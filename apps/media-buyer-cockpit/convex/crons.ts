@@ -28,4 +28,12 @@ crons.cron(
   {},
 );
 
+/** Anything queued for the assistant that the instant wake-up missed. */
+crons.interval(
+  "drain the assist queue",
+  { minutes: 10 },
+  internal.assistWorker.run,
+  {},
+);
+
 export default crons;

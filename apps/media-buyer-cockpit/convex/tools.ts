@@ -91,7 +91,7 @@ function pemToDer(pem: string): ArrayBuffer {
 
 let googleToken: { token: string; expiresAt: number } | null = null;
 
-async function googleAccessToken(): Promise<string> {
+export async function googleAccessToken(): Promise<string> {
   if (googleToken && googleToken.expiresAt > Date.now() + 60_000) {
     return googleToken.token;
   }

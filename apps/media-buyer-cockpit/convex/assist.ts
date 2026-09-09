@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
 import { internalMutation, internalQuery } from "./_generated/server";
 import { authenticatedMutation, authenticatedQuery } from "./functions";
 
@@ -51,13 +52,39 @@ export const enqueue = authenticatedMutation({
   },
   returns: v.id("assistRequests"),
   handler: async (ctx, args) => {
-    return await ctx.db.insert("assistRequests", {
+    const id = await ctx.db.insert("assistRequests", {
       ...args,
       driveLinks: (args.driveLinks ?? []).filter(l => l.trim().length > 0),
       status: "queued",
       requestedBy: ctx.userId ?? undefined,
       requestedAt: Date.now(),
     });
+    // The worker now lives in the app (assistWorker.ts); wake it right away.
+    await ctx.scheduler.runAfter(0, internal.assistWorker.run, {});
+    return id;
+  },
+});
+
+/** Same as enqueue, for automation and tests (no signed-in user). */
+export const enqueueInternal = internalMutation({
+  args: {
+    kind: v.string(),
+    campaignName: v.optional(v.string()),
+    client: v.optional(v.string()),
+    brief: v.optional(v.string()),
+    language: v.optional(v.string()),
+    driveLinks: v.optional(v.array(v.string())),
+  },
+  returns: v.id("assistRequests"),
+  handler: async (ctx, args) => {
+    const id = await ctx.db.insert("assistRequests", {
+      ...args,
+      driveLinks: (args.driveLinks ?? []).filter(l => l.trim().length > 0),
+      status: "queued",
+      requestedAt: Date.now(),
+    });
+    await ctx.scheduler.runAfter(0, internal.assistWorker.run, {});
+    return id;
   },
 });
 
@@ -165,7 +192,10 @@ export const fulfill = internalMutation({
 
 /** Context the worker needs to answer well, gathered in one round trip. */
 export const context = internalQuery({
-  args: { campaignName: v.optional(v.string()), client: v.optional(v.string()) },
+  args: {
+    campaignName: v.optional(v.string()),
+    client: v.optional(v.string()),
+  },
   returns: v.any(),
   handler: async (ctx, { campaignName, client }) => {
     const campaigns = await ctx.db.query("campaigns").collect();
@@ -179,7 +209,8 @@ export const context = internalQuery({
     // Client names differ slightly between the sheet, ClickUp and Meta
     // ("City Wood" / "City Wood Industry"), so an exact match silently loses
     // the ad account and Viktor reports a blocker that is not real.
-    const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9\u0600-\u06ff]/g, "");
+    const norm = (x: string) =>
+      x.toLowerCase().replace(/[^a-z0-9\u0600-\u06ff]/g, "");
     const like = (a?: string, b?: string) => {
       if (!a || !b) return false;
       const [x, y] = [norm(a), norm(b)];

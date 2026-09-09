@@ -49,6 +49,16 @@ every call site are untouched. `git log` shows the import commit followed by the
 | `convex/viktorSpaceAuthConfig.ts` | The `verify`/`reset` email steps are only attached when `RESEND_API_KEY` is set. Without it, sign-up completes immediately. |
 | `.env.example` | Lists the new variables. |
 
+Added on 2026-09-09 so the media buyer cockpit no longer needs the Viktor-side scripts:
+
+| File (media buyer only) | What it replaces |
+|---|---|
+| `convex/marketCollect.ts` | `collect_market_plays.py`. Walks every ad account into `marketPlays` (the "What works" page). Weekly cron, Friday 02:00 UTC. Service lines by keyword plus a hand-filled override map; label sheet with Meta-account fallback. |
+| `convex/assistWorker.ts` | `assist_worker.py`. Answers the copy / creative / launch requests from the cockpit: Drive → Meta uploads, launch checklist, copy when a model is configured. Woken on enqueue, swept every 10 min. |
+| `convex/sync.ts` (runSync) | The bridge's onboarding staging: the sync now reads each open launch task's subtasks and checklist items itself. Task list shows every open task on Marketing / ADs. |
+| `convex/builder.ts` | A build no longer fails outright when copy cannot be written. |
+| `convex/schema.ts` | Fields the code already wrote but the exported schema lacked (`clients.dwy`, report fields, `checks.block`). |
+
 The Viktor SSO shims (`spaceSessionAuth.ts`, `ViktorAutoSignIn.tsx`, etc.) were left in place.
 They are inert without the `VIKTOR_AUTH_*` variables and deleting them is cosmetic.
 
@@ -114,6 +124,10 @@ bun run dev            # http://localhost:5173
 
 ## Still pending
 
+0. **A model for the copywriting.** Build-panel copy, Edit-panel variants, the assist
+   queue's copy step and the CSM assistant all call `ai_structured_output`, which needs
+   `ANTHROPIC_API_KEY` on the deployment. Without it those steps report "blocked" and
+   everything else still works.
 1. **Bridge scripts.** `viktor-side-scripts/` fed the client-success app (`POST /bridge`) and
    the creative app (Convex HTTP API with the deploy key), and drained the media buyer's
    `outbox`. They import the Viktor SDK and cannot run here. Until they are ported (a Convex
