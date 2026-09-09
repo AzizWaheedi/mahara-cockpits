@@ -31,3 +31,5 @@ bun.lockb
 tmp/
 test-results/
 playwright-report/
+.vercel
+.env*.local
