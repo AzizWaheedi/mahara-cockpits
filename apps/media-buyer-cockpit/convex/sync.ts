@@ -1482,6 +1482,8 @@ export const runSync = internalAction({
     // the same screen as the campaigns instead of in another tab.
     // biome-ignore lint/suspicious/noExplicitAny: inbox rows
     const inbox: any[] = [];
+    // biome-ignore lint/suspicious/noExplicitAny: ClickUp launch tasks
+    const launchTasks: any[] = [];
     for (const list of HER_LISTS) {
       // Nothing on these boards is assigned to anyone, so "her tasks" means: assigned
       // to her when that ever happens, plus the launch work that is hers by role.
@@ -1501,6 +1503,8 @@ export const runSync = internalAction({
           a => String(a.id) === NADA,
         );
         const launch = /Campaign Launch|New Client/i.test(String(t.name ?? ""));
+        if (/new client campaign launch/i.test(String(t.name ?? "")))
+          launchTasks.push(t);
         const onHerBoard = String(list) === MARKETING_LIST;
         if (!hers && !launch && !onHerBoard) continue;
         inbox.push({
@@ -1558,6 +1562,85 @@ export const runSync = internalAction({
           at: Number(c.date ?? Date.now()),
         });
       }
+    }
+
+    // New-client launches. The checklist is NOT on the launch task: it lives on
+    // four subtasks (Setup, Buildout, Tracking, QA), each with its own items.
+    // This used to be staged by the sandbox bridge; now the sync reads it.
+    {
+      const acctByClient = new Map<string, string>();
+      const acctNameByClient = new Map<string, string>();
+      for (const r of clientRows.slice(1)) {
+        const nm = String(r[col("Client Name")] ?? "").trim();
+        const acct = String(r[col("Ad Account - Meta")] ?? "").trim();
+        if (!nm || !acct) continue;
+        // The column normally holds the account NAME, not an id. Keep both so
+        // the name can be resolved against Meta's own account list. [aziz, 2026-09-07]
+        if (/^\d+$/.test(acct)) acctByClient.set(normalize(nm), acct);
+        else acctNameByClient.set(normalize(nm), acct);
+      }
+      // Client names differ between ClickUp and the sheet ("City Wood" vs
+      // "city wood industry co."): match on either being a prefix of the other.
+      const match = (name: string, table: Map<string, string>) => {
+        const key = normalize(name);
+        if (table.has(key)) return table.get(key);
+        for (const [k, v] of table) {
+          if (k.length >= 5 && (key.startsWith(k) || k.startsWith(key)))
+            return v;
+        }
+        return undefined;
+      };
+      const clickupGet = async (path: string) =>
+        unwrap(
+          await callTool("pd_clickup_proxy_get", {
+            url: `https://api.clickup.com/api/v2/${path}`,
+          }),
+        );
+      // biome-ignore lint/suspicious/noExplicitAny: onboarding rows
+      const onboardingRows: any[] = [];
+      for (const t of launchTasks) {
+        const clientName = String(t.name ?? "")
+          .split(" - New Client")[0]
+          .trim();
+        const groups: {
+          name: string;
+          items: { name: string; done: boolean }[];
+        }[] = [];
+        try {
+          const detail = await clickupGet(`task/${t.id}?include_subtasks=true`);
+          // biome-ignore lint/suspicious/noExplicitAny: ClickUp payload
+          for (const sub of (detail?.subtasks ?? []) as any[]) {
+            const sd = await clickupGet(`task/${sub.id}`);
+            // biome-ignore lint/suspicious/noExplicitAny: ClickUp payload
+            const items = ((sd?.checklists ?? []) as any[]).flatMap(cl =>
+              // biome-ignore lint/suspicious/noExplicitAny: ClickUp payload
+              ((cl.items ?? []) as any[]).map(i => ({
+                name: String(i.name ?? ""),
+                done: Boolean(i.resolved),
+              })),
+            );
+            if (items.length > 0)
+              groups.push({ name: String(sub.name ?? ""), items });
+          }
+        } catch (e) {
+          console.warn(
+            `onboarding checklist for ${clientName}: ${String(e).slice(0, 120)}`,
+          );
+        }
+        onboardingRows.push({
+          taskId: t.id,
+          taskUrl: t.url,
+          client: clientName,
+          status: String(t.status?.status ?? ""),
+          accountId: match(clientName, acctByClient),
+          accountName: match(clientName, acctNameByClient),
+          groups,
+        });
+      }
+      await ctx.runMutation(internal.sync.storeOnboardings, {
+        rows: onboardingRows,
+      });
+      console.log(`open launches: ${onboardingRows.length}`);
     }
 
     const client = campaigns.filter(c => !c.internal);

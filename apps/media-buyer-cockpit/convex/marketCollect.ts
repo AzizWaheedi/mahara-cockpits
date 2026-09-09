@@ -32,8 +32,31 @@ const SKIP_ACCOUNTS = new Set(["maharamedia"]);
 // Ads with at least this much spend get Meta's rendered preview fetched.
 const PREVIEW_MIN_SPEND = 100;
 
-/** Exact client name (lower-cased) -> service line. Beats the keywords. */
-const SERVICE_LINE_OVERRIDES: Record<string, string> = {};
+/**
+ * Exact client / ad-account name (lower-cased) -> service line. Beats the
+ * keywords. Filled by hand from the Meta account list on 2026-09-09; names the
+ * keywords cannot read (brand names, transliterations) live here.
+ */
+const SERVICE_LINE_OVERRIDES: Record<string, string> = {
+  "art vision": "Interior design",
+  "evan home": "Interior design",
+  "ocean home": "Interior design",
+  "olivar design": "Interior design",
+  "the last step": "Fit-out and finishing",
+  "castello industries": "Construction and contracting",
+  "castello add": "Construction and contracting",
+  "arcturus world ad account": "Construction and contracting",
+  "grandiocity projects": "Construction and contracting",
+  phoenix: "Construction and contracting",
+  "phoenix building": "Construction and contracting",
+  "ngcc kw": "Construction and contracting",
+  "bayt al imarah": "Architecture and engineering",
+  arcwani: "Architecture and engineering",
+  "safad consulting": "Architecture and engineering",
+  "منشآت خالدة": "Architecture and engineering",
+  "تحديث المباني": "Maintenance and renovation",
+  "تحديث المباني - mahara media": "Maintenance and renovation",
+};
 
 /** Order matters: the specific lines come before the catch-alls. */
 const SERVICE_KEYWORDS: [string, RegExp][] = [
@@ -194,6 +217,12 @@ const CTA_CLEAN: Record<string, string> = {
   SUBSCRIBE: "Subscribe",
 };
 
+/** Cut a string by characters, never inside an emoji's surrogate pair. */
+function clip(s: string | undefined, n: number): string | undefined {
+  if (!s) return undefined;
+  return Array.from(s).slice(0, n).join("");
+}
+
 // biome-ignore lint/suspicious/noExplicitAny: Meta payload
 function creativeFormat(spec: any): string {
   if (!spec) return "unknown";
@@ -284,9 +313,9 @@ function readCreatives(ads: any[]) {
         spec.video_data?.image_url ||
         spec.link_data?.picture ||
         undefined,
-      headline: headline ? headline.slice(0, 120) : undefined,
+      headline: clip(headline, 120),
       // Enough to recognise the angle, not a full transcript.
-      body: body ? body.slice(0, 300) : undefined,
+      body: clip(body, 300),
       spend: Math.round(spend * 100) / 100,
       leads,
       cpl: leads ? Math.round((spend / leads) * 100) / 100 : undefined,
@@ -378,20 +407,26 @@ export const collectPlays = internalAction({
     }
 
     const counts: Record<string, number> = {};
-    clients.forEach((c, i) => {
+    let i = 0;
+    for (const c of clients) {
       const serviceLine = classifyServiceLine(c.client, c.serviceText);
       counts[serviceLine] = (counts[serviceLine] ?? 0) + 1;
       // Spaced out so ~50 accounts do not hit Meta's rate limit at once.
-      ctx.scheduler.runAfter(i * 3000, internal.marketCollect.collectAccount, {
-        client: c.client,
-        accountId: c.accountId,
-        country: c.country,
-        city: c.city,
-        serviceLine,
-        preset,
-        windowDays,
-      });
-    });
+      await ctx.scheduler.runAfter(
+        i * 3000,
+        internal.marketCollect.collectAccount,
+        {
+          client: c.client,
+          accountId: c.accountId,
+          country: c.country,
+          city: c.city,
+          serviceLine,
+          preset,
+          windowDays,
+        },
+      );
+      i++;
+    }
     // The winners archive reads the fresh plays. Run it once the last account
     // has had a fair chance to land; runSync repeats it every morning anyway.
     await ctx.scheduler.runAfter(
