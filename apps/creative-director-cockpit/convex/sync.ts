@@ -1,5 +1,10 @@
 import { v } from "convex/values";
-import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
+import {
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+} from "./_generated/server";
 
 /**
  * Ingestion for the creative director's cockpit.
@@ -11,7 +16,6 @@ import { internalMutation, internalQuery, mutation, query } from "./_generated/s
  * it safe to give the creative director his own URL: there is nothing on this
  * deployment that can touch an ad account.
  */
-
 
 /** Replace the client roster (Clients - Mahara). The spine for every screen. */
 export const storeClients = internalMutation({
@@ -229,7 +233,9 @@ export const storePlays = mutation({
   returns: v.object({ plays: v.number() }),
   handler: async (ctx, { plays }) => {
     if (plays.length === 0) {
-      throw new Error("storePlays received nothing — refusing to wipe the playbook");
+      throw new Error(
+        "storePlays received nothing — refusing to wipe the playbook",
+      );
     }
     const now = Date.now();
     for (const row of await ctx.db.query("marketPlays").collect()) {
@@ -274,7 +280,11 @@ export const freshness = query({
   args: {},
   returns: v.object({
     tables: v.array(
-      v.object({ table: v.string(), rows: v.number(), syncedAt: v.optional(v.number()) }),
+      v.object({
+        table: v.string(),
+        rows: v.number(),
+        syncedAt: v.optional(v.number()),
+      }),
     ),
     oldestSyncedAt: v.optional(v.number()),
     stale: v.array(v.string()),
@@ -309,10 +319,13 @@ export const freshness = query({
     return {
       tables,
       oldestSyncedAt: fed.reduce<number | undefined>(
-        (min, t) => (t.syncedAt && (!min || t.syncedAt < min) ? t.syncedAt : min),
+        (min, t) =>
+          t.syncedAt && (!min || t.syncedAt < min) ? t.syncedAt : min,
         undefined,
       ),
-      stale: fed.filter(t => !t.syncedAt || t.syncedAt < cutoff).map(t => t.table),
+      stale: fed
+        .filter(t => !t.syncedAt || t.syncedAt < cutoff)
+        .map(t => t.table),
       empty: tables.filter(t => t.rows === 0).map(t => t.table),
     };
   },

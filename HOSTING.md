@@ -133,7 +133,15 @@ bun run dev            # http://localhost:5173
    `ANTHROPIC_API_KEY` on the media buyer deployment switches those steps back to
    in-app, instant answers. The Edit panel's "write variants" button still needs the
    key; it is the one synchronous call left.
-1. **Bridge scripts.** `viktor-side-scripts/` fed the client-success app (`POST /bridge`) and
+1. **Bridge scripts: ported.** `apps/media-buyer-cockpit/convex/fanout.ts` now feeds the
+   creative director's cockpit (roster, boards, funnels, ad performance, plays, winners
+   through its new `/bridge` door) and the client success cockpit (snapshot + Client Data
+   overlay through its `/bridge`) every 30 minutes and after the morning sync. Media buyer
+   env: `CREATIVE_BRIDGE_URL/TOKEN`, `CSM_BRIDGE_URL/TOKEN`. Not yet ported: GHL calendar
+   bookings, churn KPIs and the client profile builder for client success (those screens
+   fall back to ClickUp fields), Drive subfolder scan and Brand Blueprint forms for creative,
+   and the outbox drains (writes queued in the two apps still need a runner).
+1b. **Old note, kept for history: Bridge scripts.** `viktor-side-scripts/` fed the client-success app (`POST /bridge`) and
    the creative app (Convex HTTP API with the deploy key), and drained the media buyer's
    `outbox`. They import the Viktor SDK and cannot run here. Until they are ported (a Convex
    cron or a small scheduled job that reuses `callTool`), those two apps show whatever data

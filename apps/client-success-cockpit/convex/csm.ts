@@ -205,8 +205,8 @@ export const snapshot = authenticatedQuery({
 
     // Booked client calls from GHL. Past ones stay for two weeks so the CSM can see the
     // call that just happened and whether the notes went in.
-    const appointments = (await ctx.db.query("appointments").collect()).sort((a, b) =>
-      a.startTime.localeCompare(b.startTime),
+    const appointments = (await ctx.db.query("appointments").collect()).sort(
+      (a, b) => a.startTime.localeCompare(b.startTime),
     );
 
     return {
@@ -250,7 +250,8 @@ export const snapshot = authenticatedQuery({
           (s, c) =>
             s +
             c.loose.filter(
-              (t: string) => !dismissed.has(`${c.name}|${t}`) || isMoneyLoose(t),
+              (t: string) =>
+                !dismissed.has(`${c.name}|${t}`) || isMoneyLoose(t),
             ).length,
           0,
         ),
@@ -655,7 +656,13 @@ export const performanceOverview = authenticatedQuery({
       clients: rows
         .map(r => {
           const perf = r.performance as
-            | { month?: Record<string, number>; lastMonth?: Record<string, number>; staleCount?: number; error?: string; source?: string }
+            | {
+                month?: Record<string, number>;
+                lastMonth?: Record<string, number>;
+                staleCount?: number;
+                error?: string;
+                source?: string;
+              }
             | undefined;
           return {
             clientName: r.clientName,
@@ -721,7 +728,7 @@ export const clientProfile = authenticatedQuery({
 });
 
 /**
- * Ask Viktor to write this client's report as an editable Google Doc.
+ * Report an issue to write this client's report as an editable Google Doc.
  *
  * The app has no Google access of its own, so this queues the request; Viktor's job (every
  * 15 minutes on working hours) writes the doc, shares it with the team and writes the link

@@ -462,7 +462,7 @@ export const askViktorFor = authenticatedAction({
     });
     await logIt(ctx, {
       campaignName: args.campaignName ?? args.client ?? "-",
-      what: `Asked Viktor: ${text.slice(0, 160)}`,
+      what: `Asked: ${text.slice(0, 160)}`,
     });
     return { ok: true };
   },

@@ -345,7 +345,7 @@ async function dispatch(
     }
     case "text2im":
       throw new Error(
-        "text2im (image generation) is not wired up outside Viktor yet",
+        "Image generation is not available in the cockpit",
       );
 
     default:

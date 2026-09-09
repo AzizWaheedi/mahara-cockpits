@@ -36,4 +36,17 @@ crons.interval(
   {},
 );
 
+/**
+ * Feed the creative director's and client success cockpits. Aziz, 2026-09-07:
+ * "have a sync every 15 minutes so nothing breaks and everything updates."
+ * Every 30 minutes keeps ClickUp and Sheets well inside their limits; the
+ * morning sync also triggers it with the stat sheets included.
+ */
+crons.interval(
+  "feed the other two cockpits",
+  { minutes: 30 },
+  internal.fanout.runFanout,
+  {},
+);
+
 export default crons;

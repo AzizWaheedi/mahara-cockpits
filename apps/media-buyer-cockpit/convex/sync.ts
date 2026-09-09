@@ -2009,6 +2009,10 @@ export const runSync = internalAction({
     // grain for the winning window and the fresh Meta tree for whether the ad
     // is still running. A winner that gets switched off is kept, not lost.
     try {
+      // The other two cockpits read from what this sync just stored.
+      await ctx.scheduler.runAfter(0, internal.fanout.runFanout, {
+        withStats: true,
+      });
       const arch = await ctx.runMutation(internal.market.archiveWinners, {});
       console.log(
         `winners archive: ${arch.archived} kept (${arch.added} new, ${arch.retired} newly off)`,

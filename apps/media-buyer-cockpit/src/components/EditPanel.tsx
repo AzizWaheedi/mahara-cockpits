@@ -165,11 +165,11 @@ function CopyTest({
               language: campaign.language,
             });
             toast.info(
-              "Asked Viktor. The options land here when they're ready.",
+              "Asked. The options land here when they're ready.",
             );
           }}
         >
-          {copyAssist.waiting ? "Viktor is writing…" : "Write me options"}
+          {copyAssist.waiting ? "Writing…" : "Write me options"}
         </Button>
       </div>
 
@@ -659,7 +659,7 @@ function AskViktor({ campaign }: { campaign: Row }) {
         request: text.trim(),
       });
       if (res.ok) {
-        toast.success("Sent to Viktor.");
+        toast.success("Sent.");
         setText("");
       } else {
         toast.error(res.error ?? "Couldn't send that.");
@@ -674,7 +674,7 @@ function AskViktor({ campaign }: { campaign: Row }) {
       <div className="flex items-center gap-1.5">
         <input
           className="flex-1 rounded border bg-background p-1.5 text-xs"
-          placeholder="Or just tell Viktor what you want for this campaign…"
+          placeholder="Or just say what you want for this campaign…"
           value={text}
           onChange={e => setText(e.target.value)}
           onKeyDown={e => {

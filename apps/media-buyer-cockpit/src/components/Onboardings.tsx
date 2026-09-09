@@ -268,7 +268,7 @@ function LaunchWithMe({ client }: { client: string }) {
             })
           }
         >
-          {launch.waiting ? "Viktor is on it…" : "Take it as far as you can"}
+          {launch.waiting ? "Working on it…" : "Take it as far as you can"}
         </Button>
         {assistLabel(row, launch.waiting) && (
           <span className="text-[12px] text-muted-foreground">

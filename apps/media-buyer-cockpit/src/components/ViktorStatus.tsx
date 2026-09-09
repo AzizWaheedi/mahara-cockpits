@@ -50,7 +50,7 @@ export function ViktorStatus() {
           )}
         </span>
         <span>
-          <span className="font-bold">Waiting on Viktor</span>{" "}
+          <span className="font-bold">Waiting for answers</span>{" "}
           {a.waitingOnViktor === 0
             ? "nothing"
             : `${a.waitingOnViktor} message${a.waitingOnViktor === 1 ? "" : "s"}`}
@@ -90,7 +90,7 @@ export function ViktorStatus() {
                   })}{" "}
                   · {m.campaignName} ·{" "}
                 </span>
-                {m.author === "viktor" ? "Viktor: " : ""}
+                {m.author === "viktor" ? "Answer: " : ""}
                 {m.text.length > 90 ? `${m.text.slice(0, 90)}…` : m.text}
               </div>
             ))}

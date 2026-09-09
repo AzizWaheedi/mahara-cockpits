@@ -540,7 +540,7 @@ function DiagnosisSection({ p }: { p: Any }) {
   );
 }
 
-/** Ask Viktor to write the report as an editable Google Doc, then show the link. */
+/** Report an issue to write the report as an editable Google Doc, then show the link. */
 /**
  * The fixed report template, and the parts the CSM can add on top of it.
  *

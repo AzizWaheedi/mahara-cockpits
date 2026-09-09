@@ -170,7 +170,7 @@ export const buildDraft = internalAction({
           prompt: copyPrompt(draft, winner),
         });
         copyNote =
-          "Ask AI is writing the copy — it appears here on its own, usually within a few minutes.";
+          "The copy is being written. It appears here on its own, usually within a few minutes.";
       } else {
         try {
           variants = await writeCopy(draft, winner);

@@ -1532,8 +1532,8 @@ export function CsmPage({ section }: { section: Section }) {
                         </Button>
                       </div>
                       <p className="text-[12px] text-muted-foreground">
-                        Viktor drafts, you send. Nothing goes to the client from
-                        here.
+                        The cockpit drafts, you send. Nothing goes to the client
+                        from here.
                       </p>
                     </>
                   );

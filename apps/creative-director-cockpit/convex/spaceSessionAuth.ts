@@ -35,12 +35,15 @@ function spaceResourceId(): string {
 function spaceClientId(): string {
   const resourceId = spaceResourceId();
   return (
-    process.env.VIKTOR_AUTH_CLIENT_ID || (resourceId ? `space-${resourceId}` : "")
+    process.env.VIKTOR_AUTH_CLIENT_ID ||
+    (resourceId ? `space-${resourceId}` : "")
   );
 }
 
 function viktorApiBaseUrl(): string {
-  return process.env.VIKTOR_SPACES_API_URL || process.env.VIKTOR_AUTH_BASE_URL || "";
+  return (
+    process.env.VIKTOR_SPACES_API_URL || process.env.VIKTOR_AUTH_BASE_URL || ""
+  );
 }
 
 const spaceSessionProvider = ConvexCredentials<DataModel>({
@@ -55,7 +58,9 @@ const spaceSessionProvider = ConvexCredentials<DataModel>({
       throw new Error("Missing session_token for space session sign-in");
     }
     if (!resourceId || !clientId || !apiBaseUrl) {
-      throw new Error("Space session sign-in is not configured on this deployment");
+      throw new Error(
+        "Space session sign-in is not configured on this deployment",
+      );
     }
 
     const response = await fetch(`${apiBaseUrl}/api/viktor-auth/session`, {
@@ -72,7 +77,9 @@ const spaceSessionProvider = ConvexCredentials<DataModel>({
     }
     const body = (await response.json()) as ViktorAuthSessionResponse;
     if (body.status !== "allowed" || !body.user) {
-      throw new Error(`Space session not allowed: ${body.reason || body.status}`);
+      throw new Error(
+        `Space session not allowed: ${body.reason || body.status}`,
+      );
     }
 
     // A stable, per-Viktor-user account key so repeated sign-ins map to one

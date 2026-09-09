@@ -28,7 +28,12 @@ type Row = {
   formId?: string;
   formStatus?: string;
   leadsAllTime?: number;
-  questions: { label: string; type: string; options: string[]; isGate: boolean }[];
+  questions: {
+    label: string;
+    type: string;
+    options: string[];
+    isGate: boolean;
+  }[];
   gates: number;
   spend: number;
   leads: number;
@@ -45,14 +50,52 @@ type Row = {
  * excluded, otherwise every construction company matches every other one.
  */
 const GENERIC = new Set([
-  "ad", "ads", "account", "acount", "company", "co", "group", "llc", "wll",
-  "est", "the", "for", "and", "general", "trading", "projects", "project",
-  "construction", "constructions", "contracting", "contractors", "engineering",
-  "consultant", "consultants", "consulting", "design", "designs", "interior",
-  "interiors", "decor", "usd", "kw", "ksa", "uae", "limited", "finishing",
-  "buildings", "building", "industries", "industry", "mahara", "maharamedia",
-  "\u0634\u0631\u0643\u0629", "\u0644\u0644\u0645\u0642\u0627\u0648\u0644\u0627\u062a",
-  "\u0645\u0642\u0627\u0648\u0644\u0627\u062a", "\u0644\u0644\u062a\u0634\u064a\u062f",
+  "ad",
+  "ads",
+  "account",
+  "acount",
+  "company",
+  "co",
+  "group",
+  "llc",
+  "wll",
+  "est",
+  "the",
+  "for",
+  "and",
+  "general",
+  "trading",
+  "projects",
+  "project",
+  "construction",
+  "constructions",
+  "contracting",
+  "contractors",
+  "engineering",
+  "consultant",
+  "consultants",
+  "consulting",
+  "design",
+  "designs",
+  "interior",
+  "interiors",
+  "decor",
+  "usd",
+  "kw",
+  "ksa",
+  "uae",
+  "limited",
+  "finishing",
+  "buildings",
+  "building",
+  "industries",
+  "industry",
+  "mahara",
+  "maharamedia",
+  "\u0634\u0631\u0643\u0629",
+  "\u0644\u0644\u0645\u0642\u0627\u0648\u0644\u0627\u062a",
+  "\u0645\u0642\u0627\u0648\u0644\u0627\u062a",
+  "\u0644\u0644\u062a\u0634\u064a\u062f",
 ]);
 
 function words(x: string): string[] {
@@ -109,7 +152,10 @@ export const list = query({
     // version of "does adding questions improve lead quality": we can only see
     // volume and cost per lead here, so the number is labelled as that and not
     // dressed up as a quality score.
-    const buckets = new Map<string, { spend: number; leads: number; forms: number }>();
+    const buckets = new Map<
+      string,
+      { spend: number; leads: number; forms: number }
+    >();
     for (const r of all) {
       if (r.kind !== "Instant form") continue;
       const key = r.gates >= 3 ? "3+" : String(r.gates);
@@ -133,7 +179,13 @@ export const list = query({
     // new form starts from what is already live rather than from scratch.
     const bank = new Map<
       string,
-      { label: string; options: string[]; accounts: string[]; leads: number; spend: number }
+      {
+        label: string;
+        options: string[];
+        accounts: string[];
+        leads: number;
+        spend: number;
+      }
     >();
     for (const r of all) {
       for (const q of r.questions) {
@@ -159,7 +211,9 @@ export const list = query({
         cpl: e.leads ? Math.round((e.spend / e.leads) * 100) / 100 : null,
         spend: Math.round(e.spend),
       }))
-      .sort((a, b) => b.accounts.length - a.accounts.length || b.leads - a.leads);
+      .sort(
+        (a, b) => b.accounts.length - a.accounts.length || b.leads - a.leads,
+      );
 
     return {
       rows: [...rows].sort((a, b) => b.spend - a.spend),
@@ -169,7 +223,8 @@ export const list = query({
         destinations: rows.length,
         accounts: new Set(all.map(r => r.account)).size,
         forms: all.filter(r => r.kind === "Instant form").length,
-        noGate: all.filter(r => r.kind === "Instant form" && r.gates === 0).length,
+        noGate: all.filter(r => r.kind === "Instant form" && r.gates === 0)
+          .length,
       },
       syncedAt: all[0]?.syncedAt,
     };

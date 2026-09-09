@@ -67,7 +67,6 @@ function winnersFrom(plays: any[]): Record<string, any>[] {
   return out as Record<string, any>[];
 }
 
-
 /**
  * What has actually worked, grouped by service line, city and play.
  *
@@ -168,7 +167,9 @@ export const dimensions = query({
       serviceLines: [
         ...new Set(all.map(p => p.serviceLine).filter(Boolean) as string[]),
       ].sort(),
-      cities: [...new Set(all.map(p => p.city).filter(Boolean) as string[])].sort(),
+      cities: [
+        ...new Set(all.map(p => p.city).filter(Boolean) as string[]),
+      ].sort(),
       plays: all.length,
       clients: new Set(all.map(p => p.client)).size,
     };
@@ -207,7 +208,13 @@ export const creativePatterns = query({
       ads: number;
     };
     const buckets = new Map<string, Bucket>();
-    const add = (kind: string, key: string, spend: number, leads: number, client: string) => {
+    const add = (
+      kind: string,
+      key: string,
+      spend: number,
+      leads: number,
+      client: string,
+    ) => {
       if (!key) return;
       const id = `${kind}::${key}`;
       const b = buckets.get(id) ?? {
@@ -249,8 +256,7 @@ export const creativePatterns = query({
         cpl: Math.round((b.spend / b.leads) * 100) / 100,
         clients: b.clients.size,
         ads: b.ads,
-        verdict:
-          b.clients.size >= 2 ? "Proven across clients" : "Worked once",
+        verdict: b.clients.size >= 2 ? "Proven across clients" : "Worked once",
       }))
       .sort((a, b) => a.cpl - b.cpl);
   },

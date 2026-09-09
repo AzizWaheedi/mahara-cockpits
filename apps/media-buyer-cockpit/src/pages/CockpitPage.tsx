@@ -640,7 +640,7 @@ function Cockpit({ view }: { view: View }) {
             , not today.
           </span>{" "}
           The refresh has not run since. Don't change budgets off this screen
-          until it's green again — tell Viktor with the chat box in the corner.
+          until it's green again — use the chat box in the corner.
         </div>
       )}
 
@@ -655,7 +655,7 @@ function Cockpit({ view }: { view: View }) {
             ))}
           </ul>
           <p className="mt-1 text-muted-foreground">
-            The last refresh flagged this itself. Viktor is alerted — don't
+            The last refresh flagged this itself. Aziz is alerted — don't
             assume a blank section means there is no work.
           </p>
         </div>
@@ -2366,13 +2366,13 @@ function Cockpit({ view }: { view: View }) {
         )}
       </div>
 
-      {/* Ask Viktor — she can flag anything wrong on the screen without leaving it. */}
+      {/* Report an issue — she can flag anything wrong on the screen without leaving it. */}
       <div className="fixed bottom-5 right-5 z-50 print:hidden">
         {chatOpen ? (
           <div className="w-[330px] rounded-xl border bg-card shadow-xl">
             <div className="flex items-center justify-between border-b px-3 py-2">
               <div>
-                <div className="text-[13px] font-bold">Ask Viktor</div>
+                <div className="text-[13px] font-bold">Report an issue</div>
                 <div className="text-[11px] text-muted-foreground">
                   A question, or something here looks wrong
                 </div>
@@ -2406,7 +2406,7 @@ function Cockpit({ view }: { view: View }) {
                         hour: "2-digit",
                         minute: "2-digit",
                       })}
-                      {f.delivered ? " · sent to Viktor" : " · sending"}
+                      {f.delivered ? " · sent" : " · sending"}
                     </div>
                     {f.reply && (
                       <div className="mt-1 rounded-lg bg-accent px-2.5 py-1.5 text-accent-foreground">
@@ -2435,7 +2435,7 @@ function Cockpit({ view }: { view: View }) {
                     page: TITLES[view].title,
                   });
                   setChatText("");
-                  toast.success("Sent to Viktor");
+                  toast.success("Sent");
                 }}
               >
                 Send
@@ -2448,7 +2448,7 @@ function Cockpit({ view }: { view: View }) {
             onClick={() => setChatOpen(true)}
             className="rounded-full bg-primary px-4 py-3 text-[13px] font-semibold text-primary-foreground shadow-xl"
           >
-            Ask Viktor
+            Report an issue
           </button>
         )}
       </div>

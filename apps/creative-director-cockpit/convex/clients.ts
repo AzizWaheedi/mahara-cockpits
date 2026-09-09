@@ -32,13 +32,7 @@ const PRELAUNCH_STATUSES = new Set([
   "onboarding booked",
 ]);
 
-const DONE = new Set([
-  "complete",
-  "cancelled",
-  "closed",
-  "done",
-  "live 🚀",
-]);
+const DONE = new Set(["complete", "cancelled", "closed", "done", "live 🚀"]);
 
 function isOpen(status: string): boolean {
   return !DONE.has((status || "").toLowerCase());
@@ -96,7 +90,9 @@ export const roster = query({
         const camps = campaigns.filter(
           k =>
             norm(k.clientName) === norm(c.name) ||
-            c.aliases.some(a => a.length > 2 && norm(k.campaignName).includes(a)),
+            c.aliases.some(
+              a => a.length > 2 && norm(k.campaignName).includes(a),
+            ),
         );
         return {
           taskId: c.taskId,
@@ -146,7 +142,6 @@ export const roster = query({
   },
 });
 
-
 const DAY = 86_400_000;
 
 /**
@@ -183,7 +178,9 @@ function touchpoint(
       (v2.status || "").toLowerCase(),
     ),
   );
-  const openScripts = tasks.filter(t => t.kind === "script" && isOpen(t.status));
+  const openScripts = tasks.filter(
+    t => t.kind === "script" && isOpen(t.status),
+  );
 
   const reasons: string[] = [];
   if (waiting.length) {
@@ -274,7 +271,9 @@ export const detail = query({
     const campaigns = (await ctx.db.query("campaigns").collect()).filter(
       k =>
         norm(k.clientName) === norm(client.name) ||
-        client.aliases.some(a => a.length > 2 && norm(k.campaignName).includes(a)),
+        client.aliases.some(
+          a => a.length > 2 && norm(k.campaignName).includes(a),
+        ),
     );
     const campaignNames = new Set(campaigns.map(k => k.campaignName));
     const tree = (await ctx.db.query("metaTree").collect()).filter(n =>
@@ -386,7 +385,9 @@ export const detail = query({
        * their own campaigns are tagged with and fall back to the field.
        */
       serviceLine:
-        campaigns.map(k => k.serviceType).find(Boolean) ?? client.service ?? null,
+        campaigns.map(k => k.serviceType).find(Boolean) ??
+        client.service ??
+        null,
       campaigns: campaigns.map(k => ({
         campaignName: k.campaignName,
         serviceType: k.serviceType,
@@ -427,7 +428,10 @@ export const detail = query({
  * only number Aziz judges paid media on. CPL is shown but never sorted on.
  */
 export const winners = query({
-  args: { service: v.optional(v.string()), excludeClient: v.optional(v.string()) },
+  args: {
+    service: v.optional(v.string()),
+    excludeClient: v.optional(v.string()),
+  },
   returns: v.any(),
   handler: async (ctx, { service, excludeClient }) => {
     const campaigns = await ctx.db.query("campaigns").collect();
@@ -435,7 +439,8 @@ export const winners = query({
 
     const wanted = campaigns.filter(k => {
       if (service && norm(k.serviceType) !== norm(service)) return false;
-      if (excludeClient && norm(k.clientName) === norm(excludeClient)) return false;
+      if (excludeClient && norm(k.clientName) === norm(excludeClient))
+        return false;
       return true;
     });
     const byCampaign = new Map(wanted.map(k => [k.campaignName, k]));
@@ -620,7 +625,9 @@ export const contextPack = query({
     const campaigns = (await ctx.db.query("campaigns").collect()).filter(
       k =>
         norm(k.clientName) === norm(client.name) ||
-        client.aliases.some(a => a.length > 2 && norm(k.campaignName).includes(a)),
+        client.aliases.some(
+          a => a.length > 2 && norm(k.campaignName).includes(a),
+        ),
     );
     const campaignNames = new Set(campaigns.map(k => k.campaignName));
     const ads = (await ctx.db.query("ads").collect())
@@ -655,7 +662,9 @@ export const contextPack = query({
     const L: string[] = [];
     const h = (t: string) => L.push("", `## ${t}`, "");
     const line = (k: string, v2?: string | number | null) =>
-      L.push(`- ${k}: ${v2 === null || v2 === undefined || v2 === "" ? "not on file" : v2}`);
+      L.push(
+        `- ${k}: ${v2 === null || v2 === undefined || v2 === "" ? "not on file" : v2}`,
+      );
 
     L.push(`# ${client.name}, full client context`);
     L.push("");

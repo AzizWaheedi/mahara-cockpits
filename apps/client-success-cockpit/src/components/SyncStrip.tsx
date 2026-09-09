@@ -41,9 +41,8 @@ export function SyncStrip() {
     <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
       <span className="font-semibold">Some data may be stale.</span>{" "}
       {when ? `Last full sync ${when} Kuwait time` : "No sync recorded yet"}
-      {ageMin !== null ? ` (${ageMin} min ago)` : ""}. {detail}. Viktor retries
-      every 15 minutes and has been alerted, so keep working, the numbers will
-      catch up.
+      {ageMin !== null ? ` (${ageMin} min ago)` : ""}. {detail}. It retries
+      every 30 minutes, so keep working, the numbers will catch up.
     </div>
   );
 }

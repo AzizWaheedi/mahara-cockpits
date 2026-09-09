@@ -199,7 +199,7 @@ function decisionComment(d: {
         : d.kind === "rerouted"
           ? `SENT TO ${(d.reroutedTo ?? "another team").toUpperCase()}`
           : "CHANGE MADE";
-  const lines = [`🎯 Viktor · ${head} — ${d.action}`, "", `Why: ${d.evidence}`];
+  const lines = [`🎯 Cockpit · ${head} — ${d.action}`, "", `Why: ${d.evidence}`];
   if (d.reason) lines.push(`Note: ${d.reason}`);
   if (d.snooze) lines.push(`Checked again: ${d.snooze}`);
   lines.push(
@@ -316,7 +316,7 @@ export const logDecision = internalAction({
         });
         await post(ctx, `https://api.clickup.com/api/v2/task/${taskId}/comment`, {
           comment_text: [
-            `🎯 Viktor · CAMPAIGN REPLACED — this task now tracks ${d.campaign.campaignName}`,
+            `🎯 Cockpit · CAMPAIGN REPLACED — this task now tracks ${d.campaign.campaignName}`,
             "",
             `${d.campaign.staleTaskName} is no longer delivering. The live campaign for this client is ${d.campaign.campaignName} (${money(d.campaign.spend7d)} in the last 7 days).`,
             "One task per client — the history stays in this thread.",
@@ -337,7 +337,7 @@ export const logDecision = internalAction({
           {
             name: d.campaign.campaignName,
             markdown_description: [
-              `Added by Viktor on behalf of the media buyer because this campaign was spending with no task on the board.`,
+              `Added from the cockpit on behalf of the media buyer because this campaign was spending with no task on the board.`,
               "",
               `Account: ${d.campaign.accountName}`,
               `Last 7 days: ${money(d.campaign.spend7d)} spend · ${d.campaign.leads7d} leads · ${money(d.campaign.cpl)} CPL`,
@@ -422,7 +422,7 @@ export const logDecision = internalAction({
             await post(ctx, 
               `https://api.clickup.com/api/v2/task/${taskId}/comment`,
               {
-                comment_text: `🎯 Viktor · Request raised on the ${dest.label} board: ${created.url}`,
+                comment_text: `🎯 Cockpit · Request raised on the ${dest.label} board: ${created.url}`,
                 notify_all: false,
               },
             );
@@ -459,7 +459,7 @@ export const logManualChange = internalAction({
     try {
       await post(ctx, `https://api.clickup.com/api/v2/task/${m.taskId}/comment`, {
         comment_text: [
-          `🎯 Viktor · CHANGE LOG — ${m.by}`,
+          `🎯 Cockpit · CHANGE LOG — ${m.by}`,
           "",
           m.adName ? `${m.campaignName} · ${m.adName}` : m.campaignName,
           m.what,

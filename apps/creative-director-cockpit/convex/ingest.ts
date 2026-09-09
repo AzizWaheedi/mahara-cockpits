@@ -1,0 +1,200 @@
+import { v } from "convex/values";
+import { internal } from "./_generated/api";
+import {
+  type ActionCtx,
+  internalMutation,
+  internalQuery,
+} from "./_generated/server";
+
+/**
+ * The feed door for the creative director's cockpit, reached over HTTP
+ * (`POST /bridge`). The media buyer's backend pushes finished rows in here
+ * after every sync; this deployment holds no integration credentials of its
+ * own, which is what makes it safe to give the creative director his own URL.
+ *
+ * Guarded by a bearer token (BRIDGE_TOKEN on the deployment).
+ */
+declare const process: { env: Record<string, string | undefined> };
+
+export const BRIDGE_TOKEN = process.env.BRIDGE_TOKEN ?? "";
+
+// biome-ignore lint/suspicious/noExplicitAny: payloads are validated by the mutations
+type Args = Record<string, any>;
+
+export async function runBridge(
+  ctx: ActionCtx,
+  fn: string,
+  args: Args,
+): Promise<unknown> {
+  switch (fn) {
+    case "storeClients":
+      return await ctx.runMutation(internal.sync.storeClients, {
+        clients: args.clients,
+      });
+    case "storeCreative":
+      return await ctx.runMutation(internal.sync.storeCreative, {
+        tasks: args.tasks ?? [],
+        videos: args.videos ?? [],
+        posts: args.posts ?? [],
+      });
+    case "storeAdPerformance":
+      return await ctx.runMutation(internal.sync.storeAdPerformance, {
+        ads: args.ads,
+        campaigns: args.campaigns ?? [],
+        tree: args.tree,
+      });
+    case "storeBlueprints":
+      return await ctx.runMutation(internal.sync.storeBlueprints, {
+        rows: args.rows,
+      });
+    case "storeFunnels":
+      return await ctx.runMutation(internal.ingest.storeFunnelsInternal, {
+        rows: args.rows,
+      });
+    case "storePlays":
+      return await ctx.runMutation(internal.ingest.storePlaysInternal, {
+        plays: args.plays,
+      });
+    case "storeWinners":
+      return await ctx.runMutation(internal.ingest.storeWinnersInternal, {
+        rows: args.rows,
+      });
+    case "counts":
+      return await ctx.runQuery(internal.sync.counts, {});
+    case "driveCache":
+      return await ctx.runQuery(internal.ingest.driveCacheInternal, {});
+    case "statCache":
+      return await ctx.runQuery(internal.ingest.statCacheInternal, {});
+    case "outboxPending":
+      return await ctx.runQuery(internal.ingest.outboxPendingInternal, {});
+    case "outboxSettle":
+      return await ctx.runMutation(internal.ingest.outboxSettleInternal, {
+        id: args.id,
+        ok: args.ok,
+        error: args.error,
+        resultUrl: args.resultUrl,
+      });
+    default:
+      throw new Error(`unknown bridge function: ${fn}`);
+  }
+}
+
+/** Same bodies as the public `sync.storePlays` / `storeFunnels` / `winners.store`, reachable from the door. */
+export const storePlaysInternal = internalMutation({
+  args: { plays: v.array(v.any()) },
+  returns: v.object({ plays: v.number() }),
+  handler: async (ctx, { plays }) => {
+    if (plays.length === 0) {
+      throw new Error(
+        "storePlays received nothing — refusing to wipe the playbook",
+      );
+    }
+    const now = Date.now();
+    for (const row of await ctx.db.query("marketPlays").collect()) {
+      await ctx.db.delete(row._id);
+    }
+    for (const row of plays) {
+      await ctx.db.insert("marketPlays", { ...row, syncedAt: now });
+    }
+    return { plays: plays.length };
+  },
+});
+
+export const storeFunnelsInternal = internalMutation({
+  args: { rows: v.array(v.any()) },
+  returns: v.object({ funnels: v.number() }),
+  handler: async (ctx, { rows }) => {
+    if (rows.length === 0) {
+      throw new Error("storeFunnels received nothing — refusing to wipe");
+    }
+    const now = Date.now();
+    for (const row of await ctx.db.query("funnels").collect()) {
+      await ctx.db.delete(row._id);
+    }
+    for (const row of rows) {
+      await ctx.db.insert("funnels", { ...row, syncedAt: now });
+    }
+    return { funnels: rows.length };
+  },
+});
+
+export const storeWinnersInternal = internalMutation({
+  args: { rows: v.array(v.any()) },
+  returns: v.any(),
+  handler: async (ctx, { rows }) => {
+    if (rows.length === 0) return { skipped: "empty payload" };
+    const now = Date.now();
+    const existing = await ctx.db.query("winnersArchive").collect();
+    const byAd = new Map(existing.map(r => [r.adId, r]));
+    let inserted = 0;
+    let patched = 0;
+    for (const raw of rows) {
+      const row = { ...raw, syncedAt: now };
+      const prev = byAd.get(row.adId);
+      if (prev) {
+        await ctx.db.patch(prev._id, row);
+        byAd.delete(row.adId);
+        patched += 1;
+      } else {
+        await ctx.db.insert("winnersArchive", row);
+        inserted += 1;
+      }
+    }
+    return { inserted, patched };
+  },
+});
+
+export const driveCacheInternal = internalQuery({
+  args: {},
+  returns: v.any(),
+  handler: async ctx =>
+    (await ctx.db.query("clients").collect()).map(c => ({
+      name: c.name,
+      driveFolderId: c.driveFolderId,
+      driveSubfolders: c.driveSubfolders,
+      driveScannedAt: c.driveScannedAt,
+    })),
+});
+
+export const statCacheInternal = internalQuery({
+  args: {},
+  returns: v.any(),
+  handler: async ctx => {
+    const out: Record<string, unknown> = {};
+    for (const c of await ctx.db.query("clients").collect()) {
+      out[c.name] = { stats: c.stats, statsScannedAt: c.statsScannedAt };
+    }
+    return out;
+  },
+});
+
+export const outboxPendingInternal = internalQuery({
+  args: {},
+  returns: v.any(),
+  handler: async ctx =>
+    (await ctx.db.query("creativeOutbox").collect()).filter(
+      // biome-ignore lint/suspicious/noExplicitAny: outbox row
+      (r: any) => !r.doneAt && !r.settledAt && (r.tries ?? 0) < 5,
+    ),
+});
+
+export const outboxSettleInternal = internalMutation({
+  args: {
+    id: v.id("creativeOutbox"),
+    ok: v.boolean(),
+    error: v.optional(v.string()),
+    resultUrl: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, { id, ok, error, resultUrl }) => {
+    const row = await ctx.db.get(id);
+    if (!row) return null;
+    // biome-ignore lint/suspicious/noExplicitAny: outbox row shape varies
+    const patch: any = { tries: ((row as any).tries ?? 0) + 1 };
+    if (ok) patch.doneAt = Date.now();
+    if (error) patch.lastError = error.slice(0, 300);
+    if (resultUrl) patch.resultUrl = resultUrl;
+    await ctx.db.patch(id, patch);
+    return null;
+  },
+});

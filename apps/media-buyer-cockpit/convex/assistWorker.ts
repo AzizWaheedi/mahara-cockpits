@@ -161,7 +161,7 @@ proof, question, direct offer. Write in ${language}. Name the angle in English.
     await enqueueAi(String(req.id), prompt);
     return {
       variants: [],
-      note: "Ask AI is writing the copy — this row fills in on its own, usually within a few minutes.",
+      note: "The copy is being written. This row fills in on its own, usually within a few minutes.",
       pending: true,
     };
   }

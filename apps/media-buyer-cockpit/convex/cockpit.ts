@@ -450,7 +450,7 @@ export const recordBuild = internalMutation({
     const id = await ctx.db.insert("manualChanges", {
       campaignName: clientName,
       what,
-      by: "Viktor (built from the cockpit)",
+      by: "Built from the cockpit",
       at: Date.now(),
     });
     await ctx.scheduler.runAfter(0, internal.writeback.logManualChange, { id });

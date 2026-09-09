@@ -32,7 +32,8 @@ export const list = query({
     const all = await ctx.db.query("winnersArchive").collect();
     const rows = all
       .filter(r => {
-        if (args.serviceLine && r.serviceLine !== args.serviceLine) return false;
+        if (args.serviceLine && r.serviceLine !== args.serviceLine)
+          return false;
         if (args.excludeClient && norm(r.client) === norm(args.excludeClient)) {
           return false;
         }

@@ -155,7 +155,7 @@ export const apply = internalAction({
                 ? `SENT TO ${(DEPARTMENT_LIST[args.department]?.label ?? args.department).toUpperCase()}`
                 : "UPDATED";
       const lines = [
-        `🎯 Viktor · ${head} — ${d.action}`,
+        `🎯 Cockpit · ${head} — ${d.action}`,
         "",
         `Why: ${d.evidence}`,
         d.reason ? `Note: ${d.reason}` : "",

@@ -196,7 +196,9 @@ const schema = defineSchema({
     phone: v.optional(v.string()),
     ghlContactId: v.optional(v.string()),
     syncedAt: v.number(),
-  }).index("by_task", ["taskId"]).index("by_name", ["name"]),
+  })
+    .index("by_task", ["taskId"])
+    .index("by_name", ["name"]),
 
   /**
    * Queued write-backs to ClickUp. This Space has no credentials, so the
@@ -416,7 +418,9 @@ const schema = defineSchema({
     kind: v.string(),
     note: v.optional(v.string()),
     at: v.number(),
-  }).index("by_day", ["day"]).index("by_client", ["client"]),
+  })
+    .index("by_day", ["day"])
+    .index("by_client", ["client"]),
 
   /** Per-user role, so this Space only ever serves the creative director. */
   roles: defineTable({

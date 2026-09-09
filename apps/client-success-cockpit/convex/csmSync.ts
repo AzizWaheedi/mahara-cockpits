@@ -300,7 +300,6 @@ export const commitProfiles = internalMutation({
   },
 });
 
-
 /**
  * The bridge's own report card, written at the end of every run. `ok` false means at least
  * one feed failed, and the app shows an amber strip rather than pretending the data is fresh.

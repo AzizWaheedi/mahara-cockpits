@@ -58,7 +58,7 @@ function StatusLine({ m }: { m: Msg }) {
       cls: "text-muted-foreground",
     },
     sent: {
-      label: `✓ Delivered to Viktor${m.deliveredAt ? ` at ${when(m.deliveredAt)}` : ""} — answer will appear here`,
+      label: `✓ Delivered${m.deliveredAt ? ` at ${when(m.deliveredAt)}` : ""} — answer will appear here`,
       cls: "txt-good",
     },
     answered: { label: "✓ Answered", cls: "txt-good" },
@@ -118,7 +118,7 @@ export function CampaignChat({
         </div>
         {waiting && (
           <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-bold uppercase text-amber-800">
-            waiting on Viktor
+            waiting for an answer
           </span>
         )}
       </div>
@@ -143,7 +143,7 @@ export function CampaignChat({
                     ? "Action"
                     : m.author === "her"
                       ? (m.authorName ?? "You")
-                      : "Viktor"}
+                      : "Answer"}
                   {" · "}
                   {when(m.at)}
                 </div>
@@ -167,7 +167,7 @@ export function CampaignChat({
             }
           }}
           rows={2}
-          placeholder="Ask about this campaign, or tell Viktor what you want done with it."
+          placeholder="Ask about this campaign, or say what you want done with it."
           className="min-h-[38px] flex-1 resize-y rounded-md border bg-background px-2 py-1.5 text-[13px]"
         />
         <Button
@@ -181,7 +181,7 @@ export function CampaignChat({
       </div>
 
       <p className="mt-1.5 text-[11px] text-muted-foreground">
-        Messages go to Viktor in Slack with this campaign's spend, leads, CPL
+        Messages go to Aziz in Slack with this campaign's spend, leads, CPL
         and days live attached. Every message shows whether it has been picked
         up, and every change made here is logged above with whether it worked.
       </p>

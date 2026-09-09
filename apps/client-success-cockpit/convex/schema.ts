@@ -106,7 +106,9 @@ const schema = defineSchema({
      * clients when a mid-push failure left the table truncated. [2026-09-07]
      */
     syncId: v.optional(v.string()),
-  }).index("by_client", ["clientName"]).index("by_syncId", ["syncId"]),
+  })
+    .index("by_client", ["clientName"])
+    .index("by_syncId", ["syncId"]),
 
   /**
    * Report documents and questions the CSM asked, both drained by Viktor's bridge.
@@ -398,7 +400,9 @@ const schema = defineSchema({
     kind: v.optional(v.string()),
     profiles: v.optional(v.number()),
     errors: v.optional(v.array(v.string())),
-  }).index("by_at", ["at"]).index("by_kind_at", ["kind", "at"]),
+  })
+    .index("by_at", ["at"])
+    .index("by_kind_at", ["kind", "at"]),
 });
 
 export default schema;

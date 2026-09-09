@@ -208,7 +208,7 @@ function IssueReporter({ page }: { page: string }) {
           </div>
           <p className="text-xs text-muted-foreground">
             Wrong client, wrong instruction, missing field — say it here and
-            Viktor fixes it.
+            It gets fixed.
           </p>
           <Textarea
             rows={3}
@@ -224,7 +224,7 @@ function IssueReporter({ page }: { page: string }) {
                 await report({ page, text: text.trim() });
                 setText("");
                 setOpen(false);
-                toast.success("Sent to Viktor — a fix task was created");
+                toast.success("Sent. A fix task was created");
               }}
             >
               Send it
@@ -787,7 +787,7 @@ export function CsmPage() {
                         </Button>
                       </div>
                       <p className="text-[12px] text-muted-foreground">
-                        Viktor drafts, you send. Nothing goes to the client from
+                        The cockpit drafts, you send. Nothing goes to the client from
                         here.
                       </p>
                     </>

@@ -4,7 +4,7 @@ import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 
 /**
- * Hand a job to Viktor and watch it come back.
+ * Hand a job over and watch it come back.
  *
  * The cockpit itself cannot write copy or reach Drive — those run through a
  * service that has gone down on us before. So the button does not "call an AI":
@@ -69,8 +69,8 @@ export function useAssist(kind: AssistKind) {
 export function assistLabel(row: AssistRow, waiting: boolean): string | null {
   if (!waiting && !row) return null;
   if (!row || row.status === "queued")
-    return "Queued — Viktor picks this up within a few minutes.";
-  if (row.status === "working") return "Viktor is on it now.";
+    return "Queued. Picked up within a few minutes.";
+  if (row.status === "working") return "Working on it now.";
   if (row.status === "failed") return row.error ?? "That one failed.";
   return null;
 }

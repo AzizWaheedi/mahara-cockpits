@@ -146,7 +146,7 @@ export const complete = internalMutation({
           variants,
           note:
             note ??
-            `${variants.length} copy options from Ask AI. Edit anything before you use them.`,
+            `${variants.length} copy options. Edit anything before you use them.`,
           steps,
         });
       } else if (row) {
@@ -154,7 +154,7 @@ export const complete = internalMutation({
           variants,
           note:
             note ??
-            `${variants.length} copy options from Ask AI. Edit anything before you use them.`,
+            `${variants.length} copy options. Edit anything before you use them.`,
         });
       }
     } else if (job.kind === "draft_copy") {
@@ -170,7 +170,7 @@ export const complete = internalMutation({
           })),
           note:
             note ??
-            "Copy written by Ask AI. Read it, edit anything, then launch.",
+            "Copy written. Read it, edit anything, then launch.",
         });
       }
     }

@@ -121,7 +121,11 @@ const VIDEO_STAGES = [
   "live 🚀",
 ];
 /** Stages where the ball is in HIS court, not an editor's or the client's. */
-const HIS_MOVE = new Set(["client review", "internal review", "update required"]);
+const HIS_MOVE = new Set([
+  "client review",
+  "internal review",
+  "update required",
+]);
 
 /** Creative director touchpoint floor: 1 to 2 per active client per week.
  *  Deliberately lighter than the CSM's WhatsApp cadence, the creative side
@@ -167,9 +171,7 @@ export const snapshot = query({
         .toLowerCase()
         .replace(/[^\p{L}\p{N}]+/gu, " ")
         .trim();
-    function docsFor(
-      raw: string,
-    ):
+    function docsFor(raw: string):
       | {
           brand?: string;
           offer?: string;
@@ -273,8 +275,7 @@ export const snapshot = query({
           client: t.client ?? t.name,
           status: t.status,
           ageDays: Math.floor((now - t.createdAt) / DAY),
-          duplicate:
-            (seen.get(key) ?? 0) > 1,
+          duplicate: (seen.get(key) ?? 0) > 1,
           /**
            * A link on the client row only means the template was generated,
            * usually automatically, with whatever the AI could find. It is not
@@ -320,18 +321,26 @@ export const snapshot = query({
     for (const job of openVideos) {
       const names = job.editors.length ? job.editors : ["Unassigned"];
       for (const name of names) {
-        const row =
-          byEditor.get(name) ??
-          { editor: name, open: 0, overdue: 0, nextDue: null };
+        const row = byEditor.get(name) ?? {
+          editor: name,
+          open: 0,
+          overdue: 0,
+          nextDue: null,
+        };
         row.open += 1;
         if (job.dueDate && job.dueDate < now) row.overdue += 1;
-        if (job.dueDate && (row.nextDue === null || job.dueDate < row.nextDue)) {
+        if (
+          job.dueDate &&
+          (row.nextDue === null || job.dueDate < row.nextDue)
+        ) {
           row.nextDue = job.dueDate;
         }
         byEditor.set(name, row);
       }
     }
-    const editors = [...byEditor.values()].sort((a, b) => b.overdue - a.overdue);
+    const editors = [...byEditor.values()].sort(
+      (a, b) => b.overdue - a.overdue,
+    );
 
     const videoJobs = openVideos
       .map(j => ({
@@ -464,7 +473,8 @@ export const snapshot = query({
       if (!b.client) continue;
       const k = b.client.toLowerCase().trim();
       const prev = blueprintByClient.get(k);
-      if (!prev || b.submittedAt > prev.submittedAt) blueprintByClient.set(k, b);
+      if (!prev || b.submittedAt > prev.submittedAt)
+        blueprintByClient.set(k, b);
     }
 
     const tree = await ctx.db.query("metaTree").collect();
@@ -502,7 +512,7 @@ export const snapshot = query({
         ).length;
         const journey = journeys.find(j => mine(j.client));
         const myCampaigns = campaigns.filter(
-          c => ((c.clientName ?? c.accountName) ?? "").toLowerCase() === key,
+          c => (c.clientName ?? c.accountName ?? "").toLowerCase() === key,
         );
         const campaignNames = new Set(myCampaigns.map(c => c.campaignName));
         const liveAds = tree.filter(
@@ -576,14 +586,16 @@ export const snapshot = query({
           brandDnaSteps.offer,
           brandDnaSteps.blueprint,
         ];
-        const onboardingOpen = onboardingSteps.filter(
-          st => !st.done && st !== brandDnaSteps.blueprint,
-        ).length + (blueprintExpected && !blueprint ? 1 : 0);
+        const onboardingOpen =
+          onboardingSteps.filter(
+            st => !st.done && st !== brandDnaSteps.blueprint,
+          ).length + (blueprintExpected && !blueprint ? 1 : 0);
         const touchesThisWeek = touchRows.filter(
           r => r.client.toLowerCase() === key && r.at >= now - 7 * DAY,
         ).length;
-        const sum = (f: (c: (typeof myCampaigns)[number]) => number | undefined) =>
-          myCampaigns.reduce((n, c) => n + (f(c) ?? 0), 0);
+        const sum = (
+          f: (c: (typeof myCampaigns)[number]) => number | undefined,
+        ) => myCampaigns.reduce((n, c) => n + (f(c) ?? 0), 0);
         const bookings = sum(c => c.bookings7d);
         const showed = sum(c => c.showed7d);
         return {
@@ -649,9 +661,8 @@ export const snapshot = query({
           journeyTotal: journey?.total ?? null,
           journeyStep: journey?.currentStep ?? null,
           scriptsOpen: myScripts.length,
-          scriptsStale: myScripts.filter(
-            sc => sc.ageDays >= SCRIPT_STALE_DAYS,
-          ).length,
+          scriptsStale: myScripts.filter(sc => sc.ageDays >= SCRIPT_STALE_DAYS)
+            .length,
           videosOpen: myVideos.length,
           videosOverdue: myVideos.filter(j => j.overdueDays > 0).length,
           videosWithEditor: myVideos.filter(j => j.editors.length > 0).length,
@@ -721,9 +732,7 @@ export const snapshot = query({
         }
         if (!c.onboardingComplete && c.campaigns.length > 0) {
           const missing = c.onboardingSteps
-            .filter(
-              (st: { done: boolean; label: string }) => !st.done,
-            )
+            .filter((st: { done: boolean; label: string }) => !st.done)
             .filter(
               (st: { label: string }) =>
                 c.blueprintExpected ||
@@ -1284,7 +1293,8 @@ export const scriptQueue = query({
       // 1. Creative burning out. The highest priority because the money is
       //    already being spent against an audience that has seen it enough.
       const burning = myAds.filter(
-        a => liveAdNames.has(a.adName) && (a.frequency ?? 0) >= FATIGUE_FREQUENCY,
+        a =>
+          liveAdNames.has(a.adName) && (a.frequency ?? 0) >= FATIGUE_FREQUENCY,
       );
       if (burning.length) {
         out.push({
@@ -1338,8 +1348,8 @@ export const scriptQueue = query({
           });
         }
         // 5. Opt in, then silence. Only ever a suggestion: Aziz, 2026-09-08, a
-      //    client is switched onto a follow up page or a VSL when the funnel
-      //    actually needs it, not as routine work.
+        //    client is switched onto a follow up page or a VSL when the funnel
+        //    actually needs it, not as routine work.
         if (f.kind === "Instant form" && !f.followUpUrl && f.leads > 0) {
           out.push({
             client: c.name,

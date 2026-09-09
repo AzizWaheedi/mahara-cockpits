@@ -124,7 +124,7 @@ export const recent = authenticatedQuery({
   },
 });
 
-/** How much is waiting on Viktor right now — drives the status strip. */
+/** How much is waiting for an answer right now — drives the status strip. */
 export const queueDepth = authenticatedQuery({
   args: {},
   returns: v.object({ queued: v.number(), working: v.number() }),
