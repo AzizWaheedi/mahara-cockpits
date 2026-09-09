@@ -1,6 +1,10 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import { internalAction, internalMutation, internalQuery } from "./_generated/server";
+import {
+  internalAction,
+  internalMutation,
+  internalQuery,
+} from "./_generated/server";
 import { callTool, unwrap } from "./tools";
 
 /**
@@ -150,14 +154,22 @@ export const buildDraft = internalAction({
           "No existing ad set with leads to copy from, so this one is built fresh — worth a closer look at the targeting before you launch it.";
       }
 
-      const variants = await writeCopy(draft, winner);
+      // Copy needs a model. If none is reachable, the build still goes ahead
+      // with the settings copied and she writes the copy herself.
+      let variants: Awaited<ReturnType<typeof writeCopy>> = [];
+      let copyNote: string | undefined;
+      try {
+        variants = await writeCopy(draft, winner);
+      } catch (e) {
+        copyNote = `Copy could not be written (${String(e).slice(0, 120)}). Add your own below.`;
+      }
 
       await ctx.runMutation(internal.builder.patchDraft, {
         id,
         patch: {
           sourceAdSetId,
           sourceAdSetName,
-          sourceReason,
+          sourceReason: copyNote ? `${sourceReason} ${copyNote}` : sourceReason,
           targeting,
           optimizationGoal,
           billingEvent,
@@ -247,7 +259,9 @@ async function writeCopy(
   return (out as any[]).slice(0, 5).map(v => ({
     headline: String(v.headline ?? "").slice(0, 120),
     primaryText: String(v.primaryText ?? "").slice(0, 1200),
-    description: v.description ? String(v.description).slice(0, 300) : undefined,
+    description: v.description
+      ? String(v.description).slice(0, 300)
+      : undefined,
   }));
 }
 

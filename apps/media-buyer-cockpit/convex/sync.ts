@@ -6,7 +6,7 @@ import {
   internalQuery,
 } from "./_generated/server";
 import { authenticatedAction } from "./functions";
-import { callTool, supabaseQuery, unwrap, graph, allAdAccounts } from "./tools";
+import { allAdAccounts, callTool, graph, supabaseQuery, unwrap } from "./tools";
 
 const TRACKER = "1pBEyClUxPLc4-RdXR8gZ0MxsLkLLFkWJwkiVqVf2rro";
 const DATABASE = "1_0Nv-IFvzhH4NBNh1dxCUm6Ryp414ctM_8EO5QORBF0";
@@ -26,6 +26,8 @@ const INTERNAL_ACCOUNTS = ["maharamedia"];
 const NADA = "113428468";
 /** Boards the media buyer works out of. */
 const HER_LISTS = ["901817774521", "901816723196"];
+/** Marketing / ADs: everything open on it is her task list. [aziz, 2026-09-09] */
+const MARKETING_LIST = "901816723196";
 
 const CPL_GATE = 15;
 const BUDGET_FLOOR = 30;
@@ -359,9 +361,7 @@ async function ghlBookingEvents(
       out.push({
         date: new Date(t + 3 * 3600 * 1000).toISOString().slice(0, 10),
         /** Kept so the calendar view can still be built later. */
-        appointmentDate: Number.isFinite(
-          Date.parse(String(e.startTime ?? "")),
-        )
+        appointmentDate: Number.isFinite(Date.parse(String(e.startTime ?? "")))
           ? new Date(Date.parse(String(e.startTime)) + 3 * 3600 * 1000)
               .toISOString()
               .slice(0, 10)
@@ -831,7 +831,9 @@ export const runSync = internalAction({
     const modeByClient = new Map<string, string>();
     for (const r of clientRows.slice(1)) {
       const name = r[col("Client Name")];
-      const mode = String(r[col("Service Mode")] ?? "").trim().toUpperCase();
+      const mode = String(r[col("Service Mode")] ?? "")
+        .trim()
+        .toUpperCase();
       if (name && (mode === "DWY" || mode === "DFY"))
         modeByClient.set(normalize(name), mode);
     }
@@ -1129,19 +1131,20 @@ export const runSync = internalAction({
         const accountName = String(r[metaCol] ?? "").trim() || undefined;
         const key = accountName ? normalize(accountName) : "";
         const accountId = accountName
-          ? (accountName.match(/^\d+$/)
-              ? accountName
-              : (accountIdByName.get(key) ??
-                [...accountIdByName.entries()].find(
-                  ([n]) =>
-                    n.length >= 5 &&
-                    (n.startsWith(key) || key.startsWith(n)),
-                )?.[1]))
+          ? accountName.match(/^\d+$/)
+            ? accountName
+            : (accountIdByName.get(key) ??
+              [...accountIdByName.entries()].find(
+                ([n]) =>
+                  n.length >= 5 && (n.startsWith(key) || key.startsWith(n)),
+              )?.[1])
           : undefined;
         const task = onboardingClients.find(o => {
           const a = normalize(o.client);
           const b = normalize(client);
-          return a === b || (a.length >= 5 && (a.startsWith(b) || b.startsWith(a)));
+          return (
+            a === b || (a.length >= 5 && (a.startsWith(b) || b.startsWith(a)))
+          );
         });
         const spend7d = key ? (spendByAccount.get(key) ?? 0) : 0;
         const issues: string[] = [];
@@ -1156,7 +1159,7 @@ export const runSync = internalAction({
         }
         if (!task) {
           issues.push(
-            "No open \"New Client Campaign Launch\" task on the board, so nobody has been given the build.",
+            'No open "New Client Campaign Launch" task on the board, so nobody has been given the build.',
           );
         }
         if (spend7d > 0) {
@@ -1375,8 +1378,8 @@ export const runSync = internalAction({
           leads: a.leads,
           cpl,
           linkCtr,
-        cpm,
-        optInRate,
+          cpm,
+          optInRate,
           frequency,
           dayRate,
           daysLive,
@@ -1418,7 +1421,8 @@ export const runSync = internalAction({
           // carry no adId and therefore never distort an ad-level number.
           const mine = e.adId
             ? adIdsHere.has(e.adId)
-            : Boolean(client) && !unattributedTaken.has(normalize(client ?? ""));
+            : Boolean(client) &&
+              !unattributedTaken.has(normalize(client ?? ""));
           if (!mine) continue;
           bookingRows.push({
             campaignName: name,
@@ -1463,9 +1467,7 @@ export const runSync = internalAction({
           optInRate:
             ad.linkClicks >= 50 ? (ad.leads / ad.linkClicks) * 100 : undefined,
           frequency: ad.freq || undefined,
-          thumbnailUrl: sbThumb.get(
-            `${normalize(name)}|${normalize(adName)}`,
-          ),
+          thumbnailUrl: sbThumb.get(`${normalize(name)}|${normalize(adName)}`),
           verdict: j.verdict,
           reason: j.reason,
           syncedAt: now,
@@ -1499,9 +1501,14 @@ export const runSync = internalAction({
           a => String(a.id) === NADA,
         );
         const launch = /Campaign Launch|New Client/i.test(String(t.name ?? ""));
-        if (!hers && !launch) continue;
+        const onHerBoard = String(list) === MARKETING_LIST;
+        if (!hers && !launch && !onHerBoard) continue;
         inbox.push({
-          reason: hers ? "assigned to you" : "campaign launch — yours by role",
+          reason: hers
+            ? "assigned to you"
+            : launch
+              ? "campaign launch — yours by role"
+              : "open on the Marketing / ADs board",
           kind: "task",
           taskId: t.id,
           title: t.name,
@@ -1703,7 +1710,7 @@ export const runSync = internalAction({
         for (let i = 0; i < ads.length; i += BATCH) {
           const slice = ads.slice(i, i + BATCH);
           await Promise.all(
-            slice.map(async (ad) => {
+            slice.map(async ad => {
               try {
                 const prev = await graph<any>(`${ad.id}/previews`, {
                   ad_format: "MOBILE_FEED_STANDARD",
@@ -1749,7 +1756,7 @@ export const runSync = internalAction({
       }
     }
     console.log(
-      `metaTree: ${metaTree.filter((r) => r.kind === "ad").length} ads, ` +
+      `metaTree: ${metaTree.filter(r => r.kind === "ad").length} ads, ` +
         `${previewOk} with a preview or thumbnail, ${previewMissing} without`,
     );
 
@@ -1820,7 +1827,10 @@ export const runSync = internalAction({
 
     // Media buying needs time to breathe: after a real change, three days of data
     // before anything else is touched. Anything else is just churn.
-    const manual = (await ctx.runQuery(internal.sync.recentManualChanges, {})) as {
+    const manual = (await ctx.runQuery(
+      internal.sync.recentManualChanges,
+      {},
+    )) as {
       campaignName: string;
       what: string;
       at: number;
@@ -1830,7 +1840,8 @@ export const runSync = internalAction({
     // Event names verified against ad_account_activities on 2026-09-03.
     const MEANINGFUL =
       /budget|targeting|bid strategy|optimisation goal|optimization goal|created|ad updated|campaign status updated|ad set status updated/i;
-    const NOT_A_CHANGE = /name updated|finishes ad review|billed|delivered|balance/i;
+    const NOT_A_CHANGE =
+      /name updated|finishes ad review|billed|delivered|balance/i;
     for (const c of campaigns) {
       const times = [
         ...adChanges
@@ -1861,8 +1872,7 @@ export const runSync = internalAction({
       };
       // Bleeding badly enough that waiting costs more than acting: keep the findings.
       const bleeding =
-        (c.cpl ?? 0) > CPL_GATE * 2 ||
-        (c.costPerBooking ?? 0) > CPB_GATE * 1.5;
+        (c.cpl ?? 0) > CPL_GATE * 2 || (c.costPerBooking ?? 0) > CPB_GATE * 1.5;
       c.findings = bleeding
         ? [
             {
@@ -2105,7 +2115,6 @@ export const storeOnboardings = internalMutation({
   },
 });
 
-
 /**
  * Hand the scoped ad performance to the creative director's Space.
  *
@@ -2202,7 +2211,12 @@ export const lastRunHealth = internalQuery({
       .order("desc")
       .first();
     if (!run) return null;
-    return { at: run.at, ok: run.ok, health: run.health, problems: run.problems };
+    return {
+      at: run.at,
+      ok: run.ok,
+      health: run.health,
+      problems: run.problems,
+    };
   },
 });
 

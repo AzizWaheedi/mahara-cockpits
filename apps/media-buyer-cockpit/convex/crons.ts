@@ -17,4 +17,15 @@ crons.cron(
   {},
 );
 
+/**
+ * Re-mine every ad account into the "What works" playbook once a week. Friday
+ * is the quiet day, and the Saturday 06:30 sync then archives the winners.
+ */
+crons.cron(
+  "collect market plays for the playbook",
+  "0 2 * * 5",
+  internal.marketCollect.collectPlays,
+  {},
+);
+
 export default crons;
