@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/((?!assets/|__viktor_meta\\.json).*)",
+      "destination": "/index.html"
+    }
+  ]
+}

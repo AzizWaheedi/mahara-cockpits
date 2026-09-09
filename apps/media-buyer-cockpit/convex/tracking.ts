@@ -1,0 +1,147 @@
+import { v } from "convex/values";
+import { internal } from "./_generated/api";
+import {
+  internalAction,
+  internalMutation,
+  internalQuery,
+} from "./_generated/server";
+import { authenticatedQuery } from "./functions";
+import { graph } from "./tools";
+
+/**
+ * Tracking audit.
+ *
+ * Runs straight against Meta with the system-user token, so it works even while
+ * the Spaces tool endpoint is down.
+ *
+ * The point is not tidiness. A lead that arrives with no UTM cannot be tied
+ * back to the ad that produced it, which means the cost per lead we optimise
+ * against is partly fiction. Same for a lead form that is missing entirely.
+ */
+
+export const store = internalMutation({
+  args: { rows: v.array(v.any()) },
+  returns: v.object({ found: v.number() }),
+  handler: async (ctx, { rows }) => {
+    for (const old of await ctx.db.query("trackingIssues").collect()) {
+      await ctx.db.delete(old._id);
+    }
+    for (const r of rows) {
+      await ctx.db.insert("trackingIssues", { ...r, foundAt: Date.now() });
+    }
+    return { found: rows.length };
+  },
+});
+
+/** Distinct client ad accounts we hold, from the winning-data database. */
+export const accounts = internalQuery({
+  args: {},
+  returns: v.array(v.object({ accountId: v.string(), client: v.string() })),
+  handler: async ctx => {
+    const plays = await ctx.db.query("marketPlays").collect();
+    const seen = new Map<string, string>();
+    for (const p of plays) {
+      if (!seen.has(p.accountId)) seen.set(p.accountId, p.client);
+    }
+    return [...seen].map(([accountId, client]) => ({ accountId, client }));
+  },
+});
+
+export const audit = internalAction({
+  args: {},
+  returns: v.object({ checked: v.number(), issues: v.number() }),
+  handler: async (ctx): Promise<{ checked: number; issues: number }> => {
+    const accounts: { accountId: string; client: string }[] =
+      await ctx.runQuery(internal.tracking.accounts, {});
+
+    const rows: Record<string, unknown>[] = [];
+    let checked = 0;
+
+    for (const acc of accounts) {
+      let ads: { data?: Record<string, any>[] };
+      try {
+        ads = await graph(`act_${acc.accountId}/ads`, {
+          fields:
+            "name,creative{url_tags,object_story_spec},adset{destination_type,optimization_goal}",
+          effective_status: '["ACTIVE"]',
+          limit: 200,
+        });
+      } catch {
+        // An unreadable account is an access problem, not a tracking fault —
+        // don't report it as one.
+        continue;
+      }
+
+      for (const ad of ads.data ?? []) {
+        checked++;
+        const creative = ad.creative ?? {};
+        const spec = creative.object_story_spec;
+        const adset = ad.adset ?? {};
+
+        // URL parameters. Verified at creative level: when url_tags is absent
+        // there is no other field carrying them, so this is a real gap and it
+        // is the "Add URL parameters" step of our own buildout checklist.
+        if (!creative.url_tags) {
+          rows.push({
+            client: acc.client,
+            accountId: acc.accountId,
+            adId: ad.id,
+            adName: ad.name ?? "",
+            issue: "No URL parameters",
+            detail:
+              "The buildout checklist requires the UTM string on every ad. Without it this ad cannot be told apart from the others in reporting.",
+          });
+        }
+
+        // Lead form. Only judge this when the ad set actually delivers a lead
+        // form on the ad AND the creative is readable. Dynamic creatives do not
+        // expose object_story_spec, and a website ad is not supposed to have a
+        // form — flagging either would be a false alarm, and 296 of 296 earlier
+        // flags were exactly that.
+        const readable = Boolean(spec);
+        const wantsLeadForm = adset.destination_type === "ON_AD";
+        if (readable && wantsLeadForm) {
+          const data = spec.video_data ?? spec.link_data ?? {};
+          const leadForm = data.call_to_action?.value?.lead_gen_form_id;
+          if (!leadForm) {
+            rows.push({
+              client: acc.client,
+              accountId: acc.accountId,
+              adId: ad.id,
+              adName: ad.name ?? "",
+              issue: "No lead form attached",
+              detail: "This ad set delivers a lead form, but this ad has none.",
+            });
+          }
+        }
+      }
+    }
+
+    const out = await ctx.runMutation(internal.tracking.store, { rows });
+    return { checked, issues: out.found };
+  },
+});
+
+/** What she sees: tracking faults, worst clients first. */
+export const issues = authenticatedQuery({
+  args: {},
+  returns: v.array(
+    v.object({
+      client: v.string(),
+      count: v.number(),
+      ads: v.array(v.object({ adName: v.string(), issue: v.string() })),
+    }),
+  ),
+  handler: async ctx => {
+    const all = await ctx.db.query("trackingIssues").collect();
+    const byClient = new Map<string, { adName: string; issue: string }[]>();
+    for (const r of all) {
+      const list = byClient.get(r.client) ?? [];
+      list.push({ adName: r.adName, issue: r.issue });
+      byClient.set(r.client, list);
+    }
+    return [...byClient]
+      .map(([client, ads]) => ({ client, count: ads.length, ads }))
+      .sort((a, b) => b.count - a.count);
+  },
+});
