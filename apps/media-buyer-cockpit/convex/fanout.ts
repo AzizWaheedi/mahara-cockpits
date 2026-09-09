@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalAction, internalQuery } from "./_generated/server";
 import { CLIENTS_LIST, CONTENT_LIST, CREATIVE_LIST, VIDEO_LIST } from "./sync";
-import { callTool, graph, unwrap } from "./tools";
+import { callTool, googleAccessToken, graph, unwrap } from "./tools";
 
 /**
  * Feed the other two cockpits.
@@ -230,6 +230,87 @@ async function gatherClients(): Promise<Any[]> {
     rows.push(row);
   }
   return rows;
+}
+
+// --- Drive: what is inside each client's folder ----------------------------------
+
+const DRIVE_SCAN_MAX_AGE_H = 6;
+
+function folderId(url: unknown): string | undefined {
+  return /\/folders\/([A-Za-z0-9_-]{10,})/.exec(String(url ?? ""))?.[1];
+}
+
+/** The subfolders inside one client's Drive folder (footage, scripts, ...). */
+async function scanClientDrive(fid: string, token: string) {
+  const q = encodeURIComponent(
+    `'${fid}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+  );
+  const res = await fetch(
+    `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=100&supportsAllDrives=true&includeItemsFromAllDrives=true`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  const json = await res.json();
+  if (!res.ok)
+    throw new Error(json?.error?.message ?? `Drive HTTP ${res.status}`);
+  return ((json.files ?? []) as Any[]).map(f => ({
+    name: String(f.name),
+    id: String(f.id),
+    url: `https://drive.google.com/drive/folders/${f.id}`,
+  }));
+}
+
+/**
+ * Fill driveSubfolders / driveFootage / driveScripts on the roster. Rescanned at
+ * most every few hours; anything already cached in the cockpit is reused.
+ */
+async function attachDriveSubfolders(roster: Any[]) {
+  let cache = new Map<string, Any>();
+  try {
+    const rows: Any[] = (await bridge("creative", "driveCache", {})) ?? [];
+    cache = new Map(rows.map(c => [c.name, c]));
+  } catch (e) {
+    console.warn(
+      `drive cache read failed, doing a full scan: ${String(e).slice(0, 120)}`,
+    );
+  }
+  const now = Date.now();
+  let token: string | undefined;
+  let scanned = 0;
+  for (const c of roster) {
+    const fid = folderId(c.driveFolder) ?? folderId(c.driveLink);
+    if (!fid) continue;
+    const old = cache.get(c.name) ?? {};
+    const fresh =
+      old.driveFolderId === fid &&
+      old.driveScannedAt &&
+      now - old.driveScannedAt < DRIVE_SCAN_MAX_AGE_H * 3600_000;
+    let subs: Any[];
+    if (fresh) {
+      subs = old.driveSubfolders ?? [];
+      c.driveScannedAt = old.driveScannedAt;
+    } else {
+      try {
+        token ??= await googleAccessToken();
+        subs = await scanClientDrive(fid, token);
+        scanned++;
+      } catch (e) {
+        console.warn(`drive scan ${c.name}: ${String(e).slice(0, 120)}`);
+        subs = old.driveSubfolders ?? [];
+      }
+      c.driveScannedAt = now;
+    }
+    c.driveFolderId = fid;
+    c.driveSubfolders = subs;
+    for (const sub of subs) {
+      const n = String(sub.name).toLowerCase();
+      if ((n.includes("footage") || n.includes("raw video")) && !c.driveFootage)
+        c.driveFootage = sub.url;
+      if (n.includes("script") && !c.driveScripts) c.driveScripts = sub.url;
+    }
+  }
+  console.log(
+    `drive: ${scanned} folder(s) rescanned, ${roster.filter(r => r.driveScripts).length} with a scripts folder, ${roster.filter(r => r.driveFootage).length} with footage`,
+  );
 }
 
 // --- Stat sheets: this month's booked / showed / quoted / closed --------------
@@ -708,6 +789,7 @@ export const feedCreative = internalAction({
     let roster: Any[] = [];
     try {
       roster = await gatherClients();
+      await attachDriveSubfolders(roster);
       // Stat sheets are filled by hand through the day: read on the full run only.
       if (withStats) await attachStatSheets(roster);
       report.clients = roster.length
@@ -846,11 +928,12 @@ export const runFanout = internalAction({
   args: { withStats: v.optional(v.boolean()) },
   returns: v.any(),
   handler: async (ctx, { withStats }): Promise<unknown> => {
+    const drains = await ctx.runAction(internal.outboxDrains.drainAll, {});
     const creative = await ctx.runAction(internal.fanout.feedCreative, {
       withStats,
     });
     const csm = await ctx.runAction(internal.fanout.feedCsm, {});
-    return { creative, csm };
+    return { drains, creative, csm };
   },
 });
 

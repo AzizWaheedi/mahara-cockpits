@@ -91,7 +91,7 @@ function pemToDer(pem: string): ArrayBuffer {
 
 let googleToken: { token: string; expiresAt: number } | null = null;
 
-async function googleAccessToken(): Promise<string> {
+export async function googleAccessToken(): Promise<string> {
   if (googleToken && googleToken.expiresAt > Date.now() + 60_000) {
     return googleToken.token;
   }
@@ -236,6 +236,21 @@ async function dispatch(
         { Authorization: env("CLICKUP_API_TOKEN") },
         args.json_body,
       );
+    case "pd_clickup_proxy_put": {
+      const res = await fetch(String(args.url), {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: env("CLICKUP_API_TOKEN"),
+        },
+        body: JSON.stringify(args.json_body ?? {}),
+      });
+      const body = await bodyOf(res);
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status} ${args.url}: ${brief(body)}`);
+      }
+      return body;
+    }
 
     // --- Google Sheets
     case "pd_google_sheets_proxy_get":
@@ -345,7 +360,7 @@ async function dispatch(
     }
     case "text2im":
       throw new Error(
-        "text2im (image generation) is not wired up outside Viktor yet",
+        "Image generation is not available in the cockpit",
       );
 
     default:

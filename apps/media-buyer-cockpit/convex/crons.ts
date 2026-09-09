@@ -10,9 +10,22 @@ import { internal } from "./_generated/api";
  */
 const crons = cronJobs();
 
+/**
+ * Aziz, 2026-09-09: everything refreshes every 15 minutes. The full sync runs
+ * on the quarter hour through the Kuwait working day (06:00 to 22:00, which is
+ * 03:00 to 19:00 UTC) and hourly overnight. Each run ends by feeding the other
+ * two cockpits, so they refresh on the same clock. Convex never overlaps runs
+ * of the same cron: a slow sync delays the next tick, it does not pile up.
+ */
 crons.cron(
-  "refresh the board before the working day",
-  "30 3 * * 0-4,6",
+  "refresh every 15 minutes through the working day",
+  "*/15 3-18 * * *",
+  internal.sync.runSync,
+  {},
+);
+crons.cron(
+  "refresh hourly overnight",
+  "0 19-23,0-2 * * *",
   internal.sync.runSync,
   {},
 );
@@ -42,10 +55,11 @@ crons.interval(
  * Every 30 minutes keeps ClickUp and Sheets well inside their limits; the
  * morning sync also triggers it with the stat sheets included.
  */
+/** Writes queued in the other two cockpits reach ClickUp within minutes. */
 crons.interval(
-  "feed the other two cockpits",
-  { minutes: 30 },
-  internal.fanout.runFanout,
+  "drain the other cockpits' outboxes",
+  { minutes: 5 },
+  internal.outboxDrains.drainAll,
   {},
 );
 

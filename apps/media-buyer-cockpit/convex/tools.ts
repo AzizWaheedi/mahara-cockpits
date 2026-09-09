@@ -236,6 +236,21 @@ async function dispatch(
         { Authorization: env("CLICKUP_API_TOKEN") },
         args.json_body,
       );
+    case "pd_clickup_proxy_put": {
+      const res = await fetch(String(args.url), {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: env("CLICKUP_API_TOKEN"),
+        },
+        body: JSON.stringify(args.json_body ?? {}),
+      });
+      const body = await bodyOf(res);
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status} ${args.url}: ${brief(body)}`);
+      }
+      return body;
+    }
 
     // --- Google Sheets
     case "pd_google_sheets_proxy_get":
@@ -344,9 +359,7 @@ async function dispatch(
       return { search_response: textOf(message) };
     }
     case "text2im":
-      throw new Error(
-        "Image generation is not available in the cockpit",
-      );
+      throw new Error("Image generation is not available in the cockpit");
 
     default:
       throw new Error(`Unknown tool "${role}": no direct client configured`);

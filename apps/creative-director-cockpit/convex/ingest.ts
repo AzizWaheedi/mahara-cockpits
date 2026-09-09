@@ -71,8 +71,7 @@ export async function runBridge(
       return await ctx.runMutation(internal.ingest.outboxSettleInternal, {
         id: args.id,
         ok: args.ok,
-        error: args.error,
-        resultUrl: args.resultUrl,
+        result: args.result,
       });
     default:
       throw new Error(`unknown bridge function: ${fn}`);
@@ -172,29 +171,35 @@ export const outboxPendingInternal = internalQuery({
   args: {},
   returns: v.any(),
   handler: async ctx =>
-    (await ctx.db.query("creativeOutbox").collect()).filter(
-      // biome-ignore lint/suspicious/noExplicitAny: outbox row
-      (r: any) => !r.doneAt && !r.settledAt && (r.tries ?? 0) < 5,
-    ),
+    (
+      await ctx.db
+        .query("creativeOutbox")
+        .withIndex("by_state", q => q.eq("state", "pending"))
+        .collect()
+    ).map(r => ({
+      id: r._id,
+      kind: r.kind,
+      taskId: r.taskId,
+      payload: r.payload,
+      createdAt: r.createdAt,
+    })),
 });
 
 export const outboxSettleInternal = internalMutation({
   args: {
     id: v.id("creativeOutbox"),
     ok: v.boolean(),
-    error: v.optional(v.string()),
-    resultUrl: v.optional(v.string()),
+    result: v.optional(v.string()),
   },
   returns: v.null(),
-  handler: async (ctx, { id, ok, error, resultUrl }) => {
+  handler: async (ctx, { id, ok, result }) => {
     const row = await ctx.db.get(id);
     if (!row) return null;
-    // biome-ignore lint/suspicious/noExplicitAny: outbox row shape varies
-    const patch: any = { tries: ((row as any).tries ?? 0) + 1 };
-    if (ok) patch.doneAt = Date.now();
-    if (error) patch.lastError = error.slice(0, 300);
-    if (resultUrl) patch.resultUrl = resultUrl;
-    await ctx.db.patch(id, patch);
+    await ctx.db.patch(id, {
+      state: ok ? "done" : "failed",
+      result: (result ?? "").slice(0, 300),
+      settledAt: Date.now(),
+    });
     return null;
   },
 });

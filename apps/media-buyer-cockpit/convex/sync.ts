@@ -1750,6 +1750,14 @@ export const runSync = internalAction({
     const metaTree: any[] = [];
     let previewOk = 0;
     let previewMissing = 0;
+    // A preview iframe URL is stable for the life of the ad, and one request
+    // per ad is what made this the expensive part of the sync. Reuse what the
+    // last run stored and only ask Meta for ads we have never seen.
+    const cachedPreview = new Map<string, string>(
+      (await ctx.runQuery(internal.sync.previewCache, {})).map(
+        ([id, src]) => [id, src] as [string, string],
+      ),
+    );
     for (const c of campaigns) {
       if (!c.metaAccountId || !c.metaCampaignId) continue;
       try {
@@ -1789,9 +1797,14 @@ export const runSync = internalAction({
         // Previews are one request per ad; run them in small parallel batches so
         // a 60-ad account doesn't serialise into a timeout.
         const previews = new Map<string, string>();
+        for (const ad of ads) {
+          const hit = cachedPreview.get(String(ad.id));
+          if (hit) previews.set(String(ad.id), hit);
+        }
+        const toFetch = ads.filter(ad => !previews.has(String(ad.id)));
         const BATCH = 8;
-        for (let i = 0; i < ads.length; i += BATCH) {
-          const slice = ads.slice(i, i + BATCH);
+        for (let i = 0; i < toFetch.length; i += BATCH) {
+          const slice = toFetch.slice(i, i + BATCH);
           await Promise.all(
             slice.map(async ad => {
               try {
@@ -2168,6 +2181,16 @@ export const stagePut = internalMutation({
     await ctx.db.insert("syncInput", { ...args, at: Date.now() });
     return null;
   },
+});
+
+/** Preview iframes already stored, by ad id: reused so a sync costs one call per NEW ad. */
+export const previewCache = internalQuery({
+  args: {},
+  returns: v.array(v.array(v.string())),
+  handler: async ctx =>
+    (await ctx.db.query("metaTree").collect())
+      .filter(t => t.kind === "ad" && t.previewSrc)
+      .map(t => [t.metaId, String(t.previewSrc)]),
 });
 
 /** Reassemble the staged chunks, if any are present and fresh. */
