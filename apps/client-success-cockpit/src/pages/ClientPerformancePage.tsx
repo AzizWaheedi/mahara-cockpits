@@ -705,6 +705,86 @@ function ReportSection({ p }: { p: Any }) {
  * actually heard. Together they turn "your leads are bad" into a specific, answerable
  * conversation, which is the whole job on a check-in call.
  */
+function RecentCalls({ calls }: { calls: Any[] }) {
+  const [openUrl, setOpenUrl] = useState<string | null>(null);
+  if (!calls?.length) return null;
+  const when = (at: string) =>
+    at
+      ? new Date(at).toLocaleString("en-GB", {
+          timeZone: "Asia/Kuwait",
+          day: "2-digit",
+          month: "short",
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : "";
+  return (
+    <section className="space-y-2">
+      <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+        Recent calls
+      </h3>
+      <p className="text-sm text-muted-foreground">
+        Recorded calls with this client in the last 30 days, with the summary
+        from the recording.
+      </p>
+      <ul className="divide-y rounded-lg border">
+        {calls.map((c, i) => (
+          <li
+            key={`${c.url ?? c.title}-${i}`}
+            className="space-y-1 p-3 text-sm"
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-medium">{String(c.title)}</span>
+              {c.host ? (
+                <span className="text-xs text-muted-foreground">
+                  hosted by {String(c.host)}
+                </span>
+              ) : null}
+              <span className="ml-auto text-xs text-muted-foreground">
+                {when(String(c.at ?? ""))}
+              </span>
+              {c.url ? (
+                <a
+                  href={String(c.url)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs text-primary underline"
+                >
+                  Open recording
+                </a>
+              ) : null}
+            </div>
+            {c.summary ? (
+              <>
+                <p className="whitespace-pre-line text-sm text-muted-foreground">
+                  {openUrl === (c.url ?? c.title)
+                    ? String(c.summary)
+                    : `${String(c.summary).slice(0, 280)}${String(c.summary).length > 280 ? "…" : ""}`}
+                </p>
+                {String(c.summary).length > 280 ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setOpenUrl(v =>
+                        v === (c.url ?? c.title) ? null : (c.url ?? c.title),
+                      )
+                    }
+                    className="text-sm text-primary underline"
+                  >
+                    {openUrl === (c.url ?? c.title)
+                      ? "Show less"
+                      : "Read the summary"}
+                  </button>
+                ) : null}
+              </>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function LostLeads({ lost }: { lost: Any }) {
   const [open, setOpen] = useState(false);
   const reasons = (lost?.reasons ?? []) as Any[];
@@ -1138,6 +1218,7 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
       )}
 
       {p.lost ? <LostLeads lost={p.lost as Any} /> : null}
+      {p.calls ? <RecentCalls calls={p.calls as Any[]} /> : null}
 
       <section className="space-y-2">
         <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">

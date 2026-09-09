@@ -99,6 +99,8 @@ const schema = defineSchema({
     lost: v.optional(v.any()),
     // This week's report reminder waiting on the CSM's approval in #csm-general.
     reportNudge: v.optional(v.any()),
+    /** Recent recorded calls with this client (Fathom), newest first. */
+    calls: v.optional(v.any()),
     syncedAt: v.number(),
     /**
      * Which sync wrote this row. A push happens in batches, so the old set is only deleted

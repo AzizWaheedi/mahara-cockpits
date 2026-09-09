@@ -239,6 +239,8 @@ export const storeProfiles = internalMutation({
         ads: p.ads ?? [],
         live: p.live ?? undefined,
         lost: p.lost ?? undefined,
+        adsAccess: p.adsAccess ?? undefined,
+        calls: p.calls ?? undefined,
         reportNudge: p.reportNudge ?? undefined,
         syncedAt: Date.now(),
         syncId: args.syncId ?? undefined,

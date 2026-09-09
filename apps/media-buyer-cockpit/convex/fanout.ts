@@ -815,11 +815,22 @@ export const feedCsm = internalAction({
       errors.push(`client feed: ${String(e).slice(0, 200)}`);
       console.error(`csm feed: ${String(e).slice(0, 300)}`);
     }
+    // The client cards: sheet numbers, lost leads, ads, calls. Its own action so a
+    // slow sheet never delays the roster above.
+    let profiles = 0;
+    try {
+      const out: Any = await ctx.runAction(internal.csmProfiles.push, {});
+      profiles = out.profiles;
+      errors.push(...(out.errors ?? []));
+    } catch (e) {
+      errors.push(`client profiles: ${String(e).slice(0, 200)}`);
+      console.error(`csm profiles: ${String(e).slice(0, 300)}`);
+    }
     try {
       await bridge("csm", "recordHealth", {
         ok: errors.length === 0,
         clients,
-        profiles: 0,
+        profiles,
         errors,
       });
     } catch (e) {
