@@ -15,7 +15,12 @@ import type { ActionCtx } from "./_generated/server";
  * grants sync rights only: write what the bridge just read, or hand back the queued
  * actions the CSM already took in the app.
  */
-export const BRIDGE_TOKEN = "mahara-csm-bridge-8f4c1d92a7be4c05b1e6";
+declare const process: { env: Record<string, string | undefined> };
+
+// Set BRIDGE_TOKEN on the deployment. The exported value was in the Viktor
+// handoff zip, so it is no longer a secret; a deployment without its own token
+// refuses every bridge call rather than accepting the old one.
+export const BRIDGE_TOKEN = process.env.BRIDGE_TOKEN ?? "";
 
 // biome-ignore lint/suspicious/noExplicitAny: payloads are validated by the mutations
 type Args = Record<string, any>;

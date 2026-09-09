@@ -21,7 +21,10 @@ http.route({
   path: "/bridge",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
-    if (request.headers.get("authorization") !== `Bearer ${BRIDGE_TOKEN}`) {
+    if (
+      !BRIDGE_TOKEN ||
+      request.headers.get("authorization") !== `Bearer ${BRIDGE_TOKEN}`
+    ) {
       return new Response("no", { status: 401 });
     }
     const { fn, args } = (await request.json()) as {

@@ -105,10 +105,16 @@ const VARIANT_SCHEMA = {
 };
 
 /** Ad copy grounded in what has actually won for this kind of client. */
+/** Set by run() so the copy step can queue a job for the outside worker. */
+let enqueueAi: (refId: string, prompt: string) => Promise<unknown> =
+  async () => {
+    throw new Error("Ask AI queue not wired");
+  };
+
 async function writeCopy(
   req: Req,
   ctx: Ctx,
-): Promise<{ variants: Variant[]; note: string }> {
+): Promise<{ variants: Variant[]; note: string; pending?: boolean }> {
   const c = ctx.campaign ?? {};
   const client = req.client || ctx.client || c.clientName || "";
   const language =
@@ -148,6 +154,17 @@ ${HOUSE_RULES}
 Give 5 distinct angles, not 5 rewrites of one sentence: outcome, objection,
 proof, question, direct offer. Write in ${language}. Name the angle in English.
 `;
+  if (!process.env.ANTHROPIC_API_KEY) {
+    // No model on this deployment: hand the question to the outside worker.
+    // The request row is patched with the copy when the answer lands.
+    if (!req.id) throw new Error("no request id to hand to Ask AI");
+    await enqueueAi(String(req.id), prompt);
+    return {
+      variants: [],
+      note: "Ask AI is writing the copy — this row fills in on its own, usually within a few minutes.",
+      pending: true,
+    };
+  }
   const out = unwrap(
     await callTool("ai_structured_output", {
       prompt,
@@ -375,6 +392,7 @@ async function setUpLaunch(
   note: string;
   variants?: Variant[];
   media?: Media[];
+  pending?: boolean;
 }> {
   const watch = ctx.launchWatch ?? {};
   const onb = ctx.onboarding ?? {};
@@ -409,10 +427,14 @@ async function setUpLaunch(
     step("Creatives", "waiting", "Paste the Drive links and I will load them.");
   }
 
-  let copy: { variants: Variant[]; note: string } | undefined;
+  let copy:
+    | { variants: Variant[]; note: string; pending?: boolean }
+    | undefined;
   try {
     copy = await writeCopy(req, ctx);
-    step("Ad copy written", "done", `${copy.variants.length} options below.`);
+    if (copy.pending) step("Ad copy", "waiting", copy.note);
+    else
+      step("Ad copy written", "done", `${copy.variants.length} options below.`);
   } catch (e) {
     step(
       "Ad copy",
@@ -445,7 +467,13 @@ async function setUpLaunch(
           .map(s => s.label)
           .join("; ")}.`) +
     " Nothing was created live — the build is still your click.";
-  return { steps, note, variants: copy?.variants, media: creative?.media };
+  return {
+    steps,
+    note,
+    variants: copy?.variants,
+    media: creative?.media,
+    pending: copy?.pending,
+  };
 }
 
 /** Drain the queue: claim, do, write back. Woken on enqueue and every 10 min. */
@@ -455,6 +483,12 @@ export const run = internalAction({
   handler: async ctx => {
     // biome-ignore lint/suspicious/noExplicitAny: queue rows
     const pending: any[] = await ctx.runQuery(internal.assist.pending, {});
+    enqueueAi = (refId, prompt) =>
+      ctx.runMutation(internal.askAi.enqueue, {
+        kind: "assist_copy",
+        refId,
+        prompt,
+      });
     let done = 0;
     let failed = 0;
     for (const req of pending) {
@@ -474,12 +508,21 @@ export const run = internalAction({
                 : (() => {
                     throw new Error(`unknown request kind ${req.kind}`);
                   })();
+        // biome-ignore lint/suspicious/noExplicitAny: handler output
+        const o: any = out;
+        // An empty variants list while Ask AI is still writing must not be
+        // stored as "no copy": leave the field alone until the answer lands.
+        const pendingCopy = o.pending === true;
         await ctx.runMutation(internal.assist.fulfill, {
           id: req.id,
           status: "ready",
           ...Object.fromEntries(
-            Object.entries(out).filter(
-              ([, val]) => val !== undefined && val !== null,
+            Object.entries(o).filter(
+              ([k, val]) =>
+                val !== undefined &&
+                val !== null &&
+                k !== "pending" &&
+                !(k === "variants" && pendingCopy),
             ),
           ),
         });

@@ -1,4 +1,7 @@
 import { v } from "convex/values";
+
+declare const process: { env: Record<string, string | undefined> };
+
 import { internal } from "./_generated/api";
 import {
   internalAction,
@@ -158,10 +161,22 @@ export const buildDraft = internalAction({
       // with the settings copied and she writes the copy herself.
       let variants: Awaited<ReturnType<typeof writeCopy>> = [];
       let copyNote: string | undefined;
-      try {
-        variants = await writeCopy(draft, winner);
-      } catch (e) {
-        copyNote = `Copy could not be written (${String(e).slice(0, 120)}). Add your own below.`;
+      if (!process.env.ANTHROPIC_API_KEY) {
+        // No model here: the outside Ask AI worker writes it and the draft
+        // fills in on its own. See askAi.ts.
+        await ctx.runMutation(internal.askAi.enqueue, {
+          kind: "draft_copy",
+          refId: id,
+          prompt: copyPrompt(draft, winner),
+        });
+        copyNote =
+          "Ask AI is writing the copy — it appears here on its own, usually within a few minutes.";
+      } else {
+        try {
+          variants = await writeCopy(draft, winner);
+        } catch (e) {
+          copyNote = `Copy could not be written (${String(e).slice(0, 120)}). Add your own below.`;
+        }
       }
 
       await ctx.runMutation(internal.builder.patchDraft, {
@@ -192,16 +207,14 @@ export const buildDraft = internalAction({
  * Ad copy in the client's language. Aziz's rules are not optional here: never
  * "contractors", money in USD only, and it has to read like a person wrote it.
  */
-async function writeCopy(
+function copyPrompt(
   // biome-ignore lint/suspicious/noExplicitAny: draft row
   draft: any,
   // biome-ignore lint/suspicious/noExplicitAny: campaign row
   winner: any,
-): Promise<
-  Array<{ headline: string; primaryText: string; description?: string }>
-> {
+): string {
   const arabic = (draft.language ?? "").toLowerCase().startsWith("ar");
-  const prompt = [
+  return [
     `Write Meta lead-generation ad copy for ${draft.clientName}, a construction and design business in the Gulf.`,
     `Language: ${arabic ? "Arabic (Gulf, natural spoken register — not formal MSA, not translated-sounding)" : "English"}.`,
     `What the media buyer asked for: ${draft.brief || "a new lead generation campaign"}.`,
@@ -226,7 +239,17 @@ async function writeCopy(
   ]
     .filter(Boolean)
     .join("\n");
+}
 
+async function writeCopy(
+  // biome-ignore lint/suspicious/noExplicitAny: draft row
+  draft: any,
+  // biome-ignore lint/suspicious/noExplicitAny: campaign row
+  winner: any,
+): Promise<
+  Array<{ headline: string; primaryText: string; description?: string }>
+> {
+  const prompt = copyPrompt(draft, winner);
   const raw = await callTool("ai_structured_output", {
     prompt,
     intelligence_level: "smart",

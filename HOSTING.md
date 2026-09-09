@@ -124,10 +124,15 @@ bun run dev            # http://localhost:5173
 
 ## Still pending
 
-0. **A model for the copywriting.** Build-panel copy, Edit-panel variants, the assist
-   queue's copy step and the CSM assistant all call `ai_structured_output`, which needs
-   `ANTHROPIC_API_KEY` on the deployment. Without it those steps report "blocked" and
-   everything else still works.
+0. **Ask AI.** No model runs on the deployments. Copy for builds and for the launch
+   assistant is queued in `aiJobs` and served through `GET /askai/pending` /
+   `POST /askai/result` on the media buyer's `.convex.site` URL (bearer `ASKAI_TOKEN`).
+   Client success questions come through its `/bridge` door (`pendingAsks` /
+   `answerAsk`, bearer `BRIDGE_TOKEN`, now an env var). Aziz's Hermes agent polls both
+   every 5 minutes; its skill and cron are in `hermes/cockpit-ask-ai/`. Setting
+   `ANTHROPIC_API_KEY` on the media buyer deployment switches those steps back to
+   in-app, instant answers. The Edit panel's "write variants" button still needs the
+   key; it is the one synchronous call left.
 1. **Bridge scripts.** `viktor-side-scripts/` fed the client-success app (`POST /bridge`) and
    the creative app (Convex HTTP API with the deploy key), and drained the media buyer's
    `outbox`. They import the Viktor SDK and cannot run here. Until they are ported (a Convex

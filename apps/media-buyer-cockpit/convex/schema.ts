@@ -771,6 +771,28 @@ const schema = defineSchema({
   // Raw HTTP bodies fetched by Viktor's bridge and pushed in, so the CSM snapshot can be
   // built without calling the Space tool gateway (which returns HTTP 500 platform-side).
   // Chunked because Convex args come through argv, which caps at ~128KB per string.
+  /**
+   * Work that needs a model, handed to the outside "Ask AI" worker (Hermes)
+   * through the /askai HTTP door. One row per question; the answer is applied
+   * to the row it belongs to (assist request, campaign draft) on completion.
+   */
+  aiJobs: defineTable({
+    /** assist_copy | draft_copy */
+    kind: v.string(),
+    /** The row the answer belongs to. */
+    refId: v.string(),
+    prompt: v.string(),
+    /** JSON schema the answer must match. */
+    schema: v.any(),
+    /** queued -> done | failed */
+    status: v.string(),
+    result: v.optional(v.any()),
+    error: v.optional(v.string()),
+    tries: v.number(),
+    createdAt: v.number(),
+    claimedAt: v.optional(v.number()),
+    doneAt: v.optional(v.number()),
+  }).index("by_status", ["status"]),
   rawFetch: defineTable({
     url: v.string(),
     part: v.number(),
