@@ -2,6 +2,7 @@ import { useAuthActions } from "@convex-dev/auth/react";
 import { useQuery } from "convex/react";
 import {
   BarChart3,
+  CalendarDays,
   DollarSign,
   Flame,
   Link2,
