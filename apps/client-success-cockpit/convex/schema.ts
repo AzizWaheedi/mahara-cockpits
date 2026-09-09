@@ -405,6 +405,36 @@ const schema = defineSchema({
   })
     .index("by_at", ["at"])
     .index("by_kind_at", ["kind", "at"]),
+  /** Calendar events for this role, a week back and three weeks ahead. */
+  calendarEvents: defineTable({
+    eventId: v.string(),
+    calendarId: v.string(),
+    title: v.string(),
+    start: v.string(),
+    end: v.string(),
+    allDay: v.boolean(),
+    location: v.optional(v.string()),
+    meetLink: v.optional(v.string()),
+    attendees: v.array(v.string()),
+    description: v.optional(v.string()),
+    htmlLink: v.optional(v.string()),
+    clientName: v.optional(v.string()),
+    syncedAt: v.number(),
+  }).index("by_start", ["start"]),
+  /** WhatsApp threads on this role's business number: groups and private chats. */
+  waThreads: defineTable({
+    chatId: v.string(),
+    name: v.string(),
+    isGroup: v.boolean(),
+    clientName: v.optional(v.string()),
+    lastAt: v.optional(v.number()),
+    lastFromUs: v.optional(v.boolean()),
+    waitingSince: v.optional(v.number()),
+    silentDays: v.optional(v.number()),
+    recent: v.array(v.any()),
+    error: v.optional(v.string()),
+    syncedAt: v.number(),
+  }).index("by_lastAt", ["lastAt"]),
 });
 
 export default schema;

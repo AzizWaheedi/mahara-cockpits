@@ -110,6 +110,14 @@ export async function runBridge(
       });
     case "lastSync":
       return await ctx.runQuery(internal.outbox.lastSync, {});
+    case "storeCalendar":
+      return await ctx.runMutation(internal.comms.storeCalendar, {
+        rows: args.rows ?? [],
+      });
+    case "storeWhatsapp":
+      return await ctx.runMutation(internal.comms.storeWhatsapp, {
+        threads: args.threads ?? [],
+      });
     default:
       throw new Error(`unknown bridge function: ${fn}`);
   }

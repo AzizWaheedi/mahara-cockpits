@@ -50,6 +50,11 @@ const navGroups = [
     items: [
       { href: "/dashboard", label: "Start of day", icon: Sunrise },
       { href: "/tasks", label: "Task list", icon: ListChecks },
+      {
+        href: "/meetings",
+        label: "Meetings & messages",
+        icon: CalendarDays,
+      },
       { href: "/eod", label: "End of day", icon: MoonStar },
     ],
   },

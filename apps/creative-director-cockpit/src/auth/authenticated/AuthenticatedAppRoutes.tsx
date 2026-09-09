@@ -18,6 +18,7 @@ import {
   KeyLinksPage,
   LandingPage,
   LoginPage,
+  MeetingsPage,
   PlaybookPage,
   ScriptDatabasePage,
   SettingsPage,
@@ -59,6 +60,7 @@ export function AuthenticatedRoutes() {
           <Route path="/scripting" element={<ScriptDatabasePage />} />
           <Route path="/profiles" element={<ClientsPage />} />
           <Route path="/eod" element={<CreativeEodPage />} />
+          <Route path="/meetings" element={<MeetingsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Route>
       </Route>

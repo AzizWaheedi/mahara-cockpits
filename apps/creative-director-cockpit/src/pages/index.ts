@@ -12,6 +12,7 @@ export { FunnelRow, FunnelsPage } from "./FunnelsPage";
 export { KeyLinksPage } from "./KeyLinksPage";
 export { LandingPage } from "./LandingPage";
 export { LoginPage } from "./LoginPage";
+export { MeetingsPage } from "./MeetingsPage";
 export { PlaybookPage } from "./PlaybookPage";
 export { SettingsPage } from "./SettingsPage";
 export { SignupPage } from "./SignupPage";

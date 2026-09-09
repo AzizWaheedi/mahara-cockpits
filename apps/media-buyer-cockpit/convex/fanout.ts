@@ -933,7 +933,13 @@ export const runFanout = internalAction({
       withStats,
     });
     const csm = await ctx.runAction(internal.fanout.feedCsm, {});
-    return { drains, creative, csm };
+    let comms: unknown;
+    try {
+      comms = await ctx.runAction(internal.comms.feedComms, {});
+    } catch (e) {
+      comms = `FAILED ${String(e).slice(0, 200)}`;
+    }
+    return { drains, creative, csm, comms };
   },
 });
 

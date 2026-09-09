@@ -49,6 +49,11 @@ const navItems = [
   { href: "/what-works", label: "What works", icon: Trophy },
   { href: "/funnels", label: "Funnels and forms", icon: Filter },
   { href: "/links", label: "Key links", icon: Link2 },
+  {
+    href: "/meetings",
+    label: "Meetings & messages",
+    icon: CalendarDays,
+  },
   { href: "/eod", label: "End of day", icon: MoonStar },
 ];
 

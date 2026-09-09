@@ -87,6 +87,15 @@ Integrations (the app boots without them; the sync and writes fail until they ar
 | `META_SYSTEM_TOKEN` | Meta Marketing API, same token as before |
 | `RESEND_API_KEY`, `AUTH_EMAIL_FROM` | sign-up verification and password reset. Optional |
 
+Meetings and messages (both other cockpits, fed by the media buyer backend every 15 min):
+
+| Variable | Used by |
+|---|---|
+| `CSM_CALENDAR_IDS`, `CREATIVE_CALENDAR_IDS` | Google Calendar ids (usually the person's email), comma-separated. Each calendar must be shared with the service account, "See all event details" |
+| `CSM_WHAPI_TOKEN`, `CREATIVE_WHAPI_TOKEN` | WHAPI channel token for that role's WhatsApp business number (one channel per number, QR-scanned in WHAPI) |
+| `WHAPI_BASE_URL` | optional, default `https://gate.whapi.cloud` |
+| `FATHOM_API_KEY` | recorded calls on the client cards |
+
 Only the media buyer cockpit talks to integrations today. The other two receive data through
 the bridge (below) and only need the boot variables.
 

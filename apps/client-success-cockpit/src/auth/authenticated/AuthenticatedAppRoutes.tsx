@@ -17,6 +17,7 @@ import {
   KeyLinksPage,
   LandingPage,
   LoginPage,
+  MeetingsPage,
   MyMoneyPage,
   SettingsPage,
   SignupPage,
@@ -53,6 +54,7 @@ export function AuthenticatedRoutes() {
             <Route path="/eod" element={<EndOfDayPage />} />
           </Route>
           <Route path="/template" element={<DashboardPage />} />
+          <Route path="/meetings" element={<MeetingsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Route>
       </Route>

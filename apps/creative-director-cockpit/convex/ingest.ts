@@ -73,6 +73,14 @@ export async function runBridge(
         ok: args.ok,
         result: args.result,
       });
+    case "storeCalendar":
+      return await ctx.runMutation(internal.comms.storeCalendar, {
+        rows: args.rows ?? [],
+      });
+    case "storeWhatsapp":
+      return await ctx.runMutation(internal.comms.storeWhatsapp, {
+        threads: args.threads ?? [],
+      });
     default:
       throw new Error(`unknown bridge function: ${fn}`);
   }
