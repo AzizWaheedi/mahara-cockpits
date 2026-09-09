@@ -238,6 +238,8 @@ const schema = defineSchema({
     detail: v.optional(v.string()),
     /** "sod" = clear the decks first thing, "mid" = the account work itself. */
     phase: v.optional(v.string()),
+    /** CSM day blocks: sprint_am | work_am | sprint_midday | work_pm | sprint_pm. */
+    block: v.optional(v.string()),
     order: v.optional(v.number()),
     href: v.optional(v.string()),
     done: v.boolean(),
