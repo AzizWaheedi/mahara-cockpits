@@ -15,8 +15,8 @@ import {
   Sunrise,
 } from "lucide-react";
 import { Link, useLocation } from "react-router";
+import { Wordmark } from "@/components/Wordmark";
 import { useTheme } from "@/contexts/ThemeContext";
-import { APP_NAME } from "@/lib/constants";
 import { api } from "../../convex/_generated/api";
 import { Avatar, AvatarFallback } from "./ui/avatar";
 import {
@@ -198,12 +198,9 @@ function SidebarHeaderContent() {
       <Link
         to="/"
         onClick={() => setOpenMobile(false)}
-        className="flex items-center gap-2.5 px-2 py-1 font-semibold text-lg"
+        className="flex items-center px-2 py-2"
       >
-        <div className="size-8 rounded-lg bg-primary flex items-center justify-center">
-          <span className="text-primary-foreground font-bold text-sm">M</span>
-        </div>
-        <span>{APP_NAME}</span>
+        <Wordmark size="sm" />
       </Link>
     </SidebarHeader>
   );

@@ -45,10 +45,7 @@ export function AuthenticatedRoutes() {
           <Route element={<RoleRoute role="csm" />}>
             <Route path="/dashboard" element={<StartOfDayPage />} />
             <Route path="/clients" element={<ClientsPage />} />
-            <Route
-              path="/performance"
-              element={<ClientPerformancePage />}
-            />
+            <Route path="/performance" element={<ClientPerformancePage />} />
             <Route path="/tasks" element={<TaskListPage />} />
             <Route path="/hotlist" element={<HotListPage />} />
             <Route path="/links" element={<KeyLinksPage />} />

@@ -1,6 +1,7 @@
 import { useConvexAuth } from "convex/react";
 import { ArrowRight } from "lucide-react";
 import { Link, useLocation } from "react-router";
+import { Wordmark } from "@/components/Wordmark";
 import { APP_NAME } from "@/lib/constants";
 import { Button } from "./ui/button";
 
@@ -28,12 +29,10 @@ function HeaderView({
             to="/"
             className="flex items-center gap-2.5 font-semibold text-lg hover:opacity-80 transition-opacity"
           >
-            <div className="size-8 rounded-lg bg-primary flex items-center justify-center">
-              <span className="text-primary-foreground font-bold text-sm">
-                M
-              </span>
-            </div>
-            <span className="hidden sm:inline">{APP_NAME}</span>
+            <Wordmark size="sm" />
+            <span className="hidden sm:inline text-sm text-muted-foreground">
+              {APP_NAME}
+            </span>
           </Link>
 
           <nav className="flex items-center gap-2">

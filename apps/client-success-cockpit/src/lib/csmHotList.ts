@@ -13,7 +13,7 @@
  * commercial terms are his: referral pays $1,000 per closed construction or design firm.
  */
 
-import { type Client, type Lang, LINKS, humaniseDeep } from "./csmTemplates";
+import { type Client, humaniseDeep, type Lang, LINKS } from "./csmTemplates";
 
 export type Opportunity = {
   /** Stable per client + kind, so her edits and follow-up dates stick. */

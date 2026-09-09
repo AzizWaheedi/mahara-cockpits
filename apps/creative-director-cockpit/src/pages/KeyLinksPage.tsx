@@ -14,7 +14,7 @@ export function KeyLinksPage() {
     <div className="mx-auto max-w-4xl space-y-4 p-4 pb-16">
       <header>
         <h1 className="text-[19px] font-bold tracking-tight">Key links</h1>
-        <p className="text-[12.5px] text-muted-foreground">
+        <p className="text-[13px] text-muted-foreground">
           Everything you open in a day. Pulled from the Brand Blueprint
           framework, the Client Communication SOP and ClickUp itself. If one is
           missing or wrong, tell Viktor and it gets fixed here, not in a
@@ -25,8 +25,8 @@ export function KeyLinksPage() {
       {LINK_GROUPS.map(g => (
         <section key={g.title} className="rounded-lg border">
           <div className="border-b px-3.5 py-2">
-            <div className="text-[13px] font-semibold">{g.title}</div>
-            <div className="text-[11.5px] text-muted-foreground">{g.blurb}</div>
+            <div className="text-[14px] font-semibold">{g.title}</div>
+            <div className="text-[12px] text-muted-foreground">{g.blurb}</div>
           </div>
           <div className="divide-y">
             {g.rows.map(r => (
@@ -39,13 +39,13 @@ export function KeyLinksPage() {
                     href={r.url}
                     target="_blank"
                     rel="noreferrer"
-                    className="inline-flex items-center gap-1.5 text-[12.5px] font-medium underline underline-offset-2"
+                    className="inline-flex items-center gap-1.5 text-[13px] font-medium underline underline-offset-2"
                   >
                     {r.label}
                     <ExternalLink className="h-3 w-3 text-muted-foreground" />
                   </a>
                   {r.note && (
-                    <div className="text-[11.5px] text-muted-foreground">
+                    <div className="text-[12px] text-muted-foreground">
                       {r.note}
                     </div>
                   )}

@@ -119,7 +119,8 @@ export function recommendAdSets(budget: number, line: ServiceLine) {
   const broad = {
     name: "Broad",
     what: "No targeting — let Meta find them.",
-    detail: "Advantage+ Audience on. Usually the strongest single ad set in the GCC.",
+    detail:
+      "Advantage+ Audience on. Usually the strongest single ad set in the GCC.",
   };
   const lal = {
     name: "Lookalike",

@@ -315,18 +315,20 @@ const TEMPLATES: Template[] = [
  * through, so a new template cannot smuggle one back in.
  */
 export function humanise(text: string): string {
-  return text
-    // Arabic has no capital letters, so only a following capital in Latin script means a
-    // new sentence started; in Arabic a dash is always a comma's job.
-    .replace(/\s*[\u2014\u2013]\s*(?=[A-Z])/g, ". ")
-    // Arabic sentences take the Arabic comma, not the Latin one.
-    .replace(/([\u0600-\u06FF])\s*[\u2014\u2013]\s*/g, "$1، ")
-    .replace(/\s*[\u2014\u2013]\s*/g, ", ")
-    .replace(/\.\s*\./g, ".")
-    .replace(/,\s*,/g, ",")
-    .replace(/،\s*،/g, "،")
-    .replace(/\s+([,.،])/g, "$1")
-    .replace(/[ \t]{2,}/g, " ");
+  return (
+    text
+      // Arabic has no capital letters, so only a following capital in Latin script means a
+      // new sentence started; in Arabic a dash is always a comma's job.
+      .replace(/\s*[\u2014\u2013]\s*(?=[A-Z])/g, ". ")
+      // Arabic sentences take the Arabic comma, not the Latin one.
+      .replace(/([\u0600-\u06FF])\s*[\u2014\u2013]\s*/g, "$1، ")
+      .replace(/\s*[\u2014\u2013]\s*/g, ", ")
+      .replace(/\.\s*\./g, ".")
+      .replace(/,\s*,/g, ",")
+      .replace(/،\s*،/g, "،")
+      .replace(/\s+([,.،])/g, "$1")
+      .replace(/[ \t]{2,}/g, " ")
+  );
 }
 
 /**
@@ -396,9 +398,7 @@ export function draftsFor(
   // Past day 14 but still not launched: the spine has run out and speed to launch is the
   // real problem, so say that instead of offering a day 15 message that does not exist.
   const stalled =
-    c.bucket === "onboarding" &&
-    (c.signupDays ?? 0) > 14 &&
-    !spine.length
+    c.bucket === "onboarding" && (c.signupDays ?? 0) > 14 && !spine.length
       ? [
           {
             id: "spine_overrun",
@@ -536,7 +536,8 @@ export function nextPocState(
   // A real booking in the client calendar beats the ClickUp field. If the call is on the
   // calendar, the touchpoint is booked, whatever the board says.
   const bookedAt = (c as { nextCallAt?: string }).nextCallAt ?? null;
-  const booked = bookedAt && bookedAt.slice(0, 10) >= today ? bookedAt.slice(0, 10) : null;
+  const booked =
+    bookedAt && bookedAt.slice(0, 10) >= today ? bookedAt.slice(0, 10) : null;
   const date = booked ?? (c.nextPoc as string | undefined) ?? null;
   const past = !!date && date < today;
   const missing = !date;
@@ -556,13 +557,12 @@ export function nextPocState(
     label: booked
       ? `next call ${booked}, booked in the calendar`
       : missing
-      ? "no next call booked"
-      : past
-        ? `next call ${date} has passed, rebook it`
-        : `next call ${date}`,
+        ? "no next call booked"
+        : past
+          ? `next call ${date} has passed, rebook it`
+          : `next call ${date}`,
   };
 }
-
 
 /**
  * Done with you or done for you, straight off ClickUp's Service field.

@@ -59,7 +59,8 @@ export function useAssist(kind: AssistKind) {
     [enqueue, kind],
   );
 
-  const waiting = !!id && (!row || row.status === "queued" || row.status === "working");
+  const waiting =
+    !!id && (!row || row.status === "queued" || row.status === "working");
 
   return { ask, row, waiting, reset: () => setId(null) };
 }
@@ -67,7 +68,8 @@ export function useAssist(kind: AssistKind) {
 /** What to show her while she waits — plain words, never a spinner alone. */
 export function assistLabel(row: AssistRow, waiting: boolean): string | null {
   if (!waiting && !row) return null;
-  if (!row || row.status === "queued") return "Queued — Viktor picks this up within a few minutes.";
+  if (!row || row.status === "queued")
+    return "Queued — Viktor picks this up within a few minutes.";
   if (row.status === "working") return "Viktor is on it now.";
   if (row.status === "failed") return row.error ?? "That one failed.";
   return null;

@@ -11,19 +11,19 @@ import {
   CalendarPage,
   ClientDatabasePage,
   ClientPage,
-  KeyLinksPage,
-  PlaybookPage,
   ClientsPage,
   CreativeEodPage,
   DashboardPage,
+  FunnelsPage,
+  KeyLinksPage,
   LandingPage,
   LoginPage,
-  SettingsPage,
+  PlaybookPage,
   ScriptDatabasePage,
+  SettingsPage,
   SignupPage,
   TouchpointsPage,
   WorkPage,
-  FunnelsPage,
 } from "@/pages";
 import { ViktorOAuthCallbackPage } from "@/pages/ViktorOAuthCallbackPage";
 

@@ -56,7 +56,7 @@ export function StatusToggle({
         }
       }}
       title={`${on ? "Turn off" : "Turn on"} this ${level}`}
-      className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 font-semibold disabled:opacity-50 ${compact ? "text-[10.5px]" : "text-[11px]"} ${on ? "tone-good" : "tone-neutral"}`}
+      className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 font-semibold disabled:opacity-50 ${compact ? "text-[11px]" : "text-[12px]"} ${on ? "tone-good" : "tone-neutral"}`}
     >
       <span
         className={`inline-block h-2 w-2 rounded-full ${on ? "bg-emerald-500" : "bg-muted-foreground/50"}`}

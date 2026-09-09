@@ -1,8 +1,8 @@
 import { useQuery } from "convex/react";
 import { useState } from "react";
-import { api } from "../../convex/_generated/api";
 import { Button } from "@/components/ui/button";
 import { assistLabel, useAssist } from "@/components/useAssist";
+import { api } from "../../convex/_generated/api";
 
 /**
  * New client launches, as one job instead of a ClickUp scavenger hunt.
@@ -11,7 +11,11 @@ import { assistLabel, useAssist } from "@/components/useAssist";
  * marks the steps that are ad-account work Viktor can execute — everything to
  * do with access, billing or a judgement call stays hers.
  */
-export function Onboardings({ onBuild }: { onBuild?: (client: string) => void }) {
+export function Onboardings({
+  onBuild,
+}: {
+  onBuild?: (client: string) => void;
+}) {
   const rows = useQuery(api.cockpit.onboardings, {});
   // biome-ignore lint/suspicious/noExplicitAny: watch rows
   const watch = useQuery(api.cockpit.launchWatch, {}) as any[] | undefined;
@@ -32,10 +36,10 @@ export function Onboardings({ onBuild }: { onBuild?: (client: string) => void })
 
   return (
     <section className="mb-4 rounded-xl border bg-card p-4 shadow-sm">
-      <h2 className="mb-1 text-[11px] font-bold uppercase tracking-widest text-teal-600">
+      <h2 className="mb-1 text-[12px] font-bold uppercase tracking-widest text-teal-600">
         New client launches
       </h2>
-      <p className="mb-3 text-[12px] text-muted-foreground">
+      <p className="mb-3 text-[13px] text-muted-foreground">
         {(rows ?? []).length} waiting to go live. I can do the ad-account build;
         the access and billing steps are yours. Re-checked against the sheet,
         ClickUp and Meta on every sync.
@@ -43,12 +47,12 @@ export function Onboardings({ onBuild }: { onBuild?: (client: string) => void })
 
       {problems.length > 0 && (
         <div className="callout-warn mb-3 rounded-lg border p-2.5">
-          <div className="text-[11px] font-bold uppercase tracking-wide">
+          <div className="text-[12px] font-bold uppercase tracking-wide">
             Launches that are stuck on something
           </div>
           <div className="mt-1.5 space-y-1.5">
             {problems.map(w => (
-              <div key={w.client} className="text-[12px]">
+              <div key={w.client} className="text-[13px]">
                 <span className="font-semibold">{w.client}</span>
                 <span className="text-muted-foreground">
                   {" "}
@@ -62,7 +66,7 @@ export function Onboardings({ onBuild }: { onBuild?: (client: string) => void })
                 </ul>
                 {w.taskUrl && (
                   <a
-                    className="text-[11px] underline"
+                    className="text-[12px] underline"
                     href={w.taskUrl}
                     target="_blank"
                     rel="noreferrer"
@@ -77,13 +81,13 @@ export function Onboardings({ onBuild }: { onBuild?: (client: string) => void })
       )}
 
       {stale.length > 0 && (
-        <details className="mb-3 rounded-lg border px-2.5 py-1.5 text-[12px]">
+        <details className="mb-3 rounded-lg border px-2.5 py-1.5 text-[13px]">
           <summary className="cursor-pointer text-muted-foreground">
             {stale.length} clients in Client Data are still marked Launching
             with no launch task and no ad account — almost certainly statuses
             nobody closed off.
           </summary>
-          <div className="mt-1 text-[11.5px] text-muted-foreground">
+          <div className="mt-1 text-[12px] text-muted-foreground">
             {stale.map(w => w.client).join(" · ")}
           </div>
         </details>
@@ -99,8 +103,8 @@ export function Onboardings({ onBuild }: { onBuild?: (client: string) => void })
             <div key={r.taskId} className="rounded-lg border">
               <div className="flex flex-wrap items-center justify-between gap-2 p-2.5">
                 <div className="min-w-0">
-                  <div className="text-[13px] font-semibold">{r.client}</div>
-                  <div className="text-[11.5px] text-muted-foreground">
+                  <div className="text-[14px] font-semibold">{r.client}</div>
+                  <div className="text-[12px] text-muted-foreground">
                     {r.done} of {r.total} steps done
                     {mine > 0 && r.accountId && (
                       <span className="txt-good"> · {mine} I can do</span>
@@ -111,7 +115,7 @@ export function Onboardings({ onBuild }: { onBuild?: (client: string) => void })
                   {onBuild && r.accountId && (
                     <Button
                       size="sm"
-                      className="h-7 text-[11.5px]"
+                      className="h-7 text-[12px]"
                       onClick={() => onBuild(r.client)}
                     >
                       Build the campaign
@@ -120,7 +124,7 @@ export function Onboardings({ onBuild }: { onBuild?: (client: string) => void })
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-7 text-[11.5px]"
+                    className="h-7 text-[12px]"
                     onClick={() => setOpen(isOpen ? null : r.taskId)}
                   >
                     {isOpen ? "Hide" : "Checklist"}
@@ -128,8 +132,10 @@ export function Onboardings({ onBuild }: { onBuild?: (client: string) => void })
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-7 text-[11.5px]"
-                    onClick={() => setWith(withMe === r.client ? null : r.client)}
+                    className="h-7 text-[12px]"
+                    onClick={() =>
+                      setWith(withMe === r.client ? null : r.client)
+                    }
                   >
                     {withMe === r.client ? "Close" : "Do it with me"}
                   </Button>
@@ -137,7 +143,7 @@ export function Onboardings({ onBuild }: { onBuild?: (client: string) => void })
                     <Button
                       size="sm"
                       variant="ghost"
-                      className="h-7 text-[11.5px]"
+                      className="h-7 text-[12px]"
                       asChild
                     >
                       <a href={r.taskUrl} target="_blank" rel="noreferrer">
@@ -149,7 +155,7 @@ export function Onboardings({ onBuild }: { onBuild?: (client: string) => void })
               </div>
 
               {!r.accountId && (
-                <div className="callout-warn border-t px-2.5 py-2 text-[12px]">
+                <div className="callout-warn border-t px-2.5 py-2 text-[13px]">
                   <strong>Blocked before anything can be built.</strong>{" "}
                   {r.accountName
                     ? `Client Data names the ad account "${r.accountName}", but no Meta account of ours matches that name — either it is spelled differently in Meta or it has not been shared with us.`
@@ -157,7 +163,7 @@ export function Onboardings({ onBuild }: { onBuild?: (client: string) => void })
                 </div>
               )}
               {r.accountId && r.accountIdSource === "meta" && (
-                <div className="border-t px-2.5 py-1.5 text-[11px] text-muted-foreground">
+                <div className="border-t px-2.5 py-1.5 text-[12px] text-muted-foreground">
                   Ad account {r.accountId}, matched from the name in Client Data
                   on the last sync.
                 </div>
@@ -169,14 +175,14 @@ export function Onboardings({ onBuild }: { onBuild?: (client: string) => void })
                 <div className="border-t p-2.5 pt-2">
                   {r.groups.map(g => (
                     <div key={g.name} className="mb-2.5 last:mb-0">
-                      <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                      <div className="mb-1 text-[12px] font-bold uppercase tracking-wide text-muted-foreground">
                         {g.name}
                       </div>
                       <ul className="space-y-1">
                         {g.items.map(i => (
                           <li
                             key={i.name}
-                            className="flex items-start gap-1.5 text-[12px]"
+                            className="flex items-start gap-1.5 text-[13px]"
                           >
                             <span
                               className={
@@ -189,7 +195,7 @@ export function Onboardings({ onBuild }: { onBuild?: (client: string) => void })
                               {i.name}
                             </span>
                             {i.viktorCanDo && !i.done && (
-                              <span className="tone-good shrink-0 rounded px-1 text-[10px] font-semibold">
+                              <span className="tone-good shrink-0 rounded px-1 text-[11px] font-semibold">
                                 I can do this
                               </span>
                             )}
@@ -225,23 +231,23 @@ function LaunchWithMe({ client }: { client: string }) {
 
   return (
     <div className="border-t bg-muted/30 p-2.5">
-      <div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+      <div className="text-[12px] font-bold uppercase tracking-wide text-muted-foreground">
         Set this launch up with me
       </div>
-      <p className="mb-2 mt-0.5 text-[11.5px] text-muted-foreground">
+      <p className="mb-2 mt-0.5 text-[12px] text-muted-foreground">
         Tell me what they sell and who they want, drop the creative links, and
         I'll take it as far as I can: check what's missing, load the creatives
         into the ad account, and write the copy. You build it from there.
       </p>
       <textarea
-        className="w-full resize-y rounded border bg-background p-1.5 text-[12px]"
+        className="w-full resize-y rounded border bg-background p-1.5 text-[13px]"
         rows={3}
         placeholder="What do they sell, who is it for, which city, any offer we agreed? Anything you'd tell a new media buyer."
         value={brief}
         onChange={e => setBrief(e.target.value)}
       />
       <input
-        className="mt-1.5 w-full rounded border bg-background p-1.5 text-[12px]"
+        className="mt-1.5 w-full rounded border bg-background p-1.5 text-[13px]"
         placeholder="Drive links to the creatives, separated by spaces (optional)"
         value={links}
         onChange={e => setLinks(e.target.value)}
@@ -249,7 +255,7 @@ function LaunchWithMe({ client }: { client: string }) {
       <div className="mt-1.5 flex flex-wrap items-center gap-2">
         <Button
           size="sm"
-          className="h-7 text-[11.5px]"
+          className="h-7 text-[12px]"
           disabled={launch.waiting}
           onClick={() =>
             launch.ask({
@@ -265,19 +271,19 @@ function LaunchWithMe({ client }: { client: string }) {
           {launch.waiting ? "Viktor is on it…" : "Take it as far as you can"}
         </Button>
         {assistLabel(row, launch.waiting) && (
-          <span className="text-[11.5px] text-muted-foreground">
+          <span className="text-[12px] text-muted-foreground">
             {assistLabel(row, launch.waiting)}
           </span>
         )}
       </div>
 
       {row?.note && (
-        <p className="mt-2 rounded bg-background p-2 text-[12px]">{row.note}</p>
+        <p className="mt-2 rounded bg-background p-2 text-[13px]">{row.note}</p>
       )}
       {(row?.steps ?? []).length > 0 && (
         <ul className="mt-2 space-y-1">
           {row?.steps?.map(st => (
-            <li key={st.label} className="flex items-start gap-1.5 text-[12px]">
+            <li key={st.label} className="flex items-start gap-1.5 text-[13px]">
               <span
                 className={
                   st.state === "done"
@@ -301,13 +307,16 @@ function LaunchWithMe({ client }: { client: string }) {
       )}
       {(row?.variants ?? []).length > 0 && (
         <div className="mt-2 space-y-1.5">
-          <div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+          <div className="text-[12px] font-bold uppercase tracking-wide text-muted-foreground">
             Copy, ready for the builder
           </div>
           {row?.variants?.map(v => (
-            <div key={v.headline} className="rounded border bg-background p-2 text-[12px]">
+            <div
+              key={v.headline}
+              className="rounded border bg-background p-2 text-[13px]"
+            >
               {v.angle && (
-                <div className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                <div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
                   {v.angle}
                 </div>
               )}

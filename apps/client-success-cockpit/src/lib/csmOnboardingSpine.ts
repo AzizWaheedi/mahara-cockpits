@@ -210,20 +210,27 @@ export function spineFor(
       : c.liveDays != null
         ? c.liveDays + 7 // launch is day 8 of the spine, so signup was roughly a week before
         : null;
-  if (since == null || since > 14) return { day: null, dayIndex: null, missed: [] };
+  if (since == null || since > 14)
+    return { day: null, dayIndex: null, missed: [] };
   const dayIndex = Math.max(0, Math.min(14, Math.round(since)));
   const day = SPINE.find(s => s.day === dayIndex) ?? null;
   // Silence longer than a day means the daily spine broke; name the days that fell through.
   const silent = c.silentDays ?? 0;
   const missed =
     silent > 1
-      ? SPINE.filter(s => s.day < dayIndex && s.day >= dayIndex - Math.min(silent, 5))
+      ? SPINE.filter(
+          s => s.day < dayIndex && s.day >= dayIndex - Math.min(silent, 5),
+        )
       : [];
   return { day, dayIndex, missed };
 }
 
 /** Fill the client's first name into whichever language she picked. */
-export function spineMessage(entry: SpineDay, lang: "en" | "ar", name: string): string {
+export function spineMessage(
+  entry: SpineDay,
+  lang: "en" | "ar",
+  name: string,
+): string {
   const firstName = (name ?? "").split(/[\s-]/)[0] || name || "";
   return (lang === "ar" ? entry.ar : entry.en).replace(/NAME/g, firstName);
 }

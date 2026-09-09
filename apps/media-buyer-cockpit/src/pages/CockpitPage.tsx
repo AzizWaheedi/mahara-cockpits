@@ -1,30 +1,26 @@
 import { useAction, useMutation, useQuery } from "convex/react";
-import {
-  CPL_GATE,
-  CPB_GATE,
-  LEARNING_DAYS,
-} from "@/lib/kpi";
 import { useMemo, useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
-import { BuildPanel } from "@/components/BuildPanel";
-import { LostLeads } from "@/components/LostLeads";
-import { StatusToggle } from "@/components/StatusToggle";
 import { AccountView } from "@/components/AccountView";
-import { CreativePreview } from "@/components/CreativePreview";
-import { CampaignChat } from "../components/CampaignChat";
+import { BuildPanel } from "@/components/BuildPanel";
 import { CampaignRange } from "@/components/CampaignRange";
-import { ViktorStatus } from "@/components/ViktorStatus";
-import { RangePicker } from "@/components/RangePicker";
-import { type Range, defaultRange } from "@/lib/range";
+import { CreativePreview } from "@/components/CreativePreview";
 import { EditPanel } from "@/components/EditPanel";
+import { LostLeads } from "@/components/LostLeads";
 import { Onboardings } from "@/components/Onboardings";
+import { RangePicker } from "@/components/RangePicker";
+import { StatusToggle } from "@/components/StatusToggle";
 import { TrackingIssues } from "@/components/TrackingIssues";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { ViktorStatus } from "@/components/ViktorStatus";
+import { CPB_GATE, CPL_GATE, LEARNING_DAYS } from "@/lib/kpi";
+import { defaultRange, type Range } from "@/lib/range";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
+import { CampaignChat } from "../components/CampaignChat";
 
 /** What one role can actually ask another for. Picking the request picks the board. */
 const REQUESTS: { label: string; dept: string; deptLabel: string }[] = [
@@ -378,7 +374,11 @@ function Cockpit({ view }: { view: View }) {
       accounts: cs.length,
       overGate: over.length ? "Yes" : "No",
       overNames: over.map(c => c.clientName ?? c.campaignName),
-      through: cs.map(c => c.dataThrough).filter(Boolean).sort().pop(),
+      through: cs
+        .map(c => c.dataThrough)
+        .filter(Boolean)
+        .sort()
+        .pop(),
     };
   }, [snap]);
 
@@ -566,15 +566,22 @@ function Cockpit({ view }: { view: View }) {
           );
         continue;
       }
-      if (!decidedBySubject.get(c.campaignName) && f?.severity !== "optimization" && f)
+      if (
+        !decidedBySubject.get(c.campaignName) &&
+        f?.severity !== "optimization" &&
+        f
+      )
         lines.push(`${who} — ${f.constraint}: ${f.fixes[0]}`);
     }
     // biome-ignore lint/suspicious/noExplicitAny: inbox row
     for (const i of ((snap.inbox ?? []) as any[]).filter(i => i.overdue))
       lines.push(`Overdue on ClickUp: ${i.title}`);
-    if (!lines.length) lines.push("Nothing outstanding — check delivery and spend pacing.");
+    if (!lines.length)
+      lines.push("Nothing outstanding — check delivery and spend pacing.");
     setDump(lines.join("\n"));
-    toast.success("Written from today's board — edit it, then turn it into tasks");
+    toast.success(
+      "Written from today's board — edit it, then turn it into tasks",
+    );
   };
 
   const submitPlan = async () => {
@@ -614,7 +621,7 @@ function Cockpit({ view }: { view: View }) {
               : "not yet synced"}
           </p>
         </div>
-        <span className="rounded-full bg-[var(--chart-1)] px-3 py-1.5 text-[11px] font-bold tracking-wide text-background">
+        <span className="rounded-full bg-[var(--chart-1)] px-3 py-1.5 text-[12px] font-bold tracking-wide text-background">
           LIVE · CLICKUP + TRACKER
         </span>
       </header>
@@ -622,7 +629,7 @@ function Cockpit({ view }: { view: View }) {
       <ViktorStatus />
 
       {snap.lastSyncAt && Date.now() - snap.lastSyncAt > 20 * 3600 * 1000 && (
-        <div className="rounded-lg border callout-warn p-3 text-[12.5px]">
+        <div className="rounded-lg border callout-warn p-3 text-[13px]">
           <span className="font-semibold">
             These numbers are from{" "}
             {new Date(snap.lastSyncAt).toLocaleDateString("en-GB", {
@@ -638,7 +645,7 @@ function Cockpit({ view }: { view: View }) {
       )}
 
       {snap.syncProblems?.length > 0 && (
-        <div className="mb-3 rounded-lg border callout-bad p-3 text-[12.5px]">
+        <div className="mb-3 rounded-lg border callout-bad p-3 text-[13px]">
           <span className="font-semibold">
             Part of this screen is not showing everything it should.
           </span>
@@ -690,14 +697,14 @@ function Cockpit({ view }: { view: View }) {
             },
           ].map(k => (
             <div key={k.l} className="rounded-xl border bg-card p-4 shadow-sm">
-              <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+              <div className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                 {k.l}
               </div>
               <div className="mt-1 text-2xl font-extrabold tabular-nums">
                 {k.v}
               </div>
               <div
-                className={`mt-0.5 text-[11px] font-semibold ${k.bad ? "txt-bad" : k.ok ? "txt-good" : "text-muted-foreground"}`}
+                className={`mt-0.5 text-[12px] font-semibold ${k.bad ? "txt-bad" : k.ok ? "txt-good" : "text-muted-foreground"}`}
               >
                 {k.d}
               </div>
@@ -732,7 +739,7 @@ function Cockpit({ view }: { view: View }) {
         )}
         {view === "ads" && !accountView && midChecks.length > 0 && (
           <section className="rounded-xl border bg-card p-4 shadow-sm">
-            <h2 className="mb-2 text-[11px] font-bold uppercase tracking-widest text-teal-600">
+            <h2 className="mb-2 text-[12px] font-bold uppercase tracking-widest text-teal-600">
               Middle of the day · the sweep
             </h2>
             <div className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
@@ -744,12 +751,12 @@ function Cockpit({ view }: { view: View }) {
                   className="flex items-start gap-2 py-1 text-left"
                 >
                   <span
-                    className={`mt-0.5 grid h-4 w-4 flex-none place-items-center rounded border text-[10px] ${c.done ? "border-[var(--chart-1)] bg-[var(--chart-1)] text-background" : "border-muted-foreground/30"}`}
+                    className={`mt-0.5 grid h-4 w-4 flex-none place-items-center rounded border text-[11px] ${c.done ? "border-[var(--chart-1)] bg-[var(--chart-1)] text-background" : "border-muted-foreground/30"}`}
                   >
                     {c.done ? "✓" : ""}
                   </span>
                   <span
-                    className={`text-[12px] leading-snug ${c.done ? "text-muted-foreground line-through" : ""}`}
+                    className={`text-[13px] leading-snug ${c.done ? "text-muted-foreground line-through" : ""}`}
                   >
                     {c.label}
                     {c.detail ? (
@@ -765,10 +772,10 @@ function Cockpit({ view }: { view: View }) {
         {view === "ads" && !accountView && (
           <section className="rounded-xl border bg-card p-4 shadow-sm">
             <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-              <h2 className="text-[11px] font-bold uppercase tracking-widest text-teal-600">
+              <h2 className="text-[12px] font-bold uppercase tracking-widest text-teal-600">
                 Campaigns · ranked by what needs a decision
               </h2>
-              <span className="text-[11px] text-muted-foreground">
+              <span className="text-[12px] text-muted-foreground">
                 USD, currency-corrected
               </span>
             </div>
@@ -782,7 +789,7 @@ function Cockpit({ view }: { view: View }) {
                   setRanges({});
                 }}
               />
-              <span className="text-[11px] text-muted-foreground">
+              <span className="text-[12px] text-muted-foreground">
                 The table below always shows the 7-day read the calls are made
                 on; the range applies inside each campaign.
               </span>
@@ -798,7 +805,7 @@ function Cockpit({ view }: { view: View }) {
                     key={f.label}
                     type="button"
                     onClick={() => setFilter(f.label)}
-                    className={`rounded-md border px-2.5 py-1 text-[11px] font-semibold ${f.label === filter ? "border-teal-400 bg-teal-50 text-teal-800" : "bg-background"}`}
+                    className={`rounded-md border px-2.5 py-1 text-[12px] font-semibold ${f.label === filter ? "border-teal-400 bg-teal-50 text-teal-800" : "bg-background"}`}
                   >
                     {f.label} · {n}
                   </button>
@@ -806,9 +813,9 @@ function Cockpit({ view }: { view: View }) {
               })}
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-[13px]">
+              <table className="w-full text-[14px]">
                 <thead>
-                  <tr className="border-b text-[10px] uppercase tracking-wide text-muted-foreground">
+                  <tr className="border-b text-[11px] uppercase tracking-wide text-muted-foreground">
                     <th className="py-2 pr-2 text-left font-bold">Campaign</th>
                     <th className="px-2 text-left font-bold">Spend</th>
                     <th className="px-2 text-left font-bold">Leads</th>
@@ -886,7 +893,7 @@ function Cockpit({ view }: { view: View }) {
                               >
                                 {c.campaignName}
                               </button>
-                              <div className="text-[11px] text-muted-foreground">
+                              <div className="text-[12px] text-muted-foreground">
                                 {c.internal ? (
                                   "Mahara's own account"
                                 ) : (
@@ -917,7 +924,7 @@ function Cockpit({ view }: { view: View }) {
                                   ? ` · live ${c.daysLive}d`
                                   : ""}
                               </div>
-                              <div className="mt-0.5 flex flex-wrap gap-2 text-[11px]">
+                              <div className="mt-0.5 flex flex-wrap gap-2 text-[12px]">
                                 {adsManagerUrl(c) && (
                                   <a
                                     className="font-semibold text-primary underline"
@@ -940,13 +947,13 @@ function Cockpit({ view }: { view: View }) {
                                 )}
                               </div>
                               {c.staleTaskName && (
-                                <div className="mt-1 text-[11px] txt-warn">
+                                <div className="mt-1 text-[12px] txt-warn">
                                   Board task still says “{c.staleTaskName}” —
                                   renamed on your next decision, no second row.
                                 </div>
                               )}
                               {decided && (
-                                <div className="mt-1 text-[11px] font-bold txt-good">
+                                <div className="mt-1 text-[12px] font-bold txt-good">
                                   ✓ {decided}
                                 </div>
                               )}
@@ -969,7 +976,7 @@ function Cockpit({ view }: { view: View }) {
                                 <>
                                   {c.bookings7d}
                                   {c.bookingRate !== undefined && (
-                                    <span className="ml-1 text-[11px] font-normal text-muted-foreground">
+                                    <span className="ml-1 text-[12px] font-normal text-muted-foreground">
                                       {Math.round(c.bookingRate)}%
                                     </span>
                                   )}
@@ -995,7 +1002,7 @@ function Cockpit({ view }: { view: View }) {
                             <td className="px-2">
                               <div className="flex flex-wrap items-center gap-1.5">
                                 <span
-                                  className={`rounded px-2 py-0.5 text-[10px] font-bold uppercase ring-1 ring-inset ${VERDICT_STYLES[c.verdict] ?? ""}`}
+                                  className={`rounded px-2 py-0.5 text-[11px] font-bold uppercase ring-1 ring-inset ${VERDICT_STYLES[c.verdict] ?? ""}`}
                                 >
                                   {c.verdict}
                                 </span>
@@ -1007,7 +1014,7 @@ function Cockpit({ view }: { view: View }) {
                                     variant={
                                       needsDecision ? "default" : "outline"
                                     }
-                                    className="h-7 whitespace-nowrap px-2.5 text-[11px]"
+                                    className="h-7 whitespace-nowrap px-2.5 text-[12px]"
                                     onClick={() => {
                                       setMode("ads");
                                       setOpen(isOpen ? null : c.campaignName);
@@ -1032,17 +1039,17 @@ function Cockpit({ view }: { view: View }) {
                                         evidence for them, instead of crowding
                                         every row of the table. */}
                                     <div className="mb-3 flex flex-wrap items-center gap-1.5 border-b pb-3">
-                                      <span className="mr-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                                      <span className="mr-1 text-[12px] font-bold uppercase tracking-wide text-muted-foreground">
                                         What do you want to do
                                       </span>
-                                      <span className="mr-1 text-[10.5px] text-muted-foreground">
+                                      <span className="mr-1 text-[11px] text-muted-foreground">
                                         {isExecutable(acts[0])
                                           ? "· the first one changes Meta straight away"
                                           : "· these are logged, not applied"}
                                       </span>
                                       <Button
                                         size="sm"
-                                        className="h-7 whitespace-nowrap px-2 text-[11px]"
+                                        className="h-7 whitespace-nowrap px-2 text-[12px]"
                                         onClick={() =>
                                           act(c, acts[0], "approved")
                                         }
@@ -1052,7 +1059,7 @@ function Cockpit({ view }: { view: View }) {
                                       <Button
                                         size="sm"
                                         variant="outline"
-                                        className="h-7 whitespace-nowrap px-2 text-[11px]"
+                                        className="h-7 whitespace-nowrap px-2 text-[12px]"
                                         onClick={() =>
                                           act(c, acts[1], "alternative")
                                         }
@@ -1062,7 +1069,7 @@ function Cockpit({ view }: { view: View }) {
                                       <Button
                                         size="sm"
                                         variant="ghost"
-                                        className="h-7 px-2 text-[11px] text-muted-foreground"
+                                        className="h-7 px-2 text-[12px] text-muted-foreground"
                                         onClick={() => setMode("leave")}
                                       >
                                         Leave it
@@ -1070,7 +1077,7 @@ function Cockpit({ view }: { view: View }) {
                                       <Button
                                         size="sm"
                                         variant="ghost"
-                                        className="h-7 px-2 text-[11px] text-muted-foreground"
+                                        className="h-7 px-2 text-[12px] text-muted-foreground"
                                         onClick={() => setMode("reroute")}
                                       >
                                         Send to another team
@@ -1089,8 +1096,9 @@ function Cockpit({ view }: { view: View }) {
                                       campaignName={c.campaignName}
                                       client={c.clientTag ?? undefined}
                                     />
-                                    <div className="mb-1 mt-3 text-[11px] text-muted-foreground">
-                                      The call below is the 7-day read · {c.reason}
+                                    <div className="mb-1 mt-3 text-[12px] text-muted-foreground">
+                                      The call below is the 7-day read ·{" "}
+                                      {c.reason}
                                     </div>
                                     <CampaignRange
                                       campaignName={c.campaignName}
@@ -1126,7 +1134,7 @@ function Cockpit({ view }: { view: View }) {
                                           <div className="flex items-center gap-1.5">
                                             {row && (
                                               <span
-                                                className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ring-1 ring-inset ${VERDICT_STYLES[row.verdict] ?? ""}`}
+                                                className={`rounded px-1.5 py-0.5 text-[11px] font-bold uppercase ring-1 ring-inset ${VERDICT_STYLES[row.verdict] ?? ""}`}
                                               >
                                                 {row.verdict}
                                               </span>
@@ -1145,10 +1153,11 @@ function Cockpit({ view }: { view: View }) {
                                     />
                                     {(c.findings ?? []).length > 0 && (
                                       <div className="mb-4 rounded-md border border-border bg-background p-3">
-                                        <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                                        <div className="mb-2 text-[12px] font-bold uppercase tracking-wide text-muted-foreground">
                                           {(c.findings ?? []).some(
                                             // biome-ignore lint/suspicious/noExplicitAny: finding rows
-                                            (f: any) => f.severity !== "optimization",
+                                            (f: any) =>
+                                              f.severity !== "optimization",
                                           )
                                             ? "What needs a decision here"
                                             : "Nothing needs touching · optional optimizations"}
@@ -1158,7 +1167,7 @@ function Cockpit({ view }: { view: View }) {
                                             // biome-ignore lint/suspicious/noExplicitAny: finding rows
                                             (f: any, i: number) => (
                                               <div key={f.constraint}>
-                                                <div className="text-[12.5px] font-semibold">
+                                                <div className="text-[13px] font-semibold">
                                                   {i === 0 &&
                                                   f.severity !== "optimization"
                                                     ? "→ "
@@ -1166,21 +1175,21 @@ function Cockpit({ view }: { view: View }) {
                                                   {f.constraint}
                                                   {f.severity ===
                                                   "optimization" ? (
-                                                    <span className="ml-2 rounded border border-border px-1.5 py-0.5 text-[10px] font-bold uppercase text-muted-foreground">
+                                                    <span className="ml-2 rounded border border-border px-1.5 py-0.5 text-[11px] font-bold uppercase text-muted-foreground">
                                                       Optimization
                                                     </span>
                                                   ) : (
                                                     i === 0 && (
-                                                      <span className="ml-2 rounded bg-foreground px-1.5 py-0.5 text-[10px] font-bold uppercase text-background">
+                                                      <span className="ml-2 rounded bg-foreground px-1.5 py-0.5 text-[11px] font-bold uppercase text-background">
                                                         Fix this first
                                                       </span>
                                                     )
                                                   )}
                                                 </div>
-                                                <div className="text-[12px] text-muted-foreground">
+                                                <div className="text-[13px] text-muted-foreground">
                                                   {f.evidence}
                                                 </div>
-                                                <ul className="mt-0.5 list-disc pl-4 text-[12px]">
+                                                <ul className="mt-0.5 list-disc pl-4 text-[13px]">
                                                   {f.fixes.map((fx: string) => (
                                                     <li key={fx}>{fx}</li>
                                                   ))}
@@ -1189,7 +1198,7 @@ function Cockpit({ view }: { view: View }) {
                                             ),
                                           )}
                                         </div>
-                                        <div className="mt-2 text-[11px] text-muted-foreground">
+                                        <div className="mt-2 text-[12px] text-muted-foreground">
                                           <a
                                             className="underline"
                                             href="https://docs.google.com/document/d/1cioKqspTOI6zK76ob0lOTzfNLDMe5WS6NJ_hgTwb-p4/edit"
@@ -1202,10 +1211,11 @@ function Cockpit({ view }: { view: View }) {
                                           — the full playbook behind these
                                           calls.
                                         </div>
-                                        <div className="mt-1 text-[11px] text-muted-foreground">
+                                        <div className="mt-1 text-[12px] text-muted-foreground">
                                           {(c.findings ?? []).some(
                                             // biome-ignore lint/suspicious/noExplicitAny: finding rows
-                                            (f: any) => f.severity !== "optimization",
+                                            (f: any) =>
+                                              f.severity !== "optimization",
                                           )
                                             ? "Patch one leak at a time — take the top one today, re-check tomorrow."
                                             : "Cheap leads that book. Leave it running; these are optional."}
@@ -1214,14 +1224,14 @@ function Cockpit({ view }: { view: View }) {
                                     )}
                                     {changes.length > 0 && (
                                       <div className="mt-4">
-                                        <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                                        <div className="mb-1 text-[12px] font-bold uppercase tracking-wide text-muted-foreground">
                                           Changed in this account · last 7 days
                                         </div>
                                         <div className="space-y-0.5">
                                           {changes.map((ch: Campaign) => (
                                             <div
                                               key={`${ch._id}`}
-                                              className="text-[11.5px]"
+                                              className="text-[12px]"
                                             >
                                               <span className="text-muted-foreground">
                                                 {new Date(
@@ -1244,10 +1254,10 @@ function Cockpit({ view }: { view: View }) {
                                       </div>
                                     )}
                                     <div className="mt-4 rounded-md border border-dashed border-border p-3">
-                                      <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                                      <div className="mb-1 text-[12px] font-bold uppercase tracking-wide text-muted-foreground">
                                         What did you change?
                                       </div>
-                                      <p className="mb-2 text-[11px] text-muted-foreground">
+                                      <p className="mb-2 text-[12px] text-muted-foreground">
                                         Anything you did by hand that Meta will
                                         not show — a new audience, a budget you
                                         set on your phone, a client request.
@@ -1261,15 +1271,18 @@ function Cockpit({ view }: { view: View }) {
                                             (m: any) => (
                                               <div
                                                 key={m._id}
-                                                className="text-[11.5px]"
+                                                className="text-[12px]"
                                               >
                                                 <span className="text-muted-foreground">
                                                   {new Date(
                                                     m.at,
-                                                  ).toLocaleDateString("en-GB", {
-                                                    day: "numeric",
-                                                    month: "short",
-                                                  })}
+                                                  ).toLocaleDateString(
+                                                    "en-GB",
+                                                    {
+                                                      day: "numeric",
+                                                      month: "short",
+                                                    },
+                                                  )}
                                                 </span>{" "}
                                                 <span className="font-semibold">
                                                   {m.by}
@@ -1286,7 +1299,7 @@ function Cockpit({ view }: { view: View }) {
                                             changeText[c.campaignName] ?? ""
                                           }
                                           placeholder="Raised budget to $40 and swapped the hook"
-                                          className="h-8 text-[12px]"
+                                          className="h-8 text-[13px]"
                                           onChange={e =>
                                             setChangeText(prev => ({
                                               ...prev,
@@ -1298,8 +1311,9 @@ function Cockpit({ view }: { view: View }) {
                                           size="sm"
                                           variant="secondary"
                                           disabled={
-                                            !(changeText[c.campaignName] ?? "")
-                                              .trim()
+                                            !(
+                                              changeText[c.campaignName] ?? ""
+                                            ).trim()
                                           }
                                           onClick={async () => {
                                             await logManualChange({
@@ -1347,7 +1361,7 @@ function Cockpit({ view }: { view: View }) {
                                     />
                                     {tree.length > 0 ? (
                                       <div className="mt-4 space-y-3">
-                                        <div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                                        <div className="text-[12px] font-bold uppercase tracking-wide text-muted-foreground">
                                           Live in Meta · ad sets and creative
                                         </div>
                                         {tree
@@ -1360,18 +1374,18 @@ function Cockpit({ view }: { view: View }) {
                                               className="rounded-lg border bg-background p-2"
                                             >
                                               <div className="flex items-center gap-2">
-                                                <span className="text-[12.5px] font-semibold">
+                                                <span className="text-[13px] font-semibold">
                                                   {set.name}
                                                 </span>
                                                 <span
-                                                  className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ring-1 ring-inset ${set.effectiveStatus === "ACTIVE" ? "bg-emerald-50 txt-good ring-emerald-200" : "bg-muted text-muted-foreground ring-border"}`}
+                                                  className={`rounded px-1.5 py-0.5 text-[11px] font-bold uppercase ring-1 ring-inset ${set.effectiveStatus === "ACTIVE" ? "bg-emerald-50 txt-good ring-emerald-200" : "bg-muted text-muted-foreground ring-border"}`}
                                                 >
                                                   {set.effectiveStatus ??
                                                     set.status}
                                                 </span>
                                                 {set.dailyBudget !==
                                                   undefined && (
-                                                  <span className="text-[11px] text-muted-foreground">
+                                                  <span className="text-[12px] text-muted-foreground">
                                                     {money(set.dailyBudget, 2)}
                                                     /day
                                                   </span>
@@ -1400,13 +1414,15 @@ function Cockpit({ view }: { view: View }) {
                                                       key={ad._id}
                                                       className="w-[340px]"
                                                     >
-                                                      <div className="mb-1 flex items-center gap-1.5 text-[11px]">
+                                                      <div className="mb-1 flex items-center gap-1.5 text-[12px]">
                                                         <StatusToggle
                                                           compact
                                                           metaId={ad.metaId}
                                                           level="ad"
                                                           name={ad.name}
-                                                          clientTag={c.clientTag}
+                                                          clientTag={
+                                                            c.clientTag
+                                                          }
                                                           active={
                                                             (ad.effectiveStatus ??
                                                               ad.status) ===
@@ -1439,9 +1455,10 @@ function Cockpit({ view }: { view: View }) {
                                                             alt={ad.name}
                                                             className="w-full rounded-md border bg-card object-cover"
                                                           />
-                                                          <span className="mt-1 block text-[10.5px] text-muted-foreground">
-                                                            Still image — open in
-                                                            Ads Manager to play
+                                                          <span className="mt-1 block text-[11px] text-muted-foreground">
+                                                            Still image — open
+                                                            in Ads Manager to
+                                                            play
                                                           </span>
                                                         </a>
                                                       ) : (
@@ -1449,7 +1466,7 @@ function Cockpit({ view }: { view: View }) {
                                                           href={`https://business.facebook.com/adsmanager/manage/ads?selected_ad_ids=${ad.metaId}`}
                                                           target="_blank"
                                                           rel="noreferrer"
-                                                          className="block rounded-md border p-3 text-[11px] text-muted-foreground underline-offset-2 hover:underline"
+                                                          className="block rounded-md border p-3 text-[12px] text-muted-foreground underline-offset-2 hover:underline"
                                                         >
                                                           Meta won't render this
                                                           one — open it in Ads
@@ -1463,7 +1480,7 @@ function Cockpit({ view }: { view: View }) {
                                           ))}
                                       </div>
                                     ) : (
-                                      <div className="mt-3 text-[11px] text-muted-foreground">
+                                      <div className="mt-3 text-[12px] text-muted-foreground">
                                         Ad sets and creative can't be shown for
                                         this account yet — it isn't shared with
                                         our Meta partner ID.
@@ -1473,10 +1490,10 @@ function Cockpit({ view }: { view: View }) {
                                 )}
                                 {mode === "reroute" && (
                                   <div className="max-w-2xl space-y-3">
-                                    <div className="text-[13px] font-bold">
+                                    <div className="text-[14px] font-bold">
                                       Modify — {c.campaignName}
                                     </div>
-                                    <div className="text-[11px] text-muted-foreground">
+                                    <div className="text-[12px] text-muted-foreground">
                                       This is not for me — pick what needs to
                                       happen and it lands on that team's ClickUp
                                       board as a request.
@@ -1487,17 +1504,17 @@ function Cockpit({ view }: { view: View }) {
                                           key={r.label}
                                           type="button"
                                           onClick={() => setDept(r.label)}
-                                          className={`rounded-md border px-2.5 py-1 text-[11px] font-semibold ${r.label === dept ? "border-teal-400 bg-teal-50 text-teal-800" : "bg-background"}`}
+                                          className={`rounded-md border px-2.5 py-1 text-[12px] font-semibold ${r.label === dept ? "border-teal-400 bg-teal-50 text-teal-800" : "bg-background"}`}
                                         >
                                           {r.label}
                                         </button>
                                       ))}
                                     </div>
-                                    <div className="rounded-md border bg-background p-2 text-[12px]">
+                                    <div className="rounded-md border bg-background p-2 text-[13px]">
                                       {c.reason}
                                     </div>
                                     <Textarea
-                                      className="min-h-[70px] text-[12px]"
+                                      className="min-h-[70px] text-[13px]"
                                       placeholder="Anything the other team needs to know — goes into Additional Notes on the ticket."
                                       value={note}
                                       onChange={e => setNote(e.target.value)}
@@ -1538,7 +1555,7 @@ function Cockpit({ view }: { view: View }) {
                                 )}
                                 {mode === "leave" && (
                                   <div className="max-w-2xl space-y-3">
-                                    <div className="text-[13px] font-bold">
+                                    <div className="text-[14px] font-bold">
                                       Leave it — {c.campaignName}
                                     </div>
                                     <div className="flex flex-wrap gap-1.5">
@@ -1547,7 +1564,7 @@ function Cockpit({ view }: { view: View }) {
                                           key={r}
                                           type="button"
                                           onClick={() => setReason(r)}
-                                          className={`rounded-md border px-2.5 py-1 text-[11px] font-semibold ${r === reason ? "border-teal-400 bg-teal-50 text-teal-800" : "bg-background"}`}
+                                          className={`rounded-md border px-2.5 py-1 text-[12px] font-semibold ${r === reason ? "border-teal-400 bg-teal-50 text-teal-800" : "bg-background"}`}
                                         >
                                           {r}
                                         </button>
@@ -1559,13 +1576,13 @@ function Cockpit({ view }: { view: View }) {
                                           key={r}
                                           type="button"
                                           onClick={() => setClock(r)}
-                                          className={`rounded-md border px-2.5 py-1 text-[11px] font-semibold ${r === clock ? "border-teal-400 bg-teal-50 text-teal-800" : "bg-background"}`}
+                                          className={`rounded-md border px-2.5 py-1 text-[12px] font-semibold ${r === clock ? "border-teal-400 bg-teal-50 text-teal-800" : "bg-background"}`}
                                         >
                                           {r}
                                         </button>
                                       ))}
                                     </div>
-                                    <p className="text-[11px] leading-relaxed text-muted-foreground">
+                                    <p className="text-[12px] leading-relaxed text-muted-foreground">
                                       "Client hasn't approved the budget"
                                       creates a CSM touchpoint task. "Disagree
                                       with the call" is logged separately — a
@@ -1608,15 +1625,15 @@ function Cockpit({ view }: { view: View }) {
 
         {view === "sod" && (
           <section className="rounded-xl border bg-card p-4 shadow-sm">
-            <h2 className="mb-1 text-[11px] font-bold uppercase tracking-widest text-teal-600">
+            <h2 className="mb-1 text-[12px] font-bold uppercase tracking-widest text-teal-600">
               Watch list · launch cadence
             </h2>
-            <p className="mb-3 text-[12px] text-muted-foreground">
+            <p className="mb-3 text-[13px] text-muted-foreground">
               A new campaign gets watched twice a day for its first 72 hours.
               After that, every 3 to 7 days — sooner if you changed something.
             </p>
             {watchList.length === 0 ? (
-              <p className="text-[12px] text-muted-foreground">
+              <p className="text-[13px] text-muted-foreground">
                 No campaign is inside its launch window and nothing is overdue a
                 review. Work the ranked list instead.
               </p>
@@ -1624,7 +1641,7 @@ function Cockpit({ view }: { view: View }) {
               watchList.map(w => (
                 <div
                   key={w.c.campaignName}
-                  className="flex items-baseline justify-between gap-3 border-b py-2 text-[12px] last:border-0"
+                  className="flex items-baseline justify-between gap-3 border-b py-2 text-[13px] last:border-0"
                 >
                   <div className="min-w-0">
                     <div className="truncate font-semibold">
@@ -1633,7 +1650,7 @@ function Cockpit({ view }: { view: View }) {
                     <div className="text-muted-foreground">{w.why}</div>
                   </div>
                   <span
-                    className={`flex-none rounded px-2 py-0.5 text-[10px] font-bold uppercase ring-1 ring-inset ${w.hot ? "tone-warn ring-current/25" : "tone-neutral ring-current/25"}`}
+                    className={`flex-none rounded px-2 py-0.5 text-[11px] font-bold uppercase ring-1 ring-inset ${w.hot ? "tone-warn ring-current/25" : "tone-neutral ring-current/25"}`}
                   >
                     {w.tag}
                   </span>
@@ -1645,10 +1662,10 @@ function Cockpit({ view }: { view: View }) {
 
         {view === "sod" && (
           <section className="rounded-xl border bg-card p-4 shadow-sm">
-            <h2 className="mb-2 text-[11px] font-bold uppercase tracking-widest text-teal-600">
+            <h2 className="mb-2 text-[12px] font-bold uppercase tracking-widest text-teal-600">
               Then, in the accounts — start here
             </h2>
-            <ol className="space-y-2 text-[13px]">
+            <ol className="space-y-2 text-[14px]">
               {(snap.campaigns as Campaign[])
                 .filter(c => !c.internal && c.spend7d >= 50)
                 .slice(0, 3)
@@ -1664,11 +1681,11 @@ function Cockpit({ view }: { view: View }) {
                       <div className="font-semibold">
                         {c.clientName ?? c.campaignName}
                       </div>
-                      <div className="text-[12px] text-muted-foreground">
+                      <div className="text-[13px] text-muted-foreground">
                         {c.reason}
                       </div>
                       {c.findings?.[0] && (
-                        <div className="mt-0.5 text-[12px]">
+                        <div className="mt-0.5 text-[13px]">
                           <span className="font-semibold">
                             {c.findings[0].constraint}:
                           </span>{" "}
@@ -1681,7 +1698,7 @@ function Cockpit({ view }: { view: View }) {
             </ol>
             <Link
               to="/ads"
-              className="mt-3 inline-block rounded-md bg-primary px-3 py-1.5 text-[12px] font-semibold text-primary-foreground"
+              className="mt-3 inline-block rounded-md bg-primary px-3 py-1.5 text-[13px] font-semibold text-primary-foreground"
             >
               Open Ads management
             </Link>
@@ -1690,39 +1707,35 @@ function Cockpit({ view }: { view: View }) {
 
         {view === "sod" && (
           <section className="rounded-xl border bg-card p-4 shadow-sm">
-            <h2 className="mb-2 text-[11px] font-bold uppercase tracking-widest text-teal-600">
+            <h2 className="mb-2 text-[12px] font-bold uppercase tracking-widest text-teal-600">
               Your ClickUp — {(snap.inbox ?? []).length} open
             </h2>
             {(snap.inbox ?? []).length === 0 ? (
-              <p className="text-[12px] text-muted-foreground">
+              <p className="text-[13px] text-muted-foreground">
                 Nothing assigned to you and no comments tagging you.
               </p>
             ) : (
               // biome-ignore lint/suspicious/noExplicitAny: inbox row
-              (snap.inbox as any[])
-                .slice(0, 12)
-                .map(i => (
-                  <a
-                    key={i._id}
-                    href={i.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="block border-b py-1.5 text-[12px] last:border-0 hover:bg-muted/40"
-                  >
-                    <span className="font-semibold">{i.title}</span>
-                    <span className="text-muted-foreground">
-                      {" "}
-                      ·{" "}
-                      {i.kind === "mention"
-                        ? `${i.author} tagged you`
-                        : i.reason}
-                      {i.overdue ? " · overdue" : ""}
-                    </span>
-                    {i.body && (
-                      <div className="text-muted-foreground">{i.body}</div>
-                    )}
-                  </a>
-                ))
+              (snap.inbox as any[]).slice(0, 12).map(i => (
+                <a
+                  key={i._id}
+                  href={i.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block border-b py-1.5 text-[13px] last:border-0 hover:bg-muted/40"
+                >
+                  <span className="font-semibold">{i.title}</span>
+                  <span className="text-muted-foreground">
+                    {" "}
+                    ·{" "}
+                    {i.kind === "mention" ? `${i.author} tagged you` : i.reason}
+                    {i.overdue ? " · overdue" : ""}
+                  </span>
+                  {i.body && (
+                    <div className="text-muted-foreground">{i.body}</div>
+                  )}
+                </a>
+              ))
             )}
           </section>
         )}
@@ -1731,21 +1744,21 @@ function Cockpit({ view }: { view: View }) {
 
         {view === "tasks" && (
           <section className="rounded-xl border bg-card p-4 shadow-sm">
-            <h2 className="mb-1 text-[11px] font-bold uppercase tracking-widest text-teal-600">
+            <h2 className="mb-1 text-[12px] font-bold uppercase tracking-widest text-teal-600">
               Your ClickUp tasks
             </h2>
-            <p className="mb-3 text-[12px] text-muted-foreground">
+            <p className="mb-3 text-[13px] text-muted-foreground">
               Open work on the Ads Managment and Marketing / ADs boards. Ticking
               it here is not enough — open the task and move it, so the rest of
               the team sees it.
             </p>
             {(snap.inbox ?? []).length === 0 ? (
-              <p className="text-[12px] text-muted-foreground">Nothing open.</p>
+              <p className="text-[13px] text-muted-foreground">Nothing open.</p>
             ) : (
               // biome-ignore lint/suspicious/noExplicitAny: inbox row
               (snap.inbox as any[]).map(i => (
                 <div key={i._id} className="border-b py-2 last:border-0">
-                  <div className="flex items-baseline justify-between gap-3 text-[12px]">
+                  <div className="flex items-baseline justify-between gap-3 text-[13px]">
                     <a
                       href={i.url}
                       target="_blank"
@@ -1760,7 +1773,7 @@ function Cockpit({ view }: { view: View }) {
                         </span>
                       )}
                     </a>
-                    <span className="flex-none text-[11px] text-muted-foreground">
+                    <span className="flex-none text-[12px] text-muted-foreground">
                       {i.kind === "mention"
                         ? `${i.author} tagged you`
                         : i.listName}
@@ -1770,7 +1783,7 @@ function Cockpit({ view }: { view: View }) {
                   {ask === i._id ? (
                     <div className="mt-2 space-y-2 rounded-md border bg-background p-2">
                       <select
-                        className="h-8 w-full rounded-md border bg-background px-2 text-[12px]"
+                        className="h-8 w-full rounded-md border bg-background px-2 text-[13px]"
                         value={askWho}
                         onChange={e => setAskWho(e.target.value)}
                       >
@@ -1785,7 +1798,7 @@ function Cockpit({ view }: { view: View }) {
                       <Input
                         value={askText}
                         placeholder="What is missing? e.g. which landing page should this point to?"
-                        className="h-8 text-[12px]"
+                        className="h-8 text-[13px]"
                         onChange={e => setAskText(e.target.value)}
                       />
                       <div className="flex gap-2">
@@ -1793,10 +1806,12 @@ function Cockpit({ view }: { view: View }) {
                           size="sm"
                           disabled={!askText.trim() || !i.taskId}
                           onClick={async () => {
-                            const who = ((snap.members ?? []) as {
-                              userId: number;
-                              username: string;
-                            }[]).find(m => String(m.userId) === askWho);
+                            const who = (
+                              (snap.members ?? []) as {
+                                userId: number;
+                                username: string;
+                              }[]
+                            ).find(m => String(m.userId) === askWho);
                             await askForDetail({
                               taskId: i.taskId,
                               question: askText.trim(),
@@ -1827,7 +1842,7 @@ function Cockpit({ view }: { view: View }) {
                   ) : (
                     <button
                       type="button"
-                      className="mt-1 text-[11px] text-primary underline"
+                      className="mt-1 text-[12px] text-primary underline"
                       onClick={() => setAsk(i._id)}
                     >
                       Something missing? Ask someone on this task
@@ -1841,11 +1856,11 @@ function Cockpit({ view }: { view: View }) {
 
         {view === "tasks" && (
           <section className="rounded-xl border bg-card p-4 shadow-sm">
-            <h2 className="mb-1 text-[11px] font-bold uppercase tracking-widest text-teal-600">
+            <h2 className="mb-1 text-[12px] font-bold uppercase tracking-widest text-teal-600">
               What you planned
             </h2>
             {(snap.plan ?? []).length === 0 ? (
-              <p className="text-[12px] text-muted-foreground">
+              <p className="text-[13px] text-muted-foreground">
                 Nothing planned yet. Write tomorrow's list on the End of day
                 screen.
               </p>
@@ -1854,7 +1869,7 @@ function Cockpit({ view }: { view: View }) {
               (snap.plan as any[]).map(p => (
                 <div
                   key={p._id}
-                  className="border-b py-1.5 text-[12px] last:border-0"
+                  className="border-b py-1.5 text-[13px] last:border-0"
                 >
                   {p.text}
                   {p.clickupTaskUrl && (
@@ -1875,16 +1890,16 @@ function Cockpit({ view }: { view: View }) {
 
         {view === "touch" && (
           <section className="rounded-xl border bg-card p-4 shadow-sm">
-            <h2 className="mb-1 text-[11px] font-bold uppercase tracking-widest text-teal-600">
+            <h2 className="mb-1 text-[12px] font-bold uppercase tracking-widest text-teal-600">
               Proactive touchpoints
             </h2>
-            <p className="mb-3 text-[12px] text-muted-foreground">
+            <p className="mb-3 text-[13px] text-muted-foreground">
               One or two per client per week, and always after a change. Copy
               the message, send it on WhatsApp, then log it — the CSM sees it on
               the client's task.
             </p>
             {touchpoints.length === 0 ? (
-              <p className="text-[12px] text-muted-foreground">
+              <p className="text-[13px] text-muted-foreground">
                 Nothing owed right now. Take a decision in Ads management and
                 the message for that client shows up here.
               </p>
@@ -1894,15 +1909,15 @@ function Cockpit({ view }: { view: View }) {
                   key={tp.campaign.campaignName}
                   className="border-b py-3 last:border-0"
                 >
-                  <div className="text-[13px] font-bold">
+                  <div className="text-[14px] font-bold">
                     {tp.campaign.clientName ?? tp.campaign.campaignName}
                   </div>
-                  <div className="text-[11px] text-muted-foreground">
+                  <div className="text-[12px] text-muted-foreground">
                     {tp.why}
                   </div>
                   <Textarea
                     dir={tp.lang === "ar" ? "rtl" : "ltr"}
-                    className="mt-1.5 min-h-[130px] text-[12px] leading-relaxed"
+                    className="mt-1.5 min-h-[130px] text-[13px] leading-relaxed"
                     value={drafts[tp.key] ?? tp.message}
                     onChange={e =>
                       setDrafts(d => ({ ...d, [tp.key]: e.target.value }))
@@ -1933,7 +1948,7 @@ function Cockpit({ view }: { view: View }) {
                     >
                       I sent it — log it
                     </Button>
-                    <span className="ml-auto flex items-center gap-1 text-[11px] text-muted-foreground">
+                    <span className="ml-auto flex items-center gap-1 text-[12px] text-muted-foreground">
                       writes in:
                       {(["ar", "en"] as const).map(lang => (
                         <button
@@ -1968,14 +1983,14 @@ function Cockpit({ view }: { view: View }) {
             {view === "sod" && (
               <section className="rounded-xl border bg-card p-4 shadow-sm">
                 <div className="mb-1 flex items-baseline justify-between">
-                  <h2 className="text-[11px] font-bold uppercase tracking-widest text-teal-600">
+                  <h2 className="text-[12px] font-bold uppercase tracking-widest text-teal-600">
                     Morning sprint · in this order
                   </h2>
-                  <span className="text-[11px] text-muted-foreground">
+                  <span className="text-[12px] text-muted-foreground">
                     {checksDone} of {sodChecks.length}
                   </span>
                 </div>
-                <p className="mb-3 text-[12px] text-muted-foreground">
+                <p className="mb-3 text-[13px] text-muted-foreground">
                   Clear communication first so nobody is waiting on you. The
                   accounts come after — that is your best work and it needs a
                   clean head.
@@ -1988,49 +2003,50 @@ function Cockpit({ view }: { view: View }) {
                     <button
                       type="button"
                       onClick={() => toggleCheck({ id: c._id })}
-                      className={`mt-0.5 grid h-5 w-5 flex-none place-items-center rounded-full border text-[11px] font-bold ${c.done ? "border-[var(--chart-1)] bg-[var(--chart-1)] text-background" : "border-muted-foreground/30 text-muted-foreground"}`}
+                      className={`mt-0.5 grid h-5 w-5 flex-none place-items-center rounded-full border text-[12px] font-bold ${c.done ? "border-[var(--chart-1)] bg-[var(--chart-1)] text-background" : "border-muted-foreground/30 text-muted-foreground"}`}
                     >
                       {c.done ? "✓" : idx + 1}
                     </button>
                     <div className="min-w-0 flex-1">
                       <div
-                        className={`text-[12.5px] font-semibold leading-snug ${c.done ? "text-muted-foreground line-through" : ""}`}
+                        className={`text-[13px] font-semibold leading-snug ${c.done ? "text-muted-foreground line-through" : ""}`}
                       >
                         {c.label}
                       </div>
                       {c.detail && (
-                        <div className="text-[11.5px] text-muted-foreground">
+                        <div className="text-[12px] text-muted-foreground">
                           {c.detail}
                         </div>
                       )}
                       {c.href && (
                         <Link
                           to={c.href}
-                          className="text-[11px] font-semibold text-primary underline"
+                          className="text-[12px] font-semibold text-primary underline"
                         >
                           Open it
                         </Link>
                       )}
                       {c.key === "whatsapp_am" && !waConnected && (
-                        <div className="text-[11px] txt-warn">
-                          Not connected yet — I cannot read the client groups, so
-                          this one is on you until the WhatsApp token is back.
+                        <div className="text-[12px] txt-warn">
+                          Not connected yet — I cannot read the client groups,
+                          so this one is on you until the WhatsApp token is
+                          back.
                         </div>
                       )}
                     </div>
                   </div>
                 ))}
                 <div className="mt-3 rounded-lg border border-teal-200 bg-teal-50/60 p-3">
-                  <div className="text-[11px] font-bold uppercase tracking-widest text-teal-700">
+                  <div className="text-[12px] font-bold uppercase tracking-widest text-teal-700">
                     Then — middle of the day
                   </div>
-                  <p className="mt-1 text-[12px] text-muted-foreground">
+                  <p className="mt-1 text-[13px] text-muted-foreground">
                     Inbox clear? Everything below is account work. Do it in one
                     block, one client at a time.
                   </p>
                   <Link
                     to="/ads"
-                    className="mt-2 inline-block rounded-md bg-primary px-3 py-1.5 text-[12px] font-semibold text-primary-foreground"
+                    className="mt-2 inline-block rounded-md bg-primary px-3 py-1.5 text-[13px] font-semibold text-primary-foreground"
                   >
                     Open Ads management
                   </Link>
@@ -2041,7 +2057,7 @@ function Cockpit({ view }: { view: View }) {
             {view === "eod" && (
               <section className="rounded-xl border bg-card p-4 shadow-sm">
                 <div className="mb-2 flex items-baseline justify-between">
-                  <h2 className="text-[11px] font-bold uppercase tracking-widest text-teal-600">
+                  <h2 className="text-[12px] font-bold uppercase tracking-widest text-teal-600">
                     Your EOD report — already written
                   </h2>
                   <Button
@@ -2052,12 +2068,12 @@ function Cockpit({ view }: { view: View }) {
                     Copy for Slack
                   </Button>
                 </div>
-                <pre className="whitespace-pre-wrap rounded-md border bg-background p-3 text-[12px] leading-relaxed">
+                <pre className="whitespace-pre-wrap rounded-md border bg-background p-3 text-[13px] leading-relaxed">
                   {eodReport}
                 </pre>
                 <div className="mt-4 space-y-4">
                   <div>
-                    <div className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+                    <div className="text-[12px] font-bold uppercase tracking-widest text-muted-foreground">
                       Health
                     </div>
                     <div className="mt-1.5 grid grid-cols-3 gap-2">
@@ -2066,7 +2082,7 @@ function Cockpit({ view }: { view: View }) {
                         ["energy", "Energy"],
                         ["biology", "Food, sleep, water"],
                       ].map(([k, label]) => (
-                        <label key={k} className="text-[11.5px]">
+                        <label key={k} className="text-[12px]">
                           <span className="text-muted-foreground">{label}</span>
                           <input
                             type="number"
@@ -2074,7 +2090,7 @@ function Cockpit({ view }: { view: View }) {
                             max={10}
                             value={eodForm[k]}
                             onChange={e => setEod(k, e.target.value)}
-                            className="mt-0.5 w-full rounded-md border bg-background px-2 py-1.5 text-[13px]"
+                            className="mt-0.5 w-full rounded-md border bg-background px-2 py-1.5 text-[14px]"
                           />
                         </label>
                       ))}
@@ -2082,7 +2098,7 @@ function Cockpit({ view }: { view: View }) {
                   </div>
 
                   <div>
-                    <div className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+                    <div className="text-[12px] font-bold uppercase tracking-widest text-muted-foreground">
                       Tasks
                     </div>
                     <div className="mt-1.5 space-y-1.5">
@@ -2092,20 +2108,23 @@ function Cockpit({ view }: { view: View }) {
                         ["flagged", "Off-KPI accounts flagged to the CSM"],
                         ["videoRequests", "Video requests / briefs submitted"],
                         ["creativesUploaded", "Approved creatives uploaded"],
-                        ["launchedPaused", "Creatives launched or paused today"],
+                        [
+                          "launchedPaused",
+                          "Creatives launched or paused today",
+                        ],
                       ].map(([k, label]) => (
                         <div
                           key={k}
                           className="flex items-center justify-between gap-3 border-b pb-1.5 last:border-0"
                         >
-                          <span className="text-[12px]">{label}</span>
+                          <span className="text-[13px]">{label}</span>
                           <div className="flex flex-none gap-1">
                             {["Yes", "No"].map(opt => (
                               <button
                                 key={opt}
                                 type="button"
                                 onClick={() => setEod(k, opt)}
-                                className={`rounded-md border px-2.5 py-1 text-[11.5px] font-semibold ${eodForm[k] === opt ? "border-primary bg-primary text-primary-foreground" : "text-muted-foreground"}`}
+                                className={`rounded-md border px-2.5 py-1 text-[12px] font-semibold ${eodForm[k] === opt ? "border-primary bg-primary text-primary-foreground" : "text-muted-foreground"}`}
                               >
                                 {opt}
                               </button>
@@ -2117,10 +2136,10 @@ function Cockpit({ view }: { view: View }) {
                   </div>
 
                   <div>
-                    <div className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+                    <div className="text-[12px] font-bold uppercase tracking-widest text-muted-foreground">
                       Today's numbers — already filled in
                     </div>
-                    <div className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-1 text-[12px] sm:grid-cols-3">
+                    <div className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-1 text-[13px] sm:grid-cols-3">
                       <div>
                         Spend{" "}
                         <span className="font-semibold">
@@ -2157,7 +2176,7 @@ function Cockpit({ view }: { view: View }) {
                       </div>
                     </div>
                     {eodNumbers.through && (
-                      <div className="mt-1 text-[11px] text-muted-foreground">
+                      <div className="mt-1 text-[12px] text-muted-foreground">
                         Figures are for {eodNumbers.through} — the last day Meta
                         has reported.
                       </div>
@@ -2166,19 +2185,19 @@ function Cockpit({ view }: { view: View }) {
 
                   <div className="space-y-2">
                     <Textarea
-                      className="min-h-[70px] text-[12px]"
+                      className="min-h-[70px] text-[13px]"
                       placeholder="Account summary — what you actually did today."
                       value={eodForm.accountSummary}
                       onChange={e => setEod("accountSummary", e.target.value)}
                     />
                     <Textarea
-                      className="min-h-[50px] text-[12px]"
+                      className="min-h-[50px] text-[13px]"
                       placeholder="Clients out of KPI and what you're doing about it."
                       value={eodForm.outOfKpi}
                       onChange={e => setEod("outOfKpi", e.target.value)}
                     />
                     <Textarea
-                      className="min-h-[50px] text-[12px]"
+                      className="min-h-[50px] text-[13px]"
                       placeholder="One thing that would make us 1% better — to add or to remove."
                       value={onePercent}
                       onChange={e => setOnePercent(e.target.value)}
@@ -2218,7 +2237,7 @@ function Cockpit({ view }: { view: View }) {
                     {eodSent ? "Submitted" : "Submit my EOD"}
                   </Button>
                 </div>
-                <p className="mt-2 text-[11px] text-muted-foreground">
+                <p className="mt-2 text-[12px] text-muted-foreground">
                   This replaces the form. Submitting posts it to #media-eods and
                   appends the row to the EOD Reports sheet, exactly as before.
                 </p>
@@ -2228,10 +2247,10 @@ function Cockpit({ view }: { view: View }) {
             {view === "eod" && (
               <section className="rounded-xl border bg-card p-4 shadow-sm">
                 <div className="mb-2 flex items-baseline justify-between">
-                  <h2 className="text-[11px] font-bold uppercase tracking-widest text-teal-600">
+                  <h2 className="text-[12px] font-bold uppercase tracking-widest text-teal-600">
                     Plan tomorrow today
                   </h2>
-                  <span className="text-[11px] text-muted-foreground">
+                  <span className="text-[12px] text-muted-foreground">
                     this is also your EOD
                   </span>
                 </div>
@@ -2248,7 +2267,7 @@ function Cockpit({ view }: { view: View }) {
                   onChange={e => setDump(e.target.value)}
                   rows={6}
                   placeholder="One line per thing. Arabic or English."
-                  className="text-[12.5px]"
+                  className="text-[13px]"
                 />
                 <Button size="sm" className="mt-2 w-full" onClick={submitPlan}>
                   Turn into tasks for tomorrow
@@ -2258,10 +2277,10 @@ function Cockpit({ view }: { view: View }) {
                     (p: { _id: string; text: string; listName?: string }) => (
                       <div
                         key={p._id}
-                        className="flex justify-between gap-3 border-b pb-1.5 text-[12px] last:border-0"
+                        className="flex justify-between gap-3 border-b pb-1.5 text-[13px] last:border-0"
                       >
                         <span>{p.text}</span>
-                        <span className="whitespace-nowrap text-[11px] text-muted-foreground">
+                        <span className="whitespace-nowrap text-[12px] text-muted-foreground">
                           {p.listName} · tomorrow
                         </span>
                       </div>
@@ -2273,11 +2292,11 @@ function Cockpit({ view }: { view: View }) {
 
             {view !== "sod" && (
               <section className="rounded-xl border bg-card p-4 shadow-sm">
-                <h2 className="mb-2 text-[11px] font-bold uppercase tracking-widest text-teal-600">
+                <h2 className="mb-2 text-[12px] font-bold uppercase tracking-widest text-teal-600">
                   Change log · written to ClickUp
                 </h2>
                 {snap.decisions.length === 0 ? (
-                  <p className="text-[12px] text-muted-foreground">
+                  <p className="text-[13px] text-muted-foreground">
                     Nothing yet. Every decision you take here is posted as a
                     comment on that client's campaign task in ClickUp, with the
                     numbers behind it — so the CSM walks into a check-in call
@@ -2296,7 +2315,7 @@ function Cockpit({ view }: { view: View }) {
                     }) => (
                       <div
                         key={d._id}
-                        className="border-b py-1.5 text-[12px] last:border-0"
+                        className="border-b py-1.5 text-[13px] last:border-0"
                       >
                         <span className="font-semibold">{d.subject}</span> —{" "}
                         {d.action}
@@ -2306,7 +2325,7 @@ function Cockpit({ view }: { view: View }) {
                             · {d.reason}
                           </span>
                         ) : null}
-                        <div className="mt-0.5 text-[11px]">
+                        <div className="mt-0.5 text-[12px]">
                           {d.logError ? (
                             <span className="text-destructive">
                               Not logged to ClickUp — {d.logError}
@@ -2353,8 +2372,8 @@ function Cockpit({ view }: { view: View }) {
           <div className="w-[330px] rounded-xl border bg-card shadow-xl">
             <div className="flex items-center justify-between border-b px-3 py-2">
               <div>
-                <div className="text-[12px] font-bold">Ask Viktor</div>
-                <div className="text-[10.5px] text-muted-foreground">
+                <div className="text-[13px] font-bold">Ask Viktor</div>
+                <div className="text-[11px] text-muted-foreground">
                   A question, or something here looks wrong
                 </div>
               </div>
@@ -2369,19 +2388,19 @@ function Cockpit({ view }: { view: View }) {
             <div className="max-h-56 space-y-2 overflow-y-auto px-3 py-2">
               {/* biome-ignore lint/suspicious/noExplicitAny: feedback row */}
               {((snap.feedback ?? []) as any[]).length === 0 ? (
-                <p className="text-[11.5px] text-muted-foreground">
-                  Tell me if a number looks off, a client is missing, or you want
-                  something on this screen changed. It reaches me directly and I
-                  reply in Slack.
+                <p className="text-[12px] text-muted-foreground">
+                  Tell me if a number looks off, a client is missing, or you
+                  want something on this screen changed. It reaches me directly
+                  and I reply in Slack.
                 </p>
               ) : (
                 // biome-ignore lint/suspicious/noExplicitAny: feedback row
                 ((snap.feedback ?? []) as any[]).map(f => (
-                  <div key={f._id} className="text-[11.5px]">
+                  <div key={f._id} className="text-[12px]">
                     <div className="rounded-lg bg-muted px-2.5 py-1.5">
                       {f.text}
                     </div>
-                    <div className="mt-0.5 text-[10px] text-muted-foreground">
+                    <div className="mt-0.5 text-[11px] text-muted-foreground">
                       {f.page} ·{" "}
                       {new Date(f.at).toLocaleTimeString("en-GB", {
                         hour: "2-digit",
@@ -2404,7 +2423,7 @@ function Cockpit({ view }: { view: View }) {
                 onChange={e => setChatText(e.target.value)}
                 rows={2}
                 placeholder="e.g. Liwan's spend looks too low, can you check?"
-                className="w-full resize-none rounded-md border bg-background p-2 text-[12px]"
+                className="w-full resize-none rounded-md border bg-background p-2 text-[13px]"
               />
               <Button
                 size="sm"
@@ -2427,7 +2446,7 @@ function Cockpit({ view }: { view: View }) {
           <button
             type="button"
             onClick={() => setChatOpen(true)}
-            className="rounded-full bg-primary px-4 py-3 text-[12px] font-semibold text-primary-foreground shadow-xl"
+            className="rounded-full bg-primary px-4 py-3 text-[13px] font-semibold text-primary-foreground shadow-xl"
           >
             Ask Viktor
           </button>

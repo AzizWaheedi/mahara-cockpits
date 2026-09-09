@@ -1,87 +1,25 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import type { ReactNode } from "react";
+import { useTheme as useAppTheme } from "@/lib/theme";
 
-type Theme = "light" | "dark";
-
-interface ThemeContextType {
-  theme: Theme;
-  toggleTheme?: () => void;
-  switchable: boolean;
-}
-
-const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
-
-function getSystemTheme(): Theme {
-  if (typeof window !== "undefined" && window.matchMedia) {
-    return window.matchMedia("(prefers-color-scheme: dark)").matches
-      ? "dark"
-      : "light";
-  }
-  return "light";
-}
-
-interface ThemeProviderProps {
-  children: React.ReactNode;
-  defaultTheme?: Theme | "system";
-  switchable?: boolean;
-}
-
+/**
+ * Thin adapter over the one real theme provider in `lib/theme.tsx`.
+ *
+ * The template shipped two providers (this one and lib/theme) that both
+ * toggled the `dark` class from different localStorage keys, so the sidebar
+ * toggle and the header toggle fought each other. Everything now reads the
+ * same source; this file only keeps the older call sites compiling.
+ */
 export function ThemeProvider({
   children,
-  defaultTheme = "system",
-  switchable = false,
-}: ThemeProviderProps) {
-  const [theme, setTheme] = useState<Theme>(() => {
-    if (switchable) {
-      const stored = localStorage.getItem("theme");
-      if (stored === "light" || stored === "dark") {
-        return stored;
-      }
-    }
-    return defaultTheme === "system" ? getSystemTheme() : defaultTheme;
-  });
-
-  useEffect(() => {
-    const root = document.documentElement;
-    if (theme === "dark") {
-      root.classList.add("dark");
-    } else {
-      root.classList.remove("dark");
-    }
-
-    if (switchable) {
-      localStorage.setItem("theme", theme);
-    }
-  }, [theme, switchable]);
-
-  useEffect(() => {
-    if (defaultTheme !== "system" || switchable) return;
-
-    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    const handleChange = (e: MediaQueryListEvent) => {
-      setTheme(e.matches ? "dark" : "light");
-    };
-
-    mediaQuery.addEventListener("change", handleChange);
-    return () => mediaQuery.removeEventListener("change", handleChange);
-  }, [defaultTheme, switchable]);
-
-  const toggleTheme = switchable
-    ? () => {
-        setTheme(prev => (prev === "light" ? "dark" : "light"));
-      }
-    : undefined;
-
-  return (
-    <ThemeContext.Provider value={{ theme, toggleTheme, switchable }}>
-      {children}
-    </ThemeContext.Provider>
-  );
+}: {
+  children: ReactNode;
+  defaultTheme?: "light" | "dark" | "system";
+  switchable?: boolean;
+}) {
+  return <>{children}</>;
 }
 
 export function useTheme() {
-  const context = useContext(ThemeContext);
-  if (!context) {
-    throw new Error("useTheme must be used within ThemeProvider");
-  }
-  return context;
+  const { theme, toggle } = useAppTheme();
+  return { theme, toggleTheme: toggle, switchable: true };
 }

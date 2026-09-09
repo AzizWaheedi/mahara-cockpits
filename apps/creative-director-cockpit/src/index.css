@@ -1,9 +1,17 @@
+/* Geist for everything, Geist Mono for numbers and labels (brand guidelines §3). */
+@import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap");
 @import "tailwindcss";
 @import "tw-animate-css";
 
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
+  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* Brand palette (brand guidelines §2). Teal is an accent, never a large fill. */
+  --color-mahara-teal: var(--mahara-teal);
+  --color-deep-space: var(--deep-space);
+  --color-royal-blue: var(--royal-blue);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -52,92 +60,105 @@
   --sidebar-width: 16rem;
   --sidebar-width-icon: 3rem;
 
-  --primary: var(--color-slate-900);
-  --primary-foreground: var(--color-white);
-  --sidebar-primary: var(--color-slate-900);
-  --sidebar-primary-foreground: var(--color-slate-50);
+  --mahara-teal: #00cfc8;
+  --deep-space: #091333;
+  --royal-blue: #2e5bd6;
+
+  /* Teal as the primary action colour, Deep Space text on it for contrast. */
+  --primary: var(--mahara-teal);
+  --primary-foreground: var(--deep-space);
+  --sidebar-primary: var(--mahara-teal);
+  --sidebar-primary-foreground: var(--deep-space);
 
   --success: var(--color-emerald-600);
   --success-foreground: var(--color-white);
-  --warning: var(--color-amber-500);
-  --warning-foreground: var(--color-amber-950);
-  --info: var(--color-cyan-500);
+  /* Orange, not amber: gold belongs to no Mahara asset. */
+  --warning: var(--color-orange-500);
+  --warning-foreground: var(--color-orange-950);
+  --info: var(--royal-blue);
   --info-foreground: var(--color-white);
 
-  --chart-1: var(--color-teal-500);
-  --chart-2: var(--color-orange-500);
-  --chart-3: var(--color-cyan-500);
+  --chart-1: var(--mahara-teal);
+  --chart-2: var(--royal-blue);
+  --chart-3: var(--color-slate-400);
   --chart-4: var(--color-rose-500);
   --chart-5: var(--color-lime-500);
 
-  --radius: 0.625rem;
-  --background: oklch(0.985 0 0);
-  --foreground: oklch(0.15 0.01 260);
+  /* Corner radius md = 12px; cards get 16px (brand §4). */
+  --radius: 0.75rem;
+  --background: oklch(0.985 0.003 250);
+  --foreground: oklch(0.2 0.045 270);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.15 0.01 260);
+  --card-foreground: oklch(0.2 0.045 270);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.15 0.01 260);
-  --secondary: oklch(0.96 0.005 260);
-  --secondary-foreground: oklch(0.3 0.01 260);
-  --muted: oklch(0.96 0.005 260);
-  --muted-foreground: oklch(0.45 0.015 260);
-  --accent: oklch(0.96 0.005 260);
-  --accent-foreground: oklch(0.15 0.01 260);
+  --popover-foreground: oklch(0.2 0.045 270);
+  --secondary: oklch(0.96 0.008 250);
+  --secondary-foreground: oklch(0.3 0.03 270);
+  --muted: oklch(0.96 0.008 250);
+  --muted-foreground: oklch(0.48 0.02 265);
+  --accent: oklch(0.95 0.02 195);
+  --accent-foreground: oklch(0.2 0.045 270);
   --destructive: oklch(0.55 0.22 25);
   --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(0.92 0.005 260);
-  --input: oklch(0.92 0.005 260);
-  --ring: oklch(0.3 0.02 260);
-  --sidebar: oklch(0.98 0 0);
-  --sidebar-foreground: oklch(0.15 0.01 260);
-  --sidebar-accent: oklch(0.96 0.005 260);
-  --sidebar-accent-foreground: oklch(0.15 0.01 260);
-  --sidebar-border: oklch(0.92 0.005 260);
-  --sidebar-ring: oklch(0.3 0.02 260);
+  --border: oklch(0.91 0.008 250);
+  --input: oklch(0.91 0.008 250);
+  --ring: var(--mahara-teal);
+  --sidebar: oklch(0.975 0.004 250);
+  --sidebar-foreground: oklch(0.2 0.045 270);
+  --sidebar-accent: oklch(0.94 0.02 195);
+  --sidebar-accent-foreground: oklch(0.2 0.045 270);
+  --sidebar-border: oklch(0.91 0.008 250);
+  --sidebar-ring: var(--mahara-teal);
+
+  /* Section-label teal that still passes contrast on white. */
+  --color-teal-600: #0a9e98;
 }
 
 .dark {
-  --primary: var(--color-white);
-  --primary-foreground: var(--color-slate-900);
-  --sidebar-primary: var(--color-white);
-  --sidebar-primary-foreground: var(--color-slate-900);
+  --primary: var(--mahara-teal);
+  --primary-foreground: var(--deep-space);
+  --sidebar-primary: var(--mahara-teal);
+  --sidebar-primary-foreground: var(--deep-space);
 
   --success: var(--color-emerald-400);
   --success-foreground: var(--color-emerald-950);
-  --warning: var(--color-amber-400);
-  --warning-foreground: var(--color-amber-950);
-  --info: var(--color-cyan-400);
-  --info-foreground: var(--color-cyan-950);
+  --warning: var(--color-orange-400);
+  --warning-foreground: var(--color-orange-950);
+  --info: #6f8fe8;
+  --info-foreground: var(--deep-space);
 
-  --chart-1: var(--color-teal-400);
-  --chart-2: var(--color-orange-400);
-  --chart-3: var(--color-cyan-400);
+  --chart-1: var(--mahara-teal);
+  --chart-2: #6f8fe8;
+  --chart-3: var(--color-slate-400);
   --chart-4: var(--color-rose-400);
   --chart-5: var(--color-lime-400);
 
-  --background: oklch(0.12 0.01 260);
-  --foreground: oklch(0.95 0.005 260);
-  --card: oklch(0.16 0.01 260);
-  --card-foreground: oklch(0.95 0.005 260);
-  --popover: oklch(0.16 0.01 260);
-  --popover-foreground: oklch(0.95 0.005 260);
-  --secondary: oklch(0.22 0.01 260);
-  --secondary-foreground: oklch(0.9 0.005 260);
-  --muted: oklch(0.22 0.01 260);
-  --muted-foreground: oklch(0.6 0.01 260);
-  --accent: oklch(0.22 0.01 260);
-  --accent-foreground: oklch(0.95 0.005 260);
-  --destructive: oklch(0.6 0.2 25);
+  /* Deep Space #091333 is the canvas; cards sit one step lighter. */
+  --background: #091333;
+  --foreground: oklch(0.95 0.008 250);
+  --card: #0f1b45;
+  --card-foreground: oklch(0.95 0.008 250);
+  --popover: #0f1b45;
+  --popover-foreground: oklch(0.95 0.008 250);
+  --secondary: oklch(1 0 0 / 8%);
+  --secondary-foreground: oklch(0.92 0.008 250);
+  --muted: oklch(1 0 0 / 7%);
+  --muted-foreground: oklch(0.68 0.015 250);
+  --accent: color-mix(in oklch, var(--mahara-teal) 14%, transparent);
+  --accent-foreground: oklch(0.95 0.008 250);
+  --destructive: oklch(0.65 0.2 25);
   --destructive-foreground: oklch(0.985 0 0);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 12%);
-  --ring: oklch(0.9 0.01 260);
-  --sidebar: oklch(0.14 0.01 260);
-  --sidebar-foreground: oklch(0.95 0.005 260);
-  --sidebar-accent: oklch(0.22 0.01 260);
-  --sidebar-accent-foreground: oklch(0.95 0.005 260);
+  --ring: var(--mahara-teal);
+  --sidebar: #070f2a;
+  --sidebar-foreground: oklch(0.95 0.008 250);
+  --sidebar-accent: color-mix(in oklch, var(--mahara-teal) 14%, transparent);
+  --sidebar-accent-foreground: oklch(0.97 0.008 250);
   --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.9 0.01 260);
+  --sidebar-ring: var(--mahara-teal);
+
+  --color-teal-600: var(--mahara-teal);
 }
 
 @layer base {
@@ -145,7 +166,14 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "ss01", "cv11";
+  }
+  h1, h2, h3 {
+    letter-spacing: -0.015em;
+  }
+  .tabular-nums, [data-mono] {
+    font-variant-numeric: tabular-nums;
   }
   button:not(:disabled),
   [role="button"]:not([aria-disabled="true"]),
@@ -219,6 +247,16 @@
   }
   .txt-warn {
     color: color-mix(in oklch, var(--warning) 85%, var(--foreground));
+  }
+  /* Signature elevation on dark surfaces (brand §4). Use sparingly. */
+  .glow-teal {
+    box-shadow:
+      0 0 0 1px color-mix(in oklch, var(--mahara-teal) 45%, transparent),
+      0 8px 28px -10px color-mix(in oklch, var(--mahara-teal) 55%, transparent);
+  }
+  /* Mahara gradient: 135°, Royal Blue → Teal (brand §2). For rings and hairlines. */
+  .bg-mahara-gradient {
+    background-image: linear-gradient(135deg, var(--royal-blue) 0%, var(--mahara-teal) 65%, var(--mahara-teal) 100%);
   }
   /* Callout panel: amber "read this" strip that survives dark mode. */
   .callout-warn {

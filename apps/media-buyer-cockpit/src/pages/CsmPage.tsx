@@ -279,12 +279,12 @@ function TouchpointRow({
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-semibold">{c.name}</span>
             <span
-              className={`rounded px-1.5 py-0.5 text-[11px] ${CHIP[c.level]}`}
+              className={`rounded px-1.5 py-0.5 text-[12px] ${CHIP[c.level]}`}
             >
               {c.stage}
             </span>
             {c.defcon && (
-              <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">
+              <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[12px] text-slate-600">
                 {c.defcon}
               </span>
             )}
@@ -522,17 +522,17 @@ export function CsmPage() {
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-semibold">{c.name}</span>
               <span
-                className={`rounded px-1.5 py-0.5 text-[11px] ${CHIP[c.level]}`}
+                className={`rounded px-1.5 py-0.5 text-[12px] ${CHIP[c.level]}`}
               >
                 {c.stage}
               </span>
               {c.happiness && (
-                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">
+                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[12px] text-slate-600">
                   {c.happiness}
                 </span>
               )}
               {handled && (
-                <span className="text-[11px] text-emerald-700">
+                <span className="text-[12px] text-emerald-700">
                   ✓ handled today
                 </span>
               )}
@@ -786,7 +786,7 @@ export function CsmPage() {
                           Sent it, not booked yet
                         </Button>
                       </div>
-                      <p className="text-[11px] text-muted-foreground">
+                      <p className="text-[12px] text-muted-foreground">
                         Viktor drafts, you send. Nothing goes to the client from
                         here.
                       </p>
@@ -974,7 +974,7 @@ export function CsmPage() {
                 onClick={() => toggleCheck({ id: c._id as Id<"checks"> })}
               >
                 <span
-                  className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px] ${c.done ? "bg-emerald-600 text-white" : ""}`}
+                  className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[11px] ${c.done ? "bg-emerald-600 text-white" : ""}`}
                 >
                   {c.done ? "✓" : ""}
                 </span>

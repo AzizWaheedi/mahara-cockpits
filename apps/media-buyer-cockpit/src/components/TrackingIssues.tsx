@@ -1,7 +1,7 @@
 import { useQuery } from "convex/react";
 import { useState } from "react";
-import { api } from "../../convex/_generated/api";
 import { Button } from "@/components/ui/button";
+import { api } from "../../convex/_generated/api";
 
 /**
  * Tracking faults on live ads, checked against Meta directly.
@@ -20,10 +20,10 @@ export function TrackingIssues() {
     <section className="mb-4 rounded-xl border p-3 callout-warn">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <div className="text-[11px] font-bold uppercase tracking-wide">
+          <div className="text-[12px] font-bold uppercase tracking-wide">
             Tracking
           </div>
-          <p className="text-[12.5px]">
+          <p className="text-[13px]">
             {total} tracking gap{total === 1 ? "" : "s"} across {rows.length}{" "}
             client{rows.length === 1 ? "" : "s"} — mostly missing UTM strings,
             which the buildout checklist requires on every ad.
@@ -32,7 +32,7 @@ export function TrackingIssues() {
         <Button
           size="sm"
           variant="outline"
-          className="h-7 text-[11.5px]"
+          className="h-7 text-[12px]"
           onClick={() => setOpen(!open)}
         >
           {open ? "Hide" : "Show"}
@@ -43,13 +43,13 @@ export function TrackingIssues() {
         <div className="mt-2.5 space-y-1.5">
           {rows.map(r => (
             <div key={r.client} className="rounded border bg-background p-2">
-              <div className="text-[12.5px] font-semibold">
+              <div className="text-[13px] font-semibold">
                 {r.client}{" "}
                 <span className="font-normal text-muted-foreground">
                   · {r.count}
                 </span>
               </div>
-              <div className="mt-0.5 text-[11.5px] text-muted-foreground">
+              <div className="mt-0.5 text-[12px] text-muted-foreground">
                 {[...new Set(r.ads.map(a => a.issue))].join(" · ")}
               </div>
             </div>

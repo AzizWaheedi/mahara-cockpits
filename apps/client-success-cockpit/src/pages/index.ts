@@ -1,3 +1,4 @@
+export { ClientPerformancePage } from "./ClientPerformancePage";
 export {
   ClientsPage,
   EndOfDayPage,
@@ -7,7 +8,6 @@ export {
   StartOfDayPage,
   TaskListPage,
 } from "./CsmPage";
-export { ClientPerformancePage } from "./ClientPerformancePage";
 export { DashboardPage } from "./DashboardPage";
 export { LandingPage } from "./LandingPage";
 export { LoginPage } from "./LoginPage";

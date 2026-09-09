@@ -23,8 +23,7 @@ export function SyncStrip() {
     }),
   );
   const workingHours = hour >= 7 && hour < 21;
-  const stale =
-    ageMin === null || (workingHours && ageMin > STALE_MINUTES);
+  const stale = ageMin === null || (workingHours && ageMin > STALE_MINUTES);
   if (s.ok && !stale) return null;
 
   const when = at

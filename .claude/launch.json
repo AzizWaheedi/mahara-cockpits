@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "media-buyer",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": ["run", "--cwd", "apps/media-buyer-cockpit", "dev", "--", "--port", "5173"],
+      "port": 5173
+    },
+    {
+      "name": "client-success",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": ["run", "--cwd", "apps/client-success-cockpit", "dev", "--", "--port", "5174"],
+      "port": 5174
+    },
+    {
+      "name": "creative-director",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": ["run", "--cwd", "apps/creative-director-cockpit", "dev", "--", "--port", "5175"],
+      "port": 5175
+    }
+  ]
+}

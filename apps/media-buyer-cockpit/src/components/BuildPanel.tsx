@@ -1,17 +1,17 @@
 import { useMutation, useQuery } from "convex/react";
 import { useState } from "react";
 import { toast } from "sonner";
+import {
+  ALWAYS,
+  ageLine,
+  recommendAdSets,
+  SERVICE_LINES,
+  type ServiceLine,
+} from "@/lib/audiences";
 import { api } from "../../convex/_generated/api";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
-import {
-  ALWAYS,
-  SERVICE_LINES,
-  type ServiceLine,
-  recommendAdSets,
-  ageLine,
-} from "@/lib/audiences";
 
 /** Ad accounts our Meta connection can write to. The rest need partner access. */
 const WRITABLE = new Set([
@@ -83,10 +83,10 @@ export function BuildPanel({
 
   return (
     <div className="mt-4 rounded-md border border-dashed border-border p-3">
-      <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+      <div className="mb-1 text-[12px] font-bold uppercase tracking-wide text-muted-foreground">
         Build me a campaign
       </div>
-      <p className="mb-2 text-[11px] text-muted-foreground">
+      <p className="mb-2 text-[12px] text-muted-foreground">
         Give me the creative and a line about what you want. I copy the
         targeting, pixel and lead form off this client's cheapest ad set, write
         the copy, and build it <span className="font-semibold">paused</span> —
@@ -94,10 +94,10 @@ export function BuildPanel({
       </p>
 
       {!writable && (
-        <p className="mb-2 rounded callout-warn p-2 text-[11px]">
-          I can build it and show you every word, but I cannot create anything in
-          this ad account until Mahara is added as a partner on it. The Launch
-          button stays off until then.
+        <p className="mb-2 rounded callout-warn p-2 text-[12px]">
+          I can build it and show you every word, but I cannot create anything
+          in this ad account until Mahara is added as a partner on it. The
+          Launch button stays off until then.
         </p>
       )}
 
@@ -125,28 +125,28 @@ export function BuildPanel({
             value={brief}
             onChange={e => setBrief(e.target.value)}
             placeholder="What is this campaign for? e.g. new villa fit-out offer, same audience as the last one, push the free consultation."
-            className="min-h-[64px] text-[12px]"
+            className="min-h-[64px] text-[13px]"
           />
           <Textarea
             value={links}
             onChange={e => setLinks(e.target.value)}
             placeholder="Creative — paste Drive links, one per line. Or leave blank and tell me which existing ad to reuse."
-            className="min-h-[52px] text-[12px]"
+            className="min-h-[52px] text-[13px]"
           />
           <Textarea
             value={contextDocs}
             onChange={e => setContextDocs(e.target.value)}
             placeholder="Brand DNA / offer creation cheat sheet — paste it or drop the link. I'll write the offer from this instead of inventing one."
-            className="min-h-[52px] text-[12px]"
+            className="min-h-[52px] text-[13px]"
           />
           <div>
-            <div className="mb-1 text-[11px] text-muted-foreground">
+            <div className="mb-1 text-[12px] text-muted-foreground">
               What does this client sell? I build the audiences from it.
             </div>
             <select
               value={line}
               onChange={e => setLine(e.target.value as ServiceLine)}
-              className="h-8 w-full rounded-md border bg-background px-2 text-[12px]"
+              className="h-8 w-full rounded-md border bg-background px-2 text-[13px]"
             >
               <option value="">Choose one…</option>
               {SERVICE_LINES.map(s => (
@@ -161,7 +161,7 @@ export function BuildPanel({
                 value={otherService}
                 onChange={e => setOtherService(e.target.value)}
                 placeholder="What do they sell? e.g. smart home automation"
-                className="mt-1.5 h-8 text-[12px]"
+                className="mt-1.5 h-8 text-[13px]"
               />
             )}
             <ProvenPlays clientName={clientName} onUse={t => setTargeting(t)} />
@@ -175,13 +175,13 @@ export function BuildPanel({
             )}
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-[11px] text-muted-foreground">
+            <span className="text-[12px] text-muted-foreground">
               Daily budget $
             </span>
             <Input
               value={budget}
               onChange={e => setBudget(e.target.value)}
-              className="h-8 w-20 text-[12px]"
+              className="h-8 w-20 text-[13px]"
             />
             <Button
               size="sm"
@@ -236,18 +236,18 @@ export function BuildPanel({
       {latest && (
         <div className="mt-3 rounded-lg border bg-background p-3">
           {latest.status === "building" && (
-            <p className="text-[12px] text-muted-foreground">
+            <p className="text-[13px] text-muted-foreground">
               Working on it — reading this account's best ad set, then writing
               the copy.
             </p>
           )}
           {latest.status === "failed" && (
-            <p className="text-[12px] text-red-700">
+            <p className="text-[13px] text-red-700">
               That did not work: {latest.error}
             </p>
           )}
           {latest.status === "launched" && (
-            <p className="text-[12px] text-emerald-800">
+            <p className="text-[13px] text-emerald-800">
               Built and <span className="font-semibold">paused</span> on Meta.{" "}
               {latest.note} Logged on the ClickUp task.
             </p>
@@ -292,38 +292,38 @@ function AudiencePlan({
   const rec = recommendAdSets(budget, line);
   return (
     <div className="mt-2 space-y-1.5 rounded-md bg-muted/40 p-2">
-      <div className="text-[10.5px] font-bold uppercase tracking-wide text-muted-foreground">
+      <div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
         What I'd do here — change anything
       </div>
-      <p className="text-[11px] text-muted-foreground">{rec.why}</p>
+      <p className="text-[12px] text-muted-foreground">{rec.why}</p>
       {rec.sets.map((a, i) => (
-        <div key={a.name} className="text-[11.5px]">
+        <div key={a.name} className="text-[12px]">
           <span className="font-semibold">
             {i + 1}. {a.name}
           </span>{" "}
           — {a.what}
-          <div className="text-[10.5px] text-muted-foreground">{a.detail}</div>
+          <div className="text-[11px] text-muted-foreground">{a.detail}</div>
         </div>
       ))}
-      <div className="pt-1 text-[10.5px] text-muted-foreground">
+      <div className="pt-1 text-[11px] text-muted-foreground">
         {ageLine(line)}
       </div>
       {ALWAYS.map(a => (
-        <div key={a} className="text-[10.5px] text-muted-foreground">
+        <div key={a} className="text-[11px] text-muted-foreground">
           {a}
         </div>
       ))}
       <div className="pt-1">
-        <div className="mb-1 text-[10.5px] font-bold uppercase tracking-wide text-muted-foreground">
+        <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
           Or just tell me the targeting you want
         </div>
         <Textarea
           value={targeting}
           onChange={e => onTargeting(e.target.value)}
           placeholder="e.g. one ad set, broad, Kuwait City 20km, 30–55, exclude last 180 days. Or: same targeting as the Liwan campaign but women only."
-          className="min-h-[52px] text-[12px]"
+          className="min-h-[52px] text-[13px]"
         />
-        <p className="mt-1 text-[10.5px] text-muted-foreground">
+        <p className="mt-1 text-[11px] text-muted-foreground">
           Whatever you write here wins over what I suggested above.
         </p>
       </div>
@@ -363,7 +363,7 @@ function WinnersStrip({
     <div className="mb-3 space-y-2">
       {groups.map(g => (
         <div key={g.label}>
-          <div className="mb-1 text-[10.5px] font-bold uppercase tracking-wide text-muted-foreground">
+          <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
             {g.label}
           </div>
           <div className="flex gap-2 overflow-x-auto pb-1">
@@ -381,13 +381,13 @@ function WinnersStrip({
                     className="mb-1 h-[70px] w-full rounded object-cover"
                   />
                 )}
-                <div className="truncate text-[11px] font-semibold">
+                <div className="truncate text-[12px] font-semibold">
                   {w.adName}
                 </div>
-                <div className="truncate text-[10.5px] text-muted-foreground">
+                <div className="truncate text-[11px] text-muted-foreground">
                   {w.clientName}
                 </div>
-                <div className="mt-0.5 text-[10.5px]">
+                <div className="mt-0.5 text-[11px]">
                   <span className="font-semibold txt-good">
                     ${(w.cpl ?? 0).toFixed(2)}
                   </span>{" "}
@@ -396,7 +396,7 @@ function WinnersStrip({
                     ? ` · $${Math.round(w.costPerBooking)} a booking`
                     : ""}
                 </div>
-                <div className="text-[10px] text-muted-foreground">
+                <div className="text-[11px] text-muted-foreground">
                   {w.leads} leads on ${Math.round(w.spend)}
                 </div>
               </button>
@@ -404,7 +404,7 @@ function WinnersStrip({
           </div>
         </div>
       ))}
-      <p className="text-[10.5px] text-muted-foreground">
+      <p className="text-[11px] text-muted-foreground">
         Click one to start from it. It goes into the brief as a starting angle —
         the copy still gets written for this client's own offer.
       </p>
@@ -438,9 +438,7 @@ function ReadyBuild({
 
   return (
     <div className="space-y-3">
-      <p className="text-[11.5px] text-muted-foreground">
-        {build.sourceReason}
-      </p>
+      <p className="text-[12px] text-muted-foreground">{build.sourceReason}</p>
       <div className="space-y-2">
         {variants.map((v, i) => {
           const rtl = isArabic(v.primaryText || v.headline);
@@ -449,19 +447,19 @@ function ReadyBuild({
               key={`${build._id}-${i}`}
               className="rounded-md border bg-muted/30 p-2"
             >
-              <div className="mb-1 text-[10.5px] font-bold uppercase tracking-wide text-muted-foreground">
+              <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
                 Angle {i + 1}
               </div>
               <Input
                 value={v.headline}
                 dir={rtl ? "rtl" : "ltr"}
-                className="mb-1 h-8 text-[12px] font-semibold"
+                className="mb-1 h-8 text-[13px] font-semibold"
                 onChange={e => edit(i, { headline: e.target.value })}
               />
               <Textarea
                 value={v.primaryText}
                 dir={rtl ? "rtl" : "ltr"}
-                className="min-h-[64px] text-[12px]"
+                className="min-h-[64px] text-[13px]"
                 onChange={e => edit(i, { primaryText: e.target.value })}
               />
             </div>
@@ -504,7 +502,6 @@ function ReadyBuild({
   );
 }
 
-
 /**
  * What has worked for this client's service line in other cities.
  *
@@ -524,7 +521,7 @@ function ProvenPlays({
 
   return (
     <div className="rounded-md border bg-muted/30 p-2">
-      <div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+      <div className="text-[12px] font-bold uppercase tracking-wide text-muted-foreground">
         Worked elsewhere for {info.serviceLine?.toLowerCase()} — not tried here
       </div>
       <div className="mt-1.5 space-y-1.5">
@@ -533,7 +530,7 @@ function ProvenPlays({
             key={`${s.city}${s.playType}${s.interests.join()}`}
             className="flex flex-wrap items-center justify-between gap-2 rounded border bg-background p-1.5"
           >
-            <div className="min-w-0 text-[12px]">
+            <div className="min-w-0 text-[13px]">
               <span className="font-semibold capitalize">{s.playType}</span>
               {s.interests.length > 0 && (
                 <span className="text-muted-foreground">
@@ -541,7 +538,7 @@ function ProvenPlays({
                   — {s.interests.slice(0, 3).join(", ")}
                 </span>
               )}
-              <span className="block text-[11px] text-muted-foreground">
+              <span className="block text-[12px] text-muted-foreground">
                 {s.city} · <span className="txt-good">${s.cpl}</span> a lead
                 {s.clients > 1 ? ` · ${s.clients} clients` : ""}
               </span>
@@ -549,7 +546,7 @@ function ProvenPlays({
             <Button
               size="sm"
               variant="outline"
-              className="h-6 px-2 text-[11px]"
+              className="h-6 px-2 text-[12px]"
               onClick={() =>
                 onUse(
                   s.interests.length

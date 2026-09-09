@@ -11,11 +11,11 @@ import {
 import { useState } from "react";
 import { Link, useParams } from "react-router";
 import { CreativePreview } from "@/components/CreativePreview";
-import { FunnelRow } from "@/pages/FunnelsPage";
 import { TemplateCard } from "@/components/TemplateCard";
-import { CopyButton, WinningAds } from "@/components/WinningAds";
 import { Button } from "@/components/ui/button";
+import { CopyButton, WinningAds } from "@/components/WinningAds";
 import { TEMPLATES } from "@/lib/creativeTemplates";
+import { FunnelRow } from "@/pages/FunnelsPage";
 import { api } from "../../convex/_generated/api";
 
 /**
@@ -63,7 +63,7 @@ function Pill({
 }) {
   return (
     <span
-      className={`tone-${tone} rounded-full px-2 py-0.5 text-[10.5px] font-medium`}
+      className={`tone-${tone} rounded-full px-2 py-0.5 text-[11px] font-medium`}
     >
       {children}
     </span>
@@ -81,7 +81,7 @@ function DocCard({
 }) {
   if (!href) {
     return (
-      <div className="rounded-lg border border-dashed p-2.5 text-[11.5px] text-muted-foreground">
+      <div className="rounded-lg border border-dashed p-2.5 text-[12px] text-muted-foreground">
         <div className="font-semibold">{label}</div>
         <div>Not on the client record yet.</div>
       </div>
@@ -92,7 +92,7 @@ function DocCard({
       href={href}
       target="_blank"
       rel="noreferrer"
-      className="rounded-lg border p-2.5 text-[11.5px] transition hover:bg-muted/50"
+      className="rounded-lg border p-2.5 text-[12px] transition hover:bg-muted/50"
     >
       <div className="flex items-center gap-1.5 font-semibold">
         <FileText className="h-3.5 w-3.5" />
@@ -144,7 +144,7 @@ function ExtractContext({ name }: { name: string }) {
             : "Extract client context"}
       </Button>
       {pack && (
-        <span className="text-[11px] text-muted-foreground">
+        <span className="text-[12px] text-muted-foreground">
           {pack.counts.campaigns} campaigns, {pack.counts.ads} ads,{" "}
           {pack.counts.transcripts} transcripts, {pack.counts.funnels} funnels,{" "}
           {pack.counts.plays} ad sets, {pack.counts.tasks} board rows,{" "}
@@ -167,7 +167,7 @@ function ExtractContext({ name }: { name: string }) {
 function ClientStats({ s }: { s: any }) {
   if (!s) {
     return (
-      <p className="mt-2 text-[11.5px] text-muted-foreground">
+      <p className="mt-2 text-[12px] text-muted-foreground">
         No appointments on their stat sheet this month, so booking, show,
         quotation and close rates cannot be worked out yet.
       </p>
@@ -200,17 +200,17 @@ function ClientStats({ s }: { s: any }) {
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
         {cells.map(c => (
           <div key={c.label} className="rounded-lg border px-2.5 py-1.5">
-            <p className="text-[10.5px] uppercase tracking-wide text-muted-foreground">
+            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
               {c.label}
             </p>
             <p className="text-[17px] font-bold leading-tight">
               {c.value === null ? "no data" : `${c.value}%`}
             </p>
-            <p className="text-[10.5px] text-muted-foreground">{c.sub}</p>
+            <p className="text-[11px] text-muted-foreground">{c.sub}</p>
           </div>
         ))}
       </div>
-      <p className="mt-1 text-[10.5px] text-muted-foreground">
+      <p className="mt-1 text-[11px] text-muted-foreground">
         {s.month} on their stat sheet. Booking rate counts appointments against
         the leads Meta reported in the last 30 days, so treat it as a direction,
         not an exact ratio.
@@ -226,11 +226,11 @@ export function ClientPage() {
   const [tab, setTab] = useState<Tab>("Script from here");
 
   if (d === undefined) {
-    return <p className="p-4 text-[13px] text-muted-foreground">Loading…</p>;
+    return <p className="p-4 text-[14px] text-muted-foreground">Loading…</p>;
   }
   if (d === null) {
     return (
-      <div className="p-4 text-[13px]">
+      <div className="p-4 text-[14px]">
         <p className="txt-bad">
           No client called “{name}” on the ClickUp client board.
         </p>
@@ -245,7 +245,7 @@ export function ClientPage() {
     <div className="mx-auto w-full max-w-6xl">
       <Link
         to="/clients"
-        className="mb-2 inline-flex items-center gap-1 text-[11.5px] text-muted-foreground hover:text-foreground"
+        className="mb-2 inline-flex items-center gap-1 text-[12px] text-muted-foreground hover:text-foreground"
       >
         <ArrowLeft className="h-3 w-3" />
         All clients
@@ -264,13 +264,13 @@ export function ClientPage() {
               href={d.client.url}
               target="_blank"
               rel="noreferrer"
-              className="text-[11.5px] underline underline-offset-2"
+              className="text-[12px] underline underline-offset-2"
             >
               ClickUp record
             </a>
           )}
         </div>
-        <p className="mt-1 text-[12px] text-muted-foreground">
+        <p className="mt-1 text-[13px] text-muted-foreground">
           {d.serviceLine ?? "Service not set"} · launch{" "}
           {when(d.client.launchDate)} · {d.liveNow.length} ads live ·{" "}
           {d.videos.filter((v: { open: boolean }) => v.open).length} videos in
@@ -311,7 +311,7 @@ export function ClientPage() {
             key={t}
             type="button"
             onClick={() => setTab(t)}
-            className={`-mb-px border-b-2 px-2.5 py-1.5 text-[12px] font-semibold transition ${
+            className={`-mb-px border-b-2 px-2.5 py-1.5 text-[13px] font-semibold transition ${
               tab === t
                 ? "border-primary text-foreground"
                 : "border-transparent text-muted-foreground hover:text-foreground"
@@ -345,12 +345,12 @@ function ScriptFromHere({ d }: { d: any }) {
   return (
     <div className="space-y-5">
       <section>
-        <h3 className="mb-1.5 flex items-center gap-1.5 text-[13px] font-bold">
+        <h3 className="mb-1.5 flex items-center gap-1.5 text-[14px] font-bold">
           <Rocket className="h-3.5 w-3.5" />
           Live on their account right now ({d.liveNow.length})
         </h3>
         {d.liveNow.length === 0 ? (
-          <p className="text-[12px] text-muted-foreground">
+          <p className="text-[13px] text-muted-foreground">
             Nothing active. Whatever you write next is what goes live first.
           </p>
         ) : (
@@ -368,7 +368,7 @@ function ScriptFromHere({ d }: { d: any }) {
                   metaAdId={a.metaId}
                   size="md"
                 />
-                <span className="min-w-0 text-[11.5px]">
+                <span className="min-w-0 text-[12px]">
                   <span className="block truncate font-medium" dir="auto">
                     {a.name}
                   </span>
@@ -384,7 +384,7 @@ function ScriptFromHere({ d }: { d: any }) {
 
       {d.history.length > 0 && (
         <section>
-          <h3 className="mb-1.5 text-[13px] font-bold">
+          <h3 className="mb-1.5 text-[14px] font-bold">
             What has already run for them ({d.history.length})
           </h3>
           <div className="divide-y rounded-lg border">
@@ -392,7 +392,7 @@ function ScriptFromHere({ d }: { d: any }) {
             {(d.history as any[]).slice(0, 12).map(a => (
               <div
                 key={`${a.campaignName}:${a.adName}`}
-                className="flex items-center gap-3 px-3 py-2 text-[12px]"
+                className="flex items-center gap-3 px-3 py-2 text-[13px]"
               >
                 <CreativePreview
                   name={a.adName}
@@ -402,7 +402,7 @@ function ScriptFromHere({ d }: { d: any }) {
                 <span className="min-w-0 flex-1 truncate" dir="auto">
                   {a.adName}
                 </span>
-                <span className="shrink-0 text-[11px] text-muted-foreground">
+                <span className="shrink-0 text-[12px] text-muted-foreground">
                   {money(a.spend)} spend · {a.leads} leads · {money(a.cpl)} CPL
                 </span>
               </div>
@@ -413,13 +413,13 @@ function ScriptFromHere({ d }: { d: any }) {
 
       <section>
         <div className="mb-1 flex items-center gap-2">
-          <h3 className="text-[13px] font-bold">
+          <h3 className="text-[14px] font-bold">
             Proven ads to build this script on
           </h3>
           <select
             value={scope}
             onChange={e => setScope(e.target.value as "service" | "all")}
-            className="ml-auto rounded border bg-transparent px-2 py-0.5 text-[11.5px]"
+            className="ml-auto rounded border bg-transparent px-2 py-0.5 text-[12px]"
           >
             <option value="service">
               {serviceLineOf(service) || "Their service line"}
@@ -447,7 +447,11 @@ function serviceLineOf(service: string): string | undefined {
   if (s.includes("architect") || s.includes("engineer")) {
     return "Architecture and engineering";
   }
-  if (s.includes("build") || s.includes("construct") || s.includes("contract")) {
+  if (
+    s.includes("build") ||
+    s.includes("construct") ||
+    s.includes("contract")
+  ) {
     return "Construction and contracting";
   }
   return undefined;
@@ -472,7 +476,7 @@ function WorkInFlight({ d, name }: { d: any; name: string }) {
   const openVideos = (d.videos as { open: boolean }[]).filter(v2 => v2.open);
 
   return (
-    <div className="space-y-4 text-[12px]">
+    <div className="space-y-4 text-[13px]">
       {d.tasks.length === 0 && openVideos.length === 0 ? (
         <p className="text-muted-foreground">Nothing open for this client.</p>
       ) : (
@@ -555,7 +559,7 @@ function WorkInFlight({ d, name }: { d: any; name: string }) {
             value={note}
             onChange={e => setNote(e.target.value)}
             placeholder="Your update, posted to ClickUp"
-            className="flex-1 rounded border bg-transparent px-2 py-1.5 text-[12px] outline-none"
+            className="flex-1 rounded border bg-transparent px-2 py-1.5 text-[13px] outline-none"
           />
           <Button
             size="sm"
@@ -596,11 +600,11 @@ function TaskActions({
             value={text}
             onChange={e => setText(e.target.value)}
             placeholder="Comment"
-            className="w-40 rounded border bg-transparent px-1.5 py-1 text-[11.5px] outline-none"
+            className="w-40 rounded border bg-transparent px-1.5 py-1 text-[12px] outline-none"
           />
           <Button
             size="sm"
-            className="h-6 px-2 text-[11px]"
+            className="h-6 px-2 text-[12px]"
             disabled={!text.trim() || busy !== null}
             onClick={async () => {
               await act("comment", taskId, { text });
@@ -616,7 +620,7 @@ function TaskActions({
         <Button
           size="sm"
           variant="ghost"
-          className="h-6 px-2 text-[11px]"
+          className="h-6 px-2 text-[12px]"
           onClick={() => setShow(true)}
         >
           Comment
@@ -625,7 +629,7 @@ function TaskActions({
       <Button
         size="sm"
         variant="outline"
-        className="h-6 px-2 text-[11px]"
+        className="h-6 px-2 text-[12px]"
         disabled={busy !== null}
         onClick={() => act("complete", taskId)}
         title="Moves it to the list's own done status: complete on Media / Creative, live on the Video Pipeline"
@@ -639,7 +643,7 @@ function TaskActions({
 // biome-ignore lint/suspicious/noExplicitAny: query payload is untyped
 function Everything({ d }: { d: any }) {
   return (
-    <div className="text-[12px]">
+    <div className="text-[13px]">
       <p className="mb-2 text-muted-foreground">
         Every script request and video job ever tagged to this client, newest
         first, with the status ClickUp actually holds.
@@ -660,7 +664,7 @@ function Everything({ d }: { d: any }) {
             >
               {t.name}
             </a>
-            <span className="flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground">
+            <span className="flex shrink-0 items-center gap-2 text-[12px] text-muted-foreground">
               <span>{t.kind}</span>
               <Pill tone={t.open ? "neutral" : "good"}>{t.status}</Pill>
               <span>{when(t.createdAt)}</span>
@@ -685,7 +689,7 @@ function Everything({ d }: { d: any }) {
                 {v2.name}
               </a>
             </span>
-            <span className="flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground">
+            <span className="flex shrink-0 items-center gap-2 text-[12px] text-muted-foreground">
               <Pill tone={v2.open ? "neutral" : "good"}>{v2.status}</Pill>
               <span>
                 {v2.editors.length ? v2.editors.join(", ") : "unassigned"}
@@ -705,13 +709,11 @@ function TalkToThem({ d, name }: { d: any; name: string }) {
   const t = d.touch;
 
   return (
-    <div className="space-y-4 text-[12px]">
+    <div className="space-y-4 text-[13px]">
       <div className="rounded-lg border p-3">
         <div className="flex flex-wrap items-center gap-2">
           <MessageSquare className="h-3.5 w-3.5" />
-          <strong>
-            {t.thisWeek} of 2 touchpoints this week
-          </strong>
+          <strong>{t.thisWeek} of 2 touchpoints this week</strong>
           <span className="text-muted-foreground">
             {t.lastTouchAt
               ? `last logged ${when(t.lastTouchAt)}`
@@ -749,7 +751,7 @@ function TalkToThem({ d, name }: { d: any; name: string }) {
       )}
 
       <section>
-        <h3 className="mb-1.5 text-[13px] font-bold">
+        <h3 className="mb-1.5 text-[14px] font-bold">
           Templates from the SOP, their name already in them
         </h3>
         <div className="space-y-2">
@@ -766,7 +768,7 @@ function TalkToThem({ d, name }: { d: any; name: string }) {
       >
         I messaged them, log the touchpoint
       </Button>
-      <p className="text-[11px] text-muted-foreground">
+      <p className="text-[12px] text-muted-foreground">
         Your floor is 1 to 2 touchpoints a week per active client, small wins
         included, and a call rather than a text when it is a real concern. Read
         the draft before sending, it is a starting point and not a substitute
@@ -786,11 +788,11 @@ function Draft({
   return (
     <div className="rounded-lg border p-3">
       <div className="mb-1.5 flex items-center gap-2">
-        <strong className="text-[12.5px]">{draft.label}</strong>
+        <strong className="text-[13px]">{draft.label}</strong>
         <button
           type="button"
           onClick={() => setLang(lang === "ar" ? "en" : "ar")}
-          className="rounded border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted"
+          className="rounded border px-1.5 py-0.5 text-[12px] text-muted-foreground hover:bg-muted"
         >
           {lang === "ar" ? "English" : "العربية"}
         </button>
@@ -841,7 +843,7 @@ function NewVideoRequest({
         <select
           value={type}
           onChange={e => setType(e.target.value)}
-          className="rounded border bg-transparent px-2 py-1.5 text-[12px]"
+          className="rounded border bg-transparent px-2 py-1.5 text-[13px]"
         >
           <option>New Video Request 🎥</option>
           <option>Edit Video Request 🎥</option>
@@ -850,21 +852,21 @@ function NewVideoRequest({
           type="date"
           value={due}
           onChange={e => setDue(e.target.value)}
-          className="rounded border bg-transparent px-2 py-1.5 text-[12px]"
+          className="rounded border bg-transparent px-2 py-1.5 text-[13px]"
         />
       </div>
       <input
         value={footage}
         onChange={e => setFootage(e.target.value)}
         placeholder="Raw footage folder link"
-        className="w-full rounded border bg-transparent px-2 py-1.5 text-[12px]"
+        className="w-full rounded border bg-transparent px-2 py-1.5 text-[13px]"
       />
       <textarea
         value={brief}
         onChange={e => setBrief(e.target.value)}
         placeholder="The brief: hook, angle, what the client must not say"
         rows={3}
-        className="w-full rounded border bg-transparent px-2 py-1.5 text-[12px]"
+        className="w-full rounded border bg-transparent px-2 py-1.5 text-[13px]"
       />
       <div className="flex gap-2">
         <Button
@@ -888,7 +890,7 @@ function NewVideoRequest({
           Cancel
         </Button>
       </div>
-      <p className="text-[11px] text-muted-foreground">
+      <p className="text-[12px] text-muted-foreground">
         Creates a tagged task on the Video Pipeline on the next sync, within 15
         minutes. Needs a brief and nothing else, the rest is filled from their
         client record. If you would rather use the ClickUp form directly, it is{" "}
@@ -912,10 +914,10 @@ function NewVideoRequest({
  */
 function TheirFunnel({ name }: { name: string }) {
   const data = useQuery(api.funnels.list, { client: name });
-  if (!data) return <p className="text-[12px]">Loading…</p>;
+  if (!data) return <p className="text-[13px]">Loading…</p>;
   if (data.rows.length === 0) {
     return (
-      <p className="text-[12px] text-muted-foreground">
+      <p className="text-[13px] text-muted-foreground">
         Nothing live to script against. Either no ad has spent in the last 30
         days, or their Meta ad account name does not match the client name on
         the board. The full list is on the Funnels and forms page.
@@ -924,7 +926,7 @@ function TheirFunnel({ name }: { name: string }) {
   }
   return (
     <div className="space-y-2">
-      <p className="text-[12px] text-muted-foreground">
+      <p className="text-[13px] text-muted-foreground">
         Where their leads come in right now. If the ad promises one thing and
         the form asks another, that is the leak, and it is yours to fix.
       </p>

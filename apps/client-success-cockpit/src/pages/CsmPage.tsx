@@ -18,13 +18,13 @@ import {
   cadence,
   draftsFor,
   guessLang,
+  humanise,
+  isChurned,
   type Lang,
   LINKS,
   nextCall,
-  isChurned,
   nextPocState,
   serviceModel,
-  humanise,
 } from "@/lib/csmTemplates";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
@@ -155,9 +155,7 @@ function ShortList({
               onClick={() => setAll(v => !v)}
               className="text-sm text-muted-foreground underline"
             >
-              {all
-                ? "Show fewer"
-                : `Show the other ${items.length - limit}`}
+              {all ? "Show fewer" : `Show the other ${items.length - limit}`}
             </button>
           )}
         </>
@@ -294,11 +292,7 @@ export function AiHelper({
           ) : null}
         </div>
       ) : (
-        <Button
-          size="sm"
-          className="shadow-lg"
-          onClick={() => setOpen(true)}
-        >
+        <Button size="sm" className="shadow-lg" onClick={() => setOpen(true)}>
           Ask AI
         </Button>
       )}
@@ -334,7 +328,9 @@ function NextPocControl({
 }) {
   const st = nextPocState(c, today);
   const call = nextCall(c, lang);
-  const [date, setDate] = useState(st.date && !st.past ? st.date : st.suggested);
+  const [date, setDate] = useState(
+    st.date && !st.past ? st.date : st.suggested,
+  );
   const bad = st.missing || st.past;
   return (
     <div
@@ -351,7 +347,7 @@ function NextPocControl({
           ({call.label.toLowerCase()})
         </span>
       </div>
-      <p className="text-[11px] font-medium">
+      <p className="text-[12px] font-medium">
         {call.doNow}
         {call.framework ? (
           <>
@@ -457,7 +453,7 @@ function TemplatePicker({
             key={d.id}
             type="button"
             onClick={() => setAngle(d.id)}
-            className={`rounded border px-2 py-0.5 text-[11px] font-medium ${
+            className={`rounded border px-2 py-0.5 text-[12px] font-medium ${
               d.id === chosen.id
                 ? "border-teal-400 bg-teal-50 text-teal-800"
                 : "bg-background text-muted-foreground"
@@ -466,7 +462,7 @@ function TemplatePicker({
             {d.title}
           </button>
         ))}
-        <span className="ml-auto flex items-center gap-1 text-[11px] text-muted-foreground">
+        <span className="ml-auto flex items-center gap-1 text-[12px] text-muted-foreground">
           writes in:
           {(["en", "ar"] as const).map(l => (
             <button
@@ -487,7 +483,7 @@ function TemplatePicker({
           ))}
         </span>
       </div>
-      <p className="text-[11px] text-muted-foreground">
+      <p className="text-[12px] text-muted-foreground">
         From the client communication SOP. {chosen.why} Messages are tracked for
         you off the cadence, you only book the calls.
       </p>
@@ -570,7 +566,7 @@ function TemplatePicker({
         )}
       </div>
       {justSent && (
-        <p className="text-[11px] font-medium text-rose-700">
+        <p className="text-[12px] font-medium text-rose-700">
           Logged. Now set the next point of contact, we always want to know when
           the next call is.
         </p>
@@ -628,15 +624,15 @@ function TouchpointRow({
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-semibold">{c.name}</span>
             <span
-              className={`rounded px-1.5 py-0.5 text-[11px] ${CHIP[c.level]}`}
+              className={`rounded px-1.5 py-0.5 text-[12px] ${CHIP[c.level]}`}
             >
               {c.stage}
             </span>
-            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">
+            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[12px] text-slate-600">
               {cad.stage} · {cad.label}
             </span>
             <span
-              className={`rounded px-1.5 py-0.5 text-[11px] ${
+              className={`rounded px-1.5 py-0.5 text-[12px] ${
                 serviceModel(c.service).code
                   ? "bg-slate-100 text-slate-600"
                   : "bg-amber-100 text-amber-800"
@@ -646,7 +642,7 @@ function TouchpointRow({
               {serviceModel(c.service).label}
             </span>
             <span
-              className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
+              className={`rounded px-1.5 py-0.5 text-[12px] font-medium ${
                 poc.missing || poc.past
                   ? "bg-rose-100 text-rose-700"
                   : "bg-emerald-50 text-emerald-800"
@@ -655,7 +651,7 @@ function TouchpointRow({
               {poc.label}
             </span>
             {spineDay != null && (
-              <span className="rounded bg-teal-50 px-1.5 py-0.5 text-[11px] font-medium text-teal-800">
+              <span className="rounded bg-teal-50 px-1.5 py-0.5 text-[12px] font-medium text-teal-800">
                 Day {spineDay} of the 14 day spine
               </span>
             )}
@@ -853,8 +849,9 @@ function HotSheet({
   return (
     <div className="space-y-4">
       <p className="text-xs text-muted-foreground">
-        Your list, your handwriting. Track the last follow-up and the next one so
-        nothing sits. I do not add rows for you, I only suggest them underneath.
+        Your list, your handwriting. Track the last follow-up and the next one
+        so nothing sits. I do not add rows for you, I only suggest them
+        underneath.
       </p>
       <div className="overflow-x-auto rounded-lg border">
         <table className="w-full text-sm">
@@ -863,7 +860,7 @@ function HotSheet({
               {COLS.map(([, label]) => (
                 <th
                   key={label}
-                  className="px-2 py-1.5 text-left text-[11px] uppercase tracking-wide text-muted-foreground"
+                  className="px-2 py-1.5 text-left text-[12px] uppercase tracking-wide text-muted-foreground"
                 >
                   {label}
                 </th>
@@ -1001,7 +998,11 @@ function HotSheet({
           ))
         )}
         {allOpen.length > open.length || showAll ? (
-          <Button size="sm" variant="ghost" onClick={() => setShowAll(!showAll)}>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setShowAll(!showAll)}
+          >
             {showAll
               ? "Show fewer"
               : `Show the other ${allOpen.length - open.length}`}
@@ -1202,12 +1203,12 @@ export function CsmPage({ section }: { section: Section }) {
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-semibold">{c.name}</span>
               <span
-                className={`rounded px-1.5 py-0.5 text-[11px] ${CHIP[c.level]}`}
+                className={`rounded px-1.5 py-0.5 text-[12px] ${CHIP[c.level]}`}
               >
                 {c.stage}
               </span>
               {c.happiness && (
-                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">
+                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[12px] text-slate-600">
                   {c.happiness}
                 </span>
               )}
@@ -1215,7 +1216,7 @@ export function CsmPage({ section }: { section: Section }) {
                 const sm = serviceModel(c.service);
                 return (
                   <span
-                    className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
+                    className={`rounded px-1.5 py-0.5 text-[12px] font-medium ${
                       sm.code
                         ? "bg-slate-100 text-slate-600"
                         : "bg-amber-100 text-amber-800"
@@ -1230,7 +1231,7 @@ export function CsmPage({ section }: { section: Section }) {
                 const poc = nextPocState(c, snap.day);
                 return (
                   <span
-                    className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
+                    className={`rounded px-1.5 py-0.5 text-[12px] font-medium ${
                       poc.missing || poc.past
                         ? "bg-rose-100 text-rose-700"
                         : "bg-emerald-50 text-emerald-800"
@@ -1241,7 +1242,7 @@ export function CsmPage({ section }: { section: Section }) {
                 );
               })()}
               {handled && (
-                <span className="text-[11px] text-emerald-700">
+                <span className="text-[12px] text-emerald-700">
                   ✓ handled today
                 </span>
               )}
@@ -1271,18 +1272,17 @@ export function CsmPage({ section }: { section: Section }) {
                   "ticket",
                   "leave",
                 ] as const
-              ).map(
-                p => (
-                  <button
-                    key={p}
-                    type="button"
-                    onClick={() => setPanel(p)}
-                    className={`rounded px-2 py-1 ${panel === p ? "bg-foreground text-background" : "bg-muted"}`}
-                  >
-                    {p === "message"
-                      ? "Message (SOP template)"
-                      : p === "actions"
-                        ? "Do it"
+              ).map(p => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => setPanel(p)}
+                  className={`rounded px-2 py-1 ${panel === p ? "bg-foreground text-background" : "bg-muted"}`}
+                >
+                  {p === "message"
+                    ? "Message (SOP template)"
+                    : p === "actions"
+                      ? "Do it"
                       : p === "book"
                         ? "Book the next call"
                         : p === "update"
@@ -1290,9 +1290,8 @@ export function CsmPage({ section }: { section: Section }) {
                           : p === "ticket"
                             ? "Raise a ticket"
                             : "Leave it"}
-                  </button>
-                ),
-              )}
+                </button>
+              ))}
             </div>
 
             {panel === "message" && (
@@ -1410,7 +1409,7 @@ export function CsmPage({ section }: { section: Section }) {
                           key={`${ch.day}-${i}`}
                           className="mt-1 text-xs text-muted-foreground"
                         >
-                          <span className="text-foreground">{ch.day}</span>, {" "}
+                          <span className="text-foreground">{ch.day}</span>,{" "}
                           {ch.action}. {ch.evidence}
                         </div>
                       ),
@@ -1532,7 +1531,7 @@ export function CsmPage({ section }: { section: Section }) {
                           Sent it, not booked yet
                         </Button>
                       </div>
-                      <p className="text-[11px] text-muted-foreground">
+                      <p className="text-[12px] text-muted-foreground">
                         Viktor drafts, you send. Nothing goes to the client from
                         here.
                       </p>
@@ -1586,7 +1585,7 @@ export function CsmPage({ section }: { section: Section }) {
                         {v}
                       </button>
                     ))}
-                    <span className="text-[11px] text-muted-foreground">
+                    <span className="text-[12px] text-muted-foreground">
                       {serviceModel(c.service).kpi}
                     </span>
                   </div>
@@ -1844,7 +1843,7 @@ export function CsmPage({ section }: { section: Section }) {
                       onClick={() => toggleCheck({ id: c._id as Id<"checks"> })}
                     >
                       <span
-                        className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px] ${c.done ? "bg-emerald-600 text-white" : ""}`}
+                        className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[11px] ${c.done ? "bg-emerald-600 text-white" : ""}`}
                       >
                         {c.done ? "✓" : ""}
                       </span>
@@ -1938,8 +1937,7 @@ export function CsmPage({ section }: { section: Section }) {
             },
             {
               key: "pipeline",
-              title:
-                "In onboarding, message every working day until they move",
+              title: "In onboarding, message every working day until they move",
               hint: "Nothing else moves them forward.",
               rows: onboardingList.filter(needsAction),
             },
@@ -2075,7 +2073,11 @@ export function CsmPage({ section }: { section: Section }) {
               ].map(({ client, item }) => {
                 const call = item.source;
                 const items = commitmentRows
-                  .filter(r => r.client.taskId === client.taskId && r.item.source === call)
+                  .filter(
+                    r =>
+                      r.client.taskId === client.taskId &&
+                      r.item.source === call,
+                  )
                   .map(r => r.item);
                 const when = call.replace("1-1 call notes, ", "");
                 return (
@@ -2106,7 +2108,8 @@ export function CsmPage({ section }: { section: Section }) {
                               )
                             }
                           >
-                            Create {items.length === 1 ? "the task" : "the tasks"}
+                            Create{" "}
+                            {items.length === 1 ? "the task" : "the tasks"}
                           </Button>
                           <a
                             className="rounded bg-muted px-2 py-1 text-xs"
@@ -2207,8 +2210,8 @@ export function CsmPage({ section }: { section: Section }) {
 
           <div className="space-y-2">
             <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Client Success board, due, overdue or undated (
-              {snap.tasks.length})
+              Client Success board, due, overdue or undated ({snap.tasks.length}
+              )
             </div>
             {snap.tasks.map(
               (task: {
@@ -2698,7 +2701,7 @@ function MoneySection({
                   <div key={l.name} className="text-sm">
                     {l.name}{" "}
                     <span className="text-xs text-muted-foreground">
-, {l.reason}
+                      , {l.reason}
                       {l.day ? ` · ${l.day}` : ""}
                     </span>
                   </div>
@@ -2769,7 +2772,7 @@ function MoneySection({
                 className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 text-sm"
               >
                 <div>
-                  <span className="rounded bg-muted px-1.5 py-0.5 text-[11px]">
+                  <span className="rounded bg-muted px-1.5 py-0.5 text-[12px]">
                     {e.r}
                   </span>{" "}
                   {e.label}
@@ -3006,8 +3009,8 @@ function TodaysCalls({
       </div>
       {todays.length === 0 ? (
         <p className="mt-2 text-sm text-muted-foreground">
-          Nothing booked today. If a client is due a call, book it from the touchpoints
-          screen.
+          Nothing booked today. If a client is due a call, book it from the
+          touchpoints screen.
         </p>
       ) : (
         <ul className="mt-2 space-y-2">

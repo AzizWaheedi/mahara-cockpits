@@ -29,7 +29,7 @@ export function LostLeads({
   return (
     <div className="mt-4 rounded-lg border p-3">
       <div className="flex items-baseline justify-between">
-        <div className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+        <div className="text-[12px] font-bold uppercase tracking-widest text-muted-foreground">
           Why leads died · {lost.total} in the lost pipeline
         </div>
       </div>
@@ -38,7 +38,7 @@ export function LostLeads({
         {lost.reasons.map(r => (
           <span
             key={r.reason}
-            className="rounded-md border px-2 py-0.5 text-[11.5px]"
+            className="rounded-md border px-2 py-0.5 text-[12px]"
           >
             {r.reason.replace(/\s*\(.*\)\s*$/, "")}{" "}
             <span className="font-semibold">{r.count}</span>
@@ -47,14 +47,14 @@ export function LostLeads({
       </div>
 
       {vague && (
-        <div className="callout-warn mt-2 rounded-md px-2.5 py-1.5 text-[11.5px]">
+        <div className="callout-warn mt-2 rounded-md px-2.5 py-1.5 text-[12px]">
           The biggest bucket is <strong>{top.reason}</strong> — the CRM label
           isn't telling you anything. The notes below are the real reasons.
         </div>
       )}
 
       {worstAd && adNameById?.[worstAd[0]] && (
-        <div className="mt-2 text-[11.5px]">
+        <div className="mt-2 text-[12px]">
           Most lost leads came from{" "}
           <span className="font-semibold">{adNameById[worstAd[0]]}</span> (
           {worstAd[1]}). Worth checking what that ad promises.
@@ -63,13 +63,13 @@ export function LostLeads({
 
       {lost.notes.length > 0 && (
         <div className="mt-3 space-y-1.5">
-          <div className="text-[11px] font-semibold text-muted-foreground">
+          <div className="text-[12px] font-semibold text-muted-foreground">
             What the team actually wrote
           </div>
           {lost.notes.slice(0, 8).map(n => (
             <div key={n.at + n.note} className="border-b pb-1.5 last:border-0">
-              <div className="text-[12px]">{n.note}</div>
-              <div className="mt-0.5 text-[10.5px] text-muted-foreground">
+              <div className="text-[13px]">{n.note}</div>
+              <div className="mt-0.5 text-[11px] text-muted-foreground">
                 {n.reason.replace(/\s*\(.*\)\s*$/, "")}
                 {n.adId && adNameById?.[n.adId]
                   ? ` · ${adNameById[n.adId]}`

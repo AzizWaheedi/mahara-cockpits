@@ -27,16 +27,16 @@ export function TemplateCard({
         <button
           type="button"
           onClick={() => setOpen(!open)}
-          className="text-left text-[12.5px] font-semibold hover:underline"
+          className="text-left text-[13px] font-semibold hover:underline"
         >
           {t.label}
         </button>
-        <span className="text-[11.5px] text-muted-foreground">{t.when}</span>
+        <span className="text-[12px] text-muted-foreground">{t.when}</span>
         <span className="ml-auto flex items-center gap-2">
           <button
             type="button"
             onClick={() => setLang(lang === "ar" ? "en" : "ar")}
-            className="rounded border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted"
+            className="rounded border px-1.5 py-0.5 text-[12px] text-muted-foreground hover:bg-muted"
           >
             {lang === "ar" ? "English" : "العربية"}
           </button>
@@ -46,11 +46,11 @@ export function TemplateCard({
       {open && (
         <div className="space-y-2 border-t px-3 py-2.5">
           {t.internal && (
-            <p className="callout-warn text-[11.5px]">
+            <p className="callout-warn text-[12px]">
               <strong>Before you send it:</strong> {t.internal}
             </p>
           )}
-          <p dir="auto" className="whitespace-pre-wrap text-[12px]">
+          <p dir="auto" className="whitespace-pre-wrap text-[13px]">
             {text}
           </p>
         </div>

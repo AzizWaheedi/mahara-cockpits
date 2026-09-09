@@ -2,6 +2,7 @@ import { Link } from "react-router";
 import { SignIn } from "@/components/SignIn";
 import { Button } from "@/components/ui/button";
 import { ViktorSignInSection } from "@/components/ViktorSignInSection";
+import { Wordmark } from "@/components/Wordmark";
 import {
   getEmailPasswordSignInAvailable,
   getViktorSignInAvailable,
@@ -44,12 +45,14 @@ export function LoginPage() {
 
       <div className="w-full max-w-sm space-y-6">
         <div className="text-center space-y-2">
-          <div className="mx-auto size-12 rounded-xl bg-primary flex items-center justify-center mb-4">
-            <span className="text-primary-foreground font-bold text-lg">M</span>
+          <div className="flex justify-center mb-6">
+            <Wordmark size="lg" />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight">Welcome back</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            Sign in to the cockpit
+          </h1>
           <p className="text-muted-foreground text-sm">
-            Sign in to your account to continue
+            One link per role. Use the email Aziz set you up with.
           </p>
         </div>
 

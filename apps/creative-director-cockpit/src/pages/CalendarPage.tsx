@@ -59,7 +59,7 @@ function todayKey(): string {
 function Card({ it, onMove }: { it: any; onMove: (id: string) => void }) {
   return (
     <div
-      className={`rounded border px-1.5 py-1 text-[11px] leading-tight ${
+      className={`rounded border px-1.5 py-1 text-[12px] leading-tight ${
         it.overdue ? "callout-warn" : ""
       } ${it.open ? "" : "opacity-55"}`}
     >
@@ -71,7 +71,7 @@ function Card({ it, onMove }: { it: any; onMove: (id: string) => void }) {
       </div>
       <div className="mt-0.5 font-medium">{it.client ?? "no client tag"}</div>
       <div className="text-muted-foreground">{it.title}</div>
-      <div className="mt-0.5 flex items-center gap-2 text-[10px] text-muted-foreground">
+      <div className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
         <span>{it.status}</span>
         {it.url && (
           <a
@@ -120,7 +120,7 @@ function QueueRow({
 }) {
   return (
     <div
-      className={`flex flex-wrap items-baseline gap-2 rounded border px-2 py-1.5 text-[11.5px] ${
+      className={`flex flex-wrap items-baseline gap-2 rounded border px-2 py-1.5 text-[12px] ${
         r.priority === 1 ? "callout-warn" : ""
       }`}
     >
@@ -175,7 +175,7 @@ function ScriptQueue({
       <div className="flex flex-wrap items-center gap-2">
         <Sparkles className="h-4 w-4" />
         <h2 className="text-[14px] font-bold">What to script next</h2>
-        <span className="text-[11.5px] text-muted-foreground">
+        <span className="text-[12px] text-muted-foreground">
           {rows.length} client{rows.length === 1 ? "" : "s"} need writing today
         </span>
       </div>
@@ -184,7 +184,7 @@ function ScriptQueue({
           <QueueRow key={`${r.client}-${r.type}`} r={r} onPlan={onPlan} />
         ))}
         {rows.length === 0 && (
-          <p className="text-[12px] text-muted-foreground">
+          <p className="text-[13px] text-muted-foreground">
             Nothing urgent. Rare, and worth using to get ahead on next week.
           </p>
         )}
@@ -193,7 +193,7 @@ function ScriptQueue({
         <div className="mt-2">
           <button
             type="button"
-            className="text-[11.5px] text-muted-foreground underline underline-offset-2"
+            className="text-[12px] text-muted-foreground underline underline-offset-2"
             onClick={() => setShowOptional(v => !v)}
           >
             {showOptional ? "hide" : "show"} {optional.length} funnel idea
@@ -203,11 +203,7 @@ function ScriptQueue({
           {showOptional && (
             <div className="mt-1 space-y-1">
               {optional.map(r => (
-                <QueueRow
-                  key={`${r.client}-${r.type}`}
-                  r={r}
-                  onPlan={onPlan}
-                />
+                <QueueRow key={`${r.client}-${r.type}`} r={r} onPlan={onPlan} />
               ))}
             </div>
           )}
@@ -237,7 +233,7 @@ export function ScriptingCalendar({ compact = false }: { compact?: boolean }) {
   );
 
   if (cal === undefined) {
-    return <p className="p-4 text-[13px] text-muted-foreground">Loading…</p>;
+    return <p className="p-4 text-[14px] text-muted-foreground">Loading…</p>;
   }
 
   // biome-ignore lint/suspicious/noExplicitAny: query payload is untyped
@@ -280,7 +276,7 @@ export function ScriptingCalendar({ compact = false }: { compact?: boolean }) {
             Scripting calendar
           </h1>
         </div>
-        <p className="text-[12.5px] text-muted-foreground">
+        <p className="text-[13px] text-muted-foreground">
           What is written when, per client. {cal.counts.planned} planned,{" "}
           <span className={cal.counts.overdue ? "txt-bad" : ""}>
             {cal.counts.overdue} late
@@ -289,14 +285,16 @@ export function ScriptingCalendar({ compact = false }: { compact?: boolean }) {
         </p>
       </header>
 
-      {note && <div className="callout-warn rounded p-2 text-[12px]">{note}</div>}
+      {note && (
+        <div className="callout-warn rounded p-2 text-[13px]">{note}</div>
+      )}
 
       {/* Plan proactively ---------------------------------------------------- */}
       <section className="rounded-lg border p-3">
         <div className="flex items-center gap-2">
           <Plus className="h-4 w-4" />
           <h2 className="text-[14px] font-bold">Plan a script</h2>
-          <span className="text-[11.5px] text-muted-foreground">
+          <span className="text-[12px] text-muted-foreground">
             creates the task on the creative board, tagged to the client
           </span>
         </div>
@@ -304,7 +302,7 @@ export function ScriptingCalendar({ compact = false }: { compact?: boolean }) {
           <select
             value={planClient}
             onChange={e => setPlanClient(e.target.value)}
-            className="rounded border bg-transparent px-2 py-1 text-[12.5px]"
+            className="rounded border bg-transparent px-2 py-1 text-[13px]"
           >
             <option value="">Which client</option>
             {clientNames.map(n => (
@@ -317,20 +315,20 @@ export function ScriptingCalendar({ compact = false }: { compact?: boolean }) {
             type="date"
             value={planDay}
             onChange={e => setPlanDay(e.target.value)}
-            className="rounded border bg-transparent px-2 py-1 text-[12.5px]"
+            className="rounded border bg-transparent px-2 py-1 text-[13px]"
           />
           <input
             value={planTitle}
             onChange={e => setPlanTitle(e.target.value)}
             placeholder="Title, or leave blank for New Script Request"
-            className="rounded border bg-transparent px-2 py-1 text-[12.5px]"
+            className="rounded border bg-transparent px-2 py-1 text-[13px]"
           />
         </div>
         <Textarea
           value={planBrief}
           onChange={e => setPlanBrief(e.target.value)}
           placeholder="The angle, the offer, the hook you want to test. This becomes the task description."
-          className="mt-2 min-h-[60px] text-[12.5px]"
+          className="mt-2 min-h-[60px] text-[13px]"
         />
         <Button size="sm" className="mt-2" onClick={plan}>
           Put it on the board
@@ -346,12 +344,12 @@ export function ScriptingCalendar({ compact = false }: { compact?: boolean }) {
       />
 
       {/* Filter -------------------------------------------------------------- */}
-      <div className="flex flex-wrap items-center gap-2 text-[12px]">
+      <div className="flex flex-wrap items-center gap-2 text-[13px]">
         <span className="text-muted-foreground">Show</span>
         <select
           value={onlyMine}
           onChange={e => setOnlyMine(e.target.value)}
-          className="rounded border bg-transparent px-2 py-1 text-[12px]"
+          className="rounded border bg-transparent px-2 py-1 text-[13px]"
         >
           <option value="all">every client</option>
           {clientNames.map(n => (
@@ -364,7 +362,7 @@ export function ScriptingCalendar({ compact = false }: { compact?: boolean }) {
 
       {/* Move dialog --------------------------------------------------------- */}
       {moving && (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border p-2 text-[12px]">
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border p-2 text-[13px]">
           <span>Move to</span>
           <input
             type="date"
@@ -400,7 +398,7 @@ export function ScriptingCalendar({ compact = false }: { compact?: boolean }) {
               }`}
             >
               <div className="mb-1 flex items-baseline justify-between">
-                <span className="text-[11px] font-semibold">
+                <span className="text-[12px] font-semibold">
                   {d.weekday} {d.label}
                 </span>
                 {d.isToday && (
@@ -408,7 +406,7 @@ export function ScriptingCalendar({ compact = false }: { compact?: boolean }) {
                 )}
               </div>
               {d.isFriday && items.length === 0 && (
-                <p className="text-[10px] text-muted-foreground">off</p>
+                <p className="text-[11px] text-muted-foreground">off</p>
               )}
               <div className="space-y-1">
                 {items.map((it: { id: string }) => (
@@ -445,7 +443,7 @@ export function ScriptingCalendar({ compact = false }: { compact?: boolean }) {
       {/* Undated -------------------------------------------------------------- */}
       <section className="space-y-1">
         <h2 className="text-[14px] font-bold">No date on them yet</h2>
-        <p className="text-[11.5px] text-muted-foreground">
+        <p className="text-[12px] text-muted-foreground">
           Open work that will never appear on a day until it gets one. Give it a
           date and it moves into the calendar.
         </p>
@@ -455,7 +453,7 @@ export function ScriptingCalendar({ compact = false }: { compact?: boolean }) {
             <Card key={it.id} it={it} onMove={id => setMoving(id)} />
           ))}
           {visible(cal.unplanned).length === 0 && (
-            <p className="text-[12px] text-muted-foreground">
+            <p className="text-[13px] text-muted-foreground">
               Everything open has a date. Rare, enjoy it.
             </p>
           )}
@@ -467,7 +465,7 @@ export function ScriptingCalendar({ compact = false }: { compact?: boolean }) {
         <div className="flex items-center gap-2">
           <FolderOpen className="h-4 w-4" />
           <h2 className="text-[14px] font-bold">Client Drive folders</h2>
-          <span className="text-[11.5px] text-muted-foreground">
+          <span className="text-[12px] text-muted-foreground">
             scripts and footage, straight from the client folder
           </span>
         </div>
@@ -476,7 +474,7 @@ export function ScriptingCalendar({ compact = false }: { compact?: boolean }) {
           {cal.clients.map((c: any) => (
             <div
               key={c.name}
-              className="flex flex-wrap items-center gap-2 rounded border px-2 py-1 text-[11.5px]"
+              className="flex flex-wrap items-center gap-2 rounded border px-2 py-1 text-[12px]"
             >
               <span className="font-medium">{c.name}</span>
               {c.driveScripts ? (

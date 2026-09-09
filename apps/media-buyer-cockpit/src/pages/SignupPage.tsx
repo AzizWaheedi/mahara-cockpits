@@ -2,6 +2,7 @@ import { Link } from "react-router";
 import { SignUp } from "@/components/SignUp";
 import { Button } from "@/components/ui/button";
 import { ViktorSignInSection } from "@/components/ViktorSignInSection";
+import { Wordmark } from "@/components/Wordmark";
 import { getEmailPasswordSignInAvailable } from "@/lib/viktor-spaces-access/config";
 
 export function SignupPage() {
@@ -16,14 +17,15 @@ export function SignupPage() {
 
       <div className="w-full max-w-sm space-y-6">
         <div className="text-center space-y-2">
-          <div className="mx-auto size-12 rounded-xl bg-primary flex items-center justify-center mb-4">
-            <span className="text-primary-foreground font-bold text-lg">M</span>
+          <div className="flex justify-center mb-6">
+            <Wordmark size="lg" />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight">
-            Create an account
+          <h1 className="text-2xl font-semibold tracking-tight">
+            Create your account
           </h1>
           <p className="text-muted-foreground text-sm">
-            Get started with your free account
+            Use the email Aziz set you up with. That is what decides which
+            cockpit you see.
           </p>
         </div>
 

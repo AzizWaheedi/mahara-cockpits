@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { PRESETS, type Range, customRange, kuwaitDay } from "@/lib/range";
+import { customRange, kuwaitDay, PRESETS, type Range } from "@/lib/range";
 
 /**
  * Pick a window: a preset, or two dates.
@@ -23,7 +23,7 @@ export function RangePicker({
   return (
     <div className="flex flex-wrap items-center gap-1">
       {!compact && (
-        <span className="mr-1 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+        <span className="mr-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
           Range
         </span>
       )}
@@ -37,7 +37,7 @@ export function RangePicker({
               setShowCustom(false);
               onChange(p.make());
             }}
-            className={`rounded border px-2 py-0.5 text-[11px] font-semibold ${
+            className={`rounded border px-2 py-0.5 text-[12px] font-semibold ${
               active
                 ? "border-primary bg-primary text-primary-foreground"
                 : "text-muted-foreground hover:bg-muted"
@@ -50,7 +50,7 @@ export function RangePicker({
       <button
         type="button"
         onClick={() => setShowCustom(s => !s)}
-        className={`rounded border px-2 py-0.5 text-[11px] font-semibold ${
+        className={`rounded border px-2 py-0.5 text-[12px] font-semibold ${
           value.key === "custom"
             ? "border-primary bg-primary text-primary-foreground"
             : "text-muted-foreground hover:bg-muted"
@@ -70,9 +70,9 @@ export function RangePicker({
                 onChange(customRange(e.target.value, end));
               }
             }}
-            className="rounded border bg-background px-1 py-0.5 text-[11px]"
+            className="rounded border bg-background px-1 py-0.5 text-[12px]"
           />
-          <span className="text-[11px] text-muted-foreground">→</span>
+          <span className="text-[12px] text-muted-foreground">→</span>
           <input
             type="date"
             value={end}
@@ -83,7 +83,7 @@ export function RangePicker({
                 onChange(customRange(start, e.target.value));
               }
             }}
-            className="rounded border bg-background px-1 py-0.5 text-[11px]"
+            className="rounded border bg-background px-1 py-0.5 text-[12px]"
           />
         </span>
       )}

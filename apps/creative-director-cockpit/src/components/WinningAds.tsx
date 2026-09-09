@@ -33,11 +33,11 @@ export function WinningAds({
   const [open, setOpen] = useState<string | null>(null);
 
   if (!rows) {
-    return <p className="text-[12px] text-muted-foreground">Loading…</p>;
+    return <p className="text-[13px] text-muted-foreground">Loading…</p>;
   }
   if (rows.length === 0) {
     return (
-      <p className="text-[12.5px] text-muted-foreground">
+      <p className="text-[13px] text-muted-foreground">
         Nothing in this service line has cleared the winner bar yet. Widen the
         filter and read the closest thing to it.
       </p>
@@ -46,8 +46,8 @@ export function WinningAds({
 
   return (
     <div>
-      <h3 className="text-[13px] font-bold">{title}</h3>
-      <p className="mb-2 text-[11.5px] text-muted-foreground">
+      <h3 className="text-[14px] font-bold">{title}</h3>
+      <p className="mb-2 text-[12px] text-muted-foreground">
         {sub ??
           "Click one to read its hook, its copy and, for video, what is actually said and shown on screen."}
       </p>
@@ -63,18 +63,18 @@ export function WinningAds({
                   previewSrc={r.previewSrc ?? undefined}
                   metaAdId={r.adId}
                 />
-                <span className="w-14 shrink-0 text-right text-[12.5px] font-bold tabular-nums">
+                <span className="w-14 shrink-0 text-right text-[13px] font-bold tabular-nums">
                   ${Number(r.cpl).toFixed(2)}
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[12.5px] font-medium">
+                  <span className="block truncate text-[13px] font-medium">
                     {r.client}
                   </span>
-                  <span className="block truncate text-[11px] text-muted-foreground">
+                  <span className="block truncate text-[12px] text-muted-foreground">
                     {r.hook || r.headline || r.adName}
                   </span>
                 </span>
-                <span className="shrink-0 text-right text-[10.5px] text-muted-foreground">
+                <span className="shrink-0 text-right text-[11px] text-muted-foreground">
                   {r.leads} leads · ${r.spend} · {r.city ?? "Unknown"}
                   <span className="block">
                     {r.wonFrom
@@ -84,7 +84,9 @@ export function WinningAds({
                       <span
                         className="ml-1 rounded bg-muted px-1 font-semibold uppercase"
                         title={
-                          r.retiredOn ? `Off since ${r.retiredOn}` : "Not running"
+                          r.retiredOn
+                            ? `Off since ${r.retiredOn}`
+                            : "Not running"
                         }
                       >
                         retired
@@ -97,14 +99,14 @@ export function WinningAds({
                 <button
                   type="button"
                   onClick={() => setOpen(isOpen ? null : r.adId)}
-                  className="shrink-0 rounded border px-2 py-0.5 text-[11px] font-semibold text-muted-foreground hover:bg-muted"
+                  className="shrink-0 rounded border px-2 py-0.5 text-[12px] font-semibold text-muted-foreground hover:bg-muted"
                 >
                   {isOpen ? "Hide" : "Read it"}
                 </button>
               </div>
               {isOpen && (
-                <div className="space-y-3 border-t bg-muted/30 px-3 py-3 text-[12px]">
-                  <div className="flex flex-wrap gap-1.5 text-[10.5px]">
+                <div className="space-y-3 border-t bg-muted/30 px-3 py-3 text-[13px]">
+                  <div className="flex flex-wrap gap-1.5 text-[11px]">
                     {[
                       r.serviceLine,
                       r.format,
@@ -182,7 +184,7 @@ function Field({
 }) {
   return (
     <div>
-      <div className="text-[10.5px] font-bold uppercase tracking-wide text-muted-foreground">
+      <div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
         {label}
       </div>
       <div>{children}</div>
@@ -209,7 +211,7 @@ export function CopyButton({
           setTimeout(() => setDone(false), 1800);
         });
       }}
-      className="rounded border px-2 py-0.5 text-[11px] font-semibold text-muted-foreground hover:bg-muted"
+      className="rounded border px-2 py-0.5 text-[12px] font-semibold text-muted-foreground hover:bg-muted"
     >
       {done ? "Copied" : label}
     </button>

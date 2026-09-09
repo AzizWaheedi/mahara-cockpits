@@ -13,7 +13,10 @@ const STORAGE_KEY = "mahara-cockpit-theme";
 
 function readInitial(): Theme {
   if (typeof window === "undefined") return "light";
-  const saved = window.localStorage.getItem(STORAGE_KEY);
+  const saved =
+    window.localStorage.getItem(STORAGE_KEY) ??
+    // The retired second provider stored its choice under "theme".
+    window.localStorage.getItem("theme");
   if (saved === "light" || saved === "dark") return saved;
   return window.matchMedia?.("(prefers-color-scheme: dark)").matches
     ? "dark"
@@ -36,7 +39,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, [theme]);
 
   const toggle = useCallback(
-    () => setTheme((t) => (t === "dark" ? "light" : "dark")),
+    () => setTheme(t => (t === "dark" ? "light" : "dark")),
     [],
   );
 

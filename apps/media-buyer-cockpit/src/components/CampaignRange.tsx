@@ -1,8 +1,8 @@
 import { useQuery } from "convex/react";
 import type { ReactNode } from "react";
-import { api } from "../../convex/_generated/api";
 import type { Range } from "@/lib/range";
 import { rangeDays } from "@/lib/range";
+import { api } from "../../convex/_generated/api";
 import { RangePicker } from "./RangePicker";
 
 /**
@@ -73,14 +73,14 @@ export function CampaignRange({
   return (
     <div className="mt-3">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+        <div className="text-[12px] font-bold uppercase tracking-wide text-muted-foreground">
           Ad set and ad level · {range.label.toLowerCase()}
         </div>
         <RangePicker value={range} onChange={onRangeChange} compact />
       </div>
 
       {coverage?.last && range.end > coverage.last && (
-        <div className="mb-2 rounded border callout-warn px-2.5 py-1.5 text-[11.5px]">
+        <div className="mb-2 rounded border callout-warn px-2.5 py-1.5 text-[12px]">
           The tracker sheet has spend up to{" "}
           <span className="font-semibold">{coverage.last}</span>. Anything after
           that is not missing — it has not been pulled yet, so today's numbers
@@ -89,13 +89,13 @@ export function CampaignRange({
       )}
 
       {data === undefined && (
-        <div className="rounded border p-3 text-[12px] text-muted-foreground">
+        <div className="rounded border p-3 text-[13px] text-muted-foreground">
           Loading {range.label.toLowerCase()}…
         </div>
       )}
 
       {data && !data.hasData && (
-        <div className="rounded border p-3 text-[12px] text-muted-foreground">
+        <div className="rounded border p-3 text-[13px] text-muted-foreground">
           No spend recorded for this campaign between {range.start} and{" "}
           {range.end}.
           {days <= 2 &&
@@ -105,7 +105,7 @@ export function CampaignRange({
 
       {data?.hasData && (
         <>
-          <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 rounded border bg-muted/30 px-3 py-2 text-[12px]">
+          <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 rounded border bg-muted/30 px-3 py-2 text-[13px]">
             <span>
               <span className="text-muted-foreground">Spend </span>
               <span className="font-semibold tabular-nums">
@@ -133,7 +133,7 @@ export function CampaignRange({
               </span>
             </span>
             {leadsOnly ? (
-              <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase text-muted-foreground">
+              <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-semibold uppercase text-muted-foreground">
                 Done with you · leads only
               </span>
             ) : (
@@ -160,7 +160,7 @@ export function CampaignRange({
                 </span>
               </>
             )}
-            <span className="text-[11px] text-muted-foreground">
+            <span className="text-[12px] text-muted-foreground">
               {data.days} day{data.days === 1 ? "" : "s"} with data
               {!leadsOnly &&
                 data.bookingsTotal > 0 &&
@@ -185,7 +185,7 @@ export function CampaignRange({
           {!leadsOnly &&
             data.bookingsTotal > 0 &&
             data.bookingsAttributed === 0 && (
-              <p className="mt-1 text-[11px] text-muted-foreground">
+              <p className="mt-1 text-[12px] text-muted-foreground">
                 None of the {data.bookingsTotal} bookings in this window could
                 be traced back to a specific ad, so cost per booking is shown
                 for the campaign only. It is blank per ad rather than guessed.
@@ -216,15 +216,15 @@ function Table({
 }) {
   if (!rows || rows.length === 0) {
     return emptyNote ? (
-      <p className="mb-2 text-[11px] text-muted-foreground">{emptyNote}</p>
+      <p className="mb-2 text-[12px] text-muted-foreground">{emptyNote}</p>
     ) : null;
   }
   return (
     <div className="mb-3">
-      <div className="mb-1 text-[11px] font-bold">{title}</div>
-      <table className="w-full text-[12.5px]">
+      <div className="mb-1 text-[12px] font-bold">{title}</div>
+      <table className="w-full text-[13px]">
         <thead>
-          <tr className="text-[10px] uppercase text-muted-foreground">
+          <tr className="text-[11px] uppercase text-muted-foreground">
             <th className="py-1 text-left">Name</th>
             <th className="text-left">Spend</th>
             <th className="text-left">Leads</th>
@@ -258,7 +258,7 @@ function Table({
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
+          {rows.map(r => (
             <tr key={r.key} className="border-t">
               <td className="py-1.5 font-semibold">
                 {renderKey ? renderKey(r.key) : r.key}
@@ -283,7 +283,7 @@ function Table({
                       <>
                         {r.bookings}
                         {r.bookingRate !== undefined && r.bookings > 0 && (
-                          <span className="ml-1 text-[11px] font-normal text-muted-foreground">
+                          <span className="ml-1 text-[12px] font-normal text-muted-foreground">
                             {Math.round(r.bookingRate)}%
                           </span>
                         )}

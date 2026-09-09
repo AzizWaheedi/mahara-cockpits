@@ -35,10 +35,7 @@ export function AccountView({
 }) {
   const spend = campaigns.reduce((t, c) => t + (c.spend7d ?? 0), 0);
   const leads = campaigns.reduce((t, c) => t + (c.leads7d ?? 0), 0);
-  const booked = campaigns.reduce(
-    (t, c) => t + (c.bookings?.booked ?? 0),
-    0,
-  );
+  const booked = campaigns.reduce((t, c) => t + (c.bookings?.booked ?? 0), 0);
   const cpl = leads > 0 ? spend / leads : undefined;
   const cpb = booked > 0 ? spend / booked : undefined;
   // Bookings come from one GHL call per client, so any campaign carries them.
@@ -50,7 +47,7 @@ export function AccountView({
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div>
           <div className="text-[17px] font-bold">{client}</div>
-          <div className="text-[11.5px] text-muted-foreground">
+          <div className="text-[12px] text-muted-foreground">
             {campaigns.length} campaign{campaigns.length === 1 ? "" : "s"} ·{" "}
             {live} live · last 7 days
           </div>
@@ -69,7 +66,7 @@ export function AccountView({
           ["Cost per booking", money(cpb, 2)],
         ].map(([label, value]) => (
           <div key={label} className="rounded-lg border p-2.5">
-            <div className="text-[10.5px] uppercase tracking-wide text-muted-foreground">
+            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
               {label}
             </div>
             <div className="mt-0.5 text-[16px] font-bold tabular-nums">
@@ -88,14 +85,14 @@ export function AccountView({
             <div className="min-w-0">
               <button
                 type="button"
-                className="text-left text-[13px] font-semibold hover:underline"
+                className="text-left text-[14px] font-semibold hover:underline"
                 onClick={() => onOpenCampaign(c.campaignName)}
               >
                 {c.campaignName}
               </button>
-              <div className="text-[11px] text-muted-foreground">
-                {money(c.spend7d)} · {c.leads7d ?? 0} leads ·{" "}
-                {money(c.cpl, 2)} per lead
+              <div className="text-[12px] text-muted-foreground">
+                {money(c.spend7d)} · {c.leads7d ?? 0} leads · {money(c.cpl, 2)}{" "}
+                per lead
                 {c.daysLive !== undefined ? ` · live ${c.daysLive}d` : ""}
               </div>
             </div>

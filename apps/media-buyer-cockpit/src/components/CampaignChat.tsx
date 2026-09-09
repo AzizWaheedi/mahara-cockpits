@@ -45,7 +45,7 @@ function StatusLine({ m }: { m: Msg }) {
   if (m.kind === "action") {
     return (
       <div
-        className={`mt-0.5 text-[10.5px] font-semibold ${m.ok === false ? "txt-bad" : "txt-good"}`}
+        className={`mt-0.5 text-[11px] font-semibold ${m.ok === false ? "txt-bad" : "txt-good"}`}
       >
         {m.ok === false ? "✕ did not go through" : "✓ done"}
       </div>
@@ -68,7 +68,7 @@ function StatusLine({ m }: { m: Msg }) {
     },
   };
   const s = map[status] ?? map.queued;
-  return <div className={`mt-0.5 text-[10.5px] ${s.cls}`}>{s.label}</div>;
+  return <div className={`mt-0.5 text-[11px] ${s.cls}`}>{s.label}</div>;
 }
 
 export function CampaignChat({
@@ -113,11 +113,11 @@ export function CampaignChat({
   return (
     <div className="mt-3 rounded-lg border bg-background p-3">
       <div className="mb-1 flex items-center justify-between">
-        <div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+        <div className="text-[12px] font-bold uppercase tracking-wide text-muted-foreground">
           This campaign · conversation and history
         </div>
         {waiting && (
-          <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-amber-800">
+          <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-bold uppercase text-amber-800">
             waiting on Viktor
           </span>
         )}
@@ -138,7 +138,7 @@ export function CampaignChat({
                       : "rounded-md border-l-2 border-primary bg-primary/5 p-2"
                 }
               >
-                <div className="text-[10.5px] font-semibold text-muted-foreground">
+                <div className="text-[11px] font-semibold text-muted-foreground">
                   {isAction
                     ? "Action"
                     : m.author === "her"
@@ -147,7 +147,7 @@ export function CampaignChat({
                   {" · "}
                   {when(m.at)}
                 </div>
-                <div className="whitespace-pre-wrap text-[12px]">{m.text}</div>
+                <div className="whitespace-pre-wrap text-[13px]">{m.text}</div>
                 <StatusLine m={m} />
               </div>
             );
@@ -168,11 +168,11 @@ export function CampaignChat({
           }}
           rows={2}
           placeholder="Ask about this campaign, or tell Viktor what you want done with it."
-          className="min-h-[38px] flex-1 resize-y rounded-md border bg-background px-2 py-1.5 text-[12px]"
+          className="min-h-[38px] flex-1 resize-y rounded-md border bg-background px-2 py-1.5 text-[13px]"
         />
         <Button
           size="sm"
-          className="h-8 self-end px-3 text-[11px]"
+          className="h-8 self-end px-3 text-[12px]"
           disabled={!text.trim() || sending}
           onClick={() => void send()}
         >
@@ -180,7 +180,7 @@ export function CampaignChat({
         </Button>
       </div>
 
-      <p className="mt-1.5 text-[10.5px] text-muted-foreground">
+      <p className="mt-1.5 text-[11px] text-muted-foreground">
         Messages go to Viktor in Slack with this campaign's spend, leads, CPL
         and days live attached. Every message shows whether it has been picked
         up, and every change made here is logged above with whether it worked.

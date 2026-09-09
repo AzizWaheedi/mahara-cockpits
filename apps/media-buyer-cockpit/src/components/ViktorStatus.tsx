@@ -24,12 +24,14 @@ export function ViktorStatus() {
   const jobs = useQuery(api.assist.queueDepth, {});
   if (!a) return null;
 
-  const stale = a.lastSyncAt ? Date.now() - a.lastSyncAt > 5 * 3600 * 1000 : true;
+  const stale = a.lastSyncAt
+    ? Date.now() - a.lastSyncAt > 5 * 3600 * 1000
+    : true;
   const problems: string[] = a.problems ?? [];
 
   return (
     <div
-      className={`mb-3 rounded-lg border px-3 py-2 text-[11.5px] ${
+      className={`mb-3 rounded-lg border px-3 py-2 text-[12px] ${
         problems.length > 0 || stale
           ? "border-amber-300 bg-amber-50 text-amber-900"
           : "bg-muted/30"
@@ -72,13 +74,13 @@ export function ViktorStatus() {
       )}
       {a.recent?.length > 0 && (
         <details className="mt-1">
-          <summary className="cursor-pointer text-[11px] text-muted-foreground">
+          <summary className="cursor-pointer text-[12px] text-muted-foreground">
             Latest activity
           </summary>
           <div className="mt-1 space-y-0.5">
             {/* biome-ignore lint/suspicious/noExplicitAny: chat rows */}
             {(a.recent as any[]).map(m => (
-              <div key={m._id} className="text-[11px]">
+              <div key={m._id} className="text-[12px]">
                 <span className="text-muted-foreground">
                   {new Date(m.at).toLocaleString("en-GB", {
                     day: "numeric",

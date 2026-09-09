@@ -31,7 +31,7 @@ function KindPill({ kind }: { kind: string }) {
           ? "tone-warn"
           : "tone-neutral";
   return (
-    <span className={`${tone} rounded px-1.5 py-0.5 text-[10.5px] font-semibold`}>
+    <span className={`${tone} rounded px-1.5 py-0.5 text-[11px] font-semibold`}>
       {kind}
     </span>
   );
@@ -50,12 +50,14 @@ export function FunnelRow({ r }: { r: any }) {
         onClick={() => setOpen(o => !o)}
       >
         <KindPill kind={r.kind} />
-        <strong className="text-[13px]">
+        <strong className="text-[14px]">
           {r.formName || r.url || r.account}
         </strong>
-        <span className="text-[11.5px] text-muted-foreground">{r.account}</span>
-        <span className="ml-auto flex items-center gap-3 text-[11.5px]">
-          <span>{r.ads.length} live ad{r.ads.length === 1 ? "" : "s"}</span>
+        <span className="text-[12px] text-muted-foreground">{r.account}</span>
+        <span className="ml-auto flex items-center gap-3 text-[12px]">
+          <span>
+            {r.ads.length} live ad{r.ads.length === 1 ? "" : "s"}
+          </span>
           <span>{money(r.spend)} · 30d</span>
           <span>{r.leads} leads</span>
           <strong>{r.cpl ? `$${r.cpl} CPL` : "no leads"}</strong>
@@ -63,7 +65,7 @@ export function FunnelRow({ r }: { r: any }) {
       </button>
 
       {open && (
-        <div className="space-y-3 border-t px-3 py-3 text-[12px]">
+        <div className="space-y-3 border-t px-3 py-3 text-[13px]">
           {r.headline && (
             <p>
               <span className="text-muted-foreground">Form headline: </span>
@@ -98,22 +100,19 @@ export function FunnelRow({ r }: { r: any }) {
                 ))}
               </ol>
               {contact.length > 0 && (
-                <p className="text-[11.5px] text-muted-foreground">
+                <p className="text-[12px] text-muted-foreground">
                   Then it asks for:{" "}
-                  {contact
-                    .map((q: { label: string }) => q.label)
-                    .join(", ")}
-                  .
+                  {contact.map((q: { label: string }) => q.label).join(", ")}.
                 </p>
               )}
               {r.leadsAllTime ? (
-                <p className="text-[11.5px] text-muted-foreground">
+                <p className="text-[12px] text-muted-foreground">
                   {r.leadsAllTime} leads through this form all time.
                 </p>
               ) : null}
               {r.followUpUrl && (
                 <a
-                  className="inline-flex items-center gap-1 text-[11.5px] underline"
+                  className="inline-flex items-center gap-1 text-[12px] underline"
                   href={r.followUpUrl}
                   target="_blank"
                   rel="noreferrer"
@@ -141,18 +140,20 @@ export function FunnelRow({ r }: { r: any }) {
           )}
 
           <div>
-            <div className="mb-1 text-[11.5px] font-semibold text-muted-foreground">
+            <div className="mb-1 text-[12px] font-semibold text-muted-foreground">
               Ads pointing here
             </div>
             <ul className="space-y-0.5">
-              {r.ads.map((a: { adId: string; adName: string; status: string }) => (
-                <li key={a.adId} className="flex items-center gap-2">
-                  <span dir="auto">{a.adName}</span>
-                  <span className="text-[11px] text-muted-foreground">
-                    {a.status.toLowerCase().replace(/_/g, " ")}
-                  </span>
-                </li>
-              ))}
+              {r.ads.map(
+                (a: { adId: string; adName: string; status: string }) => (
+                  <li key={a.adId} className="flex items-center gap-2">
+                    <span dir="auto">{a.adName}</span>
+                    <span className="text-[12px] text-muted-foreground">
+                      {a.status.toLowerCase().replace(/_/g, " ")}
+                    </span>
+                  </li>
+                ),
+              )}
             </ul>
           </div>
         </div>
@@ -163,7 +164,7 @@ export function FunnelRow({ r }: { r: any }) {
 
 export function FunnelsPage() {
   const data = useQuery(api.funnels.list, {});
-  if (!data) return <div className="p-4 text-[12.5px]">Loading…</div>;
+  if (!data) return <div className="p-4 text-[13px]">Loading…</div>;
 
   return (
     <div className="mx-auto max-w-5xl space-y-4 p-4 pb-16">
@@ -171,7 +172,7 @@ export function FunnelsPage() {
         <h1 className="text-[19px] font-bold tracking-tight">
           Funnels and lead forms
         </h1>
-        <p className="text-[12.5px] text-muted-foreground">
+        <p className="text-[13px] text-muted-foreground">
           Where the leads actually come in, for every live ad we run.{" "}
           {data.counts.destinations} destinations across {data.counts.accounts}{" "}
           ad accounts, read straight from Meta.{" "}
@@ -187,10 +188,10 @@ export function FunnelsPage() {
 
       <section className="rounded-lg border">
         <div className="border-b px-3.5 py-2">
-          <div className="text-[13px] font-semibold">
+          <div className="text-[14px] font-semibold">
             Does asking more actually cost more
           </div>
-          <div className="text-[11.5px] text-muted-foreground">
+          <div className="text-[12px] text-muted-foreground">
             Instant forms grouped by how many filtering questions they ask, last
             30 days. Cost per lead is Meta's number. Whether those leads
             qualified is not in Meta, so this tells you the price of a filter,
@@ -202,13 +203,13 @@ export function FunnelsPage() {
             // biome-ignore lint/suspicious/noExplicitAny: untyped payload
             (b: any) => (
               <div key={b.gates} className="rounded-md border p-2.5">
-                <div className="text-[11.5px] text-muted-foreground">
+                <div className="text-[12px] text-muted-foreground">
                   {b.gates} filtering question{b.gates === "1" ? "" : "s"}
                 </div>
                 <div className="text-[17px] font-bold">
                   {b.cpl ? `$${b.cpl}` : "—"}
                 </div>
-                <div className="text-[11px] text-muted-foreground">
+                <div className="text-[12px] text-muted-foreground">
                   per lead · {b.forms} form{b.forms === 1 ? "" : "s"} ·{" "}
                   {b.leads} leads
                 </div>
@@ -222,16 +223,17 @@ export function FunnelsPage() {
         <h2 className="text-[14px] font-semibold">Every destination we run</h2>
         {/* biome-ignore lint/suspicious/noExplicitAny: untyped payload */}
         {data.rows.map((r: any) => (
-          <FunnelRow key={`${r.account}-${r.formId || r.url || r.kind}`} r={r} />
+          <FunnelRow
+            key={`${r.account}-${r.formId || r.url || r.kind}`}
+            r={r}
+          />
         ))}
       </section>
 
       <section className="rounded-lg border">
         <div className="border-b px-3.5 py-2">
-          <div className="text-[13px] font-semibold">
-            The question bank
-          </div>
-          <div className="text-[11.5px] text-muted-foreground">
+          <div className="text-[14px] font-semibold">The question bank</div>
+          <div className="text-[12px] text-muted-foreground">
             Every filtering question already live somewhere in the account, with
             its answer options. Build a new form out of these instead of writing
             questions from scratch.
@@ -241,10 +243,10 @@ export function FunnelsPage() {
           {data.questionBank.map(
             // biome-ignore lint/suspicious/noExplicitAny: untyped payload
             (q: any) => (
-              <div key={q.label} className="px-3.5 py-2.5 text-[12px]">
+              <div key={q.label} className="px-3.5 py-2.5 text-[13px]">
                 <div className="flex flex-wrap items-baseline gap-2">
                   <strong dir="auto">{q.label}</strong>
-                  <span className="text-[11px] text-muted-foreground">
+                  <span className="text-[12px] text-muted-foreground">
                     live on {q.accounts.length} account
                     {q.accounts.length === 1 ? "" : "s"} · {q.leads} leads ·{" "}
                     {q.cpl ? `$${q.cpl} CPL` : "no leads yet"}
@@ -261,7 +263,7 @@ export function FunnelsPage() {
         </div>
       </section>
 
-      <p className="text-[11px] text-muted-foreground">
+      <p className="text-[12px] text-muted-foreground">
         Meta is the source for destinations, questions and cost per lead. Client
         funnels built in GoHighLevel are not visible yet, the agency token does
         not carry the funnels scope.

@@ -60,8 +60,16 @@ function Stat({
 }
 
 const LINK_LABELS: { key: string; label: string; hint: string }[] = [
-  { key: "sheet", label: "Performance sheet", hint: "leads, appointments, outcomes" },
-  { key: "drive", label: "Client drive", hint: "raw and finished creative, sheets" },
+  {
+    key: "sheet",
+    label: "Performance sheet",
+    hint: "leads, appointments, outcomes",
+  },
+  {
+    key: "drive",
+    label: "Client drive",
+    hint: "raw and finished creative, sheets",
+  },
   { key: "ghl", label: "GHL sub-account", hint: "app.maharamedia.com" },
   { key: "adAccount", label: "Ad account", hint: "Meta Ads Manager" },
   { key: "clickup", label: "ClickUp record", hint: "stage, dates, fields" },
@@ -151,15 +159,15 @@ function reportHtml(p: Any): string {
     dwy
       ? ""
       : rows.length
-      ? `<table><tr><th>Name</th><th>Added</th><th>Appointment</th><th>Missing</th><th class="n">Days</th></tr>${rows
-          .slice(0, 40)
-          .map(
-            r =>
-              `<tr><td>${esc(r.name)}</td><td>${esc(r.added)}</td><td>${esc(r.appDate)}</td><td>${esc(r.missing)}</td><td class="n">${esc(r.days ?? r.appDaysAgo ?? r.ageDays)}</td></tr>`,
-          )
-          .join("")}</table>
+        ? `<table><tr><th>Name</th><th>Added</th><th>Appointment</th><th>Missing</th><th class="n">Days</th></tr>${rows
+            .slice(0, 40)
+            .map(
+              r =>
+                `<tr><td>${esc(r.name)}</td><td>${esc(r.added)}</td><td>${esc(r.appDate)}</td><td>${esc(r.missing)}</td><td class="n">${esc(r.days ?? r.appDaysAgo ?? r.ageDays)}</td></tr>`,
+            )
+            .join("")}</table>
       <div class="note">Each unfilled row reads as a loss in every report. These are the rows to chase.</div>`
-      : "<div class=\"note\">Nothing outstanding, every appointment has an outcome.</div>"
+        : '<div class="note">Nothing outstanding, every appointment has an outcome.</div>'
   }
   <h2>Live advertising</h2>
   ${
@@ -172,7 +180,7 @@ function reportHtml(p: Any): string {
               `<tr><td>${esc(a.campaign)}</td><td>${esc(a.status)}</td><td class="n">${esc(a.leads7d)}</td><td class="n">${a.cpl ? `$${Number(a.cpl).toFixed(2)}` : "-"}</td>${dwy ? "" : `<td class="n">${esc(a.bookings7d)}</td>`}</tr>`,
           )
           .join("")}</table>`
-      : "<div class=\"note\">No live campaigns are synced for this client.</div>"
+      : '<div class="note">No live campaigns are synced for this client.</div>'
   }
   </body></html>`;
 }
@@ -189,8 +197,8 @@ function AdTree({ ads }: { ads: Any[] }) {
   if (!ads?.length)
     return (
       <p className="text-sm text-muted-foreground">
-        No campaigns are synced for this client. If they are running ads, the ads
-        board is missing the client name, use the report button at the
+        No campaigns are synced for this client. If they are running ads, the
+        ads board is missing the client name, use the report button at the
         bottom-right and I will fix the mapping.
       </p>
     );
@@ -216,12 +224,12 @@ function AdTree({ ads }: { ads: Any[] }) {
           </div>
           {(c.adsets ?? []).length === 0 ? (
             <p className="px-3 py-2 text-xs text-muted-foreground">
-              Meta will not show us the ad sets or the creative for this account.
-              Mahara's Meta app has not been granted access to ad account{" "}
-              {c.accountId ?? "this one"}, so the spend and lead numbers above
-              come from the campaign report while the previews stay locked. Fix
-              is in Meta Business Settings: assign the account to Mahara's
-              portfolio, then reauthorize with it selected.
+              Meta will not show us the ad sets or the creative for this
+              account. Mahara's Meta app has not been granted access to ad
+              account {c.accountId ?? "this one"}, so the spend and lead numbers
+              above come from the campaign report while the previews stay
+              locked. Fix is in Meta Business Settings: assign the account to
+              Mahara's portfolio, then reauthorize with it selected.
             </p>
           ) : null}
           <div className="divide-y">
@@ -295,11 +303,11 @@ function ConstraintCard({ c, first }: { c: Constraint; first?: boolean }) {
         <div>
           <div className="flex items-center gap-2">
             {first ? (
-              <span className="rounded bg-[#091333] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+              <span className="rounded bg-[#091333] px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-white">
                 Fix this first
               </span>
             ) : null}
-            <span className="rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+            <span className="rounded border px-1.5 py-0.5 text-[11px] uppercase tracking-wide text-muted-foreground">
               {c.layer === "macro"
                 ? "whole system"
                 : c.layer === "admin"
@@ -307,7 +315,7 @@ function ConstraintCard({ c, first }: { c: Constraint; first?: boolean }) {
                   : "one leak"}
             </span>
             {c.owner ? (
-              <span className="text-[11px] text-muted-foreground">
+              <span className="text-[12px] text-muted-foreground">
                 owner: {c.owner}
               </span>
             ) : null}
@@ -315,7 +323,9 @@ function ConstraintCard({ c, first }: { c: Constraint; first?: boolean }) {
           <div className="mt-1 text-sm font-semibold">{c.title}</div>
           <div className="text-xs text-muted-foreground">{c.evidence}</div>
         </div>
-        <span className="text-xs text-muted-foreground">{open ? "−" : "+"}</span>
+        <span className="text-xs text-muted-foreground">
+          {open ? "−" : "+"}
+        </span>
       </button>
       {open ? (
         <div className="space-y-3 border-t px-4 py-3">
@@ -337,7 +347,11 @@ function ConstraintCard({ c, first }: { c: Constraint; first?: boolean }) {
                   }
                   className="mt-1"
                 />
-                <span className={done[i] ? "text-muted-foreground line-through" : ""}>
+                <span
+                  className={
+                    done[i] ? "text-muted-foreground line-through" : ""
+                  }
+                >
                   {f}
                 </span>
               </label>
@@ -354,8 +368,10 @@ function ConstraintCard({ c, first }: { c: Constraint; first?: boolean }) {
                     key={l}
                     type="button"
                     onClick={() => setLang(l)}
-                    className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
-                      lang === l ? "border-teal-400 bg-teal-50 text-teal-800" : ""
+                    className={`rounded border px-1.5 py-0.5 text-[11px] font-semibold uppercase ${
+                      lang === l
+                        ? "border-teal-400 bg-teal-50 text-teal-800"
+                        : ""
                     }`}
                   >
                     {l}
@@ -402,14 +418,22 @@ function CallPrep({ p }: { p: Any }) {
   const l = (perf.lastMonth ?? {}) as Any;
   const useLast = Number(m.leads ?? 0) === 0 && Number(l.leads ?? 0) > 0;
   const n = useLast ? l : m;
-  const label = useLast ? (perf.lastMonthLabel ?? "last month") : (perf.monthLabel ?? "this month");
+  const label = useLast
+    ? (perf.lastMonthLabel ?? "last month")
+    : (perf.monthLabel ?? "this month");
   const lead = d.top ?? d.rest?.[0];
   const stale = Number(perf.staleCount ?? 0);
   const facts = [
     `${label}: ${Number(n.leads ?? 0)} enquiries, ${Number(n.booked ?? 0)} booked, ${Number(n.shows ?? 0)} attended, ${Number(n.closes ?? 0)} closed`,
-    stale ? `${stale} appointments still have no outcome on their sheet` : "Every appointment has an outcome, their tracking is clean",
-    p.liveDays != null ? `Live ${p.liveDays} days, stage ${p.stage ?? "unknown"}` : `Stage ${p.stage ?? "unknown"}`,
-    p.happiness ? `Their own happiness rating: ${p.happiness}` : "No happiness rating on their record, ask for one",
+    stale
+      ? `${stale} appointments still have no outcome on their sheet`
+      : "Every appointment has an outcome, their tracking is clean",
+    p.liveDays != null
+      ? `Live ${p.liveDays} days, stage ${p.stage ?? "unknown"}`
+      : `Stage ${p.stage ?? "unknown"}`,
+    p.happiness
+      ? `Their own happiness rating: ${p.happiness}`
+      : "No happiness rating on their record, ask for one",
   ];
   const nudge = p.reportNudge as Any;
   return (
@@ -420,8 +444,9 @@ function CallPrep({ p }: { p: Any }) {
             This week's report reminder is waiting for your approval
           </p>
           <p className="mt-0.5 text-xs text-amber-900">
-            {nudge.missing} appointment{nudge.missing === 1 ? "" : "s"} with no outcome.
-            Nothing reaches the client until you open this and press send.
+            {nudge.missing} appointment{nudge.missing === 1 ? "" : "s"} with no
+            outcome. Nothing reaches the client until you open this and press
+            send.
           </p>
           <a
             className="mt-2 inline-block rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground"
@@ -439,8 +464,8 @@ function CallPrep({ p }: { p: Any }) {
             Prep for this call
           </h3>
           <p className="text-xs text-muted-foreground">
-            Read this once before you dial. Lead with the constraint, offer the fix,
-            then make the ask.
+            Read this once before you dial. Lead with the constraint, offer the
+            fix, then make the ask.
           </p>
         </div>
         <Button size="sm" variant="outline" onClick={() => setOpen(v => !v)}>
@@ -530,8 +555,14 @@ const REPORT_TEMPLATE = [
 ];
 
 const REPORT_EXTRAS: { key: string; label: string }[] = [
-  { key: "appointments", label: "Appointment log, lead by lead with the outcome" },
-  { key: "byAd", label: "Ad performance: leads, booked, attended, closed per ad" },
+  {
+    key: "appointments",
+    label: "Appointment log, lead by lead with the outcome",
+  },
+  {
+    key: "byAd",
+    label: "Ad performance: leads, booked, attended, closed per ad",
+  },
   { key: "lost", label: "Why leads were marked lost, in their own words" },
   { key: "ads", label: "What is running right now" },
 ];
@@ -541,9 +572,7 @@ function ReportSection({ p }: { p: Any }) {
   const [note, setNote] = useState("");
   const [lang, setLang] = useState<"en" | "ar">("en");
   const [busy, setBusy] = useState(false);
-  const [extras, setExtras] = useState<string[]>(
-    REPORT_EXTRAS.map(e => e.key),
-  );
+  const [extras, setExtras] = useState<string[]>(REPORT_EXTRAS.map(e => e.key));
   const reports: Any[] = p.reports ?? [];
   const pending = reports.find((r: Any) => !r.builtAt);
   const ready = reports.filter((r: Any) => r.builtAt);
@@ -568,14 +597,19 @@ function ReportSection({ p }: { p: Any }) {
         <p className="mt-3 font-medium">Want anything else in this one?</p>
         <div className="mt-1 space-y-1">
           {REPORT_EXTRAS.map(e => (
-            <label key={e.key} className="flex items-start gap-2 text-muted-foreground">
+            <label
+              key={e.key}
+              className="flex items-start gap-2 text-muted-foreground"
+            >
               <input
                 type="checkbox"
                 className="mt-1"
                 checked={extras.includes(e.key)}
                 onChange={() =>
                   setExtras(v =>
-                    v.includes(e.key) ? v.filter(k => k !== e.key) : [...v, e.key],
+                    v.includes(e.key)
+                      ? v.filter(k => k !== e.key)
+                      : [...v, e.key],
                   )
                 }
               />
@@ -683,8 +717,8 @@ function LostLeads({ lost }: { lost: Any }) {
         Why leads were marked lost
       </h3>
       <p className="text-sm text-muted-foreground">
-        {lost.total} leads sit in {lost.pipeline || "their lost pipeline"}. These are the{" "}
-        {leads.length} most recent.
+        {lost.total} leads sit in {lost.pipeline || "their lost pipeline"}.
+        These are the {leads.length} most recent.
       </p>
       <div className="flex flex-wrap gap-2">
         {reasons.map(r => (
@@ -693,7 +727,9 @@ function LostLeads({ lost }: { lost: Any }) {
             className="rounded-full border px-3 py-1 text-xs text-muted-foreground"
           >
             {String(r.reason).replace(/\s*\(Write why.*\)/i, "")}
-            <span className="ml-1 font-semibold text-foreground">{r.count}</span>
+            <span className="ml-1 font-semibold text-foreground">
+              {r.count}
+            </span>
           </span>
         ))}
       </div>
@@ -706,10 +742,14 @@ function LostLeads({ lost }: { lost: Any }) {
                 {String(l.reason).replace(/\s*\(Write why.*\)/i, "")}
               </span>
               {l.ad ? (
-                <span className="rounded bg-muted px-1.5 py-0.5 text-xs">{String(l.ad)}</span>
+                <span className="rounded bg-muted px-1.5 py-0.5 text-xs">
+                  {String(l.ad)}
+                </span>
               ) : null}
               {l.movedAt ? (
-                <span className="ml-auto text-xs text-muted-foreground">{String(l.movedAt)}</span>
+                <span className="ml-auto text-xs text-muted-foreground">
+                  {String(l.movedAt)}
+                </span>
               ) : null}
             </div>
             {l.note ? (
@@ -738,11 +778,26 @@ function LeadsByAd({ rows }: { rows: Any[] }) {
     r => ad === "all" || (r.ad || r.source || "not tagged") === ad,
   );
   const outcome = (r: Any) => {
-    if (String(r.closed ?? "").trim().toUpperCase().startsWith("Y"))
+    if (
+      String(r.closed ?? "")
+        .trim()
+        .toUpperCase()
+        .startsWith("Y")
+    )
       return { label: "Closed", tone: "text-emerald-600 font-medium" };
-    if (String(r.show ?? "").trim().toUpperCase().startsWith("Y"))
+    if (
+      String(r.show ?? "")
+        .trim()
+        .toUpperCase()
+        .startsWith("Y")
+    )
       return { label: "Attended", tone: "" };
-    if (String(r.show ?? "").trim().toUpperCase().startsWith("N"))
+    if (
+      String(r.show ?? "")
+        .trim()
+        .toUpperCase()
+        .startsWith("N")
+    )
       return { label: "Did not attend", tone: "text-muted-foreground" };
     // An outcome is only missing once the appointment date has passed. Before that the
     // call has not happened, so nobody is late.
@@ -773,16 +828,22 @@ function LeadsByAd({ rows }: { rows: Any[] }) {
         <table className="w-full">
           <thead className="sticky top-0 bg-muted/80">
             <tr>
-              {["Lead", "Came in", "Appointment", "Ad", "Type", "Caller", "Outcome"].map(
-                h => (
-                  <th
-                    key={h}
-                    className="px-3 py-2 text-left text-xs uppercase tracking-wide text-muted-foreground"
-                  >
-                    {h}
-                  </th>
-                ),
-              )}
+              {[
+                "Lead",
+                "Came in",
+                "Appointment",
+                "Ad",
+                "Type",
+                "Caller",
+                "Outcome",
+              ].map(h => (
+                <th
+                  key={h}
+                  className="px-3 py-2 text-left text-xs uppercase tracking-wide text-muted-foreground"
+                >
+                  {h}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody className="divide-y">
@@ -810,7 +871,9 @@ function LeadsByAd({ rows }: { rows: Any[] }) {
 function Profile({ name, onBack }: { name: string; onBack: () => void }) {
   const p = useQuery(api.csm.clientProfile, { clientName: name });
   if (p === undefined)
-    return <div className="p-6 text-sm text-muted-foreground">Loading {name}…</div>;
+    return (
+      <div className="p-6 text-sm text-muted-foreground">Loading {name}…</div>
+    );
   if (p === null)
     return (
       <div className="p-6 text-sm text-muted-foreground">
@@ -869,9 +932,9 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
       ) : null}
       {!p.links?.sheet ? (
         <div className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
-          No performance sheet is linked on their ClickUp record, so there are no
-          numbers to show. Add the Sheet Link field and this fills in on the next
-          sync.
+          No performance sheet is linked on their ClickUp record, so there are
+          no numbers to show. Add the Sheet Link field and this fills in on the
+          next sync.
         </div>
       ) : (
         <>
@@ -896,27 +959,48 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
                 </p>
               </>
             ) : (
-            <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
-              <Stat label="Leads" value={num(m.leads)} hint={`${num(l.leads)} last month`} />
-              <Stat label="Booked" value={num(m.booked)} hint={`${num(l.booked)} last month`} />
-              <Stat label="Attended" value={num(m.shows)} hint={m.showRate != null ? `${m.showRate}% of decided` : "no outcome yet"} />
-              <Stat label="No show" value={num(m.noshows)} />
-              <Stat label="Quotes" value={num(m.quotes)} />
-              <Stat
-                label="Closed"
-                value={num(m.closes)}
-                tone={num(m.closes) ? "text-emerald-600" : undefined}
-                hint={m.closeRate != null ? `${m.closeRate}% of attended` : undefined}
-              />
-            </div>
+              <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+                <Stat
+                  label="Leads"
+                  value={num(m.leads)}
+                  hint={`${num(l.leads)} last month`}
+                />
+                <Stat
+                  label="Booked"
+                  value={num(m.booked)}
+                  hint={`${num(l.booked)} last month`}
+                />
+                <Stat
+                  label="Attended"
+                  value={num(m.shows)}
+                  hint={
+                    m.showRate != null
+                      ? `${m.showRate}% of decided`
+                      : "no outcome yet"
+                  }
+                />
+                <Stat label="No show" value={num(m.noshows)} />
+                <Stat label="Quotes" value={num(m.quotes)} />
+                <Stat
+                  label="Closed"
+                  value={num(m.closes)}
+                  tone={num(m.closes) ? "text-emerald-600" : undefined}
+                  hint={
+                    m.closeRate != null
+                      ? `${m.closeRate}% of attended`
+                      : undefined
+                  }
+                />
+              </div>
             )}
             {!serviceModel(p.service).dwy && (
-            <p className="text-xs text-muted-foreground">
-              All time on this sheet: {num(all.leads)} leads · {num(all.booked)}{" "}
-              booked · {num(all.shows)} attended · {num(all.closes)} closed
-              {perf.undated ? ` · ${perf.undated} rows have no date` : ""} ·
-              source: {perf.source}
-            </p>
+              <p className="text-xs text-muted-foreground">
+                All time on this sheet: {num(all.leads)} leads ·{" "}
+                {num(all.booked)} booked · {num(all.shows)} attended ·{" "}
+                {num(all.closes)} closed
+                {perf.undated ? ` · ${perf.undated} rows have no date` : ""} ·
+                source: {perf.source}
+              </p>
             )}
             {perf.staleReason ? (
               <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
@@ -940,23 +1024,28 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
             ) : (
               <>
                 <p className="text-xs text-muted-foreground">
-                  Every unfilled row reads as a loss in the monthly report. Chase
-                  these before the next check-in call.
+                  Every unfilled row reads as a loss in the monthly report.
+                  Chase these before the next check-in call.
                 </p>
                 <div className="overflow-x-auto rounded-lg border">
                   <table className="w-full">
                     <thead className="bg-muted/50">
                       <tr>
-                        {["Name", "Added", "Appointment", "Caller", "Missing", "Days"].map(
-                          h => (
-                            <th
-                              key={h}
-                              className="px-3 py-2 text-left text-xs uppercase tracking-wide text-muted-foreground"
-                            >
-                              {h}
-                            </th>
-                          ),
-                        )}
+                        {[
+                          "Name",
+                          "Added",
+                          "Appointment",
+                          "Caller",
+                          "Missing",
+                          "Days",
+                        ].map(h => (
+                          <th
+                            key={h}
+                            className="px-3 py-2 text-left text-xs uppercase tracking-wide text-muted-foreground"
+                          >
+                            {h}
+                          </th>
+                        ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y">
@@ -983,9 +1072,10 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
                 Which ad is producing the better leads
               </h3>
               <p className="text-xs text-muted-foreground">
-                Last two months, per ad. Judge an ad on what its leads did, not on
-                how many it produced. "No outcome" is the ad's rows nobody filled
-                in, so a high number there means the comparison is not fair yet.
+                Last two months, per ad. Judge an ad on what its leads did, not
+                on how many it produced. "No outcome" is the ad's rows nobody
+                filled in, so a high number there means the comparison is not
+                fair yet.
               </p>
               <div className="overflow-x-auto rounded-lg border">
                 <table className="w-full">
@@ -1015,7 +1105,10 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
                         <Cell v={a.ad} />
                         <Cell v={a.leads} />
                         <Cell v={a.shows} />
-                        <Cell v={a.showRate == null ? "-" : `${a.showRate}%`} muted />
+                        <Cell
+                          v={a.showRate == null ? "-" : `${a.showRate}%`}
+                          muted
+                        />
                         <td className="px-3 py-2 text-sm tabular-nums">
                           {num(a.closes) ? (
                             <span className="font-medium text-emerald-600">
@@ -1104,7 +1197,9 @@ export function ClientPerformancePage() {
   const data = useQuery(api.csm.performanceOverview, {});
   const [openClient, setOpenClient] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [group, setGroup] = useState<"active" | "onboarding" | "paused">("active");
+  const [group, setGroup] = useState<"active" | "onboarding" | "paused">(
+    "active",
+  );
 
   if (data === undefined)
     return (
@@ -1124,7 +1219,9 @@ export function ClientPerformancePage() {
           !GROUPS.some(g => g.match(c.stage ?? ""))
         : chosen.match(c.stage ?? ""),
     )
-    .filter(c => c.clientName.toLowerCase().includes(query.trim().toLowerCase()));
+    .filter(c =>
+      c.clientName.toLowerCase().includes(query.trim().toLowerCase()),
+    );
   // DWY clients keep their own appointment tracking, so their unfilled rows are not our
   // chase list and must not inflate it.
   const totalStale = rows.reduce(
@@ -1140,9 +1237,9 @@ export function ClientPerformancePage() {
           Client performance
         </h1>
         <p className="text-sm text-muted-foreground">
-          Every client's own numbers, straight off their performance sheet. Click
-          a client for the full picture, their drive, their CRM, their ads and a
-          report you can send.
+          Every client's own numbers, straight off their performance sheet.
+          Click a client for the full picture, their drive, their CRM, their ads
+          and a report you can send.
         </p>
       </div>
 
@@ -1153,8 +1250,8 @@ export function ClientPerformancePage() {
             {waiting.length === 1 ? "" : "s"} waiting for your approval
           </summary>
           <p className="mt-1 text-xs text-amber-900">
-            Posted in #csm-general this week. Nothing reaches a client until you open
-            it and press send.
+            Posted in #csm-general this week. Nothing reaches a client until you
+            open it and press send.
           </p>
           <ul className="mt-2 space-y-1">
             {waiting.map(c => (
@@ -1270,15 +1367,27 @@ export function ClientPerformancePage() {
                     <Cell v={c.stage} muted />
                     <Cell v={c.month?.leads ?? 0} />
                     <Cell
-                      v={serviceModel(c.service).dwy ? "-" : (c.month?.booked ?? 0)}
+                      v={
+                        serviceModel(c.service).dwy
+                          ? "-"
+                          : (c.month?.booked ?? 0)
+                      }
                       muted={serviceModel(c.service).dwy}
                     />
                     <Cell
-                      v={serviceModel(c.service).dwy ? "-" : (c.month?.shows ?? 0)}
+                      v={
+                        serviceModel(c.service).dwy
+                          ? "-"
+                          : (c.month?.shows ?? 0)
+                      }
                       muted={serviceModel(c.service).dwy}
                     />
                     <Cell
-                      v={serviceModel(c.service).dwy ? "-" : (c.month?.closes ?? 0)}
+                      v={
+                        serviceModel(c.service).dwy
+                          ? "-"
+                          : (c.month?.closes ?? 0)
+                      }
                       muted={serviceModel(c.service).dwy}
                     />
                     <td className="px-3 py-2 text-sm tabular-nums">
@@ -1294,9 +1403,7 @@ export function ClientPerformancePage() {
                     </td>
                     <td className="px-3 py-2 text-sm">
                       {!c.live || c.adsAccess === "no_access" ? (
-                        <span className="text-muted-foreground">
-                          no access
-                        </span>
+                        <span className="text-muted-foreground">no access</span>
                       ) : c.adsAccess === "no_campaigns" ? (
                         <span className="text-muted-foreground">
                           not linked

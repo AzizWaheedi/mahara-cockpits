@@ -10,20 +10,20 @@ import {
   MoonStar,
   PenLine,
   Rocket,
+  Sparkles,
   Trophy,
   Users,
-  Sparkles,
 } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 import { CreativePreview } from "@/components/CreativePreview";
+import { TemplateCard } from "@/components/TemplateCard";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { TemplateCard } from "@/components/TemplateCard";
 import { CopyButton } from "@/components/WinningAds";
-import { ScriptingCalendar } from "./CalendarPage";
 import { fill, TEMPLATES } from "@/lib/creativeTemplates";
 import { api } from "../../convex/_generated/api";
+import { ScriptingCalendar } from "./CalendarPage";
 
 /**
  * Creative director cockpit.
@@ -64,7 +64,7 @@ function Section({
         <Icon className="h-4 w-4 shrink-0 translate-y-0.5 text-muted-foreground" />
         <h2 className="text-[15px] font-bold tracking-tight">{title}</h2>
         {sub && (
-          <span className="text-[12px] text-muted-foreground">{sub}</span>
+          <span className="text-[13px] text-muted-foreground">{sub}</span>
         )}
       </div>
       {children}
@@ -129,14 +129,14 @@ function SyncHealth() {
     : null;
   if (f.stale.length === 0) {
     return (
-      <p className="mb-3 text-[11.5px] text-muted-foreground">
-        Everything on this board synced {age === 0 ? "just now" : `${age} min ago`}.
-        Refreshes every 15 minutes.
+      <p className="mb-3 text-[12px] text-muted-foreground">
+        Everything on this board synced{" "}
+        {age === 0 ? "just now" : `${age} min ago`}. Refreshes every 15 minutes.
       </p>
     );
   }
   return (
-    <div className="callout-warn mb-3 rounded-md border px-3 py-2 text-[12px]">
+    <div className="callout-warn mb-3 rounded-md border px-3 py-2 text-[13px]">
       <strong>Some of this is stale.</strong> {f.stale.join(", ")} last updated
       over 45 minutes ago, so treat those numbers as old and tell Viktor.
     </div>
@@ -149,7 +149,7 @@ function Creative({ view }: { view: View }) {
 
   if (snap === undefined) {
     return (
-      <div className="p-6 text-[13px] text-muted-foreground">Loading…</div>
+      <div className="p-6 text-[14px] text-muted-foreground">Loading…</div>
     );
   }
 
@@ -162,10 +162,8 @@ function Creative({ view }: { view: View }) {
         <h1 className="text-[19px] font-bold tracking-tight">
           {TITLES[view].title}
         </h1>
-        <p className="text-[12.5px] text-muted-foreground">
-          {TITLES[view].sub}
-        </p>
-        <p className="mt-1 text-[12px] text-muted-foreground">
+        <p className="text-[13px] text-muted-foreground">{TITLES[view].sub}</p>
+        <p className="mt-1 text-[13px] text-muted-foreground">
           {c.brandDNA} brand DNA missing · {c.scripts} scripts open ·{" "}
           {c.overdueVideos} video{c.overdueVideos === 1 ? "" : "s"} late
         </p>
@@ -186,7 +184,7 @@ function Creative({ view }: { view: View }) {
             title="The rule"
             sub="creative director floor, lighter than the CSM's"
           >
-            <p className="text-[12.5px]">
+            <p className="text-[13px]">
               <strong>
                 1 to 2 messages a week in the client's group per active client.
               </strong>{" "}
@@ -198,7 +196,7 @@ function Creative({ view }: { view: View }) {
               href="https://docs.google.com/document/d/10wQorQfSebiX3Lmh0jXkEUkp3I_xMP68p4b1q-oUxcY/edit"
               target="_blank"
               rel="noreferrer"
-              className="mt-1 inline-block text-[12px] underline underline-offset-2"
+              className="mt-1 inline-block text-[13px] underline underline-offset-2"
             >
               Open the client communication SOP
             </a>
@@ -228,7 +226,7 @@ function Creative({ view }: { view: View }) {
                       href={j.url ?? "#"}
                       target="_blank"
                       rel="noreferrer"
-                      className="callout-bad flex items-center justify-between rounded-lg border p-2.5 text-[12.5px] hover:opacity-90"
+                      className="callout-bad flex items-center justify-between rounded-lg border p-2.5 text-[13px] hover:opacity-90"
                     >
                       <span>
                         <strong>{j.overdueDays}d late</strong> ·{" "}
@@ -255,7 +253,7 @@ function Creative({ view }: { view: View }) {
                     href={p.url ?? "#"}
                     target="_blank"
                     rel="noreferrer"
-                    className="callout-warn flex items-center justify-between rounded-lg border p-2.5 text-[12.5px] hover:opacity-90"
+                    className="callout-warn flex items-center justify-between rounded-lg border p-2.5 text-[13px] hover:opacity-90"
                   >
                     <span>
                       <strong>{p.lateDays}d late</strong> · {p.name}
@@ -266,7 +264,7 @@ function Creative({ view }: { view: View }) {
                   </a>
                 ))}
                 {snap.overduePosts.length > 4 && (
-                  <p className="pl-1 text-[11.5px] text-muted-foreground">
+                  <p className="pl-1 text-[12px] text-muted-foreground">
                     + {snap.overduePosts.length - 4} more unpublished posts past
                     their date.
                   </p>
@@ -288,7 +286,7 @@ function Creative({ view }: { view: View }) {
             title="What you write from"
             sub="the database, what works, and the funnel the ad points at"
           >
-            <div className="flex flex-wrap gap-2 text-[12px]">
+            <div className="flex flex-wrap gap-2 text-[13px]">
               <Link className="rounded border px-2 py-1" to="/scripting">
                 Scripting database
               </Link>
@@ -315,12 +313,12 @@ function Creative({ view }: { view: View }) {
                   href={b.url ?? "#"}
                   target="_blank"
                   rel="noreferrer"
-                  className="flex items-center justify-between rounded-lg border p-2.5 text-[12.5px] hover:bg-accent"
+                  className="flex items-center justify-between rounded-lg border p-2.5 text-[13px] hover:bg-accent"
                 >
                   <span className="font-medium">
                     {b.client}
                     {b.docOnFile && (
-                      <span className="tone-good ml-1.5 rounded px-1 py-0.5 text-[10.5px] font-semibold">
+                      <span className="tone-good ml-1.5 rounded px-1 py-0.5 text-[11px] font-semibold">
                         doc on file
                         {b.matchedTo && b.matchedTo !== b.client
                           ? ` under "${b.matchedTo}"`
@@ -329,7 +327,7 @@ function Creative({ view }: { view: View }) {
                       </span>
                     )}
                     {b.duplicate && (
-                      <span className="tone-warn ml-1.5 rounded px-1 py-0.5 text-[10.5px] font-semibold">
+                      <span className="tone-warn ml-1.5 rounded px-1 py-0.5 text-[11px] font-semibold">
                         duplicate task
                       </span>
                     )}
@@ -341,7 +339,9 @@ function Creative({ view }: { view: View }) {
                         : "shrink-0 text-muted-foreground"
                     }
                   >
-                    {b.docOnFile ? `open ${b.ageDays}d` : `waiting ${b.ageDays}d`}
+                    {b.docOnFile
+                      ? `open ${b.ageDays}d`
+                      : `waiting ${b.ageDays}d`}
                   </span>
                 </a>
               ))}
@@ -350,7 +350,7 @@ function Creative({ view }: { view: View }) {
               <Button
                 size="sm"
                 variant="ghost"
-                className="mt-1.5 h-7 text-[11.5px]"
+                className="mt-1.5 h-7 text-[12px]"
                 onClick={() => setShowAllBrand(!showAllBrand)}
               >
                 {showAllBrand
@@ -373,7 +373,7 @@ function Creative({ view }: { view: View }) {
             <div className="space-y-1.5">
               {snap.journeys.map(j => (
                 <div key={j.taskId} className="rounded-lg border p-2.5">
-                  <div className="flex items-center justify-between text-[12.5px]">
+                  <div className="flex items-center justify-between text-[13px]">
                     <a
                       href={j.url ?? "#"}
                       target="_blank"
@@ -398,7 +398,7 @@ function Creative({ view }: { view: View }) {
                     ))}
                   </div>
                   {j.currentStep && (
-                    <p className="mt-1.5 text-[11.5px] text-muted-foreground">
+                    <p className="mt-1.5 text-[12px] text-muted-foreground">
                       Next: {j.currentStep}
                     </p>
                   )}
@@ -424,7 +424,7 @@ function Creative({ view }: { view: View }) {
                   href={s.url ?? "#"}
                   target="_blank"
                   rel="noreferrer"
-                  className="block rounded-lg border p-2.5 text-[12.5px] hover:bg-accent"
+                  className="block rounded-lg border p-2.5 text-[13px] hover:bg-accent"
                 >
                   <div className="flex items-center justify-between">
                     <span className="font-medium">
@@ -445,7 +445,7 @@ function Creative({ view }: { view: View }) {
                     </span>
                   </div>
                   {s.notes && (
-                    <p className="mt-0.5 line-clamp-1 text-[11.5px] text-muted-foreground">
+                    <p className="mt-0.5 line-clamp-1 text-[12px] text-muted-foreground">
                       {s.notes}
                     </p>
                   )}
@@ -464,14 +464,14 @@ function Creative({ view }: { view: View }) {
           <Section icon={Film} title="Editors" sub="who owes what">
             <div className="space-y-1.5">
               {snap.editors.length === 0 && (
-                <p className="text-[12.5px] text-muted-foreground">
+                <p className="text-[13px] text-muted-foreground">
                   Nothing open in the video pipeline.
                 </p>
               )}
               {snap.editors.map(e => (
                 <div
                   key={e.editor}
-                  className="flex items-center justify-between rounded-lg border p-2.5 text-[12.5px]"
+                  className="flex items-center justify-between rounded-lg border p-2.5 text-[13px]"
                 >
                   <span className="font-medium">{e.editor}</span>
                   <span className="text-muted-foreground">
@@ -502,13 +502,13 @@ function Creative({ view }: { view: View }) {
                 "everyone is uncovered" warning would be noise, not signal.
                 [aziz, 2026-09-08] */}
             {snap.plannedAhead === 0 && snap.overduePosts.length === 0 ? (
-              <p className="text-[12.5px] text-muted-foreground">
+              <p className="text-[13px] text-muted-foreground">
                 Nothing is on the content calendar list in ClickUp yet, so there
-                is nothing to show. Social posts appear here the moment real ones
-                are added to the board.
+                is nothing to show. Social posts appear here the moment real
+                ones are added to the board.
               </p>
             ) : snap.uncovered.length > 0 ? (
-              <div className="callout-warn rounded-lg border p-2.5 text-[12.5px]">
+              <div className="callout-warn rounded-lg border p-2.5 text-[13px]">
                 <strong>
                   {snap.uncovered.length} client
                   {snap.uncovered.length === 1 ? "" : "s"} with nothing
@@ -519,7 +519,7 @@ function Creative({ view }: { view: View }) {
                 complain.
               </div>
             ) : (
-              <p className="text-[12.5px] text-muted-foreground">
+              <p className="text-[13px] text-muted-foreground">
                 Every client on the calendar has upcoming posts.
               </p>
             )}
@@ -537,19 +537,19 @@ function Creative({ view }: { view: View }) {
           >
             <div className="grid gap-3 md:grid-cols-2">
               <div>
-                <h3 className="mb-1.5 text-[12px] font-semibold uppercase tracking-wide text-muted-foreground">
+                <h3 className="mb-1.5 text-[13px] font-semibold uppercase tracking-wide text-muted-foreground">
                   Winning creatives
                 </h3>
                 <div className="space-y-1.5">
                   {snap.winners.length === 0 && (
-                    <p className="text-[12px] text-muted-foreground">
+                    <p className="text-[13px] text-muted-foreground">
                       No ad has enough spend yet to call a winner.
                     </p>
                   )}
                   {snap.winners.map((w, i) => (
                     <div
                       key={i}
-                      className="rounded-lg border p-2 text-[12px] callout-good"
+                      className="rounded-lg border p-2 text-[13px] callout-good"
                     >
                       <div className="font-medium">{w.client}</div>
                       <div className="text-muted-foreground">
@@ -561,11 +561,11 @@ function Creative({ view }: { view: View }) {
               </div>
 
               <div>
-                <h3 className="mb-1.5 text-[12px] font-semibold uppercase tracking-wide text-muted-foreground">
+                <h3 className="mb-1.5 text-[13px] font-semibold uppercase tracking-wide text-muted-foreground">
                   Frequency watch
                 </h3>
                 {!snap.anyBurning && (
-                  <p className="mb-1.5 text-[12px] text-muted-foreground">
+                  <p className="mb-1.5 text-[13px] text-muted-foreground">
                     Nothing is fatiguing — the highest frequency in the accounts
                     is {snap.fatiguing[0]?.frequency.toFixed(1) ?? "—"}, well
                     under the {snap.fatigueGate} gate. No replacements needed
@@ -576,7 +576,7 @@ function Creative({ view }: { view: View }) {
                   {snap.fatiguing.slice(0, 5).map((f, i) => (
                     <div
                       key={i}
-                      className={`rounded-lg border p-2 text-[12px] ${
+                      className={`rounded-lg border p-2 text-[13px] ${
                         f.burning ? "callout-bad" : ""
                       }`}
                     >
@@ -624,7 +624,7 @@ function Checklist({
             type="button"
             key={c.key}
             onClick={() => void toggle({ key: c.key, done: !c.done })}
-            className={`flex w-full items-start gap-2.5 rounded-lg border p-2.5 text-left text-[12.5px] transition hover:bg-muted/50 ${
+            className={`flex w-full items-start gap-2.5 rounded-lg border p-2.5 text-left text-[13px] transition hover:bg-muted/50 ${
               c.done ? "opacity-55" : ""
             }`}
           >
@@ -668,7 +668,7 @@ function Touchpoints({
   if (!rows.length) {
     return (
       <Section icon={MessageSquare} title="Nobody is owed a message">
-        <p className="text-[12.5px] text-muted-foreground">
+        <p className="text-[13px] text-muted-foreground">
           Nothing changed on the creative side today that a client needs to hear
           about. That is a good day, not an empty screen.
         </p>
@@ -723,18 +723,18 @@ function AllTemplates({
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="text-[12px] underline underline-offset-2"
+        className="text-[13px] underline underline-offset-2"
       >
         {open ? "Hide the library" : `Show all ${TEMPLATES.length} templates`}
       </button>
       {open && (
         <div className="mt-2 space-y-2">
-          <div className="flex flex-wrap items-center gap-2 text-[12px]">
+          <div className="flex flex-wrap items-center gap-2 text-[13px]">
             <span className="text-muted-foreground">Writing to</span>
             <select
               value={client}
               onChange={e => setClient(e.target.value)}
-              className="rounded border bg-transparent px-2 py-1 text-[12px]"
+              className="rounded border bg-transparent px-2 py-1 text-[13px]"
             >
               <option value="">nobody in particular</option>
               {names.map(n => (
@@ -747,7 +747,7 @@ function AllTemplates({
           {TEMPLATES.map(t => (
             <TemplateCard key={t.id} t={t} client={client || undefined} />
           ))}
-          <p className="text-[11.5px] text-muted-foreground">
+          <p className="text-[12px] text-muted-foreground">
             A real concern is a call, not a message. Get them on Maqsam or Zoom
             the same day rather than typing it out.
           </p>
@@ -787,21 +787,21 @@ function TouchpointRow({
 
   return (
     <div
-      className={`rounded-lg border text-[12.5px] ${r.done ? "opacity-55" : ""}`}
+      className={`rounded-lg border text-[13px] ${r.done ? "opacity-55" : ""}`}
     >
       <div className="p-3">
         <div className="mb-1 flex items-center justify-between gap-2">
           <strong>{r.client}</strong>
           <span className="flex items-center gap-2">
             {r.done ? (
-              <span className="text-[11px] text-muted-foreground">
+              <span className="text-[12px] text-muted-foreground">
                 messaged today
               </span>
             ) : (
               <Button
                 size="sm"
                 variant="outline"
-                className="h-6 px-2 text-[11px]"
+                className="h-6 px-2 text-[12px]"
                 onClick={onLog}
               >
                 Mark as messaged
@@ -810,7 +810,7 @@ function TouchpointRow({
             <button
               type="button"
               onClick={() => setOpen(!open)}
-              className="rounded border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted"
+              className="rounded border px-1.5 py-0.5 text-[12px] text-muted-foreground hover:bg-muted"
             >
               {open ? "close" : "write it"}
             </button>
@@ -824,11 +824,11 @@ function TouchpointRow({
       </div>
       {open && (
         <div className="space-y-2 border-t p-3">
-          <div className="flex flex-wrap items-center gap-2 text-[11.5px]">
+          <div className="flex flex-wrap items-center gap-2 text-[12px]">
             <select
               value={pick}
               onChange={e => swap(e.target.value, lang)}
-              className="rounded border bg-transparent px-2 py-1 text-[11.5px]"
+              className="rounded border bg-transparent px-2 py-1 text-[12px]"
             >
               {TEMPLATES.map(x => (
                 <option key={x.id} value={x.id}>
@@ -846,7 +846,7 @@ function TouchpointRow({
             <span className="text-muted-foreground">{t.when}</span>
           </div>
           {t.internal && (
-            <p className="callout-warn rounded px-2 py-1 text-[11.5px]">
+            <p className="callout-warn rounded px-2 py-1 text-[12px]">
               <strong>Before you send it:</strong> {t.internal}
             </p>
           )}
@@ -855,7 +855,7 @@ function TouchpointRow({
             dir="auto"
             value={text}
             onChange={e => setText(e.target.value)}
-            className="text-[12px]"
+            className="text-[13px]"
           />
           <div className="flex flex-wrap gap-2">
             <CopyButton text={text} label="Copy the message" />
@@ -863,7 +863,7 @@ function TouchpointRow({
               <Button
                 size="sm"
                 variant="secondary"
-                className="h-7 text-[11.5px]"
+                className="h-7 text-[12px]"
                 onClick={onLog}
               >
                 Sent it, log the touchpoint
@@ -909,7 +909,11 @@ function OnboardingSteps({
             <li key={st.label} className="flex gap-1.5">
               <span
                 className={
-                  st.done ? "txt-good" : skip ? "text-muted-foreground" : "txt-bad"
+                  st.done
+                    ? "txt-good"
+                    : skip
+                      ? "text-muted-foreground"
+                      : "txt-bad"
                 }
               >
                 {st.done ? "✓" : skip ? "–" : "○"}
@@ -927,7 +931,7 @@ function OnboardingSteps({
                 ) : (
                   st.label
                 )}
-                <span className="block text-[11px] text-muted-foreground">
+                <span className="block text-[12px] text-muted-foreground">
                   {st.note}
                 </span>
               </span>
@@ -960,10 +964,10 @@ function ClientProfiles({
             <button
               type="button"
               onClick={() => setOpen(open === r.client ? null : r.client)}
-              className="flex w-full items-center justify-between gap-2 p-2.5 text-left text-[12.5px] hover:bg-muted/50"
+              className="flex w-full items-center justify-between gap-2 p-2.5 text-left text-[13px] hover:bg-muted/50"
             >
               <strong>{r.client}</strong>
-              <span className="flex shrink-0 gap-2 text-[11px] text-muted-foreground">
+              <span className="flex shrink-0 gap-2 text-[12px] text-muted-foreground">
                 {r.brandDnaOpen > 0 && (
                   <span className="txt-bad">brand DNA open</span>
                 )}
@@ -978,7 +982,7 @@ function ClientProfiles({
               </span>
             </button>
             {open === r.client && (
-              <div className="space-y-3 border-t p-3 text-[12px]">
+              <div className="space-y-3 border-t p-3 text-[13px]">
                 <div className="grid gap-3 sm:grid-cols-3">
                   <Stat label="Creative onboarding">
                     <OnboardingSteps r={r} />
@@ -1034,7 +1038,7 @@ function ClientProfiles({
 
                 {r.liveAds.length > 0 && (
                   <div>
-                    <div className="mb-1 text-[10.5px] font-bold uppercase tracking-wide text-muted-foreground">
+                    <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
                       Live ads ({r.liveAds.length}) — click to watch
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -1061,7 +1065,7 @@ function ClientProfiles({
 
                 {r.videos.length > 0 && (
                   <div>
-                    <div className="mb-1 text-[10.5px] font-bold uppercase tracking-wide text-muted-foreground">
+                    <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
                       Video pipeline
                     </div>
                     <div className="space-y-1">
@@ -1091,7 +1095,7 @@ function ClientProfiles({
                                 · {v2.stage}
                               </span>
                             </span>
-                            <span className="shrink-0 text-[11px] text-muted-foreground">
+                            <span className="shrink-0 text-[12px] text-muted-foreground">
                               {v2.hisMove
                                 ? "your move"
                                 : v2.editors.join(", ") || "unassigned"}
@@ -1107,7 +1111,7 @@ function ClientProfiles({
 
                 {r.scripts.length > 0 && (
                   <div>
-                    <div className="mb-1 text-[10.5px] font-bold uppercase tracking-wide text-muted-foreground">
+                    <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
                       Scripts
                     </div>
                     <div className="space-y-1">
@@ -1126,7 +1130,7 @@ function ClientProfiles({
                             className="flex items-center justify-between rounded border p-2 hover:bg-muted/50"
                           >
                             <span>{sc.status}</span>
-                            <span className="text-[11px] text-muted-foreground">
+                            <span className="text-[12px] text-muted-foreground">
                               {sc.ageDays}d old
                             </span>
                           </a>
@@ -1137,7 +1141,7 @@ function ClientProfiles({
                 )}
 
                 {r.campaigns.length > 0 && (
-                  <div className="text-[11.5px] text-muted-foreground">
+                  <div className="text-[12px] text-muted-foreground">
                     Campaigns:{" "}
                     {r.campaigns
                       .map((c2: { campaignName: string }) => c2.campaignName)
@@ -1162,7 +1166,7 @@ function Stat({
 }) {
   return (
     <div>
-      <div className="text-[10.5px] font-bold uppercase tracking-wide text-muted-foreground">
+      <div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
         {label}
       </div>
       <div>{children}</div>
@@ -1212,7 +1216,7 @@ function EndOfDay({
         title="Today, from the boards"
         sub="already counted"
       >
-        <div className="grid gap-2 text-[12.5px] sm:grid-cols-3">
+        <div className="grid gap-2 text-[13px] sm:grid-cols-3">
           <Stat label="Checklist">
             {computed.checksDone}/{computed.checksTotal} done
           </Stat>
@@ -1233,7 +1237,7 @@ function EndOfDay({
       >
         <div className="mb-2 flex gap-1.5">
           <input
-            className="flex-1 rounded border bg-background p-1.5 text-[12.5px]"
+            className="flex-1 rounded border bg-background p-1.5 text-[13px]"
             placeholder="One thing you will finish tomorrow…"
             value={line}
             onChange={e => setLine(e.target.value)}
@@ -1247,7 +1251,7 @@ function EndOfDay({
           <Button
             size="sm"
             variant="outline"
-            className="h-8 text-[11px]"
+            className="h-8 text-[12px]"
             onClick={() => {
               if (line.trim().length > 2) {
                 void addItem({ text: line });
@@ -1262,12 +1266,12 @@ function EndOfDay({
           {snap.plan.map((p: { _id: string; text: string }) => (
             <div
               key={p._id}
-              className="flex items-center justify-between rounded border p-2 text-[12.5px]"
+              className="flex items-center justify-between rounded border p-2 text-[13px]"
             >
               <span>{p.text}</span>
               <button
                 type="button"
-                className="text-[11px] text-muted-foreground hover:text-foreground"
+                className="text-[12px] text-muted-foreground hover:text-foreground"
                 // biome-ignore lint/suspicious/noExplicitAny: Convex id
                 onClick={() => void removeItem({ id: p._id as any })}
               >
@@ -1276,7 +1280,7 @@ function EndOfDay({
             </div>
           ))}
           {snap.plan.length === 0 && (
-            <p className="text-[12.5px] text-muted-foreground">
+            <p className="text-[13px] text-muted-foreground">
               Nothing written yet.
             </p>
           )}
@@ -1291,7 +1295,7 @@ function EndOfDay({
         <div className="space-y-2">
           {EOD_QUESTIONS.map(q => (
             <label key={q.key} className="block">
-              <span className="text-[11.5px] font-semibold">{q.label}</span>
+              <span className="text-[12px] font-semibold">{q.label}</span>
               {q.choices ? (
                 <div className="mt-1 flex gap-1.5">
                   {q.choices.map(ch => (
@@ -1299,7 +1303,7 @@ function EndOfDay({
                       key={ch}
                       size="sm"
                       variant={answers[q.key] === ch ? "default" : "outline"}
-                      className="h-7 px-2 text-[11px]"
+                      className="h-7 px-2 text-[12px]"
                       onClick={() => setAnswers({ ...answers, [q.key]: ch })}
                     >
                       {ch}
@@ -1308,7 +1312,7 @@ function EndOfDay({
                 </div>
               ) : (
                 <textarea
-                  className="mt-1 w-full rounded border bg-background p-2 text-[12.5px]"
+                  className="mt-1 w-full rounded border bg-background p-2 text-[13px]"
                   rows={2}
                   value={answers[q.key] ?? ""}
                   onChange={e =>
@@ -1320,7 +1324,7 @@ function EndOfDay({
           ))}
           <Button
             size="sm"
-            className="h-8 text-[11px]"
+            className="h-8 text-[12px]"
             disabled={saving}
             onClick={async () => {
               setSaving(true);
@@ -1334,7 +1338,7 @@ function EndOfDay({
             {saving ? "Saving…" : snap.eod ? "Update my EOD" : "Save my EOD"}
           </Button>
           {snap.eod && (
-            <p className="text-[11.5px] text-muted-foreground">
+            <p className="text-[12px] text-muted-foreground">
               Saved at {new Date(snap.eod.at).toLocaleTimeString()}.
             </p>
           )}
@@ -1403,7 +1407,7 @@ function VideoPipeline({
       }
     >
       {stages.length === 0 ? (
-        <p className="text-[12.5px] text-muted-foreground">
+        <p className="text-[13px] text-muted-foreground">
           Nothing open in the pipeline.
         </p>
       ) : (
@@ -1411,7 +1415,7 @@ function VideoPipeline({
           {stages.map((st: { stage: string; count: number }) => (
             <span
               key={st.stage}
-              className="rounded border px-2 py-1 text-[11px]"
+              className="rounded border px-2 py-1 text-[12px]"
             >
               {st.stage} · <strong>{st.count}</strong>
             </span>
@@ -1435,7 +1439,7 @@ function VideoPipeline({
                 href={j.url ?? "#"}
                 target="_blank"
                 rel="noreferrer"
-                className="callout-warn flex items-center justify-between rounded-lg border p-2.5 text-[12.5px] hover:opacity-90"
+                className="callout-warn flex items-center justify-between rounded-lg border p-2.5 text-[13px] hover:opacity-90"
               >
                 <span>
                   <strong>{j.stage}</strong> · {j.client ?? j.name}

@@ -16,9 +16,6 @@ import { api } from "../../convex/_generated/api";
  * never pretends a ClickUp write already landed.
  */
 
-
-
-
 function Pill({
   children,
   tone = "neutral",
@@ -28,13 +25,12 @@ function Pill({
 }) {
   return (
     <span
-      className={`tone-${tone} rounded-full px-2 py-0.5 text-[10.5px] font-medium`}
+      className={`tone-${tone} rounded-full px-2 py-0.5 text-[11px] font-medium`}
     >
       {children}
     </span>
   );
 }
-
 
 export function ClientDatabasePage() {
   const data = useQuery(api.clients.roster, {});
@@ -50,7 +46,7 @@ export function ClientDatabasePage() {
   }, [data, q]);
 
   if (data === undefined) {
-    return <p className="p-4 text-[13px] text-muted-foreground">Loading…</p>;
+    return <p className="p-4 text-[14px] text-muted-foreground">Loading…</p>;
   }
 
   return (
@@ -58,7 +54,7 @@ export function ClientDatabasePage() {
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <Users className="h-4 w-4 text-muted-foreground" />
         <h2 className="text-[15px] font-bold tracking-tight">Clients</h2>
-        <span className="text-[12px] text-muted-foreground">
+        <span className="text-[13px] text-muted-foreground">
           {data.counts.live} live · {data.counts.toContact} waiting on you
         </span>
         <div className="ml-auto flex items-center gap-1.5 rounded-md border px-2 py-1">
@@ -67,7 +63,7 @@ export function ClientDatabasePage() {
             value={q}
             onChange={e => setQ(e.target.value)}
             placeholder="Find a client"
-            className="w-40 bg-transparent text-[12px] outline-none"
+            className="w-40 bg-transparent text-[13px] outline-none"
           />
         </div>
       </div>
@@ -77,7 +73,7 @@ export function ClientDatabasePage() {
           <div key={r.taskId} className="rounded-lg border">
             <Link
               to={`/clients/${encodeURIComponent(r.name)}`}
-              className="flex w-full items-center justify-between gap-2 p-2.5 text-left text-[12.5px] hover:bg-muted/50"
+              className="flex w-full items-center justify-between gap-2 p-2.5 text-left text-[13px] hover:bg-muted/50"
             >
               <span className="flex min-w-0 items-center gap-2">
                 <strong className="truncate">{r.name}</strong>
@@ -85,7 +81,7 @@ export function ClientDatabasePage() {
                   {r.clientStatus}
                 </Pill>
               </span>
-              <span className="flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground">
+              <span className="flex shrink-0 items-center gap-2 text-[12px] text-muted-foreground">
                 {r.hisMove > 0 && (
                   <span className="txt-bad">{r.hisMove} on you</span>
                 )}
@@ -133,7 +129,7 @@ export function ScriptDatabasePage() {
   }, [data, q]);
 
   if (data === undefined) {
-    return <p className="p-4 text-[13px] text-muted-foreground">Loading…</p>;
+    return <p className="p-4 text-[14px] text-muted-foreground">Loading…</p>;
   }
 
   return (
@@ -143,11 +139,11 @@ export function ScriptDatabasePage() {
         <h2 className="text-[15px] font-bold tracking-tight">
           Scripting database
         </h2>
-        <span className="text-[12px] text-muted-foreground">
+        <span className="text-[13px] text-muted-foreground">
           {data.total} proven ads, {data.live} still running
         </span>
       </div>
-      <p className="mb-3 text-[12px] text-muted-foreground">
+      <p className="mb-3 text-[13px] text-muted-foreground">
         Before you write anything, read what already worked in the same service
         line. Search the actual copy and transcripts, not just the ad names.
       </p>
@@ -156,7 +152,7 @@ export function ScriptDatabasePage() {
         <select
           value={service}
           onChange={e => setService(e.target.value)}
-          className="rounded border bg-transparent px-2 py-1 text-[12px]"
+          className="rounded border bg-transparent px-2 py-1 text-[13px]"
         >
           <option value="">Every service line</option>
           {/* biome-ignore lint/suspicious/noExplicitAny: query rows are untyped */}
@@ -166,7 +162,7 @@ export function ScriptDatabasePage() {
             </option>
           ))}
         </select>
-        <label className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
+        <label className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
           <input
             type="checkbox"
             checked={liveOnly}
@@ -180,7 +176,7 @@ export function ScriptDatabasePage() {
             value={q}
             onChange={e => setQ(e.target.value)}
             placeholder="Search hooks, copy, transcripts"
-            className="w-52 bg-transparent text-[12px] outline-none"
+            className="w-52 bg-transparent text-[13px] outline-none"
           />
         </div>
       </div>
@@ -189,10 +185,10 @@ export function ScriptDatabasePage() {
 
       {roster?.clients?.length ? (
         <div className="mt-6">
-          <h3 className="mb-1.5 text-[13px] font-bold">
+          <h3 className="mb-1.5 text-[14px] font-bold">
             Or start from a client
           </h3>
-          <p className="mb-2 text-[11.5px] text-muted-foreground">
+          <p className="mb-2 text-[12px] text-muted-foreground">
             Opens their full screen: brand direction, offer, everything we have
             made and what is live on their account right now.
           </p>
@@ -202,7 +198,7 @@ export function ScriptDatabasePage() {
               <Link
                 key={c.taskId}
                 to={`/clients/${encodeURIComponent(c.name)}`}
-                className="rounded-full border px-2.5 py-1 text-[11.5px] hover:bg-muted"
+                className="rounded-full border px-2.5 py-1 text-[12px] hover:bg-muted"
                 dir="auto"
               >
                 {c.name}

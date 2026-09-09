@@ -83,7 +83,8 @@ export const LINK_GROUPS: LinkGroup[] = [
         note: "Before you ever send a cancellation form",
       },
       {
-        label: "Reset call SOP (Client Success Manager bootcamp, video + framework)",
+        label:
+          "Reset call SOP (Client Success Manager bootcamp, video + framework)",
         url: "https://www.skool.com/maharamedia-8165/classroom/68fc87a8?md=181f7ebf64164828bd0faec51925059c",
         note: "The save call, when they are unhappy or hinting at cancelling. Find out whether it is money, results or the team, then reset expectations",
       },

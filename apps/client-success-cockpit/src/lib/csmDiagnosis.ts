@@ -51,7 +51,8 @@ export type Diagnosis = {
   basis: string;
 };
 
-const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 100) : null);
+const pct = (n: number, d: number) =>
+  d > 0 ? Math.round((n / d) * 100) : null;
 const first = (name: string) => (name ?? "").split(/[\s—–-]/)[0] || name || "";
 
 /**
@@ -79,7 +80,9 @@ function diagnoseRaw(p: Any): Diagnosis {
       n +
       (c.adsets ?? []).reduce(
         (k: number, s: Any) =>
-          k + (s.ads ?? []).filter((a: Any) => /active/i.test(a.status ?? "")).length,
+          k +
+          (s.ads ?? []).filter((a: Any) => /active/i.test(a.status ?? ""))
+            .length,
         0,
       ),
     0,
@@ -251,7 +254,8 @@ function diagnoseRaw(p: Any): Diagnosis {
     found.unshift({
       id: "macro_offer",
       layer: "macro",
-      title: "Every stage is leaking and nothing has ever closed, treat this as one problem",
+      title:
+        "Every stage is leaking and nothing has ever closed, treat this as one problem",
       evidence: `${leads} leads, ${booked} booked, ${shows} attended, 0 closed ever on their sheet.`,
       diagnosis:
         "When every metric is broken at once, the constraint is upstream: the offer or the message is attracting the wrong people. Patching each leak separately wastes months, this is a macro constraint.",
@@ -285,8 +289,7 @@ function diagnoseRaw(p: Any): Diagnosis {
 
   // No em dashes in anything the client reads.
   for (const c of found)
-    if (c.say)
-      c.say = { en: humanise(c.say.en), ar: humanise(c.say.ar) };
+    if (c.say) c.say = { en: humanise(c.say.en), ar: humanise(c.say.ar) };
 
   // Done with you: the client books and tracks their own appointments, so we are not
   // accountable for the sheet or for anything downstream of the lead. Judging them on
@@ -305,15 +308,17 @@ function diagnoseRaw(p: Any): Diagnosis {
   const basis = dwy
     ? [
         `${leads7} leads in the last 7 days`,
-        cpl != null ? `cost per lead $${cpl.toFixed(2)}` : "no cost per lead yet",
+        cpl != null
+          ? `cost per lead $${cpl.toFixed(2)}`
+          : "no cost per lead yet",
         "done with you, so lead volume and cost per lead only",
       ].join(" · ")
     : [
-    `${leads} leads`,
-    `${booked} booked`,
-    `${decided} with an outcome`,
-    `${closes} closed`,
-    "last two months of their sheet",
+        `${leads} leads`,
+        `${booked} booked`,
+        `${decided} with an outcome`,
+        `${closes} closed`,
+        "last two months of their sheet",
       ].join(" · ");
 
   return {
@@ -324,8 +329,8 @@ function diagnoseRaw(p: Any): Diagnosis {
       ? dwy
         ? "Lead volume and cost per lead are both inside the gates. They book their own appointments, so ask about their close rate on the call rather than reporting it."
         : Number(m.leads ?? 0) > 0
-        ? "Every gate with enough data behind it is met. Do not manufacture work here, ask for a review, a referral or more budget."
-        : "Nothing is out of KPI, but there is not enough data yet to judge. Get the sheet filled and come back to it."
+          ? "Every gate with enough data behind it is met. Do not manufacture work here, ask for a review, a referral or more budget."
+          : "Nothing is out of KPI, but there is not enough data yet to judge. Get the sheet filled and come back to it."
       : `Fix ${ranked[0].title.toLowerCase()} first. ${ranked.length - 1 > 0 ? `${ranked.length - 1} more below, one leak at a time.` : "One leak at a time."}`,
     basis,
   };

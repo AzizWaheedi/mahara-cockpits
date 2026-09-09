@@ -1,9 +1,9 @@
 import { useAction } from "convex/react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { api } from "../../convex/_generated/api";
 import { Button } from "@/components/ui/button";
 import { assistLabel, useAssist } from "@/components/useAssist";
+import { api } from "../../convex/_generated/api";
 
 /**
  * "Change what's already running" — the other half of the builder.
@@ -17,13 +17,7 @@ type Row = any;
 
 type Tab = "ads" | "creative" | "adset" | "budget" | null;
 
-export function EditPanel({
-  campaign,
-  tree,
-}: {
-  campaign: Row;
-  tree: Row[];
-}) {
+export function EditPanel({ campaign, tree }: { campaign: Row; tree: Row[] }) {
   const [tab, setTab] = useState<Tab>(null);
   const adSets = tree.filter(t => t.kind === "adset");
   const ads = tree.filter(t => t.kind === "ad");
@@ -31,7 +25,7 @@ export function EditPanel({
   return (
     <div className="mt-3 rounded-lg border bg-muted/30 p-3">
       <div className="flex flex-wrap items-center gap-1.5">
-        <span className="mr-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+        <span className="mr-1 text-[12px] font-bold uppercase tracking-wide text-muted-foreground">
           Make changes
         </span>
         {(
@@ -46,7 +40,7 @@ export function EditPanel({
             key={label}
             size="sm"
             variant={tab === key ? "default" : "outline"}
-            className="h-7 px-2 text-[11px]"
+            className="h-7 px-2 text-[12px]"
             onClick={() => setTab(tab === key ? null : key)}
           >
             {label}
@@ -104,23 +98,23 @@ function CopyTest({
 
   if (ads.length === 0)
     return (
-      <p className="mt-3 text-[12px] text-muted-foreground">
+      <p className="mt-3 text-[13px] text-muted-foreground">
         No ads synced for this campaign yet, so there's nothing to copy from.
       </p>
     );
 
   return (
     <div className="mt-3 space-y-2.5">
-      <p className="text-[12px] text-muted-foreground">
+      <p className="text-[13px] text-muted-foreground">
         Keeps the video, the page and the lead form exactly as they are — only
         the text changes. New ads arrive <strong>paused</strong>.
       </p>
 
       <div className="grid gap-2 sm:grid-cols-2">
-        <label className="text-[11.5px] font-semibold">
+        <label className="text-[12px] font-semibold">
           Copy this ad
           <select
-            className="mt-1 w-full rounded-md border bg-background p-1.5 text-[12px] font-normal"
+            className="mt-1 w-full rounded-md border bg-background p-1.5 text-[13px] font-normal"
             value={source}
             onChange={e => setSource(e.target.value)}
           >
@@ -131,10 +125,10 @@ function CopyTest({
             ))}
           </select>
         </label>
-        <label className="text-[11.5px] font-semibold">
+        <label className="text-[12px] font-semibold">
           Put them in
           <select
-            className="mt-1 w-full rounded-md border bg-background p-1.5 text-[12px] font-normal"
+            className="mt-1 w-full rounded-md border bg-background p-1.5 text-[13px] font-normal"
             value={adset}
             onChange={e => setAdset(e.target.value)}
           >
@@ -149,10 +143,10 @@ function CopyTest({
       </div>
 
       <div className="flex flex-wrap items-end gap-2">
-        <label className="min-w-[220px] flex-1 text-[11.5px] font-semibold">
+        <label className="min-w-[220px] flex-1 text-[12px] font-semibold">
           Optional — tell me an angle and I'll draft a first pass
           <input
-            className="mt-1 w-full rounded-md border bg-background p-1.5 text-[12px] font-normal"
+            className="mt-1 w-full rounded-md border bg-background p-1.5 text-[13px] font-normal"
             placeholder="e.g. lead with the free consultation"
             value={brief}
             onChange={e => setBrief(e.target.value)}
@@ -161,7 +155,7 @@ function CopyTest({
         <Button
           size="sm"
           variant="outline"
-          className="h-8 text-[11.5px]"
+          className="h-8 text-[12px]"
           disabled={copyAssist.waiting}
           onClick={async () => {
             await copyAssist.ask({
@@ -170,7 +164,9 @@ function CopyTest({
               brief,
               language: campaign.language,
             });
-            toast.info("Asked Viktor. The options land here when they're ready.");
+            toast.info(
+              "Asked Viktor. The options land here when they're ready.",
+            );
           }}
         >
           {copyAssist.waiting ? "Viktor is writing…" : "Write me options"}
@@ -178,14 +174,13 @@ function CopyTest({
       </div>
 
       {assistLabel(copyAssist.row, copyAssist.waiting) && (
-        <p className="rounded-md bg-muted p-2 text-[11.5px] text-muted-foreground">
-          {assistLabel(copyAssist.row, copyAssist.waiting)}{" "}
-          You don't have to wait — type your own copy below and create the ads
-          the same way.
+        <p className="rounded-md bg-muted p-2 text-[12px] text-muted-foreground">
+          {assistLabel(copyAssist.row, copyAssist.waiting)} You don't have to
+          wait — type your own copy below and create the ads the same way.
         </p>
       )}
       {copyAssist.row?.status === "ready" && copyAssist.row.note && (
-        <p className="rounded-md bg-muted p-2 text-[11.5px]">
+        <p className="rounded-md bg-muted p-2 text-[12px]">
           {copyAssist.row.note}
         </p>
       )}
@@ -194,12 +189,12 @@ function CopyTest({
         // biome-ignore lint/suspicious/noArrayIndexKey: editable fixed-order rows
         <div key={i} className="rounded-md border bg-background p-2">
           {vr.angle && (
-            <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+            <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
               {vr.angle}
             </div>
           )}
           <input
-            className="w-full border-b bg-transparent pb-1 text-[12.5px] font-semibold outline-none"
+            className="w-full border-b bg-transparent pb-1 text-[13px] font-semibold outline-none"
             placeholder="Headline (under 40 characters)"
             value={vr.headline}
             onChange={e =>
@@ -211,7 +206,7 @@ function CopyTest({
             }
           />
           <textarea
-            className="mt-1.5 w-full resize-y bg-transparent text-[12.5px] outline-none"
+            className="mt-1.5 w-full resize-y bg-transparent text-[13px] outline-none"
             rows={3}
             dir="auto"
             placeholder="Primary text"
@@ -231,7 +226,7 @@ function CopyTest({
         <Button
           size="sm"
           variant="ghost"
-          className="h-7 text-[11.5px]"
+          className="h-7 text-[12px]"
           onClick={() =>
             setVariants([...variants, { message: "", headline: "" }])
           }
@@ -240,7 +235,7 @@ function CopyTest({
         </Button>
         <Button
           size="sm"
-          className="h-7 text-[11.5px]"
+          className="h-7 text-[12px]"
           disabled={busy}
           onClick={async () => {
             const clean = variants.filter(x => x.message && x.headline);
@@ -279,23 +274,23 @@ function NewAdSet({ campaign, adSets }: { campaign: Row; adSets: Row[] }) {
 
   if (adSets.length === 0)
     return (
-      <p className="mt-3 text-[12px] text-muted-foreground">
+      <p className="mt-3 text-[13px] text-muted-foreground">
         No ad sets synced for this campaign yet.
       </p>
     );
 
   return (
     <div className="mt-3 space-y-2.5">
-      <p className="text-[12px] text-muted-foreground">
+      <p className="text-[13px] text-muted-foreground">
         Copies the targeting, optimisation and lead form from an ad set that
         already works. Arrives <strong>paused</strong> with no ads in it — add
         ads with "Test new copy".
       </p>
       <div className="grid gap-2 sm:grid-cols-3">
-        <label className="text-[11.5px] font-semibold">
+        <label className="text-[12px] font-semibold">
           Copy targeting from
           <select
-            className="mt-1 w-full rounded-md border bg-background p-1.5 text-[12px] font-normal"
+            className="mt-1 w-full rounded-md border bg-background p-1.5 text-[13px] font-normal"
             value={from}
             onChange={e => setFrom(e.target.value)}
           >
@@ -306,19 +301,19 @@ function NewAdSet({ campaign, adSets }: { campaign: Row; adSets: Row[] }) {
             ))}
           </select>
         </label>
-        <label className="text-[11.5px] font-semibold">
+        <label className="text-[12px] font-semibold">
           Call it
           <input
-            className="mt-1 w-full rounded-md border bg-background p-1.5 text-[12px] font-normal"
+            className="mt-1 w-full rounded-md border bg-background p-1.5 text-[13px] font-normal"
             placeholder="New ad set name"
             value={name}
             onChange={e => setName(e.target.value)}
           />
         </label>
-        <label className="text-[11.5px] font-semibold">
+        <label className="text-[12px] font-semibold">
           Daily budget ($)
           <input
-            className="mt-1 w-full rounded-md border bg-background p-1.5 text-[12px] font-normal"
+            className="mt-1 w-full rounded-md border bg-background p-1.5 text-[13px] font-normal"
             placeholder="same as the original"
             inputMode="decimal"
             value={budget}
@@ -328,7 +323,7 @@ function NewAdSet({ campaign, adSets }: { campaign: Row; adSets: Row[] }) {
       </div>
       <Button
         size="sm"
-        className="h-7 text-[11.5px]"
+        className="h-7 text-[12px]"
         disabled={busy}
         onClick={async () => {
           if (!name) {
@@ -360,7 +355,7 @@ function BudgetEditor({ campaign, adSets }: { campaign: Row; adSets: Row[] }) {
 
   if (adSets.length === 0)
     return (
-      <p className="mt-3 text-[12px] text-muted-foreground">
+      <p className="mt-3 text-[13px] text-muted-foreground">
         No ad sets synced for this campaign yet.
       </p>
     );
@@ -373,8 +368,8 @@ function BudgetEditor({ campaign, adSets }: { campaign: Row; adSets: Row[] }) {
           className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-background p-2"
         >
           <div className="min-w-0">
-            <div className="text-[12.5px] font-semibold">{s.name}</div>
-            <div className="text-[11px] text-muted-foreground">
+            <div className="text-[13px] font-semibold">{s.name}</div>
+            <div className="text-[12px] text-muted-foreground">
               now{" "}
               {s.dailyBudget !== undefined
                 ? `$${s.dailyBudget.toFixed(2)}/day`
@@ -383,18 +378,16 @@ function BudgetEditor({ campaign, adSets }: { campaign: Row; adSets: Row[] }) {
           </div>
           <div className="flex items-center gap-1.5">
             <input
-              className="w-24 rounded-md border bg-background p-1.5 text-[12px]"
+              className="w-24 rounded-md border bg-background p-1.5 text-[13px]"
               inputMode="decimal"
               placeholder="new $"
               value={edits[s.metaId] ?? ""}
-              onChange={e =>
-                setEdits({ ...edits, [s.metaId]: e.target.value })
-              }
+              onChange={e => setEdits({ ...edits, [s.metaId]: e.target.value })}
             />
             <Button
               size="sm"
               variant="outline"
-              className="h-7 text-[11px]"
+              className="h-7 text-[12px]"
               disabled={busy || !edits[s.metaId]}
               onClick={async () => {
                 setBusy(true);
@@ -471,7 +464,9 @@ function AddCreative({
         headline: headline.trim() || undefined,
       });
       if (res.ok) {
-        toast.success("Added, paused. Review it in Ads Manager before it runs.");
+        toast.success(
+          "Added, paused. Review it in Ads Manager before it runs.",
+        );
         setUrl("");
         setDrive("");
         setPicked(null);
@@ -524,7 +519,7 @@ function AddCreative({
         </label>
       </div>
       <div className="rounded-md border bg-background p-2">
-        <div className="mb-1 text-[11px] font-semibold">
+        <div className="mb-1 text-[12px] font-semibold">
           Paste the Drive link — I'll fetch the file and put it in the ad
           account
         </div>
@@ -538,7 +533,7 @@ function AddCreative({
           <Button
             size="sm"
             variant="outline"
-            className="h-8 text-[11px]"
+            className="h-8 text-[12px]"
             disabled={driveAssist.waiting || !drive.trim()}
             onClick={async () => {
               await driveAssist.ask({
@@ -556,30 +551,29 @@ function AddCreative({
           </Button>
         </div>
         {assistLabel(driveAssist.row, driveAssist.waiting) && (
-          <p className="mt-1 text-[11px] text-muted-foreground">
+          <p className="mt-1 text-[12px] text-muted-foreground">
             {assistLabel(driveAssist.row, driveAssist.waiting)}
           </p>
         )}
         {(driveAssist.row?.media ?? []).map(m => (
           <div
             key={m.link}
-            className="mt-1 flex items-center justify-between gap-2 border-t pt-1 text-[11.5px]"
+            className="mt-1 flex items-center justify-between gap-2 border-t pt-1 text-[12px]"
           >
             <span className="min-w-0 flex-1 truncate">
               {m.name}
-              {m.error && (
-                <span className="txt-bad"> — {m.error}</span>
-              )}
+              {m.error && <span className="txt-bad"> — {m.error}</span>}
             </span>
             {!m.error && (
               <Button
                 size="sm"
                 variant={
-                  picked?.name === m.name && (picked?.videoId ?? picked?.imageHash)
+                  picked?.name === m.name &&
+                  (picked?.videoId ?? picked?.imageHash)
                     ? "default"
                     : "outline"
                 }
-                className="h-6 px-2 text-[10.5px]"
+                className="h-6 px-2 text-[11px]"
                 onClick={() => {
                   setPicked({
                     name: m.name,
@@ -603,7 +597,7 @@ function AddCreative({
             key={k}
             size="sm"
             variant={kind === k ? "default" : "outline"}
-            className="h-7 px-2 text-[11px] capitalize"
+            className="h-7 px-2 text-[12px] capitalize"
             onClick={() => setKind(k)}
           >
             {k}
@@ -637,7 +631,12 @@ function AddCreative({
         value={headline}
         onChange={e => setHeadline(e.target.value)}
       />
-      <Button size="sm" className="h-7 text-[11px]" disabled={busy} onClick={submit}>
+      <Button
+        size="sm"
+        className="h-7 text-[12px]"
+        disabled={busy}
+        onClick={submit}
+      >
         {busy ? "Uploading to Meta…" : "Add it, paused"}
       </Button>
     </div>
@@ -685,7 +684,7 @@ function AskViktor({ campaign }: { campaign: Row }) {
         <Button
           size="sm"
           variant="outline"
-          className="h-7 px-2 text-[11px]"
+          className="h-7 px-2 text-[12px]"
           disabled={busy}
           onClick={send}
         >
