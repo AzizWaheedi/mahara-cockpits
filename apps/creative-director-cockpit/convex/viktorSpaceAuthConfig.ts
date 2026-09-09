@@ -68,19 +68,20 @@ function configuredSpaceAuthProviders(): AuthProviderConfig[] {
   const providerNames = configuredAuthProviderNames();
   const providers: AuthProviderConfig[] = [];
   if (providerNames.has("email_password")) {
+    // Email verification and password reset need a mail transport. Without
+    // RESEND_API_KEY on the deployment, sign-up completes without the OTP step.
+    const mailConfigured = Boolean(process.env.RESEND_API_KEY);
     providers.push(
-      Password({
-        verify: ViktorSpacesEmail,
-        reset: ViktorSpacesPasswordReset,
-      }),
+      Password(
+        mailConfigured
+          ? { verify: ViktorSpacesEmail, reset: ViktorSpacesPasswordReset }
+          : {},
+      ),
     );
   }
   if (providerNames.has("viktor")) {
     const viktorProviders = viktorWorkspaceSignInProviders();
-    if (
-      viktorProviders.length === 0 &&
-      !providerNames.has("email_password")
-    ) {
+    if (viktorProviders.length === 0 && !providerNames.has("email_password")) {
       throw new Error(
         "Viktor sign-in is the only configured provider but the Viktor OAuth " +
           "deployment env (VIKTOR_AUTH_RESOURCE_ID, VIKTOR_AUTH_BASE_URL) is " +

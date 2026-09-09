@@ -22,28 +22,25 @@ async function sendEmail({
   heading: string;
   description: string;
 }) {
-  const apiUrl = process.env.VIKTOR_SPACES_API_URL;
-  const projectName = process.env.VIKTOR_SPACES_PROJECT_NAME;
-  const projectSecret = process.env.VIKTOR_SPACES_PROJECT_SECRET;
-
-  if (!apiUrl || !projectName || !projectSecret) {
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.AUTH_EMAIL_FROM || "onboarding@resend.dev";
+  if (!apiKey) {
     throw new Error(
-      "Viktor Spaces environment variables not configured. " +
-        "Required: VIKTOR_SPACES_API_URL, VIKTOR_SPACES_PROJECT_NAME, VIKTOR_SPACES_PROJECT_SECRET",
+      "RESEND_API_KEY is not set on this deployment, so verification emails cannot be sent",
     );
   }
 
-  const response = await fetch(`${apiUrl}/api/viktor-spaces/send-email`, {
+  const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      project_name: projectName,
-      project_secret: projectSecret,
-      to_email: email,
+      from,
+      to: [email],
       subject: `${subject} - ${APP_NAME}`,
-      html_content: `
+      html: `
         <div style="font-family: sans-serif; max-width: 400px; margin: 0 auto; padding: 20px;">
           <h2 style="color: #333;">${heading}</h2>
           <p style="color: #666;">${description}</p>
@@ -55,8 +52,7 @@ async function sendEmail({
           <p style="color: #999; font-size: 12px; text-align: center;">This email was sent by ${APP_NAME}</p>
         </div>
       `,
-      text_content: `${heading}\n\n${description}\n\nYour code is: ${token}\n\nThis code expires in 15 minutes.\n\n---\nThis email was sent by ${APP_NAME}`,
-      email_type: "otp",
+      text: `${heading}\n\n${description}\n\nYour code is: ${token}\n\nThis code expires in 15 minutes.\n\n---\nThis email was sent by ${APP_NAME}`,
     }),
   });
 
@@ -64,22 +60,11 @@ async function sendEmail({
     const error = await response.text();
     throw new Error(`Failed to send email: ${error}`);
   }
-
-  const result = (await response.json()) as {
-    success: boolean;
-    error?: string;
-  };
-  if (!result.success) {
-    throw new Error(`Email sending failed: ${result.error}`);
-  }
 }
 
 /**
  * Email verification provider for sign-up flow.
- * Sends OTP codes via Viktor Spaces API which:
- * - Rate limits per project (100 emails/hour)
- * - Sends from project-specific email addresses
- * - Keeps the Resend API key secure on the backend
+ * Sends OTP codes through Resend (RESEND_API_KEY, AUTH_EMAIL_FROM).
  */
 export const ViktorSpacesEmail = Email({
   id: "viktor-spaces-email",
@@ -102,7 +87,7 @@ export const ViktorSpacesEmail = Email({
 
 /**
  * Password reset email provider.
- * Uses the same Viktor Spaces API but with different email template.
+ * Same Resend transport, different template.
  */
 export const ViktorSpacesPasswordReset = Email({
   id: "viktor-spaces-password-reset",
