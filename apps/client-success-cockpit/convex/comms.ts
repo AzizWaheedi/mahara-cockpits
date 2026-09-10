@@ -19,12 +19,14 @@ export const storeCalendar = internalMutation({
 });
 
 export const storeWhatsapp = internalMutation({
-  args: { threads: v.array(v.any()) },
+  args: { threads: v.array(v.any()), append: v.optional(v.boolean()) },
   returns: v.object({ threads: v.number() }),
-  handler: async (ctx, { threads }) => {
-    if (threads.length === 0) return { threads: 0 };
-    for (const old of await ctx.db.query("waThreads").collect())
-      await ctx.db.delete(old._id);
+  handler: async (ctx, { threads, append }) => {
+    // Sent in chunks: the first call replaces, the rest append.
+    if (threads.length === 0 && !append) return { threads: 0 };
+    if (!append)
+      for (const old of await ctx.db.query("waThreads").collect())
+        await ctx.db.delete(old._id);
     const now = Date.now();
     for (const t of threads)
       await ctx.db.insert("waThreads", {

@@ -80,6 +80,7 @@ export async function runBridge(
     case "storeWhatsapp":
       return await ctx.runMutation(internal.comms.storeWhatsapp, {
         threads: args.threads ?? [],
+        append: Boolean(args.append),
       });
     default:
       throw new Error(`unknown bridge function: ${fn}`);

@@ -433,6 +433,7 @@ const schema = defineSchema({
     lastFromUs: v.optional(v.boolean()),
     waitingSince: v.optional(v.number()),
     silentDays: v.optional(v.number()),
+    unread: v.optional(v.number()),
     recent: v.array(v.any()),
     error: v.optional(v.string()),
     syncedAt: v.number(),

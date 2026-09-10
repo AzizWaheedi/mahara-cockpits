@@ -33,6 +33,28 @@ type App = "csm" | "creative";
 const MSG_PER_CHAT = 40;
 const MAX_CHATS = 150;
 
+/**
+ * A message body cut in the middle of an emoji leaves a lone surrogate; the
+ * receiving JSON parser rejects it ("unexpected end of hex escape") and the
+ * whole chunk is lost. Strip them from every string before sending.
+ */
+function wellFormed<T>(value: T): T {
+  if (typeof value === "string")
+    return value.replace(
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g,
+      "",
+    ) as T;
+  if (Array.isArray(value)) return value.map(wellFormed) as T;
+  if (value && typeof value === "object")
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([k, v]) => [
+        k,
+        wellFormed(v),
+      ]),
+    ) as T;
+  return value;
+}
+
 async function bridge(
   app: App,
   fn: string,
@@ -51,7 +73,7 @@ async function bridge(
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ fn, args }),
+    body: JSON.stringify({ fn, args: wellFormed(args) }),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok || body?.ok === false)
@@ -59,6 +81,17 @@ async function bridge(
       `${app}:${fn} → HTTP ${res.status} ${String(body?.error ?? "").slice(0, 200)}`,
     );
   return body.data;
+}
+
+/** Cut to `n` characters without splitting an emoji, and drop lone surrogates that break JSON. */
+function clip(x: unknown, n: number): string {
+  const chars = Array.from(
+    String(x ?? "").replace(
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g,
+      "",
+    ),
+  );
+  return chars.slice(0, n).join("");
 }
 
 function norm(s: unknown): string {
@@ -252,7 +285,7 @@ const GHL = "https://services.leadconnectorhq.com";
 const MAHARA_LOCATION = () =>
   process.env.MAHARA_GHL_LOCATION || "wwG426bwruWWv9W3fazQ";
 const CONVERSATION_LIMIT = 100;
-const MESSAGES_PER_CONVERSATION = 15;
+const MESSAGES_PER_CONVERSATION = 10;
 
 async function ghl(
   token: string,
@@ -292,7 +325,12 @@ async function ghlCalendarEvents(token: string, names: string[]) {
       console.warn(`calendar ${cal.name}: ${String(e).slice(0, 100)}`);
       continue;
     }
-    for (const e of (d?.events ?? []) as Any[]) {
+    const evs = (d?.events ?? []) as Any[];
+    if (evs.length)
+      console.log(
+        `calendar ${cal.name}: ${evs.length} event(s), statuses ${[...new Set(evs.map(e => e.appointmentStatus))].join(",")}`,
+      );
+    for (const e of evs) {
       if (/cancel/i.test(String(e.appointmentStatus ?? ""))) continue;
       const title = String(e.title ?? cal.name ?? "(no title)");
       const who = String(e.contact?.name ?? e.contactName ?? "");
@@ -306,7 +344,7 @@ async function ghlCalendarEvents(token: string, names: string[]) {
         location: e.address ? String(e.address) : undefined,
         meetLink: undefined,
         attendees: [who, String(e.assignedUserId ?? "")].filter(Boolean),
-        description: e.notes ? String(e.notes).slice(0, 500) : undefined,
+        description: e.notes ? clip(e.notes, 500) : undefined,
         htmlLink: undefined,
         clientName: matchClient(`${title} ${who} ${e.notes ?? ""}`, names),
       });
@@ -427,10 +465,19 @@ export const feedComms = internalAction({
       }
       try {
         const threads = await ghlThreads(mahara, names);
-        for (const app of ["csm", "creative"] as const)
-          report[`${app}.whatsapp`] = await bridge(app, "storeWhatsapp", {
-            threads,
-          });
+        // 25 threads per call keeps each bridge body well under the size
+        // that broke a single 180-thread push (JSON cut mid-escape).
+        for (const app of ["csm", "creative"] as const) {
+          let stored = 0;
+          for (let i = 0; i < Math.max(threads.length, 1); i += 25) {
+            const r = await bridge(app, "storeWhatsapp", {
+              threads: threads.slice(i, i + 25),
+              append: i > 0,
+            });
+            stored += Number(r?.threads ?? 0);
+          }
+          report[`${app}.whatsapp`] = { threads: stored };
+        }
         covered.whatsapp = true;
       } catch (e) {
         report["mahara.conversations"] = `FAILED ${String(e).slice(0, 160)}`;

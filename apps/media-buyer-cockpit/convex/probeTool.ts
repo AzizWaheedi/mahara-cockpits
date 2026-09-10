@@ -225,3 +225,87 @@ export const ghlLocationTokenProbe = internalAction({
     return out;
   },
 });
+
+/** What Mahara's own GHL location exposes: calendars with event counts, and a conversation sample. */
+export const maharaGhlProbe = internalAction({
+  args: {},
+  returns: v.any(),
+  handler: async () => {
+    const token = process.env.MAHARA_GHL_TOKEN ?? "";
+    const loc = process.env.MAHARA_GHL_LOCATION || "wwG426bwruWWv9W3fazQ";
+    const get = async (path: string, version = "2021-04-15") => {
+      const res = await fetch(`https://services.leadconnectorhq.com${path}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Version: version,
+          Accept: "application/json",
+        },
+      });
+      return { status: res.status, json: await res.json().catch(() => ({})) };
+    };
+    const out: Any = { location: loc, tokenLen: token.length };
+    const cals = await get(`/calendars/?locationId=${loc}`);
+    out.calendarsStatus = cals.status;
+    out.calendars = [];
+    const from = Date.now() - 7 * 86400_000;
+    const to = Date.now() + 21 * 86400_000;
+    for (const c of (cals.json?.calendars ?? []) as Any[]) {
+      const ev = await get(
+        `/calendars/events?locationId=${loc}&calendarId=${c.id}&startTime=${from}&endTime=${to}`,
+      );
+      out.calendars.push({
+        name: c.name,
+        id: c.id,
+        status: ev.status,
+        events: (ev.json?.events ?? []).length,
+        err: ev.json?.message,
+      });
+    }
+    const conv = await get(
+      `/conversations/search?locationId=${loc}&limit=20&sortBy=last_message_date&sort=desc`,
+    );
+    out.conversationsStatus = conv.status;
+    out.conversationsTotal = conv.json?.total;
+    out.conversationSample = ((conv.json?.conversations ?? []) as Any[])
+      .slice(0, 8)
+      .map(c => ({
+        name: c.fullName ?? c.contactName,
+        type: c.lastMessageType ?? c.type,
+        dir: c.lastMessageDirection,
+        at: c.lastMessageDate,
+        unread: c.unreadCount,
+      }));
+    return out;
+  },
+});
+
+/** Is the Fathom key live, and what does the last 30 days look like? */
+export const fathomProbe = internalAction({
+  args: {},
+  returns: v.any(),
+  handler: async () => {
+    const key = process.env.FATHOM_API_KEY ?? "";
+    const since = new Date(Date.now() - 30 * 86400_000)
+      .toISOString()
+      .replace(/\.\d{3}Z$/, "Z");
+    const res = await fetch(
+      `https://api.fathom.ai/external/v1/meetings?${new URLSearchParams({ created_after: since, include_summary: "false" })}`,
+      { headers: { "X-Api-Key": key } },
+    );
+    const json: Any = await res.json().catch(() => ({}));
+    return {
+      keyLen: key.length,
+      status: res.status,
+      items: (json.items ?? []).length,
+      nextCursor: Boolean(json.next_cursor),
+      sample: ((json.items ?? []) as Any[]).slice(0, 6).map(m => ({
+        title: m.title,
+        at: m.scheduled_start_time ?? m.created_at,
+        external: (m.calendar_invitees ?? [])
+          .filter((i: Any) => i.is_external)
+          .map((i: Any) => i.name ?? i.email),
+      })),
+      error: json.message ?? json.error,
+    };
+  },
+});

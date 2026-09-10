@@ -710,11 +710,25 @@ async function fathomCalls(days: number): Promise<Call[]> {
 }
 
 /** Only exact normalised containment counts; a wrong match is worse than none. */
+/**
+ * A call is the client's when its title or an external invitee carries the
+ * client's name. Titles say "Castello", cards say "Castello Industries", so
+ * the first distinctive word counts too (five letters or more, not a generic
+ * word like Company or Design).
+ */
 function callsFor(client: string, calls: Call[]): Call[] {
-  const key = normTight(client);
-  if (key.length < 4) return [];
+  const full = normTight(client);
+  if (full.length < 4) return [];
+  const first = normTight(client.split(/[\s\-_/(),]+/)[0] ?? "");
+  const generic =
+    /^(company|design|designs|group|contracting|engineering|general|trading|construction|interior|interiors|studio|the|al|شركة|مؤسسة)$/;
+  const keys = [full];
+  if (first.length >= 5 && !generic.test(first)) keys.push(first);
   return calls
-    .filter(c => normTight([c.title, ...c.external].join(" ")).includes(key))
+    .filter(c => {
+      const hay = normTight([c.title, ...c.external].join(" "));
+      return keys.some(k => hay.includes(k));
+    })
     .slice(0, 8);
 }
 
@@ -1114,9 +1128,13 @@ export const push = internalAction({
           acct,
           lost,
           accountId,
+          // A card counts by its client tag first (Aziz: "you should be
+          // looking at the tags"), then by the client name the account maps to.
           onBoard: campaigns.some(
             (k: Any) =>
-              k.clientName && normTight(k.clientName) === normTight(c.name),
+              (k.tags ?? []).includes(normTight(c.name)) ||
+              (k.clientTag && k.clientTag === normTight(c.name)) ||
+              (k.clientName && normTight(k.clientName) === normTight(c.name)),
           ),
           visibleAccounts,
           calls: mergeCalls(callsFor(c.name, calls), cached, c.name).length,
