@@ -10,6 +10,7 @@ import { callTool } from "./tools";
 
 // biome-ignore lint/suspicious/noExplicitAny: chat rows and job results
 type Any = any;
+declare const process: { env: Record<string, string | undefined> };
 
 /**
  * Relays every cockpit's chat to Hermes and brings his answers back.
@@ -226,7 +227,7 @@ export const run = internalAction({
             ? `${String(res.status).replace("_", " ")}: ${res.summary ?? ""}${Array.isArray(res.changes) && res.changes.length ? `\n${res.changes.map((c: Any) => `• ${c}`).join("\n")}` : ""}`
             : (error ?? text ?? "");
           await callTool("coworker_send_slack_message", {
-            channel_id: "D0B21PZHDH9",
+            channel_id: process.env.ALERT_SLACK_TO || "U0AJQ8P1ACF",
             text: `Hermes on "${r.messageId}"\n${line}`.slice(0, 3000),
           });
         } else {

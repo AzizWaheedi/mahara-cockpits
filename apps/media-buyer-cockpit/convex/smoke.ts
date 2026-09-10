@@ -11,8 +11,11 @@ import { callTool } from "./tools";
 
 // biome-ignore lint/suspicious/noExplicitAny: check payloads
 type Any = any;
+declare const process: { env: Record<string, string | undefined> };
 
-const AZIZ_DM = "D0B21PZHDH9";
+// Aziz's Slack user id: posting to a user id opens the DM; the old D… channel id
+// belonged to another bot and returns channel_not_found. ALERT_SLACK_TO overrides.
+const AZIZ_DM = process.env.ALERT_SLACK_TO || "U0AJQ8P1ACF";
 const RE_ALERT_AFTER_H = 6;
 
 /** This cockpit's own screens, without a signed-in user. */
