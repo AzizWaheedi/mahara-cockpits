@@ -5,6 +5,7 @@ import { allAdAccounts, callTool, graph, unwrap } from "./tools";
 
 // biome-ignore lint/suspicious/noExplicitAny: Meta payloads
 type Any = any;
+declare const process: { env: Record<string, string | undefined> };
 
 /** Clear test rows out of the assist queue. Kept for future stress tests. */
 export const clearAssist = internalMutation({

@@ -28,7 +28,6 @@ import { allAdAccounts, callTool, unwrap } from "./tools";
 
 declare const process: { env: Record<string, string | undefined> };
 
-const DATABASE = "1_0Nv-IFvzhH4NBNh1dxCUm6Ryp414ctM_8EO5QORBF0";
 const META_ADS_MANAGER =
   "https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=";
 const LC = "https://services.leadconnectorhq.com";
