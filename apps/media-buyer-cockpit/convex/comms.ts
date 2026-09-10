@@ -485,6 +485,9 @@ export const feedComms = internalAction({
             const r = await bridge(app, "storeWhatsapp", {
               threads: threads.slice(i, i + 25),
               append: i > 0,
+              // A successful read that finds nothing still replaces what
+              // was there: the old number's threads must not linger.
+              clear: i === 0,
             });
             stored += Number(r?.threads ?? 0);
           }
