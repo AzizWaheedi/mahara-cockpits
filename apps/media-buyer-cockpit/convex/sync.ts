@@ -1698,6 +1698,28 @@ export const runSync = internalAction({
       c => c.dayRate < BUDGET_FLOOR && c.spend7d > 0,
     ).length;
     const offBoard = client.filter(c => !c.onBoard).length;
+    // Every spending campaign with no card on the ads management board is a
+    // job with a form, not a number on a checklist. The card is what the media
+    // buyer fills in and what the other cockpits read. [Aziz, 2026-09-10]
+    const offBoardRows = client
+      .filter(c => !c.onBoard && c.spend7d > 0)
+      .map(c => ({
+        client: String(c.clientName || c.campaignName || c.accountName),
+        sheetStatus: "no card on the ads board",
+        accountName: c.accountName,
+        accountId: c.accountId,
+        hasTask: false,
+        spend7d: c.spend7d,
+        issues: [
+          `"${c.campaignName}" on ${c.accountName} is spending ($${c.spend7d.toFixed(0)} in the last 7 days) with no card on the ads management board. Fill the new-campaign form so the card exists: ${NEW_CAMPAIGN_FORM_URL}`,
+        ],
+      }));
+    console.log(
+      `board: ${offBoardRows.length} spending campaign(s) with no card on the ads board`,
+    );
+    await ctx.runMutation(internal.sync.appendLaunchWatch, {
+      rows: offBoardRows,
+    });
     const stale = client.filter(c => (c.daysLive ?? 0) >= 14).length;
     const noLeads = client.filter(c => c.leads7d === 0 && c.spend7d > 0).length;
 
@@ -2178,6 +2200,39 @@ export const liveWatch = internalQuery({
       spend7d: w.spend7d,
       sheetStatus: w.sheetStatus,
     })),
+});
+
+/** Add rows to the watch without touching the ones the sheet pass wrote; one row per client. */
+export const appendLaunchWatch = internalMutation({
+  // biome-ignore lint/suspicious/noExplicitAny: watch rows
+  args: { rows: v.array(v.any()) },
+  returns: v.number(),
+  handler: async (ctx, { rows }) => {
+    const existing = await ctx.db.query("launchWatch").collect();
+    const key = (x: string) => normalize(x);
+    let added = 0;
+    for (const r of rows) {
+      const k = key(r.client);
+      const dup = existing.find(w => {
+        const a = key(w.client);
+        return (
+          a === k || (a.length >= 5 && (a.startsWith(k) || k.startsWith(a)))
+        );
+      });
+      if (dup) {
+        // The sheet pass already has this client; add the board issue to it.
+        if (!dup.issues.some(i => /ads management board/.test(i)))
+          await ctx.db.patch(dup._id, {
+            issues: [...dup.issues, ...r.issues],
+            spend7d: Math.max(dup.spend7d, r.spend7d),
+          });
+        continue;
+      }
+      await ctx.db.insert("launchWatch", { ...r, syncedAt: Date.now() });
+      added++;
+    }
+    return added;
+  },
 });
 
 export const storeLaunchWatch = internalMutation({

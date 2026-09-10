@@ -138,7 +138,36 @@ async function whapi(token: string, path: string): Promise<Any> {
   return json;
 }
 
+const DATABASE = "1_0Nv-IFvzhH4NBNh1dxCUm6Ryp414ctM_8EO5QORBF0";
+
+/**
+ * Client Data on the database sheet carries each client's WhatsApp group id
+ * (column F, "…@g.us"). That beats guessing from the group name, which is
+ * often the client's nickname or Arabic spelling. [Aziz, 2026-09-10]
+ */
+async function whatsappGroupsFromSheet(): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  try {
+    const token = await googleAccessToken();
+    const res = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${DATABASE}/values/${encodeURIComponent("Client Data!A1:F200")}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    const data = await res.json();
+    for (const row of ((data?.values ?? []) as string[][]).slice(1)) {
+      const [, name = "", , , , group = ""] = row;
+      if (name && /@g\.us$/.test(group.trim())) out.set(group.trim(), name);
+    }
+  } catch (e) {
+    console.log(
+      `comms: Client Data unreadable, falling back to name matching: ${String(e).slice(0, 120)}`,
+    );
+  }
+  return out;
+}
+
 async function whatsappThreads(token: string, names: string[]) {
+  const groupOwner = await whatsappGroupsFromSheet();
   const health = await whapi(token, "/health");
   const code = health?.status?.code;
   if (code !== undefined && code !== 0) {
@@ -210,7 +239,7 @@ async function whatsappThreads(token: string, names: string[]) {
       chatId: id,
       name,
       isGroup: chat.isGroup,
-      clientName: matchClient(name, names),
+      clientName: groupOwner.get(id) ?? matchClient(name, names),
       lastAt,
       lastFromUs,
       waitingSince,

@@ -30,17 +30,20 @@ export function gapsFor(client: Any, profile: Any | undefined): Gap[] {
       fix: `Share the sheet with claude@studied-handler-508106-m5.iam.gserviceaccount.com (viewer). Last error: ${String(profile.performance.error).slice(0, 120)}`,
     });
   }
-  if (!profile?.lost) {
+  // The match lives on the profile as ghlName; `lost` is only filled when the
+  // matched account actually has lost leads, so it says nothing about the match.
+  // [Aziz, 2026-09-10: "a lot of it isn't true because there are GHL accounts matched"]
+  if (!profile?.ghlName) {
     gaps.push({
       gap: "ghl",
-      label: "No GHL sub-account matched",
-      fix: "Add the client to the GHL token sheet with the exact ClickUp name so lost-lead reasons can be read.",
+      label: "GHL sub-account not readable: no token on the Client Data row",
+      fix: "In the database sheet, Client Data tab, paste the sub-account's private integration token (pit-…) in the token column of this client's row. The location id is usually already there.",
     });
-  } else if (profile.lost.error) {
+  } else if (profile.lost?.error) {
     gaps.push({
       gap: "ghl_error",
       label: "GHL sub-account cannot be read",
-      fix: `Check the token on the GHL sheet. Last error: ${String(profile.lost.error).slice(0, 120)}`,
+      fix: `Check the token on the Client Data tab. Last error: ${String(profile.lost.error).slice(0, 120)}`,
     });
   }
   if (!profile?.calls?.length) {
