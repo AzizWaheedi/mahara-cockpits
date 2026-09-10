@@ -101,6 +101,8 @@ const schema = defineSchema({
     reportNudge: v.optional(v.any()),
     /** Recent recorded calls with this client (Fathom), newest first. */
     calls: v.optional(v.any()),
+    /** What is missing for this client and where to put it, computed by the media buyer backend. */
+    gaps: v.optional(v.array(v.any())),
     syncedAt: v.number(),
     /**
      * Which sync wrote this row. A push happens in batches, so the old set is only deleted

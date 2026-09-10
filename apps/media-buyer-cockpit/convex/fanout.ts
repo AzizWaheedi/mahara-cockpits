@@ -1,6 +1,11 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalAction, internalQuery } from "./_generated/server";
+import {
+  type ClientDataRow,
+  clientDataFor,
+  readClientData,
+} from "./clientData";
 import { CLIENTS_LIST, CONTENT_LIST, CREATIVE_LIST, VIDEO_LIST } from "./sync";
 import { callTool, googleAccessToken, graph, unwrap } from "./tools";
 
@@ -276,8 +281,19 @@ async function attachDriveSubfolders(roster: Any[]) {
   const now = Date.now();
   let token: string | undefined;
   let scanned = 0;
+  let dataRows: ClientDataRow[] = [];
+  try {
+    dataRows = await readClientData();
+  } catch (e) {
+    console.warn(
+      `Client Data unreadable, card links only: ${String(e).slice(0, 120)}`,
+    );
+  }
   for (const c of roster) {
-    const fid = folderId(c.driveFolder) ?? folderId(c.driveLink);
+    const fid =
+      folderId(c.driveFolder) ??
+      folderId(c.driveLink) ??
+      folderId(clientDataFor(dataRows, c.name, c.taskId)?.driveLink);
     if (!fid) continue;
     const old = cache.get(c.name) ?? {};
     const fresh =

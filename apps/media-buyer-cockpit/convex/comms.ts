@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalAction, internalQuery } from "./_generated/server";
+import { readClientData } from "./clientData";
 import { googleAccessToken } from "./tools";
 
 /**
@@ -138,25 +139,12 @@ async function whapi(token: string, path: string): Promise<Any> {
   return json;
 }
 
-const DATABASE = "1_0Nv-IFvzhH4NBNh1dxCUm6Ryp414ctM_8EO5QORBF0";
-
-/**
- * Client Data on the database sheet carries each client's WhatsApp group id
- * (column F, "…@g.us"). That beats guessing from the group name, which is
- * often the client's nickname or Arabic spelling. [Aziz, 2026-09-10]
- */
+/** Group id → client name from the Client Data tab. */
 async function whatsappGroupsFromSheet(): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   try {
-    const token = await googleAccessToken();
-    const res = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${DATABASE}/values/${encodeURIComponent("Client Data!A1:F200")}`,
-      { headers: { Authorization: `Bearer ${token}` } },
-    );
-    const data = await res.json();
-    for (const row of ((data?.values ?? []) as string[][]).slice(1)) {
-      const [, name = "", , , , group = ""] = row;
-      if (name && /@g\.us$/.test(group.trim())) out.set(group.trim(), name);
+    for (const r of await readClientData()) {
+      if (/@g\.us$/.test(r.waGroupId)) out.set(r.waGroupId, r.name);
     }
   } catch (e) {
     console.log(

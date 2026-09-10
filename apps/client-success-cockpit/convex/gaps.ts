@@ -16,6 +16,23 @@ type Gap = { gap: string; label: string; fix: string };
  * Queueing a row creates a task on the Client Success list so it gets done.
  */
 export function gapsFor(client: Any, profile: Any | undefined): Gap[] {
+  // The media buyer backend sees the card, Client Data, Meta and GHL together
+  // and writes the list onto the profile. The checks below are the fallback
+  // for a profile that predates that.
+  if (Array.isArray(profile?.gaps)) {
+    const out: Gap[] = profile.gaps.map((g: Any) => ({
+      gap: String(g.gap),
+      label: String(g.label),
+      fix: String(g.fix),
+    }));
+    if (!client.csmAssigned)
+      out.push({
+        gap: "csm",
+        label: "No CSM on the card",
+        fix: "Set the CSM field on the client task in ClickUp.",
+      });
+    return out;
+  }
   const gaps: Gap[] = [];
   if (!client.sheetLink) {
     gaps.push({
@@ -170,5 +187,64 @@ export const summary = internalQuery({
       }
     }
     return { activeClients: clients.length, gaps: out, sheetErrors: reasons };
+  },
+});
+
+/** Compact per-client flags for audits from the command line. */
+export const matrix = internalQuery({
+  args: {},
+  returns: v.any(),
+  handler: async ctx => {
+    const clients = await ctx.db.query("clients").collect();
+    const profiles = await ctx.db.query("clientProfiles").collect();
+    const byName = new Map(profiles.map(p => [p.clientName, p]));
+    return clients.map(c => {
+      const p = byName.get(c.name) as Any;
+      return {
+        client: c.name,
+        taskId: c.taskId,
+        bucket: c.bucket,
+        stage: c.stage,
+        csm: c.csmAssigned ?? null,
+        cardSheetLink: Boolean(c.sheetLink),
+        profile: Boolean(p),
+        sheetOk: Boolean(p?.performance && !p.performance.error),
+        sheetError: p?.performance?.error
+          ? String(p.performance.error).slice(0, 90)
+          : null,
+        ghlName: p?.ghlName ?? null,
+        lostError: p?.lost?.error ? String(p.lost.error).slice(0, 90) : null,
+        calls: Array.isArray(p?.calls) ? p.calls.length : 0,
+        adsAccess: p?.adsAccess ?? null,
+        ads: Array.isArray(p?.ads) ? p.ads.length : 0,
+        links: p?.links ? Object.keys(p.links) : [],
+        service: c.service ?? null,
+      };
+    });
+  },
+});
+
+/** Per-client gap lists for active clients, for the audit page. */
+export const forAudit = internalQuery({
+  args: {},
+  returns: v.any(),
+  handler: async ctx => {
+    const clients = (await ctx.db.query("clients").collect()).filter(
+      c => c.bucket !== "inactive",
+    );
+    const profiles = await ctx.db.query("clientProfiles").collect();
+    const byName = new Map(profiles.map(p => [p.clientName, p]));
+    return clients
+      .map(c => ({
+        client: c.name,
+        taskId: c.taskId,
+        stage: c.stage,
+        csm: c.csmAssigned ?? null,
+        gaps: gapsFor(c, byName.get(c.name)),
+      }))
+      .sort(
+        (a, b) =>
+          b.gaps.length - a.gaps.length || a.client.localeCompare(b.client),
+      );
   },
 });

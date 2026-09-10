@@ -1,8 +1,14 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalAction } from "./_generated/server";
+import {
+  type ClientDataRow,
+  clientDataFor,
+  readClientData,
+  statSheetUrl,
+} from "./clientData";
 import { CLIENTS_LIST } from "./sync";
-import { callTool, unwrap } from "./tools";
+import { allAdAccounts, callTool, unwrap } from "./tools";
 
 /**
  * Per-client profiles for the client success cockpit.
@@ -707,6 +713,150 @@ function callsFor(client: string, calls: Call[]): Call[] {
     .slice(0, 8);
 }
 
+type Gap = { gap: string; label: string; fix: string };
+
+/**
+ * What is missing for one client, and where to put it. Computed here because
+ * this is the only place that sees the card, Client Data, Meta and GHL at once.
+ * Pre-launch stages skip the things that only exist once ads run.
+ */
+function gapsFor(x: {
+  client: Any;
+  row?: ClientDataRow;
+  perf: Any;
+  acct: Any;
+  lost: Any;
+  accountId?: string;
+  onBoard: boolean;
+  visibleAccounts: { name: string; id: string }[];
+  calls: number;
+}): Gap[] {
+  const { client: c, row } = x;
+  const gaps: Gap[] = [];
+  const stage = String(c.stage ?? "");
+  const live = /^active$/i.test(stage);
+  const dead = /paused|stopped|cancel|churn|lost|ghost/i.test(stage);
+  if (dead) return gaps;
+  const add = (gap: string, label: string, fix: string) =>
+    gaps.push({ gap, label, fix });
+  // ClickUp card: relationship fields the CSM owns
+  if (!c.service)
+    add(
+      "service",
+      "Service not set on the card",
+      "ClickUp client card → Service (DWY or DFY).",
+    );
+  // Client Data: ids and links
+  if (!row) {
+    add(
+      "data_row",
+      "No row on the Client Data tab",
+      `Database sheet → Client Data: add a row with Clickup ID ${c.taskId}, GHL ID, GHL API token, WA GROUP ID, Sheet Link, Google Drive Link, Ad Account - Meta.`,
+    );
+  } else {
+    if (row.clickupId !== c.taskId)
+      add(
+        "data_id",
+        `Client Data row points at task ${row.clickupId || "(blank)"}, the card is ${c.taskId}`,
+        "Database sheet → Client Data → Clickup ID: paste the card's task id so the match is exact.",
+      );
+    if (!row.ghlLocationId)
+      add(
+        "ghl_id",
+        "GHL ID empty on Client Data",
+        "Database sheet → Client Data → GHL ID: the sub-account location id.",
+      );
+    if (!row.ghlToken.startsWith("pit-"))
+      add(
+        "ghl_token",
+        "GHL API token empty on Client Data",
+        "Database sheet → Client Data → GHL API: the sub-account's private integration token (pit-…). Without it lost-lead reasons and calendars cannot be read.",
+      );
+    if (!/@g\.us$/.test(row.waGroupId))
+      add(
+        "wa_group",
+        "WA GROUP ID empty on Client Data",
+        "Database sheet → Client Data → WA GROUP ID: the client group's id (…@g.us).",
+      );
+    if (!row.driveLink)
+      add(
+        "drive",
+        "Google Drive Link empty on Client Data",
+        "Database sheet → Client Data → Google Drive Link: the client folder, shared with the service account.",
+      );
+    if (!row.adAccountMeta)
+      add(
+        "meta_name",
+        "Ad Account - Meta empty on Client Data",
+        "Database sheet → Client Data → Ad Account - Meta: the ad account name exactly as in Business Manager (or its id).",
+      );
+    if (live && !/active/i.test(row.status))
+      add(
+        "data_status",
+        `Client Data Status is "${row.status}" but the card is Active`,
+        "Database sheet → Client Data → Status: set to Active.",
+      );
+  }
+  if (!c.sheetLink)
+    add(
+      "sheet",
+      "No stat sheet anywhere",
+      "Database sheet → Client Data → Sheet Link (or paste it on the card's Sheet Link field).",
+    );
+  else if (x.perf?.error)
+    add(
+      "sheet_read",
+      "Stat sheet cannot be read",
+      `Share the stat sheet with claude@studied-handler-508106-m5.iam.gserviceaccount.com as viewer. Last error: ${String(x.perf.error).slice(0, 100)}`,
+    );
+  if (row?.ghlToken.startsWith("pit-") && !x.acct)
+    add(
+      "ghl_match",
+      "GHL row exists but did not match the card",
+      "Database sheet → Client Data → Clickup ID must equal the card's task id.",
+    );
+  if (x.lost?.error)
+    add(
+      "ghl_read",
+      "GHL token rejected",
+      `Database sheet → Client Data → GHL API: replace the token. Last error: ${String(x.lost.error).slice(0, 100)}`,
+    );
+  // Meta
+  const nt = normTight;
+  const wanted = row?.adAccountMeta ? nt(row.adAccountMeta) : "";
+  const visible =
+    x.accountId ||
+    x.visibleAccounts.find(
+      a => wanted && (nt(a.name) === wanted || a.id === row?.adAccountMeta),
+    ) ||
+    x.visibleAccounts.find(a => {
+      const k = nt(a.name);
+      const n = nt(c.name);
+      return (
+        k.length >= 5 && n.length >= 5 && (k.startsWith(n) || n.startsWith(k))
+      );
+    });
+  if (!visible)
+    add(
+      "meta_access",
+      "No Meta ad account visible to Mahara",
+      "Business Manager: have the client share their ad account with Mahara's business, then put its exact name in Client Data → Ad Account - Meta.",
+    );
+  if (live && !x.onBoard)
+    add(
+      "board",
+      "No campaign card on the ads management board",
+      "Fill the new-campaign form so the card exists: https://forms.clickup.com/90182518398/f/2kzmr1ky-3878/1BO7T0R9GQCL88NBHR",
+    );
+  if (live && x.calls === 0)
+    add(
+      "call",
+      "No recorded call in 30 days",
+      "Book the check-in and record it with Fathom.",
+    );
+  return gaps;
+}
+
 /** API matches first, then remembered calls for this client, no duplicate links, newest first, 8 at most. */
 function mergeCalls(fresh: Call[], cached: Any[], client: string): Any[] {
   const seen = new Set<string>();
@@ -848,6 +998,30 @@ export const push = internalAction({
     const today = kuwaitToday();
     const errors: string[] = [];
     const clients = await profileInputs(today);
+    // Client Data is the source of truth for ids and links. The card only has
+    // to carry what the CSM owns; anything missing on the card is filled from
+    // the sheet, and anything missing on both becomes a gap on the profile.
+    let clientData: ClientDataRow[] = [];
+    try {
+      clientData = await readClientData();
+    } catch (e) {
+      errors.push(`Client Data: ${String(e).slice(0, 160)}`);
+    }
+    let visibleAccounts: { name: string; id: string }[] = [];
+    try {
+      visibleAccounts = (await allAdAccounts()).map(a => ({
+        name: String(a.name ?? ""),
+        id: String(a.account_id ?? ""),
+      }));
+    } catch (e) {
+      errors.push(`Meta accounts: ${String(e).slice(0, 160)}`);
+    }
+    for (const c of clients) {
+      const row = clientDataFor(clientData, c.name, c.taskId);
+      c.data = row;
+      c.sheetLink = c.sheetLink || statSheetUrl(row);
+      c.driveLink = c.driveLink || row?.driveLink || undefined;
+    }
     const campaigns: Any[] = await ctx.runQuery(
       internal.csmSync.campaignsForCsm,
       {},
@@ -928,6 +1102,20 @@ export const push = internalAction({
               ? lost
               : undefined,
         calls: mergeCalls(callsFor(c.name, calls), cached, c.name),
+        gaps: gapsFor({
+          client: c,
+          row: c.data,
+          perf,
+          acct,
+          lost,
+          accountId,
+          onBoard: campaigns.some(
+            (k: Any) =>
+              k.clientName && normTight(k.clientName) === normTight(c.name),
+          ),
+          visibleAccounts,
+          calls: mergeCalls(callsFor(c.name, calls), cached, c.name).length,
+        }),
         syncedAt: Date.now(),
       };
     });
