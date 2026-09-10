@@ -359,7 +359,19 @@ async function ghlThreads(token: string, names: string[]) {
     token,
     `/conversations/search?locationId=${loc}&limit=${CONVERSATION_LIMIT}&sortBy=last_message_date&sort=desc`,
   );
-  const convos: Any[] = d?.conversations ?? [];
+  // Only WhatsApp, and only from the day the number was (re)connected. The
+  // older SMS/email conversations on this location belonged to a previous
+  // CSM and were disconnected long ago. Aziz, 2026-09-10: "forget the old
+  // WhatsApp messages … I'm going to sync all the WhatsApp groups with my
+  // number." Override the date with WHATSAPP_SINCE (YYYY-MM-DD) if needed.
+  const since = Date.parse(
+    `${process.env.WHATSAPP_SINCE || "2026-09-10"}T00:00:00+03:00`,
+  );
+  const convos: Any[] = (d?.conversations ?? []).filter((c: Any) => {
+    const type = String(c.lastMessageType ?? c.type ?? "").toUpperCase();
+    const at = Number(c.lastMessageDate ?? 0);
+    return type.includes("WHATSAPP") && at >= since;
+  });
   const now = Date.now();
   const out: Any[] = [];
   for (const c of convos) {
