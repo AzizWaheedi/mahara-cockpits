@@ -114,6 +114,19 @@ export async function runBridge(
       return await ctx.runMutation(internal.comms.storeCalendar, {
         rows: args.rows ?? [],
       });
+    case "chatPending":
+      return await ctx.runQuery(internal.hermes.pending, {});
+    case "chatSent":
+      return await ctx.runMutation(internal.hermes.markSent, {
+        id: args.id,
+        jobId: String(args.jobId),
+      });
+    case "chatAnswer":
+      return await ctx.runMutation(internal.hermes.answer, {
+        id: args.id,
+        text: args.text,
+        error: args.error,
+      });
     case "smoke":
       return await ctx.runQuery(internal.smoke.run, {});
     case "storeWhatsapp":

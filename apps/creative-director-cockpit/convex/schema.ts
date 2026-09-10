@@ -458,6 +458,20 @@ const schema = defineSchema({
     error: v.optional(v.string()),
     syncedAt: v.number(),
   }).index("by_lastAt", ["lastAt"]),
+  /** The chat with Hermes: one thread per signed-in person. */
+  hermesChat: defineTable({
+    thread: v.string(),
+    role: v.string(),
+    text: v.string(),
+    clientName: v.optional(v.string()),
+    page: v.optional(v.string()),
+    context: v.optional(v.string()),
+    /** queued → sent → answered | failed (user messages); answered (assistant). */
+    status: v.string(),
+    error: v.optional(v.string()),
+    jobId: v.optional(v.string()),
+    at: v.number(),
+  }).index("by_thread", ["thread"]),
 });
 
 export default schema;

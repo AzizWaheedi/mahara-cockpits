@@ -1,5 +1,6 @@
 import { Outlet } from "react-router";
 import { AppSidebar } from "./AppSidebar";
+import { HermesChat } from "./HermesChat";
 import { SyncStrip } from "./SyncStrip";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "./ui/sidebar";
 
@@ -15,6 +16,7 @@ export function AppLayout() {
           <SyncStrip />
           <Outlet />
         </main>
+        <HermesChat />
       </SidebarInset>
     </SidebarProvider>
   );

@@ -198,44 +198,18 @@ function Stat({
  * Answers are not instant: the app cannot call a model itself, so the question is queued
  * and answered on the next sync. The panel says so rather than faking a live chat.
  */
-export function AiHelper({
-  page,
-  clientName,
-}: {
-  page: string;
-  clientName?: string;
-}) {
+export function AiHelper({ page }: { page: string; clientName?: string }) {
+  // Questions now go to the Hermes chat (bottom right). This box is only for
+  // reporting a wrong screen, so the fix lands as a task. [aziz, 2026-09-10]
   const report = useMutation(api.csm.reportIssue);
-  const ask = useMutation(api.csm.askViktor);
-  const asks = useQuery(api.csm.myAsks, {});
   const [open, setOpen] = useState(false);
-  const [mode, setMode] = useState<"ask" | "fix">("ask");
   const [text, setText] = useState("");
-  const recent = (
-    Array.isArray(asks)
-      ? (asks as { _id: string; question: string; answer?: string }[])
-      : []
-  ).slice(0, 3);
   return (
-    <div className="fixed bottom-4 right-4 z-50 w-[min(24rem,calc(100vw-2rem))]">
+    <div className="fixed bottom-4 left-4 z-40 w-[min(22rem,calc(100vw-2rem))] md:left-[calc(var(--sidebar-width,16rem)+1rem)]">
       {open ? (
         <div className="space-y-2 rounded-lg border bg-card p-3 shadow-lg">
           <div className="flex items-center gap-2">
-            {(
-              [
-                ["ask", "Ask me anything"],
-                ["fix", "This screen is wrong"],
-              ] as const
-            ).map(([k, label]) => (
-              <button
-                key={k}
-                type="button"
-                onClick={() => setMode(k)}
-                className={`rounded px-2 py-1 text-xs ${mode === k ? "bg-foreground text-background" : "bg-muted"}`}
-              >
-                {label}
-              </button>
-            ))}
+            <span className="text-xs font-semibold">This screen is wrong</span>
             <button
               type="button"
               className="ml-auto text-xs text-muted-foreground"
@@ -245,55 +219,38 @@ export function AiHelper({
             </button>
           </div>
           <p className="text-xs text-muted-foreground">
-            {mode === "ask"
-              ? "I have the Client Communication SOP, every message template and the client's numbers. Answers land here within about 15 minutes."
-              : "Wrong client, wrong instruction, missing field, say it here and I fix the app itself."}
+            Wrong client, wrong instruction, missing field: say it here and a
+            fix task is created. Questions go to Ask Hermes, bottom right.
           </p>
           <Textarea
             rows={3}
             value={text}
             onChange={e => setText(e.target.value)}
-            placeholder={
-              mode === "ask"
-                ? "e.g. how do I ask for a review without sounding needy?"
-                : "What is wrong, and what should it say instead?"
-            }
+            placeholder="What is wrong, and what should it say instead?"
           />
           <div className="flex gap-2">
             <Button
               size="sm"
               onClick={async () => {
                 if (!text.trim()) return;
-                if (mode === "ask") {
-                  await ask({ question: text.trim(), clientName });
-                  toast.success("Asked, the answer appears in here shortly");
-                } else {
-                  await report({ page, text: text.trim() });
-                  toast.success("Sent, a fix task was created");
-                  setOpen(false);
-                }
+                await report({ page, text: text.trim() });
+                toast.success("Sent, a fix task was created");
+                setOpen(false);
                 setText("");
               }}
             >
-              {mode === "ask" ? "Ask" : "Send it"}
+              Send it
             </Button>
           </div>
-          {mode === "ask" && recent.length ? (
-            <div className="max-h-64 space-y-2 overflow-y-auto border-t pt-2">
-              {recent.map(a => (
-                <div key={a._id} className="text-xs">
-                  <div className="font-medium">{a.question}</div>
-                  <div className="mt-0.5 whitespace-pre-wrap text-muted-foreground">
-                    {a.answer ?? "Thinking about it, check back shortly."}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : null}
         </div>
       ) : (
-        <Button size="sm" className="shadow-lg" onClick={() => setOpen(true)}>
-          Ask AI
+        <Button
+          size="sm"
+          variant="secondary"
+          className="shadow-lg"
+          onClick={() => setOpen(true)}
+        >
+          Report an issue
         </Button>
       )}
     </div>

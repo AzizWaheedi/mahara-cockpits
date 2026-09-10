@@ -94,4 +94,12 @@ crons.interval(
   {},
 );
 
+/** The chat with Hermes in every cockpit: questions out, answers back, every 20 seconds. */
+crons.interval(
+  "relay the Hermes chat",
+  { seconds: 20 },
+  internal.hermesDrain.run,
+  {},
+);
+
 export default crons;

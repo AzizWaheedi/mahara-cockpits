@@ -836,6 +836,28 @@ const schema = defineSchema({
     text: v.string(),
     at: v.number(),
   }).index("by_signature", ["signature"]),
+  /** The chat with Hermes: one thread per signed-in person. */
+  hermesChat: defineTable({
+    thread: v.string(),
+    role: v.string(),
+    text: v.string(),
+    clientName: v.optional(v.string()),
+    page: v.optional(v.string()),
+    context: v.optional(v.string()),
+    /** queued → sent → answered | failed (user messages); answered (assistant). */
+    status: v.string(),
+    error: v.optional(v.string()),
+    jobId: v.optional(v.string()),
+    at: v.number(),
+  }).index("by_thread", ["thread"]),
+  /** Chat messages relayed to Hermes and which job carries them. */
+  chatRelay: defineTable({
+    app: v.string(),
+    messageId: v.string(),
+    jobId: v.string(),
+    at: v.number(),
+    deliveredAt: v.optional(v.number()),
+  }),
 });
 
 export default schema;
