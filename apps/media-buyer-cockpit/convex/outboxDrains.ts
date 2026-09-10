@@ -230,6 +230,7 @@ export const drainCreative = internalAction({
 
 /** Perform one client success outbox row. Returns [resultUrl, error]. */
 async function csmRow(
+  ctx: Any,
   row: Any,
 ): Promise<[string | undefined, string | undefined]> {
   const kind: string = row.kind;
@@ -352,7 +353,7 @@ export const drainCsm = internalAction({
       let url: string | undefined;
       let error: string | undefined;
       try {
-        [url, error] = await csmRow(row);
+        [url, error] = await csmRow(ctx, row);
       } catch (e) {
         error = String(e).slice(0, 300);
       }
