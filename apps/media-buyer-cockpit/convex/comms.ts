@@ -16,6 +16,9 @@ import { googleAccessToken } from "./tools";
  *     client has been waiting for a reply.
  *
  * Env on this deployment (all optional; a missing one skips that feed):
+ *   MAHARA_GHL_TOKEN                          Mahara's own GHL sub-account: its
+ *                                             calendars and conversations feed both cockpits
+ *   MAHARA_GHL_LOCATION                       default wwG426bwruWWv9W3fazQ
  *   CSM_CALENDAR_IDS, CREATIVE_CALENDAR_IDS   comma-separated calendar ids
  *   CSM_WHAPI_TOKEN, CREATIVE_WHAPI_TOKEN     WHAPI channel tokens
  *   WHAPI_BASE_URL                            default https://gate.whapi.cloud
@@ -239,6 +242,163 @@ async function whatsappThreads(token: string, names: string[]) {
   return out;
 }
 
+// --- Mahara's own GHL sub-account: calendars and conversations --------------------
+//
+// Aziz, 2026-09-10: "keep them in the Mahara client account … as well as the
+// WhatsApp groups … and the calendars as well from there." One token
+// (MAHARA_GHL_TOKEN) on one location feeds both cockpits.
+
+const GHL = "https://services.leadconnectorhq.com";
+const MAHARA_LOCATION = () =>
+  process.env.MAHARA_GHL_LOCATION || "wwG426bwruWWv9W3fazQ";
+const CONVERSATION_LIMIT = 100;
+const MESSAGES_PER_CONVERSATION = 15;
+
+async function ghl(
+  token: string,
+  path: string,
+  version = "2021-04-15",
+): Promise<Any> {
+  const res = await fetch(`${GHL}${path}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Version: version,
+      Accept: "application/json",
+    },
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok)
+    throw new Error(
+      `GHL ${path} ${res.status}: ${String(json?.message ?? "").slice(0, 120)}`,
+    );
+  return json;
+}
+
+async function ghlCalendarEvents(token: string, names: string[]) {
+  const loc = MAHARA_LOCATION();
+  const from = Date.now() - 7 * 86400_000;
+  const to = Date.now() + 21 * 86400_000;
+  const cals: Any[] =
+    (await ghl(token, `/calendars/?locationId=${loc}`)).calendars ?? [];
+  const rows: Any[] = [];
+  for (const cal of cals) {
+    let d: Any;
+    try {
+      d = await ghl(
+        token,
+        `/calendars/events?locationId=${loc}&calendarId=${cal.id}&startTime=${from}&endTime=${to}`,
+      );
+    } catch (e) {
+      console.warn(`calendar ${cal.name}: ${String(e).slice(0, 100)}`);
+      continue;
+    }
+    for (const e of (d?.events ?? []) as Any[]) {
+      if (/cancel/i.test(String(e.appointmentStatus ?? ""))) continue;
+      const title = String(e.title ?? cal.name ?? "(no title)");
+      const who = String(e.contact?.name ?? e.contactName ?? "");
+      rows.push({
+        eventId: String(e.id),
+        calendarId: String(cal.name ?? cal.id),
+        title,
+        start: String(e.startTime ?? ""),
+        end: String(e.endTime ?? ""),
+        allDay: false,
+        location: e.address ? String(e.address) : undefined,
+        meetLink: undefined,
+        attendees: [who, String(e.assignedUserId ?? "")].filter(Boolean),
+        description: e.notes ? String(e.notes).slice(0, 500) : undefined,
+        htmlLink: undefined,
+        clientName: matchClient(`${title} ${who} ${e.notes ?? ""}`, names),
+      });
+    }
+  }
+  return rows;
+}
+
+async function ghlThreads(token: string, names: string[]) {
+  const loc = MAHARA_LOCATION();
+  const d = await ghl(
+    token,
+    `/conversations/search?locationId=${loc}&limit=${CONVERSATION_LIMIT}&sortBy=last_message_date&sort=desc`,
+  );
+  const convos: Any[] = d?.conversations ?? [];
+  const now = Date.now();
+  const out: Any[] = [];
+  for (const c of convos) {
+    const id = String(c.id ?? "");
+    if (!id) continue;
+    const name = String(
+      c.fullName ?? c.contactName ?? c.email ?? c.phone ?? id,
+    );
+    let msgs: Any[] = [];
+    try {
+      const m = await ghl(
+        token,
+        `/conversations/${id}/messages?limit=${MESSAGES_PER_CONVERSATION}`,
+      );
+      msgs = m?.messages?.messages ?? m?.messages ?? [];
+    } catch (e) {
+      out.push({
+        chatId: id,
+        name,
+        isGroup: false,
+        error: String(e).slice(0, 160),
+        recent: [],
+        syncedAt: now,
+      });
+      continue;
+    }
+    // GHL returns newest first.
+    const ts = (m: Any) =>
+      new Date(m.dateAdded ?? m.dateUpdated ?? 0).getTime();
+    const outbound = (m: Any) => String(m.direction ?? "") === "outbound";
+    const lastAt = msgs.length
+      ? ts(msgs[0])
+      : Number(c.lastMessageDate ?? 0) || undefined;
+    const lastFromUs = msgs.length
+      ? outbound(msgs[0])
+      : String(c.lastMessageDirection ?? "") === "outbound";
+    let waitingSince: number | undefined;
+    if (!lastFromUs && msgs.length) {
+      const ours = msgs.findIndex(outbound);
+      const theirs = ours === -1 ? msgs : msgs.slice(0, ours);
+      waitingSince = ts(theirs[theirs.length - 1]);
+    } else if (!lastFromUs && lastAt) waitingSince = lastAt;
+    const channel = String(c.lastMessageType ?? c.type ?? "")
+      .replace(/^TYPE_/, "")
+      .toLowerCase();
+    const recent = msgs
+      .slice(0, 12)
+      .reverse()
+      .map(m => ({
+        at: ts(m),
+        fromMe: outbound(m),
+        who: outbound(m) ? "Mahara" : name,
+        text: String(
+          m.body ??
+            m.text ??
+            `[${String(m.messageType ?? "message")
+              .replace(/^TYPE_/, "")
+              .toLowerCase()}]`,
+        ).slice(0, 300),
+      }));
+    out.push({
+      chatId: id,
+      name: channel ? `${name} · ${channel}` : name,
+      isGroup: false,
+      clientName: matchClient(name, names),
+      lastAt,
+      lastFromUs,
+      waitingSince,
+      silentDays: lastAt ? Math.floor((now - lastAt) / 86400_000) : undefined,
+      unread: Number(c.unreadCount ?? 0) || undefined,
+      recent,
+      syncedAt: now,
+    });
+  }
+  return out;
+}
+
 // --- The feed --------------------------------------------------------------------
 
 export const feedComms = internalAction({
@@ -249,6 +409,34 @@ export const feedComms = internalAction({
     // Client names for matching: the CSM roster plus campaign client names.
     const names: string[] = await ctx.runQuery(internal.comms.clientNames, {});
 
+    // One Mahara GHL sub-account carries the calendars and every conversation
+    // (WhatsApp included). When its token is set it feeds both cockpits and
+    // the per-role calendar / WHAPI settings below are only used if present.
+    const mahara = process.env.MAHARA_GHL_TOKEN;
+    const covered = { calendar: false, whatsapp: false };
+    if (mahara) {
+      try {
+        const rows = await ghlCalendarEvents(mahara, names);
+        for (const app of ["csm", "creative"] as const)
+          report[`${app}.calendar`] = await bridge(app, "storeCalendar", {
+            rows,
+          });
+        covered.calendar = true;
+      } catch (e) {
+        report["mahara.calendar"] = `FAILED ${String(e).slice(0, 160)}`;
+      }
+      try {
+        const threads = await ghlThreads(mahara, names);
+        for (const app of ["csm", "creative"] as const)
+          report[`${app}.whatsapp`] = await bridge(app, "storeWhatsapp", {
+            threads,
+          });
+        covered.whatsapp = true;
+      } catch (e) {
+        report["mahara.conversations"] = `FAILED ${String(e).slice(0, 160)}`;
+      }
+    }
+
     for (const app of ["csm", "creative"] as const) {
       const prefix = app === "csm" ? "CSM" : "CREATIVE";
       const calendarIds = (process.env[`${prefix}_CALENDAR_IDS`] ?? "")
@@ -258,6 +446,11 @@ export const feedComms = internalAction({
       if (calendarIds.length) {
         try {
           const token = await googleAccessToken();
+          if (covered.calendar) {
+            report[`${app}.calendar.google`] =
+              "skipped: Mahara GHL calendars in use";
+            throw new Error("covered");
+          }
           const rows: Any[] = [];
           for (const id of calendarIds) {
             try {
@@ -278,12 +471,12 @@ export const feedComms = internalAction({
         } catch (e) {
           report[`${app}.calendar`] = `FAILED ${String(e).slice(0, 160)}`;
         }
-      } else {
+      } else if (!covered.calendar) {
         report[`${app}.calendar`] = "not configured";
       }
 
       const waToken = process.env[`${prefix}_WHAPI_TOKEN`];
-      if (waToken) {
+      if (waToken && !covered.whatsapp) {
         try {
           const threads = await whatsappThreads(waToken, names);
           report[`${app}.whatsapp`] = await bridge(app, "storeWhatsapp", {
@@ -292,7 +485,7 @@ export const feedComms = internalAction({
         } catch (e) {
           report[`${app}.whatsapp`] = `FAILED ${String(e).slice(0, 160)}`;
         }
-      } else {
+      } else if (!covered.whatsapp) {
         report[`${app}.whatsapp`] = "not configured";
       }
     }

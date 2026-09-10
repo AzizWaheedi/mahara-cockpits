@@ -857,12 +857,6 @@ function gapsFor(x: {
       "No campaign card on the ads management board",
       "Fill the new-campaign form so the card exists: https://forms.clickup.com/90182518398/f/2kzmr1ky-3878/1BO7T0R9GQCL88NBHR",
     );
-  if (live && x.calls === 0)
-    add(
-      "call",
-      "No recorded call in 30 days",
-      "Book the check-in and record it with Fathom.",
-    );
   return gaps;
 }
 

@@ -91,6 +91,7 @@ Meetings and messages (both other cockpits, fed by the media buyer backend every
 
 | Variable | Used by |
 |---|---|
+| `MAHARA_GHL_TOKEN` | private integration token of Mahara's own GHL sub-account (`MAHARA_GHL_LOCATION`, default `wwG426bwruWWv9W3fazQ`). Its calendars and conversations (WhatsApp included) feed the Meetings & messages page of both cockpits; the rows below are then optional |
 | `CSM_CALENDAR_IDS`, `CREATIVE_CALENDAR_IDS` | Google Calendar ids (usually the person's email), comma-separated. Each calendar must be shared with the service account, "See all event details" |
 | `CSM_WHAPI_TOKEN`, `CREATIVE_WHAPI_TOKEN` | WHAPI channel token for that role's WhatsApp business number (one channel per number, QR-scanned in WHAPI) |
 | `WHAPI_BASE_URL` | optional, default `https://gate.whapi.cloud` |
