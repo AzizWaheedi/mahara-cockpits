@@ -86,4 +86,12 @@ crons.cron(
   {},
 );
 
+/** Client reports the CSM asked for become Google Docs within a few minutes. */
+crons.interval(
+  "write requested client reports",
+  { minutes: 3 },
+  internal.reportDocs.drain,
+  {},
+);
+
 export default crons;

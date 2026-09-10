@@ -120,7 +120,7 @@ export async function googleAccessToken(): Promise<string> {
     JSON.stringify({
       iss: sa.client_email,
       scope:
-        "https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/calendar.readonly",
+        "https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/calendar.readonly",
       aud: "https://oauth2.googleapis.com/token",
       iat: now,
       exp: now + 3600,

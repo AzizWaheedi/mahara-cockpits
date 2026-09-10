@@ -96,6 +96,8 @@ Meetings and messages (both other cockpits, fed by the media buyer backend every
 | `CSM_WHAPI_TOKEN`, `CREATIVE_WHAPI_TOKEN` | WHAPI channel token for that role's WhatsApp business number (one channel per number, QR-scanned in WHAPI) |
 | `WHAPI_BASE_URL` | optional, default `https://gate.whapi.cloud` |
 | `GHL_AGENCY_TOKEN` | not used: agency-level tokens cannot read sub-account pipelines or calendars (tested 2026-09-10). Each Client Data row carries its own sub-account token |
+| `ANTHROPIC_API_KEY` | the "what this means" paragraph in client report docs (reportDocs.ts); without it the doc still ships with the plain diagnosis |
+| (GCP project 195153154932) | Google Docs API must be enabled for report docs; Drive and Sheets already are |
 | `FATHOM_API_KEY` | recorded calls on the client cards. Without it, calls loaded into the `fathomCache` table (one-off backfills from the Fathom connector) still show for 90 days |
 
 Only the media buyer cockpit talks to integrations today. The other two receive data through

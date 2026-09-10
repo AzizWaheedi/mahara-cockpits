@@ -203,6 +203,8 @@ async function gatherClients(): Promise<Any[]> {
   for (const t of data?.tasks ?? []) {
     const name = String(t.name ?? "").trim();
     const low = name.toLowerCase();
+    // Aziz, 2026-09-10: "ignore the Ziad playing account completely."
+    if (/playing account/i.test(name)) continue;
     if (!name || (NOT_A_CLIENT.some(k => low.includes(k)) && name.length > 25))
       continue;
     const f = fieldsOf(t);
