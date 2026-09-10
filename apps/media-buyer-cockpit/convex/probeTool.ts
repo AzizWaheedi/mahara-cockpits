@@ -152,3 +152,76 @@ export const ghlAgencyProbe = internalAction({
     return out;
   },
 });
+
+/** Can the agency token mint a location token, and does that token read pipelines? */
+export const ghlLocationTokenProbe = internalAction({
+  args: { client: v.string() },
+  returns: v.any(),
+  handler: async (_ctx, { client }) => {
+    const row = clientDataFor(await readClientData(), client);
+    const token = process.env.GHL_AGENCY_TOKEN ?? "";
+    if (!row?.ghlLocationId) return { error: "no GHL ID" };
+    const loc = await fetch(
+      `https://services.leadconnectorhq.com/locations/${row.ghlLocationId}`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Version: "2021-07-28",
+          Accept: "application/json",
+        },
+      },
+    ).then(r => r.json());
+    const companyId = loc?.location?.companyId;
+    const out: Any = { location: row.ghlLocationId, companyId };
+    for (const [k, body, ctype] of [
+      [
+        "form",
+        new URLSearchParams({
+          companyId: String(companyId),
+          locationId: row.ghlLocationId,
+        }).toString(),
+        "application/x-www-form-urlencoded",
+      ],
+      [
+        "json",
+        JSON.stringify({ companyId, locationId: row.ghlLocationId }),
+        "application/json",
+      ],
+    ] as const) {
+      const res = await fetch(
+        "https://services.leadconnectorhq.com/oauth/locationToken",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Version: "2021-07-28",
+            Accept: "application/json",
+            "Content-Type": ctype,
+          },
+          body,
+        },
+      );
+      const text = await res.text();
+      out[`mint_${k}`] = { status: res.status, body: text.slice(0, 200) };
+      if (res.ok) {
+        const lt = JSON.parse(text)?.access_token;
+        const p = await fetch(
+          `https://services.leadconnectorhq.com/opportunities/pipelines?locationId=${row.ghlLocationId}`,
+          {
+            headers: {
+              Authorization: `Bearer ${lt}`,
+              Version: "2021-07-28",
+              Accept: "application/json",
+            },
+          },
+        );
+        out.pipelinesWithLocationToken = {
+          status: p.status,
+          body: (await p.text()).slice(0, 160),
+        };
+        break;
+      }
+    }
+    return out;
+  },
+});

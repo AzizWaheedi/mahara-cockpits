@@ -94,7 +94,7 @@ Meetings and messages (both other cockpits, fed by the media buyer backend every
 | `CSM_CALENDAR_IDS`, `CREATIVE_CALENDAR_IDS` | Google Calendar ids (usually the person's email), comma-separated. Each calendar must be shared with the service account, "See all event details" |
 | `CSM_WHAPI_TOKEN`, `CREATIVE_WHAPI_TOKEN` | WHAPI channel token for that role's WhatsApp business number (one channel per number, QR-scanned in WHAPI) |
 | `WHAPI_BASE_URL` | optional, default `https://gate.whapi.cloud` |
-| `GHL_AGENCY_TOKEN` | agency-level GoHighLevel private integration token (pit-…) with scopes `locations.readonly`, `opportunities.readonly`, `contacts.readonly`, `calendars.readonly`, `calendars/events.readonly`; covers every sub-account whose GHL ID is on Client Data, so per-client tokens become optional |
+| `GHL_AGENCY_TOKEN` | not used: agency-level tokens cannot read sub-account pipelines or calendars (tested 2026-09-10). Each Client Data row carries its own sub-account token |
 | `FATHOM_API_KEY` | recorded calls on the client cards. Without it, calls loaded into the `fathomCache` table (one-off backfills from the Fathom connector) still show for 90 days |
 
 Only the media buyer cockpit talks to integrations today. The other two receive data through

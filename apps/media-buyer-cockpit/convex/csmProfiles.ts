@@ -524,9 +524,11 @@ type GhlAccount = {
 /** `{normalised client name | id:<clickupId>: account}` off Client Data columns A-E. */
 async function ghlAccounts(): Promise<Map<string, GhlAccount>> {
   const out = new Map<string, GhlAccount>();
-  const agency = process.env.GHL_AGENCY_TOKEN ?? "";
+  // Agency-level tokens cannot read a sub-account's pipelines or calendars
+  // (tested 2026-09-10: 401 on every location endpoint and on locationToken),
+  // so each row needs its own sub-account private integration token.
   for (const r of await readClientData()) {
-    const token = r.ghlToken.startsWith("pit-") ? r.ghlToken : agency;
+    const token = r.ghlToken;
     if (!token.startsWith("pit-") || !r.ghlLocationId) continue;
     const entry = {
       name: r.name,
@@ -773,14 +775,11 @@ function gapsFor(x: {
         "GHL ID empty on Client Data",
         "Database sheet → Client Data → GHL ID: the sub-account location id.",
       );
-    if (
-      !row.ghlToken.startsWith("pit-") &&
-      !(process.env.GHL_AGENCY_TOKEN ?? "").startsWith("pit-")
-    )
+    if (!row.ghlToken.startsWith("pit-"))
       add(
         "ghl_token",
         "GHL API token empty on Client Data",
-        "Database sheet → Client Data → GHL API: the sub-account's private integration token (pit-…). Without it lost-lead reasons and calendars cannot be read.",
+        "In GHL switch into this sub-account → Settings → Private Integrations → New, scopes: contacts, opportunities, calendars, calendar events, locations (read). Paste the pit-… token into Client Data → GHL API.",
       );
     if (!/@g\.us$/.test(row.waGroupId))
       add(

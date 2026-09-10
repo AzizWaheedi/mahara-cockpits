@@ -844,13 +844,9 @@ export const runSync = internalAction({
     for (const r of clientRows.slice(1)) {
       const name = r[col("Client Name")];
       const loc = r[col("GHL ID")];
-      // A row's own pit- token wins; otherwise the agency-level private
-      // integration token covers every sub-account by location id. One
-      // token to keep, instead of one per client. [2026-09-10]
-      const own = String(r[col("GHL API")] ?? "").trim();
-      const token = own.startsWith("pit-")
-        ? own
-        : (process.env.GHL_AGENCY_TOKEN ?? "");
+      // Each row needs its own sub-account token: agency-level tokens cannot
+      // read location endpoints (tested 2026-09-10).
+      const token = String(r[col("GHL API")] ?? "").trim();
       if (name && loc && token.startsWith("pit-")) {
         ghlByClient.set(normalize(name), {
           loc: String(loc),
