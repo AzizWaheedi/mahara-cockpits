@@ -6,8 +6,8 @@ import { googleAccessToken } from "./tools";
  * the ClickUp client card stays the source of truth for the relationship
  * (stage, CSM, happiness, dates, service). [Aziz, 2026-09-10]
  *
- * Columns (A→L): Status | Client Name | Clickup ID | GHL ID | GHL API |
- * WA GROUP ID | Report Document ID | Google Drive Link | Sheet Link |
+ * Columns, by header name: Status | Client Name | Clickup ID | GHL ID |
+ * GHL API | WA GROUP ID | Report Document ID | Google Drive Link | Sheet Link |
  * Ad Account - Snap | Ad Account - Meta | Ad Account - TikTok
  */
 export const DATABASE_SHEET = "1_0Nv-IFvzhH4NBNh1dxCUm6Ryp414ctM_8EO5QORBF0";
@@ -34,10 +34,29 @@ export function normTight(s: unknown): string {
     .replace(/[^\p{L}\p{N}]+/gu, "");
 }
 
+const HEADERS = {
+  status: "Status",
+  name: "Client Name",
+  clickupId: "Clickup ID",
+  ghlLocationId: "GHL ID",
+  ghlToken: "GHL API",
+  waGroupId: "WA GROUP ID",
+  reportDocId: "Report Document ID",
+  driveLink: "Google Drive Link",
+  sheetLink: "Sheet Link",
+  adAccountSnap: "Ad Account - Snap",
+  adAccountMeta: "Ad Account - Meta",
+  adAccountTiktok: "Ad Account - TikTok",
+} as const;
+
+/**
+ * Columns are found by header name, so the tab can be reordered or widened
+ * without breaking anything. A renamed header is reported, not ignored.
+ */
 export async function readClientData(): Promise<ClientDataRow[]> {
   const token = await googleAccessToken();
   const res = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${DATABASE_SHEET}/values/${encodeURIComponent("Client Data!A1:L300")}`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${DATABASE_SHEET}/values/${encodeURIComponent("Client Data!A1:Z500")}`,
     { headers: { Authorization: `Bearer ${token}` } },
   );
   const data = await res.json();
@@ -45,24 +64,45 @@ export async function readClientData(): Promise<ClientDataRow[]> {
     throw new Error(
       `Client Data: ${data?.error?.message ?? res.status}`.slice(0, 200),
     );
+  const values = (data?.values ?? []) as string[][];
+  const head = (values[0] ?? []).map(h =>
+    String(h ?? "")
+      .trim()
+      .toLowerCase(),
+  );
+  const col: Record<keyof typeof HEADERS, number> = {} as Record<
+    keyof typeof HEADERS,
+    number
+  >;
+  const missing: string[] = [];
+  for (const [key, label] of Object.entries(HEADERS)) {
+    const i = head.indexOf(label.toLowerCase());
+    if (i === -1) missing.push(label);
+    col[key as keyof typeof HEADERS] = i;
+  }
+  if (missing.includes(HEADERS.name) || missing.includes(HEADERS.clickupId))
+    throw new Error(`Client Data: header(s) renamed: ${missing.join(", ")}`);
+  if (missing.length)
+    console.warn(`Client Data: header(s) not found: ${missing.join(", ")}`);
   const rows: ClientDataRow[] = [];
-  for (const r of ((data?.values ?? []) as string[][]).slice(1)) {
-    const cell = (i: number) => String(r[i] ?? "").trim();
-    const name = cell(1);
+  for (const r of values.slice(1)) {
+    const cell = (k: keyof typeof HEADERS) =>
+      col[k] === -1 ? "" : String(r[col[k]] ?? "").trim();
+    const name = cell("name");
     if (!name) continue;
     rows.push({
-      status: cell(0),
+      status: cell("status"),
       name,
-      clickupId: cell(2),
-      ghlLocationId: cell(3),
-      ghlToken: cell(4),
-      waGroupId: cell(5),
-      reportDocId: cell(6),
-      driveLink: cell(7),
-      sheetLink: cell(8),
-      adAccountSnap: cell(9),
-      adAccountMeta: cell(10),
-      adAccountTiktok: cell(11),
+      clickupId: cell("clickupId"),
+      ghlLocationId: cell("ghlLocationId"),
+      ghlToken: cell("ghlToken"),
+      waGroupId: cell("waGroupId"),
+      reportDocId: cell("reportDocId"),
+      driveLink: cell("driveLink"),
+      sheetLink: cell("sheetLink"),
+      adAccountSnap: cell("adAccountSnap"),
+      adAccountMeta: cell("adAccountMeta"),
+      adAccountTiktok: cell("adAccountTiktok"),
     });
   }
   return rows;

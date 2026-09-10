@@ -331,20 +331,26 @@ async function attachDriveSubfolders(roster: Any[]) {
 
 // --- Stat sheets: this month's booked / showed / quoted / closed --------------
 
-const MONTH_TABS = [
-  "Jan 26",
-  "Feb 26",
-  "Mar 26",
-  "Apr 26",
-  "May 26",
-  "Jun 26",
-  "Jul 26",
-  "Aug 26",
-  "Sep 26",
-  "Oct 26",
-  "Nov 26",
-  "Dec 26",
+const MONTH_NAMES = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
 ];
+
+/** The stat sheet's tab for the current Kuwait month, e.g. "Sep 26". Any year. */
+function currentMonthTab(): string {
+  const d = new Date(Date.now() + 3 * 3600_000);
+  return `${MONTH_NAMES[d.getUTCMonth()]} ${String(d.getUTCFullYear()).slice(-2)}`;
+}
 
 function sheetIdOf(link: unknown): string | undefined {
   const m = /\/spreadsheets\/d\/([A-Za-z0-9_-]{20,})/.exec(String(link ?? ""));
@@ -380,7 +386,7 @@ async function readStatSheet(sheetId: string, tab: string) {
 }
 
 async function attachStatSheets(roster: Any[]) {
-  const tab = MONTH_TABS[new Date(Date.now() + 3 * 3600_000).getUTCMonth()];
+  const tab = currentMonthTab();
   const now = Date.now();
   let read = 0;
   for (const row of roster) {
@@ -903,6 +909,14 @@ export const feedCsm = internalAction({
       } catch (e) {
         errors.push(`client data overlay: ${String(e).slice(0, 200)}`);
       }
+      // The media buyer's own roster used to refresh only from the manual
+      // button, so the pre-launch watch and WhatsApp/calendar matching read
+      // stale stages. Store it here on every feed. [2026-09-10]
+      await ctx.runMutation(internal.csmSync.store, {
+        clients: payload.clients,
+        tasks: payload.tasks,
+        checks: payload.checks,
+      });
       await bridge("csm", "store", {
         clients: payload.clients,
         tasks: payload.tasks,

@@ -63,4 +63,19 @@ crons.interval(
   {},
 );
 
+/**
+ * The board's CPL / bookings / last-updated columns used to refresh only when
+ * a decision was logged. Hourly through the working day keeps the board true
+ * for whoever reads it in ClickUp. [2026-09-10]
+ */
+crons.cron(
+  "write the board's KPI columns",
+  "5 3-18 * * *",
+  internal.writeback.pushMetrics,
+  {},
+);
+
+/** Tracking audit (url_tags, lead forms) once a day; it had no schedule. */
+crons.cron("audit ad tracking", "30 2 * * *", internal.tracking.audit, {});
+
 export default crons;

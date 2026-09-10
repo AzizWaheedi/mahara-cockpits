@@ -524,15 +524,16 @@ type GhlAccount = {
 /** `{normalised client name | id:<clickupId>: account}` off Client Data columns A-E. */
 async function ghlAccounts(): Promise<Map<string, GhlAccount>> {
   const out = new Map<string, GhlAccount>();
-  const data = await sheetsGet(
-    `https://sheets.googleapis.com/v4/spreadsheets/${DATABASE}/values/${encodeURIComponent("Client Data!A1:E200")}`,
-  );
-  for (const row of ((data?.values ?? []) as string[][]).slice(1)) {
-    const [, name = "", clickupId = "", locationId = "", token = ""] = row;
-    if (!name || !token.startsWith("pit-") || !locationId) continue;
-    const entry = { name, clickupId, locationId, token };
-    out.set(normTight(name), entry);
-    if (clickupId) out.set(`id:${clickupId}`, entry);
+  for (const r of await readClientData()) {
+    if (!r.ghlToken.startsWith("pit-") || !r.ghlLocationId) continue;
+    const entry = {
+      name: r.name,
+      clickupId: r.clickupId,
+      locationId: r.ghlLocationId,
+      token: r.ghlToken,
+    };
+    out.set(normTight(r.name), entry);
+    if (r.clickupId) out.set(`id:${r.clickupId}`, entry);
   }
   return out;
 }
@@ -730,6 +731,7 @@ function gapsFor(x: {
   onBoard: boolean;
   visibleAccounts: { name: string; id: string }[];
   calls: number;
+  clientDataOk: boolean;
 }): Gap[] {
   const { client: c, row } = x;
   const gaps: Gap[] = [];
@@ -746,8 +748,11 @@ function gapsFor(x: {
       "Service not set on the card",
       "ClickUp client card → Service (DWY or DFY).",
     );
-  // Client Data: ids and links
-  if (!row) {
+  // Client Data: ids and links. If the tab itself could not be read this run,
+  // say nothing about rows rather than telling the CSM every client is missing.
+  if (!x.clientDataOk) {
+    // no row-level gaps this run
+  } else if (!row) {
     add(
       "data_row",
       "No row on the Client Data tab",
@@ -803,7 +808,7 @@ function gapsFor(x: {
       "No stat sheet anywhere",
       "Database sheet → Client Data → Sheet Link (or paste it on the card's Sheet Link field).",
     );
-  else if (x.perf?.error)
+  else if (x.perf?.error && !x.perf?.staleReason)
     add(
       "sheet_read",
       "Stat sheet cannot be read",
@@ -1002,8 +1007,10 @@ export const push = internalAction({
     // to carry what the CSM owns; anything missing on the card is filled from
     // the sheet, and anything missing on both becomes a gap on the profile.
     let clientData: ClientDataRow[] = [];
+    let clientDataOk = false;
     try {
       clientData = await readClientData();
+      clientDataOk = clientData.length > 0;
     } catch (e) {
       errors.push(`Client Data: ${String(e).slice(0, 160)}`);
     }
@@ -1102,10 +1109,9 @@ export const push = internalAction({
               ? lost
               : undefined,
         calls: mergeCalls(callsFor(c.name, calls), cached, c.name),
-        gaps: gapsFor({
+        gapInputs: {
           client: c,
           row: c.data,
-          perf,
           acct,
           lost,
           accountId,
@@ -1115,7 +1121,8 @@ export const push = internalAction({
           ),
           visibleAccounts,
           calls: mergeCalls(callsFor(c.name, calls), cached, c.name).length,
-        }),
+          clientDataOk,
+        },
         syncedAt: Date.now(),
       };
     });
@@ -1145,6 +1152,13 @@ export const push = internalAction({
       console.log(
         `kept last good numbers for ${kept} clients (their sheet was unreadable)`,
       );
+
+    // Gaps are judged after the keep step, so a sheet that was unreadable for
+    // one run (quota, a blip) but has last good numbers is not a gap.
+    for (const p of profiles as Any[]) {
+      p.gaps = gapsFor({ ...p.gapInputs, perf: p.performance });
+      p.gapInputs = undefined;
+    }
 
     const syncId = `${iso(today)}-${Date.now()}`;
     for (let i = 0; i < profiles.length; i += PROFILE_BATCH) {
