@@ -94,7 +94,7 @@ Meetings and messages (both other cockpits, fed by the media buyer backend every
 | `CSM_CALENDAR_IDS`, `CREATIVE_CALENDAR_IDS` | Google Calendar ids (usually the person's email), comma-separated. Each calendar must be shared with the service account, "See all event details" |
 | `CSM_WHAPI_TOKEN`, `CREATIVE_WHAPI_TOKEN` | WHAPI channel token for that role's WhatsApp business number (one channel per number, QR-scanned in WHAPI) |
 | `WHAPI_BASE_URL` | optional, default `https://gate.whapi.cloud` |
-| `FATHOM_API_KEY` | recorded calls on the client cards |
+| `FATHOM_API_KEY` | recorded calls on the client cards. Without it, calls loaded into the `fathomCache` table (one-off backfills from the Fathom connector) still show for 90 days |
 
 Only the media buyer cockpit talks to integrations today. The other two receive data through
 the bridge (below) and only need the boot variables.

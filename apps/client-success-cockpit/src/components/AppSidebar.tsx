@@ -7,6 +7,7 @@ import {
   Flame,
   Link2,
   ListChecks,
+  ListTodo,
   LogOut,
   MessageSquare,
   Moon,
@@ -64,6 +65,7 @@ const navGroups = [
     items: [
       { href: "/clients", label: "Clients & touchpoints", icon: MessageSquare },
       { href: "/performance", label: "Client performance", icon: BarChart3 },
+      { href: "/backlog", label: "Data backlog", icon: ListTodo },
     ],
   },
   {

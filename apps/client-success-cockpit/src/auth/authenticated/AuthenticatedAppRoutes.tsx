@@ -9,6 +9,7 @@ import { SpaceSessionAutoSignIn } from "@/components/SpaceSessionAutoSignIn";
 import { ViktorAutoSignIn } from "@/components/ViktorAutoSignIn";
 import { ViktorProductAuthProvider } from "@/lib/viktor-spaces-access/ViktorProductAuthProvider";
 import {
+  BacklogPage,
   ClientPerformancePage,
   ClientsPage,
   DashboardPage,
@@ -55,6 +56,7 @@ export function AuthenticatedRoutes() {
           </Route>
           <Route path="/template" element={<DashboardPage />} />
           <Route path="/meetings" element={<MeetingsPage />} />
+          <Route path="/backlog" element={<BacklogPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Route>
       </Route>

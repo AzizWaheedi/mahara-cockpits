@@ -1,3 +1,4 @@
+export { BacklogPage } from "./BacklogPage";
 export { ClientPerformancePage } from "./ClientPerformancePage";
 export {
   ClientsPage,

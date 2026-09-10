@@ -11,6 +11,30 @@ import { api } from "../../convex/_generated/api";
  * marks the steps that are ad-account work Viktor can execute — everything to
  * do with access, billing or a judgement call stays hers.
  */
+/** Issue text with the form URL turned into a link. */
+function Linkified({ text }: { text: string }) {
+  const parts = text.split(/(https?:\/\/\S+)/g);
+  return (
+    <>
+      {parts.map((p, i) =>
+        /^https?:\/\//.test(p) ? (
+          <a
+            key={`${i}-${p}`}
+            href={p.replace(/[.,)]+$/, "")}
+            target="_blank"
+            rel="noreferrer"
+            className="text-primary underline"
+          >
+            the new-campaign form
+          </a>
+        ) : (
+          <span key={`${i}-${p.slice(0, 12)}`}>{p}</span>
+        ),
+      )}
+    </>
+  );
+}
+
 export function Onboardings({
   onBuild,
 }: {
@@ -61,7 +85,9 @@ export function Onboardings({
                 </span>
                 <ul className="ml-3 mt-0.5 list-disc">
                   {w.issues.map((i: string) => (
-                    <li key={i}>{i}</li>
+                    <li key={i}>
+                      <Linkified text={i} />
+                    </li>
                   ))}
                 </ul>
                 {w.taskUrl && (

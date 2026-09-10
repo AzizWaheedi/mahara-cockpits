@@ -5,6 +5,7 @@ import {
   internalMutation,
   internalQuery,
 } from "./_generated/server";
+import { NEW_CAMPAIGN_FORM_URL } from "./constants";
 import { authenticatedAction } from "./functions";
 import { allAdAccounts, callTool, graph, supabaseQuery, unwrap } from "./tools";
 
@@ -1178,6 +1179,52 @@ export const runSync = internalAction({
           issues,
         });
       }
+      // A client can be live in Meta while their card still says a pre-launch
+      // stage and no campaign card exists on the ads board. Castello ran three
+      // ads for a day before anyone noticed (2026-09-09). The fix is the
+      // new-campaign form, which creates the board card; the CSM then marks
+      // the client Active.
+      const preLaunch: { name: string; stage: string }[] = await ctx.runQuery(
+        internal.sync.preLaunchClients,
+        {},
+      );
+      for (const c of preLaunch) {
+        const nk = normalize(c.name);
+        const first = normalize(c.name.split(/[\s\-_/]+/)[0] ?? "");
+        const matches = (x: string) =>
+          x.length >= 5 &&
+          (x.startsWith(nk) ||
+            nk.startsWith(x) ||
+            (first.length >= 5 && x.startsWith(first)));
+        if (watch.some(w => matches(normalize(w.client)))) continue;
+        let spend = 0;
+        let accountName: string | undefined;
+        const campaignNames = new Set<string>();
+        for (const [campaignKey, agg] of byCampaign) {
+          const acct = normalize(agg.account);
+          const camp = normalize(String(campaignKey));
+          if (matches(acct) || matches(camp)) {
+            spend += agg.spend;
+            accountName = accountName ?? agg.account;
+            campaignNames.add(camp);
+          }
+        }
+        if (spend <= 0) continue;
+        const n = campaignNames.size;
+        watch.push({
+          client: c.name,
+          sheetStatus: `card says ${c.stage}`,
+          accountName,
+          accountId: accountName
+            ? accountIdByName.get(normalize(accountName))
+            : undefined,
+          hasTask: false,
+          spend7d: spend,
+          issues: [
+            `Live in Meta ($${spend.toFixed(0)} in the last 7 days, ${n} campaign${n === 1 ? "" : "s"}) while the client card still says "${c.stage}" and there is no card on the ads board. Fill the new-campaign form so the card exists: ${NEW_CAMPAIGN_FORM_URL} — then the CSM marks them Active.`,
+          ],
+        });
+      }
       await ctx.runMutation(internal.sync.storeLaunchWatch, { rows: watch });
       console.log(
         `launches: ${watch.length} launching clients · ${watch.filter(w => w.issues.length).length} with something blocking · onboarding ids resolved ${resolvedLaunches.resolved}, still missing ${resolvedLaunches.stillMissing}`,
@@ -2098,6 +2145,38 @@ export const onboardingClients = internalQuery({
     (await ctx.db.query("onboardings").collect()).map(r => ({
       client: r.client,
       taskUrl: r.taskUrl,
+    })),
+});
+
+/** Clients whose ClickUp card is still in a pre-launch stage. */
+export const preLaunchClients = internalQuery({
+  args: {},
+  returns: v.array(v.object({ name: v.string(), stage: v.string() })),
+  handler: async ctx =>
+    (await ctx.db.query("clients").collect())
+      .filter(c =>
+        /launch booked|ready for launch|blueprint|onboarding booked/i.test(
+          c.stage,
+        ),
+      )
+      .map(c => ({ name: c.name, stage: c.stage })),
+});
+
+/** The launch watch, for the CSM feed: who is live while their card says otherwise. */
+export const liveWatch = internalQuery({
+  args: {},
+  returns: v.array(
+    v.object({
+      client: v.string(),
+      spend7d: v.number(),
+      sheetStatus: v.string(),
+    }),
+  ),
+  handler: async ctx =>
+    (await ctx.db.query("launchWatch").collect()).map(w => ({
+      client: w.client,
+      spend7d: w.spend7d,
+      sheetStatus: w.sheetStatus,
     })),
 });
 

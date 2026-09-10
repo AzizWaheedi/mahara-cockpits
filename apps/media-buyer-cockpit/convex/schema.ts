@@ -813,6 +813,23 @@ const schema = defineSchema({
     health: v.optional(v.any()),
     problems: v.optional(v.array(v.string())),
   }).index("by_at", ["at"]),
+  /**
+   * Recorded calls that mention a client, kept here so they survive profile
+   * rebuilds. Filled from the Fathom API when FATHOM_API_KEY is set and from
+   * one-off backfills when it is not. Upserted on (clientName, url).
+   */
+  fathomCache: defineTable({
+    clientName: v.string(),
+    title: v.string(),
+    at: v.string(),
+    url: v.string(),
+    host: v.optional(v.string()),
+    summary: v.optional(v.string()),
+    /** "client" = a call with the client; "mention" = a team meeting that discussed them. */
+    kind: v.string(),
+    source: v.string(),
+    addedAt: v.number(),
+  }).index("by_client", ["clientName"]),
 });
 
 export default schema;

@@ -707,6 +707,24 @@ function callsFor(client: string, calls: Call[]): Call[] {
     .slice(0, 8);
 }
 
+/** API matches first, then remembered calls for this client, no duplicate links, newest first, 8 at most. */
+function mergeCalls(fresh: Call[], cached: Any[], client: string): Any[] {
+  const seen = new Set<string>();
+  const out: Any[] = [];
+  const rows = [
+    ...fresh.map(c => ({ ...c, kind: "client" })),
+    ...cached.filter(r => r.clientName === client),
+  ];
+  rows.sort((a, b) => (String(a.at) < String(b.at) ? 1 : -1));
+  for (const r of rows) {
+    const key = String(r.url ?? r.title);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(r);
+  }
+  return out.slice(0, 8);
+}
+
 // --- Inputs: the client rows off Clickup ------------------------------------------
 
 function cfById(task: Any): Record<string, Any> {
@@ -848,6 +866,11 @@ export const push = internalAction({
     } catch (e) {
       errors.push(`Fathom: ${String(e).slice(0, 160)}`);
     }
+    // Calls the API found are remembered; calls a backfill added stay visible
+    // for 90 days even with no key on this deployment.
+    const cached: Any[] = await ctx.runQuery(internal.fathomCache.recent, {
+      days: 90,
+    });
 
     const profiles = await pool(clients, 6, async c => {
       const perf = await sheetPerformance(c.sheetLink, today);
@@ -904,7 +927,7 @@ export const push = internalAction({
             : lost?.error
               ? lost
               : undefined,
-        calls: callsFor(c.name, calls),
+        calls: mergeCalls(callsFor(c.name, calls), cached, c.name),
         syncedAt: Date.now(),
       };
     });

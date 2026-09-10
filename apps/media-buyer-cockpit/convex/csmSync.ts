@@ -1,12 +1,12 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
+import type { ActionCtx } from "./_generated/server";
 import {
   internalAction,
   internalMutation,
   internalQuery,
 } from "./_generated/server";
 import { authenticatedAction } from "./functions";
-import type { ActionCtx } from "./_generated/server";
 import { callTool, unwrap } from "./tools";
 
 const CLIENTS_LIST = "901816559981"; // Clients - Mahara
@@ -318,6 +318,8 @@ function raw(task: any, fieldId: string): any {
  * The cadence rules from the CSM SOP, expressed once. Returns what the CSM must
  * do about this client today plus how loud it should be.
  */
+const normName = (x: string) => x.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+
 function instruct(c: {
   stage: string;
   silentDays?: number;
@@ -328,6 +330,8 @@ function instruct(c: {
   launchDate?: string;
   paymentDue?: number;
   extendedUntil?: string;
+  /** Meta spend in the last 7 days while the card is still pre-launch. */
+  liveSpend7d?: number;
   today: string;
 }): { todo: string; level: "red" | "amber" | "blue" | "green"; rank: number } {
   // Paused, stopped and cancelled clients carry no cadence at all. Reactivation is a
@@ -407,6 +411,13 @@ function instruct(c: {
   // The journey is fixed, so each pipeline stage gets its own next step rather than one
   // generic "keep messaging". Onboarding call books the brand blueprint, not the launch.
   if (PIPELINE.has(c.stage)) {
+    // Ads already running: the card is behind reality and nobody told the client.
+    if ((c.liveSpend7d ?? 0) > 0)
+      return {
+        todo: `Live in Meta ($${Math.round(c.liveSpend7d ?? 0)} in 7 days) while the card says ${c.stage}. Mark them Active and tell the client they are live`,
+        level: "red",
+        rank: 1,
+      };
     const step = /onboarding booked/i.test(c.stage)
       ? "Run the onboarding call, then book the brand blueprint with the creative strategist"
       : /blueprint/i.test(c.stage)
@@ -522,6 +533,21 @@ export const buildCsmSnapshot = internalAction({
     // it exists and degrades to "unknown" rather than "never sent" while it does not.
     const reportFieldId = await fieldIdByName(ctx, "Last report sent");
     const clientTasks = await allTasks(ctx, CLIENTS_LIST, true);
+    const liveWatch: {
+      client: string;
+      spend7d: number;
+      sheetStatus: string;
+    }[] = await ctx.runQuery(internal.sync.liveWatch, {});
+    const liveSpendFor = (name: string): number | undefined => {
+      const nk = normName(name);
+      const hit = liveWatch.find(w => {
+        const a = normName(w.client);
+        return (
+          a === nk || (a.length >= 5 && (a.startsWith(nk) || nk.startsWith(a)))
+        );
+      });
+      return hit && hit.spend7d > 0 ? hit.spend7d : undefined;
+    };
     const csTasks = await allTasks(ctx, CS_LIST, false);
     // Campaign decisions already logged by the media buyer, so the CSM walks into a
     // check-in call knowing every change made on that client's account.
@@ -550,7 +576,9 @@ export const buildCsmSnapshot = internalAction({
       // report sheet is chased and cost per lead is the KPI we are accountable for.
       const dwy = /dwy|done with/i.test(String(service ?? ""));
       const stageName = stage ?? "Needs Contacting";
-      const lastReport = reportFieldId ? toIso(raw(t, reportFieldId)) : undefined;
+      const lastReport = reportFieldId
+        ? toIso(raw(t, reportFieldId))
+        : undefined;
       const reportDays = daysSince(lastReport, today);
       const silentDays = daysSince(lastPoc, today);
       const callDays = daysSince(lastCall, today);
@@ -562,6 +590,7 @@ export const buildCsmSnapshot = internalAction({
       const extendedUntil = liveExtension(t.name, exts, today);
       const { todo, level, rank } = instruct({
         stage: stageName,
+        liveSpend7d: liveSpendFor(t.name),
         extendedUntil,
         silentDays,
         callDays,
