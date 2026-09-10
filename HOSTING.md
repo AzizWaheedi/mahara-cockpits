@@ -176,9 +176,9 @@ Slack. `fixRequests.ts` on the media buyer deployment.
 
 For him to actually change code, three things have to be on his side:
 
-1. The repository somewhere he can pull and push. It lives only on Aziz's Mac
-   today. Push it to GitHub (private), then set `REPO_URL` on the media buyer
-   deployment so the jobs point at it.
+1. The repository: https://github.com/AzizWaheedi/mahara-cockpits (private).
+   `REPO_URL` on the media buyer deployment points at it; Hermes needs a token
+   with Contents read/write on it.
 2. A Convex deploy key per app (Convex dashboard → Settings → Deploy keys):
    `adorable-seahorse-418`, `impressive-dinosaur-375`, `colorful-wombat-644`.
 3. A Vercel token for the three projects, or he opens a pull request and the
