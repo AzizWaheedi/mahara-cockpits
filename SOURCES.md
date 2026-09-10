@@ -21,7 +21,7 @@ Service account for every sheet, Drive folder and calendar:
 | Appointments, shows, quotes, closes per month | The client's own stat sheet (`Sheet Link` on the card, else Client Data) | `csmProfiles.ts`, `fanout.ts` |
 | Scripts and footage | The client's Drive folder (card `Drive Folder`/`Drive Link`, else Client Data `Google Drive Link`) | `fanout.ts` |
 | Recorded calls | Fathom (`FATHOM_API_KEY`), plus backfills in `fathomCache` | `csmProfiles.ts` |
-| WhatsApp threads, calendars | WHAPI tokens and shared Google Calendars (`CSM_*`, `CREATIVE_*` env) | `comms.ts` |
+| WhatsApp threads, calendars | Mahara's own GHL sub-account (`MAHARA_GHL_TOKEN`): its calendars and its WhatsApp conversations since `WHATSAPP_SINCE`; WHAPI / Google Calendar env only as fallbacks | `comms.ts` |
 | Call notes, DEFCON, promises | Typeform `fRokTITH`, keyed on the ClickUp task id | `csmSync.ts` |
 
 If the card and Client Data disagree, the card wins for relationship fields
@@ -104,7 +104,7 @@ with Aziz and the CSM, and the link is written back to the request.
 
 ## Schedules
 
-Full sync every 15 minutes 06:00–22:00 Kuwait, hourly overnight; each run
+Full sync every 10 minutes 06:00–22:00 Kuwait, hourly overnight; each run
 feeds the other two cockpits and re-stores the media buyer's own roster.
 Outbox drains every 5 minutes. Board KPI columns written hourly through the
 working day. Tracking audit daily 05:30 Kuwait. Playbook mining Fridays.
