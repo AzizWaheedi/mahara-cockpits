@@ -345,7 +345,7 @@ async function csmRow(
 export const drainCsm = internalAction({
   args: {},
   returns: v.object({ done: v.number(), failed: v.number() }),
-  handler: async () => {
+  handler: async ctx => {
     const rows: Any[] = (await bridge("csm", "pending", {})) ?? [];
     let done = 0;
     let failed = 0;
