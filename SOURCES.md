@@ -90,6 +90,18 @@ New-campaign form (creates the Ads Managment card):
 6. A GHL sub-account with a pipeline whose name contains `lost`.
 7. Fathom calls whose title or invitees contain the client name.
 
+## Client report docs
+
+The CSM requests a report in the client success app. Every 3 minutes the
+media buyer backend picks up requests, queues the narrative for Hermes as an
+`aiJobs` row (`report_narrative`, answered through `/askai`), and once the
+answer is in (or after 45 minutes without one, using the plain diagnosis)
+writes a branded Google Doc from the stored profile: snapshot table, pipeline
+health, appointment log, ad performance, lost reasons. The doc is created in
+the client's Drive folder when the service account can write there, shared
+with Aziz and the CSM, and the link is written back to the request.
+`reportDocs.peek` prints a built doc from the command line.
+
 ## Schedules
 
 Full sync every 15 minutes 06:00–22:00 Kuwait, hourly overnight; each run

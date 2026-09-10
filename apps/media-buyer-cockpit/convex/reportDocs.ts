@@ -3,7 +3,7 @@ import { internal } from "./_generated/api";
 import { internalAction, internalQuery } from "./_generated/server";
 import { clientDataFor, normTight, readClientData } from "./clientData";
 import { bridge } from "./comms";
-import { callTool, googleAccessToken, unwrap } from "./tools";
+import { googleAccessToken } from "./tools";
 
 /**
  * One client's monthly report as a branded, editable Google Doc.
@@ -241,31 +241,6 @@ function constraintsFor(profile: Any): string[] {
   return out;
 }
 
-async function narrative(profile: Any, language: Lang, note?: string) {
-  const perf = profile?.performance ?? {};
-  const [period, previous, label] = reportingPeriod(perf);
-  const payload = {
-    client: profile?.clientName,
-    month: label,
-    thisMonth: period,
-    lastMonth: previous,
-    allTime: nums(perf.allTime),
-    appointmentsWithNoOutcome: perf.staleCount,
-    constraints: constraintsFor(profile),
-    csmNote: note ?? "",
-    language: language === "ar" ? "Arabic" : "English",
-  };
-  const res: Any = unwrap(
-    await callTool("ai_structured_output", {
-      prompt: NARRATIVE_PROMPT + JSON.stringify(payload),
-      output_schema: NARRATIVE_SCHEMA,
-    }),
-  );
-  const data = typeof res === "string" ? JSON.parse(res) : res;
-  if (!data || !data.means) throw new Error("the model returned nothing");
-  return data as { means: string; next: string[] };
-}
-
 /** The diagnosis as prose, for when no model is available. Facts only. */
 function plainStory(
   profile: Any,
@@ -275,10 +250,10 @@ function plainStory(
   const [m, l, label] = reportingPeriod(perf);
   const cons = constraintsFor(profile);
   if (language === "ar") {
-    const means = `هذا التقرير يغطي ${label}: ${m.leads ?? 0} استفسار، ${m.booked ?? 0} موعد محجوز، ${m.shows ?? 0} حضروا، ${m.closes ?? 0} تقفلت${Object.keys(l).length ? ` (الشهر الماضي: ${l.leads ?? 0} استفسار، ${l.booked ?? 0} موعد)` : ""}.`;
+    const means = `هذا التقرير يغطي ${label}: ${m.leads ?? 0} استفسار، ${m.booked ?? 0} موعد محجوز، ${m.shows ?? 0} حضروا، ${m.closes ?? 0} تقفلت${(l.leads ?? 0) > 0 ? ` (الشهر الماضي: ${l.leads ?? 0} استفسار، ${l.booked ?? 0} موعد)` : ""}.`;
     return { means, next: cons.map(c => c) };
   }
-  const means = `This report covers ${label}: ${m.leads ?? 0} enquiries, ${m.booked ?? 0} appointments booked, ${m.shows ?? 0} attended, ${m.closes ?? 0} closed${Object.keys(l).length ? ` (last month: ${l.leads ?? 0} enquiries, ${l.booked ?? 0} booked)` : ""}. The main constraint right now: ${cons[0]}.`;
+  const means = `This report covers ${label}: ${m.leads ?? 0} enquiries, ${m.booked ?? 0} appointments booked, ${m.shows ?? 0} attended, ${m.closes ?? 0} closed${(l.leads ?? 0) > 0 ? ` (last month: ${l.leads ?? 0} enquiries, ${l.booked ?? 0} booked)` : ""}. The main constraint right now: ${cons[0]}.`;
   return { means, next: cons.map(c => c.charAt(0).toUpperCase() + c.slice(1)) };
 }
 
@@ -801,6 +776,68 @@ function monthRange(perf: Any, label: string): [string, string] {
   return [iso(first), iso(today)];
 }
 
+// --- Hermes writes the narrative ---------------------------------------------------
+//
+// Aziz, 2026-09-10: "we don't need the Anthropic key, all we need is that same
+// agent, Hermes". The prose is queued as an aiJobs row that Hermes already
+// polls through /askai; the doc is built once his answer is in, or from the
+// plain diagnosis if he has not answered within HERMES_WAIT_MIN.
+
+const NARRATIVE_KIND = "report_narrative";
+const HERMES_WAIT_MIN = 45;
+
+export const jobFor = internalQuery({
+  args: { refId: v.string() },
+  returns: v.any(),
+  handler: async (ctx, { refId }) => {
+    const rows = (await ctx.db.query("aiJobs").collect()).filter(
+      j => j.kind === NARRATIVE_KIND && j.refId === refId,
+    );
+    rows.sort((a, b) => b.createdAt - a.createdAt);
+    const j = rows[0];
+    return j
+      ? {
+          id: j._id,
+          status: j.status,
+          result: j.result,
+          error: j.error,
+          createdAt: j.createdAt,
+        }
+      : null;
+  },
+});
+
+function narrativePrompt(profile: Any, language: Lang, note?: string): string {
+  const perf = profile?.performance ?? {};
+  const [period, previous, label] = reportingPeriod(perf);
+  return (
+    NARRATIVE_PROMPT +
+    JSON.stringify({
+      client: profile?.clientName,
+      month: label,
+      thisMonth: period,
+      lastMonth: previous,
+      allTime: nums(perf.allTime),
+      appointmentsWithNoOutcome: perf.staleCount,
+      constraints: constraintsFor(profile),
+      csmNote: note ?? "",
+      language: language === "ar" ? "Arabic" : "English",
+    })
+  );
+}
+
+function storyFromResult(
+  result: Any,
+): { means: string; next: string[] } | null {
+  const data = typeof result === "string" ? JSON.parse(result) : result;
+  if (!data || typeof data.means !== "string" || !data.means.trim())
+    return null;
+  return {
+    means: data.means,
+    next: Array.isArray(data.next) ? data.next.map(String) : [],
+  };
+}
+
 // --- The drain ------------------------------------------------------------------------
 
 /** Every pending report in the Client Success app, built and written back. */
@@ -818,6 +855,7 @@ export const drain = internalAction({
     }
     const done: string[] = [];
     const failed: string[] = [];
+    const waiting: string[] = [];
     for (const r of pending) {
       try {
         const profile = await bridge("csm", "profileFor", {
@@ -827,14 +865,33 @@ export const drain = internalAction({
         const language: Lang = r.language === "ar" ? "ar" : "en";
         const extras: string[] =
           Array.isArray(r.extras) && r.extras.length ? r.extras : EXTRAS;
-        let story: { means: string; next: string[] };
-        try {
-          story = await narrative(profile, language, r.note ?? undefined);
-        } catch (e) {
-          // No model (no key, or it failed): the doc still ships, with the
-          // diagnosis written plainly from the numbers. The CSM edits it anyway.
+        // The narrative: Hermes first, the plain diagnosis if he is late.
+        const refId = String(r._id);
+        const job = await ctx.runQuery(internal.reportDocs.jobFor, { refId });
+        let story: { means: string; next: string[] } | null = null;
+        if (!job) {
+          await ctx.runMutation(internal.askAi.enqueue, {
+            kind: NARRATIVE_KIND,
+            refId,
+            prompt: narrativePrompt(profile, language, r.note ?? undefined),
+            schema: NARRATIVE_SCHEMA,
+          });
+          waiting.push(
+            `${r.clientName} ${r.month}: narrative queued for Hermes`,
+          );
+          continue;
+        }
+        if (job.status === "done") story = storyFromResult(job.result);
+        const waitedMin = (Date.now() - Number(job.createdAt)) / 60_000;
+        if (!story && job.status !== "failed" && waitedMin < HERMES_WAIT_MIN) {
+          waiting.push(
+            `${r.clientName} ${r.month}: waiting on Hermes (${Math.round(waitedMin)} min)`,
+          );
+          continue;
+        }
+        if (!story) {
           console.warn(
-            `report: narrative fell back to the diagnosis: ${String(e).slice(0, 120)}`,
+            `report: Hermes ${job.status} after ${Math.round(waitedMin)} min, using the plain diagnosis`,
           );
           story = plainStory(profile, language);
         }
@@ -903,8 +960,52 @@ export const drain = internalAction({
       }
     }
     console.log(
-      `reports: ${done.length} built, ${failed.length} failed ${failed.join(" | ")}`,
+      `reports: ${done.length} built, ${waiting.length} waiting, ${failed.length} failed ${failed.join(" | ")}`,
     );
-    return { built: done.length, done, failed };
+    return { built: done.length, done, waiting, failed };
+  },
+});
+
+/** The text of a built doc, paragraph by paragraph, to eyeball a report from the command line. */
+export const peek = internalAction({
+  args: { docId: v.string() },
+  returns: v.any(),
+  handler: async (_ctx, { docId }) => {
+    const doc = await document(docId);
+    const lines: string[] = [];
+    for (const el of doc.body?.content ?? []) {
+      if (el.paragraph) {
+        const t = (el.paragraph.elements ?? [])
+          .map((e: Any) => e.textRun?.content ?? "")
+          .join("")
+          .trim();
+        if (t)
+          lines.push(
+            `${el.paragraph.paragraphStyle?.namedStyleType ?? ""}: ${t}`,
+          );
+      } else if (el.table) {
+        lines.push(
+          `TABLE ${el.table.rows}x${el.table.columns}: ` +
+            (el.table.tableRows ?? [])
+              .slice(0, 3)
+              .map((r: Any) =>
+                r.tableCells
+                  .map((c: Any) =>
+                    (c.content ?? [])
+                      .map((p: Any) =>
+                        (p.paragraph?.elements ?? [])
+                          .map((e: Any) => e.textRun?.content ?? "")
+                          .join(""),
+                      )
+                      .join("")
+                      .trim(),
+                  )
+                  .join(" | "),
+              )
+              .join(" // "),
+        );
+      }
+    }
+    return { title: doc.title, lines };
   },
 });

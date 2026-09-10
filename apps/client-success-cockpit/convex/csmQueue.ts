@@ -146,3 +146,25 @@ export const profileFor = internalQuery({
       .withIndex("by_client", q => q.eq("clientName", clientName))
       .first(),
 });
+
+/** Queue a report the way the CSM's button does, from the command line. */
+export const enqueueReport = internalMutation({
+  args: {
+    clientName: v.string(),
+    month: v.string(),
+    language: v.optional(v.string()),
+    note: v.optional(v.string()),
+    extras: v.optional(v.array(v.string())),
+  },
+  returns: v.id("reportDocs"),
+  handler: async (ctx, args) =>
+    await ctx.db.insert("reportDocs", {
+      clientName: args.clientName,
+      month: args.month,
+      language: args.language ?? "en",
+      note: args.note,
+      extras: args.extras,
+      requestedBy: "command line",
+      requestedAt: Date.now(),
+    }),
+});
