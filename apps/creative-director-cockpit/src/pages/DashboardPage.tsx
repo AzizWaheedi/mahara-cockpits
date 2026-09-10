@@ -10,7 +10,6 @@ import {
   MoonStar,
   PenLine,
   Rocket,
-  Sparkles,
   Trophy,
   Users,
 } from "lucide-react";
@@ -154,7 +153,12 @@ function Creative({ view }: { view: View }) {
   }
 
   const c = snap.counts;
-  const brandShown = showAllBrand ? snap.brandDNA : snap.brandDNA.slice(0, 6);
+  // Start of day shows only the rows still missing a doc; the rest are
+  // housekeeping and sit behind "Show all". [aziz, 2026-09-10]
+  const brandOpen = snap.brandDNA.filter(
+    (b: { docOnFile?: boolean }) => !b.docOnFile,
+  );
+  const brandShown = showAllBrand ? snap.brandDNA : brandOpen.slice(0, 8);
 
   return (
     <div className="mx-auto max-w-5xl p-4 pb-16">
@@ -282,26 +286,6 @@ function Creative({ view }: { view: View }) {
               everything you write from sits one line below. [aziz, 2026-09-08] */}
           <ScriptingCalendar compact />
           <Section
-            icon={Sparkles}
-            title="What you write from"
-            sub="the database, what works, and the funnel the ad points at"
-          >
-            <div className="flex flex-wrap gap-2 text-[13px]">
-              <Link className="rounded border px-2 py-1" to="/scripting">
-                Scripting database
-              </Link>
-              <Link className="rounded border px-2 py-1" to="/what-works">
-                What works
-              </Link>
-              <Link className="rounded border px-2 py-1" to="/funnels">
-                Funnels and forms
-              </Link>
-              <Link className="rounded border px-2 py-1" to="/clients">
-                Clients and their Drive folders
-              </Link>
-            </div>
-          </Section>
-          <Section
             icon={Dna}
             title="Brand DNA board rows"
             sub="the doc is what counts, not the task. Rows marked done are already written and can be closed"
@@ -346,7 +330,7 @@ function Creative({ view }: { view: View }) {
                 </a>
               ))}
             </div>
-            {snap.brandDNA.length > 6 && (
+            {snap.brandDNA.length > brandShown.length && (
               <Button
                 size="sm"
                 variant="ghost"
@@ -362,51 +346,31 @@ function Creative({ view }: { view: View }) {
         </>
       )}
 
-      {/* 3. Onboarding journeys. */}
+      {/* 3. Onboarding: the one parent task per client. Aziz, 2026-09-10:
+          "just the main task, not the subtasks below it." */}
       {view === "work" && snap.journeys.length > 0 && (
-        <>
-          <Section
-            icon={Rocket}
-            title="Clients in creative onboarding"
-            sub="the six-step sequence"
-          >
-            <div className="space-y-1.5">
-              {snap.journeys.map(j => (
-                <div key={j.taskId} className="rounded-lg border p-2.5">
-                  <div className="flex items-center justify-between text-[13px]">
-                    <a
-                      href={j.url ?? "#"}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="font-medium hover:underline"
-                    >
-                      {j.client}
-                    </a>
-                    <span className="text-muted-foreground">
-                      {j.done} of {j.total} · day {j.ageDays}
-                    </span>
-                  </div>
-                  <div className="mt-1.5 flex gap-1">
-                    {j.steps.map((s, i) => (
-                      <span
-                        key={i}
-                        title={s.name}
-                        className={`h-1.5 flex-1 rounded-full ${
-                          s.open ? "bg-muted" : "bg-emerald-500"
-                        }`}
-                      />
-                    ))}
-                  </div>
-                  {j.currentStep && (
-                    <p className="mt-1.5 text-[12px] text-muted-foreground">
-                      Next: {j.currentStep}
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
-          </Section>
-        </>
+        <Section
+          icon={Rocket}
+          title="Clients in creative onboarding"
+          sub="one task per client, open it in ClickUp for the steps"
+        >
+          <div className="divide-y rounded-lg border">
+            {snap.journeys.map(j => (
+              <a
+                key={j.taskId}
+                href={j.url ?? "#"}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center justify-between p-2.5 text-[13px] hover:bg-muted/40"
+              >
+                <span className="font-medium">{j.client}</span>
+                <span className="text-muted-foreground">
+                  {j.status} · day {j.ageDays}
+                </span>
+              </a>
+            ))}
+          </div>
+        </Section>
       )}
 
       {/* 4. Script requests. */}

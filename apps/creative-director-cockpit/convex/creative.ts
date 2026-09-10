@@ -1010,9 +1010,11 @@ export const calendar = query({
           ? "brandDNA"
           : t.kind === "script"
             ? "script"
-            : t.kind === "onboarding" || t.kind === "onboardingStep"
+            : t.kind === "onboarding"
               ? "onboarding"
               : null;
+      // Aziz, 2026-09-10: onboarding shows as the one parent task, never the
+      // checklist of subtasks under it.
       if (!kind) continue;
       const open = isOpen(t.status);
       // Closed work with no date is history, not a plan. Keep it out.

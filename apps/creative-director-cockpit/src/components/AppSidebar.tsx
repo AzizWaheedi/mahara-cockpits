@@ -34,6 +34,7 @@ import {
   SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
+  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
@@ -41,21 +42,43 @@ import {
   useSidebar,
 } from "./ui/sidebar";
 
-const navItems = [
-  { href: "/dashboard", label: "Start of day", icon: Sunrise },
-  { href: "/work", label: "Middle of the day", icon: Clapperboard },
-  { href: "/touchpoints", label: "Client touchpoints", icon: MessageSquare },
-  { href: "/clients", label: "Clients", icon: Users },
-  { href: "/scripting", label: "Scripting database", icon: Sparkles },
-  { href: "/what-works", label: "What works", icon: Trophy },
-  { href: "/funnels", label: "Funnels and forms", icon: Filter },
-  { href: "/links", label: "Key links", icon: Link2 },
+type NavItem = {
+  href: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+};
+
+/** The day in order, then the people, then what he writes from. */
+const navGroups: { label: string; items: NavItem[] }[] = [
   {
-    href: "/meetings",
-    label: "Meetings & messages",
-    icon: CalendarDays,
+    label: "Your day",
+    items: [
+      { href: "/dashboard", label: "Start of day", icon: Sunrise },
+      { href: "/work", label: "Middle of the day", icon: Clapperboard },
+      {
+        href: "/touchpoints",
+        label: "Client touchpoints",
+        icon: MessageSquare,
+      },
+      { href: "/eod", label: "End of day", icon: MoonStar },
+    ],
   },
-  { href: "/eod", label: "End of day", icon: MoonStar },
+  {
+    label: "Clients",
+    items: [
+      { href: "/clients", label: "Clients", icon: Users },
+      { href: "/meetings", label: "Meetings & messages", icon: CalendarDays },
+    ],
+  },
+  {
+    label: "Library",
+    items: [
+      { href: "/scripting", label: "Scripting database", icon: Sparkles },
+      { href: "/what-works", label: "What works", icon: Trophy },
+      { href: "/funnels", label: "Funnels and forms", icon: Filter },
+      { href: "/links", label: "Key links", icon: Link2 },
+    ],
+  },
 ];
 
 function NavLink({
@@ -88,21 +111,24 @@ function SidebarNav() {
 
   return (
     <SidebarContent>
-      <SidebarGroup>
-        <SidebarGroupContent>
-          <SidebarMenu>
-            {navItems.map(item => (
-              <NavLink
-                key={item.href}
-                href={item.href}
-                label={item.label}
-                icon={item.icon}
-                isActive={location.pathname === item.href}
-              />
-            ))}
-          </SidebarMenu>
-        </SidebarGroupContent>
-      </SidebarGroup>
+      {navGroups.map(group => (
+        <SidebarGroup key={group.label}>
+          <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {group.items.map(item => (
+                <NavLink
+                  key={item.href}
+                  href={item.href}
+                  label={item.label}
+                  icon={item.icon}
+                  isActive={location.pathname === item.href}
+                />
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      ))}
     </SidebarContent>
   );
 }
