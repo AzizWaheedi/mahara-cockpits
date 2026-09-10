@@ -39,7 +39,7 @@ Header names are what the code looks for; order does not matter.
 | `Client Name` | the client name as on the ClickUp card | name join |
 | `Clickup ID` | the Clients - Mahara task id | exact join (the only one that never guesses) |
 | `GHL ID` | sub-account location id | bookings, lost leads |
-| `GHL API` | private integration token, must start `pit-`. Optional once `GHL_AGENCY_TOKEN` is set on the media buyer deployment | same; a token without `pit-` is ignored |
+| `GHL API` | private integration token, must start `pit-`. Optional once `GHL_AGENCY_TOKEN` (an agency private integration with opportunities, contacts, calendars and locations read scopes) is set on the media buyer deployment | same; a token without `pit-` is ignored |
 | `WA GROUP ID` | `…@g.us` | WhatsApp thread to client |
 | `Report Document ID` / `Sheet Link` | the stat sheet | performance when the card has no Sheet Link |
 | `Google Drive Link` | the client folder | scripts/footage scan when the card has no Drive link |
@@ -108,3 +108,4 @@ working day. Tracking audit daily 05:30 Kuwait. Playbook mining Fridays.
 - `data_fb` column Y (currency) blank reads as USD.
 - Typeform notes with a wrong task id are dropped silently.
 - Fathom matches only by title or invitee containing the client name.
+- Google Sheets allows 60 reads a minute for the service account; reads retry on 429 and Client Data is memoized for two minutes, but adding many more sheets per run would need pacing.

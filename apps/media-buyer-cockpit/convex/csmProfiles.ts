@@ -1058,7 +1058,8 @@ export const push = internalAction({
       days: 90,
     });
 
-    const profiles = await pool(clients, 6, async c => {
+    // Four in flight keeps a 47-client run under the Sheets per-minute read cap.
+    const profiles = await pool(clients, 4, async c => {
       const perf = await sheetPerformance(c.sheetLink, today);
       const ads = adsForClient(c.name, campaigns, tree);
       const accountId = ads.find(a => a.accountId)?.accountId;

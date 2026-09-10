@@ -43,11 +43,26 @@ function brief(value: unknown): string {
   return String(s ?? "").slice(0, 400);
 }
 
+const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+/**
+ * Google Sheets allows 60 reads a minute per user and the service account is
+ * one user. A 15-minute run reads about 90 ranges, so a burst can trip it
+ * (2026-09-10: every client "lost" its sheet for one run). Wait and retry
+ * on 429 and on 5xx instead of failing the whole run.
+ */
 async function httpGet(url: string, headers: Record<string, string>) {
-  const res = await fetch(url, { headers });
-  const body = await bodyOf(res);
-  if (!res.ok) throw new Error(`HTTP ${res.status} ${url}: ${brief(body)}`);
-  return body;
+  const retry = /googleapis\.com/.test(url) ? 4 : 1;
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, { headers });
+    if ((res.status === 429 || res.status >= 500) && attempt < retry - 1) {
+      await wait((attempt + 1) * 15_000);
+      continue;
+    }
+    const body = await bodyOf(res);
+    if (!res.ok) throw new Error(`HTTP ${res.status} ${url}: ${brief(body)}`);
+    return body;
+  }
 }
 
 async function httpPost(

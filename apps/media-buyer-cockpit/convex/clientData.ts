@@ -1,5 +1,34 @@
 import { googleAccessToken } from "./tools";
 
+const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+/** Sheets read with the service account; waits and retries on 429 / 5xx. */
+async function sheetsJson(
+  url: string,
+): Promise<{ ok: boolean; status: number; data: Any }> {
+  const token = await googleAccessToken();
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if ((res.status === 429 || res.status >= 500) && attempt < 3) {
+      await wait((attempt + 1) * 15_000);
+      continue;
+    }
+    return {
+      ok: res.ok,
+      status: res.status,
+      data: await res.json().catch(() => ({})),
+    };
+  }
+}
+
+// biome-ignore lint/suspicious/noExplicitAny: sheet payloads
+type Any = any;
+
+/** One read per two minutes per isolate; every feed in a run reads this tab. */
+let memo: { at: number; rows: ClientDataRow[] } | undefined;
+
 /**
  * The Client Data tab of the database sheet: one row per client with every
  * integration id we need. This is the source of truth for ids and links;
@@ -60,12 +89,10 @@ export async function clientDataHeader(): Promise<{
   head: string[];
   col: Record<keyof typeof HEADERS, number>;
 }> {
-  const token = await googleAccessToken();
-  const res = await fetch(
+  const res = await sheetsJson(
     `https://sheets.googleapis.com/v4/spreadsheets/${DATABASE_SHEET}/values/${encodeURIComponent("Client Data!A1:Z1")}`,
-    { headers: { Authorization: `Bearer ${token}` } },
   );
-  const data = await res.json();
+  const data = res.data;
   const head = ((data?.values ?? [[]])[0] as string[]).map(h =>
     String(h ?? "").trim(),
   );
@@ -77,12 +104,11 @@ export async function clientDataHeader(): Promise<{
 }
 
 export async function readClientData(): Promise<ClientDataRow[]> {
-  const token = await googleAccessToken();
-  const res = await fetch(
+  if (memo && Date.now() - memo.at < 120_000) return memo.rows;
+  const res = await sheetsJson(
     `https://sheets.googleapis.com/v4/spreadsheets/${DATABASE_SHEET}/values/${encodeURIComponent("Client Data!A1:Z500")}`,
-    { headers: { Authorization: `Bearer ${token}` } },
   );
-  const data = await res.json();
+  const data = res.data;
   if (!res.ok)
     throw new Error(
       `Client Data: ${data?.error?.message ?? res.status}`.slice(0, 200),
@@ -129,6 +155,7 @@ export async function readClientData(): Promise<ClientDataRow[]> {
       adAccountTiktok: cell("adAccountTiktok"),
     });
   }
+  memo = { at: Date.now(), rows };
   return rows;
 }
 
