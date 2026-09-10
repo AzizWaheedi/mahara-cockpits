@@ -36,8 +36,7 @@ export const probe = internalAction({
         // Where would a scale step land?
         if (camp.daily_budget) {
           row.scale = `campaign budget $${(Number(camp.daily_budget) / 100).toFixed(0)}/d → $${(
-            (Number(camp.daily_budget) / 100) *
-            1.25
+            (Number(camp.daily_budget) / 100) * 1.25
           ).toFixed(0)}/d`;
         } else if (camp.lifetime_budget) {
           row.scale = "REFUSES — lifetime budget";
@@ -56,8 +55,7 @@ export const probe = internalAction({
             row.scale = "REFUSES — ad set has no daily budget";
           else
             row.scale = `ad set $${(Number(pool[0].daily_budget) / 100).toFixed(0)}/d → $${(
-              (Number(pool[0].daily_budget) / 100) *
-              1.25
+              (Number(pool[0].daily_budget) / 100) * 1.25
             ).toFixed(0)}/d`;
         }
 
@@ -122,10 +120,7 @@ export const probe = internalAction({
           });
           if (r.hasData) got.push(label);
           // Ad set spend must reconstruct the campaign spend exactly.
-          const setSum = r.adSets.reduce(
-            (t: number, x: any) => t + x.spend,
-            0,
-          );
+          const setSum = r.adSets.reduce((t: number, x: any) => t + x.spend, 0);
           const adSum = r.ads.reduce((t: number, x: any) => t + x.spend, 0);
           const off = (a: number, b: number) => Math.abs(a - b) > 0.02;
           if (off(setSum, r.total.spend) || off(adSum, r.total.spend)) {

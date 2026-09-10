@@ -1,7 +1,8 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import { authenticatedMutation, authenticatedQuery } from "./functions";
+import type { QueryCtx } from "./_generated/server";
 import { internalMutation } from "./_generated/server";
+import { authenticatedMutation, authenticatedQuery } from "./functions";
 import { assertRole } from "./roles";
 
 function kuwaitToday(): string {
@@ -11,85 +12,91 @@ function kuwaitToday(): string {
 export const snapshot = authenticatedQuery({
   args: {},
   returns: v.any(),
-  handler: async ctx => {
-    await assertRole(ctx, "media_buyer");
-    const day = kuwaitToday();
-    const campaigns = await ctx.db
-      .query("campaigns")
-      .withIndex("by_rank")
-      .collect();
-    const ads = await ctx.db.query("ads").collect();
-    const metaTree = await ctx.db.query("metaTree").collect();
-    const adChanges = await ctx.db.query("adChanges").collect();
-    const checks = await ctx.db
-      .query("checks")
-      .withIndex("by_role_day", q => q.eq("role", "media_buyer").eq("day", day))
-      .collect();
-    const decisions = await ctx.db
-      .query("decisions")
-      .withIndex("by_day", q => q.eq("day", day))
-      .collect();
-    const plan = await ctx.db
-      .query("planItems")
-      .withIndex("by_role_day", q => q.eq("role", "media_buyer").eq("day", day))
-      .collect();
-    const inbox = await ctx.db.query("inbox").collect();
-    const manualChanges = await ctx.db.query("manualChanges").collect();
-    const members = await ctx.db.query("clickupMembers").collect();
-    const prefs = await ctx.db.query("clientPrefs").collect();
-    const eod = await ctx.db
-      .query("eodReports")
-      .withIndex("by_role_day", q => q.eq("role", "media_buyer").eq("day", day))
-      .first();
-    const lastRun = await ctx.db
-      .query("syncRuns")
-      .withIndex("by_at")
-      .order("desc")
-      .first();
-
-    const spend7d = campaigns.reduce((s, c) => s + c.spend7d, 0);
-    const leads7d = campaigns.reduce((s, c) => s + c.leads7d, 0);
-    const clientCampaigns = campaigns.filter(c => !c.internal);
-    const clientSpend = clientCampaigns.reduce((s, c) => s + c.spend7d, 0);
-    const clientLeads = clientCampaigns.reduce((s, c) => s + c.leads7d, 0);
-
-    return {
-      day,
-      campaigns,
-      ads,
-      metaTree,
-      adChanges,
-      manualChanges,
-      members,
-      inbox,
-      prefs,
-      eod,
-      checks: checks.sort((a, b) => (a.order ?? 99) - (b.order ?? 99)),
-      feedback: await ctx.db
-        .query("feedback")
-        .withIndex("by_role", q => q.eq("role", "media_buyer"))
-        .order("desc")
-        .take(20),
-      decisions,
-      plan,
-      lastSyncAt: lastRun?.at ?? null,
-      syncProblems: lastRun?.problems ?? [],
-      syncHealth: lastRun?.health ?? null,
-      totals: {
-        spend7d,
-        leads7d,
-        clientSpend,
-        clientLeads,
-        blendedCpl: clientLeads > 0 ? clientSpend / clientLeads : null,
-        overGate: clientCampaigns.filter(c => c.cpl !== undefined && c.cpl > 15)
-          .length,
-        underFloor: clientCampaigns.filter(c => c.dayRate < 30 && c.spend7d > 0)
-          .length,
-        offBoard: clientCampaigns.filter(c => !c.onBoard).length,
-      },
-    };
-  },
+  handler: async ctx => buildSnapshot(ctx, false),
 });
+
+// biome-ignore lint/suspicious/noExplicitAny: payload shape is the screen's
+export async function buildSnapshot(
+  ctx: QueryCtx,
+  smoke: boolean,
+): Promise<any> {
+  if (!smoke) await assertRole(ctx, "media_buyer");
+  const day = kuwaitToday();
+  const campaigns = await ctx.db
+    .query("campaigns")
+    .withIndex("by_rank")
+    .collect();
+  const ads = await ctx.db.query("ads").collect();
+  const metaTree = await ctx.db.query("metaTree").collect();
+  const adChanges = await ctx.db.query("adChanges").collect();
+  const checks = await ctx.db
+    .query("checks")
+    .withIndex("by_role_day", q => q.eq("role", "media_buyer").eq("day", day))
+    .collect();
+  const decisions = await ctx.db
+    .query("decisions")
+    .withIndex("by_day", q => q.eq("day", day))
+    .collect();
+  const plan = await ctx.db
+    .query("planItems")
+    .withIndex("by_role_day", q => q.eq("role", "media_buyer").eq("day", day))
+    .collect();
+  const inbox = await ctx.db.query("inbox").collect();
+  const manualChanges = await ctx.db.query("manualChanges").collect();
+  const members = await ctx.db.query("clickupMembers").collect();
+  const prefs = await ctx.db.query("clientPrefs").collect();
+  const eod = await ctx.db
+    .query("eodReports")
+    .withIndex("by_role_day", q => q.eq("role", "media_buyer").eq("day", day))
+    .first();
+  const lastRun = await ctx.db
+    .query("syncRuns")
+    .withIndex("by_at")
+    .order("desc")
+    .first();
+
+  const spend7d = campaigns.reduce((s, c) => s + c.spend7d, 0);
+  const leads7d = campaigns.reduce((s, c) => s + c.leads7d, 0);
+  const clientCampaigns = campaigns.filter(c => !c.internal);
+  const clientSpend = clientCampaigns.reduce((s, c) => s + c.spend7d, 0);
+  const clientLeads = clientCampaigns.reduce((s, c) => s + c.leads7d, 0);
+
+  return {
+    day,
+    campaigns,
+    ads,
+    metaTree,
+    adChanges,
+    manualChanges,
+    members,
+    inbox,
+    prefs,
+    eod,
+    checks: checks.sort((a, b) => (a.order ?? 99) - (b.order ?? 99)),
+    feedback: await ctx.db
+      .query("feedback")
+      .withIndex("by_role", q => q.eq("role", "media_buyer"))
+      .order("desc")
+      .take(20),
+    decisions,
+    plan,
+    lastSyncAt: lastRun?.at ?? null,
+    syncProblems: lastRun?.problems ?? [],
+    syncHealth: lastRun?.health ?? null,
+    totals: {
+      spend7d,
+      leads7d,
+      clientSpend,
+      clientLeads,
+      blendedCpl: clientLeads > 0 ? clientSpend / clientLeads : null,
+      overGate: clientCampaigns.filter(c => c.cpl !== undefined && c.cpl > 15)
+        .length,
+      underFloor: clientCampaigns.filter(c => c.dayRate < 30 && c.spend7d > 0)
+        .length,
+      offBoard: clientCampaigns.filter(c => !c.onBoard).length,
+    },
+  };
+}
 
 export const toggleCheck = authenticatedMutation({
   args: { id: v.id("checks") },
@@ -618,7 +625,8 @@ export const launchWatch = authenticatedQuery({
   handler: async ctx => {
     const rows = await ctx.db.query("launchWatch").collect();
     return rows.sort(
-      (a, b) => b.issues.length - a.issues.length || a.client.localeCompare(b.client),
+      (a, b) =>
+        b.issues.length - a.issues.length || a.client.localeCompare(b.client),
     );
   },
 });

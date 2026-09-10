@@ -25,8 +25,7 @@ export function rolesForEmail(email: string | undefined | null): string[] {
   if (ROLES[key]) return ROLES[key];
   // Platform-minted space sessions (screenshot runner, e2e) are not real people and
   // only exist behind the app's own access gate; they get the owner's view.
-  if (key.endsWith("@viktor.invalid"))
-    return ["media_buyer", "csm"];
+  if (key.endsWith("@viktor.invalid")) return ["media_buyer", "csm"];
   return [];
 }
 

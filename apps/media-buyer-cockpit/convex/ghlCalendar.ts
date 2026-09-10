@@ -20,7 +20,8 @@ async function ghl(token: string, path: string, version = "2021-04-15") {
       Accept: "application/json",
     },
   });
-  if (!res.ok) throw new Error(`GHL ${path} -> ${res.status} ${await res.text()}`);
+  if (!res.ok)
+    throw new Error(`GHL ${path} -> ${res.status} ${await res.text()}`);
   return res.json();
 }
 
@@ -102,9 +103,7 @@ export const contacts = internalAction({
           phone: c.phone ?? null,
           companyName: c.companyName ?? null,
         });
-      } catch {
-        continue;
-      }
+      } catch {}
     }
     return out;
   },

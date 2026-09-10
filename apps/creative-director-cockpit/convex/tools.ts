@@ -359,9 +359,7 @@ async function dispatch(
       return { search_response: textOf(message) };
     }
     case "text2im":
-      throw new Error(
-        "Image generation is not available in the cockpit",
-      );
+      throw new Error("Image generation is not available in the cockpit");
 
     default:
       throw new Error(`Unknown tool "${role}": no direct client configured`);

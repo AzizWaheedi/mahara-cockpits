@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import type { QueryCtx } from "./_generated/server";
 import { PAUSE_IS_CHURN_DAYS, stateOf } from "./csmSync";
 import { authenticatedMutation, authenticatedQuery } from "./functions";
 import { assertRole, userEmail } from "./roles";
@@ -37,6 +38,7 @@ async function churnThisMonth(ctx: any, month: string) {
 
   const lost: { name: string; reason: string; day?: string }[] = [];
   const stillPaused: { name: string; days: number | null }[] = [];
+  let roster: any[] | undefined;
   for (const b of baseline) {
     const now = nowByKey.get(b.key);
     const event = events
@@ -52,12 +54,18 @@ async function churnThisMonth(ctx: any, month: string) {
     }
     if (!now.paying) {
       // A pause is not churn on day one. It becomes churn at 14 days, per the company rule.
-      const client = await ctx.db
-        .query("clients")
-        .withIndex("by_key", (q: any) => q.eq("key", b.key))
-        .first();
+      // The roster key is the client name; this table has no `key` field and
+      // no `by_key` index (the query used to crash the whole start-of-day
+      // screen the first time a paused client appeared, 2026-09-10).
+      const rows = roster ?? (await ctx.db.query("clients").collect());
+      roster = rows;
+      const client = rows.find(
+        (c: any) => c.name === b.name || c.taskId === b.key,
+      );
       const paused = stateOf(now.status) === "paused";
-      const pausedDays = client?.pausedDays as number | undefined;
+      const pausedDays = (client?.pausedDays ?? client?.pauseDays) as
+        | number
+        | undefined;
       if (paused && (pausedDays ?? 0) < PAUSE_IS_CHURN_DAYS) {
         stillPaused.push({
           name: b.name,
@@ -129,137 +137,142 @@ export const syncStatus = authenticatedQuery({
 export const snapshot = authenticatedQuery({
   args: {},
   returns: v.any(),
-  handler: async ctx => {
-    const day = kuwaitToday();
-    const clients = await ctx.db
-      .query("clients")
-      .withIndex("by_rank")
-      .collect();
-    const tasks = await ctx.db.query("csTasks").collect();
-    const checks = await ctx.db
-      .query("checks")
-      .withIndex("by_role_day", q => q.eq("role", "csm").eq("day", day))
-      .collect();
-    const decisions = (
-      await ctx.db
-        .query("decisions")
-        .withIndex("by_day", q => q.eq("day", day))
-        .collect()
-    ).filter(d => d.role === "csm");
-    const plan = await ctx.db
-      .query("planItems")
-      .withIndex("by_role_day", q => q.eq("role", "csm").eq("day", day))
-      .collect();
-    const eod = await ctx.db
-      .query("eodReports")
-      .withIndex("by_role_day", q => q.eq("role", "csm").eq("day", day))
-      .first();
-    const recentRuns = await ctx.db
-      .query("syncRuns")
-      .withIndex("by_at")
-      .order("desc")
-      .take(40);
-    const lastRun = recentRuns.find(r => r.role === "csm");
-    // The bridge's report card: drives the amber "data may be stale" strip.
-    const healthRow = recentRuns.find(r => r.kind === "health");
-    const syncHealth = healthRow
-      ? {
-          at: healthRow.at,
-          ok: healthRow.ok,
-          profiles: healthRow.profiles ?? 0,
-          errors: healthRow.errors ?? [],
-        }
-      : null;
-
-    const month = day.slice(0, 7);
-    const monthDecisions = await ctx.db
-      .query("decisions")
-      .order("desc")
-      .take(400);
-    // One upsell / referral / review conversation per client per month, enforced here
-    // rather than left to the CSM to remember.
-    const hotUsed = new Set(
-      monthDecisions
-        .filter(
-          d => d.role === "csm" && d.day.startsWith(month) && d.kind !== "left",
-        )
-        .filter(d => /upsell|referral|review/i.test(d.action))
-        .map(d => d.subject),
-    );
-
-    // Loose ends written off stay written off, except money ones, which cannot be.
-    const dismissed = new Set(
-      (await ctx.db.query("looseDismissed").collect()).map(d => d.key),
-    );
-    const prefs = await ctx.db.query("clientPrefs").collect();
-    const hotRows = await ctx.db.query("hotList").collect();
-    const kpis = await ctx.db.query("kpi").collect();
-    const churn = await churnThisMonth(ctx, month);
-    const myEmail = await userEmail(ctx);
-    const money = await ctx.db
-      .query("moneyGoals")
-      .withIndex("by_month_email", q =>
-        q.eq("month", month).eq("byEmail", myEmail),
-      )
-      .first();
-
-    // Booked client calls from GHL. Past ones stay for two weeks so the CSM can see the
-    // call that just happened and whether the notes went in.
-    const appointments = (await ctx.db.query("appointments").collect()).sort(
-      (a, b) => a.startTime.localeCompare(b.startTime),
-    );
-
-    return {
-      day,
-      month,
-      appointments,
-      todaysCalls: appointments.filter(
-        a => a.day === day && a.status !== "cancelled",
-      ),
-      prefs,
-      hotRows,
-      kpis,
-      churn,
-      money,
-      clients: clients.map(c => ({
-        ...c,
-        hotBlocked: hotUsed.has(c.name),
-        loose: c.loose.filter(
-          (t: string) => !dismissed.has(`${c.name}|${t}`) || isMoneyLoose(t),
-        ),
-      })),
-      tasks,
-      checks: checks.sort((a, b) => a.key.localeCompare(b.key)),
-      decisions,
-      plan,
-      eod,
-      lastSyncAt: lastRun?.at ?? null,
-      syncHealth,
-      totals: {
-        clients: clients.length,
-        dueToday: clients.filter(c => c.rank < 40 && c.level !== "green")
-          .length,
-        newSignups: clients.filter(c => c.newSignup).length,
-        pauses: clients.filter(c => c.pauseRequired).length,
-        onboarding: clients.filter(c => c.bucket === "onboarding").length,
-        managed: clients.filter(c => c.bucket === "management").length,
-        pastDue: clients.filter(c => (c.paymentDue ?? -99) >= 1).length,
-        hot: clients.filter(c => c.hot.length > 0 && !hotUsed.has(c.name))
-          .length,
-        loose: clients.reduce(
-          (s, c) =>
-            s +
-            c.loose.filter(
-              (t: string) =>
-                !dismissed.has(`${c.name}|${t}`) || isMoneyLoose(t),
-            ).length,
-          0,
-        ),
-        healthy: clients.filter(c => c.level === "green").length,
-      },
-    };
-  },
+  handler: async ctx => buildSnapshot(ctx, false),
 });
+
+/**
+ * The start-of-day payload. `smoke` runs it without a signed-in user so the
+ * media buyer backend can check every 15 minutes that this screen still
+ * renders; a failure reaches Aziz on Slack instead of the CSM's browser.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: payload shape is the screen's
+export async function buildSnapshot(
+  ctx: QueryCtx,
+  smoke: boolean,
+): Promise<any> {
+  const day = kuwaitToday();
+  const clients = await ctx.db.query("clients").withIndex("by_rank").collect();
+  const tasks = await ctx.db.query("csTasks").collect();
+  const checks = await ctx.db
+    .query("checks")
+    .withIndex("by_role_day", q => q.eq("role", "csm").eq("day", day))
+    .collect();
+  const decisions = (
+    await ctx.db
+      .query("decisions")
+      .withIndex("by_day", q => q.eq("day", day))
+      .collect()
+  ).filter(d => d.role === "csm");
+  const plan = await ctx.db
+    .query("planItems")
+    .withIndex("by_role_day", q => q.eq("role", "csm").eq("day", day))
+    .collect();
+  const eod = await ctx.db
+    .query("eodReports")
+    .withIndex("by_role_day", q => q.eq("role", "csm").eq("day", day))
+    .first();
+  const recentRuns = await ctx.db
+    .query("syncRuns")
+    .withIndex("by_at")
+    .order("desc")
+    .take(40);
+  const lastRun = recentRuns.find(r => r.role === "csm");
+  // The bridge's report card: drives the amber "data may be stale" strip.
+  const healthRow = recentRuns.find(r => r.kind === "health");
+  const syncHealth = healthRow
+    ? {
+        at: healthRow.at,
+        ok: healthRow.ok,
+        profiles: healthRow.profiles ?? 0,
+        errors: healthRow.errors ?? [],
+      }
+    : null;
+
+  const month = day.slice(0, 7);
+  const monthDecisions = await ctx.db
+    .query("decisions")
+    .order("desc")
+    .take(400);
+  // One upsell / referral / review conversation per client per month, enforced here
+  // rather than left to the CSM to remember.
+  const hotUsed = new Set(
+    monthDecisions
+      .filter(
+        d => d.role === "csm" && d.day.startsWith(month) && d.kind !== "left",
+      )
+      .filter(d => /upsell|referral|review/i.test(d.action))
+      .map(d => d.subject),
+  );
+
+  // Loose ends written off stay written off, except money ones, which cannot be.
+  const dismissed = new Set(
+    (await ctx.db.query("looseDismissed").collect()).map(d => d.key),
+  );
+  const prefs = await ctx.db.query("clientPrefs").collect();
+  const hotRows = await ctx.db.query("hotList").collect();
+  const kpis = await ctx.db.query("kpi").collect();
+  const churn = await churnThisMonth(ctx, month);
+  const myEmail = await (smoke ? Promise.resolve("smoke") : userEmail(ctx));
+  const money = await ctx.db
+    .query("moneyGoals")
+    .withIndex("by_month_email", q =>
+      q.eq("month", month).eq("byEmail", myEmail),
+    )
+    .first();
+
+  // Booked client calls from GHL. Past ones stay for two weeks so the CSM can see the
+  // call that just happened and whether the notes went in.
+  const appointments = (await ctx.db.query("appointments").collect()).sort(
+    (a, b) => a.startTime.localeCompare(b.startTime),
+  );
+
+  return {
+    day,
+    month,
+    appointments,
+    todaysCalls: appointments.filter(
+      a => a.day === day && a.status !== "cancelled",
+    ),
+    prefs,
+    hotRows,
+    kpis,
+    churn,
+    money,
+    clients: clients.map(c => ({
+      ...c,
+      hotBlocked: hotUsed.has(c.name),
+      loose: c.loose.filter(
+        (t: string) => !dismissed.has(`${c.name}|${t}`) || isMoneyLoose(t),
+      ),
+    })),
+    tasks,
+    checks: checks.sort((a, b) => a.key.localeCompare(b.key)),
+    decisions,
+    plan,
+    eod,
+    lastSyncAt: lastRun?.at ?? null,
+    syncHealth,
+    totals: {
+      clients: clients.length,
+      dueToday: clients.filter(c => c.rank < 40 && c.level !== "green").length,
+      newSignups: clients.filter(c => c.newSignup).length,
+      pauses: clients.filter(c => c.pauseRequired).length,
+      onboarding: clients.filter(c => c.bucket === "onboarding").length,
+      managed: clients.filter(c => c.bucket === "management").length,
+      pastDue: clients.filter(c => (c.paymentDue ?? -99) >= 1).length,
+      hot: clients.filter(c => c.hot.length > 0 && !hotUsed.has(c.name)).length,
+      loose: clients.reduce(
+        (s, c) =>
+          s +
+          c.loose.filter(
+            (t: string) => !dismissed.has(`${c.name}|${t}`) || isMoneyLoose(t),
+          ).length,
+        0,
+      ),
+      healthy: clients.filter(c => c.level === "green").length,
+    },
+  };
+}
 
 /** Anything about money is never dismissible. */
 export function isMoneyLoose(text: string): boolean {

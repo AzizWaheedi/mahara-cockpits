@@ -103,7 +103,10 @@ export const duplicateAdSet = authenticatedAction({
       if (src.destination_type) payload.destination_type = src.destination_type;
       if (src.bid_strategy) payload.bid_strategy = src.bid_strategy;
 
-      const made = await graphPost<any>(`act_${src.account_id}/adsets`, payload);
+      const made = await graphPost<any>(
+        `act_${src.account_id}/adsets`,
+        payload,
+      );
       await logIt(ctx, {
         campaignName: args.campaignName,
         what: `Created ad set "${args.newName}" (paused) by copying the targeting from "${src.name}"`,
@@ -383,11 +386,16 @@ export const addCreativeToCampaign = authenticatedAction({
       } else if (args.imageUrl || args.imageHash) {
         const uploaded = args.imageHash
           ? { images: { a: { hash: args.imageHash } } }
-          : await graphPost<any>(`${act}/adimages`, { url: args.imageUrl ?? "" });
+          : await graphPost<any>(`${act}/adimages`, {
+              url: args.imageUrl ?? "",
+            });
         // The images response is keyed by filename, not a fixed field.
         const first: any = Object.values(uploaded.images ?? {})[0];
         if (!first?.hash) {
-          return { ok: false, error: "Meta accepted the image but returned no hash." };
+          return {
+            ok: false,
+            error: "Meta accepted the image but returned no hash.",
+          };
         }
         next.link_data = { ...(next.link_data ?? {}), image_hash: first.hash };
         delete next.video_data;

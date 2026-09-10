@@ -35,9 +35,7 @@ export const store = internalMutation({
         // Transcripts are expensive (a video model per ad) and are written by a
         // separate pass. A plain patch here wipes all of them — it did, once.
         // Carry the read-off-the-video fields across by ad id. [2026-09-07]
-        const prior = new Map(
-          (existing.creatives ?? []).map(c => [c.adId, c]),
-        );
+        const prior = new Map((existing.creatives ?? []).map(c => [c.adId, c]));
         doc.creatives = (r.creatives ?? []).map(
           (c: { adId: string; transcript?: string }) => {
             const old = prior.get(c.adId);
@@ -52,11 +50,12 @@ export const store = internalMutation({
         );
         // Convex optional fields reject explicit undefined keys.
         doc.creatives = (doc.creatives as Record<string, unknown>[]).map(c =>
-          Object.fromEntries(Object.entries(c).filter(([, v]) => v !== undefined)),
+          Object.fromEntries(
+            Object.entries(c).filter(([, v]) => v !== undefined),
+          ),
         );
         await ctx.db.patch(existing._id, doc);
-      }
-      else await ctx.db.insert("marketPlays", doc as never);
+      } else await ctx.db.insert("marketPlays", doc as never);
       written++;
     }
     return { written };
@@ -174,7 +173,9 @@ export const dimensions = query({
       serviceLines: [
         ...new Set(all.map(p => p.serviceLine).filter(Boolean) as string[]),
       ].sort(),
-      cities: [...new Set(all.map(p => p.city).filter(Boolean) as string[])].sort(),
+      cities: [
+        ...new Set(all.map(p => p.city).filter(Boolean) as string[]),
+      ].sort(),
       plays: all.length,
       clients: new Set(all.map(p => p.client)).size,
     };
@@ -209,7 +210,8 @@ export const forClient = query({
     const mine = all.filter(p => p.client === client);
     const city = mine[0]?.city ?? undefined;
     const serviceLine = mine[0]?.serviceLine ?? undefined;
-    if (!serviceLine) return { city, serviceLine, running: [], suggestions: [] };
+    if (!serviceLine)
+      return { city, serviceLine, running: [], suggestions: [] };
 
     // What this client already runs, so we never suggest their own setup back.
     const running = [
@@ -222,7 +224,14 @@ export const forClient = query({
 
     const groups = new Map<
       string,
-      { city: string; playType: string; interests: string[]; spend: number; leads: number; clients: Set<string> }
+      {
+        city: string;
+        playType: string;
+        interests: string[];
+        spend: number;
+        leads: number;
+        clients: Set<string>;
+      }
     >();
     for (const p of all) {
       if (p.serviceLine !== serviceLine) continue;
@@ -294,7 +303,13 @@ export const creativePatterns = query({
       ads: number;
     };
     const buckets = new Map<string, Bucket>();
-    const add = (kind: string, key: string, spend: number, leads: number, client: string) => {
+    const add = (
+      kind: string,
+      key: string,
+      spend: number,
+      leads: number,
+      client: string,
+    ) => {
       if (!key) return;
       const id = `${kind}::${key}`;
       const b = buckets.get(id) ?? {
@@ -336,13 +351,11 @@ export const creativePatterns = query({
         cpl: Math.round((b.spend / b.leads) * 100) / 100,
         clients: b.clients.size,
         ads: b.ads,
-        verdict:
-          b.clients.size >= 2 ? "Proven across clients" : "Worked once",
+        verdict: b.clients.size >= 2 ? "Proven across clients" : "Worked once",
       }))
       .sort((a, b) => a.cpl - b.cpl);
   },
 });
-
 
 /**
  * The individual ads that actually won, with their real copy and script.
@@ -431,7 +444,11 @@ export const archiveWinners = internalMutation({
     for (const t of await ctx.db.query("metaTree").collect()) {
       if (t.kind !== "ad") continue;
       campaignOf.set(t.metaId, t.campaignName);
-      if (!/paused|archived|deleted|disapproved/i.test(t.effectiveStatus ?? t.status))
+      if (
+        !/paused|archived|deleted|disapproved/i.test(
+          t.effectiveStatus ?? t.status,
+        )
+      )
         live.add(t.metaId);
     }
 
@@ -578,7 +595,11 @@ export const archiveStats = query({
       retired: rows.filter(r => r.stillLive === false).length,
       withTranscript: rows.filter(r => r.transcript).length,
       withPreview: rows.filter(r => r.previewSrc || r.thumbUrl).length,
-      oldestWonFrom: rows.map(r => r.wonFrom).filter(Boolean).sort()[0] ?? null,
+      oldestWonFrom:
+        rows
+          .map(r => r.wonFrom)
+          .filter(Boolean)
+          .sort()[0] ?? null,
     };
   },
 });

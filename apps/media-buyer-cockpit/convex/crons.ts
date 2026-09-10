@@ -18,8 +18,8 @@ const crons = cronJobs();
  * of the same cron: a slow sync delays the next tick, it does not pile up.
  */
 crons.cron(
-  "refresh every 15 minutes through the working day",
-  "*/15 3-18 * * *",
+  "refresh every 10 minutes through the working day",
+  "*/10 3-18 * * *",
   internal.sync.runSync,
   {},
 );
@@ -77,5 +77,13 @@ crons.cron(
 
 /** Tracking audit (url_tags, lead forms) once a day; it had no schedule. */
 crons.cron("audit ad tracking", "30 2 * * *", internal.tracking.audit, {});
+
+/** The three cockpits' main screens, checked like a browser would, every 15 minutes. */
+crons.cron(
+  "smoke-check every screen",
+  "7,22,37,52 * * * *",
+  internal.smoke.check,
+  {},
+);
 
 export default crons;

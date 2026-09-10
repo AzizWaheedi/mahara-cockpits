@@ -1,10 +1,10 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import {
+  type ActionCtx,
   internalAction,
   internalMutation,
   internalQuery,
-  type ActionCtx,
 } from "./_generated/server";
 import { callTool, unwrap } from "./tools";
 
@@ -92,7 +92,8 @@ async function refreshKpiFields(
   await setField(ctx, taskId, FIELD.lastUpdated, Date.now());
   if (c.cpl !== undefined) {
     await setField(ctx, taskId, FIELD.cpl7d, Number(c.cpl.toFixed(2)));
-    await setDropdown(ctx, 
+    await setDropdown(
+      ctx,
       taskId,
       FIELD.cplStatus,
       // Board language: "Above KPI" means performing ABOVE the KPI, i.e. good.
@@ -107,11 +108,7 @@ async function refreshKpiFields(
   ) {
     const cpb = c.spend7d / c.bookings7d;
     await setField(ctx, taskId, FIELD.bookings7d, c.bookings7d);
-    await setDropdown(ctx, 
-      taskId,
-      FIELD.cpbStatus,
-      kpiBand(cpb, CPB_GATE),
-    );
+    await setDropdown(ctx, taskId, FIELD.cpbStatus, kpiBand(cpb, CPB_GATE));
   }
 }
 
@@ -169,9 +166,13 @@ async function setField(
   fieldId: string,
   value: unknown,
 ) {
-  await post(ctx, `https://api.clickup.com/api/v2/task/${taskId}/field/${fieldId}`, {
-    value,
-  });
+  await post(
+    ctx,
+    `https://api.clickup.com/api/v2/task/${taskId}/field/${fieldId}`,
+    {
+      value,
+    },
+  );
 }
 
 function money(n: number | undefined): string {
@@ -199,7 +200,11 @@ function decisionComment(d: {
         : d.kind === "rerouted"
           ? `SENT TO ${(d.reroutedTo ?? "another team").toUpperCase()}`
           : "CHANGE MADE";
-  const lines = [`🎯 Cockpit · ${head} — ${d.action}`, "", `Why: ${d.evidence}`];
+  const lines = [
+    `🎯 Cockpit · ${head} — ${d.action}`,
+    "",
+    `Why: ${d.evidence}`,
+  ];
   if (d.reason) lines.push(`Note: ${d.reason}`);
   if (d.snooze) lines.push(`Checked again: ${d.snooze}`);
   lines.push(
@@ -314,15 +319,19 @@ export const logDecision = internalAction({
         await post(ctx, `https://api.clickup.com/api/v2/task/${taskId}`, {
           name: d.campaign.campaignName,
         });
-        await post(ctx, `https://api.clickup.com/api/v2/task/${taskId}/comment`, {
-          comment_text: [
-            `🎯 Cockpit · CAMPAIGN REPLACED — this task now tracks ${d.campaign.campaignName}`,
-            "",
-            `${d.campaign.staleTaskName} is no longer delivering. The live campaign for this client is ${d.campaign.campaignName} (${money(d.campaign.spend7d)} in the last 7 days).`,
-            "One task per client — the history stays in this thread.",
-          ].join("\n"),
-          notify_all: false,
-        });
+        await post(
+          ctx,
+          `https://api.clickup.com/api/v2/task/${taskId}/comment`,
+          {
+            comment_text: [
+              `🎯 Cockpit · CAMPAIGN REPLACED — this task now tracks ${d.campaign.campaignName}`,
+              "",
+              `${d.campaign.staleTaskName} is no longer delivering. The live campaign for this client is ${d.campaign.campaignName} (${money(d.campaign.spend7d)} in the last 7 days).`,
+              "One task per client — the history stays in this thread.",
+            ].join("\n"),
+            notify_all: false,
+          },
+        );
         await ctx.runMutation(internal.writeback.attachTask, {
           campaignName: d.campaign.campaignName,
           taskId,
@@ -332,7 +341,8 @@ export const logDecision = internalAction({
 
       // Genuinely new client on the board — create the task, always tagged.
       if (!taskId && d.campaign) {
-        const created = await post(ctx, 
+        const created = await post(
+          ctx,
           "https://api.clickup.com/api/v2/list/" + ADS_LIST + "/task",
           {
             name: d.campaign.campaignName,
@@ -373,7 +383,8 @@ export const logDecision = internalAction({
         d.campaign?.clientTag &&
         !(d.campaign.tags ?? []).includes(d.campaign.clientTag)
       ) {
-        await post(ctx, 
+        await post(
+          ctx,
           `https://api.clickup.com/api/v2/task/${taskId}/tag/${encodeURIComponent(d.campaign.clientTag)}`,
           {},
         );
@@ -383,7 +394,8 @@ export const logDecision = internalAction({
       if (d.kind === "rerouted" && d.reroutedTo) {
         const dest = DEPARTMENT_LIST[d.reroutedTo];
         if (dest) {
-          const created = await post(ctx, 
+          const created = await post(
+            ctx,
             `https://api.clickup.com/api/v2/list/${dest.id}/task`,
             {
               name: `${d.campaign?.clientName ?? d.subject} — ${d.action}`,
@@ -405,13 +417,15 @@ export const logDecision = internalAction({
           if (created?.id && d.reroutedTo === "tech") {
             const rt = TECH_REQUEST_TYPE[d.action];
             if (rt) await setField(ctx, created.id, TECH_FIELD.requestType, rt);
-            await setField(ctx, 
+            await setField(
+              ctx,
               created.id,
               TECH_FIELD.additionalNotes,
               (d.reason ?? d.evidence).slice(0, 250),
             );
             if (d.action.includes("qualification")) {
-              await setField(ctx, 
+              await setField(
+                ctx,
                 created.id,
                 TECH_FIELD.qualificationQuestions,
                 (d.reason ?? "See notes").slice(0, 250),
@@ -419,7 +433,8 @@ export const logDecision = internalAction({
             }
           }
           if (created?.url) {
-            await post(ctx, 
+            await post(
+              ctx,
               `https://api.clickup.com/api/v2/task/${taskId}/comment`,
               {
                 comment_text: `🎯 Cockpit · Request raised on the ${dest.label} board: ${created.url}`,
@@ -457,17 +472,21 @@ export const logManualChange = internalAction({
     const m = await ctx.runQuery(internal.writeback.getManualChange, { id });
     if (!m?.taskId) return null;
     try {
-      await post(ctx, `https://api.clickup.com/api/v2/task/${m.taskId}/comment`, {
-        comment_text: [
-          `🎯 Cockpit · CHANGE LOG — ${m.by}`,
-          "",
-          m.adName ? `${m.campaignName} · ${m.adName}` : m.campaignName,
-          m.what,
-          "",
-          "Logged from the media buyer cockpit. Three days before this is judged.",
-        ].join("\n"),
-        notify_all: false,
-      });
+      await post(
+        ctx,
+        `https://api.clickup.com/api/v2/task/${m.taskId}/comment`,
+        {
+          comment_text: [
+            `🎯 Cockpit · CHANGE LOG — ${m.by}`,
+            "",
+            m.adName ? `${m.campaignName} · ${m.adName}` : m.campaignName,
+            m.what,
+            "",
+            "Logged from the media buyer cockpit. Three days before this is judged.",
+          ].join("\n"),
+          notify_all: false,
+        },
+      );
       await ctx.runMutation(internal.writeback.markChangeLogged, { id });
     } catch {
       // The cockpit entry stands even if ClickUp is down.
@@ -498,7 +517,8 @@ export const askOnTask = internalAction({
       notify_all: true,
     };
     if (args.assignee !== undefined) body.assignee = args.assignee;
-    await post(ctx, 
+    await post(
+      ctx,
       `https://api.clickup.com/api/v2/task/${args.taskId}/comment`,
       body,
     );

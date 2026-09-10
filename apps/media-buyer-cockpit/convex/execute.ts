@@ -171,7 +171,10 @@ export const runAction = authenticatedAction({
             name: string;
             effective_status: string;
             insights?: {
-              data: { spend: string; actions?: { action_type: string; value: string }[] }[];
+              data: {
+                spend: string;
+                actions?: { action_type: string; value: string }[];
+              }[];
             };
           }[];
         }>(`${args.campaignMetaId}/ads`, {
@@ -196,11 +199,15 @@ export const runAction = authenticatedAction({
             const row = a.insights?.data?.[0];
             const spend = Number(row?.spend ?? 0);
             const leads = Number(
-              (row?.actions ?? []).find(x =>
-                x.action_type.includes("lead"),
-              )?.value ?? 0,
+              (row?.actions ?? []).find(x => x.action_type.includes("lead"))
+                ?.value ?? 0,
             );
-            return { a, spend, leads, cpl: leads > 0 ? spend / leads : Infinity };
+            return {
+              a,
+              spend,
+              leads,
+              cpl: leads > 0 ? spend / leads : Infinity,
+            };
           })
           .filter(x => x.spend > 0);
         if (scored.length === 0) {

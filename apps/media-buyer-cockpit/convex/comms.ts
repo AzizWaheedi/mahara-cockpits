@@ -28,7 +28,7 @@ declare const process: { env: Record<string, string | undefined> };
 
 // biome-ignore lint/suspicious/noExplicitAny: external payloads
 type Any = any;
-type App = "csm" | "creative";
+export type App = "csm" | "creative";
 
 const MSG_PER_CHAT = 40;
 const MAX_CHATS = 150;
@@ -55,7 +55,7 @@ function wellFormed<T>(value: T): T {
   return value;
 }
 
-async function bridge(
+export async function bridge(
   app: App,
   fn: string,
   args: Record<string, unknown>,

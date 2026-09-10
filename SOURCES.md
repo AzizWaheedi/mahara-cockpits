@@ -97,6 +97,15 @@ feeds the other two cockpits and re-stores the media buyer's own roster.
 Outbox drains every 5 minutes. Board KPI columns written hourly through the
 working day. Tracking audit daily 05:30 Kuwait. Playbook mining Fridays.
 
+## Smoke checks
+
+Every 15 minutes the media buyer backend runs the queries behind each
+cockpit's main screens (start of day, meetings and messages, data backlog,
+creative dashboard) exactly as a browser would, minus the sign-in. The first
+time one throws, Aziz gets a Slack DM with the app, the screen and the error;
+the same error is not repeated for six hours. `smoke.check` on the media buyer
+deployment, `smoke.run` in the other two.
+
 ## Where it can still break quietly
 
 - A campaign name that differs between Meta and the Ads Managment card loses

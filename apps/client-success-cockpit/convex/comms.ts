@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import type { QueryCtx } from "./_generated/server";
 import { internalMutation } from "./_generated/server";
 import { authenticatedQuery } from "./functions";
 import { assertRole } from "./roles";
@@ -44,50 +45,56 @@ const kuwaitDay = (ms: number) =>
 export const overview = authenticatedQuery({
   args: {},
   returns: v.any(),
-  handler: async ctx => {
-    await assertRole(ctx, "csm");
-    const events = await ctx.db
-      .query("calendarEvents")
-      .withIndex("by_start")
-      .collect();
-    const threads = await ctx.db.query("waThreads").collect();
-    const now = Date.now();
-    const todayKey = kuwaitDay(now);
-    const startMs = (e: { start: string }) => new Date(e.start).getTime();
-    const today = events.filter(e =>
-      e.allDay ? e.start === todayKey : kuwaitDay(startMs(e)) === todayKey,
-    );
-    const upcoming = events
-      .filter(
-        e =>
-          startMs(e) > now &&
-          startMs(e) < now + 7 * 86400_000 &&
-          kuwaitDay(startMs(e)) !== todayKey,
-      )
-      .slice(0, 60);
-    const nextCall = new Map<string, (typeof events)[number]>();
-    for (const e of events) {
-      if (!e.clientName || startMs(e) < now) continue;
-      if (!nextCall.has(e.clientName)) nextCall.set(e.clientName, e);
-    }
-    threads.sort((a, b) => {
-      if (Boolean(a.waitingSince) !== Boolean(b.waitingSince))
-        return a.waitingSince ? -1 : 1;
-      return (b.lastAt ?? 0) - (a.lastAt ?? 0);
-    });
-    const syncedAt = Math.max(
-      0,
-      ...events.map(e => e.syncedAt),
-      ...threads.map(t => t.syncedAt),
-    );
-    return {
-      today,
-      upcoming,
-      nextCall: [...nextCall.values()].sort((a, b) => startMs(a) - startMs(b)),
-      threads,
-      calendarConfigured: events.length > 0,
-      whatsappConfigured: threads.length > 0,
-      syncedAt: syncedAt || undefined,
-    };
-  },
+  handler: async ctx => buildOverview(ctx, false),
 });
+
+// biome-ignore lint/suspicious/noExplicitAny: payload shape is the screen's
+export async function buildOverview(
+  ctx: QueryCtx,
+  smoke: boolean,
+): Promise<any> {
+  if (!smoke) await assertRole(ctx, "csm");
+  const events = await ctx.db
+    .query("calendarEvents")
+    .withIndex("by_start")
+    .collect();
+  const threads = await ctx.db.query("waThreads").collect();
+  const now = Date.now();
+  const todayKey = kuwaitDay(now);
+  const startMs = (e: { start: string }) => new Date(e.start).getTime();
+  const today = events.filter(e =>
+    e.allDay ? e.start === todayKey : kuwaitDay(startMs(e)) === todayKey,
+  );
+  const upcoming = events
+    .filter(
+      e =>
+        startMs(e) > now &&
+        startMs(e) < now + 7 * 86400_000 &&
+        kuwaitDay(startMs(e)) !== todayKey,
+    )
+    .slice(0, 60);
+  const nextCall = new Map<string, (typeof events)[number]>();
+  for (const e of events) {
+    if (!e.clientName || startMs(e) < now) continue;
+    if (!nextCall.has(e.clientName)) nextCall.set(e.clientName, e);
+  }
+  threads.sort((a, b) => {
+    if (Boolean(a.waitingSince) !== Boolean(b.waitingSince))
+      return a.waitingSince ? -1 : 1;
+    return (b.lastAt ?? 0) - (a.lastAt ?? 0);
+  });
+  const syncedAt = Math.max(
+    0,
+    ...events.map(e => e.syncedAt),
+    ...threads.map(t => t.syncedAt),
+  );
+  return {
+    today,
+    upcoming,
+    nextCall: [...nextCall.values()].sort((a, b) => startMs(a) - startMs(b)),
+    threads,
+    calendarConfigured: events.length > 0,
+    whatsappConfigured: threads.length > 0,
+    syncedAt: syncedAt || undefined,
+  };
+}

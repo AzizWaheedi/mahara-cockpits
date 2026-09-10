@@ -168,9 +168,7 @@ export const complete = internalMutation({
             primaryText: x.message,
             description: x.description,
           })),
-          note:
-            note ??
-            "Copy written. Read it, edit anything, then launch.",
+          note: note ?? "Copy written. Read it, edit anything, then launch.",
         });
       }
     }

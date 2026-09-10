@@ -830,6 +830,12 @@ const schema = defineSchema({
     source: v.string(),
     addedAt: v.number(),
   }).index("by_client", ["clientName"]),
+  /** Smoke-check failures already sent to Slack, so a broken screen is reported once, not every 15 minutes. */
+  alerts: defineTable({
+    signature: v.string(),
+    text: v.string(),
+    at: v.number(),
+  }).index("by_signature", ["signature"]),
 });
 
 export default schema;

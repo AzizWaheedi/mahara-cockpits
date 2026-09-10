@@ -77,7 +77,11 @@ function finish(b: Bucket) {
 async function computeRange(
   // biome-ignore lint/suspicious/noExplicitAny: query ctx
   ctx: any,
-  { campaignName, start, end }: { campaignName: string; start: string; end: string },
+  {
+    campaignName,
+    start,
+    end,
+  }: { campaignName: string; start: string; end: string },
 ) {
   {
     const rows = await ctx.db
@@ -165,9 +169,7 @@ async function computeRange(
       total: finish(total),
       bookingsTotal: bookings.length,
       bookingsAttributed: attributed,
-      adSets: [...bySet.values()]
-        .map(finish)
-        .sort((x, y) => y.spend - x.spend),
+      adSets: [...bySet.values()].map(finish).sort((x, y) => y.spend - x.spend),
       ads: [...byAd.values()].map(finish).sort((x, y) => y.spend - x.spend),
     };
   }

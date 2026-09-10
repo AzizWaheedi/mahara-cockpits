@@ -7,16 +7,23 @@ import { internalAction } from "./_generated/server";
  * is built properly.
  */
 export const probe = internalAction({
-  args: { token: v.string(), path: v.string(), version: v.optional(v.string()) },
+  args: {
+    token: v.string(),
+    path: v.string(),
+    version: v.optional(v.string()),
+  },
   returns: v.string(),
   handler: async (_ctx, args) => {
-    const res = await fetch(`https://services.leadconnectorhq.com${args.path}`, {
-      headers: {
-        Authorization: `Bearer ${args.token}`,
-        Version: args.version ?? "2021-07-28",
-        Accept: "application/json",
+    const res = await fetch(
+      `https://services.leadconnectorhq.com${args.path}`,
+      {
+        headers: {
+          Authorization: `Bearer ${args.token}`,
+          Version: args.version ?? "2021-07-28",
+          Accept: "application/json",
+        },
       },
-    });
+    );
     const body = await res.text();
     return `${res.status} ${body.slice(0, 900)}`;
   },
@@ -39,7 +46,8 @@ export const findLocation = internalAction({
           },
         },
       );
-      if (res.status === 200) hits.push(`${id} ${(await res.text()).slice(0, 400)}`);
+      if (res.status === 200)
+        hits.push(`${id} ${(await res.text()).slice(0, 400)}`);
     }
     return hits;
   },

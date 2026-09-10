@@ -14,11 +14,7 @@ import { graphPost } from "./tools";
 export const setStatus = authenticatedAction({
   args: {
     metaId: v.string(),
-    level: v.union(
-      v.literal("campaign"),
-      v.literal("adset"),
-      v.literal("ad"),
-    ),
+    level: v.union(v.literal("campaign"), v.literal("adset"), v.literal("ad")),
     active: v.boolean(),
     name: v.string(),
     clientTag: v.optional(v.string()),

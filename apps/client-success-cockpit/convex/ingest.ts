@@ -114,6 +114,8 @@ export async function runBridge(
       return await ctx.runMutation(internal.comms.storeCalendar, {
         rows: args.rows ?? [],
       });
+    case "smoke":
+      return await ctx.runQuery(internal.smoke.run, {});
     case "storeWhatsapp":
       return await ctx.runMutation(internal.comms.storeWhatsapp, {
         threads: args.threads ?? [],
