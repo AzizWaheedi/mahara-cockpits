@@ -1260,7 +1260,21 @@ export const runSync = internalAction({
       const client = clientByAccount.get(normalize(a.account));
       const byName = taskByName.get(normalize(name));
       const byTag = client ? taskByTag.get(normalize(client)) : undefined;
-      const task = byName ?? byTag;
+      // Last resort: the campaign name's first word against the client tags
+      // ("CASTELLO-mahaa-9\9" → tag "castello industries"). A typo in the
+      // campaign name, or spend in a second ad account the sheet does not
+      // list, used to leave a carded client looking off-board. [2026-09-10]
+      const firstWord = normalize(name.split(/[\s\-_/|(),]+/)[0] ?? "");
+      const byTagPrefix =
+        !byName && !byTag && firstWord.length >= 5
+          ? [...taskByTag.entries()].find(([k]) => k.startsWith(firstWord))?.[1]
+          : undefined;
+      const task = byName ?? byTag ?? byTagPrefix;
+      // A tag match also tells us who the client is when the account did not.
+      const clientFromTag =
+        !client && task
+          ? (task.tags ?? []).map((t: any) => String(t.name))[0]
+          : undefined;
       // Matched on the client tag but the task still names an older campaign.
       const staleTaskName = !byName && byTag ? byTag.name : undefined;
       const cpl = a.leads > 0 ? a.spend / a.leads : undefined;
@@ -1367,7 +1381,7 @@ export const runSync = internalAction({
         campaignName: name,
 
         accountName: a.account,
-        clientName: client,
+        clientName: client ?? clientFromTag,
         staleTaskName,
         clientTag: client ? normalize(client) : undefined,
         // biome-ignore lint/suspicious/noExplicitAny: ClickUp payload

@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { internalAction, internalMutation } from "./_generated/server";
 import { clientDataFor, readClientData } from "./clientData";
-import { allAdAccounts, graph } from "./tools";
+import { allAdAccounts, callTool, graph, unwrap } from "./tools";
 
 // biome-ignore lint/suspicious/noExplicitAny: Meta payloads
 type Any = any;
@@ -307,5 +307,39 @@ export const fathomProbe = internalAction({
       })),
       error: json.message ?? json.error,
     };
+  },
+});
+
+/** Cards on the Ads Managment board whose name or tags contain a term. */
+export const boardCards = internalAction({
+  args: { term: v.string() },
+  returns: v.any(),
+  handler: async (_ctx, { term }) => {
+    const t = term.toLowerCase();
+    const out: Any[] = [];
+    for (let page = 0; page < 5; page++) {
+      const d: Any = unwrap(
+        await callTool("pd_clickup_proxy_get", {
+          url: `https://api.clickup.com/api/v2/list/901817774521/task?include_closed=true&subtasks=true&page=${page}`,
+        }),
+      );
+      const tasks: Any[] = d?.tasks ?? [];
+      for (const k of tasks) {
+        const tags = (k.tags ?? []).map((x: Any) => String(x.name));
+        if (
+          String(k.name).toLowerCase().includes(t) ||
+          tags.some((x: string) => x.toLowerCase().includes(t))
+        )
+          out.push({
+            id: k.id,
+            name: k.name,
+            status: k.status?.status,
+            tags,
+            updated: k.date_updated,
+          });
+      }
+      if (tasks.length < 100) break;
+    }
+    return out;
   },
 });
