@@ -68,13 +68,11 @@ async function contextFor(ctx: any, clientName?: string): Promise<string> {
           }
         : null,
       lostLeads: p?.lost?.reasons ?? null,
-      recentCalls: (p?.calls ?? [])
-        .slice(0, 4)
-        .map((k: Any) => ({
-          title: k.title,
-          at: k.at,
-          summary: String(k.summary ?? "").slice(0, 400),
-        })),
+      recentCalls: (p?.calls ?? []).slice(0, 4).map((k: Any) => ({
+        title: k.title,
+        at: k.at,
+        summary: String(k.summary ?? "").slice(0, 400),
+      })),
       gaps: p?.gaps ?? [],
       links: p?.links ?? {},
     });
@@ -214,6 +212,17 @@ export const answer = internalMutation({
       status: "answered",
       at: Date.now(),
     });
+    return null;
+  },
+});
+
+/** Hermes has picked the message up: show "typing" instead of "waiting". */
+export const markReading = internalMutation({
+  args: { id: v.id("hermesChat") },
+  returns: v.null(),
+  handler: async (ctx, { id }) => {
+    const m = await ctx.db.get(id);
+    if (m && m.status === "sent") await ctx.db.patch(id, { status: "reading" });
     return null;
   },
 });

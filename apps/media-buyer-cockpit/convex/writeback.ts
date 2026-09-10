@@ -568,6 +568,17 @@ export const forwardFeedback = internalAction({
         },
       ],
     });
+    try {
+      await ctx.runMutation(internal.fixRequests.file, {
+        source: "feedback box (media buyer cockpit)",
+        app: "media-buyer",
+        title: String(row.text).slice(0, 120),
+        detail: String(row.text),
+        page: String(row.page ?? ""),
+      });
+    } catch (e) {
+      console.error(`fix request failed: ${String(e).slice(0, 120)}`);
+    }
     await ctx.runMutation(internal.writeback.markFeedbackDelivered, { id });
     return null;
   },

@@ -8,11 +8,73 @@ type Any = any;
 
 const ago = (ms: number) => {
   const m = Math.round((Date.now() - ms) / 60000);
-  if (m < 1) return "now";
-  if (m < 60) return `${m} min`;
-  if (m < 48 * 60) return `${Math.round(m / 60)} h`;
-  return `${Math.round(m / 1440)} d`;
+  if (m < 1) return "just now";
+  if (m < 60) return `${m} min ago`;
+  if (m < 48 * 60) return `${Math.round(m / 60)} h ago`;
+  return `${Math.round(m / 1440)} d ago`;
 };
+
+/** Three dots that breathe, the universal "typing". Still under reduced motion. */
+function Dots() {
+  return (
+    <span
+      className="inline-flex items-center gap-1 align-middle"
+      aria-hidden="true"
+    >
+      {[0, 1, 2].map(i => (
+        <span
+          key={i}
+          className="hermes-dot inline-block h-1.5 w-1.5 rounded-full bg-current opacity-60"
+          style={{ animationDelay: `${i * 160}ms` }}
+        />
+      ))}
+    </span>
+  );
+}
+
+/**
+ * An assistant message that types itself out when it first arrives. Hermes
+ * returns his answer whole, so the typing is played here; anything already
+ * on screen when the panel opened is shown in full.
+ */
+function Typed({
+  text,
+  animate,
+  onDone,
+}: {
+  text: string;
+  animate: boolean;
+  onDone: () => void;
+}) {
+  const [n, setN] = useState(animate ? 0 : text.length);
+  useEffect(() => {
+    if (!animate) return;
+    const reduced = window.matchMedia?.(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    if (reduced) {
+      setN(text.length);
+      onDone();
+      return;
+    }
+    let i = 0;
+    const step = () => {
+      // Two to four characters a tick reads like fast typing, not a crawl.
+      i = Math.min(text.length, i + 2 + Math.floor(Math.random() * 3));
+      setN(i);
+      if (i < text.length) timer = window.setTimeout(step, 18);
+      else onDone();
+    };
+    let timer = window.setTimeout(step, 120);
+    return () => window.clearTimeout(timer);
+  }, [animate, text, onDone]);
+  return (
+    <p className="whitespace-pre-wrap">
+      {text.slice(0, n)}
+      {n < text.length ? <span className="hermes-caret">▍</span> : null}
+    </p>
+  );
+}
 
 /**
  * A conversation with Hermes, the same agent that writes ad copy and client
@@ -28,9 +90,25 @@ export function HermesChat() {
   const send = useMutation(api.hermes.send);
   const clear = useMutation(api.hermes.clear);
   const endRef = useRef<HTMLDivElement>(null);
-  const waiting = (thread ?? []).some(
-    m => m.role === "user" && m.status !== "answered" && m.status !== "failed",
-  );
+  // Ids seen before the current moment: those render in full, newer ones type.
+  const seen = useRef<Set<string> | null>(null);
+  const [, bump] = useState(0);
+  if (seen.current === null && thread)
+    seen.current = new Set(thread.map(m => m._id));
+
+  const lastUser = [...(thread ?? [])].reverse().find(m => m.role === "user");
+  const live =
+    lastUser && lastUser.status !== "answered" && lastUser.status !== "failed"
+      ? lastUser
+      : null;
+  const liveLabel =
+    live?.status === "reading"
+      ? "Hermes is typing"
+      : live?.status === "sent"
+        ? "Sent, waiting for Hermes to pick it up"
+        : live
+          ? "Sending"
+          : null;
 
   // The client on the current page, if the URL names one.
   const clientName = (() => {
@@ -40,9 +118,11 @@ export function HermesChat() {
     return m ? decodeURIComponent(m[2]) : undefined;
   })();
 
+  const count = thread?.length ?? 0;
   useEffect(() => {
-    if (open) endRef.current?.scrollIntoView({ block: "end" });
-  }, [open, thread?.length]);
+    if (open)
+      endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+  }, [open, count, live?.status]);
 
   const submit = async () => {
     const t = text.trim();
@@ -53,16 +133,27 @@ export function HermesChat() {
 
   return (
     <>
+      <style>{`
+        @keyframes hermes-bounce { 0%, 80%, 100% { transform: translateY(0); opacity: .45 } 40% { transform: translateY(-3px); opacity: 1 } }
+        .hermes-dot { animation: hermes-bounce 1.2s infinite ease-in-out }
+        @keyframes hermes-blink { 50% { opacity: 0 } }
+        .hermes-caret { animation: hermes-blink 1s steps(1) infinite; margin-left: 1px }
+        @media (prefers-reduced-motion: reduce) { .hermes-dot, .hermes-caret { animation: none } }
+      `}</style>
       <button
         type="button"
         onClick={() => setOpen(v => !v)}
         className="fixed bottom-5 right-5 z-40 flex items-center gap-2 rounded-full border bg-background px-4 py-2 text-[13px] font-semibold shadow-lg hover:bg-muted"
         aria-label="Ask Hermes"
       >
-        <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
+        <span
+          className={`inline-block h-2 w-2 rounded-full ${live ? "bg-amber-500" : "bg-emerald-500"}`}
+        />
         Ask Hermes
-        {waiting ? (
-          <span className="text-muted-foreground">· thinking</span>
+        {live && !open ? (
+          <span className="text-muted-foreground">
+            · {live.status === "reading" ? "typing" : "thinking"} <Dots />
+          </span>
         ) : null}
       </button>
       {open ? (
@@ -77,7 +168,7 @@ export function HermesChat() {
                 {clientName ? ` · about ${clientName}` : " · this cockpit"}
               </span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3">
               <button
                 type="button"
                 className="text-[12px] text-muted-foreground hover:underline"
@@ -96,44 +187,52 @@ export function HermesChat() {
             </div>
           </header>
           <div className="flex-1 space-y-3 overflow-y-auto px-3 py-3 text-[13px]">
-            {(thread ?? []).length === 0 ? (
+            {count === 0 ? (
               <p className="text-muted-foreground">
                 Ask anything about this cockpit's clients, numbers or what to do
                 next. Hermes sees what this screen sees and answers here,
                 usually within a minute or two.
               </p>
             ) : null}
-            {(thread ?? []).map(m => (
-              <div
-                key={m._id}
-                className={
-                  m.role === "user" ? "flex justify-end" : "flex justify-start"
-                }
-              >
-                <div
-                  className={
-                    m.role === "user"
-                      ? "max-w-[85%] rounded-2xl rounded-br-sm bg-primary px-3 py-2 text-primary-foreground"
-                      : "max-w-[90%] rounded-2xl rounded-bl-sm bg-muted px-3 py-2"
-                  }
-                >
-                  <p className="whitespace-pre-wrap">{m.text}</p>
-                  <p
-                    className={`mt-1 text-[11px] ${m.role === "user" ? "text-primary-foreground/70" : "text-muted-foreground"}`}
-                  >
-                    {m.role === "user"
-                      ? m.status === "failed"
-                        ? `failed: ${m.error ?? "no answer"}`
-                        : m.status === "answered"
-                          ? ago(m.at)
-                          : m.status === "sent"
-                            ? "Hermes is reading it…"
-                            : "sending…"
-                      : `Hermes · ${ago(m.at)}`}
-                  </p>
+            {(thread ?? []).map(m =>
+              m.role === "user" ? (
+                <div key={m._id} className="flex justify-end">
+                  <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-primary px-3 py-2 text-primary-foreground">
+                    <p className="whitespace-pre-wrap">{m.text}</p>
+                    <p className="mt-1 text-[11px] text-primary-foreground/70">
+                      {m.status === "failed"
+                        ? `Failed: ${m.error ?? "no answer"}`
+                        : ago(m.at)}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div key={m._id} className="flex justify-start">
+                  <div className="max-w-[90%] rounded-2xl rounded-bl-sm bg-muted px-3 py-2">
+                    <Typed
+                      text={m.text}
+                      animate={!seen.current?.has(m._id)}
+                      onDone={() => {
+                        if (!seen.current?.has(m._id)) {
+                          seen.current?.add(m._id);
+                          bump(x => x + 1);
+                        }
+                      }}
+                    />
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      Hermes · {ago(m.at)}
+                    </p>
+                  </div>
+                </div>
+              ),
+            )}
+            {liveLabel ? (
+              <div className="flex justify-start">
+                <div className="rounded-2xl rounded-bl-sm bg-muted px-3 py-2 text-muted-foreground">
+                  {liveLabel} <Dots />
                 </div>
               </div>
-            ))}
+            ) : null}
             <div ref={endRef} />
           </div>
           <form

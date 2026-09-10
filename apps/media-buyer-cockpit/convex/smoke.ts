@@ -102,6 +102,17 @@ export const check = internalAction({
         console.error(`slack alert failed: ${String(e).slice(0, 120)}`);
       }
       await ctx.runMutation(internal.smoke.remember, { signature, text });
+      // And a job for Hermes to go and fix it.
+      try {
+        await ctx.runMutation(internal.fixRequests.file, {
+          source: "smoke check",
+          app: String(f.app),
+          title: `${f.name} throws`,
+          detail: String(f.error),
+        });
+      } catch (e) {
+        console.error(`fix request failed: ${String(e).slice(0, 120)}`);
+      }
     }
     console.log(
       `smoke: ${results.map((r: Any) => `${r.app} ${r.ok ? "ok" : "FAILED"}`).join(" · ")}`,

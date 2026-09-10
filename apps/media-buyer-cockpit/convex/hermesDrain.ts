@@ -6,6 +6,7 @@ import {
   internalQuery,
 } from "./_generated/server";
 import { bridge } from "./comms";
+import { callTool } from "./tools";
 
 // biome-ignore lint/suspicious/noExplicitAny: chat rows and job results
 type Any = any;
@@ -75,6 +76,11 @@ async function markSent(ctx: Any, app: App, id: string, jobId: string) {
     return await ctx.runMutation(internal.hermes.markSent, { id, jobId });
   return await bridge(app, "chatSent", { id, jobId });
 }
+async function markReading(ctx: Any, app: App, id: string) {
+  if (app === "local")
+    return await ctx.runMutation(internal.hermes.markReading, { id });
+  return await bridge(app, "chatReading", { id });
+}
 async function answer(
   ctx: Any,
   app: App,
@@ -104,6 +110,15 @@ export const addRelay = internalMutation({
   },
 });
 
+export const markRelayReading = internalMutation({
+  args: { id: v.id("chatRelay") },
+  returns: v.null(),
+  handler: async (ctx, { id }) => {
+    await ctx.db.patch(id, { readingAt: Date.now() });
+    return null;
+  },
+});
+
 export const closeRelay = internalMutation({
   args: { id: v.id("chatRelay") },
   returns: v.null(),
@@ -124,6 +139,7 @@ export const jobState = internalQuery({
           result: (j as Any).result,
           error: (j as Any).error,
           createdAt: (j as Any).createdAt,
+          claimedAt: (j as Any).claimedAt,
         }
       : null;
   },
@@ -187,9 +203,35 @@ export const run = internalAction({
         error = `Hermes could not answer: ${String(job.error ?? "").slice(0, 160)}`;
       } else if (waitedMin > GIVE_UP_MIN) {
         error = `No answer from Hermes after ${GIVE_UP_MIN} minutes. Ask again, or check that he is running.`;
-      } else continue;
+      } else {
+        // Claimed but not answered yet: the panel shows "typing".
+        if (job.claimedAt && !r.readingAt) {
+          try {
+            await markReading(ctx, app, r.messageId);
+            await ctx.runMutation(internal.hermesDrain.markRelayReading, {
+              id: r._id,
+            });
+          } catch (e) {
+            errors.push(`${app} reading: ${String(e).slice(0, 120)}`);
+          }
+        }
+        continue;
+      }
       try {
-        await answer(ctx, app, r.messageId, text, error);
+        if ((r.app as string) === "fix") {
+          // Hermes's report on a flagged error goes to Aziz, not to a thread.
+          const res =
+            typeof job.result === "string" ? safeParse(job.result) : job.result;
+          const line = res?.status
+            ? `${String(res.status).replace("_", " ")}: ${res.summary ?? ""}${Array.isArray(res.changes) && res.changes.length ? `\n${res.changes.map((c: Any) => `• ${c}`).join("\n")}` : ""}`
+            : (error ?? text ?? "");
+          await callTool("coworker_send_slack_message", {
+            channel_id: "D0B21PZHDH9",
+            text: `Hermes on "${r.messageId}"\n${line}`.slice(0, 3000),
+          });
+        } else {
+          await answer(ctx, app, r.messageId, text, error);
+        }
         await ctx.runMutation(internal.hermesDrain.closeRelay, { id: r._id });
         delivered++;
       } catch (e) {

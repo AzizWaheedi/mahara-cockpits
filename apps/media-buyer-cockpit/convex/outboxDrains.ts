@@ -274,6 +274,19 @@ async function csmRow(
       name,
       description: row.evidence,
     });
+    if (kind === "issue" && !row.clientName) {
+      // A wrong screen, reported by the CSM: Hermes gets the job too.
+      try {
+        await ctx.runMutation(internal.fixRequests.file, {
+          source: "Report an issue (client success cockpit)",
+          app: "client-success",
+          title: String(row.action).slice(0, 120),
+          detail: String(row.evidence ?? row.action),
+        });
+      } catch (e) {
+        console.error(`fix request failed: ${String(e).slice(0, 120)}`);
+      }
+    }
     return [created?.url, undefined];
   }
 

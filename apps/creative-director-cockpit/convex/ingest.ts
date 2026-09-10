@@ -84,6 +84,10 @@ export async function runBridge(
         id: args.id,
         jobId: String(args.jobId),
       });
+    case "chatReading":
+      return await ctx.runMutation(internal.hermes.markReading, {
+        id: args.id,
+      });
     case "chatAnswer":
       return await ctx.runMutation(internal.hermes.answer, {
         id: args.id,

@@ -856,6 +856,7 @@ const schema = defineSchema({
     messageId: v.string(),
     jobId: v.string(),
     at: v.number(),
+    readingAt: v.optional(v.number()),
     deliveredAt: v.optional(v.number()),
   }),
 });
