@@ -39,7 +39,7 @@ Header names are what the code looks for; order does not matter.
 | `Client Name` | the client name as on the ClickUp card | name join |
 | `Clickup ID` | the Clients - Mahara task id | exact join (the only one that never guesses) |
 | `GHL ID` | sub-account location id | bookings, lost leads |
-| `GHL API` | private integration token, must start `pit-` | same; a token without `pit-` is ignored |
+| `GHL API` | private integration token, must start `pit-`. Optional once `GHL_AGENCY_TOKEN` is set on the media buyer deployment | same; a token without `pit-` is ignored |
 | `WA GROUP ID` | `…@g.us` | WhatsApp thread to client |
 | `Report Document ID` / `Sheet Link` | the stat sheet | performance when the card has no Sheet Link |
 | `Google Drive Link` | the client folder | scripts/footage scan when the card has no Drive link |

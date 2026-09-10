@@ -524,13 +524,15 @@ type GhlAccount = {
 /** `{normalised client name | id:<clickupId>: account}` off Client Data columns A-E. */
 async function ghlAccounts(): Promise<Map<string, GhlAccount>> {
   const out = new Map<string, GhlAccount>();
+  const agency = process.env.GHL_AGENCY_TOKEN ?? "";
   for (const r of await readClientData()) {
-    if (!r.ghlToken.startsWith("pit-") || !r.ghlLocationId) continue;
+    const token = r.ghlToken.startsWith("pit-") ? r.ghlToken : agency;
+    if (!token.startsWith("pit-") || !r.ghlLocationId) continue;
     const entry = {
       name: r.name,
       clickupId: r.clickupId,
       locationId: r.ghlLocationId,
-      token: r.ghlToken,
+      token,
     };
     out.set(normTight(r.name), entry);
     if (r.clickupId) out.set(`id:${r.clickupId}`, entry);
@@ -771,7 +773,10 @@ function gapsFor(x: {
         "GHL ID empty on Client Data",
         "Database sheet → Client Data → GHL ID: the sub-account location id.",
       );
-    if (!row.ghlToken.startsWith("pit-"))
+    if (
+      !row.ghlToken.startsWith("pit-") &&
+      !(process.env.GHL_AGENCY_TOKEN ?? "").startsWith("pit-")
+    )
       add(
         "ghl_token",
         "GHL API token empty on Client Data",

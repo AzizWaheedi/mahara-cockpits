@@ -13,6 +13,8 @@ import { googleAccessToken } from "./tools";
 export const DATABASE_SHEET = "1_0Nv-IFvzhH4NBNh1dxCUm6Ryp414ctM_8EO5QORBF0";
 
 export type ClientDataRow = {
+  /** 1-based sheet row, for writes. */
+  rowNumber: number;
   status: string;
   name: string;
   clickupId: string;
@@ -34,7 +36,7 @@ export function normTight(s: unknown): string {
     .replace(/[^\p{L}\p{N}]+/gu, "");
 }
 
-const HEADERS = {
+export const HEADERS = {
   status: "Status",
   name: "Client Name",
   clickupId: "Clickup ID",
@@ -53,6 +55,27 @@ const HEADERS = {
  * Columns are found by header name, so the tab can be reordered or widened
  * without breaking anything. A renamed header is reported, not ignored.
  */
+/** Header row and the 0-based column of each known header (-1 when absent). */
+export async function clientDataHeader(): Promise<{
+  head: string[];
+  col: Record<keyof typeof HEADERS, number>;
+}> {
+  const token = await googleAccessToken();
+  const res = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${DATABASE_SHEET}/values/${encodeURIComponent("Client Data!A1:Z1")}`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  const data = await res.json();
+  const head = ((data?.values ?? [[]])[0] as string[]).map(h =>
+    String(h ?? "").trim(),
+  );
+  const lower = head.map(h => h.toLowerCase());
+  const col = {} as Record<keyof typeof HEADERS, number>;
+  for (const [key, label] of Object.entries(HEADERS))
+    col[key as keyof typeof HEADERS] = lower.indexOf(label.toLowerCase());
+  return { head, col };
+}
+
 export async function readClientData(): Promise<ClientDataRow[]> {
   const token = await googleAccessToken();
   const res = await fetch(
@@ -85,12 +108,13 @@ export async function readClientData(): Promise<ClientDataRow[]> {
   if (missing.length)
     console.warn(`Client Data: header(s) not found: ${missing.join(", ")}`);
   const rows: ClientDataRow[] = [];
-  for (const r of values.slice(1)) {
+  for (const [i, r] of values.slice(1).entries()) {
     const cell = (k: keyof typeof HEADERS) =>
       col[k] === -1 ? "" : String(r[col[k]] ?? "").trim();
     const name = cell("name");
     if (!name) continue;
     rows.push({
+      rowNumber: i + 2,
       status: cell("status"),
       name,
       clickupId: cell("clickupId"),
