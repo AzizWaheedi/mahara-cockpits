@@ -14,7 +14,6 @@ import {
   Users,
 } from "lucide-react";
 import { useState } from "react";
-import { Link } from "react-router";
 import { CreativePreview } from "@/components/CreativePreview";
 import { TemplateCard } from "@/components/TemplateCard";
 import { Button } from "@/components/ui/button";
