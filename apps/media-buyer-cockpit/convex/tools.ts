@@ -460,7 +460,14 @@ export const MAHARA_BUSINESS_ID = "767701513092162";
 
 /** Every ad account the business can reach, owned + client. */
 export async function allAdAccounts(): Promise<
-  { id: string; account_id: string; name: string; timezone_name?: string }[]
+  {
+    id: string;
+    account_id: string;
+    name: string;
+    timezone_name?: string;
+    account_status?: number;
+    currency?: string;
+  }[]
 > {
   const out: any[] = [];
   for (const edge of ["owned_ad_accounts", "client_ad_accounts"]) {
