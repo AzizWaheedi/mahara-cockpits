@@ -914,9 +914,31 @@ function Cockpit({ view }: { view: View }) {
                                     className="ml-1 rounded bg-red-50 px-1 py-0.5 text-[9px] font-bold uppercase text-red-700 dark:bg-red-950 dark:text-red-300"
                                     title={c.accountIssue}
                                   >
-                                    account blocked
+                                    {/unsettled/i.test(c.accountIssue)
+                                      ? "card declined"
+                                      : "account blocked"}
                                   </span>
                                 )}
+                                {c.accountIssue &&
+                                  /unsettled/i.test(c.accountIssue) && (
+                                    <button
+                                      type="button"
+                                      className="ml-1 rounded border px-1.5 py-0.5 text-[10px] font-semibold hover:bg-muted"
+                                      title="Files a 'card declined' request on the Client Success board so the CSM chases the payment. Meta refuses every edit until it is paid."
+                                      onClick={() =>
+                                        decide({
+                                          subject: c.campaignName,
+                                          action:
+                                            "Client card declined, chase the payment",
+                                          kind: "rerouted",
+                                          evidence: `${c.accountIssue} Ad account: ${c.accountName}.`,
+                                          reroutedTo: "client_success",
+                                        })
+                                      }
+                                    >
+                                      Tell client success
+                                    </button>
+                                  )}
                                 {c.serviceMode === "DWY" && (
                                   <span
                                     className="ml-1 rounded bg-muted px-1 py-0.5 text-[9px] font-bold uppercase text-muted-foreground"

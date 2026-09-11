@@ -80,6 +80,9 @@ async function httpPost(
   return body;
 }
 
+// biome-ignore lint/suspicious/noExplicitAny: Graph payloads
+type Any = any;
+
 // ---------------------------------------------------------------------------
 // Google: service-account JWT → short-lived access token (cached per isolate).
 
@@ -500,12 +503,22 @@ export async function graphPost<T = any>(
     ),
     access_token: token,
   });
-  const res = await fetch(`https://graph.facebook.com/v21.0/${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body,
-  });
-  const json = await res.json();
+  let json: Any;
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(`https://graph.facebook.com/v21.0/${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+    });
+    json = await res.json();
+    // Meta allows one budget change per ad set per 30 seconds (#613). Wait it
+    // out once rather than hand the media buyer a rate-limit error.
+    if (json?.error?.code === 613 && attempt === 0) {
+      await new Promise(r => setTimeout(r, 31_000));
+      continue;
+    }
+    break;
+  }
   if (json.error) {
     throw new Error(
       `Meta ${json.error.code}${json.error.error_subcode ? `/${json.error.error_subcode}` : ""}: ${json.error.message}${json.error.error_user_msg ? ` — ${json.error.error_user_msg}` : ""}${json.error.error_user_title ? ` (${json.error.error_user_title})` : ""}`,

@@ -1,5 +1,10 @@
 import { v } from "convex/values";
-import { internalAction } from "./_generated/server";
+import { internal } from "./_generated/api";
+import {
+  internalAction,
+  internalMutation,
+  internalQuery,
+} from "./_generated/server";
 import { allAdAccounts, callTool, graph, graphPost, unwrap } from "./tools";
 
 // biome-ignore lint/suspicious/noExplicitAny: Meta payloads
@@ -229,6 +234,220 @@ export const launchRehearsal = internalAction({
           });
         }
       }
+    }
+    return { account: act, steps };
+  },
+});
+
+// --- Every button, for real, in Mahara's own account -----------------------------
+
+export const makeTestDraft = internalMutation({
+  args: { accountId: v.string() },
+  returns: v.id("campaignDrafts"),
+  handler: async (ctx, { accountId }) =>
+    await ctx.db.insert("campaignDrafts", {
+      clientTag: "rehearsal",
+      clientName: "REHEARSAL delete me",
+      accountId,
+      kind: "campaign",
+      brief:
+        "Button rehearsal. Everything created here is deleted in the same run.",
+      creativeLinks: [],
+      dailyBudget: 20,
+      language: "en",
+      variants: [],
+      status: "ready",
+      at: Date.now(),
+      by: "rehearsal",
+    } as Any),
+});
+
+export const readDraft = internalQuery({
+  args: { id: v.id("campaignDrafts") },
+  returns: v.any(),
+  handler: async (ctx, { id }) => await ctx.db.get(id),
+});
+
+export const dropDraft = internalMutation({
+  args: { id: v.id("campaignDrafts") },
+  returns: v.null(),
+  handler: async (ctx, { id }) => {
+    await ctx.db.delete(id);
+    return null;
+  },
+});
+
+/**
+ * Launch through the real builder, then run every edit the cockpit offers
+ * against what it made (budget, duplicate ad set, new ad from an existing
+ * one, pause), then delete all of it. Aziz, 2026-09-11: "try to actually
+ * edit a campaign and launch a new campaign and see what happens".
+ */
+export const buttonsRehearsal = internalAction({
+  args: { accountId: v.optional(v.string()) },
+  returns: v.any(),
+  handler: async (ctx, { accountId }) => {
+    const acc = (accountId ?? "746108264865897").replace(/^act_/, "");
+    const act = `act_${acc}`;
+    const steps: Any[] = [];
+    const made: string[] = [];
+    const ok = (step: string, extra: Any = {}) =>
+      steps.push({ step, ok: true, ...extra });
+    const fail = (step: string, e: unknown) =>
+      steps.push({ step, ok: false, error: String(e).slice(0, 260) });
+    const draftId = await ctx.runMutation(internal.writeProbe.makeTestDraft, {
+      accountId: acc,
+    });
+    let campaignId: string | undefined;
+    let adSetId: string | undefined;
+    try {
+      // 1. Launch: the real code path behind "Launch".
+      await ctx.runAction(internal.builder.launchDraft, { id: draftId });
+      const draft: Any = await ctx.runQuery(internal.writeProbe.readDraft, {
+        id: draftId,
+      });
+      campaignId = draft?.metaCampaignId;
+      adSetId = draft?.metaAdSetId;
+      if (draft?.status === "launched" && campaignId && adSetId) {
+        ok("Launch (builder.launchDraft)", { campaignId, adSetId });
+        made.push(adSetId, campaignId);
+      } else
+        throw new Error(
+          `draft status ${draft?.status}: ${draft?.error ?? "no ids"}`,
+        );
+
+      // 2. Budget change: the setAdSetBudget call.
+      try {
+        await graphPost(adSetId, { daily_budget: 2500 });
+        ok("Set ad set budget ($20 → $25)");
+      } catch (e) {
+        fail("Set ad set budget", e);
+      }
+      // 3. Scale: the "Scale the winner" call (+25%, ad-set level).
+      try {
+        await graphPost(adSetId, { daily_budget: 3100 });
+        ok("Scale the winner (+25%)");
+      } catch (e) {
+        fail("Scale the winner", e);
+      }
+      // 4. Duplicate ad set: the duplicateAdSet payload.
+      try {
+        const src: Any = await graph(adSetId, {
+          fields:
+            "name,campaign_id,account_id,daily_budget,billing_event,optimization_goal,bid_strategy,promoted_object,destination_type,targeting",
+        });
+        const payload: Record<string, string | number> = {
+          name: "REHEARSAL copy",
+          campaign_id: src.campaign_id,
+          billing_event: src.billing_event,
+          optimization_goal: src.optimization_goal,
+          targeting: JSON.stringify(src.targeting),
+          status: "PAUSED",
+          daily_budget: src.daily_budget ?? 2000,
+        };
+        if (src.promoted_object)
+          payload.promoted_object = JSON.stringify(src.promoted_object);
+        if (src.bid_strategy) payload.bid_strategy = src.bid_strategy;
+        const copy: Any = await graphPost(
+          `act_${src.account_id}/adsets`,
+          payload,
+        );
+        if (copy?.id) made.unshift(String(copy.id));
+        ok("Duplicate ad set", { id: copy?.id });
+      } catch (e) {
+        fail("Duplicate ad set", e);
+      }
+      // 5. An ad: creative + ad, then a second ad from it (newAdsFromExisting).
+      let sourceAdId: string | undefined;
+      try {
+        const pages: Any = await graph(`${act}/promote_pages`, {
+          fields: "id",
+          limit: "1",
+        });
+        const pageId = pages?.data?.[0]?.id;
+        if (!pageId) throw new Error("no page on the account");
+        const creative: Any = await graphPost(`${act}/adcreatives`, {
+          name: "REHEARSAL creative",
+          object_story_spec: JSON.stringify({
+            page_id: String(pageId),
+            link_data: {
+              link: "https://maharamedia.com",
+              message: "Rehearsal, never delivered.",
+              name: "Rehearsal",
+            },
+          }),
+        });
+        const ad: Any = await graphPost(`${act}/ads`, {
+          name: "REHEARSAL ad",
+          adset_id: adSetId,
+          creative: JSON.stringify({ creative_id: creative.id }),
+          status: "PAUSED",
+        });
+        sourceAdId = String(ad.id);
+        made.unshift(sourceAdId);
+        ok("Create an ad (creative + ad)", { id: sourceAdId });
+      } catch (e) {
+        fail("Create an ad (creative + ad)", e);
+      }
+      if (sourceAdId) {
+        try {
+          const src: Any = await graph(sourceAdId, {
+            fields: "name,adset_id,account_id,creative{object_story_spec}",
+          });
+          const spec = src.creative?.object_story_spec;
+          const creative: Any = await graphPost(
+            `act_${src.account_id}/adcreatives`,
+            {
+              name: "REHEARSAL copy creative",
+              object_story_spec: JSON.stringify({
+                ...spec,
+                link_data: { ...spec.link_data, message: "Rehearsal copy" },
+              }),
+            },
+          );
+          const ad: Any = await graphPost(`act_${src.account_id}/ads`, {
+            name: "REHEARSAL copy ad",
+            adset_id: src.adset_id,
+            creative: JSON.stringify({ creative_id: creative.id }),
+            status: "PAUSED",
+          });
+          made.unshift(String(ad.id));
+          ok("New ad from an existing ad (newAdsFromExisting)", { id: ad.id });
+          // Cut the worst ad = pause one ad.
+          await graphPost(String(ad.id), { status: "PAUSED" });
+          ok("Cut the worst ad (pause an ad)");
+        } catch (e) {
+          fail("New ad from an existing ad", e);
+        }
+      }
+      // 6. Turn it off.
+      try {
+        await graphPost(campaignId, { status: "PAUSED" });
+        ok("Turn it off (pause campaign)");
+      } catch (e) {
+        fail("Turn it off", e);
+      }
+    } catch (e) {
+      fail("Launch (builder.launchDraft)", e);
+    } finally {
+      const token = process.env.META_SYSTEM_TOKEN;
+      for (const id of made) {
+        try {
+          const res = await fetch(
+            `https://graph.facebook.com/v21.0/${id}?access_token=${token}`,
+            { method: "DELETE" },
+          );
+          const json: Any = await res.json();
+          steps.push({
+            step: `delete ${id}`,
+            ok: Boolean(json?.success),
+            error: json?.error?.message,
+          });
+        } catch (e) {
+          fail(`delete ${id}`, e);
+        }
+      }
+      await ctx.runMutation(internal.writeProbe.dropDraft, { id: draftId });
     }
     return { account: act, steps };
   },
