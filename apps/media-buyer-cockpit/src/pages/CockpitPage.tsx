@@ -909,6 +909,14 @@ function Cockpit({ view }: { view: View }) {
                                     {c.clientName ?? c.accountName}
                                   </button>
                                 )}
+                                {c.accountIssue && (
+                                  <span
+                                    className="ml-1 rounded bg-red-50 px-1 py-0.5 text-[9px] font-bold uppercase text-red-700 dark:bg-red-950 dark:text-red-300"
+                                    title={c.accountIssue}
+                                  >
+                                    account blocked
+                                  </span>
+                                )}
                                 {c.serviceMode === "DWY" && (
                                   <span
                                     className="ml-1 rounded bg-muted px-1 py-0.5 text-[9px] font-bold uppercase text-muted-foreground"

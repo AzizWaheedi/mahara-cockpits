@@ -1055,6 +1055,7 @@ export const runSync = internalAction({
 
     // Meta ids, so every row can deep-link into Ads Manager on the exact campaign.
     const accountIdByName = new Map<string, string>();
+    const accountIssueByName = new Map<string, string>();
     const campaignIdByName = new Map<string, string>();
     // Campaign name -> { ad account, campaign id }, straight from Meta.
     // This used to come only from Supabase, which reaches the Viktor tool
@@ -1067,6 +1068,22 @@ export const runSync = internalAction({
       // Viktor tool gateway is down. See tools.ts:graph().
       for (const a of await allAdAccounts()) {
         accountIdByName.set(normalize(a.name ?? ""), a.account_id);
+        // Meta refuses every write on an unsettled or disabled account. Say
+        // so on the row instead of letting a button fail. [2026-09-11]
+        const st = Number(a.account_status ?? 1);
+        const issue =
+          st === 3
+            ? "Ad account unsettled: an unpaid Meta balance. Meta refuses pauses, budget changes and new ads until it is paid."
+            : st === 2
+              ? "Ad account disabled by Meta. Nothing can be changed until it is reinstated."
+              : st === 9
+                ? "Ad account in payment grace period."
+                : st === 100 || st === 101
+                  ? "Ad account closed or closing."
+                  : st === 7 || st === 8
+                    ? "Ad account pending review or settlement at Meta."
+                    : undefined;
+        if (issue) accountIssueByName.set(normalize(a.name ?? ""), issue);
       }
       for (const [, id] of accountIdByName) {
         if (!id) continue;
@@ -1385,6 +1402,7 @@ export const runSync = internalAction({
         campaignName: name,
 
         accountName: a.account,
+        accountIssue: accountIssueByName.get(normalize(a.account)),
         clientName: client ?? clientFromTag,
         staleTaskName,
         clientTag: client ? normalize(client) : undefined,
