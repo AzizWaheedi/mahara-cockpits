@@ -1,9 +1,10 @@
 import { v } from "convex/values";
 import { internalAction } from "./_generated/server";
-import { allAdAccounts, graph, graphPost } from "./tools";
+import { allAdAccounts, callTool, graph, graphPost, unwrap } from "./tools";
 
 // biome-ignore lint/suspicious/noExplicitAny: Meta payloads
 type Any = any;
+declare const process: { env: Record<string, string | undefined> };
 
 /**
  * Can the cockpit actually WRITE to each ad account?
@@ -46,6 +47,50 @@ export const accounts = internalAction({
           execution_options: '["validate_only"]',
         });
         row.write = "ok";
+        // The rest of a launch, validated against a real campaign in the
+        // account: the ad set exactly as builder.launchDraft sends it, and a
+        // status update the way "Turn it off" does.
+        try {
+          const cps: Any = await graph(`act_${id}/campaigns`, {
+            fields: "id,name,status,objective",
+            limit: "5",
+          });
+          const camp =
+            (cps?.data ?? []).find(
+              (c: Any) => c.objective === "OUTCOME_LEADS",
+            ) ?? (cps?.data ?? [])[0];
+          if (camp) {
+            row.campaignUsed = camp.name;
+            try {
+              await graphPost(`act_${id}/adsets`, {
+                campaign_id: String(camp.id),
+                name: "cockpit write probe ad set (never created)",
+                status: "PAUSED",
+                daily_budget: "2000",
+                targeting: JSON.stringify({
+                  geo_locations: { countries: ["KW"] },
+                }),
+                optimization_goal: "LEAD_GENERATION",
+                billing_event: "IMPRESSIONS",
+                execution_options: '["validate_only"]',
+              });
+              row.adSet = "ok";
+            } catch (e) {
+              row.adSet = `FAILED ${String(e).slice(0, 220)}`;
+            }
+            try {
+              await graphPost(String(camp.id), {
+                status: String(camp.status ?? "PAUSED"),
+                execution_options: '["validate_only"]',
+              });
+              row.update = "ok";
+            } catch (e) {
+              row.update = `FAILED ${String(e).slice(0, 160)}`;
+            }
+          } else row.adSet = "no campaign in the account to validate against";
+        } catch (e) {
+          row.adSet = `FAILED ${String(e).slice(0, 160)}`;
+        }
       } catch (e) {
         const msg = String(e);
         row.write =
@@ -55,7 +100,13 @@ export const accounts = internalAction({
       }
       out.push(row);
     }
-    const bad = out.filter(r => r.write !== "ok" || r.read);
+    const bad = out.filter(
+      r =>
+        r.write !== "ok" ||
+        r.read ||
+        (r.adSet && r.adSet !== "ok" && !/no campaign/.test(r.adSet)) ||
+        (r.update && r.update !== "ok"),
+    );
     console.log(
       `write probe: ${out.length} accounts, ${bad.length} cannot be written: ${bad
         .map(r => `${r.name} (${r.write ?? r.read})`)
@@ -68,5 +119,117 @@ export const accounts = internalAction({
       bad,
       all: out,
     };
+  },
+});
+
+/**
+ * A real launch rehearsal in Mahara's own ad account: campaign + ad set
+ * created PAUSED exactly the way builder.launchDraft creates them, then
+ * deleted. This is the only honest end-to-end test of "launch from the
+ * cockpit"; validate_only cannot chain the two steps.
+ */
+export const launchRehearsal = internalAction({
+  args: { accountId: v.optional(v.string()) },
+  returns: v.any(),
+  handler: async (_ctx, { accountId }) => {
+    const act = `act_${(accountId ?? "746108264865897").replace(/^act_/, "")}`;
+    const steps: Any[] = [];
+    let campaignId: string | undefined;
+    let adSetId: string | undefined;
+    try {
+      const campaign: Any = await callTool("mcp_meta_ads_create_campaign", {
+        ad_account_id: act,
+        name: `REHEARSAL |MAHARA| delete me ${new Date().toISOString().slice(0, 16)}`,
+        objective: "OUTCOME_LEADS",
+        status: "PAUSED",
+        special_ad_categories: [],
+      });
+      campaignId = unwrap(campaign)?.id;
+      steps.push({
+        step: "create campaign",
+        ok: Boolean(campaignId),
+        id: campaignId,
+      });
+      if (!campaignId) throw new Error("no campaign id returned");
+      try {
+        const pages: Any = await graph(`${act}/promote_pages`, {
+          fields: "id,name",
+          limit: "5",
+        });
+        const page = (pages?.data ?? [])[0];
+        steps.push({
+          step: "find a page to promote",
+          ok: Boolean(page),
+          id: page?.id,
+          error: page ? undefined : "no page connected to this account",
+        });
+        const adSet: Any = await callTool("mcp_meta_ads_create_ad_set", {
+          ad_account_id: act,
+          campaign_id: campaignId,
+          name: "REHEARSAL — new build",
+          status: "PAUSED",
+          daily_budget: "2000",
+          bid_strategy: "LOWEST_COST_WITHOUT_CAP",
+          targeting: { geo_locations: { countries: ["KW"] } },
+          optimization_goal: "LEAD_GENERATION",
+          billing_event: "IMPRESSIONS",
+          ...(page ? { promoted_object: { page_id: String(page.id) } } : {}),
+        });
+        adSetId = unwrap(adSet)?.id;
+        steps.push({
+          step: "create ad set (builder's shape, no promoted_object)",
+          ok: Boolean(adSetId),
+          id: adSetId,
+        });
+      } catch (e) {
+        steps.push({
+          step: "create ad set (builder's shape, no promoted_object)",
+          ok: false,
+          error: String(e).slice(0, 300),
+        });
+      }
+      try {
+        await graphPost(campaignId, { status: "PAUSED" });
+        steps.push({
+          step: "update campaign status (Turn it off path)",
+          ok: true,
+        });
+      } catch (e) {
+        steps.push({
+          step: "update campaign status",
+          ok: false,
+          error: String(e).slice(0, 200),
+        });
+      }
+    } catch (e) {
+      steps.push({
+        step: "create campaign",
+        ok: false,
+        error: String(e).slice(0, 300),
+      });
+    } finally {
+      for (const id of [adSetId, campaignId].filter(Boolean) as string[]) {
+        try {
+          const token = process.env.META_SYSTEM_TOKEN;
+          const res = await fetch(
+            `https://graph.facebook.com/v21.0/${id}?access_token=${token}`,
+            { method: "DELETE" },
+          );
+          const json: Any = await res.json();
+          steps.push({
+            step: `delete ${id}`,
+            ok: Boolean(json?.success),
+            error: json?.error?.message,
+          });
+        } catch (e) {
+          steps.push({
+            step: `delete ${id}`,
+            ok: false,
+            error: String(e).slice(0, 160),
+          });
+        }
+      }
+    }
+    return { account: act, steps };
   },
 });

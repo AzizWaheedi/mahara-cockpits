@@ -9,6 +9,8 @@ const schema = defineSchema({
   campaigns: defineTable({
     campaignName: v.string(),
     accountName: v.string(),
+    /** Why Meta would refuse edits on this account right now (unsettled balance, disabled), if it would. */
+    accountIssue: v.optional(v.string()),
     clientName: v.optional(v.string()),
     taskId: v.optional(v.string()),
     taskUrl: v.optional(v.string()),

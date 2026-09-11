@@ -1,5 +1,8 @@
 import { v } from "convex/values";
 
+// biome-ignore lint/suspicious/noExplicitAny: Meta payloads
+type Any = any;
+
 declare const process: { env: Record<string, string | undefined> };
 
 import { internal } from "./_generated/api";
@@ -8,7 +11,7 @@ import {
   internalMutation,
   internalQuery,
 } from "./_generated/server";
-import { allAdAccounts, callTool, unwrap } from "./tools";
+import { allAdAccounts, callTool, graph, unwrap } from "./tools";
 
 /**
  * Building a campaign for her.
@@ -343,6 +346,19 @@ export const launchDraft = internalAction({
       );
       const campaignId = campaign?.id;
       if (!campaignId) throw new Error("Meta did not return a campaign id");
+      let promotedObject: unknown = draft.promotedObject;
+      if (!promotedObject) {
+        try {
+          const pages: Any = await graph(`${act}/promote_pages`, {
+            fields: "id,name",
+            limit: "5",
+          });
+          const page = (pages?.data ?? [])[0];
+          if (page) promotedObject = { page_id: String(page.id) };
+        } catch (e) {
+          console.warn(`promote_pages: ${String(e).slice(0, 120)}`);
+        }
+      }
 
       const adSet = unwrap(
         await callTool("mcp_meta_ads_create_ad_set", {
@@ -351,14 +367,18 @@ export const launchDraft = internalAction({
           name: `${draft.clientName} — ${draft.kind === "refresh" ? "creative refresh" : "new build"}`,
           status: "PAUSED",
           daily_budget: String(Math.round(draft.dailyBudget * 100)),
+          // Meta needs an explicit bid strategy or it asks for a bid amount
+          // (subcode 2490487); lowest cost is what every campaign here runs.
+          bid_strategy: "LOWEST_COST_WITHOUT_CAP",
           targeting: draft.targeting ?? {
             geo_locations: { countries: ["KW"] },
           },
           optimization_goal: draft.optimizationGoal ?? "LEAD_GENERATION",
           billing_event: draft.billingEvent ?? "IMPRESSIONS",
-          ...(draft.promotedObject
-            ? { promoted_object: draft.promotedObject }
-            : {}),
+          // A lead-generation ad set needs the client's page. Copied from the
+          // winner when there is one, otherwise the page connected to the
+          // account. [2026-09-11]
+          ...(promotedObject ? { promoted_object: promotedObject } : {}),
         }),
       );
       const adSetId = adSet?.id;

@@ -655,8 +655,8 @@ function Cockpit({ view }: { view: View }) {
             ))}
           </ul>
           <p className="mt-1 text-muted-foreground">
-            The last refresh flagged this itself. Aziz is alerted — don't
-            assume a blank section means there is no work.
+            The last refresh flagged this itself. Aziz is alerted — don't assume
+            a blank section means there is no work.
           </p>
         </div>
       )}
