@@ -8,7 +8,7 @@ import {
   internalMutation,
   internalQuery,
 } from "./_generated/server";
-import { callTool, unwrap } from "./tools";
+import { allAdAccounts, callTool, unwrap } from "./tools";
 
 /**
  * Building a campaign for her.
@@ -66,6 +66,21 @@ export const WRITABLE_ACCOUNTS: Record<string, string> = {
   "1326793265986543": "نهوض نجد للمقاولات",
   "1988430024784828": "artist.. airbrush & graffiti",
 };
+
+/** Live check: the account is one the system user can reach. Falls back to the static list if Meta is unreachable. */
+export async function canWriteLive(
+  accountId?: string | null,
+): Promise<boolean> {
+  if (!accountId) return false;
+  const id = accountId.replace(/^act_/, "");
+  try {
+    const all = await allAdAccounts();
+    if (all.some(a => String(a.account_id) === id)) return true;
+  } catch {
+    // fall through to the static list
+  }
+  return canWrite(id);
+}
 
 export function canWrite(accountId?: string | null): boolean {
   if (!accountId) return false;
@@ -299,7 +314,10 @@ export const launchDraft = internalAction({
     const draft = await ctx.runQuery(internal.builder.getDraft, { id });
     if (!draft) return null;
     const accountId = ACCOUNT_FROM_NAME(draft.accountId);
-    if (!canWrite(accountId)) {
+    // Writable = any account the system user can reach, not the hardcoded
+    // list from 2026-09-06. New accounts (Castello, City Wood, Al Ola, Ardon,
+    // Alkhalil, Atlantis's "Ahmed Salama USD") were being refused. [2026-09-11]
+    if (!(await canWriteLive(accountId))) {
       await ctx.runMutation(internal.builder.patchDraft, {
         id,
         patch: {

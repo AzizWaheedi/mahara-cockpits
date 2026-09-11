@@ -1101,13 +1101,10 @@ export const runSync = internalAction({
       },
     );
 
-    // The launch watch: every client the sheet calls Launching, checked against
-    // ClickUp, Meta and actual spend. Runs on every sync, so a stalled launch
+    // The launch watch: every open launch task on ClickUp, checked against
+    // Client Data, Meta and actual spend. Runs on every sync, so a stalled launch
     // announces itself instead of waiting to be noticed. [aziz, 2026-09-07]
     {
-      const statusCol = col("Status");
-      const nameCol = col("Client Name");
-      const metaCol = col("Ad Account - Meta");
       const spendByAccount = new Map<string, number>();
       for (const [, agg] of byCampaign) {
         const k = normalize(agg.account);
@@ -1123,60 +1120,67 @@ export const runSync = internalAction({
         spend7d: number;
         issues: string[];
       }[] = [];
-      const onboardingClients: { client: string; taskUrl?: string }[] =
-        await ctx.runQuery(internal.sync.onboardingClients, {});
-
-      for (const r of clientRows.slice(1)) {
-        const status = String(r[statusCol] ?? "").trim();
-        const client = String(r[nameCol] ?? "").trim();
-        if (!client) continue;
-        if (!/launching/i.test(status)) continue;
-        const accountName = String(r[metaCol] ?? "").trim() || undefined;
-        const key = accountName ? normalize(accountName) : "";
-        const accountId = accountName
-          ? accountName.match(/^\d+$/)
-            ? accountName
-            : (accountIdByName.get(key) ??
+      // Aziz, 2026-09-11: "don't use the sheet; use whatever is on ClickUp
+      // as a task for new campaign launches as the source of truth." A client
+      // is launching when there is an open "New Client Campaign Launch" task,
+      // full stop. The sheet's Status column is no longer read here.
+      const launching: {
+        client: string;
+        taskUrl?: string;
+        status?: string;
+        accountId?: string;
+        accountName?: string;
+      }[] = await ctx.runQuery(internal.sync.onboardingClients, {});
+      for (const o of launching) {
+        const client = o.client;
+        const key = o.accountName ? normalize(o.accountName) : "";
+        const accountId =
+          o.accountId ??
+          (key
+            ? (accountIdByName.get(key) ??
               [...accountIdByName.entries()].find(
                 ([n]) =>
                   n.length >= 5 && (n.startsWith(key) || key.startsWith(n)),
               )?.[1])
-          : undefined;
-        const task = onboardingClients.find(o => {
-          const a = normalize(o.client);
-          const b = normalize(client);
-          return (
-            a === b || (a.length >= 5 && (a.startsWith(b) || b.startsWith(a)))
-          );
-        });
-        const spend7d = key ? (spendByAccount.get(key) ?? 0) : 0;
+            : undefined);
+        let spend7d = key ? (spendByAccount.get(key) ?? 0) : 0;
+        if (!spend7d) {
+          // No account on the row yet: any spend under the client's own name.
+          const nk = normalize(client);
+          const first = normalize(client.split(/[\s\-_/]+/)[0] ?? "");
+          for (const [campaignKey, agg] of byCampaign) {
+            const acct = normalize(agg.account);
+            const camp = normalize(String(campaignKey));
+            const hit = (x: string) =>
+              x.length >= 5 &&
+              (x.startsWith(nk) ||
+                nk.startsWith(x) ||
+                (first.length >= 5 && x.startsWith(first)));
+            if (hit(acct) || hit(camp)) spend7d += agg.spend;
+          }
+        }
         const issues: string[] = [];
-        if (!accountName) {
+        if (!o.accountName && !o.accountId) {
           issues.push(
             "No ad account in Client Data — nothing can be built until that cell is filled.",
           );
         } else if (!accountId) {
           issues.push(
-            `Client Data says the ad account is "${accountName}", but no Meta account of ours has that name. Either the name is wrong or the account has not been shared with us.`,
-          );
-        }
-        if (!task) {
-          issues.push(
-            'No open "New Client Campaign Launch" task on the board, so nobody has been given the build.',
+            `Client Data says the ad account is "${o.accountName}", but no Meta account of ours has that name. Either the name is wrong or the account has not been shared with us.`,
           );
         }
         if (spend7d > 0) {
           issues.push(
-            `Already spending ($${spend7d.toFixed(0)} in 7 days) while the sheet still says ${status} — set them to Active.`,
+            `Already spending ($${spend7d.toFixed(0)} in 7 days) while the launch task is still open — close the launch task and set the client Active.`,
           );
         }
         watch.push({
           client,
-          sheetStatus: status,
-          accountName,
+          sheetStatus: `launch task: ${o.status || "open"}`,
+          accountName: o.accountName,
           accountId,
-          hasTask: Boolean(task),
-          taskUrl: task?.taskUrl,
+          hasTask: true,
+          taskUrl: o.taskUrl,
           spend7d,
           issues,
         });
@@ -2177,12 +2181,21 @@ export const resolveOnboardingAccounts = internalMutation({
 export const onboardingClients = internalQuery({
   args: {},
   returns: v.array(
-    v.object({ client: v.string(), taskUrl: v.optional(v.string()) }),
+    v.object({
+      client: v.string(),
+      taskUrl: v.optional(v.string()),
+      status: v.optional(v.string()),
+      accountId: v.optional(v.string()),
+      accountName: v.optional(v.string()),
+    }),
   ),
   handler: async ctx =>
     (await ctx.db.query("onboardings").collect()).map(r => ({
       client: r.client,
       taskUrl: r.taskUrl,
+      status: r.status,
+      accountId: r.accountId,
+      accountName: r.accountName,
     })),
 });
 

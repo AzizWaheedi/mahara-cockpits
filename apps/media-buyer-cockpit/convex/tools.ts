@@ -311,7 +311,13 @@ async function dispatch(
       });
     case "mcp_meta_ads_create_campaign": {
       const { ad_account_id, ...rest } = args;
-      return graphPost(`${ad_account_id}/campaigns`, graphParams(rest));
+      // Meta rejects a campaign create without this flag ("Invalid parameter",
+      // subcode 4834011). Every launch from the cockpit failed on it until
+      // 2026-09-11. Ad-set budgets stay per ad set, as the builder assumes.
+      return graphPost(`${ad_account_id}/campaigns`, {
+        is_adset_budget_sharing_enabled: "false",
+        ...graphParams(rest),
+      });
     }
     case "mcp_meta_ads_create_ad_set": {
       const { ad_account_id, ...rest } = args;
@@ -443,7 +449,9 @@ export async function graph<T = any>(
   const res = await fetch(`https://graph.facebook.com/v21.0/${path}?${qs}`);
   const json = await res.json();
   if (json.error) {
-    throw new Error(`Meta ${json.error.code}: ${json.error.message}`);
+    throw new Error(
+      `Meta ${json.error.code}${json.error.error_subcode ? `/${json.error.error_subcode}` : ""}: ${json.error.message}${json.error.error_user_msg ? ` — ${json.error.error_user_msg}` : ""}${json.error.error_user_title ? ` (${json.error.error_user_title})` : ""}`,
+    );
   }
   return json as T;
 }
@@ -492,7 +500,9 @@ export async function graphPost<T = any>(
   });
   const json = await res.json();
   if (json.error) {
-    throw new Error(`Meta ${json.error.code}: ${json.error.message}`);
+    throw new Error(
+      `Meta ${json.error.code}${json.error.error_subcode ? `/${json.error.error_subcode}` : ""}: ${json.error.message}${json.error.error_user_msg ? ` — ${json.error.error_user_msg}` : ""}${json.error.error_user_title ? ` (${json.error.error_user_title})` : ""}`,
+    );
   }
   return json as T;
 }

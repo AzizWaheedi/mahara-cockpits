@@ -80,7 +80,7 @@ export function Onboardings({
                 <span className="font-semibold">{w.client}</span>
                 <span className="text-muted-foreground">
                   {" "}
-                  · sheet says {w.sheetStatus}
+                  · {w.sheetStatus}
                   {w.accountId ? ` · account ${w.accountId}` : ""}
                 </span>
                 <ul className="ml-3 mt-0.5 list-disc">

@@ -1,4 +1,8 @@
 import { v } from "convex/values";
+
+// biome-ignore lint/suspicious/noExplicitAny: issue rows
+type Any = any;
+
 import { internal } from "./_generated/api";
 import {
   internalAction,
@@ -6,7 +10,7 @@ import {
   internalQuery,
 } from "./_generated/server";
 import { authenticatedQuery } from "./functions";
-import { graph } from "./tools";
+import { callTool, graph, unwrap } from "./tools";
 
 /**
  * Tracking audit.
@@ -118,6 +122,14 @@ export const audit = internalAction({
     }
 
     const out = await ctx.runMutation(internal.tracking.store, { rows });
+    // Aziz, 2026-09-11: "can you just backlog it?" One ClickUp task a week on
+    // the Marketing / ADs list carries the per-client list; the cockpit only
+    // shows a quiet count.
+    try {
+      await ctx.runAction(internal.tracking.backlogTask, {});
+    } catch (e) {
+      console.warn(`tracking backlog task: ${String(e).slice(0, 120)}`);
+    }
     return { checked, issues: out.found };
   },
 });
@@ -141,6 +153,72 @@ export const issues = authenticatedQuery({
       byClient.set(r.client, list);
     }
     return [...byClient]
+      .map(([client, ads]) => ({ client, count: ads.length, ads }))
+      .sort((a, b) => b.count - a.count);
+  },
+});
+
+/** Week key like 2026-W37, Kuwait time. */
+function weekKey(): string {
+  const d = new Date(Date.now() + 3 * 3600_000);
+  const jan1 = Date.UTC(d.getUTCFullYear(), 0, 1);
+  const week = Math.ceil(
+    ((d.getTime() - jan1) / 86400_000 + new Date(jan1).getUTCDay() + 1) / 7,
+  );
+  return `${d.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+}
+
+export const backlogTask = internalAction({
+  args: {},
+  returns: v.any(),
+  handler: async ctx => {
+    const signature = `tracking-backlog:${weekKey()}`;
+    const last = await ctx.runQuery(internal.smoke.alerted, { signature });
+    if (last) return { skipped: "already filed this week" };
+    const rows: Any[] = await ctx.runQuery(
+      internal.tracking.issuesInternal,
+      {},
+    );
+    const total = rows.reduce((n: number, r: Any) => n + r.count, 0);
+    if (!total) return { skipped: "nothing to file" };
+    const lines = rows.map(
+      (r: Any) =>
+        `• ${r.client}: ${r.count} (${[...new Set(r.ads.map((a: Any) => a.issue))].join(", ")})`,
+    );
+    const created: Any = unwrap(
+      await callTool("pd_clickup_proxy_post", {
+        url: "https://api.clickup.com/api/v2/list/901816723196/task",
+        json_body: {
+          name: `Tracking backlog · ${total} ads across ${rows.length} clients without UTM strings or a lead form (${weekKey()})`,
+          description: [
+            "Standing hygiene backlog from the Media Buyer Cockpit, refreshed weekly. The buildout checklist requires the UTM string on every ad and a lead form on every ON_AD ad set.",
+            "",
+            ...lines,
+          ].join("\n"),
+          priority: 4,
+        },
+      }),
+    );
+    await ctx.runMutation(internal.smoke.remember, {
+      signature,
+      text: String(created?.url ?? ""),
+    });
+    return { filed: created?.url, total };
+  },
+});
+
+export const issuesInternal = internalQuery({
+  args: {},
+  returns: v.array(v.any()),
+  handler: async ctx => {
+    const rows = await ctx.db.query("trackingIssues").collect();
+    const byClient = new Map<string, Any[]>();
+    for (const r of rows) {
+      const list = byClient.get(r.client) ?? [];
+      list.push({ adName: r.adName, issue: r.issue });
+      byClient.set(r.client, list);
+    }
+    return [...byClient.entries()]
       .map(([client, ads]) => ({ client, count: ads.length, ads }))
       .sort((a, b) => b.count - a.count);
   },

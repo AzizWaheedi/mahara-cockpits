@@ -17,16 +17,17 @@ export function TrackingIssues() {
   const total = rows.reduce((n, r) => n + r.count, 0);
 
   return (
-    <section className="mb-4 rounded-xl border p-3 callout-warn">
+    <section className="mb-4 rounded-xl border p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <div className="text-[12px] font-bold uppercase tracking-wide">
-            Tracking
+          <div className="text-[12px] font-bold uppercase tracking-wide text-muted-foreground">
+            Tracking backlog
           </div>
-          <p className="text-[13px]">
-            {total} tracking gap{total === 1 ? "" : "s"} across {rows.length}{" "}
-            client{rows.length === 1 ? "" : "s"} — mostly missing UTM strings,
-            which the buildout checklist requires on every ad.
+          <p className="text-[13px] text-muted-foreground">
+            {total} ad{total === 1 ? "" : "s"} across {rows.length} client
+            {rows.length === 1 ? "" : "s"} without UTM strings or a lead form.
+            Backlog, not today's work: a ClickUp task on the ads board carries
+            the list, refreshed weekly.
           </p>
         </div>
         <Button
