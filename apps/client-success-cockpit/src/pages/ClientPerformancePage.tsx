@@ -1269,6 +1269,10 @@ function RangePicker({
 
 function Profile({ name, onBack }: { name: string; onBack: () => void }) {
   const p = useQuery(api.csm.clientProfile, { clientName: name });
+  // Hooks before any early return, so their order never changes.
+  const [range, setRange] = useState<RangeKey>("month");
+  const rv = useMemo(() => rangeMetrics(p ?? {}, range), [p, range]);
+  const months = useMemo(() => monthsAvailable(p ?? {}), [p]);
   if (p === undefined)
     return (
       <div className="p-6 text-sm text-muted-foreground">Loading {name}…</div>
@@ -1280,14 +1284,11 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
       </div>
     );
   const perf = p.performance ?? {};
-  const [range, setRange] = useState<RangeKey>("month");
-  const rv = useMemo(() => rangeMetrics(p, range), [p, range]);
   // "This month" keeps the profile's own month figures (they carry the sheet's
   // extra fields); every other range is summed from the daily grain.
   const custom = range !== "month";
   const m: Any = custom ? rv : (perf.month ?? {});
   const l: Any = custom ? {} : (perf.lastMonth ?? {});
-  const months = useMemo(() => monthsAvailable(p), [p]);
   const all = perf.allTime ?? {};
   const stale: Any[] = perf.stale ?? [];
   return (
