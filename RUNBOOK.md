@@ -38,6 +38,17 @@ last error and this fix next to it.
 
 Set a variable: `cd apps/<app> && bunx convex env set --prod NAME value`.
 
+## Scheduled jobs
+
+Every cron (the sync, the feeds, the outbox drains, the Hermes relay, the
+smoke check, the report writer, the board writeback, the tracking audit, the
+weekly playbook) runs through one wrapper that records the outcome. The admin
+view lists each job with its last run and error. Three failures in a row file
+a fix job for Hermes and send one Slack line; a job that has not run for three
+times its interval is flagged by the smoke check. "Not running" for every job
+at once means the media buyer deployment itself is down: check the Convex
+dashboard, then `scripts/ship.sh media-buyer`.
+
 ## What never needs a person
 
 - Rate limits: every Google, ClickUp and Meta call waits and retries.

@@ -527,13 +527,26 @@ export const feedComms = internalAction({
         for (const app of ["csm", "creative"] as const) {
           let stored = 0;
           for (let i = 0; i < Math.max(threads.length, 1); i += 25) {
-            const r = await bridge(app, "storeWhatsapp", {
-              threads: threads.slice(i, i + 25),
-              append: i > 0,
-              // A successful read that finds nothing still replaces what
-              // was there: the old number's threads must not linger.
-              clear: i === 0,
-            });
+            // A chunk that fails is retried; the receiving side replaces rows
+            // by chatId, so a retry never duplicates a thread.
+            let r: Any;
+            for (let attempt = 0; ; attempt++) {
+              try {
+                r = await bridge(app, "storeWhatsapp", {
+                  threads: threads.slice(i, i + 25),
+                  append: i > 0,
+                  // A successful read that finds nothing still replaces what
+                  // was there: the old number's threads must not linger.
+                  clear: i === 0,
+                });
+                break;
+              } catch (e) {
+                if (attempt >= 2) throw e;
+                await new Promise(res =>
+                  setTimeout(res, 2_000 * (attempt + 1)),
+                );
+              }
+            }
             stored += Number(r?.threads ?? 0);
           }
           report[`${app}.whatsapp`] = { threads: stored };
