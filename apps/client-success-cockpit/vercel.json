@@ -16,6 +16,10 @@
       "destination": "/apple-touch-icon.png"
     },
     {
+      "source": "/client-success/favicon.ico",
+      "destination": "/favicon.ico"
+    },
+    {
       "source": "/client-success/favicon.png",
       "destination": "/favicon.png"
     },

@@ -24,7 +24,7 @@ export function portalUrl(): string {
   if (env) return env.replace(/\/$/, "");
   // Proxied under the portal's domain: the portal is this origin.
   if (!OWN_HOSTS.includes(window.location.host)) return window.location.origin;
-  return "https://mahara-media-buyer.vercel.app";
+  return "https://cockpit.maharamedia.com";
 }
 
 const NEXT_KEY = "portal_next";

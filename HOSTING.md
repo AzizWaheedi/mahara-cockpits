@@ -7,7 +7,7 @@ they are hosted now and what was changed to get there. Started 2026-09-09.
 
 | App | Frontend (Vercel) | Convex prod deployment | Convex dev deployment |
 |---|---|---|---|
-| Media buyer | https://mahara-media-buyer.vercel.app | `adorable-seahorse-418` → https://adorable-seahorse-418.convex.cloud | `wonderful-woodpecker-707` |
+| Media buyer | https://cockpit.maharamedia.com | `adorable-seahorse-418` → https://adorable-seahorse-418.convex.cloud | `wonderful-woodpecker-707` |
 | Client success | https://mahara-client-success.vercel.app | `impressive-dinosaur-375` → https://impressive-dinosaur-375.convex.cloud | `successful-gnu-925` |
 | Creative director | https://mahara-creative-director.vercel.app | `colorful-wombat-644` → https://colorful-wombat-644.convex.cloud | `diligent-koala-992` |
 
@@ -239,7 +239,7 @@ drained within a minute and sent through the CRM
 
 ## The portal (one sign-in, one domain)
 
-`https://mahara-media-buyer.vercel.app` is the portal. Everyone signs in there
+`https://cockpit.maharamedia.com` is the portal. Everyone signs in there
 with one email and password; the portal routes them to their cockpit:
 
 - media buyer pages live on the portal itself (`/dashboard`, `/ads`, ...)
