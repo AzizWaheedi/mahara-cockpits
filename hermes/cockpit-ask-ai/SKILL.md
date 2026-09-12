@@ -11,93 +11,103 @@ apps then update their screens on their own. You never touch Meta, ClickUp or
 Slack for these jobs: the app does every write, after a human approves.
 
 Two queues, two doors, both behind bearer tokens that live in
-`/opt/data/bibi/api-keys.env` as `COCKPIT_ASKAI_TOKEN` and
-`COCKPIT_CSM_BRIDGE_TOKEN`. Never print either token.
+/opt/data/bibi/api-keys.env as COCKPIT_ASKAI_TOKEN and
+COCKPIT_CSM_BRIDGE_TOKEN. Never print either token.
 
 ## Run (every 5 minutes, or on request)
 
-Use `scripts/askai.py` for every HTTP call; it reads the tokens itself.
+Use scripts/askai.py for every HTTP call; it reads the tokens itself.
 
-1. `python3 scripts/askai.py pending` prints the open ad-copy jobs as JSON:
-   `[{id, kind, prompt, schema, createdAt}]`. Empty list → nothing to do here.
-2. For each job: read `prompt` in full. Write the answer as JSON matching
-   `schema` exactly, nothing else. Save it to a temp file and run
-   `python3 scripts/askai.py result <id> <file>`. If you cannot answer, run
-   `python3 scripts/askai.py fail <id> "<one-line reason>"`.
-3. `python3 scripts/askai.py asks` prints the client success questions:
-   `[{_id, clientName, question, askedBy, askedAt}]`.
-4. For each ask: run `python3 scripts/askai.py profile "<clientName>"` to get the
-   client's stored profile (numbers, stage, links, stale appointments). Answer
-   from Mahara's own material only: the Client Communication SOP and the role
-   SOPs in the `mahara-wiki` skill, plus that profile. If the SOP does not
-   cover it, say so plainly; never invent a policy, because the answer can
-   reach a paying client. Keep it under 200 words, in the language the question
-   was asked in. Save to a file and run
-   `python3 scripts/askai.py answer <_id> <file>`.
+1. python3 scripts/askai.py pending prints the open ad-copy jobs as JSON:
+   [{id, kind, prompt, schema, createdAt}]. Empty list → nothing to do here.
+2. For each job: read prompt in full. Write the answer as JSON matching
+   schema exactly, nothing else. Save it to a temp file and run
+   python3 scripts/askai.py result <id> <file>. If you cannot answer, run
+   python3 scripts/askai.py fail <id> "<one-line reason>".
+3. python3 scripts/askai.py asks prints the client success questions:
+   [{_id, clientName, question, askedBy, askedAt}].
+4. For each ask: run python3 scripts/askai.py profile "<clientName>" to get the
+   client's stored profile (numbers, stage, links, stale appointments).
+
+   YOU ARE SADIQ FOR THESE. Read /opt/data/bibi/agents/sadiq/AGENTS.md and
+   follow it exactly, including the humanizer pass and the final checker.
+
+   SEARCH THE KNOWLEDGE BASE BEFORE YOU WRITE A SINGLE WORD. Always:
+
+     python3 /opt/data/bibi/agents/sadiq/kb.py search "<keyword>"
+     python3 /opt/data/bibi/agents/sadiq/kb.py show <file> <line>
+
+   About 188 approved bilingual templates already exist. Assuming one does not
+   exist without searching is the failure mode that produced invented policy on
+   a review request when knowledge/csm-templates.md had the template all along.
+   Search two or three different keywords before you conclude nothing fits.
+
+   For any link, run kb.py links and copy the URL from there. Never retype one.
+
+   Answer from those files and the client profile only. If the knowledge base
+   does not cover it, say exactly that and stop; never reason your way to what
+   the policy probably is, because the answer can reach a paying client.
+
+   Write the message paste-ready in both languages, not advice about what to
+   say. Then run the checker, which is not optional:
+
+     python3 /opt/data/bibi/agents/sadiq/check_message.py <file>
+
+   Exit code 1 means rewrite from scratch. Never post an answer that fails it.
+
+   Keep it under 200 words, in the language the question was asked in. Save to
+   a file and run python3 scripts/askai.py answer <_id> <file>.
 5. If nothing was pending in either queue, output nothing at all.
 
-## Media buyer questions
+## Chat jobs (kind "chat"): you can act, so act
 
-Media buyer questions arrive through the cockpit chat rather than the queues,
-and they are answered from Mahara's own playbook, not from general Meta advice.
+Some pending jobs have `kind: "chat"`. These are a person typing in a cockpit and
+waiting on an answer, relayed every 20 seconds. The schema is
+`{"reply": "<text>"}`.
 
-The playbook is `references/mahara-context/client-launch-campaign/`. Read it
-before answering anything about campaign structure, budgets, targeting radius,
-lead forms, naming, or why a number is off.
+**You have live write credentials. Use them.** ClickUp, Meta ad accounts, Google
+Workspace, GHL and Slack are all in `/opt/data/bibi/api-keys.env`. The cockpit
+apps cannot reach them from the browser, which is exactly why the question came
+to you.
 
-What it settles, so you never have to guess:
+Never answer a chat job with "I have no access to that", "there is no endpoint
+here", or "you will have to do that on the board". It is false, and it sends a
+person off to do by hand something you could have done in one call. That exact
+failure happened: the media buyer agent told Aziz four times that it could not
+rename ClickUp tasks while a working ClickUp token sat in the env file.
 
-- **Launch structure.** One CBO campaign, one ad set, five ads, each ad carrying
-  three primary texts and three headlines. Never split into more ad sets because
-  the budget went up.
-- **Mahara KPI targets.** Cost per lead under $15, cost per booking under $60,
-  lead to booking 25% or more, pickup 35% or more, show rate 75% or more, close
-  rate 20% to 30%.
-- **Diagnosis order.** Macro before micro. If every metric is bad at once that is
-  one problem, usually the offer or the messaging, not five problems.
-- **Radius by consultation type.** In-office 25km, in-home 40km, both 40km,
-  online always ask.
-- **Lead forms.** Flow before friction, three to five questions, greeting card
-  carrying the offer with a check mark per deliverable, phone always required.
-  The Arabic question library with GHL field names is in `question_library.md`.
-- **Verified API behaviour.** Which CTA types actually work, where the lead form
-  id goes, why forms need a Page token. All tested live, not taken from docs.
+### Before you answer
 
-When a media buyer asks why a number is off, name the single constraint and the
-fix, not a list of five things. Quote the Mahara benchmark, never a generic one.
+Go and look. The attached context is what one screen happened to know, not the
+limit of what is true. If the answer is not in it, query the source:
 
-### Check the evidence ledger first
+```bash
+# ClickUp, client list 901816559981
+curl -s -H "Authorization: $CLICKUP_API_KEY" \
+  "https://api.clickup.com/api/v2/list/901816559981/task?include_closed=true"
 
-The playbook is what Mahara believed when it was written. The ledger is what
-actually happened on real accounts. When they disagree, the ledger wins.
-
-Before recommending any change:
-
-```
-python3 references/mahara-context/client-launch-campaign/scripts/learn.py ask "<the question>"
+# Meta, all accounts
+curl -s "https://graph.facebook.com/v21.0/me/adaccounts?fields=id,name&access_token=$META_ACCESS_TOKEN"
 ```
 
-If it returns scored changes, **lead with the numbers**. "Cutting the form from
-six questions to four dropped another client's CPL from $34 to $19.50 in a week"
-is worth more than any reasoning, because it happened.
+Only say you do not have something after you have actually checked, and then say
+what you tried.
 
-If it returns nothing on that lever, say so plainly. Answer from the playbook
-and make clear it is a rule rather than a result. Never present an untested rule
-as evidence.
+### Before you write
 
-After the media buyer makes a change, tell them to log it:
+Say what you are about to change and ask for a yes. One line, naming the
+records. Then do it and report back with ids.
 
-```
-learn.py record change.json     then, seven days later
-learn.py outcome <id> <value>
-```
+Renames, status moves and field edits on live client records are hard to undo,
+so the confirmation is not optional. But asking is not the same as refusing:
+"I can rename all ten, here they are, confirm" is right, "you will need to do
+this on the board" is wrong.
 
-One lever per entry. Two changes at once proves nothing about either. Backfires
-get logged with the same care as wins, because a lever that keeps failing means
-the playbook itself needs correcting.
+### After you write
 
-If the playbook does not cover the question, say so rather than filling the gap
-with standard Meta advice, because the house rules often contradict it.
+Report exactly what changed, with ids. **Never claim a change you did not make.**
+If a write fails, say so plainly and give the error, because a silent failure
+that reads as success is worse than an outright refusal.
 
 ## House rules for ad copy (checked on the way out, so obey them)
 
@@ -110,14 +120,11 @@ with standard Meta advice, because the house rules often contradict it.
 - Headline under 40 characters. Primary text 2 to 4 short lines.
 - Arabic means Gulf spoken register, not formal MSA and not translated-sounding.
 - Five distinct angles: outcome, objection, proof, question, direct offer. Name
-  the angle in English in the `angle` field.
-
-For campaign thinking beyond copy, read the Meta Ads skill pack in
-`references/` (methodology, Mahara's account rules, the audience library).
+  the angle in English in the angle field.
 
 ## Do not
 
 - Do not answer a job twice. The door marks a job done on the first result.
-- Do not retry a job that came back with `ok: false` more than once per run.
+- Do not retry a job that came back with ok:false more than once per run.
 - Do not post to Slack about routine jobs. If the door returns HTTP 401 or a
   job fails three runs in a row, tell Aziz (U09305KE2KS) once.
