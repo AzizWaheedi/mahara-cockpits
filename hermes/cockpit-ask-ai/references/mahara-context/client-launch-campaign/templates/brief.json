@@ -1,0 +1,60 @@
+{
+  "_comment": "Copy this, fill it, run: python3 scripts/launch.py brief.json",
+
+  "client": "Monshaat Khaldaa",
+  "ad_account_id": "act_1275190574533155",
+  "page_id": "1215892868273680",
+  "lead_form_id": "1028199336420036",
+  "daily_budget_usd": 25,
+  "cta": "BOOK_TRAVEL",
+  "age_min": 25,
+  "age_max": 65,
+  "special_ad_categories": [],
+
+  "_consult_note": "in-office 25km, in-home 40km, both 40km, online ASK the client",
+  "consultation_type": "in-office",
+
+  "geo": {
+    "country": "SA",
+    "radius_km": 40,
+    "cities": [
+      { "name": "Jeddah", "radius": 42 },
+      { "name": "Mecca", "radius": 37 },
+      { "name": "Taif", "radius": 40 }
+    ],
+    "excluded_cities": []
+  },
+
+  "names": {
+    "campaign": "Monshaat Khaldaa | LEADS | CBO | 2026-09-10",
+    "adset": "Monshaat Khaldaa | broad | jeddah-makkah-taif | office | $25D"
+  },
+
+  "assets_dir": "/opt/data/bibi/workspace/clients/monshaat-khaldaa/ads",
+
+  "ads": [
+    {
+      "name": "01 | awareness | commercial-owner",
+      "image": "01-awareness-commercial.png",
+      "description": "مكة وجدة والطائف",
+      "_note": "3 variants: a = emojis, b = clean same length, c = long form",
+      "variants": [
+        {
+          "style": "a",
+          "headline": "headline one",
+          "primary": "mid-short body with emojis used as structure"
+        },
+        {
+          "style": "b",
+          "headline": "headline two",
+          "primary": "mid-short body, no emojis, same length as a"
+        },
+        {
+          "style": "c",
+          "headline": "headline three",
+          "primary": "long form body that teaches something before it asks"
+        }
+      ]
+    }
+  ]
+}
