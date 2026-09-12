@@ -406,6 +406,90 @@ export function AdminPage() {
         </CardContent>
       </Card>
 
+      {/* The clockwork: every job's last run and whether it is failing. */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Activity className="size-4 text-teal-600" /> Scheduled jobs
+            <span className="ml-2 text-xs font-normal text-muted-foreground">
+              A job that fails three times in a row files a fix job for Hermes
+              and sends one message. One that stops running is flagged within
+              the hour.
+            </span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="overflow-x-auto p-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Job</TableHead>
+                <TableHead>Every</TableHead>
+                <TableHead>Last run</TableHead>
+                <TableHead>Took</TableHead>
+                <TableHead>State</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {(overview?.scheduled ?? []).length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="text-muted-foreground">
+                    No job has reported yet.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                (overview.scheduled as Any[]).map(j => {
+                  const late =
+                    Date.now() - j.at > Math.max(3 * j.everyMin, 45) * 60_000;
+                  return (
+                    <TableRow key={j.job}>
+                      <TableCell className="font-medium">{j.job}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {j.everyMin >= 1440
+                          ? `${Math.round(j.everyMin / 1440)} d`
+                          : j.everyMin >= 60
+                            ? `${Math.round(j.everyMin / 60)} h`
+                            : `${j.everyMin} min`}
+                      </TableCell>
+                      <TableCell
+                        className={
+                          late ? "text-red-600" : "text-muted-foreground"
+                        }
+                      >
+                        {ago(j.at)}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {j.ms >= 1000
+                          ? `${Math.round(j.ms / 1000)} s`
+                          : `${j.ms} ms`}
+                      </TableCell>
+                      <TableCell>
+                        {j.ok && !late ? (
+                          <span className="text-emerald-600">ok</span>
+                        ) : late ? (
+                          <span className="text-red-600">not running</span>
+                        ) : (
+                          <span className="text-red-600" title={j.error}>
+                            failing ({j.streak} in a row)
+                          </span>
+                        )}
+                        {!j.ok && j.error ? (
+                          <div
+                            className="max-w-md truncate font-mono text-[11px] text-muted-foreground"
+                            title={j.error}
+                          >
+                            {j.error}
+                          </div>
+                        ) : null}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
       <section className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader className="pb-2">
