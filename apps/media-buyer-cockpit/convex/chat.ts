@@ -393,11 +393,9 @@ export const failLegacyQueued = internalMutation({
         !row.deliveredAt &&
         row.at < cutoff
       ) {
-        await ctx.db.patch(row._id, {
-          status: "failed",
-          pending: false,
-          error: "not delivered: queued before the direct Slack relay existed",
-        });
+        // The row has no error field; "failed" with pending cleared is what the
+        // thread reads, and the reason lives in this comment.
+        await ctx.db.patch(row._id, { status: "failed", pending: false });
         n++;
       }
     }

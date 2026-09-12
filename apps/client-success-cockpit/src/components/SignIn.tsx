@@ -23,7 +23,7 @@ export function SignIn() {
       <Card variant="elevated">
         <CardContent className="pt-6">
           <form
-            key={typeof step === "string" ? step : step.type}
+            key={JSON.stringify(step)}
             onSubmit={async e => {
               e.preventDefault();
               setError("");
@@ -101,7 +101,7 @@ export function SignIn() {
             </p>
           </div>
           <form
-            key={typeof step === "string" ? step : step.type}
+            key={JSON.stringify(step)}
             onSubmit={async e => {
               e.preventDefault();
               setError("");
@@ -176,7 +176,7 @@ export function SignIn() {
             </p>
           </div>
           <form
-            key={typeof step === "string" ? step : step.type}
+            key={JSON.stringify(step)}
             onSubmit={e => {
               e.preventDefault();
               setError("");
@@ -230,7 +230,7 @@ export function SignIn() {
           </p>
         </div>
         <form
-          key={typeof step === "string" ? step : step.type}
+          key={JSON.stringify(step)}
           onSubmit={async e => {
             e.preventDefault();
             setError("");

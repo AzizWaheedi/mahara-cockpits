@@ -23,6 +23,9 @@ import { fill, TEMPLATES } from "@/lib/creativeTemplates";
 import { api } from "../../convex/_generated/api";
 import { ScriptingCalendar } from "./CalendarPage";
 
+// biome-ignore lint/suspicious/noExplicitAny: the snapshot is the screen's own shape
+type Any = any;
+
 /**
  * Creative director cockpit.
  *
@@ -143,7 +146,7 @@ function SyncHealth() {
 }
 
 function Creative({ view }: { view: View }) {
-  const snap = useQuery(api.creative.snapshot, {});
+  const snap = useQuery(api.creative.snapshot, {}) as Any;
   const [showAllBrand, setShowAllBrand] = useState(false);
 
   if (snap === undefined) {
@@ -223,8 +226,8 @@ function Creative({ view }: { view: View }) {
             >
               <div className="space-y-1.5">
                 {snap.videoJobs
-                  .filter(j => j.overdueDays > 0)
-                  .map(j => (
+                  .filter((j: Any) => j.overdueDays > 0)
+                  .map((j: Any) => (
                     <a
                       key={j.taskId}
                       href={j.url ?? "#"}
@@ -251,7 +254,7 @@ function Creative({ view }: { view: View }) {
                       </span>
                     </a>
                   ))}
-                {snap.overduePosts.slice(0, 4).map(p => (
+                {snap.overduePosts.slice(0, 4).map((p: Any) => (
                   <a
                     key={p.taskId}
                     href={p.url ?? "#"}
@@ -291,7 +294,7 @@ function Creative({ view }: { view: View }) {
             sub="the doc is what counts, not the task. Rows marked done are already written and can be closed"
           >
             <div className="space-y-1.5">
-              {brandShown.map(b => (
+              {brandShown.map((b: Any) => (
                 <a
                   key={b.taskId}
                   href={b.url ?? "#"}
@@ -355,7 +358,7 @@ function Creative({ view }: { view: View }) {
           sub="one task per client, open it in ClickUp for the steps"
         >
           <div className="divide-y rounded-lg border">
-            {snap.journeys.map(j => (
+            {snap.journeys.map((j: Any) => (
               <a
                 key={j.taskId}
                 href={j.url ?? "#"}
@@ -382,7 +385,7 @@ function Creative({ view }: { view: View }) {
             sub={`${snap.staleScripts} sitting 3+ days`}
           >
             <div className="space-y-1.5">
-              {snap.scripts.slice(0, 8).map(s => (
+              {snap.scripts.slice(0, 8).map((s: Any) => (
                 <a
                   key={s.taskId}
                   href={s.url ?? "#"}
@@ -432,7 +435,7 @@ function Creative({ view }: { view: View }) {
                   Nothing open in the video pipeline.
                 </p>
               )}
-              {snap.editors.map(e => (
+              {snap.editors.map((e: Any) => (
                 <div
                   key={e.editor}
                   className="flex items-center justify-between rounded-lg border p-2.5 text-[13px]"
@@ -478,9 +481,9 @@ function Creative({ view }: { view: View }) {
                   {snap.uncovered.length === 1 ? "" : "s"} with nothing
                   scheduled from today:
                 </strong>{" "}
-                {snap.uncovered.map(u => u.client).join(", ")}. A paying social
-                client with an empty calendar is a churn risk before they ever
-                complain.
+                {snap.uncovered.map((u: Any) => u.client).join(", ")}. A paying
+                social client with an empty calendar is a churn risk before they
+                ever complain.
               </div>
             ) : (
               <p className="text-[13px] text-muted-foreground">
@@ -510,7 +513,7 @@ function Creative({ view }: { view: View }) {
                       No ad has enough spend yet to call a winner.
                     </p>
                   )}
-                  {snap.winners.map((w, i) => (
+                  {snap.winners.map((w: Any, i: Any) => (
                     <div
                       key={i}
                       className="rounded-lg border p-2 text-[13px] callout-good"
@@ -537,7 +540,7 @@ function Creative({ view }: { view: View }) {
                   </p>
                 )}
                 <div className="space-y-1.5">
-                  {snap.fatiguing.slice(0, 5).map((f, i) => (
+                  {snap.fatiguing.slice(0, 5).map((f: Any, i: Any) => (
                     <div
                       key={i}
                       className={`rounded-lg border p-2 text-[13px] ${
@@ -573,8 +576,8 @@ function Checklist({
   checks: any[];
 }) {
   const toggle = useMutation(api.creative.toggleCheck);
-  const rows = checks.filter(c => c.phase === phase);
-  const done = rows.filter(c => c.done).length;
+  const rows = checks.filter((c: Any) => c.phase === phase);
+  const done = rows.filter((c: Any) => c.done).length;
 
   return (
     <Section
@@ -583,7 +586,7 @@ function Checklist({
       sub={`${done}/${rows.length} done`}
     >
       <div className="space-y-1.5">
-        {rows.map(c => (
+        {rows.map((c: Any) => (
           <button
             type="button"
             key={c.key}
@@ -644,10 +647,10 @@ function Touchpoints({
     <Section
       icon={MessageSquare}
       title="Owed a message today"
-      sub={`${rows.filter(r => !r.done).length} outstanding`}
+      sub={`${rows.filter((r: Any) => !r.done).length} outstanding`}
     >
       <div className="space-y-2">
-        {rows.map(r => (
+        {rows.map((r: Any) => (
           <TouchpointRow
             key={r.client}
             r={r}
@@ -674,9 +677,11 @@ function AllTemplates({
 }) {
   const [open, setOpen] = useState(false);
   const [client, setClient] = useState("");
-  const names: string[] = [...new Set(roster.map(r => r.client as string))]
+  const names: string[] = [
+    ...new Set(roster.map((r: Any) => r.client as string)),
+  ]
     .filter(Boolean)
-    .sort((a, b) => a.localeCompare(b));
+    .sort((a: Any, b: Any) => a.localeCompare(b));
 
   return (
     <Section
@@ -701,14 +706,14 @@ function AllTemplates({
               className="rounded border bg-transparent px-2 py-1 text-[13px]"
             >
               <option value="">nobody in particular</option>
-              {names.map(n => (
+              {names.map((n: Any) => (
                 <option key={n} value={n}>
                   {n}
                 </option>
               ))}
             </select>
           </div>
-          {TEMPLATES.map(t => (
+          {TEMPLATES.map((t: Any) => (
             <TemplateCard key={t.id} t={t} client={client || undefined} />
           ))}
           <p className="text-[12px] text-muted-foreground">
@@ -739,11 +744,11 @@ function TouchpointRow({
   const [open, setOpen] = useState(false);
   const [pick, setPick] = useState<string>(r.templateId ?? TEMPLATES[0].id);
   const [lang, setLang] = useState<"ar" | "en">("ar");
-  const t = TEMPLATES.find(x => x.id === pick) ?? TEMPLATES[0];
+  const t = TEMPLATES.find((x: Any) => x.id === pick) ?? TEMPLATES[0];
   const [text, setText] = useState(fill(t.ar, r.client));
 
   const swap = (id: string, l: "ar" | "en") => {
-    const next = TEMPLATES.find(x => x.id === id) ?? TEMPLATES[0];
+    const next = TEMPLATES.find((x: Any) => x.id === id) ?? TEMPLATES[0];
     setPick(id);
     setLang(l);
     setText(fill(l === "ar" ? next.ar : next.en, r.client));
@@ -794,7 +799,7 @@ function TouchpointRow({
               onChange={e => swap(e.target.value, lang)}
               className="rounded border bg-transparent px-2 py-1 text-[12px]"
             >
-              {TEMPLATES.map(x => (
+              {TEMPLATES.map((x: Any) => (
                 <option key={x.id} value={x.id}>
                   {x.label}
                 </option>
@@ -923,7 +928,7 @@ function ClientProfiles({
       sub="worst first — most open, oldest, latest"
     >
       <div className="space-y-1.5">
-        {rows.map(r => (
+        {rows.map((r: Any) => (
           <div key={r.client} className="rounded-lg border">
             <button
               type="button"
@@ -1257,12 +1262,12 @@ function EndOfDay({
         sub="saved in the cockpit only: it does not reach the EOD sheet yet, so still submit the EOD form"
       >
         <div className="space-y-2">
-          {EOD_QUESTIONS.map(q => (
+          {EOD_QUESTIONS.map((q: Any) => (
             <div key={q.key} className="block">
               <span className="text-[12px] font-semibold">{q.label}</span>
               {q.choices ? (
                 <div className="mt-1 flex gap-1.5">
-                  {q.choices.map(ch => (
+                  {q.choices.map((ch: Any) => (
                     <Button
                       key={ch}
                       size="sm"
