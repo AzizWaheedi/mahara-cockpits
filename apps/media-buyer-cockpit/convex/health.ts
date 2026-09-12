@@ -1,7 +1,11 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { ActionCtx } from "./_generated/server";
-import { internalMutation, internalQuery } from "./_generated/server";
+import {
+  internalAction,
+  internalMutation,
+  internalQuery,
+} from "./_generated/server";
 
 /**
  * The health ledger: one row per outside system the cockpits depend on.
@@ -86,6 +90,11 @@ export const RUNBOOK: Record<
     label: "Resend (email)",
     fix: "Set RESEND_API_KEY and AUTH_EMAIL_FROM on all three deployments; the sender domain must be verified in Resend.",
     owner: "Aziz",
+  },
+  jobs: {
+    label: "Scheduled jobs",
+    fix: "A job stopped running or keeps throwing. Hermes already has a fix job with the error. If nothing changes within an hour: scripts/ship.sh media-buyer, then read the Convex logs for the job name.",
+    owner: "Hermes or Aziz",
   },
   hermes: {
     label: "Hermes (AI agent)",
@@ -269,4 +278,137 @@ export const sources = internalQuery({
       };
     });
   },
+});
+
+// --- Scheduled jobs ---------------------------------------------------------------------
+
+/**
+ * Every cron goes through `runJob`, so a job that starts throwing (a code
+ * bug, a dead dependency) is a row here with its error, a fix job for Hermes
+ * on the third failure, and an alert when it has not run at all. Before this
+ * a crashing cron only showed in the Convex logs, which nobody reads.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: function references of mixed shapes
+const JOBS: Record<string, { ref: any; everyMin: number }> = {
+  sync: { ref: internal.sync.runSync, everyMin: 10 },
+  "market plays": {
+    ref: internal.marketCollect.collectPlays,
+    everyMin: 7 * 24 * 60,
+  },
+  "assist queue": { ref: internal.assistWorker.run, everyMin: 10 },
+  "outbox drains": { ref: internal.outboxDrains.drainAll, everyMin: 1 },
+  "board KPI columns": { ref: internal.writeback.pushMetrics, everyMin: 60 },
+  "tracking audit": { ref: internal.tracking.audit, everyMin: 24 * 60 },
+  "smoke check": { ref: internal.smoke.check, everyMin: 15 },
+  "report docs": { ref: internal.reportDocs.drain, everyMin: 3 },
+  "hermes relay": { ref: internal.hermesDrain.run, everyMin: 1 },
+};
+
+export const runJob = internalAction({
+  args: { job: v.string() },
+  returns: v.any(),
+  handler: async (ctx, { job }): Promise<Any> => {
+    const j = JOBS[job];
+    if (!j) throw new Error(`unknown job ${job}`);
+    const t0 = Date.now();
+    let error: string | undefined;
+    let result: Any;
+    try {
+      result = await ctx.runAction(j.ref, {});
+    } catch (e) {
+      error = String(e).slice(0, 400);
+    }
+    await ctx.runMutation(internal.health.beat, {
+      job,
+      ok: !error,
+      ms: Date.now() - t0,
+      error,
+      everyMin: j.everyMin,
+    });
+    if (error) throw new Error(error);
+    return result;
+  },
+});
+
+export const beat = internalMutation({
+  args: {
+    job: v.string(),
+    ok: v.boolean(),
+    ms: v.number(),
+    error: v.optional(v.string()),
+    everyMin: v.number(),
+  },
+  returns: v.null(),
+  handler: async (ctx, a) => {
+    const row = await ctx.db
+      .query("cronRuns")
+      .withIndex("by_job", q => q.eq("job", a.job))
+      .unique();
+    const streak = a.ok ? 0 : (row?.streak ?? 0) + 1;
+    const doc = {
+      job: a.job,
+      ok: a.ok,
+      at: Date.now(),
+      ms: a.ms,
+      error: a.error,
+      streak,
+      everyMin: a.everyMin,
+    };
+    if (row) await ctx.db.patch(row._id, doc);
+    else await ctx.db.insert("cronRuns", doc);
+    // Third failure in a row: Hermes gets the fix job and Aziz one line.
+    if (streak === ALERT_AFTER) {
+      await ctx.runMutation(internal.fixRequests.file, {
+        source: "scheduled job",
+        app: "media-buyer",
+        title: `Job "${a.job}" keeps failing`,
+        detail: a.error ?? "no error text",
+      });
+      await ctx.scheduler.runAfter(0, internal.health.notify, {
+        texts: [
+          `Scheduled job "${a.job}" has failed ${streak} times in a row.\nLast error: ${a.error ?? "unknown"}\nHermes has a fix job for it. If nothing changes within an hour: scripts/ship.sh media-buyer, then the Convex logs.`,
+        ],
+      });
+    }
+    if (a.ok && (row?.streak ?? 0) >= ALERT_AFTER)
+      await ctx.scheduler.runAfter(0, internal.health.notify, {
+        texts: [`Scheduled job "${a.job}" is running again.`],
+      });
+    return null;
+  },
+});
+
+/** Jobs that should have run by now and have not, for the smoke check. */
+export const staleJobs = internalQuery({
+  args: {},
+  returns: v.array(v.any()),
+  handler: async ctx => {
+    const rows = await ctx.db.query("cronRuns").collect();
+    const now = Date.now();
+    return rows
+      .filter(r => now - r.at > Math.max(3 * r.everyMin, 45) * 60_000)
+      .map(r => ({
+        job: r.job,
+        at: r.at,
+        minutes: Math.round((now - r.at) / 60_000),
+      }));
+  },
+});
+
+/** For the admin view. */
+export const jobs = internalQuery({
+  args: {},
+  returns: v.array(v.any()),
+  handler: async ctx =>
+    (await ctx.db.query("cronRuns").collect())
+      .map(r => ({
+        job: r.job,
+        ok: r.ok,
+        at: r.at,
+        ms: r.ms,
+        error: r.error,
+        streak: r.streak,
+        everyMin: r.everyMin,
+      }))
+      .sort((a, b) => a.job.localeCompare(b.job)),
 });

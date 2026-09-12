@@ -904,6 +904,16 @@ const schema = defineSchema({
     lastError: v.optional(v.string()),
     alertedAt: v.optional(v.number()),
   }).index("by_source", ["source"]),
+  /** One row per scheduled job: last run, outcome, failure streak (see health.ts runJob). */
+  cronRuns: defineTable({
+    job: v.string(),
+    ok: v.boolean(),
+    at: v.number(),
+    ms: v.number(),
+    error: v.optional(v.string()),
+    streak: v.number(),
+    everyMin: v.number(),
+  }).index("by_job", ["job"]),
   /** The last smoke check per cockpit, for the admin view. */
   cockpitHealth: defineTable({
     app: v.string(),

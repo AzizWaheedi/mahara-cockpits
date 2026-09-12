@@ -8,6 +8,8 @@ import { internal } from "./_generated/api";
  * Thursday. Without this she would open the screen to whatever the last manual
  * sync left behind and make budget decisions on stale numbers.
  */
+// Every job runs through health.runJob, which records the outcome and raises
+// a fix job and an alert when one keeps failing or stops running.
 const crons = cronJobs();
 
 /**
@@ -20,14 +22,14 @@ const crons = cronJobs();
 crons.cron(
   "refresh every 10 minutes through the working day",
   "*/10 3-18 * * *",
-  internal.sync.runSync,
-  {},
+  internal.health.runJob,
+  { job: "sync" },
 );
 crons.cron(
   "refresh hourly overnight",
   "0 19-23,0-2 * * *",
-  internal.sync.runSync,
-  {},
+  internal.health.runJob,
+  { job: "sync" },
 );
 
 /**
@@ -37,16 +39,16 @@ crons.cron(
 crons.cron(
   "collect market plays for the playbook",
   "0 2 * * 5",
-  internal.marketCollect.collectPlays,
-  {},
+  internal.health.runJob,
+  { job: "market plays" },
 );
 
 /** Anything queued for the assistant that the instant wake-up missed. */
 crons.interval(
   "drain the assist queue",
   { minutes: 10 },
-  internal.assistWorker.run,
-  {},
+  internal.health.runJob,
+  { job: "assist queue" },
 );
 
 /**
@@ -61,8 +63,8 @@ crons.interval(
   // Every minute since 2026-09-12: WhatsApp replies sent from the cockpits
   // should leave within a minute, not five.
   { minutes: 1 },
-  internal.outboxDrains.drainAll,
-  {},
+  internal.health.runJob,
+  { job: "outbox drains" },
 );
 
 /**
@@ -73,35 +75,37 @@ crons.interval(
 crons.cron(
   "write the board's KPI columns",
   "5 3-18 * * *",
-  internal.writeback.pushMetrics,
-  {},
+  internal.health.runJob,
+  { job: "board KPI columns" },
 );
 
 /** Tracking audit (url_tags, lead forms) once a day; it had no schedule. */
-crons.cron("audit ad tracking", "30 2 * * *", internal.tracking.audit, {});
+crons.cron("audit ad tracking", "30 2 * * *", internal.health.runJob, {
+  job: "tracking audit",
+});
 
 /** The three cockpits' main screens, checked like a browser would, every 15 minutes. */
 crons.cron(
   "smoke-check every screen",
   "7,22,37,52 * * * *",
-  internal.smoke.check,
-  {},
+  internal.health.runJob,
+  { job: "smoke check" },
 );
 
 /** Client reports the CSM asked for become Google Docs within a few minutes. */
 crons.interval(
   "write requested client reports",
   { minutes: 3 },
-  internal.reportDocs.drain,
-  {},
+  internal.health.runJob,
+  { job: "report docs" },
 );
 
 /** The chat with Hermes in every cockpit: questions out, answers back, every 20 seconds. */
 crons.interval(
   "relay the Hermes chat",
   { seconds: 20 },
-  internal.hermesDrain.run,
-  {},
+  internal.health.runJob,
+  { job: "hermes relay" },
 );
 
 export default crons;

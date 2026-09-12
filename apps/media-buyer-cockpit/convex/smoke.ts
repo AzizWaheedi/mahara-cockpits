@@ -164,6 +164,22 @@ export const check = internalAction({
     } catch (e) {
       console.error(`hermes watchdog: ${String(e).slice(0, 120)}`);
     }
+    // Jobs that stopped running are an outage nobody sees in a screen.
+    try {
+      const stale: Any[] = await ctx.runQuery(internal.health.staleJobs, {});
+      if (stale.length)
+        await recordManyDirect(
+          ctx,
+          stale.map(j => ({
+            source: "jobs",
+            ok: false,
+            error: `"${j.job}" last ran ${j.minutes} min ago`,
+          })),
+        );
+      else await recordManyDirect(ctx, [{ source: "jobs", ok: true }]);
+    } catch (e) {
+      console.error(`stale jobs: ${String(e).slice(0, 120)}`);
+    }
     await flush(ctx);
     return { ok: failures.length === 0, failures, results };
   },

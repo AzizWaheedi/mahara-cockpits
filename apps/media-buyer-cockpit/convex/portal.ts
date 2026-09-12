@@ -247,9 +247,11 @@ export const overview = authenticatedQuery({
     const clients = await ctx.db.query("clients").collect();
     const members = await ctx.db.query("members").collect();
     const sources = await ctx.runQuery(internal.health.sources, {});
+    const scheduled = await ctx.runQuery(internal.health.jobs, {});
     const hermesWaiting = await ctx.runQuery(internal.askAi.waiting, {});
     return {
       sources,
+      scheduled,
       hermesWaiting,
       health: health.map(h => ({
         app: h.app,
