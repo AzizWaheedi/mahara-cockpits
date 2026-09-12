@@ -20,7 +20,7 @@ const OWN_HOSTS = [
   "mahara-creative-director.vercel.app",
 ];
 
-const PORTAL_URL = "https://mahara-media-buyer.vercel.app";
+const PORTAL_URL = "https://cockpit.maharamedia.com";
 
 export function portalUrl(): string {
   const env = (import.meta.env.VITE_PORTAL_URL as string | undefined)?.trim();
