@@ -531,6 +531,43 @@ function normTight(name: unknown): string {
     .replace(/[^a-z0-9؀-ۿ]+/g, "");
 }
 
+/**
+ * The client's Meta ad account, from what we can see. A matched campaign's
+ * account first; else the Database sheet's "Ad Account - Meta" (an id or the
+ * account's exact name); else a visible account whose name starts like the
+ * client's. Aziz, 2026-09-12: "it should automatically be scanning the
+ * database for their ad account", City Wood being the case in point.
+ */
+function metaAccountFor(
+  clientName: string,
+  row: ClientDataRow | undefined,
+  campaignAccountId: string | undefined,
+  visible: { name: string; id: string }[],
+): { id: string; visible: boolean } | undefined {
+  if (campaignAccountId)
+    return { id: String(campaignAccountId).replace("act_", ""), visible: true };
+  const raw = String(row?.adAccountMeta ?? "").trim();
+  const digits = raw.replace(/^act_/, "").match(/\d{6,}/)?.[0];
+  if (digits && visible.some(a => a.id === digits))
+    return { id: digits, visible: true };
+  const wanted = raw && !digits ? normTight(raw) : "";
+  const byName = wanted
+    ? visible.find(a => normTight(a.name) === wanted)
+    : undefined;
+  if (byName) return { id: byName.id, visible: true };
+  const n = normTight(clientName);
+  const byPrefix = visible.find(a => {
+    const k = normTight(a.name);
+    return (
+      k.length >= 5 && n.length >= 5 && (k.startsWith(n) || n.startsWith(k))
+    );
+  });
+  if (byPrefix) return { id: byPrefix.id, visible: true };
+  // On record but not shared with Mahara's business yet: link it, flag it.
+  if (digits) return { id: digits, visible: false };
+  return undefined;
+}
+
 type GhlAccount = {
   name: string;
   clickupId: string;
@@ -1108,7 +1145,13 @@ export const push = internalAction({
     const profiles = await pool(clients, 4, async c => {
       const perf = await sheetPerformance(c.sheetLink, today);
       const ads = adsForClient(c.name, campaigns, tree);
-      const accountId = ads.find(a => a.accountId)?.accountId;
+      const meta = metaAccountFor(
+        c.name,
+        c.data,
+        ads.find(a => a.accountId)?.accountId,
+        visibleAccounts,
+      );
+      const accountId = meta?.visible ? meta.id : undefined;
       let lost: Any;
       const acct = accountFor(accounts, c.name, c.taskId);
       if (acct) {
@@ -1131,9 +1174,7 @@ export const push = internalAction({
         ghl: acct
           ? `https://app.maharamedia.com/v2/location/${acct.locationId}/dashboard`
           : undefined,
-        adAccount: accountId
-          ? `${META_ADS_MANAGER}${String(accountId).replace("act_", "")}`
-          : undefined,
+        adAccount: meta ? `${META_ADS_MANAGER}${meta.id}` : undefined,
         contract: c.contractLink,
       })) {
         if (val) links[k] = String(val);

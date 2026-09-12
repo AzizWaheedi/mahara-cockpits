@@ -59,21 +59,50 @@ function Stat({
   );
 }
 
-const LINK_LABELS: { key: string; label: string; hint: string }[] = [
+/** Each link's source of truth, so a missing one says where to add it. */
+const LINK_LABELS: {
+  key: string;
+  label: string;
+  hint: string;
+  missing: string;
+}[] = [
   {
     key: "sheet",
     label: "Performance sheet",
     hint: "leads, appointments, outcomes",
+    missing: "not in the Database sheet (Client Data) yet",
   },
   {
     key: "drive",
     label: "Client drive",
     hint: "raw and finished creative, sheets",
+    missing: "not in the Database sheet (Client Data) yet",
   },
-  { key: "ghl", label: "GHL sub-account", hint: "app.maharamedia.com" },
-  { key: "adAccount", label: "Ad account", hint: "Meta Ads Manager" },
-  { key: "clickup", label: "ClickUp record", hint: "stage, dates, fields" },
-  { key: "contract", label: "Contract", hint: "signed agreement" },
+  {
+    key: "ghl",
+    label: "GHL sub-account",
+    hint: "app.maharamedia.com",
+    missing: "no GHL row matched in the Database sheet",
+  },
+  {
+    key: "adAccount",
+    label: "Ad account",
+    hint: "Meta Ads Manager",
+    missing:
+      "no Meta account found: not shared with Mahara, and not in Client Data",
+  },
+  {
+    key: "clickup",
+    label: "ClickUp record",
+    hint: "stage, dates, fields",
+    missing: "no ClickUp card",
+  },
+  {
+    key: "contract",
+    label: "Contract",
+    hint: "signed agreement",
+    missing: "not on their ClickUp record yet",
+  },
 ];
 
 function Links({ links }: { links: Record<string, string> }) {
@@ -98,9 +127,7 @@ function Links({ links }: { links: Record<string, string> }) {
             className="rounded-lg border border-dashed px-3 py-2 opacity-60"
           >
             <div className="text-sm font-medium">{l.label}</div>
-            <div className="text-xs text-muted-foreground">
-              not on their ClickUp record yet
-            </div>
+            <div className="text-xs text-muted-foreground">{l.missing}</div>
           </div>
         );
       })}
@@ -1733,16 +1760,19 @@ export function ClientPerformancePage() {
     );
 
   const all = (data.clients ?? []) as Any[];
-  const churned = all.filter(c => isChurnedStage(c.stage ?? ""));
-  const live = all.filter(c => !isChurnedStage(c.stage ?? ""));
+  // The backend sorts each client into a group from the media buyer's
+  // bucket (the ClickUp stage rule lives there); the stage regex is only
+  // for a row that arrived without one.
+  const groupOf = (c: Any): string =>
+    c.group ??
+    (isChurnedStage(c.stage ?? "")
+      ? "churned"
+      : (GROUPS.find(g => g.match(c.stage ?? ""))?.key ?? "active"));
+  const churned = all.filter(c => groupOf(c) === "churned");
+  const live = all.filter(c => groupOf(c) !== "churned");
   const chosen = GROUPS.find(g => g.key === group) ?? GROUPS[0];
   const rows = live
-    .filter(c =>
-      group === "active"
-        ? chosen.match(c.stage ?? "") ||
-          !GROUPS.some(g => g.match(c.stage ?? ""))
-        : chosen.match(c.stage ?? ""),
-    )
+    .filter(c => groupOf(c) === chosen.key)
     .filter(c =>
       c.clientName.toLowerCase().includes(query.trim().toLowerCase()),
     );
@@ -1818,12 +1848,7 @@ export function ClientPerformancePage() {
 
           <div className="flex flex-wrap items-center gap-2 text-sm">
             {GROUPS.map(g => {
-              const n = live.filter(c =>
-                g.key === "active"
-                  ? g.match(c.stage ?? "") ||
-                    !GROUPS.some(x => x.match(c.stage ?? ""))
-                  : g.match(c.stage ?? ""),
-              ).length;
+              const n = live.filter(c => groupOf(c) === g.key).length;
               return (
                 <button
                   key={g.key}

@@ -1,4 +1,8 @@
 import { v } from "convex/values";
+
+// biome-ignore lint/suspicious/noExplicitAny: joined rows
+type Any = any;
+
 import type { QueryCtx } from "./_generated/server";
 import { PAUSE_IS_CHURN_DAYS, stateOf } from "./csmSync";
 import { authenticatedMutation, authenticatedQuery } from "./functions";
@@ -664,10 +668,40 @@ export const performanceOverview = authenticatedQuery({
   handler: async ctx => {
     await assertRole(ctx, "csm");
     const rows = await ctx.db.query("clientProfiles").collect();
+    // The media buyer sync already sorts every card into management,
+    // onboarding or inactive from its ClickUp stage; that is the one place
+    // the rule lives. The stage regex below is only the fallback for a
+    // profile with no client row.
+    const byName = new Map<string, { bucket?: string; stage?: string }>();
+    for (const c of await ctx.db.query("clients").collect())
+      byName.set(String(c.name ?? "").toLowerCase(), {
+        bucket: (c as Any).bucket,
+        stage: (c as Any).stage,
+      });
     return {
       syncedAt: Math.max(0, ...rows.map(r => r.syncedAt)),
       clients: rows
         .map(r => {
+          const cl = byName.get(String(r.clientName).toLowerCase());
+          const stage = String(r.stage ?? cl?.stage ?? "");
+          const group =
+            cl?.bucket === "onboarding"
+              ? "onboarding"
+              : cl?.bucket === "management"
+                ? "active"
+                : cl?.bucket === "inactive"
+                  ? /pause|freeze|hold/i.test(stage)
+                    ? "paused"
+                    : "churned"
+                  : /contact|booked|ready for launch|ghosted|delay|blueprint/i.test(
+                        stage,
+                      )
+                    ? "onboarding"
+                    : /pause|freeze|hold/i.test(stage)
+                      ? "paused"
+                      : /stop|cancel|churn|offboard|lost/i.test(stage)
+                        ? "churned"
+                        : "active";
           const perf = r.performance as
             | {
                 month?: Record<string, number>;
@@ -679,7 +713,8 @@ export const performanceOverview = authenticatedQuery({
             | undefined;
           return {
             clientName: r.clientName,
-            stage: r.stage,
+            stage: r.stage ?? cl?.stage,
+            group,
             happiness: r.happiness,
             liveDays: r.liveDays,
             service: r.service,

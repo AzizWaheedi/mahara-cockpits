@@ -408,3 +408,19 @@ export const docText = internalAction({
     };
   },
 });
+
+/** One Client Data row by client name, to see what the sheet holds for them. */
+export const clientDataRow = internalAction({
+  args: { name: v.string() },
+  returns: v.any(),
+  handler: async (_ctx, { name }) => {
+    const rows = await readClientData();
+    const key = name.toLowerCase().replace(/[^a-z0-9]+/g, "");
+    return rows.filter(r =>
+      String(r.name ?? "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "")
+        .includes(key),
+    );
+  },
+});
