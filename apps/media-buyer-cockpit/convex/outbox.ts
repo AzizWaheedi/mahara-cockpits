@@ -23,7 +23,12 @@ export const enqueue = internalMutation({
 export const pending = internalQuery({
   args: {},
   returns: v.array(
-    v.object({ id: v.id("outbox"), role: v.string(), args: v.any() }),
+    v.object({
+      id: v.id("outbox"),
+      role: v.string(),
+      args: v.any(),
+      at: v.number(),
+    }),
   ),
   handler: async ctx => {
     const rows = await ctx.db
@@ -33,7 +38,7 @@ export const pending = internalQuery({
     // Give up after 5 attempts rather than retrying a poisoned payload forever.
     return rows
       .filter(r => r.tries < 5)
-      .map(r => ({ id: r._id, role: r.role, args: r.args }));
+      .map(r => ({ id: r._id, role: r.role, args: r.args, at: r.at }));
   },
 });
 
@@ -50,7 +55,8 @@ export const settle = internalMutation({
     await ctx.db.patch(id, {
       doneAt: ok ? Date.now() : undefined,
       tries: row.tries + 1,
-      lastError: ok ? undefined : error?.slice(0, 300),
+      // A note can ride along with success (e.g. "stale, not sent").
+      lastError: error?.slice(0, 300),
     });
     return null;
   },

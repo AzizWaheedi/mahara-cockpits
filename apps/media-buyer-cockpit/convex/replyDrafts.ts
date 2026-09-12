@@ -160,7 +160,13 @@ export const queue = internalAction({
       const existing = await ctx.runQuery(internal.replyDrafts.draftFor, {
         chatId: t.chatId,
       });
-      if (existing && existing.lastAt === t.lastAt) {
+      // Same message, already drafted, or still in Hermes's queue for less than
+      // half an hour: leave it. A job that never came back is asked again.
+      if (
+        existing &&
+        existing.lastAt === t.lastAt &&
+        (existing.status === "done" || Date.now() - existing.at < 30 * 60_000)
+      ) {
         have++;
         continue;
       }

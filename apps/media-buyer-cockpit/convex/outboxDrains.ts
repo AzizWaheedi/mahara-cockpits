@@ -525,6 +525,55 @@ export const drainCsm = internalAction({
   },
 });
 
+/**
+ * The media buyer's own outbox: tool calls (Slack posts, ClickUp writes) that
+ * failed at the time and were kept rather than lost. Delivered here with the
+ * same tool dispatcher; a Slack channel nobody can post to is redirected to
+ * Aziz's DM, which is where those messages were meant to land anyway.
+ */
+export const drainOwn = internalAction({
+  args: {},
+  returns: v.object({ done: v.number(), failed: v.number() }),
+  handler: async ctx => {
+    const rows: Any[] = await ctx.runQuery(internal.outbox.pending, {});
+    let done = 0;
+    let failed = 0;
+    const dm = process.env.ALERT_SLACK_TO || "U0AJQ8P1ACF";
+    for (const row of rows) {
+      // A message nobody could deliver for two days is stale chatter by now;
+      // replaying it would only confuse. Closed with a note, not sent.
+      if (Date.now() - Number(row.at ?? 0) > 48 * 3600_000) {
+        await ctx.runMutation(internal.outbox.settle, {
+          id: row.id,
+          ok: true,
+          error: "stale after 48 h, not sent",
+        });
+        continue;
+      }
+      const args: Any = { ...(row.args ?? {}) };
+      if (
+        row.role === "coworker_send_slack_message" &&
+        typeof args.channel_id === "string" &&
+        args.channel_id.startsWith("D")
+      )
+        args.channel_id = dm;
+      let error: string | undefined;
+      try {
+        await callTool(row.role, args);
+      } catch (e) {
+        error = String(e).slice(0, 300);
+      }
+      await ctx.runMutation(internal.outbox.settle, {
+        id: row.id,
+        ok: !error,
+        error,
+      });
+      error ? failed++ : done++;
+    }
+    return { done, failed };
+  },
+});
+
 /** Both queues. Every 5 minutes, so an action in either app lands within minutes. */
 export const drainAll = internalAction({
   args: {},
@@ -534,12 +583,15 @@ export const drainAll = internalAction({
     for (const [name, fn] of [
       ["creative", "drainCreative"],
       ["csm", "drainCsm"],
+      ["own", "drainOwn"],
     ] as const) {
       try {
         out[name] = await ctx.runAction(
           fn === "drainCreative"
             ? internal.outboxDrains.drainCreative
-            : internal.outboxDrains.drainCsm,
+            : fn === "drainCsm"
+              ? internal.outboxDrains.drainCsm
+              : internal.outboxDrains.drainOwn,
           {},
         );
       } catch (e) {

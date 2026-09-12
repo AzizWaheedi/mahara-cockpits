@@ -225,9 +225,10 @@ export const overview = authenticatedQuery({
   handler: async (ctx): Promise<Any> => {
     await assertAdmin(ctx);
     const health = await ctx.db.query("cockpitHealth").collect();
+    // The main sync's own record; the client success feed writes its own rows.
     const lastSync = (
-      await ctx.db.query("syncRuns").withIndex("by_at").order("desc").take(1)
-    )[0];
+      await ctx.db.query("syncRuns").withIndex("by_at").order("desc").take(10)
+    ).find(r => r.role !== "csm");
     const alerts = (await ctx.db.query("alerts").order("desc").take(8)).map(
       a => ({ text: a.text, at: a.at }),
     );
