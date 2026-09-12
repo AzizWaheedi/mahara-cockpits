@@ -435,6 +435,25 @@ async function sheetPerformance(url: unknown, today: Day): Promise<Any> {
     ),
     byAdAllTime: byAd(rows),
     recent: rows.slice(-60).reverse(),
+    // Every dated row from the last 120 days, compact, so the app can sum any
+    // range the CSM picks (3, 7, 30 days, a month). [Aziz, 2026-09-12]
+    appointments: rows
+      .filter(
+        r =>
+          r.added &&
+          String(r.added) >=
+            new Date(Date.now() - 120 * 86400_000).toISOString().slice(0, 10),
+      )
+      .slice(-400)
+      .map(r => ({
+        added: r.added,
+        appAt: r.appAt,
+        booked: Boolean(r.appDate),
+        show: yes(r.show) ? "y" : no(r.show) ? "n" : "",
+        quote: yes(r.quote) ? "y" : "",
+        closed: yes(r.closed) ? "y" : "",
+        ad: r.ad || r.source || "",
+      })),
   };
 }
 
@@ -1501,6 +1520,9 @@ export const adLeadsByClient = internalQuery({
     const sevenDaysAgo = new Date(now.getTime() - 7 * 86400_000)
       .toISOString()
       .slice(0, 10);
+    const since120 = new Date(now.getTime() - 120 * 86400_000)
+      .toISOString()
+      .slice(0, 10);
     const out: Record<
       string,
       {
@@ -1512,6 +1534,7 @@ export const adLeadsByClient = internalQuery({
         spendAllTime: number;
         firstDay?: string;
         campaigns: string[];
+        daily: Record<string, { leads: number; spend: number }>;
       }
     > = {};
     for (const d of await ctx.db.query("dailyStats").collect()) {
@@ -1526,6 +1549,7 @@ export const adLeadsByClient = internalQuery({
           spendMonth: 0,
           spendAllTime: 0,
           campaigns: [],
+          daily: {},
         };
       const row = out[key];
       const leads = Number(d.leads ?? 0);
@@ -1541,12 +1565,28 @@ export const adLeadsByClient = internalQuery({
       if (!row.firstDay || d.date < row.firstDay) row.firstDay = d.date;
       if (!row.campaigns.includes(d.campaignName))
         row.campaigns.push(d.campaignName);
+      if (d.date >= since120) {
+        if (!row.daily[d.date]) row.daily[d.date] = { leads: 0, spend: 0 };
+        row.daily[d.date].leads += leads;
+        row.daily[d.date].spend += spend;
+      }
     }
     for (const r of Object.values(out)) {
       r.spendMonth = Math.round(r.spendMonth * 100) / 100;
       r.spendAllTime = Math.round(r.spendAllTime * 100) / 100;
     }
-    // Arabic client names cannot be object keys in a Convex value; hand back rows.
-    return Object.entries(out).map(([key, r]) => ({ key, ...r }));
+    // Arabic client names cannot be object keys in a Convex value; hand back
+    // rows, with the daily grain as an array for the same reason.
+    return Object.entries(out).map(([key, r]) => ({
+      key,
+      ...r,
+      daily: Object.entries(r.daily)
+        .map(([date, v]) => ({
+          date,
+          leads: v.leads,
+          spend: Math.round(v.spend * 100) / 100,
+        }))
+        .sort((a, b) => (a.date < b.date ? -1 : 1)),
+    }));
   },
 });

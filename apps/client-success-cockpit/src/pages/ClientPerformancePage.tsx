@@ -1143,6 +1143,130 @@ function LeadsByAd({ rows }: { rows: Any[] }) {
   );
 }
 
+type RangeKey = "month" | "3d" | "7d" | "30d" | "lastMonth" | string;
+
+const kuwaitToday = () =>
+  new Date(Date.now() + 3 * 3600_000).toISOString().slice(0, 10);
+const shiftDays = (iso: string, n: number) =>
+  new Date(Date.parse(`${iso}T00:00:00Z`) + n * 86400_000)
+    .toISOString()
+    .slice(0, 10);
+
+/** [from, to] inclusive ISO dates for a range key; months are "YYYY-MM". */
+function rangeBounds(key: RangeKey): [string, string, string] {
+  const today = kuwaitToday();
+  if (key === "3d") return [shiftDays(today, -2), today, "last 3 days"];
+  if (key === "7d") return [shiftDays(today, -6), today, "last 7 days"];
+  if (key === "30d") return [shiftDays(today, -29), today, "last 30 days"];
+  const ym =
+    key === "month"
+      ? today.slice(0, 7)
+      : key === "lastMonth"
+        ? shiftDays(`${today.slice(0, 7)}-01`, -1).slice(0, 7)
+        : key;
+  const [y, mo] = ym.split("-").map(Number);
+  const last = new Date(Date.UTC(y, mo, 0)).toISOString().slice(0, 10);
+  const label = new Date(Date.UTC(y, mo - 1, 1)).toLocaleDateString("en-GB", {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+  return [`${ym}-01`, last, label];
+}
+
+/** Sum the profile's daily grain for one range: ad leads and spend, sheet outcomes. */
+function rangeMetrics(p: Any, key: RangeKey) {
+  const [from, to, label] = rangeBounds(key);
+  const daily: Any[] = p.adLeads?.daily ?? [];
+  let leads = 0;
+  let spend = 0;
+  for (const d of daily) {
+    if (d.date >= from && d.date <= to) {
+      leads += d.leads;
+      spend += d.spend;
+    }
+  }
+  const rows: Any[] = (p.performance?.appointments ?? []).filter(
+    (r: Any) =>
+      r.added && r.added.slice(0, 10) >= from && r.added.slice(0, 10) <= to,
+  );
+  const booked = rows.filter((r: Any) => r.booked).length;
+  const shows = rows.filter((r: Any) => r.show === "y").length;
+  const noshows = rows.filter((r: Any) => r.show === "n").length;
+  const quotes = rows.filter((r: Any) => r.quote === "y").length;
+  const closes = rows.filter((r: Any) => r.closed === "y").length;
+  const decided = shows + noshows;
+  return {
+    label,
+    from,
+    to,
+    leads,
+    spend: Math.round(spend * 100) / 100,
+    cpl: leads ? Math.round((spend / leads) * 100) / 100 : null,
+    booked,
+    shows,
+    noshows,
+    quotes,
+    closes,
+    showRate: decided ? Math.round((100 * shows) / decided) : null,
+    closeRate: shows ? Math.round((100 * closes) / shows) : null,
+  };
+}
+
+/** Months with any data, newest first, for the month picker. */
+function monthsAvailable(p: Any): string[] {
+  const set = new Set<string>();
+  for (const d of p.adLeads?.daily ?? []) set.add(String(d.date).slice(0, 7));
+  for (const r of p.performance?.appointments ?? [])
+    if (r.added) set.add(String(r.added).slice(0, 7));
+  return [...set].sort().reverse();
+}
+
+function RangePicker({
+  value,
+  onChange,
+  months,
+}: {
+  value: RangeKey;
+  onChange: (k: RangeKey) => void;
+  months: string[];
+}) {
+  const quick: [RangeKey, string][] = [
+    ["3d", "3 days"],
+    ["7d", "7 days"],
+    ["30d", "30 days"],
+    ["month", "This month"],
+    ["lastMonth", "Last month"],
+  ];
+  const isMonth = /^\d{4}-\d{2}$/.test(String(value));
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 text-sm">
+      {quick.map(([k, label]) => (
+        <button
+          key={k}
+          type="button"
+          onClick={() => onChange(k)}
+          className={`rounded-md border px-2.5 py-1 ${value === k ? "border-primary bg-primary text-primary-foreground" : "hover:bg-muted"}`}
+        >
+          {label}
+        </button>
+      ))}
+      <select
+        className="rounded-md border bg-background px-2 py-1"
+        value={isMonth ? value : ""}
+        onChange={e => e.target.value && onChange(e.target.value)}
+      >
+        <option value="">Pick a month…</option>
+        {months.map(m => (
+          <option key={m} value={m}>
+            {rangeBounds(m)[2]}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 function Profile({ name, onBack }: { name: string; onBack: () => void }) {
   const p = useQuery(api.csm.clientProfile, { clientName: name });
   if (p === undefined)
@@ -1156,8 +1280,14 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
       </div>
     );
   const perf = p.performance ?? {};
-  const m = perf.month ?? {};
-  const l = perf.lastMonth ?? {};
+  const [range, setRange] = useState<RangeKey>("month");
+  const rv = useMemo(() => rangeMetrics(p, range), [p, range]);
+  // "This month" keeps the profile's own month figures (they carry the sheet's
+  // extra fields); every other range is summed from the daily grain.
+  const custom = range !== "month";
+  const m: Any = custom ? rv : (perf.month ?? {});
+  const l: Any = custom ? {} : (perf.lastMonth ?? {});
+  const months = useMemo(() => monthsAvailable(p), [p]);
   const all = perf.allTime ?? {};
   const stale: Any[] = perf.stale ?? [];
   return (
@@ -1231,7 +1361,7 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
                   <Stat
                     label="Leads"
                     value={num(m.leads)}
-                    hint={`${num(l.leads)} last month`}
+                    hint={custom ? rv.label : `${num(l.leads)} last month`}
                   />
                 </div>
                 <p className="text-xs text-muted-foreground">
@@ -1242,44 +1372,65 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
                 </p>
               </>
             ) : (
-              <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
-                <Stat
-                  label={
-                    perf.leadsSource === "meta" ? "Leads (from ads)" : "Leads"
-                  }
-                  value={num(m.leads)}
-                  hint={
-                    perf.leadsSource === "meta"
-                      ? `${num(l.leads)} last month · ${num(p.adLeads?.allTime)} since launch`
-                      : `${num(l.leads)} last month`
-                  }
-                />
-                <Stat
-                  label="Booked"
-                  value={num(m.booked)}
-                  hint={`${num(l.booked)} last month`}
-                />
-                <Stat
-                  label="Attended"
-                  value={num(m.shows)}
-                  hint={
-                    m.showRate != null
-                      ? `${m.showRate}% of decided`
-                      : "no outcome yet"
-                  }
-                />
-                <Stat label="No show" value={num(m.noshows)} />
-                <Stat label="Quotes" value={num(m.quotes)} />
-                <Stat
-                  label="Closed"
-                  value={num(m.closes)}
-                  tone={num(m.closes) ? "text-emerald-600" : undefined}
-                  hint={
-                    m.closeRate != null
-                      ? `${m.closeRate}% of attended`
-                      : undefined
-                  }
-                />
+              <div className="space-y-2">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <RangePicker
+                    value={range}
+                    onChange={setRange}
+                    months={months}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    {custom
+                      ? `${rv.label} · ${rv.from} to ${rv.to}`
+                      : (perf.monthLabel ?? "this month")}
+                    {custom && rv.cpl != null
+                      ? ` · $${rv.spend} spent, $${rv.cpl} per lead`
+                      : ""}
+                  </span>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+                  <Stat
+                    label={
+                      perf.leadsSource === "meta" ? "Leads (from ads)" : "Leads"
+                    }
+                    value={num(m.leads)}
+                    hint={
+                      perf.leadsSource === "meta"
+                        ? custom
+                          ? rv.label
+                          : `${num(l.leads)} last month · ${num(p.adLeads?.allTime)} since launch`
+                        : custom
+                          ? rv.label
+                          : `${num(l.leads)} last month`
+                    }
+                  />
+                  <Stat
+                    label="Booked"
+                    value={num(m.booked)}
+                    hint={custom ? rv.label : `${num(l.booked)} last month`}
+                  />
+                  <Stat
+                    label="Attended"
+                    value={num(m.shows)}
+                    hint={
+                      m.showRate != null
+                        ? `${m.showRate}% of decided`
+                        : "no outcome yet"
+                    }
+                  />
+                  <Stat label="No show" value={num(m.noshows)} />
+                  <Stat label="Quotes" value={num(m.quotes)} />
+                  <Stat
+                    label="Closed"
+                    value={num(m.closes)}
+                    tone={num(m.closes) ? "text-emerald-600" : undefined}
+                    hint={
+                      m.closeRate != null
+                        ? `${m.closeRate}% of attended`
+                        : undefined
+                    }
+                  />
+                </div>
               </div>
             )}
             {!serviceModel(p.service).dwy && (
@@ -1299,7 +1450,6 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
               </p>
             ) : null}
           </section>
-
           <section
             className={`space-y-2 ${serviceModel(p.service).dwy ? "hidden" : ""}`}
           >
@@ -1354,75 +1504,70 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
               </>
             )}
           </section>
-
-          {(perf.byAd ?? []).length ? (
-            <section className="space-y-2">
-              <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-                Which ad is producing the better leads
-              </h3>
-              <p className="text-xs text-muted-foreground">
-                Last two months, per ad. Judge an ad on what its leads did, not
-                on how many it produced. "No outcome" is the ad's rows nobody
-                filled in, so a high number there means the comparison is not
-                fair yet.
-              </p>
-              <div className="overflow-x-auto rounded-lg border">
-                <table className="w-full">
-                  <thead className="bg-muted/50">
-                    <tr>
-                      {[
-                        "Ad / source",
-                        "Leads",
-                        "Attended",
-                        "Attendance",
-                        "Closed",
-                        "Close rate",
-                        "No outcome",
-                      ].map(h => (
-                        <th
-                          key={h}
-                          className="px-3 py-2 text-left text-xs uppercase tracking-wide text-muted-foreground"
-                        >
-                          {h}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {(perf.byAd as Any[]).map(a => (
-                      <tr key={a.ad}>
-                        <Cell v={a.ad} />
-                        <Cell v={a.leads} />
-                        <Cell v={a.shows} />
-                        <Cell
-                          v={a.showRate == null ? "-" : `${a.showRate}%`}
-                          muted
-                        />
-                        <td className="px-3 py-2 text-sm tabular-nums">
-                          {num(a.closes) ? (
-                            <span className="font-medium text-emerald-600">
-                              {a.closes}
-                            </span>
-                          ) : (
-                            "0"
-                          )}
-                        </td>
-                        <Cell
-                          v={a.closeRate == null ? "-" : `${a.closeRate}%`}
-                          muted
-                        />
-                        <Cell v={a.unknown ?? 0} muted />
-                      </tr>
+          (perf.byAd ?? []).length ? (
+          <section className="space-y-2">
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+              Which ad is producing the better leads
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              Last two months, per ad. Judge an ad on what its leads did, not on
+              how many it produced. "No outcome" is the ad's rows nobody filled
+              in, so a high number there means the comparison is not fair yet.
+            </p>
+            <div className="overflow-x-auto rounded-lg border">
+              <table className="w-full">
+                <thead className="bg-muted/50">
+                  <tr>
+                    {[
+                      "Ad / source",
+                      "Leads",
+                      "Attended",
+                      "Attendance",
+                      "Closed",
+                      "Close rate",
+                      "No outcome",
+                    ].map(h => (
+                      <th
+                        key={h}
+                        className="px-3 py-2 text-left text-xs uppercase tracking-wide text-muted-foreground"
+                      >
+                        {h}
+                      </th>
                     ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          ) : null}
-
-          {(perf.recent ?? []).length ? (
-            <LeadsByAd rows={perf.recent as Any[]} />
-          ) : null}
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {(perf.byAd as Any[]).map(a => (
+                    <tr key={a.ad}>
+                      <Cell v={a.ad} />
+                      <Cell v={a.leads} />
+                      <Cell v={a.shows} />
+                      <Cell
+                        v={a.showRate == null ? "-" : `${a.showRate}%`}
+                        muted
+                      />
+                      <td className="px-3 py-2 text-sm tabular-nums">
+                        {num(a.closes) ? (
+                          <span className="font-medium text-emerald-600">
+                            {a.closes}
+                          </span>
+                        ) : (
+                          "0"
+                        )}
+                      </td>
+                      <Cell
+                        v={a.closeRate == null ? "-" : `${a.closeRate}%`}
+                        muted
+                      />
+                      <Cell v={a.unknown ?? 0} muted />
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+          ) : null(perf.recent ?? []).length ? (
+          <LeadsByAd rows={perf.recent as Any[]} />) : null
         </>
       )}
 
