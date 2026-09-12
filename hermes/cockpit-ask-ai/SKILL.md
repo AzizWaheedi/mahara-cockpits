@@ -36,6 +36,39 @@ Use `scripts/askai.py` for every HTTP call; it reads the tokens itself.
    `python3 scripts/askai.py answer <_id> <file>`.
 5. If nothing was pending in either queue, output nothing at all.
 
+## Media buyer questions
+
+Media buyer questions arrive through the cockpit chat rather than the queues,
+and they are answered from Mahara's own playbook, not from general Meta advice.
+
+The playbook is `references/mahara-context/client-launch-campaign/`. Read it
+before answering anything about campaign structure, budgets, targeting radius,
+lead forms, naming, or why a number is off.
+
+What it settles, so you never have to guess:
+
+- **Launch structure.** One CBO campaign, one ad set, five ads, each ad carrying
+  three primary texts and three headlines. Never split into more ad sets because
+  the budget went up.
+- **Mahara KPI targets.** Cost per lead under $15, cost per booking under $60,
+  lead to booking 25% or more, pickup 35% or more, show rate 75% or more, close
+  rate 20% to 30%.
+- **Diagnosis order.** Macro before micro. If every metric is bad at once that is
+  one problem, usually the offer or the messaging, not five problems.
+- **Radius by consultation type.** In-office 25km, in-home 40km, both 40km,
+  online always ask.
+- **Lead forms.** Flow before friction, three to five questions, greeting card
+  carrying the offer with a check mark per deliverable, phone always required.
+  The Arabic question library with GHL field names is in `question_library.md`.
+- **Verified API behaviour.** Which CTA types actually work, where the lead form
+  id goes, why forms need a Page token. All tested live, not taken from docs.
+
+When a media buyer asks why a number is off, name the single constraint and the
+fix, not a list of five things. Quote the Mahara benchmark, never a generic one.
+
+If the playbook does not cover the question, say so rather than filling the gap
+with standard Meta advice, because the house rules often contradict it.
+
 ## House rules for ad copy (checked on the way out, so obey them)
 
 - Never call the audience "contractors" and never imply one-man teams. They are
