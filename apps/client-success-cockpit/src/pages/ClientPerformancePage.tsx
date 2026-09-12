@@ -1143,7 +1143,8 @@ function LeadsByAd({ rows }: { rows: Any[] }) {
   );
 }
 
-type RangeKey = "month" | "3d" | "7d" | "30d" | "lastMonth" | string;
+/** Quick keys, a month "YYYY-MM", "all", or "custom:YYYY-MM-DD:YYYY-MM-DD". */
+type RangeKey = "month" | "3d" | "7d" | "30d" | "lastMonth" | "all" | string;
 
 const kuwaitToday = () =>
   new Date(Date.now() + 3 * 3600_000).toISOString().slice(0, 10);
@@ -1153,8 +1154,13 @@ const shiftDays = (iso: string, n: number) =>
     .slice(0, 10);
 
 /** [from, to] inclusive ISO dates for a range key; months are "YYYY-MM". */
-function rangeBounds(key: RangeKey): [string, string, string] {
+function rangeBounds(key: RangeKey, p?: Any): [string, string, string] {
   const today = kuwaitToday();
+  if (key === "all") return [firstDate(p) ?? "2000-01-01", today, "all time"];
+  if (key.startsWith("custom:")) {
+    const [, from, to] = key.split(":");
+    return [from, to, "custom range"];
+  }
   if (key === "3d") return [shiftDays(today, -2), today, "last 3 days"];
   if (key === "7d") return [shiftDays(today, -6), today, "last 7 days"];
   if (key === "30d") return [shiftDays(today, -29), today, "last 30 days"];
@@ -1174,9 +1180,21 @@ function rangeBounds(key: RangeKey): [string, string, string] {
   return [`${ym}-01`, last, label];
 }
 
+/** The earliest day with any data, ads or sheet, for "all time" and the custom picker. */
+function firstDate(p: Any): string | undefined {
+  let first: string | undefined;
+  for (const d of p?.adLeads?.daily ?? [])
+    if (!first || d.date < first) first = String(d.date);
+  for (const r of p?.performance?.appointments ?? []) {
+    const a = r.added ? String(r.added).slice(0, 10) : "";
+    if (a && (!first || a < first)) first = a;
+  }
+  return first;
+}
+
 /** Sum the profile's daily grain for one range: ad leads and spend, sheet outcomes. */
 function rangeMetrics(p: Any, key: RangeKey) {
-  const [from, to, label] = rangeBounds(key);
+  const [from, to, label] = rangeBounds(key, p);
   const daily: Any[] = p.adLeads?.daily ?? [];
   let leads = 0;
   let spend = 0;
@@ -1226,10 +1244,12 @@ function RangePicker({
   value,
   onChange,
   months,
+  earliest,
 }: {
   value: RangeKey;
   onChange: (k: RangeKey) => void;
   months: string[];
+  earliest?: string;
 }) {
   const quick: [RangeKey, string][] = [
     ["3d", "3 days"],
@@ -1237,8 +1257,19 @@ function RangePicker({
     ["30d", "30 days"],
     ["month", "This month"],
     ["lastMonth", "Last month"],
+    ["all", "All time"],
   ];
   const isMonth = /^\d{4}-\d{2}$/.test(String(value));
+  const isCustom = String(value).startsWith("custom:");
+  const [customOpen, setCustomOpen] = useState(false);
+  const [from, setFrom] = useState(
+    isCustom ? value.split(":")[1] : shiftDays(kuwaitToday(), -13),
+  );
+  const [to, setTo] = useState(isCustom ? value.split(":")[2] : kuwaitToday());
+  const customOk =
+    /^\d{4}-\d{2}-\d{2}$/.test(from) &&
+    /^\d{4}-\d{2}-\d{2}$/.test(to) &&
+    from <= to;
   return (
     <div className="flex flex-wrap items-center gap-1.5 text-sm">
       {quick.map(([k, label]) => (
@@ -1263,6 +1294,56 @@ function RangePicker({
           </option>
         ))}
       </select>
+      <button
+        type="button"
+        onClick={() => setCustomOpen(o => !o)}
+        className={`rounded-md border px-2.5 py-1 ${isCustom ? "border-primary bg-primary text-primary-foreground" : "hover:bg-muted"}`}
+      >
+        {isCustom ? `${from} to ${to}` : "Custom"}
+      </button>
+      {customOpen ? (
+        <form
+          className="flex flex-wrap items-center gap-1.5"
+          onSubmit={e => {
+            e.preventDefault();
+            if (!customOk) return;
+            onChange(`custom:${from}:${to}`);
+            setCustomOpen(false);
+          }}
+        >
+          <input
+            type="date"
+            value={from}
+            min={earliest}
+            max={to}
+            onChange={e => setFrom(e.target.value)}
+            className="rounded-md border bg-background px-2 py-1"
+            aria-label="From"
+          />
+          <span className="text-muted-foreground">to</span>
+          <input
+            type="date"
+            value={to}
+            min={from}
+            max={kuwaitToday()}
+            onChange={e => setTo(e.target.value)}
+            className="rounded-md border bg-background px-2 py-1"
+            aria-label="To"
+          />
+          <button
+            type="submit"
+            disabled={!customOk}
+            className="rounded-md bg-primary px-2.5 py-1 font-semibold text-primary-foreground disabled:opacity-50"
+          >
+            Apply
+          </button>
+          {earliest ? (
+            <span className="text-xs text-muted-foreground">
+              data from {earliest}
+            </span>
+          ) : null}
+        </form>
+      ) : null}
     </div>
   );
 }
@@ -1379,6 +1460,7 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
                     value={range}
                     onChange={setRange}
                     months={months}
+                    earliest={firstDate(p)}
                   />
                   <span className="text-xs text-muted-foreground">
                     {custom

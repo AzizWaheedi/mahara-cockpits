@@ -435,16 +435,11 @@ async function sheetPerformance(url: unknown, today: Day): Promise<Any> {
     ),
     byAdAllTime: byAd(rows),
     recent: rows.slice(-60).reverse(),
-    // Every dated row from the last 120 days, compact, so the app can sum any
-    // range the CSM picks (3, 7, 30 days, a month). [Aziz, 2026-09-12]
+    // Every dated row, compact, so the app can sum any range the CSM picks
+    // (3, 7, 30 days, a month, all time, a custom span). [Aziz, 2026-09-12]
     appointments: rows
-      .filter(
-        r =>
-          r.added &&
-          String(r.added) >=
-            new Date(Date.now() - 120 * 86400_000).toISOString().slice(0, 10),
-      )
-      .slice(-400)
+      .filter(r => r.added)
+      .slice(-3000)
       .map(r => ({
         added: r.added,
         appAt: r.appAt,
@@ -1520,9 +1515,6 @@ export const adLeadsByClient = internalQuery({
     const sevenDaysAgo = new Date(now.getTime() - 7 * 86400_000)
       .toISOString()
       .slice(0, 10);
-    const since120 = new Date(now.getTime() - 120 * 86400_000)
-      .toISOString()
-      .slice(0, 10);
     const out: Record<
       string,
       {
@@ -1565,11 +1557,11 @@ export const adLeadsByClient = internalQuery({
       if (!row.firstDay || d.date < row.firstDay) row.firstDay = d.date;
       if (!row.campaigns.includes(d.campaignName))
         row.campaigns.push(d.campaignName);
-      if (d.date >= since120) {
-        if (!row.daily[d.date]) row.daily[d.date] = { leads: 0, spend: 0 };
-        row.daily[d.date].leads += leads;
-        row.daily[d.date].spend += spend;
-      }
+      // The whole history, one row per day, so "all time" and custom spans
+      // add up in the app without another Meta call.
+      if (!row.daily[d.date]) row.daily[d.date] = { leads: 0, spend: 0 };
+      row.daily[d.date].leads += leads;
+      row.daily[d.date].spend += spend;
     }
     for (const r of Object.values(out)) {
       r.spendMonth = Math.round(r.spendMonth * 100) / 100;

@@ -223,7 +223,9 @@ export const rowsFor = internalAction({
       app === "mb"
         ? await ctx.runQuery(internal.personalCalendars.links, {})
         : ((await bridge(app as App, "calendarLinks", {})) ?? []);
-    const wanted = all.filter(l => !onlyPending || l.status === "pending");
+    // "Pending" and "error" links are retried every minute, so sharing the
+    // calendar is enough: no button to press afterwards.
+    const wanted = all.filter(l => !onlyPending || l.status !== "ok");
     if (wanted.length === 0) return { rows: [], statuses: [] };
     const token = await googleAccessToken();
     const rows: Any[] = [];
