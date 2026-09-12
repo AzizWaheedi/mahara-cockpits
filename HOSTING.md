@@ -197,3 +197,30 @@ For him to actually change code, three things have to be on his side:
    push deploys.
 
 Until then he reads the job and answers "needs a human" with what he found.
+
+
+## Personal Google Calendars (all three cockpits)
+
+Each person can connect their own Google Calendar from the Meetings page
+(client success, creative) or the start-of-day view (media buyer): share the
+calendar with the service account `claude@studied-handler-508106-m5.iam.gserviceaccount.com`
+("See all event details"), then type the Google account email into the
+cockpit. The media buyer backend reads it within a minute
+(`personalCalendars.checkPending`, from the outbox drain) and every 10 minutes
+with the comms feed. Events are tagged `client` (matched a client name),
+`team` (only Mahara people, or a team-sounding title) or `other`, and each
+person sees only their own calendar plus the shared client calendars.
+
+One-time setup: the Google Calendar API must be enabled on the service
+account's Google Cloud project (project 195153154932, APIs & Services,
+Google Calendar API, Enable). Until then every link shows a note saying so.
+
+## Recommended replies
+
+Every WhatsApp or SMS thread waiting on us gets a reply drafted by Hermes
+from the Client Communication SOP (Google Doc
+`10wQorQfSebiX3Lmh0jXkEUkp3I_xMP68p4b1q-oUxcY`, cached 24 h in `docCache`).
+The draft lands on the thread in both cockpits (`replyDrafts`), the person
+edits it if they want and presses "Send on WhatsApp"; the outbox row is
+drained within a minute and sent through the CRM
+(`POST /conversations/messages`, type WhatsApp or SMS to match the thread).
