@@ -179,6 +179,34 @@ Read the city names it prints. Meta accepts a wrong city key without complaint:
 a Taif key that was actually a village called Saq passed silently and would have
 sent a fifth of the budget nowhere.
 
+## Step 6: record what you changed
+
+Every change to a live campaign gets logged, and gets scored seven days later.
+
+```bash
+python3 scripts/learn.py ask "..."        # before: what has worked before
+python3 scripts/learn.py record c.json    # after: log the change
+python3 scripts/learn.py due              # weekly: what needs scoring
+python3 scripts/learn.py outcome <id> N   # the result
+python3 scripts/learn.py report           # what the ledger proves
+```
+
+This is not admin. It is the difference between an agent that repeats the same
+advice forever and one that gets better. The ledger is the only part of this
+skill that knows what actually happened rather than what someone believed in
+September.
+
+Full rules in `references/diagnostics.md`. The short version:
+
+- Check the ledger **before** recommending a change, and lead with a real number
+  when there is one.
+- Say plainly when there is no evidence yet, rather than dressing a rule up as a
+  result.
+- One lever per entry, or you learn nothing about either.
+- Log the backfires with the same care as the wins.
+- Three wins with no failures promotes a lever into the playbook. More backfires
+  than wins means the playbook is wrong and the text gets corrected.
+
 ## Naming
 
 Consistent names are what make reporting possible three months later. This is
