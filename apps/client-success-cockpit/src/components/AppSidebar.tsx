@@ -5,6 +5,7 @@ import {
   CalendarDays,
   DollarSign,
   Flame,
+  LayoutGrid,
   Link2,
   ListChecks,
   ListTodo,
@@ -17,6 +18,7 @@ import {
   Sunrise,
 } from "lucide-react";
 import { Link, useLocation } from "react-router";
+import { portalUrl } from "@/components/PortalAutoSignIn";
 import { Wordmark } from "@/components/Wordmark";
 import { useTheme } from "@/contexts/ThemeContext";
 import { api } from "../../convex/_generated/api";
@@ -182,6 +184,13 @@ function SidebarUserMenu() {
                   {theme === "light" ? "Dark mode" : "Light mode"}
                 </DropdownMenuItem>
               )}
+              <DropdownMenuItem asChild>
+                {/* Back to the portal: the admin view, or the other cockpits. */}
+                <a href={`${portalUrl()}/`}>
+                  <LayoutGrid className="size-4" />
+                  Mahara portal
+                </a>
+              </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 onClick={() => signOut()}
