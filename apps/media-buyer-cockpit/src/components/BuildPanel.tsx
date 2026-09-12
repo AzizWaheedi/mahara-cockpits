@@ -13,22 +13,6 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
 
-/** Ad accounts our Meta connection can write to. The rest need partner access. */
-const WRITABLE = new Set([
-  "750052678056652",
-  "985366551096162",
-  "1988430024784828",
-  "1298343058123107",
-  "971153818910775",
-  "2378944772609634",
-  "37532169989703452",
-  "1326793265986543",
-  "1923309945035375",
-  "1009665871644699",
-  "1790433979003370",
-  "1910040802988539",
-]);
-
 type Variant = {
   headline: string;
   primaryText: string;
@@ -78,7 +62,12 @@ export function BuildPanel({
   const [contextDocs, setContextDocs] = useState("");
   const [targeting, setTargeting] = useState("");
 
-  const writable = accountId ? WRITABLE.has(accountId) : false;
+  // Whether Mahara can write to the account is decided on the server at launch
+  // (builder.ts canWriteLive, against Meta's live list) and comes back as a
+  // failed build with the reason. A hardcoded list here disabled Launch for
+  // most clients the backend was happy to launch. The only thing this side
+  // knows is whether an account id has been synced at all.
+  const writable = Boolean(accountId);
   const latest = builds?.[0];
 
   return (
@@ -95,9 +84,10 @@ export function BuildPanel({
 
       {!writable && (
         <p className="mb-2 rounded callout-warn p-2 text-[12px]">
-          I can build it and show you every word, but I cannot create anything
-          in this ad account until Mahara is added as a partner on it. The
-          Launch button stays off until then.
+          This client has no Meta ad account id synced yet, so there is nothing
+          to launch into. I can still build it and show you every word. Add the
+          account to the client sheet and the Launch button lights up after the
+          next sync.
         </p>
       )}
 
@@ -492,7 +482,7 @@ function ReadyBuild({
             ? "Going up…"
             : writable
               ? `Launch it paused — $${build.dailyBudget}/day`
-              : "Launch — needs partner access"}
+              : "Launch, once an ad account is synced"}
         </Button>
         <Button size="sm" variant="ghost" onClick={onDiscard}>
           Throw it away

@@ -1287,10 +1287,25 @@ export const push = internalAction({
           jobId: row.jobId,
         });
         if (job?.status === "done") {
-          const res =
-            typeof job.result === "string"
-              ? JSON.parse(job.result)
-              : job.result;
+          let res: Any = null;
+          try {
+            res =
+              typeof job.result === "string"
+                ? JSON.parse(job.result)
+                : job.result;
+          } catch {
+            // One unreadable brief must not stop every client's profile from
+            // shipping, on this run and every run after it.
+            res = null;
+          }
+          if (!res || typeof res !== "object") {
+            await ctx.runMutation(internal.csmProfiles.saveCallBrief, {
+              clientName: p.clientName,
+              key,
+              status: "failed",
+            });
+            continue;
+          }
           await ctx.runMutation(internal.csmProfiles.saveCallBrief, {
             clientName: p.clientName,
             key,

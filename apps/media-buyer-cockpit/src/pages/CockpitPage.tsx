@@ -1,5 +1,5 @@
 import { useAction, useMutation, useQuery } from "convex/react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
 import { AccountView } from "@/components/AccountView";
@@ -154,14 +154,19 @@ function actionsFor(c: Campaign): string[] {
   if (c.verdict === "kill") return ["Turn it off", "Cut the worst ad"];
   if (c.verdict === "fatiguing")
     return ["Queue replacement creative", "Cut the worst ad"];
-  if (c.dayRate < 30 && c.cpl !== undefined && c.cpl < 20) {
+  // Only a campaign inside the $15 gate earns a one-click raise; the server's
+  // "hold" verdict starts just above it and says "watch, do not scale".
+  if (c.dayRate < 30 && c.cpl !== undefined && c.cpl <= CPL_GATE) {
     const target =
       c.contractedBudget && c.contractedBudget > c.dayRate
         ? c.contractedBudget
         : 30;
     return [`Raise to $${Math.round(target)}/day`, "Duplicate the winner"];
   }
-  if (c.verdict === "hold") return ["Cut the worst ad", "Watch for 3 days"];
+  // "below KPI" is over the gate too (the ad works, the page does not), so a
+  // Meta-executing "Scale the winner" is the wrong first button for it.
+  if (c.verdict === "hold" || c.verdict === "below KPI")
+    return ["Cut the worst ad", "Watch for 3 days"];
   return ["Scale the winner", "Duplicate the winner"];
 }
 
@@ -217,7 +222,14 @@ function Cockpit({ view }: { view: View }) {
   const setClientLanguage = useMutation(api.cockpit.setClientLanguage);
   const removeDecision = useMutation(api.cockpit.removeDecision);
   const saveEod = useMutation(api.cockpit.saveEod);
+  const resubmitEod = useMutation(api.cockpit.resubmitEod);
   const sendFeedback = useMutation(api.cockpit.sendFeedback);
+  /** Today's EOD row, if one was saved: the submitted state lives here, not in the tab. */
+  const eodRow = (snap?.eod ?? null) as {
+    submittedAt?: number;
+    error?: string;
+    answers?: Record<string, unknown>;
+  } | null;
 
   const [open, setOpen] = useState<string | null>(null);
   // The window each campaign is being read over. One default for the screen,
@@ -243,7 +255,7 @@ function Cockpit({ view }: { view: View }) {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [note, setNote] = useState("");
   const [onePercent, setOnePercent] = useState("");
-  const [eodSent, setEodSent] = useState(false);
+  const [eodSending, setEodSending] = useState(false);
   /** When set, the ads tab shows one client in full instead of the table. */
   const [accountView, setAccountView] = useState<string | null>(null);
   /** The EOD form's own human answers. Numbers are filled in for her. */
@@ -262,6 +274,25 @@ function Cockpit({ view }: { view: View }) {
   });
   const setEod = (k: string, val: string) =>
     setEodForm(f => ({ ...f, [k]: val }));
+  // Switching tabs remounts this component and a reload clears it, but
+  // today's row may already be saved: show what was filed rather than an
+  // empty form under a "Submitted" button.
+  const eodSeeded = useRef(false);
+  useEffect(() => {
+    const a = eodRow?.answers;
+    if (!a || eodSeeded.current) return;
+    eodSeeded.current = true;
+    setEodForm(f => {
+      const next = { ...f };
+      for (const k of Object.keys(f)) {
+        const val = a[k];
+        if (typeof val === "string") next[k] = val;
+      }
+      return next;
+    });
+    if (typeof a.one_percent_better === "string")
+      setOnePercent(a.one_percent_better);
+  }, [eodRow]);
 
   /**
    * A touchpoint is owed when something changed on the account today, or when the
@@ -514,13 +545,22 @@ function Cockpit({ view }: { view: View }) {
       const target = action.startsWith("Raise to")
         ? Number(action.replace(/[^0-9.]/g, ""))
         : undefined;
-      const r = await run({
-        action,
-        campaignName: c.campaignName,
-        campaignMetaId: c.metaCampaignId,
-        targetBudget: Number.isFinite(target) ? target : undefined,
-        clientTag: c.clientTag,
-      });
+      let r: { ok: boolean; did?: string; error?: string };
+      try {
+        r = await run({
+          action,
+          campaignName: c.campaignName,
+          campaignMetaId: c.metaCampaignId,
+          targetBudget: Number.isFinite(target) ? target : undefined,
+          clientTag: c.clientTag,
+        });
+      } catch (e) {
+        // A dropped connection mid-call: Meta may or may not have applied it.
+        toast.error(
+          `Could not confirm "${action}" with Meta (${e instanceof Error ? e.message : String(e)}). Check ${c.campaignName} in Ads Manager before retrying.`,
+        );
+        return;
+      }
       if (!r.ok) {
         toast.error(r.error ?? "Meta refused that.");
         return;
@@ -679,10 +719,13 @@ function Cockpit({ view }: { view: View }) {
               l: "Blended CPL",
               v: money(t.blendedCpl, 2),
               d:
-                t.blendedCpl && t.blendedCpl < 20
-                  ? `under the $${CPL_GATE} gate`
-                  : `over the $${CPL_GATE} gate`,
-              ok: (t.blendedCpl ?? 0) < 20,
+                t.blendedCpl == null
+                  ? "no client leads yet"
+                  : t.blendedCpl <= CPL_GATE
+                    ? `under the $${CPL_GATE} gate`
+                    : `over the $${CPL_GATE} gate`,
+              ok: t.blendedCpl != null && t.blendedCpl <= CPL_GATE,
+              bad: t.blendedCpl != null && t.blendedCpl > CPL_GATE,
             },
             {
               l: "Under the $30/day floor",
@@ -1068,7 +1111,9 @@ function Cockpit({ view }: { view: View }) {
                               key={`${c._id}-panel`}
                               className="border-b bg-muted/20"
                             >
-                              <td colSpan={6} className="p-3">
+                              {/* Spans every header column; six left the
+                                  panel squeezed into 60% of the row. */}
+                              <td colSpan={8} className="p-3">
                                 {mode === "ads" && (
                                   <div>
                                     {/* The decisions live here, next to the
@@ -1123,7 +1168,15 @@ function Cockpit({ view }: { view: View }) {
                                         level="campaign"
                                         name={c.campaignName}
                                         clientTag={c.clientTag}
-                                        active={c.status === "ACTIVE"}
+                                        campaignName={c.campaignName}
+                                        // Campaign rows carry no status; an
+                                        // ad delivering under it means on.
+                                        active={tree.some(
+                                          (t: Campaign) =>
+                                            t.kind === "ad" &&
+                                            (t.effectiveStatus ?? t.status) ===
+                                              "ACTIVE",
+                                        )}
                                       />
                                     </div>
                                     <EditPanel campaign={c} tree={tree} />
@@ -1181,6 +1234,7 @@ function Cockpit({ view }: { view: View }) {
                                               level="ad"
                                               name={adName}
                                               clientTag={c.clientTag}
+                                              campaignName={c.campaignName}
                                               active={adIsActive(adName)}
                                             />
                                           </div>
@@ -1432,6 +1486,7 @@ function Cockpit({ view }: { view: View }) {
                                                   level="adset"
                                                   name={set.name}
                                                   clientTag={c.clientTag}
+                                                  campaignName={c.campaignName}
                                                   active={
                                                     (set.effectiveStatus ??
                                                       set.status) === "ACTIVE"
@@ -1458,6 +1513,9 @@ function Cockpit({ view }: { view: View }) {
                                                           name={ad.name}
                                                           clientTag={
                                                             c.clientTag
+                                                          }
+                                                          campaignName={
+                                                            c.campaignName
                                                           }
                                                           active={
                                                             (ad.effectiveStatus ??
@@ -2242,38 +2300,77 @@ function Cockpit({ view }: { view: View }) {
                     />
                   </div>
 
-                  <Button
-                    size="sm"
-                    disabled={eodSent}
-                    onClick={() => {
-                      if (!eodForm.accountSummary.trim()) {
-                        toast.error("Add your account summary first.");
-                        return;
-                      }
-                      setEodSent(true);
-                      void saveEod({
-                        body: eodReport,
-                        energy: eodForm.energy,
-                        answers: {
-                          ...eodForm,
-                          one_percent_better: onePercent,
-                        },
-                        computed: {
-                          spend: eodNumbers.spend,
-                          leads: eodNumbers.leads,
-                          cpl: eodNumbers.cpl,
-                          accounts: eodNumbers.accounts,
-                          overGate: eodNumbers.overGate,
-                        },
-                        submit: true,
-                      });
-                      toast.success(
-                        "Sent — it's in #media-eods and on the EOD Reports sheet.",
-                      );
-                    }}
-                  >
-                    {eodSent ? "Submitted" : "Submit my EOD"}
-                  </Button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      size="sm"
+                      disabled={eodSending || Boolean(eodRow?.submittedAt)}
+                      onClick={async () => {
+                        if (!eodForm.accountSummary.trim()) {
+                          toast.error("Add your account summary first.");
+                          return;
+                        }
+                        setEodSending(true);
+                        try {
+                          await saveEod({
+                            body: eodReport,
+                            energy: eodForm.energy,
+                            answers: {
+                              ...eodForm,
+                              one_percent_better: onePercent,
+                            },
+                            computed: {
+                              spend: eodNumbers.spend,
+                              leads: eodNumbers.leads,
+                              cpl: eodNumbers.cpl,
+                              accounts: eodNumbers.accounts,
+                              overGate: eodNumbers.overGate,
+                            },
+                            submit: true,
+                          });
+                          // "Sent" is only true once submittedAt lands; the
+                          // button below reads that from the snapshot.
+                          toast.success(
+                            "Saved. Posting to #media-eods and the EOD Reports sheet now.",
+                          );
+                        } catch (e) {
+                          toast.error(
+                            `Could not save the EOD (${e instanceof Error ? e.message : String(e)}). Nothing was posted.`,
+                          );
+                        } finally {
+                          setEodSending(false);
+                        }
+                      }}
+                    >
+                      {eodRow?.submittedAt
+                        ? `Submitted ✓ ${new Date(eodRow.submittedAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`
+                        : eodSending
+                          ? "Saving…"
+                          : "Submit my EOD"}
+                    </Button>
+                    {eodRow && !eodRow.submittedAt && !eodSending && (
+                      <span className="text-[12px] text-amber-800">
+                        Saved, still posting to #media-eods
+                        {eodRow.error ? ` (${eodRow.error})` : ""}.{" "}
+                        {/* Retry only once a post has actually failed. In the
+                            seconds the first post is still running the row is
+                            saved but not yet submitted, and a click here then
+                            would race it. */}
+                        {eodRow.error && (
+                          <button
+                            type="button"
+                            className="underline"
+                            onClick={() =>
+                              void resubmitEod({}).then(() =>
+                                toast.success("Posting it again."),
+                              )
+                            }
+                          >
+                            Retry
+                          </button>
+                        )}
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <p className="mt-2 text-[12px] text-muted-foreground">
                   This replaces the form. Submitting posts it to #media-eods and

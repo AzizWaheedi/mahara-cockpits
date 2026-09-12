@@ -2,6 +2,8 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalMutation, internalQuery } from "./_generated/server";
 import { authenticatedMutation, authenticatedQuery } from "./functions";
+import { assertScope, scopeFilter } from "./gate";
+import { assertRole } from "./roles";
 
 /**
  * The hand-off queue between the cockpit and Viktor.
@@ -52,6 +54,15 @@ export const enqueue = authenticatedMutation({
   },
   returns: v.id("assistRequests"),
   handler: async (ctx, args) => {
+    // The worker uploads footage into the client's ad account: a seat, on a
+    // client on her list.
+    await assertRole(ctx, "media_buyer");
+    if (args.campaignName || args.client) {
+      await assertScope(ctx, {
+        campaignName: args.campaignName,
+        clientName: args.client,
+      });
+    }
     const id = await ctx.db.insert("assistRequests", {
       ...args,
       driveLinks: (args.driveLinks ?? []).filter(l => l.trim().length > 0),
@@ -92,7 +103,13 @@ export const enqueueInternal = internalMutation({
 export const get = authenticatedQuery({
   args: { id: v.id("assistRequests") },
   returns: v.any(),
-  handler: async (ctx, { id }) => await ctx.db.get(id),
+  handler: async (ctx, { id }) => {
+    await assertRole(ctx, "media_buyer");
+    const row = await ctx.db.get(id);
+    if (!row) return null;
+    const visible = await scopeFilter(ctx);
+    return visible(row) ? row : null;
+  },
 });
 
 /** Everything open or recently finished for one campaign or client. */
@@ -104,6 +121,8 @@ export const recent = authenticatedQuery({
   },
   returns: v.any(),
   handler: async (ctx, { campaignName, client, kind }) => {
+    await assertRole(ctx, "media_buyer");
+    const visible = await scopeFilter(ctx);
     const rows = campaignName
       ? await ctx.db
           .query("assistRequests")
@@ -118,7 +137,7 @@ export const recent = authenticatedQuery({
             .collect()
         : await ctx.db.query("assistRequests").order("desc").take(40);
     return rows
-      .filter(r => !kind || r.kind === kind)
+      .filter(r => (!kind || r.kind === kind) && visible(r))
       .sort((a, b) => b.requestedAt - a.requestedAt)
       .slice(0, 12);
   },
@@ -129,6 +148,7 @@ export const queueDepth = authenticatedQuery({
   args: {},
   returns: v.object({ queued: v.number(), working: v.number() }),
   handler: async ctx => {
+    await assertRole(ctx, "media_buyer");
     const q = await ctx.db
       .query("assistRequests")
       .withIndex("by_status", (i: any) => i.eq("status", "queued"))

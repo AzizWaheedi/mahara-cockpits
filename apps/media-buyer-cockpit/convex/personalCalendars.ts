@@ -4,10 +4,11 @@ import {
   internalAction,
   internalMutation,
   internalQuery,
-  mutation,
-  query,
 } from "./_generated/server";
 import { type App, bridge, calendarEvents, matchClient } from "./comms";
+import { authenticatedMutation, authenticatedQuery } from "./functions";
+import { emailOf } from "./gate";
+import { assertRole } from "./roles";
 import { googleAccessToken } from "./tools";
 
 /**
@@ -50,14 +51,15 @@ export function classify(
   return "other";
 }
 
+/**
+ * The link is keyed by the person's email. The auth JWT carries no email, so
+ * keying on getUserIdentity() meant a new owner on every sign-in and device,
+ * and a calendar that had to be linked again each time.
+ */
 // biome-ignore lint/suspicious/noExplicitAny: ctx from query or mutation
 async function who(ctx: any): Promise<string> {
-  const id = await ctx.auth.getUserIdentity();
-  const me = String(id?.email ?? id?.subject ?? "")
-    .trim()
-    .toLowerCase();
-  if (!me) throw new Error("Sign in first.");
-  return me;
+  await assertRole(ctx, "media_buyer");
+  return await emailOf(ctx);
 }
 
 const kuwaitDay = (ms: number) =>
@@ -106,7 +108,7 @@ export const store = internalMutation({
   },
 });
 
-export const link = mutation({
+export const link = authenticatedMutation({
   args: { calendarId: v.string() },
   returns: v.null(),
   handler: async (ctx, { calendarId }) => {
@@ -158,7 +160,7 @@ export const linkFor = internalMutation({
   },
 });
 
-export const unlink = mutation({
+export const unlink = authenticatedMutation({
   args: {},
   returns: v.null(),
   handler: async ctx => {
@@ -174,17 +176,77 @@ export const unlink = mutation({
   },
 });
 
+/**
+ * One-off, after the owner key changed from session id to email: rows keyed
+ * "<userId>|<sessionId>" are re-keyed to that user's email, or dropped when
+ * the user is gone. Run once from the CLI:
+ * `bunx convex run --prod personalCalendars:migrateOwners`.
+ */
+export const migrateOwners = internalMutation({
+  args: {},
+  returns: v.object({
+    links: v.number(),
+    events: v.number(),
+    chat: v.number(),
+    dropped: v.number(),
+  }),
+  handler: async ctx => {
+    const emailFor = async (key: string): Promise<string | null> => {
+      if (key.includes("@")) return key.trim().toLowerCase();
+      const userId = ctx.db.normalizeId("users", key.split("|")[0]);
+      const user = userId ? await ctx.db.get(userId) : null;
+      const email = String(user?.email ?? "")
+        .trim()
+        .toLowerCase();
+      return email || null;
+    };
+    const out = { links: 0, events: 0, chat: 0, dropped: 0 };
+    // Newest link per person wins; older sessions' links are duplicates.
+    const links = (await ctx.db.query("calendarLinks").collect()).sort(
+      (a, b) => b.createdAt - a.createdAt,
+    );
+    const kept = new Set<string>();
+    for (const l of links) {
+      const owner = await emailFor(l.owner);
+      if (!owner || kept.has(owner)) {
+        await ctx.db.delete(l._id);
+        out.dropped++;
+        continue;
+      }
+      kept.add(owner);
+      if (owner !== l.owner) {
+        await ctx.db.patch(l._id, { owner });
+        out.links++;
+      }
+    }
+    for (const e of await ctx.db.query("calendarEvents").collect()) {
+      if (!e.owner) continue;
+      const owner = await emailFor(e.owner);
+      if (!owner) {
+        await ctx.db.delete(e._id);
+        out.dropped++;
+      } else if (owner !== e.owner) {
+        await ctx.db.patch(e._id, { owner });
+        out.events++;
+      }
+    }
+    for (const m of await ctx.db.query("hermesChat").collect()) {
+      const thread = await emailFor(m.thread);
+      if (thread && thread !== m.thread) {
+        await ctx.db.patch(m._id, { thread });
+        out.chat++;
+      }
+    }
+    return out;
+  },
+});
+
 /** The signed-in person's link and today's meetings: theirs plus the shared client calendars. */
-export const mine = query({
+export const mine = authenticatedQuery({
   args: {},
   returns: v.any(),
   handler: async ctx => {
-    let me = "";
-    try {
-      me = await who(ctx);
-    } catch {
-      return { link: null, today: [], saEmail: SERVICE_ACCOUNT };
-    }
+    const me = await who(ctx);
     const link =
       (
         await ctx.db

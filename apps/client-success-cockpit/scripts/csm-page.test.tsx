@@ -47,6 +47,8 @@ mock.module("sonner", () => ({
 const { CsmPage } = await import("../src/pages/CsmPage");
 const { createRoot } = await import("react-dom/client");
 const { createElement, act: reactAct } = await import("react");
+// The page links to /clients; a Link outside a Router throws, so every render sits in one.
+const { MemoryRouter } = await import("react-router");
 const { Window } = await import("happy-dom");
 
 const win = new Window({ url: "https://localhost/" });
@@ -85,11 +87,23 @@ for (const section of SECTIONS) {
     try {
       queryResult = undefined; // still loading
       await reactAct(async () => {
-        root.render(createElement(CsmPage, { section }));
+        root.render(
+          createElement(
+            MemoryRouter,
+            null,
+            createElement(CsmPage, { section }),
+          ),
+        );
       });
       queryResult = snapshot; // data arrives — the render that used to crash
       await reactAct(async () => {
-        root.render(createElement(CsmPage, { section }));
+        root.render(
+          createElement(
+            MemoryRouter,
+            null,
+            createElement(CsmPage, { section }),
+          ),
+        );
       });
       const html = host.innerHTML;
       expect(html.length).toBeGreaterThan(500);
@@ -111,7 +125,13 @@ async function renderSection(section: string): Promise<string> {
   const root = createRoot(host as any);
   queryResult = snapshot;
   await reactAct(async () => {
-    root.render(createElement(CsmPage, { section: section as never }));
+    root.render(
+      createElement(
+        MemoryRouter,
+        null,
+        createElement(CsmPage, { section: section as never }),
+      ),
+    );
   });
   const text = (host.textContent ?? "").replace(/\s+/g, " ");
   await reactAct(async () => root.unmount());
@@ -125,7 +145,13 @@ test("the hot list and the message drafts render real client copy", async () => 
   const root = createRoot(host as any);
   queryResult = snapshot;
   await reactAct(async () => {
-    root.render(createElement(CsmPage, { section: "hot" }));
+    root.render(
+      createElement(
+        MemoryRouter,
+        null,
+        createElement(CsmPage, { section: "hot" }),
+      ),
+    );
   });
   // A client name from the fixture must appear, so we know rows actually built.
   const html = host.innerHTML;
@@ -165,7 +191,9 @@ test("client performance renders the overview then a single client", async () =>
       root.render(createElement(ClientPerformancePage, {}));
     });
     expect(host.innerHTML).toContain("Client performance");
-    expect(host.innerHTML).toContain(perfFixture.overview.clients[0].clientName);
+    expect(host.innerHTML).toContain(
+      perfFixture.overview.clients[0].clientName,
+    );
 
     // Open a client: the profile query answers, the overview keeps its own payload.
     queryByName = {
@@ -184,7 +212,6 @@ test("client performance renders the overview then a single client", async () =>
     expect(html).toContain("What is holding this client back");
     expect(html).toContain("Fix this first");
     expect(html).toContain("Write the Google Doc");
-    expect(html).toContain("Ask AI");
     expect(html).toContain("no outcome on the sheet");
     expect(errors.join("\n")).not.toContain("Rendered more hooks");
     expect(errors.filter(e => /error/i.test(e)).join("\n")).toBe("");
@@ -240,7 +267,14 @@ test("diagnosis ranks one constraint first and never invents work", async () => 
       lastMonth: { leads: 30, booked: 12, shows: 4, noshows: 8, closes: 1 },
       allTime: { closes: 2 },
     },
-    ads: [{ campaign: "c", spend7d: 100, leads7d: 20, adsets: [{ ads: [{ status: "ACTIVE" }] }] }],
+    ads: [
+      {
+        campaign: "c",
+        spend7d: 100,
+        leads7d: 20,
+        adsets: [{ ads: [{ status: "ACTIVE" }] }],
+      },
+    ],
   });
   const ids = [leak.top, ...leak.rest].map(c => c?.id);
   expect(ids).toContain("show_rate");
@@ -251,7 +285,12 @@ test("diagnosis ranks one constraint first and never invents work", async () => 
   expect(GATES.showRate).toBe(75);
 
   // No sheet: the only sane first move is to get the sheet linked.
-  const blind = diagnose({ clientName: "No Sheet", stage: "Active", links: {}, performance: {} });
+  const blind = diagnose({
+    clientName: "No Sheet",
+    stage: "Active",
+    links: {},
+    performance: {},
+  });
   expect(blind.top?.id).toBe("no_sheet");
 });
 
@@ -282,7 +321,13 @@ test("the onboarding spine gives the right day, in both languages, and names mis
 test("the day blocks read in order and the quiet screens stay quiet", async () => {
   // Start of day must read 1 to 5 in that order, or the sprints stop meaning anything.
   const start = await renderSection("start");
-  const order = ["1 · Morning sprint", "2 · Then the work", "3 · Midday sprint", "4 · Then the work", "5 · Evening sprint"];
+  const order = [
+    "1 · Morning sprint",
+    "2 · Then the work",
+    "3 · Midday sprint",
+    "4 · Then the work",
+    "5 · Evening sprint",
+  ];
   let cursor = -1;
   for (const label of order) {
     const at = start.indexOf(label);

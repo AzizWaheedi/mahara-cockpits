@@ -1,7 +1,5 @@
-import { Link } from "react-router";
 import { portalUrl } from "@/components/PortalAutoSignIn";
 import { SignIn } from "@/components/SignIn";
-import { Button } from "@/components/ui/button";
 import { ViktorSignInSection } from "@/components/ViktorSignInSection";
 import { Wordmark } from "@/components/Wordmark";
 import {
@@ -74,14 +72,6 @@ export function LoginPage() {
           </a>
           , which opens the right cockpit.
         </p>
-        {emailPasswordAvailable && (
-          <p className="text-center text-sm text-muted-foreground">
-            Don't have an account?{" "}
-            <Button variant="link" className="p-0 h-auto font-medium" asChild>
-              <Link to="/signup">Sign up</Link>
-            </Button>
-          </p>
-        )}
       </div>
     </div>
   );

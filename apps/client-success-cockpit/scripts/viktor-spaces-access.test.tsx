@@ -21,6 +21,7 @@ const fetchMock = mock();
 globalThis.fetch = fetchMock as typeof fetch;
 const currentUserQuery = Symbol("currentUser");
 const deleteAccountMutation = Symbol("deleteAccount");
+const meQuery = Symbol("roles.me");
 const apiMock = {
   api: {
     auth: {
@@ -29,7 +30,13 @@ const apiMock = {
     users: {
       deleteAccount: deleteAccountMutation,
     },
+    // The portal sign-in reads the member row to refresh a stale pass.
+    roles: {
+      me: meQuery,
+    },
   },
+  // Convex modules import `internal` at the top level; nothing here calls it.
+  internal: {},
 };
 
 class MemoryStorage {
@@ -376,7 +383,8 @@ describe("Viktor Spaces auth template contract", () => {
     );
 
     expect(html).not.toContain("Change password");
-    expect(html).toContain("Delete account");
+    // The Account card still renders; access is managed in the portal now.
+    expect(html).toContain("Your seat");
   });
 
   test("OAuth code detection distinguishes successful returns from denials", async () => {
@@ -614,8 +622,8 @@ describe("Viktor Spaces auth template contract", () => {
         provider => (provider as { id?: string }).id === "viktor",
       ),
     ).toBe(false);
-    // Password plus the always-on space_session automation provider.
-    expect(withoutViktor.length).toBe(2);
+    // Password, the always-on space_session automation provider, and the portal pass.
+    expect(withoutViktor.length).toBe(3);
     expect(
       withoutViktor.some(
         provider => (provider as { id?: string }).id === "space_session",
@@ -628,7 +636,7 @@ describe("Viktor Spaces auth template contract", () => {
     const viktorOnly = configuredAuthProviders();
     expect(
       viktorOnly.map(provider => (provider as { id?: string }).id),
-    ).toEqual(["viktor", "space_session"]);
+    ).toEqual(["viktor", "space_session", "portal"]);
 
     process.env.VIKTOR_SPACES_AUTH_PROVIDERS = '["email_password","viktor"]';
     const withViktor = configuredAuthProviders();
@@ -637,7 +645,8 @@ describe("Viktor Spaces auth template contract", () => {
         provider => (provider as { id?: string }).id === "viktor",
       ),
     ).toBe(true);
-    expect(withViktor.length).toBe(3);
+    // Password, Viktor, space_session and the portal pass.
+    expect(withViktor.length).toBe(4);
 
     process.env.VIKTOR_SPACES_AUTH_PROVIDERS = "[]";
     expect(() => configuredAuthProviders()).toThrow(
@@ -665,7 +674,7 @@ describe("Viktor Spaces auth template contract", () => {
       configuredAuthProviders().map(
         provider => (provider as { id?: string }).id,
       ),
-    ).toEqual(["viktor", "space_session"]);
+    ).toEqual(["viktor", "space_session", "portal"]);
   });
 
   test("custom Auth.js provider preserves resource and keeps token exchange server-side", () => {

@@ -86,7 +86,16 @@ export function HermesChat() {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
   const location = useLocation();
-  const thread = useQuery(api.hermes.thread, {}) as Any[] | undefined;
+  // The chat sits in the layout, outside RoleRoute. For a session without
+  // the creative seat (revoked in the portal, or a pass minted for another
+  // cockpit) hermes.thread throws, and convex/react rethrows that during
+  // render, which would replace the whole app with "Reload" instead of the
+  // "not yours" page. So the thread is only asked for once the seat is known.
+  const me = useQuery(api.roles.me, {});
+  const isCreative = Boolean(me?.roles?.includes("creative"));
+  const thread = useQuery(api.hermes.thread, isCreative ? {} : "skip") as
+    | Any[]
+    | undefined;
   const send = useMutation(api.hermes.send);
   const clear = useMutation(api.hermes.clear);
   const endRef = useRef<HTMLDivElement>(null);
@@ -123,6 +132,9 @@ export function HermesChat() {
     if (open)
       endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
   }, [open, count, live?.status]);
+
+  // After every hook, so the hook order is the same on both branches.
+  if (!isCreative) return null;
 
   const submit = async () => {
     const t = text.trim();

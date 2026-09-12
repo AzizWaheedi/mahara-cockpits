@@ -15,8 +15,9 @@ const ALLOWED = new Set([
 export function allowed(email: string | undefined | null): boolean {
   const key = (email ?? "").trim().toLowerCase();
   if (!key) return false;
-  // Platform-minted space sessions (screenshot runner, e2e) sit behind the app gate.
-  return ALLOWED.has(key) || key.endsWith("@viktor.invalid");
+  // No suffix shortcuts: nothing on this deployment mints the old
+  // platform (`@viktor.invalid`) sessions, and the smoke check needs no user.
+  return ALLOWED.has(key);
 }
 
 /** The portal's word on this person, if they came through it. */
@@ -82,6 +83,8 @@ export const me = authenticatedQuery({
       /** Every seat the portal gave them, for the cockpit switcher. */
       portalRoles: row?.roles ?? [],
       clients: row?.clients ?? [],
+      /** When the portal last told us about them; stale rows are refreshed through the portal. */
+      memberAt: row?.at ?? null,
       home: ok ? "/dashboard" : null,
     };
   },

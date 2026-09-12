@@ -263,6 +263,19 @@ in `/admin`. `convex/roles.ts` keeps a static fallback for the first five
 people. Client access (empty = all) is applied in the main list queries of
 every cockpit (`allowedClients`).
 
+Pushing seat changes (client success `/bridge`, bearer `BRIDGE_TOKEN`). Today
+the media buyer only sends `revokeMember` (`{ email }`); a seat or client-list
+edit otherwise reaches the child cockpit on the person's next portal pass. Two
+more cases are ready on the client success side for when the media buyer's
+`portal.ts` sends them:
+
+- `upsertMember`: `{ email, name?, roles, clients }`, one person after an edit.
+- `storeMembers`: `{ members: [...] }`, the whole `members` table. Each row may
+  be passed exactly as stored (`note`, `addedBy`, `addedAt`, `updatedAt`,
+  `lastSeenAt`, `lastCockpit` are dropped on receipt); only `email`, `name`,
+  `roles` and `clients` are kept, a row with no roles is marked revoked, and
+  anyone missing from the list is revoked. An empty list is ignored.
+
 Custom domain: add e.g. `portal.maharamedia.com` to the mahara-media-buyer
 Vercel project and set `VITE_PORTAL_URL` on the two child projects (or leave
 it: proxied visits use the current origin).

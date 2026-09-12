@@ -8,6 +8,8 @@ import {
 } from "./_generated/server";
 import { callTool, unwrap } from "./tools";
 
+declare const process: { env: Record<string, string | undefined> };
+
 const ADS_LIST = "901817774521";
 
 /** Custom fields on the Ads Managment list. */
@@ -559,7 +561,8 @@ export const forwardFeedback = internalAction({
     const row = await ctx.runQuery(internal.writeback.getFeedback, { id });
     if (!row) return null;
     await callOrQueue(ctx, "coworker_send_slack_message", {
-      channel_id: "D0B21PZHDH9",
+      // Aziz's user id opens his DM; the old D... channel id no longer exists.
+      channel_id: process.env.ALERT_SLACK_TO || "U0AJQ8P1ACF",
       do_send: true,
       blocks: [
         {
@@ -619,27 +622,62 @@ function eodDate(day: string): string {
   return `${d}-${m}-${y}`;
 }
 
-export const getEod = internalQuery({
+/** How long one post run owns the row. A run that died without reporting back frees it after this. */
+const EOD_CLAIM_MS = 60_000;
+
+/**
+ * Claim the row before anything is sent. A resubmit or a re-save can schedule
+ * a second run while a ladder retry is still in flight; the first one to
+ * claim posts, the other returns null. Returns the row, or null when it has
+ * already gone out or someone else holds it.
+ */
+export const claimEod = internalMutation({
   args: { id: v.id("eodReports") },
   returns: v.any(),
-  handler: async (ctx, { id }) => await ctx.db.get(id),
+  handler: async (ctx, { id }) => {
+    const row = await ctx.db.get(id);
+    if (!row || row.submittedAt) return null; // never double-post
+    const now = Date.now();
+    if (row.postingAt && now - row.postingAt < EOD_CLAIM_MS) return null;
+    await ctx.db.patch(id, { postingAt: now });
+    return row;
+  },
 });
 
 export const markEodSubmitted = internalMutation({
   args: { id: v.id("eodReports"), ts: v.optional(v.string()) },
   returns: v.null(),
   handler: async (ctx, { id, ts }) => {
-    await ctx.db.patch(id, { submittedAt: Date.now(), slackTs: ts });
+    await ctx.db.patch(id, {
+      submittedAt: Date.now(),
+      slackTs: ts,
+      error: undefined,
+      postingAt: undefined,
+    });
     return null;
   },
 });
+
+/** A failed post is recorded on the row, so the cockpit can say so and retry. */
+export const markEodError = internalMutation({
+  args: { id: v.id("eodReports"), error: v.string(), attempts: v.number() },
+  returns: v.null(),
+  handler: async (ctx, { id, error, attempts }) => {
+    // The run is over, so the claim is released: a Retry may go straight away.
+    await ctx.db.patch(id, { error, attempts, postingAt: undefined });
+    return null;
+  },
+});
+
+/** Retry gaps for the Slack post, minutes: the same ladder the outbox uses. */
+const EOD_RETRY_MIN = [1, 5, 15, 60, 240];
 
 export const submitEod = internalAction({
   args: { id: v.id("eodReports") },
   returns: v.null(),
   handler: async (ctx, { id }) => {
-    const row = await ctx.runQuery(internal.writeback.getEod, { id });
-    if (!row || row.submittedAt) return null; // never double-post
+    const row = await ctx.runMutation(internal.writeback.claimEod, { id });
+    if (!row) return null; // already out, or another run holds it
     const a = row.answers ?? {};
     const c = row.computed ?? {};
     const name = a.name ?? "Nada";
@@ -685,11 +723,32 @@ export const submitEod = internalAction({
       `1% improvement - ${a.one_percent_better ?? "--"}`,
     ].join("\n");
 
-    const posted = await callTool<any>("coworker_send_slack_message", {
-      channel_id: MEDIA_EODS_CHANNEL,
-      do_send: true,
-      blocks: [{ type: "section", text: { type: "mrkdwn", text: msg } }],
-    });
+    // A scheduled action that throws is not retried and leaves no trace, and
+    // she has already been told the EOD went out. So a Slack failure is
+    // written on the row, retried on the outbox ladder, and left visible.
+    let posted: any;
+    try {
+      posted = await callTool<any>("coworker_send_slack_message", {
+        channel_id: MEDIA_EODS_CHANNEL,
+        do_send: true,
+        blocks: [{ type: "section", text: { type: "mrkdwn", text: msg } }],
+      });
+    } catch (e) {
+      const n = Number(row.attempts ?? 0);
+      await ctx.runMutation(internal.writeback.markEodError, {
+        id,
+        error: String(e instanceof Error ? e.message : e).slice(0, 300),
+        attempts: n + 1,
+      });
+      if (n < EOD_RETRY_MIN.length) {
+        await ctx.scheduler.runAfter(
+          EOD_RETRY_MIN[n] * 60_000,
+          internal.writeback.submitEod,
+          { id },
+        );
+      }
+      return null;
+    }
 
     // --- the sheet row, in the tab's own column order.
     const values = [

@@ -1,7 +1,7 @@
 import { v } from "convex/values";
-import { internalQuery } from "./_generated/server";
+import { internalQuery, type QueryCtx } from "./_generated/server";
 import { authenticatedMutation, authenticatedQuery } from "./functions";
-import { assertRole } from "./roles";
+import { allowedClients, assertRole } from "./roles";
 
 // biome-ignore lint/suspicious/noExplicitAny: profile blobs
 type Any = any;
@@ -85,48 +85,57 @@ export const list = authenticatedQuery({
   returns: v.any(),
   handler: async ctx => {
     await assertRole(ctx, "csm");
-    const clients = (await ctx.db.query("clients").collect()).filter(
-      c => c.bucket !== "inactive",
-    );
-    const profiles = await ctx.db.query("clientProfiles").collect();
-    const byName = new Map(profiles.map(p => [p.clientName, p]));
-    const queued = (await ctx.db.query("outbox").collect()).filter(
-      o => o.kind === "issue",
-    );
-    const rows = clients
-      .map(c => {
-        const gaps = gapsFor(c, byName.get(c.name)).map(g => {
-          const q = queued.find(
-            o => o.clientTaskId === c.taskId && o.action === g.label,
-          );
-          return {
-            ...g,
-            queued: Boolean(q),
-            sent: Boolean(q?.sentAt && !q.error),
-            resultUrl: q?.resultUrl,
-            error: q?.error,
-          };
-        });
-        return {
-          clientName: c.name,
-          taskId: c.taskId,
-          bucket: c.bucket,
-          csm: c.csmAssigned,
-          gaps,
-        };
-      })
-      .filter(r => r.gaps.length > 0)
-      .sort(
-        (a, b) =>
-          b.gaps.length - a.gaps.length ||
-          a.clientName.localeCompare(b.clientName),
-      );
-    const counts: Record<string, number> = {};
-    for (const r of rows)
-      for (const g of r.gaps) counts[g.gap] = (counts[g.gap] ?? 0) + 1;
-    return { rows, counts, activeClients: clients.length };
+    return await buildGapsList(ctx, await allowedClients(ctx));
   },
 });
+
+/** The backlog rows. The smoke check runs it with no user and no client scope. */
+export async function buildGapsList(
+  ctx: QueryCtx,
+  scope: Set<string> | null,
+): Promise<Any> {
+  // The client list set in the portal hides the other clients' gaps too.
+  const clients = (await ctx.db.query("clients").collect()).filter(
+    c => c.bucket !== "inactive" && (!scope || scope.has(c.name.toLowerCase())),
+  );
+  const profiles = await ctx.db.query("clientProfiles").collect();
+  const byName = new Map(profiles.map(p => [p.clientName, p]));
+  const queued = (await ctx.db.query("outbox").collect()).filter(
+    o => o.kind === "issue",
+  );
+  const rows = clients
+    .map(c => {
+      const gaps = gapsFor(c, byName.get(c.name)).map(g => {
+        const q = queued.find(
+          o => o.clientTaskId === c.taskId && o.action === g.label,
+        );
+        return {
+          ...g,
+          queued: Boolean(q),
+          sent: Boolean(q?.sentAt && !q.error),
+          resultUrl: q?.resultUrl,
+          error: q?.error,
+        };
+      });
+      return {
+        clientName: c.name,
+        taskId: c.taskId,
+        bucket: c.bucket,
+        csm: c.csmAssigned,
+        gaps,
+      };
+    })
+    .filter(r => r.gaps.length > 0)
+    .sort(
+      (a, b) =>
+        b.gaps.length - a.gaps.length ||
+        a.clientName.localeCompare(b.clientName),
+    );
+  const counts: Record<string, number> = {};
+  for (const r of rows)
+    for (const g of r.gaps) counts[g.gap] = (counts[g.gap] ?? 0) + 1;
+  return { rows, counts, activeClients: clients.length };
+}
 
 /** Queue one gap as a ClickUp task on the Client Success list. */
 export const queue = authenticatedMutation({
@@ -139,6 +148,9 @@ export const queue = authenticatedMutation({
   returns: v.null(),
   handler: async (ctx, { taskId, clientName, label, fix }) => {
     await assertRole(ctx, "csm");
+    const scope = await allowedClients(ctx);
+    if (scope && !scope.has(clientName.toLowerCase()))
+      throw new Error("That client is not on your list.");
     const already = (await ctx.db.query("outbox").collect()).find(
       o =>
         o.kind === "issue" && o.clientTaskId === taskId && o.action === label,

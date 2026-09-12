@@ -1,8 +1,41 @@
 import { v } from "convex/values";
 import { internalQuery } from "./_generated/server";
 import { buildOverview } from "./comms";
-import { buildSnapshot } from "./csm";
-import { gapsFor } from "./gaps";
+import {
+  buildClientProfile,
+  buildPerformanceOverview,
+  buildSnapshot,
+} from "./csm";
+import { buildGapsList } from "./gaps";
+
+/** Minutes without a feed before the check fails, inside the working day. */
+const STALE_AFTER_MIN = 45;
+/**
+ * The feed runs every 10 minutes from 06:00 to 22:00 Kuwait and hourly
+ * overnight (crons on the media buyer deployment). Judging from 07:00 leaves
+ * the first working-day run an hour to land before the overnight gap counts.
+ */
+const WORK_START_H = 7;
+const WORK_END_H = 22;
+const KUWAIT_OFFSET_MS = 3 * 3600_000;
+/** Health rows that must all fail before the feed counts as failing, as in the ledger. */
+const FAILURES_IN_A_ROW = 3;
+/**
+ * A health row's `ok` is false for any error in the run, including the side
+ * errors of the profile builder (an expired Fathom key, a Meta account that
+ * would not answer) while the roster and the profiles still landed. The media
+ * buyer's ledger already alerts on those. The feed is down only when the
+ * roster or the profiles themselves did not arrive.
+ */
+const FEED_ERROR_PREFIXES = ["client feed:", "client profiles:"];
+type HealthRow = { campaigns: number; errors?: string[] };
+const feedError = (r: HealthRow) =>
+  (r.errors ?? []).find(e => FEED_ERROR_PREFIXES.some(p => e.startsWith(p)));
+const feedDown = (r: HealthRow) =>
+  r.campaigns === 0 || feedError(r) !== undefined;
+
+const kuwaitClock = (ms: number) =>
+  new Date(ms + KUWAIT_OFFSET_MS).toISOString().slice(0, 16).replace("T", " ");
 
 /**
  * Runs the queries behind the main screens the way the browser would, minus
@@ -30,12 +63,36 @@ export const run = internalQuery({
       }
     };
     await t("csm.snapshot", () => buildSnapshot(ctx, true));
+    await t("csm.performanceOverview", () =>
+      buildPerformanceOverview(ctx, true),
+    );
+    await t("csm.clientProfile", async () => {
+      const p = await ctx.db.query("clientProfiles").first();
+      if (p) await buildClientProfile(ctx, { clientName: p.clientName }, true);
+    });
     await t("comms.overview", () => buildOverview(ctx, true));
-    await t("gaps.list", async () => {
-      const clients = await ctx.db.query("clients").collect();
-      const profiles = await ctx.db.query("clientProfiles").collect();
-      const byName = new Map(profiles.map(p => [p.clientName, p]));
-      for (const c of clients) gapsFor(c, byName.get(c.name));
+    await t("gaps.list", () => buildGapsList(ctx, null));
+    // A screen that renders without throwing but shows yesterday's numbers
+    // is the failure the CSM acts on, so a feed that keeps failing, or stops
+    // during the working day, fails the check too.
+    await t("feed.fresh", async () => {
+      const recent = await ctx.db
+        .query("syncRuns")
+        .withIndex("by_kind_at", q => q.eq("kind", "health"))
+        .order("desc")
+        .take(FAILURES_IN_A_ROW);
+      const latest = recent[0];
+      if (!latest) return;
+      if (recent.length === FAILURES_IN_A_ROW && recent.every(feedDown))
+        throw new Error(
+          `feed failing: ${feedError(latest) ?? "no clients in the feed"}`,
+        );
+      const hour = new Date(Date.now() + KUWAIT_OFFSET_MS).getUTCHours();
+      const working = hour >= WORK_START_H && hour < WORK_END_H;
+      // Named by the last feed, not the minutes since, so the alert
+      // signature stays the same until the feed recovers.
+      if (working && Date.now() - latest.at > STALE_AFTER_MIN * 60_000)
+        throw new Error(`no feed since ${kuwaitClock(latest.at)} Kuwait`);
     });
     return { app: "client-success", ok: checks.every(c => c.ok), checks };
   },

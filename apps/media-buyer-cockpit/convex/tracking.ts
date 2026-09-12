@@ -10,6 +10,8 @@ import {
   internalQuery,
 } from "./_generated/server";
 import { authenticatedQuery } from "./functions";
+import { scopeFilter } from "./gate";
+import { assertRole } from "./roles";
 import { callTool, graph, unwrap } from "./tools";
 
 /**
@@ -145,9 +147,12 @@ export const issues = authenticatedQuery({
     }),
   ),
   handler: async ctx => {
+    await assertRole(ctx, "media_buyer");
+    const visible = await scopeFilter(ctx);
     const all = await ctx.db.query("trackingIssues").collect();
     const byClient = new Map<string, { adName: string; issue: string }[]>();
     for (const r of all) {
+      if (!visible({ clientName: r.client })) continue;
       const list = byClient.get(r.client) ?? [];
       list.push({ adName: r.adName, issue: r.issue });
       byClient.set(r.client, list);

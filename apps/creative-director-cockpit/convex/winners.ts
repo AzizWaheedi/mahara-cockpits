@@ -1,5 +1,7 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import type { QueryCtx } from "./_generated/server";
+import { authenticatedQuery } from "./functions";
+import { assertRole } from "./roles";
 
 /**
  * The winning ads database, exactly as the media buyer sees it.
@@ -9,8 +11,13 @@ import { mutation, query } from "./_generated/server";
  * worked, with its hook, its copy, its transcript and its preview.
  *
  * This deployment does not compute winners. The media buyer Space owns that
- * logic; the sandbox sync mirrors the rows here so there is one definition of
- * "winning" in the company, not two that drift.
+ * logic and mirrors the rows here through the bridge (ingest.storeWinners),
+ * so there is one definition of "winning" in the company, not two that drift.
+ *
+ * Not cut to the person's client list: these are other clients' ads on
+ * purpose, ad copy meant for reuse with nothing client-private in it, and the
+ * media buyer's own view is unscoped the same way. `excludeClient` is the only
+ * cut.
  */
 
 function norm(x?: string): string {
@@ -20,68 +27,51 @@ function norm(x?: string): string {
     .trim();
 }
 
-export const list = query({
-  args: {
-    serviceLine: v.optional(v.string()),
-    excludeClient: v.optional(v.string()),
-    liveOnly: v.optional(v.boolean()),
-    limit: v.optional(v.number()),
-  },
+const listArgs = {
+  serviceLine: v.optional(v.string()),
+  excludeClient: v.optional(v.string()),
+  liveOnly: v.optional(v.boolean()),
+  limit: v.optional(v.number()),
+};
+type ListArgs = {
+  serviceLine?: string;
+  excludeClient?: string;
+  liveOnly?: boolean;
+  limit?: number;
+};
+
+export const list = authenticatedQuery({
+  args: listArgs,
   returns: v.any(),
   handler: async (ctx, args) => {
-    const all = await ctx.db.query("winnersArchive").collect();
-    const rows = all
-      .filter(r => {
-        if (args.serviceLine && r.serviceLine !== args.serviceLine)
-          return false;
-        if (args.excludeClient && norm(r.client) === norm(args.excludeClient)) {
-          return false;
-        }
-        if (args.liveOnly && r.stillLive === false) return false;
-        return true;
-      })
-      .sort((a, b) => a.cpl - b.cpl)
-      .slice(0, args.limit ?? 40);
-
-    const serviceLines = Array.from(
-      new Set(all.map(r => r.serviceLine).filter(Boolean) as string[]),
-    ).sort();
-
-    return {
-      rows,
-      serviceLines,
-      total: all.length,
-      live: all.filter(r => r.stillLive).length,
-      syncedAt: all[0]?.syncedAt ?? null,
-    };
+    await assertRole(ctx, "creative");
+    return await buildWinnersList(ctx, args);
   },
 });
 
-/** Replace the mirror wholesale. Called by the sandbox sync. */
-export const store = mutation({
-  args: { rows: v.array(v.any()) },
-  returns: v.any(),
-  handler: async (ctx, { rows }) => {
-    // A partial or empty pull must never wipe the database he scripts from.
-    if (rows.length === 0) return { skipped: "empty payload" };
-    const now = Date.now();
-    const existing = await ctx.db.query("winnersArchive").collect();
-    const byAd = new Map(existing.map(r => [r.adId, r]));
-    let inserted = 0;
-    let patched = 0;
-    for (const raw of rows) {
-      const row = { ...raw, syncedAt: now };
-      const prev = byAd.get(row.adId);
-      if (prev) {
-        await ctx.db.patch(prev._id, row);
-        byAd.delete(row.adId);
-        patched += 1;
-      } else {
-        await ctx.db.insert("winnersArchive", row);
-        inserted += 1;
+export async function buildWinnersList(ctx: QueryCtx, args: ListArgs) {
+  const all = await ctx.db.query("winnersArchive").collect();
+  const rows = all
+    .filter(r => {
+      if (args.serviceLine && r.serviceLine !== args.serviceLine) return false;
+      if (args.excludeClient && norm(r.client) === norm(args.excludeClient)) {
+        return false;
       }
-    }
-    for (const stale of byAd.values()) await ctx.db.delete(stale._id);
-    return { inserted, patched, removed: byAd.size };
-  },
-});
+      if (args.liveOnly && r.stillLive === false) return false;
+      return true;
+    })
+    .sort((a, b) => a.cpl - b.cpl)
+    .slice(0, args.limit ?? 40);
+
+  const serviceLines = Array.from(
+    new Set(all.map(r => r.serviceLine).filter(Boolean) as string[]),
+  ).sort();
+
+  return {
+    rows,
+    serviceLines,
+    total: all.length,
+    live: all.filter(r => r.stillLive).length,
+    syncedAt: all[0]?.syncedAt ?? null,
+  };
+}

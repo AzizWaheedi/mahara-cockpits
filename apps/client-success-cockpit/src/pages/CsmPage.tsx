@@ -1,5 +1,6 @@
 import { useMutation, useQuery } from "convex/react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -26,6 +27,7 @@ import {
   nextPocState,
   serviceModel,
 } from "@/lib/csmTemplates";
+import { publishOpenClient } from "@/lib/openClient";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 
@@ -357,7 +359,9 @@ function NextPocControl({
           onClick={() =>
             onLog(c, `Next call booked for ${date}`, "booked", {
               value: date,
-              note: `Booked via ${call.label.toLowerCase()} (${call.url}).`,
+              note: `Booked via ${call.label.toLowerCase()}${
+                call.url ? ` (${call.url})` : ""
+              }.`,
             })
           }
         >
@@ -365,6 +369,47 @@ function NextPocControl({
         </Button>
       </div>
     </div>
+  );
+}
+
+/**
+ * A date field with its button, for the places that book a call in one click.
+ * A date input can only produce a real day, so free text never reaches the
+ * Next POC field in ClickUp.
+ */
+function BookDate({
+  c,
+  today,
+  label,
+  onBook,
+}: {
+  c: Client;
+  today: string;
+  label: string;
+  onBook: (date: string) => void;
+}) {
+  const st = nextPocState(c, today);
+  const [date, setDate] = useState(
+    st.date && !st.past ? st.date : st.suggested,
+  );
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1">
+      <input
+        type="date"
+        value={date}
+        onChange={e => setDate(e.target.value)}
+        aria-label="Date of the next call"
+        className="rounded border bg-background px-1.5 py-0.5 text-xs text-foreground"
+      />
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={!date}
+        onClick={() => onBook(date)}
+      >
+        {label}
+      </Button>
+    </span>
   );
 }
 
@@ -482,14 +527,20 @@ function TemplatePicker({
         >
           Copy the {nc.label.toLowerCase()} invite
         </Button>
-        <a
-          className="rounded bg-muted px-2 py-1 text-xs"
-          href={nc.url}
-          target="_blank"
-          rel="noreferrer"
-        >
-          {nc.label} booking link
-        </a>
+        {nc.url ? (
+          <a
+            className="rounded bg-muted px-2 py-1 text-xs"
+            href={nc.url}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {nc.label} booking link
+          </a>
+        ) : (
+          <span className="rounded border px-2 py-1 text-xs">
+            {nc.label}, no link needed
+          </span>
+        )}
         {c.reportDue && (
           <Button
             size="sm"
@@ -990,6 +1041,11 @@ export function CsmPage({ section }: { section: Section }) {
   };
 
   const [open, setOpen] = useState<string | null>(null);
+  // The open row is state, not a URL: tell the Hermes chat which client it is.
+  useEffect(() => {
+    publishOpenClient(open);
+    return () => publishOpenClient(null);
+  }, [open]);
   const [panel, setPanel] = useState<
     "message" | "actions" | "book" | "ticket" | "leave" | "update"
   >("message");
@@ -1113,7 +1169,19 @@ export function CsmPage({ section }: { section: Section }) {
     kind: string,
     extra: Record<string, unknown> = {},
   ) => {
-    await act({ clientId: c._id as Id<"clients">, action, kind, ...extra });
+    try {
+      // The ClickUp id survives the sync replacing every row; the document id may not.
+      await act({
+        clientId: c._id as Id<"clients">,
+        taskId: c.taskId,
+        action,
+        kind,
+        ...extra,
+      });
+    } catch (e) {
+      toast.error(String((e as Error).message ?? e));
+      return;
+    }
     setOpen(null);
     setNote("");
     setTicketNote("");
@@ -1287,22 +1355,16 @@ export function CsmPage({ section }: { section: Section }) {
                   >
                     Logged a call + summary
                   </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      const d = prompt("Next touchpoint date (YYYY-MM-DD)");
-                      if (d)
-                        run(
-                          c,
-                          `Booked the next touchpoint for ${d}`,
-                          "booked",
-                          { value: d },
-                        );
-                    }}
-                  >
-                    Book the next touchpoint
-                  </Button>
+                  <BookDate
+                    c={c}
+                    today={snap.day}
+                    label="Book the next touchpoint"
+                    onBook={d =>
+                      run(c, `Booked the next touchpoint for ${d}`, "booked", {
+                        value: d,
+                      })
+                    }
+                  />
                   {c.sheetLink && (
                     <a
                       className="text-xs underline"
@@ -1456,37 +1518,37 @@ export function CsmPage({ section }: { section: Section }) {
                         >
                           Copy the message
                         </Button>
-                        <Button
-                          size="sm"
-                          onClick={() => {
-                            const d = prompt(
-                              "Booked for which date? (YYYY-MM-DD)",
-                            );
-                            if (d)
-                              run(c, `Booked ${nc.label} for ${d}`, "booked", {
-                                value: d,
-                                note: `Sent the booking link (${nc.url}).`,
-                              });
-                          }}
-                        >
-                          They booked, log the date
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() =>
-                            run(
-                              c,
-                              `Sent the ${nc.label} booking link`,
-                              "touchpoint",
-                              {
-                                note: `Booking link sent: ${nc.url}`,
-                              },
-                            )
+                        <BookDate
+                          c={c}
+                          today={snap.day}
+                          label="They booked, log the date"
+                          onBook={d =>
+                            run(c, `Booked ${nc.label} for ${d}`, "booked", {
+                              value: d,
+                              note: nc.url
+                                ? `Sent the booking link (${nc.url}).`
+                                : `${nc.label} booked.`,
+                            })
                           }
-                        >
-                          Sent it, not booked yet
-                        </Button>
+                        />
+                        {nc.url ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                              run(
+                                c,
+                                `Sent the ${nc.label} booking link`,
+                                "touchpoint",
+                                {
+                                  note: `Booking link sent: ${nc.url}`,
+                                },
+                              )
+                            }
+                          >
+                            Sent it, not booked yet
+                          </Button>
+                        ) : null}
                       </div>
                       <p className="text-[12px] text-muted-foreground">
                         The cockpit drafts, you send. Nothing goes to the client
@@ -1686,12 +1748,12 @@ export function CsmPage({ section }: { section: Section }) {
               ? ` ${t.pastDue} ${t.pastDue === 1 ? "invoice is" : "invoices are"} past due.`
               : ""}{" "}
             {t.dueToday > 0 && (
-              <a
-                href="/clients"
+              <Link
+                to="/clients"
                 className="font-medium underline underline-offset-4"
               >
                 Open the client list
-              </a>
+              </Link>
             )}
           </p>
         )}

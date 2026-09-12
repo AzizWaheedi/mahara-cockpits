@@ -11,13 +11,16 @@
  */
 import { v } from "convex/values";
 import { authenticatedAction } from "./functions";
+import { assertRoleAction } from "./gate";
 
 import { callTool } from "./tools";
 
 export const quickAiSearch = authenticatedAction({
   args: { query: v.string() },
   returns: v.string(),
-  handler: async (_ctx, { query }) => {
+  handler: async (ctx, { query }) => {
+    // Paid model calls: a seat, not just a session.
+    await assertRoleAction(ctx, "media_buyer");
     const result = await callTool<{ search_response: string }>(
       "quick_ai_search",
       {
@@ -42,7 +45,8 @@ export const generateImage = authenticatedAction({
     ),
   },
   returns: v.string(),
-  handler: async (_ctx, { prompt, aspectRatio }) => {
+  handler: async (ctx, { prompt, aspectRatio }) => {
+    await assertRoleAction(ctx, "media_buyer");
     const result = await callTool<{ response_text: string }>("text2im", {
       prompt,
       aspect_ratio: aspectRatio ?? "1:1",

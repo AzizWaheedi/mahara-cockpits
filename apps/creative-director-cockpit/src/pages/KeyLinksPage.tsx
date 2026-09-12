@@ -17,8 +17,7 @@ export function KeyLinksPage() {
         <p className="text-[13px] text-muted-foreground">
           Everything you open in a day. Pulled from the Brand Blueprint
           framework, the Client Communication SOP and ClickUp itself. If one is
-          missing or wrong, tell Viktor and it gets fixed here, not in a
-          bookmark.
+          missing or wrong, tell Aziz and it gets fixed here, not in a bookmark.
         </p>
       </header>
 

@@ -11,6 +11,7 @@ export const snapshot = authenticatedQuery({
   args: {},
   returns: v.any(),
   handler: async ctx => {
+    await assertRole(ctx, "csm");
     const day = kuwaitToday();
     const clients = await ctx.db
       .query("clients")
@@ -201,6 +202,7 @@ export const submitEod = authenticatedMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    await assertRole(ctx, "csm");
     const user = await ctx.db.get(ctx.userId);
     const day = kuwaitToday();
     const existing = await ctx.db
@@ -227,6 +229,7 @@ export const reportIssue = authenticatedMutation({
   args: { page: v.string(), text: v.string() },
   returns: v.null(),
   handler: async (ctx, { page, text }) => {
+    await assertRole(ctx, "csm");
     const user = await ctx.db.get(ctx.userId);
     const id = await ctx.db.insert("feedback", {
       role: "csm",

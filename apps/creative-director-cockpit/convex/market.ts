@@ -1,5 +1,7 @@
 import { v } from "convex/values";
-import { query } from "./_generated/server";
+import type { QueryCtx } from "./_generated/server";
+import { authenticatedQuery } from "./functions";
+import { assertRole } from "./roles";
 
 /**
  * "What works" — the media buyer's playbook, mirrored.
@@ -8,6 +10,11 @@ import { query } from "./_generated/server";
  * `marketPlays` and `winnersArchive` rows the sync mirrors across. If the media
  * buyer's definition of a proven play changes, this file gets recopied rather
  * than reinvented. [aziz, 2026-09-07]
+ *
+ * Not cut to the person's client list: the page exists to learn from other
+ * clients' ads, the rows hold ad copy meant for reuse and nothing
+ * client-private, and the media buyer's own playbook is unscoped the same
+ * way. `exclude` (the client being built for) is the only cut.
  */
 
 /** Enough spend to mean something. Below this, a cheap CPL is just noise. */
@@ -16,6 +23,11 @@ const MIN_SPEND = 100;
 const CPL_GATE = 15;
 const WINNER_MIN_SPEND = 100;
 const WINNER_MAX_CPL = 15;
+
+/** The mirrored plays, every client's. */
+async function playsFor(ctx: QueryCtx) {
+  return await ctx.db.query("marketPlays").collect();
+}
 
 type Group = {
   key: string;
@@ -73,12 +85,19 @@ function winnersFrom(plays: any[]): Record<string, any>[] {
  * `exclude` is the client you are building for: their own history is removed so
  * the answer is "what worked ELSEWHERE that you have not tried here yet".
  */
-export const playbook = query({
-  args: {
-    serviceLine: v.optional(v.string()),
-    city: v.optional(v.string()),
-    exclude: v.optional(v.string()),
-  },
+const playbookArgs = {
+  serviceLine: v.optional(v.string()),
+  city: v.optional(v.string()),
+  exclude: v.optional(v.string()),
+};
+type PlaybookArgs = {
+  serviceLine?: string;
+  city?: string;
+  exclude?: string;
+};
+
+export const playbook = authenticatedQuery({
+  args: playbookArgs,
   returns: v.array(
     v.object({
       serviceLine: v.string(),
@@ -93,67 +112,72 @@ export const playbook = query({
     }),
   ),
   handler: async (ctx, args) => {
-    const all = await ctx.db.query("marketPlays").collect();
-    const groups = new Map<string, Group>();
-
-    for (const p of all) {
-      if (args.serviceLine && p.serviceLine !== args.serviceLine) continue;
-      if (args.city && p.city !== args.city) continue;
-      if (args.exclude && p.client === args.exclude) continue;
-
-      // Interests define the play; broad and lookalike are plays in their own right.
-      const stack = [...p.interests].sort();
-      const key = [
-        p.serviceLine ?? "?",
-        p.city ?? "?",
-        p.playType,
-        stack.join("|"),
-      ].join("::");
-
-      const g = groups.get(key) ?? {
-        key,
-        serviceLine: p.serviceLine ?? "Unknown",
-        city: p.city ?? "Unknown",
-        playType: p.playType,
-        interests: stack,
-        spend: 0,
-        leads: 0,
-        clients: new Set<string>(),
-      };
-      g.spend += p.spend;
-      g.leads += p.leads;
-      g.clients.add(p.client);
-      groups.set(key, g);
-    }
-
-    return [...groups.values()]
-      .filter(g => g.spend >= MIN_SPEND && g.leads > 0)
-      .map(g => {
-        const cpl = g.spend / g.leads;
-        return {
-          serviceLine: g.serviceLine,
-          city: g.city,
-          playType: g.playType,
-          interests: g.interests,
-          spend: Math.round(g.spend),
-          leads: g.leads,
-          cpl: Number(cpl.toFixed(2)),
-          clients: g.clients.size,
-          // Two clients beating the gate is a pattern; one is an anecdote.
-          verdict:
-            cpl <= CPL_GATE && g.clients.size > 1
-              ? "Proven"
-              : cpl <= CPL_GATE
-                ? "Worked once"
-                : "Expensive",
-        };
-      })
-      .sort((a, b) => a.cpl - b.cpl);
+    await assertRole(ctx, "creative");
+    return await buildPlaybook(ctx, args);
   },
 });
 
+export async function buildPlaybook(ctx: QueryCtx, args: PlaybookArgs) {
+  const all = await playsFor(ctx);
+  const groups = new Map<string, Group>();
+
+  for (const p of all) {
+    if (args.serviceLine && p.serviceLine !== args.serviceLine) continue;
+    if (args.city && p.city !== args.city) continue;
+    if (args.exclude && p.client === args.exclude) continue;
+
+    // Interests define the play; broad and lookalike are plays in their own right.
+    const stack = [...p.interests].sort();
+    const key = [
+      p.serviceLine ?? "?",
+      p.city ?? "?",
+      p.playType,
+      stack.join("|"),
+    ].join("::");
+
+    const g = groups.get(key) ?? {
+      key,
+      serviceLine: p.serviceLine ?? "Unknown",
+      city: p.city ?? "Unknown",
+      playType: p.playType,
+      interests: stack,
+      spend: 0,
+      leads: 0,
+      clients: new Set<string>(),
+    };
+    g.spend += p.spend;
+    g.leads += p.leads;
+    g.clients.add(p.client);
+    groups.set(key, g);
+  }
+
+  return [...groups.values()]
+    .filter(g => g.spend >= MIN_SPEND && g.leads > 0)
+    .map(g => {
+      const cpl = g.spend / g.leads;
+      return {
+        serviceLine: g.serviceLine,
+        city: g.city,
+        playType: g.playType,
+        interests: g.interests,
+        spend: Math.round(g.spend),
+        leads: g.leads,
+        cpl: Number(cpl.toFixed(2)),
+        clients: g.clients.size,
+        // Two clients beating the gate is a pattern; one is an anecdote.
+        verdict:
+          cpl <= CPL_GATE && g.clients.size > 1
+            ? "Proven"
+            : cpl <= CPL_GATE
+              ? "Worked once"
+              : "Expensive",
+      };
+    })
+    .sort((a, b) => a.cpl - b.cpl);
+}
+
 /** The service lines and cities we actually hold data for. */
-export const dimensions = query({
+export const dimensions = authenticatedQuery({
   args: {},
   returns: v.object({
     serviceLines: v.array(v.string()),
@@ -162,19 +186,24 @@ export const dimensions = query({
     clients: v.number(),
   }),
   handler: async ctx => {
-    const all = await ctx.db.query("marketPlays").collect();
-    return {
-      serviceLines: [
-        ...new Set(all.map(p => p.serviceLine).filter(Boolean) as string[]),
-      ].sort(),
-      cities: [
-        ...new Set(all.map(p => p.city).filter(Boolean) as string[]),
-      ].sort(),
-      plays: all.length,
-      clients: new Set(all.map(p => p.client)).size,
-    };
+    await assertRole(ctx, "creative");
+    return await buildDimensions(ctx);
   },
 });
+
+export async function buildDimensions(ctx: QueryCtx) {
+  const all = await playsFor(ctx);
+  return {
+    serviceLines: [
+      ...new Set(all.map(p => p.serviceLine).filter(Boolean) as string[]),
+    ].sort(),
+    cities: [
+      ...new Set(all.map(p => p.city).filter(Boolean) as string[]),
+    ].sort(),
+    plays: all.length,
+    clients: new Set(all.map(p => p.client)).size,
+  };
+}
 
 /**
  * What has worked on the creative side, independent of targeting.
@@ -185,135 +214,156 @@ export const dimensions = query({
  * the ad-level rows by format, CTA and copy trait so the pattern is visible.
  * [aziz, 2026-09-06]
  */
-export const creativePatterns = query({
-  args: {
-    serviceLine: v.optional(v.string()),
-    exclude: v.optional(v.string()),
-  },
+const patternArgs = {
+  serviceLine: v.optional(v.string()),
+  exclude: v.optional(v.string()),
+};
+type PatternArgs = { serviceLine?: string; exclude?: string };
+
+export const creativePatterns = authenticatedQuery({
+  args: patternArgs,
   returns: v.any(),
   handler: async (ctx, args) => {
-    const plays = await ctx.db.query("marketPlays").collect();
-    const rows = plays.filter(
-      p =>
-        (!args.serviceLine || p.serviceLine === args.serviceLine) &&
-        (!args.exclude || p.client !== args.exclude),
-    );
-
-    type Bucket = {
-      key: string;
-      kind: string;
-      spend: number;
-      leads: number;
-      clients: Set<string>;
-      ads: number;
-    };
-    const buckets = new Map<string, Bucket>();
-    const add = (
-      kind: string,
-      key: string,
-      spend: number,
-      leads: number,
-      client: string,
-    ) => {
-      if (!key) return;
-      const id = `${kind}::${key}`;
-      const b = buckets.get(id) ?? {
-        key,
-        kind,
-        spend: 0,
-        leads: 0,
-        clients: new Set<string>(),
-        ads: 0,
-      };
-      b.spend += spend;
-      b.leads += leads;
-      b.clients.add(client);
-      b.ads += 1;
-      buckets.set(id, b);
-    };
-
-    for (const p of rows) {
-      for (const cr of p.creatives ?? []) {
-        add("format", cr.format, cr.spend, cr.leads, p.client);
-        if (cr.cta) add("cta", cr.cta, cr.spend, cr.leads, p.client);
-      }
-      // Copy traits and language are properties of the ad set's creative mix, so
-      // they carry the ad set's totals rather than a single ad's.
-      for (const t of p.copyTraits ?? [])
-        add("copy", t, p.spend, p.leads, p.client);
-      if (p.language) add("language", p.language, p.spend, p.leads, p.client);
-    }
-
-    // Below this there is not enough money behind a pattern to trust it.
-    const MIN = 100;
-    return [...buckets.values()]
-      .filter(b => b.spend >= MIN && b.leads > 0)
-      .map(b => ({
-        kind: b.kind,
-        key: b.key,
-        spend: Math.round(b.spend),
-        leads: b.leads,
-        cpl: Math.round((b.spend / b.leads) * 100) / 100,
-        clients: b.clients.size,
-        ads: b.ads,
-        verdict: b.clients.size >= 2 ? "Proven across clients" : "Worked once",
-      }))
-      .sort((a, b) => a.cpl - b.cpl);
+    await assertRole(ctx, "creative");
+    return await buildCreativePatterns(ctx, args);
   },
 });
+
+export async function buildCreativePatterns(ctx: QueryCtx, args: PatternArgs) {
+  const plays = await playsFor(ctx);
+  const rows = plays.filter(
+    p =>
+      (!args.serviceLine || p.serviceLine === args.serviceLine) &&
+      (!args.exclude || p.client !== args.exclude),
+  );
+
+  type Bucket = {
+    key: string;
+    kind: string;
+    spend: number;
+    leads: number;
+    clients: Set<string>;
+    ads: number;
+  };
+  const buckets = new Map<string, Bucket>();
+  const add = (
+    kind: string,
+    key: string,
+    spend: number,
+    leads: number,
+    client: string,
+  ) => {
+    if (!key) return;
+    const id = `${kind}::${key}`;
+    const b = buckets.get(id) ?? {
+      key,
+      kind,
+      spend: 0,
+      leads: 0,
+      clients: new Set<string>(),
+      ads: 0,
+    };
+    b.spend += spend;
+    b.leads += leads;
+    b.clients.add(client);
+    b.ads += 1;
+    buckets.set(id, b);
+  };
+
+  for (const p of rows) {
+    for (const cr of p.creatives ?? []) {
+      add("format", cr.format, cr.spend, cr.leads, p.client);
+      if (cr.cta) add("cta", cr.cta, cr.spend, cr.leads, p.client);
+    }
+    // Copy traits and language are properties of the ad set's creative mix, so
+    // they carry the ad set's totals rather than a single ad's.
+    for (const t of p.copyTraits ?? [])
+      add("copy", t, p.spend, p.leads, p.client);
+    if (p.language) add("language", p.language, p.spend, p.leads, p.client);
+  }
+
+  // Below this there is not enough money behind a pattern to trust it.
+  const MIN = 100;
+  return [...buckets.values()]
+    .filter(b => b.spend >= MIN && b.leads > 0)
+    .map(b => ({
+      kind: b.kind,
+      key: b.key,
+      spend: Math.round(b.spend),
+      leads: b.leads,
+      cpl: Math.round((b.spend / b.leads) * 100) / 100,
+      clients: b.clients.size,
+      ads: b.ads,
+      verdict: b.clients.size >= 2 ? "Proven across clients" : "Worked once",
+    }))
+    .sort((a, b) => a.cpl - b.cpl);
+}
 
 /**
  * The winning ads, read from the permanent archive so switched-off winners are
  * still there. Falls back to the live plays only if the archive is empty.
  */
-export const winners = query({
-  args: {
-    serviceLine: v.optional(v.string()),
-    exclude: v.optional(v.string()),
-    limit: v.optional(v.number()),
-    /** Default false: retired winners are still worth reusing. */
-    liveOnly: v.optional(v.boolean()),
-  },
+const winnerArgs = {
+  serviceLine: v.optional(v.string()),
+  exclude: v.optional(v.string()),
+  limit: v.optional(v.number()),
+  /** Default false: retired winners are still worth reusing. */
+  liveOnly: v.optional(v.boolean()),
+};
+type WinnerArgs = {
+  serviceLine?: string;
+  exclude?: string;
+  limit?: number;
+  liveOnly?: boolean;
+};
+
+export const winners = authenticatedQuery({
+  args: winnerArgs,
   returns: v.any(),
   handler: async (ctx, args) => {
-    const rows = await ctx.db.query("winnersArchive").collect();
-    const source: Record<string, any>[] = rows.length
-      ? rows.map(r => ({ ...r }))
-      : winnersFrom(await ctx.db.query("marketPlays").collect());
-
-    const out = source.filter(r => {
-      if (args.serviceLine && r.serviceLine !== args.serviceLine) return false;
-      if (args.exclude && r.client === args.exclude) return false;
-      if (args.liveOnly && r.stillLive === false) return false;
-      return true;
-    });
-    out.sort((a, b) => (a.cpl as number) - (b.cpl as number));
-    return out.slice(0, args.limit ?? 40).map(r => ({
-      adId: r.adId,
-      adName: r.adName,
-      client: r.client,
-      serviceLine: r.serviceLine ?? "Unknown",
-      city: r.city ?? "Unknown",
-      format: r.format,
-      cta: r.cta ?? null,
-      headline: r.headline ?? null,
-      body: r.body ?? null,
-      transcript: r.transcript ?? null,
-      hook: r.hook ?? null,
-      voice: r.voice ?? null,
-      previewSrc: r.previewSrc ?? null,
-      thumbUrl: r.thumbUrl ?? null,
-      language: r.language ?? null,
-      copyTraits: r.copyTraits ?? [],
-      playType: r.playType ?? null,
-      interests: r.interests ?? [],
-      spend: r.spend,
-      leads: r.leads,
-      cpl: r.cpl,
-      wonFrom: r.wonFrom ?? null,
-      wonTo: r.wonTo ?? null,
-      stillLive: r.stillLive ?? null,
-      retiredOn: r.retiredOn ?? null,
-    }));
+    await assertRole(ctx, "creative");
+    return await buildMarketWinners(ctx, args);
   },
 });
+
+export async function buildMarketWinners(ctx: QueryCtx, args: WinnerArgs) {
+  const rows = await ctx.db.query("winnersArchive").collect();
+  const source: Record<string, any>[] = rows.length
+    ? rows.map(r => ({ ...r }))
+    : winnersFrom(await playsFor(ctx));
+
+  const out = source.filter(r => {
+    if (args.serviceLine && r.serviceLine !== args.serviceLine) return false;
+    if (args.exclude && r.client === args.exclude) return false;
+    if (args.liveOnly && r.stillLive === false) return false;
+    return true;
+  });
+  out.sort((a, b) => (a.cpl as number) - (b.cpl as number));
+  return out.slice(0, args.limit ?? 40).map(r => ({
+    adId: r.adId,
+    adName: r.adName,
+    client: r.client,
+    serviceLine: r.serviceLine ?? "Unknown",
+    city: r.city ?? "Unknown",
+    format: r.format,
+    cta: r.cta ?? null,
+    headline: r.headline ?? null,
+    body: r.body ?? null,
+    transcript: r.transcript ?? null,
+    hook: r.hook ?? null,
+    voice: r.voice ?? null,
+    previewSrc: r.previewSrc ?? null,
+    thumbUrl: r.thumbUrl ?? null,
+    language: r.language ?? null,
+    copyTraits: r.copyTraits ?? [],
+    playType: r.playType ?? null,
+    interests: r.interests ?? [],
+    spend: r.spend,
+    leads: r.leads,
+    cpl: r.cpl,
+    wonFrom: r.wonFrom ?? null,
+    wonTo: r.wonTo ?? null,
+    stillLive: r.stillLive ?? null,
+    retiredOn: r.retiredOn ?? null,
+  }));
+}

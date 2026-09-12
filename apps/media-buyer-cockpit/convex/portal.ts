@@ -11,6 +11,7 @@ import {
 } from "./_generated/server";
 import { bridge } from "./comms";
 import { authenticatedMutation, authenticatedQuery } from "./functions";
+import { flush } from "./health";
 import { accessFor, assertAdmin, COCKPITS, staticRoles } from "./roles";
 
 /**
@@ -92,7 +93,75 @@ export const upsertMember = authenticatedMutation({
         addedBy: admin.email,
         addedAt: Date.now(),
       });
+    // The other cockpits learn the new seats now, not at the next sign-in.
+    await ctx.scheduler.runAfter(0, internal.portal.pushMember, { email });
     return null;
+  },
+});
+
+export const memberByEmail = internalQuery({
+  args: { email: v.string() },
+  returns: v.any(),
+  handler: async (ctx, { email }) =>
+    await ctx.db
+      .query("members")
+      .withIndex("by_email", q => q.eq("email", norm(email)))
+      .unique(),
+});
+
+export const allMembers = internalQuery({
+  args: {},
+  returns: v.array(v.any()),
+  handler: async ctx =>
+    (await ctx.db.query("members").collect()).map(m => ({
+      email: m.email,
+      name: m.name,
+      roles: m.roles,
+      clients: m.clients,
+    })),
+});
+
+/** One person's seats to the other cockpits (they keep a copy in portalMembers). */
+export const pushMember = internalAction({
+  args: { email: v.string() },
+  returns: v.any(),
+  handler: async (ctx, { email }): Promise<Any> => {
+    const m: Any = await ctx.runQuery(internal.portal.memberByEmail, { email });
+    if (!m) return null;
+    const out: Record<string, string> = {};
+    for (const app of ["csm", "creative"] as const) {
+      try {
+        await bridge(app, "upsertMember", {
+          email: m.email,
+          name: m.name,
+          roles: m.roles,
+          clients: m.clients,
+        });
+        out[app] = "ok";
+      } catch (e) {
+        out[app] = `FAILED ${String(e).slice(0, 120)}`;
+      }
+    }
+    await flush(ctx);
+    return out;
+  },
+});
+
+/** The whole directory to the other cockpits; runs with the comms feed. */
+export const pushMembers = internalAction({
+  args: {},
+  returns: v.any(),
+  handler: async (ctx): Promise<Any> => {
+    const members: Any[] = await ctx.runQuery(internal.portal.allMembers, {});
+    const out: Record<string, unknown> = {};
+    for (const app of ["csm", "creative"] as const) {
+      try {
+        out[app] = await bridge(app, "storeMembers", { members });
+      } catch (e) {
+        out[app] = `FAILED ${String(e).slice(0, 120)}`;
+      }
+    }
+    return out;
   },
 });
 

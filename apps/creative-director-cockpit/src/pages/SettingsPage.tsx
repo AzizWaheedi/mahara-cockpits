@@ -101,7 +101,9 @@ export function SettingsPage() {
         <h1 className="text-2xl md:text-3xl font-bold tracking-tight">
           Settings
         </h1>
-        <p className="text-muted-foreground mt-1">Page subtitle goes here</p>
+        <p className="text-muted-foreground mt-1">
+          Your account and how the cockpit looks.
+        </p>
       </div>
 
       <Card className="overflow-hidden">
@@ -146,7 +148,7 @@ export function SettingsPage() {
                     Dark mode
                   </Label>
                   <p className="text-sm text-muted-foreground">
-                    Toggle description goes here
+                    Switch between light and dark.
                   </p>
                 </div>
               </div>

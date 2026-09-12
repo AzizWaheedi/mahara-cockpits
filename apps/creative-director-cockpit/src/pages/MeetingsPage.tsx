@@ -338,8 +338,7 @@ export function MeetingsPage() {
                     </p>
                     {t.sendError ? (
                       <p className="mb-1 text-[12px] text-red-600">
-                        The last send failed: {t.sendError}. Fix and send
-                        again.
+                        The last send failed: {t.sendError}. Fix and send again.
                       </p>
                     ) : null}
                     <textarea

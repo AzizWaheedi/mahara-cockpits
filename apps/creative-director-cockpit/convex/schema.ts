@@ -363,6 +363,8 @@ const schema = defineSchema({
     /** pending | sending | done | failed (failed only after the last retry) */
     state: v.string(),
     result: v.optional(v.string()),
+    /** Who queued it (email), so the drain can log who sent what. */
+    by: v.optional(v.string()),
     createdAt: v.number(),
     settledAt: v.optional(v.number()),
     claimedAt: v.optional(v.number()),
@@ -438,6 +440,8 @@ const schema = defineSchema({
     roles: v.array(v.string()),
     clients: v.array(v.string()),
     at: v.number(),
+    /** Removed in the portal: the row stays with no roles so the fallback cannot readmit them. */
+    revokedAt: v.optional(v.number()),
   }).index("by_email", ["email"]),
   calendarEvents: defineTable({
     eventId: v.string(),

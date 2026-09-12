@@ -370,6 +370,11 @@ const schema = defineSchema({
     /** Set once it has gone to the sheet and #media-eods. Guards double-posting. */
     submittedAt: v.optional(v.number()),
     slackTs: v.optional(v.string()),
+    /** Why the last post attempt failed, and how many have been made, so the cockpit can say "still posting" and retry. */
+    error: v.optional(v.string()),
+    attempts: v.optional(v.number()),
+    /** When a post run claimed the row. A second run inside a minute of it backs off, so a retry and a resubmit never both post. */
+    postingAt: v.optional(v.number()),
   }).index("by_role_day", ["role", "day"]),
 
   /**

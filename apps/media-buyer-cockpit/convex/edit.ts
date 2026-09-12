@@ -1,7 +1,13 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { authenticatedAction } from "./functions";
+import { refusal } from "./gate";
 import { callTool, graph, graphPost, unwrap } from "./tools";
+
+declare const process: { env: Record<string, string | undefined> };
+
+/** Aziz's Slack DM. A user id opens the DM; the old D... channel id is gone. */
+const AZIZ_DM = process.env.ALERT_SLACK_TO || "U0AJQ8P1ACF";
 
 /**
  * Editing what already exists: new ad sets, new ads, new budgets.
@@ -48,9 +54,22 @@ async function logIt(
     level: "edit",
     status: "-",
     name: args.adName ?? args.campaignName,
-    clientTag: args.campaignName,
+    campaignName: args.campaignName,
     overrideNote: args.what,
   });
+}
+
+/**
+ * Only a media buyer, on a client on her list, may change a live account.
+ * Returned as a result rather than thrown so the panel shows it like any
+ * other refusal.
+ */
+async function refused(
+  ctx: any,
+  campaignName?: string,
+): Promise<string | undefined> {
+  const no = await refusal(ctx, "media_buyer", { campaignName });
+  return no || undefined;
 }
 
 /**
@@ -70,6 +89,8 @@ export const duplicateAdSet = authenticatedAction({
     error: v.optional(v.string()),
   }),
   handler: async (ctx, args) => {
+    const no = await refused(ctx, args.campaignName);
+    if (no) return { ok: false, error: no };
     try {
       const src = await graph<any>(args.adsetId, {
         fields:
@@ -128,6 +149,8 @@ export const setAdSetBudget = authenticatedAction({
   },
   returns: v.object({ ok: v.boolean(), error: v.optional(v.string()) }),
   handler: async (ctx, args) => {
+    const no = await refused(ctx, args.campaignName);
+    if (no) return { ok: false, error: no };
     try {
       await graphPost(args.adsetId, {
         daily_budget: toMinor(args.dailyBudget),
@@ -165,6 +188,8 @@ export const newAdsFromExisting = authenticatedAction({
     error: v.optional(v.string()),
   }),
   handler: async (ctx, args) => {
+    const no = await refused(ctx, args.campaignName);
+    if (no) return { ok: false, error: no };
     try {
       const src = await graph<any>(args.sourceAdId, {
         fields: "name,adset_id,account_id,creative{id,object_story_spec}",
@@ -241,7 +266,9 @@ export const suggestCopy = authenticatedAction({
     ),
     error: v.optional(v.string()),
   }),
-  handler: async (_ctx, args) => {
+  handler: async (ctx, args) => {
+    const no = await refused(ctx);
+    if (no) return { ok: false, error: no };
     const arabic = (args.language ?? "").toLowerCase().startsWith("ar");
     const prompt = [
       `Write Meta lead-generation ad copy for ${args.clientName}, a construction and design business in the Gulf.`,
@@ -332,6 +359,8 @@ export const addCreativeToCampaign = authenticatedAction({
     error: v.optional(v.string()),
   }),
   handler: async (ctx, args) => {
+    const no = await refused(ctx, args.campaignName);
+    if (no) return { ok: false, error: no };
     if (!args.videoUrl && !args.imageUrl && !args.videoId && !args.imageHash) {
       return { ok: false, error: "Give me a video or an image to use." };
     }
@@ -434,12 +463,12 @@ export const addCreativeToCampaign = authenticatedAction({
 });
 
 /**
- * Free-form: she describes what she wants and it reaches Viktor.
+ * Free-form: she describes what she wants and it reaches Aziz on Slack.
  *
- * Deliberately not an AI text box that pretends to act. The in-app model
- * gateway is down, and a box that silently does nothing is worse than no box.
- * This captures the request against the campaign it belongs to and queues it
- * for delivery, so it lands somewhere a human or Viktor will actually see it.
+ * Deliberately not an AI text box that pretends to act. This posts the request
+ * straight to his DM with the campaign it belongs to, and says so honestly
+ * when Slack cannot be reached, rather than queueing it somewhere nothing
+ * reads and answering "Sent".
  */
 export const askViktorFor = authenticatedAction({
   args: {
@@ -450,6 +479,11 @@ export const askViktorFor = authenticatedAction({
   },
   returns: v.object({ ok: v.boolean(), error: v.optional(v.string()) }),
   handler: async (ctx, args) => {
+    const refusedFor = await refusal(ctx, "media_buyer", {
+      campaignName: args.campaignName,
+      clientName: args.client,
+    });
+    if (refusedFor) return { ok: false, error: refusedFor };
     const text = args.request.trim();
     if (text.length < 5) {
       return { ok: false, error: "Tell me a bit more about what you want." };
@@ -459,18 +493,20 @@ export const askViktorFor = authenticatedAction({
       : args.client
         ? ` (client: ${args.client})`
         : "";
-    await ctx.runMutation(internal.outbox.enqueue, {
-      role: "slack_request",
-      args: {
-        text: `Request from the media buyer cockpit${where}: ${text}`,
-        askedBy: args.askedBy,
-        campaignName: args.campaignName,
-        client: args.client,
-      },
-    });
+    try {
+      await callTool("coworker_send_slack_message", {
+        channel_id: AZIZ_DM,
+        text: `Request from ${args.askedBy ?? "the media buyer"} in the cockpit${where}: ${text}`,
+      });
+    } catch (e) {
+      return {
+        ok: false,
+        error: `Could not reach Slack (${e instanceof Error ? e.message : String(e)}). Say it in Slack, or try again in a minute.`,
+      };
+    }
     await logIt(ctx, {
       campaignName: args.campaignName ?? args.client ?? "-",
-      what: `Asked: ${text.slice(0, 160)}`,
+      what: `Asked Aziz: ${text.slice(0, 160)}`,
     });
     return { ok: true };
   },

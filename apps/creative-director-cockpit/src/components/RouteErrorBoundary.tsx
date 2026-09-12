@@ -6,7 +6,10 @@ import { Component, type ReactNode } from "react";
  * the rest of the app, reload starts over, and the failure is reported once
  * so Hermes gets a fix job without anyone having to write it up.
  */
-type Props = { children: ReactNode; report?: (r: { title: string; detail: string }) => Promise<unknown> };
+type Props = {
+  children: ReactNode;
+  report?: (r: { title: string; detail: string }) => Promise<unknown>;
+};
 type State = { error: Error | null; key: number };
 
 export class RouteErrorBoundary extends Component<Props, State> {
@@ -33,7 +36,8 @@ export class RouteErrorBoundary extends Component<Props, State> {
   }
 
   render() {
-    if (!this.state.error) return <div key={this.state.key}>{this.props.children}</div>;
+    if (!this.state.error)
+      return <div key={this.state.key}>{this.props.children}</div>;
     return (
       <div className="mx-auto flex max-w-lg flex-col items-center gap-3 p-10 text-center">
         <AlertTriangle className="size-8 text-destructive" />
@@ -48,7 +52,9 @@ export class RouteErrorBoundary extends Component<Props, State> {
         <div className="flex gap-2">
           <button
             type="button"
-            onClick={() => this.setState(s => ({ error: null, key: s.key + 1 }))}
+            onClick={() =>
+              this.setState(s => ({ error: null, key: s.key + 1 }))
+            }
             className="rounded-md bg-primary px-3 py-1.5 text-sm font-semibold text-primary-foreground"
           >
             Try again

@@ -13,7 +13,6 @@ import {
   BacklogPage,
   ClientPerformancePage,
   ClientsPage,
-  DashboardPage,
   EndOfDayPage,
   HotListPage,
   KeyLinksPage,
@@ -45,6 +44,7 @@ export function AuthenticatedRoutes() {
 
       <Route element={<ProtectedRoute />}>
         <Route element={<AppLayout />}>
+          {/* biome-ignore lint/a11y/useValidAriaRole: RoleRoute's role prop is a seat name, not an ARIA role */}
           <Route element={<RoleRoute role="csm" />}>
             <Route path="/dashboard" element={<StartOfDayPage />} />
             <Route path="/clients" element={<ClientsPage />} />
@@ -54,11 +54,12 @@ export function AuthenticatedRoutes() {
             <Route path="/links" element={<KeyLinksPage />} />
             <Route path="/money" element={<MyMoneyPage />} />
             <Route path="/eod" element={<EndOfDayPage />} />
+            {/* Every page in this cockpit is the CSM's: a session minted for
+                another seat gets "not yours", not a crashed screen. */}
+            <Route path="/meetings" element={<MeetingsPage />} />
+            <Route path="/backlog" element={<BacklogPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
           </Route>
-          <Route path="/template" element={<DashboardPage />} />
-          <Route path="/meetings" element={<MeetingsPage />} />
-          <Route path="/backlog" element={<BacklogPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
         </Route>
       </Route>
 

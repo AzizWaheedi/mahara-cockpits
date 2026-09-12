@@ -1,6 +1,8 @@
 import { v } from "convex/values";
 import { internalQuery } from "./_generated/server";
 import { authenticatedQuery } from "./functions";
+import { assertScope } from "./gate";
+import { assertRole } from "./roles";
 
 /**
  * Any date range, at every level.
@@ -183,7 +185,13 @@ export const range = authenticatedQuery({
     end: v.string(),
   },
   returns: v.any(),
-  handler: async (ctx, args) => computeRange(ctx, args),
+  handler: async (ctx, args) => {
+    await assertRole(ctx, "media_buyer");
+    // The campaign name comes straight from the client; check its client is
+    // on this person's list before computing anything.
+    await assertScope(ctx, { campaignName: args.campaignName });
+    return computeRange(ctx, args);
+  },
 });
 
 /** Same numbers, callable from a script or a stress test. */
@@ -198,6 +206,7 @@ export const coverage = authenticatedQuery({
   args: {},
   returns: v.any(),
   handler: async ctx => {
+    await assertRole(ctx, "media_buyer");
     const rows = await ctx.db.query("dailyStats").take(20000);
     if (rows.length === 0) return { first: null, last: null, rows: 0 };
     let first = rows[0].date;

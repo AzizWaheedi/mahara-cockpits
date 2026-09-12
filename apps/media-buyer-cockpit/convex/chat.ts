@@ -1,21 +1,38 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import { internalMutation, mutation, query } from "./_generated/server";
+import {
+  internalAction,
+  internalMutation,
+  internalQuery,
+} from "./_generated/server";
+import { authenticatedMutation, authenticatedQuery } from "./functions";
+import { assertScope, scopeFilter } from "./gate";
+import { assertRole } from "./roles";
+import { callTool } from "./tools";
 
 /**
  * The conversation attached to one campaign.
  *
- * This is deliberately not a chatbot. In-app AI generation runs through the
- * Viktor tool gateway, which is returning 500 for every call, so pretending to
- * answer would mean inventing numbers about a live ad account. Instead the
- * question is relayed to Slack together with the campaign's actual figures,
- * and the answer is written back into the same thread. From her side it reads
- * as one conversation either way. [aziz, 2026-09-06]
+ * This is deliberately not a chatbot. Inventing an answer about a live ad
+ * account is worse than waiting for a real one, so the question goes to Aziz
+ * on Slack together with the campaign's actual figures, and he answers there.
+ * Every message shows whether it reached him. [aziz, 2026-09-06]
  */
-export const thread = query({
+
+declare const process: { env: Record<string, string | undefined> };
+
+/** Aziz's Slack DM. A user id opens the DM; the old D... channel id is gone. */
+const AZIZ_DM = process.env.ALERT_SLACK_TO || "U0AJQ8P1ACF";
+/** Retry gaps in minutes: a Slack hiccup should not lose her question. */
+const RETRY_MIN = [1, 5, 15];
+
+export const thread = authenticatedQuery({
   args: { campaignId: v.string() },
   returns: v.any(),
   handler: async (ctx, { campaignId }) => {
+    await assertRole(ctx, "media_buyer");
+    // The id she is looking at is the campaign name (see CockpitPage).
+    await assertScope(ctx, { campaignName: campaignId });
     const rows = await ctx.db
       .query("campaignChat")
       .withIndex("by_campaign", q => q.eq("campaignId", campaignId))
@@ -25,13 +42,16 @@ export const thread = query({
 });
 
 /** Campaign ids that have any conversation, so the list can show a marker. */
-export const active = query({
+export const active = authenticatedQuery({
   args: {},
   returns: v.any(),
   handler: async ctx => {
+    await assertRole(ctx, "media_buyer");
+    const visible = await scopeFilter(ctx);
     const rows = await ctx.db.query("campaignChat").collect();
     const out: Record<string, { messages: number; waiting: boolean }> = {};
     for (const r of rows) {
+      if (!visible(r)) continue;
       const e = out[r.campaignId] ?? { messages: 0, waiting: false };
       e.messages += 1;
       if (r.author === "her" && r.pending) e.waiting = true;
@@ -41,7 +61,7 @@ export const active = query({
   },
 });
 
-export const ask = mutation({
+export const ask = authenticatedMutation({
   args: {
     campaignId: v.string(),
     campaignName: v.string(),
@@ -51,6 +71,8 @@ export const ask = mutation({
   },
   returns: v.object({ ok: v.boolean() }),
   handler: async (ctx, args) => {
+    await assertRole(ctx, "media_buyer");
+    await assertScope(ctx, { campaignName: args.campaignName });
     const text = args.text.trim();
     if (!text) return { ok: false };
 
@@ -78,7 +100,7 @@ export const ask = mutation({
           .join(" · ")
       : undefined;
 
-    await ctx.db.insert("campaignChat", {
+    const id = await ctx.db.insert("campaignChat", {
       campaignId: args.campaignId,
       campaignName: args.campaignName,
       client: args.client,
@@ -91,25 +113,59 @@ export const ask = mutation({
       kind: "question",
       at: Date.now(),
     });
-
-    await ctx.runMutation(internal.outbox.enqueue, {
-      role: "slack_request",
-      args: {
-        kind: "campaign_question",
-        campaignId: args.campaignId,
-        campaign: args.campaignName,
-        client: args.client ?? "",
-        who: args.authorName ?? "the media buyer",
-        context: context ?? "",
-        text,
-      },
-    });
+    // Straight to Slack from here. The old outbox relay had no runner on this
+    // deployment, so every question sat at "queued" for good.
+    await ctx.scheduler.runAfter(0, internal.chat.deliver, { id });
     return { ok: true };
   },
 });
 
+export const get = internalQuery({
+  args: { id: v.id("campaignChat") },
+  returns: v.any(),
+  handler: async (ctx, { id }) => await ctx.db.get(id),
+});
+
+/** Post one question to Aziz's DM, retrying a few times before giving up. */
+export const deliver = internalAction({
+  args: { id: v.id("campaignChat"), attempt: v.optional(v.number()) },
+  returns: v.null(),
+  handler: async (ctx, { id, attempt }) => {
+    const row = await ctx.runQuery(internal.chat.get, { id });
+    if (!row || row.author !== "her") return null;
+    if ((row.status ?? "queued") !== "queued") return null;
+    const text = [
+      `*${row.authorName ?? "The media buyer"} asks about "${row.campaignName}"${row.client ? ` (${row.client})` : ""}*`,
+      row.context ? `_${row.context}_` : null,
+      row.text,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    try {
+      await callTool("coworker_send_slack_message", {
+        channel_id: AZIZ_DM,
+        text,
+      });
+      await ctx.runMutation(internal.chat.markSent, { id, ok: true });
+    } catch (e) {
+      const n = attempt ?? 0;
+      console.warn(`campaign question ${id}: ${String(e).slice(0, 160)}`);
+      if (n < RETRY_MIN.length) {
+        await ctx.scheduler.runAfter(
+          RETRY_MIN[n] * 60_000,
+          internal.chat.deliver,
+          { id, attempt: n + 1 },
+        );
+      } else {
+        await ctx.runMutation(internal.chat.markSent, { id, ok: false });
+      }
+    }
+    return null;
+  },
+});
+
 /**
- * Viktor's answer, written back by the bridge. Clears the waiting state on
+ * An answer written back into the thread. Clears the waiting state on
  * every outstanding question in that campaign.
  */
 export const reply = internalMutation({
@@ -144,17 +200,19 @@ export const reply = internalMutation({
   },
 });
 
-/** Questions still waiting on an answer — the bridge prints these. */
-export const waiting = query({
+/** Questions not yet delivered. */
+export const waiting = authenticatedQuery({
   args: {},
   returns: v.any(),
   handler: async ctx => {
+    await assertRole(ctx, "media_buyer");
+    const visible = await scopeFilter(ctx);
     const rows = await ctx.db
       .query("campaignChat")
       .withIndex("by_pending", q => q.eq("pending", true))
       .collect();
     return rows
-      .filter(r => r.author === "her")
+      .filter(r => r.author === "her" && visible(r))
       .map(r => ({
         campaignId: r.campaignId,
         campaign: r.campaignName,
@@ -182,24 +240,31 @@ export const discard = internalMutation({
 });
 
 /**
- * Mark a relayed message as delivered.
+ * Mark a message as delivered (or given up on).
  *
- * Called by the bridge the moment the question actually lands in Slack. The
- * difference between "queued" and "sent" is the difference between a box that
- * might be broken and one she can trust. [aziz, 2026-09-07]
+ * The difference between "queued" and "sent" is the difference between a box
+ * that might be broken and one she can trust. [aziz, 2026-09-07]
+ * Aziz answers in Slack, not in this thread, so a delivered question is no
+ * longer "waiting for an answer" here either.
  */
 export const markSent = internalMutation({
   args: {
-    campaignId: v.string(),
+    id: v.optional(v.id("campaignChat")),
+    campaignId: v.optional(v.string()),
     text: v.optional(v.string()),
     ok: v.optional(v.boolean()),
   },
   returns: v.object({ marked: v.number() }),
-  handler: async (ctx, { campaignId, text, ok }) => {
-    const rows = await ctx.db
-      .query("campaignChat")
-      .withIndex("by_campaign", q => q.eq("campaignId", campaignId))
-      .collect();
+  handler: async (ctx, { id, campaignId, text, ok }) => {
+    const one = id ? await ctx.db.get(id) : null;
+    const rows = one
+      ? [one]
+      : campaignId
+        ? await ctx.db
+            .query("campaignChat")
+            .withIndex("by_campaign", q => q.eq("campaignId", campaignId))
+            .collect()
+        : [];
     let marked = 0;
     for (const r of rows) {
       if (r.author !== "her") continue;
@@ -208,6 +273,7 @@ export const markSent = internalMutation({
       await ctx.db.patch(r._id, {
         status: ok === false ? "failed" : "sent",
         deliveredAt: Date.now(),
+        pending: false,
       });
       marked += 1;
     }
@@ -222,7 +288,7 @@ export const markSent = internalMutation({
  * asked for a build. The thread then answers "what is going on with this
  * campaign, and did it work" without anyone having to ask. [aziz, 2026-09-07]
  */
-export const logEvent = mutation({
+export const logEvent = authenticatedMutation({
   args: {
     campaignId: v.string(),
     campaignName: v.string(),
@@ -234,6 +300,8 @@ export const logEvent = mutation({
   },
   returns: v.object({ ok: v.boolean() }),
   handler: async (ctx, args) => {
+    await assertRole(ctx, "media_buyer");
+    await assertScope(ctx, { campaignName: args.campaignName });
     await ctx.db.insert("campaignChat", {
       campaignId: args.campaignId,
       campaignName: args.campaignName,
@@ -253,13 +321,15 @@ export const logEvent = mutation({
 
 /**
  * Everything happening right now, across every campaign: the newest messages,
- * what is still waiting to reach Viktor, and when the data last refreshed.
+ * what is still on its way to Aziz, and when the data last refreshed.
  */
-export const activity = query({
+export const activity = authenticatedQuery({
   args: { limit: v.optional(v.number()) },
   returns: v.any(),
   handler: async (ctx, { limit }) => {
-    const rows = await ctx.db.query("campaignChat").collect();
+    await assertRole(ctx, "media_buyer");
+    const visible = await scopeFilter(ctx);
+    const rows = (await ctx.db.query("campaignChat").collect()).filter(visible);
     rows.sort((a, b) => b.at - a.at);
     const lastSync = (await ctx.db.query("syncRuns").collect()).sort(
       (a, b) => b.at - a.at,
@@ -301,5 +371,36 @@ export const logInternal = internalMutation({
       at: Date.now(),
     });
     return null;
+  },
+});
+
+/**
+ * One-off after 2026-09-13: campaign questions queued by the old outbox relay
+ * (which never ran on this deployment) would show "sending to Aziz" for ever.
+ * Anything queued more than a day ago is marked failed so the thread is honest.
+ *   bunx convex run --prod chat:failLegacyQueued
+ */
+export const failLegacyQueued = internalMutation({
+  args: {},
+  returns: v.number(),
+  handler: async ctx => {
+    const cutoff = Date.now() - 86400_000;
+    let n = 0;
+    for (const row of await ctx.db.query("campaignChat").collect()) {
+      if (
+        row.author === "her" &&
+        row.status === "queued" &&
+        !row.deliveredAt &&
+        row.at < cutoff
+      ) {
+        await ctx.db.patch(row._id, {
+          status: "failed",
+          pending: false,
+          error: "not delivered: queued before the direct Slack relay existed",
+        });
+        n++;
+      }
+    }
+    return n;
   },
 });

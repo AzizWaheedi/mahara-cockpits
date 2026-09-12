@@ -23,6 +23,7 @@ export function SignIn() {
       <Card variant="elevated">
         <CardContent className="pt-6">
           <form
+            key={step.type}
             onSubmit={async e => {
               e.preventDefault();
               setError("");
@@ -100,6 +101,7 @@ export function SignIn() {
             </p>
           </div>
           <form
+            key={step.type}
             onSubmit={async e => {
               e.preventDefault();
               setError("");
@@ -110,9 +112,11 @@ export function SignIn() {
               try {
                 await signIn("password", formData);
                 setStep({ type: "reset-code", email });
-              } catch {
+              } catch (e) {
                 setError(
-                  "Could not send the reset code. Check the email is the one Aziz set you up with, or ask him to reset it.",
+                  String(e).includes("InvalidAccountId")
+                    ? "There is no password on this email yet. If you sign in through the portal, you do not need one; otherwise ask Aziz to set one."
+                    : "Could not send the reset code. Check the email is the one Aziz set you up with, or ask him to reset it.",
                 );
               } finally {
                 setLoading(false);
@@ -172,6 +176,7 @@ export function SignIn() {
             </p>
           </div>
           <form
+            key={step.type}
             onSubmit={e => {
               e.preventDefault();
               setError("");
@@ -225,6 +230,7 @@ export function SignIn() {
           </p>
         </div>
         <form
+          key={step.type}
           onSubmit={async e => {
             e.preventDefault();
             setError("");

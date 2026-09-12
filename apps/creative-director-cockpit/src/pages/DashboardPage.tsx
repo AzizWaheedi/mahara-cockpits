@@ -129,14 +129,15 @@ function SyncHealth() {
     return (
       <p className="mb-3 text-[12px] text-muted-foreground">
         Everything on this board synced{" "}
-        {age === 0 ? "just now" : `${age} min ago`}. Refreshes every 15 minutes.
+        {age === 0 ? "just now" : `${age} min ago`}. Refreshes {f.cadence}.
       </p>
     );
   }
   return (
     <div className="callout-warn mb-3 rounded-md border px-3 py-2 text-[13px]">
-      <strong>Some of this is stale.</strong> {f.stale.join(", ")} last updated
-      over 45 minutes ago, so treat those numbers as old and tell Viktor.
+      <strong>Some of this is stale.</strong> {f.stale.join(", ")} should
+      refresh every {f.expectedEveryMin} minutes right now and have not, so
+      treat those numbers as old and tell Aziz, or ask Hermes in the chat.
     </div>
   );
 }
@@ -1253,11 +1254,11 @@ function EndOfDay({
       <Section
         icon={PenLine}
         title="Your EOD"
-        sub="the same questions as the form, so it lands in the same sheet"
+        sub="saved in the cockpit only: it does not reach the EOD sheet yet, so still submit the EOD form"
       >
         <div className="space-y-2">
           {EOD_QUESTIONS.map(q => (
-            <label key={q.key} className="block">
+            <div key={q.key} className="block">
               <span className="text-[12px] font-semibold">{q.label}</span>
               {q.choices ? (
                 <div className="mt-1 flex gap-1.5">
@@ -1275,6 +1276,7 @@ function EndOfDay({
                 </div>
               ) : (
                 <textarea
+                  aria-label={q.label}
                   className="mt-1 w-full rounded border bg-background p-2 text-[13px]"
                   rows={2}
                   value={answers[q.key] ?? ""}
@@ -1283,7 +1285,7 @@ function EndOfDay({
                   }
                 />
               )}
-            </label>
+            </div>
           ))}
           <Button
             size="sm"
@@ -1298,11 +1300,16 @@ function EndOfDay({
               }
             }}
           >
-            {saving ? "Saving…" : snap.eod ? "Update my EOD" : "Save my EOD"}
+            {saving
+              ? "Saving…"
+              : snap.eod
+                ? "Update the draft"
+                : "Save a draft"}
           </Button>
           {snap.eod && (
             <p className="text-[12px] text-muted-foreground">
-              Saved at {new Date(snap.eod.at).toLocaleTimeString()}.
+              Draft saved at {new Date(snap.eod.at).toLocaleTimeString()}. The
+              EOD form is still the record.
             </p>
           )}
         </div>

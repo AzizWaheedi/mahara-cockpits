@@ -2,7 +2,9 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { QueryCtx } from "./_generated/server";
 import { internalMutation } from "./_generated/server";
+import { CPL_GATE } from "./constants";
 import { authenticatedMutation, authenticatedQuery } from "./functions";
+import { scopeFilter } from "./gate";
 import { allowedClients, assertRole } from "./roles";
 
 function kuwaitToday(): string {
@@ -31,23 +33,35 @@ export async function buildSnapshot(
       !scope ||
       scope.has(String(c.clientName ?? c.accountName ?? "").toLowerCase()),
   );
-  const ads = await ctx.db.query("ads").collect();
-  const metaTree = await ctx.db.query("metaTree").collect();
-  const adChanges = await ctx.db.query("adChanges").collect();
+  // The same access trims everything keyed by campaign, otherwise a member
+  // limited to one client still gets every other client's ads, previews and
+  // change log in the payload.
+  const names = new Set(campaigns.map(c => c.campaignName));
+  const mine = (row: { campaignName: string }) =>
+    !scope || names.has(row.campaignName);
+  const ads = (await ctx.db.query("ads").collect()).filter(mine);
+  const metaTree = (await ctx.db.query("metaTree").collect()).filter(mine);
+  const adChanges = (await ctx.db.query("adChanges").collect()).filter(mine);
   const checks = await ctx.db
     .query("checks")
     .withIndex("by_role_day", q => q.eq("role", "media_buyer").eq("day", day))
     .collect();
-  const decisions = await ctx.db
-    .query("decisions")
-    .withIndex("by_day", q => q.eq("day", day))
-    .collect();
+  const decisions = (
+    await ctx.db
+      .query("decisions")
+      .withIndex("by_day", q => q.eq("day", day))
+      .collect()
+  ).filter(
+    d => !scope || names.has(d.subject) || scope.has(d.subject.toLowerCase()),
+  );
   const plan = await ctx.db
     .query("planItems")
     .withIndex("by_role_day", q => q.eq("role", "media_buyer").eq("day", day))
     .collect();
   const inbox = await ctx.db.query("inbox").collect();
-  const manualChanges = await ctx.db.query("manualChanges").collect();
+  const manualChanges = (await ctx.db.query("manualChanges").collect()).filter(
+    mine,
+  );
   const members = await ctx.db.query("clickupMembers").collect();
   const prefs = await ctx.db.query("clientPrefs").collect();
   const eod = await ctx.db
@@ -94,8 +108,9 @@ export async function buildSnapshot(
       clientSpend,
       clientLeads,
       blendedCpl: clientLeads > 0 ? clientSpend / clientLeads : null,
-      overGate: clientCampaigns.filter(c => c.cpl !== undefined && c.cpl > 15)
-        .length,
+      overGate: clientCampaigns.filter(
+        c => c.cpl !== undefined && c.cpl > CPL_GATE,
+      ).length,
       underFloor: clientCampaigns.filter(c => c.dayRate < 30 && c.spend7d > 0)
         .length,
       offBoard: clientCampaigns.filter(c => !c.onBoard).length,
@@ -126,6 +141,7 @@ export const setClientLanguage = authenticatedMutation({
   args: { clientName: v.string(), language: v.string() },
   returns: v.null(),
   handler: async (ctx, { clientName, language }) => {
+    await assertRole(ctx, "media_buyer");
     const row = await ctx.db
       .query("clientPrefs")
       .withIndex("by_client", q => q.eq("clientName", clientName))
@@ -154,11 +170,17 @@ export const saveEod = authenticatedMutation({
   },
   returns: v.null(),
   handler: async (ctx, { body, energy, answers, computed, submit }) => {
+    await assertRole(ctx, "media_buyer");
     const day = kuwaitToday();
     const row = await ctx.db
       .query("eodReports")
       .withIndex("by_role_day", q => q.eq("role", "media_buyer").eq("day", day))
       .first();
+    // Once it has gone out, the stored answers must match what Slack and the
+    // sheet hold; a second submit would rewrite them without re-posting.
+    if (row?.submittedAt) {
+      throw new Error("Today's EOD has already been submitted.");
+    }
     const doc = {
       role: "media_buyer",
       day,
@@ -166,9 +188,10 @@ export const saveEod = authenticatedMutation({
       computed,
       answers: { ...answers, body },
       at: Date.now(),
+      attempts: 0,
     };
     const id = row
-      ? (await ctx.db.patch(row._id, doc), row._id)
+      ? (await ctx.db.patch(row._id, { ...doc, error: undefined }), row._id)
       : await ctx.db.insert("eodReports", doc);
     // Straight into the sheet and #media-eods, the same as the form would.
     if (submit) {
@@ -178,11 +201,35 @@ export const saveEod = authenticatedMutation({
   },
 });
 
+/**
+ * Post today's saved EOD again, without touching the answers. For the
+ * "saved, still posting" state after a Slack failure or a reload.
+ */
+export const resubmitEod = authenticatedMutation({
+  args: {},
+  returns: v.null(),
+  handler: async ctx => {
+    await assertRole(ctx, "media_buyer");
+    const day = kuwaitToday();
+    const row = await ctx.db
+      .query("eodReports")
+      .withIndex("by_role_day", q => q.eq("role", "media_buyer").eq("day", day))
+      .first();
+    if (!row || row.submittedAt) return null;
+    await ctx.db.patch(row._id, { attempts: 0, error: undefined });
+    await ctx.scheduler.runAfter(0, internal.writeback.submitEod, {
+      id: row._id,
+    });
+    return null;
+  },
+});
+
 /** Clearing a decision that should never have been logged (a test, a misclick). */
 export const removeDecision = authenticatedMutation({
   args: { id: v.id("decisions") },
   returns: v.null(),
   handler: async (ctx, { id }) => {
+    await assertRole(ctx, "media_buyer");
     await ctx.db.delete(id);
     return null;
   },
@@ -575,6 +622,8 @@ export const onboardings = authenticatedQuery({
     }),
   ),
   handler: async ctx => {
+    await assertRole(ctx, "media_buyer");
+    const visible = await scopeFilter(ctx);
     // Steps that are ad-account work Viktor can genuinely execute. Anything
     // involving access, billing or a human decision stays hers.
     const CAN_DO = [
@@ -586,7 +635,9 @@ export const onboardings = authenticatedQuery({
       "add url parameters",
       "duplicate ads",
     ];
-    const rows = await ctx.db.query("onboardings").collect();
+    const rows = (await ctx.db.query("onboardings").collect()).filter(r =>
+      visible({ clientName: r.client }),
+    );
     return rows.map(r => {
       let done = 0;
       let total = 0;
@@ -628,7 +679,11 @@ export const launchWatch = authenticatedQuery({
   args: {},
   returns: v.any(),
   handler: async ctx => {
-    const rows = await ctx.db.query("launchWatch").collect();
+    await assertRole(ctx, "media_buyer");
+    const visible = await scopeFilter(ctx);
+    const rows = (await ctx.db.query("launchWatch").collect()).filter(r =>
+      visible({ clientName: r.client }),
+    );
     return rows.sort(
       (a, b) =>
         b.issues.length - a.issues.length || a.client.localeCompare(b.client),

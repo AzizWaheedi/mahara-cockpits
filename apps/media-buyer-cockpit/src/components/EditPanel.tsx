@@ -17,6 +17,16 @@ type Row = any;
 
 type Tab = "ads" | "creative" | "adset" | "budget" | null;
 
+/**
+ * A call that threw (session expired, connection dropped mid-flight) rather
+ * than returned ok:false. Meta may or may not have applied it, so say so
+ * instead of leaving the button stuck on its busy label.
+ */
+function describe(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e);
+  return `Could not confirm that with Meta (${msg}). Check Ads Manager before retrying.`;
+}
+
 export function EditPanel({ campaign, tree }: { campaign: Row; tree: Row[] }) {
   const [tab, setTab] = useState<Tab>(null);
   const adSets = tree.filter(t => t.kind === "adset");
@@ -242,18 +252,23 @@ function CopyTest({
               return;
             }
             setBusy(true);
-            const r = await create({
-              sourceAdId: source,
-              variants: clean,
-              adsetId: adset || undefined,
-              campaignName: campaign.campaignName,
-            });
-            setBusy(false);
-            if (r.ok)
-              toast.success(
-                `Created ${r.made?.length} paused ad${r.made?.length === 1 ? "" : "s"}. Review in Ads Manager, then switch them on.`,
-              );
-            else toast.error(r.error ?? "Meta refused that.");
+            try {
+              const r = await create({
+                sourceAdId: source,
+                variants: clean,
+                adsetId: adset || undefined,
+                campaignName: campaign.campaignName,
+              });
+              if (r.ok)
+                toast.success(
+                  `Created ${r.made?.length} paused ad${r.made?.length === 1 ? "" : "s"}. Review in Ads Manager, then switch them on.`,
+                );
+              else toast.error(r.error ?? "Meta refused that.");
+            } catch (e) {
+              toast.error(describe(e));
+            } finally {
+              setBusy(false);
+            }
           }}
         >
           {busy ? "Creating…" : "Create the ads (paused)"}
@@ -329,15 +344,20 @@ function NewAdSet({ campaign, adSets }: { campaign: Row; adSets: Row[] }) {
             return;
           }
           setBusy(true);
-          const r = await dup({
-            adsetId: from,
-            newName: name,
-            dailyBudget: budget ? Number(budget) : undefined,
-            campaignName: campaign.campaignName,
-          });
-          setBusy(false);
-          if (r.ok) toast.success(`Created "${name}", paused. Logged.`);
-          else toast.error(r.error ?? "Meta refused that.");
+          try {
+            const r = await dup({
+              adsetId: from,
+              newName: name,
+              dailyBudget: budget ? Number(budget) : undefined,
+              campaignName: campaign.campaignName,
+            });
+            if (r.ok) toast.success(`Created "${name}", paused. Logged.`);
+            else toast.error(r.error ?? "Meta refused that.");
+          } catch (e) {
+            toast.error(describe(e));
+          } finally {
+            setBusy(false);
+          }
         }}
       >
         {busy ? "Creating…" : "Create the ad set (paused)"}
@@ -389,15 +409,20 @@ function BudgetEditor({ campaign, adSets }: { campaign: Row; adSets: Row[] }) {
               disabled={busy || !edits[s.metaId]}
               onClick={async () => {
                 setBusy(true);
-                const r = await setBudgetAction({
-                  adsetId: s.metaId,
-                  dailyBudget: Number(edits[s.metaId]),
-                  name: s.name,
-                  campaignName: campaign.campaignName,
-                });
-                setBusy(false);
-                if (r.ok) toast.success(`${s.name} set. Logged.`);
-                else toast.error(r.error ?? "Meta refused that.");
+                try {
+                  const r = await setBudgetAction({
+                    adsetId: s.metaId,
+                    dailyBudget: Number(edits[s.metaId]),
+                    name: s.name,
+                    campaignName: campaign.campaignName,
+                  });
+                  if (r.ok) toast.success(`${s.name} set. Logged.`);
+                  else toast.error(r.error ?? "Meta refused that.");
+                } catch (e) {
+                  toast.error(describe(e));
+                } finally {
+                  setBusy(false);
+                }
               }}
             >
               Set
@@ -474,6 +499,8 @@ function AddCreative({
       } else {
         toast.error(res.error ?? "Meta refused it.");
       }
+    } catch (e) {
+      toast.error(describe(e));
     } finally {
       setBusy(false);
     }
@@ -657,11 +684,13 @@ function AskViktor({ campaign }: { campaign: Row }) {
         request: text.trim(),
       });
       if (res.ok) {
-        toast.success("Sent.");
+        toast.success("Sent to Aziz on Slack.");
         setText("");
       } else {
         toast.error(res.error ?? "Couldn't send that.");
       }
+    } catch (e) {
+      toast.error(describe(e));
     } finally {
       setBusy(false);
     }

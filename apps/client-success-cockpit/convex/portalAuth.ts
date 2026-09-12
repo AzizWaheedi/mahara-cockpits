@@ -91,10 +91,64 @@ export const remember = internalMutation({
       .query("portalMembers")
       .withIndex("by_email", q => q.eq("email", args.email))
       .unique();
-    const doc = { ...args, at: Date.now() };
+    const doc = { ...args, at: Date.now(), revokedAt: undefined };
     if (row) await ctx.db.patch(row._id, doc);
     else await ctx.db.insert("portalMembers", doc);
     return null;
+  },
+});
+
+/**
+ * The portal's whole member list, pushed by the media buyer backend so a
+ * seat or client-list change reaches this cockpit without the person
+ * re-entering through the portal. Anyone missing from the push is revoked.
+ */
+export const storeMembers = internalMutation({
+  args: {
+    members: v.array(
+      v.object({
+        email: v.string(),
+        name: v.optional(v.string()),
+        roles: v.array(v.string()),
+        clients: v.array(v.string()),
+      }),
+    ),
+  },
+  returns: v.object({ members: v.number(), revoked: v.number() }),
+  handler: async (ctx, { members }) => {
+    if (members.length === 0) return { members: 0, revoked: 0 };
+    const now = Date.now();
+    const seen = new Set<string>();
+    for (const m of members) {
+      const email = m.email.trim().toLowerCase();
+      seen.add(email);
+      const row = await ctx.db
+        .query("portalMembers")
+        .withIndex("by_email", q => q.eq("email", email))
+        .unique();
+      const doc = {
+        email,
+        name: m.name,
+        roles: m.roles,
+        clients: m.clients,
+        at: now,
+        revokedAt: m.roles.length === 0 ? now : undefined,
+      };
+      if (row) await ctx.db.patch(row._id, doc);
+      else await ctx.db.insert("portalMembers", doc);
+    }
+    let revoked = 0;
+    for (const row of await ctx.db.query("portalMembers").collect()) {
+      if (seen.has(row.email) || row.roles.length === 0) continue;
+      await ctx.db.patch(row._id, {
+        roles: [],
+        clients: [],
+        at: now,
+        revokedAt: now,
+      });
+      revoked++;
+    }
+    return { members: members.length, revoked };
   },
 });
 
@@ -111,7 +165,16 @@ export const forget = internalMutation({
       .query("portalMembers")
       .withIndex("by_email", q => q.eq("email", key))
       .unique();
-    if (row) await ctx.db.delete(row._id);
+    // Kept with no roles rather than deleted: a missing row falls back to the
+    // static allowlist, which would let a removed founder-era email back in.
+    const gone = {
+      roles: [] as string[],
+      clients: [] as string[],
+      at: Date.now(),
+      revokedAt: Date.now(),
+    };
+    if (row) await ctx.db.patch(row._id, gone);
+    else await ctx.db.insert("portalMembers", { email: key, ...gone });
     const user = await ctx.db
       .query("users")
       .withIndex("email", q => q.eq("email", key))

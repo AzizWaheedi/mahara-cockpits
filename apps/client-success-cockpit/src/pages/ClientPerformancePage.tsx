@@ -1,10 +1,11 @@
 import { useMutation, useQuery } from "convex/react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { type Constraint, diagnose } from "@/lib/csmDiagnosis";
 import { serviceModel } from "@/lib/csmTemplates";
+import { publishOpenClient } from "@/lib/openClient";
 import { api } from "../../convex/_generated/api";
 import { AiHelper } from "./CsmPage";
 
@@ -1614,70 +1615,73 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
               </>
             )}
           </section>
-          (perf.byAd ?? []).length ? (
-          <section className="space-y-2">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-              Which ad is producing the better leads
-            </h3>
-            <p className="text-xs text-muted-foreground">
-              Last two months, per ad. Judge an ad on what its leads did, not on
-              how many it produced. "No outcome" is the ad's rows nobody filled
-              in, so a high number there means the comparison is not fair yet.
-            </p>
-            <div className="overflow-x-auto rounded-lg border">
-              <table className="w-full">
-                <thead className="bg-muted/50">
-                  <tr>
-                    {[
-                      "Ad / source",
-                      "Leads",
-                      "Attended",
-                      "Attendance",
-                      "Closed",
-                      "Close rate",
-                      "No outcome",
-                    ].map(h => (
-                      <th
-                        key={h}
-                        className="px-3 py-2 text-left text-xs uppercase tracking-wide text-muted-foreground"
-                      >
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {(perf.byAd as Any[]).map(a => (
-                    <tr key={a.ad}>
-                      <Cell v={a.ad} />
-                      <Cell v={a.leads} />
-                      <Cell v={a.shows} />
-                      <Cell
-                        v={a.showRate == null ? "-" : `${a.showRate}%`}
-                        muted
-                      />
-                      <td className="px-3 py-2 text-sm tabular-nums">
-                        {num(a.closes) ? (
-                          <span className="font-medium text-emerald-600">
-                            {a.closes}
-                          </span>
-                        ) : (
-                          "0"
-                        )}
-                      </td>
-                      <Cell
-                        v={a.closeRate == null ? "-" : `${a.closeRate}%`}
-                        muted
-                      />
-                      <Cell v={a.unknown ?? 0} muted />
+          {(perf.byAd ?? []).length ? (
+            <section className="space-y-2">
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                Which ad is producing the better leads
+              </h3>
+              <p className="text-xs text-muted-foreground">
+                Last two months, per ad. Judge an ad on what its leads did, not
+                on how many it produced. "No outcome" is the ad's rows nobody
+                filled in, so a high number there means the comparison is not
+                fair yet.
+              </p>
+              <div className="overflow-x-auto rounded-lg border">
+                <table className="w-full">
+                  <thead className="bg-muted/50">
+                    <tr>
+                      {[
+                        "Ad / source",
+                        "Leads",
+                        "Attended",
+                        "Attendance",
+                        "Closed",
+                        "Close rate",
+                        "No outcome",
+                      ].map(h => (
+                        <th
+                          key={h}
+                          className="px-3 py-2 text-left text-xs uppercase tracking-wide text-muted-foreground"
+                        >
+                          {h}
+                        </th>
+                      ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-          ) : null(perf.recent ?? []).length ? (
-          <LeadsByAd rows={perf.recent as Any[]} />) : null
+                  </thead>
+                  <tbody className="divide-y">
+                    {(perf.byAd as Any[]).map(a => (
+                      <tr key={a.ad}>
+                        <Cell v={a.ad} />
+                        <Cell v={a.leads} />
+                        <Cell v={a.shows} />
+                        <Cell
+                          v={a.showRate == null ? "-" : `${a.showRate}%`}
+                          muted
+                        />
+                        <td className="px-3 py-2 text-sm tabular-nums">
+                          {num(a.closes) ? (
+                            <span className="font-medium text-emerald-600">
+                              {a.closes}
+                            </span>
+                          ) : (
+                            "0"
+                          )}
+                        </td>
+                        <Cell
+                          v={a.closeRate == null ? "-" : `${a.closeRate}%`}
+                          muted
+                        />
+                        <Cell v={a.unknown ?? 0} muted />
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          ) : null}
+          {(perf.recent ?? []).length ? (
+            <LeadsByAd rows={perf.recent as Any[]} />
+          ) : null}
         </>
       )}
 
@@ -1751,6 +1755,12 @@ export function ClientPerformancePage() {
   const [group, setGroup] = useState<"active" | "onboarding" | "paused">(
     "active",
   );
+  // The profile opens from state, not the URL: tell the Hermes chat which
+  // client is on screen so its answers carry that client's numbers.
+  useEffect(() => {
+    publishOpenClient(openClient);
+    return () => publishOpenClient(null);
+  }, [openClient]);
 
   if (data === undefined)
     return (

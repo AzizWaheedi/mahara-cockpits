@@ -1,7 +1,8 @@
 import { useAuthActions } from "@convex-dev/auth/react";
-import { useConvexAuth } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
+import { api } from "../../convex/_generated/api";
 
 /**
  * Sign-in through the portal.
@@ -19,16 +20,23 @@ const OWN_HOSTS = [
   "mahara-creative-director.vercel.app",
 ];
 
+const PORTAL_URL = "https://mahara-media-buyer.vercel.app";
+
 export function portalUrl(): string {
   const env = (import.meta.env.VITE_PORTAL_URL as string | undefined)?.trim();
   if (env) return env.replace(/\/$/, "");
+  // Rendered without a browser (the contract tests): the portal's own address.
+  if (typeof window === "undefined") return PORTAL_URL;
   // Proxied under the portal's domain: the portal is this origin.
   if (!OWN_HOSTS.includes(window.location.host)) return window.location.origin;
-  return "https://mahara-media-buyer.vercel.app";
+  return PORTAL_URL;
 }
 
 const NEXT_KEY = "portal_next";
 const BOUNCE_KEY = "portal_bounced_at";
+const REFRESH_KEY = "portal_refreshed_at";
+/** How old the portal's word on this person may get before a fresh pass is fetched. */
+const MEMBER_TTL_MS = 60 * 60_000;
 
 export function PortalAutoSignIn() {
   const { signIn } = useAuthActions();
@@ -36,13 +44,30 @@ export function PortalAutoSignIn() {
   const navigate = useNavigate();
   const location = useLocation();
   const acted = useRef(false);
+  // The portal refresh is judged once per page load. Left to the effect
+  // below it would fire on the next route change after the hour is up and
+  // drop whatever the CSM had half-typed.
+  const checkedMember = useRef(false);
   const [failed, setFailed] = useState<string | null>(null);
+  // Only once signed in: the query needs a session.
+  const me = useQuery(api.roles.me, isAuthenticated ? {} : "skip");
+  const memberAt: number | null = me?.memberAt ?? null;
 
   useEffect(() => {
     if (acted.current || isLoading) return;
     const params = new URLSearchParams(window.location.search);
     const token = params.get("portal_token");
     const next = params.get("next");
+    const wanted =
+      location.pathname === "/"
+        ? "/dashboard"
+        : location.pathname + location.search;
+    const goThroughPortal = () => {
+      acted.current = true;
+      window.location.replace(
+        `${portalUrl()}/go/${COCKPIT}?next=${encodeURIComponent(wanted)}`,
+      );
+    };
     if (token) {
       acted.current = true;
       if (next) sessionStorage.setItem(NEXT_KEY, next);
@@ -61,12 +86,27 @@ export function PortalAutoSignIn() {
         .catch(e => setFailed(String((e as Error).message ?? e)));
       return;
     }
+    const onAuthPage =
+      location.pathname === "/login" || location.pathname === "/signup";
     if (isAuthenticated) {
       const to = sessionStorage.getItem(NEXT_KEY);
       if (to) {
         sessionStorage.removeItem(NEXT_KEY);
         navigate(to, { replace: true });
+        return;
       }
+      // Seats and client lists change in the portal's admin view and only
+      // travel on a fresh pass. At most once an hour per tab, and only on a
+      // page load, go through the portal again so a change does not wait for
+      // a sign-out. A live portal session brings them straight back.
+      if (onAuthPage) return;
+      if (memberAt === null || checkedMember.current) return;
+      checkedMember.current = true;
+      if (Date.now() - memberAt < MEMBER_TTL_MS) return;
+      const lastRefresh = Number(sessionStorage.getItem(REFRESH_KEY) ?? 0);
+      if (Date.now() - lastRefresh < MEMBER_TTL_MS) return;
+      sessionStorage.setItem(REFRESH_KEY, String(Date.now()));
+      goThroughPortal();
       return;
     }
     // No session and no token: let the portal sign them in. Once per minute,
@@ -74,20 +114,13 @@ export function PortalAutoSignIn() {
     // of bouncing forever.
     const last = Number(sessionStorage.getItem(BOUNCE_KEY) ?? 0);
     if (Date.now() - last < 60_000) return;
-    if (location.pathname === "/login" || location.pathname === "/signup")
-      return;
-    acted.current = true;
+    if (onAuthPage) return;
     sessionStorage.setItem(BOUNCE_KEY, String(Date.now()));
-    const wanted =
-      location.pathname === "/"
-        ? "/dashboard"
-        : location.pathname + location.search;
-    window.location.replace(
-      `${portalUrl()}/go/${COCKPIT}?next=${encodeURIComponent(wanted)}`,
-    );
+    goThroughPortal();
   }, [
     isAuthenticated,
     isLoading,
+    memberAt,
     signIn,
     navigate,
     location.pathname,

@@ -13,9 +13,9 @@ import { Button } from "./ui/button";
  * thread with its result. The thread is the campaign's history, not a comment
  * box.
  *
- * It remains a relay rather than a chatbot: in-app generation runs through the
- * Viktor tool gateway, which is down, and inventing answers about a live ad
- * account is worse than waiting for a real one.
+ * It remains a relay rather than a chatbot: a question goes to Aziz's Slack DM
+ * with the numbers attached and he answers there, because inventing answers
+ * about a live ad account is worse than waiting for a real one.
  */
 
 type Msg = {
@@ -54,16 +54,18 @@ function StatusLine({ m }: { m: Msg }) {
   const status = m.status ?? "queued";
   const map: Record<string, { label: string; cls: string }> = {
     queued: {
-      label: "◷ Queued — waiting for the next relay (runs every 2 hours)",
+      label:
+        "◷ Sending to Aziz on Slack (retried for a few minutes if Slack is slow)",
       cls: "text-muted-foreground",
     },
     sent: {
-      label: `✓ Delivered${m.deliveredAt ? ` at ${when(m.deliveredAt)}` : ""} — answer will appear here`,
+      label: `✓ Delivered to Aziz on Slack${m.deliveredAt ? ` at ${when(m.deliveredAt)}` : ""}. He answers there.`,
       cls: "txt-good",
     },
     answered: { label: "✓ Answered", cls: "txt-good" },
     failed: {
-      label: "✕ Could not be delivered — say it in Slack instead",
+      label:
+        "✕ Could not reach Slack after three tries. Say it in Slack instead.",
       cls: "txt-bad",
     },
   };
@@ -90,6 +92,7 @@ export function CampaignChat({
   const [sending, setSending] = useState(false);
 
   const rows = messages ?? [];
+  // Pending means not yet delivered; it clears once the DM has landed.
   const waiting = rows.some(m => m.author === "her" && m.pending);
 
   const send = async () => {
@@ -118,7 +121,7 @@ export function CampaignChat({
         </div>
         {waiting && (
           <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-bold uppercase text-amber-800">
-            waiting for an answer
+            still sending
           </span>
         )}
       </div>
@@ -181,9 +184,10 @@ export function CampaignChat({
       </div>
 
       <p className="mt-1.5 text-[11px] text-muted-foreground">
-        Messages go to Aziz in Slack with this campaign's spend, leads, CPL and
-        days live attached. Every message shows whether it has been picked up,
-        and every change made here is logged above with whether it worked.
+        Messages go straight to Aziz on Slack with this campaign's spend, leads,
+        CPL and days live attached, and he answers there. Every message shows
+        whether it was delivered, and every change made here is logged above
+        with whether it worked.
       </p>
     </div>
   );

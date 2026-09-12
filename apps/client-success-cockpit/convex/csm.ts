@@ -3,6 +3,7 @@ import { v } from "convex/values";
 // biome-ignore lint/suspicious/noExplicitAny: joined rows
 type Any = any;
 
+import type { Id } from "./_generated/dataModel";
 import type { QueryCtx } from "./_generated/server";
 import { PAUSE_IS_CHURN_DAYS, stateOf } from "./csmSync";
 import { authenticatedMutation, authenticatedQuery } from "./functions";
@@ -10,6 +11,46 @@ import { allowedClients, assertRole, userEmail } from "./roles";
 
 function kuwaitToday(): string {
   return new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+const norm = (s: unknown) =>
+  String(s ?? "")
+    .trim()
+    .toLowerCase();
+
+/** A client-list restriction from the portal applies to writes as well as the list. */
+// biome-ignore lint/suspicious/noExplicitAny: convex ctx
+async function assertInScope(ctx: any, clientName: string): Promise<void> {
+  const scope = await allowedClients(ctx);
+  if (scope && !scope.has(norm(clientName)))
+    throw new Error("That client is not on your list.");
+}
+
+/** A real calendar day, YYYY-MM-DD; anything else must never reach ClickUp's Next POC. */
+export function isIsoDay(v: unknown): boolean {
+  const s = String(v ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(`${s}T12:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
+
+/**
+ * The roster client a free-text EOD line refers to, if we can tell. Exact name first,
+ * then a name that contains the line or vice versa; two candidates means we do not know.
+ */
+function matchClient<T extends { name: string }>(
+  line: string,
+  clients: T[],
+): T | undefined {
+  const l = norm(line);
+  if (!l) return undefined;
+  const exact = clients.find(c => norm(c.name) === l);
+  if (exact) return exact;
+  const loose = clients.filter(c => {
+    const n = norm(c.name);
+    return n.includes(l) || l.includes(n);
+  });
+  return loose.length === 1 ? loose[0] : undefined;
 }
 
 /**
@@ -40,7 +81,8 @@ async function churnThisMonth(ctx: any, month: string) {
     .withIndex("by_month", (q: any) => q.eq("month", month))
     .collect();
 
-  const lost: { name: string; reason: string; day?: string }[] = [];
+  const lost: { key: string; name: string; reason: string; day?: string }[] =
+    [];
   const stillPaused: { name: string; days: number | null }[] = [];
   let roster: any[] | undefined;
   for (const b of baseline) {
@@ -50,6 +92,7 @@ async function churnThisMonth(ctx: any, month: string) {
       .sort((x: any, y: any) => (x.day < y.day ? 1 : -1))[0];
     if (!now) {
       lost.push({
+        key: b.key,
         name: b.name,
         reason: "removed from the board",
         day: event?.day,
@@ -78,6 +121,7 @@ async function churnThisMonth(ctx: any, month: string) {
         continue;
       }
       lost.push({
+        key: b.key,
         name: b.name,
         reason: paused
           ? `paused ${pausedDays}d — past the 14-day line`
@@ -88,10 +132,23 @@ async function churnThisMonth(ctx: any, month: string) {
   }
 
   // A client the CSM confirmed offboarded counts even if ClickUp still says otherwise.
+  // Matched by the ClickUp id when the EOD line resolved to a card, else by name,
+  // case-insensitively, so the same client is never counted twice.
   for (const e of events.filter((x: any) => x.kind === "offboarded")) {
-    if (lost.some(l => l.name === e.name)) continue;
-    lost.push({ name: e.name, reason: "offboarded (your EOD)", day: e.day });
+    if (lost.some(l => l.key === e.key || norm(l.name) === norm(e.name)))
+      continue;
+    lost.push({
+      key: e.key,
+      name: e.name,
+      reason: "offboarded (your EOD)",
+      day: e.day,
+    });
   }
+  // One event per client per kind for the month: a line typed on two days is one pause.
+  const uniqueKeys = (kinds: string[]) =>
+    new Set(
+      events.filter((e: any) => kinds.includes(e.kind)).map((e: any) => e.key),
+    ).size;
 
   const pct = baseline.length
     ? Math.round((lost.length / baseline.length) * 1000) / 10
@@ -106,10 +163,8 @@ async function churnThisMonth(ctx: any, month: string) {
     latestDay: latest.day,
     daysTracked: days.length,
     partial: !first.day.endsWith("-01"),
-    extensions: events.filter((e: any) => e.kind === "extension").length,
-    pausedThisMonth: events.filter((e: any) =>
-      ["paused", "paused_by_csm"].includes(e.kind),
-    ).length,
+    extensions: uniqueKeys(["extension"]),
+    pausedThisMonth: uniqueKeys(["paused", "paused_by_csm"]),
     stillPaused,
   };
 }
@@ -215,7 +270,11 @@ export async function buildSnapshot(
     (await ctx.db.query("looseDismissed").collect()).map(d => d.key),
   );
   const prefs = await ctx.db.query("clientPrefs").collect();
-  const hotRows = await ctx.db.query("hotList").collect();
+  // The client-list restriction covers every per-client row, not only the cards.
+  const inScope = (name: unknown) => !scope || scope.has(norm(name));
+  const hotRows = (await ctx.db.query("hotList").collect()).filter(r =>
+    inScope(r.clientName),
+  );
   const kpis = await ctx.db.query("kpi").collect();
   const churn = await churnThisMonth(ctx, month);
   const myEmail = await (smoke ? Promise.resolve("smoke") : userEmail(ctx));
@@ -228,9 +287,9 @@ export async function buildSnapshot(
 
   // Booked client calls from GHL. Past ones stay for two weeks so the CSM can see the
   // call that just happened and whether the notes went in.
-  const appointments = (await ctx.db.query("appointments").collect()).sort(
-    (a, b) => a.startTime.localeCompare(b.startTime),
-  );
+  const appointments = (await ctx.db.query("appointments").collect())
+    .filter(a => !scope || (a.clientName && inScope(a.clientName)))
+    .sort((a, b) => a.startTime.localeCompare(b.startTime));
 
   return {
     day,
@@ -245,7 +304,7 @@ export async function buildSnapshot(
     churn,
     money,
     clients: clients
-      .filter(c => !scope || scope.has(c.name.toLowerCase()))
+      .filter(c => inScope(c.name))
       .map(c => ({
         ...c,
         hotBlocked: hotUsed.has(c.name),
@@ -300,11 +359,13 @@ export const clearLooseEnds = authenticatedMutation({
   handler: async (ctx, args) => {
     await assertRole(ctx, "csm");
     const email = (await userEmail(ctx)) ?? "csm";
+    const scope = await allowedClients(ctx);
     const clients = await ctx.db.query("clients").collect();
     let cleared = 0;
     let kept = 0;
     for (const c of clients) {
       if (args.clientName && c.name !== args.clientName) continue;
+      if (scope && !scope.has(norm(c.name))) continue;
       for (const text of c.loose) {
         if (isMoneyLoose(text)) {
           kept += 1;
@@ -351,6 +412,8 @@ export const toggleCheck = authenticatedMutation({
 export const act = authenticatedMutation({
   args: {
     clientId: v.id("clients"),
+    /** The ClickUp id: survives the sync replacing every client row. */
+    taskId: v.optional(v.string()),
     action: v.string(),
     kind: v.string(), // touchpoint | call | report | stage | happiness | booked | upsell | ticket | left
     note: v.optional(v.string()),
@@ -362,8 +425,21 @@ export const act = authenticatedMutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     await assertRole(ctx, "csm");
-    const client = await ctx.db.get(args.clientId);
-    if (!client) return null;
+    // The sync deletes and re-inserts every row, so a click that lands during
+    // a refresh carries a dead id; the ClickUp id still finds the client.
+    const client =
+      (await ctx.db.get(args.clientId)) ??
+      (args.taskId
+        ? await ctx.db
+            .query("clients")
+            .withIndex("by_taskId", q => q.eq("taskId", String(args.taskId)))
+            .first()
+        : null);
+    if (!client)
+      throw new Error("That client row was just refreshed, open it again.");
+    await assertInScope(ctx, client.name);
+    if (args.kind === "booked" && args.value && !isIsoDay(args.value))
+      throw new Error("Pick a date (YYYY-MM-DD) for the next call.");
     const id = await ctx.db.insert("decisions", {
       day: kuwaitToday(),
       role: "csm",
@@ -486,35 +562,46 @@ export const submitEod = authenticatedMutation({
 
     // The three churn-ledger answers become dated events, so the churn number is built
     // from what he confirmed rather than only from a status field somebody may forget.
+    // Each line is matched to a roster card so the event carries the ClickUp id and
+    // the card's name; one event per client per kind per month, whatever day it was typed.
     const ledger: [string, string][] = [
       ["offboarded", "offboarded"],
       ["extended", "extension"],
       ["paused", "paused_by_csm"],
     ];
+    const roster = await ctx.db.query("clients").collect();
+    const already = await ctx.db
+      .query("churnEvents")
+      .withIndex("by_month", q => q.eq("month", day.slice(0, 7)))
+      .collect();
     for (const [field, kind] of ledger) {
       const raw = String(args.answers?.[field] ?? "");
       for (const line of raw
         .split("\n")
         .map(l => l.trim())
         .filter(Boolean)) {
-        const already = await ctx.db
-          .query("churnEvents")
-          .withIndex("by_month", q => q.eq("month", day.slice(0, 7)))
-          .collect();
+        const match = matchClient(line, roster);
+        const key = match ? match.taskId : `eod:${line}`;
+        const name = match ? match.name : line;
         if (
-          already.some(e => e.kind === kind && e.name === line && e.day === day)
+          already.some(
+            e =>
+              e.kind === kind && (e.key === key || norm(e.name) === norm(name)),
+          )
         )
           continue;
-        await ctx.db.insert("churnEvents", {
+        const ev = {
           day,
           month: day.slice(0, 7),
-          key: `eod:${line}`,
-          name: line,
+          key,
+          name,
           from: "reported by the CSM at end of day",
           to: kind,
           kind,
           at: Date.now(),
-        });
+        };
+        await ctx.db.insert("churnEvents", ev);
+        already.push({ ...ev, _id: "" as Id<"churnEvents">, _creationTime: 0 });
       }
     }
     return null;
@@ -590,6 +677,7 @@ export const setClientLanguage = authenticatedMutation({
   returns: v.null(),
   handler: async (ctx, { clientName, language }) => {
     await assertRole(ctx, "csm");
+    await assertInScope(ctx, clientName);
     const row = await ctx.db
       .query("clientPrefs")
       .withIndex("by_client", q => q.eq("clientName", clientName))
@@ -623,6 +711,7 @@ export const saveHotRow = authenticatedMutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     await assertRole(ctx, "csm");
+    await assertInScope(ctx, args.clientName);
     const existing = await ctx.db
       .query("hotList")
       .withIndex("by_key", q => q.eq("key", args.key))
@@ -669,10 +758,18 @@ export const saveMoneyGoals = authenticatedMutation({
 export const performanceOverview = authenticatedQuery({
   args: {},
   returns: v.any(),
-  handler: async ctx => {
-    await assertRole(ctx, "csm");
+  handler: async ctx => buildPerformanceOverview(ctx, false),
+});
+
+/** The overview grid; `smoke` runs it without a user for the 15-minute check. */
+export async function buildPerformanceOverview(
+  ctx: QueryCtx,
+  smoke: boolean,
+): Promise<Any> {
+  {
+    if (!smoke) await assertRole(ctx, "csm");
     // Client access set in the portal: an empty list means every client.
-    const scope = await allowedClients(ctx);
+    const scope = smoke ? null : await allowedClients(ctx);
     const rows = (await ctx.db.query("clientProfiles").collect()).filter(
       r => !scope || scope.has(r.clientName.toLowerCase()),
     );
@@ -740,15 +837,24 @@ export const performanceOverview = authenticatedQuery({
         })
         .sort((a, b) => (b.staleCount ?? 0) - (a.staleCount ?? 0)),
     };
-  },
-});
+  }
+}
 
 export const clientProfile = authenticatedQuery({
   args: { clientName: v.string() },
   returns: v.any(),
-  handler: async (ctx, args) => {
-    await assertRole(ctx, "csm");
-    const scope = await allowedClients(ctx);
+  handler: async (ctx, args) => buildClientProfile(ctx, args, false),
+});
+
+/** One client's full profile; `smoke` runs it without a user for the 15-minute check. */
+export async function buildClientProfile(
+  ctx: QueryCtx,
+  args: { clientName: string },
+  smoke: boolean,
+): Promise<Any> {
+  {
+    if (!smoke) await assertRole(ctx, "csm");
+    const scope = smoke ? null : await allowedClients(ctx);
     if (scope && !scope.has(args.clientName.toLowerCase())) return null;
     const p = await ctx.db
       .query("clientProfiles")
@@ -782,8 +888,8 @@ export const clientProfile = authenticatedQuery({
       language: prefs?.language ?? "en",
       reports: reports.slice(0, 5),
     };
-  },
-});
+  }
+}
 
 /**
  * Report an issue to write this client's report as an editable Google Doc.
@@ -804,6 +910,7 @@ export const requestReportDoc = authenticatedMutation({
   returns: v.any(),
   handler: async (ctx, args) => {
     await assertRole(ctx, "csm");
+    await assertInScope(ctx, args.clientName);
     const month = args.month ?? kuwaitToday().slice(0, 7);
     const existing = await ctx.db
       .query("reportDocs")
@@ -839,6 +946,7 @@ export const askViktor = authenticatedMutation({
   returns: v.any(),
   handler: async (ctx, args) => {
     await assertRole(ctx, "csm");
+    if (args.clientName) await assertInScope(ctx, args.clientName);
     const question = args.question.trim();
     if (!question) return { status: "empty" };
     const id = await ctx.db.insert("asks", {
@@ -856,12 +964,15 @@ export const myAsks = authenticatedQuery({
   returns: v.any(),
   handler: async ctx => {
     await assertRole(ctx, "csm");
+    // Everyone's questions for an unrestricted seat; only their own for a scoped one.
+    const scope = await allowedClients(ctx);
+    const me = scope ? await userEmail(ctx) : null;
     const rows = await ctx.db
       .query("asks")
       .withIndex("by_askedAt")
       .order("desc")
-      .take(20);
-    return rows;
+      .take(scope ? 100 : 20);
+    return me ? rows.filter(r => r.askedBy === me).slice(0, 20) : rows;
   },
 });
 
@@ -883,6 +994,7 @@ export const addTask = authenticatedMutation({
   returns: v.id("outbox"),
   handler: async (ctx, args) => {
     await assertRole(ctx, "csm");
+    await assertInScope(ctx, args.clientName);
     const by = await userEmail(ctx);
     return await ctx.db.insert("outbox", {
       kind: "task",

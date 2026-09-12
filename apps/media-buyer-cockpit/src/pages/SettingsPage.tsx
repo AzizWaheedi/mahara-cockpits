@@ -50,8 +50,12 @@ export function SettingsPage() {
     try {
       await signIn("password", formData);
       setPasswordStep("verify");
-    } catch {
-      setError("Could not send reset code. Please try again.");
+    } catch (e) {
+      setError(
+        String(e).includes("InvalidAccountId")
+          ? "This account has no password: you signed in through the portal pass. Nothing to change here."
+          : "Could not send reset code. Please try again.",
+      );
     } finally {
       setLoading(false);
     }
@@ -101,7 +105,9 @@ export function SettingsPage() {
         <h1 className="text-2xl md:text-3xl font-bold tracking-tight">
           Settings
         </h1>
-        <p className="text-muted-foreground mt-1">Page subtitle goes here</p>
+        <p className="text-muted-foreground mt-1">
+          Your account, appearance and password.
+        </p>
       </div>
 
       <Card className="overflow-hidden">
@@ -146,7 +152,7 @@ export function SettingsPage() {
                     Dark mode
                   </Label>
                   <p className="text-sm text-muted-foreground">
-                    Toggle description goes here
+                    Follows your system unless you switch it.
                   </p>
                 </div>
               </div>

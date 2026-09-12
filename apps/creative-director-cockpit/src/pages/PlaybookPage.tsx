@@ -119,8 +119,8 @@ export function PlaybookPage() {
         </select>
       </div>
 
-      <div className="overflow-hidden rounded-lg border">
-        <table className="w-full text-[13px]">
+      <div className="overflow-x-auto rounded-lg border">
+        <table className="w-full min-w-[640px] text-[13px]">
           <thead className="bg-muted/50 text-[12px] uppercase tracking-wide text-muted-foreground">
             <tr>
               <th className="p-2 text-left font-semibold">Service line</th>

@@ -66,7 +66,10 @@ const schema = defineSchema({
     pauseRequired: v.optional(v.boolean()),
     onboarding: v.boolean(),
     syncedAt: v.number(),
-  }).index("by_rank", ["rank"]),
+  })
+    .index("by_rank", ["rank"])
+    // Rows are replaced on every sync, so the ClickUp id is the stable handle.
+    .index("by_taskId", ["taskId"]),
 
   /**
    * Her per-client choices that must survive a sync: which language she writes to
@@ -429,6 +432,8 @@ const schema = defineSchema({
     roles: v.array(v.string()),
     clients: v.array(v.string()),
     at: v.number(),
+    /** Removed in the portal: the row stays, with no roles, so the static allowlist cannot let them back in. */
+    revokedAt: v.optional(v.number()),
   }).index("by_email", ["email"]),
   calendarEvents: defineTable({
     eventId: v.string(),
@@ -499,7 +504,10 @@ const schema = defineSchema({
     error: v.optional(v.string()),
     jobId: v.optional(v.string()),
     at: v.number(),
-  }).index("by_thread", ["thread"]),
+  })
+    .index("by_thread", ["thread"])
+    // The relay polls for queued rows every 20 seconds; a full scan would stop fitting.
+    .index("by_status", ["status"]),
 });
 
 export default schema;

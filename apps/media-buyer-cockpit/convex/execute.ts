@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { authenticatedAction } from "./functions";
+import { refusal } from "./gate";
 import { graph, graphPost } from "./tools";
 
 /**
@@ -114,6 +115,11 @@ export const runAction = authenticatedAction({
   }),
   handler: async (ctx, args): Promise<Result> => {
     const { action } = args;
+    // Returned rather than thrown so the panel shows it like any refusal.
+    const no = await refusal(ctx, "media_buyer", {
+      campaignName: args.campaignName,
+    });
+    if (no) return { ok: false, error: no };
     if (!args.campaignMetaId) {
       await ctx.runMutation(internal.chat.logInternal, {
         campaignName: args.campaignName,
@@ -238,6 +244,7 @@ export const runAction = authenticatedAction({
         status: "ACTIVE",
         name: args.campaignName,
         clientTag: args.clientTag,
+        campaignName: args.campaignName,
         overrideNote: did,
       });
       return { ok: true, did };

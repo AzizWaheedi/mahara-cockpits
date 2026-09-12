@@ -157,6 +157,27 @@ export async function runBridge(
       return await ctx.runAction(internal.portalAuth.revoke, {
         email: String(args.email),
       });
+    case "upsertMember":
+      // A seat or client-list change in the portal's admin view.
+      return await ctx.runMutation(internal.portalAuth.remember, {
+        email: String(args.email),
+        name: args.name ? String(args.name) : undefined,
+        roles: Array.isArray(args.roles) ? args.roles.map(String) : [],
+        clients: Array.isArray(args.clients) ? args.clients.map(String) : [],
+      });
+    case "storeMembers":
+      // The portal's whole member list. Rows come straight from the media buyer's
+      // members table (note, addedBy, addedAt, ...), so keep only what we store.
+      return await ctx.runMutation(internal.portalAuth.storeMembers, {
+        members: (Array.isArray(args.members) ? args.members : [])
+          .filter(m => m && typeof m.email === "string")
+          .map(m => ({
+            email: String(m.email),
+            name: m.name ? String(m.name) : undefined,
+            roles: Array.isArray(m.roles) ? m.roles.map(String) : [],
+            clients: Array.isArray(m.clients) ? m.clients.map(String) : [],
+          })),
+      });
     case "markReplied":
       return await ctx.runMutation(internal.comms.markReplied, {
         chatId: String(args.chatId),

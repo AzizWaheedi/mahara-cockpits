@@ -35,12 +35,22 @@ export function AccountView({
 }) {
   const spend = campaigns.reduce((t, c) => t + (c.spend7d ?? 0), 0);
   const leads = campaigns.reduce((t, c) => t + (c.leads7d ?? 0), 0);
-  const booked = campaigns.reduce((t, c) => t + (c.bookings?.booked ?? 0), 0);
+  // The sync writes the 7-day count as bookings7d, the same field the table reads.
+  const booked = campaigns.reduce((t, c) => t + (c.bookings7d ?? 0), 0);
   const cpl = leads > 0 ? spend / leads : undefined;
   const cpb = booked > 0 ? spend / booked : undefined;
   // Bookings come from one GHL call per client, so any campaign carries them.
   const lost = campaigns.find(c => c.lost)?.lost;
-  const live = campaigns.filter(c => c.status === "ACTIVE").length;
+  // Campaign rows carry no status of their own; an ad that is delivering
+  // (effective status, which folds in the parent's) means the campaign is on.
+  const isLive = (c: Row) =>
+    tree.some(
+      t =>
+        t.campaignName === c.campaignName &&
+        t.kind === "ad" &&
+        (t.effectiveStatus ?? t.status) === "ACTIVE",
+    );
+  const live = campaigns.filter(isLive).length;
 
   return (
     <div className="rounded-xl border bg-card p-4">
@@ -102,7 +112,8 @@ export function AccountView({
               level="campaign"
               name={c.campaignName}
               clientTag={c.clientTag}
-              active={c.status === "ACTIVE"}
+              campaignName={c.campaignName}
+              active={isLive(c)}
             />
           </div>
         ))}

@@ -331,6 +331,7 @@ function TouchpointRow({
             >
               Sent it — log the touchpoint
             </Button>
+            {/* biome-ignore lint/a11y/noAmbiguousAnchorText: the card name next to it says what opens */}
             <a
               className="rounded bg-muted px-2 py-1 text-xs"
               href={nc.url}

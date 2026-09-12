@@ -50,11 +50,8 @@ export function ViktorStatus() {
           )}
         </span>
         <span>
-          <span className="font-bold">Waiting for answers</span>{" "}
-          {a.waitingOnViktor === 0
-            ? "nothing"
-            : `${a.waitingOnViktor} message${a.waitingOnViktor === 1 ? "" : "s"}`}
-          {a.queued > 0 && ` · ${a.queued} not relayed yet`}
+          <span className="font-bold">Questions to Aziz</span>{" "}
+          {a.queued === 0 ? "all delivered" : `${a.queued} still sending`}
         </span>
         {jobs && jobs.queued + jobs.working > 0 && (
           <span>

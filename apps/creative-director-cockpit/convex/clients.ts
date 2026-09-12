@@ -1,6 +1,18 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
-import { allowedClients } from "./roles";
+import {
+  internalMutation,
+  internalQuery,
+  type QueryCtx,
+} from "./_generated/server";
+import { TOUCHPOINTS_PER_WEEK } from "./creative";
+import { authenticatedMutation, authenticatedQuery } from "./functions";
+import {
+  allowedClients,
+  assertRole,
+  inScope,
+  rowInScope,
+  userEmail,
+} from "./roles";
 
 /**
  * The client database.
@@ -69,93 +81,106 @@ function norm(x?: string): string {
  * him: every one of them already has a Brand DNA doc and an Offer Cheat Sheet,
  * so his next move is scripts and creative, not discovery.
  */
-export const roster = query({
+export const roster = authenticatedQuery({
   args: {},
   returns: v.any(),
   handler: async ctx => {
-    // Client access set in the portal: an empty list means every client.
-    const scope = await allowedClients(ctx).catch(() => null);
-    const clients = (await ctx.db.query("clients").collect()).filter(
-      c => !scope || scope.has(String(c.name).toLowerCase()),
-    );
-    const tasks = await ctx.db.query("creativeTasks").collect();
-    const videos = await ctx.db.query("videoJobs").collect();
-    const campaigns = await ctx.db.query("campaigns").collect();
-
-    const openTasks = tasks.filter(t => isOpen(t.status));
-    const openVideos = videos.filter(t => isOpen(t.status));
-
-    const rows = clients
-      .filter(c => isLive(c.clientStatus))
-      .map(c => {
-        const mine = (t: { clients?: string[]; client?: string }) =>
-          (t.clients ?? (t.client ? [t.client] : [])).includes(c.name);
-        const scripts = openTasks.filter(t => t.kind === "script" && mine(t));
-        const vids = openVideos.filter(mine);
-        const camps = campaigns.filter(
-          k =>
-            norm(k.clientName) === norm(c.name) ||
-            c.aliases.some(
-              a => a.length > 2 && norm(k.campaignName).includes(a),
-            ),
-        );
-        return {
-          taskId: c.taskId,
-          name: c.name,
-          url: c.url,
-          clientStatus: c.clientStatus,
-          happiness: c.happiness,
-          service: c.service,
-          launchDate: c.launchDate,
-          prelaunch: isPrelaunch(c.clientStatus),
-          docs: {
-            brandDna: c.brandDnaDoc,
-            offerCheatSheet: c.offerCheatSheet,
-            blueprintForm: c.blueprintFormLink,
-            drive: c.driveLink ?? c.driveFolder,
-            history: c.clientHistoryDoc,
-            research: c.marketResearchDoc,
-          },
-          docsReady: Boolean(c.brandDnaDoc && c.offerCheatSheet),
-          openScripts: scripts.length,
-          openVideos: vids.length,
-          /** Stages where the ball is his, not an editor's. */
-          hisMove: vids.filter(x =>
-            ["client review", "internal review", "update required"].includes(
-              (x.status || "").toLowerCase(),
-            ),
-          ).length,
-          liveCampaigns: camps.length,
-        };
-      })
-      .sort((a, b) => {
-        if (a.prelaunch !== b.prelaunch) return a.prelaunch ? -1 : 1;
-        return b.openScripts + b.hisMove - (a.openScripts + a.hisMove);
-      });
-
-    const toContact = rows.filter(r => r.prelaunch);
-    return {
-      clients: rows,
-      counts: {
-        live: rows.length,
-        toContact: toContact.length,
-        docsMissing: rows.filter(r => !r.docsReady).length,
-      },
-      toContact: toContact.map(r => r.name),
-      syncedAt: clients[0]?.syncedAt ?? null,
-    };
+    await assertRole(ctx, "creative");
+    return await buildRoster(ctx, await allowedClients(ctx));
   },
 });
+
+// biome-ignore lint/suspicious/noExplicitAny: the screen's own shape
+export async function buildRoster(
+  ctx: QueryCtx,
+  scope: Set<string> | null,
+): Promise<any> {
+  // Client access set in the portal: an empty list means every client.
+  const clients = (await ctx.db.query("clients").collect()).filter(c =>
+    inScope(scope, c.name),
+  );
+  const tasks = (await ctx.db.query("creativeTasks").collect()).filter(t =>
+    rowInScope(scope, t),
+  );
+  const videos = (await ctx.db.query("videoJobs").collect()).filter(t =>
+    rowInScope(scope, t),
+  );
+  const campaigns = (await ctx.db.query("campaigns").collect()).filter(k =>
+    inScope(scope, k.clientName),
+  );
+
+  const openTasks = tasks.filter(t => isOpen(t.status));
+  const openVideos = videos.filter(t => isOpen(t.status));
+
+  const rows = clients
+    .filter(c => isLive(c.clientStatus))
+    .map(c => {
+      const mine = (t: { clients?: string[]; client?: string }) =>
+        (t.clients ?? (t.client ? [t.client] : [])).includes(c.name);
+      const scripts = openTasks.filter(t => t.kind === "script" && mine(t));
+      const vids = openVideos.filter(mine);
+      const camps = campaigns.filter(
+        k =>
+          norm(k.clientName) === norm(c.name) ||
+          c.aliases.some(a => a.length > 2 && norm(k.campaignName).includes(a)),
+      );
+      return {
+        taskId: c.taskId,
+        name: c.name,
+        url: c.url,
+        clientStatus: c.clientStatus,
+        happiness: c.happiness,
+        service: c.service,
+        launchDate: c.launchDate,
+        prelaunch: isPrelaunch(c.clientStatus),
+        docs: {
+          brandDna: c.brandDnaDoc,
+          offerCheatSheet: c.offerCheatSheet,
+          blueprintForm: c.blueprintFormLink,
+          drive: c.driveLink ?? c.driveFolder,
+          history: c.clientHistoryDoc,
+          research: c.marketResearchDoc,
+        },
+        docsReady: Boolean(c.brandDnaDoc && c.offerCheatSheet),
+        openScripts: scripts.length,
+        openVideos: vids.length,
+        /** Stages where the ball is his, not an editor's. */
+        hisMove: vids.filter(x =>
+          ["client review", "internal review", "update required"].includes(
+            (x.status || "").toLowerCase(),
+          ),
+        ).length,
+        liveCampaigns: camps.length,
+      };
+    })
+    .sort((a, b) => {
+      if (a.prelaunch !== b.prelaunch) return a.prelaunch ? -1 : 1;
+      return b.openScripts + b.hisMove - (a.openScripts + a.hisMove);
+    });
+
+  const toContact = rows.filter(r => r.prelaunch);
+  return {
+    clients: rows,
+    counts: {
+      live: rows.length,
+      toContact: toContact.length,
+      docsMissing: rows.filter(r => !r.docsReady).length,
+    },
+    toContact: toContact.map(r => r.name),
+    syncedAt: clients[0]?.syncedAt ?? null,
+  };
+}
 
 const DAY = 86_400_000;
 
 /**
  * What this client is owed, and a message he can actually send.
  *
- * The Client Communication SOP sets the floor: at least three touchpoints a
- * week in the client's WhatsApp group, small wins included, and a call rather
- * than a text when there is a real concern. It has no creative director script
- * block written yet, so these drafts follow the SOP's rules and tone instead of
+ * The Client Communication SOP sets the tone: small wins included, and a call
+ * rather than a text when there is a real concern. The floor here is the
+ * creative director's own (1 to 2 a week, see creative.ts), not the CSM's
+ * three-a-week WhatsApp cadence. It has no creative director script block
+ * written yet, so these drafts follow the SOP's rules and tone instead of
  * inventing a template that does not exist. Arabic and English, no em dashes,
  * because most of these groups run in Arabic. [sop, 2026-09-07]
  */
@@ -201,9 +226,9 @@ function touchpoint(
   if (inProduction.length) {
     reasons.push(`${inProduction.length} in production, worth a progress note`);
   }
-  if (thisWeek < 3) {
+  if (thisWeek < TOUCHPOINTS_PER_WEEK) {
     reasons.push(
-      `${thisWeek} of 3 touchpoints this week, the SOP floor is 3 in the group`,
+      `${thisWeek} of ${TOUCHPOINTS_PER_WEEK} touchpoints this week, the creative floor is 1 to 2`,
     );
   }
 
@@ -244,201 +269,220 @@ function touchpoint(
     lastTouchAt: last,
     daysSince,
     thisWeek,
-    owed: reasons.length > 0 && (thisWeek < 3 || waiting.length > 0),
+    owed:
+      reasons.length > 0 &&
+      (thisWeek < TOUCHPOINTS_PER_WEEK || waiting.length > 0),
     reasons,
     drafts,
   };
 }
 
 /** Everything about one client, on one screen. */
-export const detail = query({
+export const detail = authenticatedQuery({
   args: { name: v.string() },
   returns: v.any(),
   handler: async (ctx, { name }) => {
-    const client = (await ctx.db.query("clients").collect()).find(
-      c => c.name === name || norm(c.name) === norm(name),
-    );
-    if (!client) return null;
-
-    const mine = (t: { clients?: string[]; client?: string }) =>
-      (t.clients ?? (t.client ? [t.client] : [])).some(
-        n => norm(n) === norm(client.name),
-      );
-
-    const tasks = (await ctx.db.query("creativeTasks").collect()).filter(mine);
-    const videos = (await ctx.db.query("videoJobs").collect()).filter(mine);
-    const posts = (await ctx.db.query("contentPosts").collect()).filter(mine);
-
-    const touches = (await ctx.db.query("touchLog").collect())
-      .filter(t => norm(t.client) === norm(client.name))
-      .sort((a, b) => b.at - a.at);
-
-    const campaigns = (await ctx.db.query("campaigns").collect()).filter(
-      k =>
-        norm(k.clientName) === norm(client.name) ||
-        client.aliases.some(
-          a => a.length > 2 && norm(k.campaignName).includes(a),
-        ),
-    );
-    const campaignNames = new Set(campaigns.map(k => k.campaignName));
-    const tree = (await ctx.db.query("metaTree").collect()).filter(n =>
-      campaignNames.has(n.campaignName),
-    );
-    const ads = (await ctx.db.query("ads").collect()).filter(a =>
-      campaignNames.has(a.campaignName),
-    );
-
-    const liveAds = tree.filter(
-      n =>
-        n.kind === "ad" &&
-        (n.effectiveStatus || n.status || "").toUpperCase() === "ACTIVE",
-    );
-
-    return {
-      /**
-       * This month off their own stat sheet. Aziz, 2026-09-08: cost per lead is
-       * not enough, the writing has to be judged against what happens after the
-       * lead. Rates are computed here so there is one definition of each:
-       * booking rate is appointments against leads Meta reported in 30 days,
-       * show rate is shows against appointments, quotation rate is quotations
-       * against shows, close rate is closes against quotations.
-       */
-      stats: (() => {
-        const s2 = client.stats;
-        if (!s2) return null;
-        const leads30 = ads.reduce((n, a) => n + a.leads, 0);
-        const pct = (a: number, b: number) =>
-          b > 0 ? Math.round((a / b) * 100) : null;
-        return {
-          month: s2.tab,
-          booked: s2.booked,
-          shows: s2.shows,
-          quotes: s2.quotes,
-          closes: s2.closes,
-          leads30,
-          bookingRate: pct(s2.booked, leads30),
-          showRate: pct(s2.shows, s2.booked),
-          quotationRate: pct(s2.quotes, s2.shows),
-          closeRate: pct(s2.closes, s2.quotes),
-          scannedAt: client.statsScannedAt ?? null,
-        };
-      })(),
-      client: {
-        name: client.name,
-        url: client.url,
-        clientStatus: client.clientStatus,
-        happiness: client.happiness,
-        service: client.service,
-        launchDate: client.launchDate,
-        phone: client.phone,
-        docs: {
-          brandDna: client.brandDnaDoc,
-          offerCheatSheet: client.offerCheatSheet,
-          blueprintForm: client.blueprintFormLink,
-          drive: client.driveLink ?? client.driveFolder,
-          sheet: client.sheetLink,
-          history: client.clientHistoryDoc,
-          research: client.marketResearchDoc,
-        },
-      },
-      // Raw ClickUp status on every row. No derived stages.
-      tasks: tasks
-        .filter(t => isOpen(t.status))
-        .map(t => ({
-          taskId: t.taskId,
-          name: t.name,
-          kind: t.kind,
-          status: t.status,
-          url: t.url,
-          createdAt: t.createdAt,
-          dueDate: t.dueDate,
-          assignees: t.assignees,
-          otherClients: (t.clients ?? []).filter(
-            n => norm(n) !== norm(client.name),
-          ),
-        })),
-      videos: videos.map(v2 => ({
-        taskId: v2.taskId,
-        name: v2.name,
-        status: v2.status,
-        url: v2.url,
-        editors: v2.editors,
-        dueDate: v2.dueDate,
-        editedLink: v2.editedLink,
-        rawLink: v2.rawLink,
-        open: isOpen(v2.status),
-      })),
-      posts: posts.filter(p => isOpen(p.status)).length,
-      /** Everything we have ever made for them, closed rows included. */
-      allTasks: tasks
-        .map(t => ({
-          taskId: t.taskId,
-          name: t.name,
-          kind: t.kind,
-          status: t.status,
-          url: t.url,
-          createdAt: t.createdAt,
-          dueDate: t.dueDate,
-          assignees: t.assignees,
-          open: isOpen(t.status),
-        }))
-        .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0)),
-      touch: touchpoint(client, tasks, videos, touches),
-      /**
-       * The service line to read winning ads from. The client board's Service
-       * field is a package name ("DFY") on most records, so take the service
-       * their own campaigns are tagged with and fall back to the field.
-       */
-      serviceLine:
-        campaigns.map(k => k.serviceType).find(Boolean) ??
-        client.service ??
-        null,
-      campaigns: campaigns.map(k => ({
-        campaignName: k.campaignName,
-        serviceType: k.serviceType,
-        spend7d: k.spend7d,
-        leads7d: k.leads7d,
-        bookings7d: k.bookings7d,
-        costPerBooking: k.costPerBooking,
-        boardAdStatus: k.boardAdStatus,
-      })),
-      /** What is running right now, and what has run before. */
-      liveNow: liveAds.map(n => ({
-        metaId: n.metaId,
-        name: n.name,
-        campaignName: n.campaignName,
-        previewSrc: n.previewSrc,
-        thumbUrl: n.thumbUrl,
-      })),
-      history: ads
-        .map(a => ({
-          adName: a.adName,
-          campaignName: a.campaignName,
-          spend: a.spend,
-          leads: a.leads,
-          cpl: a.cpl,
-          ctr: a.ctr,
-          thumbnailUrl: a.thumbnailUrl,
-          previewSrc: a.previewSrc,
-        }))
-        .sort((a, b) => b.spend - a.spend),
-    };
+    await assertRole(ctx, "creative");
+    return await buildDetail(ctx, name, await allowedClients(ctx));
   },
 });
+
+// biome-ignore lint/suspicious/noExplicitAny: the screen's own shape
+export async function buildDetail(
+  ctx: QueryCtx,
+  name: string,
+  scope: Set<string> | null,
+): Promise<any> {
+  const client = (await ctx.db.query("clients").collect()).find(
+    c => c.name === name || norm(c.name) === norm(name),
+  );
+  // Outside the person's client list reads the same as not on the board.
+  if (!client || !inScope(scope, client.name)) return null;
+
+  const mine = (t: { clients?: string[]; client?: string }) =>
+    (t.clients ?? (t.client ? [t.client] : [])).some(
+      n => norm(n) === norm(client.name),
+    );
+
+  const tasks = (await ctx.db.query("creativeTasks").collect()).filter(mine);
+  const videos = (await ctx.db.query("videoJobs").collect()).filter(mine);
+  const posts = (await ctx.db.query("contentPosts").collect()).filter(mine);
+
+  const touches = (await ctx.db.query("touchLog").collect())
+    .filter(t => norm(t.client) === norm(client.name))
+    .sort((a, b) => b.at - a.at);
+
+  const campaigns = (await ctx.db.query("campaigns").collect()).filter(
+    k =>
+      norm(k.clientName) === norm(client.name) ||
+      client.aliases.some(
+        a => a.length > 2 && norm(k.campaignName).includes(a),
+      ),
+  );
+  const campaignNames = new Set(campaigns.map(k => k.campaignName));
+  const tree = (await ctx.db.query("metaTree").collect()).filter(n =>
+    campaignNames.has(n.campaignName),
+  );
+  const ads = (await ctx.db.query("ads").collect()).filter(a =>
+    campaignNames.has(a.campaignName),
+  );
+
+  const liveAds = tree.filter(
+    n =>
+      n.kind === "ad" &&
+      (n.effectiveStatus || n.status || "").toUpperCase() === "ACTIVE",
+  );
+
+  return {
+    /**
+     * This month off their own stat sheet. Aziz, 2026-09-08: cost per lead is
+     * not enough, the writing has to be judged against what happens after the
+     * lead. Rates are computed here so there is one definition of each:
+     * booking rate is appointments against leads Meta reported in 30 days,
+     * show rate is shows against appointments, quotation rate is quotations
+     * against shows, close rate is closes against quotations.
+     */
+    stats: (() => {
+      const s2 = client.stats;
+      if (!s2) return null;
+      const leads30 = ads.reduce((n, a) => n + a.leads, 0);
+      const pct = (a: number, b: number) =>
+        b > 0 ? Math.round((a / b) * 100) : null;
+      return {
+        month: s2.tab,
+        booked: s2.booked,
+        shows: s2.shows,
+        quotes: s2.quotes,
+        closes: s2.closes,
+        leads30,
+        bookingRate: pct(s2.booked, leads30),
+        showRate: pct(s2.shows, s2.booked),
+        quotationRate: pct(s2.quotes, s2.shows),
+        closeRate: pct(s2.closes, s2.quotes),
+        scannedAt: client.statsScannedAt ?? null,
+      };
+    })(),
+    client: {
+      name: client.name,
+      url: client.url,
+      clientStatus: client.clientStatus,
+      happiness: client.happiness,
+      service: client.service,
+      launchDate: client.launchDate,
+      phone: client.phone,
+      docs: {
+        brandDna: client.brandDnaDoc,
+        offerCheatSheet: client.offerCheatSheet,
+        blueprintForm: client.blueprintFormLink,
+        drive: client.driveLink ?? client.driveFolder,
+        sheet: client.sheetLink,
+        history: client.clientHistoryDoc,
+        research: client.marketResearchDoc,
+      },
+    },
+    // Raw ClickUp status on every row. No derived stages. Newest first, so
+    // "comment on their newest task" really is the newest.
+    tasks: tasks
+      .filter(t => isOpen(t.status))
+      .map(t => ({
+        taskId: t.taskId,
+        name: t.name,
+        kind: t.kind,
+        status: t.status,
+        url: t.url,
+        createdAt: t.createdAt,
+        dueDate: t.dueDate,
+        assignees: t.assignees,
+        otherClients: (t.clients ?? []).filter(
+          n => norm(n) !== norm(client.name),
+        ),
+      }))
+      .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0)),
+    videos: videos.map(v2 => ({
+      taskId: v2.taskId,
+      name: v2.name,
+      status: v2.status,
+      url: v2.url,
+      editors: v2.editors,
+      dueDate: v2.dueDate,
+      editedLink: v2.editedLink,
+      rawLink: v2.rawLink,
+      open: isOpen(v2.status),
+    })),
+    posts: posts.filter(p => isOpen(p.status)).length,
+    /** Everything we have ever made for them, closed rows included. */
+    allTasks: tasks
+      .map(t => ({
+        taskId: t.taskId,
+        name: t.name,
+        kind: t.kind,
+        status: t.status,
+        url: t.url,
+        createdAt: t.createdAt,
+        dueDate: t.dueDate,
+        assignees: t.assignees,
+        open: isOpen(t.status),
+      }))
+      .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0)),
+    touch: touchpoint(client, tasks, videos, touches),
+    /**
+     * The service line to read winning ads from. The client board's Service
+     * field is a package name ("DFY") on most records, so take the service
+     * their own campaigns are tagged with and fall back to the field.
+     */
+    serviceLine:
+      campaigns.map(k => k.serviceType).find(Boolean) ?? client.service ?? null,
+    campaigns: campaigns.map(k => ({
+      campaignName: k.campaignName,
+      serviceType: k.serviceType,
+      spend7d: k.spend7d,
+      leads7d: k.leads7d,
+      bookings7d: k.bookings7d,
+      costPerBooking: k.costPerBooking,
+      boardAdStatus: k.boardAdStatus,
+    })),
+    /** What is running right now, and what has run before. */
+    liveNow: liveAds.map(n => ({
+      metaId: n.metaId,
+      name: n.name,
+      campaignName: n.campaignName,
+      previewSrc: n.previewSrc,
+      thumbUrl: n.thumbUrl,
+    })),
+    history: ads
+      .map(a => ({
+        adName: a.adName,
+        campaignName: a.campaignName,
+        spend: a.spend,
+        leads: a.leads,
+        cpl: a.cpl,
+        ctr: a.ctr,
+        thumbnailUrl: a.thumbnailUrl,
+        previewSrc: a.previewSrc,
+      }))
+      .sort((a, b) => b.spend - a.spend),
+  };
+}
 
 /**
  * The scripting database: what worked for OTHER clients in the same service.
  *
  * Ranked on cost per booked call where the campaign has it, because that is the
  * only number Aziz judges paid media on. CPL is shown but never sorted on.
+ *
+ * Not cut to the person's client list on purpose: the whole point is learning
+ * from other clients' ads, the rows hold ad copy meant for reuse and nothing
+ * client-private, and the media buyer's own playbook is unscoped the same way.
+ * `excludeClient` is the only cut.
  */
-export const winners = query({
+export const winners = authenticatedQuery({
   args: {
     service: v.optional(v.string()),
     excludeClient: v.optional(v.string()),
   },
   returns: v.any(),
   handler: async (ctx, { service, excludeClient }) => {
+    await assertRole(ctx, "creative");
     const campaigns = await ctx.db.query("campaigns").collect();
     const ads = await ctx.db.query("ads").collect();
 
@@ -492,7 +536,7 @@ export const winners = query({
  * on the next sync and reports back. Worst case an action is late, never
  * silently lost.
  */
-export const queueAction = mutation({
+export const queueAction = authenticatedMutation({
   args: {
     kind: v.string(),
     taskId: v.optional(v.string()),
@@ -500,6 +544,7 @@ export const queueAction = mutation({
   },
   returns: v.id("creativeOutbox"),
   handler: async (ctx, { kind, taskId, payload }) => {
+    await assertRole(ctx, "creative");
     if (
       ![
         "comment",
@@ -520,44 +565,33 @@ export const queueAction = mutation({
       taskId,
       payload,
       state: "pending",
+      by: await userEmail(ctx),
       createdAt: Date.now(),
     });
   },
 });
 
-/**
- * What the sync already knows about each client's Drive folder.
- *
- * Listing 35 Drive folders on every 15 minute run is wasteful and slow, so the
- * bridge reads this first and only rescans a folder that is new or stale.
- */
-export const driveCache = query({
+/** The last 40 queued actions with their state, for the screens that queued them. */
+export const outbox = authenticatedQuery({
   args: {},
   returns: v.any(),
-  handler: async ctx =>
-    (await ctx.db.query("clients").collect()).map(c => ({
-      name: c.name,
-      driveFolderId: c.driveFolderId ?? null,
-      driveSubfolders: c.driveSubfolders ?? [],
-      driveScannedAt: c.driveScannedAt ?? null,
-    })),
-});
-
-export const outbox = query({
-  args: {},
-  returns: v.any(),
-  handler: async ctx =>
-    (await ctx.db.query("creativeOutbox").collect())
+  handler: async ctx => {
+    await assertRole(ctx, "creative");
+    return (await ctx.db.query("creativeOutbox").collect())
       .sort((a, b) => b.createdAt - a.createdAt)
-      .slice(0, 40),
+      .slice(0, 40);
+  },
 });
 
-/** Drained by the sandbox bridge on each sync. */
+/**
+ * Drained by the media buyer backend through the bridge (ingest.ts), never
+ * from a browser: the drive cache and stat cache twins live in ingest.ts.
+ */
 const CLAIM_TTL_MS = 10 * 60_000;
 /** Minutes to wait before each retry; the last failure is final. */
 const BACKOFF_MIN = [1, 5, 15, 60, 240];
 
-export const outboxPending = query({
+export const outboxPending = internalQuery({
   args: {},
   returns: v.any(),
   handler: async ctx => {
@@ -586,7 +620,7 @@ export const outboxPending = query({
 });
 
 /** The drain takes the row. False if another drain already has it. */
-export const outboxClaim = mutation({
+export const outboxClaim = internalMutation({
   args: { id: v.id("creativeOutbox") },
   returns: v.boolean(),
   handler: async (ctx, { id }) => {
@@ -602,7 +636,7 @@ export const outboxClaim = mutation({
   },
 });
 
-export const outboxSettle = mutation({
+export const outboxSettle = internalMutation({
   args: {
     id: v.id("creativeOutbox"),
     ok: v.boolean(),
@@ -659,14 +693,16 @@ function dt(ts?: number | null): string {
   return ts ? new Date(ts).toISOString().slice(0, 10) : "no date";
 }
 
-export const contextPack = query({
+export const contextPack = authenticatedQuery({
   args: { name: v.string() },
   returns: v.any(),
   handler: async (ctx, { name }) => {
+    await assertRole(ctx, "creative");
+    const scope = await allowedClients(ctx);
     const client = (await ctx.db.query("clients").collect()).find(
       c => c.name === name || norm(c.name) === norm(name),
     );
-    if (!client) return null;
+    if (!client || !inScope(scope, client.name)) return null;
 
     const mine = (t: { clients?: string[]; client?: string }) =>
       (t.clients ?? (t.client ? [t.client] : [])).some(
@@ -765,13 +801,13 @@ export const contextPack = query({
       line("Cost per lead", money(f.cpl));
       if (f.questions.length) {
         L.push("", "Questions asked, in order:");
-        f.questions.forEach((q, i) =>
+        f.questions.forEach((q, i) => {
           L.push(
             `${i + 1}. ${q.label}${q.isGate ? " (filters lead quality)" : ""}${
               q.options.length ? ` — options: ${q.options.join(" / ")}` : ""
             }`,
-          ),
-        );
+          );
+        });
       } else {
         L.push("", "This form asks nothing that filters lead quality.");
       }
@@ -878,21 +914,5 @@ export const contextPack = query({
         plays: plays.length,
       },
     };
-  },
-});
-
-/** What the sync already holds, so stat sheets are re-read every couple of
- *  hours instead of every 15 minutes. */
-export const statCache = query({
-  args: {},
-  returns: v.any(),
-  handler: async ctx => {
-    const out: Record<string, unknown> = {};
-    for (const c of await ctx.db.query("clients").collect()) {
-      if (c.stats || c.statsScannedAt) {
-        out[c.name] = { stats: c.stats, statsScannedAt: c.statsScannedAt };
-      }
-    }
-    return out;
   },
 });

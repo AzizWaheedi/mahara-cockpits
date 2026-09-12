@@ -132,12 +132,21 @@ export const store = internalMutation({
     // How long has each paused client been paused? Taken from our own recorded pause
     // events, never guessed. Unknown stays unknown — a made-up day count would drive
     // fake churn. 14 days paused is the churn line, so this number matters.
+    // Walked in date order so the start is the current pause: a client paused in
+    // June, back in July and paused again today counts from today, not June.
     const pauseEvents = await ctx.db.query("churnEvents").collect();
+    pauseEvents.sort((a, b) =>
+      a.day === b.day ? a.at - b.at : a.day < b.day ? -1 : 1,
+    );
     const pausedSince = new Map<string, string>();
     for (const e of pauseEvents) {
-      if (!["paused", "paused_by_csm"].includes(e.kind)) continue;
-      const prev = pausedSince.get(e.key);
-      if (!prev || e.day < prev) pausedSince.set(e.key, e.day);
+      if (e.kind === "paused" || e.kind === "paused_by_csm") {
+        if (!pausedSince.has(e.key)) pausedSince.set(e.key, e.day);
+      } else if (
+        ["regained", "lost", "new", "removed", "offboarded"].includes(e.kind)
+      ) {
+        pausedSince.delete(e.key);
+      }
     }
     for (const c of args.clients) {
       const key = String(c.taskId ?? c.name);

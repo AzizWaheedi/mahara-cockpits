@@ -2,9 +2,10 @@ import { v } from "convex/values";
 import {
   internalMutation,
   internalQuery,
-  mutation,
-  query,
+  type QueryCtx,
 } from "./_generated/server";
+import { authenticatedQuery } from "./functions";
+import { assertRole } from "./roles";
 
 /**
  * Ingestion for the creative director's cockpit.
@@ -118,7 +119,8 @@ export const storeAdPerformance = internalMutation({
         spend: row.spend,
         leads: row.leads,
         cpl: row.cpl,
-        ctr: row.ctr,
+        // The media buyer's ads table calls it linkCtr; older pushes sent ctr.
+        ctr: row.ctr ?? row.linkCtr,
         frequency: row.frequency,
         thumbnailUrl: row.thumbnailUrl,
         previewSrc: row.previewSrc,
@@ -227,46 +229,6 @@ export const counts = internalQuery({
   }),
 });
 
-/** Mirror the media buyer's marketPlays rows so "What works" is identical. */
-export const storePlays = mutation({
-  args: { plays: v.array(v.any()) },
-  returns: v.object({ plays: v.number() }),
-  handler: async (ctx, { plays }) => {
-    if (plays.length === 0) {
-      throw new Error(
-        "storePlays received nothing — refusing to wipe the playbook",
-      );
-    }
-    const now = Date.now();
-    for (const row of await ctx.db.query("marketPlays").collect()) {
-      await ctx.db.delete(row._id);
-    }
-    for (const row of plays) {
-      await ctx.db.insert("marketPlays", { ...row, syncedAt: now });
-    }
-    return { plays: plays.length };
-  },
-});
-
-/** Funnel destinations from Meta: forms, their questions, and landing pages. */
-export const storeFunnels = mutation({
-  args: { rows: v.array(v.any()) },
-  returns: v.object({ funnels: v.number() }),
-  handler: async (ctx, { rows }) => {
-    if (rows.length === 0) {
-      throw new Error("storeFunnels received nothing — refusing to wipe");
-    }
-    const now = Date.now();
-    for (const row of await ctx.db.query("funnels").collect()) {
-      await ctx.db.delete(row._id);
-    }
-    for (const row of rows) {
-      await ctx.db.insert("funnels", { ...row, syncedAt: now });
-    }
-    return { funnels: rows.length };
-  },
-});
-
 /**
  * Freshness of every synced table.
  *
@@ -276,57 +238,82 @@ export const storeFunnels = mutation({
  * Tables he writes himself (touchpoints, plan, EOD) are not listed: they have
  * no upstream source and going quiet is normal.
  */
-export const freshness = query({
+const freshnessShape = v.object({
+  tables: v.array(
+    v.object({
+      table: v.string(),
+      rows: v.number(),
+      syncedAt: v.optional(v.number()),
+    }),
+  ),
+  oldestSyncedAt: v.optional(v.number()),
+  stale: v.array(v.string()),
+  empty: v.array(v.string()),
+  /** How often the feed is meant to land right now, in minutes. */
+  expectedEveryMin: v.number(),
+  /** The schedule in words, so every screen phrases it the same way. */
+  cadence: v.string(),
+});
+
+export const CADENCE =
+  "every 10 minutes through the working day, hourly overnight";
+
+export const freshness = authenticatedQuery({
   args: {},
-  returns: v.object({
-    tables: v.array(
-      v.object({
-        table: v.string(),
-        rows: v.number(),
-        syncedAt: v.optional(v.number()),
-      }),
-    ),
-    oldestSyncedAt: v.optional(v.number()),
-    stale: v.array(v.string()),
-    empty: v.array(v.string()),
-  }),
+  returns: freshnessShape,
   handler: async ctx => {
-    const names = [
-      "clients",
-      "creativeTasks",
-      "videoJobs",
-      "contentPosts",
-      "ads",
-      "campaigns",
-      "metaTree",
-      "winnersArchive",
-      "marketPlays",
-      "funnels",
-      "blueprints",
-    ] as const;
-    const tables: { table: string; rows: number; syncedAt?: number }[] = [];
-    for (const table of names) {
-      const rows = await ctx.db.query(table).collect();
-      const syncedAt = rows.reduce<number | undefined>((max, r) => {
-        const t = (r as { syncedAt?: number }).syncedAt;
-        return t && (!max || t > max) ? t : max;
-      }, undefined);
-      tables.push({ table, rows: rows.length, syncedAt });
-    }
-    // 45 minutes: three missed runs of a 15 minute cron.
-    const cutoff = Date.now() - 45 * 60_000;
-    const fed = tables.filter(t => t.rows > 0);
-    return {
-      tables,
-      oldestSyncedAt: fed.reduce<number | undefined>(
-        (min, t) =>
-          t.syncedAt && (!min || t.syncedAt < min) ? t.syncedAt : min,
-        undefined,
-      ),
-      stale: fed
-        .filter(t => !t.syncedAt || t.syncedAt < cutoff)
-        .map(t => t.table),
-      empty: tables.filter(t => t.rows === 0).map(t => t.table),
-    };
+    await assertRole(ctx, "creative");
+    return await buildFreshness(ctx);
   },
 });
+
+export async function buildFreshness(ctx: QueryCtx) {
+  // `blueprints` is not listed: the Typeform read has not been ported, so the
+  // table would sit in `empty` forever and teach people to ignore the banner.
+  const names = [
+    "clients",
+    "creativeTasks",
+    "videoJobs",
+    "contentPosts",
+    "ads",
+    "campaigns",
+    "metaTree",
+    "winnersArchive",
+    "marketPlays",
+    "funnels",
+  ] as const;
+  const tables: { table: string; rows: number; syncedAt?: number }[] = [];
+  for (const table of names) {
+    const rows = await ctx.db.query(table).collect();
+    const syncedAt = rows.reduce<number | undefined>((max, r) => {
+      const t = (r as { syncedAt?: number }).syncedAt;
+      return t && (!max || t > max) ? t : max;
+    }, undefined);
+    tables.push({ table, rows: rows.length, syncedAt });
+  }
+  // The media buyer feeds this app after every sync: every 10 minutes from
+  // 06:00 to 22:00 Kuwait and on the hour overnight. The cutoff follows that
+  // schedule, otherwise the banner cries wolf every night. The day window
+  // starts at 06:15 so the first ten-minute run has landed before it applies.
+  const now = Date.now();
+  const kuwaitMinutes = Math.floor(
+    ((now + 3 * 3600_000) % 86_400_000) / 60_000,
+  );
+  const daytime = kuwaitMinutes >= 6 * 60 + 15 && kuwaitMinutes < 22 * 60;
+  const expectedEveryMin = daytime ? 10 : 60;
+  const cutoff = now - (daytime ? 45 : 75) * 60_000;
+  const fed = tables.filter(t => t.rows > 0);
+  return {
+    tables,
+    oldestSyncedAt: fed.reduce<number | undefined>(
+      (min, t) => (t.syncedAt && (!min || t.syncedAt < min) ? t.syncedAt : min),
+      undefined,
+    ),
+    stale: fed
+      .filter(t => !t.syncedAt || t.syncedAt < cutoff)
+      .map(t => t.table),
+    empty: tables.filter(t => t.rows === 0).map(t => t.table),
+    expectedEveryMin,
+    cadence: CADENCE,
+  };
+}

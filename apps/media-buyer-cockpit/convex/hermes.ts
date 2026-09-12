@@ -1,10 +1,8 @@
 import { v } from "convex/values";
-import {
-  internalMutation,
-  internalQuery,
-  mutation,
-  query,
-} from "./_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
+import { authenticatedMutation, authenticatedQuery } from "./functions";
+import { assertAnyRole, emailOf } from "./gate";
+import { allowedClients, COCKPITS } from "./roles";
 
 // biome-ignore lint/suspicious/noExplicitAny: context blobs
 type Any = any;
@@ -21,20 +19,27 @@ type Any = any;
 const MAX_THREAD = 60;
 const MAX_CONTEXT = 6000;
 
+/**
+ * One thread per person, keyed by email. Hermes can act on the ad accounts
+ * from this chat, so it takes a seat in a cockpit, not just a session, and a
+ * session id would have started a fresh thread on every sign-in or device.
+ */
 // biome-ignore lint/suspicious/noExplicitAny: ctx from query or mutation
 async function who(ctx: any): Promise<string> {
-  try {
-    const id = await ctx.auth.getUserIdentity();
-    return String(id?.email ?? id?.subject ?? "media-buyer");
-  } catch {
-    return "media-buyer";
-  }
+  await assertAnyRole(ctx, COCKPITS);
+  return await emailOf(ctx);
 }
 
 /** What this cockpit knows that Hermes should see for this question. */
 // biome-ignore lint/suspicious/noExplicitAny: db ctx
 async function contextFor(ctx: any, clientName?: string): Promise<string> {
-  const campaigns = await ctx.db.query("campaigns").collect();
+  // Client access set in the portal applies to what Hermes is told, too.
+  const scope = await allowedClients(ctx);
+  const visible = (name: unknown) =>
+    !scope || scope.has(String(name ?? "").toLowerCase());
+  const campaigns = (await ctx.db.query("campaigns").collect()).filter(
+    (c: Any) => visible(c.clientName ?? c.accountName),
+  );
   const compact = (c: Any) => ({
     campaign: c.campaignName,
     client: c.clientName,
@@ -55,12 +60,12 @@ async function contextFor(ctx: any, clientName?: string): Promise<string> {
       (c: Any) => String(c.clientName ?? "").toLowerCase() === key,
     );
     const watch = (await ctx.db.query("launchWatch").collect()).filter(
-      (w: Any) => String(w.client).toLowerCase() === key,
+      (w: Any) => String(w.client).toLowerCase() === key && visible(w.client),
     );
     return JSON.stringify({ campaigns: mine.map(compact), launchWatch: watch });
   }
   const watch = (await ctx.db.query("launchWatch").collect()).filter(
-    (w: Any) => w.issues?.length && w.spend7d > 0,
+    (w: Any) => w.issues?.length && w.spend7d > 0 && visible(w.client),
   );
   return JSON.stringify({
     campaigns: campaigns.filter((c: Any) => !c.internal).map(compact),
@@ -71,7 +76,7 @@ async function contextFor(ctx: any, clientName?: string): Promise<string> {
   });
 }
 
-export const thread = query({
+export const thread = authenticatedQuery({
   args: {},
   returns: v.array(v.any()),
   handler: async ctx => {
@@ -85,7 +90,7 @@ export const thread = query({
   },
 });
 
-export const send = mutation({
+export const send = authenticatedMutation({
   args: {
     text: v.string(),
     clientName: v.optional(v.string()),
@@ -109,7 +114,7 @@ export const send = mutation({
 });
 
 /** Start over: the old thread is deleted, not hidden. */
-export const clear = mutation({
+export const clear = authenticatedMutation({
   args: {},
   returns: v.null(),
   handler: async ctx => {

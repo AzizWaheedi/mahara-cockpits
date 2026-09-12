@@ -650,6 +650,12 @@ export const feedComms = internalAction({
         report[`${app}.whatsapp`] = "not configured";
       }
     }
+    // Seats and client lists reach the other cockpits on the same clock.
+    try {
+      report.members = await ctx.runAction(internal.portal.pushMembers, {});
+    } catch (e) {
+      report.members = `FAILED ${String(e).slice(0, 160)}`;
+    }
     console.log(`comms feed: ${JSON.stringify(report)}`);
     await flush(ctx);
     return report;

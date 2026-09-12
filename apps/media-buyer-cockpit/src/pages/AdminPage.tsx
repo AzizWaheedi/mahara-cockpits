@@ -664,14 +664,18 @@ function MemberDialog({
             <Label>Seats</Label>
             <div className="grid gap-2 sm:grid-cols-2">
               {ROLE_META.map(r => (
-                <label
+                <button
+                  type="button"
                   key={r.key}
-                  className={`flex cursor-pointer items-start gap-2 rounded-md border p-2.5 ${roles.includes(r.key) ? "border-primary bg-primary/5" : ""}`}
+                  aria-pressed={roles.includes(r.key)}
+                  onClick={() => setRoles(toggle(roles, r.key))}
+                  className={`flex cursor-pointer items-start gap-2 rounded-md border p-2.5 text-left ${roles.includes(r.key) ? "border-primary bg-primary/5" : ""}`}
                 >
                   <Checkbox
                     checked={roles.includes(r.key)}
-                    onCheckedChange={() => setRoles(toggle(roles, r.key))}
-                    className="mt-0.5"
+                    tabIndex={-1}
+                    aria-hidden
+                    className="pointer-events-none mt-0.5"
                   />
                   <span>
                     <span className="block text-sm font-medium">{r.label}</span>
@@ -679,17 +683,21 @@ function MemberDialog({
                       {r.hint}
                     </span>
                   </span>
-                </label>
+                </button>
               ))}
             </div>
           </div>
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <Label>Client access</Label>
-              <label className="flex items-center gap-2 text-sm">
-                <Switch checked={allClients} onCheckedChange={setAllClients} />
+              <span className="flex items-center gap-2 text-sm">
+                <Switch
+                  checked={allClients}
+                  onCheckedChange={setAllClients}
+                  aria-label="All clients"
+                />
                 All clients
-              </label>
+              </span>
             </div>
             {!allClients ? (
               <div className="rounded-md border">
@@ -708,16 +716,21 @@ function MemberDialog({
                     </p>
                   ) : (
                     shown.map(c => (
-                      <label
+                      <button
+                        type="button"
                         key={c}
-                        className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-muted"
+                        aria-pressed={clients.includes(c)}
+                        onClick={() => setClients(toggle(clients, c))}
+                        className="flex w-full cursor-pointer items-center gap-2 rounded px-2 py-1 text-left text-sm hover:bg-muted"
                       >
                         <Checkbox
                           checked={clients.includes(c)}
-                          onCheckedChange={() => setClients(toggle(clients, c))}
+                          tabIndex={-1}
+                          aria-hidden
+                          className="pointer-events-none"
                         />
                         {c}
-                      </label>
+                      </button>
                     ))
                   )}
                 </div>

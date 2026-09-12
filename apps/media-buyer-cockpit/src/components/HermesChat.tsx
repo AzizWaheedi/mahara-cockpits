@@ -86,7 +86,13 @@ export function HermesChat() {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
   const location = useLocation();
-  const thread = useQuery(api.hermes.thread, {}) as Any[] | undefined;
+  // The chat takes a seat in a cockpit (Hermes can act on the ad accounts
+  // from it), so someone with no seat yet gets no panel instead of an error.
+  const me = useQuery(api.roles.me, {}) as Any;
+  const allowed = Boolean(me && (me.isAdmin || me.cockpits?.length > 0));
+  const thread = useQuery(api.hermes.thread, allowed ? {} : "skip") as
+    | Any[]
+    | undefined;
   const send = useMutation(api.hermes.send);
   const clear = useMutation(api.hermes.clear);
   const endRef = useRef<HTMLDivElement>(null);
@@ -130,6 +136,8 @@ export function HermesChat() {
     setText("");
     await send({ text: t, clientName, page: location.pathname });
   };
+
+  if (!allowed) return null;
 
   return (
     <>

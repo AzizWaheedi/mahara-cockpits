@@ -1,10 +1,13 @@
 import { v } from "convex/values";
+import { internalMutation, internalQuery } from "./_generated/server";
+import { authenticatedMutation, authenticatedQuery } from "./functions";
 import {
-  internalMutation,
-  internalQuery,
-  mutation,
-  query,
-} from "./_generated/server";
+  allowedClients,
+  assertRole,
+  inScope,
+  rowInScope,
+  userEmail,
+} from "./roles";
 
 // biome-ignore lint/suspicious/noExplicitAny: context blobs
 type Any = any;
@@ -20,23 +23,32 @@ type Any = any;
 
 const MAX_THREAD = 60;
 const MAX_CONTEXT = 6000;
+const DAY = 86_400_000;
 
-// biome-ignore lint/suspicious/noExplicitAny: ctx from query or mutation
-async function who(ctx: any): Promise<string> {
-  try {
-    const id = await ctx.auth.getUserIdentity();
-    return String(id?.email ?? id?.subject ?? "creative");
-  } catch {
-    return "creative";
-  }
-}
+/** Days past the due date, or 0. videoJobs rows carry a dueDate, never this. */
+const overdueDays = (j: { dueDate?: number }): number =>
+  j.dueDate && j.dueDate < Date.now()
+    ? Math.floor((Date.now() - j.dueDate) / DAY)
+    : 0;
+const isOpen = (status: unknown) =>
+  !/closed|complete|done|live/i.test(String(status ?? ""));
 
 /** What this cockpit knows that Hermes should see for this question. */
 // biome-ignore lint/suspicious/noExplicitAny: db ctx
-async function contextFor(ctx: any, clientName?: string): Promise<string> {
-  const roster = await ctx.db.query("clients").collect();
-  const tasks = await ctx.db.query("creativeTasks").collect();
-  const videos = await ctx.db.query("videoJobs").collect();
+async function contextFor(
+  ctx: any,
+  scope: Set<string> | null,
+  clientName?: string,
+): Promise<string> {
+  const roster = (await ctx.db.query("clients").collect()).filter((c: Any) =>
+    inScope(scope, c.name),
+  );
+  const tasks = (await ctx.db.query("creativeTasks").collect()).filter(
+    (t: Any) => rowInScope(scope, t),
+  );
+  const videos = (await ctx.db.query("videoJobs").collect()).filter((j: Any) =>
+    rowInScope(scope, j),
+  );
   if (clientName) {
     const c = roster.find((x: Any) => x.name === clientName);
     const mine = (t: Any) =>
@@ -72,7 +84,7 @@ async function contextFor(ctx: any, clientName?: string): Promise<string> {
           name: j.name,
           status: j.status,
           editors: j.editors,
-          overdueDays: j.overdueDays,
+          overdueDays: isOpen(j.status) ? overdueDays(j) : 0,
         })),
     });
   }
@@ -83,20 +95,23 @@ async function contextFor(ctx: any, clientName?: string): Promise<string> {
       brandDna: Boolean(c.brandDnaDoc),
       scripts: Boolean(c.driveScripts),
     })),
-    openTasks: tasks.filter(
-      (t: Any) => !/closed|complete|done/i.test(String(t.status)),
-    ).length,
+    openTasks: tasks.filter((t: Any) => isOpen(t.status)).length,
     videosLate: videos
-      .filter((j: Any) => (j.overdueDays ?? 0) > 0)
-      .map((j: Any) => ({ name: j.name, overdueDays: j.overdueDays })),
+      .filter((j: Any) => isOpen(j.status) && overdueDays(j) > 0)
+      .map((j: Any) => ({
+        name: j.name,
+        client: j.client,
+        overdueDays: overdueDays(j),
+      })),
   });
 }
 
-export const thread = query({
+export const thread = authenticatedQuery({
   args: {},
   returns: v.array(v.any()),
   handler: async ctx => {
-    const me = await who(ctx);
+    await assertRole(ctx, "creative");
+    const me = await userEmail(ctx);
     const rows = await ctx.db
       .query("hermesChat")
       .withIndex("by_thread", q => q.eq("thread", me))
@@ -106,7 +121,7 @@ export const thread = query({
   },
 });
 
-export const send = mutation({
+export const send = authenticatedMutation({
   args: {
     text: v.string(),
     clientName: v.optional(v.string()),
@@ -114,8 +129,17 @@ export const send = mutation({
   },
   returns: v.id("hermesChat"),
   handler: async (ctx, { text, clientName, page }) => {
-    const me = await who(ctx);
-    const context = (await contextFor(ctx, clientName)).slice(0, MAX_CONTEXT);
+    await assertRole(ctx, "creative");
+    const me = await userEmail(ctx);
+    // The client list set in the portal applies here too: no asking about
+    // a client the person cannot open.
+    const scope = await allowedClients(ctx);
+    if (clientName && !inScope(scope, clientName))
+      throw new Error("That client is not on your list.");
+    const context = (await contextFor(ctx, scope, clientName)).slice(
+      0,
+      MAX_CONTEXT,
+    );
     return await ctx.db.insert("hermesChat", {
       thread: me,
       role: "user",
@@ -130,11 +154,12 @@ export const send = mutation({
 });
 
 /** Start over: the old thread is deleted, not hidden. */
-export const clear = mutation({
+export const clear = authenticatedMutation({
   args: {},
   returns: v.null(),
   handler: async ctx => {
-    const me = await who(ctx);
+    await assertRole(ctx, "creative");
+    const me = await userEmail(ctx);
     for (const m of await ctx.db
       .query("hermesChat")
       .withIndex("by_thread", q => q.eq("thread", me))
@@ -202,6 +227,8 @@ export const answer = internalMutation({
   handler: async (ctx, { id, text, error }) => {
     const m = await ctx.db.get(id);
     if (!m) return null;
+    // A relay hiccup can deliver the same answer twice; the first one stands.
+    if (m.status === "answered") return null;
     if (error || !text) {
       await ctx.db.patch(id, { status: "failed", error: error ?? "no answer" });
       return null;

@@ -264,4 +264,15 @@
     border-color: color-mix(in oklch, var(--warning) 45%, transparent);
     color: color-mix(in oklch, var(--warning) 80%, var(--foreground));
   }
+  /* Same recipe in red ("deal with this first") and green ("make more of this"). */
+  .callout-bad {
+    background-color: color-mix(in oklch, var(--destructive) 12%, transparent);
+    border-color: color-mix(in oklch, var(--destructive) 45%, transparent);
+    color: color-mix(in oklch, var(--destructive) 80%, var(--foreground));
+  }
+  .callout-good {
+    background-color: color-mix(in oklch, var(--success) 12%, transparent);
+    border-color: color-mix(in oklch, var(--success) 45%, transparent);
+    color: color-mix(in oklch, var(--success) 80%, var(--foreground));
+  }
 }

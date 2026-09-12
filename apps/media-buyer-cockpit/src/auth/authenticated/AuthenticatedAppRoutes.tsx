@@ -47,10 +47,12 @@ export function AuthenticatedRoutes() {
         {/* The door into the cockpits on the other deployments. */}
         <Route path="/go/:cockpit" element={<GoPage />} />
         <Route element={<AppLayout />}>
+          {/* biome-ignore lint/a11y/useValidAriaRole: RoleRoute's role prop is a seat name, not an ARIA role */}
           <Route element={<RoleRoute role="admin" />}>
             <Route path="/admin" element={<AdminPage />} />
           </Route>
           {/* Media buyer's cockpit — her link only. */}
+          {/* biome-ignore lint/a11y/useValidAriaRole: RoleRoute's role prop is a seat name, not an ARIA role */}
           <Route element={<RoleRoute role="media_buyer" />}>
             <Route path="/dashboard" element={<StartOfDayPage />} />
             <Route path="/ads" element={<AdsPage />} />
@@ -60,6 +62,7 @@ export function AuthenticatedRoutes() {
             <Route path="/playbook" element={<PlaybookPage />} />
           </Route>
           {/* Client success cockpit — separate link, separate view. */}
+          {/* biome-ignore lint/a11y/useValidAriaRole: RoleRoute's role prop is a seat name, not an ARIA role */}
           <Route element={<RoleRoute role="csm" />}>
             <Route path="/csm" element={<CsmPage />} />
           </Route>

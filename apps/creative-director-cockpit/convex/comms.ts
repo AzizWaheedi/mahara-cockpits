@@ -2,9 +2,10 @@ import { v } from "convex/values";
 import {
   internalMutation,
   internalQuery,
-  mutation,
-  query,
+  type QueryCtx,
 } from "./_generated/server";
+import { authenticatedMutation, authenticatedQuery } from "./functions";
+import { allowedClients, assertRole, inScope, userEmail } from "./roles";
 
 /** Replace the calendar wholesale. An empty read keeps what is there. */
 export const storeCalendar = internalMutation({
@@ -71,17 +72,11 @@ export const storeWhatsapp = internalMutation({
   },
 });
 
-// biome-ignore lint/suspicious/noExplicitAny: ctx from query or mutation
-async function me(ctx: any): Promise<string> {
-  try {
-    const id = await ctx.auth.getUserIdentity();
-    return String(id?.email ?? id?.subject ?? "")
-      .trim()
-      .toLowerCase();
-  } catch {
-    return "";
-  }
-}
+/**
+ * Rows keyed by the old session id (`userId|sessionId`) can never be matched
+ * again now that the person's email is the key; an email never holds a `|`.
+ */
+const sessionKeyed = (owner?: string | null) => (owner ?? "").includes("|");
 
 /** The cockpit's Google service account: share a calendar with it and the cockpit can read it. */
 const SERVICE_ACCOUNT =
@@ -90,65 +85,84 @@ const SERVICE_ACCOUNT =
 const kuwaitDay = (ms: number) =>
   new Date(ms + 3 * 3600_000).toISOString().slice(0, 10);
 
-export const overview = query({
+export const overview = authenticatedQuery({
   args: {},
   returns: v.any(),
   handler: async ctx => {
-    const who = await me(ctx);
-    const myLink =
-      (
-        await ctx.db
-          .query("calendarLinks")
-          .withIndex("by_owner", q => q.eq("owner", who))
-          .collect()
-      )[0] ?? null;
-    // Shared client calendars for everyone, personal calendars only to their owner.
-    const events = (
-      await ctx.db.query("calendarEvents").withIndex("by_start").collect()
-    ).filter(e => !e.owner || e.owner === who);
-    const threads = await ctx.db.query("waThreads").collect();
-    const now = Date.now();
-    const todayKey = kuwaitDay(now);
-    const startMs = (e: { start: string }) => new Date(e.start).getTime();
-    const today = events.filter(e =>
-      e.allDay ? e.start === todayKey : kuwaitDay(startMs(e)) === todayKey,
-    );
-    const upcoming = events
-      .filter(
-        e =>
-          startMs(e) > now &&
-          startMs(e) < now + 7 * 86400_000 &&
-          kuwaitDay(startMs(e)) !== todayKey,
-      )
-      .slice(0, 60);
-    const nextCall = new Map<string, (typeof events)[number]>();
-    for (const e of events) {
-      if (!e.clientName || startMs(e) < now) continue;
-      if (!nextCall.has(e.clientName)) nextCall.set(e.clientName, e);
-    }
-    threads.sort((a, b) => {
-      if (Boolean(a.waitingSince) !== Boolean(b.waitingSince))
-        return a.waitingSince ? -1 : 1;
-      return (b.lastAt ?? 0) - (a.lastAt ?? 0);
-    });
-    const syncedAt = Math.max(
-      0,
-      ...events.map(e => e.syncedAt),
-      ...threads.map(t => t.syncedAt),
-    );
-    return {
-      today,
-      upcoming,
-      nextCall: [...nextCall.values()].sort((a, b) => startMs(a) - startMs(b)),
-      threads,
-      calendarConfigured: events.length > 0,
-      myCalendar: myLink,
-      saEmail: SERVICE_ACCOUNT,
-      whatsappConfigured: threads.length > 0,
-      syncedAt: syncedAt || undefined,
-    };
+    await assertRole(ctx, "creative");
+    return await buildOverview(ctx, false);
   },
 });
+
+/** The Meetings and messages screen. `smoke` runs it with no person signed in. */
+// biome-ignore lint/suspicious/noExplicitAny: the screen's own shape
+export async function buildOverview(
+  ctx: QueryCtx,
+  smoke: boolean,
+): Promise<any> {
+  const who = smoke ? "" : await userEmail(ctx);
+  const scope = smoke ? null : await allowedClients(ctx);
+  const myLink =
+    (
+      await ctx.db
+        .query("calendarLinks")
+        .withIndex("by_owner", q => q.eq("owner", who))
+        .collect()
+    )[0] ?? null;
+  // Shared client calendars for everyone, personal calendars only to their
+  // owner, and client events only for clients on the person's list.
+  const events = (
+    await ctx.db.query("calendarEvents").withIndex("by_start").collect()
+  ).filter(
+    e =>
+      (!e.owner || e.owner === who) &&
+      (!e.clientName || inScope(scope, e.clientName)),
+  );
+  // A restricted seat sees only the threads matched to their clients.
+  const threads = (await ctx.db.query("waThreads").collect()).filter(
+    t => !scope || inScope(scope, t.clientName),
+  );
+  const now = Date.now();
+  const todayKey = kuwaitDay(now);
+  const startMs = (e: { start: string }) => new Date(e.start).getTime();
+  const today = events.filter(e =>
+    e.allDay ? e.start === todayKey : kuwaitDay(startMs(e)) === todayKey,
+  );
+  const upcoming = events
+    .filter(
+      e =>
+        startMs(e) > now &&
+        startMs(e) < now + 7 * 86400_000 &&
+        kuwaitDay(startMs(e)) !== todayKey,
+    )
+    .slice(0, 60);
+  const nextCall = new Map<string, (typeof events)[number]>();
+  for (const e of events) {
+    if (!e.clientName || startMs(e) < now) continue;
+    if (!nextCall.has(e.clientName)) nextCall.set(e.clientName, e);
+  }
+  threads.sort((a, b) => {
+    if (Boolean(a.waitingSince) !== Boolean(b.waitingSince))
+      return a.waitingSince ? -1 : 1;
+    return (b.lastAt ?? 0) - (a.lastAt ?? 0);
+  });
+  const syncedAt = Math.max(
+    0,
+    ...events.map(e => e.syncedAt),
+    ...threads.map(t => t.syncedAt),
+  );
+  return {
+    today,
+    upcoming,
+    nextCall: [...nextCall.values()].sort((a, b) => startMs(a) - startMs(b)),
+    threads,
+    calendarConfigured: events.length > 0,
+    myCalendar: myLink,
+    saEmail: SERVICE_ACCOUNT,
+    whatsappConfigured: threads.length > 0,
+    syncedAt: syncedAt || undefined,
+  };
+}
 
 // --- Replies -----------------------------------------------------------------------
 
@@ -194,14 +208,19 @@ export const markReplied = internalMutation({
 });
 
 /** Send a reply from the Meetings & messages page. Leaves within a minute through the media buyer backend. */
-export const sendReply = mutation({
+export const sendReply = authenticatedMutation({
   args: { chatId: v.string(), text: v.string() },
   returns: v.null(),
   handler: async (ctx, { chatId, text }) => {
+    await assertRole(ctx, "creative");
     const t = (await ctx.db.query("waThreads").collect()).find(
       x => x.chatId === chatId,
     );
     if (!t) throw new Error("thread not found");
+    const scope = await allowedClients(ctx);
+    if (scope && !inScope(scope, t.clientName))
+      throw new Error("That client is not on your list.");
+    if (!text.trim()) throw new Error("Write the reply first.");
     await ctx.db.insert("creativeOutbox", {
       kind: "wa_send",
       payload: {
@@ -212,6 +231,7 @@ export const sendReply = mutation({
         channel: t.channel ?? "whatsapp",
       },
       state: "pending",
+      by: await userEmail(ctx),
       createdAt: Date.now(),
     });
     // Not "replied" yet: that is stamped when the CRM confirms the send.
@@ -245,17 +265,18 @@ export const sendFailed = internalMutation({
  * person shares their calendar with the service account and types their
  * Google email here; the media buyer backend reads it within a minute.
  */
-export const linkCalendar = mutation({
+export const linkCalendar = authenticatedMutation({
   args: { calendarId: v.string() },
   returns: v.null(),
   handler: async (ctx, { calendarId }) => {
-    const who = await me(ctx);
-    if (!who) throw new Error("Sign in first.");
+    await assertRole(ctx, "creative");
+    const who = await userEmail(ctx);
     const id = calendarId.trim().toLowerCase();
     if (!id.includes("@"))
       throw new Error(
         "Enter the Google account email the calendar belongs to.",
       );
+    await purgeSessionKeyed(ctx);
     for (const l of await ctx.db
       .query("calendarLinks")
       .withIndex("by_owner", q => q.eq("owner", who))
@@ -271,12 +292,13 @@ export const linkCalendar = mutation({
   },
 });
 
-export const unlinkCalendar = mutation({
+export const unlinkCalendar = authenticatedMutation({
   args: {},
   returns: v.null(),
   handler: async ctx => {
-    const who = await me(ctx);
-    if (!who) throw new Error("Sign in first.");
+    await assertRole(ctx, "creative");
+    const who = await userEmail(ctx);
+    await purgeSessionKeyed(ctx);
     for (const l of await ctx.db
       .query("calendarLinks")
       .withIndex("by_owner", q => q.eq("owner", who))
@@ -288,11 +310,27 @@ export const unlinkCalendar = mutation({
   },
 });
 
+/**
+ * Links and events left under a dead session key. They were invisible to
+ * everyone and made the backend read the same calendar twice; the next
+ * link or unlink from anyone clears them.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: mutation ctx
+async function purgeSessionKeyed(ctx: any): Promise<void> {
+  for (const l of await ctx.db.query("calendarLinks").collect())
+    if (sessionKeyed(l.owner)) await ctx.db.delete(l._id);
+  for (const e of await ctx.db.query("calendarEvents").collect())
+    if (sessionKeyed(e.owner)) await ctx.db.delete(e._id);
+}
+
 /** Bridge: every linked calendar, for the media buyer backend to read. */
 export const calendarLinks = internalQuery({
   args: {},
   returns: v.array(v.any()),
-  handler: async ctx => await ctx.db.query("calendarLinks").collect(),
+  handler: async ctx =>
+    (await ctx.db.query("calendarLinks").collect()).filter(
+      l => !sessionKeyed(l.owner),
+    ),
 });
 
 /** Bridge: what the read found for each link. */

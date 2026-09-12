@@ -1,5 +1,5 @@
 import { useAction } from "convex/react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { api } from "../../convex/_generated/api";
 
@@ -16,6 +16,7 @@ export function StatusToggle({
   level,
   name,
   clientTag,
+  campaignName,
   active,
   compact,
 }: {
@@ -23,12 +24,19 @@ export function StatusToggle({
   level: "campaign" | "adset" | "ad";
   name: string;
   clientTag?: string;
+  /** The campaign this belongs to, so the change is filed under it. */
+  campaignName?: string;
   active: boolean;
   compact?: boolean;
 }) {
   const setStatus = useAction(api.control.setStatus);
   const [busy, setBusy] = useState(false);
   const [on, setOn] = useState(active);
+  // The same object can be shown twice in one panel (range table and tree);
+  // when the snapshot moves, follow it instead of keeping a private copy.
+  useEffect(() => {
+    setOn(active);
+  }, [active]);
   if (!metaId) return null;
 
   return (
@@ -38,21 +46,31 @@ export function StatusToggle({
       onClick={async () => {
         setBusy(true);
         const next = !on;
-        const res = await setStatus({
-          metaId,
-          level,
-          active: next,
-          name,
-          clientTag,
-        });
-        setBusy(false);
-        if (res.ok) {
-          setOn(next);
-          toast.success(
-            `${next ? "Turned on" : "Turned off"} — ${name}. Logged to the change log.`,
+        try {
+          const res = await setStatus({
+            metaId,
+            level,
+            active: next,
+            name,
+            clientTag,
+            campaignName,
+          });
+          if (res.ok) {
+            setOn(next);
+            toast.success(
+              `${next ? "Turned on" : "Turned off"} ${name}. Logged to the change log.`,
+            );
+          } else {
+            toast.error(res.error ?? "Meta refused the change.");
+          }
+        } catch (e) {
+          // A dropped connection mid-call means Meta may or may not have
+          // applied it, so say that rather than leave the button stuck on "…".
+          toast.error(
+            `Could not confirm the change with Meta (${e instanceof Error ? e.message : String(e)}). Check ${name} in Ads Manager before retrying.`,
           );
-        } else {
-          toast.error(res.error ?? "Meta refused the change.");
+        } finally {
+          setBusy(false);
         }
       }}
       title={`${on ? "Turn off" : "Turn on"} this ${level}`}

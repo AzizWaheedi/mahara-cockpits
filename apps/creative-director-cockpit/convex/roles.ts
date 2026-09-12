@@ -26,7 +26,11 @@ export async function hasAccess(
   const row = await portalRow(ctx, email);
   if (row) return row.roles.includes("creative") || row.roles.includes("admin");
   const key = (email ?? "").trim().toLowerCase();
-  return FALLBACK.has(key) || key.endsWith("@viktor.invalid");
+  // No suffix shortcuts. spaceSessionAuth.ts can still mint
+  // `space-session-<id>@viktor.invalid` accounts, but only with the
+  // VIKTOR_AUTH_* variables this deployment does not set, and an automation
+  // identity like that must not pass the role gate in any case.
+  return FALLBACK.has(key);
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: convex ctx
@@ -46,6 +50,52 @@ export async function allowedClients(ctx: any): Promise<Set<string> | null> {
   if (!row || row.roles.includes("admin") || row.clients.length === 0)
     return null;
   return new Set(row.clients.map((c: string) => c.toLowerCase()));
+}
+
+/** True when the person may see this client. A null scope means everyone. */
+export function inScope(
+  scope: Set<string> | null,
+  name?: string | null,
+): boolean {
+  return !scope || scope.has((name ?? "").trim().toLowerCase());
+}
+
+/** Board rows carry one client or several; keep the row when any is in scope. */
+export function rowInScope(
+  scope: Set<string> | null,
+  row: { client?: string | null; clients?: string[] | null },
+): boolean {
+  if (!scope) return true;
+  const names = row.clients?.length
+    ? row.clients
+    : row.client
+      ? [row.client]
+      : [];
+  return names.some(n => scope.has(n.trim().toLowerCase()));
+}
+
+/**
+ * The signed-in person's email, lowercased. It keys their Hermes thread and
+ * their calendar link. The session JWT only carries `userId|sessionId`, so
+ * the users table is the source, with the identity's email as the fallback.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: convex ctx
+export async function userEmail(ctx: any): Promise<string> {
+  const user = await ctx.db.get(ctx.userId);
+  let email = String(user?.email ?? "")
+    .trim()
+    .toLowerCase();
+  if (!email) {
+    const id = await ctx.auth.getUserIdentity();
+    email = String(id?.email ?? "")
+      .trim()
+      .toLowerCase();
+  }
+  if (!email)
+    throw new Error(
+      "Your account has no email on it. Open the cockpit from the portal again.",
+    );
+  return email;
 }
 
 export const me = authenticatedQuery({

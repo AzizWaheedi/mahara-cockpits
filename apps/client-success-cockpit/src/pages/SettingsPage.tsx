@@ -1,8 +1,8 @@
 import { useAuthActions } from "@convex-dev/auth/react";
-import { useMutation, useQuery } from "convex/react";
+import { useQuery } from "convex/react";
 import { ChevronRight, Loader2, Moon, Palette, Sun, User } from "lucide-react";
 import { useState } from "react";
-import { useNavigate } from "react-router";
+import { portalUrl } from "@/components/PortalAutoSignIn";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,13 +24,10 @@ import { api } from "../../convex/_generated/api";
 export function SettingsPage() {
   const user = useQuery(api.auth.currentUser);
   const { theme, toggleTheme, switchable } = useTheme();
-  const { signIn, signOut } = useAuthActions();
-  const deleteAccount = useMutation(api.users.deleteAccount);
-  const navigate = useNavigate();
+  const { signIn } = useAuthActions();
   const emailPasswordAvailable = getEmailPasswordSignInAvailable();
 
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
-  const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -81,27 +78,15 @@ export function SettingsPage() {
     }
   };
 
-  const handleDeleteAccount = async () => {
-    setLoading(true);
-    setError("");
-
-    try {
-      await deleteAccount();
-      await signOut();
-      navigate("/");
-    } catch {
-      setError("Could not delete account. Please try again.");
-      setLoading(false);
-    }
-  };
-
   return (
     <div className="space-y-8 max-w-2xl mx-auto">
       <div>
         <h1 className="text-2xl md:text-3xl font-bold tracking-tight">
           Settings
         </h1>
-        <p className="text-muted-foreground mt-1">Page subtitle goes here</p>
+        <p className="text-muted-foreground mt-1">
+          Your account and how the cockpit looks
+        </p>
       </div>
 
       <Card className="overflow-hidden">
@@ -146,7 +131,7 @@ export function SettingsPage() {
                     Dark mode
                   </Label>
                   <p className="text-sm text-muted-foreground">
-                    Toggle description goes here
+                    Switch between light and dark
                   </p>
                 </div>
               </div>
@@ -186,20 +171,20 @@ export function SettingsPage() {
               <ChevronRight className="size-4 text-muted-foreground" />
             </button>
           )}
-          <button
-            onClick={() => setDeleteAccountOpen(true)}
-            className="w-full flex items-center justify-between rounded-lg border border-destructive/20 p-4 transition-colors hover:bg-destructive/5 text-left"
-          >
-            <div>
-              <p className="font-medium text-sm text-destructive">
-                Delete account
-              </p>
-              <p className="text-sm text-muted-foreground">
-                Permanently delete your account
-              </p>
-            </div>
-            <ChevronRight className="size-4 text-destructive" />
-          </button>
+          {/* Access lives in the portal's member list, not here: deleting the
+              local user only signed the person out and the portal recreated
+              it on the next visit. */}
+          <div className="rounded-lg border p-4">
+            <p className="font-medium text-sm">Your seat</p>
+            <p className="text-sm text-muted-foreground">
+              Who can open this cockpit, and which clients they see, is set in
+              the{" "}
+              <a className="underline" href={`${portalUrl()}/admin`}>
+                portal
+              </a>
+              . Ask Aziz to change or remove your access there.
+            </p>
+          </div>
         </CardContent>
       </Card>
 
@@ -300,44 +285,6 @@ export function SettingsPage() {
           </DialogContent>
         </Dialog>
       )}
-
-      <Dialog open={deleteAccountOpen} onOpenChange={setDeleteAccountOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete Account</DialogTitle>
-            <DialogDescription>
-              This action cannot be undone. This will permanently delete your
-              account and remove all your data.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="py-4">
-            <p className="text-sm text-muted-foreground">
-              Are you sure you want to delete your account?
-            </p>
-          </div>
-          {error && (
-            <p className="text-sm text-destructive bg-destructive/10 rounded-lg px-3 py-2">
-              {error}
-            </p>
-          )}
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setDeleteAccountOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleDeleteAccount}
-              disabled={loading}
-            >
-              {loading && <Loader2 className="size-4 animate-spin" />}
-              Delete Account
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

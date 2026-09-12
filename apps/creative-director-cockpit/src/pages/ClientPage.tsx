@@ -460,14 +460,46 @@ function serviceLineOf(service: string): string | undefined {
 // biome-ignore lint/suspicious/noExplicitAny: query payload is untyped
 function WorkInFlight({ d, name }: { d: any; name: string }) {
   const queue = useMutation(api.clients.queueAction);
+  // biome-ignore lint/suspicious/noExplicitAny: outbox rows are untyped
+  const outbox = useQuery(api.clients.outbox, {}) as any[] | undefined;
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState("");
+  const [feedback, setFeedback] = useState<{
+    tone: "warn" | "bad";
+    text: string;
+  } | null>(null);
+
+  // A task with a row still in the outbox takes no second click: the drain
+  // executes every row it finds, so a repeat would post twice on ClickUp.
+  const inFlight = new Set<string>();
+  const lastFailed = new Map<string, string>();
+  // Rows arrive newest first: only the most recent settled row per task
+  // decides whether a red "last one failed" line shows.
+  const settled = new Set<string>();
+  for (const r of outbox ?? []) {
+    if (!r.taskId) continue;
+    if (r.state === "pending" || r.state === "sending") inFlight.add(r.taskId);
+    else if (r.state === "done") settled.add(r.taskId);
+    else if (r.state === "failed" && !settled.has(r.taskId)) {
+      settled.add(r.taskId);
+      lastFailed.set(r.taskId, String(r.result ?? "failed"));
+    }
+  }
 
   async function act(kind: string, taskId?: string, payload: unknown = {}) {
     setBusy(`${kind}:${taskId ?? ""}`);
     try {
       await queue({ kind, taskId, payload });
       setNote("");
+      setFeedback({
+        tone: "warn",
+        text: "Queued. It reaches ClickUp within a minute; this screen shows the change at the next board sync, within 10 minutes.",
+      });
+    } catch (e) {
+      setFeedback({
+        tone: "bad",
+        text: `Not queued: ${String((e as Error)?.message ?? e).slice(0, 200)}`,
+      });
     } finally {
       setBusy(null);
     }
@@ -477,6 +509,13 @@ function WorkInFlight({ d, name }: { d: any; name: string }) {
 
   return (
     <div className="space-y-4 text-[13px]">
+      {feedback && (
+        <div
+          className={`${feedback.tone === "bad" ? "callout-bad" : "callout-warn"} rounded-md border p-2`}
+        >
+          {feedback.text}
+        </div>
+      )}
       {d.tasks.length === 0 && openVideos.length === 0 ? (
         <p className="text-muted-foreground">Nothing open for this client.</p>
       ) : (
@@ -508,7 +547,13 @@ function WorkInFlight({ d, name }: { d: any; name: string }) {
                 <span className="text-muted-foreground">
                   opened {when(t.createdAt)}
                 </span>
-                <TaskActions taskId={t.taskId} act={act} busy={busy} />
+                <TaskActions
+                  taskId={t.taskId}
+                  act={act}
+                  busy={busy}
+                  pending={inFlight.has(t.taskId)}
+                  failed={lastFailed.get(t.taskId)}
+                />
               </span>
             </div>
           ))}
@@ -545,7 +590,13 @@ function WorkInFlight({ d, name }: { d: any; name: string }) {
                   <span className="text-muted-foreground">
                     {v2.editors.length ? v2.editors.join(", ") : "unassigned"}
                   </span>
-                  <TaskActions taskId={v2.taskId} act={act} busy={busy} />
+                  <TaskActions
+                    taskId={v2.taskId}
+                    act={act}
+                    busy={busy}
+                    pending={inFlight.has(v2.taskId)}
+                    failed={lastFailed.get(v2.taskId)}
+                  />
                 </span>
               </div>
             ))}
@@ -554,6 +605,11 @@ function WorkInFlight({ d, name }: { d: any; name: string }) {
 
       <div>
         <h4 className="mb-1.5 font-semibold">Comment on their newest task</h4>
+        {d.tasks[0] && (
+          <p className="mb-1 text-[12px] text-muted-foreground" dir="auto">
+            Posting to: {d.tasks[0].name}
+          </p>
+        )}
         <div className="flex gap-2">
           <input
             value={note}
@@ -563,7 +619,12 @@ function WorkInFlight({ d, name }: { d: any; name: string }) {
           />
           <Button
             size="sm"
-            disabled={!note.trim() || busy !== null || d.tasks.length === 0}
+            disabled={
+              !note.trim() ||
+              busy !== null ||
+              d.tasks.length === 0 ||
+              inFlight.has(d.tasks[0]?.taskId)
+            }
             onClick={() => act("comment", d.tasks[0]?.taskId, { text: note })}
           >
             Post
@@ -585,15 +646,29 @@ function TaskActions({
   taskId,
   act,
   busy,
+  pending,
+  failed,
 }: {
   taskId: string;
   act: (kind: string, taskId?: string, payload?: unknown) => Promise<void>;
   busy: string | null;
+  /** A queued row for this task has not reached ClickUp yet. */
+  pending?: boolean;
+  /** The last queued row for this task failed, with the drain's reason. */
+  failed?: string;
 }) {
   const [text, setText] = useState("");
   const [show, setShow] = useState(false);
+  if (pending) {
+    return <Pill tone="warn">queued, reaches ClickUp within a minute</Pill>;
+  }
   return (
     <>
+      {failed && (
+        <span className="txt-bad text-[12px]" title={failed}>
+          last one failed: {failed.slice(0, 60)}
+        </span>
+      )}
       {show && (
         <span className="flex items-center gap-1">
           <input
@@ -893,14 +968,14 @@ function NewVideoRequest({
       <p className="text-[12px] text-muted-foreground">
         Creates a tagged task on the Video Pipeline on the next sync, within 15
         minutes. Needs a brief and nothing else, the rest is filled from their
-        client record. If you would rather use the ClickUp form directly, it is{" "}
+        client record. If you would rather use the ClickUp form directly, open{" "}
         <a
           href="https://forms.clickup.com/90182518398/f/2kzmr1ky-1058/E1LP6F3OHFC3WACLU8"
           target="_blank"
           rel="noreferrer"
           className="underline underline-offset-2"
         >
-          here
+          the video request form
         </a>
         .
       </p>

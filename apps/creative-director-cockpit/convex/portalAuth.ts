@@ -89,12 +89,70 @@ export const remember = internalMutation({
   handler: async (ctx, args) => {
     const row = await ctx.db
       .query("portalMembers")
-      .withIndex("by_email", q => q.eq("email", args.email))
+      .withIndex("by_email", q =>
+        q.eq("email", args.email.trim().toLowerCase()),
+      )
       .unique();
-    const doc = { ...args, at: Date.now() };
+    const email = args.email.trim().toLowerCase();
+    const doc = {
+      ...args,
+      email,
+      at: Date.now(),
+      revokedAt: args.roles.length === 0 ? Date.now() : undefined,
+    };
     if (row) await ctx.db.patch(row._id, doc);
     else await ctx.db.insert("portalMembers", doc);
     return null;
+  },
+});
+
+/** The whole directory from the portal (every feed): upsert each, revoke the rest. */
+export const storeMembers = internalMutation({
+  args: {
+    members: v.array(
+      v.object({
+        email: v.string(),
+        name: v.optional(v.string()),
+        roles: v.array(v.string()),
+        clients: v.array(v.string()),
+      }),
+    ),
+  },
+  returns: v.object({ members: v.number(), revoked: v.number() }),
+  handler: async (ctx, { members }) => {
+    if (members.length === 0) return { members: 0, revoked: 0 };
+    const now = Date.now();
+    const seen = new Set<string>();
+    for (const m of members) {
+      const email = m.email.trim().toLowerCase();
+      seen.add(email);
+      const row = await ctx.db
+        .query("portalMembers")
+        .withIndex("by_email", q => q.eq("email", email))
+        .unique();
+      const doc = {
+        email,
+        name: m.name,
+        roles: m.roles,
+        clients: m.clients,
+        at: now,
+        revokedAt: m.roles.length === 0 ? now : undefined,
+      };
+      if (row) await ctx.db.patch(row._id, doc);
+      else await ctx.db.insert("portalMembers", doc);
+    }
+    let revoked = 0;
+    for (const row of await ctx.db.query("portalMembers").collect()) {
+      if (seen.has(row.email) || row.roles.length === 0) continue;
+      await ctx.db.patch(row._id, {
+        roles: [],
+        clients: [],
+        at: now,
+        revokedAt: now,
+      });
+      revoked++;
+    }
+    return { members: members.length, revoked };
   },
 });
 

@@ -1,5 +1,8 @@
 import { v } from "convex/values";
-import { internalMutation, query } from "./_generated/server";
+import { internalMutation } from "./_generated/server";
+import { CPL_GATE } from "./constants";
+import { authenticatedQuery } from "./functions";
+import { assertRole } from "./roles";
 
 /**
  * The GCC winning-data database.
@@ -12,8 +15,6 @@ import { internalMutation, query } from "./_generated/server";
 
 /** Enough spend to mean something. Below this, a cheap CPL is just noise. */
 const MIN_SPEND = 100;
-/** Our working cost-per-lead gate, confirmed by Aziz 2026-09-05. */
-const CPL_GATE = 15;
 
 export const store = internalMutation({
   args: { rows: v.array(v.any()), windowDays: v.number() },
@@ -79,7 +80,7 @@ type Group = {
  * `exclude` is the client you are building for: their own history is removed so
  * the answer is "what worked ELSEWHERE that you have not tried here yet".
  */
-export const playbook = query({
+export const playbook = authenticatedQuery({
   args: {
     serviceLine: v.optional(v.string()),
     city: v.optional(v.string()),
@@ -99,6 +100,7 @@ export const playbook = query({
     }),
   ),
   handler: async (ctx, args) => {
+    await assertRole(ctx, "media_buyer");
     const all = await ctx.db.query("marketPlays").collect();
     const groups = new Map<string, Group>();
 
@@ -159,7 +161,7 @@ export const playbook = query({
 });
 
 /** The service lines and cities we actually hold data for. */
-export const dimensions = query({
+export const dimensions = authenticatedQuery({
   args: {},
   returns: v.object({
     serviceLines: v.array(v.string()),
@@ -168,6 +170,7 @@ export const dimensions = query({
     clients: v.number(),
   }),
   handler: async ctx => {
+    await assertRole(ctx, "media_buyer");
     const all = await ctx.db.query("marketPlays").collect();
     return {
       serviceLines: [
@@ -189,7 +192,7 @@ export const dimensions = query({
  * This is the playbook delivered at the moment of decision — while she is
  * building — rather than on a page she has to remember to open.
  */
-export const forClient = query({
+export const forClient = authenticatedQuery({
   args: { client: v.string() },
   returns: v.object({
     city: v.optional(v.string()),
@@ -206,6 +209,7 @@ export const forClient = query({
     ),
   }),
   handler: async (ctx, { client }) => {
+    await assertRole(ctx, "media_buyer");
     const all = await ctx.db.query("marketPlays").collect();
     const mine = all.filter(p => p.client === client);
     const city = mine[0]?.city ?? undefined;
@@ -280,13 +284,14 @@ export const forClient = query({
  * the ad-level rows by format, CTA and copy trait so the pattern is visible.
  * [aziz, 2026-09-06]
  */
-export const creativePatterns = query({
+export const creativePatterns = authenticatedQuery({
   args: {
     serviceLine: v.optional(v.string()),
     exclude: v.optional(v.string()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
+    await assertRole(ctx, "media_buyer");
     const plays = await ctx.db.query("marketPlays").collect();
     const rows = plays.filter(
       p =>
@@ -531,7 +536,7 @@ export const archiveWinners = internalMutation({
  * The winning ads, read from the permanent archive so switched-off winners are
  * still there. Falls back to the live plays only if the archive is empty.
  */
-export const winners = query({
+export const winners = authenticatedQuery({
   args: {
     serviceLine: v.optional(v.string()),
     exclude: v.optional(v.string()),
@@ -541,6 +546,7 @@ export const winners = query({
   },
   returns: v.any(),
   handler: async (ctx, args) => {
+    await assertRole(ctx, "media_buyer");
     const rows = await ctx.db.query("winnersArchive").collect();
     const source: Record<string, any>[] = rows.length
       ? rows.map(r => ({ ...r }))
@@ -584,10 +590,11 @@ export const winners = query({
 });
 
 /** Archive counts, for the sync self-check. */
-export const archiveStats = query({
+export const archiveStats = authenticatedQuery({
   args: {},
   returns: v.any(),
   handler: async ctx => {
+    await assertRole(ctx, "media_buyer");
     const rows = await ctx.db.query("winnersArchive").collect();
     return {
       total: rows.length,
@@ -646,10 +653,11 @@ export const storeTranscript = internalMutation({
 });
 
 /** Video ads in the database that have no transcript yet. */
-export const untranscribed = query({
+export const untranscribed = authenticatedQuery({
   args: { minSpend: v.optional(v.number()) },
   returns: v.any(),
   handler: async (ctx, { minSpend }) => {
+    await assertRole(ctx, "media_buyer");
     const plays = await ctx.db.query("marketPlays").collect();
     const out: Array<Record<string, unknown>> = [];
     for (const p of plays) {
@@ -678,10 +686,11 @@ export const untranscribed = query({
  * director's Space so his "What works" page is the same page over the same
  * data rather than a second, drifting implementation. [aziz, 2026-09-07]
  */
-export const rawPlays = query({
+export const rawPlays = authenticatedQuery({
   args: {},
   returns: v.any(),
   handler: async ctx => {
+    await assertRole(ctx, "media_buyer");
     const rows = await ctx.db.query("marketPlays").collect();
     return rows.map(({ _id, _creationTime, syncedAt, ...rest }) => rest);
   },

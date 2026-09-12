@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { api, internal } from "./_generated/api";
+import { internal } from "./_generated/api";
 import {
   type ActionCtx,
   internalMutation,
@@ -65,10 +65,11 @@ export async function runBridge(
       return await ctx.runQuery(internal.ingest.driveCacheInternal, {});
     case "statCache":
       return await ctx.runQuery(internal.ingest.statCacheInternal, {});
+    // The outbox lives in clients.ts: claim before acting, bounded retries.
     case "outboxPending":
-      return await ctx.runQuery(internal.ingest.outboxPendingInternal, {});
+      return await ctx.runQuery(internal.clients.outboxPending, {});
     case "outboxSettle":
-      return await ctx.runMutation(internal.ingest.outboxSettleInternal, {
+      return await ctx.runMutation(internal.clients.outboxSettle, {
         id: args.id,
         ok: args.ok,
         result: args.result,
@@ -108,11 +109,32 @@ export async function runBridge(
         draftAt: Number(args.draftAt ?? Date.now()),
       });
     case "outboxClaim":
-      return await ctx.runMutation(api.clients.outboxClaim, { id: args.id });
+      return await ctx.runMutation(internal.clients.outboxClaim, {
+        id: args.id,
+      });
     case "sendFailed":
       return await ctx.runMutation(internal.comms.sendFailed, {
         chatId: String(args.chatId),
         error: String(args.error ?? "send failed"),
+      });
+    case "upsertMember":
+      // A seat or client-list change in the portal's admin view.
+      return await ctx.runMutation(internal.portalAuth.remember, {
+        email: String(args.email),
+        name: args.name ? String(args.name) : undefined,
+        roles: Array.isArray(args.roles) ? args.roles.map(String) : [],
+        clients: Array.isArray(args.clients) ? args.clients.map(String) : [],
+      });
+    case "storeMembers":
+      return await ctx.runMutation(internal.portalAuth.storeMembers, {
+        members: (Array.isArray(args.members) ? args.members : []).map(
+          (m: Record<string, unknown>) => ({
+            email: String(m.email ?? ""),
+            name: m.name ? String(m.name) : undefined,
+            roles: Array.isArray(m.roles) ? m.roles.map(String) : [],
+            clients: Array.isArray(m.clients) ? m.clients.map(String) : [],
+          }),
+        ),
       });
     case "revokeMember":
       return await ctx.runAction(internal.portalAuth.revoke, {
@@ -123,8 +145,9 @@ export async function runBridge(
         chatId: String(args.chatId),
         text: String(args.text ?? ""),
       });
+    // An action: every screen gets its own transaction, see smoke.ts.
     case "smoke":
-      return await ctx.runQuery(internal.smoke.run, {});
+      return await ctx.runAction(internal.smoke.run, {});
     case "storeWhatsapp":
       return await ctx.runMutation(internal.comms.storeWhatsapp, {
         threads: args.threads ?? [],
@@ -136,7 +159,7 @@ export async function runBridge(
   }
 }
 
-/** Same bodies as the public `sync.storePlays` / `storeFunnels` / `winners.store`, reachable from the door. */
+/** The only way plays, funnels and winners get written: through the door. */
 export const storePlaysInternal = internalMutation({
   args: { plays: v.array(v.any()) },
   returns: v.object({ plays: v.number() }),
@@ -222,42 +245,5 @@ export const statCacheInternal = internalQuery({
       out[c.name] = { stats: c.stats, statsScannedAt: c.statsScannedAt };
     }
     return out;
-  },
-});
-
-export const outboxPendingInternal = internalQuery({
-  args: {},
-  returns: v.any(),
-  handler: async ctx =>
-    (
-      await ctx.db
-        .query("creativeOutbox")
-        .withIndex("by_state", q => q.eq("state", "pending"))
-        .collect()
-    ).map(r => ({
-      id: r._id,
-      kind: r.kind,
-      taskId: r.taskId,
-      payload: r.payload,
-      createdAt: r.createdAt,
-    })),
-});
-
-export const outboxSettleInternal = internalMutation({
-  args: {
-    id: v.id("creativeOutbox"),
-    ok: v.boolean(),
-    result: v.optional(v.string()),
-  },
-  returns: v.null(),
-  handler: async (ctx, { id, ok, result }) => {
-    const row = await ctx.db.get(id);
-    if (!row) return null;
-    await ctx.db.patch(id, {
-      state: ok ? "done" : "failed",
-      result: (result ?? "").slice(0, 300),
-      settledAt: Date.now(),
-    });
-    return null;
   },
 });

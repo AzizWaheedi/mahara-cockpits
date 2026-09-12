@@ -9,7 +9,6 @@ export {
   StartOfDayPage,
   TaskListPage,
 } from "./CsmPage";
-export { DashboardPage } from "./DashboardPage";
 export { LandingPage } from "./LandingPage";
 export { LoginPage } from "./LoginPage";
 export { MeetingsPage } from "./MeetingsPage";

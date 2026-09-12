@@ -47,6 +47,7 @@ export function AuthenticatedRoutes() {
 
       <Route element={<ProtectedRoute />}>
         <Route element={<AppLayout />}>
+          {/* biome-ignore lint/a11y/useValidAriaRole: RoleRoute's role prop is a seat name, not an ARIA role */}
           <Route element={<RoleRoute role="creative" />}>
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/work" element={<WorkPage />} />

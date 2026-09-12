@@ -1,10 +1,7 @@
 import { v } from "convex/values";
-import {
-  internalMutation,
-  internalQuery,
-  mutation,
-  query,
-} from "./_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
+import { authenticatedMutation, authenticatedQuery } from "./functions";
+import { allowedClients, assertRole, userEmail } from "./roles";
 
 // biome-ignore lint/suspicious/noExplicitAny: context blobs
 type Any = any;
@@ -15,21 +12,12 @@ type Any = any;
  * Messages live here; the media buyer backend relays each user message to
  * Hermes with this screen's context and writes the answer back through the
  * bridge (`chatPending`, `chatSent`, `chatAnswer`). One thread per signed-in
- * person, so the history reads like a conversation.
+ * person, keyed by their email, so the history reads like a conversation and
+ * follows them across devices and sign-ins.
  */
 
 const MAX_THREAD = 60;
 const MAX_CONTEXT = 6000;
-
-// biome-ignore lint/suspicious/noExplicitAny: ctx from query or mutation
-async function who(ctx: any): Promise<string> {
-  try {
-    const id = await ctx.auth.getUserIdentity();
-    return String(id?.email ?? id?.subject ?? "csm");
-  } catch {
-    return "csm";
-  }
-}
 
 /** What this cockpit knows that Hermes should see for this question. */
 // biome-ignore lint/suspicious/noExplicitAny: db ctx
@@ -37,9 +25,10 @@ async function contextFor(ctx: any, clientName?: string): Promise<string> {
   const clients = await ctx.db.query("clients").collect();
   if (clientName) {
     const c = clients.find((x: Any) => x.name === clientName);
-    const p = (await ctx.db.query("clientProfiles").collect()).find(
-      (x: Any) => x.clientName === clientName,
-    );
+    const p = await ctx.db
+      .query("clientProfiles")
+      .withIndex("by_client", (q: Any) => q.eq("clientName", clientName))
+      .first();
     return JSON.stringify({
       client: c
         ? {
@@ -89,11 +78,12 @@ async function contextFor(ctx: any, clientName?: string): Promise<string> {
   });
 }
 
-export const thread = query({
+export const thread = authenticatedQuery({
   args: {},
   returns: v.array(v.any()),
   handler: async ctx => {
-    const me = await who(ctx);
+    await assertRole(ctx, "csm");
+    const me = await userEmail(ctx);
     const rows = await ctx.db
       .query("hermesChat")
       .withIndex("by_thread", q => q.eq("thread", me))
@@ -103,7 +93,7 @@ export const thread = query({
   },
 });
 
-export const send = mutation({
+export const send = authenticatedMutation({
   args: {
     text: v.string(),
     clientName: v.optional(v.string()),
@@ -111,9 +101,15 @@ export const send = mutation({
   },
   returns: v.id("hermesChat"),
   handler: async (ctx, { text, clientName, page }) => {
-    const me = await who(ctx);
+    await assertRole(ctx, "csm");
+    const me = await userEmail(ctx);
+    // The client list set in the portal applies here too: no asking about
+    // a client the person cannot open.
+    const scope = await allowedClients(ctx);
+    if (clientName && scope && !scope.has(clientName.toLowerCase()))
+      throw new Error("That client is not on your list.");
     const context = (await contextFor(ctx, clientName)).slice(0, MAX_CONTEXT);
-    return await ctx.db.insert("hermesChat", {
+    const id = await ctx.db.insert("hermesChat", {
       thread: me,
       role: "user",
       text: text.trim().slice(0, 4000),
@@ -123,15 +119,25 @@ export const send = mutation({
       status: "queued",
       at: Date.now(),
     });
+    // Keep the thread bounded: nothing reads past the last MAX_THREAD rows.
+    const rows = await ctx.db
+      .query("hermesChat")
+      .withIndex("by_thread", q => q.eq("thread", me))
+      .collect();
+    rows.sort((a, b) => a.at - b.at);
+    for (const old of rows.slice(0, Math.max(0, rows.length - MAX_THREAD)))
+      await ctx.db.delete(old._id);
+    return id;
   },
 });
 
 /** Start over: the old thread is deleted, not hidden. */
-export const clear = mutation({
+export const clear = authenticatedMutation({
   args: {},
   returns: v.null(),
   handler: async ctx => {
-    const me = await who(ctx);
+    await assertRole(ctx, "csm");
+    const me = await userEmail(ctx);
     for (const m of await ctx.db
       .query("hermesChat")
       .withIndex("by_thread", q => q.eq("thread", me))
@@ -148,11 +154,14 @@ export const pending = internalQuery({
   args: {},
   returns: v.array(v.any()),
   handler: async ctx => {
-    const queued = (await ctx.db.query("hermesChat").collect()).filter(
-      m => m.role === "user" && m.status === "queued",
-    );
+    const queued = (
+      await ctx.db
+        .query("hermesChat")
+        .withIndex("by_status", q => q.eq("status", "queued"))
+        .take(10)
+    ).filter(m => m.role === "user");
     const out: Any[] = [];
-    for (const m of queued.slice(0, 10)) {
+    for (const m of queued) {
       const history = (
         await ctx.db
           .query("hermesChat")
@@ -199,11 +208,14 @@ export const answer = internalMutation({
   handler: async (ctx, { id, text, error }) => {
     const m = await ctx.db.get(id);
     if (!m) return null;
+    // A relay retry must not produce a second reply to the same question.
+    if (m.status === "answered") return null;
     if (error || !text) {
       await ctx.db.patch(id, { status: "failed", error: error ?? "no answer" });
       return null;
     }
-    await ctx.db.patch(id, { status: "answered" });
+    // The screen context was for Hermes; once answered it is dead weight.
+    await ctx.db.patch(id, { status: "answered", context: undefined });
     await ctx.db.insert("hermesChat", {
       thread: m.thread,
       role: "assistant",

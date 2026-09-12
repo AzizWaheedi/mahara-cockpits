@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import type { QueryCtx } from "./_generated/server";
 import { internalMutation, internalQuery } from "./_generated/server";
 import { authenticatedMutation, authenticatedQuery } from "./functions";
-import { assertRole, userEmail } from "./roles";
+import { allowedClients, assertRole, userEmail } from "./roles";
 
 /** Replace the calendar wholesale. An empty read keeps what is there. */
 export const storeCalendar = internalMutation({
@@ -90,6 +90,8 @@ export async function buildOverview(
 ): Promise<any> {
   if (!smoke) await assertRole(ctx, "csm");
   const who = smoke ? "" : await userEmail(ctx);
+  // A client list set in the portal hides the other clients' conversations.
+  const scope = smoke ? null : await allowedClients(ctx);
   const myLink =
     (
       await ctx.db
@@ -101,7 +103,9 @@ export async function buildOverview(
   const events = (
     await ctx.db.query("calendarEvents").withIndex("by_start").collect()
   ).filter(e => !e.owner || e.owner === who);
-  const threads = await ctx.db.query("waThreads").collect();
+  const allThreads = await ctx.db.query("waThreads").collect();
+  // Threads matched to no client stay visible only to an unrestricted seat.
+  const threads = allThreads.filter(t => inScope(scope, t.clientName));
   const now = Date.now();
   const todayKey = kuwaitDay(now);
   const startMs = (e: { start: string }) => new Date(e.start).getTime();
@@ -139,9 +143,15 @@ export async function buildOverview(
     calendarConfigured: events.length > 0,
     myCalendar: myLink,
     saEmail: SERVICE_ACCOUNT,
-    whatsappConfigured: threads.length > 0,
+    whatsappConfigured: allThreads.length > 0,
     syncedAt: syncedAt || undefined,
   };
+}
+
+/** No scope means every thread; a scoped seat sees only its own clients' threads. */
+function inScope(scope: Set<string> | null, clientName?: string): boolean {
+  if (!scope) return true;
+  return Boolean(clientName && scope.has(clientName.trim().toLowerCase()));
 }
 
 // --- Replies -----------------------------------------------------------------------
@@ -197,6 +207,8 @@ export const sendReply = authenticatedMutation({
       x => x.chatId === chatId,
     );
     if (!t) throw new Error("thread not found");
+    if (!inScope(await allowedClients(ctx), t.clientName))
+      throw new Error("That client is not on your list.");
     await ctx.db.insert("outbox", {
       kind: "wa_send",
       clientTaskId: chatId,
