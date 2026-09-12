@@ -428,6 +428,14 @@ const schema = defineSchema({
     role: v.string(),
   }).index("by_email", ["email"]),
   /** Calendar events for this role, a week back and three weeks ahead. */
+  /** What the portal said about this person at their last sign-in through it. */
+  portalMembers: defineTable({
+    email: v.string(),
+    name: v.optional(v.string()),
+    roles: v.array(v.string()),
+    clients: v.array(v.string()),
+    at: v.number(),
+  }).index("by_email", ["email"]),
   calendarEvents: defineTable({
     eventId: v.string(),
     calendarId: v.string(),

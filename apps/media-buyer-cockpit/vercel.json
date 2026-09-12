@@ -1,6 +1,22 @@
 {
   "rewrites": [
     {
+      "source": "/client-success/",
+      "destination": "https://mahara-client-success.vercel.app/client-success/"
+    },
+    {
+      "source": "/client-success/:path*",
+      "destination": "https://mahara-client-success.vercel.app/client-success/:path*"
+    },
+    {
+      "source": "/creative/",
+      "destination": "https://mahara-creative-director.vercel.app/creative/"
+    },
+    {
+      "source": "/creative/:path*",
+      "destination": "https://mahara-creative-director.vercel.app/creative/:path*"
+    },
+    {
       "source": "/((?!assets/|__viktor_meta\\.json).*)",
       "destination": "/index.html"
     }

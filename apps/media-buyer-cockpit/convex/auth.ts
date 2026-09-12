@@ -7,7 +7,7 @@ import { configuredAuthProviders } from "./viktorSpaceAuthConfig";
 
 declare const process: { env: Record<string, string | undefined> };
 
-function decodePrivateKey(key: string | undefined): string | undefined {
+export function decodePrivateKey(key: string | undefined): string | undefined {
   if (!key) return undefined;
   if (key.includes("\n")) return key;
   if (key.startsWith("-----BEGIN")) {

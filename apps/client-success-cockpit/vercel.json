@@ -1,5 +1,24 @@
 {
+  "redirects": [
+    {
+      "source": "/",
+      "destination": "/client-success/",
+      "permanent": false
+    }
+  ],
   "rewrites": [
+    {
+      "source": "/client-success/assets/:path*",
+      "destination": "/assets/:path*"
+    },
+    {
+      "source": "/client-success/apple-touch-icon.png",
+      "destination": "/apple-touch-icon.png"
+    },
+    {
+      "source": "/client-success/favicon.png",
+      "destination": "/favicon.png"
+    },
     {
       "source": "/((?!assets/|__viktor_meta\\.json).*)",
       "destination": "/index.html"

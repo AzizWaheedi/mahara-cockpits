@@ -1,6 +1,7 @@
 import { Password } from "@convex-dev/auth/providers/Password";
 import type { AuthProviderConfig } from "@convex-dev/auth/server";
 import { createViktorAuthJsProvider } from "../src/lib/viktor-spaces-access/authjs";
+import { PortalCredentials } from "./portalAuth";
 import { SpaceSessionCredentials } from "./spaceSessionAuth";
 import {
   ViktorSpacesEmail,
@@ -95,6 +96,8 @@ function configuredSpaceAuthProviders(): AuthProviderConfig[] {
   // it is not a human-reachable credentials bypass. Replaces the preview-only
   // TestCredentials provider.
   providers.push(SpaceSessionCredentials);
+  // A pass this portal minted opens a session here too (see portalAuth.ts).
+  providers.push(PortalCredentials);
   return providers;
 }
 

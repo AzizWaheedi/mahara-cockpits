@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router";
 import { OAUTH_CALLBACK_PATH } from "@/auth/oauthReturn";
 import { AppLayout } from "@/components/AppLayout";
+import { PortalAutoSignIn } from "@/components/PortalAutoSignIn";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { PublicLayout } from "@/components/PublicLayout";
 import { PublicOnlyRoute } from "@/components/PublicOnlyRoute";
@@ -76,6 +77,8 @@ export function AuthenticatedAppRoutes() {
           by the e2e/screenshot runner) for a Convex Auth session. Inert on a
           normal visit. */}
       <SpaceSessionAutoSignIn />
+      {/* One sign-in for every cockpit: swaps the portal's pass for a session here. */}
+      <PortalAutoSignIn />
       <AuthenticatedRoutes />
     </ViktorProductAuthProvider>
   );

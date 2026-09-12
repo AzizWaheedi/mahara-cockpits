@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router";
 import { OAUTH_CALLBACK_PATH } from "@/auth/oauthReturn";
 import { AppLayout } from "@/components/AppLayout";
+import { PortalAutoSignIn } from "@/components/PortalAutoSignIn";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { PublicLayout } from "@/components/PublicLayout";
 import { PublicOnlyRoute } from "@/components/PublicOnlyRoute";
@@ -9,13 +10,15 @@ import { SpaceSessionAutoSignIn } from "@/components/SpaceSessionAutoSignIn";
 import { ViktorAutoSignIn } from "@/components/ViktorAutoSignIn";
 import { ViktorProductAuthProvider } from "@/lib/viktor-spaces-access/ViktorProductAuthProvider";
 import {
+  AdminPage,
   AdsPage,
   CsmPage,
   DashboardPage,
   EndOfDayPage,
-  LandingPage,
+  GoPage,
   LoginPage,
   PlaybookPage,
+  PortalHome,
   SettingsPage,
   SignupPage,
   StartOfDayPage,
@@ -28,7 +31,8 @@ export function AuthenticatedRoutes() {
   return (
     <Routes>
       <Route element={<PublicLayout />}>
-        <Route path="/" element={<LandingPage />} />
+        {/* The portal's front door: sign in, then straight to your cockpit. */}
+        <Route path="/" element={<PortalHome />} />
         <Route element={<PublicOnlyRoute />}>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/signup" element={<SignupPage />} />
@@ -40,7 +44,12 @@ export function AuthenticatedRoutes() {
       <Route path={OAUTH_CALLBACK_PATH} element={<ViktorOAuthCallbackPage />} />
 
       <Route element={<ProtectedRoute />}>
+        {/* The door into the cockpits on the other deployments. */}
+        <Route path="/go/:cockpit" element={<GoPage />} />
         <Route element={<AppLayout />}>
+          <Route element={<RoleRoute role="admin" />}>
+            <Route path="/admin" element={<AdminPage />} />
+          </Route>
           {/* Media buyer's cockpit — her link only. */}
           <Route element={<RoleRoute role="media_buyer" />}>
             <Route path="/dashboard" element={<StartOfDayPage />} />
@@ -74,6 +83,7 @@ export function AuthenticatedAppRoutes() {
           by the e2e/screenshot runner) for a Convex Auth session. Inert on a
           normal visit. */}
       <SpaceSessionAutoSignIn />
+      <PortalAutoSignIn />
       <AuthenticatedRoutes />
     </ViktorProductAuthProvider>
   );

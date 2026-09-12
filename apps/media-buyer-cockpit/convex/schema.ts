@@ -868,6 +868,38 @@ const schema = defineSchema({
     kind: v.optional(v.string()),
     syncedAt: v.number(),
   }).index("by_start", ["start"]),
+  /**
+   * The team directory for the portal: who may open which cockpit and, if
+   * limited, which clients they see. Empty `clients` means every client.
+   */
+  members: defineTable({
+    email: v.string(),
+    name: v.optional(v.string()),
+    /** admin | media_buyer | csm | creative */
+    roles: v.array(v.string()),
+    clients: v.array(v.string()),
+    note: v.optional(v.string()),
+    addedBy: v.optional(v.string()),
+    addedAt: v.number(),
+    updatedAt: v.optional(v.number()),
+    lastSeenAt: v.optional(v.number()),
+    lastCockpit: v.optional(v.string()),
+  }).index("by_email", ["email"]),
+  /** Who came in through a portal pass (the members table is the source of truth here). */
+  portalMembers: defineTable({
+    email: v.string(),
+    name: v.optional(v.string()),
+    roles: v.array(v.string()),
+    clients: v.array(v.string()),
+    at: v.number(),
+  }).index("by_email", ["email"]),
+  /** The last smoke check per cockpit, for the admin view. */
+  cockpitHealth: defineTable({
+    app: v.string(),
+    ok: v.boolean(),
+    checks: v.array(v.any()),
+    at: v.number(),
+  }).index("by_app", ["app"]),
   /** The chat with Hermes: one thread per signed-in person. */
   hermesChat: defineTable({
     thread: v.string(),

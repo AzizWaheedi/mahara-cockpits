@@ -1,4 +1,5 @@
 import { Link } from "react-router";
+import { portalUrl } from "@/components/PortalAutoSignIn";
 import { SignIn } from "@/components/SignIn";
 import { Button } from "@/components/ui/button";
 import { ViktorSignInSection } from "@/components/ViktorSignInSection";
@@ -66,6 +67,13 @@ export function LoginPage() {
           </p>
         )}
 
+        <p className="text-center text-sm text-muted-foreground">
+          Team members sign in once at{" "}
+          <a className="font-medium underline" href={portalUrl()}>
+            the Mahara portal
+          </a>
+          , which opens the right cockpit.
+        </p>
         {emailPasswordAvailable && (
           <p className="text-center text-sm text-muted-foreground">
             Don't have an account?{" "}

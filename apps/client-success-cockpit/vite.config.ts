@@ -4,6 +4,8 @@ import path from "path";
 import { defineConfig } from "vite";
 
 export default defineConfig({
+  // Served under the portal domain at /client-success/ (see vercel.json).
+  base: "/client-success/",
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {

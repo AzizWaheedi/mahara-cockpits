@@ -49,10 +49,11 @@ export function LoginPage() {
             <Wordmark size="lg" />
           </div>
           <h1 className="text-2xl font-semibold tracking-tight">
-            Sign in to the cockpit
+            Sign in to Mahara
           </h1>
           <p className="text-muted-foreground text-sm">
-            One link per role. Use the email Aziz set you up with.
+            One sign-in for every cockpit. Use the email Aziz set you up with;
+            your cockpit opens on its own.
           </p>
         </div>
 

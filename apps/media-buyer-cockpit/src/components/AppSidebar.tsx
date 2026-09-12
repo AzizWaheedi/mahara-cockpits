@@ -1,6 +1,7 @@
 import { useAuthActions } from "@convex-dev/auth/react";
 import { useQuery } from "convex/react";
 import {
+  ArrowRightLeft,
   LayoutDashboard,
   ListChecks,
   LogOut,
@@ -9,6 +10,7 @@ import {
   Moon,
   MoonStar,
   Settings,
+  ShieldCheck,
   Sun,
   Trophy,
 } from "lucide-react";
@@ -30,6 +32,7 @@ import {
   SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
+  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
@@ -101,13 +104,29 @@ function SidebarNav() {
   const location = useLocation();
   const me = useQuery(api.roles.me, {});
   const allowed = me?.roles ?? [];
-  const items = navItems.filter(item => allowed.includes(item.role));
+  const items = navItems.filter(
+    item => me?.isAdmin || allowed.includes(item.role),
+  );
+  // Other cockpits this person may open, so switching is one click.
+  const cockpits: string[] = me?.cockpits ?? [];
+  const others = [
+    { key: "csm", label: "Client success", href: "/go/csm" },
+    { key: "creative", label: "Creative director", href: "/go/creative" },
+  ].filter(c => cockpits.includes(c.key));
 
   return (
     <SidebarContent>
       <SidebarGroup>
         <SidebarGroupContent>
           <SidebarMenu>
+            {me?.isAdmin ? (
+              <NavLink
+                href="/admin"
+                label="Admin"
+                icon={ShieldCheck}
+                isActive={location.pathname === "/admin"}
+              />
+            ) : null}
             {items.map(item => (
               <NavLink
                 key={item.href}
@@ -120,6 +139,24 @@ function SidebarNav() {
           </SidebarMenu>
         </SidebarGroupContent>
       </SidebarGroup>
+      {others.length ? (
+        <SidebarGroup>
+          <SidebarGroupLabel>Switch cockpit</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {others.map(c => (
+                <NavLink
+                  key={c.key}
+                  href={c.href}
+                  label={c.label}
+                  icon={ArrowRightLeft}
+                  isActive={false}
+                />
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      ) : null}
     </SidebarContent>
   );
 }

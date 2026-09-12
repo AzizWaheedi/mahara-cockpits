@@ -3,7 +3,7 @@ import { internal } from "./_generated/api";
 import type { QueryCtx } from "./_generated/server";
 import { internalMutation } from "./_generated/server";
 import { authenticatedMutation, authenticatedQuery } from "./functions";
-import { assertRole } from "./roles";
+import { allowedClients, assertRole } from "./roles";
 
 function kuwaitToday(): string {
   return new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 10);
@@ -21,11 +21,16 @@ export async function buildSnapshot(
   smoke: boolean,
 ): Promise<any> {
   if (!smoke) await assertRole(ctx, "media_buyer");
+  // Client access set in the portal: an empty list means every client.
+  const scope = smoke ? null : await allowedClients(ctx);
   const day = kuwaitToday();
-  const campaigns = await ctx.db
-    .query("campaigns")
-    .withIndex("by_rank")
-    .collect();
+  const campaigns = (
+    await ctx.db.query("campaigns").withIndex("by_rank").collect()
+  ).filter(
+    c =>
+      !scope ||
+      scope.has(String(c.clientName ?? c.accountName ?? "").toLowerCase()),
+  );
   const ads = await ctx.db.query("ads").collect();
   const metaTree = await ctx.db.query("metaTree").collect();
   const adChanges = await ctx.db.query("adChanges").collect();

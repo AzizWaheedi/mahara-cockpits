@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { allowedClients } from "./roles";
 
 /**
  * The client database.
@@ -72,7 +73,11 @@ export const roster = query({
   args: {},
   returns: v.any(),
   handler: async ctx => {
-    const clients = await ctx.db.query("clients").collect();
+    // Client access set in the portal: an empty list means every client.
+    const scope = await allowedClients(ctx).catch(() => null);
+    const clients = (await ctx.db.query("clients").collect()).filter(
+      c => !scope || scope.has(String(c.name).toLowerCase()),
+    );
     const tasks = await ctx.db.query("creativeTasks").collect();
     const videos = await ctx.db.query("videoJobs").collect();
     const campaigns = await ctx.db.query("campaigns").collect();

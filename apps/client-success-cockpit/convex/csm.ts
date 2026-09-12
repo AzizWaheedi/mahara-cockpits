@@ -6,7 +6,7 @@ type Any = any;
 import type { QueryCtx } from "./_generated/server";
 import { PAUSE_IS_CHURN_DAYS, stateOf } from "./csmSync";
 import { authenticatedMutation, authenticatedQuery } from "./functions";
-import { assertRole, userEmail } from "./roles";
+import { allowedClients, assertRole, userEmail } from "./roles";
 
 function kuwaitToday(): string {
   return new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 10);
@@ -155,6 +155,8 @@ export async function buildSnapshot(
   smoke: boolean,
 ): Promise<any> {
   const day = kuwaitToday();
+  // Client access set in the portal: an empty list means every client.
+  const scope = smoke ? null : await allowedClients(ctx);
   const clients = await ctx.db.query("clients").withIndex("by_rank").collect();
   const tasks = await ctx.db.query("csTasks").collect();
   const checks = await ctx.db
@@ -242,13 +244,15 @@ export async function buildSnapshot(
     kpis,
     churn,
     money,
-    clients: clients.map(c => ({
-      ...c,
-      hotBlocked: hotUsed.has(c.name),
-      loose: c.loose.filter(
-        (t: string) => !dismissed.has(`${c.name}|${t}`) || isMoneyLoose(t),
-      ),
-    })),
+    clients: clients
+      .filter(c => !scope || scope.has(c.name.toLowerCase()))
+      .map(c => ({
+        ...c,
+        hotBlocked: hotUsed.has(c.name),
+        loose: c.loose.filter(
+          (t: string) => !dismissed.has(`${c.name}|${t}`) || isMoneyLoose(t),
+        ),
+      })),
     tasks,
     checks: checks.sort((a, b) => a.key.localeCompare(b.key)),
     decisions,
@@ -667,7 +671,11 @@ export const performanceOverview = authenticatedQuery({
   returns: v.any(),
   handler: async ctx => {
     await assertRole(ctx, "csm");
-    const rows = await ctx.db.query("clientProfiles").collect();
+    // Client access set in the portal: an empty list means every client.
+    const scope = await allowedClients(ctx);
+    const rows = (await ctx.db.query("clientProfiles").collect()).filter(
+      r => !scope || scope.has(r.clientName.toLowerCase()),
+    );
     // The media buyer sync already sorts every card into management,
     // onboarding or inactive from its ClickUp stage; that is the one place
     // the rule lives. The stage regex below is only the fallback for a
@@ -740,6 +748,8 @@ export const clientProfile = authenticatedQuery({
   returns: v.any(),
   handler: async (ctx, args) => {
     await assertRole(ctx, "csm");
+    const scope = await allowedClients(ctx);
+    if (scope && !scope.has(args.clientName.toLowerCase())) return null;
     const p = await ctx.db
       .query("clientProfiles")
       .withIndex("by_client", q => q.eq("clientName", args.clientName))

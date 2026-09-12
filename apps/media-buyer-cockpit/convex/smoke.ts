@@ -86,6 +86,12 @@ export const check = internalAction({
         });
       }
     }
+    for (const r of results)
+      await ctx.runMutation(internal.portal.recordHealth, {
+        app: String(r.app),
+        ok: Boolean(r.ok),
+        checks: r.checks ?? [],
+      });
     const failures = results.flatMap((r: Any) =>
       (r.checks ?? [])
         .filter((c: Any) => !c.ok)

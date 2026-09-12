@@ -18,7 +18,7 @@ export function RoleRoute({ role }: { role: string }) {
       </div>
     );
   }
-  if (me.roles.includes(role)) return <Outlet />;
+  if (me.isAdmin || me.roles.includes(role)) return <Outlet />;
   if (me.home && me.home !== location.pathname)
     return <Navigate to={me.home} replace />;
 
@@ -26,8 +26,7 @@ export function RoleRoute({ role }: { role: string }) {
     <div className="mx-auto max-w-md space-y-2 p-10 text-center">
       <h1 className="text-lg font-semibold">This cockpit isn't yours</h1>
       <p className="text-sm text-muted-foreground">
-        Each role has its own link, and this one is for a different seat. Ask
-        Aziz for yours.
+        Ask Aziz to give you this seat in the portal's admin view.
       </p>
     </div>
   );

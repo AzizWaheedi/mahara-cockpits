@@ -1,6 +1,8 @@
 import { v } from "convex/values";
+import { importPKCS8 } from "jose";
 import { internalAction, internalMutation } from "./_generated/server";
 import { clientDataFor, readClientData } from "./clientData";
+import { pkcs8Pem } from "./portal";
 import { allAdAccounts, callTool, graph, unwrap } from "./tools";
 
 // biome-ignore lint/suspicious/noExplicitAny: Meta payloads
@@ -422,5 +424,50 @@ export const clientDataRow = internalAction({
         .replace(/[^a-z0-9]+/g, "")
         .includes(key),
     );
+  },
+});
+
+/** Shape of the auth signing key as this deployment sees it (header only, never the key). */
+export const jwtKeyShape = internalAction({
+  args: {},
+  returns: v.any(),
+  handler: async () => {
+    const raw = process.env.JWT_PRIVATE_KEY ?? "";
+    const shape = (k: string) => ({
+      len: k.length,
+      head: k.slice(0, 27),
+      newline: k.includes("\n"),
+      escapedNewline: k.includes("\\n"),
+      spaces: k.includes(" "),
+    });
+    let decoded = "";
+    try {
+      decoded = atob(raw);
+    } catch {
+      decoded = "(not base64)";
+    }
+    return { raw: shape(raw), atob: shape(decoded) };
+  },
+});
+
+export const pemProbe = internalAction({
+  args: {},
+  returns: v.any(),
+  handler: async () => {
+    const pem = pkcs8Pem(process.env.JWT_PRIVATE_KEY);
+    const out: Any = {
+      len: pem.length,
+      head: pem.slice(0, 40),
+      tail: pem.slice(-40),
+      codes: [...pem.slice(0, 32)].map(c => c.charCodeAt(0)),
+      lines: pem.split("\n").length,
+    };
+    try {
+      await importPKCS8(pem, "RS256");
+      out.imported = true;
+    } catch (e) {
+      out.imported = String(e);
+    }
+    return out;
   },
 });
