@@ -112,7 +112,7 @@ export function SignIn() {
                 setStep({ type: "reset-code", email });
               } catch {
                 setError(
-                  "Reset by email is not set up on this cockpit. Ask Aziz to reset your password.",
+                  "Could not send the reset code. Check the email is the one Aziz set you up with, or ask him to reset it.",
                 );
               } finally {
                 setLoading(false);

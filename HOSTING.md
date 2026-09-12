@@ -122,8 +122,12 @@ output `dist`. Build-time env:
 cockpit: aziz@ and awaheedi2008@ (both), nada@ (media buyer), abdulelah@ and abdu@ (CSM).
 Edit that file to add people.
 
-Forgotten password: there is no mail transport (no `RESEND_API_KEY`), so "Forgot password"
-cannot email a code. Reset it from the CLI and tell the person to change it under Settings:
+Sessions last a year and lapse after 90 days without a visit (`convex/auth.ts`).
+
+Forgotten password: "Forgot password" emails a 6-digit code through Resend when
+`RESEND_API_KEY` and `AUTH_EMAIL_FROM` (an address on notify.maharamedia.com) are set on
+each deployment. Without them, reset it from the CLI and tell the person to change it under
+Settings:
 
 ```bash
 cd apps/media-buyer-cockpit && bunx convex run --prod adminAuth:setPassword '{"email":"nada@maharamedia.com","password":"<temporary>"}'

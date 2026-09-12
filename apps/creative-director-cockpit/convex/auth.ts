@@ -37,8 +37,13 @@ if (jwtPrivateKey) {
 // Providers are resolved from the space's configured provider list
 // (email_password / viktor) plus the `space_session` exchange used by
 // automation and authenticated-screenshot capture. See viktorSpaceAuthConfig.ts.
+const DAY = 86400_000;
+
 export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
   providers: configuredAuthProviders(),
+  // Aziz, 2026-09-12: "make sure she doesn't get logged out again". A
+  // session lasts a year and only lapses after 90 days without a visit.
+  session: { totalDurationMs: 365 * DAY, inactiveDurationMs: 90 * DAY },
 });
 
 export const currentUser = query({
