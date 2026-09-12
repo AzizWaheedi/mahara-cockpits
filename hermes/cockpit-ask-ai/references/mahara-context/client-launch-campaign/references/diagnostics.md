@@ -140,6 +140,97 @@ This is where offer level decisions get made.
 The most common failure is not checking often enough. A constraint found in week
 one costs a fraction of the same constraint found in week four.
 
+## The evidence ledger
+
+Everything above is what Mahara believed when it was written. The ledger is what
+actually happened. When the two disagree, the ledger wins.
+
+`scripts/learn.py` keeps it, one JSON line per change, at
+`/opt/data/bibi/workspace/mediabuyer/evidence.jsonl`.
+
+### Before you recommend anything
+
+```bash
+python3 scripts/learn.py ask "should I cut questions to lower CPL?"
+```
+
+If the ledger has scored changes on that lever, lead with them. A real number
+from a real client beats a rule every time:
+
+> Cutting the form from six questions to four dropped Monshaat Khaldaa's CPL
+> from $34 to $19.50 in seven days. Same lever, same shape of client.
+
+If the ledger is empty on that lever, **say so**. Answer from the playbook and
+be clear it is a rule rather than a result. Never dress an untested rule up as
+evidence.
+
+### After you change anything
+
+```bash
+python3 scripts/learn.py record change.json
+```
+
+```json
+{
+  "client": "Monshaat Khaldaa",
+  "lever": "form_questions",
+  "change": "cut lead form from six questions to four, removed budget and style",
+  "why": "CPL at $34, SOP says remove one or two questions first",
+  "metric": "CPL",
+  "before": 34.0
+}
+```
+
+One lever per entry. Two changes at once teaches nothing, because you cannot
+tell which one moved the number. If you must change two things, record two
+entries and accept that both are unreliable.
+
+Levers, kept to a fixed list so like is compared with like:
+
+```
+offer · creative · copy · form_questions · form_greeting · form_quality
+radius · budget · cta · targeting · placement · landing
+```
+
+### Seven days later
+
+```bash
+python3 scripts/learn.py due                        # what needs scoring
+python3 scripts/learn.py outcome <id> 19.5          # what happened
+```
+
+The verdict is computed, not chosen. Under 5% movement is `noise`, not a win.
+Anything else is `worked` or `backfired` depending on direction, and cost
+metrics correctly treat down as good.
+
+**An unscored change teaches nothing.** Run `due` weekly, in the same Monday
+pulse check as everything else.
+
+### What the ledger proves
+
+```bash
+python3 scripts/learn.py report
+```
+
+Two thresholds decide when the playbook changes:
+
+**Worked on three or more clients with no failures.** Promote it into the
+playbook as a default. It has earned the right to be the standing advice.
+
+**Backfires more often than it works.** The playbook is wrong on that lever.
+Correct the text, do not quietly keep recommending it.
+
+That second case is the whole point. A playbook nobody corrects becomes a list
+of things that used to be true.
+
+### Recording a backfire
+
+Backfires are the most valuable entries in the ledger, so record them with the
+same care as the wins. Then reverse the change and record the reversal as its
+own entry, since reverting is itself a change and it also needs scoring.
+
+Nobody logs their mistakes unless the system makes it normal. Make it normal.
+
 ## What to tell the client
 
 Report the constraint, not the metric. "Cost per lead is $34" is a number.
@@ -149,3 +240,7 @@ diagnosis.
 
 Never present five problems at once. Present the one that matters most, what you
 are doing about it, and when you will know if it worked.
+
+Where the ledger has a result, use it. "We cut the form to four questions for
+another client and their cost per lead dropped 40% in a week" is worth more than
+any amount of reasoning, because it happened.
