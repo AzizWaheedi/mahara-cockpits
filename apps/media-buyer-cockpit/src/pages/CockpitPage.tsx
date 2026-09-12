@@ -925,7 +925,12 @@ function Cockpit({ view }: { view: View }) {
                                       type="button"
                                       className="ml-1 rounded border px-1.5 py-0.5 text-[10px] font-semibold hover:bg-muted"
                                       title="Files a 'card declined' request on the Client Success board so the CSM chases the payment. Meta refuses every edit until it is paid."
-                                      onClick={() =>
+                                      onClick={() => {
+                                        window.open(
+                                          "https://forms.clickup.com/90182518398/f/2kzmr1ky-1218/EGZ60WWQVFFLDWOE89",
+                                          "_blank",
+                                          "noopener",
+                                        );
                                         decide({
                                           subject: c.campaignName,
                                           action:
@@ -933,10 +938,10 @@ function Cockpit({ view }: { view: View }) {
                                           kind: "rerouted",
                                           evidence: `${c.accountIssue} Ad account: ${c.accountName}.`,
                                           reroutedTo: "client_success",
-                                        })
-                                      }
+                                        });
+                                      }}
                                     >
-                                      Tell client success
+                                      Card declined form
                                     </button>
                                   )}
                                 {c.serviceMode === "DWY" && (

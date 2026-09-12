@@ -1857,12 +1857,18 @@ export const runSync = internalAction({
     const metaTree: any[] = [];
     let previewOk = 0;
     let previewMissing = 0;
-    // A preview iframe URL is stable for the life of the ad, and one request
-    // per ad is what made this the expensive part of the sync. Reuse what the
-    // last run stored and only ask Meta for ads we have never seen.
-    const cachedPreview = new Map<string, string>(
+    // One preview request per ad is the expensive part of the sync, so the
+    // last run's links are reused. But Meta signs them and they expire: on
+    // 2026-09-12 Nada opened an ad and saw "Preview Expired". The cache now
+    // carries the fetch time and anything older than PREVIEW_MAX_AGE_H is
+    // fetched again.
+    const cachedPreview = new Map<string, { src: string; at: number }>(
       (await ctx.runQuery(internal.sync.previewCache, {})).map(
-        ([id, src]) => [id, src] as [string, string],
+        ([id, src, at]) =>
+          [id, { src, at: Number(at) }] as [
+            string,
+            { src: string; at: number },
+          ],
       ),
     );
     for (const c of campaigns) {
@@ -1903,7 +1909,7 @@ export const runSync = internalAction({
 
         // Previews are one request per ad; run them in small parallel batches so
         // a 60-ad account doesn't serialise into a timeout.
-        const previews = new Map<string, string>();
+        const previews = new Map<string, { src: string; at: number }>();
         for (const ad of ads) {
           const hit = cachedPreview.get(String(ad.id));
           if (hit) previews.set(String(ad.id), hit);
@@ -1922,7 +1928,7 @@ export const runSync = internalAction({
                 const src = /src="([^"]+)"/
                   .exec(body)?.[1]
                   ?.replace(/&amp;/g, "&");
-                if (src) previews.set(String(ad.id), src);
+                if (src) previews.set(String(ad.id), { src, at: now });
               } catch {
                 // Fall through to the creative thumbnail below.
               }
@@ -1931,7 +1937,8 @@ export const runSync = internalAction({
         }
 
         for (const ad of ads) {
-          const previewSrc = previews.get(String(ad.id));
+          const preview = previews.get(String(ad.id));
+          const previewSrc = preview?.src;
           const cr = ad.creative ?? {};
           const thumbUrl: string | undefined =
             cr.image_url ??
@@ -1950,6 +1957,7 @@ export const runSync = internalAction({
             effectiveStatus: ad.effective_status,
             adsetId: ad.adset_id ? String(ad.adset_id) : undefined,
             previewSrc,
+            previewAt: preview?.at,
             thumbUrl,
             syncedAt: now,
           });
@@ -2365,13 +2373,20 @@ export const stagePut = internalMutation({
 });
 
 /** Preview iframes already stored, by ad id: reused so a sync costs one call per NEW ad. */
+/** Meta signs preview links and they die after about a day. Refetch past this age. */
+export const PREVIEW_MAX_AGE_H = 18;
+
 export const previewCache = internalQuery({
   args: {},
   returns: v.array(v.array(v.string())),
-  handler: async ctx =>
-    (await ctx.db.query("metaTree").collect())
-      .filter(t => t.kind === "ad" && t.previewSrc)
-      .map(t => [t.metaId, String(t.previewSrc)]),
+  handler: async ctx => {
+    const oldest = Date.now() - PREVIEW_MAX_AGE_H * 3600_000;
+    return (await ctx.db.query("metaTree").collect())
+      .filter(
+        t => t.kind === "ad" && t.previewSrc && (t.previewAt ?? 0) > oldest,
+      )
+      .map(t => [t.metaId, String(t.previewSrc), String(t.previewAt ?? 0)]);
+  },
 });
 
 /** Reassemble the staged chunks, if any are present and fresh. */

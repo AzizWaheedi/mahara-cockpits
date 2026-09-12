@@ -47,7 +47,33 @@ How to answer:
 - Numbers: quote them exactly as given. All money in USD. Never invent a figure.
 - Never use an em dash or an en dash. A comma or a full stop.
 - Keep it short: a few sentences, or a short list when there are several items. No preamble, no sign-off.
-- You cannot take actions yourself; when the right move is a button in the cockpit or a step in ClickUp, say which one.`;
+- When the right move is a step in ClickUp, say which one.`;
+
+/** What Hermes may do, and how. Filled with this deployment's own URL. */
+function capabilities(app: App, jobId: string): string {
+  const site =
+    process.env.CONVEX_SITE_URL ?? "https://adorable-seahorse-418.convex.site";
+  if (app !== "local") return "";
+  return `
+You can ACT on every Meta ad account Mahara manages, through the cockpit's own access. Use it when the user asks you to change something, and only then.
+Endpoint: POST ${site}/askai/meta with your usual Authorization bearer token and a JSON body:
+  { "method": "GET" | "POST" | "DELETE", "path": "<Graph path without version>", "params": { ... }, "jobId": "${jobId}", "note": "<one line saying what this does, shown to the media buyer>", "campaignName": "<the campaign, if the action is about one>" }
+GET ${site}/askai/accounts lists the accounts with their status (3 = unsettled, Meta refuses writes).
+Recipes the cockpit itself uses (all Graph v21):
+  pause:            POST <campaign_id>          {"status":"PAUSED"}      (same for an ad set or an ad)
+  turn on:          POST <campaign_id>          {"status":"ACTIVE"}
+  change budget:    POST <adset_id>             {"daily_budget": <cents>}   (one change per ad set per 30 s)
+  new campaign:     POST act_<id>/campaigns     {"name":..., "objective":"OUTCOME_LEADS", "status":"PAUSED", "special_ad_categories":[], "is_adset_budget_sharing_enabled":"false"}
+  new ad set:       POST act_<id>/adsets        {"campaign_id":..., "name":..., "status":"PAUSED", "daily_budget":<cents>, "bid_strategy":"LOWEST_COST_WITHOUT_CAP", "billing_event":"IMPRESSIONS", "optimization_goal":"LEAD_GENERATION", "targeting":{"geo_locations":{"countries":["KW"]}}, "promoted_object":{"page_id":"<from act_<id>/promote_pages>"}}
+  copy an ad set:   GET <adset_id>?fields=campaign_id,targeting,optimization_goal,billing_event,bid_strategy,promoted_object,daily_budget then POST act_<id>/adsets with those fields
+  new ad:           POST act_<id>/adcreatives   {"name":..., "object_story_spec":{...}}  then POST act_<id>/ads {"name":..., "adset_id":..., "creative":{"creative_id":...}, "status":"PAUSED"}
+  read anything:    GET <object_id>?fields=...  or GET act_<id>/campaigns?fields=name,status,daily_budget
+Rules for acting:
+- Create things PAUSED unless the user explicitly says to turn them on.
+- Raise a budget by at most 25% in one step unless the user names the exact figure.
+- Say in your reply exactly what you changed, with the ids, in one line each. If a call failed, say what Meta said.
+- Never act on an account the user did not name or that the context does not point at.`;
+}
 
 function prompt(app: App, m: Any): string {
   const turns = (m.history ?? [])
@@ -58,6 +84,7 @@ function prompt(app: App, m: Any): string {
     RULES,
     m.clientName ? `\nThe question is about the client "${m.clientName}".` : "",
     m.page ? `Screen: ${m.page}` : "",
+    capabilities(app, String(m.jobId ?? "")),
     "\nContext the cockpit attached (JSON or notes):",
     String(m.context ?? "(none)").slice(0, 6000),
     turns ? `\nConversation so far:\n${turns}` : "",
@@ -120,6 +147,15 @@ export const markRelayReading = internalMutation({
   },
 });
 
+export const setPrompt = internalMutation({
+  args: { jobId: v.string(), prompt: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { jobId, prompt }) => {
+    await ctx.db.patch(jobId as Any, { prompt });
+    return null;
+  },
+});
+
 export const closeRelay = internalMutation({
   args: { id: v.id("chatRelay") },
   returns: v.null(),
@@ -170,6 +206,11 @@ export const run = internalAction({
             prompt: prompt(app, m),
             schema: CHAT_SCHEMA,
           });
+          // The prompt needs the job's own id so Hermes can tag his actions.
+          await ctx.runMutation(internal.hermesDrain.setPrompt, {
+            jobId,
+            prompt: prompt(app, { ...m, jobId }),
+          });
           await ctx.runMutation(internal.hermesDrain.addRelay, {
             app,
             messageId: String(m.id),
@@ -196,9 +237,21 @@ export const run = internalAction({
       if (job.status === "done") {
         const res =
           typeof job.result === "string" ? safeParse(job.result) : job.result;
+        const acts: Any[] = await ctx.runQuery(internal.agentActions.forJob, {
+          jobId: String(r.jobId),
+        });
+        const footnote = acts.length
+          ? `\n\nActions taken:\n${acts
+              .map(
+                (a: Any) =>
+                  `${a.ok ? "✓" : "✗"} ${a.note ?? `${a.method} ${a.path}`}${a.ok ? "" : ` (${a.error ?? "failed"})`}`,
+              )
+              .join("\n")}`
+          : "";
         text = String(
           res?.reply ?? res?.text ?? (typeof res === "string" ? res : ""),
         ).trim();
+        if (text) text += footnote;
         if (!text) error = "Hermes answered with nothing";
       } else if (job.status === "failed") {
         error = `Hermes could not answer: ${String(job.error ?? "").slice(0, 160)}`;

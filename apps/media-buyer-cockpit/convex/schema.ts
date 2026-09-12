@@ -167,6 +167,8 @@ const schema = defineSchema({
     adsetId: v.optional(v.string()),
     dailyBudget: v.optional(v.number()),
     previewSrc: v.optional(v.string()),
+    /** When the preview link was fetched; Meta signs them and they expire after about a day. */
+    previewAt: v.optional(v.number()),
     /** Still image fallback when Meta will not render the preview iframe. */
     thumbUrl: v.optional(v.string()),
     syncedAt: v.number(),
@@ -860,6 +862,19 @@ const schema = defineSchema({
     at: v.number(),
     readingAt: v.optional(v.number()),
     deliveredAt: v.optional(v.number()),
+  }),
+  /** Every Meta call Hermes makes through /askai/meta, with its outcome. */
+  agentActions: defineTable({
+    at: v.number(),
+    method: v.string(),
+    path: v.string(),
+    params: v.optional(v.any()),
+    ok: v.boolean(),
+    result: v.optional(v.any()),
+    error: v.optional(v.string()),
+    jobId: v.optional(v.string()),
+    note: v.optional(v.string()),
+    campaignName: v.optional(v.string()),
   }),
 });
 

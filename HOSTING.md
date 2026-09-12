@@ -165,6 +165,18 @@ bun run dev            # http://localhost:5173
    rotate it on the GHL side.
 
 
+## Hermes acting on the ad accounts
+
+`POST /askai/meta` on the media buyer deployment (same bearer token as the
+other `/askai` routes) runs any Meta Graph call with the cockpit's own
+system-user token: `{ method, path, params, jobId?, note?, campaignName? }`.
+`GET /askai/accounts` lists the accounts with status. Every call is logged in
+`agentActions`, tied to the chat job it came from, and listed under Hermes's
+reply as "Actions taken". The chat prompt on the media buyer cockpit carries
+the recipes the buttons use (pause, budget, new campaign and ad set with the
+flags Meta requires, copy an ad set, new ad). Rules in the prompt: create
+paused, +25% budget steps unless a figure is named, say what changed.
+
 ## Letting Hermes fix things
 
 Every flagged error becomes a job for Hermes as well as a Slack DM: a screen

@@ -80,4 +80,54 @@ http.route({
   }),
 });
 
+/**
+ * Hermes acts on the ad accounts through here. Any Graph call, the cockpit's
+ * own token, everything logged (agentActions.ts). Body:
+ * { method: "GET"|"POST"|"DELETE", path: "act_123/campaigns", params: {...},
+ *   jobId?: "<the chat job this belongs to>", note?: "<what this is for>",
+ *   campaignName?: "<to log into that campaign's thread>" }
+ */
+http.route({
+  path: "/askai/meta",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    if (!authorized(request)) return new Response("no", { status: 401 });
+    const body = (await request.json()) as {
+      method?: string;
+      path?: string;
+      params?: Record<string, unknown>;
+      jobId?: string;
+      note?: string;
+      campaignName?: string;
+    };
+    if (!body?.path || !body?.method)
+      return Response.json(
+        { ok: false, error: "method and path required" },
+        { status: 400 },
+      );
+    const out = await ctx.runAction(internal.agentActions.meta, {
+      method: body.method,
+      path: body.path,
+      params: body.params,
+      jobId: body.jobId,
+      note: body.note,
+      campaignName: body.campaignName,
+    });
+    return Response.json(out, { status: out.ok ? 200 : 400 });
+  }),
+});
+
+/** The ad accounts Hermes may act on, with status. */
+http.route({
+  path: "/askai/accounts",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    if (!authorized(request)) return new Response("no", { status: 401 });
+    return Response.json({
+      ok: true,
+      accounts: await ctx.runAction(internal.agentActions.accounts, {}),
+    });
+  }),
+});
+
 export default http;
