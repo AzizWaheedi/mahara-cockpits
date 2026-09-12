@@ -93,12 +93,22 @@ Rules for acting:
 - Never act on an account the user did not name or that the context does not point at.`;
 }
 
+/** Each cockpit's own skill in the repo; Hermes loads it by path, the relay only names it. */
+const SKILL_FOR: Record<App, string> = {
+  local:
+    "Skill: hermes/cockpit-ask-ai/SKILL.md, and for launches, budgets and diagnostics hermes/cockpit-ask-ai/references/mahara-context/client-launch-campaign/SKILL.md.",
+  csm: "Skill: hermes/cockpit-client-success/SKILL.md (templates, triage, churn rules, never-invent rules). Do not use the other cockpits' skills.",
+  creative:
+    "Skill: hermes/cockpit-creative-director/SKILL.md (scripts, VSLs, direct response structure, dialect rules). Do not use the other cockpits' skills.",
+};
+
 function prompt(app: App, m: Any): string {
   const turns = (m.history ?? [])
     .map((h: Any) => `${h.role === "user" ? "User" : "Hermes"}: ${h.text}`)
     .join("\n");
   return [
     ROLE[app],
+    SKILL_FOR[app],
     RULES,
     m.clientName ? `\nThe question is about the client "${m.clientName}".` : "",
     m.page ? `Screen: ${m.page}` : "",
