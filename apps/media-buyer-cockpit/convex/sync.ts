@@ -317,6 +317,15 @@ async function ghlBookingEvents(
     // biome-ignore lint/suspicious/noExplicitAny: GHL payload
     const events: any[] = [];
     for (const c of cals) {
+      // "Not Confirmed Appointments" is the provisional calendar and the
+      // callback / reschedule calendars are agent scheduling, not bookings.
+      // Counting them inflated bookings7d until 2026-09-12.
+      if (
+        /not confirmed|callback|reschedule|personal calendar/i.test(
+          String(c.name ?? ""),
+        )
+      )
+        continue;
       const evRes = await fetch(
         `https://services.leadconnectorhq.com/calendars/events?locationId=${loc}&calendarId=${c.id}&startTime=${start}&endTime=${end}`,
         { headers: calHeaders },

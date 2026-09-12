@@ -344,3 +344,38 @@ export const boardCards = internalAction({
     return out;
   },
 });
+
+/** Calendar names in every client sub-account we hold a token for. */
+export const ghlCalendarNames = internalAction({
+  args: {},
+  returns: v.any(),
+  handler: async () => {
+    const rows = (await readClientData()).filter(
+      r => r.ghlToken.startsWith("pit-") && r.ghlLocationId,
+    );
+    const out: Any[] = [];
+    for (const r of rows) {
+      try {
+        const res = await fetch(
+          `https://services.leadconnectorhq.com/calendars/?locationId=${r.ghlLocationId}`,
+          {
+            headers: {
+              Authorization: `Bearer ${r.ghlToken}`,
+              Version: "2021-04-15",
+              Accept: "application/json",
+            },
+          },
+        );
+        const json: Any = await res.json();
+        out.push({
+          client: r.name,
+          status: res.status,
+          calendars: (json?.calendars ?? []).map((c: Any) => c.name),
+        });
+      } catch (e) {
+        out.push({ client: r.name, error: String(e).slice(0, 100) });
+      }
+    }
+    return out;
+  },
+});

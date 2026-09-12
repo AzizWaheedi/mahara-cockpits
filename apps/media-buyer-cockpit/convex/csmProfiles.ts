@@ -1,6 +1,10 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import { internalAction, internalQuery } from "./_generated/server";
+import {
+  internalAction,
+  internalMutation,
+  internalQuery,
+} from "./_generated/server";
 import {
   type ClientDataRow,
   clientDataFor,
@@ -1192,6 +1196,83 @@ export const push = internalAction({
         `kept last good numbers for ${kept} clients (their sheet was unreadable)`,
       );
 
+    // Provisional bookings, per client with a GHL token.
+    await pool(profiles as Any[], 4, async p => {
+      const acct = accountFor(accounts, p.clientName, p.taskId);
+      if (!acct) return;
+      try {
+        p.provisional = await provisionalFor(acct);
+      } catch (e) {
+        console.warn(`provisional ${p.clientName}: ${String(e).slice(0, 100)}`);
+      }
+    });
+
+    // Call briefs from Hermes: queue when the call set changed, attach when done.
+    for (const p of profiles as Any[]) {
+      const calls: Any[] = p.calls ?? [];
+      if (!calls.length) continue;
+      const key = calls
+        .map(c => c.url ?? c.title)
+        .sort()
+        .join("|");
+      const row: Any = await ctx.runQuery(internal.csmProfiles.callBriefFor, {
+        clientName: p.clientName,
+      });
+      if (row && row.key === key && row.status === "done") {
+        p.callsBrief = row.overall;
+        const byUrl = new Map(
+          (row.perCall ?? []).map((x: Any) => [x.url, x.brief]),
+        );
+        for (const c of calls) c.brief = byUrl.get(c.url) ?? c.brief;
+        continue;
+      }
+      if (row && row.key === key && row.status === "queued" && row.jobId) {
+        const job: Any = await ctx.runQuery(internal.hermesDrain.jobState, {
+          jobId: row.jobId,
+        });
+        if (job?.status === "done") {
+          const res =
+            typeof job.result === "string"
+              ? JSON.parse(job.result)
+              : job.result;
+          await ctx.runMutation(internal.csmProfiles.saveCallBrief, {
+            clientName: p.clientName,
+            key,
+            jobId: row.jobId,
+            status: "done",
+            overall: String(res?.overall ?? ""),
+            perCall: Array.isArray(res?.perCall) ? res.perCall : [],
+          });
+          p.callsBrief = String(res?.overall ?? "");
+          const byUrl = new Map(
+            (res?.perCall ?? []).map((x: Any) => [x.url, x.brief]),
+          );
+          for (const c of calls) c.brief = byUrl.get(c.url) ?? c.brief;
+        } else if (job?.status === "failed") {
+          await ctx.runMutation(internal.csmProfiles.saveCallBrief, {
+            clientName: p.clientName,
+            key,
+            status: "failed",
+          });
+        }
+        continue;
+      }
+      // New or changed set of calls: one job for Hermes.
+      const jobId: string = await ctx.runMutation(internal.askAi.enqueue, {
+        kind: "call_brief",
+        refId: `brief:${p.clientName}`,
+        prompt: briefPrompt(p.clientName, calls),
+        schema: BRIEF_SCHEMA,
+      });
+      await ctx.runMutation(internal.csmProfiles.saveCallBrief, {
+        clientName: p.clientName,
+        key,
+        jobId: String(jobId),
+        status: "queued",
+      });
+      if (row?.status === "done" && row.overall) p.callsBrief = row.overall;
+    }
+
     // Leads come from the ads. The sheet's count stays as sheetLeads so the
     // two can be compared, but every screen and the report read the ad figure.
     for (const p of profiles as Any[]) {
@@ -1237,6 +1318,156 @@ export const push = internalAction({
     };
   },
 });
+
+// --- Provisional bookings ----------------------------------------------------------
+//
+// Aziz, 2026-09-12: every sub-account has a "Not Confirmed Appointments"
+// calendar. Those are provisionally booked: the call centre holds them and
+// they never reach the stat sheet until confirmed. Shown on the profile so the
+// CSM knows what is coming, counted apart from real bookings.
+
+type Provisional = {
+  count: number;
+  callbacks: number;
+  upcoming: { name: string; at: string; status: string; addedAt?: string }[];
+};
+
+async function provisionalFor(
+  acct: GhlAccount,
+): Promise<Provisional | undefined> {
+  const headers = {
+    Authorization: `Bearer ${acct.token}`,
+    Version: "2021-04-15",
+    Accept: "application/json",
+  };
+  const calRes = await fetch(
+    `https://services.leadconnectorhq.com/calendars/?locationId=${acct.locationId}`,
+    { headers },
+  );
+  if (!calRes.ok) return undefined;
+  const cals: Any[] = (await calRes.json())?.calendars ?? [];
+  const from = Date.now() - 7 * 86400_000;
+  const to = Date.now() + 90 * 86400_000;
+  const read = async (id: string): Promise<Any[]> => {
+    const r = await fetch(
+      `https://services.leadconnectorhq.com/calendars/events?locationId=${acct.locationId}&calendarId=${id}&startTime=${from}&endTime=${to}`,
+      { headers },
+    );
+    return r.ok ? ((await r.json())?.events ?? []) : [];
+  };
+  const kuwait = (iso: string) =>
+    Number.isFinite(Date.parse(iso))
+      ? new Date(Date.parse(iso) + 3 * 3600_000)
+          .toISOString()
+          .slice(0, 16)
+          .replace("T", " ")
+      : "";
+  let upcoming: Provisional["upcoming"] = [];
+  let callbacks = 0;
+  for (const c of cals) {
+    const name = String(c.name ?? "");
+    if (/not confirmed/i.test(name)) {
+      const events = await read(String(c.id));
+      upcoming = events
+        .filter(
+          (e: Any) =>
+            !/cancel|no.?show|invalid/i.test(String(e.appointmentStatus ?? "")),
+        )
+        .map((e: Any) => ({
+          name: String(e.contact?.name ?? e.title ?? "").slice(0, 80),
+          at: kuwait(String(e.startTime ?? "")),
+          status: String(e.appointmentStatus ?? ""),
+          addedAt: kuwait(String(e.dateAdded ?? "")),
+        }))
+        .sort((a: Any, b: Any) => (a.at < b.at ? -1 : 1))
+        .slice(0, 25);
+    } else if (/callback/i.test(name)) {
+      const events = await read(String(c.id));
+      callbacks += events.filter(
+        (e: Any) =>
+          Date.parse(String(e.startTime ?? "")) >= Date.now() - 86400_000,
+      ).length;
+    }
+  }
+  return { count: upcoming.length, callbacks, upcoming };
+}
+
+// --- Call briefs, written by Hermes ----------------------------------------------
+//
+// Aziz, 2026-09-12: "better summaries instead of timestamps … what was
+// mentioned about the specific client". Fathom's summary is a meeting
+// summary, not a client one. Hermes turns the calls a client appears in into
+// one paragraph about that client plus a line per call. Re-done when the set
+// of calls changes.
+
+export const callBriefFor = internalQuery({
+  args: { clientName: v.string() },
+  returns: v.any(),
+  handler: async (ctx, { clientName }) =>
+    (await ctx.db.query("callBriefs").collect()).find(
+      b => b.clientName === clientName,
+    ) ?? null,
+});
+
+export const saveCallBrief = internalMutation({
+  args: {
+    clientName: v.string(),
+    key: v.string(),
+    jobId: v.optional(v.string()),
+    status: v.string(),
+    overall: v.optional(v.string()),
+    perCall: v.optional(v.array(v.any())),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const existing = (await ctx.db.query("callBriefs").collect()).find(
+      b => b.clientName === args.clientName,
+    );
+    const row = { ...args, at: Date.now() };
+    if (existing) await ctx.db.patch(existing._id, row);
+    else await ctx.db.insert("callBriefs", row);
+    return null;
+  },
+});
+
+const BRIEF_SCHEMA = {
+  type: "object",
+  properties: {
+    overall: { type: "string" },
+    perCall: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { url: { type: "string" }, brief: { type: "string" } },
+        required: ["url", "brief"],
+      },
+    },
+  },
+  required: ["overall", "perCall"],
+};
+
+function briefPrompt(client: string, calls: Any[]): string {
+  return `You write short call briefs for Mahara Media's client success manager.
+
+Client: ${client}
+
+Below are recorded calls this client appears in (some are team meetings where the client came up, some are calls with the client). For each call, write ONE short paragraph (2 to 4 sentences) about what was said regarding this client only: decisions, blockers, promises, numbers, next steps. Ignore everything about other clients. No timestamps, no headings, no bullet lists inside the brief. Then write "overall": one paragraph (3 to 5 sentences) that tells the CSM where things stand with this client across all these calls, most recent first in importance.
+
+Rules: use only what the summaries say, invent nothing, no em dashes, plain direct English, name people by first name.
+
+Calls (JSON):
+${JSON.stringify(
+  calls.map(c => ({
+    url: c.url,
+    title: c.title,
+    date: c.at,
+    kind: c.kind,
+    summary: String(c.summary ?? "").slice(0, 2500),
+  })),
+)}
+
+Return JSON: {"overall": "...", "perCall": [{"url": "<call url>", "brief": "..."}]}`;
+}
 
 // --- Leads from the ads, not the sheet -------------------------------------------
 //

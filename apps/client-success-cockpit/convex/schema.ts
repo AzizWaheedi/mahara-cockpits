@@ -103,6 +103,10 @@ const schema = defineSchema({
     calls: v.optional(v.any()),
     /** Leads from Meta per month, the number the client is judged on. */
     adLeads: v.optional(v.any()),
+    /** Provisionally booked appointments from the sub-account's "Not Confirmed" calendar. */
+    provisional: v.optional(v.any()),
+    /** One paragraph from Hermes on where things stand with this client across recorded calls. */
+    callsBrief: v.optional(v.string()),
     /** What is missing for this client and where to put it, computed by the media buyer backend. */
     gaps: v.optional(v.array(v.any())),
     syncedAt: v.number(),

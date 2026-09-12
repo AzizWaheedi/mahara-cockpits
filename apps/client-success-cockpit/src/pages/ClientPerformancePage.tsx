@@ -705,7 +705,49 @@ function ReportSection({ p }: { p: Any }) {
  * actually heard. Together they turn "your leads are bad" into a specific, answerable
  * conversation, which is the whole job on a check-in call.
  */
-function RecentCalls({ calls }: { calls: Any[] }) {
+/**
+ * Provisionally booked: appointments the call centre holds on the
+ * sub-account's "Not Confirmed" calendar. They never reach the stat sheet
+ * until confirmed, so the CSM sees them here.
+ */
+function Provisional({ pv }: { pv: Any }) {
+  if (!pv || (!pv.count && !pv.callbacks)) return null;
+  return (
+    <section className="space-y-2">
+      <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+        Provisionally booked
+      </h3>
+      <p className="text-sm text-muted-foreground">
+        {pv.count} appointment{pv.count === 1 ? "" : "s"} on the Not Confirmed
+        calendar
+        {pv.callbacks
+          ? `, ${pv.callbacks} callback${pv.callbacks === 1 ? "" : "s"} scheduled`
+          : ""}
+        . Not on the stat sheet until confirmed.
+      </p>
+      {pv.upcoming?.length ? (
+        <ul className="divide-y rounded-lg border text-sm">
+          {pv.upcoming.map((e: Any, i: number) => (
+            <li
+              key={`${e.at}-${i}`}
+              className="flex flex-wrap items-baseline gap-2 p-2"
+            >
+              <span className="font-mono text-xs tabular-nums text-muted-foreground">
+                {e.at}
+              </span>
+              <span className="font-medium">{e.name || "(no name)"}</span>
+              <span className="ml-auto text-xs text-muted-foreground">
+                {e.status}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
+
+function RecentCalls({ calls, brief }: { calls: Any[]; brief?: string }) {
   const [openUrl, setOpenUrl] = useState<string | null>(null);
   if (!calls?.length) return null;
   const when = (at: string) =>
@@ -724,9 +766,16 @@ function RecentCalls({ calls }: { calls: Any[] }) {
         Recent calls
       </h3>
       <p className="text-sm text-muted-foreground">
-        Recorded calls with this client in the last 30 days, with the summary
-        from the recording.
+        Recorded calls this client came up in, with what was said about them.
       </p>
+      {brief ? (
+        <div className="rounded-lg border bg-muted/40 p-3 text-sm">
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Where things stand, from the calls
+          </p>
+          <p className="whitespace-pre-wrap">{brief}</p>
+        </div>
+      ) : null}
       <ul className="divide-y rounded-lg border">
         {calls.map((c, i) => (
           <li
@@ -754,7 +803,10 @@ function RecentCalls({ calls }: { calls: Any[] }) {
                 </a>
               ) : null}
             </div>
-            {c.summary ? (
+            {c.brief ? (
+              <p className="whitespace-pre-wrap text-sm">{String(c.brief)}</p>
+            ) : null}
+            {c.summary && !c.brief ? (
               <>
                 <p className="whitespace-pre-line text-sm text-muted-foreground">
                   {openUrl === (c.url ?? c.title)
@@ -1224,7 +1276,13 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
       )}
 
       {p.lost ? <LostLeads lost={p.lost as Any} /> : null}
-      {p.calls ? <RecentCalls calls={p.calls as Any[]} /> : null}
+      {p.provisional ? <Provisional pv={p.provisional as Any} /> : null}
+      {p.calls ? (
+        <RecentCalls
+          calls={p.calls as Any[]}
+          brief={p.callsBrief as string | undefined}
+        />
+      ) : null}
 
       <section className="space-y-2">
         <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">

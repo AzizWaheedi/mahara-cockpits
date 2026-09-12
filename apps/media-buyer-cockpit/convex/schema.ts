@@ -876,6 +876,16 @@ const schema = defineSchema({
     note: v.optional(v.string()),
     campaignName: v.optional(v.string()),
   }),
+  /** Hermes's client-focused call briefs, keyed by the set of calls they cover. */
+  callBriefs: defineTable({
+    clientName: v.string(),
+    key: v.string(),
+    jobId: v.optional(v.string()),
+    status: v.string(),
+    overall: v.optional(v.string()),
+    perCall: v.optional(v.array(v.any())),
+    at: v.number(),
+  }),
 });
 
 export default schema;

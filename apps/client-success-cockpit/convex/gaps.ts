@@ -248,3 +248,27 @@ export const forAudit = internalQuery({
       );
   },
 });
+
+/** Provisional bookings and call briefs per active client, for the command line. */
+export const extras = internalQuery({
+  args: {},
+  returns: v.any(),
+  handler: async ctx => {
+    const clients = (await ctx.db.query("clients").collect()).filter(
+      c => c.bucket !== "inactive",
+    );
+    const profiles = await ctx.db.query("clientProfiles").collect();
+    const byName = new Map(profiles.map(p => [p.clientName, p]));
+    return clients.map(c => {
+      const p = byName.get(c.name) as Any;
+      return {
+        client: c.name,
+        provisional: p?.provisional?.count ?? null,
+        callbacks: p?.provisional?.callbacks ?? null,
+        next: p?.provisional?.upcoming?.[0] ?? null,
+        calls: Array.isArray(p?.calls) ? p.calls.length : 0,
+        brief: p?.callsBrief ? String(p.callsBrief).slice(0, 160) : null,
+      };
+    });
+  },
+});
