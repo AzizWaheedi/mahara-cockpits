@@ -49,7 +49,8 @@ export function PortalAutoSignIn() {
       // Drop the token from the address bar before anything else sees it.
       params.delete("portal_token");
       params.delete("next");
-      const clean = `${location.pathname}${params.toString() ? `?${params}` : ""}`;
+      // window.location keeps the /client-success base; the router's pathname does not.
+      const clean = `${window.location.pathname}${params.toString() ? `?${params}` : ""}`;
       window.history.replaceState(null, "", clean);
       signIn("portal", { token })
         .then(() => {

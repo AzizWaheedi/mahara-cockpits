@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalAction, internalQuery } from "./_generated/server";
 import { readClientData } from "./clientData";
+import { flush, note } from "./health";
 import { googleAccessToken } from "./tools";
 
 /**
@@ -67,19 +68,32 @@ export async function bridge(
       app === "creative" ? "CREATIVE_BRIDGE_TOKEN" : "CSM_BRIDGE_TOKEN"
     ];
   if (!url || !token) throw new Error(`${app} bridge not configured`);
-  const res = await fetch(`${url}/bridge`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ fn, args: wellFormed(args) }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${url}/bridge`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ fn, args: wellFormed(args) }),
+    });
+  } catch (e) {
+    note(`bridge_${app}`, false, `${fn}: network ${String(e).slice(0, 100)}`);
+    throw e;
+  }
   const body = await res.json().catch(() => ({}));
-  if (!res.ok || body?.ok === false)
+  if (!res.ok || body?.ok === false) {
+    note(
+      `bridge_${app}`,
+      false,
+      `${fn}: HTTP ${res.status} ${String(body?.error ?? "").slice(0, 120)}`,
+    );
     throw new Error(
       `${app}:${fn} → HTTP ${res.status} ${String(body?.error ?? "").slice(0, 200)}`,
     );
+  }
+  note(`bridge_${app}`, true);
   return body.data;
 }
 
@@ -305,10 +319,17 @@ async function ghl(
     },
   });
   const json = await res.json().catch(() => ({}));
-  if (!res.ok)
+  if (!res.ok) {
+    note(
+      "ghl",
+      res.status === 429,
+      `GHL ${path.split("?")[0]} ${res.status}: ${String(json?.message ?? "").slice(0, 100)}`,
+    );
     throw new Error(
       `GHL ${path} ${res.status}: ${String(json?.message ?? "").slice(0, 120)}`,
     );
+  }
+  note("ghl", true);
   return json;
 }
 
@@ -617,6 +638,7 @@ export const feedComms = internalAction({
       }
     }
     console.log(`comms feed: ${JSON.stringify(report)}`);
+    await flush(ctx);
     return report;
   },
 });

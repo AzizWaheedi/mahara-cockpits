@@ -893,6 +893,17 @@ const schema = defineSchema({
     clients: v.array(v.string()),
     at: v.number(),
   }).index("by_email", ["email"]),
+  /** One row per outside system: ok, failure streak, last error (see health.ts). */
+  sourceHealth: defineTable({
+    source: v.string(),
+    ok: v.boolean(),
+    streak: v.number(),
+    at: v.number(),
+    lastOkAt: v.optional(v.number()),
+    lastFailAt: v.optional(v.number()),
+    lastError: v.optional(v.string()),
+    alertedAt: v.optional(v.number()),
+  }).index("by_source", ["source"]),
   /** The last smoke check per cockpit, for the admin view. */
   cockpitHealth: defineTable({
     app: v.string(),

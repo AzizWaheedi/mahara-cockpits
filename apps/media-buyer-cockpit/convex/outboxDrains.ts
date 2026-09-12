@@ -1,6 +1,8 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
+import type { ActionCtx } from "./_generated/server";
 import { internalAction } from "./_generated/server";
+import { flush, note } from "./health";
 import { CLIENTS_LIST, CREATIVE_LIST, VIDEO_LIST } from "./sync";
 import { callTool, unwrap } from "./tools";
 
@@ -103,11 +105,18 @@ async function sendWhatsapp(
       },
     );
     const json: Any = await res.json().catch(() => ({}));
-    if (!res.ok)
+    if (!res.ok) {
+      note(
+        "ghl",
+        res.status === 429,
+        `send ${res.status}: ${String(json?.message ?? "").slice(0, 100)}`,
+      );
       return [
         false,
         `GHL ${res.status}: ${String(json?.message ?? "").slice(0, 160)}`,
       ];
+    }
+    note("ghl", true);
   } else {
     const token = process.env.CSM_WHAPI_TOKEN;
     if (!token) return [false, "CSM_WHAPI_TOKEN not set"];
@@ -228,7 +237,10 @@ async function closeTask(taskId: string): Promise<[boolean, string]> {
 
 // --- creative director ---------------------------------------------------------
 
-async function creativeItem(item: Any): Promise<[boolean, string]> {
+async function creativeItem(
+  ctx: ActionCtx,
+  item: Any,
+): Promise<[boolean, string]> {
   const { kind, taskId } = item;
   const data: Any = item.payload ?? {};
   if (kind === "wa_send") {
@@ -240,7 +252,22 @@ async function creativeItem(item: Any): Promise<[boolean, string]> {
       String(pl.contactId ?? ""),
       String(pl.channel ?? "whatsapp"),
     );
+    if (!ok)
+      await bridge("creative", "sendFailed", {
+        chatId: String(pl.chatId ?? ""),
+        error: err ?? "send failed",
+      }).catch(() => undefined);
     return [ok, err ?? "sent"];
+  }
+  if (kind === "issue") {
+    // A screen that crashed, or a person's report: Hermes gets a fix job.
+    await ctx.runMutation(internal.fixRequests.file, {
+      source: "creative cockpit",
+      app: "creative",
+      title: String(data.title ?? "Issue reported").slice(0, 120),
+      detail: String(data.detail ?? data.text ?? "").slice(0, 4000),
+    });
+    return [true, "filed for Hermes"];
   }
   if (kind === "comment" && taskId) {
     await comment(taskId, String(data.text ?? ""));
@@ -289,15 +316,24 @@ async function creativeItem(item: Any): Promise<[boolean, string]> {
 export const drainCreative = internalAction({
   args: {},
   returns: v.object({ done: v.number(), failed: v.number() }),
-  handler: async () => {
+  handler: async ctx => {
     const items: Any[] = (await bridge("creative", "outboxPending", {})) ?? [];
     let done = 0;
     let failed = 0;
     for (const item of items) {
+      try {
+        const claimed = await bridge("creative", "outboxClaim", {
+          id: item.id,
+        });
+        if (claimed === false) continue;
+      } catch (e) {
+        console.warn(`creative claim ${item.id}: ${String(e).slice(0, 100)}`);
+        continue;
+      }
       let ok = false;
       let result = "";
       try {
-        [ok, result] = await creativeItem(item);
+        [ok, result] = await creativeItem(ctx, item);
       } catch (e) {
         result = String(e).slice(0, 300);
       }
@@ -330,6 +366,11 @@ async function csmRow(
       String(row.note ?? ""),
       channel || "whatsapp",
     );
+    if (err)
+      await bridge("csm", "sendFailed", {
+        chatId: String(row.clientTaskId ?? ""),
+        error: err,
+      }).catch(() => undefined);
     return [undefined, err];
   }
   if (kind === "report") {
@@ -461,6 +502,14 @@ export const drainCsm = internalAction({
     for (const row of rows) {
       let url: string | undefined;
       let error: string | undefined;
+      // Claim first, so a second drain cannot send the same row twice.
+      try {
+        const claimed = await bridge("csm", "markSending", { id: row._id });
+        if (claimed === false) continue;
+      } catch (e) {
+        console.warn(`csm claim ${row._id}: ${String(e).slice(0, 100)}`);
+        continue;
+      }
       try {
         [url, error] = await csmRow(ctx, row);
       } catch (e) {
@@ -498,6 +547,7 @@ export const drainAll = internalAction({
         console.error(`${name} outbox drain: ${String(e).slice(0, 300)}`);
       }
     }
+    await flush(ctx);
     // Calendars linked in the last minute get their first read now.
     try {
       out.calendars = await ctx.runAction(

@@ -1,3 +1,5 @@
+import { note, sourceFor, transient } from "./health";
+
 declare const process: { env: Record<string, string | undefined> };
 
 /**
@@ -52,15 +54,36 @@ const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
  * on 429 and on 5xx instead of failing the whole run.
  */
 async function httpGet(url: string, headers: Record<string, string>) {
-  const retry = /googleapis\.com/.test(url) ? 4 : 1;
+  // Google and ClickUp rate-limit in bursts: wait it out rather than fail the run.
+  const retry = /googleapis\.com|api\.clickup\.com/.test(url) ? 4 : 2;
+  const source = sourceFor(url);
   for (let attempt = 0; ; attempt++) {
-    const res = await fetch(url, { headers });
+    let res: Response;
+    try {
+      res = await fetch(url, { headers });
+    } catch (e) {
+      if (attempt < retry - 1) {
+        await wait((attempt + 1) * 5_000);
+        continue;
+      }
+      note(source, false, `network: ${String(e).slice(0, 120)}`);
+      throw e;
+    }
     if ((res.status === 429 || res.status >= 500) && attempt < retry - 1) {
       await wait((attempt + 1) * 15_000);
       continue;
     }
     const body = await bodyOf(res);
-    if (!res.ok) throw new Error(`HTTP ${res.status} ${url}: ${brief(body)}`);
+    if (!res.ok) {
+      // A rate limit that persisted is still worth a note; a blip is not.
+      note(
+        source,
+        transient(res.status) && attempt === 0,
+        `HTTP ${res.status} ${brief(body)}`,
+      );
+      throw new Error(`HTTP ${res.status} ${url}: ${brief(body)}`);
+    }
+    note(source, true);
     return body;
   }
 }
@@ -76,7 +99,15 @@ async function httpPost(
     body: JSON.stringify(json ?? {}),
   });
   const body = await bodyOf(res);
-  if (!res.ok) throw new Error(`HTTP ${res.status} ${url}: ${brief(body)}`);
+  if (!res.ok) {
+    note(
+      sourceFor(url),
+      transient(res.status),
+      `HTTP ${res.status} ${brief(body)}`,
+    );
+    throw new Error(`HTTP ${res.status} ${url}: ${brief(body)}`);
+  }
+  note(sourceFor(url), true);
   return body;
 }
 
@@ -452,10 +483,17 @@ export async function graph<T = any>(
   const res = await fetch(`https://graph.facebook.com/v21.0/${path}?${qs}`);
   const json = await res.json();
   if (json.error) {
+    // Rate limits (#4, #17, #32, #613) pass; a bad token or lost permission counts.
+    note(
+      "meta",
+      [4, 17, 32, 613, 80004].includes(Number(json.error.code)),
+      `Meta ${json.error.code}: ${String(json.error.message).slice(0, 120)}`,
+    );
     throw new Error(
       `Meta ${json.error.code}${json.error.error_subcode ? `/${json.error.error_subcode}` : ""}: ${json.error.message}${json.error.error_user_msg ? ` — ${json.error.error_user_msg}` : ""}${json.error.error_user_title ? ` (${json.error.error_user_title})` : ""}`,
     );
   }
+  note("meta", true);
   return json as T;
 }
 

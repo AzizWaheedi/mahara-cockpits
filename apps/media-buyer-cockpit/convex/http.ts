@@ -33,6 +33,7 @@ http.route({
     if (!authorized(request)) return new Response("no", { status: 401 });
     const limit = Number(new URL(request.url).searchParams.get("limit") ?? 10);
     const jobs = await ctx.runMutation(internal.askAi.pending, { limit });
+    await ctx.runMutation(internal.askAi.heartbeat, {});
     return Response.json({ ok: true, jobs });
   }),
 });

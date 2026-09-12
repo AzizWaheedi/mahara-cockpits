@@ -11,6 +11,7 @@ import {
   readClientData,
   statSheetUrl,
 } from "./clientData";
+import { flush } from "./health";
 import { CLIENTS_LIST } from "./sync";
 import { allAdAccounts, callTool, unwrap } from "./tools";
 
@@ -1363,6 +1364,7 @@ export const push = internalAction({
     console.log(
       `profiles: ${profiles.length} pushed, ${JSON.stringify(done)}; ${errors.length} error(s)`,
     );
+    await flush(ctx);
     return {
       profiles: profiles.length,
       withSheet: profiles.filter(p => p.performance && !p.performance.error)

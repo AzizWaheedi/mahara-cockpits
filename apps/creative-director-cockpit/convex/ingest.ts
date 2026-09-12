@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import {
   type ActionCtx,
   internalMutation,
@@ -106,6 +106,17 @@ export async function runBridge(
         chatId: String(args.chatId),
         draft: String(args.draft),
         draftAt: Number(args.draftAt ?? Date.now()),
+      });
+    case "outboxClaim":
+      return await ctx.runMutation(api.clients.outboxClaim, { id: args.id });
+    case "sendFailed":
+      return await ctx.runMutation(internal.comms.sendFailed, {
+        chatId: String(args.chatId),
+        error: String(args.error ?? "send failed"),
+      });
+    case "revokeMember":
+      return await ctx.runAction(internal.portalAuth.revoke, {
+        email: String(args.email),
       });
     case "markReplied":
       return await ctx.runMutation(internal.comms.markReplied, {

@@ -6,6 +6,7 @@ import {
   internalQuery,
 } from "./_generated/server";
 import { bridge } from "./comms";
+import { flush } from "./health";
 import { callTool } from "./tools";
 
 // biome-ignore lint/suspicious/noExplicitAny: chat rows and job results
@@ -189,6 +190,12 @@ export const run = internalAction({
     let relayed = 0;
     let delivered = 0;
     const errors: string[] = [];
+    // 0. Jobs Hermes took and dropped go back in the queue (or fail for good).
+    try {
+      await ctx.runMutation(internal.askAi.reap, {});
+    } catch (e) {
+      errors.push(`reap: ${String(e).slice(0, 120)}`);
+    }
     // 1. New questions → Hermes's queue.
     for (const app of ["local", "csm", "creative"] as App[]) {
       let rows: Any[] = [];
@@ -305,6 +312,7 @@ export const run = internalAction({
       console.log(
         `hermes chat: ${relayed} relayed, ${delivered} delivered${errors.length ? ` · ${errors.join(" | ")}` : ""}`,
       );
+    await flush(ctx);
     return { relayed, delivered, errors };
   },
 });

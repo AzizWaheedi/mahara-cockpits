@@ -1,10 +1,14 @@
 import { ConvexCredentials } from "@convex-dev/auth/providers/ConvexCredentials";
-import { createAccount, retrieveAccount } from "@convex-dev/auth/server";
+import {
+  createAccount,
+  invalidateSessions,
+  retrieveAccount,
+} from "@convex-dev/auth/server";
 import { v } from "convex/values";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { internal } from "./_generated/api";
 import type { DataModel } from "./_generated/dataModel";
-import { internalMutation } from "./_generated/server";
+import { internalAction, internalMutation } from "./_generated/server";
 
 /**
  * Sign-in through the portal.
@@ -35,6 +39,8 @@ const provider = ConvexCredentials<DataModel>({
       issuer: PORTAL_SITE_URL,
       audience: AUDIENCE,
     });
+    if (payload.cockpit !== "creative")
+      throw new Error("This pass is for a different cockpit");
     const email = String(payload.email ?? payload.sub ?? "")
       .trim()
       .toLowerCase();
@@ -94,3 +100,33 @@ export const remember = internalMutation({
 
 // ConvexCredentials hard-codes the top-level id to "credentials"; surface ours.
 export const PortalCredentials = { ...provider, id: "portal" };
+
+/** The portal removed this person: forget them here and end their sessions. */
+export const forget = internalMutation({
+  args: { email: v.string() },
+  returns: v.union(v.id("users"), v.null()),
+  handler: async (ctx, { email }) => {
+    const key = email.trim().toLowerCase();
+    const row = await ctx.db
+      .query("portalMembers")
+      .withIndex("by_email", q => q.eq("email", key))
+      .unique();
+    if (row) await ctx.db.delete(row._id);
+    const user = await ctx.db
+      .query("users")
+      .withIndex("email", q => q.eq("email", key))
+      .first();
+    return user?._id ?? null;
+  },
+});
+
+export const revoke = internalAction({
+  args: { email: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { email }) => {
+    const userId = await ctx.runMutation(internal.portalAuth.forget, { email });
+    // Sessions end now, not at their natural expiry a year on.
+    if (userId) await invalidateSessions(ctx, { userId });
+    return null;
+  },
+});

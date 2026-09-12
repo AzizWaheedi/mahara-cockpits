@@ -360,11 +360,14 @@ const schema = defineSchema({
     kind: v.string(),
     taskId: v.optional(v.string()),
     payload: v.any(),
-    /** pending | done | failed */
+    /** pending | sending | done | failed (failed only after the last retry) */
     state: v.string(),
     result: v.optional(v.string()),
     createdAt: v.number(),
     settledAt: v.optional(v.number()),
+    claimedAt: v.optional(v.number()),
+    attempts: v.optional(v.number()),
+    nextTryAt: v.optional(v.number()),
   }).index("by_state", ["state"]),
 
   /** Staging for large sync payloads, drained by sync:storeCreative. */
@@ -485,6 +488,9 @@ const schema = defineSchema({
     draft: v.optional(v.string()),
     draftAt: v.optional(v.number()),
     repliedAt: v.optional(v.number()),
+    /** A reply is on its way; cleared when it lands or fails. */
+    sendingAt: v.optional(v.number()),
+    sendError: v.optional(v.string()),
     recent: v.array(v.any()),
     error: v.optional(v.string()),
     syncedAt: v.number(),

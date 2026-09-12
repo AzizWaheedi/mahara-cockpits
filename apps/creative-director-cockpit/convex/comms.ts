@@ -34,16 +34,39 @@ export const storeWhatsapp = internalMutation({
   handler: async (ctx, { threads, append, clear }) => {
     // Sent in chunks: the first call replaces, the rest append.
     if (threads.length === 0 && !append && !clear) return { threads: 0 };
-    if (!append)
-      for (const old of await ctx.db.query("waThreads").collect())
-        await ctx.db.delete(old._id);
+    // What this app added to a thread (Hermes's draft, a reply in flight)
+    // must survive the refresh, which only knows what the CRM knows.
+    const kept = new Map<string, Record<string, unknown>>();
+    const existing = await ctx.db.query("waThreads").collect();
+    for (const old of existing)
+      kept.set(old.chatId, {
+        draft: old.draft,
+        draftAt: old.draftAt,
+        repliedAt: old.repliedAt,
+        sendingAt: old.sendingAt,
+        sendError: old.sendError,
+      });
+    if (!append) for (const old of existing) await ctx.db.delete(old._id);
+    else
+      for (const t of threads)
+        for (const old of existing)
+          if (old.chatId === t.chatId) await ctx.db.delete(old._id);
     const now = Date.now();
-    for (const t of threads)
+    for (const t of threads) {
+      const k = kept.get(t.chatId) ?? {};
+      const sameMessage =
+        k.draftAt && t.lastAt && Number(k.draftAt) >= Number(t.lastAt);
       await ctx.db.insert("waThreads", {
         ...t,
+        draft: sameMessage ? k.draft : undefined,
+        draftAt: sameMessage ? k.draftAt : undefined,
+        repliedAt: t.lastFromUs ? undefined : k.repliedAt,
+        sendingAt: k.sendingAt,
+        sendError: k.sendError,
         recent: t.recent ?? [],
         syncedAt: now,
       });
+    }
     return { threads: threads.length };
   },
 });
@@ -158,6 +181,8 @@ export const markReplied = internalMutation({
       waitingSince: undefined,
       silentDays: 0,
       repliedAt: now,
+      sendingAt: undefined,
+      sendError: undefined,
       draft: undefined,
       recent: [
         ...(t.recent ?? []).slice(-11),
@@ -189,7 +214,25 @@ export const sendReply = mutation({
       state: "pending",
       createdAt: Date.now(),
     });
-    await ctx.db.patch(t._id, { repliedAt: Date.now() });
+    // Not "replied" yet: that is stamped when the CRM confirms the send.
+    await ctx.db.patch(t._id, { sendingAt: Date.now(), sendError: undefined });
+    return null;
+  },
+});
+
+/** The send failed: back to waiting, with the reason on the thread. */
+export const sendFailed = internalMutation({
+  args: { chatId: v.string(), error: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { chatId, error }) => {
+    const t = (await ctx.db.query("waThreads").collect()).find(
+      x => x.chatId === chatId,
+    );
+    if (t)
+      await ctx.db.patch(t._id, {
+        sendingAt: undefined,
+        sendError: error.slice(0, 200),
+      });
     return null;
   },
 });

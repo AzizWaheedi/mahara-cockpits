@@ -389,6 +389,12 @@ const schema = defineSchema({
     error: v.optional(v.string()),
     resultUrl: v.optional(v.string()),
     createdAt: v.number(),
+    /** Claimed by a drain; a claim older than ten minutes is up for grabs again. */
+    claimedAt: v.optional(v.number()),
+    attempts: v.optional(v.number()),
+    nextTryAt: v.optional(v.number()),
+    /** Five failures: no more retries, the error stays for a person to read. */
+    gaveUpAt: v.optional(v.number()),
   }).index("by_sentAt", ["sentAt"]),
 
   usage: defineTable({
@@ -473,6 +479,9 @@ const schema = defineSchema({
     draft: v.optional(v.string()),
     draftAt: v.optional(v.number()),
     repliedAt: v.optional(v.number()),
+    /** A reply is on its way; cleared when it lands or fails. */
+    sendingAt: v.optional(v.number()),
+    sendError: v.optional(v.string()),
     recent: v.array(v.any()),
     error: v.optional(v.string()),
     syncedAt: v.number(),

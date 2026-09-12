@@ -73,11 +73,19 @@ function configuredSpaceAuthProviders(): AuthProviderConfig[] {
     // RESEND_API_KEY on the deployment, sign-up completes without the OTP step.
     const mailConfigured = Boolean(process.env.RESEND_API_KEY);
     providers.push(
-      Password(
-        mailConfigured
+      Password({
+        ...(mailConfigured
           ? { verify: ViktorSpacesEmail, reset: ViktorSpacesPasswordReset }
-          : {},
-      ),
+          : {}),
+        // The email is normalised here; whether a sign-up is allowed at all is
+        // decided in auth.ts (createOrUpdateUser), which can read the team table.
+        profile: params => ({
+          email: String(params.email ?? "")
+            .trim()
+            .toLowerCase(),
+          ...(params.name ? { name: String(params.name) } : {}),
+        }),
+      }),
     );
   }
   if (providerNames.has("viktor")) {

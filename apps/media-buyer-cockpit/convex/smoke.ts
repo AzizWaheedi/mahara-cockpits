@@ -7,6 +7,7 @@ import {
 } from "./_generated/server";
 import { buildSnapshot } from "./cockpit";
 import { bridge } from "./comms";
+import { flush, recordManyDirect } from "./health";
 import { callTool } from "./tools";
 
 // biome-ignore lint/suspicious/noExplicitAny: check payloads
@@ -17,6 +18,25 @@ declare const process: { env: Record<string, string | undefined> };
 // belonged to another bot and returns channel_not_found. ALERT_SLACK_TO overrides.
 const AZIZ_DM = process.env.ALERT_SLACK_TO || "U0AJQ8P1ACF";
 const RE_ALERT_AFTER_H = 6;
+
+/** Lines from the health ledger, delivered to Aziz's DM. */
+export const slackLines = internalAction({
+  args: { texts: v.array(v.string()) },
+  returns: v.null(),
+  handler: async (_ctx, { texts }) => {
+    for (const text of texts) {
+      try {
+        await callTool("coworker_send_slack_message", {
+          channel_id: AZIZ_DM,
+          text,
+        });
+      } catch (e) {
+        console.error(`slack alert failed: ${String(e).slice(0, 120)}`);
+      }
+    }
+    return null;
+  },
+});
 
 /** This cockpit's own screens, without a signed-in user. */
 export const local = internalQuery({
@@ -126,6 +146,25 @@ export const check = internalAction({
     console.log(
       `smoke: ${results.map((r: Any) => `${r.app} ${r.ok ? "ok" : "FAILED"}`).join(" · ")}`,
     );
+    // Hermes watchdog: jobs waiting and no poll for ten minutes is an outage.
+    try {
+      const w: Any = await ctx.runQuery(internal.askAi.waiting, {});
+      if (
+        w.queued > 0 &&
+        w.lastPollAt &&
+        Date.now() - w.lastPollAt > 10 * 60_000
+      )
+        await recordManyDirect(ctx, [
+          {
+            source: "hermes",
+            ok: false,
+            error: `${w.queued} job(s) waiting, last poll ${Math.round((Date.now() - w.lastPollAt) / 60_000)} min ago`,
+          },
+        ]);
+    } catch (e) {
+      console.error(`hermes watchdog: ${String(e).slice(0, 120)}`);
+    }
+    await flush(ctx);
     return { ok: failures.length === 0, failures, results };
   },
 });

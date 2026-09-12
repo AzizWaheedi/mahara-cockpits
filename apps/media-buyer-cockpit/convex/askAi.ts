@@ -78,7 +78,12 @@ export const pending = internalMutation({
       .sort((a, b) => a.createdAt - b.createdAt)
       .slice(0, limit ?? 10);
     for (const r of rows) {
-      await ctx.db.patch(r._id, { tries: r.tries + 1, claimedAt: Date.now() });
+      // Handed out once: "claimed" until Hermes answers or `reap` gives it back.
+      await ctx.db.patch(r._id, {
+        status: "claimed",
+        tries: r.tries + 1,
+        claimedAt: Date.now(),
+      });
     }
     return rows.map(r => ({
       id: r._id,
@@ -209,5 +214,96 @@ export const health = internalQuery({
       undefined,
     );
     return { queued: queued.length, failed: failed.length, lastDoneAt };
+  },
+});
+
+/** Hermes polled: remembered as the heartbeat the watchdog reads. */
+export const heartbeat = internalMutation({
+  args: {},
+  returns: v.null(),
+  handler: async ctx => {
+    const row = await ctx.db
+      .query("sourceHealth")
+      .withIndex("by_source", q => q.eq("source", "hermes"))
+      .unique();
+    const now = Date.now();
+    const doc = {
+      source: "hermes",
+      ok: true,
+      streak: 0,
+      at: now,
+      lastOkAt: now,
+      lastFailAt: row?.lastFailAt,
+      lastError: row?.lastError,
+      alertedAt: undefined,
+    };
+    if (row) await ctx.db.patch(row._id, doc);
+    else await ctx.db.insert("sourceHealth", doc);
+    return null;
+  },
+});
+
+const CLAIM_TTL_MS = 20 * 60_000;
+
+/**
+ * A job Hermes took but never answered goes back in the queue after twenty
+ * minutes; after four tries it is failed for good so the person asking is
+ * told instead of waiting forever. Runs from the Hermes relay cron.
+ */
+export const reap = internalMutation({
+  args: {},
+  returns: v.object({ requeued: v.number(), failed: v.number() }),
+  handler: async ctx => {
+    const stale = (
+      await ctx.db
+        .query("aiJobs")
+        .withIndex("by_status", q => q.eq("status", "claimed"))
+        .collect()
+    ).filter(j => Date.now() - (j.claimedAt ?? j.createdAt) > CLAIM_TTL_MS);
+    let requeued = 0;
+    let failed = 0;
+    for (const j of stale) {
+      if (j.tries >= 4) {
+        await ctx.db.patch(j._id, {
+          status: "failed",
+          error: "Hermes took the job four times and never answered.",
+          doneAt: Date.now(),
+        });
+        failed++;
+      } else {
+        await ctx.db.patch(j._id, { status: "queued" });
+        requeued++;
+      }
+    }
+    return { requeued, failed };
+  },
+});
+
+/** Queue and heartbeat, for the watchdog and the admin view. */
+export const waiting = internalQuery({
+  args: {},
+  returns: v.object({
+    queued: v.number(),
+    claimed: v.number(),
+    lastPollAt: v.optional(v.number()),
+  }),
+  handler: async ctx => {
+    const queued = await ctx.db
+      .query("aiJobs")
+      .withIndex("by_status", q => q.eq("status", "queued"))
+      .collect();
+    const claimed = await ctx.db
+      .query("aiJobs")
+      .withIndex("by_status", q => q.eq("status", "claimed"))
+      .collect();
+    const h = await ctx.db
+      .query("sourceHealth")
+      .withIndex("by_source", q => q.eq("source", "hermes"))
+      .unique();
+    return {
+      queued: queued.length,
+      claimed: claimed.length,
+      lastPollAt: h?.lastOkAt,
+    };
   },
 });

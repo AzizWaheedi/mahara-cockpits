@@ -73,11 +73,24 @@ function configuredSpaceAuthProviders(): AuthProviderConfig[] {
     // RESEND_API_KEY on the deployment, sign-up completes without the OTP step.
     const mailConfigured = Boolean(process.env.RESEND_API_KEY);
     providers.push(
-      Password(
-        mailConfigured
+      Password({
+        ...(mailConfigured
           ? { verify: ViktorSpacesEmail, reset: ViktorSpacesPasswordReset }
-          : {},
-      ),
+          : {}),
+        // Accounts are created through the portal; a sign-up here would
+        // bypass the team directory.
+        profile: params => {
+          if (params.flow === "signUp")
+            throw new Error(
+              "Sign up at the Mahara portal, not here; it opens this cockpit for you.",
+            );
+          return {
+            email: String(params.email ?? "")
+              .trim()
+              .toLowerCase(),
+          };
+        },
+      }),
     );
   }
   if (providerNames.has("viktor")) {

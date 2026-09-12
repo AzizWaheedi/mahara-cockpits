@@ -3,6 +3,7 @@
 import "./phiLogging";
 import { convexAuth, getAuthUserId } from "@convex-dev/auth/server";
 import { query } from "./_generated/server";
+import { accessFor } from "./roles";
 import { configuredAuthProviders } from "./viktorSpaceAuthConfig";
 
 declare const process: { env: Record<string, string | undefined> };
@@ -41,6 +42,30 @@ const DAY = 86400_000;
 
 export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
   providers: configuredAuthProviders(),
+  callbacks: {
+    /**
+     * Only a person an admin added in the portal may create a password
+     * account, so nobody can claim a colleague's seat by typing their email
+     * first. Existing users and portal passes are unaffected.
+     */
+    async createOrUpdateUser(ctx, args) {
+      const email = String(args.profile.email ?? "")
+        .trim()
+        .toLowerCase();
+      if (!args.existingUserId && args.provider.id === "password") {
+        const a = await accessFor(ctx, email);
+        if (a.roles.length === 0)
+          throw new Error(
+            "This email is not on the team yet. Ask Aziz to add you in the portal, then sign up.",
+          );
+      }
+      if (args.existingUserId) {
+        await ctx.db.patch(args.existingUserId, { ...args.profile, email });
+        return args.existingUserId;
+      }
+      return await ctx.db.insert("users", { ...args.profile, email });
+    },
+  },
   // Aziz, 2026-09-12: "make sure she doesn't get logged out again". A
   // session lasts a year and only lapses after 90 days without a visit.
   session: { totalDurationMs: 365 * DAY, inactiveDurationMs: 90 * DAY },

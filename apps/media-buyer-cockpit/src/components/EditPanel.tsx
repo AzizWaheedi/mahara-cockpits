@@ -164,9 +164,7 @@ function CopyTest({
               brief,
               language: campaign.language,
             });
-            toast.info(
-              "Asked. The options land here when they're ready.",
-            );
+            toast.info("Asked. The options land here when they're ready.");
           }}
         >
           {copyAssist.waiting ? "Writing…" : "Write me options"}

@@ -340,6 +340,72 @@ export function AdminPage() {
         </CardContent>
       </Card>
 
+      {/* Every outside system, with the fix next to it when it is down. */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Activity className="size-4 text-teal-600" /> Data sources
+            <span className="ml-2 text-xs font-normal text-muted-foreground">
+              Three failures in a row send one Slack message with the fix. Green
+              means the last call worked.
+            </span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {(overview?.sources ?? []).map((src: Any) => {
+            const down = src.ok === false && src.streak >= 3;
+            const blip = src.ok === false && src.streak < 3;
+            return (
+              <div
+                key={src.source}
+                className={`rounded-lg border p-3 text-sm ${down ? "border-red-300 bg-red-50 dark:border-red-900 dark:bg-red-950/30" : ""}`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium">{src.label}</span>
+                  <span
+                    className={`inline-flex items-center gap-1 text-[11px] ${down ? "text-red-600" : blip ? "text-amber-600" : src.ok ? "text-emerald-600" : "text-muted-foreground"}`}
+                  >
+                    <span
+                      className={`size-2 rounded-full ${down ? "bg-red-500" : blip ? "bg-amber-500" : src.ok ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
+                    />
+                    {down
+                      ? `down, ${src.streak} in a row`
+                      : blip
+                        ? `failed ${src.streak}×, watching`
+                        : src.ok
+                          ? `ok ${ago(src.at)}`
+                          : "not used yet"}
+                  </span>
+                </div>
+                {src.ok === false ? (
+                  <>
+                    <p
+                      className="mt-1 truncate font-mono text-[11px] text-muted-foreground"
+                      title={src.lastError}
+                    >
+                      {src.lastError}
+                    </p>
+                    <p className="mt-1 text-xs">
+                      <span className="font-semibold">{src.owner}:</span>{" "}
+                      {src.fix}
+                    </p>
+                  </>
+                ) : (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {src.lastFailAt
+                      ? `last failed ${ago(src.lastFailAt)}`
+                      : "no failures recorded"}
+                    {src.source === "hermes" && overview?.hermesWaiting
+                      ? ` · ${overview.hermesWaiting.queued} waiting, ${overview.hermesWaiting.claimed} in progress`
+                      : ""}
+                  </p>
+                )}
+              </div>
+            );
+          })}
+        </CardContent>
+      </Card>
+
       <section className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader className="pb-2">

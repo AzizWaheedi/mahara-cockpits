@@ -144,6 +144,19 @@ export async function runBridge(
         draft: String(args.draft),
         draftAt: Number(args.draftAt ?? Date.now()),
       });
+    case "markSending":
+      return await ctx.runMutation(internal.outbox.markSending, {
+        id: args.id,
+      });
+    case "sendFailed":
+      return await ctx.runMutation(internal.comms.sendFailed, {
+        chatId: String(args.chatId),
+        error: String(args.error ?? "send failed"),
+      });
+    case "revokeMember":
+      return await ctx.runAction(internal.portalAuth.revoke, {
+        email: String(args.email),
+      });
     case "markReplied":
       return await ctx.runMutation(internal.comms.markReplied, {
         chatId: String(args.chatId),

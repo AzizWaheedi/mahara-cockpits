@@ -31,10 +31,24 @@ export function staticRoles(email: string | undefined | null): string[] {
   const key = (email ?? "").trim().toLowerCase();
   if (!key) return [];
   if (STATIC[key]) return STATIC[key];
-  // Platform-minted space sessions (screenshot runner, e2e) are not real
-  // people and only exist behind the app's own access gate.
-  if (key.endsWith("@viktor.invalid")) return ["media_buyer", "csm"];
   return [];
+}
+
+/**
+ * Platform-minted space sessions (screenshot runner, e2e) carry a synthetic
+ * @viktor.invalid address. Only an account the space_session provider itself
+ * created gets a view; someone who signs up with such an address gets nothing.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: db ctx
+async function spaceSessionRoles(ctx: any, userId: any): Promise<string[]> {
+  if (!userId) return [];
+  const acct = await ctx.db
+    .query("authAccounts")
+    .withIndex("userIdAndProvider", (q: any) =>
+      q.eq("userId", userId).eq("provider", "space_session"),
+    )
+    .unique();
+  return acct ? ["media_buyer", "csm"] : [];
 }
 
 export type Access = {
@@ -52,6 +66,7 @@ export type Access = {
 export async function accessFor(
   ctx: any,
   email: string | null | undefined,
+  userId?: any,
 ): Promise<Access> {
   const key = (email ?? "").trim().toLowerCase();
   const row = key
@@ -60,7 +75,11 @@ export async function accessFor(
         .withIndex("by_email", (q: any) => q.eq("email", key))
         .unique()
     : null;
-  const roles: string[] = row ? row.roles : staticRoles(key);
+  const roles: string[] = row
+    ? row.roles
+    : key.endsWith("@viktor.invalid")
+      ? await spaceSessionRoles(ctx, userId)
+      : staticRoles(key);
   const isAdmin = roles.includes("admin");
   const cockpits = isAdmin
     ? [...COCKPITS]
@@ -84,7 +103,7 @@ export async function assertRole(
   role: string,
 ): Promise<void> {
   const user = await ctx.db.get(ctx.userId);
-  const a = await accessFor(ctx, user?.email);
+  const a = await accessFor(ctx, user?.email, ctx.userId);
   if (!(a.isAdmin || a.roles.includes(role))) {
     throw new Error(
       "This cockpit is not yours. Ask Aziz to give you access in the portal.",
@@ -95,7 +114,7 @@ export async function assertRole(
 // biome-ignore lint/suspicious/noExplicitAny: convex ctx
 export async function assertAdmin(ctx: any): Promise<Access> {
   const user = await ctx.db.get(ctx.userId);
-  const a = await accessFor(ctx, user?.email);
+  const a = await accessFor(ctx, user?.email, ctx.userId);
   if (!a.isAdmin) throw new Error("Admins only.");
   return a;
 }
@@ -104,7 +123,7 @@ export async function assertAdmin(ctx: any): Promise<Access> {
 // biome-ignore lint/suspicious/noExplicitAny: convex ctx
 export async function allowedClients(ctx: any): Promise<Set<string> | null> {
   const user = await ctx.db.get(ctx.userId);
-  const a = await accessFor(ctx, user?.email);
+  const a = await accessFor(ctx, user?.email, ctx.userId);
   if (a.isAdmin || a.clients.length === 0) return null;
   return new Set(a.clients.map(c => c.toLowerCase()));
 }
@@ -114,7 +133,7 @@ export const me = authenticatedQuery({
   returns: v.any(),
   handler: async ctx => {
     const user = await ctx.db.get(ctx.userId);
-    const a = await accessFor(ctx, user?.email);
+    const a = await accessFor(ctx, user?.email, ctx.userId);
     return {
       email: user?.email ?? null,
       name: user?.name ?? a.name ?? null,

@@ -169,8 +169,9 @@ export function MeetingsPage() {
     {},
   );
   const waiting = (threads as Any[]).filter(
-    t => t.waitingSince && !t.repliedAt,
+    t => t.waitingSince && !t.repliedAt && !t.sendingAt,
   );
+  const inFlight = (threads as Any[]).filter(t => t.sendingAt);
   const quiet = (threads as Any[]).filter(
     t => !t.waitingSince && (t.silentDays ?? 0) >= 3 && t.clientName,
   );
@@ -257,6 +258,24 @@ export function MeetingsPage() {
         )}
       </section>
 
+      {inFlight.length ? (
+        <section className="rounded-xl border bg-card p-4 shadow-sm">
+          <h2 className="mb-2 text-[12px] font-bold uppercase tracking-widest text-teal-600">
+            Sending
+          </h2>
+          <ul className="divide-y text-[13px]">
+            {inFlight.map(t => (
+              <li key={t.chatId} className="flex items-baseline gap-2 py-2">
+                <span className="font-semibold">{t.name}</span>
+                <span className="text-muted-foreground">
+                  reply leaving within a minute, queued {ago(t.sendingAt)} ago
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
       <section className="rounded-xl border bg-card p-4 shadow-sm">
         <h2 className="mb-2 text-[12px] font-bold uppercase tracking-widest text-teal-600">
           Next check-in per client
@@ -317,6 +336,11 @@ export function MeetingsPage() {
                       Recommended reply
                       {t.draft ? ", from the communication SOP" : ""}
                     </p>
+                    {t.sendError ? (
+                      <p className="mb-1 text-[12px] text-red-600">
+                        The last send failed: {t.sendError}. Fix and send again.
+                      </p>
+                    ) : null}
                     <textarea
                       value={text}
                       onChange={e =>

@@ -7,6 +7,7 @@ import {
 } from "./_generated/server";
 import { NEW_CAMPAIGN_FORM_URL } from "./constants";
 import { authenticatedAction } from "./functions";
+import { flush } from "./health";
 import { allAdAccounts, callTool, graph, supabaseQuery, unwrap } from "./tools";
 
 const TRACKER = "1pBEyClUxPLc4-RdXR8gZ0MxsLkLLFkWJwkiVqVf2rro";
@@ -2158,6 +2159,7 @@ export const runSync = internalAction({
       console.error(`winners archive failed: ${String(e)}`);
     }
 
+    await flush(ctx);
     return result;
   },
 });

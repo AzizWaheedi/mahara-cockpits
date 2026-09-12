@@ -9,6 +9,7 @@ import {
   internalQuery,
   query,
 } from "./_generated/server";
+import { bridge } from "./comms";
 import { authenticatedMutation, authenticatedQuery } from "./functions";
 import { accessFor, assertAdmin, COCKPITS, staticRoles } from "./roles";
 
@@ -46,7 +47,9 @@ export const members = authenticatedQuery({
   returns: v.array(v.any()),
   handler: async ctx => {
     await assertAdmin(ctx);
-    const rows = await ctx.db.query("members").collect();
+    const rows = (await ctx.db.query("members").collect()).filter(
+      r => r.roles.length > 0,
+    );
     return rows.sort((a, b) => a.email.localeCompare(b.email));
   },
 });
@@ -104,8 +107,53 @@ export const removeMember = authenticatedMutation({
       .query("members")
       .withIndex("by_email", q => q.eq("email", key))
       .unique();
-    if (row) await ctx.db.delete(row._id);
+    // Kept with no seats rather than deleted: a row with no roles beats the
+    // static fallback, so a removed person stays out.
+    const gone = {
+      roles: [] as string[],
+      clients: [] as string[],
+      note: `removed by ${admin.email}`,
+      updatedAt: Date.now(),
+    };
+    if (row) await ctx.db.patch(row._id, gone);
+    else
+      await ctx.db.insert("members", {
+        email: key,
+        ...gone,
+        addedBy: admin.email,
+        addedAt: Date.now(),
+      });
+    // And the other cockpits drop their copy and end their sessions.
+    await ctx.scheduler.runAfter(0, internal.portal.revoke, { email: key });
     return null;
+  },
+});
+
+/** Tell the other cockpits a person is out. */
+export const revoke = internalAction({
+  args: { email: v.string() },
+  returns: v.any(),
+  handler: async (_ctx, { email }) => {
+    const out: Record<string, string> = {};
+    for (const app of ["csm", "creative"] as const) {
+      try {
+        await bridge(app, "revokeMember", { email });
+        out[app] = "revoked";
+      } catch (e) {
+        out[app] = `FAILED ${String(e).slice(0, 120)}`;
+      }
+    }
+    return out;
+  },
+});
+
+/** Sign-up gate: only people an admin added may create an account. */
+export const isMember = internalQuery({
+  args: { email: v.string() },
+  returns: v.boolean(),
+  handler: async (ctx, { email }) => {
+    const a = await accessFor(ctx, email);
+    return a.roles.length > 0;
   },
 });
 
@@ -174,7 +222,7 @@ export const recordHealth = internalMutation({
 export const overview = authenticatedQuery({
   args: {},
   returns: v.any(),
-  handler: async ctx => {
+  handler: async (ctx): Promise<Any> => {
     await assertAdmin(ctx);
     const health = await ctx.db.query("cockpitHealth").collect();
     const lastSync = (
@@ -197,7 +245,11 @@ export const overview = authenticatedQuery({
     const campaigns = await ctx.db.query("campaigns").collect();
     const clients = await ctx.db.query("clients").collect();
     const members = await ctx.db.query("members").collect();
+    const sources = await ctx.runQuery(internal.health.sources, {});
+    const hermesWaiting = await ctx.runQuery(internal.askAi.waiting, {});
     return {
+      sources,
+      hermesWaiting,
       health: health.map(h => ({
         app: h.app,
         ok: h.ok,

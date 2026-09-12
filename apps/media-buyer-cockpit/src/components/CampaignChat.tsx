@@ -181,9 +181,9 @@ export function CampaignChat({
       </div>
 
       <p className="mt-1.5 text-[11px] text-muted-foreground">
-        Messages go to Aziz in Slack with this campaign's spend, leads, CPL
-        and days live attached. Every message shows whether it has been picked
-        up, and every change made here is logged above with whether it worked.
+        Messages go to Aziz in Slack with this campaign's spend, leads, CPL and
+        days live attached. Every message shows whether it has been picked up,
+        and every change made here is logged above with whether it worked.
       </p>
     </div>
   );

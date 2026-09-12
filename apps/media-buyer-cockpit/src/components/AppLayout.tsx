@@ -1,10 +1,14 @@
+import { useMutation } from "convex/react";
 import { Outlet } from "react-router";
+import { api } from "../../convex/_generated/api";
 import { AppSidebar } from "./AppSidebar";
 import { HermesChat } from "./HermesChat";
+import { RouteErrorBoundary } from "./RouteErrorBoundary";
 import { ThemeToggle } from "./ThemeToggle";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "./ui/sidebar";
 
 export function AppLayout() {
+  const report = useMutation(api.issues.report);
   return (
     <SidebarProvider>
       <AppSidebar />
@@ -16,7 +20,9 @@ export function AppLayout() {
           </div>
         </header>
         <main className="flex-1 p-4 lg:p-6">
-          <Outlet />
+          <RouteErrorBoundary report={r => report(r)}>
+            <Outlet />
+          </RouteErrorBoundary>
         </main>
         <HermesChat />
       </SidebarInset>

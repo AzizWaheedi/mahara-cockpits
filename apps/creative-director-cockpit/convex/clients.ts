@@ -505,6 +505,8 @@ export const queueAction = mutation({
         "comment",
         "complete",
         "videoRequest",
+        // A screen that crashed reports itself; Hermes gets the fix job.
+        "issue",
         // Planning: put a dated script request on the creative board, or move
         // an existing card to another day. [aziz, 2026-09-08]
         "planScript",
@@ -551,20 +553,52 @@ export const outbox = query({
 });
 
 /** Drained by the sandbox bridge on each sync. */
+const CLAIM_TTL_MS = 10 * 60_000;
+/** Minutes to wait before each retry; the last failure is final. */
+const BACKOFF_MIN = [1, 5, 15, 60, 240];
+
 export const outboxPending = query({
   args: {},
   returns: v.any(),
   handler: async ctx => {
-    const rows = await ctx.db
-      .query("creativeOutbox")
-      .withIndex("by_state", q => q.eq("state", "pending"))
-      .collect();
+    const now = Date.now();
+    const pending = (
+      await ctx.db
+        .query("creativeOutbox")
+        .withIndex("by_state", q => q.eq("state", "pending"))
+        .collect()
+    ).filter(r => (r.nextTryAt ?? 0) <= now);
+    // A claim nobody settled in ten minutes (a drain that died) is free again.
+    const stale = (
+      await ctx.db
+        .query("creativeOutbox")
+        .withIndex("by_state", q => q.eq("state", "sending"))
+        .collect()
+    ).filter(r => now - (r.claimedAt ?? 0) > CLAIM_TTL_MS);
+    const rows = [...pending, ...stale].slice(0, 50);
     return rows.map(r => ({
       id: r._id,
       kind: r.kind,
       taskId: r.taskId,
       payload: r.payload,
     }));
+  },
+});
+
+/** The drain takes the row. False if another drain already has it. */
+export const outboxClaim = mutation({
+  args: { id: v.id("creativeOutbox") },
+  returns: v.boolean(),
+  handler: async (ctx, { id }) => {
+    const row = await ctx.db.get(id);
+    if (!row || row.state === "done" || row.state === "failed") return false;
+    if (
+      row.state === "sending" &&
+      Date.now() - (row.claimedAt ?? 0) < CLAIM_TTL_MS
+    )
+      return false;
+    await ctx.db.patch(id, { state: "sending", claimedAt: Date.now() });
+    return true;
   },
 });
 
@@ -576,10 +610,24 @@ export const outboxSettle = mutation({
   },
   returns: v.null(),
   handler: async (ctx, { id, ok, result }) => {
+    const row = await ctx.db.get(id);
+    if (!row) return null;
+    if (ok) {
+      await ctx.db.patch(id, { state: "done", result, settledAt: Date.now() });
+      return null;
+    }
+    // Retry with growing gaps; the last failure stays for a person to read.
+    const attempts = (row.attempts ?? 0) + 1;
+    const final = attempts >= BACKOFF_MIN.length;
     await ctx.db.patch(id, {
-      state: ok ? "done" : "failed",
+      state: final ? "failed" : "pending",
       result,
-      settledAt: Date.now(),
+      attempts,
+      claimedAt: undefined,
+      nextTryAt: final
+        ? undefined
+        : Date.now() + BACKOFF_MIN[attempts - 1] * 60_000,
+      settledAt: final ? Date.now() : undefined,
     });
     return null;
   },

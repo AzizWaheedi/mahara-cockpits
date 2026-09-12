@@ -6,6 +6,7 @@ import {
   clientDataFor,
   readClientData,
 } from "./clientData";
+import { flush } from "./health";
 import { CLIENTS_LIST, CONTENT_LIST, CREATIVE_LIST, VIDEO_LIST } from "./sync";
 import { callTool, googleAccessToken, graph, unwrap } from "./tools";
 
@@ -971,6 +972,7 @@ export const runFanout = internalAction({
     } catch (e) {
       comms = `FAILED ${String(e).slice(0, 200)}`;
     }
+    await flush(ctx);
     return { drains, creative, csm, comms };
   },
 });

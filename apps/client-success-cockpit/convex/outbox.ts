@@ -6,14 +6,43 @@ import { internalMutation, internalQuery } from "./_generated/server";
  * ClickUp writes with its own credentials, then calls `markSent`. The app therefore
  * never needs an outbound integration connection of its own.
  */
+const CLAIM_TTL_MS = 10 * 60_000;
+/** Minutes to wait before each retry; after the last one the row is left with its error. */
+const BACKOFF_MIN = [1, 5, 15, 60, 240];
+
 export const pending = internalQuery({
   args: {},
   returns: v.any(),
-  handler: async ctx =>
-    await ctx.db
-      .query("outbox")
-      .withIndex("by_sentAt", q => q.eq("sentAt", undefined))
-      .take(50),
+  handler: async ctx => {
+    const now = Date.now();
+    return (
+      await ctx.db
+        .query("outbox")
+        .withIndex("by_sentAt", q => q.eq("sentAt", undefined))
+        .take(200)
+    )
+      .filter(
+        r =>
+          !r.gaveUpAt &&
+          (r.nextTryAt ?? 0) <= now &&
+          (!r.claimedAt || now - r.claimedAt > CLAIM_TTL_MS),
+      )
+      .slice(0, 50);
+  },
+});
+
+/** The drain takes the row. False if another drain already has it. */
+export const markSending = internalMutation({
+  args: { id: v.id("outbox") },
+  returns: v.boolean(),
+  handler: async (ctx, { id }) => {
+    const row = await ctx.db.get(id);
+    if (!row || row.sentAt || row.gaveUpAt) return false;
+    if (row.claimedAt && Date.now() - row.claimedAt < CLAIM_TTL_MS)
+      return false;
+    await ctx.db.patch(id, { claimedAt: Date.now() });
+    return true;
+  },
 });
 
 export const markSent = internalMutation({
@@ -26,10 +55,24 @@ export const markSent = internalMutation({
   handler: async (ctx, { id, resultUrl, error }) => {
     const row = await ctx.db.get(id);
     if (!row) return null;
+    if (error) {
+      // Retry with growing gaps; give up after the last one and keep the error.
+      const attempts = (row.attempts ?? 0) + 1;
+      const wait = BACKOFF_MIN[Math.min(attempts, BACKOFF_MIN.length) - 1];
+      await ctx.db.patch(id, {
+        error,
+        attempts,
+        claimedAt: undefined,
+        nextTryAt: Date.now() + wait * 60_000,
+        gaveUpAt: attempts >= BACKOFF_MIN.length ? Date.now() : undefined,
+      });
+      return null;
+    }
     await ctx.db.patch(id, {
-      sentAt: error ? undefined : Date.now(),
-      error,
+      sentAt: Date.now(),
+      error: undefined,
       resultUrl,
+      claimedAt: undefined,
     });
     if (!error && row.decisionId) {
       await ctx.db.patch(row.decisionId, {
