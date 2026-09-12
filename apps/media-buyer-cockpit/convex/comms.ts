@@ -101,7 +101,7 @@ function norm(s: unknown): string {
 }
 
 /** Match free text to a client by name: exact containment, longest unique wins. */
-function matchClient(text: string, names: string[]): string | undefined {
+export function matchClient(text: string, names: string[]): string | undefined {
   const blob = norm(text);
   const hits = names.filter(n => norm(n).length >= 4 && blob.includes(norm(n)));
   if (hits.length === 0) return undefined;
@@ -113,7 +113,7 @@ function matchClient(text: string, names: string[]): string | undefined {
 
 // --- Google Calendar ------------------------------------------------------------
 
-async function calendarEvents(calendarId: string, token: string) {
+export async function calendarEvents(calendarId: string, token: string) {
   const timeMin = new Date(Date.now() - 7 * 86400_000).toISOString();
   const timeMax = new Date(Date.now() + 21 * 86400_000).toISOString();
   const params = new URLSearchParams({
@@ -153,6 +153,10 @@ async function calendarEvents(calendarId: string, token: string) {
       attendees: ((e.attendees ?? []) as Any[])
         .map(a => String(a.displayName ?? a.email ?? ""))
         .filter(Boolean),
+      /** Emails decide client vs team; dropped before the row is stored. */
+      emails: ((e.attendees ?? []) as Any[])
+        .map(a => String(a.email ?? "").toLowerCase())
+        .filter(Boolean) as string[],
       description: e.description
         ? String(e.description).slice(0, 500)
         : undefined,
@@ -261,6 +265,7 @@ async function whatsappThreads(token: string, names: string[]) {
       }));
     out.push({
       chatId: id,
+      source: "whapi",
       name,
       isGroup: chat.isGroup,
       clientName: groupOwner.get(id) ?? matchClient(name, names),
@@ -370,7 +375,8 @@ async function ghlThreads(token: string, names: string[]) {
   const convos: Any[] = (d?.conversations ?? []).filter((c: Any) => {
     const type = String(c.lastMessageType ?? c.type ?? "").toUpperCase();
     const at = Number(c.lastMessageDate ?? 0);
-    return type.includes("WHATSAPP") && at >= since;
+    // SMS rides the same CRM door as WhatsApp, so it is read and answered here too.
+    return (type.includes("WHATSAPP") || type.includes("SMS")) && at >= since;
   });
   const now = Date.now();
   const out: Any[] = [];
@@ -434,6 +440,9 @@ async function ghlThreads(token: string, names: string[]) {
       }));
     out.push({
       chatId: id,
+      source: "ghl",
+      contactId: c.contactId ? String(c.contactId) : undefined,
+      channel: channel.includes("sms") ? "sms" : "whatsapp",
       name: channel ? `${name} · ${channel}` : name,
       isGroup: false,
       clientName: matchClient(name, names),
@@ -464,13 +473,12 @@ export const feedComms = internalAction({
     // the per-role calendar / WHAPI settings below are only used if present.
     const mahara = process.env.MAHARA_GHL_TOKEN;
     const covered = { calendar: false, whatsapp: false };
+    // Shared client calendars (GHL) go to every cockpit; each person's own
+    // Google Calendar is added per cockpit below.
+    const ghlRows: Any[] = [];
     if (mahara) {
       try {
-        const rows = await ghlCalendarEvents(mahara, names);
-        for (const app of ["csm", "creative"] as const)
-          report[`${app}.calendar`] = await bridge(app, "storeCalendar", {
-            rows,
-          });
+        ghlRows.push(...(await ghlCalendarEvents(mahara, names)));
         covered.calendar = true;
       } catch (e) {
         report["mahara.calendar"] = `FAILED ${String(e).slice(0, 160)}`;
@@ -494,9 +502,39 @@ export const feedComms = internalAction({
           report[`${app}.whatsapp`] = { threads: stored };
         }
         covered.whatsapp = true;
+        try {
+          report["drafts"] = await ctx.runAction(internal.replyDrafts.queue, {
+            threads: threads
+              .filter((t: Any) => t.waitingSince)
+              .map((t: Any) => ({
+                chatId: t.chatId,
+                name: t.name,
+                clientName: t.clientName,
+                lastAt: t.lastAt,
+                recent: t.recent,
+              })),
+          });
+        } catch (e) {
+          report["drafts"] = `FAILED ${String(e).slice(0, 160)}`;
+        }
       } catch (e) {
         report["mahara.conversations"] = `FAILED ${String(e).slice(0, 160)}`;
       }
+    }
+
+    // The media buyer cockpit's own calendar view.
+    try {
+      const own: Any = await ctx.runAction(internal.personalCalendars.rowsFor, {
+        app: "mb",
+        names,
+      });
+      report["mb.calendar"] = await ctx.runMutation(
+        internal.personalCalendars.store,
+        { rows: [...ghlRows, ...own.rows] },
+      );
+      if (own.statuses.length) report["mb.calendars"] = own.statuses;
+    } catch (e) {
+      report["mb.calendar"] = `FAILED ${String(e).slice(0, 160)}`;
     }
 
     for (const app of ["csm", "creative"] as const) {
@@ -505,36 +543,47 @@ export const feedComms = internalAction({
         .split(",")
         .map(s => s.trim())
         .filter(Boolean);
+      const rows: Any[] = [...ghlRows];
       if (calendarIds.length) {
         try {
           const token = await googleAccessToken();
-          if (covered.calendar) {
-            report[`${app}.calendar.google`] =
-              "skipped: Mahara GHL calendars in use";
-            throw new Error("covered");
-          }
-          const rows: Any[] = [];
           for (const id of calendarIds) {
             try {
-              rows.push(...(await calendarEvents(id, token)));
+              for (const r of await calendarEvents(id, token))
+                rows.push({
+                  ...r,
+                  emails: undefined,
+                  clientName: matchClient(
+                    `${r.title} ${r.attendees.join(" ")} ${r.description ?? ""}`,
+                    names,
+                  ),
+                });
             } catch (e) {
               report[`${app}.calendar.${id}`] =
                 `FAILED ${String(e).slice(0, 160)}`;
             }
           }
-          for (const r of rows)
-            r.clientName = matchClient(
-              `${r.title} ${r.attendees.join(" ")} ${r.description ?? ""}`,
-              names,
-            );
-          report[`${app}.calendar`] = await bridge(app, "storeCalendar", {
-            rows,
-          });
         } catch (e) {
-          report[`${app}.calendar`] = `FAILED ${String(e).slice(0, 160)}`;
+          report[`${app}.calendar.google`] =
+            `FAILED ${String(e).slice(0, 160)}`;
         }
-      } else if (!covered.calendar) {
-        report[`${app}.calendar`] = "not configured";
+      }
+      try {
+        const own: Any = await ctx.runAction(
+          internal.personalCalendars.rowsFor,
+          { app, names },
+        );
+        rows.push(...own.rows);
+        if (own.statuses.length) report[`${app}.calendars`] = own.statuses;
+      } catch (e) {
+        report[`${app}.calendars`] = `FAILED ${String(e).slice(0, 160)}`;
+      }
+      try {
+        report[`${app}.calendar`] = rows.length
+          ? await bridge(app, "storeCalendar", { rows })
+          : "not configured";
+      } catch (e) {
+        report[`${app}.calendar`] = `FAILED ${String(e).slice(0, 160)}`;
       }
 
       const waToken = process.env[`${prefix}_WHAPI_TOKEN`];

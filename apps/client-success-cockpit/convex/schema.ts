@@ -429,8 +429,22 @@ const schema = defineSchema({
     description: v.optional(v.string()),
     htmlLink: v.optional(v.string()),
     clientName: v.optional(v.string()),
+    /** Set on a person's own calendar events; shared client calendars have none. */
+    owner: v.optional(v.string()),
+    /** client | team | other */
+    kind: v.optional(v.string()),
     syncedAt: v.number(),
   }).index("by_start", ["start"]),
+  /** A person's own Google Calendar, shared with the cockpit's service account. */
+  calendarLinks: defineTable({
+    owner: v.string(),
+    calendarId: v.string(),
+    status: v.string(),
+    note: v.optional(v.string()),
+    events: v.optional(v.number()),
+    checkedAt: v.optional(v.number()),
+    createdAt: v.number(),
+  }).index("by_owner", ["owner"]),
   /** WhatsApp threads on this role's business number: groups and private chats. */
   waThreads: defineTable({
     chatId: v.string(),
@@ -442,6 +456,15 @@ const schema = defineSchema({
     waitingSince: v.optional(v.number()),
     silentDays: v.optional(v.number()),
     unread: v.optional(v.number()),
+    /** ghl | whapi, and the GHL contact to reply to. */
+    source: v.optional(v.string()),
+    contactId: v.optional(v.string()),
+    /** whatsapp | sms: the CRM sends the reply on the same channel. */
+    channel: v.optional(v.string()),
+    /** Hermes's recommended reply for the latest client message. */
+    draft: v.optional(v.string()),
+    draftAt: v.optional(v.number()),
+    repliedAt: v.optional(v.number()),
     recent: v.array(v.any()),
     error: v.optional(v.string()),
     syncedAt: v.number(),

@@ -11,6 +11,7 @@ import { LostLeads } from "@/components/LostLeads";
 import { Onboardings } from "@/components/Onboardings";
 import { RangePicker } from "@/components/RangePicker";
 import { StatusToggle } from "@/components/StatusToggle";
+import { TodayMeetings } from "@/components/TodayMeetings";
 import { TrackingIssues } from "@/components/TrackingIssues";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1774,6 +1775,8 @@ function Cockpit({ view }: { view: View }) {
             )}
           </section>
         )}
+
+        {(view === "tasks" || view === "sod") && <TodayMeetings />}
 
         {view === "tasks" && <Onboardings />}
 

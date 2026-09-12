@@ -76,6 +76,13 @@ export async function runBridge(
     case "storeCalendar":
       return await ctx.runMutation(internal.comms.storeCalendar, {
         rows: args.rows ?? [],
+        append: Boolean(args.append),
+      });
+    case "calendarLinks":
+      return await ctx.runQuery(internal.comms.calendarLinks, {});
+    case "calendarLinkStatus":
+      return await ctx.runMutation(internal.comms.calendarLinkStatus, {
+        statuses: args.statuses ?? [],
       });
     case "chatPending":
       return await ctx.runQuery(internal.hermes.pending, {});
@@ -93,6 +100,17 @@ export async function runBridge(
         id: args.id,
         text: args.text,
         error: args.error,
+      });
+    case "storeReplyDraft":
+      return await ctx.runMutation(internal.comms.storeReplyDraft, {
+        chatId: String(args.chatId),
+        draft: String(args.draft),
+        draftAt: Number(args.draftAt ?? Date.now()),
+      });
+    case "markReplied":
+      return await ctx.runMutation(internal.comms.markReplied, {
+        chatId: String(args.chatId),
+        text: String(args.text ?? ""),
       });
     case "smoke":
       return await ctx.runQuery(internal.smoke.run, {});

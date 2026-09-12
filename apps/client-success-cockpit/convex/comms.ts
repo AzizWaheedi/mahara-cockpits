@@ -1,17 +1,19 @@
 import { v } from "convex/values";
 import type { QueryCtx } from "./_generated/server";
-import { internalMutation } from "./_generated/server";
-import { authenticatedQuery } from "./functions";
-import { assertRole } from "./roles";
+import { internalMutation, internalQuery } from "./_generated/server";
+import { authenticatedMutation, authenticatedQuery } from "./functions";
+import { assertRole, userEmail } from "./roles";
 
 /** Replace the calendar wholesale. An empty read keeps what is there. */
 export const storeCalendar = internalMutation({
-  args: { rows: v.array(v.any()) },
+  args: { rows: v.array(v.any()), append: v.optional(v.boolean()) },
   returns: v.object({ events: v.number() }),
-  handler: async (ctx, { rows }) => {
-    if (rows.length === 0) return { events: 0 };
+  handler: async (ctx, { rows, append }) => {
+    if (rows.length === 0 && !append) return { events: 0 };
+    // With `append`, only the owners in these rows are replaced.
+    const owners = new Set(rows.map(r => r.owner ?? ""));
     for (const old of await ctx.db.query("calendarEvents").collect())
-      await ctx.db.delete(old._id);
+      if (!append || owners.has(old.owner ?? "")) await ctx.db.delete(old._id);
     const now = Date.now();
     for (const r of rows)
       await ctx.db.insert("calendarEvents", { ...r, syncedAt: now });
@@ -44,6 +46,10 @@ export const storeWhatsapp = internalMutation({
   },
 });
 
+/** The cockpit's Google service account: share a calendar with it and the cockpit can read it. */
+const SERVICE_ACCOUNT =
+  "claude@studied-handler-508106-m5.iam.gserviceaccount.com";
+
 const kuwaitDay = (ms: number) =>
   new Date(ms + 3 * 3600_000).toISOString().slice(0, 10);
 
@@ -59,10 +65,18 @@ export async function buildOverview(
   smoke: boolean,
 ): Promise<any> {
   if (!smoke) await assertRole(ctx, "csm");
-  const events = await ctx.db
-    .query("calendarEvents")
-    .withIndex("by_start")
-    .collect();
+  const who = smoke ? "" : await userEmail(ctx);
+  const myLink =
+    (
+      await ctx.db
+        .query("calendarLinks")
+        .withIndex("by_owner", q => q.eq("owner", who))
+        .collect()
+    )[0] ?? null;
+  // Shared client calendars for everyone, personal calendars only to their owner.
+  const events = (
+    await ctx.db.query("calendarEvents").withIndex("by_start").collect()
+  ).filter(e => !e.owner || e.owner === who);
   const threads = await ctx.db.query("waThreads").collect();
   const now = Date.now();
   const todayKey = kuwaitDay(now);
@@ -99,7 +113,153 @@ export async function buildOverview(
     nextCall: [...nextCall.values()].sort((a, b) => startMs(a) - startMs(b)),
     threads,
     calendarConfigured: events.length > 0,
+    myCalendar: myLink,
+    saEmail: SERVICE_ACCOUNT,
     whatsappConfigured: threads.length > 0,
     syncedAt: syncedAt || undefined,
   };
 }
+
+// --- Replies -----------------------------------------------------------------------
+
+/** Hermes's recommended reply for a thread, from the media buyer backend. */
+export const storeReplyDraft = internalMutation({
+  args: { chatId: v.string(), draft: v.string(), draftAt: v.number() },
+  returns: v.null(),
+  handler: async (ctx, { chatId, draft, draftAt }) => {
+    const t = (await ctx.db.query("waThreads").collect()).find(
+      x => x.chatId === chatId,
+    );
+    if (t) await ctx.db.patch(t._id, { draft, draftAt });
+    return null;
+  },
+});
+
+/** A reply went out: the thread is no longer waiting on us. */
+export const markReplied = internalMutation({
+  args: { chatId: v.string(), text: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { chatId, text }) => {
+    const t = (await ctx.db.query("waThreads").collect()).find(
+      x => x.chatId === chatId,
+    );
+    if (!t) return null;
+    const now = Date.now();
+    await ctx.db.patch(t._id, {
+      lastAt: now,
+      lastFromUs: true,
+      waitingSince: undefined,
+      silentDays: 0,
+      repliedAt: now,
+      draft: undefined,
+      recent: [
+        ...(t.recent ?? []).slice(-11),
+        { at: now, fromMe: true, who: "Mahara", text },
+      ],
+    });
+    return null;
+  },
+});
+
+/** Send a reply from the Meetings & messages page. Leaves within a minute through the media buyer backend. */
+export const sendReply = authenticatedMutation({
+  args: { chatId: v.string(), text: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { chatId, text }) => {
+    await assertRole(ctx, "csm");
+    const t = (await ctx.db.query("waThreads").collect()).find(
+      x => x.chatId === chatId,
+    );
+    if (!t) throw new Error("thread not found");
+    await ctx.db.insert("outbox", {
+      kind: "wa_send",
+      clientTaskId: chatId,
+      clientName: t.name,
+      action: "WhatsApp reply",
+      evidence: text.trim(),
+      value: `${t.source ?? "ghl"}/${t.channel ?? "whatsapp"}`,
+      note: t.contactId,
+      createdAt: Date.now(),
+    });
+    await ctx.db.patch(t._id, { repliedAt: Date.now() });
+    return null;
+  },
+});
+
+// --- Your own Google Calendar ---------------------------------------------------------
+
+/**
+ * Aziz, 2026-09-12: every cockpit should let people connect their Google
+ * Calendar so it tells them today's meetings, team and client alike. The
+ * person shares their calendar with the service account and types their
+ * Google email here; the media buyer backend reads it within a minute.
+ */
+export const linkCalendar = authenticatedMutation({
+  args: { calendarId: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { calendarId }) => {
+    await assertRole(ctx, "csm");
+    const who = await userEmail(ctx);
+    const id = calendarId.trim().toLowerCase();
+    if (!id.includes("@"))
+      throw new Error(
+        "Enter the Google account email the calendar belongs to.",
+      );
+    for (const l of await ctx.db
+      .query("calendarLinks")
+      .withIndex("by_owner", q => q.eq("owner", who))
+      .collect())
+      await ctx.db.delete(l._id);
+    await ctx.db.insert("calendarLinks", {
+      owner: who,
+      calendarId: id,
+      status: "pending",
+      createdAt: Date.now(),
+    });
+    return null;
+  },
+});
+
+export const unlinkCalendar = authenticatedMutation({
+  args: {},
+  returns: v.null(),
+  handler: async ctx => {
+    await assertRole(ctx, "csm");
+    const who = await userEmail(ctx);
+    for (const l of await ctx.db
+      .query("calendarLinks")
+      .withIndex("by_owner", q => q.eq("owner", who))
+      .collect())
+      await ctx.db.delete(l._id);
+    for (const e of await ctx.db.query("calendarEvents").collect())
+      if (e.owner === who) await ctx.db.delete(e._id);
+    return null;
+  },
+});
+
+/** Bridge: every linked calendar, for the media buyer backend to read. */
+export const calendarLinks = internalQuery({
+  args: {},
+  returns: v.array(v.any()),
+  handler: async ctx => await ctx.db.query("calendarLinks").collect(),
+});
+
+/** Bridge: what the read found for each link. */
+export const calendarLinkStatus = internalMutation({
+  args: { statuses: v.array(v.any()) },
+  returns: v.null(),
+  handler: async (ctx, { statuses }) => {
+    const all = await ctx.db.query("calendarLinks").collect();
+    for (const st of statuses) {
+      const l = all.find(x => x.calendarId === st.calendarId);
+      if (!l) continue;
+      await ctx.db.patch(l._id, {
+        status: String(st.status),
+        note: st.note ? String(st.note) : undefined,
+        events: Number(st.events ?? 0),
+        checkedAt: Date.now(),
+      });
+    }
+    return null;
+  },
+});

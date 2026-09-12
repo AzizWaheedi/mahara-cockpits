@@ -58,7 +58,9 @@ crons.interval(
 /** Writes queued in the other two cockpits reach ClickUp within minutes. */
 crons.interval(
   "drain the other cockpits' outboxes",
-  { minutes: 5 },
+  // Every minute since 2026-09-12: WhatsApp replies sent from the cockpits
+  // should leave within a minute, not five.
+  { minutes: 1 },
   internal.outboxDrains.drainAll,
   {},
 );

@@ -1,4 +1,4 @@
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { useState } from "react";
 import { api } from "../../convex/_generated/api";
 
@@ -33,8 +33,120 @@ const ago = (ms: number) => {
  * per client, and every WhatsApp thread with a client, unanswered ones first.
  * Read-only: the app never sends a message on its own.
  */
+const KIND_LABEL: Record<string, string> = {
+  client: "Client",
+  team: "Team",
+  other: "",
+};
+const KIND_CLASS: Record<string, string> = {
+  client: "bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-200",
+  team: "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-200",
+  other: "bg-muted text-muted-foreground",
+};
+
+/**
+ * Connect your own Google Calendar: share it with the cockpit's service
+ * account, type the Google email, done. Checked within a minute.
+ */
+function CalendarLink({ link, saEmail }: { link: Any; saEmail: string }) {
+  const linkCalendar = useMutation(api.comms.linkCalendar);
+  const unlinkCalendar = useMutation(api.comms.unlinkCalendar);
+  const [email, setEmail] = useState("");
+  const [open, setOpen] = useState(false);
+  const [err, setErr] = useState("");
+  if (link) {
+    const status =
+      link.status === "ok"
+        ? `connected, ${link.events ?? 0} event${link.events === 1 ? "" : "s"} in view`
+        : link.status === "pending"
+          ? "checking, under a minute"
+          : "not readable yet";
+    return (
+      <div className="text-[12px] text-muted-foreground">
+        <span className="font-semibold text-foreground">{link.calendarId}</span>{" "}
+        · {status}{" "}
+        <button
+          type="button"
+          className="underline"
+          onClick={() => unlinkCalendar({})}
+        >
+          disconnect
+        </button>
+        {link.status === "error" && link.note ? (
+          <p className="mt-1 text-amber-700 dark:text-amber-300">{link.note}</p>
+        ) : null}
+      </div>
+    );
+  }
+  if (!open)
+    return (
+      <button
+        type="button"
+        className="text-[12px] text-primary underline"
+        onClick={() => setOpen(true)}
+      >
+        Connect your Google Calendar
+      </button>
+    );
+  return (
+    <form
+      className="mt-1 max-w-xl rounded-md border bg-muted/30 p-3 text-[12px]"
+      onSubmit={async e => {
+        e.preventDefault();
+        setErr("");
+        try {
+          await linkCalendar({ calendarId: email });
+          setOpen(false);
+        } catch (x) {
+          setErr(String((x as Error).message ?? x));
+        }
+      }}
+    >
+      <ol className="list-decimal space-y-1 pl-4 text-muted-foreground">
+        <li>
+          In Google Calendar, open your calendar's settings, then "Share with
+          specific people or groups", and add{" "}
+          <code className="select-all rounded bg-background px-1">
+            {saEmail}
+          </code>{" "}
+          with "See all event details".
+        </li>
+        <li>
+          Type the Google account email that calendar belongs to and connect.
+        </li>
+      </ol>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <input
+          value={email}
+          onChange={e => setEmail(e.target.value)}
+          placeholder="you@maharamedia.com"
+          className="w-64 rounded-md border bg-background px-2 py-1 text-[13px]"
+        />
+        <button
+          type="submit"
+          disabled={!email.includes("@")}
+          className="rounded-md bg-primary px-3 py-1 text-[12px] font-semibold text-primary-foreground disabled:opacity-50"
+        >
+          Connect
+        </button>
+        <button
+          type="button"
+          className="text-muted-foreground underline"
+          onClick={() => setOpen(false)}
+        >
+          Cancel
+        </button>
+        {err ? <span className="text-red-600">{err}</span> : null}
+      </div>
+    </form>
+  );
+}
+
 export function MeetingsPage() {
   const data = useQuery(api.comms.overview, {});
+  const sendReply = useMutation(api.comms.sendReply);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [sending, setSending] = useState<Record<string, boolean>>({});
   const [openThread, setOpenThread] = useState<string | null>(null);
   if (!data) return <p className="text-sm text-muted-foreground">Loading…</p>;
   const {
@@ -45,8 +157,20 @@ export function MeetingsPage() {
     calendarConfigured,
     whatsappConfigured,
     syncedAt,
+    myCalendar,
+    saEmail,
   } = data as Any;
-  const waiting = (threads as Any[]).filter(t => t.waitingSince);
+  const todayCounts = (today as Any[]).reduce(
+    (acc: Record<string, number>, e) => {
+      const k = e.kind ?? (e.clientName ? "client" : "other");
+      acc[k] = (acc[k] ?? 0) + 1;
+      return acc;
+    },
+    {},
+  );
+  const waiting = (threads as Any[]).filter(
+    t => t.waitingSince && !t.repliedAt,
+  );
   const quiet = (threads as Any[]).filter(
     t => !t.waitingSince && (t.silentDays ?? 0) >= 3 && t.clientName,
   );
@@ -59,15 +183,29 @@ export function MeetingsPage() {
         </h1>
         <p className="mt-1 text-[13px] text-muted-foreground">
           {syncedAt ? `Refreshed ${ago(syncedAt)} ago. ` : ""}
-          {!calendarConfigured ? "Calendar not connected yet. " : ""}
+          {!calendarConfigured ? "No calendar events yet. " : ""}
           {!whatsappConfigured ? "WhatsApp not connected yet." : ""}
         </p>
       </header>
 
       <section className="rounded-xl border bg-card p-4 shadow-sm">
-        <h2 className="mb-2 text-[12px] font-bold uppercase tracking-widest text-teal-600">
-          Today
-        </h2>
+        <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-[12px] font-bold uppercase tracking-widest text-teal-600">
+            Today
+            {today.length ? (
+              <span className="ml-2 font-medium normal-case tracking-normal text-muted-foreground">
+                {[
+                  todayCounts.client ? `${todayCounts.client} client` : "",
+                  todayCounts.team ? `${todayCounts.team} team` : "",
+                  todayCounts.other ? `${todayCounts.other} other` : "",
+                ]
+                  .filter(Boolean)
+                  .join(", ")}
+              </span>
+            ) : null}
+          </h2>
+          <CalendarLink link={myCalendar} saEmail={saEmail} />
+        </div>
         {today.length === 0 ? (
           <p className="text-[13px] text-muted-foreground">
             Nothing in the calendar today.
@@ -83,6 +221,16 @@ export function MeetingsPage() {
                   {e.allDay ? "all day" : clock(e.start)}
                 </span>
                 <span className="font-semibold">{e.title}</span>
+                {(() => {
+                  const k = e.kind ?? (e.clientName ? "client" : "other");
+                  return KIND_LABEL[k] ? (
+                    <span
+                      className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${KIND_CLASS[k]}`}
+                    >
+                      {KIND_LABEL[k]}
+                    </span>
+                  ) : null;
+                })()}
                 {e.clientName ? (
                   <span className="rounded bg-muted px-1.5 py-0.5 text-[12px]">
                     {e.clientName}
@@ -144,26 +292,68 @@ export function MeetingsPage() {
           </p>
         ) : (
           <ul className="divide-y">
-            {waiting.map(t => (
-              <li key={t.chatId} className="py-2 text-[13px]">
-                <div className="flex flex-wrap items-baseline gap-2">
-                  <span className="font-semibold">{t.name}</span>
-                  {t.clientName ? (
-                    <span className="rounded bg-muted px-1.5 py-0.5 text-[12px]">
-                      {t.clientName}
+            {waiting.map(t => {
+              const text = drafts[t.chatId] ?? t.draft ?? "";
+              return (
+                <li key={t.chatId} className="py-2 text-[13px]">
+                  <div className="flex flex-wrap items-baseline gap-2">
+                    <span className="font-semibold">{t.name}</span>
+                    {t.clientName ? (
+                      <span className="rounded bg-muted px-1.5 py-0.5 text-[12px]">
+                        {t.clientName}
+                      </span>
+                    ) : null}
+                    <span className="ml-auto text-[12px] text-muted-foreground">
+                      waiting {ago(t.waitingSince)}
                     </span>
-                  ) : null}
-                  <span className="ml-auto text-[12px] text-muted-foreground">
-                    waiting {ago(t.waitingSince)}
-                  </span>
-                </div>
-                <p className="mt-0.5 text-muted-foreground">
-                  {t.recent?.length
-                    ? `${t.recent[t.recent.length - 1].who}: ${t.recent[t.recent.length - 1].text}`
-                    : ""}
-                </p>
-              </li>
-            ))}
+                  </div>
+                  <p className="mt-0.5 text-muted-foreground">
+                    {t.recent?.length
+                      ? `${t.recent[t.recent.length - 1].who}: ${t.recent[t.recent.length - 1].text}`
+                      : ""}
+                  </p>
+                  <div className="mt-2 rounded-md border bg-muted/30 p-2">
+                    <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      Recommended reply
+                      {t.draft ? ", from the communication SOP" : ""}
+                    </p>
+                    <textarea
+                      value={text}
+                      onChange={e =>
+                        setDrafts(d => ({ ...d, [t.chatId]: e.target.value }))
+                      }
+                      rows={3}
+                      placeholder={
+                        t.draft
+                          ? ""
+                          : "Hermes is drafting a reply from the SOP…"
+                      }
+                      className="w-full resize-y rounded-md border bg-background px-2 py-1.5 text-[13px]"
+                    />
+                    <div className="mt-1.5 flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={!text.trim() || sending[t.chatId]}
+                        onClick={async () => {
+                          setSending(x => ({ ...x, [t.chatId]: true }));
+                          try {
+                            await sendReply({ chatId: t.chatId, text });
+                          } finally {
+                            setSending(x => ({ ...x, [t.chatId]: false }));
+                          }
+                        }}
+                        className="rounded-md bg-primary px-3 py-1 text-[12px] font-semibold text-primary-foreground disabled:opacity-50"
+                      >
+                        {sending[t.chatId] ? "Sending…" : "Send on WhatsApp"}
+                      </button>
+                      <span className="text-[11px] text-muted-foreground">
+                        Edit it first if you want. It leaves within a minute.
+                      </span>
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>

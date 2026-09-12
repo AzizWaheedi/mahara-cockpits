@@ -272,7 +272,16 @@ export const run = internalAction({
         continue;
       }
       try {
-        if ((r.app as string) === "fix") {
+        if ((r.app as string) === "wadraft") {
+          // A recommended WhatsApp reply: store it and push it to the threads.
+          const [chatId, lastAt] = String(r.messageId).split("|");
+          if (text)
+            await ctx.runAction(internal.replyDrafts.deliver, {
+              chatId,
+              lastAt: Number(lastAt),
+              draft: text,
+            });
+        } else if ((r.app as string) === "fix") {
           // Hermes's report on a flagged error goes to Aziz, not to a thread.
           const res =
             typeof job.result === "string" ? safeParse(job.result) : job.result;

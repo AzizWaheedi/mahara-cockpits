@@ -379,3 +379,32 @@ export const ghlCalendarNames = internalAction({
     return out;
   },
 });
+
+/** Read a Google Doc as plain text (service account must have access). */
+export const docText = internalAction({
+  args: { docId: v.string() },
+  returns: v.any(),
+  handler: async (_ctx, { docId }) => {
+    const { googleAccessToken } = await import("./tools");
+    const token = await googleAccessToken();
+    const res = await fetch(
+      `https://docs.googleapis.com/v1/documents/${docId}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    const doc: Any = await res.json();
+    if (!res.ok) return { status: res.status, error: doc?.error?.message };
+    const lines: string[] = [];
+    for (const el of doc.body?.content ?? []) {
+      const t = (el.paragraph?.elements ?? [])
+        .map((e: Any) => e.textRun?.content ?? "")
+        .join("")
+        .trim();
+      if (t) lines.push(t);
+    }
+    return {
+      title: doc.title,
+      chars: lines.join("\n").length,
+      head: lines.slice(0, 40),
+    };
+  },
+});

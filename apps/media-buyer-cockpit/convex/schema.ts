@@ -840,6 +840,34 @@ const schema = defineSchema({
     text: v.string(),
     at: v.number(),
   }).index("by_signature", ["signature"]),
+  /** A person's own Google Calendar, shared with the service account. */
+  calendarLinks: defineTable({
+    owner: v.string(),
+    calendarId: v.string(),
+    status: v.string(),
+    note: v.optional(v.string()),
+    events: v.optional(v.number()),
+    checkedAt: v.optional(v.number()),
+    createdAt: v.number(),
+  }).index("by_owner", ["owner"]),
+  /** Shared client calendars plus every linked personal calendar, a week back and three ahead. */
+  calendarEvents: defineTable({
+    eventId: v.string(),
+    calendarId: v.string(),
+    title: v.string(),
+    start: v.string(),
+    end: v.string(),
+    allDay: v.boolean(),
+    location: v.optional(v.string()),
+    meetLink: v.optional(v.string()),
+    attendees: v.array(v.string()),
+    description: v.optional(v.string()),
+    htmlLink: v.optional(v.string()),
+    clientName: v.optional(v.string()),
+    owner: v.optional(v.string()),
+    kind: v.optional(v.string()),
+    syncedAt: v.number(),
+  }).index("by_start", ["start"]),
   /** The chat with Hermes: one thread per signed-in person. */
   hermesChat: defineTable({
     thread: v.string(),
@@ -886,6 +914,22 @@ const schema = defineSchema({
     perCall: v.optional(v.array(v.any())),
     at: v.number(),
   }),
+  /** Google Docs read for prompts (the Client Communication SOP), refreshed daily. */
+  docCache: defineTable({
+    docId: v.string(),
+    title: v.optional(v.string()),
+    text: v.string(),
+    at: v.number(),
+  }).index("by_doc", ["docId"]),
+  /** Hermes's recommended WhatsApp replies, one per thread per last message. */
+  replyDrafts: defineTable({
+    chatId: v.string(),
+    lastAt: v.number(),
+    jobId: v.optional(v.string()),
+    status: v.string(),
+    draft: v.optional(v.string()),
+    at: v.number(),
+  }).index("by_chat", ["chatId"]),
 });
 
 export default schema;

@@ -66,6 +66,80 @@ async function put(path: string, json_body: unknown): Promise<Any> {
   );
 }
 
+/**
+ * A WhatsApp reply sent from the Meetings & messages page. GHL threads go
+ * through the Mahara sub-account's conversations API, WHAPI threads through
+ * the channel. Both cockpits are told so the thread flips at once.
+ * [Aziz, 2026-09-12]
+ */
+async function sendWhatsapp(
+  chatId: string,
+  text: string,
+  source: string,
+  contactId: string,
+  channel = "whatsapp",
+): Promise<[boolean, string | undefined]> {
+  if (!text.trim()) return [false, "empty message"];
+  if (source === "ghl") {
+    const token = process.env.MAHARA_GHL_TOKEN;
+    if (!token) return [false, "MAHARA_GHL_TOKEN not set"];
+    if (!contactId) return [false, "no contact on this thread"];
+    const res = await fetch(
+      "https://services.leadconnectorhq.com/conversations/messages",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Version: "2021-04-15",
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        // SMS goes out the same door: the CRM picks the channel by type.
+        body: JSON.stringify({
+          type: channel === "sms" ? "SMS" : "WhatsApp",
+          contactId,
+          message: text,
+        }),
+      },
+    );
+    const json: Any = await res.json().catch(() => ({}));
+    if (!res.ok)
+      return [
+        false,
+        `GHL ${res.status}: ${String(json?.message ?? "").slice(0, 160)}`,
+      ];
+  } else {
+    const token = process.env.CSM_WHAPI_TOKEN;
+    if (!token) return [false, "CSM_WHAPI_TOKEN not set"];
+    const res = await fetch(
+      `${process.env.WHAPI_BASE_URL || "https://gate.whapi.cloud"}/messages/text`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({ to: chatId, body: text }),
+      },
+    );
+    const json: Any = await res.json().catch(() => ({}));
+    if (!res.ok)
+      return [
+        false,
+        `WHAPI ${res.status}: ${String(json?.message ?? json?.error ?? "").slice(0, 160)}`,
+      ];
+  }
+  for (const app of ["csm", "creative"] as const) {
+    try {
+      await bridge(app, "markReplied", { chatId, text });
+    } catch {
+      // the next feed flips the thread anyway
+    }
+  }
+  return [true, undefined];
+}
+
 async function bridge(
   app: "creative" | "csm",
   fn: string,
@@ -157,6 +231,17 @@ async function closeTask(taskId: string): Promise<[boolean, string]> {
 async function creativeItem(item: Any): Promise<[boolean, string]> {
   const { kind, taskId } = item;
   const data: Any = item.payload ?? {};
+  if (kind === "wa_send") {
+    const pl: Any = item.payload ?? {};
+    const [ok, err] = await sendWhatsapp(
+      String(pl.chatId ?? ""),
+      String(pl.text ?? ""),
+      String(pl.source ?? "ghl"),
+      String(pl.contactId ?? ""),
+      String(pl.channel ?? "whatsapp"),
+    );
+    return [ok, err ?? "sent"];
+  }
   if (kind === "comment" && taskId) {
     await comment(taskId, String(data.text ?? ""));
     return [true, "comment posted"];
@@ -235,6 +320,18 @@ async function csmRow(
 ): Promise<[string | undefined, string | undefined]> {
   const kind: string = row.kind;
   const taskId: string = row.clientTaskId ?? "";
+  if (kind === "wa_send") {
+    // value carries "source/channel", e.g. ghl/sms.
+    const [source, channel] = String(row.value ?? "ghl").split("/");
+    const [, err] = await sendWhatsapp(
+      String(row.clientTaskId ?? ""),
+      String(row.evidence ?? ""),
+      source || "ghl",
+      String(row.note ?? ""),
+      channel || "whatsapp",
+    );
+    return [undefined, err];
+  }
   if (kind === "report") {
     const fid = await fieldIdByName("Last report sent");
     if (!fid)
@@ -400,6 +497,15 @@ export const drainAll = internalAction({
         out[name] = `FAILED ${String(e).slice(0, 200)}`;
         console.error(`${name} outbox drain: ${String(e).slice(0, 300)}`);
       }
+    }
+    // Calendars linked in the last minute get their first read now.
+    try {
+      out.calendars = await ctx.runAction(
+        internal.personalCalendars.checkPending,
+        {},
+      );
+    } catch (e) {
+      out.calendars = `FAILED ${String(e).slice(0, 160)}`;
     }
     return out;
   },
