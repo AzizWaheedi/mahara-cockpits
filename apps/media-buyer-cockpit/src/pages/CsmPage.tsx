@@ -200,15 +200,15 @@ function IssueReporter({ page }: { page: string }) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
   return (
-    <div className="fixed bottom-4 right-4 z-50 w-[min(22rem,calc(100vw-2rem))]">
+    <div className="fixed bottom-4 left-4 z-30 w-[min(22rem,calc(100vw-2rem))] md:left-[calc(var(--sidebar-width,16rem)+1rem)]">
       {open ? (
         <div className="space-y-2 rounded-lg border bg-card p-3 shadow-lg">
           <div className="text-sm font-semibold">
             Something wrong on this screen?
           </div>
           <p className="text-xs text-muted-foreground">
-            Wrong client, wrong instruction, missing field — say it here and
-            It gets fixed.
+            Wrong client, wrong instruction, missing field — say it here and It
+            gets fixed.
           </p>
           <Textarea
             rows={3}
@@ -787,8 +787,8 @@ export function CsmPage() {
                         </Button>
                       </div>
                       <p className="text-[12px] text-muted-foreground">
-                        The cockpit drafts, you send. Nothing goes to the client from
-                        here.
+                        The cockpit drafts, you send. Nothing goes to the client
+                        from here.
                       </p>
                     </>
                   );

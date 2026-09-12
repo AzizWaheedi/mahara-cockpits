@@ -2402,7 +2402,8 @@ function Cockpit({ view }: { view: View }) {
       </div>
 
       {/* Report an issue — she can flag anything wrong on the screen without leaving it. */}
-      <div className="fixed bottom-5 right-5 z-50 print:hidden">
+      {/* Bottom left, clear of the Hermes chat at bottom right. */}
+      <div className="fixed bottom-5 left-4 z-30 print:hidden md:left-[calc(var(--sidebar-width,16rem)+1rem)]">
         {chatOpen ? (
           <div className="w-[330px] rounded-xl border bg-card shadow-xl">
             <div className="flex items-center justify-between border-b px-3 py-2">
