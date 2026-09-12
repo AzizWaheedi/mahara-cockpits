@@ -747,6 +747,149 @@ function Provisional({ pv }: { pv: Any }) {
   );
 }
 
+const TEAMS: [string, string][] = [
+  ["", "Me (Client Success list)"],
+  ["creative", "Media / Creative"],
+  ["tech", "Operations / Tech"],
+  ["call_center", "Call Center"],
+  ["media_buyer", "Media buyer (Marketing / ADs)"],
+];
+
+/**
+ * Add a task for this client: a reminder for me, or a request to another
+ * team. It reaches ClickUp within five minutes with the client's tag on it.
+ */
+function AddTask({
+  taskId,
+  clientName,
+}: {
+  taskId: string;
+  clientName: string;
+}) {
+  const add = useMutation(api.csm.addTask);
+  const added = useQuery(api.csm.tasksAdded, { taskId }) as Any[] | undefined;
+  const [open, setOpen] = useState(false);
+  const [title, setTitle] = useState("");
+  const [note, setNote] = useState("");
+  const [team, setTeam] = useState("");
+  const [due, setDue] = useState("");
+  const submit = async () => {
+    if (!title.trim()) return;
+    await add({
+      taskId,
+      clientName,
+      title: title.trim(),
+      note: note.trim() || undefined,
+      department: team || undefined,
+      due: due ? Date.parse(`${due}T12:00:00+03:00`) : undefined,
+    });
+    toast.success(
+      team
+        ? `Sent to ${TEAMS.find(t => t[0] === team)?.[1] ?? team}, in ClickUp within 5 minutes`
+        : "Added to your Client Success list, in ClickUp within 5 minutes",
+    );
+    setTitle("");
+    setNote("");
+    setDue("");
+    setOpen(false);
+  };
+  return (
+    <div className="space-y-2">
+      <button
+        type="button"
+        className="rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-muted"
+        onClick={() => setOpen(v => !v)}
+      >
+        {open ? "Close" : "Add a task for this client"}
+      </button>
+      {open ? (
+        <form
+          className="space-y-2 rounded-lg border bg-card p-3 text-sm"
+          onSubmit={e => {
+            e.preventDefault();
+            void submit();
+          }}
+        >
+          <input
+            className="w-full rounded-md border bg-background px-2 py-1.5"
+            placeholder="What needs doing"
+            value={title}
+            onChange={e => setTitle(e.target.value)}
+          />
+          <textarea
+            className="w-full rounded-md border bg-background px-2 py-1.5"
+            rows={2}
+            placeholder="Detail, optional"
+            value={note}
+            onChange={e => setNote(e.target.value)}
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              className="rounded-md border bg-background px-2 py-1.5"
+              value={team}
+              onChange={e => setTeam(e.target.value)}
+            >
+              {TEAMS.map(([k, label]) => (
+                <option key={k} value={k}>
+                  {label}
+                </option>
+              ))}
+            </select>
+            <input
+              type="date"
+              className="rounded-md border bg-background px-2 py-1.5"
+              value={due}
+              onChange={e => setDue(e.target.value)}
+            />
+            <button
+              type="submit"
+              disabled={!title.trim()}
+              className="ml-auto rounded-md bg-primary px-3 py-1.5 font-medium text-primary-foreground disabled:opacity-50"
+            >
+              Add task
+            </button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Tagged "{clientName.toLowerCase()}" in ClickUp, so the board
+            attributes it to this client.
+          </p>
+        </form>
+      ) : null}
+      {added?.length ? (
+        <ul className="divide-y rounded-lg border text-sm">
+          {added.map(t => (
+            <li key={t.id} className="flex flex-wrap items-baseline gap-2 p-2">
+              <span className="font-medium">{t.title}</span>
+              <span className="text-xs text-muted-foreground">
+                {t.department
+                  ? (TEAMS.find(x => x[0] === t.department)?.[1] ??
+                    t.department)
+                  : "my list"}
+              </span>
+              <span className="ml-auto text-xs">
+                {t.url ? (
+                  <a
+                    href={t.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-primary underline"
+                  >
+                    In ClickUp
+                  </a>
+                ) : t.error ? (
+                  <span className="text-red-600">failed: {t.error}</span>
+                ) : (
+                  <span className="text-muted-foreground">queued</span>
+                )}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 function RecentCalls({ calls, brief }: { calls: Any[]; brief?: string }) {
   const [openUrl, setOpenUrl] = useState<string | null>(null);
   if (!calls?.length) return null;
@@ -1025,6 +1168,14 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
             ← All clients
           </Button>
           <h2 className="mt-1 text-xl font-bold">{p.clientName}</h2>
+          {p.taskId ? (
+            <div className="mt-2">
+              <AddTask
+                taskId={String(p.taskId)}
+                clientName={String(p.clientName)}
+              />
+            </div>
+          ) : null}
           <p className="text-sm text-muted-foreground">
             {[
               p.stage,

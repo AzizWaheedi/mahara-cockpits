@@ -380,6 +380,8 @@ const schema = defineSchema({
     snooze: v.optional(v.string()),
     value: v.optional(v.string()),
     department: v.optional(v.string()),
+    /** ClickUp due date, ms since epoch. */
+    due: v.optional(v.number()),
     decisionId: v.optional(v.id("decisions")),
     planItemId: v.optional(v.id("planItems")),
     feedbackId: v.optional(v.id("feedback")),

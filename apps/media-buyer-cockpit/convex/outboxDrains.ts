@@ -265,7 +265,13 @@ async function csmRow(
   }
 
   let resultUrl: string | undefined;
-  if (kind === "plan_task" || kind === "issue") {
+  // A task the CSM adds for themselves lands on the Client Success list,
+  // tagged with the client so every board attributes it. [Aziz, 2026-09-12]
+  if (
+    kind === "plan_task" ||
+    kind === "issue" ||
+    (kind === "task" && !row.department)
+  ) {
     const name = row.clientName
       ? `${row.clientName} — ${row.action}`
       : kind === "issue"
@@ -274,6 +280,10 @@ async function csmRow(
     const created = await post(`list/${CS_LIST}/task`, {
       name,
       description: row.evidence,
+      ...(row.clientName
+        ? { tags: [String(row.clientName).toLowerCase()] }
+        : {}),
+      ...(row.due ? { due_date: Number(row.due) } : {}),
     });
     if (kind === "issue" && !row.clientName) {
       // A wrong screen, reported by the CSM: Hermes gets the job too.
@@ -307,6 +317,8 @@ async function csmRow(
       ]
         .join("\n")
         .trim(),
+      tags: [String(row.clientName).toLowerCase()],
+      ...(row.due ? { due_date: Number(row.due) } : {}),
     });
     resultUrl = created?.url;
     const typeLabel = REQUEST_TYPE[row.action];

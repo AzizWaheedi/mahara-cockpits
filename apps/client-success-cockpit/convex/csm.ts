@@ -819,3 +819,64 @@ export const myAsks = authenticatedQuery({
     return rows;
   },
 });
+
+/**
+ * A task for this client, for me or for another team. Lands on the chosen
+ * ClickUp list within five minutes, tagged with the client so every board
+ * attributes it. Aziz, 2026-09-12.
+ */
+export const addTask = authenticatedMutation({
+  args: {
+    taskId: v.string(),
+    clientName: v.string(),
+    title: v.string(),
+    note: v.optional(v.string()),
+    /** creative | tech | call_center | media_buyer, or empty for my own list. */
+    department: v.optional(v.string()),
+    due: v.optional(v.number()),
+  },
+  returns: v.id("outbox"),
+  handler: async (ctx, args) => {
+    await assertRole(ctx, "csm");
+    const by = await userEmail(ctx);
+    return await ctx.db.insert("outbox", {
+      kind: "task",
+      clientTaskId: args.taskId,
+      clientName: args.clientName,
+      action: args.title.trim().slice(0, 140),
+      evidence: [
+        `Added by ${by} from the Client Success Cockpit.`,
+        args.note ? `\n${args.note.trim()}` : "",
+        `\nClient task: https://app.clickup.com/t/${args.taskId}`,
+      ]
+        .join("")
+        .trim(),
+      department: args.department || undefined,
+      due: args.due,
+      createdAt: Date.now(),
+    });
+  },
+});
+
+/** Tasks added from this client's page, newest first, with where they landed. */
+export const tasksAdded = authenticatedQuery({
+  args: { taskId: v.string() },
+  returns: v.array(v.any()),
+  handler: async (ctx, { taskId }) => {
+    await assertRole(ctx, "csm");
+    return (await ctx.db.query("outbox").collect())
+      .filter(o => o.clientTaskId === taskId && o.kind === "task")
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, 8)
+      .map(o => ({
+        id: o._id,
+        title: o.action,
+        department: o.department ?? null,
+        due: o.due ?? null,
+        sent: Boolean(o.sentAt && !o.error),
+        error: o.error ?? null,
+        url: o.resultUrl ?? null,
+        at: o.createdAt,
+      }));
+  },
+});
