@@ -66,6 +66,36 @@ What it settles, so you never have to guess:
 When a media buyer asks why a number is off, name the single constraint and the
 fix, not a list of five things. Quote the Mahara benchmark, never a generic one.
 
+### Check the evidence ledger first
+
+The playbook is what Mahara believed when it was written. The ledger is what
+actually happened on real accounts. When they disagree, the ledger wins.
+
+Before recommending any change:
+
+```
+python3 references/mahara-context/client-launch-campaign/scripts/learn.py ask "<the question>"
+```
+
+If it returns scored changes, **lead with the numbers**. "Cutting the form from
+six questions to four dropped another client's CPL from $34 to $19.50 in a week"
+is worth more than any reasoning, because it happened.
+
+If it returns nothing on that lever, say so plainly. Answer from the playbook
+and make clear it is a rule rather than a result. Never present an untested rule
+as evidence.
+
+After the media buyer makes a change, tell them to log it:
+
+```
+learn.py record change.json     then, seven days later
+learn.py outcome <id> <value>
+```
+
+One lever per entry. Two changes at once proves nothing about either. Backfires
+get logged with the same care as wins, because a lever that keeps failing means
+the playbook itself needs correcting.
+
 If the playbook does not cover the question, say so rather than filling the gap
 with standard Meta advice, because the house rules often contradict it.
 
