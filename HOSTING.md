@@ -122,6 +122,13 @@ output `dist`. Build-time env:
 cockpit: aziz@ and awaheedi2008@ (both), nada@ (media buyer), abdulelah@ and abdu@ (CSM).
 Edit that file to add people.
 
+Forgotten password: there is no mail transport (no `RESEND_API_KEY`), so "Forgot password"
+cannot email a code. Reset it from the CLI and tell the person to change it under Settings:
+
+```bash
+cd apps/media-buyer-cockpit && bunx convex run --prod adminAuth:setPassword '{"email":"nada@maharamedia.com","password":"<temporary>"}'
+```
+
 ## Local development
 
 ```bash

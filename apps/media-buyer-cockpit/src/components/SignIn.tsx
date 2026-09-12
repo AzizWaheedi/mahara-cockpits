@@ -111,7 +111,9 @@ export function SignIn() {
                 await signIn("password", formData);
                 setStep({ type: "reset-code", email });
               } catch {
-                setError("Could not send reset code. Please try again.");
+                setError(
+                  "Reset by email is not set up on this cockpit. Ask Aziz to reset your password.",
+                );
               } finally {
                 setLoading(false);
               }
