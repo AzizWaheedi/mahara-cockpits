@@ -65,9 +65,10 @@ const ROLE_META: { key: string; label: string; hint: string }[] = [
   },
 ];
 
+/** Cockpit key → the app name its smoke check reports under. */
 const APP_KEY: Record<string, string> = {
   media_buyer: "media-buyer",
-  csm: "csm",
+  csm: "client-success",
   creative: "creative",
 };
 

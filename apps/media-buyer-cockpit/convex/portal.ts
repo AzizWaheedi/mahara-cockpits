@@ -220,7 +220,10 @@ export const overview = authenticatedQuery({
       },
       counts: {
         campaigns: campaigns.length,
-        liveCampaigns: campaigns.filter(c => c.adStatus === "ACTIVE").length,
+        // "Live" on the ads board, client work only.
+        liveCampaigns: campaigns.filter(
+          c => !c.internal && /live/i.test(String(c.boardAdStatus ?? "")),
+        ).length,
         clients: clients.length,
         members: members.length,
         admins: members.filter(m => m.roles.includes("admin")).length,

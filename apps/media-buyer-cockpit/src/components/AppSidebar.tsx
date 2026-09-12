@@ -163,6 +163,10 @@ function SidebarNav() {
 
 function SidebarUserMenu() {
   const user = useQuery(api.auth.currentUser);
+  const me = useQuery(api.roles.me, {});
+  // The name the admin typed in the portal, else the email's first part.
+  const shownName =
+    user?.name || me?.name || user?.email?.split("@")[0] || "User";
   const { signOut } = useAuthActions();
   const { theme, toggleTheme, switchable } = useTheme();
   const { setOpenMobile } = useSidebar();
@@ -176,12 +180,12 @@ function SidebarUserMenu() {
               <SidebarMenuButton size="lg">
                 <Avatar className="size-8">
                   <AvatarFallback className="bg-primary text-primary-foreground text-sm font-medium">
-                    {user?.name?.charAt(0).toUpperCase() || "U"}
+                    {shownName.charAt(0).toUpperCase()}
                   </AvatarFallback>
                 </Avatar>
                 <div className="flex flex-col items-start text-left">
                   <span className="text-sm font-medium truncate">
-                    {user?.name || "User"}
+                    {shownName}
                   </span>
                   <span className="text-xs text-muted-foreground truncate">
                     {user?.email}
