@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import { internalAction } from "./_generated/server";
+import { internalAction, internalQuery } from "./_generated/server";
 import {
   type ClientDataRow,
   clientDataFor,
@@ -873,6 +873,21 @@ function gapsFor(x: {
   return gaps;
 }
 
+/** The ad-lead roll-up for one client, matched by name or first word. */
+function adLeadsFor(client: string, all: Record<string, Any>): Any {
+  const key = normTight(client);
+  if (all[key]) return all[key];
+  const first = normTight(client.split(/[\s\-_/(),]+/)[0] ?? "");
+  const hit = Object.keys(all).find(
+    k =>
+      k.length >= 5 &&
+      (k.startsWith(key) ||
+        key.startsWith(k) ||
+        (first.length >= 5 && k.startsWith(first))),
+  );
+  return hit ? all[hit] : undefined;
+}
+
 /** API matches first, then remembered calls for this client, no duplicate links, newest first, 8 at most. */
 function mergeCalls(fresh: Call[], cached: Any[], client: string): Any[] {
   const seen = new Set<string>();
@@ -1014,6 +1029,13 @@ export const push = internalAction({
     const today = kuwaitToday();
     const errors: string[] = [];
     const clients = await profileInputs(today);
+    const adLeadRows: Any[] = await ctx.runQuery(
+      internal.csmProfiles.adLeadsByClient,
+      {},
+    );
+    const adLeads: Record<string, Any> = Object.fromEntries(
+      adLeadRows.map(r => [r.key, r]),
+    );
     // Client Data is the source of truth for ids and links. The card only has
     // to carry what the CSM owns; anything missing on the card is filled from
     // the sheet, and anything missing on both becomes a gap on the profile.
@@ -1120,6 +1142,7 @@ export const push = internalAction({
             : lost?.error
               ? lost
               : undefined,
+        adLeads: adLeadsFor(c.name, adLeads),
         calls: mergeCalls(callsFor(c.name, calls), cached, c.name),
         gapInputs: {
           client: c,
@@ -1169,6 +1192,23 @@ export const push = internalAction({
         `kept last good numbers for ${kept} clients (their sheet was unreadable)`,
       );
 
+    // Leads come from the ads. The sheet's count stays as sheetLeads so the
+    // two can be compared, but every screen and the report read the ad figure.
+    for (const p of profiles as Any[]) {
+      const al = p.adLeads;
+      const perf = p.performance;
+      if (!al || !perf || perf.error) continue;
+      perf.sheetLeads = {
+        month: perf.month?.leads,
+        lastMonth: perf.lastMonth?.leads,
+        allTime: perf.allTime?.leads,
+      };
+      if (perf.month) perf.month.leads = al.month;
+      if (perf.lastMonth) perf.lastMonth.leads = al.lastMonth;
+      if (perf.allTime) perf.allTime.leads = al.allTime;
+      perf.leadsSource = "meta";
+    }
+
     // Gaps are judged after the keep step, so a sheet that was unreadable for
     // one run (quota, a blip) but has last good numbers is not a gap.
     for (const p of profiles as Any[]) {
@@ -1195,5 +1235,87 @@ export const push = internalAction({
       withCalls: profiles.filter(p => p.calls.length > 0).length,
       errors,
     };
+  },
+});
+
+// --- Leads from the ads, not the sheet -------------------------------------------
+//
+// Aziz, 2026-09-12: "leads isn't an accurate source from their sheet … it
+// should be from the ads manager". The stat sheet lists appointments, so its
+// "leads" is really "rows". Meta's lead count per campaign per day is in
+// dailyStats; this rolls it up per client for this month, last month, the
+// last 7 days and all time, and the profile shows those as the lead numbers.
+
+export const adLeadsByClient = internalQuery({
+  args: {},
+  returns: v.any(),
+  handler: async ctx => {
+    const campaigns = await ctx.db.query("campaigns").collect();
+    const byCampaign = new Map<string, string>();
+    for (const c of campaigns) {
+      const key = c.clientName
+        ? normTight(c.clientName)
+        : c.clientTag
+          ? c.clientTag
+          : (c.tags ?? [])[0];
+      if (key) byCampaign.set(c.campaignName, key);
+    }
+    const now = new Date(Date.now() + 3 * 3600_000);
+    const ym = (d: Date) =>
+      `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+    const thisMonth = ym(now);
+    const lastMonth = ym(
+      new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)),
+    );
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 86400_000)
+      .toISOString()
+      .slice(0, 10);
+    const out: Record<
+      string,
+      {
+        month: number;
+        lastMonth: number;
+        last7d: number;
+        allTime: number;
+        spendMonth: number;
+        spendAllTime: number;
+        firstDay?: string;
+        campaigns: string[];
+      }
+    > = {};
+    for (const d of await ctx.db.query("dailyStats").collect()) {
+      const key = byCampaign.get(d.campaignName);
+      if (!key) continue;
+      if (!out[key])
+        out[key] = {
+          month: 0,
+          lastMonth: 0,
+          last7d: 0,
+          allTime: 0,
+          spendMonth: 0,
+          spendAllTime: 0,
+          campaigns: [],
+        };
+      const row = out[key];
+      const leads = Number(d.leads ?? 0);
+      const spend = Number(d.spend ?? 0);
+      row.allTime += leads;
+      row.spendAllTime += spend;
+      if (d.date.startsWith(thisMonth)) {
+        row.month += leads;
+        row.spendMonth += spend;
+      }
+      if (d.date.startsWith(lastMonth)) row.lastMonth += leads;
+      if (d.date >= sevenDaysAgo) row.last7d += leads;
+      if (!row.firstDay || d.date < row.firstDay) row.firstDay = d.date;
+      if (!row.campaigns.includes(d.campaignName))
+        row.campaigns.push(d.campaignName);
+    }
+    for (const r of Object.values(out)) {
+      r.spendMonth = Math.round(r.spendMonth * 100) / 100;
+      r.spendAllTime = Math.round(r.spendAllTime * 100) / 100;
+    }
+    // Arabic client names cannot be object keys in a Convex value; hand back rows.
+    return Object.entries(out).map(([key, r]) => ({ key, ...r }));
   },
 });

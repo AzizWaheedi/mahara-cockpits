@@ -242,6 +242,7 @@ export const storeProfiles = internalMutation({
         adsAccess: p.adsAccess ?? undefined,
         calls: p.calls ?? undefined,
         gaps: Array.isArray(p.gaps) ? p.gaps : undefined,
+        adLeads: p.adLeads ?? undefined,
         reportNudge: p.reportNudge ?? undefined,
         syncedAt: Date.now(),
         syncId: args.syncId ?? undefined,

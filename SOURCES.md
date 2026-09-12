@@ -19,6 +19,7 @@ Service account for every sheet, Drive folder and calendar:
 | Campaign card, KPI columns the team reads in ClickUp | ClickUp **Ads Managment** list `901817774521`, card name = Meta campaign name, tag = client | `sync.ts`, `writeback.ts` |
 | Bookings, shows, lost-lead reasons | GoHighLevel sub-account (location id + `pit-` token from Client Data) | `sync.ts`, `csmProfiles.ts` |
 | Appointments, shows, quotes, closes per month | The client's own stat sheet (`Sheet Link` on the card, else Client Data) | `csmProfiles.ts`, `fanout.ts` |
+| Leads per client (month, last month, 7 days, since launch) | Meta, via the `data_fb` grain rolled up per client in `csmProfiles.adLeadsByClient`; the sheet's own count is kept as `sheetLeads` for comparison | `csmProfiles.ts` |
 | Scripts and footage | The client's Drive folder (card `Drive Folder`/`Drive Link`, else Client Data `Google Drive Link`) | `fanout.ts` |
 | Recorded calls | Fathom (`FATHOM_API_KEY`), plus backfills in `fathomCache` | `csmProfiles.ts` |
 | WhatsApp threads, calendars | Mahara's own GHL sub-account (`MAHARA_GHL_TOKEN`): its calendars and its WhatsApp conversations since `WHATSAPP_SINCE`; WHAPI / Google Calendar env only as fallbacks | `comms.ts` |

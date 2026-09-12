@@ -101,6 +101,8 @@ const schema = defineSchema({
     reportNudge: v.optional(v.any()),
     /** Recent recorded calls with this client (Fathom), newest first. */
     calls: v.optional(v.any()),
+    /** Leads from Meta per month, the number the client is judged on. */
+    adLeads: v.optional(v.any()),
     /** What is missing for this client and where to put it, computed by the media buyer backend. */
     gaps: v.optional(v.array(v.any())),
     syncedAt: v.number(),

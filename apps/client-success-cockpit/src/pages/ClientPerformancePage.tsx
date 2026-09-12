@@ -1041,9 +1041,15 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
             ) : (
               <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
                 <Stat
-                  label="Leads"
+                  label={
+                    perf.leadsSource === "meta" ? "Leads (from ads)" : "Leads"
+                  }
                   value={num(m.leads)}
-                  hint={`${num(l.leads)} last month`}
+                  hint={
+                    perf.leadsSource === "meta"
+                      ? `${num(l.leads)} last month · ${num(p.adLeads?.allTime)} since launch`
+                      : `${num(l.leads)} last month`
+                  }
                 />
                 <Stat
                   label="Booked"
