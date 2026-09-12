@@ -60,6 +60,8 @@ export const me = authenticatedQuery({
       name: user?.name ?? row?.name ?? null,
       roles: ok ? ["creative"] : [],
       isAdmin: Boolean(row?.roles.includes("admin")),
+      /** Every seat the portal gave them, for the cockpit switcher. */
+      portalRoles: row?.roles ?? [],
       clients: row?.clients ?? [],
       home: ok ? "/dashboard" : null,
     };

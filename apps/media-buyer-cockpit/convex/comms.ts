@@ -460,6 +460,22 @@ async function ghlThreads(token: string, names: string[]) {
 
 // --- The feed --------------------------------------------------------------------
 
+/**
+ * Which of the shared client calendars each cockpit sees. Aziz, 2026-09-12:
+ * the creative director gets the Brand Blueprint calls; the media buyer gets
+ * none of the client calls; client success sees them all. Everyone sees
+ * their own linked Google Calendar on top.
+ */
+function sharedCalendarsFor(
+  app: "csm" | "creative" | "mb",
+  rows: Any[],
+): Any[] {
+  if (app === "csm") return rows;
+  if (app === "creative")
+    return rows.filter(r => /blueprint/i.test(String(r.calendarId ?? "")));
+  return [];
+}
+
 export const feedComms = internalAction({
   args: {},
   returns: v.any(),
@@ -530,7 +546,7 @@ export const feedComms = internalAction({
       });
       report["mb.calendar"] = await ctx.runMutation(
         internal.personalCalendars.store,
-        { rows: [...ghlRows, ...own.rows] },
+        { rows: [...sharedCalendarsFor("mb", ghlRows), ...own.rows] },
       );
       if (own.statuses.length) report["mb.calendars"] = own.statuses;
     } catch (e) {
@@ -543,7 +559,7 @@ export const feedComms = internalAction({
         .split(",")
         .map(s => s.trim())
         .filter(Boolean);
-      const rows: Any[] = [...ghlRows];
+      const rows: Any[] = [...sharedCalendarsFor(app, ghlRows)];
       if (calendarIds.length) {
         try {
           const token = await googleAccessToken();

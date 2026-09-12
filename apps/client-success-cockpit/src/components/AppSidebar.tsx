@@ -1,6 +1,7 @@
 import { useAuthActions } from "@convex-dev/auth/react";
 import { useQuery } from "convex/react";
 import {
+  ArrowRightLeft,
   BarChart3,
   CalendarDays,
   DollarSign,
@@ -14,6 +15,7 @@ import {
   Moon,
   MoonStar,
   Settings,
+  ShieldCheck,
   Sun,
   Sunrise,
 } from "lucide-react";
@@ -108,11 +110,65 @@ function NavLink({
   );
 }
 
+/** The portal's other doors: the admin view and the cockpits this person also has. */
+function PortalGroup() {
+  const me = useQuery(api.roles.me, {});
+  const portal = portalUrl();
+  const roles: string[] = me?.portalRoles ?? [];
+  const isAdmin = Boolean(me?.isAdmin);
+  const doors = [
+    { key: "admin", label: "Admin", href: `${portal}/admin`, show: isAdmin },
+    {
+      key: "media_buyer",
+      label: "Media buyer",
+      href: `${portal}/dashboard`,
+      show: isAdmin || roles.includes("media_buyer"),
+    },
+    {
+      key: "csm",
+      label: "Client success",
+      href: `${portal}/go/csm`,
+      show: false,
+    },
+    {
+      key: "creative",
+      label: "Creative director",
+      href: `${portal}/go/creative`,
+      show: isAdmin || roles.includes("creative"),
+    },
+  ].filter(d => d.show);
+  if (doors.length === 0) return null;
+  return (
+    <SidebarGroup>
+      <SidebarGroupLabel>Switch cockpit</SidebarGroupLabel>
+      <SidebarGroupContent>
+        <SidebarMenu>
+          {doors.map(d => (
+            <SidebarMenuItem key={d.key}>
+              <SidebarMenuButton asChild>
+                <a href={d.href}>
+                  {d.key === "admin" ? (
+                    <ShieldCheck className="size-4" />
+                  ) : (
+                    <ArrowRightLeft className="size-4" />
+                  )}
+                  <span>{d.label}</span>
+                </a>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ))}
+        </SidebarMenu>
+      </SidebarGroupContent>
+    </SidebarGroup>
+  );
+}
+
 function SidebarNav() {
   const location = useLocation();
 
   return (
     <SidebarContent>
+      <PortalGroup />
       {navGroups.map(group => (
         <SidebarGroup key={group.label}>
           <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
