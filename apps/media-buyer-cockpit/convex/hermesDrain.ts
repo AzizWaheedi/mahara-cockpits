@@ -42,7 +42,10 @@ const ROLE: Record<App, string> = {
 
 const RULES = `
 How to answer:
-- Use only what is in the context and the conversation. If something is not there, say you do not have it and name the screen or source that does.
+- The attached context is a starting point, not your only source. If the answer
+  is not in it, go and look: ClickUp, Meta, Sheets, the CRM. Only say you do
+  not have something after you have actually checked and failed, and then say 
+  what you tried.
 - Be direct and specific, like a sharp colleague, in plain English (or Gulf Arabic if the question is in Arabic).
 - Numbers: quote them exactly as given. All money in USD. Never invent a figure.
 - Never use an em dash or an en dash. A comma or a full stop.
