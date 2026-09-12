@@ -235,3 +235,37 @@ The draft lands on the thread in both cockpits (`replyDrafts`), the person
 edits it if they want and presses "Send on WhatsApp"; the outbox row is
 drained within a minute and sent through the CRM
 (`POST /conversations/messages`, type WhatsApp or SMS to match the thread).
+
+
+## The portal (one sign-in, one domain)
+
+`https://mahara-media-buyer.vercel.app` is the portal. Everyone signs in there
+with one email and password; the portal routes them to their cockpit:
+
+- media buyer pages live on the portal itself (`/dashboard`, `/ads`, ...)
+- client success is proxied at `/client-success/` (Vercel rewrite to the
+  mahara-client-success project, built with vite `base: "/client-success/"`)
+- creative director is proxied at `/creative/`
+- admins land on `/admin`: team members, seats (admin, media buyer, client
+  success, creative), per-member client access, cockpit health, alerts, Hermes
+
+How the door works (no shared secret): `portal.mintToken` signs a two-minute
+RS256 pass with the deployment's own auth key; `/go/csm` and `/go/creative`
+send the person to `/client-success/dashboard?portal_token=...`; the other
+cockpit's `portalAuth.ts` verifies it against
+`https://adorable-seahorse-418.convex.site/.well-known/jwks.json`, links the
+account by verified email, and stores the roles and client access in its
+`portalMembers` table. A sessionless visit to a cockpit bounces to the portal
+once a minute at most (`PortalAutoSignIn.tsx`).
+
+Who may open what: the `members` table on the media buyer deployment, edited
+in `/admin`. `convex/roles.ts` keeps a static fallback for the first five
+people. Client access (empty = all) is applied in the main list queries of
+every cockpit (`allowedClients`).
+
+Custom domain: add e.g. `portal.maharamedia.com` to the mahara-media-buyer
+Vercel project and set `VITE_PORTAL_URL` on the two child projects (or leave
+it: proxied visits use the current origin).
+
+CLI helpers: `portal:seed` (first five members), `portal:mintFor` (a pass for
+someone, for tests), `adminAuth:setPassword` (reset a password).
