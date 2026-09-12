@@ -1,0 +1,160 @@
+{
+  "_comment": "Fill and run: python3 scripts/make_form.py form_spec.json",
+  "_note": "Creates as DRAFT. Forms cannot be deleted, only archived. Confirm before activating.",
+  "page_id": "1215892868273680",
+  "name": "Monshaat Khaldaa | Safety Readiness | Sep2026",
+  "locale": "AR_AR",
+  "_locale_note": "Match the AD, not the client. Arabic ad = AR_AR, English ad = en_US. Same client can run both.",
+  "_privacy_note": "Privacy policy OFF by default. Only include if the industry requires it.",
+  "privacy_policy_url": "",
+  "_followup_note": "Where the thank you button goes. Website if they have one, else WhatsApp, else their Instagram.",
+  "follow_up_url": "https://maharamedia.com",
+  "_quality_note": "ASK the client. false = more volume (default at launch), true = higher intent with a review step and lower volume. Switch only after a lead-quality complaint and after tightening questions first.",
+  "is_optimized_for_quality": false,
+  "block_display_for_non_targeted_viewer": false,
+  "allow_organic_lead": true,
+  "tracking_parameters": {
+    "client": "monshaat-khaldaa",
+    "service": "safety-plans",
+    "source": "meta-launch"
+  },
+  "question_page_custom_headline": "سجل بياناتك يتواصل معك فريقنا لحجز موعد استشارتك المجانية",
+  "_greeting_note": "The greeting IS the offer. LIST_STYLE with a check mark per deliverable, 3 to 5 of them. Must match the ad that brought them here.",
+  "context_card": {
+    "title": "فحص جاهزية مشروعك مجاناً",
+    "style": "LIST_STYLE",
+    "content": [
+      "✅ مراجعة وضع المشروع والمخططات الحالية",
+      "✅ تحديد النواقص والاشتراطات الأساسية",
+      "✅ شرح نطاق العمل قبل ما تلتزم",
+      "✅ قائمة واضحة تمشي عليها"
+    ],
+    "button_text": "ابدأ"
+  },
+  "_questions_note": "3 to 5 by service type. Flow before friction: easy opener, qualifying in the middle, contact last. Phone is REQUIRED, never optional. Pick from references/question_library.md.",
+  "contact_description": "يرجى إدخال أفضل وسيلة للتواصل معك حتى يتمكن فريقنا من شرح العرض لك ومساعدتك بأفضل طريقة ممكنة",
+  "questions": [
+    {
+      "type": "FULL_NAME"
+    },
+    {
+      "type": "PHONE"
+    },
+    {
+      "type": "CUSTOM",
+      "key": "project_type",
+      "label": "وش نوع المشروع؟",
+      "options": [
+        {
+          "key": "commercial",
+          "value": "مشروع تجاري"
+        },
+        {
+          "key": "office",
+          "value": "مكتب اداري"
+        },
+        {
+          "key": "factory",
+          "value": "مصنع"
+        },
+        {
+          "key": "workshop",
+          "value": "مشغل"
+        },
+        {
+          "key": "other",
+          "value": "غير ذلك"
+        }
+      ]
+    },
+    {
+      "type": "CUSTOM",
+      "key": "project_stage",
+      "label": "في أي مرحلة مشروعك حالياً؟",
+      "options": [
+        {
+          "key": "planning",
+          "value": "بمرحلة التخطيط"
+        },
+        {
+          "key": "have_plans",
+          "value": "عندي مخططات جاهزة"
+        },
+        {
+          "key": "submitting",
+          "value": "أجهز للتقديم"
+        },
+        {
+          "key": "comments",
+          "value": "وصلتني ملاحظات"
+        }
+      ]
+    },
+    {
+      "type": "CUSTOM",
+      "key": "start_timeline",
+      "label": "متى تخطط تبدأ؟",
+      "options": [
+        {
+          "key": "now",
+          "value": "الآن"
+        },
+        {
+          "key": "month",
+          "value": "خلال شهر"
+        },
+        {
+          "key": "three_months",
+          "value": "خلال 3 شهور"
+        },
+        {
+          "key": "researching",
+          "value": "أبحث وأقارن حالياً"
+        }
+      ]
+    },
+    {
+      "type": "CUSTOM",
+      "key": "decision_maker",
+      "label": "هل أنت صاحب القرار؟",
+      "options": [
+        {
+          "key": "yes",
+          "value": "نعم"
+        },
+        {
+          "key": "shared",
+          "value": "القرار مشترك"
+        },
+        {
+          "key": "other",
+          "value": "شخص ثاني يقرر"
+        }
+      ]
+    },
+    {
+      "_hidden_note": "Only attribution that works on an instant form. UTMs do not.",
+      "type": "CUSTOM",
+      "key": "campaign_id",
+      "label": "campaign_id"
+    },
+    {
+      "type": "CUSTOM",
+      "key": "adset_id",
+      "label": "adset_id"
+    },
+    {
+      "type": "CUSTOM",
+      "key": "ad_id",
+      "label": "ad_id"
+    }
+  ],
+  "_thankyou_note": "button_type: VIEW_WEBSITE if they have a site, MESSAGE_BUSINESS if WhatsApp is connected to the page, else point VIEW_WEBSITE at their Instagram.",
+  "thank_you_page": {
+    "title": "شكرًا لك 🙏 تم استلام طلبك وسنتواصل معك قريبًا",
+    "body": "لقد استلمنا طلبك وحجزنا لك مكان! فريقنا راح يتواصل معاك قريبًا علشان يفهم مشروعك أكثر، يساعدك في أي استفسار، ويحدد لك موعد الاستشارة. نتطلع تواصلك وراح نكون معاك قريب إن شاء الله",
+    "button_type": "VIEW_WEBSITE",
+    "button_text": "زيارة الموقع",
+    "website_url": "https://maharamedia.com"
+  }
+}
