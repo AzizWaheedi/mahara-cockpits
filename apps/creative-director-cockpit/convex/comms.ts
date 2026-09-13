@@ -12,11 +12,17 @@ export const storeCalendar = internalMutation({
   args: { rows: v.array(v.any()), append: v.optional(v.boolean()) },
   returns: v.object({ events: v.number() }),
   handler: async (ctx, { rows, append }) => {
-    if (rows.length === 0 && !append) return { events: 0 };
-    // With `append`, only the owners in these rows are replaced.
+    // The feed is the whole picture for the shared calendars, even when it
+    // says "none"; stale shared rows used to linger. A person's own rows are
+    // only replaced when the feed carries that person.
     const owners = new Set(rows.map(r => r.owner ?? ""));
     for (const old of await ctx.db.query("calendarEvents").collect())
-      if (!append || owners.has(old.owner ?? "")) await ctx.db.delete(old._id);
+      if (
+        append
+          ? owners.has(old.owner ?? "")
+          : !old.owner || owners.has(old.owner)
+      )
+        await ctx.db.delete(old._id);
     const now = Date.now();
     for (const r of rows)
       await ctx.db.insert("calendarEvents", { ...r, syncedAt: now });

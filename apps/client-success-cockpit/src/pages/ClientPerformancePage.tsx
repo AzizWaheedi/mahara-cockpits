@@ -319,7 +319,7 @@ function ConstraintCard({ c, first }: { c: Constraint; first?: boolean }) {
     c.layer === "macro"
       ? "border-rose-300 bg-rose-50"
       : c.layer === "admin"
-        ? "border-amber-300 bg-amber-50"
+        ? "border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/40"
         : "border-sky-300 bg-sky-50";
   return (
     <div className={`rounded-lg border ${first ? tone : "bg-card"}`}>
@@ -398,7 +398,7 @@ function ConstraintCard({ c, first }: { c: Constraint; first?: boolean }) {
                     onClick={() => setLang(l)}
                     className={`rounded border px-1.5 py-0.5 text-[11px] font-semibold uppercase ${
                       lang === l
-                        ? "border-teal-400 bg-teal-50 text-teal-800"
+                        ? "border-teal-400 bg-teal-50 text-teal-800 dark:bg-teal-950/40 dark:text-teal-100"
                         : ""
                     }`}
                   >
@@ -467,7 +467,7 @@ function CallPrep({ p }: { p: Any }) {
   return (
     <section className="space-y-3 rounded-lg border-2 border-primary/30 bg-primary/5 p-4">
       {nudge?.url ? (
-        <div className="rounded border border-amber-300 bg-amber-50 p-3 text-sm">
+        <div className="rounded border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-700 dark:bg-amber-950/40">
           <p className="font-medium">
             This week's report reminder is waiting for your approval
           </p>
@@ -653,7 +653,9 @@ function ReportSection({ p }: { p: Any }) {
             type="button"
             onClick={() => setLang(l)}
             className={`rounded border px-2 py-1 text-xs font-semibold uppercase ${
-              lang === l ? "border-teal-400 bg-teal-50 text-teal-800" : ""
+              lang === l
+                ? "border-teal-400 bg-teal-50 text-teal-800 dark:bg-teal-950/40 dark:text-teal-100"
+                : ""
             }`}
           >
             {l}
@@ -1440,7 +1442,7 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
       <DiagnosisSection p={p} />
 
       {perf.error ? (
-        <div className="space-y-1 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm">
+        <div className="space-y-1 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-700 dark:bg-amber-950/40">
           <p className="font-medium">
             {/UNAUTHENTICATED|401/.test(String(perf.error))
               ? "Their numbers are not showing because our Google Sheets connection is down, not because the sheet is empty."
@@ -1554,7 +1556,7 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
               </p>
             )}
             {perf.staleReason ? (
-              <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
                 These numbers were last read on {perf.staleAt}. Today's read
                 failed, so you are looking at the last good copy rather than a
                 partial one. Reason: {perf.staleReason}
@@ -1808,7 +1810,7 @@ export function ClientPerformancePage() {
       </div>
 
       {!openClient && waiting.length ? (
-        <details className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm">
+        <details className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-700 dark:bg-amber-950/40">
           <summary className="cursor-pointer font-medium">
             {waiting.length} weekly report reminder
             {waiting.length === 1 ? "" : "s"} waiting for your approval

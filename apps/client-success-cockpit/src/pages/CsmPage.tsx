@@ -109,7 +109,7 @@ const CLOCKS = ["Tomorrow", "In 3 days", "Next week"];
 
 const LEVEL: Record<string, string> = {
   red: "border-l-4 border-rose-500 bg-rose-50/40",
-  amber: "border-l-4 border-amber-500 bg-amber-50/40",
+  amber: "border-l-4 border-amber-500 bg-amber-50/40 dark:bg-amber-950/30",
   blue: "border-l-4 border-sky-500 bg-sky-50/30",
   green: "border-l-4 border-emerald-500",
 };
@@ -296,7 +296,7 @@ function NextPocControl({
       className={`space-y-2 rounded border px-3 py-2 text-xs ${
         bad
           ? "border-rose-300 bg-rose-50 text-rose-800"
-          : "border-emerald-200 bg-emerald-50 text-emerald-800"
+          : "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-100"
       } ${emphasise && bad ? "ring-1 ring-rose-300" : ""}`}
     >
       <div className="flex flex-wrap items-center gap-2">
@@ -457,7 +457,7 @@ function TemplatePicker({
             onClick={() => setAngle(d.id)}
             className={`rounded border px-2 py-0.5 text-[12px] font-medium ${
               d.id === chosen.id
-                ? "border-teal-400 bg-teal-50 text-teal-800"
+                ? "border-teal-400 bg-teal-50 text-teal-800 dark:bg-teal-950/40 dark:text-teal-100"
                 : "bg-background text-muted-foreground"
             }`}
           >
@@ -476,7 +476,7 @@ function TemplatePicker({
               }}
               className={`rounded border px-1.5 py-0.5 font-semibold uppercase ${
                 lang === l
-                  ? "border-teal-400 bg-teal-50 text-teal-800"
+                  ? "border-teal-400 bg-teal-50 text-teal-800 dark:bg-teal-950/40 dark:text-teal-100"
                   : "bg-background"
               }`}
             >
@@ -653,13 +653,13 @@ function TouchpointRow({
               className={`rounded px-1.5 py-0.5 text-[12px] font-medium ${
                 poc.missing || poc.past
                   ? "bg-rose-100 text-rose-700"
-                  : "bg-emerald-50 text-emerald-800"
+                  : "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-100"
               }`}
             >
               {poc.label}
             </span>
             {spineDay != null && (
-              <span className="rounded bg-teal-50 px-1.5 py-0.5 text-[12px] font-medium text-teal-800">
+              <span className="rounded bg-teal-50 px-1.5 py-0.5 text-[12px] font-medium text-teal-800 dark:bg-teal-950/40 dark:text-teal-100">
                 Day {spineDay} of the 14 day spine
               </span>
             )}
@@ -697,7 +697,7 @@ function TouchpointRow({
             )}
           </div>
         </div>
-        <span className="shrink-0 rounded border border-teal-400 bg-teal-50 px-2 py-1 text-xs font-semibold text-teal-800">
+        <span className="shrink-0 rounded border border-teal-400 bg-teal-50 px-2 py-1 text-xs font-semibold text-teal-800 dark:bg-teal-950/40 dark:text-teal-100">
           {open ? "close" : `Open the message${count > 1 ? ` (${count})` : ""}`}
         </span>
       </button>
@@ -1259,7 +1259,7 @@ export function CsmPage({ section }: { section: Section }) {
                     className={`rounded px-1.5 py-0.5 text-[12px] font-medium ${
                       poc.missing || poc.past
                         ? "bg-rose-100 text-rose-700"
-                        : "bg-emerald-50 text-emerald-800"
+                        : "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-100"
                     }`}
                   >
                     {poc.label}
@@ -1387,7 +1387,7 @@ export function CsmPage({ section }: { section: Section }) {
                   )}
                 </div>
                 {c.hot.length > 0 && !c.hotBlocked && (
-                  <div className="rounded border border-emerald-300 bg-emerald-50/60 p-2">
+                  <div className="rounded border border-emerald-300 bg-emerald-50/60 p-2 dark:border-emerald-800 dark:bg-emerald-950/30">
                     <div className="text-xs font-semibold text-emerald-800">
                       Hot list
                     </div>
@@ -1842,7 +1842,7 @@ export function CsmPage({ section }: { section: Section }) {
               <details
                 key={block}
                 open={!allDone}
-                className={`rounded-lg border ${isSprint ? "border-teal-300 bg-teal-50/40" : ""} ${allDone ? "opacity-70" : ""}`}
+                className={`rounded-lg border ${isSprint ? "border-teal-300 bg-teal-50/40 dark:border-teal-800 dark:bg-teal-950/30" : ""} ${allDone ? "opacity-70" : ""}`}
               >
                 <summary className="flex cursor-pointer flex-wrap items-baseline justify-between gap-2 px-4 py-2">
                   <span className="text-sm font-semibold">
@@ -2654,7 +2654,7 @@ function MoneySection({
           churn === null
             ? ""
             : churn <= CHURN_TARGET
-              ? "border-teal-400 bg-teal-50/60"
+              ? "border-teal-400 bg-teal-50/60 dark:bg-teal-950/30"
               : "border-rose-400 bg-rose-50/60"
         }`}
       >
