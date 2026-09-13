@@ -7,6 +7,7 @@ import {
   readClientData,
 } from "./clientData";
 import { flush } from "./health";
+import { loadSheetCache, type SheetCache, saveSheetCache } from "./sheetCache";
 import { CLIENTS_LIST, CONTENT_LIST, CREATIVE_LIST, VIDEO_LIST } from "./sync";
 import { callTool, googleAccessToken, graph, unwrap } from "./tools";
 
@@ -367,12 +368,23 @@ const yes = (cell: unknown) =>
     .startsWith("Y");
 
 /** Columns are fixed by the template: Name(0) … Show(9) Quotation(10) Closed(11). */
-async function readStatSheet(sheetId: string, tab: string) {
+async function readStatSheet(
+  sheetId: string,
+  tab: string,
+  cache?: SheetCache,
+  fresh?: SheetCache,
+) {
   let rows: string[][];
-  try {
-    rows = await sheet(sheetId, `'${tab}'!A3:L400`);
-  } catch {
-    return undefined; // an empty or missing tab is not an error
+  const key = `sheet:${sheetId}:${tab}`;
+  const hit = cache?.get(key);
+  if (hit) rows = hit.data as string[][];
+  else {
+    try {
+      rows = await sheet(sheetId, `'${tab}'!A3:L400`);
+      fresh?.set(key, { at: Date.now(), data: rows });
+    } catch {
+      return undefined; // an empty or missing tab is not an error
+    }
   }
   let booked = 0,
     shows = 0,
@@ -388,20 +400,24 @@ async function readStatSheet(sheetId: string, tab: string) {
   return booked ? { tab, booked, shows, quotes, closes } : undefined;
 }
 
-async function attachStatSheets(roster: Any[]) {
+// biome-ignore lint/suspicious/noExplicitAny: action ctx
+async function attachStatSheets(ctx: any, roster: Any[]) {
   const tab = currentMonthTab();
   const now = Date.now();
   let read = 0;
+  const cache = await loadSheetCache(ctx);
+  const fresh: SheetCache = new Map();
   for (const row of roster) {
     const sid = sheetIdOf(row.sheetLink);
     if (!sid) continue;
-    const stats = await readStatSheet(sid, tab);
+    const stats = await readStatSheet(sid, tab, cache, fresh);
     read++;
     if (stats) row.stats = stats;
     row.statsScannedAt = now;
   }
+  await saveSheetCache(ctx, fresh);
   console.log(
-    `stat sheets: ${read} read, ${roster.filter(r => r.stats).length} with appointments in ${tab}`,
+    `stat sheets: ${read} read (${fresh.size} from Google, the rest cached), ${roster.filter(r => r.stats).length} with appointments in ${tab}`,
   );
 }
 
@@ -816,7 +832,7 @@ export const feedCreative = internalAction({
       roster = await gatherClients();
       await attachDriveSubfolders(roster);
       // Stat sheets are filled by hand through the day: read on the full run only.
-      if (withStats) await attachStatSheets(roster);
+      if (withStats) await attachStatSheets(ctx, roster);
       report.clients = roster.length
         ? await bridge("creative", "storeClients", { clients: roster })
         : "empty, kept";

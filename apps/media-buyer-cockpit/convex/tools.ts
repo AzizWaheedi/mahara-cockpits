@@ -53,7 +53,25 @@ const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
  * (2026-09-10: every client "lost" its sheet for one run). Wait and retry
  * on 429 and on 5xx instead of failing the whole run.
  */
+/**
+ * Google Sheets allows 60 reads a minute per user, and every read here goes
+ * out as the one service account. A sync cycle used to fire ninety reads in
+ * a minute, tripping the limit for us and for anything else on that account
+ * (Hermes's morning sheet, Make). Reads now leave at most one every 1.3 s.
+ */
+let sheetsGate: Promise<void> = Promise.resolve();
+const SHEETS_GAP_MS = 1300;
+export function paceSheets(url: string): Promise<void> {
+  if (!/sheets\.googleapis\.com/.test(url)) return Promise.resolve();
+  const turn: Promise<void> = sheetsGate
+    .then(() => wait(SHEETS_GAP_MS))
+    .then(() => undefined);
+  sheetsGate = turn.catch(() => undefined);
+  return turn;
+}
+
 async function httpGet(url: string, headers: Record<string, string>) {
+  await paceSheets(url);
   // Google and ClickUp rate-limit in bursts: wait it out rather than fail the run.
   const retry = /googleapis\.com|api\.clickup\.com/.test(url) ? 4 : 2;
   const source = sourceFor(url);

@@ -12,6 +12,7 @@ import {
   statSheetUrl,
 } from "./clientData";
 import { flush } from "./health";
+import { loadSheetCache, type SheetCache, saveSheetCache } from "./sheetCache";
 import { CLIENTS_LIST } from "./sync";
 import { allAdAccounts, callTool, unwrap } from "./tools";
 
@@ -374,7 +375,12 @@ function sheetId(url: unknown): string | undefined {
  * Read one client's performance sheet. The `Appointments` tab is the master
  * log every caller fills; the month tabs are read as a fallback.
  */
-async function sheetPerformance(url: unknown, today: Day): Promise<Any> {
+async function sheetPerformance(
+  url: unknown,
+  today: Day,
+  cache?: SheetCache,
+  fresh?: SheetCache,
+): Promise<Any> {
   const sid = sheetId(url);
   if (!sid) return undefined;
   const first = { ...today, d: 1 };
@@ -391,12 +397,18 @@ async function sheetPerformance(url: unknown, today: Day): Promise<Any> {
     .map(t => `ranges=${encodeURIComponent(`${t}!A1:P600`)}`)
     .join("&");
   let data: Any;
-  try {
-    data = await sheetsGet(
-      `https://sheets.googleapis.com/v4/spreadsheets/${sid}/values:batchGet?${qs}`,
-    );
-  } catch (e) {
-    return { sheetId: sid, error: String(e).slice(0, 200) };
+  const cacheKey = `sheet:${sid}:${wanted.join("|")}`;
+  const hit = cache?.get(cacheKey);
+  if (hit) data = hit.data;
+  else {
+    try {
+      data = await sheetsGet(
+        `https://sheets.googleapis.com/v4/spreadsheets/${sid}/values:batchGet?${qs}`,
+      );
+      fresh?.set(cacheKey, { at: Date.now(), data });
+    } catch (e) {
+      return { sheetId: sid, error: String(e).slice(0, 200) };
+    }
   }
   const grids: Any[] = data?.valueRanges ?? [];
   if (grids.length === 0)
@@ -1143,8 +1155,15 @@ export const push = internalAction({
     });
 
     // Four in flight keeps a 47-client run under the Sheets per-minute read cap.
+    const sheetCache = await loadSheetCache(ctx);
+    const freshSheets: SheetCache = new Map();
     const profiles = await pool(clients, 4, async c => {
-      const perf = await sheetPerformance(c.sheetLink, today);
+      const perf = await sheetPerformance(
+        c.sheetLink,
+        today,
+        sheetCache,
+        freshSheets,
+      );
       const ads = adsForClient(c.name, campaigns, tree);
       const meta = metaAccountFor(
         c.name,
@@ -1253,6 +1272,7 @@ export const push = internalAction({
       );
 
     // Provisional bookings, per client with a GHL token.
+    await saveSheetCache(ctx, freshSheets);
     await pool(profiles as Any[], 4, async p => {
       const acct = accountFor(accounts, p.clientName, p.taskId);
       if (!acct) return;

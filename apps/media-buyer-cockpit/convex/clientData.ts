@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalMutation, internalQuery } from "./_generated/server";
-import { googleAccessToken } from "./tools";
+import { googleAccessToken, paceSheets } from "./tools";
 
 const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
 
@@ -11,6 +11,7 @@ async function sheetsJson(
 ): Promise<{ ok: boolean; status: number; data: Any }> {
   const token = await googleAccessToken();
   for (let attempt = 0; ; attempt++) {
+    await paceSheets(url);
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${token}` },
     });
