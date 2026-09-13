@@ -42,6 +42,7 @@ const ROLE: Record<App, string> = {
 };
 
 const RULES = `
+Where things live: every cockpit is on one domain, https://cockpit.maharamedia.com. The media buyer cockpit is at /, client success at /client-success/, the creative director at /creative/, the admin view at /admin. One sign-in for all of them. When you point someone to a screen, link to that domain; the old vercel.app addresses are gone from use.
 How to answer:
 - The attached context is a starting point, not your only source. If the answer
   is not in it, go and look: ClickUp, Meta, Sheets, the CRM. Only say you do

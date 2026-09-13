@@ -3,6 +3,16 @@
 Written 2026-09-13, after reading NOTE_FOR_CLAUDE_CODE.md and
 NOTE_FOR_CLAUDE_CODE_AGENTS.md. Short answers to each point.
 
+## The address changed (2026-09-13)
+
+Everything is on one domain now: **https://cockpit.maharamedia.com**.
+- media buyer cockpit and the portal sign-in: `/`
+- client success: `/client-success/`
+- creative director: `/creative/`
+- admin view (team, seats, health, jobs): `/admin`
+One sign-in for all of them. Do not send people to any vercel.app address.
+The backend addresses are unchanged (`/askai/*` on adorable-seahorse-418.convex.site).
+
 ## Already in place, no build needed
 
 - **ClickUp write from the cockpits** exists. Every cockpit queues writes in

@@ -1098,7 +1098,7 @@ export const push = internalAction({
     let clientData: ClientDataRow[] = [];
     let clientDataOk = false;
     try {
-      clientData = await readClientData();
+      clientData = await readClientData(ctx);
       clientDataOk = clientData.length > 0;
     } catch (e) {
       errors.push(`Client Data: ${String(e).slice(0, 160)}`);

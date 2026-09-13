@@ -1,3 +1,6 @@
+import { v } from "convex/values";
+import { internal } from "./_generated/api";
+import { internalMutation, internalQuery } from "./_generated/server";
 import { googleAccessToken } from "./tools";
 
 const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -103,16 +106,39 @@ export async function clientDataHeader(): Promise<{
   return { head, col };
 }
 
-export async function readClientData(): Promise<ClientDataRow[]> {
+/**
+ * The Client Data tab, with a fallback: every good read is kept in
+ * `docCache` (docId "clientData"), and a read that fails (quota, a share
+ * revoked, Google down) serves the last good copy instead of throwing, so a
+ * sheet hiccup never empties the cockpits. Pass `ctx` from an action to get
+ * the fallback; without it the read behaves as before.
+ */
+export async function readClientData(
+  // biome-ignore lint/suspicious/noExplicitAny: action ctx, optional
+  ctx?: any,
+): Promise<ClientDataRow[]> {
   if (memo && Date.now() - memo.at < 120_000) return memo.rows;
   const res = await sheetsJson(
     `https://sheets.googleapis.com/v4/spreadsheets/${DATABASE_SHEET}/values/${encodeURIComponent("Client Data!A1:Z500")}`,
   );
   const data = res.data;
-  if (!res.ok)
-    throw new Error(
-      `Client Data: ${data?.error?.message ?? res.status}`.slice(0, 200),
+  if (!res.ok) {
+    const message = `Client Data: ${data?.error?.message ?? res.status}`.slice(
+      0,
+      200,
     );
+    if (ctx) {
+      const copy = await ctx.runQuery(internal.clientData.lastCopy, {});
+      if (copy) {
+        console.warn(
+          `${message}; using the copy from ${new Date(copy.at).toISOString()}`,
+        );
+        memo = { at: Date.now(), rows: copy.rows };
+        return copy.rows;
+      }
+    }
+    throw new Error(message);
+  }
   const values = (data?.values ?? []) as string[][];
   const head = (values[0] ?? []).map(h =>
     String(h ?? "")
@@ -156,6 +182,10 @@ export async function readClientData(): Promise<ClientDataRow[]> {
     });
   }
   memo = { at: Date.now(), rows };
+  if (ctx)
+    await ctx
+      .runMutation(internal.clientData.saveCopy, { rows })
+      .catch(() => undefined);
   return rows;
 }
 
@@ -187,3 +217,40 @@ export function statSheetUrl(row?: ClientDataRow): string | undefined {
     return `https://docs.google.com/spreadsheets/d/${row.reportDocId}/edit`;
   return undefined;
 }
+
+export const lastCopy = internalQuery({
+  args: {},
+  returns: v.any(),
+  handler: async ctx => {
+    const row = await ctx.db
+      .query("docCache")
+      .withIndex("by_doc", q => q.eq("docId", "clientData"))
+      .unique();
+    if (!row) return null;
+    try {
+      return { at: row.at, rows: JSON.parse(row.text) };
+    } catch {
+      return null;
+    }
+  },
+});
+
+export const saveCopy = internalMutation({
+  args: { rows: v.any() },
+  returns: v.null(),
+  handler: async (ctx, { rows }) => {
+    const row = await ctx.db
+      .query("docCache")
+      .withIndex("by_doc", q => q.eq("docId", "clientData"))
+      .unique();
+    const doc = {
+      docId: "clientData",
+      title: "Client Data (last good read)",
+      text: JSON.stringify(rows),
+      at: Date.now(),
+    };
+    if (row) await ctx.db.patch(row._id, doc);
+    else await ctx.db.insert("docCache", doc);
+    return null;
+  },
+});

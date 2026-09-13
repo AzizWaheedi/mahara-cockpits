@@ -132,3 +132,25 @@ deployment, `smoke.run` in the other two.
 - Typeform notes with a wrong task id are dropped silently.
 - Fathom matches only by title or invitee containing the client name.
 - Google Sheets allows 60 reads a minute for the service account; reads retry on 429 and Client Data is memoized for two minutes, but adding many more sheets per run would need pacing.
+
+
+## Fallbacks
+
+Aziz, 2026-09-13: "there should always be a fallback source for these types of things." Every feed and what happens when its first source fails:
+
+| Feed | First source | Fallback |
+| --- | --- | --- |
+| Ad spend, leads, clicks | tracker sheet `data_fb` | Meta ad-level daily insights for any account the sheet lacks; the whole sheet unreadable means Meta for every account with spend |
+| Client ids and links | Client Data tab | the last good copy of the tab (`docCache` "clientData"), then the ClickUp card |
+| Ad account per client | matched campaign | Client Data "Ad Account - Meta", then a visible Meta account by name |
+| Leads per client | Meta | the sheet's own lead count, kept as `sheetLeads` |
+| Bookings | GHL calendars | the sheet's appointment rows |
+| Recorded calls | Fathom API | the `fathomCache` backfill, 90 days |
+| Client stage and group | ClickUp card | the last synced client row |
+| Communication SOP | Google Doc | `docCache`, 24 hours |
+| Ad previews | Meta preview | cached copy, refreshed after 18 hours |
+| WhatsApp threads | GHL conversations | WHAPI channel when set |
+| Slack alerts | Slack DM | `alerts` table, shown in Admin |
+| Seats | `members` table | static list in `roles.ts` (first five people), and each cockpit's own `portalMembers` copy |
+| Campaign snapshot | this sync | an empty or failed read keeps the previous snapshot; grain outside the 30-day window is kept for a year |
+| Hermes | the agent on the VPS | jobs wait in the queue, reaped and retried; no second model by design |

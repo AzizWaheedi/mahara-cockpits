@@ -849,7 +849,7 @@ export const drain = internalAction({
     if (!pending.length) return { built: 0 };
     let rows: Any[] = [];
     try {
-      rows = await readClientData();
+      rows = await readClientData(ctx);
     } catch {
       // no folder placement, the doc still gets written
     }

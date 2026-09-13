@@ -925,8 +925,18 @@ async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
   // biome-ignore lint/suspicious/noExplicitAny: staged payload
   const staged: any = stagedRaw ? JSON.parse(stagedRaw) : null;
 
-  const rows: string[][] =
-    staged?.rows ?? (await sheet(TRACKER, "'data_fb'!A3:Y11005"));
+  // If the tracker sheet cannot be read at all, the Meta fallback below
+  // covers every account with spend, so the cockpits still refresh.
+  let rows: string[][] = staged?.rows ?? [];
+  if (!staged?.rows) {
+    try {
+      rows = await sheet(TRACKER, "'data_fb'!A3:Y11005");
+    } catch (e) {
+      console.error(
+        `tracker sheet unreadable, Meta only: ${String(e).slice(0, 160)}`,
+      );
+    }
+  }
   const clientRows: string[][] =
     staged?.clientRows ?? (await sheet(DATABASE, "'Client Data'!A1:S200"));
   // The tracker sheet only carries the accounts its connector was set up
