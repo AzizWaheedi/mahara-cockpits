@@ -286,7 +286,7 @@ async function attachDriveSubfolders(roster: Any[]) {
   let scanned = 0;
   let dataRows: ClientDataRow[] = [];
   try {
-    dataRows = await readClientData(ctx);
+    dataRows = await readClientData();
   } catch (e) {
     console.warn(
       `Client Data unreadable, card links only: ${String(e).slice(0, 120)}`,
