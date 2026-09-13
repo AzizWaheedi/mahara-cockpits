@@ -471,3 +471,23 @@ export const pemProbe = internalAction({
     return out;
   },
 });
+
+/** Tracker sheet rows (data_fb) mentioning a name, to see whether the sync can even see a client. */
+export const trackerRows = internalAction({
+  args: { name: v.string() },
+  returns: v.any(),
+  handler: async (_ctx, { name }) => {
+    const rows: string[][] = await callTool("pd_google_sheets_proxy_get", {
+      url: `https://sheets.googleapis.com/v4/spreadsheets/1pBEyClUxPLc4-RdXR8gZ0MxsLkLLFkWJwkiVqVf2rro/values/${encodeURIComponent("'data_fb'!A3:Y11005")}`,
+    }).then((r: Any) => r?.values ?? []);
+    const key = name.toLowerCase();
+    const hits = rows.filter(r => r.join(" ").toLowerCase().includes(key));
+    return {
+      total: rows.length,
+      hits: hits.length,
+      sample: hits.slice(0, 5),
+      newest: hits.slice(-3),
+      accounts: [...new Set(hits.map(r => r[1]))].slice(0, 10),
+    };
+  },
+});

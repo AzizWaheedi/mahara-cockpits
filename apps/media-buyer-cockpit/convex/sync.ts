@@ -9,7 +9,14 @@ import {
 import { NEW_CAMPAIGN_FORM_URL } from "./constants";
 import { authenticatedAction } from "./functions";
 import { flush } from "./health";
-import { allAdAccounts, callTool, graph, supabaseQuery, unwrap } from "./tools";
+import {
+  allAdAccounts,
+  callTool,
+  graph,
+  MAHARA_BUSINESS_ID,
+  supabaseQuery,
+  unwrap,
+} from "./tools";
 
 const TRACKER = "1pBEyClUxPLc4-RdXR8gZ0MxsLkLLFkWJwkiVqVf2rro";
 const DATABASE = "1_0Nv-IFvzhH4NBNh1dxCUm6Ryp414ctM_8EO5QORBF0";
@@ -97,6 +104,85 @@ function normalize(s: string): string {
   return String(s)
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]/gu, "");
+}
+
+/**
+ * Ad-level daily rows, straight from Meta, for every visible account with
+ * spend in the last 30 days that has no row in the tracker sheet. Same
+ * columns as `data_fb` (see `C`), so the rest of the sync does not care
+ * where a row came from.
+ */
+async function metaRowsForMissingAccounts(
+  sheetRows: string[][],
+  since: string,
+): Promise<{ rows: string[][]; accounts: string[] }> {
+  const inSheet = new Set<string>();
+  for (const r of sheetRows)
+    if (r[C.date] >= since && r[C.account])
+      inSheet.add(normalize(r[C.account]));
+  // One call per edge for the 30-day spend of every account at once.
+  // biome-ignore lint/suspicious/noExplicitAny: Graph rows
+  const accounts: any[] = [];
+  for (const edge of ["owned_ad_accounts", "client_ad_accounts"]) {
+    // biome-ignore lint/suspicious/noExplicitAny: Graph rows
+    const r = await graph<any>(`${MAHARA_BUSINESS_ID}/${edge}`, {
+      fields: "id,name,currency,insights.date_preset(last_30d){spend}",
+      limit: 200,
+    });
+    accounts.push(...(r.data ?? []));
+  }
+  const out: string[][] = [];
+  const names: string[] = [];
+  for (const a of accounts) {
+    const name = String(a.name ?? "").trim();
+    const key = normalize(name);
+    if (!key || inSheet.has(key) || INTERNAL_ACCOUNTS.includes(key)) continue;
+    const spend = num(a.insights?.data?.[0]?.spend);
+    if (spend <= 0) continue;
+    const currency = String(a.currency ?? "USD");
+    // biome-ignore lint/suspicious/noExplicitAny: Graph rows
+    let page: any = await graph<any>(`${a.id}/insights`, {
+      level: "ad",
+      time_increment: 1,
+      date_preset: "last_30d",
+      fields:
+        "date_start,campaign_name,adset_name,ad_name,ad_id,spend,impressions,inline_link_clicks,frequency,actions",
+      limit: 500,
+    });
+    let guard = 0;
+    while (page && guard++ < 10) {
+      for (const d of page.data ?? []) {
+        const leads = num(
+          // biome-ignore lint/suspicious/noExplicitAny: Graph rows
+          (d.actions ?? []).find((x: any) => x.action_type === "lead")?.value,
+        );
+        const cost = num(d.spend);
+        const row: string[] = new Array(25).fill("");
+        row[C.date] = String(d.date_start ?? "");
+        row[C.account] = name;
+        row[C.campaign] = String(d.campaign_name ?? "");
+        row[C.adSet] = String(d.adset_name ?? "");
+        row[C.cost] = String(cost);
+        row[C.leads] = String(leads);
+        row[6] = leads ? String(Math.round((cost / leads) * 100) / 100) : "";
+        row[C.impressions] = String(num(d.impressions));
+        row[C.linkClicks] = String(num(d.inline_link_clicks));
+        row[C.frequency] = String(num(d.frequency));
+        row[C.adId] = String(d.ad_id ?? "");
+        row[C.adName] = String(d.ad_name ?? "");
+        row[C.status] = "ACTIVE";
+        row[C.currency] = currency;
+        out.push(row);
+      }
+      const next = page.paging?.next;
+      if (!next) break;
+      const res = await fetch(next);
+      page = await res.json();
+      if (page?.error) break;
+    }
+    names.push(name);
+  }
+  return { rows: out, accounts: names };
 }
 
 async function sheet(id: string, range: string): Promise<string[][]> {
@@ -843,6 +929,21 @@ async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
     staged?.rows ?? (await sheet(TRACKER, "'data_fb'!A3:Y11005"));
   const clientRows: string[][] =
     staged?.clientRows ?? (await sheet(DATABASE, "'Client Data'!A1:S200"));
+  // The tracker sheet only carries the accounts its connector was set up
+  // for. Any account Meta shows us that the sheet does not (City Wood, Al Ola
+  // on 2026-09-12) is read straight from Meta in the same row shape, so a new
+  // ad account never needs anyone to touch the sheet's connector first.
+  try {
+    const extra = await metaRowsForMissingAccounts(rows, since30);
+    if (extra.rows.length) {
+      rows.push(...extra.rows);
+      console.log(
+        `meta fallback: ${extra.rows.length} row(s) for ${extra.accounts.join(", ")}`,
+      );
+    }
+  } catch (e) {
+    console.error(`meta fallback: ${String(e).slice(0, 200)}`);
+  }
 
   // Client Data → account name to client name.
   const head = clientRows[0] ?? [];
