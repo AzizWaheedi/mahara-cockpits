@@ -67,24 +67,35 @@ export const pending = internalMutation({
     }),
   ),
   handler: async (ctx, { limit }) => {
-    const rows = (
-      await ctx.db
+    // Every open job is listed on every poll. Hermes checks for work with one
+    // call and answers with another; handing a job out only once (2026-09-12)
+    // left the answering run with an empty queue, and every job died after
+    // four rounds on 2026-09-13. An attempt is counted once per claim window,
+    // not per poll, so a job nobody answers still fails after four attempts.
+    const now = Date.now();
+    const open = [
+      ...(await ctx.db
         .query("aiJobs")
         .withIndex("by_status", q => q.eq("status", "queued"))
-        .collect()
-    )
-      // A poisoned prompt must not be retried forever.
-      .filter(r => r.tries < 4)
+        .collect()),
+      ...(await ctx.db
+        .query("aiJobs")
+        .withIndex("by_status", q => q.eq("status", "claimed"))
+        .collect()),
+    ];
+    const inWindow = (r: { claimedAt?: number }) =>
+      now - (r.claimedAt ?? 0) <= CLAIM_TTL_MS;
+    const rows = open
+      .filter(r => r.tries < 4 || (r.status === "claimed" && inWindow(r)))
       .sort((a, b) => a.createdAt - b.createdAt)
       .slice(0, limit ?? 10);
-    for (const r of rows) {
-      // Handed out once: "claimed" until Hermes answers or `reap` gives it back.
-      await ctx.db.patch(r._id, {
-        status: "claimed",
-        tries: r.tries + 1,
-        claimedAt: Date.now(),
-      });
-    }
+    for (const r of rows)
+      if (r.status === "queued" || !inWindow(r))
+        await ctx.db.patch(r._id, {
+          status: "claimed",
+          tries: r.tries + 1,
+          claimedAt: now,
+        });
     return rows.map(r => ({
       id: r._id,
       kind: r.kind,
@@ -305,5 +316,25 @@ export const waiting = internalQuery({
       claimed: claimed.length,
       lastPollAt: h?.lastOkAt,
     };
+  },
+});
+
+/** Retire jobs whose person-facing message is gone, so Hermes never acts on them unseen. */
+export const retire = internalMutation({
+  args: { ids: v.array(v.id("aiJobs")), reason: v.string() },
+  returns: v.number(),
+  handler: async (ctx, { ids, reason }) => {
+    let n = 0;
+    for (const id of ids) {
+      const j = await ctx.db.get(id);
+      if (!j || j.status === "done" || j.status === "failed") continue;
+      await ctx.db.patch(id, {
+        status: "failed",
+        error: reason,
+        doneAt: Date.now(),
+      });
+      n++;
+    }
+    return n;
   },
 });

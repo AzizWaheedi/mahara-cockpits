@@ -213,3 +213,19 @@ export const markReading = internalMutation({
     return null;
   },
 });
+
+/** Send a person's message to Hermes again (after an outage on our side). */
+export const requeue = internalMutation({
+  args: { id: v.id("hermesChat") },
+  returns: v.null(),
+  handler: async (ctx, { id }) => {
+    const m = await ctx.db.get(id);
+    if (!m || m.role !== "user") return null;
+    await ctx.db.patch(id, {
+      status: "queued",
+      error: undefined,
+      jobId: undefined,
+    });
+    return null;
+  },
+});
