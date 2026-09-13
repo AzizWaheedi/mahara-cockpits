@@ -3,7 +3,8 @@ import {
   modifyAccountCredentials,
 } from "@convex-dev/auth/server";
 import { v } from "convex/values";
-import { internalAction } from "./_generated/server";
+import { internalAction, internalMutation } from "./_generated/server";
+import { upsertTeamUser } from "./auth";
 
 /**
  * Reset someone's password from the CLI. There is no mail transport on this
@@ -36,5 +37,40 @@ export const setPassword = internalAction({
       });
       return `password created for ${id}; they can sign in now`;
     }
+  },
+});
+
+/**
+ * Self-test for the sign-in save step, with no lasting effect: it runs the
+ * exact save a reset or sign-up code triggers, then throws, and Convex rolls
+ * the whole mutation back. "ROLLED BACK OK" means the save would succeed.
+ *   bunx convex run --prod adminAuth:dryRunUpsert '{"email":"nada@maharamedia.com"}'
+ */
+export const dryRunUpsert = internalMutation({
+  args: { email: v.string(), name: v.optional(v.string()) },
+  returns: v.null(),
+  handler: async (ctx, { email, name }) => {
+    const key = email.trim().toLowerCase();
+    const user = await ctx.db
+      .query("users")
+      .withIndex("email", q => q.eq("email", key))
+      .first();
+    const acct = user
+      ? await ctx.db
+          .query("authAccounts")
+          .withIndex("userIdAndProvider", q =>
+            q.eq("userId", user._id).eq("provider", "password"),
+          )
+          .unique()
+      : null;
+    await upsertTeamUser(ctx, {
+      existingUserId: acct?.userId ?? null,
+      provider: { id: "password", type: "credentials" },
+      type: "credentials",
+      profile: { email: key, emailVerified: true, ...(name ? { name } : {}) },
+    });
+    throw new Error(
+      `ROLLED BACK OK: ${acct ? "existing account updated" : user ? "linked to existing user" : "new user created"}`,
+    );
   },
 });

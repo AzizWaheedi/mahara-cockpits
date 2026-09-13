@@ -4,6 +4,7 @@ import "./phiLogging";
 import { convexAuth, getAuthUserId } from "@convex-dev/auth/server";
 import { query } from "./_generated/server";
 import { accessFor } from "./roles";
+
 import { configuredAuthProviders } from "./viktorSpaceAuthConfig";
 
 declare const process: { env: Record<string, string | undefined> };
@@ -38,33 +39,66 @@ if (jwtPrivateKey) {
 // Providers are resolved from the space's configured provider list
 // (email_password / viktor) plus the `space_session` exchange used by
 // automation and authenticated-screenshot capture. See viktorSpaceAuthConfig.ts.
+
+const USER_FIELDS = ["email", "name", "image", "phone"] as const;
+
+/**
+ * Save the user behind a sign-in, a sign-up code or a reset code.
+ *
+ * Mirrors Convex Auth's default: the provider's `emailVerified` /
+ * `phoneVerified` flags become verification times (the users table has no
+ * such flags, and passing them through made every reset and sign-up code
+ * fail on 2026-09-13), and a new sign-in links to an existing user with the
+ * same verified email. On top of that, a brand-new password account is only
+ * created for someone an admin added in the portal.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: Convex Auth callback shapes
+export async function upsertTeamUser(ctx: any, args: any): Promise<any> {
+  const profile = (args.profile ?? {}) as Record<string, unknown>;
+  const email =
+    typeof profile.email === "string"
+      ? profile.email.trim().toLowerCase()
+      : undefined;
+  const data: Record<string, string | number> = {};
+  for (const k of USER_FIELDS)
+    if (typeof profile[k] === "string" && profile[k])
+      data[k] = k === "email" && email ? email : (profile[k] as string);
+  if (profile.emailVerified) data.emailVerificationTime = Date.now();
+  if (profile.phoneVerified) data.phoneVerificationTime = Date.now();
+
+  let userId = args.existingUserId ?? null;
+  if (!userId && email) {
+    const same = (
+      await ctx.db
+        .query("users")
+        .withIndex("email", (q: any) => q.eq("email", email))
+        .collect()
+    ).filter((u: any) => u.emailVerificationTime !== undefined);
+    if (same.length === 1) userId = same[0]._id;
+  }
+  if (!userId && args.provider?.id === "password") {
+    const a = await accessFor(ctx, email);
+    if (a.roles.length === 0)
+      throw new Error(
+        "This email is not on the team yet. Ask Aziz to add you in the portal, then sign up.",
+      );
+  }
+  if (userId) {
+    await ctx.db.patch(userId, data);
+    return userId;
+  }
+  return await ctx.db.insert("users", data);
+}
+
 const DAY = 86400_000;
 
 export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
   providers: configuredAuthProviders(),
   callbacks: {
-    /**
-     * Only a person an admin added in the portal may create a password
-     * account, so nobody can claim a colleague's seat by typing their email
-     * first. Existing users and portal passes are unaffected.
-     */
-    async createOrUpdateUser(ctx, args) {
-      const email = String(args.profile.email ?? "")
-        .trim()
-        .toLowerCase();
-      if (!args.existingUserId && args.provider.id === "password") {
-        const a = await accessFor(ctx, email);
-        if (a.roles.length === 0)
-          throw new Error(
-            "This email is not on the team yet. Ask Aziz to add you in the portal, then sign up.",
-          );
-      }
-      if (args.existingUserId) {
-        await ctx.db.patch(args.existingUserId, { ...args.profile, email });
-        return args.existingUserId;
-      }
-      return await ctx.db.insert("users", { ...args.profile, email });
-    },
+    // Only a person an admin added in the portal may create a password
+    // account; everything else is the library's own behaviour (see
+    // upsertTeamUser).
+    createOrUpdateUser: upsertTeamUser,
   },
   // Aziz, 2026-09-12: "make sure she doesn't get logged out again". A
   // session lasts a year and only lapses after 90 days without a visit.
