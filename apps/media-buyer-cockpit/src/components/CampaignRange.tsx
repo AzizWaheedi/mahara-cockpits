@@ -4,6 +4,7 @@ import type { Range } from "@/lib/range";
 import { rangeDays } from "@/lib/range";
 import { api } from "../../convex/_generated/api";
 import { RangePicker } from "./RangePicker";
+import { CampaignTrend } from "./Trends";
 
 /**
  * One campaign, over whatever window she asks for, at ad set and ad level.
@@ -78,6 +79,11 @@ export function CampaignRange({
         </div>
         <RangePicker value={range} onChange={onRangeChange} compact />
       </div>
+      <CampaignTrend
+        campaignName={campaignName}
+        start={range.start}
+        end={range.end}
+      />
 
       {coverage?.last && range.end > coverage.last && (
         <div className="mb-2 rounded border callout-warn px-2.5 py-1.5 text-[12px]">

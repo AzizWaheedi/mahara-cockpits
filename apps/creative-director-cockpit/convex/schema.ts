@@ -195,6 +195,12 @@ const schema = defineSchema({
     onboardingCallDate: v.optional(v.number()),
     phone: v.optional(v.string()),
     ghlContactId: v.optional(v.string()),
+    /** Leads and spend per day from the ads, last 90 days, for the trend charts. */
+    daily: v.optional(
+      v.array(
+        v.object({ date: v.string(), leads: v.number(), spend: v.number() }),
+      ),
+    ),
     syncedAt: v.number(),
   })
     .index("by_task", ["taskId"])

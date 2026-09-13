@@ -13,6 +13,7 @@ import { RangePicker } from "@/components/RangePicker";
 import { StatusToggle } from "@/components/StatusToggle";
 import { TodayMeetings } from "@/components/TodayMeetings";
 import { TrackingIssues } from "@/components/TrackingIssues";
+import { PortfolioTrends } from "@/components/Trends";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -754,6 +755,12 @@ function Cockpit({ view }: { view: View }) {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {view === "sod" && (
+        <div className="mb-5">
+          <PortfolioTrends />
         </div>
       )}
 

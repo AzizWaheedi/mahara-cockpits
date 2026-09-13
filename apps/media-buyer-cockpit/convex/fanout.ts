@@ -400,6 +400,45 @@ async function readStatSheet(
   return booked ? { tab, booked, shows, quotes, closes } : undefined;
 }
 
+/** Leads and spend per day per client from the ad grain, for the creative trend charts. */
+// biome-ignore lint/suspicious/noExplicitAny: action ctx
+async function attachDaily(ctx: any, roster: Any[]) {
+  try {
+    const rows: Any[] = await ctx.runQuery(
+      internal.csmProfiles.adLeadsByClient,
+      {},
+    );
+    const since = new Date(Date.now() - 90 * 86400_000)
+      .toISOString()
+      .slice(0, 10);
+    const tight = (x: unknown) =>
+      String(x ?? "")
+        .toLowerCase()
+        .replace(/[^a-z0-9\u0600-\u06ff]+/g, "");
+    const byKey = new Map(rows.map(r => [tight(r.key), r]));
+    for (const row of roster) {
+      const name = tight(row.name);
+      const hit =
+        byKey.get(name) ??
+        (name.length >= 5
+          ? [...byKey.entries()].find(([k]) =>
+              k.startsWith(name.slice(0, 5)),
+            )?.[1]
+          : undefined);
+      if (!hit) continue;
+      row.daily = (hit.daily ?? [])
+        .filter((d: Any) => d.date >= since)
+        .map((d: Any) => ({
+          date: d.date,
+          leads: Number(d.leads ?? 0),
+          spend: Number(d.spend ?? 0),
+        }));
+    }
+  } catch (e) {
+    console.warn(`daily for creative: ${String(e).slice(0, 120)}`);
+  }
+}
+
 // biome-ignore lint/suspicious/noExplicitAny: action ctx
 async function attachStatSheets(ctx: any, roster: Any[]) {
   const tab = currentMonthTab();
@@ -833,6 +872,7 @@ export const feedCreative = internalAction({
       await attachDriveSubfolders(roster);
       // Stat sheets are filled by hand through the day: read on the full run only.
       if (withStats) await attachStatSheets(ctx, roster);
+      await attachDaily(ctx, roster);
       report.clients = roster.length
         ? await bridge("creative", "storeClients", { clients: roster })
         : "empty, kept";

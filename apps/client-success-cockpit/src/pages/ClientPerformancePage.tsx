@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { bucketDays, TrendChart } from "@/components/TrendChart";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { type Constraint, diagnose } from "@/lib/csmDiagnosis";
@@ -1270,6 +1271,117 @@ function monthsAvailable(p: Any): string[] {
   return [...set].sort().reverse();
 }
 
+/**
+ * The client's own trends for the picked range: what the ads did per day,
+ * and what came of it per day or per week (weekly once the span passes 45
+ * days). Cost per booking divides ad spend by bookings made in the bucket.
+ */
+function ProfileTrends({ p, from, to }: { p: Any; from: string; to: string }) {
+  const daily: Any[] = (p.adLeads?.daily ?? []).filter(
+    (d: Any) => d.date >= from && d.date <= to,
+  );
+  const appts: Any[] = (p.performance?.appointments ?? [])
+    .filter((r: Any) => r.added)
+    .map((r: Any) => ({ ...r, date: String(r.added).slice(0, 10) }));
+  const adBuckets = bucketDays(daily, from, to);
+  const apptBuckets = bucketDays(appts, from, to);
+  const spendByKey = new Map(
+    adBuckets.map(b => [
+      b.key,
+      b.rows.reduce((s, r) => s + Number(r.spend ?? 0), 0),
+    ]),
+  );
+  const leads = adBuckets.map(b => ({
+    x: b.key,
+    y: b.rows.reduce((s, r) => s + Number(r.leads ?? 0), 0),
+  }));
+  const spend = adBuckets.map(b => ({
+    x: b.key,
+    y: Math.round(spendByKey.get(b.key) ?? 0),
+  }));
+  const cpl = adBuckets.map(b => {
+    const l = b.rows.reduce((s, r) => s + Number(r.leads ?? 0), 0);
+    return {
+      x: b.key,
+      y: l ? Math.round(((spendByKey.get(b.key) ?? 0) / l) * 100) / 100 : null,
+    };
+  });
+  const booked = apptBuckets.map(b => ({
+    x: b.key,
+    y: b.rows.filter(r => r.booked).length,
+  }));
+  const showRate = apptBuckets.map(b => {
+    const s = b.rows.filter(r => r.show === "y").length;
+    const n = b.rows.filter(r => r.show === "n").length;
+    return { x: b.key, y: s + n ? Math.round((100 * s) / (s + n)) : null };
+  });
+  const cpb = apptBuckets.map(b => {
+    const bk = b.rows.filter(r => r.booked).length;
+    const sp = spendByKey.get(b.key) ?? 0;
+    return { x: b.key, y: bk && sp ? Math.round((sp / bk) * 100) / 100 : null };
+  });
+  const weekly =
+    adBuckets.length > 0 &&
+    apptBuckets.length > 0 &&
+    (Date.parse(to) - Date.parse(from)) / 86400_000 > 45;
+  const per = weekly ? "per week" : "per day";
+  return (
+    <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <TrendChart title={`Leads ${per}`} points={leads} kind="bar" />
+      <TrendChart title={`Spend ${per}`} points={spend} unit="$" />
+      <TrendChart
+        title="Cost per lead"
+        points={cpl}
+        unit="$"
+        mode="avg"
+        goodWhen="down"
+      />
+      <TrendChart title={`Booked ${per}`} points={booked} kind="bar" />
+      <TrendChart title="Show rate" points={showRate} unit="%" mode="avg" />
+      <TrendChart
+        title="Cost per booking"
+        points={cpb}
+        unit="$"
+        mode="avg"
+        goodWhen="down"
+        hint="Ad spend in the bucket divided by bookings made in it."
+      />
+    </div>
+  );
+}
+
+/** The whole book, on the overview. */
+function BookTrends({ trend, weekly }: { trend: Any[]; weekly: Any[] }) {
+  if (!trend?.length) return null;
+  return (
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <TrendChart
+        title="Leads per day, all clients"
+        points={trend.map((r: Any) => ({ x: r.date, y: r.leads }))}
+        kind="bar"
+      />
+      <TrendChart
+        title="Spend per day"
+        points={trend.map((r: Any) => ({ x: r.date, y: r.spend }))}
+        unit="$"
+      />
+      <TrendChart
+        title="Cost per lead"
+        points={trend.map((r: Any) => ({ x: r.date, y: r.cpl }))}
+        unit="$"
+        mode="avg"
+        goodWhen="down"
+      />
+      <TrendChart
+        title="Show rate per week"
+        points={(weekly ?? []).map((w: Any) => ({ x: w.week, y: w.showRate }))}
+        unit="%"
+        mode="avg"
+      />
+    </div>
+  );
+}
+
 function RangePicker({
   value,
   onChange,
@@ -1544,6 +1656,7 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
                     }
                   />
                 </div>
+                <ProfileTrends p={p} from={rv.from} to={rv.to} />
               </div>
             )}
             {!serviceModel(p.service).dwy && (
@@ -1857,6 +1970,11 @@ export function ClientPerformancePage() {
               hint="what the client actually banked"
             />
           </div>
+
+          <BookTrends
+            trend={data.trend as Any[]}
+            weekly={data.weeklyOutcomes as Any[]}
+          />
 
           <div className="flex flex-wrap items-center gap-2 text-sm">
             {GROUPS.map(g => {

@@ -783,7 +783,64 @@ export async function buildPerformanceOverview(
         bucket: (c as Any).bucket,
         stage: (c as Any).stage,
       });
+    // Trends across the book: leads and spend per day from the ads, booked
+    // and show rate per week from the sheets, last 90 days.
+    const since = new Date(Date.now() - 90 * 86400_000)
+      .toISOString()
+      .slice(0, 10);
+    const byDate = new Map<string, { leads: number; spend: number }>();
+    const byWeek = new Map<
+      string,
+      { booked: number; shows: number; noshows: number }
+    >();
+    const weekOf = (d: string) => {
+      const t = new Date(`${d.slice(0, 10)}T00:00:00Z`);
+      t.setUTCDate(t.getUTCDate() - ((t.getUTCDay() + 6) % 7));
+      return t.toISOString().slice(0, 10);
+    };
+    for (const r of rows) {
+      for (const d of ((r.adLeads as Any)?.daily ?? []) as Any[]) {
+        if (d.date < since) continue;
+        const row = byDate.get(d.date) ?? { leads: 0, spend: 0 };
+        row.leads += Number(d.leads ?? 0);
+        row.spend += Number(d.spend ?? 0);
+        byDate.set(d.date, row);
+      }
+      for (const a of ((r.performance as Any)?.appointments ?? []) as Any[]) {
+        const day = a.added ? String(a.added).slice(0, 10) : "";
+        if (!day || day < since) continue;
+        const w = byWeek.get(weekOf(day)) ?? {
+          booked: 0,
+          shows: 0,
+          noshows: 0,
+        };
+        if (a.booked) w.booked++;
+        if (a.show === "y") w.shows++;
+        if (a.show === "n") w.noshows++;
+        byWeek.set(weekOf(day), w);
+      }
+    }
+    const trend = [...byDate.entries()]
+      .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+      .map(([date, r]) => ({
+        date,
+        leads: r.leads,
+        spend: Math.round(r.spend * 100) / 100,
+        cpl: r.leads ? Math.round((r.spend / r.leads) * 100) / 100 : null,
+      }));
+    const weeklyOutcomes = [...byWeek.entries()]
+      .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+      .map(([week, w]) => ({
+        week,
+        booked: w.booked,
+        showRate:
+          w.shows + w.noshows
+            ? Math.round((100 * w.shows) / (w.shows + w.noshows))
+            : null,
+      }));
     return {
+      trend,
+      weeklyOutcomes,
       syncedAt: Math.max(0, ...rows.map(r => r.syncedAt)),
       clients: rows
         .map(r => {

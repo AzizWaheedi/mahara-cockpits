@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { internalQuery } from "./_generated/server";
 import { authenticatedQuery } from "./functions";
 import { assertScope } from "./gate";
-import { assertRole } from "./roles";
+import { allowedClients, assertRole } from "./roles";
 
 /**
  * Any date range, at every level.
@@ -275,5 +275,81 @@ export const modes = internalQuery({
       bookings: c.bookings7d ?? null,
       cpb: c.costPerBooking ?? null,
     }));
+  },
+});
+
+/**
+ * Trends for the start-of-day screen: spend, leads and cost per lead per
+ * day across every campaign this person may see, last 30 days.
+ */
+export const portfolioTrend = authenticatedQuery({
+  args: {},
+  returns: v.array(v.any()),
+  handler: async ctx => {
+    await assertRole(ctx, "media_buyer");
+    const scope = await allowedClients(ctx);
+    const campaigns = await ctx.db.query("campaigns").collect();
+    const allowed = new Set(
+      campaigns
+        .filter(
+          c =>
+            !c.internal &&
+            (!scope ||
+              scope.has(
+                String(c.clientName ?? c.accountName ?? "").toLowerCase(),
+              )),
+        )
+        .map(c => c.campaignName),
+    );
+    const since = new Date(Date.now() - 30 * 86400_000)
+      .toISOString()
+      .slice(0, 10);
+    const byDate = new Map<string, { spend: number; leads: number }>();
+    for (const d of await ctx.db.query("dailyStats").take(30000)) {
+      if (d.date < since || !allowed.has(d.campaignName)) continue;
+      const row = byDate.get(d.date) ?? { spend: 0, leads: 0 };
+      row.spend += Number(d.spend ?? 0);
+      row.leads += Number(d.leads ?? 0);
+      byDate.set(d.date, row);
+    }
+    return [...byDate.entries()]
+      .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+      .map(([date, r]) => ({
+        date,
+        spend: Math.round(r.spend * 100) / 100,
+        leads: r.leads,
+        cpl: r.leads ? Math.round((r.spend / r.leads) * 100) / 100 : null,
+      }));
+  },
+});
+
+/** One campaign's daily spend, leads and cost per lead for a range. */
+export const campaignTrend = authenticatedQuery({
+  args: { campaignName: v.string(), start: v.string(), end: v.string() },
+  returns: v.array(v.any()),
+  handler: async (ctx, args) => {
+    await assertRole(ctx, "media_buyer");
+    await assertScope(ctx, { campaignName: args.campaignName });
+    const byDate = new Map<string, { spend: number; leads: number }>();
+    for (const d of await ctx.db
+      .query("dailyStats")
+      .withIndex("by_campaign_date", q =>
+        q.eq("campaignName", args.campaignName),
+      )
+      .collect()) {
+      if (d.date < args.start || d.date > args.end) continue;
+      const row = byDate.get(d.date) ?? { spend: 0, leads: 0 };
+      row.spend += Number(d.spend ?? 0);
+      row.leads += Number(d.leads ?? 0);
+      byDate.set(d.date, row);
+    }
+    return [...byDate.entries()]
+      .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+      .map(([date, r]) => ({
+        date,
+        spend: Math.round(r.spend * 100) / 100,
+        leads: r.leads,
+        cpl: r.leads ? Math.round((r.spend / r.leads) * 100) / 100 : null,
+      }));
   },
 });

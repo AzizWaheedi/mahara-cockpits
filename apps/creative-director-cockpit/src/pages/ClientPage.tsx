@@ -12,6 +12,7 @@ import { useState } from "react";
 import { Link, useParams } from "react-router";
 import { CreativePreview } from "@/components/CreativePreview";
 import { TemplateCard } from "@/components/TemplateCard";
+import { bucketDays, TrendChart } from "@/components/TrendChart";
 import { Button } from "@/components/ui/button";
 import { CopyButton, WinningAds } from "@/components/WinningAds";
 import { TEMPLATES } from "@/lib/creativeTemplates";
@@ -219,6 +220,53 @@ function ClientStats({ s }: { s: any }) {
   );
 }
 
+/** What the client's ads did, per day, last 90 days: the creative director's scoreboard. */
+// biome-ignore lint/suspicious/noExplicitAny: client row
+function ClientTrends({ client }: { client: any }) {
+  // biome-ignore lint/suspicious/noExplicitAny: series rows
+  const daily: any[] = client?.daily ?? [];
+  if (daily.length < 2) return null;
+  const from = daily[0].date;
+  const to = daily[daily.length - 1].date;
+  const buckets = bucketDays(daily, from, to);
+  // biome-ignore lint/suspicious/noExplicitAny: series rows
+  const sum = (rows: any[], k: string) =>
+    rows.reduce((s, r) => s + Number(r[k] ?? 0), 0);
+  const leads = buckets.map(b => ({ x: b.key, y: sum(b.rows, "leads") }));
+  const spend = buckets.map(b => ({
+    x: b.key,
+    y: Math.round(sum(b.rows, "spend")),
+  }));
+  const cpl = buckets.map(b => {
+    const l = sum(b.rows, "leads");
+    return {
+      x: b.key,
+      y: l ? Math.round((sum(b.rows, "spend") / l) * 100) / 100 : null,
+    };
+  });
+  const weekly = (Date.parse(to) - Date.parse(from)) / 86400_000 > 45;
+  const per = weekly ? "per week" : "per day";
+  return (
+    <section>
+      <h2 className="mb-2 text-[12px] font-bold uppercase tracking-widest text-teal-600">
+        Trends, last 90 days
+      </h2>
+      <div className="grid gap-3 md:grid-cols-3">
+        <TrendChart title={`Leads ${per}`} points={leads} kind="bar" />
+        <TrendChart title={`Spend ${per}`} points={spend} unit="$" />
+        <TrendChart
+          title="Cost per lead"
+          points={cpl}
+          unit="$"
+          mode="avg"
+          goodWhen="down"
+          hint="Cheaper leads after a new creative went live is the win to look for."
+        />
+      </div>
+    </section>
+  );
+}
+
 export function ClientPage() {
   const params = useParams();
   const name = decodeURIComponent(params.name ?? "");
@@ -410,6 +458,8 @@ function ScriptFromHere({ d }: { d: any }) {
           </div>
         </section>
       )}
+
+      <ClientTrends client={d.client} />
 
       <section>
         <div className="mb-1 flex items-center gap-2">
