@@ -18,12 +18,19 @@ COCKPIT_CSM_BRIDGE_TOKEN. Never print either token.
 
 Use scripts/askai.py for every HTTP call; it reads the tokens itself.
 
-1. python3 scripts/askai.py pending prints the open ad-copy jobs as JSON:
+1. python3 scripts/askai.py pending prints EVERY open job as JSON:
    [{id, kind, prompt, schema, createdAt}]. Empty list → nothing to do here.
+
+   These are not only ad-copy jobs. The `kind` field varies and new kinds get
+   added to the cockpit without this skill being updated. **Every job in that
+   list is yours to answer, whatever its kind.** Do not skip one because the
+   kind is unfamiliar or because it looks like it belongs to another workflow.
+   Read its prompt, do what the prompt says, and match its schema.
 2. For each job: read prompt in full. Write the answer as JSON matching
    schema exactly, nothing else. Save it to a temp file and run
-   python3 scripts/askai.py result <id> <file>. If you cannot answer, run
-   python3 scripts/askai.py fail <id> "<one-line reason>".
+   python3 scripts/askai.py result <id> <file>. If you genuinely cannot answer,
+   run python3 scripts/askai.py fail <id> "<one-line reason>" so the cockpit
+   knows why. Never leave a job untouched.
 3. python3 scripts/askai.py asks prints the client success questions:
    [{_id, clientName, question, askedBy, askedAt}].
 4. For each ask: run python3 scripts/askai.py profile "<clientName>" to get the
@@ -57,7 +64,10 @@ Use scripts/askai.py for every HTTP call; it reads the tokens itself.
 
    Keep it under 200 words, in the language the question was asked in. Save to
    a file and run python3 scripts/askai.py answer <_id> <file>.
-5. If nothing was pending in either queue, output nothing at all.
+5. If, and only if, BOTH queues came back empty, output nothing at all. If a job
+   was present, it must be answered or explicitly failed with a reason. Silence
+   while a job is pending leaves a person staring at a loading state until the
+   job times out, and it is the single worst outcome here.
 
 ## Chat jobs (kind "chat"): you can act, so act
 
@@ -108,6 +118,49 @@ this on the board" is wrong.
 Report exactly what changed, with ids. **Never claim a change you did not make.**
 If a write fails, say so plainly and give the error, because a silent failure
 that reads as success is worse than an outright refusal.
+
+## Job kinds
+
+`askai.py pending` returns jobs of several kinds. **Answer every kind you are
+given.** A job whose kind you do not recognise is still a real person waiting on
+a screen, so read the prompt, follow it literally, and return JSON matching the
+`schema` field exactly. Never answer `[SILENT]` when a job is present.
+
+Known kinds:
+
+| kind | what it is |
+|---|---|
+| ad copy jobs | five angles, house rules below |
+| `call_brief` | call summaries for one client, see below |
+
+### call_brief
+
+Produced by the client success cockpit when a client's set of recorded calls
+changes. The prompt carries a JSON array of calls, each with `url`, `title`,
+`date`, `kind` and a `summary`.
+
+Return exactly:
+
+```json
+{"overall": "...", "perCall": [{"url": "<call url>", "brief": "..."}]}
+```
+
+Rules that matter here, because the output reaches a CSM who acts on it:
+
+- One paragraph per call, 2 to 4 sentences, **about that client only**. These
+  are often team meetings covering several clients. Everything about anyone else
+  is noise and must be dropped.
+- `overall` is 3 to 5 sentences on where things stand across all the calls, most
+  recent weighted most heavily.
+- **Use only what the summaries say.** No inference, no filling gaps. If the
+  calls do not say what was decided, the brief says that rather than guessing.
+- Every call in the input gets an entry in `perCall`, keyed by its exact `url`.
+  A missing url means the cockpit cannot match the brief back to the call.
+- First names for people. No timestamps, no headings, no bullets inside a brief.
+- No em dashes.
+
+If a call's summary is empty, say so in one short sentence for that call rather
+than omitting it.
 
 ## House rules for ad copy (checked on the way out, so obey them)
 
