@@ -31,6 +31,13 @@ export function SignIn() {
               setLoading(true);
 
               const formData = new FormData(e.currentTarget);
+              if (formData.has("code"))
+                formData.set(
+                  "code",
+                  String(formData.get("code") ?? "")
+                    .replace(/\D/g, "")
+                    .slice(-6),
+                );
               try {
                 const res = await signIn("password", formData);
                 // An account whose email was never verified gets a code by
@@ -117,6 +124,13 @@ export function SignIn() {
               setLoading(true);
 
               const formData = new FormData(e.currentTarget);
+              if (formData.has("code"))
+                formData.set(
+                  "code",
+                  String(formData.get("code") ?? "")
+                    .replace(/\D/g, "")
+                    .slice(-6),
+                );
               const email = formData.get("email") as string;
               try {
                 await signIn("password", formData);
@@ -188,6 +202,13 @@ export function SignIn() {
               setError("");
               setLoading(true);
               const formData = new FormData(e.currentTarget);
+              if (formData.has("code"))
+                formData.set(
+                  "code",
+                  String(formData.get("code") ?? "")
+                    .replace(/\D/g, "")
+                    .slice(-6),
+                );
               try {
                 await signIn("password", formData);
               } catch {
@@ -206,8 +227,9 @@ export function SignIn() {
                 id="verify-code"
                 name="code"
                 type="text"
-                placeholder="Enter code"
+                placeholder="6-digit code"
                 autoComplete="one-time-code"
+                inputMode="numeric"
                 className="h-11 text-center tracking-[0.5em] font-mono"
                 required
               />
@@ -259,6 +281,13 @@ export function SignIn() {
               e.preventDefault();
               setError("");
               const formData = new FormData(e.currentTarget);
+              if (formData.has("code"))
+                formData.set(
+                  "code",
+                  String(formData.get("code") ?? "")
+                    .replace(/\D/g, "")
+                    .slice(-6),
+                );
               const code = formData.get("code") as string;
               setStep({ type: "new-password", email: step.email, code });
             }}
@@ -270,8 +299,9 @@ export function SignIn() {
                 id="code"
                 name="code"
                 type="text"
-                placeholder="Enter code"
+                placeholder="6-digit code"
                 autoComplete="one-time-code"
+                inputMode="numeric"
                 className="h-11 text-center tracking-[0.5em] font-mono"
                 required
               />
@@ -315,6 +345,13 @@ export function SignIn() {
             setLoading(true);
 
             const formData = new FormData(e.currentTarget);
+            if (formData.has("code"))
+              formData.set(
+                "code",
+                String(formData.get("code") ?? "")
+                  .replace(/\D/g, "")
+                  .slice(-6),
+              );
             try {
               await signIn("password", formData);
             } catch {

@@ -39,7 +39,7 @@ async function sendEmail({
     body: JSON.stringify({
       from,
       to: [email],
-      subject: `${subject} - ${APP_NAME}`,
+      subject: `${token} is your ${subject.toLowerCase()} code`,
       html: `
         <div style="font-family: sans-serif; max-width: 400px; margin: 0 auto; padding: 20px;">
           <h2 style="color: #333;">${heading}</h2>
@@ -47,12 +47,12 @@ async function sendEmail({
           <div style="background: #f5f5f5; padding: 20px; text-align: center; border-radius: 8px; margin: 20px 0;">
             <span style="font-size: 36px; font-weight: bold; letter-spacing: 8px; color: #333;">${token}</span>
           </div>
-          <p style="color: #999; font-size: 12px;">This code expires in 15 minutes.</p>
+          <p style="color: #999; font-size: 12px;">This code expires in 15 minutes and replaces any code sent before it.</p>
           <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
           <p style="color: #999; font-size: 12px; text-align: center;">This email was sent by ${APP_NAME}</p>
         </div>
       `,
-      text: `${heading}\n\n${description}\n\nYour code is: ${token}\n\nThis code expires in 15 minutes.\n\n---\nThis email was sent by ${APP_NAME}`,
+      text: `${heading}\n\n${description}\n\nYour code is: ${token}\n\nThis code expires in 15 minutes and replaces any code sent before it.\n\n---\nThis email was sent by ${APP_NAME}`,
     }),
   });
 
@@ -78,7 +78,7 @@ export const ViktorSpacesEmail = Email({
     await sendEmail({
       email,
       token,
-      subject: "Verify your email",
+      subject: "Mahara sign-up",
       heading: "Verify your email",
       description: "Your verification code is:",
     });
@@ -101,7 +101,7 @@ export const ViktorSpacesPasswordReset = Email({
     await sendEmail({
       email,
       token,
-      subject: "Reset your password",
+      subject: "Mahara password reset",
       heading: "Reset your password",
       description: "Your password reset code is:",
     });

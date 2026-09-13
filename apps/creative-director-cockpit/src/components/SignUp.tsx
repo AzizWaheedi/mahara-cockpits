@@ -19,12 +19,20 @@ export function SignUp() {
       <Card variant="elevated">
         <CardContent className="pt-6">
           <form
+            key={JSON.stringify(step)}
             onSubmit={async e => {
               e.preventDefault();
               setError("");
               setLoading(true);
 
               const formData = new FormData(e.currentTarget);
+              if (formData.has("code"))
+                formData.set(
+                  "code",
+                  String(formData.get("code") ?? "")
+                    .replace(/\D/g, "")
+                    .slice(-6),
+                );
               const email = formData.get("email") as string;
               try {
                 await signIn("password", formData);
@@ -102,16 +110,25 @@ export function SignUp() {
           </div>
           <h2 className="font-semibold text-lg">Check your email</h2>
           <p className="text-sm text-muted-foreground">
-            We sent a verification code to {step.email}
+            We sent a 6-digit code to {step.email}. If you asked more than once,
+            only the newest email works.
           </p>
         </div>
         <form
+          key={JSON.stringify(step)}
           onSubmit={async e => {
             e.preventDefault();
             setError("");
             setLoading(true);
 
             const formData = new FormData(e.currentTarget);
+            if (formData.has("code"))
+              formData.set(
+                "code",
+                String(formData.get("code") ?? "")
+                  .replace(/\D/g, "")
+                  .slice(-6),
+              );
             try {
               await signIn("password", formData);
             } catch {
@@ -128,8 +145,9 @@ export function SignUp() {
               id="code"
               name="code"
               type="text"
-              placeholder="Enter code"
+              placeholder="6-digit code"
               autoComplete="one-time-code"
+              inputMode="numeric"
               className="h-11 text-center tracking-[0.5em] font-mono"
               required
             />
