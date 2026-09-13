@@ -10,7 +10,8 @@ type Step =
   | "signIn"
   | { type: "forgot"; email?: string }
   | { type: "reset-code"; email: string }
-  | { type: "new-password"; email: string; code: string };
+  | { type: "new-password"; email: string; code: string }
+  | { type: "verify"; email: string };
 
 export function SignIn() {
   const { signIn } = useAuthActions();
@@ -31,7 +32,15 @@ export function SignIn() {
 
               const formData = new FormData(e.currentTarget);
               try {
-                await signIn("password", formData);
+                const res = await signIn("password", formData);
+                // An account whose email was never verified gets a code by
+                // email instead of a session; show the code step rather than
+                // nothing.
+                if (res && res.signingIn === false)
+                  setStep({
+                    type: "verify",
+                    email: String(formData.get("email") ?? ""),
+                  });
               } catch {
                 setError("Invalid email or password");
               } finally {
@@ -154,6 +163,75 @@ export function SignIn() {
               onClick={() => setStep("signIn")}
             >
               <ArrowLeft className="size-4" />
+              Back to sign in
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (step.type === "verify") {
+    return (
+      <Card variant="elevated">
+        <CardContent className="pt-6">
+          <div className="text-center mb-6">
+            <h2 className="font-semibold text-lg">Check your email</h2>
+            <p className="text-sm text-muted-foreground">
+              First sign-in on this account: we sent a code to {step.email}.
+            </p>
+          </div>
+          <form
+            key="verify"
+            onSubmit={async e => {
+              e.preventDefault();
+              setError("");
+              setLoading(true);
+              const formData = new FormData(e.currentTarget);
+              try {
+                await signIn("password", formData);
+              } catch {
+                setError(
+                  "That code did not match. Check the newest email, or sign in again for a fresh one.",
+                );
+              } finally {
+                setLoading(false);
+              }
+            }}
+            className="space-y-4"
+          >
+            <div className="space-y-2">
+              <Label htmlFor="verify-code">Code</Label>
+              <Input
+                id="verify-code"
+                name="code"
+                type="text"
+                placeholder="Enter code"
+                autoComplete="one-time-code"
+                className="h-11 text-center tracking-[0.5em] font-mono"
+                required
+              />
+            </div>
+            <input name="flow" value="email-verification" type="hidden" />
+            <input name="email" value={step.email} type="hidden" />
+            {error && (
+              <p className="text-sm text-destructive bg-destructive/10 rounded-lg px-3 py-2">
+                {error}
+              </p>
+            )}
+            <Button type="submit" className="w-full h-11" disabled={loading}>
+              {loading && <Loader2 className="size-4 animate-spin" />}
+              {loading ? "Checking..." : "Continue"}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              className="w-full"
+              onClick={() => {
+                setError("");
+                setStep("signIn");
+              }}
+            >
               Back to sign in
             </Button>
           </form>
