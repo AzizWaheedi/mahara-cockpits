@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { Link, useParams } from "react-router";
+import { ClientUpdates } from "@/components/ClientUpdates";
 import { CreativePreview } from "@/components/CreativePreview";
 import { DosDontsCard } from "@/components/DosDonts";
 import { TemplateCard } from "@/components/TemplateCard";
@@ -354,8 +355,13 @@ export function ClientPage() {
         />
       </div>
 
-      <div className="mb-4">
+      <div className="mb-4 grid gap-3">
         <DosDontsCard text={d.client.dosDonts} url={d.client.url} />
+        <ClientUpdates
+          updates={d.client.updates}
+          focus="creative"
+          url={d.client.url}
+        />
       </div>
 
       <div className="mb-3 flex flex-wrap gap-1 border-b">

@@ -70,6 +70,31 @@ export async function buildSnapshot(
     .collect();
   const inbox = await ctx.db.query("inbox").collect();
   const clientLinks = await ctx.db.query("clientLinks").collect();
+  // What the latest client card comments said (commentWatch), newest first.
+  const clientUpdates = (
+    await ctx.db
+      .query("clientComments")
+      .withIndex("by_status", q =>
+        q.eq("status", "done").gte("at", Date.now() - 45 * 86_400_000),
+      )
+      .collect()
+  )
+    .filter(r => !scope || scope.has(r.clientName.toLowerCase()))
+    .sort((a, b) => b.at - a.at)
+    .map(r => ({
+      taskId: r.taskId,
+      clientName: r.clientName,
+      at: r.at,
+      kind: r.kind,
+      summary: String(r.digest?.summary ?? ""),
+      forAds: Array.isArray(r.digest?.forAds) ? r.digest.forAds : [],
+      risks: Array.isArray(r.digest?.risks) ? r.digest.risks : [],
+      nextSteps: Array.isArray(r.digest?.nextSteps) ? r.digest.nextSteps : [],
+      clientRequests: Array.isArray(r.digest?.clientRequests)
+        ? r.digest.clientRequests
+        : [],
+    }))
+    .filter(u => u.summary || u.forAds.length || u.risks.length);
   const boardCards = (await ctx.db.query("boardCards").collect()).filter(
     c => !scope || scope.has(String(c.tag ?? "").toLowerCase()),
   );
@@ -109,6 +134,7 @@ export async function buildSnapshot(
     manualChanges,
     offBoardCampaigns,
     clientLinks,
+    clientUpdates,
     boardCards,
     members,
     inbox,

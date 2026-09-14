@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
 import { internalMutation, internalQuery } from "./_generated/server";
 
 /**
@@ -171,6 +172,22 @@ export const complete = internalMutation({
           note:
             note ??
             `${variants.length} copy options. Edit anything before you use them.`,
+        });
+      }
+    } else if (job.kind === "comment_digest") {
+      // A client card comment, digested: store it and add any new rules to
+      // the client's Do's & Don'ts (commentWatch.apply).
+      const row = await ctx.db.get(job.refId as never);
+      // biome-ignore lint/suspicious/noExplicitAny: client comment row
+      const r: any = row;
+      if (r && "commentId" in r) {
+        await ctx.db.patch(r._id, {
+          status: "done",
+          digest: result,
+          syncedAt: Date.now(),
+        });
+        await ctx.scheduler.runAfter(0, internal.commentWatch.apply, {
+          id: r._id,
         });
       }
     } else if (job.kind === "draft_copy") {

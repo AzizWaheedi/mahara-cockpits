@@ -11,6 +11,7 @@ import {
   readClientData,
   statSheetUrl,
 } from "./clientData";
+import { cleanDosDonts } from "./dosDonts";
 import { flush } from "./health";
 import { loadSheetCache, type SheetCache, saveSheetCache } from "./sheetCache";
 import { CLIENTS_LIST } from "./sync";
@@ -1035,7 +1036,9 @@ async function profileInputs(today: Day): Promise<Any[]> {
         cf[PROFILE_CF.drive]?.value ?? cf[PROFILE_CF.driveFolder]?.value,
       contractLink: cf[PROFILE_CF.contract]?.value,
       profileText: cf[PROFILE_CF.profile]?.value,
-      dosDonts: cf[PROFILE_CF.dosDonts]?.value,
+      dosDonts:
+        cleanDosDonts(String(cf[PROFILE_CF.dosDonts]?.value ?? "")).text ||
+        undefined,
       stage,
       happiness: drop(cf[PROFILE_CF.happiness]),
       service: drop(cf[PROFILE_CF.service]),
@@ -1099,6 +1102,10 @@ export const push = internalAction({
     const today = kuwaitToday();
     const errors: string[] = [];
     const clients = await profileInputs(today);
+    const updatesByTask: Record<string, Any[]> = await ctx.runQuery(
+      internal.commentWatch.latestByTask,
+      {},
+    );
     const adLeadRows: Any[] = await ctx.runQuery(
       internal.csmProfiles.adLeadsByClient,
       {},
@@ -1214,6 +1221,7 @@ export const push = internalAction({
         adsPlatform: c.adsPlatform,
         profileText: c.profileText,
         dosDonts: c.dosDonts,
+        updates: updatesByTask[c.taskId] ?? undefined,
         performance: perf,
         ads,
         live: liveCounts(ads),

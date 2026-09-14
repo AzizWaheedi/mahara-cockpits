@@ -108,4 +108,16 @@ crons.interval(
   { job: "hermes relay" },
 );
 
+/**
+ * New comments on client cards (call summaries, kickoff handoffs, briefs, notes)
+ * go to Hermes for a digest that updates Do's & Don'ts and all three cockpits.
+ * [Aziz, 2026-09-14]
+ */
+crons.interval(
+  "read new client card comments",
+  { minutes: 15 },
+  internal.health.runJob,
+  { job: "client comment watch" },
+);
+
 export default crons;

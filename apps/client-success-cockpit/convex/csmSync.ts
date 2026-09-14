@@ -241,6 +241,7 @@ export const storeProfiles = internalMutation({
         adsPlatform: p.adsPlatform ?? undefined,
         profileText: p.profileText ?? undefined,
         dosDonts: p.dosDonts ?? undefined,
+        updates: p.updates ?? undefined,
         stage: p.stage ?? undefined,
         happiness: p.happiness ?? undefined,
         launchDate: p.launchDate ?? undefined,

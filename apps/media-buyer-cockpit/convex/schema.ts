@@ -862,6 +862,29 @@ const schema = defineSchema({
     leads7d: v.number(),
     syncedAt: v.number(),
   }).index("by_campaign", ["campaignName"]),
+  /**
+   * Comments on client cards (Clients - Mahara) the comment watch has read, and
+   * the Hermes digest of the ones worth reading. See commentWatch.ts.
+   */
+  clientComments: defineTable({
+    taskId: v.string(),
+    clientName: v.string(),
+    commentId: v.string(),
+    at: v.number(),
+    by: v.optional(v.string()),
+    /** call | kickoff | brief | note | skip */
+    kind: v.string(),
+    /** skipped | queued | done | failed */
+    status: v.string(),
+    jobId: v.optional(v.id("aiJobs")),
+    digest: v.optional(v.any()),
+    rulesAdded: v.optional(v.number()),
+    appliedAt: v.optional(v.number()),
+    syncedAt: v.number(),
+  })
+    .index("by_comment", ["commentId"])
+    .index("by_status", ["status", "at"])
+    .index("by_task", ["taskId", "at"]),
   /** Each client's Drive folder, Brand DNA and offer sheet, from the ClickUp client list. */
   clientLinks: defineTable({
     name: v.string(),

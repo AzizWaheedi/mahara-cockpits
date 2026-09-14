@@ -62,6 +62,7 @@ async function contextFor(
             brandDnaDoc: c.brandDnaDoc,
             offerCheatSheet: c.offerCheatSheet,
             dosDonts: c.dosDonts,
+            latestFromClickUp: c.updates,
             blueprintFormLink: c.blueprintFormLink,
             driveFootage: c.driveFootage,
             driveScripts: c.driveScripts,

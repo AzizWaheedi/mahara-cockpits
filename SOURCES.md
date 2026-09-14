@@ -23,6 +23,7 @@ Service account for every sheet, Drive folder and calendar:
 | Leads per client (month, last month, 7 days, since launch) | Meta, via the `data_fb` grain rolled up per client in `csmProfiles.adLeadsByClient`; the sheet's own count is kept as `sheetLeads` for comparison | `csmProfiles.ts` |
 | Scripts and footage | The client's Drive folder (card `Drive Folder`/`Drive Link`, else Client Data `Google Drive Link`) | `fanout.ts` |
 | Recorded calls | Fathom (`FATHOM_API_KEY`), plus backfills in `fathomCache` | `csmProfiles.ts` |
+| What the latest client comments said (call summaries, kickoff handoffs, briefs, notes) | Comments on the client's ClickUp card, read every 15 minutes and digested by Hermes (`comment_digest`); stored in `clientComments` | `commentWatch.ts`, shown via `cockpit.ts`, `fanout.ts`, `csmProfiles.ts` |
 | Client do's and don'ts (what to target, promise, say or avoid) | ClickUp **Clients - Mahara** card, field **Do's & Don'ts** `0f06a523-64f9-4f20-90a1-f76cb6f85318`: DO / DON'T / NOTES headings, one `- ` line each with its source. Removed from Ads Management on 2026-09-14; edit it only on the client card | `fanout.ts` (media buyer, creative), `csmProfiles.ts` (client success), `builder.ts` / `assist.ts` (ad copy prompts) |
 | WhatsApp threads, calendars | Mahara's own GHL sub-account (`MAHARA_GHL_TOKEN`): its calendars and its WhatsApp conversations since `WHATSAPP_SINCE`; WHAPI / Google Calendar env only as fallbacks | `comms.ts` |
 | Call notes, DEFCON, promises | Typeform `fRokTITH`, keyed on the ClickUp task id | `csmSync.ts` |

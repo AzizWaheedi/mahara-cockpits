@@ -92,6 +92,8 @@ const schema = defineSchema({
     profileText: v.optional(v.string()),
     /** The "Do's & Don'ts" field on the ClickUp client card, verbatim. */
     dosDonts: v.optional(v.string()),
+    /** Digests of the newest comments on the client's ClickUp card (call summaries, handoffs, notes). */
+    updates: v.optional(v.any()),
     stage: v.optional(v.string()),
     happiness: v.optional(v.string()),
     launchDate: v.optional(v.string()),

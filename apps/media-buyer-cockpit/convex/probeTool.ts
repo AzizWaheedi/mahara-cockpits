@@ -665,3 +665,71 @@ export const fieldValues = internalAction({
     };
   },
 });
+
+/** Live Meta read for campaigns: effective status, and spend today and yesterday in the account's own timezone. */
+export const metaSpendNow = internalAction({
+  args: { campaignIds: v.array(v.string()) },
+  returns: v.any(),
+  handler: async (_ctx, { campaignIds }) => {
+    const out: Any[] = [];
+    for (const id of campaignIds) {
+      const c: Any = await graph(id, {
+        fields: "name,status,effective_status,daily_budget,account_id",
+      });
+      const day = async (preset: string) => {
+        const r: Any = await graph(`${id}/insights`, {
+          fields: "spend,date_start",
+          date_preset: preset,
+        });
+        return r?.data?.[0]
+          ? `${r.data[0].spend} on ${r.data[0].date_start}`
+          : "0";
+      };
+      const adsets: Any = await graph(`${id}/adsets`, {
+        fields: "name,effective_status",
+        limit: "50",
+      });
+      out.push({
+        name: c?.name,
+        status: c?.status,
+        effective: c?.effective_status,
+        today: await day("today"),
+        yesterday: await day("yesterday"),
+        adsets: (adsets?.data ?? []).map(
+          (a: Any) => `${a.name}: ${a.effective_status}`,
+        ),
+      });
+    }
+    return out;
+  },
+});
+
+/** Read-only: the latest comments on some client tasks, trimmed, to see what gets posted there. */
+export const taskComments = internalAction({
+  args: { taskIds: v.array(v.string()), chars: v.optional(v.number()) },
+  returns: v.any(),
+  handler: async (_ctx, { taskIds, chars }) => {
+    const out: Any[] = [];
+    for (const id of taskIds) {
+      const r: Any = await callTool("pd_clickup_proxy_get", {
+        url: `https://api.clickup.com/api/v2/task/${id}/comment`,
+      });
+      const list: Any[] = (unwrap(r) ?? r)?.comments ?? [];
+      out.push({
+        task: id,
+        count: list.length,
+        comments: list.slice(0, 6).map((c: Any) => ({
+          id: c.id,
+          by: c.user?.username ?? c.user?.email,
+          at: new Date(Number(c.date)).toISOString().slice(0, 16),
+          len: String(c.comment_text ?? "").length,
+          replies: c.reply_count,
+          text: String(c.comment_text ?? "")
+            .replace(/\s+/g, " ")
+            .slice(0, chars ?? 160),
+        })),
+      });
+    }
+    return out;
+  },
+});

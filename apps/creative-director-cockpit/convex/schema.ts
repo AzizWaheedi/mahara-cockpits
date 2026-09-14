@@ -156,6 +156,8 @@ const schema = defineSchema({
     offerCheatSheet: v.optional(v.string()),
     /** The "Do's & Don'ts" field on the ClickUp client card, verbatim. */
     dosDonts: v.optional(v.string()),
+    /** Digests of the newest comments on the client's ClickUp card (call summaries, handoffs, notes). */
+    updates: v.optional(v.any()),
     blueprintFormLink: v.optional(v.string()),
     /**
      * Verbatim "Offer Creation" dropdown: Working on it / Done / Stuck. This,

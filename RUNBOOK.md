@@ -49,6 +49,15 @@ times its interval is flagged by the smoke check. "Not running" for every job
 at once means the media buyer deployment itself is down: check the Convex
 dashboard, then `scripts/ship.sh media-buyer`.
 
+The client comment watch (every 15 minutes, `commentWatch.scan`) reads the
+comments on current client cards in Clients - Mahara. Call summaries, kickoff
+handoffs, briefs and typed notes go to Hermes as `comment_digest` jobs; the
+digest shows as "Latest from the ClickUp card" in all three cockpits and new
+rules are added to the card's Do's & Don'ts. Billing and touchpoint logs,
+ClickBot, sales handoffs and research reports are skipped. Every sync also puts
+Do's & Don'ts into the clean DO / DON'T format and moves notes to a comment.
+No digests appearing means Hermes is not polling (see the Hermes row above).
+
 ## What never needs a person
 
 - Rate limits: every Google, ClickUp and Meta call waits and retries.

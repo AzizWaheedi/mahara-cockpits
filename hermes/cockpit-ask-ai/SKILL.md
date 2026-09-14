@@ -132,6 +132,7 @@ Known kinds:
 |---|---|
 | ad copy jobs | five angles, house rules below |
 | `call_brief` | call summaries for one client, see below |
+| `comment_digest` | one new comment on a client's ClickUp card, see below |
 
 ### call_brief
 
@@ -161,6 +162,24 @@ Rules that matter here, because the output reaches a CSM who acts on it:
 
 If a call's summary is empty, say so in one short sentence for that call rather
 than omitting it.
+
+### comment_digest
+
+Produced every 15 minutes by the media buyer backend's comment watch when a new
+comment lands on a client's ClickUp card (Clients - Mahara): a call summary, a
+kickoff handoff, a client brief, or a note someone typed. The prompt carries the
+comment and the client's current Do's & Don'ts.
+
+Return exactly the schema: `summary` (1 to 3 sentences), `nextSteps` (each
+starting "Mahara:" or "Client:"), `clientRequests`, `risks`, `forAds`,
+`forCreative`, `dos`, `donts`.
+
+- Use only what the comment says. Empty strings and empty arrays when there is
+  nothing; never pad.
+- `dos` and `donts` are only explicit, lasting client instructions that the
+  current Do's & Don'ts do not already cover. They are added to the client card
+  automatically, so a guess becomes a rule the whole team follows.
+- No phone numbers, emails or names of leads. No em dashes.
 
 ## House rules for ad copy (checked on the way out, so obey them)
 

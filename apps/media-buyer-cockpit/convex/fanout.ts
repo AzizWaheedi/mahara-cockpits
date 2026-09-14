@@ -6,6 +6,7 @@ import {
   clientDataFor,
   readClientData,
 } from "./clientData";
+import { cleanDosDonts } from "./dosDonts";
 import { flush } from "./health";
 import { loadSheetCache, type SheetCache, saveSheetCache } from "./sheetCache";
 import { CLIENTS_LIST, CONTENT_LIST, CREATIVE_LIST, VIDEO_LIST } from "./sync";
@@ -875,6 +876,22 @@ export const feedCreative = internalAction({
       // Stat sheets are filled by hand through the day: read on the full run only.
       if (withStats) await attachStatSheets(ctx, roster);
       await attachDaily(ctx, roster);
+      // Do's & Don'ts in the clean format everywhere; a card someone typed
+      // loosely is rewritten on ClickUp too. [Aziz, 2026-09-14]
+      const updates: Record<string, Any[]> = await ctx.runQuery(
+        internal.commentWatch.latestByTask,
+        {},
+      );
+      for (const r of roster as Any[]) {
+        r.updates = updates[r.taskId] ?? undefined;
+        if (typeof r.dosDonts !== "string" || !r.dosDonts.trim()) continue;
+        const clean = cleanDosDonts(r.dosDonts);
+        if (clean.text !== r.dosDonts.trim() || clean.notes.length)
+          await ctx.scheduler.runAfter(0, internal.dosDonts.tidyClient, {
+            taskId: r.taskId,
+          });
+        r.dosDonts = clean.text || undefined;
+      }
       // The media buyer groups campaigns by client and links their Drive
       // folder, Brand DNA and offer sheet. Drive falls back to Client Data.
       try {

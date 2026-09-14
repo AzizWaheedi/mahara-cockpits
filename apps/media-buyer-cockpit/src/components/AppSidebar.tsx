@@ -2,6 +2,7 @@ import { useAuthActions } from "@convex-dev/auth/react";
 import { useQuery } from "convex/react";
 import {
   ArrowRightLeft,
+  CirclePause,
   LayoutDashboard,
   ListChecks,
   LogOut,
@@ -52,6 +53,12 @@ const navItems = [
     href: "/ads",
     label: "Ads management",
     icon: Megaphone,
+    role: "media_buyer",
+  },
+  {
+    href: "/off-board",
+    label: "Off on the board",
+    icon: CirclePause,
     role: "media_buyer",
   },
   {

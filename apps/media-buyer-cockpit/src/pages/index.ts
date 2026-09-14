@@ -2,6 +2,7 @@ export { AdminPage } from "./AdminPage";
 export {
   AdsPage,
   EndOfDayPage,
+  OffBoardPage,
   StartOfDayPage,
   TaskListPage,
   TouchpointsPage,
