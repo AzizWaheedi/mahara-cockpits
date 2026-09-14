@@ -783,6 +783,29 @@ export async function buildPerformanceOverview(
         bucket: (c as Any).bucket,
         stage: (c as Any).stage,
       });
+    // Active, onboarding, paused or churned: the same rule for the table and
+    // the charts, so a tab filters both. [Aziz, 2026-09-14]
+    const groupOf = (r: Any): string => {
+      const cl = byName.get(String(r.clientName).toLowerCase());
+      const stage = String(r.stage ?? cl?.stage ?? "");
+      return cl?.bucket === "onboarding"
+        ? "onboarding"
+        : cl?.bucket === "management"
+          ? "active"
+          : cl?.bucket === "inactive"
+            ? /pause|freeze|hold/i.test(stage)
+              ? "paused"
+              : "churned"
+            : /contact|booked|ready for launch|ghosted|delay|blueprint/i.test(
+                  stage,
+                )
+              ? "onboarding"
+              : /pause|freeze|hold/i.test(stage)
+                ? "paused"
+                : /stop|cancel|churn|offboard|lost/i.test(stage)
+                  ? "churned"
+                  : "active";
+    };
     // Trends across the book: leads and spend per day from the ads, booked
     // and show rate per week from the sheets, last 90 days.
     const since = new Date(Date.now() - 90 * 86400_000)
@@ -798,72 +821,76 @@ export async function buildPerformanceOverview(
       t.setUTCDate(t.getUTCDate() - ((t.getUTCDay() + 6) % 7));
       return t.toISOString().slice(0, 10);
     };
+    const byDateG = new Map<string, typeof byDate>();
+    const byWeekG = new Map<string, typeof byWeek>();
     for (const r of rows) {
+      const g = groupOf(r);
+      const dates = byDateG.get(g) ?? new Map();
+      byDateG.set(g, dates);
+      const weeks = byWeekG.get(g) ?? new Map();
+      byWeekG.set(g, weeks);
       for (const d of ((r.adLeads as Any)?.daily ?? []) as Any[]) {
         if (d.date < since) continue;
-        const row = byDate.get(d.date) ?? { leads: 0, spend: 0 };
-        row.leads += Number(d.leads ?? 0);
-        row.spend += Number(d.spend ?? 0);
-        byDate.set(d.date, row);
+        for (const m of [byDate, dates]) {
+          const row = m.get(d.date) ?? { leads: 0, spend: 0 };
+          row.leads += Number(d.leads ?? 0);
+          row.spend += Number(d.spend ?? 0);
+          m.set(d.date, row);
+        }
       }
       for (const a of ((r.performance as Any)?.appointments ?? []) as Any[]) {
         const day = a.added ? String(a.added).slice(0, 10) : "";
         if (!day || day < since) continue;
-        const w = byWeek.get(weekOf(day)) ?? {
-          booked: 0,
-          shows: 0,
-          noshows: 0,
-        };
-        if (a.booked) w.booked++;
-        if (a.show === "y") w.shows++;
-        if (a.show === "n") w.noshows++;
-        byWeek.set(weekOf(day), w);
+        for (const m of [byWeek, weeks]) {
+          const w = m.get(weekOf(day)) ?? {
+            booked: 0,
+            shows: 0,
+            noshows: 0,
+          };
+          if (a.booked) w.booked++;
+          if (a.show === "y") w.shows++;
+          if (a.show === "n") w.noshows++;
+          m.set(weekOf(day), w);
+        }
       }
     }
-    const trend = [...byDate.entries()]
-      .sort((a, b) => (a[0] < b[0] ? -1 : 1))
-      .map(([date, r]) => ({
-        date,
-        leads: r.leads,
-        spend: Math.round(r.spend * 100) / 100,
-        cpl: r.leads ? Math.round((r.spend / r.leads) * 100) / 100 : null,
-      }));
-    const weeklyOutcomes = [...byWeek.entries()]
-      .sort((a, b) => (a[0] < b[0] ? -1 : 1))
-      .map(([week, w]) => ({
-        week,
-        booked: w.booked,
-        showRate:
-          w.shows + w.noshows
-            ? Math.round((100 * w.shows) / (w.shows + w.noshows))
-            : null,
-      }));
+    const toTrend = (m: typeof byDate) =>
+      [...m.entries()]
+        .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+        .map(([date, r]) => ({
+          date,
+          leads: r.leads,
+          spend: Math.round(r.spend * 100) / 100,
+          cpl: r.leads ? Math.round((r.spend / r.leads) * 100) / 100 : null,
+        }));
+    const trend = toTrend(byDate);
+    const toWeekly = (m: typeof byWeek) =>
+      [...m.entries()]
+        .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+        .map(([week, w]) => ({
+          week,
+          booked: w.booked,
+          showRate:
+            w.shows + w.noshows
+              ? Math.round((100 * w.shows) / (w.shows + w.noshows))
+              : null,
+        }));
+    const weeklyOutcomes = toWeekly(byWeek);
+    const groups = ["active", "onboarding", "paused"];
     return {
       trend,
       weeklyOutcomes,
+      trendByGroup: Object.fromEntries(
+        groups.map(g => [g, toTrend(byDateG.get(g) ?? new Map())]),
+      ),
+      weeklyByGroup: Object.fromEntries(
+        groups.map(g => [g, toWeekly(byWeekG.get(g) ?? new Map())]),
+      ),
       syncedAt: Math.max(0, ...rows.map(r => r.syncedAt)),
       clients: rows
         .map(r => {
           const cl = byName.get(String(r.clientName).toLowerCase());
-          const stage = String(r.stage ?? cl?.stage ?? "");
-          const group =
-            cl?.bucket === "onboarding"
-              ? "onboarding"
-              : cl?.bucket === "management"
-                ? "active"
-                : cl?.bucket === "inactive"
-                  ? /pause|freeze|hold/i.test(stage)
-                    ? "paused"
-                    : "churned"
-                  : /contact|booked|ready for launch|ghosted|delay|blueprint/i.test(
-                        stage,
-                      )
-                    ? "onboarding"
-                    : /pause|freeze|hold/i.test(stage)
-                      ? "paused"
-                      : /stop|cancel|churn|offboard|lost/i.test(stage)
-                        ? "churned"
-                        : "active";
+          const group = groupOf(r);
           const perf = r.performance as
             | {
                 month?: Record<string, number>;

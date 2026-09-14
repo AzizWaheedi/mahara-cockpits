@@ -1353,12 +1353,26 @@ function ProfileTrends({ p, from, to }: { p: Any; from: string; to: string }) {
 }
 
 /** The whole book, on the overview. */
-function BookTrends({ trend, weekly }: { trend: Any[]; weekly: Any[] }) {
-  if (!trend?.length) return null;
+function BookTrends({
+  trend,
+  weekly,
+  label,
+}: {
+  trend: Any[];
+  weekly: Any[];
+  label: string;
+}) {
+  if (!trend?.length && !weekly?.length)
+    return (
+      <p className="text-xs text-muted-foreground">
+        No ad or sheet data for {label} clients in the last 90 days, so there is
+        nothing to chart yet.
+      </p>
+    );
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <TrendChart
-        title="Leads per day, all clients"
+        title={`Leads per day, ${label} clients`}
         points={trend.map((r: Any) => ({ x: r.date, y: r.leads }))}
         kind="bar"
       />
@@ -1969,26 +1983,6 @@ export function ClientPerformancePage() {
         <Profile name={openClient} onBack={() => setOpenClient(null)} />
       ) : (
         <>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <Stat label="Clients" value={rows.length} />
-            <Stat
-              label="Appointments with no outcome"
-              value={totalStale}
-              tone={totalStale ? "text-rose-600" : "text-emerald-600"}
-              hint="across every sheet"
-            />
-            <Stat
-              label="Closed this month"
-              value={rows.reduce((n, c) => n + num(c.month?.closes), 0)}
-              hint="what the client actually banked"
-            />
-          </div>
-
-          <BookTrends
-            trend={data.trend as Any[]}
-            weekly={data.weeklyOutcomes as Any[]}
-          />
-
           <div className="flex flex-wrap items-center gap-2 text-sm">
             {GROUPS.map(g => {
               const n = live.filter(c => groupOf(c) === g.key).length;
@@ -2009,6 +2003,29 @@ export function ClientPerformancePage() {
             </span>
           </div>
           <p className="text-xs text-muted-foreground">{chosen.hint}</p>
+
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Stat label="Clients" value={rows.length} />
+            <Stat
+              label="Appointments with no outcome"
+              value={totalStale}
+              tone={totalStale ? "text-rose-600" : "text-emerald-600"}
+              hint="across every sheet"
+            />
+            <Stat
+              label="Closed this month"
+              value={rows.reduce((n, c) => n + num(c.month?.closes), 0)}
+              hint="what the client actually banked"
+            />
+          </div>
+
+          <BookTrends
+            trend={(data.trendByGroup?.[group] ?? data.trend) as Any[]}
+            weekly={
+              (data.weeklyByGroup?.[group] ?? data.weeklyOutcomes) as Any[]
+            }
+            label={chosen.label.toLowerCase()}
+          />
 
           <input
             value={query}
