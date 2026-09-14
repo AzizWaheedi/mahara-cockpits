@@ -177,6 +177,9 @@ export const buildDraft = internalAction({
 
       // Copy needs a model. If none is reachable, the build still goes ahead
       // with the settings copied and she writes the copy herself.
+      const dosDonts = await ctx.runQuery(internal.board.dosDontsFor, {
+        name: draft.clientName,
+      });
       let variants: Awaited<ReturnType<typeof writeCopy>> = [];
       let copyNote: string | undefined;
       if (!process.env.ANTHROPIC_API_KEY) {
@@ -185,13 +188,13 @@ export const buildDraft = internalAction({
         await ctx.runMutation(internal.askAi.enqueue, {
           kind: "draft_copy",
           refId: id,
-          prompt: copyPrompt(draft, winner),
+          prompt: copyPrompt(draft, winner, dosDonts),
         });
         copyNote =
           "The copy is being written. It appears here on its own, usually within a few minutes.";
       } else {
         try {
-          variants = await writeCopy(draft, winner);
+          variants = await writeCopy(draft, winner, dosDonts);
         } catch (e) {
           copyNote = `Copy could not be written (${String(e).slice(0, 120)}). Add your own below.`;
         }
@@ -230,6 +233,7 @@ function copyPrompt(
   draft: any,
   // biome-ignore lint/suspicious/noExplicitAny: campaign row
   winner: any,
+  dosDonts?: string | null,
 ): string {
   const arabic = (draft.language ?? "").toLowerCase().startsWith("ar");
   return [
@@ -241,6 +245,9 @@ function copyPrompt(
       : "",
     draft.contextDocs
       ? `Their brand DNA and offer cheat sheet — use the positioning and the offer in it rather than inventing one:\n${String(draft.contextDocs).slice(0, 4000)}`
+      : "",
+    dosDonts
+      ? `The client's do's and don'ts from their ClickUp card. Follow every one:\n${dosDonts}`
       : "",
     winner
       ? `Their best current campaign is "${winner.campaignName}" at $${(winner.cpl ?? 0).toFixed(2)} per lead — stay in that territory rather than inventing a new angle.`
@@ -264,10 +271,11 @@ async function writeCopy(
   draft: any,
   // biome-ignore lint/suspicious/noExplicitAny: campaign row
   winner: any,
+  dosDonts?: string | null,
 ): Promise<
   Array<{ headline: string; primaryText: string; description?: string }>
 > {
-  const prompt = copyPrompt(draft, winner);
+  const prompt = copyPrompt(draft, winner, dosDonts);
   const raw = await callTool("ai_structured_output", {
     prompt,
     intelligence_level: "smart",

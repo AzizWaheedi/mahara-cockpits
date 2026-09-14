@@ -870,6 +870,8 @@ const schema = defineSchema({
     driveLink: v.optional(v.string()),
     brandDnaDoc: v.optional(v.string()),
     offerCheatSheet: v.optional(v.string()),
+    /** The "Do's & Don'ts" field on the client card, verbatim. */
+    dosDonts: v.optional(v.string()),
     syncedAt: v.number(),
   }).index("by_name", ["name"]),
   /** Every card on the Ads Management board, live or not, for the board view. */

@@ -161,6 +161,8 @@ const CLIENT_FIELDS: Record<string, string> = {
   sheetLink: "Sheet Link",
   clientHistoryDoc: "Client History Document",
   marketResearchDoc: "Market Research doc",
+  // One list per client, read by all three cockpits and by Hermes.
+  dosDonts: "Do's & Don'ts",
 };
 
 const NOT_A_CLIENT = [
@@ -893,6 +895,7 @@ export const feedCreative = internalAction({
               clientDataFor(dataRows, r.name, r.taskId)?.driveLink,
             brandDnaDoc: r.brandDnaDoc,
             offerCheatSheet: r.offerCheatSheet,
+            dosDonts: r.dosDonts,
           })),
         });
       } catch (e) {

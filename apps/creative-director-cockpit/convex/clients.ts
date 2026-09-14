@@ -370,6 +370,7 @@ export async function buildDetail(
       service: client.service,
       launchDate: client.launchDate,
       phone: client.phone,
+      dosDonts: client.dosDonts,
       docs: {
         brandDna: client.brandDnaDoc,
         offerCheatSheet: client.offerCheatSheet,

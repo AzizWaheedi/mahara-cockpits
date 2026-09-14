@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { DosDontsCard } from "@/components/DosDonts";
 import { bucketDays, TrendChart } from "@/components/TrendChart";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -1548,6 +1549,11 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
       </div>
 
       <Links links={(p.links ?? {}) as Record<string, string>} />
+
+      <DosDontsCard
+        text={p.dosDonts as string | undefined}
+        url={p.links?.clickup as string | undefined}
+      />
 
       <CallPrep p={p} />
 

@@ -146,7 +146,7 @@ Language of the ad: ${language}
 
 What she asked for:
 ${req.brief || "No brief given — write the strongest general options for this client."}
-
+${ctx.dosDonts ? `\nThe client's do's and don'ts from their ClickUp card. Follow every one:\n${ctx.dosDonts}\n` : ""}
 Ads that have actually produced cheap leads for similar clients — steal the
 angles, not the words:
 ${proof || "No comparable winners on file yet."}

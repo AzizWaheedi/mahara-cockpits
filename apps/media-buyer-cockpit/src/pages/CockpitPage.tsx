@@ -6,6 +6,7 @@ import { AccountView } from "@/components/AccountView";
 import { BuildPanel } from "@/components/BuildPanel";
 import { CampaignRange } from "@/components/CampaignRange";
 import { CreativePreview } from "@/components/CreativePreview";
+import { DosDontsList, parseDosDonts } from "@/components/DosDonts";
 import { EditPanel } from "@/components/EditPanel";
 import { LostLeads } from "@/components/LostLeads";
 import { Onboardings } from "@/components/Onboardings";
@@ -182,6 +183,39 @@ const isOffOnBoard = (c: Campaign) =>
 const clientOf = (c: Campaign | undefined) =>
   String(c?.clientName ?? c?.accountName ?? "Unassigned");
 
+/** The client's name row: their links, and their do's and don'ts one click away. */
+function ClientHeader({ name, links }: { name: string; links?: Campaign }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      {name}
+      <ClientLinks
+        links={links}
+        dosOpen={open}
+        onDos={() => setOpen(o => !o)}
+      />
+      {open && (
+        <div className="mt-2 max-w-4xl rounded-md border bg-card p-3 font-normal text-foreground">
+          <DosDontsList text={links?.dosDonts} />
+        </div>
+      )}
+    </>
+  );
+}
+
+/** Inside an open campaign: the client's do's and don'ts, when the card has any. */
+function ClientRules({ name, links }: { name: string; links?: Campaign }) {
+  if (!parseDosDonts(links?.dosDonts).length) return null;
+  return (
+    <div className="mb-3 rounded-md border border-amber-300 bg-amber-50/60 p-3 dark:border-amber-800 dark:bg-amber-950/30">
+      <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-amber-900 dark:text-amber-200">
+        {name}: do's & don'ts from the client card
+      </p>
+      <DosDontsList text={links?.dosDonts} />
+    </div>
+  );
+}
+
 /** A client's links from the ClickUp client list, matched by name or alias. */
 function findClientLinks(list: Campaign[], name: string): Campaign | undefined {
   const key = name.trim().toLowerCase();
@@ -198,7 +232,15 @@ function findClientLinks(list: Campaign[], name: string): Campaign | undefined {
 }
 
 /** Drive folder, Brand DNA and offer sheet beside the client's name; a missing one says so. */
-function ClientLinks({ links }: { links?: Campaign }) {
+function ClientLinks({
+  links,
+  dosOpen,
+  onDos,
+}: {
+  links?: Campaign;
+  dosOpen?: boolean;
+  onDos?: () => void;
+}) {
   const item = (href: string | undefined, label: string) =>
     href ? (
       <a
@@ -226,6 +268,18 @@ function ClientLinks({ links }: { links?: Campaign }) {
       {item(links.driveLink, "Drive")}
       {item(links.brandDnaDoc, "Brand DNA")}
       {item(links.offerCheatSheet, "Offer")}
+      {onDos &&
+        (parseDosDonts(links.dosDonts).length ? (
+          <button
+            type="button"
+            onClick={onDos}
+            className="font-semibold text-primary underline"
+          >
+            {dosOpen ? "Hide do's & don'ts" : "Do's & don'ts"}
+          </button>
+        ) : (
+          <span className="text-muted-foreground">no do's & don'ts</span>
+        ))}
       {item(links.url, "ClickUp")}
     </span>
   );
@@ -1335,8 +1389,8 @@ function Cockpit({ view }: { view: View }) {
                                 colSpan={8}
                                 className="pt-3 pb-1 text-[12px] font-bold text-teal-700 dark:text-teal-300"
                               >
-                                {clientOf(c)}
-                                <ClientLinks
+                                <ClientHeader
+                                  name={clientOf(c)}
                                   links={findClientLinks(
                                     (snap.clientLinks ?? []) as Campaign[],
                                     clientOf(c),
@@ -1584,6 +1638,13 @@ function Cockpit({ view }: { view: View }) {
                               {/* Spans every header column; six left the
                                   panel squeezed into 60% of the row. */}
                               <td colSpan={8} className="p-3">
+                                <ClientRules
+                                  name={clientOf(c)}
+                                  links={findClientLinks(
+                                    (snap.clientLinks ?? []) as Campaign[],
+                                    clientOf(c),
+                                  )}
+                                />
                                 {mode === "ads" && (
                                   <div>
                                     {/* The decisions live here, next to the

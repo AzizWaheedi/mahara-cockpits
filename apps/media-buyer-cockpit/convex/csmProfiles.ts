@@ -50,6 +50,7 @@ const PROFILE_CF = {
   launch: "2e744484-f581-4c37-962a-023c4de23729",
   service: "fccfc09c-650e-4aed-b4cd-3f50beba05a3",
   platform: "2de15aa5-7fe9-48bf-86a1-e4cfee1306c9",
+  dosDonts: "0f06a523-64f9-4f20-90a1-f76cb6f85318",
 };
 const CSM_FIELD = "68ff84db-6c66-4e70-8e72-15d70828fda6";
 const PROFILE_BATCH = 6;
@@ -1034,6 +1035,7 @@ async function profileInputs(today: Day): Promise<Any[]> {
         cf[PROFILE_CF.drive]?.value ?? cf[PROFILE_CF.driveFolder]?.value,
       contractLink: cf[PROFILE_CF.contract]?.value,
       profileText: cf[PROFILE_CF.profile]?.value,
+      dosDonts: cf[PROFILE_CF.dosDonts]?.value,
       stage,
       happiness: drop(cf[PROFILE_CF.happiness]),
       service: drop(cf[PROFILE_CF.service]),
@@ -1211,6 +1213,7 @@ export const push = internalAction({
         service: c.service,
         adsPlatform: c.adsPlatform,
         profileText: c.profileText,
+        dosDonts: c.dosDonts,
         performance: perf,
         ads,
         live: liveCounts(ads),

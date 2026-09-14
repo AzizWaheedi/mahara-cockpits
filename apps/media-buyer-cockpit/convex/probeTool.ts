@@ -570,3 +570,98 @@ export const adsListFields = internalAction({
       }));
   },
 });
+
+/** A list's custom fields by name pattern, and how many tasks have a value in each (no values returned). */
+export const listFieldUsage = internalAction({
+  args: { listId: v.string(), pattern: v.string() },
+  returns: v.any(),
+  handler: async (_ctx, { listId, pattern }) => {
+    const re = new RegExp(pattern, "i");
+    const fr: Any = await callTool("pd_clickup_proxy_get", {
+      url: `https://api.clickup.com/api/v2/list/${listId}/field`,
+    });
+    const fields: Any[] = (unwrap(fr)?.fields ?? fr?.fields ?? []).filter(
+      (f: Any) => re.test(f.name),
+    );
+    const counts: Record<string, number> = {};
+    let tasks = 0;
+    for (let page = 0; page < 10; page++) {
+      const tr: Any = await callTool("pd_clickup_proxy_get", {
+        url: `https://api.clickup.com/api/v2/list/${listId}/task?include_closed=true&page=${page}`,
+      });
+      const list: Any[] = unwrap(tr)?.tasks ?? tr?.tasks ?? [];
+      tasks += list.length;
+      for (const t of list)
+        for (const cf of t.custom_fields ?? [])
+          if (
+            re.test(cf.name) &&
+            cf.value !== undefined &&
+            cf.value !== null &&
+            String(cf.value).trim() !== ""
+          )
+            counts[cf.name] = (counts[cf.name] ?? 0) + 1;
+      if (list.length < 100) break;
+    }
+    return {
+      tasks,
+      fields: fields.map(f => ({ id: f.id, name: f.name, type: f.type })),
+      withValue: counts,
+    };
+  },
+});
+
+/** Read-only: which cards hold a value in one custom field, and where the field is defined (folder, space or workspace). */
+export const fieldValues = internalAction({
+  args: { listId: v.string(), fieldId: v.string() },
+  returns: v.any(),
+  handler: async (_ctx, { listId, fieldId }) => {
+    const get = async (url: string): Promise<Any> => {
+      const r: Any = await callTool("pd_clickup_proxy_get", {
+        url: `https://api.clickup.com/api/v2/${url}`,
+      });
+      return unwrap(r) ?? r;
+    };
+    const list = await get(`list/${listId}`);
+    const where: Record<string, boolean> = {};
+    const has = (fields: Any) =>
+      (fields?.fields ?? []).some((f: Any) => f.id === fieldId);
+    if (list?.folder?.id)
+      where[`folder ${list.folder.name} (${list.folder.id})`] = has(
+        await get(`folder/${list.folder.id}/field`),
+      );
+    if (list?.space?.id)
+      where[`space ${list.space.id}`] = has(
+        await get(`space/${list.space.id}/field`),
+      );
+    const cards: Any[] = [];
+    for (let page = 0; page < 10; page++) {
+      const tr = await get(
+        `list/${listId}/task?include_closed=true&page=${page}`,
+      );
+      const tasks: Any[] = tr?.tasks ?? [];
+      for (const t of tasks) {
+        const cf = (t.custom_fields ?? []).find((f: Any) => f.id === fieldId);
+        if (
+          cf?.value !== undefined &&
+          cf?.value !== null &&
+          String(cf.value).trim() !== ""
+        )
+          cards.push({
+            id: t.id,
+            name: t.name,
+            status: t.status?.status,
+            tags: (t.tags ?? []).map((x: Any) => x.name),
+            value: cf.value,
+          });
+      }
+      if (tasks.length < 100) break;
+    }
+    return {
+      list: list?.name,
+      folder: list?.folder?.name,
+      space: list?.space?.id,
+      definedAt: where,
+      cards,
+    };
+  },
+});

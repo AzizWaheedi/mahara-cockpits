@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalMutation, internalQuery } from "./_generated/server";
+import { dosDontsText } from "./board";
 import { authenticatedMutation, authenticatedQuery } from "./functions";
 import { assertScope, scopeFilter } from "./gate";
 import { assertRole } from "./roles";
@@ -257,6 +258,7 @@ export const context = internalQuery({
       onboarding: onboarding ?? null,
       launchWatch: watch ?? null,
       prefs: prefs ?? null,
+      dosDonts: await dosDontsText(ctx, who),
       winners: winners.map(w => ({
         client: w.client,
         serviceLine: w.serviceLine,

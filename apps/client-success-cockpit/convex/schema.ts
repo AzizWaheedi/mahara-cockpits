@@ -90,6 +90,8 @@ const schema = defineSchema({
     service: v.optional(v.string()),
     adsPlatform: v.optional(v.string()),
     profileText: v.optional(v.string()),
+    /** The "Do's & Don'ts" field on the ClickUp client card, verbatim. */
+    dosDonts: v.optional(v.string()),
     stage: v.optional(v.string()),
     happiness: v.optional(v.string()),
     launchDate: v.optional(v.string()),

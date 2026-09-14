@@ -154,6 +154,8 @@ const schema = defineSchema({
     aliases: v.array(v.string()),
     brandDnaDoc: v.optional(v.string()),
     offerCheatSheet: v.optional(v.string()),
+    /** The "Do's & Don'ts" field on the ClickUp client card, verbatim. */
+    dosDonts: v.optional(v.string()),
     blueprintFormLink: v.optional(v.string()),
     /**
      * Verbatim "Offer Creation" dropdown: Working on it / Done / Stuck. This,

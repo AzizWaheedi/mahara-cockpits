@@ -11,6 +11,7 @@ import {
 import { useState } from "react";
 import { Link, useParams } from "react-router";
 import { CreativePreview } from "@/components/CreativePreview";
+import { DosDontsCard } from "@/components/DosDonts";
 import { TemplateCard } from "@/components/TemplateCard";
 import { bucketDays, TrendChart } from "@/components/TrendChart";
 import { Button } from "@/components/ui/button";
@@ -351,6 +352,10 @@ export function ClientPage() {
           label="Drive folder"
           hint="Raw footage and brand assets"
         />
+      </div>
+
+      <div className="mb-4">
+        <DosDontsCard text={d.client.dosDonts} url={d.client.url} />
       </div>
 
       <div className="mb-3 flex flex-wrap gap-1 border-b">

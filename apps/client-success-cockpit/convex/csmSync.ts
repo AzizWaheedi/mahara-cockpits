@@ -240,6 +240,7 @@ export const storeProfiles = internalMutation({
         service: p.service ?? undefined,
         adsPlatform: p.adsPlatform ?? undefined,
         profileText: p.profileText ?? undefined,
+        dosDonts: p.dosDonts ?? undefined,
         stage: p.stage ?? undefined,
         happiness: p.happiness ?? undefined,
         launchDate: p.launchDate ?? undefined,

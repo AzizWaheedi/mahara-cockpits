@@ -1,6 +1,10 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import { internalMutation, internalQuery } from "./_generated/server";
+import {
+  internalMutation,
+  internalQuery,
+  type QueryCtx,
+} from "./_generated/server";
 import { authenticatedAction } from "./functions";
 import { refusal } from "./gate";
 import { callTool, unwrap } from "./tools";
@@ -208,6 +212,7 @@ export const storeClientLinks = internalMutation({
         driveLink: str(r.driveLink),
         brandDnaDoc: str(r.brandDnaDoc),
         offerCheatSheet: str(r.offerCheatSheet),
+        dosDonts: str(r.dosDonts),
         syncedAt: Date.now(),
       });
     return rows.length;
@@ -292,4 +297,32 @@ export const renameCard = authenticatedAction({
       return { ok: false, error: String(e).slice(0, 300) };
     }
   },
+});
+
+/**
+ * A client's Do's & Don'ts from their ClickUp client card, matched by name or
+ * alias the same way the cockpit groups campaigns. Null when the card has none.
+ */
+export async function dosDontsText(
+  ctx: QueryCtx,
+  name?: string | null,
+): Promise<string | null> {
+  if (!name) return null;
+  const key = name.trim().toLowerCase();
+  const tight = key.replace(/[^a-z0-9\u0600-\u06ff]+/g, "");
+  const rows = await ctx.db.query("clientLinks").collect();
+  const hit =
+    rows.find(r => r.name.trim().toLowerCase() === key) ??
+    rows.find(r =>
+      r.aliases.some(
+        a => a === key || a.replace(/[^a-z0-9\u0600-\u06ff]+/g, "") === tight,
+      ),
+    );
+  return hit?.dosDonts ?? null;
+}
+
+export const dosDontsFor = internalQuery({
+  args: { name: v.optional(v.string()) },
+  returns: v.union(v.string(), v.null()),
+  handler: async (ctx, { name }) => await dosDontsText(ctx, name),
 });
