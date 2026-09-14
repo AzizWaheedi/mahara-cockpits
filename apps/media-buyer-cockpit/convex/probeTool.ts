@@ -733,3 +733,28 @@ export const taskComments = internalAction({
     return out;
   },
 });
+
+/** Read-only: lines of one task comment that match a pattern (to check a digest against its source without reading the whole comment). */
+export const commentLines = internalAction({
+  args: { taskId: v.string(), commentId: v.string(), pattern: v.string() },
+  returns: v.any(),
+  handler: async (_ctx, { taskId, commentId, pattern }) => {
+    const r: Any = await callTool("pd_clickup_proxy_get", {
+      url: `https://api.clickup.com/api/v2/task/${taskId}/comment`,
+    });
+    const c = ((unwrap(r) ?? r)?.comments ?? []).find(
+      (x: Any) => String(x.id) === commentId,
+    );
+    if (!c) return "comment not found";
+    const re = new RegExp(pattern, "i");
+    return String(c.comment_text ?? "")
+      .split(/\n+/)
+      .filter(l => re.test(l))
+      .map(l =>
+        l
+          .replace(/\+?\d[\d\s-]{7,}\d/g, "[number]")
+          .replace(/\S+@\S+/g, "[email]")
+          .slice(0, 300),
+      );
+  },
+});
