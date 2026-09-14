@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { QueryCtx } from "./_generated/server";
-import { internalMutation } from "./_generated/server";
+import { internalMutation, internalMutation } from "./_generated/server";
 import { CPL_GATE } from "./constants";
 import { authenticatedMutation, authenticatedQuery } from "./functions";
 import { scopeFilter } from "./gate";
@@ -9,6 +9,16 @@ import { allowedClients, assertRole } from "./roles";
 
 function kuwaitToday(): string {
   return new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+/**
+ * The working day an end-of-day belongs to: one filed before 04:00 Kuwait is
+ * the previous day's (Nada filed Sunday's at 00:46 on Monday, 2026-09-14).
+ */
+function eodWorkingDay(): string {
+  return new Date(Date.now() + 3 * 3600 * 1000 - 4 * 3600 * 1000)
+    .toISOString()
+    .slice(0, 10);
 }
 
 export const snapshot = authenticatedQuery({
@@ -171,7 +181,7 @@ export const saveEod = authenticatedMutation({
   returns: v.null(),
   handler: async (ctx, { body, energy, answers, computed, submit }) => {
     await assertRole(ctx, "media_buyer");
-    const day = kuwaitToday();
+    const day = eodWorkingDay();
     const row = await ctx.db
       .query("eodReports")
       .withIndex("by_role_day", q => q.eq("role", "media_buyer").eq("day", day))
@@ -688,5 +698,16 @@ export const launchWatch = authenticatedQuery({
       (a, b) =>
         b.issues.length - a.issues.length || a.client.localeCompare(b.client),
     );
+  },
+});
+
+
+/** One-off: move a saved end-of-day to the working day it belongs to. */
+export const setEodDay = internalMutation({
+  args: { id: v.id("eodReports"), day: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { id, day }) => {
+    await ctx.db.patch(id, { day });
+    return null;
   },
 });
