@@ -173,6 +173,188 @@ function actionsFor(c: Campaign): string[] {
 
 type View = "sod" | "ads" | "tasks" | "touch" | "eod";
 
+/** Ad Status values that take a campaign out of the active list (the board is the truth). */
+const OFF_STATUSES = ["Paused", "Dead Campaign", "Lost Client"];
+const isOffOnBoard = (c: Campaign) =>
+  OFF_STATUSES.some(
+    s => s.toLowerCase() === String(c?.boardAdStatus ?? "").toLowerCase(),
+  );
+const clientOf = (c: Campaign | undefined) =>
+  String(c?.clientName ?? c?.accountName ?? "Unassigned");
+
+/** A client's links from the ClickUp client list, matched by name or alias. */
+function findClientLinks(list: Campaign[], name: string): Campaign | undefined {
+  const key = name.trim().toLowerCase();
+  const tight = key.replace(/[^a-z0-9\u0600-\u06ff]+/g, "");
+  return (
+    list.find(l => String(l.name).trim().toLowerCase() === key) ??
+    list.find(l =>
+      (l.aliases ?? []).some(
+        (a: string) =>
+          a === key || a.replace(/[^a-z0-9\u0600-\u06ff]+/g, "") === tight,
+      ),
+    )
+  );
+}
+
+/** Drive folder, Brand DNA and offer sheet beside the client's name; a missing one says so. */
+function ClientLinks({ links }: { links?: Campaign }) {
+  const item = (href: string | undefined, label: string) =>
+    href ? (
+      <a
+        key={label}
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        className="font-semibold text-primary underline"
+      >
+        {label}
+      </a>
+    ) : (
+      <span key={label} className="text-muted-foreground">
+        no {label}
+      </span>
+    );
+  if (!links)
+    return (
+      <span className="ml-2 text-[11px] font-normal text-muted-foreground">
+        not on the ClickUp client list
+      </span>
+    );
+  return (
+    <span className="ml-2 inline-flex flex-wrap gap-2 text-[11px] font-normal">
+      {item(links.driveLink, "Drive")}
+      {item(links.brandDnaDoc, "Brand DNA")}
+      {item(links.offerCheatSheet, "Offer")}
+      {item(links.url, "ClickUp")}
+    </span>
+  );
+}
+
+/** The ClickUp options, fetched once per page load and shared by every picker. */
+let statusOptionsCache: Promise<string[]> | null = null;
+
+/** The card's Ad Status on the Ads Management board, editable in place. */
+function AdStatusPicker({
+  campaignName,
+  status,
+  hasCard,
+}: {
+  campaignName: string;
+  status?: string;
+  hasCard: boolean;
+}) {
+  const loadOptions = useAction(api.board.adStatusOptions);
+  const setStatus = useAction(api.board.setAdStatus);
+  const [options, setOptions] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!hasCard) return;
+    if (!statusOptionsCache) statusOptionsCache = loadOptions({});
+    statusOptionsCache.then(setOptions).catch(() => setOptions([]));
+  }, [hasCard, loadOptions]);
+  if (!hasCard) return null;
+  const list = options.length ? options : status ? [status] : [];
+  return (
+    <select
+      className="ml-1 rounded border bg-background px-1 py-0.5 text-[11px] font-semibold"
+      value={status ?? ""}
+      disabled={busy}
+      title="Ad Status on the ClickUp board, the source of truth for on or off"
+      onChange={async e => {
+        const next = e.target.value;
+        setBusy(true);
+        try {
+          const r = await setStatus({ campaignName, status: next });
+          if (r.ok) toast.success(`Ad status set to ${next} on the board.`);
+          else toast.error(r.error ?? "ClickUp refused that.");
+        } catch (err) {
+          toast.error(String((err as Error).message ?? err));
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      {!status && <option value="">no status</option>}
+      {list.map(o => (
+        <option key={o} value={o}>
+          {o}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+/** Spending campaigns with no card on the ads board, with a button to add one. */
+function OffBoardCampaigns({ rows }: { rows: Campaign[] }) {
+  const addToBoard = useAction(api.board.addToBoard);
+  const [client, setClient] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+  if (!rows.length) return null;
+  return (
+    <div className="mt-5 rounded-lg border border-dashed p-3">
+      <div className="text-[12px] font-bold uppercase tracking-widest text-muted-foreground">
+        Spending but not on the ClickUp board ({rows.length})
+      </div>
+      <p className="mb-2 text-[12px] text-muted-foreground">
+        These campaigns spend on an ad account with no card on the Ads
+        Management board, so no other screen tracks them. Add the card here, the
+        same card the new-campaign form makes, and it joins the list on the next
+        sync.
+      </p>
+      <ul className="divide-y text-[13px]">
+        {rows.map(r => {
+          const name = client[r.campaignName] ?? r.clientName ?? "";
+          return (
+            <li
+              key={r.campaignName}
+              className="flex flex-wrap items-center gap-2 py-2"
+            >
+              <span className="font-semibold">{r.campaignName}</span>
+              <span className="text-muted-foreground">
+                {r.accountName} · ${Number(r.spend7d).toFixed(0)} in 7 days ·{" "}
+                {r.leads7d} leads
+              </span>
+              <input
+                className="ml-auto w-44 rounded border bg-background px-2 py-1 text-[12px]"
+                placeholder="Client name (the card's tag)"
+                value={name}
+                onChange={e =>
+                  setClient({ ...client, [r.campaignName]: e.target.value })
+                }
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-[12px]"
+                disabled={!name.trim() || busy === r.campaignName}
+                onClick={async () => {
+                  setBusy(r.campaignName);
+                  try {
+                    const res = await addToBoard({
+                      campaignName: r.campaignName,
+                      clientName: name.trim(),
+                      status: "Live",
+                    });
+                    if (res.ok) toast.success("Card added to the ads board.");
+                    else toast.error(res.error ?? "ClickUp refused that.");
+                  } catch (err) {
+                    toast.error(String((err as Error).message ?? err));
+                  } finally {
+                    setBusy(null);
+                  }
+                }}
+              >
+                {busy === r.campaignName ? "Adding..." : "Add to ClickUp"}
+              </Button>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 export function StartOfDayPage() {
   return <Cockpit view="sod" />;
 }
@@ -488,6 +670,22 @@ function Cockpit({ view }: { view: View }) {
   const t = snap.totals;
   // biome-ignore lint/suspicious/noExplicitAny: check row
   const checkRows = (snap.checks as any[]) ?? [];
+  // Campaigns where Meta delivers nothing: every ad and ad set under them is
+  // paused, archived or held by a paused campaign. The board card can still
+  // say Live; Meta is the truth about delivery. [Aziz, 2026-09-14]
+  const offOnMeta = new Set<string>();
+  {
+    const byCampaign = new Map<string, Campaign[]>();
+    for (const t of (snap?.metaTree ?? []) as Campaign[]) {
+      if (t.kind !== "ad" && t.kind !== "adset") continue;
+      const list = byCampaign.get(t.campaignName) ?? [];
+      list.push(t);
+      byCampaign.set(t.campaignName, list);
+    }
+    for (const [name, nodes] of byCampaign)
+      if (!nodes.some(t => (t.effectiveStatus ?? t.status) === "ACTIVE"))
+        offOnMeta.add(name);
+  }
   const sodChecks = checkRows.filter(c => (c.phase ?? "sod") === "sod");
   const midChecks = checkRows.filter(c => c.phase === "mid");
   const checksDone = sodChecks.filter(c => c.done).length;
@@ -873,20 +1071,38 @@ function Cockpit({ view }: { view: View }) {
                     <th className="px-2 text-left font-bold">CPL</th>
                     <th className="px-2 text-left font-bold">Bookings</th>
                     <th className="px-2 text-left font-bold">Cost / booking</th>
-                    <th className="px-2 text-left font-bold">Day rate</th>
+                    <th className="px-2 text-left font-bold">Budget / spend</th>
                     <th className="px-2 text-left font-bold w-[38%]">Call</th>
                   </tr>
                 </thead>
                 <tbody>
                   {(snap.campaigns as Campaign[])
                     .filter(c => {
+                      // Off on the board (ClickUp Ad Status): listed last under
+                      // "Everything", left out of the problem filters.
+                      if (filter !== "Everything" && isOffOnBoard(c))
+                        return false;
                       if (filter === "Undecided today")
                         return !decidedBySubject.has(c.campaignName);
                       return (
                         FILTERS.find(f => f.label === filter) ?? FILTERS[0]
                       ).test(c);
                     })
-                    .map((c: Campaign) => {
+                    // Active first, then off; within each, grouped by client.
+                    .sort(
+                      (a, b) =>
+                        Number(isOffOnBoard(a)) - Number(isOffOnBoard(b)) ||
+                        clientOf(a).localeCompare(clientOf(b)) ||
+                        String(a.campaignName).localeCompare(
+                          String(b.campaignName),
+                        ),
+                    )
+                    .map((c: Campaign, i: number, list: Campaign[]) => {
+                      const prev = i > 0 ? list[i - 1] : undefined;
+                      const newSection =
+                        !prev || isOffOnBoard(prev) !== isOffOnBoard(c);
+                      const newClient =
+                        newSection || clientOf(prev) !== clientOf(c);
                       const isOpen = open === c.campaignName;
                       const decided = decidedBySubject.get(c.campaignName);
                       const acts = actionsFor(c);
@@ -925,9 +1141,36 @@ function Cockpit({ view }: { view: View }) {
                           adNode(adName)?.status) === "ACTIVE";
                       return (
                         <>
+                          {newSection && isOffOnBoard(c) && (
+                            <tr>
+                              <td
+                                colSpan={8}
+                                className="pt-5 pb-1 text-[11px] font-bold uppercase tracking-widest text-muted-foreground"
+                              >
+                                Off on the board (Ad Status:{" "}
+                                {OFF_STATUSES.join(", ")})
+                              </td>
+                            </tr>
+                          )}
+                          {newClient && (
+                            <tr>
+                              <td
+                                colSpan={8}
+                                className="pt-3 pb-1 text-[12px] font-bold text-teal-700 dark:text-teal-300"
+                              >
+                                {clientOf(c)}
+                                <ClientLinks
+                                  links={findClientLinks(
+                                    (snap.clientLinks ?? []) as Campaign[],
+                                    clientOf(c),
+                                  )}
+                                />
+                              </td>
+                            </tr>
+                          )}
                           <tr
                             key={c._id}
-                            className={`border-b align-top ${isOpen ? "bg-muted/40" : ""}`}
+                            className={`border-b align-top ${isOpen ? "bg-muted/40" : ""} ${isOffOnBoard(c) && !isOpen ? "opacity-60" : ""}`}
                           >
                             <td className="py-2.5 pr-2">
                               <button
@@ -960,6 +1203,20 @@ function Cockpit({ view }: { view: View }) {
                                     {c.clientName ?? c.accountName}
                                   </button>
                                 )}
+                                <AdStatusPicker
+                                  campaignName={c.campaignName}
+                                  status={c.boardAdStatus}
+                                  hasCard={Boolean(c.taskId)}
+                                />
+                                {!isOffOnBoard(c) &&
+                                  offOnMeta.has(c.campaignName) && (
+                                    <span
+                                      className="ml-1 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-bold uppercase text-amber-900 dark:bg-amber-950 dark:text-amber-200"
+                                      title="The board says this campaign is on, but nothing is delivering on Meta. If it is off, set the Ad Status."
+                                    >
+                                      nothing delivering on Meta
+                                    </span>
+                                  )}
                                 {c.accountIssue && (
                                   <span
                                     className="ml-1 rounded bg-red-50 px-1 py-0.5 text-[9px] font-bold uppercase text-red-700 dark:bg-red-950 dark:text-red-300"
@@ -1080,10 +1337,37 @@ function Cockpit({ view }: { view: View }) {
                             >
                               {money(c.costPerBooking, 0)}
                             </td>
-                            <td
-                              className={`px-2 tabular-nums font-semibold ${c.dayRate < 30 ? "txt-bad" : ""}`}
-                            >
-                              {money(c.dayRate)}
+                            <td className="px-2 tabular-nums">
+                              {/* What is set on Meta, where it lives, and what it actually spends. */}
+                              <div className="font-semibold">
+                                {c.budgetDaily !== undefined
+                                  ? `${money(c.budgetDaily)}/day`
+                                  : c.budgetLifetime !== undefined
+                                    ? `${money(c.budgetLifetime)} lifetime`
+                                    : "—"}
+                                {c.budgetLevel && (
+                                  <span
+                                    className="ml-1 rounded bg-muted px-1 py-0.5 text-[9px] font-bold uppercase text-muted-foreground"
+                                    title={
+                                      c.budgetLevel === "campaign"
+                                        ? "CBO: the budget is set on the campaign and Meta splits it across the ad sets"
+                                        : "ABO: each ad set has its own budget; this is their total"
+                                    }
+                                  >
+                                    {c.budgetLevel === "campaign"
+                                      ? "CBO"
+                                      : "ABO"}
+                                  </span>
+                                )}
+                              </div>
+                              <div
+                                className={`text-[12px] ${c.dayRate < 30 ? "txt-bad" : "text-muted-foreground"}`}
+                              >
+                                {money(c.dayRate)}/day avg
+                                {c.dataThrough
+                                  ? ` · ${money(c.spendToday, 2)} on ${String(c.dataThrough).slice(8, 10)}/${String(c.dataThrough).slice(5, 7)}`
+                                  : ""}
+                              </div>
                             </td>
                             <td className="px-2">
                               <div className="flex flex-wrap items-center gap-1.5">
@@ -1203,6 +1487,17 @@ function Cockpit({ view }: { view: View }) {
                                         setRange(c.campaignName, r)
                                       }
                                       leadsOnly={c.serviceMode === "DWY"}
+                                      extraAds={[
+                                        ...new Set<string>(
+                                          tree
+                                            .filter(
+                                              (t: Campaign) => t.kind === "ad",
+                                            )
+                                            .map((t: Campaign) =>
+                                              String(t.name),
+                                            ),
+                                        ),
+                                      ]}
                                       renderAdCell={(adName: string) => {
                                         const row = ads.find(
                                           (a: Campaign) => a.adName === adName,
@@ -1721,6 +2016,9 @@ function Cockpit({ view }: { view: View }) {
                 </tbody>
               </table>
             </div>
+            <OffBoardCampaigns
+              rows={(snap.offBoardCampaigns ?? []) as Campaign[]}
+            />
           </section>
         )}
 

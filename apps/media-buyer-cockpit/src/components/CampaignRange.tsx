@@ -19,6 +19,26 @@ import { CampaignTrend } from "./Trends";
 const CPL_GATE = 15;
 const CPB_GATE = 80;
 
+/** The ads that spent in the range, then every other ad Meta has in the campaign at $0. */
+function withQuietAds(rows: Row[], names?: string[]): Row[] {
+  const seen = new Set(rows.map(r => r.key));
+  const quiet = (names ?? [])
+    .filter(n => !seen.has(n))
+    .map(n => ({
+      key: n,
+      spend: 0,
+      leads: 0,
+      bookings: 0,
+      bookingsAttributed: false,
+    }));
+  return [...rows, ...quiet];
+}
+
+function quietCount(rows: Row[], names?: string[]): number {
+  const seen = new Set(rows.map(r => r.key));
+  return new Set((names ?? []).filter(n => !seen.has(n))).size;
+}
+
 function money(n: number | undefined, dp = 0) {
   if (n === undefined || n === null || Number.isNaN(n)) return "—";
   return `$${n.toFixed(dp)}`;
@@ -51,8 +71,11 @@ export function CampaignRange({
   renderAdCell,
   renderAdCall,
   leadsOnly,
+  extraAds,
 }: {
   campaignName: string;
+  /** Every ad Meta has in this campaign; ones with no spend in the range still get a row. */
+  extraAds?: string[];
   range: Range;
   onRangeChange: (r: Range) => void;
   /** Done With You: we do not book for them, so booking columns are hidden. */
@@ -182,12 +205,22 @@ export function CampaignRange({
           />
           <Table
             title="Ads"
-            rows={data.ads as Row[]}
+            rows={withQuietAds(data.ads as Row[], extraAds)}
             leadsOnly={leadsOnly}
             renderKey={renderAdCell}
             renderTail={renderAdCall}
             tailTitle="Call"
           />
+          {quietCount(data.ads as Row[], extraAds) > 0 && (
+            <p className="mt-1 text-[12px] text-muted-foreground">
+              {quietCount(data.ads as Row[], extraAds)} ad
+              {quietCount(data.ads as Row[], extraAds) === 1
+                ? " has"
+                : "s have"}{" "}
+              not spent in this range yet, so they show $0. New ads usually take
+              a day to start delivering.
+            </p>
+          )}
           {!leadsOnly &&
             data.bookingsTotal > 0 &&
             data.bookingsAttributed === 0 && (

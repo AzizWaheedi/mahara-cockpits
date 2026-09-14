@@ -5,6 +5,7 @@ import {
   internalMutation,
   internalQuery,
 } from "./_generated/server";
+import { duplicateAdSetCore, setDailyBudget } from "./edit";
 import { allAdAccounts, callTool, graph, graphPost, unwrap } from "./tools";
 
 // biome-ignore lint/suspicious/noExplicitAny: Meta payloads
@@ -316,12 +317,14 @@ export const buttonsRehearsal = internalAction({
           `draft status ${draft?.status}: ${draft?.error ?? "no ids"}`,
         );
 
-      // 2. Budget change: the setAdSetBudget call.
+      // 2. Budget change: the same helper the budget button calls.
       try {
-        await graphPost(adSetId, { daily_budget: 2500 });
-        ok("Set ad set budget ($20 → $25)");
+        const where = await setDailyBudget(adSetId, 25);
+        ok(
+          `Set budget, budget on the ad set ($20 → $25, wrote to the ${where.level})`,
+        );
       } catch (e) {
-        fail("Set ad set budget", e);
+        fail("Set budget, budget on the ad set", e);
       }
       // 3. Scale: the "Scale the winner" call (+25%, ad-set level).
       try {
@@ -330,30 +333,73 @@ export const buttonsRehearsal = internalAction({
       } catch (e) {
         fail("Scale the winner", e);
       }
-      // 4. Duplicate ad set: the duplicateAdSet payload.
+      // 4. Duplicate ad set: the same helper the duplicate button calls.
       try {
+        const copy = await duplicateAdSetCore({
+          adsetId: adSetId,
+          newName: "REHEARSAL copy",
+        });
+        made.unshift(copy.id);
+        ok("Duplicate ad set, budget on the ad set", { id: copy.id });
+
+        // 4b. The same two buttons on a campaign that holds its own budget,
+        // which is how client campaigns are built and what failed for Nada on
+        // 2026-09-14 ("You can only set an ad set budget or a campaign budget").
         const src: Any = await graph(adSetId, {
           fields:
-            "name,campaign_id,account_id,daily_budget,billing_event,optimization_goal,bid_strategy,promoted_object,destination_type,targeting",
+            "billing_event,optimization_goal,promoted_object,destination_type,targeting",
         });
-        const payload: Record<string, string | number> = {
-          name: "REHEARSAL copy",
-          campaign_id: src.campaign_id,
+        const cbo: Any = await graphPost(`${act}/campaigns`, {
+          name: `REHEARSAL campaign budget ${new Date().toISOString().slice(0, 16)}`,
+          objective: "OUTCOME_LEADS",
+          status: "PAUSED",
+          special_ad_categories: "[]",
+          daily_budget: 2000,
+          bid_strategy: "LOWEST_COST_WITHOUT_CAP",
+        });
+        made.push(String(cbo.id));
+        const cboSetPayload: Record<string, string | number> = {
+          name: "REHEARSAL campaign-budget ad set",
+          campaign_id: String(cbo.id),
           billing_event: src.billing_event,
           optimization_goal: src.optimization_goal,
           targeting: JSON.stringify(src.targeting),
           status: "PAUSED",
-          daily_budget: src.daily_budget ?? 2000,
         };
         if (src.promoted_object)
-          payload.promoted_object = JSON.stringify(src.promoted_object);
-        if (src.bid_strategy) payload.bid_strategy = src.bid_strategy;
-        const copy: Any = await graphPost(
-          `act_${src.account_id}/adsets`,
-          payload,
-        );
-        if (copy?.id) made.unshift(String(copy.id));
-        ok("Duplicate ad set", { id: copy?.id });
+          cboSetPayload.promoted_object = JSON.stringify(src.promoted_object);
+        if (src.destination_type)
+          cboSetPayload.destination_type = src.destination_type;
+        const cboSet: Any = await graphPost(`${act}/adsets`, cboSetPayload);
+        made.unshift(String(cboSet.id));
+        try {
+          const where = await setDailyBudget(String(cboSet.id), 25);
+          const back: Any = await graph(String(cbo.id), {
+            fields: "daily_budget",
+          });
+          if (
+            where.level !== "campaign" ||
+            String(back.daily_budget) !== "2500"
+          )
+            throw new Error(
+              `wrote to the ${where.level}; campaign budget reads ${back.daily_budget}`,
+            );
+          ok(
+            "Set budget, budget on the campaign ($20 → $25, read back from Meta)",
+          );
+        } catch (e) {
+          fail("Set budget, budget on the campaign", e);
+        }
+        try {
+          const copy2 = await duplicateAdSetCore({
+            adsetId: String(cboSet.id),
+            newName: "REHEARSAL campaign-budget copy",
+          });
+          made.unshift(copy2.id);
+          ok("Duplicate ad set, budget on the campaign", { id: copy2.id });
+        } catch (e) {
+          fail("Duplicate ad set, budget on the campaign", e);
+        }
       } catch (e) {
         fail("Duplicate ad set", e);
       }

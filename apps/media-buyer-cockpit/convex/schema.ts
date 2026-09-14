@@ -53,6 +53,15 @@ const schema = defineSchema({
     dayRate: v.number(),
     medianDayRate: v.optional(v.number()),
     contractedBudget: v.optional(v.number()),
+    /**
+     * Where Meta holds the budget: "campaign" (CBO, Advantage campaign budget)
+     * or "adset" (ABO). Budget edits must go to that level, or Meta refuses.
+     */
+    budgetLevel: v.optional(v.string()),
+    /** The daily budget set on Meta: the campaign's for CBO, the delivering ad sets' total for ABO. */
+    budgetDaily: v.optional(v.number()),
+    /** A lifetime budget, when the campaign or its ad sets use one instead. */
+    budgetLifetime: v.optional(v.number()),
     firstSpend: v.optional(v.string()),
     daysLive: v.optional(v.number()),
     staleTaskName: v.optional(v.string()),
@@ -840,6 +849,29 @@ const schema = defineSchema({
     addedAt: v.number(),
   }).index("by_client", ["clientName"]),
   /** Smoke-check failures already sent to Slack, so a broken screen is reported once, not every 15 minutes. */
+  /**
+   * Campaigns spending on an ad account with no card on the Ads Management
+   * board. Replaced every sync; the media buyer adds a card from the cockpit.
+   */
+  offBoardCampaigns: defineTable({
+    campaignName: v.string(),
+    accountName: v.string(),
+    accountId: v.optional(v.string()),
+    clientName: v.optional(v.string()),
+    spend7d: v.number(),
+    leads7d: v.number(),
+    syncedAt: v.number(),
+  }).index("by_campaign", ["campaignName"]),
+  /** Each client's Drive folder, Brand DNA and offer sheet, from the ClickUp client list. */
+  clientLinks: defineTable({
+    name: v.string(),
+    aliases: v.array(v.string()),
+    url: v.optional(v.string()),
+    driveLink: v.optional(v.string()),
+    brandDnaDoc: v.optional(v.string()),
+    offerCheatSheet: v.optional(v.string()),
+    syncedAt: v.number(),
+  }).index("by_name", ["name"]),
   alerts: defineTable({
     signature: v.string(),
     text: v.string(),

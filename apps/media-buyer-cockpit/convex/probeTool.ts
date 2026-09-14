@@ -546,3 +546,27 @@ export const sheetTail = internalAction({
     return { total: values.length, last: values.slice(-(rows ?? 3)) };
   },
 });
+
+/** The Ads Management list's custom fields: ids and dropdown options (no values from tasks). */
+export const adsListFields = internalAction({
+  args: {},
+  returns: v.any(),
+  handler: async () => {
+    const r: Any = await callTool("pd_clickup_proxy_get", {
+      url: "https://api.clickup.com/api/v2/list/901817774521/field",
+    });
+    const fields: Any[] = unwrap(r)?.fields ?? r?.fields ?? [];
+    return fields
+      .filter(f => /status|client/i.test(f.name))
+      .map(f => ({
+        id: f.id,
+        name: f.name,
+        type: f.type,
+        options: (f.type_config?.options ?? []).map((o: Any) => ({
+          id: o.id,
+          name: o.name,
+          orderindex: o.orderindex,
+        })),
+      }));
+  },
+});

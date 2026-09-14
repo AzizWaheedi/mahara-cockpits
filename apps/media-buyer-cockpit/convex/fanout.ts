@@ -873,6 +873,31 @@ export const feedCreative = internalAction({
       // Stat sheets are filled by hand through the day: read on the full run only.
       if (withStats) await attachStatSheets(ctx, roster);
       await attachDaily(ctx, roster);
+      // The media buyer groups campaigns by client and links their Drive
+      // folder, Brand DNA and offer sheet. Drive falls back to Client Data.
+      try {
+        let dataRows: Any[] = [];
+        try {
+          dataRows = await readClientData(ctx);
+        } catch {
+          // card links only
+        }
+        await ctx.runMutation(internal.board.storeClientLinks, {
+          rows: roster.map((r: Any) => ({
+            name: r.name,
+            aliases: r.aliases,
+            url: r.url,
+            driveLink:
+              r.driveLink ??
+              r.driveFolder ??
+              clientDataFor(dataRows, r.name, r.taskId)?.driveLink,
+            brandDnaDoc: r.brandDnaDoc,
+            offerCheatSheet: r.offerCheatSheet,
+          })),
+        });
+      } catch (e) {
+        console.warn(`client links: ${String(e).slice(0, 120)}`);
+      }
       report.clients = roster.length
         ? await bridge("creative", "storeClients", { clients: roster })
         : "empty, kept";

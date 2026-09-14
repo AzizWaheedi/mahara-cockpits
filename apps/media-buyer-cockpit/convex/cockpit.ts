@@ -69,6 +69,13 @@ export async function buildSnapshot(
     .withIndex("by_role_day", q => q.eq("role", "media_buyer").eq("day", day))
     .collect();
   const inbox = await ctx.db.query("inbox").collect();
+  const clientLinks = await ctx.db.query("clientLinks").collect();
+  const offBoardCampaigns = (
+    await ctx.db.query("offBoardCampaigns").collect()
+  ).filter(
+    c =>
+      !scope || scope.has(String(c.clientName ?? c.accountName).toLowerCase()),
+  );
   const manualChanges = (await ctx.db.query("manualChanges").collect()).filter(
     mine,
   );
@@ -97,6 +104,8 @@ export async function buildSnapshot(
     metaTree,
     adChanges,
     manualChanges,
+    offBoardCampaigns,
+    clientLinks,
     members,
     inbox,
     prefs,
@@ -700,7 +709,6 @@ export const launchWatch = authenticatedQuery({
     );
   },
 });
-
 
 /** One-off: move a saved end-of-day to the working day it belongs to. */
 export const setEodDay = internalMutation({

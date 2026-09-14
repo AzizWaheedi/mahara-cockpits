@@ -73,6 +73,48 @@ async function refused(
   return no || undefined;
 }
 
+/** The Meta side of "Duplicate ad set", shared with the rehearsal. */
+export async function duplicateAdSetCore(args: {
+  adsetId: string;
+  newName: string;
+  dailyBudget?: number;
+}): Promise<{ id: string; sourceName: string }> {
+  const src = await graph<any>(args.adsetId, {
+    fields:
+      "name,campaign_id,account_id,daily_budget,billing_event,optimization_goal,bid_strategy,promoted_object,destination_type,targeting,attribution_spec",
+  });
+  // If the campaign holds the budget (CBO), Meta rejects an ad-set budget
+  // outright. Ask the campaign first rather than guessing.
+  const parent = await graph<any>(src.campaign_id, {
+    fields: "daily_budget,lifetime_budget",
+  });
+  const campaignHoldsBudget = Boolean(
+    parent.daily_budget || parent.lifetime_budget,
+  );
+
+  const payload: Record<string, string | number> = {
+    name: args.newName,
+    campaign_id: src.campaign_id,
+    billing_event: src.billing_event,
+    optimization_goal: src.optimization_goal,
+    targeting: JSON.stringify(sanitizeTargeting(src.targeting)),
+    status: "PAUSED",
+  };
+  if (!campaignHoldsBudget) {
+    payload.daily_budget =
+      args.dailyBudget !== undefined
+        ? toMinor(args.dailyBudget)
+        : (src.daily_budget ?? toMinor(30));
+  }
+  if (src.promoted_object)
+    payload.promoted_object = JSON.stringify(src.promoted_object);
+  if (src.destination_type) payload.destination_type = src.destination_type;
+  if (src.bid_strategy) payload.bid_strategy = src.bid_strategy;
+
+  const made = await graphPost<any>(`act_${src.account_id}/adsets`, payload);
+  return { id: String(made.id), sourceName: String(src.name) };
+}
+
 /**
  * Copy an existing ad set, keeping its targeting, optimisation goal and lead
  * form, so a new angle can be tested without rebuilding the setup by hand.
@@ -93,45 +135,10 @@ export const duplicateAdSet = authenticatedAction({
     const no = await refused(ctx, args.campaignName);
     if (no) return { ok: false, error: no };
     try {
-      const src = await graph<any>(args.adsetId, {
-        fields:
-          "name,campaign_id,account_id,daily_budget,billing_event,optimization_goal,bid_strategy,promoted_object,destination_type,targeting,attribution_spec",
-      });
-      // If the campaign holds the budget (CBO), Meta rejects an ad-set budget
-      // outright. Ask the campaign first rather than guessing.
-      const parent = await graph<any>(src.campaign_id, {
-        fields: "daily_budget,lifetime_budget",
-      });
-      const campaignHoldsBudget = Boolean(
-        parent.daily_budget || parent.lifetime_budget,
-      );
-
-      const payload: Record<string, string | number> = {
-        name: args.newName,
-        campaign_id: src.campaign_id,
-        billing_event: src.billing_event,
-        optimization_goal: src.optimization_goal,
-        targeting: JSON.stringify(sanitizeTargeting(src.targeting)),
-        status: "PAUSED",
-      };
-      if (!campaignHoldsBudget) {
-        payload.daily_budget =
-          args.dailyBudget !== undefined
-            ? toMinor(args.dailyBudget)
-            : (src.daily_budget ?? toMinor(30));
-      }
-      if (src.promoted_object)
-        payload.promoted_object = JSON.stringify(src.promoted_object);
-      if (src.destination_type) payload.destination_type = src.destination_type;
-      if (src.bid_strategy) payload.bid_strategy = src.bid_strategy;
-
-      const made = await graphPost<any>(
-        `act_${src.account_id}/adsets`,
-        payload,
-      );
+      const made = await duplicateAdSetCore(args);
       await logIt(ctx, {
         campaignName: args.campaignName,
-        what: `Created ad set "${args.newName}" (paused) by copying the targeting from "${src.name}"`,
+        what: `Created ad set "${args.newName}" (paused) by copying the targeting from "${made.sourceName}"`,
       });
       return { ok: true, adsetId: made.id };
     } catch (e) {
@@ -139,6 +146,33 @@ export const duplicateAdSet = authenticatedAction({
     }
   },
 });
+
+/**
+ * Change a daily budget wherever it lives. A campaign that holds its own
+ * budget (Advantage campaign budget, how the launch playbook builds client
+ * campaigns) refuses an ad set budget with "Meta 100/1885621", so the change
+ * goes to the campaign; otherwise to the ad set. Shared by the button and the
+ * rehearsal so the rehearsal tests the code the button runs.
+ */
+export async function setDailyBudget(
+  adsetId: string,
+  dailyBudget: number,
+): Promise<{ level: "campaign" | "ad set"; id: string }> {
+  const adset = await graph<any>(adsetId, {
+    fields: "campaign{id,daily_budget,lifetime_budget}",
+  });
+  const camp = adset?.campaign;
+  if (camp?.lifetime_budget)
+    throw new Error(
+      "This campaign runs on a lifetime budget, not a daily one. Change it in Ads Manager.",
+    );
+  if (camp?.id && camp.daily_budget) {
+    await graphPost(camp.id, { daily_budget: toMinor(dailyBudget) });
+    return { level: "campaign", id: String(camp.id) };
+  }
+  await graphPost(adsetId, { daily_budget: toMinor(dailyBudget) });
+  return { level: "ad set", id: adsetId };
+}
 
 /** Change an ad set's daily budget. */
 export const setAdSetBudget = authenticatedAction({
@@ -153,13 +187,14 @@ export const setAdSetBudget = authenticatedAction({
     const no = await refused(ctx, args.campaignName);
     if (no) return { ok: false, error: no };
     try {
-      await graphPost(args.adsetId, {
-        daily_budget: toMinor(args.dailyBudget),
-      });
+      const where = await setDailyBudget(args.adsetId, args.dailyBudget);
       await logIt(ctx, {
         campaignName: args.campaignName,
         adName: args.name,
-        what: `Set daily budget on ad set "${args.name}" to $${args.dailyBudget}`,
+        what:
+          where.level === "campaign"
+            ? `Set the campaign's daily budget to $${args.dailyBudget} (the budget lives on the campaign)`
+            : `Set daily budget on ad set "${args.name}" to $${args.dailyBudget}`,
       });
       return { ok: true };
     } catch (e) {

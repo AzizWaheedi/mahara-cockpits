@@ -378,9 +378,29 @@ function BudgetEditor({ campaign, adSets }: { campaign: Row; adSets: Row[] }) {
       </p>
     );
 
+  // CBO: one budget on the campaign, so one input, not one per ad set.
+  // Meta refuses an ad set budget on these campaigns (2026-09-14).
+  const isCbo = campaign.budgetLevel === "campaign";
+  const rows = isCbo
+    ? [
+        {
+          metaId: adSets[0].metaId,
+          name: `Campaign budget (CBO), shared by ${adSets.length} ad set${adSets.length === 1 ? "" : "s"}`,
+          dailyBudget: campaign.budgetDaily,
+        },
+      ]
+    : adSets;
+
   return (
     <div className="mt-3 space-y-2">
-      {adSets.map(s => (
+      <p className="text-[12px] text-muted-foreground">
+        {isCbo
+          ? "This campaign uses a campaign budget (CBO). A change applies to the whole campaign and Meta splits it across the ad sets."
+          : campaign.budgetLevel === "adset"
+            ? "This campaign uses ad set budgets (ABO). Each ad set is changed on its own."
+            : ""}
+      </p>
+      {rows.map(s => (
         <div
           key={s.metaId}
           className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-background p-2"
@@ -416,7 +436,12 @@ function BudgetEditor({ campaign, adSets }: { campaign: Row; adSets: Row[] }) {
                     name: s.name,
                     campaignName: campaign.campaignName,
                   });
-                  if (r.ok) toast.success(`${s.name} set. Logged.`);
+                  if (r.ok)
+                    toast.success(
+                      isCbo
+                        ? "Campaign budget set. Logged."
+                        : `${s.name} set. Logged.`,
+                    );
                   else toast.error(r.error ?? "Meta refused that.");
                 } catch (e) {
                   toast.error(describe(e));

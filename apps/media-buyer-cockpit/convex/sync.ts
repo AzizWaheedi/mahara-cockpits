@@ -775,6 +775,21 @@ export const store = internalMutation({
     const scopedNames = new Set(scoped.map(c => c.campaignName));
 
     for (const c of scoped) await ctx.db.insert("campaigns", c);
+    // Spending with no card: kept apart so the cockpit can offer "Add to
+    // ClickUp" without these filling the campaign table. [Aziz, 2026-09-14]
+    for (const row of await ctx.db.query("offBoardCampaigns").collect())
+      await ctx.db.delete(row._id);
+    for (const c of args.campaigns)
+      if (!c.onBoard && !c.internal && Number(c.spend7d ?? 0) > 0)
+        await ctx.db.insert("offBoardCampaigns", {
+          campaignName: String(c.campaignName),
+          accountName: String(c.accountName ?? ""),
+          accountId: c.accountId ? String(c.accountId) : undefined,
+          clientName: c.clientName ? String(c.clientName) : undefined,
+          spend7d: Number(c.spend7d ?? 0),
+          leads7d: Number(c.leads7d ?? 0),
+          syncedAt: Date.now(),
+        });
     for (const a of args.ads) {
       if (!scopedNames.has(a.campaignName)) continue;
       await ctx.db.insert("ads", a);
@@ -2005,10 +2020,38 @@ async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
       // Graph direct, not the tool gateway: previews were silently failing
       // whenever the gateway 500'd, and a missing preview is the one thing
       // Nada actually looks at. See tools.ts:graph().
-      const sets = await graph<any>(`${c.metaCampaignId}/adsets`, {
-        fields: "id,name,status,effective_status,daily_budget",
-        limit: 200,
+      // The campaign's own budget and its ad sets in one call: a budget on
+      // the campaign means CBO, and edits must go there (2026-09-14).
+      const campRes = await graph<any>(c.metaCampaignId, {
+        fields:
+          "daily_budget,lifetime_budget,adsets.limit(200){id,name,status,effective_status,daily_budget,lifetime_budget}",
       });
+      const sets = campRes?.adsets ?? { data: [] };
+      {
+        const minor = (x: unknown) => (x ? Number(x) / 100 : undefined);
+        const setRows = (sets?.data ?? []) as any[];
+        const delivering = setRows.filter(
+          s => String(s.effective_status ?? s.status) === "ACTIVE",
+        );
+        const counted = delivering.length ? delivering : setRows;
+        if (campRes?.daily_budget || campRes?.lifetime_budget) {
+          c.budgetLevel = "campaign";
+          c.budgetDaily = minor(campRes.daily_budget);
+          c.budgetLifetime = minor(campRes.lifetime_budget);
+        } else {
+          c.budgetLevel = "adset";
+          const daily = counted.reduce(
+            (sum, s) => sum + (minor(s.daily_budget) ?? 0),
+            0,
+          );
+          const lifetime = counted.reduce(
+            (sum, s) => sum + (minor(s.lifetime_budget) ?? 0),
+            0,
+          );
+          c.budgetDaily = daily || undefined;
+          c.budgetLifetime = lifetime || undefined;
+        }
+      }
       // biome-ignore lint/suspicious/noExplicitAny: Meta payload
       for (const s of (sets?.data ?? []) as any[]) {
         metaTree.push({
