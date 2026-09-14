@@ -72,7 +72,9 @@ export function ClientUpdateList({
               <p key={label} className="mt-1">
                 <span className="font-semibold">{label}: </span>
                 {items.slice(0, 5).join(" · ")}
-                {items.length > 5 ? ` · +${items.length - 5} more on the card` : ""}
+                {items.length > 5
+                  ? ` · +${items.length - 5} more on the card`
+                  : ""}
               </p>
             ) : null;
           })}
