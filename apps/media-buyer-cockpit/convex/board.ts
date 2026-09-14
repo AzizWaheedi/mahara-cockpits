@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import {
+  internalAction,
   internalMutation,
   internalQuery,
   type QueryCtx,
@@ -208,6 +209,37 @@ export const dropOffBoard = internalMutation({
       .collect())
       await ctx.db.delete(r._id);
     return null;
+  },
+});
+
+/**
+ * The same write as setAdStatus for one card, run from the backend when Aziz
+ * asks for a board clean-up (no user session). Logged like a cockpit change.
+ */
+export const setCardStatus = internalAction({
+  args: { taskId: v.string(), cardName: v.string(), status: v.string() },
+  returns: v.object({ ok: v.boolean(), error: v.optional(v.string()) }),
+  handler: async (ctx, { taskId, cardName, status }) => {
+    const opt = (await statusOptions()).find(
+      o => o.name.toLowerCase() === status.toLowerCase(),
+    );
+    if (!opt)
+      return { ok: false, error: `"${status}" is not an Ad Status option.` };
+    await callTool("pd_clickup_proxy_post", {
+      url: `https://api.clickup.com/api/v2/task/${taskId}/field/${AD_STATUS_FIELD}`,
+      json_body: { value: opt.id },
+    });
+    await ctx.runMutation(internal.board.patchStatus, {
+      campaignName: cardName,
+      status: opt.name,
+      taskId,
+    });
+    await ctx.runMutation(internal.chat.logInternal, {
+      campaignName: cardName,
+      text: `Ad status on the board set to ${opt.name} (old card, replaced by a newer campaign)`,
+      ok: true,
+    });
+    return { ok: true };
   },
 });
 

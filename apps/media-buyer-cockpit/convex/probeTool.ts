@@ -833,3 +833,45 @@ export const labelsRewriteProbe = internalAction({
     };
   },
 });
+
+/** Read-only: cards on a list whose name matches, with creation time, creator, status and tags. */
+export const cardsNamed = internalAction({
+  args: { listId: v.string(), pattern: v.string() },
+  returns: v.any(),
+  handler: async (_ctx, { listId, pattern }) => {
+    const re = new RegExp(pattern, "i");
+    const out: Any[] = [];
+    for (let page = 0; page < 5; page++) {
+      const tr: Any = await callTool("pd_clickup_proxy_get", {
+        url: `https://api.clickup.com/api/v2/list/${listId}/task?include_closed=true&page=${page}`,
+      });
+      const tasks: Any[] = (unwrap(tr) ?? tr)?.tasks ?? [];
+      for (const t of tasks)
+        if (re.test(String(t.name)))
+          out.push({
+            id: t.id,
+            name: t.name,
+            created: new Date(Number(t.date_created))
+              .toISOString()
+              .slice(0, 16),
+            updated: new Date(Number(t.date_updated))
+              .toISOString()
+              .slice(0, 16),
+            creator: t.creator?.username,
+            status: t.status?.status,
+            tags: (t.tags ?? []).map((x: Any) => x.name),
+            adStatus: (() => {
+              const f = (t.custom_fields ?? []).find(
+                (c: Any) => c.name === "Ad Status",
+              );
+              const o = (f?.type_config?.options ?? []).find(
+                (x: Any) => x.id === f?.value || x.orderindex === f?.value,
+              );
+              return o?.name;
+            })(),
+          });
+      if (tasks.length < 100) break;
+    }
+    return out;
+  },
+});
