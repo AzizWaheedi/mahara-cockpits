@@ -17,7 +17,6 @@ import {
   EndOfDayPage,
   GoPage,
   LoginPage,
-  OffBoardPage,
   PlaybookPage,
   PortalHome,
   SettingsPage,
@@ -57,7 +56,6 @@ export function AuthenticatedRoutes() {
           <Route element={<RoleRoute role="media_buyer" />}>
             <Route path="/dashboard" element={<StartOfDayPage />} />
             <Route path="/ads" element={<AdsPage />} />
-            <Route path="/off-board" element={<OffBoardPage />} />
             <Route path="/tasks" element={<TaskListPage />} />
             <Route path="/touchpoints" element={<TouchpointsPage />} />
             <Route path="/eod" element={<EndOfDayPage />} />

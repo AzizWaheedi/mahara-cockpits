@@ -8,6 +8,7 @@ import { CampaignRange } from "@/components/CampaignRange";
 import {
   type ClientUpdate,
   ClientUpdateList,
+  relevantUpdates,
 } from "@/components/ClientUpdates";
 import { CreativePreview } from "@/components/CreativePreview";
 import { DosDontsList, parseDosDonts } from "@/components/DosDonts";
@@ -176,7 +177,7 @@ function actionsFor(c: Campaign): string[] {
   return ["Scale the winner", "Duplicate the winner"];
 }
 
-type View = "sod" | "ads" | "off" | "tasks" | "touch" | "eod";
+type View = "sod" | "ads" | "tasks" | "touch" | "eod";
 
 /** Ad Status values that take a campaign out of the active list (the board is the truth). */
 const OFF_STATUSES = ["Paused", "Dead Campaign", "Lost Client"];
@@ -192,10 +193,13 @@ function updatesFor(all: ClientUpdate[] | undefined, links?: Campaign) {
   const taskId = String(links?.url ?? "")
     .split("/")
     .pop();
-  return (all ?? []).filter(
-    (u: Campaign) =>
-      (taskId && u.taskId === taskId) || u.clientName === links?.name,
-  ) as ClientUpdate[];
+  return relevantUpdates(
+    (all ?? []).filter(
+      (u: Campaign) =>
+        (taskId && u.taskId === taskId) || u.clientName === links?.name,
+    ) as ClientUpdate[],
+    "ads",
+  );
 }
 
 /** The client's name row: their links, and their do's and don'ts and latest card comments one click away. */
@@ -247,9 +251,7 @@ function ClientRules({
   updates: ClientUpdate[];
 }) {
   const hasRules = parseDosDonts(links?.dosDonts).length > 0;
-  const recent = updates.filter(
-    u => Date.now() - u.at < 30 * 86_400_000 && (u.forAds ?? []).length,
-  );
+  const recent = updates.filter(u => Date.now() - u.at < 30 * 86_400_000);
   if (!hasRules && !recent.length) return null;
   return (
     <div className="mb-3 grid gap-3 rounded-md border border-amber-300 bg-amber-50/60 p-3 dark:border-amber-800 dark:bg-amber-950/30">
@@ -657,10 +659,6 @@ export function StartOfDayPage() {
 export function AdsPage() {
   return <Cockpit view="ads" />;
 }
-/** Campaigns the board has off and Meta is not running: their own screen. */
-export function OffBoardPage() {
-  return <Cockpit view="off" />;
-}
 export function TaskListPage() {
   return <Cockpit view="tasks" />;
 }
@@ -679,10 +677,6 @@ const TITLES: Record<View, { title: string; sub: string }> = {
   ads: {
     title: "Ads management",
     sub: "Every campaign, ranked by what needs a decision",
-  },
-  off: {
-    title: "Off on the board",
-    sub: "Paused, Dead Campaign or Lost Client on the board, and nothing running on Meta",
   },
   tasks: {
     title: "Task list",
@@ -737,6 +731,9 @@ function Cockpit({ view }: { view: View }) {
   const [askText, setAskText] = useState("");
   const [askWho, setAskWho] = useState<string>("");
   const [filter, setFilter] = useState(FILTERS[0].label);
+  // Ads management has two tabs: what is running, and what the board has off
+  // with nothing running on Meta. [Aziz, 2026-09-14]
+  const [adsTab, setAdsTab] = useState<"running" | "off">("running");
   const [chatOpen, setChatOpen] = useState(false);
   const [chatText, setChatText] = useState("");
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -1006,7 +1003,6 @@ function Cockpit({ view }: { view: View }) {
       : Number(c.spendToday ?? 0) > 0 &&
         String(c.dataThrough ?? "") >= yesterday;
   const isParked = (c: Campaign) => isOffOnBoard(c) && !runningOnMeta(c);
-  const adsLike = view === "ads" || view === "off";
   const sodChecks = checkRows.filter(c => (c.phase ?? "sod") === "sod");
   const midChecks = checkRows.filter(c => c.phase === "mid");
   const checksDone = sodChecks.filter(c => c.done).length;
@@ -1285,14 +1281,14 @@ function Cockpit({ view }: { view: View }) {
 
       <div
         className={
-          adsLike
+          view === "ads"
             ? "grid gap-5"
             : "grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]"
         }
       >
         {view === "ads" && !accountView && <TrackingIssues />}
 
-        {adsLike && accountView && (
+        {view === "ads" && accountView && (
           <AccountView
             client={accountView}
             campaigns={(snap.campaigns as Campaign[]).filter(
@@ -1339,14 +1335,35 @@ function Cockpit({ view }: { view: View }) {
           </section>
         )}
 
-        {adsLike && !accountView && (
+        {view === "ads" && !accountView && (
           <section className="rounded-xl border bg-card p-4 shadow-sm">
             <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-              <h2 className="text-[12px] font-bold uppercase tracking-widest text-teal-600">
-                {view === "off"
-                  ? `Off on the board · ${(snap.campaigns as Campaign[]).filter(isParked).length} campaigns`
-                  : "Campaigns · ranked by what needs a decision"}
-              </h2>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {(
+                  [
+                    [
+                      "running",
+                      "Running",
+                      (snap.campaigns as Campaign[]).filter(c => !isParked(c))
+                        .length,
+                    ],
+                    [
+                      "off",
+                      "Off the board",
+                      (snap.campaigns as Campaign[]).filter(isParked).length,
+                    ],
+                  ] as const
+                ).map(([key, label, n]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setAdsTab(key)}
+                    className={`rounded-md border px-3 py-1.5 text-[12px] font-bold uppercase tracking-widest ${adsTab === key ? "border-teal-400 bg-teal-50 text-teal-800 dark:border-teal-700 dark:bg-teal-950 dark:text-teal-200" : "bg-background text-muted-foreground"}`}
+                  >
+                    {label} · {n}
+                  </button>
+                ))}
+              </div>
               <span className="text-[12px] text-muted-foreground">
                 USD, currency-corrected
               </span>
@@ -1366,18 +1383,17 @@ function Cockpit({ view }: { view: View }) {
                 on; the range applies inside each campaign.
               </span>
             </div>
-            {view === "off" && (
+            {adsTab === "off" && (
               <p className="mb-3 text-[13px] text-muted-foreground">
                 The Ads Management board has these as {OFF_STATUSES.join(", ")},
-                and nothing is running on Meta. To bring one back, set its Ad
-                Status and it moves to Ads management. A campaign the board has
-                off but Meta still runs stays in Ads management with a red
-                warning.
+                and nothing is running on Meta. Set the Ad Status to bring one
+                back to Running. A campaign the board has off but Meta still
+                runs stays in Running with a red warning.
               </p>
             )}
             {/* Filters, so she can work one problem at a time instead of the whole list. */}
             <div
-              className={`mb-3 flex flex-wrap gap-1.5 ${view === "off" ? "hidden" : ""}`}
+              className={`mb-3 flex flex-wrap gap-1.5 ${adsTab === "off" ? "hidden" : ""}`}
             >
               {FILTERS.map(f => {
                 const n = (snap.campaigns as Campaign[]).filter(
@@ -1414,7 +1430,7 @@ function Cockpit({ view }: { view: View }) {
                     .filter(c => {
                       // Parked campaigns have their own screen; nothing else
                       // shows there. [Aziz, 2026-09-14]
-                      if (view === "off") return isParked(c);
+                      if (adsTab === "off") return isParked(c);
                       if (isParked(c)) return false;
                       if (filter === "Undecided today")
                         return !decidedBySubject.has(c.campaignName);
@@ -1495,7 +1511,7 @@ function Cockpit({ view }: { view: View }) {
                           )}
                           <tr
                             key={c._id}
-                            className={`border-b align-top ${isOpen ? "bg-muted/40" : ""} ${view === "off" && !isOpen ? "opacity-80" : ""}`}
+                            className={`border-b align-top ${isOpen ? "bg-muted/40" : ""} ${adsTab === "off" && !isOpen ? "opacity-80" : ""}`}
                           >
                             <td className="py-2.5 pr-2">
                               <button
@@ -1533,7 +1549,7 @@ function Cockpit({ view }: { view: View }) {
                                   status={c.boardAdStatus}
                                   hasCard={Boolean(c.taskId)}
                                 />
-                                {view === "ads" && isOffOnBoard(c) && (
+                                {adsTab === "running" && isOffOnBoard(c) && (
                                   <span
                                     className="ml-1 rounded bg-red-100 px-1 py-0.5 text-[9px] font-bold uppercase text-red-800 dark:bg-red-950 dark:text-red-200"
                                     title="The board has this campaign off, but Meta is still running it and spending. Pause it on Meta, or set the Ad Status back to Live."
@@ -1542,7 +1558,7 @@ function Cockpit({ view }: { view: View }) {
                                     on Meta
                                   </span>
                                 )}
-                                {view === "off" && (
+                                {adsTab === "off" && (
                                   <span className="ml-1 rounded bg-muted px-1 py-0.5 text-[9px] font-bold uppercase text-muted-foreground">
                                     {c.dataThrough
                                       ? `not running on Meta · last spend ${String(c.dataThrough).slice(8, 10)}/${String(c.dataThrough).slice(5, 7)}`
@@ -2364,12 +2380,12 @@ function Cockpit({ view }: { view: View }) {
                 </tbody>
               </table>
             </div>
-            {view === "ads" && (
+            {adsTab === "running" && (
               <OffBoardCampaigns
                 rows={(snap.offBoardCampaigns ?? []) as Campaign[]}
               />
             )}
-            {view === "off" && (
+            {adsTab === "off" && (
               <BoardView
                 cards={(snap.boardCards ?? []) as Campaign[]}
                 campaigns={(snap.campaigns ?? []) as Campaign[]}

@@ -26,10 +26,7 @@ const KIND: Record<string, string> = {
 };
 
 const LISTS: Record<Focus, Array<[string, keyof ClientUpdate]>> = {
-  ads: [
-    ["For the ads", "forAds"],
-    ["Risks", "risks"],
-  ],
+  ads: [["For the ads", "forAds"]],
   creative: [
     ["For creative", "forCreative"],
     ["Client asked for", "clientRequests"],
@@ -40,6 +37,40 @@ const LISTS: Record<Focus, Array<[string, keyof ClientUpdate]>> = {
     ["Risks", "risks"],
   ],
 };
+
+/**
+ * Contract value, payments, fees and revenue are client success business. The
+ * media buyer and creative director see only what changes their work, and no
+ * summary. [Aziz, 2026-09-14]
+ */
+const MONEY = /contract|payment|paid|deposit|invoice|revenue|signed|\bfees?\b/i;
+
+/** The lists this role acts on, with anything about money taken out. */
+export function itemsFor(u: ClientUpdate, focus: Focus) {
+  return LISTS[focus]
+    .map(
+      ([label, key]) =>
+        [
+          label,
+          ((u[key] as string[] | undefined) ?? []).filter(
+            x => focus === "csm" || !MONEY.test(x),
+          ),
+        ] as const,
+    )
+    .filter(([, items]) => items.length > 0);
+}
+
+/** Updates worth showing to this role. */
+export function relevantUpdates(
+  updates: ClientUpdate[] | undefined,
+  focus: Focus,
+) {
+  return (updates ?? []).filter(u =>
+    focus === "csm"
+      ? Boolean(u.summary) || itemsFor(u, focus).length > 0
+      : itemsFor(u, focus).length > 0,
+  );
+}
 
 function day(at: number) {
   const d = new Date(at);
@@ -56,7 +87,7 @@ export function ClientUpdateList({
   focus: Focus;
   limit?: number;
 }) {
-  const list = (updates ?? []).slice(0, limit);
+  const list = relevantUpdates(updates, focus).slice(0, limit);
   if (!list.length) return null;
   return (
     <ul className="space-y-3">
@@ -65,19 +96,18 @@ export function ClientUpdateList({
           <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
             {KIND[u.kind] ?? "Comment"} · {day(u.at)}
           </p>
-          {u.summary ? <p className="mt-0.5">{u.summary}</p> : null}
-          {LISTS[focus].map(([label, key]) => {
-            const items = (u[key] as string[] | undefined) ?? [];
-            return items.length ? (
-              <p key={label} className="mt-1">
-                <span className="font-semibold">{label}: </span>
-                {items.slice(0, 5).join(" · ")}
-                {items.length > 5
-                  ? ` · +${items.length - 5} more on the card`
-                  : ""}
-              </p>
-            ) : null;
-          })}
+          {focus === "csm" && u.summary ? (
+            <p className="mt-0.5">{u.summary}</p>
+          ) : null}
+          {itemsFor(u, focus).map(([label, items]) => (
+            <p key={label} className="mt-1">
+              <span className="font-semibold">{label}: </span>
+              {items.slice(0, 5).join(" · ")}
+              {items.length > 5
+                ? ` · +${items.length - 5} more on the card`
+                : ""}
+            </p>
+          ))}
         </li>
       ))}
     </ul>
@@ -96,7 +126,7 @@ export function ClientUpdates({
   url?: string;
   limit?: number;
 }) {
-  if (!(updates ?? []).length) return null;
+  if (!relevantUpdates(updates, focus).length) return null;
   return (
     <section className="rounded-lg border bg-card p-3">
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">

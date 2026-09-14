@@ -128,8 +128,8 @@ Return JSON matching the schema:
 - nextSteps: short lines, each starting with who owns it, "Mahara:" or "Client:".
 - clientRequests: what the client explicitly asked for.
 - risks: anything that threatens the account (unhappy client, payment, lead quality, delays).
-- forAds: what the media buyer should act on (targeting, budget, platforms, offer, lead forms, lead quality).
-- forCreative: what the creative director should act on (scripts, videos, footage, approvals, brand look).
+- forAds: what the media buyer should act on (targeting, ad budget, platforms, offer, lead forms, lead quality). Never contract value, payment status, Mahara's fees or the client's revenue.
+- forCreative: what the creative director should act on (scripts, videos, footage, approvals, brand look). Never contract value, payment status, Mahara's fees or the client's revenue.
 - dos and donts: rules for how Mahara markets this client: who to target or exclude, what to say or never say, what to promise or not, how the ads and videos should look, how to handle their leads. Each one must be stated in the comment itself, lasting, and not already covered by the current Do's & Don'ts. Never payment or contract terms, setup tasks, one-off to-dos, or anything you inferred. Short imperative lines, don'ts start with "Don't", no source in the text. When in doubt, leave it out.
 
 Rules: use only what the comment says, never guess or fill gaps. Nothing about other clients. No phone numbers, emails, or names of leads. Plain English, no em dashes. Empty arrays when there is nothing.`;

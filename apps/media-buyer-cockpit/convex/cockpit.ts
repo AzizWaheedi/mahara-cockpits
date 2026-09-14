@@ -81,20 +81,23 @@ export async function buildSnapshot(
   )
     .filter(r => !scope || scope.has(r.clientName.toLowerCase()))
     .sort((a, b) => b.at - a.at)
+    // The media buyer sees only what changes the campaigns: no summary, no
+    // contract, payment or revenue lines. [Aziz, 2026-09-14]
     .map(r => ({
       taskId: r.taskId,
       clientName: r.clientName,
       at: r.at,
       kind: r.kind,
-      summary: String(r.digest?.summary ?? ""),
-      forAds: Array.isArray(r.digest?.forAds) ? r.digest.forAds : [],
-      risks: Array.isArray(r.digest?.risks) ? r.digest.risks : [],
-      nextSteps: Array.isArray(r.digest?.nextSteps) ? r.digest.nextSteps : [],
-      clientRequests: Array.isArray(r.digest?.clientRequests)
-        ? r.digest.clientRequests
-        : [],
+      forAds: (Array.isArray(r.digest?.forAds) ? r.digest.forAds : [])
+        .map(String)
+        .filter(
+          (x: string) =>
+            !/contract|payment|paid|deposit|invoice|revenue|signed|\bfees?\b/i.test(
+              x,
+            ),
+        ),
     }))
-    .filter(u => u.summary || u.forAds.length || u.risks.length);
+    .filter(u => u.forAds.length);
   const boardCards = (await ctx.db.query("boardCards").collect()).filter(
     c => !scope || scope.has(String(c.tag ?? "").toLowerCase()),
   );
