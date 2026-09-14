@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { QueryCtx } from "./_generated/server";
-import { internalMutation, internalMutation } from "./_generated/server";
+import { internalMutation } from "./_generated/server";
 import { CPL_GATE } from "./constants";
 import { authenticatedMutation, authenticatedQuery } from "./functions";
 import { scopeFilter } from "./gate";
