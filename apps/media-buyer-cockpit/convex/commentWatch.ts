@@ -360,6 +360,38 @@ export const scan = internalAction({
  * A digest came back: add its new rules to the client's Do's & Don'ts, in the
  * clean format, only if nobody edited the field meanwhile (one retry).
  */
+const STOP = new Set(
+  "the and for with not are but from that this their them they into than any all only each per its our who what when how".split(
+    " ",
+  ),
+);
+function words(rule: string): Set<string> {
+  return new Set(
+    rule
+      .replace(/\([^)]*\)\s*$/, "")
+      .toLowerCase()
+      .replace(/don't|do not|never/g, "")
+      .split(/[^a-z0-9\u0600-\u06ff]+/)
+      .filter(w => w.length > 2 && !STOP.has(w)),
+  );
+}
+/**
+ * Two digests of the same client can land together, each written against the
+ * rules as they were before the other one. A new rule that mostly repeats an
+ * existing line (most of its words already there) is dropped.
+ */
+function nearDuplicate(rule: string, existing: string[]): boolean {
+  const a = words(rule);
+  if (!a.size) return true;
+  return existing.some(line => {
+    const b = words(line);
+    if (!b.size) return false;
+    let shared = 0;
+    for (const w of a) if (b.has(w)) shared++;
+    return shared / Math.min(a.size, b.size) >= 0.7;
+  });
+}
+
 export const apply = internalAction({
   args: { id: v.id("clientComments") },
   returns: v.any(),
@@ -377,8 +409,16 @@ export const apply = internalAction({
     };
     const source = `${label[row.kind] ?? "ClickUp comment"}, ${day}`;
     const tag = (s: string) => `${s.trim().replace(/[.\s]+$/, "")} (${source})`;
-    const dos = lines(d.dos).map(tag);
-    const donts = lines(d.donts).map(tag);
+    const current = (await valueOn(row.taskId))
+      .split("\n")
+      .filter(l => l.startsWith("- "))
+      .map(l => l.slice(2));
+    const dos = lines(d.dos)
+      .filter(r => !nearDuplicate(r, current))
+      .map(tag);
+    const donts = lines(d.donts)
+      .filter(r => !nearDuplicate(r, current))
+      .map(tag);
     let added = 0;
     if (dos.length || donts.length) {
       for (let attempt = 0; attempt < 2; attempt++) {
