@@ -13,6 +13,10 @@ Everything is on one domain now: **https://cockpit.maharamedia.com**.
 One sign-in for all of them. Do not send people to any vercel.app address.
 The backend addresses are unchanged (`/askai/*` on adorable-seahorse-418.convex.site).
 
+## Client do's and don'ts (2026-09-14)
+
+Every client's do's and don'ts live in one place: the "Do's & Don'ts" field on their ClickUp client card (Clients - Mahara). The text has DO, DON'T and NOTES sections, one line per rule, each with its source (Brand DNA, Offer sheet, or a Fathom call). The media buyer, creative director and client success cockpits all show it, and ad copy jobs from the cockpit include it in the prompt. Follow it in anything you write for that client. The field was removed from Ads Management campaign cards.
+
 ## Already in place, no build needed
 
 - **ClickUp write from the cockpits** exists. Every cockpit queues writes in
