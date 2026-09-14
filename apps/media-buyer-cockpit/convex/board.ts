@@ -5,6 +5,7 @@ import {
   internalQuery,
   type QueryCtx,
 } from "./_generated/server";
+import { clickupCall } from "./dosDonts";
 import { authenticatedAction } from "./functions";
 import { refusal } from "./gate";
 import { callTool, unwrap } from "./tools";
@@ -38,6 +39,123 @@ async function statusOptions(): Promise<{ id: string; name: string }[]> {
     name: String(o.name),
   }));
 }
+
+/** The Advertising Cities labels field on the Ads Management board. [Aziz, 2026-09-14] */
+export const CITIES_FIELD = "b98aa20e-c2d1-4785-baae-67e67506023d";
+
+async function cityOptions(): Promise<
+  { id: string; label: string; color?: string }[]
+> {
+  const r: Any = await callTool("pd_clickup_proxy_get", {
+    url: `https://api.clickup.com/api/v2/list/${ADS_LIST}/field`,
+  });
+  const fields: Any[] = unwrap(r)?.fields ?? r?.fields ?? [];
+  const f = fields.find(
+    x => x.id === CITIES_FIELD || x.name === "Advertising Cities",
+  );
+  return (f?.type_config?.options ?? [])
+    .map((o: Any) => ({
+      id: String(o.id),
+      label: String(o.label ?? o.name ?? ""),
+      color: o.color ? String(o.color) : undefined,
+    }))
+    .filter((o: { label: string }) => o.label);
+}
+
+/** Every city on the board's Advertising Cities field, in the board's order. */
+export const advertisingCityOptions = authenticatedAction({
+  args: {},
+  returns: v.array(
+    v.object({
+      id: v.string(),
+      label: v.string(),
+      color: v.optional(v.string()),
+    }),
+  ),
+  handler: async () => await cityOptions(),
+});
+
+export const patchCities = internalMutation({
+  args: {
+    campaignName: v.string(),
+    taskId: v.optional(v.string()),
+    cities: v.array(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, { campaignName, taskId, cities }) => {
+    const value = cities.length ? cities : undefined;
+    for (const c of await ctx.db.query("campaigns").collect())
+      if (c.campaignName === campaignName || (taskId && c.taskId === taskId))
+        await ctx.db.patch(c._id, { advertisingCities: value });
+    if (taskId)
+      for (const card of await ctx.db
+        .query("boardCards")
+        .withIndex("by_task", q => q.eq("taskId", taskId))
+        .collect())
+        await ctx.db.patch(card._id, { advertisingCities: value });
+    return null;
+  },
+});
+
+/** Set the card's Advertising Cities on ClickUp (the whole set), then here. */
+export const setAdvertisingCities = authenticatedAction({
+  args: {
+    campaignName: v.string(),
+    cities: v.array(v.string()),
+    /** A card from the board view that has no campaign row. */
+    taskId: v.optional(v.string()),
+    clientTag: v.optional(v.string()),
+  },
+  returns: v.object({ ok: v.boolean(), error: v.optional(v.string()) }),
+  handler: async (ctx, { campaignName, cities, taskId, clientTag }) => {
+    const no = await refusal(
+      ctx,
+      "media_buyer",
+      taskId ? { clientName: clientTag } : { campaignName },
+    );
+    if (no) return { ok: false, error: no };
+    try {
+      const c: Any = taskId
+        ? { taskId }
+        : await ctx.runQuery(internal.board.campaignByName, { campaignName });
+      if (!c?.taskId)
+        return {
+          ok: false,
+          error: "This campaign has no card on the board yet.",
+        };
+      const options = await cityOptions();
+      const unknown = cities.filter(x => !options.some(o => o.label === x));
+      if (unknown.length)
+        return {
+          ok: false,
+          error: `Not an Advertising Cities option on the board: ${unknown.join(", ")}`,
+        };
+      const picked = options.filter(o => cities.includes(o.label));
+      if (picked.length)
+        await callTool("pd_clickup_proxy_post", {
+          url: `https://api.clickup.com/api/v2/task/${c.taskId}/field/${CITIES_FIELD}`,
+          json_body: { value: picked.map(o => o.id) },
+        });
+      else
+        await clickupCall("DELETE", `task/${c.taskId}/field/${CITIES_FIELD}`);
+      await ctx.runMutation(internal.board.patchCities, {
+        campaignName,
+        taskId: String(c.taskId),
+        cities: picked.map(o => o.label),
+      });
+      await ctx.runMutation(internal.chat.logInternal, {
+        campaignName,
+        text: picked.length
+          ? `Advertising cities on the board set to ${picked.map(o => o.label).join(", ")}`
+          : "Advertising cities on the board cleared",
+        ok: true,
+      });
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: String(e).slice(0, 300) };
+    }
+  },
+});
 
 /** The dropdown's current options, for the status picker. */
 export const adStatusOptions = authenticatedAction({

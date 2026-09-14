@@ -758,3 +758,78 @@ export const commentLines = internalAction({
       );
   },
 });
+
+/** Read-only: a labels/dropdown field's options and each card's current value, by option name. */
+export const fieldOptions = internalAction({
+  args: { listId: v.string(), fieldId: v.string() },
+  returns: v.any(),
+  handler: async (_ctx, { listId, fieldId }) => {
+    const fr: Any = await callTool("pd_clickup_proxy_get", {
+      url: `https://api.clickup.com/api/v2/list/${listId}/field`,
+    });
+    const field = ((unwrap(fr) ?? fr)?.fields ?? []).find(
+      (f: Any) => f.id === fieldId,
+    );
+    const options: Any[] = field?.type_config?.options ?? [];
+    const name = (id: unknown) =>
+      options.find(o => o.id === id)?.label ??
+      options.find(o => o.id === id)?.name ??
+      String(id);
+    const cards: Any[] = [];
+    const tr: Any = await callTool("pd_clickup_proxy_get", {
+      url: `https://api.clickup.com/api/v2/list/${listId}/task?include_closed=true`,
+    });
+    for (const t of (unwrap(tr) ?? tr)?.tasks ?? []) {
+      const cf = (t.custom_fields ?? []).find((f: Any) => f.id === fieldId);
+      if (Array.isArray(cf?.value) && cf.value.length)
+        cards.push({ card: t.name, cities: cf.value.map(name) });
+    }
+    return {
+      type: field?.type,
+      options: options.map(o => ({
+        id: o.id,
+        label: o.label ?? o.name,
+        color: o.color,
+      })),
+      cards,
+    };
+  },
+});
+
+/** Write test for a labels field: set a card to the ids it already has, read it back. Changes nothing. */
+export const labelsRewriteProbe = internalAction({
+  args: { listId: v.string(), fieldId: v.string(), cardName: v.string() },
+  returns: v.any(),
+  handler: async (_ctx, { listId, fieldId, cardName }) => {
+    const tr: Any = await callTool("pd_clickup_proxy_get", {
+      url: `https://api.clickup.com/api/v2/list/${listId}/task?include_closed=true`,
+    });
+    const t = ((unwrap(tr) ?? tr)?.tasks ?? []).find(
+      (x: Any) => x.name === cardName,
+    );
+    if (!t) return "card not found";
+    const before =
+      (t.custom_fields ?? []).find((f: Any) => f.id === fieldId)?.value ?? [];
+    if (!Array.isArray(before) || !before.length)
+      return "card has no value; nothing to rewrite";
+    await callTool("pd_clickup_proxy_post", {
+      url: `https://api.clickup.com/api/v2/task/${t.id}/field/${fieldId}`,
+      json_body: { value: before },
+    });
+    const rr: Any = await callTool("pd_clickup_proxy_get", {
+      url: `https://api.clickup.com/api/v2/task/${t.id}`,
+    });
+    const after =
+      ((unwrap(rr) ?? rr)?.custom_fields ?? []).find(
+        (f: Any) => f.id === fieldId,
+      )?.value ?? [];
+    return {
+      taskId: t.id,
+      before,
+      after,
+      same:
+        JSON.stringify([...before].sort()) ===
+        JSON.stringify([...after].sort()),
+    };
+  },
+});

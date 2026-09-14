@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { AccountView } from "@/components/AccountView";
 import { BuildPanel } from "@/components/BuildPanel";
 import { CampaignRange } from "@/components/CampaignRange";
+import { CityPicker } from "@/components/CityPicker";
 import {
   type ClientUpdate,
   ClientUpdateList,
@@ -539,6 +540,15 @@ function BoardView({
                   taskId={String(c.taskId)}
                   clientTag={c.tag}
                 />
+                <div className="basis-full">
+                  <CityPicker
+                    campaignName={String(c.name)}
+                    cities={c.advertisingCities}
+                    hasCard
+                    taskId={String(c.taskId)}
+                    clientTag={c.tag}
+                  />
+                </div>
                 {c.url && (
                   <a
                     href={c.url}
@@ -1646,6 +1656,11 @@ function Cockpit({ view }: { view: View }) {
                                   </a>
                                 )}
                               </div>
+                              <CityPicker
+                                campaignName={c.campaignName}
+                                cities={c.advertisingCities}
+                                hasCard={Boolean(c.taskId)}
+                              />
                               {c.staleTaskName && (
                                 <div className="mt-1 text-[12px] txt-warn">
                                   Board card still says “{c.staleTaskName}”.{" "}

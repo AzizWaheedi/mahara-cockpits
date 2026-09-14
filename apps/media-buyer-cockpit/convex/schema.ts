@@ -87,6 +87,8 @@ const schema = defineSchema({
     serviceMode: v.optional(v.string()),
     priority: v.optional(v.string()),
     boardAdStatus: v.optional(v.string()),
+    /** The card's Advertising Cities labels on the Ads Management board. */
+    advertisingCities: v.optional(v.array(v.string())),
     cplStatus: v.optional(v.string()),
     cpbStatus: v.optional(v.string()),
     showed7d: v.optional(v.number()),
@@ -903,6 +905,7 @@ const schema = defineSchema({
     name: v.string(),
     url: v.optional(v.string()),
     adStatus: v.optional(v.string()),
+    advertisingCities: v.optional(v.array(v.string())),
     tag: v.optional(v.string()),
     updatedAt: v.optional(v.number()),
     syncedAt: v.number(),

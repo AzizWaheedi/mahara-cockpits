@@ -1048,6 +1048,16 @@ async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
           name: String(t.name ?? ""),
           url: t.url ? String(t.url) : undefined,
           adStatus: hit?.name ? String(hit.name) : undefined,
+          advertisingCities: (() => {
+            const cf = (t.custom_fields ?? []).find(
+              (x: any) => x.name === "Advertising Cities",
+            );
+            if (!Array.isArray(cf?.value) || !cf.value.length) return undefined;
+            const o: any[] = cf.type_config?.options ?? [];
+            return cf.value.map(
+              (id: unknown) => o.find(x => x.id === id)?.label ?? String(id),
+            );
+          })(),
           tag: t.tags?.[0]?.name ? String(t.tags[0].name) : undefined,
           updatedAt: Number(t.date_updated ?? 0) || undefined,
         };
@@ -1586,6 +1596,17 @@ async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
         opts[typeof f.value === "number" ? f.value : -1];
       return hit?.name ?? hit?.label ?? undefined;
     };
+    // Labels fields (Advertising Cities) come back as a list of option ids.
+    const labels = (n: string): string[] | undefined => {
+      // biome-ignore lint/suspicious/noExplicitAny: ClickUp payload
+      const f = (task?.custom_fields ?? []).find((c: any) => c.name === n);
+      if (!Array.isArray(f?.value) || !f.value.length) return undefined;
+      // biome-ignore lint/suspicious/noExplicitAny: ClickUp payload
+      const opts: any[] = f.type_config?.options ?? [];
+      return f.value.map(
+        (id: unknown) => opts.find(o => o.id === id)?.label ?? String(id),
+      );
+    };
 
     campaigns.push({
       campaignName: name,
@@ -1623,6 +1644,7 @@ async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
       serviceMode,
       priority: dropdown("Priority"),
       boardAdStatus: dropdown("Ad Status"),
+      advertisingCities: labels("Advertising Cities"),
       cplStatus: dropdown("Cost Per Lead"),
       cpbStatus: dropdown("Cost Per Booking"),
       bookings7d: bookings?.booked,
@@ -2056,6 +2078,7 @@ async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
         c.taskUrl = undefined;
         c.staleTaskName = undefined;
         c.boardAdStatus = undefined;
+        c.advertisingCities = undefined;
         c.adStatus = undefined;
       }
       console.log(
