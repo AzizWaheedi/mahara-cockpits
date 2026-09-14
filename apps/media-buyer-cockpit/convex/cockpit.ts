@@ -70,6 +70,9 @@ export async function buildSnapshot(
     .collect();
   const inbox = await ctx.db.query("inbox").collect();
   const clientLinks = await ctx.db.query("clientLinks").collect();
+  const boardCards = (await ctx.db.query("boardCards").collect()).filter(
+    c => !scope || scope.has(String(c.tag ?? "").toLowerCase()),
+  );
   const offBoardCampaigns = (
     await ctx.db.query("offBoardCampaigns").collect()
   ).filter(
@@ -106,6 +109,7 @@ export async function buildSnapshot(
     manualChanges,
     offBoardCampaigns,
     clientLinks,
+    boardCards,
     members,
     inbox,
     prefs,

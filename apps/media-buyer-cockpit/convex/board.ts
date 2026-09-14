@@ -56,12 +56,22 @@ export const campaignByName = internalQuery({
 });
 
 export const patchStatus = internalMutation({
-  args: { campaignName: v.string(), status: v.string() },
+  args: {
+    campaignName: v.string(),
+    status: v.string(),
+    taskId: v.optional(v.string()),
+  },
   returns: v.null(),
-  handler: async (ctx, { campaignName, status }) => {
+  handler: async (ctx, { campaignName, status, taskId }) => {
     for (const c of await ctx.db.query("campaigns").collect())
-      if (c.campaignName === campaignName)
+      if (c.campaignName === campaignName || (taskId && c.taskId === taskId))
         await ctx.db.patch(c._id, { boardAdStatus: status });
+    if (taskId)
+      for (const card of await ctx.db
+        .query("boardCards")
+        .withIndex("by_task", q => q.eq("taskId", taskId))
+        .collect())
+        await ctx.db.patch(card._id, { adStatus: status });
     return null;
   },
 });
@@ -81,15 +91,25 @@ export const dropOffBoard = internalMutation({
 
 /** Set the card's Ad Status on ClickUp, then here, so the list regroups at once. */
 export const setAdStatus = authenticatedAction({
-  args: { campaignName: v.string(), status: v.string() },
+  args: {
+    campaignName: v.string(),
+    status: v.string(),
+    /** A card from the board view that has no campaign row. */
+    taskId: v.optional(v.string()),
+    clientTag: v.optional(v.string()),
+  },
   returns: v.object({ ok: v.boolean(), error: v.optional(v.string()) }),
-  handler: async (ctx, { campaignName, status }) => {
-    const no = await refusal(ctx, "media_buyer", { campaignName });
+  handler: async (ctx, { campaignName, status, taskId, clientTag }) => {
+    const no = await refusal(
+      ctx,
+      "media_buyer",
+      taskId ? { clientName: clientTag } : { campaignName },
+    );
     if (no) return { ok: false, error: no };
     try {
-      const c: Any = await ctx.runQuery(internal.board.campaignByName, {
-        campaignName,
-      });
+      const c: Any = taskId
+        ? { taskId }
+        : await ctx.runQuery(internal.board.campaignByName, { campaignName });
       if (!c?.taskId)
         return {
           ok: false,
@@ -110,6 +130,7 @@ export const setAdStatus = authenticatedAction({
       await ctx.runMutation(internal.board.patchStatus, {
         campaignName,
         status: opt.name,
+        taskId: String(c.taskId),
       });
       await ctx.runMutation(internal.chat.logInternal, {
         campaignName,
@@ -190,5 +211,85 @@ export const storeClientLinks = internalMutation({
         syncedAt: Date.now(),
       });
     return rows.length;
+  },
+});
+
+/** Replace the board card list; an empty read keeps the old one. */
+export const storeBoardCards = internalMutation({
+  args: { rows: v.array(v.any()) },
+  returns: v.number(),
+  handler: async (ctx, { rows }) => {
+    if (!rows.length) return 0;
+    for (const r of await ctx.db.query("boardCards").collect())
+      await ctx.db.delete(r._id);
+    for (const r of rows)
+      await ctx.db.insert("boardCards", { ...r, syncedAt: Date.now() });
+    return rows.length;
+  },
+});
+
+export const recordDismissal = internalMutation({
+  args: { campaignName: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { campaignName }) => {
+    await ctx.db.insert("offBoardDismissals", { campaignName, at: Date.now() });
+    for (const r of await ctx.db
+      .query("offBoardCampaigns")
+      .withIndex("by_campaign", q => q.eq("campaignName", campaignName))
+      .collect())
+      await ctx.db.delete(r._id);
+    return null;
+  },
+});
+
+/** "Not our campaign": gone from the missing-card list, and it stays gone. */
+export const dismissOffBoard = authenticatedAction({
+  args: { campaignName: v.string() },
+  returns: v.object({ ok: v.boolean(), error: v.optional(v.string()) }),
+  handler: async (ctx, { campaignName }) => {
+    const no = await refusal(ctx, "media_buyer");
+    if (no) return { ok: false, error: no };
+    await ctx.runMutation(internal.board.recordDismissal, { campaignName });
+    return { ok: true };
+  },
+});
+
+export const clearStaleName = internalMutation({
+  args: { campaignName: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { campaignName }) => {
+    for (const c of await ctx.db.query("campaigns").collect())
+      if (c.campaignName === campaignName)
+        await ctx.db.patch(c._id, { staleTaskName: undefined });
+    return null;
+  },
+});
+
+/** Rename the card to the campaign it now tracks (a relaunch under a new name). */
+export const renameCard = authenticatedAction({
+  args: { campaignName: v.string() },
+  returns: v.object({ ok: v.boolean(), error: v.optional(v.string()) }),
+  handler: async (ctx, { campaignName }) => {
+    const no = await refusal(ctx, "media_buyer", { campaignName });
+    if (no) return { ok: false, error: no };
+    try {
+      const c: Any = await ctx.runQuery(internal.board.campaignByName, {
+        campaignName,
+      });
+      if (!c?.taskId) return { ok: false, error: "No card to rename." };
+      await callTool("pd_clickup_proxy_put", {
+        url: `https://api.clickup.com/api/v2/task/${c.taskId}`,
+        json_body: { name: campaignName },
+      });
+      await ctx.runMutation(internal.board.clearStaleName, { campaignName });
+      await ctx.runMutation(internal.chat.logInternal, {
+        campaignName,
+        text: `Board card renamed to ${campaignName}`,
+        ok: true,
+      });
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: String(e).slice(0, 300) };
+    }
   },
 });

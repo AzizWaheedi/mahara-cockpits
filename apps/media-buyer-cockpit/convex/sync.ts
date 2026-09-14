@@ -779,8 +779,18 @@ export const store = internalMutation({
     // ClickUp" without these filling the campaign table. [Aziz, 2026-09-14]
     for (const row of await ctx.db.query("offBoardCampaigns").collect())
       await ctx.db.delete(row._id);
+    const dismissed = new Set(
+      (await ctx.db.query("offBoardDismissals").collect()).map(
+        d => d.campaignName,
+      ),
+    );
     for (const c of args.campaigns)
-      if (!c.onBoard && !c.internal && Number(c.spend7d ?? 0) > 0)
+      if (
+        !c.onBoard &&
+        !c.internal &&
+        Number(c.spend7d ?? 0) > 0 &&
+        !dismissed.has(String(c.campaignName))
+      )
         await ctx.db.insert("offBoardCampaigns", {
           campaignName: String(c.campaignName),
           accountName: String(c.accountName ?? ""),
@@ -1019,6 +1029,33 @@ async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
       );
   // biome-ignore lint/suspicious/noExplicitAny: ClickUp payload
   const tasks: any[] = board?.tasks ?? [];
+  // Every card on the board, for the board view in the cockpit (old,
+  // paused and dead campaigns included). [Aziz, 2026-09-14]
+  try {
+    await ctx.runMutation(internal.board.storeBoardCards, {
+      rows: (tasks as any[]).map(t => {
+        const f = (t.custom_fields ?? []).find(
+          (x: any) => x.name === "Ad Status",
+        );
+        const opts: any[] = f?.type_config?.options ?? [];
+        const hit =
+          f && f.value !== undefined && f.value !== null
+            ? (opts.find(o => o.id === f.value) ??
+              opts[typeof f.value === "number" ? f.value : -1])
+            : undefined;
+        return {
+          taskId: String(t.id),
+          name: String(t.name ?? ""),
+          url: t.url ? String(t.url) : undefined,
+          adStatus: hit?.name ? String(hit.name) : undefined,
+          tag: t.tags?.[0]?.name ? String(t.tags[0].name) : undefined,
+          updatedAt: Number(t.date_updated ?? 0) || undefined,
+        };
+      }),
+    });
+  } catch (e) {
+    console.warn(`board cards: ${String(e).slice(0, 120)}`);
+  }
   const taskByName = new Map<string, (typeof tasks)[number]>();
   for (const t of tasks) taskByName.set(normalize(t.name), t);
   // Aziz's rule: one task per CLIENT, not per campaign. Every board task carries a

@@ -872,6 +872,22 @@ const schema = defineSchema({
     offerCheatSheet: v.optional(v.string()),
     syncedAt: v.number(),
   }).index("by_name", ["name"]),
+  /** Every card on the Ads Management board, live or not, for the board view. */
+  boardCards: defineTable({
+    taskId: v.string(),
+    name: v.string(),
+    url: v.optional(v.string()),
+    adStatus: v.optional(v.string()),
+    tag: v.optional(v.string()),
+    updatedAt: v.optional(v.number()),
+    syncedAt: v.number(),
+  }).index("by_task", ["taskId"]),
+  /** Campaigns the media buyer marked "not our campaign": never listed as missing a card again. */
+  offBoardDismissals: defineTable({
+    campaignName: v.string(),
+    by: v.optional(v.string()),
+    at: v.number(),
+  }).index("by_campaign", ["campaignName"]),
   alerts: defineTable({
     signature: v.string(),
     text: v.string(),

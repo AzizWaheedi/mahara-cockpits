@@ -239,10 +239,15 @@ function AdStatusPicker({
   campaignName,
   status,
   hasCard,
+  taskId,
+  clientTag,
 }: {
   campaignName: string;
   status?: string;
   hasCard: boolean;
+  /** For a board card with no campaign row. */
+  taskId?: string;
+  clientTag?: string;
 }) {
   const loadOptions = useAction(api.board.adStatusOptions);
   const setStatus = useAction(api.board.setAdStatus);
@@ -265,7 +270,11 @@ function AdStatusPicker({
         const next = e.target.value;
         setBusy(true);
         try {
-          const r = await setStatus({ campaignName, status: next });
+          const r = await setStatus({
+            campaignName,
+            status: next,
+            ...(taskId ? { taskId, clientTag } : {}),
+          });
           if (r.ok) toast.success(`Ad status set to ${next} on the board.`);
           else toast.error(r.error ?? "ClickUp refused that.");
         } catch (err) {
@@ -285,9 +294,158 @@ function AdStatusPicker({
   );
 }
 
+/** Rename a board card to the campaign it now tracks, instead of waiting for a decision. */
+function RenameCardButton({ campaignName }: { campaignName: string }) {
+  const rename = useAction(api.board.renameCard);
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      type="button"
+      className="font-semibold underline disabled:opacity-50"
+      disabled={busy}
+      onClick={async () => {
+        setBusy(true);
+        try {
+          const r = await rename({ campaignName });
+          if (r.ok) toast.success("Card renamed on ClickUp.");
+          else toast.error(r.error ?? "ClickUp refused that.");
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      {busy ? "Renaming..." : "Rename the card now"}
+    </button>
+  );
+}
+
+/**
+ * Every card on the Ads Management board, old ones included: paused, dead and
+ * setup cards she can read, reopen in ClickUp, or set back to Live.
+ */
+function BoardView({
+  cards,
+  campaigns,
+}: {
+  cards: Campaign[];
+  campaigns: Campaign[];
+}) {
+  const [tab, setTab] = useState<"notLive" | "live" | "all">("notLive");
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
+  if (!cards.length) return null;
+  const spending = new Set(campaigns.map(c => c.taskId).filter(Boolean));
+  const isLive = (c: Campaign) =>
+    String(c.adStatus ?? "").toLowerCase() === "live";
+  const shown = cards
+    .filter(c =>
+      tab === "all" ? true : tab === "live" ? isLive(c) : !isLive(c),
+    )
+    .filter(c =>
+      `${c.name} ${c.tag ?? ""}`.toLowerCase().includes(q.trim().toLowerCase()),
+    )
+    .sort((a, b) => Number(b.updatedAt ?? 0) - Number(a.updatedAt ?? 0));
+  const count = (t: "notLive" | "live" | "all") =>
+    cards.filter(c =>
+      t === "all" ? true : t === "live" ? isLive(c) : !isLive(c),
+    ).length;
+  return (
+    <div className="mt-5 rounded-lg border p-3">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between text-left"
+        onClick={() => setOpen(o => !o)}
+      >
+        <span className="text-[12px] font-bold uppercase tracking-widest text-muted-foreground">
+          The Ads Management board ({cards.length} cards)
+        </span>
+        <span className="text-[12px] text-muted-foreground">
+          {open ? "Hide" : "Show old and paused campaigns"}
+        </span>
+      </button>
+      {open && (
+        <>
+          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[12px]">
+            {(
+              [
+                ["notLive", "Not live"],
+                ["live", "Live"],
+                ["all", "All"],
+              ] as const
+            ).map(([k, label]) => (
+              <button
+                key={k}
+                type="button"
+                onClick={() => setTab(k)}
+                className={`rounded px-2 py-1 ${tab === k ? "bg-foreground text-background" : "bg-muted"}`}
+              >
+                {label} · {count(k)}
+              </button>
+            ))}
+            <input
+              className="ml-auto w-48 rounded border bg-background px-2 py-1"
+              placeholder="Find a campaign or client"
+              value={q}
+              onChange={e => setQ(e.target.value)}
+            />
+          </div>
+          <ul className="mt-2 divide-y text-[13px]">
+            {shown.slice(0, 200).map(c => (
+              <li
+                key={c.taskId}
+                className="flex flex-wrap items-center gap-2 py-1.5"
+              >
+                <span className="font-semibold">{c.name}</span>
+                {c.tag && (
+                  <span className="rounded bg-muted px-1.5 py-0.5 text-[11px]">
+                    {c.tag}
+                  </span>
+                )}
+                {spending.has(c.taskId) && (
+                  <span className="text-[11px] text-emerald-600">
+                    spending now
+                  </span>
+                )}
+                <span className="ml-auto text-[11px] text-muted-foreground">
+                  {c.updatedAt
+                    ? `updated ${new Date(Number(c.updatedAt)).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}`
+                    : ""}
+                </span>
+                <AdStatusPicker
+                  campaignName={String(c.name)}
+                  status={c.adStatus}
+                  hasCard
+                  taskId={String(c.taskId)}
+                  clientTag={c.tag}
+                />
+                {c.url && (
+                  <a
+                    href={c.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-[12px] text-primary underline"
+                  >
+                    ClickUp
+                  </a>
+                )}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-[11px] text-muted-foreground">
+            Setting a card back to Live puts it in the active list on the next
+            sync if its campaign is spending. Past campaigns stay here as
+            history.
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
 /** Spending campaigns with no card on the ads board, with a button to add one. */
 function OffBoardCampaigns({ rows }: { rows: Campaign[] }) {
   const addToBoard = useAction(api.board.addToBoard);
+  const dismiss = useAction(api.board.dismissOffBoard);
   const [client, setClient] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   if (!rows.length) return null;
@@ -346,6 +504,25 @@ function OffBoardCampaigns({ rows }: { rows: Campaign[] }) {
                 }}
               >
                 {busy === r.campaignName ? "Adding..." : "Add to ClickUp"}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 text-[12px] text-muted-foreground"
+                disabled={busy === r.campaignName}
+                onClick={async () => {
+                  setBusy(r.campaignName);
+                  try {
+                    const res = await dismiss({ campaignName: r.campaignName });
+                    if (res.ok)
+                      toast.success("Removed. It will not be listed again.");
+                    else toast.error(res.error ?? "Could not remove it.");
+                  } finally {
+                    setBusy(null);
+                  }
+                }}
+              >
+                Not our campaign
               </Button>
             </li>
           );
@@ -1291,8 +1468,10 @@ function Cockpit({ view }: { view: View }) {
                               </div>
                               {c.staleTaskName && (
                                 <div className="mt-1 text-[12px] txt-warn">
-                                  Board task still says “{c.staleTaskName}” —
-                                  renamed on your next decision, no second row.
+                                  Board card still says “{c.staleTaskName}”.{" "}
+                                  <RenameCardButton
+                                    campaignName={c.campaignName}
+                                  />
                                 </div>
                               )}
                               {decided && (
@@ -2018,6 +2197,10 @@ function Cockpit({ view }: { view: View }) {
             </div>
             <OffBoardCampaigns
               rows={(snap.offBoardCampaigns ?? []) as Campaign[]}
+            />
+            <BoardView
+              cards={(snap.boardCards ?? []) as Campaign[]}
+              campaigns={(snap.campaigns ?? []) as Campaign[]}
             />
           </section>
         )}
