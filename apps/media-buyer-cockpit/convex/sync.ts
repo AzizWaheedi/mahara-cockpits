@@ -1997,6 +1997,36 @@ async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
     },
   ];
 
+  // One card, one campaign. A client's second campaign used to match the
+  // first campaign's card through the client tag, so both shared one Ad
+  // Status and pausing one paused both (Ocean Home 2/9 and 9/9, Liwan,
+  // 2026-09-14). The card stays with the campaign it is named after, else
+  // the one spending most; the others are "not on the board" and get their
+  // own card from the cockpit.
+  {
+    const byTask = new Map<string, any[]>();
+    for (const c of campaigns)
+      if (c.taskId) byTask.set(c.taskId, [...(byTask.get(c.taskId) ?? []), c]);
+    for (const [, list] of byTask) {
+      if (list.length < 2) continue;
+      const owner =
+        list.find(c => !c.staleTaskName) ??
+        [...list].sort((a, b) => (b.spend7d ?? 0) - (a.spend7d ?? 0))[0];
+      for (const c of list) {
+        if (c === owner) continue;
+        c.onBoard = false;
+        c.taskId = undefined;
+        c.taskUrl = undefined;
+        c.staleTaskName = undefined;
+        c.boardAdStatus = undefined;
+        c.adStatus = undefined;
+      }
+      console.log(
+        `board: card shared by ${list.map(c => c.campaignName).join(" + ")}; kept for ${owner.campaignName}`,
+      );
+    }
+  }
+
   // Pull the live structure under every campaign we can actually see in the API,
   // so she can read ad sets and ads — and Meta's own creative preview — in place.
   // biome-ignore lint/suspicious/noExplicitAny: Meta rows
