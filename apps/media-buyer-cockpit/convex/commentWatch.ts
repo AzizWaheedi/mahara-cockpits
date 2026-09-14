@@ -79,7 +79,8 @@ export function kindOf(text: string, by: string): string {
   )
     return "skip";
   if (/^\**\s*CLOSER\s*:?/i.test(t)) return "skip";
-  if (/^Client Research Report/i.test(t)) return "skip";
+  if (/^\W*(Client Research Report|Market Intelligence Report)/i.test(t))
+    return "skip";
   if (
     /CALL RECORDING|fathom\.video\/share|To-?Do List|Next Steps from/i.test(t)
   )
