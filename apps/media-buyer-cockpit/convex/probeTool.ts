@@ -533,3 +533,16 @@ export const slackWhoAmI = internalAction({
     return out;
   },
 });
+
+/** The last rows of a sheet tab, to confirm a write landed. */
+export const sheetTail = internalAction({
+  args: { sheetId: v.string(), tab: v.string(), rows: v.optional(v.number()) },
+  returns: v.any(),
+  handler: async (_ctx, { sheetId, tab, rows }) => {
+    const res: Any = await callTool("pd_google_sheets_proxy_get", {
+      url: `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(`'${tab}'!A:D`)}`,
+    });
+    const values: string[][] = res?.values ?? [];
+    return { total: values.length, last: values.slice(-(rows ?? 3)) };
+  },
+});
