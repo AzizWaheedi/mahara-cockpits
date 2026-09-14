@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { ActionCtx } from "./_generated/server";
 import { internalAction } from "./_generated/server";
+import { AZIZ_SLACK_ID } from "./constants";
 import { flush, note } from "./health";
 import { CLIENTS_LIST, CREATIVE_LIST, VIDEO_LIST } from "./sync";
 import { callTool, unwrap } from "./tools";
@@ -538,7 +539,7 @@ export const drainOwn = internalAction({
     const rows: Any[] = await ctx.runQuery(internal.outbox.pending, {});
     let done = 0;
     let failed = 0;
-    const dm = process.env.ALERT_SLACK_TO || "U0AJQ8P1ACF";
+    const dm = process.env.ALERT_SLACK_TO || AZIZ_SLACK_ID;
     for (const row of rows) {
       // A message nobody could deliver for two days is stale chatter by now;
       // replaying it would only confuse. Closed with a note, not sent.

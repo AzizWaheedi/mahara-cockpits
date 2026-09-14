@@ -6,6 +6,7 @@ import {
   internalMutation,
   internalQuery,
 } from "./_generated/server";
+import { AZIZ_SLACK_ID } from "./constants";
 import { callTool, unwrap } from "./tools";
 
 declare const process: { env: Record<string, string | undefined> };
@@ -562,7 +563,7 @@ export const forwardFeedback = internalAction({
     if (!row) return null;
     await callOrQueue(ctx, "coworker_send_slack_message", {
       // Aziz's user id opens his DM; the old D... channel id no longer exists.
-      channel_id: process.env.ALERT_SLACK_TO || "U0AJQ8P1ACF",
+      channel_id: process.env.ALERT_SLACK_TO || AZIZ_SLACK_ID,
       do_send: true,
       blocks: [
         {

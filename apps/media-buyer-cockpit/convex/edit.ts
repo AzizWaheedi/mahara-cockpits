@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
+import { AZIZ_SLACK_ID } from "./constants";
 import { authenticatedAction } from "./functions";
 import { refusal } from "./gate";
 import { callTool, graph, graphPost, unwrap } from "./tools";
@@ -7,7 +8,7 @@ import { callTool, graph, graphPost, unwrap } from "./tools";
 declare const process: { env: Record<string, string | undefined> };
 
 /** Aziz's Slack DM. A user id opens the DM; the old D... channel id is gone. */
-const AZIZ_DM = process.env.ALERT_SLACK_TO || "U0AJQ8P1ACF";
+const AZIZ_DM = process.env.ALERT_SLACK_TO || AZIZ_SLACK_ID;
 
 /**
  * Editing what already exists: new ad sets, new ads, new budgets.

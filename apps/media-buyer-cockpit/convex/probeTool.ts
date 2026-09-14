@@ -491,3 +491,45 @@ export const trackerRows = internalAction({
     };
   },
 });
+
+/** Which Slack identity the cockpit posts as, and whether it can see a channel (no token returned). */
+export const slackWhoAmI = internalAction({
+  args: { channel: v.optional(v.string()) },
+  returns: v.any(),
+  handler: async (_ctx, { channel }) => {
+    const token = process.env.SLACK_BOT_TOKEN ?? "";
+    const call = async (method: string, params: Record<string, string>) => {
+      const res = await fetch(
+        `https://slack.com/api/${method}?${new URLSearchParams(params)}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
+      return (await res.json()) as Any;
+    };
+    const me = await call("auth.test", {});
+    const out: Any = {
+      ok: me.ok,
+      error: me.error,
+      team: me.team,
+      user: me.user,
+      userId: me.user_id,
+      botId: me.bot_id,
+    };
+    if (me.bot_id) {
+      const bot = await call("bots.info", { bot: me.bot_id });
+      out.appName = bot?.bot?.name;
+    }
+    if (channel) {
+      const info = await call("conversations.info", { channel });
+      out.channel = {
+        ok: info.ok,
+        error: info.error,
+        name: info.channel?.name,
+        isPrivate: info.channel?.is_private,
+        isMember: info.channel?.is_member,
+      };
+    }
+    return out;
+  },
+});

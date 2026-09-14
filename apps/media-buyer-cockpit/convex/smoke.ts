@@ -7,6 +7,7 @@ import {
 } from "./_generated/server";
 import { buildSnapshot } from "./cockpit";
 import { bridge } from "./comms";
+import { AZIZ_SLACK_ID } from "./constants";
 import { flush, recordManyDirect } from "./health";
 import { callTool } from "./tools";
 
@@ -16,7 +17,7 @@ declare const process: { env: Record<string, string | undefined> };
 
 // Aziz's Slack user id: posting to a user id opens the DM; the old D… channel id
 // belonged to another bot and returns channel_not_found. ALERT_SLACK_TO overrides.
-const AZIZ_DM = process.env.ALERT_SLACK_TO || "U0AJQ8P1ACF";
+const AZIZ_DM = process.env.ALERT_SLACK_TO || AZIZ_SLACK_ID;
 const RE_ALERT_AFTER_H = 6;
 
 /** Lines from the health ledger, delivered to Aziz's DM. */

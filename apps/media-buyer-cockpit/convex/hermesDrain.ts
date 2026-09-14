@@ -6,6 +6,7 @@ import {
   internalQuery,
 } from "./_generated/server";
 import { bridge } from "./comms";
+import { AZIZ_SLACK_ID } from "./constants";
 import { flush } from "./health";
 import { callTool } from "./tools";
 
@@ -327,7 +328,7 @@ export const run = internalAction({
             ? `${String(res.status).replace("_", " ")}: ${res.summary ?? ""}${Array.isArray(res.changes) && res.changes.length ? `\n${res.changes.map((c: Any) => `• ${c}`).join("\n")}` : ""}`
             : (error ?? text ?? "");
           await callTool("coworker_send_slack_message", {
-            channel_id: process.env.ALERT_SLACK_TO || "U0AJQ8P1ACF",
+            channel_id: process.env.ALERT_SLACK_TO || AZIZ_SLACK_ID,
             text: `Hermes on "${r.messageId}"\n${line}`.slice(0, 3000),
           });
         } else {

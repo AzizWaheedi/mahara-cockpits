@@ -5,6 +5,7 @@ import {
   internalMutation,
   internalQuery,
 } from "./_generated/server";
+import { AZIZ_SLACK_ID } from "./constants";
 import { authenticatedMutation, authenticatedQuery } from "./functions";
 import { assertScope, scopeFilter } from "./gate";
 import { assertRole } from "./roles";
@@ -22,7 +23,7 @@ import { callTool } from "./tools";
 declare const process: { env: Record<string, string | undefined> };
 
 /** Aziz's Slack DM. A user id opens the DM; the old D... channel id is gone. */
-const AZIZ_DM = process.env.ALERT_SLACK_TO || "U0AJQ8P1ACF";
+const AZIZ_DM = process.env.ALERT_SLACK_TO || AZIZ_SLACK_ID;
 /** Retry gaps in minutes: a Slack hiccup should not lose her question. */
 const RETRY_MIN = [1, 5, 15];
 
