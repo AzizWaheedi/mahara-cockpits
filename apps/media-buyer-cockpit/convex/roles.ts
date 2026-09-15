@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { isCeoEmail } from "./ceo/gate";
 import { authenticatedQuery } from "./functions";
 
 /**
@@ -141,6 +142,7 @@ export const me = authenticatedQuery({
       cockpits: a.cockpits,
       clients: a.clients,
       isAdmin: a.isAdmin,
+      isCeo: isCeoEmail(user?.email),
       home: a.home,
     };
   },

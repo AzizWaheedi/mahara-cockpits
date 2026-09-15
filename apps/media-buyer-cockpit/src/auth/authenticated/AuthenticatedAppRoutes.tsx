@@ -12,6 +12,7 @@ import { ViktorProductAuthProvider } from "@/lib/viktor-spaces-access/ViktorProd
 import {
   AdminPage,
   AdsPage,
+  CeoPage,
   CsmPage,
   DashboardPage,
   EndOfDayPage,
@@ -50,6 +51,7 @@ export function AuthenticatedRoutes() {
           {/* biome-ignore lint/a11y/useValidAriaRole: RoleRoute's role prop is a seat name, not an ARIA role */}
           <Route element={<RoleRoute role="admin" />}>
             <Route path="/admin" element={<AdminPage />} />
+            <Route path="/ceo" element={<CeoPage />} />
           </Route>
           {/* Media buyer's cockpit — her link only. */}
           {/* biome-ignore lint/a11y/useValidAriaRole: RoleRoute's role prop is a seat name, not an ARIA role */}

@@ -875,3 +875,21 @@ export const cardsNamed = internalAction({
     return out;
   },
 });
+
+/** Read-only SQL against a Supabase project through the management token the backend already holds. */
+export const supabaseRead = internalAction({
+  args: { projectId: v.string(), sql: v.string() },
+  returns: v.any(),
+  handler: async (_ctx, { projectId, sql }) => {
+    if (!/^\s*(select|with)\b/i.test(sql))
+      throw new Error("read-only probe: SELECT or WITH only");
+    const raw: Any = await callTool("mcp_supabase_execute_sql", {
+      project_id: projectId,
+      query: sql,
+    });
+    const text =
+      typeof raw?.result === "string" ? raw.result : JSON.stringify(raw);
+    const m = /(\[[\s\S]*\])/.exec(text);
+    return m ? JSON.parse(m[1]) : text.slice(0, 500);
+  },
+});

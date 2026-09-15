@@ -2,6 +2,7 @@ import { useAuthActions } from "@convex-dev/auth/react";
 import { useQuery } from "convex/react";
 import {
   ArrowRightLeft,
+  Gauge,
   LayoutDashboard,
   ListChecks,
   LogOut,
@@ -119,6 +120,14 @@ function SidebarNav() {
       <SidebarGroup>
         <SidebarGroupContent>
           <SidebarMenu>
+            {me?.isCeo ? (
+              <NavLink
+                href="/ceo"
+                label="CEO"
+                icon={Gauge}
+                isActive={location.pathname.startsWith("/ceo")}
+              />
+            ) : null}
             {me?.isAdmin ? (
               <NavLink
                 href="/admin"

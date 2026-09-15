@@ -1,4 +1,5 @@
 export { AdminPage } from "./AdminPage";
+export { CeoPage } from "./CeoPage";
 export {
   AdsPage,
   EndOfDayPage,

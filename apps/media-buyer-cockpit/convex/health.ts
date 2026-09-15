@@ -303,6 +303,7 @@ const JOBS: Record<string, { ref: any; everyMin: number }> = {
   "report docs": { ref: internal.reportDocs.drain, everyMin: 3 },
   "hermes relay": { ref: internal.hermesDrain.run, everyMin: 1 },
   "client comment watch": { ref: internal.commentWatch.scan, everyMin: 15 },
+  "ceo refresh": { ref: internal.ceo.refresh.refreshAll, everyMin: 15 },
 };
 
 export const runJob = internalAction({

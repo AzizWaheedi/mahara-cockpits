@@ -985,6 +985,28 @@ const schema = defineSchema({
     lastError: v.optional(v.string()),
     alertedAt: v.optional(v.number()),
   }).index("by_source", ["source"]),
+  /** CEO cockpit: the latest prepared payload per section (convex/ceo). A failed compute keeps the last good payload. */
+  ceoSections: defineTable({
+    key: v.string(),
+    label: v.string(),
+    payload: v.optional(v.any()),
+    ok: v.boolean(),
+    error: v.optional(v.string()),
+    sources: v.array(v.any()),
+    computedAt: v.number(),
+    lastOkAt: v.optional(v.number()),
+    ms: v.number(),
+  }).index("by_key", ["key"]),
+  /** CEO cockpit: daily history per metric and scope (Kuwait days), so every number has a trend. */
+  ceoDaily: defineTable({
+    date: v.string(),
+    metric: v.string(),
+    scope: v.string(),
+    value: v.number(),
+    at: v.number(),
+  })
+    .index("by_metric_scope_date", ["metric", "scope", "date"])
+    .index("by_date", ["date"]),
   /** One row per scheduled job: last run, outcome, failure streak (see health.ts runJob). */
   cronRuns: defineTable({
     job: v.string(),

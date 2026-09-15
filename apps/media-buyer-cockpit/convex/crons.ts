@@ -120,4 +120,12 @@ crons.interval(
   { job: "client comment watch" },
 );
 
+/** The CEO cockpit's prepared sections: every 15 minutes, all sources. [Aziz, 2026-09-15] */
+crons.interval(
+  "refresh the CEO cockpit",
+  { minutes: 15 },
+  internal.health.runJob,
+  { job: "ceo refresh" },
+);
+
 export default crons;
