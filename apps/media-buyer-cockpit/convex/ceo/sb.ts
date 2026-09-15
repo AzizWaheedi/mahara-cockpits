@@ -44,6 +44,12 @@ export function num(x: unknown): number {
 /** Epoch ms from a timestamp cell, or undefined. */
 export function ms(x: unknown): number | undefined {
   if (x === null || x === undefined || x === "") return undefined;
-  const t = new Date(String(x).replace(" ", "T")).getTime();
+  // Postgres writes "2026-09-12 15:05:15+00": JavaScript needs "T" and "+00:00".
+  let iso = String(x).trim().replace(" ", "T");
+  if (/T\d{2}:\d{2}/.test(iso))
+    iso = iso
+      .replace(/([+-]\d{2})$/, "$1:00")
+      .replace(/([+-]\d{2})(\d{2})$/, "$1:$2");
+  const t = new Date(iso).getTime();
   return Number.isFinite(t) ? t : undefined;
 }

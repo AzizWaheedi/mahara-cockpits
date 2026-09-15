@@ -2,23 +2,54 @@ import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import { internalAction } from "../_generated/server";
 import { ADAPTERS } from "./registry";
-import type { DailyPoint } from "./types";
+import type { Adapter, DailyPoint } from "./types";
 
 /**
- * Recompute CEO sections (all, or the ones named). Adapters run one after the
- * other so Supabase and the child deployments see one query at a time. One
- * failing adapter never stops the rest.
+ * How long one section may take. Creative Triage can hang for minutes when it
+ * is degraded (2026-09-15: its gateway returned 524 after 100 s), and one slow
+ * source must not hold back the rest. A section that runs out of time keeps
+ * its last good payload and shows the error.
+ */
+const SECTION_BUDGET_MS = 150_000;
+
+function withBudget<T>(p: Promise<T>, key: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () =>
+        reject(
+          new Error(
+            `${key} took longer than ${SECTION_BUDGET_MS / 1000} s; a source is slow or down`,
+          ),
+        ),
+      SECTION_BUDGET_MS,
+    );
+    p.then(
+      v => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      e => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
+}
+
+/**
+ * Recompute CEO sections (all, or the ones named). Sections run at the same
+ * time, each within its budget, so the refresh takes as long as the slowest
+ * section instead of the sum. One failing section never stops the rest.
  */
 export const refreshAll = internalAction({
   args: { only: v.optional(v.array(v.string())) },
   returns: v.any(),
   handler: async (ctx, { only }): Promise<Record<string, string>> => {
     const report: Record<string, string> = {};
-    for (const a of ADAPTERS) {
-      if (only?.length && !only.includes(a.key)) continue;
+    const run = async (a: Adapter) => {
       const started = Date.now();
       try {
-        const res = await a.compute(ctx);
+        const res = await withBudget(a.compute(ctx), a.key);
         await ctx.runMutation(internal.ceo.store.saveSection, {
           key: a.key,
           label: a.label,
@@ -46,7 +77,10 @@ export const refreshAll = internalAction({
         });
         report[a.key] = `FAILED ${error}`;
       }
-    }
+    };
+    await Promise.all(
+      ADAPTERS.filter(a => !only?.length || only.includes(a.key)).map(run),
+    );
     return report;
   },
 });

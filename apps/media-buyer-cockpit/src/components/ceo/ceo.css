@@ -1,0 +1,124 @@
+/*
+ * CEO cockpit color roles. Validated with the dataviz palette validator on
+ * the app's card surfaces, so change a value here only after re-validating.
+ * Light values sit on .ceo-root and dark values on .dark .ceo-root; every
+ * derived token (washes, tracks) is a color-mix of a base role, so it follows
+ * the theme without a second definition.
+ */
+
+.ceo-root {
+  /* Single-series marks, sparklines, funnel bars, the active tab. */
+  --ceo-emphasis: #0d9488;
+  --ceo-emphasis-wash: color-mix(in srgb, var(--ceo-emphasis) 10%, transparent);
+  /* Unfilled meter track: a lighter step of the same ramp. */
+  --ceo-emphasis-track: color-mix(in srgb, var(--ceo-emphasis) 18%, transparent);
+
+  /* Categorical slots, only for 2+ series, in this order, never cycled.
+     Slots 3, 4 and 5 are under 3:1 on light cards: pair them with direct
+     labels or the table view. */
+  --ceo-cat-1: #2a78d6;
+  --ceo-cat-2: #eb6834;
+  --ceo-cat-3: #1baf7a;
+  --ceo-cat-4: #eda100;
+  --ceo-cat-5: #e87ba4;
+  --ceo-cat-6: #008300;
+  --ceo-cat-7: #4a3aa7;
+  --ceo-cat-8: #e34948;
+
+  /* Status, never used for series. Color goes on an icon or a dot only. */
+  --ceo-good: #0ca30c;
+  --ceo-warning: #fab219;
+  --ceo-serious: #ec835a;
+  --ceo-critical: #d03b3b;
+
+  /* Context series drawn behind the one that matters. */
+  --ceo-deemphasis: #c3c7d1;
+
+  /* Hairline grid; axis text uses the muted-foreground token. */
+  --ceo-grid: #e8eaf0;
+  --ceo-crosshair: #aeb3bf;
+  --ceo-hover: rgba(9, 19, 51, 0.04);
+
+  /* Delta text: good direction, bad direction, neither. */
+  --ceo-delta-good: #006300;
+  --ceo-delta-bad: #b42323;
+  --ceo-delta-neutral: var(--muted-foreground);
+
+  /* Surface used for the 2px ring on markers and the gap between bars. */
+  --ceo-surface: var(--card);
+  --ceo-card-shadow: 0 1px 2px rgba(9, 19, 51, 0.04), 0 1px 1px rgba(9, 19, 51, 0.02);
+}
+
+.dark .ceo-root {
+  --ceo-emphasis: #12aaa4;
+
+  --ceo-cat-1: #3987e5;
+  --ceo-cat-2: #d95926;
+  --ceo-cat-3: #199e70;
+  --ceo-cat-4: #c98500;
+  --ceo-cat-5: #d55181;
+  --ceo-cat-6: #008300;
+  --ceo-cat-7: #9085e9;
+  --ceo-cat-8: #e66767;
+
+  --ceo-deemphasis: rgba(255, 255, 255, 0.22);
+
+  --ceo-grid: rgba(255, 255, 255, 0.08);
+  --ceo-crosshair: rgba(255, 255, 255, 0.28);
+  --ceo-hover: rgba(255, 255, 255, 0.05);
+
+  --ceo-delta-good: #0ca30c;
+  --ceo-delta-bad: #e66767;
+
+  --ceo-card-shadow: none;
+}
+
+/* Cards: hairline border, a whisper of shadow in light mode only. */
+.ceo-root .ceo-card {
+  box-shadow: var(--ceo-card-shadow);
+}
+
+/* The stale banner and warning callouts: a warm wash that works in both themes. */
+.ceo-root .ceo-stale {
+  background-color: color-mix(in srgb, var(--ceo-warning) 9%, transparent);
+  border-color: color-mix(in srgb, var(--ceo-warning) 38%, transparent);
+}
+
+/* Axis ticks line up as columns of numbers. */
+.ceo-root .ceo-chart .recharts-cartesian-axis-tick text,
+.ceo-root .ceo-chart .ceo-end-label {
+  font-variant-numeric: tabular-nums;
+}
+
+.ceo-root .ceo-chart .recharts-surface:focus,
+.ceo-root .ceo-chart .recharts-wrapper:focus,
+.ceo-root .ceo-chart .recharts-layer:focus {
+  outline: none;
+}
+
+.ceo-root .ceo-chart .recharts-wrapper:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Horizontal scrollers (tabs, wide tables) without a visible scrollbar track on touch. */
+.ceo-root .ceo-scroll-x {
+  scrollbar-width: none;
+}
+
+.ceo-root .ceo-scroll-x::-webkit-scrollbar {
+  display: none;
+}
+
+/* Tables inside cards keep a thin, quiet scrollbar so wide rosters stay discoverable. */
+.ceo-root .ceo-table-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ceo-grid) transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ceo-root .ceo-spin {
+    animation-duration: 2.4s;
+  }
+}
