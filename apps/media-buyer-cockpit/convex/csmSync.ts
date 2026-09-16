@@ -7,6 +7,8 @@ import {
   internalQuery,
 } from "./_generated/server";
 import { authenticatedAction } from "./functions";
+import { metaImageUsable } from "./metaMedia";
+import { latestStillAt } from "./previews";
 import { callTool, unwrap } from "./tools";
 
 const CLIENTS_LIST = "901816559981"; // Clients - Mahara
@@ -938,13 +940,20 @@ export const csmSyncNow = authenticatedAction({
     (await ctx.runAction(internal.csmSync.runCsmSync, {})) as CsmSyncResult,
 });
 
-/** The live Meta structure the media buyer already syncs, for the CSM's client profile. */
+/**
+ * The live Meta structure the media buyer already syncs, for the CSM's client
+ * profile. Ads carry their saved still and ids; the live preview is fetched
+ * when someone opens one (previews.ts), so no preview link is sent.
+ * `latestStillAt` lets the feed skip the saved-stills push when the client
+ * success cockpit already has them all.
+ */
 export const metaTreeForCsm = internalQuery({
   args: {},
   returns: v.any(),
   handler: async ctx => {
+    const now = Date.now();
     const rows = await ctx.db.query("metaTree").collect();
-    return rows.map(r => ({
+    const tree = rows.map(r => ({
       campaignName: r.campaignName,
       kind: r.kind,
       metaId: r.metaId,
@@ -953,7 +962,13 @@ export const metaTreeForCsm = internalQuery({
       effectiveStatus: r.effectiveStatus,
       adsetId: r.adsetId,
       dailyBudget: r.dailyBudget,
-      previewSrc: r.previewSrc,
+      accountId: r.accountId,
+      stillKey: r.stillKey,
+      stillUrl: r.stillUrl,
+      stillTinyUrl: r.stillTinyUrl,
+      // Meta's own picture link, only while it has not expired.
+      thumbUrl: metaImageUsable(r.thumbUrl, now) ? r.thumbUrl : undefined,
     }));
+    return { tree, latestStillAt: await latestStillAt(ctx.db) };
   },
 });

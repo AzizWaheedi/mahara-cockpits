@@ -5,6 +5,7 @@ import {
   internalMutation,
   internalQuery,
 } from "./_generated/server";
+import { copyStills } from "./previews";
 
 /**
  * The feed door for the creative director's cockpit, reached over HTTP
@@ -59,6 +60,10 @@ export async function runBridge(
       return await ctx.runMutation(internal.ingest.storeWinnersInternal, {
         rows: args.rows,
       });
+    // The media buyer's saved ad stills, copied into this deployment's own
+    // file storage so pictures keep showing while its backend is down.
+    case "storeStills":
+      return await copyStills(ctx, args.stills);
     case "counts":
       return await ctx.runQuery(internal.sync.counts, {});
     case "driveCache":
@@ -198,29 +203,112 @@ export const storeFunnelsInternal = internalMutation({
   },
 });
 
+/** Winner fields the media buyer can remove from a row it keeps. */
+const CLEARED_WHEN_MISSING = [
+  "retiredOn",
+  "savedBy",
+  "savedByName",
+  "savedAt",
+  "savedNote",
+  "savedRange",
+  "savedStats",
+  "unsavedBy",
+  "unsavedAt",
+] as const;
+
+/** The same value, whatever the key order of nested objects. */
+function sameValue(a: unknown, b: unknown): boolean {
+  const norm = (x: unknown): unknown =>
+    Array.isArray(x)
+      ? x.map(norm)
+      : x && typeof x === "object"
+        ? Object.fromEntries(
+            Object.entries(x as Record<string, unknown>)
+              .filter(([, y]) => y !== undefined)
+              .sort(([p], [q]) => (p < q ? -1 : p > q ? 1 : 0))
+              .map(([k, y]) => [k, norm(y)]),
+          )
+        : x;
+  return JSON.stringify(norm(a)) === JSON.stringify(norm(b));
+}
+
+/**
+ * The media buyer's winners archive, mirrored. Rows are patched or inserted,
+ * never deleted, so a "Save as winner" that was taken back arrives as
+ * `unsavedAt` and the row stays. Preview links are no longer kept: a stored
+ * one is cleared, and pages fetch a fresh preview when an ad is opened.
+ *
+ * The media buyer sends up to 500 rows after every sync. Only rows that
+ * changed are written, plus one row that carries this push's time for the
+ * freshness check, instead of rewriting every row on every push.
+ */
 export const storeWinnersInternal = internalMutation({
   args: { rows: v.array(v.any()) },
   returns: v.any(),
   handler: async (ctx, { rows }) => {
     if (rows.length === 0) return { skipped: "empty payload" };
     const now = Date.now();
+    // One row per ad. When the media buyer holds two, the saved one wins.
+    const incoming = new Map<string, any>();
+    for (const raw of rows) {
+      if (!raw || typeof raw.adId !== "string" || !raw.adId) continue;
+      const prev = incoming.get(raw.adId);
+      if (!prev || (raw.savedAt ?? 0) > (prev.savedAt ?? 0))
+        incoming.set(raw.adId, raw);
+    }
     const existing = await ctx.db.query("winnersArchive").collect();
-    const byAd = new Map(existing.map(r => [r.adId, r]));
+    const byAd = new Map<string, (typeof existing)[number]>();
+    for (const r of existing) {
+      const prev = byAd.get(r.adId);
+      // Duplicates here are left alone; the saved one is the one kept up to date.
+      if (!prev || (r.savedAt ?? 0) > (prev.savedAt ?? 0)) byAd.set(r.adId, r);
+    }
     let inserted = 0;
     let patched = 0;
-    for (const raw of rows) {
-      const row = { ...raw, syncedAt: now };
-      const prev = byAd.get(row.adId);
+    let unchanged = 0;
+    // The freshness check reads the newest syncedAt in the table.
+    let stamped = false;
+    for (const [adId, raw] of incoming) {
+      const { previewSrc: _dropped, ...rest } = raw;
+      const row = { ...rest, syncedAt: now };
+      const prev = byAd.get(adId);
       if (prev) {
-        await ctx.db.patch(prev._id, row);
-        byAd.delete(row.adId);
-        patched += 1;
+        // The media buyer leaves out a field it has removed (a note dropped on
+        // a new save, the retired date of an ad that came back). A patch alone
+        // would keep the old value here, so clear what it no longer sends.
+        const gone: Record<string, undefined> = {};
+        for (const f of CLEARED_WHEN_MISSING) {
+          if (row[f] === undefined && prev[f] !== undefined)
+            gone[f] = undefined;
+        }
+        const patch: Record<string, unknown> = {
+          ...row,
+          ...gone,
+          ...(prev.previewSrc !== undefined ? { previewSrc: undefined } : {}),
+        };
+        const changed = Object.entries(patch).some(
+          ([k, x]) =>
+            k !== "syncedAt" &&
+            !sameValue((prev as Record<string, unknown>)[k], x),
+        );
+        if (changed) {
+          await ctx.db.patch(prev._id, patch);
+          patched += 1;
+        } else if (!stamped) {
+          await ctx.db.patch(prev._id, { syncedAt: now });
+          unchanged += 1;
+        } else {
+          unchanged += 1;
+          continue;
+        }
+        stamped = true;
       } else {
         await ctx.db.insert("winnersArchive", row);
         inserted += 1;
+        stamped = true;
       }
     }
-    return { inserted, patched };
+    return { inserted, patched, unchanged };
   },
 });
 

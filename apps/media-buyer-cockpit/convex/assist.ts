@@ -4,6 +4,7 @@ import { internalMutation, internalQuery } from "./_generated/server";
 import { dosDontsText } from "./board";
 import { authenticatedMutation, authenticatedQuery } from "./functions";
 import { assertScope, scopeFilter } from "./gate";
+import { isAuto, isSaved } from "./market";
 import { assertRole } from "./roles";
 
 /**
@@ -13,7 +14,7 @@ import { assertRole } from "./roles";
  * Meta API call goes through here: write me copy, pull these creatives off
  * Drive and load them into the account, set this new client's launch up with
  * me. She fills a box, the row queues, Viktor's worker picks it up and writes
- * the answer back into the same row — so the panel shows real progress instead
+ * the answer back into the same row, so the panel shows real progress instead
  * of an error when the in-app AI path is unavailable.
  *
  * Nothing in this file talks to an AI model or to Meta. That is deliberate:
@@ -144,7 +145,7 @@ export const recent = authenticatedQuery({
   },
 });
 
-/** How much is waiting for an answer right now — drives the status strip. */
+/** How much is waiting for an answer right now. Drives the status strip. */
 export const queueDepth = authenticatedQuery({
   args: {},
   returns: v.object({ queued: v.number(), working: v.number() }),
@@ -224,9 +225,25 @@ export const context = internalQuery({
       ? campaigns.find(x => x.campaignName === campaignName)
       : campaigns.find(x => (x.clientName ?? x.accountName) === client);
     const who = client ?? c?.clientName ?? c?.accountName;
-    const winners = (await ctx.db.query("winnersArchive").collect())
-      .sort((a, b) => a.cpl - b.cpl)
-      .slice(0, 40);
+    // The team's own saves first (newest ten, each with why it works), then
+    // the 40 cheapest winners. A withdrawn save that the weekly check never
+    // picked is not a winner.
+    const archive = (await ctx.db.query("winnersArchive").collect()).filter(
+      r => isSaved(r) || isAuto(r),
+    );
+    const saves = archive
+      .filter(isSaved)
+      .sort((a, b) => (b.savedAt ?? 0) - (a.savedAt ?? 0))
+      .slice(0, 10);
+    const taken = new Set(saves.map(r => r.adId));
+    const cheapest: typeof archive = [];
+    for (const r of [...archive].sort((a, b) => a.cpl - b.cpl)) {
+      if (cheapest.length >= 40) break;
+      if (taken.has(r.adId)) continue;
+      taken.add(r.adId);
+      cheapest.push(r);
+    }
+    const winners = [...saves, ...cheapest];
     // Client names differ slightly between the sheet, ClickUp and Meta
     // ("City Wood" / "City Wood Industry"), so an exact match silently loses
     // the ad account and Viktor reports a blocker that is not real.
@@ -271,6 +288,8 @@ export const context = internalQuery({
         cta: w.cta,
         format: w.format,
         transcript: w.transcript ? w.transcript.slice(0, 1200) : undefined,
+        savedBy: isSaved(w) ? w.savedByName : undefined,
+        whyItWorks: isSaved(w) ? w.savedNote : undefined,
       })),
     };
   },

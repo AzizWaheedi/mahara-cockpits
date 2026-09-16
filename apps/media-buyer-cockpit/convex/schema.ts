@@ -2,6 +2,34 @@ import { authTables } from "@convex-dev/auth/server";
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
+/**
+ * A manual "Save as winner": the date range the numbers were read over.
+ * The creative cockpit's schema carries the same shape (winners are bridged).
+ */
+const vSavedRange = v.object({
+  start: v.string(),
+  end: v.string(),
+  label: v.optional(v.string()),
+});
+
+/** A manual "Save as winner": the ad's own numbers over that range, at save time. */
+const vSavedStats = v.object({
+  spend: v.number(),
+  leads: v.number(),
+  cpl: v.optional(v.number()),
+  impressions: v.optional(v.number()),
+  linkClicks: v.optional(v.number()),
+  linkCtr: v.optional(v.number()),
+  cpm: v.optional(v.number()),
+  optInRate: v.optional(v.number()),
+  frequency: v.optional(v.number()),
+  bookings: v.optional(v.number()),
+  showed: v.optional(v.number()),
+  costPerBooking: v.optional(v.number()),
+  /** False when no booking in the range could be traced to an ad, so cost per booking is blank. */
+  bookingsAttributed: v.optional(v.boolean()),
+});
+
 const schema = defineSchema({
   ...authTables,
 
@@ -156,8 +184,15 @@ const schema = defineSchema({
     frequency: v.optional(v.number()),
     thumbnailUrl: v.optional(v.string()),
     // Meta's rendered preview iframe, so she can watch the actual ad.
+    // No longer written: previews are fetched when someone opens one (previews.ts).
     previewSrc: v.optional(v.string()),
     metaAdId: v.optional(v.string()),
+    /** Which saved still this ad uses: "c:<creative id>" or "a:<ad id>" (see adStills). */
+    stillKey: v.optional(v.string()),
+    /** Our own copy of the still in file storage, about 320px. Never expires. */
+    stillUrl: v.optional(v.string()),
+    /** The same still at about 96px, for tables and lists. */
+    stillTinyUrl: v.optional(v.string()),
     verdict: v.string(),
     reason: v.string(),
     syncedAt: v.number(),
@@ -182,8 +217,21 @@ const schema = defineSchema({
     previewAt: v.optional(v.number()),
     /** Still image fallback when Meta will not render the preview iframe. */
     thumbUrl: v.optional(v.string()),
+    /** The ad account (digits, no act_ prefix), for Ads Manager links and preview calls. */
+    accountId: v.optional(v.string()),
+    /** The ad's creative id. Many ads share one creative, so stills are keyed by it. */
+    creativeId: v.optional(v.string()),
+    /** Which saved still this ad uses: "c:<creative id>" or "a:<ad id>" (see adStills). */
+    stillKey: v.optional(v.string()),
+    /** Our own copy of the still in file storage, about 320px. Never expires. */
+    stillUrl: v.optional(v.string()),
+    /** The same still at about 96px, for tables and lists. */
+    stillTinyUrl: v.optional(v.string()),
     syncedAt: v.number(),
-  }).index("by_campaign", ["campaignName"]),
+  })
+    .index("by_campaign", ["campaignName"])
+    // One ad by its Meta id: access checks and on-demand previews.
+    .index("by_meta", ["metaId"]),
 
   /**
    * Meta change history from the Creative Triage database — who changed what in an
@@ -528,6 +576,10 @@ const schema = defineSchema({
           previewSrc: v.optional(v.string()),
           /** Still image fallback, which loads instantly in a list. */
           thumbUrl: v.optional(v.string()),
+          /** The ad's creative id, so the winner can get a saved still. */
+          creativeId: v.optional(v.string()),
+          /** Which saved still this ad uses (see adStills). */
+          stillKey: v.optional(v.string()),
           spend: v.number(),
           leads: v.number(),
           cpl: v.optional(v.number()),
@@ -586,10 +638,110 @@ const schema = defineSchema({
     /** Still running in Meta as of the last sync. */
     stillLive: v.optional(v.boolean()),
     retiredOn: v.optional(v.string()),
+    /** The ad's creative id and ad account, for saved stills and Ads Manager links. */
+    creativeId: v.optional(v.string()),
+    accountId: v.optional(v.string()),
+    /** Which saved still this ad uses (see adStills), and our own copies of it. */
+    stillKey: v.optional(v.string()),
+    stillUrl: v.optional(v.string()),
+    stillTinyUrl: v.optional(v.string()),
+    /**
+     * How the row was first created: "auto" by the weekly collector's rule,
+     * "manual" by a person's "Save as winner". Absent means auto (every row
+     * written before 2026-09-16).
+     */
+    origin: v.optional(v.union(v.literal("auto"), v.literal("manual"))),
+    /** First time the collector's rule matched a row a person saved first. */
+    autoFirstAt: v.optional(v.number()),
+    /**
+     * "Save as winner" from Ads management. The collector never writes these
+     * fields and never removes the row. A save counts while savedAt is later
+     * than unsavedAt (or there is no unsavedAt).
+     */
+    savedBy: v.optional(v.string()),
+    savedByName: v.optional(v.string()),
+    savedAt: v.optional(v.number()),
+    /** "Why it works", as the person typed it. */
+    savedNote: v.optional(v.string()),
+    savedRange: v.optional(vSavedRange),
+    savedStats: v.optional(vSavedStats),
+    /** "Remove from What works": the row is kept, only the save is withdrawn. */
+    unsavedBy: v.optional(v.string()),
+    unsavedAt: v.optional(v.number()),
   })
     .index("by_ad", ["adId"])
     .index("by_service", ["serviceLine"])
     .index("by_cpl", ["cpl"]),
+
+  /**
+   * Our own copy of each ad's still image, kept in Convex file storage.
+   *
+   * Meta's image links are signed and die within days, and its preview links
+   * within a day, so a stored Meta link can never be relied on. One small file
+   * per creative is saved the first time we see it and never fetched again, so
+   * a winner keeps its picture after the ad is deleted in Meta. Keyed by
+   * creative id ("c:<id>") because many ads share a creative, else by ad id
+   * ("a:<id>"). A failed or "gone" row stops the capture from retrying forever.
+   * The other two cockpits copy the saved files into their own storage through
+   * the bridge (everything newer than their highest savedAt).
+   */
+  adStills: defineTable({
+    key: v.string(),
+    creativeId: v.optional(v.string()),
+    /** The ad it was first captured for. */
+    adId: v.optional(v.string()),
+    accountId: v.optional(v.string()),
+    /** saved: files stored. failed: will be retried. gone: Meta no longer has it, not retried. */
+    status: v.union(v.literal("saved"), v.literal("failed"), v.literal("gone")),
+    /** About 320px. */
+    storageId: v.optional(v.id("_storage")),
+    url: v.optional(v.string()),
+    /** About 96px, for tables and lists. */
+    tinyStorageId: v.optional(v.id("_storage")),
+    tinyUrl: v.optional(v.string()),
+    bytes: v.optional(v.number()),
+    tinyBytes: v.optional(v.number()),
+    contentType: v.optional(v.string()),
+    /** Where the picture came from: thumbnail | image | video_picture | link_picture | row_url. */
+    source: v.optional(v.string()),
+    /** Used by a winner: never removed if pruning is ever added. */
+    keep: v.optional(v.boolean()),
+    attempts: v.number(),
+    lastError: v.optional(v.string()),
+    lastTriedAt: v.number(),
+    /** Set when the files were stored. The bridge watermark for the other cockpits. */
+    savedAt: v.optional(v.number()),
+  })
+    .index("by_key", ["key"])
+    .index("by_saved", ["savedAt"])
+    .index("by_status", ["status", "lastTriedAt"]),
+
+  /**
+   * Meta preview links fetched when someone opened a preview, shared by all
+   * three cockpits so a busy page does not call Meta again for the same ad.
+   * Meta says a preview link is valid for 24 hours; `expiresAt` is 20 hours
+   * after the fetch. A refusal (ad deleted, no access, rate limit) is cached
+   * too, for a shorter time, with `reason` and no `src`. Expired rows are
+   * removed by the daily preview check.
+   */
+  previewLinks: defineTable({
+    adId: v.string(),
+    /** Meta's ad_format, e.g. MOBILE_FEED_STANDARD. */
+    format: v.string(),
+    src: v.optional(v.string()),
+    width: v.optional(v.number()),
+    height: v.optional(v.number()),
+    fetchedAt: v.number(),
+    expiresAt: v.number(),
+    /** A fresh Meta CDN still fetched with the preview, and when its signature (oe) runs out. */
+    thumbUrl: v.optional(v.string()),
+    thumbExpiresAt: v.optional(v.number()),
+    /** gone | no_meta_access | rate_limited | error, when there is no src. */
+    reason: v.optional(v.string()),
+    error: v.optional(v.string()),
+  })
+    .index("by_ad", ["adId", "format"])
+    .index("by_expires", ["expiresAt"]),
 
   onboardings: defineTable({
     taskId: v.string(),

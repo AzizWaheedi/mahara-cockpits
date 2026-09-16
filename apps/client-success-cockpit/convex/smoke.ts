@@ -7,6 +7,7 @@ import {
   buildSnapshot,
 } from "./csm";
 import { buildGapsList } from "./gaps";
+import { stillsCopyProblem } from "./previews";
 
 /** Minutes without a feed before the check fails, inside the working day. */
 const STALE_AFTER_MIN = 45;
@@ -33,6 +34,15 @@ const feedError = (r: HealthRow) =>
   (r.errors ?? []).find(e => FEED_ERROR_PREFIXES.some(p => e.startsWith(p)));
 const feedDown = (r: HealthRow) =>
   r.campaigns === 0 || feedError(r) !== undefined;
+
+/**
+ * Copies of the media buyer's saved ad stills are checked once a day, in the
+ * 03:00 UTC run the media buyer also uses for its own picture checks, so the
+ * 15-minute check stays as cheap as it was.
+ */
+function dailyWindow(now = new Date()): boolean {
+  return now.getUTCHours() === 3 && now.getUTCMinutes() < 15;
+}
 
 const kuwaitClock = (ms: number) =>
   new Date(ms + KUWAIT_OFFSET_MS).toISOString().slice(0, 16).replace("T", " ");
@@ -94,6 +104,11 @@ export const run = internalQuery({
       if (working && Date.now() - latest.at > STALE_AFTER_MIN * 60_000)
         throw new Error(`no feed since ${kuwaitClock(latest.at)} Kuwait`);
     });
+    if (dailyWindow())
+      await t("stills copy", async () => {
+        const problem = await stillsCopyProblem(ctx);
+        if (problem) throw new Error(problem);
+      });
     return { app: "client-success", ok: checks.every(c => c.ok), checks };
   },
 });

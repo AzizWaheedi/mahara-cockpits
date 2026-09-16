@@ -96,6 +96,11 @@ export const RUNBOOK: Record<
     fix: "A job stopped running or keeps throwing. Hermes already has a fix job with the error. If nothing changes within an hour: scripts/ship.sh media-buyer, then read the Convex logs for the job name.",
     owner: "Hermes or Aziz",
   },
+  previews: {
+    label: "Ad previews and saved pictures",
+    fix: "Live previews are fetched only when someone opens one; if none open, check the Meta Ads line first. If winners have no saved picture, the Meta token may be broken (see Meta Ads), or the ad was deleted before a picture was saved, and nothing can bring those back. If saved pictures do not load, open the deployment's File Storage page in the Convex dashboard and check the storage limit.",
+    owner: "Hermes or Aziz",
+  },
   hermes: {
     label: "Hermes (AI agent)",
     fix: "Hermes has not polled for jobs. Restart the Hermes poller on its host. While it is down, chat answers, reply drafts, call briefs and report narratives wait; nothing is lost, they run when it is back.",

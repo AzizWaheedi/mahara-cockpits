@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { type Infer, v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { ActionCtx } from "./_generated/server";
 import {
@@ -9,6 +9,16 @@ import {
 import { NEW_CAMPAIGN_FORM_URL } from "./constants";
 import { authenticatedAction } from "./functions";
 import { flush } from "./health";
+import {
+  hasPicture,
+  isMetaId,
+  metaImageExpiry,
+  metaImageUsable,
+  sameStoredRow,
+  stillCaptureDue,
+  stillKeyFor,
+} from "./metaMedia";
+import { latestStillAt } from "./previews";
 import {
   allAdAccounts,
   callTool,
@@ -732,6 +742,27 @@ export const storeMembers = internalMutation({
   },
 });
 
+/** A capture request for a still (see previews.captureStills). */
+const vStillItem = v.object({
+  adId: v.optional(v.string()),
+  creativeId: v.optional(v.string()),
+  accountId: v.optional(v.string()),
+  campaignName: v.optional(v.string()),
+  sourceUrl: v.optional(v.string()),
+});
+type StillItem = Infer<typeof vStillItem>;
+
+/** Stills handed to one capture run per sync; the rest wait for the next sync. */
+const STILLS_PER_SYNC = 30;
+
+type StillState = {
+  status: "saved" | "failed" | "gone";
+  url?: string;
+  tinyUrl?: string;
+  attempts: number;
+  lastTriedAt: number;
+};
+
 export const store = internalMutation({
   args: {
     // biome-ignore lint/suspicious/noExplicitAny: snapshot rows
@@ -751,6 +782,8 @@ export const store = internalMutation({
     campaigns: v.number(),
     ads: v.number(),
     offBoard: v.number(),
+    /** Ads with no saved still yet, for this sync's capture run. */
+    missingStills: v.array(vStillItem),
   }),
   handler: async (ctx, args) => {
     // An upstream hiccup (Meta or the tracker sheet) can return zero campaigns.
@@ -758,12 +791,18 @@ export const store = internalMutation({
     // empty cockpit at 08:00.
     if (args.campaigns.length === 0) {
       const kept = await ctx.db.query("campaigns").collect();
-      return { campaigns: kept.length, ads: 0, offBoard: -1 };
+      return {
+        campaigns: kept.length,
+        ads: 0,
+        offBoard: -1,
+        missingStills: [],
+      };
     }
+    const now = Date.now();
     for (const row of await ctx.db.query("campaigns").collect())
       await ctx.db.delete(row._id);
-    for (const row of await ctx.db.query("ads").collect())
-      await ctx.db.delete(row._id);
+    const oldAds = await ctx.db.query("ads").collect();
+    for (const row of oldAds) await ctx.db.delete(row._id);
 
     // Scope: only campaigns that exist on the Ads Managment board. Some clients
     // run their own campaigns and some are long gone; pulling every campaign
@@ -800,13 +839,164 @@ export const store = internalMutation({
           leads7d: Number(c.leads7d ?? 0),
           syncedAt: Date.now(),
         });
+
+    // --- Saved stills -------------------------------------------------------
+    // Meta's picture links die within days, so every ad row points at our own
+    // saved copy (previews.ts). The links carry over from the rows being
+    // replaced; only a key seen for the first time costs an index read.
+    const oldTree = await ctx.db.query("metaTree").collect();
+    const stills = new Map<string, StillState | null>();
+    for (const r of [...oldTree, ...oldAds])
+      if (r.stillKey && r.stillUrl && !stills.has(r.stillKey))
+        stills.set(r.stillKey, {
+          status: "saved",
+          url: r.stillUrl,
+          tinyUrl: r.stillTinyUrl,
+          attempts: 0,
+          lastTriedAt: 0,
+        });
+    const stillOf = async (key: string): Promise<StillState | null> => {
+      if (!stills.has(key)) {
+        const row = await ctx.db
+          .query("adStills")
+          .withIndex("by_key", q => q.eq("key", key))
+          .first();
+        stills.set(
+          key,
+          row
+            ? {
+                status: row.status,
+                url: row.url,
+                tinyUrl: row.tinyUrl,
+                attempts: row.attempts,
+                lastTriedAt: row.lastTriedAt,
+              }
+            : null,
+        );
+      }
+      return stills.get(key) ?? null;
+    };
+    const withStill = async (row: any) => {
+      if (!row.stillKey) return;
+      const s = await stillOf(row.stillKey);
+      if (s?.status === "saved" && s.url) {
+        row.stillUrl = s.url;
+        if (s.tinyUrl) row.stillTinyUrl = s.tinyUrl;
+      }
+    };
+    // A row that had a working picture keeps it when its key has none yet
+    // (for example a still saved by ad id, and Meta now names the creative).
+    // The key moves with the picture, so the two never disagree.
+    const keepOldPicture = (row: any, old: any) => {
+      if (row.stillUrl || !old?.stillKey || !old.stillUrl) return;
+      row.stillKey = old.stillKey;
+      row.stillUrl = old.stillUrl;
+      if (old.stillTinyUrl) row.stillTinyUrl = old.stillTinyUrl;
+    };
+    const wanted: (StillItem & { key: string; rank: number })[] = [];
+    // The capture run keys an item exactly as stillKeyFor does, so the item
+    // is built from the key: a key the run would name differently would be
+    // asked for again on every sync.
+    const want = async (
+      key: string,
+      base: { adId?: string; accountId?: string; campaignName: string },
+      sourceUrl: string | undefined,
+      rank: number,
+    ) => {
+      const [kind, id] = [key.slice(0, 2), key.slice(2)];
+      if (!isMetaId(id) || (kind !== "c:" && kind !== "a:")) return;
+      const item: StillItem =
+        kind === "c:"
+          ? {
+              ...base,
+              adId: isMetaId(base.adId) ? base.adId : undefined,
+              creativeId: id,
+              sourceUrl,
+            }
+          : { ...base, adId: id, sourceUrl };
+      if (wanted.some(w => w.key === key)) return;
+      if (!stillCaptureDue(await stillOf(key), now)) return;
+      wanted.push({ ...item, key, rank });
+    };
+
+    // --- Meta tree, written as a diff ---------------------------------------
+    // Rewriting every row on every sync re-ran every screen that reads the
+    // tree. Only changed rows are written now. Nothing reads syncedAt.
+    const oldPictureByAd = new Map(
+      oldTree
+        .filter(t => t.kind === "ad" && t.stillKey && t.stillUrl)
+        .map(t => [`${t.campaignName}|${t.metaId}`, t]),
+    );
+    for (const m of args.metaTree) {
+      if (m.kind !== "ad") continue;
+      await withStill(m);
+      // Only the same creative's picture (or one saved before the creative
+      // was known): an edited ad needs its new one.
+      const oldPic = oldPictureByAd.get(`${m.campaignName}|${m.metaId}`);
+      if (oldPic && (!oldPic.creativeId || oldPic.creativeId === m.creativeId))
+        keepOldPicture(m, oldPic);
+      if (m.stillKey && !m.stillUrl)
+        await want(
+          m.stillKey,
+          {
+            adId: m.metaId,
+            accountId: m.accountId,
+            campaignName: m.campaignName,
+          },
+          metaImageUsable(m.thumbUrl, now) ? m.thumbUrl : undefined,
+          /active/i.test(String(m.effectiveStatus ?? m.status)) ? 0 : 1,
+        );
+    }
+    const oldByKey = new Map<string, typeof oldTree>();
+    for (const t of oldTree) {
+      const k = `${t.campaignName}|${t.kind}|${t.metaId}`;
+      oldByKey.set(k, [...(oldByKey.get(k) ?? []), t]);
+    }
+    for (const m of args.metaTree) {
+      const k = `${m.campaignName}|${m.kind}|${m.metaId}`;
+      const old = oldByKey.get(k)?.shift();
+      // Meta signs its picture links again every few hours. A new link for
+      // the same creative is not a change while the old one has a day left.
+      if (
+        old?.thumbUrl &&
+        m.thumbUrl &&
+        old.thumbUrl !== m.thumbUrl &&
+        old.creativeId === m.creativeId &&
+        metaImageExpiry(old.thumbUrl) !== undefined &&
+        metaImageUsable(old.thumbUrl, now, 24 * 3600_000)
+      )
+        m.thumbUrl = old.thumbUrl;
+      if (!old) await ctx.db.insert("metaTree", m);
+      else if (!sameStoredRow(old, m)) await ctx.db.replace(old._id, m);
+    }
+    for (const rest of oldByKey.values())
+      for (const t of rest) await ctx.db.delete(t._id);
+
+    // --- Ad rows ------------------------------------------------------------
+    const oldAd = new Map(
+      oldAds.map(a => [`${a.campaignName}|${a.adName}`, a]),
+    );
     for (const a of args.ads) {
       if (!scopedNames.has(a.campaignName)) continue;
+      // An ad that dropped out of Meta's list keeps its id and its picture.
+      const old = oldAd.get(`${a.campaignName}|${a.adName}`);
+      if (!a.metaAdId && old?.metaAdId) a.metaAdId = old.metaAdId;
+      if (!a.stillKey && old?.stillKey) a.stillKey = old.stillKey;
+      // No tree node: the ad is read by its own id (Meta keeps archived ads
+      // readable), or its row picture is saved while that link still works.
+      if (!a.stillKey && isMetaId(a.metaAdId))
+        a.stillKey = stillKeyFor(undefined, a.metaAdId);
+      await withStill(a);
+      keepOldPicture(a, old);
+      if (a.stillKey && !a.stillUrl)
+        await want(
+          a.stillKey,
+          { adId: a.metaAdId, campaignName: a.campaignName },
+          metaImageUsable(a.thumbnailUrl, now) ? a.thumbnailUrl : undefined,
+          2,
+        );
       await ctx.db.insert("ads", a);
     }
-    for (const row of await ctx.db.query("metaTree").collect())
-      await ctx.db.delete(row._id);
-    for (const m of args.metaTree) await ctx.db.insert("metaTree", m);
     for (const row of await ctx.db.query("adChanges").collect())
       await ctx.db.delete(row._id);
     for (const ch of args.adChanges) await ctx.db.insert("adChanges", ch);
@@ -849,15 +1039,15 @@ export const store = internalMutation({
     // nothing checked. Every sync now asserts what the dashboard needs to be
     // true and records what failed; the cockpit shows it. Nobody should have to
     // notice a missing feature by eye. [aziz, 2026-09-06]
+    // A picture counts when it is our saved copy, or a Meta link that has not
+    // expired. A stored preview link no longer counts. [2026-09-16]
     const treeAds = (args.metaTree ?? []).filter(
       (t: { kind?: string }) => t.kind === "ad",
     );
-    const treeWithPreview = treeAds.filter(
-      (t: { previewSrc?: string }) => t.previewSrc,
-    ).length;
+    const treeWithPicture = treeAds.filter(t => hasPicture(t, now)).length;
     const scopedAdRows = args.ads.filter(a => scopedNames.has(a.campaignName));
     const adsWithCreative = scopedAdRows.filter(
-      a => a.previewSrc || a.thumbnailUrl,
+      a => a.stillUrl || metaImageUsable(a.thumbnailUrl, now),
     ).length;
     const health = {
       campaigns: scoped.length,
@@ -865,7 +1055,8 @@ export const store = internalMutation({
       ads: scopedAdRows.length,
       adsWithCreative,
       treeAds: treeAds.length,
-      treeWithPreview,
+      treeWithPicture,
+      stillsWanted: wanted.length,
       offBoard,
     };
     const problems: string[] = [];
@@ -882,9 +1073,9 @@ export const store = internalMutation({
         "Campaigns matched to Meta but no ads came back — the Meta pull failed.",
       );
     }
-    if (health.treeAds > 0 && treeWithPreview / health.treeAds < 0.8) {
+    if (health.treeAds > 0 && treeWithPicture / health.treeAds < 0.8) {
       problems.push(
-        `Only ${treeWithPreview} of ${health.treeAds} ads have a creative preview.`,
+        `Only ${treeWithPicture} of ${health.treeAds} ads have a picture.`,
       );
     }
     if (health.ads > 0 && adsWithCreative / health.ads < 0.8) {
@@ -905,7 +1096,20 @@ export const store = internalMutation({
       health,
       problems,
     });
-    return { campaigns: scoped.length, ads: storedAds, offBoard };
+    const missingStills = wanted
+      .sort((x, y) => x.rank - y.rank)
+      .slice(0, STILLS_PER_SYNC)
+      .map(({ key: _key, rank: _rank, ...item }) =>
+        Object.fromEntries(
+          Object.entries(item).filter(([, x]) => x !== undefined && x !== null),
+        ),
+      ) as StillItem[];
+    return {
+      campaigns: scoped.length,
+      ads: storedAds,
+      offBoard,
+      missingStills,
+    };
   },
 });
 
@@ -1699,8 +1903,16 @@ async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
 
     // Raw daily grain for this campaign, and its bookings tied to ads.
     const adIdsHere = new Set<string>();
+    // The tracker's own ad id per ad name (latest day wins), so an ad that is
+    // no longer in Meta's list can still get its picture and preview.
+    const adIdByName = new Map<string, { id: string; date: string }>();
     for (const d of a.daily.values()) {
-      if (d.metaAdId) adIdsHere.add(d.metaAdId);
+      if (d.metaAdId) {
+        adIdsHere.add(d.metaAdId);
+        const seen = adIdByName.get(d.adName);
+        if (!seen || d.date > seen.date)
+          adIdByName.set(d.adName, { id: d.metaAdId, date: d.date });
+      }
       daily.push({ campaignName: name, ...d });
     }
     if (clientEvents) {
@@ -1759,6 +1971,7 @@ async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
           ad.linkClicks >= 50 ? (ad.leads / ad.linkClicks) * 100 : undefined,
         frequency: ad.freq || undefined,
         thumbnailUrl: sbThumb.get(`${normalize(name)}|${normalize(adName)}`),
+        metaAdId: adIdByName.get(adName)?.id,
         verdict: j.verdict,
         reason: j.reason,
         syncedAt: now,
@@ -2088,22 +2301,14 @@ async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
   }
 
   // Pull the live structure under every campaign we can actually see in the API,
-  // so she can read ad sets and ads — and Meta's own creative preview — in place.
+  // so she can read ad sets and ads in place. Preview links are no longer
+  // fetched here: Meta's expire within a day, so previews.ts fetches one when
+  // someone opens an ad, and pictures come from our own saved stills.
+  // [2026-09-16]
   // biome-ignore lint/suspicious/noExplicitAny: Meta rows
   const metaTree: any[] = [];
-  let previewOk = 0;
-  let previewMissing = 0;
-  // One preview request per ad is the expensive part of the sync, so the
-  // last run's links are reused. But Meta signs them and they expire: on
-  // 2026-09-12 Nada opened an ad and saw "Preview Expired". The cache now
-  // carries the fetch time and anything older than PREVIEW_MAX_AGE_H is
-  // fetched again.
-  const cachedPreview = new Map<string, { src: string; at: number }>(
-    (await ctx.runQuery(internal.sync.previewCache, {})).map(
-      ([id, src, at]) =>
-        [id, { src, at: Number(at) }] as [string, { src: string; at: number }],
-    ),
-  );
+  let pictureOk = 0;
+  let pictureMissing = 0;
   for (const c of campaigns) {
     if (!c.metaAccountId || !c.metaCampaignId) continue;
     try {
@@ -2158,57 +2363,29 @@ async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
         });
       }
 
-      // Every ad, not the first ten. `creative{...}` gives us a still image to
-      // fall back on when the preview iframe is unavailable.
+      // Every ad, not the first ten. The creative id keys the saved still;
+      // its thumbnail is a short-lived Meta link, used only until it expires.
       const adsRes = await graph<any>(`${c.metaCampaignId}/ads`, {
         fields:
           "id,name,status,effective_status,adset_id," +
-          "creative{id,thumbnail_url,image_url,object_story_spec}",
+          "creative{id,thumbnail_url,image_url,object_story_spec{video_data{image_url},link_data{picture}}}",
         limit: 200,
       });
       const ads = (adsRes?.data ?? []) as any[];
 
-      // Previews are one request per ad; run them in small parallel batches so
-      // a 60-ad account doesn't serialise into a timeout.
-      const previews = new Map<string, { src: string; at: number }>();
       for (const ad of ads) {
-        const hit = cachedPreview.get(String(ad.id));
-        if (hit) previews.set(String(ad.id), hit);
-      }
-      const toFetch = ads.filter(ad => !previews.has(String(ad.id)));
-      const BATCH = 8;
-      for (let i = 0; i < toFetch.length; i += BATCH) {
-        const slice = toFetch.slice(i, i + BATCH);
-        await Promise.all(
-          slice.map(async ad => {
-            try {
-              const prev = await graph<any>(`${ad.id}/previews`, {
-                ad_format: "MOBILE_FEED_STANDARD",
-              });
-              const body = String(prev?.data?.[0]?.body ?? "");
-              const src = /src="([^"]+)"/
-                .exec(body)?.[1]
-                ?.replace(/&amp;/g, "&");
-              if (src) previews.set(String(ad.id), { src, at: now });
-            } catch {
-              // Fall through to the creative thumbnail below.
-            }
-          }),
-        );
-      }
-
-      for (const ad of ads) {
-        const preview = previews.get(String(ad.id));
-        const previewSrc = preview?.src;
         const cr = ad.creative ?? {};
+        const creativeId: string | undefined = cr.id
+          ? String(cr.id)
+          : undefined;
         const thumbUrl: string | undefined =
           cr.image_url ??
           cr.thumbnail_url ??
           cr.object_story_spec?.video_data?.image_url ??
           cr.object_story_spec?.link_data?.picture ??
           undefined;
-        if (previewSrc || thumbUrl) previewOk++;
-        else previewMissing++;
+        if (thumbUrl) pictureOk++;
+        else pictureMissing++;
         metaTree.push({
           campaignName: c.campaignName,
           kind: "ad",
@@ -2217,9 +2394,10 @@ async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
           status: String(ad.status ?? ""),
           effectiveStatus: ad.effective_status,
           adsetId: ad.adset_id ? String(ad.adset_id) : undefined,
-          previewSrc,
-          previewAt: preview?.at,
           thumbUrl,
+          accountId: String(c.metaAccountId).replace(/^act_/, ""),
+          creativeId,
+          stillKey: stillKeyFor(creativeId, String(ad.id)),
           syncedAt: now,
         });
       }
@@ -2229,38 +2407,41 @@ async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
   }
   console.log(
     `metaTree: ${metaTree.filter(r => r.kind === "ad").length} ads, ` +
-      `${previewOk} with a preview or thumbnail, ${previewMissing} without`,
+      `${pictureOk} with a Meta picture, ${pictureMissing} without`,
   );
 
   // Give every performance row the creative that produced it. The spend rows
   // and the Meta tree are two different sources keyed by the same ad name, so
   // join them here rather than making the UI guess. Meta's own thumbnail wins
-  // over the Supabase one, which is often stale or missing entirely.
-  const previewByAd = new Map<
-    string,
-    { previewSrc?: string; thumbUrl?: string; metaId: string }
-  >();
+  // over the Supabase one, which is often stale or missing entirely. The
+  // tracker's own ad id is the fallback join when the names differ.
+  type TreeHit = { thumbUrl?: string; metaId: string; stillKey?: string };
+  const treeByName = new Map<string, TreeHit>();
+  const treeById = new Map<string, TreeHit>();
   for (const r of metaTree) {
     if (r.kind !== "ad") continue;
-    previewByAd.set(`${normalize(r.campaignName)}|${normalize(r.name)}`, {
-      previewSrc: r.previewSrc,
+    const hit = {
       thumbUrl: r.thumbUrl,
       metaId: r.metaId,
-    });
+      stillKey: r.stillKey,
+    };
+    treeByName.set(`${normalize(r.campaignName)}|${normalize(r.name)}`, hit);
+    treeById.set(r.metaId, hit);
   }
   let adsWithCreative = 0;
   for (const a of ads) {
-    const hit = previewByAd.get(
-      `${normalize(a.campaignName)}|${normalize(a.adName)}`,
-    );
-    if (!hit) continue;
-    a.metaAdId = hit.metaId;
-    a.previewSrc = hit.previewSrc;
-    if (hit.thumbUrl) a.thumbnailUrl = hit.thumbUrl;
-    if (a.previewSrc || a.thumbnailUrl) adsWithCreative++;
+    const hit =
+      treeByName.get(`${normalize(a.campaignName)}|${normalize(a.adName)}`) ??
+      (a.metaAdId ? treeById.get(a.metaAdId) : undefined);
+    if (hit) {
+      a.metaAdId = hit.metaId;
+      a.stillKey = hit.stillKey;
+      if (hit.thumbUrl) a.thumbnailUrl = hit.thumbUrl;
+    }
+    if (a.thumbnailUrl) adsWithCreative++;
   }
   console.log(
-    `ad performance rows: ${ads.length}, ${adsWithCreative} with a creative`,
+    `ad performance rows: ${ads.length}, ${adsWithCreative} with a Meta picture`,
   );
 
   // Who changed what in each account over the last 7 days.
@@ -2358,14 +2539,27 @@ async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
       : [note];
   }
 
-  const result = (await ctx.runMutation(internal.sync.store, {
-    campaigns,
-    ads,
-    metaTree,
-    adChanges,
-    checks,
-    inbox,
-  })) as SyncResult;
+  const { missingStills, ...result } = await ctx.runMutation(
+    internal.sync.store,
+    {
+      campaigns,
+      ads,
+      metaTree,
+      adChanges,
+      checks,
+      inbox,
+    },
+  );
+  // Ads with no saved still yet: one capture run, at most 30 per sync.
+  if (missingStills.length) {
+    try {
+      await ctx.scheduler.runAfter(0, internal.previews.captureStills, {
+        items: missingStills,
+      });
+    } catch (e) {
+      console.error(`stills: could not schedule: ${String(e).slice(0, 120)}`);
+    }
+  }
 
   // The raw grain goes in its own chunked pass: thousands of rows will not
   // fit in one mutation, and it must never be able to fail the main store.
@@ -2397,15 +2591,22 @@ async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
   // Keep the permanent winners archive in step: it needs the fresh daily
   // grain for the winning window and the fresh Meta tree for whether the ad
   // is still running. A winner that gets switched off is kept, not lost.
+  // It reads four whole tables, so it runs once a day (the 03:00 UTC sync)
+  // and after the weekly collector, not on every sync. [2026-09-16]
   try {
     // The other two cockpits read from what this sync just stored.
     await ctx.scheduler.runAfter(0, internal.fanout.runFanout, {
       withStats: true,
     });
-    const arch = await ctx.runMutation(internal.market.archiveWinners, {});
-    console.log(
-      `winners archive: ${arch.archived} kept (${arch.added} new, ${arch.retired} newly off)`,
-    );
+    // Judged on when this sync started (the 03:00 cron), not when it ends:
+    // a slow run must not skip the day's pass.
+    const clock = new Date(now);
+    if (clock.getUTCHours() === 3 && clock.getUTCMinutes() < 10) {
+      const arch = await ctx.runMutation(internal.market.archiveWinners, {});
+      console.log(
+        `winners archive: ${arch.archived} kept (${arch.added} new, ${arch.retired} newly off)`,
+      );
+    }
   } catch (e) {
     console.error(`winners archive failed: ${String(e)}`);
   }
@@ -2642,23 +2843,6 @@ export const stagePut = internalMutation({
   },
 });
 
-/** Preview iframes already stored, by ad id: reused so a sync costs one call per NEW ad. */
-/** Meta signs preview links and they die after about a day. Refetch past this age. */
-export const PREVIEW_MAX_AGE_H = 18;
-
-export const previewCache = internalQuery({
-  args: {},
-  returns: v.array(v.array(v.string())),
-  handler: async ctx => {
-    const oldest = Date.now() - PREVIEW_MAX_AGE_H * 3600_000;
-    return (await ctx.db.query("metaTree").collect())
-      .filter(
-        t => t.kind === "ad" && t.previewSrc && (t.previewAt ?? 0) > oldest,
-      )
-      .map(t => [t.metaId, String(t.previewSrc), String(t.previewAt ?? 0)]);
-  },
-});
-
 /** Reassemble the staged chunks, if any are present and fresh. */
 export const stagedInput = internalQuery({
   args: {},
@@ -2739,6 +2923,8 @@ export const exportAdPerformance = internalQuery({
     const ads = await ctx.db.query("ads").collect();
     const campaigns = await ctx.db.query("campaigns").collect();
     return {
+      // Lets the feed skip the saved-stills push when the cockpit has them all.
+      latestStillAt: await latestStillAt(ctx.db),
       ads: ads.map(a => ({
         campaignName: a.campaignName,
         adName: a.adName,
@@ -2750,10 +2936,13 @@ export const exportAdPerformance = internalQuery({
         optInRate: a.optInRate,
         frequency: a.frequency,
         thumbnailUrl: a.thumbnailUrl,
-        // The creative director's whole job is the creative, so the preview
-        // travels with the numbers. [aziz, 2026-09-06]
-        previewSrc: a.previewSrc,
+        // The creative director's whole job is the creative, so the picture
+        // travels with the numbers. The live preview is fetched when he opens
+        // it (previews.ts, /bridge/preview). [aziz, 2026-09-06; 2026-09-16]
         metaAdId: a.metaAdId,
+        stillKey: a.stillKey,
+        stillUrl: a.stillUrl,
+        stillTinyUrl: a.stillTinyUrl,
       })),
       campaigns: campaigns.map(c => ({
         campaignName: c.campaignName,
@@ -2775,7 +2964,7 @@ export const exportAdPerformance = internalQuery({
         metaAccountId: c.metaAccountId,
         metaCampaignId: c.metaCampaignId,
       })),
-      // Live ad sets and ads with Meta's previews, so the client view can show
+      // Live ad sets and ads with their pictures, so the client view can show
       // what is actually running right now, not just what spent.
       tree: (await ctx.db.query("metaTree").collect()).map(t => ({
         campaignName: t.campaignName,
@@ -2785,8 +2974,12 @@ export const exportAdPerformance = internalQuery({
         status: t.status,
         effectiveStatus: t.effectiveStatus,
         adsetId: t.adsetId,
-        previewSrc: t.previewSrc,
         thumbUrl: t.thumbUrl,
+        accountId: t.accountId,
+        creativeId: t.creativeId,
+        stillKey: t.stillKey,
+        stillUrl: t.stillUrl,
+        stillTinyUrl: t.stillTinyUrl,
       })),
     };
   },
@@ -2797,15 +2990,21 @@ export const previewCoverage = internalQuery({
   args: {},
   returns: v.any(),
   handler: async ctx => {
+    const now = Date.now();
     const ads = await ctx.db.query("ads").collect();
     const tree = await ctx.db.query("metaTree").collect();
     const treeAds = tree.filter(r => r.kind === "ad");
     return {
       perfAds: ads.length,
-      perfWithThumb: ads.filter(a => a.thumbnailUrl).length,
+      perfWithPicture: ads.filter(
+        a => a.stillUrl || metaImageUsable(a.thumbnailUrl, now),
+      ).length,
+      perfWithSavedStill: ads.filter(a => a.stillUrl).length,
       treeAds: treeAds.length,
-      treeWithPreview: treeAds.filter(r => r.previewSrc).length,
-      treeWithThumb: treeAds.filter(r => r.thumbUrl).length,
+      treeWithPicture: treeAds.filter(r => hasPicture(r, now)).length,
+      treeWithSavedStill: treeAds.filter(r => r.stillUrl).length,
+      treeWithUsableThumb: treeAds.filter(r => metaImageUsable(r.thumbUrl, now))
+        .length,
     };
   },
 });

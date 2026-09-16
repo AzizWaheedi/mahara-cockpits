@@ -99,6 +99,12 @@ const schema = defineSchema({
     launchDate: v.optional(v.string()),
     liveDays: v.optional(v.number()),
     performance: v.optional(v.any()),
+    /**
+     * Campaigns, then ad sets, then ads. Each ad carries name, status, metaId,
+     * accountId and, when the media buyer has one, stillKey, stillUrl,
+     * stillTinyUrl and thumbUrl. Preview links are no longer stored: they are
+     * fetched from the media buyer when someone opens an ad.
+     */
     ads: v.optional(v.array(v.any())),
     adsAccess: v.optional(v.string()),
     live: v.optional(v.any()),
@@ -126,6 +132,33 @@ const schema = defineSchema({
   })
     .index("by_client", ["clientName"])
     .index("by_syncId", ["syncId"]),
+
+  /**
+   * This cockpit's own copy of each saved ad still, so pictures keep showing
+   * while the media buyer's backend is down. Copied once from the media
+   * buyer's file storage through the bridge (storeStills), in the order the
+   * media buyer saved them. `settled` rows (copied, or failed three times)
+   * move the watermark: the media buyer sends everything saved after the
+   * highest settled sourceSavedAt.
+   */
+  adStills: defineTable({
+    key: v.string(),
+    status: v.union(v.literal("copied"), v.literal("failed")),
+    storageId: v.optional(v.id("_storage")),
+    url: v.optional(v.string()),
+    tinyStorageId: v.optional(v.id("_storage")),
+    tinyUrl: v.optional(v.string()),
+    /** The media buyer's savedAt for this still. */
+    sourceSavedAt: v.number(),
+    /** The media buyer's copy it came from. */
+    sourceUrl: v.optional(v.string()),
+    settled: v.boolean(),
+    attempts: v.number(),
+    lastError: v.optional(v.string()),
+    copiedAt: v.optional(v.number()),
+  })
+    .index("by_key", ["key"])
+    .index("by_settled", ["settled", "sourceSavedAt"]),
 
   /**
    * Report documents and questions the CSM asked, both drained by Viktor's bridge.

@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
+import type { ActionCtx } from "./_generated/server";
 import { internalAction, internalQuery } from "./_generated/server";
 import {
   type ClientDataRow,
@@ -939,13 +940,26 @@ export const feedCreative = internalAction({
         internal.sync.exportAdPerformance,
         {},
       );
-      report.performance = ads?.ads?.length
+      const stored: Any = ads?.ads?.length
         ? await bridge("creative", "storeAdPerformance", {
             ads: ads.ads,
             campaigns: ads.campaigns ?? [],
             tree: ads.tree ?? [],
           })
         : "no ads in scope, skipped";
+      report.performance = stored;
+      // The cockpit says how far its copies of our saved stills go; send the rest.
+      try {
+        const sent = await pushStills(
+          ctx,
+          "creative",
+          stored?.stillsWatermark,
+          ads?.latestStillAt,
+        );
+        if (sent !== undefined) report.stills = sent;
+      } catch (e) {
+        fail("stills", e);
+      }
     } catch (e) {
       fail("performance", e);
     }
@@ -1038,6 +1052,11 @@ export const feedCsm = internalAction({
       const out: Any = await ctx.runAction(internal.csmProfiles.push, {});
       profiles = out.profiles;
       errors.push(...(out.errors ?? []));
+      try {
+        await pushStills(ctx, "csm", out.stillsWatermark, out.latestStillAt);
+      } catch (e) {
+        errors.push(`saved pictures: ${String(e).slice(0, 200)}`);
+      }
     } catch (e) {
       errors.push(`client profiles: ${String(e).slice(0, 200)}`);
       console.error(`csm profiles: ${String(e).slice(0, 300)}`);
@@ -1056,6 +1075,32 @@ export const feedCsm = internalAction({
     return { clients, errors };
   },
 });
+
+/** Stills sent to a cockpit in one push; the rest follow on the next feed. */
+const STILLS_PER_PUSH = 40;
+
+/**
+ * Send a cockpit the saved stills it has not copied yet. `watermark` is the
+ * highest savedAt it has settled, returned by its store call; a cockpit that
+ * does not return one has not shipped the receiver, so nothing is sent.
+ */
+async function pushStills(
+  ctx: ActionCtx,
+  app: "creative" | "csm",
+  watermark: unknown,
+  latest: unknown,
+): Promise<string | undefined> {
+  if (typeof watermark !== "number" || !Number.isFinite(watermark))
+    return undefined;
+  if (typeof latest === "number" && watermark >= latest) return "up to date";
+  const stills = await ctx.runQuery(internal.previews.stillsSince, {
+    since: watermark,
+    limit: STILLS_PER_PUSH,
+  });
+  if (stills.length === 0) return "up to date";
+  const out: Any = await bridge(app, "storeStills", { stills });
+  return `${Number(out?.copied ?? 0)} copied, ${Number(out?.failed ?? 0)} failed of ${stills.length}`;
+}
 
 /** Both feeds. Woken by the cron and after the morning sync. */
 export const runFanout = internalAction({
@@ -1085,7 +1130,11 @@ export const rawPlays = internalQuery({
   returns: v.any(),
   handler: async ctx =>
     (await ctx.db.query("marketPlays").collect()).map(
-      ({ _id, _creationTime, syncedAt, ...rest }) => rest,
+      ({ _id, _creationTime, syncedAt, ...rest }) => ({
+        ...rest,
+        // Old rows still carry Meta preview links, which expire within a day.
+        creatives: rest.creatives?.map(({ previewSrc: _dead, ...c }) => c),
+      }),
     ),
 });
 
@@ -1103,7 +1152,6 @@ const WINNER_KEEP = new Set([
   "transcript",
   "hook",
   "voice",
-  "previewSrc",
   "thumbUrl",
   "playType",
   "interests",
@@ -1115,20 +1163,50 @@ const WINNER_KEEP = new Set([
   "wonTo",
   "stillLive",
   "retiredOn",
+  // Pictures and the ad's ids (no preview links: they expire within a day).
+  "creativeId",
+  "accountId",
+  "stillKey",
+  "stillUrl",
+  "stillTinyUrl",
+  // "Save as winner" from Ads management, mirrored as it is.
+  "origin",
+  "autoFirstAt",
+  "savedBy",
+  "savedByName",
+  "savedAt",
+  "savedNote",
+  "savedRange",
+  "savedStats",
+  "unsavedBy",
+  "unsavedAt",
 ]);
 
+const WINNER_ROWS_MAX = 500;
+
+/**
+ * The winners the creative cockpit mirrors. Every row a person saved or
+ * unsaved goes first and is never cut, so a save and its withdrawal always
+ * arrive; then the cheapest leads, up to 500 rows in all.
+ */
 export const winnerRows = internalQuery({
   args: {},
   returns: v.any(),
-  handler: async ctx =>
-    (await ctx.db.query("winnersArchive").collect())
-      .sort((a: Any, b: Any) => (a.cpl ?? 0) - (b.cpl ?? 0))
-      .slice(0, 500)
-      .map((r: Any) =>
-        Object.fromEntries(
-          Object.entries(r).filter(
-            ([k, v]) => WINNER_KEEP.has(k) && v !== null && v !== undefined,
-          ),
+  handler: async ctx => {
+    const rows = await ctx.db.query("winnersArchive").collect();
+    const touched = rows.filter(
+      r => r.savedAt !== undefined || r.unsavedAt !== undefined,
+    );
+    const rest = rows
+      .filter(r => r.savedAt === undefined && r.unsavedAt === undefined)
+      .sort((a, b) => (a.cpl ?? 0) - (b.cpl ?? 0))
+      .slice(0, Math.max(0, WINNER_ROWS_MAX - touched.length));
+    return [...touched, ...rest].map((r: Any) =>
+      Object.fromEntries(
+        Object.entries(r).filter(
+          ([k, x]) => WINNER_KEEP.has(k) && x !== null && x !== undefined,
         ),
       ),
+    );
+  },
 });

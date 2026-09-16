@@ -14,7 +14,11 @@ import {
   Users,
 } from "lucide-react";
 import { useState } from "react";
-import { CreativePreview } from "@/components/CreativePreview";
+import {
+  CreativePreview,
+  stillPropsFor,
+  useLocalStills,
+} from "@/components/CreativePreview";
 import { TemplateCard } from "@/components/TemplateCard";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -912,6 +916,47 @@ function OnboardingSteps({
   );
 }
 
+type LiveAd = {
+  metaId: string;
+  name: string;
+  campaignName?: string;
+  accountId?: string;
+  thumbUrl?: string;
+  stillKey?: string;
+  stillUrl?: string;
+  stillTinyUrl?: string;
+};
+
+/**
+ * One client's live ads as saved pictures. Only rendered for the open client,
+ * so the picture look-up runs for the ads on screen and nothing else.
+ */
+function LiveAdsStrip({ ads, client }: { ads: LiveAd[]; client: string }) {
+  const stills = useLocalStills(ads.map(a => a.stillKey));
+  return (
+    <div>
+      <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+        Live ads ({ads.length}), click one to watch
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {ads.map(a => (
+          <CreativePreview
+            key={a.metaId}
+            name={a.name}
+            metaAdId={a.metaId}
+            accountId={a.accountId}
+            campaignName={a.campaignName}
+            clientName={client}
+            thumbUrl={a.thumbUrl}
+            {...stillPropsFor(a, stills)}
+            size="md"
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** One row per client: branding, production, calendar and ad performance. */
 function ClientProfiles({
   rows,
@@ -1006,30 +1051,7 @@ function ClientProfiles({
                 </div>
 
                 {r.liveAds.length > 0 && (
-                  <div>
-                    <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
-                      Live ads ({r.liveAds.length}) — click to watch
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {r.liveAds.map(
-                        (a: {
-                          metaId: string;
-                          name: string;
-                          previewSrc?: string;
-                          thumbUrl?: string;
-                        }) => (
-                          <CreativePreview
-                            key={a.metaId}
-                            name={a.name}
-                            thumbUrl={a.thumbUrl}
-                            previewSrc={a.previewSrc}
-                            metaAdId={a.metaId}
-                            size="md"
-                          />
-                        ),
-                      )}
-                    </div>
-                  </div>
+                  <LiveAdsStrip ads={r.liveAds} client={r.client} />
                 )}
 
                 {r.videos.length > 0 && (

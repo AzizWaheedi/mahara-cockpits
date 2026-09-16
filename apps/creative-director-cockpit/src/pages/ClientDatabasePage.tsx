@@ -1,8 +1,12 @@
 import { useQuery } from "convex/react";
 import { Search, Sparkles, Users } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
-import { WinningAds } from "@/components/WinningAds";
+import {
+  WinnerFilter,
+  type WinnerOrigin,
+  WinningAds,
+} from "@/components/WinningAds";
 import { api } from "../../convex/_generated/api";
 
 /**
@@ -109,11 +113,20 @@ export function ScriptDatabasePage() {
   const [service, setService] = useState<string>("");
   const [liveOnly, setLiveOnly] = useState(false);
   const [q, setQ] = useState("");
-  const data = useQuery(api.winners.list, {
+  const [origin, setOrigin] = useState<WinnerOrigin>("all");
+  const [savedBy, setSavedBy] = useState("");
+  const latest = useQuery(api.winners.list, {
     serviceLine: service || undefined,
     liveOnly: liveOnly || undefined,
     limit: 200,
+    origin: origin === "all" ? undefined : origin,
+    savedBy: savedBy || undefined,
   });
+  // A new filter loads in the background: keep showing the last list so the
+  // page (and the "Saved by" names it has seen) stays put meanwhile.
+  const kept = useRef(latest);
+  if (latest !== undefined) kept.current = latest;
+  const data = latest ?? kept.current;
   const roster = useQuery(api.clients.roster, {});
 
   const rows = useMemo(() => {
@@ -141,6 +154,7 @@ export function ScriptDatabasePage() {
         </h2>
         <span className="text-[13px] text-muted-foreground">
           {data.total} proven ads, {data.live} still running
+          {data.saved ? `, ${data.saved} saved by the team` : ""}
         </span>
       </div>
       <p className="mb-3 text-[13px] text-muted-foreground">
@@ -181,7 +195,28 @@ export function ScriptDatabasePage() {
         </div>
       </div>
 
-      <WinningAds rows={rows} title="" />
+      <div className="mb-2">
+        <WinnerFilter
+          rows={data.rows}
+          origin={origin}
+          onOrigin={setOrigin}
+          savedBy={savedBy}
+          onSavedBy={setSavedBy}
+        />
+      </div>
+
+      <WinningAds
+        rows={rows}
+        title=""
+        sub="Ads found by the weekly check spent at least $100 at $15 or less a lead. Ads marked Saved were picked by the team, with their numbers from the day they were saved. Click one to read its hook, its copy and, for video, what is actually said and shown on screen."
+        empty={
+          q.trim()
+            ? "No ad here matches that search."
+            : origin === "saved" || savedBy
+              ? "Nobody has saved an ad here yet. The media buyer saves one from the Ads table with Save as winner."
+              : undefined
+        }
+      />
 
       {roster?.clients?.length ? (
         <div className="mt-6">

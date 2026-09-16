@@ -1,13 +1,21 @@
-import { useState } from "react";
-import { CreativePreview } from "@/components/CreativePreview";
+import { Star } from "lucide-react";
+import { useRef, useState } from "react";
+import {
+  CreativePreview,
+  type LocalStill,
+  stillPropsFor,
+  useLocalStills,
+} from "@/components/CreativePreview";
 
 /**
  * The winning ads, word for word.
  *
  * This is deliberately the same view the media buyer has in the media buyer cockpit, on
  * the same rows, so a script starts from an ad that already earned its money
- * instead of a blank page. Every ad here spent at least $100 and stayed under
- * $15 a lead, kept permanently whether it is still switched on or not.
+ * instead of a blank page. Ads found by the weekly check spent at least $100
+ * and stayed under $15 a lead; ads marked Saved were picked by the team in
+ * the media buyer cockpit, with their numbers from the day they were saved.
+ * Both are kept permanently whether the ad is still switched on or not.
  */
 
 function fmtDay(d: string | null | undefined): string {
@@ -20,17 +28,138 @@ function fmtDay(d: string | null | undefined): string {
   });
 }
 
+function fmtDate(ms: number | null | undefined): string {
+  if (!ms) return "";
+  return new Date(ms).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function dollars(n: unknown, digits = 0): string {
+  return typeof n === "number" && Number.isFinite(n)
+    ? `$${n.toLocaleString("en-US", {
+        minimumFractionDigits: digits,
+        maximumFractionDigits: digits,
+      })}`
+    : "n/a";
+}
+
+/**
+ * "Numbers when saved (Last 10 days, 1 Sep to 10 Sep): $420.00 spent, 38
+ * leads, $11.05 a lead", worded as in the media buyer's What works.
+ */
+function savedNumbers(r: any): string | null {
+  const st = r.savedStats;
+  if (!st) return null;
+  const range = r.savedRange
+    ? `${fmtDay(r.savedRange.start)} to ${fmtDay(r.savedRange.end)}`
+    : "";
+  const rangeText = r.savedRange?.label
+    ? `${r.savedRange.label}, ${range}`
+    : range;
+  return `Numbers when saved${rangeText ? ` (${rangeText})` : ""}: ${dollars(st.spend, 2)} spent, ${st.leads} lead${st.leads === 1 ? "" : "s"}, ${dollars(st.cpl, 2)} a lead`;
+}
+
+/** Who saved it, as the media buyer's badge names them. */
+function saverName(r: any): string {
+  return r.savedByName ?? "the team";
+}
+
+export type WinnerOrigin = "all" | "saved" | "auto";
+
+/**
+ * "All", "Saved by the team", "Found by the weekly check", and a "Saved by"
+ * pick when anyone has saved something. People seen once stay in the pick
+ * while the list is narrowed to one of them.
+ */
+export function WinnerFilter({
+  rows,
+  origin,
+  onOrigin,
+  savedBy,
+  onSavedBy,
+}: {
+  rows: any[] | undefined;
+  origin: WinnerOrigin;
+  onOrigin: (o: WinnerOrigin) => void;
+  savedBy: string;
+  onSavedBy: (email: string) => void;
+}) {
+  const people = useRef(new Map<string, string>());
+  for (const r of rows ?? []) {
+    if (r.isSaved && r.savedBy)
+      people.current.set(
+        String(r.savedBy).toLowerCase(),
+        r.savedByName ?? String(r.savedBy).split("@")[0],
+      );
+  }
+  const names = [...people.current.entries()].sort((a, b) =>
+    a[1].localeCompare(b[1]),
+  );
+  const chips: { key: WinnerOrigin; label: string }[] = [
+    { key: "all", label: "All" },
+    { key: "saved", label: "Saved by the team" },
+    { key: "auto", label: "Found by the weekly check" },
+  ];
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {chips.map(c => (
+        <button
+          key={c.key}
+          type="button"
+          onClick={() => {
+            onOrigin(c.key);
+            if (c.key === "auto") onSavedBy("");
+          }}
+          aria-pressed={origin === c.key}
+          className={`rounded-full border px-2.5 py-0.5 text-[12px] font-semibold ${
+            origin === c.key
+              ? "bg-foreground text-background"
+              : "text-muted-foreground hover:bg-muted"
+          }`}
+        >
+          {c.label}
+        </button>
+      ))}
+      {names.length > 0 && origin !== "auto" && (
+        <select
+          value={savedBy}
+          onChange={e => onSavedBy(e.target.value)}
+          aria-label="Saved by"
+          className="ml-1 h-7 rounded-md border bg-background px-2 text-[12px]"
+        >
+          <option value="">Saved by anyone</option>
+          {names.map(([email, name]) => (
+            <option key={email} value={email}>
+              Saved by {name}
+            </option>
+          ))}
+        </select>
+      )}
+    </div>
+  );
+}
+
 export function WinningAds({
   rows,
   title = "The winning ads, word for word",
   sub,
+  empty,
+  local,
 }: {
-  // biome-ignore lint/suspicious/noExplicitAny: query payload is untyped
   rows: any[] | undefined;
   title?: string;
   sub?: string;
+  /** What to say when nothing matches. */
+  empty?: string;
+  /** Saved stills the page already looked up; otherwise this looks them up. */
+  local?: Record<string, LocalStill>;
 }) {
   const [open, setOpen] = useState<string | null>(null);
+  const own = useLocalStills(local ? [] : (rows ?? []).map(r => r.stillKey));
+  const stills = local ?? own;
 
   if (!rows) {
     return <p className="text-[13px] text-muted-foreground">Loading…</p>;
@@ -38,15 +167,15 @@ export function WinningAds({
   if (rows.length === 0) {
     return (
       <p className="text-[13px] text-muted-foreground">
-        Nothing in this service line has cleared the winner bar yet. Widen the
-        filter and read the closest thing to it.
+        {empty ??
+          "Nothing in this service line has cleared the winner bar yet. Widen the filter and read the closest thing to it."}
       </p>
     );
   }
 
   return (
     <div>
-      <h3 className="text-[14px] font-bold">{title}</h3>
+      {title && <h3 className="text-[14px] font-bold">{title}</h3>}
       <p className="mb-2 text-[12px] text-muted-foreground">
         {sub ??
           "Click one to read its hook, its copy and, for video, what is actually said and shown on screen."}
@@ -54,31 +183,71 @@ export function WinningAds({
       <div className="divide-y rounded-lg border">
         {rows.map(r => {
           const isOpen = open === r.adId;
+          const numbersWhenSaved = r.isSaved ? savedNumbers(r) : null;
           return (
             <div key={r.adId}>
               <div className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-muted/50">
                 <CreativePreview
                   name={r.adName}
-                  thumbUrl={r.thumbUrl ?? undefined}
-                  previewSrc={r.previewSrc ?? undefined}
                   metaAdId={r.adId}
+                  accountId={r.accountId ?? undefined}
+                  campaignName={r.campaignName ?? undefined}
+                  thumbUrl={r.thumbUrl ?? undefined}
+                  {...stillPropsFor(r, stills)}
                 />
                 <span className="w-14 shrink-0 text-right text-[13px] font-bold tabular-nums">
-                  ${Number(r.cpl).toFixed(2)}
+                  {typeof r.cpl === "number" ? `$${r.cpl.toFixed(2)}` : "n/a"}
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[13px] font-medium">
-                    {r.client}
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <span className="truncate text-[13px] font-medium">
+                      {r.client}
+                    </span>
+                    {r.isSaved && (
+                      <span
+                        className="flex shrink-0 items-center gap-0.5 rounded border px-1 text-[10px] font-semibold"
+                        title={
+                          r.savedAt
+                            ? `Saved to What works by ${saverName(r)} on ${fmtDate(r.savedAt)}`
+                            : undefined
+                        }
+                      >
+                        <Star className="h-2.5 w-2.5 fill-current" />
+                        Saved by {saverName(r)}
+                      </span>
+                    )}
+                    {r.isSaved && r.isAuto && (
+                      <span
+                        className="shrink-0 rounded border px-1 text-[10px] text-muted-foreground"
+                        title="The weekly check also picked this ad"
+                      >
+                        Weekly check
+                      </span>
+                    )}
                   </span>
                   <span className="block truncate text-[12px] text-muted-foreground">
                     {r.hook || r.headline || r.adName}
                   </span>
+                  {r.isSaved && r.savedNote && (
+                    <span
+                      className="block whitespace-pre-wrap text-[12px]"
+                      dir="auto"
+                    >
+                      <span className="font-semibold">Why it works: </span>
+                      {r.savedNote}
+                    </span>
+                  )}
+                  {numbersWhenSaved && (
+                    <span className="block text-[11px] text-muted-foreground">
+                      {numbersWhenSaved}
+                    </span>
+                  )}
                 </span>
                 <span className="shrink-0 text-right text-[11px] text-muted-foreground">
                   {r.leads} leads · ${r.spend} · {r.city ?? "Unknown"}
                   <span className="block">
                     {r.wonFrom
-                      ? `won ${fmtDay(r.wonFrom)}${r.wonTo && r.wonTo !== r.wonFrom ? `–${fmtDay(r.wonTo)}` : ""}`
+                      ? `won ${fmtDay(r.wonFrom)}${r.wonTo && r.wonTo !== r.wonFrom ? ` to ${fmtDay(r.wonTo)}` : ""}`
                       : ""}
                     {r.stillLive === false ? (
                       <span

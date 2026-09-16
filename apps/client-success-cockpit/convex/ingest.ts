@@ -1,5 +1,6 @@
 import { internal } from "./_generated/api";
 import type { ActionCtx } from "./_generated/server";
+import { copyStills } from "./previews";
 
 /**
  * The machine door for Viktor's sync bridge, reached over HTTP (`POST /bridge`).
@@ -55,6 +56,10 @@ export async function runBridge(
       return await ctx.runMutation(internal.csmSync.commitProfiles, {
         syncId: args.syncId,
       });
+    // The media buyer's saved ad stills, copied into this deployment's own
+    // file storage so pictures keep showing while its backend is down.
+    case "storeStills":
+      return await copyStills(ctx, args.stills);
     case "pending":
       return await ctx.runQuery(internal.outbox.pending, {});
     case "markSent":

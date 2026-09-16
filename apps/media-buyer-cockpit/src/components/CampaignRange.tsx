@@ -4,6 +4,7 @@ import type { Range } from "@/lib/range";
 import { rangeDays } from "@/lib/range";
 import { api } from "../../convex/_generated/api";
 import { RangePicker } from "./RangePicker";
+import { SaveWinnerButton } from "./SaveWinnerButton";
 import { CampaignTrend } from "./Trends";
 
 /**
@@ -40,17 +41,19 @@ function quietCount(rows: Row[], names?: string[]): number {
 }
 
 function money(n: number | undefined, dp = 0) {
-  if (n === undefined || n === null || Number.isNaN(n)) return "—";
+  if (n === undefined || n === null || Number.isNaN(n)) return "n/a";
   return `$${n.toFixed(dp)}`;
 }
 
 function pct(n: number | undefined) {
-  if (n === undefined || n === null || Number.isNaN(n)) return "—";
+  if (n === undefined || n === null || Number.isNaN(n)) return "n/a";
   return `${n.toFixed(2)}%`;
 }
 
 type Row = {
   key: string;
+  /** The Meta ad ids behind this row (several ads can share one name). */
+  adIds?: string[];
   spend: number;
   leads: number;
   cpl?: number;
@@ -63,6 +66,9 @@ type Row = {
   frequency?: number;
   bookingsAttributed: boolean;
 };
+
+/** One row of the ad set or ad table, as the page's render callbacks get it. */
+export type RangeRow = Row;
 
 export function CampaignRange({
   campaignName,
@@ -81,9 +87,9 @@ export function CampaignRange({
   /** Done With You: we do not book for them, so booking columns are hidden. */
   leadsOnly?: boolean;
   /** The creative thumbnail and name, owned by the page. */
-  renderAdCell?: (adName: string) => ReactNode;
+  renderAdCell?: (adName: string, row?: RangeRow) => ReactNode;
   /** The verdict badge and on/off toggle, owned by the page. */
-  renderAdCall?: (adName: string) => ReactNode;
+  renderAdCall?: (adName: string, row?: RangeRow) => ReactNode;
 }) {
   const coverage = useQuery(api.stats.coverage, {});
   const data = useQuery(api.stats.range, {
@@ -91,6 +97,20 @@ export function CampaignRange({
     start: range.start,
     end: range.end,
   });
+
+  // Which ads in this table are already in What works: one read per open
+  // panel, for every "Save as winner" button in it.
+  const adIds = [
+    ...new Set(
+      ((data?.ads ?? []) as Row[]).flatMap(r =>
+        r.leads > 0 ? (r.adIds ?? []) : [],
+      ),
+    ),
+  ].sort();
+  const savedIn = useQuery(
+    api.winnerSaves.savedIn,
+    adIds.length > 0 ? { adIds } : "skip",
+  );
 
   const days = rangeDays(range);
 
@@ -112,7 +132,7 @@ export function CampaignRange({
         <div className="mb-2 rounded border callout-warn px-2.5 py-1.5 text-[12px]">
           The tracker sheet has spend up to{" "}
           <span className="font-semibold">{coverage.last}</span>. Anything after
-          that is not missing — it has not been pulled yet, so today's numbers
+          that is not missing: it has not been pulled yet, so today's numbers
           appear tomorrow morning.
         </div>
       )}
@@ -128,7 +148,7 @@ export function CampaignRange({
           No spend recorded for this campaign between {range.start} and{" "}
           {range.end}.
           {days <= 2 &&
-            " Today's numbers only appear once the tracker has pulled the day — before that this is genuinely empty rather than zero."}
+            " Today's numbers only appear once the tracker has pulled the day. Before that this is genuinely empty rather than zero."}
         </div>
       )}
 
@@ -209,6 +229,15 @@ export function CampaignRange({
             leadsOnly={leadsOnly}
             renderKey={renderAdCell}
             renderTail={renderAdCall}
+            renderSave={r => (
+              <SaveWinnerButton
+                campaignName={campaignName}
+                range={range}
+                row={r}
+                leadsOnly={leadsOnly}
+                savedIn={savedIn}
+              />
+            )}
             tailTitle="Call"
           />
           {quietCount(data.ads as Row[], extraAds) > 0 && (
@@ -241,6 +270,7 @@ function Table({
   rows,
   renderKey,
   renderTail,
+  renderSave,
   tailTitle,
   emptyNote,
   leadsOnly,
@@ -248,18 +278,21 @@ function Table({
   title: string;
   rows: Row[];
   leadsOnly?: boolean;
-  renderKey?: (key: string) => ReactNode;
-  renderTail?: (key: string) => ReactNode;
+  renderKey?: (key: string, row?: Row) => ReactNode;
+  renderTail?: (key: string, row?: Row) => ReactNode;
+  /** "Save as winner", in the tail cell after the page's own controls. */
+  renderSave?: (row: Row) => ReactNode;
   tailTitle?: string;
   emptyNote?: string;
 }) {
+  const hasTail = Boolean(renderTail || renderSave);
   if (!rows || rows.length === 0) {
     return emptyNote ? (
       <p className="mb-2 text-[12px] text-muted-foreground">{emptyNote}</p>
     ) : null;
   }
   return (
-    <div className="mb-3">
+    <div className="mb-3 overflow-x-auto">
       <div className="mb-1 text-[12px] font-bold">{title}</div>
       <table className="w-full text-[13px]">
         <thead>
@@ -293,14 +326,14 @@ function Table({
               Opt-in
             </th>
             <th className="text-left">Freq</th>
-            {renderTail && <th className="text-left">{tailTitle ?? ""}</th>}
+            {hasTail && <th className="text-left">{tailTitle ?? ""}</th>}
           </tr>
         </thead>
         <tbody>
           {rows.map(r => (
             <tr key={r.key} className="border-t">
               <td className="py-1.5 font-semibold">
-                {renderKey ? renderKey(r.key) : r.key}
+                {renderKey ? renderKey(r.key, r) : r.key}
               </td>
               <td className="tabular-nums">{money(r.spend, 2)}</td>
               <td className="tabular-nums">{r.leads}</td>
@@ -332,7 +365,7 @@ function Table({
                         className="text-muted-foreground"
                         title="No booking in this window carried an ad id"
                       >
-                        —
+                        n/a
                       </span>
                     )}
                   </td>
@@ -345,7 +378,7 @@ function Table({
                           : "txt-good"
                     }`}
                   >
-                    {r.bookingsAttributed ? money(r.costPerBooking, 0) : "—"}
+                    {r.bookingsAttributed ? money(r.costPerBooking, 0) : "n/a"}
                   </td>
                 </>
               )}
@@ -353,9 +386,16 @@ function Table({
               <td className="tabular-nums">{money(r.cpm, 2)}</td>
               <td className="tabular-nums">{pct(r.optInRate)}</td>
               <td className="tabular-nums">
-                {r.frequency ? r.frequency.toFixed(2) : "—"}
+                {r.frequency ? r.frequency.toFixed(2) : "n/a"}
               </td>
-              {renderTail && <td>{renderTail(r.key)}</td>}
+              {hasTail && (
+                <td>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {renderTail?.(r.key, r)}
+                    {renderSave?.(r)}
+                  </div>
+                </td>
+              )}
             </tr>
           ))}
         </tbody>

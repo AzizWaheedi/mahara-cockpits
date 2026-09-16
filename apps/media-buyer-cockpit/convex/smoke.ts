@@ -9,6 +9,7 @@ import { buildSnapshot } from "./cockpit";
 import { bridge } from "./comms";
 import { AZIZ_SLACK_ID } from "./constants";
 import { flush, recordManyDirect } from "./health";
+import { runRotCheck } from "./previews";
 import { callTool } from "./tools";
 
 // biome-ignore lint/suspicious/noExplicitAny: check payloads
@@ -93,7 +94,29 @@ export const check = internalAction({
   returns: v.any(),
   handler: async ctx => {
     const results: Any[] = [];
-    results.push(await ctx.runQuery(internal.smoke.local, {}));
+    const local: Any = await ctx.runQuery(internal.smoke.local, {});
+    // Once a day (the 03:07 UTC run): do the saved ad pictures still load, and
+    // does every winner and live ad have one? Its lines join this cockpit's
+    // checks, so the Slack alert, the health record and the watchdog see them.
+    const clock = new Date();
+    if (clock.getUTCHours() === 3 && clock.getUTCMinutes() < 15) {
+      try {
+        const rot = await runRotCheck(ctx);
+        local.checks = [...(local.checks ?? []), ...rot.checks];
+        local.ok = Boolean(local.ok) && rot.ok;
+      } catch (e) {
+        local.checks = [
+          ...(local.checks ?? []),
+          {
+            name: "previews check",
+            ok: false,
+            error: String(e).slice(0, 300),
+          },
+        ];
+        local.ok = false;
+      }
+    }
+    results.push(local);
     for (const app of ["csm", "creative"] as const) {
       try {
         results.push(await bridge(app, "smoke", {}));

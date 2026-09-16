@@ -5,6 +5,7 @@ import {
   type QueryCtx,
 } from "./_generated/server";
 import { authenticatedQuery } from "./functions";
+import { stillsWatermark } from "./previews";
 import { assertRole } from "./roles";
 
 /**
@@ -95,6 +96,11 @@ export const storeCreative = internalMutation({
  * Only the fields the creative screens read — no spend totals beyond what a
  * CPL needs, no budgets, no revenue. He sees which creative is working, not the
  * commercials of the account.
+ *
+ * Preview links are no longer kept (they expire in a day). Each ad carries
+ * the key of its saved still and the media buyer's copies of it instead.
+ * The answer includes `stillsWatermark`, which tells the media buyer which
+ * saved stills this cockpit still needs.
  */
 export const storeAdPerformance = internalMutation({
   args: {
@@ -102,7 +108,11 @@ export const storeAdPerformance = internalMutation({
     campaigns: v.array(v.any()),
     tree: v.optional(v.array(v.any())),
   },
-  returns: v.object({ ads: v.number(), campaigns: v.number() }),
+  returns: v.object({
+    ads: v.number(),
+    campaigns: v.number(),
+    stillsWatermark: v.number(),
+  }),
   handler: async (ctx, { ads, campaigns, tree }) => {
     const now = Date.now();
     if (ads.length === 0) {
@@ -123,8 +133,10 @@ export const storeAdPerformance = internalMutation({
         ctr: row.ctr ?? row.linkCtr,
         frequency: row.frequency,
         thumbnailUrl: row.thumbnailUrl,
-        previewSrc: row.previewSrc,
         metaAdId: row.metaAdId,
+        stillKey: row.stillKey,
+        stillUrl: row.stillUrl,
+        stillTinyUrl: row.stillTinyUrl,
         syncedAt: now,
       });
     }
@@ -167,14 +179,22 @@ export const storeAdPerformance = internalMutation({
           status: row.status,
           effectiveStatus: row.effectiveStatus,
           adsetId: row.adsetId,
-          previewSrc: row.previewSrc,
           thumbUrl: row.thumbUrl,
+          accountId: row.accountId,
+          creativeId: row.creativeId,
+          stillKey: row.stillKey,
+          stillUrl: row.stillUrl,
+          stillTinyUrl: row.stillTinyUrl,
           syncedAt: now,
         });
       }
     }
 
-    return { ads: ads.length, campaigns: campaigns.length };
+    return {
+      ads: ads.length,
+      campaigns: campaigns.length,
+      stillsWatermark: await stillsWatermark(ctx),
+    };
   },
 });
 

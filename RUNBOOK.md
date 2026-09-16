@@ -58,6 +58,43 @@ ClickBot, sales handoffs and research reports are skipped. Every sync also puts
 Do's & Don'ts into the clean DO / DON'T format and moves notes to a comment.
 No digests appearing means Hermes is not polling (see the Hermes row above).
 
+## Previews
+
+Ad previews and pictures in all three cockpits (health row "Ad previews and
+saved pictures", owner Hermes or Aziz).
+
+How they work. Meta's links do not last: a live preview link dies after a
+day and a Meta image link after a few days. So nothing keeps them:
+
+- The live preview is fetched from Meta when someone opens an ad, and the
+  answer is reused for 20 hours by all three cockpits. The creative and
+  client success cockpits ask the media buyer backend for it
+  (`/bridge/preview`, with the bridge tokens they already have).
+- One small picture per creative is saved in the media buyer's own file
+  storage, the first time the sync sees it, when a winner is archived, or
+  when someone saves a winner. It is never fetched again, so a winner keeps
+  its picture after the ad is deleted in Meta. The other two cockpits copy
+  those pictures into their own storage, so pictures still show while the
+  media buyer backend is down.
+- When nothing else works, the cockpit shows a grey box that says why, with
+  an "Open in Ads Manager" link.
+
+Every day at 03:07 UTC the smoke check also checks the pictures. What its
+lines mean:
+
+| Check | Means | Fix | Who |
+| --- | --- | --- | --- |
+| `previews saved pictures load` fails | Saved pictures are not served | Open the media buyer deployment's File Storage page in the Convex dashboard and check the storage limit; a disabled deployment serves nothing | Aziz |
+| `previews winners with a picture` fails ("N of M winners have no saved picture") | Pictures could not be saved | Check the Meta Ads row first (a broken token stops every save). Failed ones are retried by themselves: up to five tries, then once a week. Winners deleted in Meta before a picture was saved are only reported and cannot be recovered | Hermes or Aziz |
+| `previews live ads with a picture` fails | Under 90% of running ads have a picture | Usually the Meta token or a Meta outage; the next syncs save the missing ones | Hermes or Aziz |
+| `previews storage` fails | Saved pictures use over 500 MB | Check the Convex plan's storage limit before it fills; nothing is deleted automatically | Aziz |
+
+The live preview says "Meta no longer has this ad" for a deleted ad or an
+unshared ad account, and "Mahara's Meta access does not cover this ad
+account" when the client has not shared the account; both show the saved
+picture instead. "The media buyer system is offline" in the creative or
+client success cockpit means the media buyer deployment is not answering.
+
 ## What never needs a person
 
 - Rate limits: every Google, ClickUp and Meta call waits and retries.

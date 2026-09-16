@@ -79,7 +79,7 @@ async function matches(
   if (!campaignName && s.metaId) {
     const node = await ctx.db
       .query("metaTree")
-      .filter((q: Ctx) => q.eq(q.field("metaId"), s.metaId))
+      .withIndex("by_meta", (q: Ctx) => q.eq("metaId", s.metaId))
       .first();
     campaignName = node?.campaignName;
   }

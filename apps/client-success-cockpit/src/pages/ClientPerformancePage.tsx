@@ -2,6 +2,11 @@ import { useMutation, useQuery } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ClientUpdates } from "@/components/ClientUpdates";
+import {
+  CreativePreview,
+  stillPropsFor,
+  useLocalStills,
+} from "@/components/CreativePreview";
 import { DosDontsCard } from "@/components/DosDonts";
 import { bucketDays, TrendChart } from "@/components/TrendChart";
 import { Button } from "@/components/ui/button";
@@ -223,8 +228,20 @@ function openReport(p: Any) {
   w.document.close();
 }
 
-function AdTree({ ads }: { ads: Any[] }) {
-  const [openAd, setOpenAd] = useState<string | null>(null);
+/**
+ * Campaigns, ad sets and ads, each ad with its saved picture. Opening an ad
+ * fetches Meta's live preview through the media buyer system; when that is
+ * not available (the media buyer is down, or Meta refused) the saved picture
+ * shows with the reason. No preview link is stored on the profile.
+ */
+function AdTree({ ads, clientName }: { ads: Any[]; clientName: string }) {
+  const stills = useLocalStills(
+    (ads ?? []).flatMap((c: Any) =>
+      (c.adsets ?? []).flatMap((s: Any) =>
+        (s.ads ?? []).map((a: Any) => a.stillKey),
+      ),
+    ),
+  );
   if (!ads?.length)
     return (
       <p className="text-sm text-muted-foreground">
@@ -255,49 +272,48 @@ function AdTree({ ads }: { ads: Any[] }) {
           </div>
           {(c.adsets ?? []).length === 0 ? (
             <p className="px-3 py-2 text-xs text-muted-foreground">
-              Meta will not show us the ad sets or the creative for this
-              account. Mahara's Meta app has not been granted access to ad
-              account {c.accountId ?? "this one"}, so the spend and lead numbers
-              above come from the campaign report while the previews stay
-              locked. Fix is in Meta Business Settings: assign the account to
-              Mahara's portfolio, then reauthorize with it selected.
+              Meta did not return the ad sets for this campaign. Either Mahara's
+              Meta access does not cover ad account {c.accountId ?? "(unknown)"}
+              , or the campaign name on the ads board does not match Meta.
             </p>
           ) : null}
           <div className="divide-y">
-            {(c.adsets ?? []).map((s: Any) => (
-              <div key={s.name} className="px-3 py-2">
+            {(c.adsets ?? []).map((s: Any, si: number) => (
+              <div key={s.metaId ?? `${s.name}:${si}`} className="px-3 py-2">
                 <div className="text-sm font-medium">
                   {s.name}{" "}
                   <span className="text-xs font-normal text-muted-foreground">
                     {s.status}
                   </span>
                 </div>
-                <div className="mt-1 flex flex-wrap gap-2">
-                  {(s.ads ?? []).map((ad: Any) => (
-                    <Button
-                      key={ad.name + ad.previewSrc}
-                      size="sm"
-                      variant={
-                        openAd === ad.previewSrc ? "default" : "secondary"
-                      }
-                      onClick={() =>
-                        setOpenAd(
-                          openAd === ad.previewSrc ? null : ad.previewSrc,
-                        )
-                      }
+                <div className="mt-1 space-y-1">
+                  {(s.ads ?? []).map((ad: Any, ai: number) => (
+                    <div
+                      key={ad.metaId ?? `${ad.name}:${ai}`}
+                      className="flex items-center gap-2"
                     >
-                      {ad.name} · {ad.status}
-                    </Button>
+                      <CreativePreview
+                        name={String(ad.name ?? "Ad")}
+                        metaAdId={ad.metaId ?? undefined}
+                        accountId={ad.accountId ?? c.accountId ?? undefined}
+                        clientName={clientName}
+                        campaignName={c.campaign}
+                        thumbUrl={ad.thumbUrl ?? undefined}
+                        {...stillPropsFor(ad, stills)}
+                        size="sm"
+                      />
+                      <span
+                        className="min-w-0 flex-1 truncate text-sm"
+                        dir="auto"
+                      >
+                        {ad.name}
+                      </span>
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {ad.status}
+                      </span>
+                    </div>
                   ))}
                 </div>
-                {(s.ads ?? []).some((a: Any) => a.previewSrc === openAd) &&
-                openAd ? (
-                  <iframe
-                    title="Ad preview"
-                    src={openAd}
-                    className="mt-2 h-[520px] w-full max-w-[420px] rounded-md border"
-                  />
-                ) : null}
               </div>
             ))}
           </div>
@@ -1840,7 +1856,7 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
         <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
           Live campaigns, ad sets and ads
         </h3>
-        <AdTree ads={(p.ads ?? []) as Any[]} />
+        <AdTree ads={(p.ads ?? []) as Any[]} clientName={name} />
       </section>
 
       <ReportSection p={p} />

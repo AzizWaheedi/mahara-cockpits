@@ -610,9 +610,14 @@ export const winners = authenticatedQuery({
           campaignName: a.campaignName,
           clientName: c?.clientName ?? c?.accountName ?? "",
           serviceType: c?.serviceType,
+          // Meta's own picture link (it expires), our saved still (it does
+          // not), and the ids the live preview is fetched with.
           thumbnailUrl: a.thumbnailUrl,
-          previewSrc: a.previewSrc,
           metaAdId: a.metaAdId,
+          accountId: c?.metaAccountId,
+          stillKey: a.stillKey,
+          stillUrl: a.stillUrl,
+          stillTinyUrl: a.stillTinyUrl,
           spend: a.spend,
           leads: a.leads,
           cpl: a.cpl,

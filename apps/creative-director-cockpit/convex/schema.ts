@@ -2,6 +2,34 @@ import { authTables } from "@convex-dev/auth/server";
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
+/**
+ * A manual "Save as winner" in the media buyer cockpit: the date range the
+ * numbers were read over. Same shape as the media buyer's schema.
+ */
+const vSavedRange = v.object({
+  start: v.string(),
+  end: v.string(),
+  label: v.optional(v.string()),
+});
+
+/** A manual "Save as winner": the ad's own numbers over that range, at save time. */
+const vSavedStats = v.object({
+  spend: v.number(),
+  leads: v.number(),
+  cpl: v.optional(v.number()),
+  impressions: v.optional(v.number()),
+  linkClicks: v.optional(v.number()),
+  linkCtr: v.optional(v.number()),
+  cpm: v.optional(v.number()),
+  optInRate: v.optional(v.number()),
+  frequency: v.optional(v.number()),
+  bookings: v.optional(v.number()),
+  showed: v.optional(v.number()),
+  costPerBooking: v.optional(v.number()),
+  /** False when no booking in the range could be traced to an ad, so cost per booking is blank. */
+  bookingsAttributed: v.optional(v.boolean()),
+});
+
 const schema = defineSchema({
   ...authTables,
 
@@ -76,8 +104,14 @@ const schema = defineSchema({
     ctr: v.optional(v.number()),
     frequency: v.optional(v.number()),
     thumbnailUrl: v.optional(v.string()),
+    /** No longer sent: previews are fetched from the media buyer when opened. */
     previewSrc: v.optional(v.string()),
     metaAdId: v.optional(v.string()),
+    /** Which saved still this ad uses: "c:<creative id>" or "a:<ad id>" (see adStills). */
+    stillKey: v.optional(v.string()),
+    /** The media buyer's saved copy of the still (about 320px and 96px). */
+    stillUrl: v.optional(v.string()),
+    stillTinyUrl: v.optional(v.string()),
     syncedAt: v.number(),
   }).index("by_ad", ["campaignName", "adName"]),
 
@@ -114,6 +148,13 @@ const schema = defineSchema({
     adsetId: v.optional(v.string()),
     previewSrc: v.optional(v.string()),
     thumbUrl: v.optional(v.string()),
+    /** The ad account (digits, no act_ prefix), for Ads Manager links. */
+    accountId: v.optional(v.string()),
+    creativeId: v.optional(v.string()),
+    /** Which saved still this ad uses (see adStills), and the media buyer's copies of it. */
+    stillKey: v.optional(v.string()),
+    stillUrl: v.optional(v.string()),
+    stillTinyUrl: v.optional(v.string()),
     syncedAt: v.number(),
   }).index("by_campaign", ["campaignName"]),
 
@@ -322,6 +363,9 @@ const schema = defineSchema({
           previewSrc: v.optional(v.string()),
           /** Still image fallback, which loads instantly in a list. */
           thumbUrl: v.optional(v.string()),
+          /** Mirrors the media buyer's marketPlays: creative id and saved still key. */
+          creativeId: v.optional(v.string()),
+          stillKey: v.optional(v.string()),
           spend: v.number(),
           leads: v.number(),
           cpl: v.optional(v.number()),
@@ -360,10 +404,60 @@ const schema = defineSchema({
     wonTo: v.optional(v.string()),
     stillLive: v.optional(v.boolean()),
     retiredOn: v.optional(v.string()),
+    /** The ad's creative id and ad account, for saved stills and Ads Manager links. */
+    creativeId: v.optional(v.string()),
+    accountId: v.optional(v.string()),
+    /** Which saved still this ad uses (see adStills), and the media buyer's copies of it. */
+    stillKey: v.optional(v.string()),
+    stillUrl: v.optional(v.string()),
+    stillTinyUrl: v.optional(v.string()),
+    /** "auto" (the weekly collector's rule) or "manual" (Save as winner). Absent means auto. */
+    origin: v.optional(v.union(v.literal("auto"), v.literal("manual"))),
+    autoFirstAt: v.optional(v.number()),
+    /**
+     * "Save as winner" in the media buyer cockpit, mirrored. A save counts
+     * while savedAt is later than unsavedAt (or there is no unsavedAt). Rows
+     * are never deleted here, so an unsave arrives as unsavedAt.
+     */
+    savedBy: v.optional(v.string()),
+    savedByName: v.optional(v.string()),
+    savedAt: v.optional(v.number()),
+    savedNote: v.optional(v.string()),
+    savedRange: v.optional(vSavedRange),
+    savedStats: v.optional(vSavedStats),
+    unsavedBy: v.optional(v.string()),
+    unsavedAt: v.optional(v.number()),
     syncedAt: v.number(),
   })
     .index("by_ad", ["adId"])
     .index("by_service", ["serviceLine"]),
+
+  /**
+   * This cockpit's own copy of each saved ad still, so pictures keep showing
+   * while the media buyer's backend is down. Copied once from the media
+   * buyer's file storage through the bridge (storeStills), in the order the
+   * media buyer saved them. `settled` rows (copied, or failed three times)
+   * move the watermark: the media buyer sends everything saved after the
+   * highest settled sourceSavedAt.
+   */
+  adStills: defineTable({
+    key: v.string(),
+    status: v.union(v.literal("copied"), v.literal("failed")),
+    storageId: v.optional(v.id("_storage")),
+    url: v.optional(v.string()),
+    tinyStorageId: v.optional(v.id("_storage")),
+    tinyUrl: v.optional(v.string()),
+    /** The media buyer's savedAt for this still. */
+    sourceSavedAt: v.number(),
+    /** The media buyer's copy it came from. */
+    sourceUrl: v.optional(v.string()),
+    settled: v.boolean(),
+    attempts: v.number(),
+    lastError: v.optional(v.string()),
+    copiedAt: v.optional(v.number()),
+  })
+    .index("by_key", ["key"])
+    .index("by_settled", ["settled", "sourceSavedAt"]),
 
   creativeOutbox: defineTable({
     /** comment | complete | videoRequest */

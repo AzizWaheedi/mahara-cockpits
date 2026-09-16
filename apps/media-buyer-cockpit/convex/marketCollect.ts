@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalAction } from "./_generated/server";
+import { creativeCopyParts, readCreativeCopy, stillKeyFor } from "./metaMedia";
 import { allAdAccounts, callTool, graph, unwrap } from "./tools";
 
 /**
@@ -28,9 +29,6 @@ const DATABASE = "1_0Nv-IFvzhH4NBNh1dxCUm6Ryp414ctM_8EO5QORBF0";
 
 // Aziz, 2026-09-05: the MaharaMedia account is his own lead gen, not a client.
 const SKIP_ACCOUNTS = new Set(["maharamedia"]);
-
-// Ads with at least this much spend get Meta's rendered preview fetched.
-const PREVIEW_MIN_SPEND = 100;
 
 /**
  * Exact client / ad-account name (lower-cased) -> service line. Beats the
@@ -203,46 +201,8 @@ async function loadFromMeta(): Promise<ClientLabel[]> {
 
 // --- creative side of a play -------------------------------------------------
 
-const CTA_CLEAN: Record<string, string> = {
-  LEARN_MORE: "Learn more",
-  SIGN_UP: "Sign up",
-  GET_QUOTE: "Get quote",
-  CONTACT_US: "Contact us",
-  MESSAGE_PAGE: "Message",
-  WHATSAPP_MESSAGE: "WhatsApp",
-  BOOK_TRAVEL: "Book",
-  APPLY_NOW: "Apply now",
-  GET_OFFER: "Get offer",
-  DOWNLOAD: "Download",
-  SUBSCRIBE: "Subscribe",
-};
-
-/** Cut a string by characters, never inside an emoji's surrogate pair. */
-function clip(s: string | undefined, n: number): string | undefined {
-  if (!s) return undefined;
-  return Array.from(s).slice(0, n).join("");
-}
-
-// biome-ignore lint/suspicious/noExplicitAny: Meta payload
-function creativeFormat(spec: any): string {
-  if (!spec) return "unknown";
-  if (spec.video_data) return "video";
-  const link = spec.link_data ?? {};
-  if (link.child_attachments) return "carousel";
-  if (spec.link_data) return "image";
-  return "unknown";
-}
-
-// biome-ignore lint/suspicious/noExplicitAny: Meta payload
-function copyParts(
-  spec: any,
-): [string | undefined, string | undefined, string | undefined] {
-  const block = spec?.video_data ?? spec?.link_data ?? {};
-  const body = block.message || undefined;
-  const headline = block.title || block.name || undefined;
-  const cta: string | undefined = block.call_to_action?.type || undefined;
-  return [body, headline, cta ? (CTA_CLEAN[cta] ?? cta) : undefined];
-}
+// Format, call to action and copy parsing live in metaMedia.ts
+// (readCreativeCopy), shared with previews.adDetails.
 
 /**
  * Describe the copy rather than storing a wall of it. What matters for
@@ -293,29 +253,35 @@ function readCreatives(ads: any[]) {
   for (const ad of ads) {
     const cr = ad.creative ?? {};
     const spec = cr.object_story_spec ?? {};
-    const fmt = creativeFormat(spec);
-    const [body, headline, cta] = copyParts(spec);
-    const [t, lang] = copyTraits(body, headline);
+    // Traits read the whole copy; the stored copy is cut (headline 120,
+    // body 300: enough to recognise the angle, not a full transcript).
+    const full = creativeCopyParts(spec);
+    const copy = readCreativeCopy(cr);
+    const [t, lang] = copyTraits(full.body, full.headline);
     const { spend, leads } = leadsOf(ad.insights);
-    formats.add(fmt);
-    if (cta) ctas.add(cta);
+    formats.add(copy.format);
+    if (copy.cta) ctas.add(copy.cta);
     for (const x of t) traits.add(x);
     if (lang) langs.add(lang);
+    const creativeId = cr.id ? String(cr.id) : undefined;
     out.push({
       adId: String(ad.id),
       adName: String(ad.name ?? ""),
-      format: fmt,
-      cta,
-      videoId: spec.video_data?.video_id || undefined,
+      format: copy.format,
+      cta: copy.cta,
+      videoId: copy.videoId,
+      // A short-lived Meta link: shown only until it expires. The lasting
+      // picture is the saved still under stillKey (previews.ts).
       thumbUrl:
         cr.image_url ||
         cr.thumbnail_url ||
         spec.video_data?.image_url ||
         spec.link_data?.picture ||
         undefined,
-      headline: clip(headline, 120),
-      // Enough to recognise the angle, not a full transcript.
-      body: clip(body, 300),
+      creativeId,
+      stillKey: stillKeyFor(creativeId, String(ad.id)),
+      headline: copy.headline,
+      body: copy.body,
       spend: Math.round(spend * 100) / 100,
       leads,
       cpl: leads ? Math.round((spend / leads) * 100) / 100 : undefined,
@@ -459,7 +425,7 @@ export const collectAccount = internalAction({
     const base = `id,name,optimization_goal,${targeting},insights.date_preset(${a.preset}){spend,actions}`;
     const rich =
       `id,name,optimization_goal,${targeting},` +
-      `ads.limit(25){id,name,creative{object_story_spec,thumbnail_url,image_url},insights.date_preset(${a.preset}){spend,actions}},` +
+      `ads.limit(25){id,name,creative{id,object_story_spec,thumbnail_url,image_url},insights.date_preset(${a.preset}){spend,actions}},` +
       `insights.date_preset(${a.preset}){spend,actions}`;
 
     // The creative expansion makes this request much heavier, and Meta refuses
@@ -503,24 +469,9 @@ export const collectAccount = internalAction({
       });
     }
 
-    // Meta's rendered preview for the ads with real spend behind them, so the
-    // database shows the ad itself and not just its description. [aziz, 2026-09-07]
-    for (const r of rows) {
-      for (const cr of (r.creatives as Record<string, unknown>[]) ?? []) {
-        if (Number(cr.spend ?? 0) < PREVIEW_MIN_SPEND) continue;
-        try {
-          const prev = await graph<{ data?: { body?: string }[] }>(
-            `${cr.adId}/previews`,
-            { ad_format: "MOBILE_FEED_STANDARD" },
-          );
-          const body = prev.data?.[0]?.body ?? "";
-          const src = /src="([^"]+)"/.exec(body);
-          if (src) cr.previewSrc = src[1].replace(/&amp;/g, "&");
-        } catch {
-          // A missing preview is cosmetic; the thumbnail still shows.
-        }
-      }
-    }
+    // No preview links are stored: Meta's expire within a day. The preview is
+    // fetched when someone opens the ad, and winners get a saved still from
+    // the winners pass (previews.ts). [2026-09-16]
 
     let stored = 0;
     if (rows.length > 0) {

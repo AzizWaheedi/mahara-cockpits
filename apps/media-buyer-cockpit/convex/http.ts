@@ -6,6 +6,8 @@ import { internal } from "./_generated/api";
 import { httpAction, internalQuery } from "./_generated/server";
 import { auth } from "./auth";
 import { RUNBOOK } from "./health";
+import { isMetaId, type PreviewResult } from "./metaMedia";
+import { previewFor } from "./previews";
 
 declare const process: { env: Record<string, string | undefined> };
 
@@ -411,6 +413,94 @@ http.route({
       },
       { headers },
     );
+  }),
+});
+
+// --- Live ad previews for the other two cockpits ---------------------------------------------
+
+/**
+ * The creative and client success cockpits hold no Meta token, so they ask
+ * here when someone opens an ad (their `previews.fresh`). The bearer token is
+ * the bridge token that cockpit already uses (CREATIVE_BRIDGE_TOKEN or
+ * CSM_BRIDGE_TOKEN here, BRIDGE_TOKEN there), so no new secret is needed.
+ * The caller says who is looking; the same role and client access as the
+ * portal apply. This door only answers for one ad id: it never passes an
+ * arbitrary Graph path through, and it logs no links.
+ *
+ * Body: { adId: "<digits>", email: "<who is looking>",
+ *         cockpit: "creative" | "csm", format?: "<Meta ad_format>" }
+ * Answer: a PreviewResult (previews.ts), never cached by the browser.
+ */
+http.route({
+  path: "/bridge/preview",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const header = request.headers.get("authorization");
+    const tokenFor = {
+      creative: sameBearer(header, process.env.CREATIVE_BRIDGE_TOKEN),
+      csm: sameBearer(header, process.env.CSM_BRIDGE_TOKEN),
+    };
+    if (!tokenFor.creative && !tokenFor.csm)
+      return new Response("no", { status: 401 });
+    const headers = { "Cache-Control": "no-store" };
+    let body: {
+      adId?: unknown;
+      email?: unknown;
+      cockpit?: unknown;
+      format?: unknown;
+    };
+    try {
+      body = (await request.json()) as typeof body;
+    } catch {
+      body = {};
+    }
+    const adId = typeof body?.adId === "string" ? body.adId : "";
+    const email =
+      typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
+    const refuse = (message: string, status = 400) =>
+      Response.json(
+        {
+          ok: false,
+          adId: adId.slice(0, 30),
+          reason: "error",
+          message,
+        } satisfies PreviewResult,
+        { status, headers },
+      );
+    // The cockpit named in the body must hold that cockpit's token. Checked
+    // this way round, so it still works if both cockpits share one token.
+    const app =
+      body?.cockpit === "creative" && tokenFor.creative
+        ? "creative"
+        : body?.cockpit === "csm" && tokenFor.csm
+          ? "csm"
+          : null;
+    if (!app) return refuse("The cockpit does not match its token.", 403);
+    if (!isMetaId(adId)) return refuse("That is not a Meta ad id.");
+    if (!email || email.length > 200 || !email.includes("@"))
+      return refuse("Say who is looking (email).");
+    const format =
+      typeof body?.format === "string" ? body.format.slice(0, 40) : undefined;
+    try {
+      const out = await previewFor(ctx, {
+        adId,
+        format,
+        caller: app,
+        access: { role: app, email },
+      });
+      return Response.json(out, { headers });
+    } catch (e) {
+      console.error(`bridge preview (${app}): ${scrub(String(e))}`);
+      return Response.json(
+        {
+          ok: false,
+          adId,
+          reason: "error",
+          message: "The live preview failed on the media buyer side.",
+        } satisfies PreviewResult,
+        { status: 500, headers },
+      );
+    }
   }),
 });
 

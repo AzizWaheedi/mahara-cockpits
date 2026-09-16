@@ -9,6 +9,7 @@ import {
   type ServiceLine,
 } from "@/lib/audiences";
 import { api } from "../../convex/_generated/api";
+import { CreativePreview } from "./CreativePreview";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
@@ -103,7 +104,7 @@ export function BuildPanel({
           onUse={(w: Winner) =>
             setBrief(
               b =>
-                `${b ? `${b}\n\n` : ""}Start from what worked: “${w.adName}” for ${w.clientName} — $${(w.cpl ?? 0).toFixed(2)} a lead${w.costPerBooking ? `, $${Math.round(w.costPerBooking)} a booking` : ""}. Same angle, our client's own offer.`,
+                `${b ? `${b}\n\n` : ""}Start from what worked: “${w.adName}” for ${w.clientName}, ${typeof w.cpl === "number" ? `$${w.cpl.toFixed(2)}` : "n/a"} a lead${w.costPerBooking ? `, $${Math.round(w.costPerBooking)} a booking` : ""}. Same angle, our client's own offer.`,
             )
           }
         />
@@ -325,6 +326,12 @@ type Winner = {
   _id: string;
   adName: string;
   clientName: string;
+  metaAdId?: string;
+  accountId?: string;
+  /** Our saved copy of the ad's still: never expires. */
+  stillUrl?: string;
+  stillTinyUrl?: string;
+  /** Meta's own still. The preview uses it only while its link is valid. */
   thumbnailUrl?: string;
   cpl?: number;
   costPerBooking?: number;
@@ -334,7 +341,9 @@ type Winner = {
 
 /**
  * The winners library: ads that are actually working, anywhere in the book.
- * Same service line first — a fit-out hook does not transfer to real estate.
+ * Same service line first, because a fit-out hook does not transfer to real
+ * estate. Pictures come from CreativePreview, which falls back to a
+ * placeholder that says why when an ad has no picture.
  */
 function WinnersStrip({
   winners,
@@ -358,45 +367,63 @@ function WinnersStrip({
           </div>
           <div className="flex gap-2 overflow-x-auto pb-1">
             {g.rows.map(w => (
-              <button
-                type="button"
+              <div
                 key={w._id}
-                onClick={() => onUse(w)}
-                className="w-[150px] shrink-0 rounded-md border bg-background p-2 text-left hover:border-primary"
+                className="w-[150px] shrink-0 rounded-md border bg-background p-2 hover:border-primary"
               >
-                {w.thumbnailUrl && (
-                  <img
-                    src={w.thumbnailUrl}
-                    alt=""
-                    className="mb-1 h-[70px] w-full rounded object-cover"
+                {/* The picture opens the ad; the text below starts from it. */}
+                <div className="mb-1">
+                  <CreativePreview
+                    size="lg"
+                    name={w.adName}
+                    metaAdId={w.metaAdId}
+                    accountId={w.accountId}
+                    stillUrl={w.stillUrl}
+                    stillTinyUrl={w.stillTinyUrl}
+                    thumbUrl={w.thumbnailUrl}
                   />
-                )}
-                <div className="truncate text-[12px] font-semibold">
-                  {w.adName}
                 </div>
-                <div className="truncate text-[11px] text-muted-foreground">
-                  {w.clientName}
-                </div>
-                <div className="mt-0.5 text-[11px]">
-                  <span className="font-semibold txt-good">
-                    ${(w.cpl ?? 0).toFixed(2)}
-                  </span>{" "}
-                  a lead
-                  {w.costPerBooking
-                    ? ` · $${Math.round(w.costPerBooking)} a booking`
-                    : ""}
-                </div>
-                <div className="text-[11px] text-muted-foreground">
-                  {w.leads} leads on ${Math.round(w.spend)}
-                </div>
-              </button>
+                <button
+                  type="button"
+                  onClick={() => onUse(w)}
+                  title="Start the brief from this ad"
+                  className="block w-full text-left"
+                >
+                  <div className="truncate text-[12px] font-semibold">
+                    {w.adName}
+                  </div>
+                  <div className="truncate text-[11px] text-muted-foreground">
+                    {w.clientName}
+                  </div>
+                  <div className="mt-0.5 text-[11px]">
+                    <span
+                      className={`font-semibold ${typeof w.cpl === "number" ? "txt-good" : "text-muted-foreground"}`}
+                    >
+                      {typeof w.cpl === "number"
+                        ? `$${w.cpl.toFixed(2)}`
+                        : "n/a"}
+                    </span>{" "}
+                    a lead
+                    {w.costPerBooking
+                      ? ` · $${Math.round(w.costPerBooking)} a booking`
+                      : ""}
+                  </div>
+                  <div className="text-[11px] text-muted-foreground">
+                    {w.leads} leads on ${Math.round(w.spend)}
+                  </div>
+                  <div className="mt-1 text-[11px] font-semibold text-primary">
+                    Start from this
+                  </div>
+                </button>
+              </div>
             ))}
           </div>
         </div>
       ))}
       <p className="text-[11px] text-muted-foreground">
-        Click one to start from it. It goes into the brief as a starting angle —
-        the copy still gets written for this client's own offer.
+        Click a picture to watch the ad. Click the text to start from it: it
+        goes into the brief as a starting angle, and the copy still gets written
+        for this client's own offer.
       </p>
     </div>
   );

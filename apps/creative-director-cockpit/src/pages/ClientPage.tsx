@@ -11,7 +11,11 @@ import {
 import { useState } from "react";
 import { Link, useParams } from "react-router";
 import { ClientUpdates } from "@/components/ClientUpdates";
-import { CreativePreview } from "@/components/CreativePreview";
+import {
+  CreativePreview,
+  stillPropsFor,
+  useLocalStills,
+} from "@/components/CreativePreview";
 import { DosDontsCard } from "@/components/DosDonts";
 import { TemplateCard } from "@/components/TemplateCard";
 import { bucketDays, TrendChart } from "@/components/TrendChart";
@@ -118,7 +122,17 @@ function DocCard({
 function ExtractContext({ name }: { name: string }) {
   const [wanted, setWanted] = useState(false);
   const pack = useQuery(api.clients.contextPack, wanted ? { name } : "skip");
-  const [done, setDone] = useState(false);
+  // What the last download held. The query is switched off once the file is
+  // built, so the pack does not keep re-running on every feed.
+  const [done, setDone] = useState<null | {
+    campaigns: number;
+    ads: number;
+    transcripts: number;
+    funnels: number;
+    plays: number;
+    tasks: number;
+    videos: number;
+  }>(null);
 
   function download() {
     if (!pack) {
@@ -133,9 +147,11 @@ function ExtractContext({ name }: { name: string }) {
     a.download = `${name.replace(/[^\w\u0600-\u06FF -]/g, "")} context.md`;
     a.click();
     URL.revokeObjectURL(a.href);
-    setDone(true);
+    setDone(pack.counts);
+    setWanted(false);
   }
 
+  const counts = pack?.counts ?? done;
   return (
     <div className="flex flex-wrap items-center gap-2">
       <Button size="sm" variant="outline" onClick={download}>
@@ -144,15 +160,17 @@ function ExtractContext({ name }: { name: string }) {
           ? "Building the pack…"
           : pack
             ? "Download the context pack"
-            : "Extract client context"}
+            : done
+              ? "Extract client context again"
+              : "Extract client context"}
       </Button>
-      {pack && (
+      {counts && (
         <span className="text-[12px] text-muted-foreground">
-          {pack.counts.campaigns} campaigns, {pack.counts.ads} ads,{" "}
-          {pack.counts.transcripts} transcripts, {pack.counts.funnels} funnels,{" "}
-          {pack.counts.plays} ad sets, {pack.counts.tasks} board rows,{" "}
-          {pack.counts.videos} videos. Documents are linked, not embedded.
-          {done ? " Downloaded." : ""}
+          {counts.campaigns} campaigns, {counts.ads} ads, {counts.transcripts}{" "}
+          transcripts, {counts.funnels} funnels, {counts.plays} ad sets,{" "}
+          {counts.tasks} board rows, {counts.videos} videos. Documents are
+          linked, not embedded.
+          {done && !pack ? " Downloaded." : ""}
         </span>
       )}
     </div>
@@ -400,6 +418,13 @@ function ScriptFromHere({ d }: { d: any }) {
     excludeClient: d.client.name,
     limit: 40,
   });
+  // One look-up for every saved picture this tab shows.
+  const history = (d.history as any[]).slice(0, 12);
+  const stills = useLocalStills([
+    ...(d.liveNow as any[]).map(a => a.stillKey),
+    ...history.map(a => a.stillKey),
+    ...((winners?.rows ?? []) as any[]).map(r => r.stillKey),
+  ]);
 
   return (
     <div className="space-y-5">
@@ -422,9 +447,12 @@ function ScriptFromHere({ d }: { d: any }) {
               >
                 <CreativePreview
                   name={a.name}
-                  thumbUrl={a.thumbUrl ?? undefined}
-                  previewSrc={a.previewSrc ?? undefined}
                   metaAdId={a.metaId}
+                  accountId={a.accountId ?? undefined}
+                  campaignName={a.campaignName}
+                  clientName={d.client.name}
+                  thumbUrl={a.thumbUrl ?? undefined}
+                  {...stillPropsFor(a, stills)}
                   size="md"
                 />
                 <span className="min-w-0 text-[12px]">
@@ -447,16 +475,19 @@ function ScriptFromHere({ d }: { d: any }) {
             What has already run for them ({d.history.length})
           </h3>
           <div className="divide-y rounded-lg border">
-            {/* biome-ignore lint/suspicious/noExplicitAny: query rows are untyped */}
-            {(d.history as any[]).slice(0, 12).map(a => (
+            {history.map(a => (
               <div
                 key={`${a.campaignName}:${a.adName}`}
                 className="flex items-center gap-3 px-3 py-2 text-[13px]"
               >
                 <CreativePreview
                   name={a.adName}
+                  metaAdId={a.metaAdId ?? undefined}
+                  accountId={a.accountId ?? undefined}
+                  campaignName={a.campaignName}
+                  clientName={d.client.name}
                   thumbUrl={a.thumbnailUrl ?? undefined}
-                  previewSrc={a.previewSrc ?? undefined}
+                  {...stillPropsFor(a, stills)}
                 />
                 <span className="min-w-0 flex-1 truncate" dir="auto">
                   {a.adName}
@@ -490,6 +521,7 @@ function ScriptFromHere({ d }: { d: any }) {
         </div>
         <WinningAds
           rows={winners?.rows}
+          local={stills}
           title=""
           sub="Same database the media buyer works from. Every ad here spent real money and stayed cheap. Read the hook and the transcript, then write theirs."
         />

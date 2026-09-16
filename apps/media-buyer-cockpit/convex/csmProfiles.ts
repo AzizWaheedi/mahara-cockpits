@@ -504,15 +504,27 @@ function adsForClient(client: string, campaigns: Any[], tree: Any[]) {
         showed7d: c.showed7d,
         costPerBooking: c.costPerBooking,
         taskUrl: c.taskUrl,
+        // Ids and saved stills travel with each ad; the live preview is
+        // fetched from the media buyer when the CSM opens one.
         adsets: adsets.map(a => ({
           name: a.name,
+          metaId: a.metaId,
           status: a.effectiveStatus ?? a.status,
           ads: ads
             .filter(ad => ad.adsetId === a.metaId)
             .map(ad => ({
               name: ad.name,
               status: ad.effectiveStatus ?? ad.status,
-              previewSrc: ad.previewSrc,
+              metaId: ad.metaId,
+              accountId:
+                ad.accountId ??
+                (c.metaAccountId
+                  ? String(c.metaAccountId).replace(/^act_/, "")
+                  : undefined),
+              stillKey: ad.stillKey,
+              stillUrl: ad.stillUrl,
+              stillTinyUrl: ad.stillTinyUrl,
+              thumbUrl: ad.thumbUrl,
             })),
         })),
       };
@@ -1097,6 +1109,10 @@ export const push = internalAction({
     withLost: v.number(),
     withCalls: v.number(),
     errors: v.array(v.string()),
+    /** How far the cockpit's copies of our saved stills go (commitProfiles). */
+    stillsWatermark: v.optional(v.number()),
+    /** The newest saved still here, to skip the push when nothing is new. */
+    latestStillAt: v.optional(v.number()),
   }),
   handler: async ctx => {
     const today = kuwaitToday();
@@ -1143,7 +1159,13 @@ export const push = internalAction({
       internal.csmSync.campaignsForCsm,
       {},
     );
-    const tree: Any[] = await ctx.runQuery(internal.csmSync.metaTreeForCsm, {});
+    const treeOut: Any = await ctx.runQuery(
+      internal.csmSync.metaTreeForCsm,
+      {},
+    );
+    const tree: Any[] = Array.isArray(treeOut)
+      ? treeOut
+      : (treeOut?.tree ?? []);
 
     let accounts = new Map<string, GhlAccount>();
     try {
@@ -1411,6 +1433,8 @@ export const push = internalAction({
       `profiles: ${profiles.length} pushed, ${JSON.stringify(done)}; ${errors.length} error(s)`,
     );
     await flush(ctx);
+    const watermark = Number(done?.stillsWatermark);
+    const latest = Number(treeOut?.latestStillAt);
     return {
       profiles: profiles.length,
       withSheet: profiles.filter(p => p.performance && !p.performance.error)
@@ -1418,6 +1442,11 @@ export const push = internalAction({
       withLost: profiles.filter(p => p.lost && !p.lost.error).length,
       withCalls: profiles.filter(p => p.calls.length > 0).length,
       errors,
+      stillsWatermark:
+        typeof done?.stillsWatermark === "number" && Number.isFinite(watermark)
+          ? watermark
+          : undefined,
+      latestStillAt: Number.isFinite(latest) ? latest : undefined,
     };
   },
 });

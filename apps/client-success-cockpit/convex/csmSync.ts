@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
+import { stillsWatermark } from "./previews";
 
 function kuwaitToday(): string {
   return new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 10);
@@ -303,7 +304,12 @@ export const countRows = internalQuery({
  */
 export const commitProfiles = internalMutation({
   args: { syncId: v.string() },
-  returns: v.object({ kept: v.number(), removed: v.number() }),
+  returns: v.object({
+    kept: v.number(),
+    removed: v.number(),
+    /** The newest saved ad still this cockpit holds; the media buyer sends what came after. */
+    stillsWatermark: v.number(),
+  }),
   handler: async (ctx, args) => {
     const rows = await ctx.db.query("clientProfiles").collect();
     let removed = 0;
@@ -313,7 +319,11 @@ export const commitProfiles = internalMutation({
         removed++;
       }
     }
-    return { kept: rows.length - removed, removed };
+    return {
+      kept: rows.length - removed,
+      removed,
+      stillsWatermark: await stillsWatermark(ctx),
+    };
   },
 });
 

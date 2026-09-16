@@ -451,7 +451,6 @@ export async function buildSnapshot(
       frequency: a.frequency ?? 0,
       cpl: a.cpl,
       spend: a.spend,
-      thumbnailUrl: a.thumbnailUrl,
       burning: (a.frequency ?? 0) >= FATIGUE_FREQUENCY,
     }))
     .sort((a, b) => b.frequency - a.frequency)
@@ -471,7 +470,6 @@ export async function buildSnapshot(
       cpl: a.cpl ?? 0,
       leads: a.leads,
       spend: a.spend,
-      thumbnailUrl: a.thumbnailUrl,
     }))
     .sort((a, b) => a.cpl - b.cpl)
     .slice(0, 12);
@@ -661,12 +659,20 @@ export async function buildSnapshot(
           metaAccountId: c.metaAccountId,
           metaCampaignId: c.metaCampaignId,
         })),
+        // No preview links: the page shows the saved still and fetches a
+        // live preview when an ad is opened.
         liveAds: liveAds.map(a => ({
           metaId: a.metaId,
           name: a.name,
-          previewSrc: a.previewSrc,
           thumbUrl: a.thumbUrl,
           campaignName: a.campaignName,
+          accountId:
+            a.accountId ??
+            myCampaigns.find(c => c.campaignName === a.campaignName)
+              ?.metaAccountId,
+          stillKey: a.stillKey,
+          stillUrl: a.stillUrl,
+          stillTinyUrl: a.stillTinyUrl,
         })),
         bookings7d: bookings,
         showed7d: showDataAvailable ? showed : null,

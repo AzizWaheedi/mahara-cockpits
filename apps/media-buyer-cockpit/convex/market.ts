@@ -1,15 +1,82 @@
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
 import { internalMutation } from "./_generated/server";
 import { CPL_GATE } from "./constants";
 import { authenticatedQuery } from "./functions";
+import {
+  isAutoWinner,
+  isSavedWinner,
+  metaImageExpiry,
+  metaImageUsable,
+  stillKeyFor,
+} from "./metaMedia";
+import { type CaptureItem, lookupStills } from "./previews";
 import { assertRole } from "./roles";
+
+/**
+ * "Save as winner" rules, shared by the collector, the What works queries and
+ * winnerSaves.ts. The creative cockpit copies the same rules.
+ */
+
+/**
+ * A save counts while it is newer than any "Remove from What works". The rule
+ * itself lives in metaMedia.ts, next to the daily picture check that uses it.
+ */
+export const isSaved = isSavedWinner;
+
+/** Picked by the weekly check's rule. Rows written before 2026-09-16 have no origin. */
+export const isAuto = isAutoWinner;
+
+/**
+ * The one row a save marks and the collector updates when an ad has more
+ * than one: the saved row (the newest save), else the oldest row.
+ */
+export function primaryRow<
+  T extends { savedAt?: number; _creationTime?: number },
+>(rows: T[]): T | null {
+  if (rows.length === 0) return null;
+  const saved = rows
+    .filter(r => r.savedAt !== undefined)
+    .sort((a, b) => (b.savedAt ?? 0) - (a.savedAt ?? 0));
+  if (saved.length > 0) return saved[0];
+  return [...rows].sort(
+    (a, b) => (a._creationTime ?? 0) - (b._creationTime ?? 0),
+  )[0];
+}
+
+/** Meta still delivers it: the test the archive has always used. */
+export function adIsLive(status: string | undefined): boolean {
+  return !/paused|archived|deleted|disapproved/i.test(status ?? "");
+}
+
+/** Keeps one row per ad for display: an active save first, else the primary row. */
+function onePerAd(rows: Record<string, any>[]): Record<string, any>[] {
+  const byAd = new Map<string, Record<string, any>[]>();
+  for (const r of rows) {
+    const list = byAd.get(String(r.adId)) ?? [];
+    list.push(r);
+    byAd.set(String(r.adId), list);
+  }
+  return [...byAd.values()].map(list => {
+    const saved = list
+      .filter(isSaved)
+      .sort((a, b) => (b.savedAt ?? 0) - (a.savedAt ?? 0));
+    return saved[0] ?? primaryRow(list) ?? list[0];
+  });
+}
+
+const same = (a: unknown, b: unknown) =>
+  a === b ||
+  (typeof a === "object" &&
+    typeof b === "object" &&
+    JSON.stringify(a) === JSON.stringify(b));
 
 /**
  * The GCC winning-data database.
  *
  * Every ad set we run is one observation: what was targeted, and what it
  * returned. Aggregated across clients it answers the question that actually
- * compounds — "what works for this service line in this city?" — so a new
+ * compounds ("what works for this service line in this city?"), so a new
  * client inherits everything the last thirty taught us.
  */
 
@@ -34,7 +101,7 @@ export const store = internalMutation({
       };
       if (existing) {
         // Transcripts are expensive (a video model per ad) and are written by a
-        // separate pass. A plain patch here wipes all of them — it did, once.
+        // separate pass. A plain patch here wipes all of them; it did, once.
         // Carry the read-off-the-video fields across by ad id. [2026-09-07]
         const prior = new Map((existing.creatives ?? []).map(c => [c.adId, c]));
         doc.creatives = (r.creatives ?? []).map(
@@ -189,8 +256,8 @@ export const dimensions = authenticatedQuery({
  * What we know about this client, and what has worked for their service line
  * elsewhere that they are not already running.
  *
- * This is the playbook delivered at the moment of decision — while she is
- * building — rather than on a page she has to remember to open.
+ * This is the playbook delivered at the moment of decision, while she is
+ * building, rather than on a page she has to remember to open.
  */
 export const forClient = authenticatedQuery({
   args: { client: v.string() },
@@ -374,7 +441,6 @@ const WINNER_MIN_SPEND = 100;
 const WINNER_MAX_CPL = 15;
 
 /** Every ad in `marketPlays` that clears the winner bar right now. */
-// biome-ignore lint/suspicious/noExplicitAny: play/creative shapes
 function winnersFrom(plays: any[]): Record<string, any>[] {
   const out: Record<string, unknown>[] = [];
   for (const p of plays) {
@@ -396,8 +462,13 @@ function winnersFrom(plays: any[]): Record<string, any>[] {
         transcript: cr.transcript,
         hook: cr.hook,
         voice: cr.voice,
-        previewSrc: cr.previewSrc,
+        // No preview link: those die within a day and are fetched on open.
         thumbUrl: cr.thumbUrl,
+        creativeId: cr.creativeId,
+        accountId: p.accountId
+          ? String(p.accountId).replace(/^act_/, "")
+          : undefined,
+        stillKey: cr.stillKey ?? stillKeyFor(cr.creativeId, cr.adId),
         language: p.language,
         copyTraits: p.copyTraits ?? [],
         playType: p.playType,
@@ -416,10 +487,19 @@ function winnersFrom(plays: any[]): Record<string, any>[] {
  * Write today's winners into the permanent archive.
  *
  * Nothing is ever deleted here. An ad that stops running keeps its copy,
- * script and preview, and gets `stillLive: false` with the date it went quiet,
+ * script and picture, and gets `stillLive: false` with the date it went quiet,
  * so a retired winner can still be reused for another client. Numbers are kept
  * at their best: an ad judged on its winning window, not on a tail of dribbling
  * spend. [aziz, 2026-09-07]
+ *
+ * A person's "Save as winner" (winnerSaves.ts) is never overwritten or removed
+ * here: the collector patches rows field by field, never touches the saved
+ * fields or `origin`, and leaves the labels of a saved row alone. A row a
+ * person saved first gets `autoFirstAt` the first time the rule also picks it.
+ * [aziz, 2026-09-16]
+ *
+ * Runs after the weekly collector and once a day from the sync, not on every
+ * sync: it reads four whole tables.
  */
 export const archiveWinners = internalMutation({
   args: {},
@@ -427,6 +507,8 @@ export const archiveWinners = internalMutation({
     archived: v.number(),
     added: v.number(),
     retired: v.number(),
+    updated: v.number(),
+    stillsQueued: v.number(),
   }),
   handler: async ctx => {
     const plays = await ctx.db.query("marketPlays").collect();
@@ -443,98 +525,264 @@ export const archiveWinners = internalMutation({
         if (d.date > cur.to) cur.to = d.date;
       }
     }
-    // What Meta still reports as running.
+    // What Meta still reports as running. `treeCampaigns` is every campaign
+    // Meta answered for this run: an ad missing from a campaign that did
+    // answer is off, while an ad whose account could not be read keeps its
+    // state (this stops the retire-and-come-back flip).
     const live = new Set<string>();
     const campaignOf = new Map<string, string>();
+    const treeCampaigns = new Set<string>();
     for (const t of await ctx.db.query("metaTree").collect()) {
+      treeCampaigns.add(t.campaignName);
       if (t.kind !== "ad") continue;
       campaignOf.set(t.metaId, t.campaignName);
-      if (
-        !/paused|archived|deleted|disapproved/i.test(
-          t.effectiveStatus ?? t.status,
-        )
-      )
-        live.add(t.metaId);
+      if (adIsLive(t.effectiveStatus ?? t.status)) live.add(t.metaId);
     }
+    const canJudge = (adId: string, campaign: string | undefined) =>
+      live.has(adId) || (campaign !== undefined && treeCampaigns.has(campaign));
 
     const now = Date.now();
     const today = new Date(now + 3 * 3600_000).toISOString().slice(0, 10);
     let added = 0;
+    let updated = 0;
     const seen = new Set<string>();
 
     for (const w of current) {
       const adId = String(w.adId);
       seen.add(adId);
       const window = span.get(adId);
-      const existing = await ctx.db
-        .query("winnersArchive")
-        .withIndex("by_ad", (q: any) => q.eq("adId", adId))
-        .unique()
-        .catch(() => null);
-      const doc: Record<string, unknown> = {
-        ...w,
-        campaignName: campaignOf.get(adId) ?? existing?.campaignName,
-        stillLive: live.has(adId),
-        wonFrom:
-          existing?.wonFrom && window
-            ? existing.wonFrom < window.from
-              ? existing.wonFrom
-              : window.from
-            : (existing?.wonFrom ?? window?.from),
-        wonTo:
-          existing?.wonTo && window
-            ? existing.wonTo > window.to
-              ? existing.wonTo
-              : window.to
-            : (existing?.wonTo ?? window?.to),
-        lastSeenAt: now,
-        firstArchivedAt: existing?.firstArchivedAt ?? now,
-        retiredOn: live.has(adId) ? undefined : (existing?.retiredOn ?? today),
-      };
-      // Keep the best numbers, and never drop a transcript we already read.
-      if (existing) {
-        if (existing.spend > Number(doc.spend)) {
-          doc.spend = existing.spend;
-          doc.leads = existing.leads;
-          doc.cpl = existing.cpl;
-        }
-        doc.transcript = doc.transcript ?? existing.transcript;
-        doc.hook = doc.hook ?? existing.hook;
-        doc.voice = doc.voice ?? existing.voice;
-        doc.previewSrc = doc.previewSrc ?? existing.previewSrc;
-        doc.thumbUrl = doc.thumbUrl ?? existing.thumbUrl;
-      }
-      const clean = Object.fromEntries(
-        Object.entries(doc).filter(([, v]) => v !== undefined && v !== null),
+      const existing = primaryRow(
+        await ctx.db
+          .query("winnersArchive")
+          .withIndex("by_ad", q => q.eq("adId", adId))
+          .collect(),
       );
-      if (existing) await ctx.db.replace(existing._id, clean as never);
-      else {
-        await ctx.db.insert("winnersArchive", clean as never);
+      const campaign = campaignOf.get(adId) ?? existing?.campaignName;
+      const judged = canJudge(adId, campaign);
+      const isLive = live.has(adId);
+
+      if (!existing) {
+        const doc: Record<string, unknown> = {
+          ...w,
+          origin: "auto",
+          campaignName: campaign,
+          stillLive: judged ? isLive : undefined,
+          retiredOn: judged && !isLive ? today : undefined,
+          wonFrom: window?.from,
+          wonTo: window?.to,
+          lastSeenAt: now,
+          firstArchivedAt: now,
+        };
+        await ctx.db.insert("winnersArchive", stripEmpty(doc) as never);
         added++;
+        continue;
+      }
+
+      const old = existing as Record<string, any>;
+      const patch: Record<string, unknown> = {};
+      const set = (field: string, value: unknown) => {
+        if (value === undefined || value === null) return;
+        if (!same(old[field], value)) patch[field] = value;
+      };
+
+      // Keep the best numbers.
+      if (Number(w.spend) >= existing.spend) {
+        set("spend", w.spend);
+        set("leads", w.leads);
+        set("cpl", w.cpl);
+      }
+      // Copy: only filled in, never replaced, so a saved row keeps what was saved.
+      for (const f of [
+        "headline",
+        "body",
+        "cta",
+        "transcript",
+        "hook",
+        "voice",
+      ]) {
+        if (old[f] === undefined) set(f, w[f]);
+      }
+      if ((!old.format || old.format === "unknown") && w.format !== "unknown") {
+        set("format", w.format);
+      }
+      // A saved row keeps the labels it was saved with.
+      if (existing.savedAt === undefined) {
+        for (const f of [
+          "client",
+          "adName",
+          "serviceLine",
+          "city",
+          "country",
+        ]) {
+          set(f, w[f]);
+        }
+      }
+      for (const f of [
+        "language",
+        "copyTraits",
+        "playType",
+        "interests",
+        "adsetName",
+      ]) {
+        set(f, w[f]);
+      }
+      // The winning window, widened.
+      set(
+        "wonFrom",
+        existing.wonFrom && window
+          ? existing.wonFrom < window.from
+            ? existing.wonFrom
+            : window.from
+          : (existing.wonFrom ?? window?.from),
+      );
+      set(
+        "wonTo",
+        existing.wonTo && window
+          ? existing.wonTo > window.to
+            ? existing.wonTo
+            : window.to
+          : (existing.wonTo ?? window?.to),
+      );
+      if (judged) {
+        set("stillLive", isLive);
+        const retiredOn = isLive ? undefined : (existing.retiredOn ?? today);
+        if (retiredOn !== existing.retiredOn) patch.retiredOn = retiredOn;
+      }
+      if (w.thumbUrl && w.thumbUrl !== existing.thumbUrl) {
+        const next = metaImageExpiry(w.thumbUrl);
+        const prev = metaImageExpiry(existing.thumbUrl);
+        const newer =
+          !existing.thumbUrl ||
+          (next ?? 0) > (prev ?? 0) ||
+          (next === undefined && prev === undefined);
+        if (newer) patch.thumbUrl = w.thumbUrl;
+      }
+      set("creativeId", w.creativeId);
+      set("accountId", w.accountId);
+      // The key names the saved picture; once a picture is saved under one key,
+      // the key stays with it.
+      // A key by ad id never replaces one by creative id (a save may know the
+      // creative when the collected play does not).
+      if (!existing.stillUrl && (w.creativeId || !existing.stillKey)) {
+        set("stillKey", w.stillKey);
+      }
+      if (!existing.campaignName) set("campaignName", campaign);
+      if (now - existing.lastSeenAt > 20 * 3600_000) patch.lastSeenAt = now;
+      if (existing.origin === "manual" && existing.autoFirstAt === undefined) {
+        patch.autoFirstAt = now;
+      }
+      // Preview links die within a day; they are fetched on open now.
+      if (existing.previewSrc !== undefined) patch.previewSrc = undefined;
+
+      if (Object.keys(patch).length > 0) {
+        await ctx.db.patch(existing._id, patch);
+        updated++;
       }
     }
 
-    // Anything already archived that no longer shows up live gets marked, not deleted.
+    // Everything else in the archive: mark what went quiet (never delete,
+    // manual saves included), and find winners that still need a saved picture.
+    const all = await ctx.db.query("winnersArchive").collect();
+    const primaries = new Map<string, (typeof all)[number]>();
+    for (const [adId, rows] of groupByAd(all)) {
+      const p = primaryRow(rows);
+      if (p) primaries.set(adId, p);
+    }
+    const keyOf = (r: (typeof all)[number]) =>
+      r.stillKey ?? stillKeyFor(r.creativeId, r.adId);
+    const wantPicture = [...primaries.values()].filter(
+      r => !r.stillUrl && (isSaved(r) || isAuto(r)) && keyOf(r),
+    );
+    const stills = await lookupStills(
+      ctx.db,
+      wantPicture.map(r => keyOf(r) as string),
+    );
+
     let retired = 0;
-    for (const row of await ctx.db.query("winnersArchive").collect()) {
-      if (seen.has(row.adId)) continue;
-      const isLive = live.has(row.adId);
-      if (row.stillLive === isLive && (isLive || row.retiredOn)) continue;
-      await ctx.db.patch(row._id, {
-        stillLive: isLive,
-        retiredOn: isLive ? undefined : (row.retiredOn ?? today),
+    const capture: CaptureItem[] = [];
+    for (const row of primaries.values()) {
+      const patch: Record<string, unknown> = {};
+      if (!seen.has(row.adId)) {
+        const isLive = live.has(row.adId);
+        if (canJudge(row.adId, row.campaignName)) {
+          if (row.stillLive !== isLive) {
+            patch.stillLive = isLive;
+            if (!isLive) retired++;
+          }
+          const retiredOn = isLive ? undefined : (row.retiredOn ?? today);
+          if (retiredOn !== row.retiredOn) patch.retiredOn = retiredOn;
+        }
+        if (row.previewSrc !== undefined) patch.previewSrc = undefined;
+      }
+      if (!row.stillUrl && (isSaved(row) || isAuto(row))) {
+        const key = keyOf(row);
+        if (key) {
+          if (!row.stillKey) patch.stillKey = key;
+          const still = stills.get(key);
+          if (still?.status === "saved" && still.url) {
+            patch.stillUrl = still.url;
+            if (still.tinyUrl) patch.stillTinyUrl = still.tinyUrl;
+          } else if (still?.status !== "gone" && capture.length < 40) {
+            capture.push(
+              stripEmpty({
+                adId: row.adId,
+                creativeId: row.creativeId,
+                accountId: row.accountId,
+                campaignName: row.campaignName,
+                sourceUrl: metaImageUsable(row.thumbUrl)
+                  ? row.thumbUrl
+                  : undefined,
+                keep: true,
+              }),
+            );
+          }
+        }
+      }
+      if (Object.keys(patch).length > 0) {
+        await ctx.db.patch(row._id, patch);
+      }
+    }
+    if (capture.length > 0) {
+      await ctx.scheduler.runAfter(0, internal.previews.captureStills, {
+        items: capture,
       });
-      if (!isLive) retired++;
     }
 
-    const archived = (await ctx.db.query("winnersArchive").collect()).length;
-    return { archived, added, retired };
+    return {
+      archived: all.length,
+      added,
+      retired,
+      updated,
+      stillsQueued: capture.length,
+    };
   },
 });
+
+/** Drops undefined and null fields: Convex optional fields reject them. */
+function stripEmpty<T extends Record<string, unknown>>(doc: T): T {
+  return Object.fromEntries(
+    Object.entries(doc).filter(([, x]) => x !== undefined && x !== null),
+  ) as T;
+}
+
+function groupByAd<T extends { adId: string }>(rows: T[]): Map<string, T[]> {
+  const out = new Map<string, T[]>();
+  for (const r of rows) {
+    const list = out.get(r.adId) ?? [];
+    list.push(r);
+    out.set(r.adId, list);
+  }
+  return out;
+}
 
 /**
  * The winning ads, read from the permanent archive so switched-off winners are
  * still there. Falls back to the live plays only if the archive is empty.
+ *
+ * Shows the weekly check's winners and the ads the team saved. A saved row
+ * comes first (newest save first) and is never cut by `limit`; the rest follow
+ * by cost per lead until the list holds `limit` rows. An ad a person saved and
+ * then removed, which the rule never picked, is hidden (the row is kept).
  */
 export const winners = authenticatedQuery({
   args: {
@@ -543,6 +791,12 @@ export const winners = authenticatedQuery({
     limit: v.optional(v.number()),
     /** Default false: retired winners are still worth reusing. */
     liveOnly: v.optional(v.boolean()),
+    /** "saved": the team's saves only. "auto": the weekly check's only. */
+    origin: v.optional(
+      v.union(v.literal("all"), v.literal("saved"), v.literal("auto")),
+    ),
+    /** Only saves by this person (their email). */
+    savedBy: v.optional(v.string()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
@@ -552,14 +806,44 @@ export const winners = authenticatedQuery({
       ? rows.map(r => ({ ...r }))
       : winnersFrom(await ctx.db.query("marketPlays").collect());
 
-    const out = source.filter(r => {
-      if (args.serviceLine && r.serviceLine !== args.serviceLine) return false;
-      if (args.exclude && r.client === args.exclude) return false;
-      if (args.liveOnly && r.stillLive === false) return false;
+    const origin = args.origin ?? "all";
+    const savedBy = args.savedBy?.trim().toLowerCase();
+    const shown = onePerAd(
+      source.filter(r => {
+        if (!(isSaved(r) || isAuto(r))) return false;
+        if (args.serviceLine && r.serviceLine !== args.serviceLine)
+          return false;
+        if (args.exclude && r.client === args.exclude) return false;
+        if (args.liveOnly && r.stillLive === false) return false;
+        return true;
+      }),
+    ).filter(r => {
+      if (origin === "saved" && !isSaved(r)) return false;
+      if (origin === "auto" && !isAuto(r)) return false;
+      if (savedBy && !(isSaved(r) && r.savedBy === savedBy)) return false;
       return true;
     });
-    out.sort((a, b) => (a.cpl as number) - (b.cpl as number));
-    return out.slice(0, args.limit ?? 40).map(r => ({
+
+    const limit = Math.max(0, Math.floor(args.limit ?? 40));
+    const cplOf = (r: { cpl?: unknown }) =>
+      typeof r.cpl === "number" ? r.cpl : Number.POSITIVE_INFINITY;
+    const byCpl = (a: { cpl?: unknown }, b: { cpl?: unknown }) =>
+      cplOf(a) - cplOf(b);
+    let ordered: typeof shown;
+    if (origin === "auto") {
+      ordered = shown.sort(byCpl).slice(0, limit);
+    } else {
+      const saved = shown
+        .filter(isSaved)
+        .sort((a, b) => (b.savedAt ?? 0) - (a.savedAt ?? 0));
+      const rest = shown
+        .filter(r => !isSaved(r))
+        .sort(byCpl)
+        .slice(0, Math.max(0, limit - saved.length));
+      ordered = [...saved, ...rest];
+    }
+
+    return ordered.map(r => ({
       adId: r.adId,
       adName: r.adName,
       client: r.client,
@@ -572,19 +856,32 @@ export const winners = authenticatedQuery({
       transcript: r.transcript ?? null,
       hook: r.hook ?? null,
       voice: r.voice ?? null,
-      previewSrc: r.previewSrc ?? null,
       thumbUrl: r.thumbUrl ?? null,
+      stillKey: r.stillKey ?? null,
+      stillUrl: r.stillUrl ?? null,
+      stillTinyUrl: r.stillTinyUrl ?? null,
+      accountId: r.accountId ?? null,
+      campaignName: r.campaignName ?? null,
       language: r.language ?? null,
       copyTraits: r.copyTraits ?? [],
       playType: r.playType ?? null,
       interests: r.interests ?? [],
       spend: r.spend,
       leads: r.leads,
-      cpl: r.cpl,
+      cpl: typeof r.cpl === "number" ? r.cpl : null,
       wonFrom: r.wonFrom ?? null,
       wonTo: r.wonTo ?? null,
       stillLive: r.stillLive ?? null,
       retiredOn: r.retiredOn ?? null,
+      origin: r.origin ?? "auto",
+      isSaved: isSaved(r),
+      isAuto: isAuto(r),
+      savedBy: r.savedBy ?? null,
+      savedByName: r.savedByName ?? null,
+      savedAt: r.savedAt ?? null,
+      savedNote: r.savedNote ?? null,
+      savedRange: r.savedRange ?? null,
+      savedStats: r.savedStats ?? null,
     }));
   },
 });
@@ -601,7 +898,15 @@ export const archiveStats = authenticatedQuery({
       live: rows.filter(r => r.stillLive).length,
       retired: rows.filter(r => r.stillLive === false).length,
       withTranscript: rows.filter(r => r.transcript).length,
-      withPreview: rows.filter(r => r.previewSrc || r.thumbUrl).length,
+      withPreview: rows.filter(r => r.stillUrl || metaImageUsable(r.thumbUrl))
+        .length,
+      withSavedPicture: rows.filter(r => r.stillUrl).length,
+      /** Active saves by the team. */
+      saved: rows.filter(isSaved).length,
+      /** Saved by the team and never picked by the weekly check. */
+      savedOnly: rows.filter(
+        r => r.origin === "manual" && r.autoFirstAt === undefined,
+      ).length,
       oldestWonFrom:
         rows
           .map(r => r.wonFrom)
@@ -628,8 +933,7 @@ export const storeTranscript = internalMutation({
     const play = await ctx.db
       .query("marketPlays")
       .withIndex("by_adset", q => q.eq("adsetId", adsetId))
-      .unique()
-      .catch(() => null);
+      .first();
     if (!play) return { ok: false };
     const creatives = (play.creatives ?? []).map(c =>
       c.adId === adId ? { ...c, transcript, hook, voice } : c,
@@ -638,9 +942,8 @@ export const storeTranscript = internalMutation({
     // Keep the permanent archive in step, so a retired winner keeps its script.
     const archived = await ctx.db
       .query("winnersArchive")
-      .withIndex("by_ad", (q: any) => q.eq("adId", adId))
-      .unique()
-      .catch(() => null);
+      .withIndex("by_ad", q => q.eq("adId", adId))
+      .first();
     if (archived) {
       await ctx.db.patch(archived._id, {
         transcript,

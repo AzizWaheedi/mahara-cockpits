@@ -1,5 +1,5 @@
 import { useAction, useMutation, useQuery } from "convex/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
 import { AccountView } from "@/components/AccountView";
@@ -140,6 +140,101 @@ const VERDICT_STYLES: Record<string, string> = {
 
 // biome-ignore lint/suspicious/noExplicitAny: snapshot payload is untyped by design
 type Campaign = any;
+
+/**
+ * The live Meta structure under one campaign: ad sets, then each ad as a card
+ * with its saved picture. "Watch" swaps in Meta's live preview in place, and
+ * only one ad per campaign panel plays at a time, so an open panel never loads
+ * a wall of iframes.
+ */
+function LiveInMeta({ c, tree }: { c: Campaign; tree: Campaign[] }) {
+  const [openAdId, setOpenAdId] = useState<string | null>(null);
+  if (tree.length === 0) {
+    return (
+      <div className="mt-3 text-[12px] text-muted-foreground">
+        Ad sets and creative can't be shown for this account yet. It isn't
+        shared with our Meta partner ID.
+      </div>
+    );
+  }
+  return (
+    <div className="mt-4 space-y-3">
+      <div className="text-[12px] font-bold uppercase tracking-wide text-muted-foreground">
+        Live in Meta · ad sets and creative
+      </div>
+      {tree
+        .filter((t: Campaign) => t.kind === "adset")
+        .map((set: Campaign) => (
+          <div key={set._id} className="rounded-lg border bg-background p-2">
+            <div className="flex items-center gap-2">
+              <span className="text-[13px] font-semibold">{set.name}</span>
+              <span
+                className={`rounded px-1.5 py-0.5 text-[11px] font-bold uppercase ring-1 ring-inset ${set.effectiveStatus === "ACTIVE" ? "bg-emerald-50 txt-good ring-emerald-200" : "bg-muted text-muted-foreground ring-border"}`}
+              >
+                {set.effectiveStatus ?? set.status}
+              </span>
+              {set.dailyBudget !== undefined && (
+                <span className="text-[12px] text-muted-foreground">
+                  {money(set.dailyBudget, 2)}
+                  /day
+                </span>
+              )}
+              <StatusToggle
+                compact
+                metaId={set.metaId}
+                level="adset"
+                name={set.name}
+                clientTag={c.clientTag}
+                campaignName={c.campaignName}
+                active={(set.effectiveStatus ?? set.status) === "ACTIVE"}
+              />
+            </div>
+            <div className="mt-2 flex flex-wrap gap-3">
+              {tree
+                .filter(
+                  (t: Campaign) => t.kind === "ad" && t.adsetId === set.metaId,
+                )
+                .map((ad: Campaign) => (
+                  <div key={ad._id} className="w-[340px] max-w-full">
+                    <div className="mb-1 flex items-center gap-1.5 text-[12px]">
+                      <StatusToggle
+                        compact
+                        metaId={ad.metaId}
+                        level="ad"
+                        name={ad.name}
+                        clientTag={c.clientTag}
+                        campaignName={c.campaignName}
+                        active={(ad.effectiveStatus ?? ad.status) === "ACTIVE"}
+                      />
+                      <span className="font-semibold">{ad.name}</span>
+                      <span className="text-muted-foreground">
+                        {ad.effectiveStatus ?? ad.status}
+                      </span>
+                    </div>
+                    <CreativePreview
+                      variant="card"
+                      name={ad.name}
+                      metaAdId={ad.metaId}
+                      accountId={ad.accountId ?? c.metaAccountId ?? undefined}
+                      stillUrl={ad.stillUrl}
+                      stillTinyUrl={ad.stillTinyUrl}
+                      thumbUrl={ad.thumbUrl}
+                      // Old stored link: used only while under 20 hours old.
+                      previewSrc={ad.previewSrc}
+                      previewAt={ad.previewAt}
+                      open={openAdId === ad.metaId}
+                      onOpenChange={open =>
+                        setOpenAdId(open ? ad.metaId : null)
+                      }
+                    />
+                  </div>
+                ))}
+            </div>
+          </div>
+        ))}
+    </div>
+  );
+}
 
 /**
  * Which recommendation labels are things I can actually carry out in Meta.
@@ -1503,8 +1598,55 @@ function Cockpit({ view }: { view: View }) {
                       const adIsActive = (adName: string) =>
                         (adNode(adName)?.effectiveStatus ??
                           adNode(adName)?.status) === "ACTIVE";
+                      // The picture for one row of the ads table. The range
+                      // table knows the row's ad ids, so the tree node is
+                      // matched by id first and by name only as a fallback.
+                      // Stored preview links are never passed: the preview
+                      // is fetched when she opens it.
+                      const adPicture = (adName: string, adIds?: string[]) => {
+                        const byId = (adIds ?? [])
+                          .map((id: string) =>
+                            tree.find(
+                              (t: Campaign) =>
+                                t.kind === "ad" && t.metaId === id,
+                            ),
+                          )
+                          .filter(Boolean);
+                        const node: Campaign =
+                          byId.find(
+                            (t: Campaign) => t.stillUrl || t.stillTinyUrl,
+                          ) ??
+                          byId[0] ??
+                          adNode(adName);
+                        const metaAdId: string | undefined =
+                          node?.metaId ?? adIds?.[0];
+                        const row: Campaign = ads.find(
+                          (a: Campaign) => a.adName === adName,
+                        );
+                        // The ads row is keyed by name; trust its picture
+                        // first only when it is the same ad.
+                        const same =
+                          row &&
+                          (!row.metaAdId ||
+                            !metaAdId ||
+                            row.metaAdId === metaAdId);
+                        const first = same ? row : node;
+                        const second = same ? node : row;
+                        return {
+                          metaAdId: metaAdId ?? row?.metaAdId,
+                          accountId: node?.accountId as string | undefined,
+                          stillUrl: (first?.stillUrl ?? second?.stillUrl) as
+                            | string
+                            | undefined,
+                          stillTinyUrl: (first?.stillTinyUrl ??
+                            second?.stillTinyUrl) as string | undefined,
+                          thumbUrl: ((same ? row?.thumbnailUrl : undefined) ??
+                            node?.thumbUrl ??
+                            row?.thumbnailUrl) as string | undefined,
+                        };
+                      };
                       return (
-                        <>
+                        <Fragment key={c._id}>
                           {newClient && (
                             <tr>
                               <td
@@ -1877,20 +2019,27 @@ function Cockpit({ view }: { view: View }) {
                                             ),
                                         ),
                                       ]}
-                                      renderAdCell={(adName: string) => {
-                                        const row = ads.find(
-                                          (a: Campaign) => a.adName === adName,
+                                      renderAdCell={(
+                                        adName: string,
+                                        rangeRow?: { adIds?: string[] },
+                                      ) => {
+                                        const p = adPicture(
+                                          adName,
+                                          rangeRow?.adIds,
                                         );
                                         return (
                                           <div className="flex items-center gap-2">
                                             <CreativePreview
                                               name={adName}
-                                              thumbUrl={row?.thumbnailUrl}
-                                              previewSrc={row?.previewSrc}
-                                              metaAdId={
-                                                row?.metaAdId ??
-                                                adMetaId(adName)
+                                              metaAdId={p.metaAdId}
+                                              accountId={
+                                                p.accountId ??
+                                                c.metaAccountId ??
+                                                undefined
                                               }
+                                              stillUrl={p.stillUrl}
+                                              stillTinyUrl={p.stillTinyUrl}
+                                              thumbUrl={p.thumbUrl}
                                             />
                                             <span>{adName}</span>
                                           </div>
@@ -2112,7 +2261,7 @@ function Cockpit({ view }: { view: View }) {
                                         tree
                                           .filter(
                                             (t: any) =>
-                                              t.level === "ad" && t.metaId,
+                                              t.kind === "ad" && t.metaId,
                                           )
                                           .map((t: any) => [t.metaId, t.name]),
                                       )}
@@ -2130,137 +2279,7 @@ function Cockpit({ view }: { view: View }) {
                                           : "en"
                                       }
                                     />
-                                    {tree.length > 0 ? (
-                                      <div className="mt-4 space-y-3">
-                                        <div className="text-[12px] font-bold uppercase tracking-wide text-muted-foreground">
-                                          Live in Meta · ad sets and creative
-                                        </div>
-                                        {tree
-                                          .filter(
-                                            (t: Campaign) => t.kind === "adset",
-                                          )
-                                          .map((set: Campaign) => (
-                                            <div
-                                              key={set._id}
-                                              className="rounded-lg border bg-background p-2"
-                                            >
-                                              <div className="flex items-center gap-2">
-                                                <span className="text-[13px] font-semibold">
-                                                  {set.name}
-                                                </span>
-                                                <span
-                                                  className={`rounded px-1.5 py-0.5 text-[11px] font-bold uppercase ring-1 ring-inset ${set.effectiveStatus === "ACTIVE" ? "bg-emerald-50 txt-good ring-emerald-200" : "bg-muted text-muted-foreground ring-border"}`}
-                                                >
-                                                  {set.effectiveStatus ??
-                                                    set.status}
-                                                </span>
-                                                {set.dailyBudget !==
-                                                  undefined && (
-                                                  <span className="text-[12px] text-muted-foreground">
-                                                    {money(set.dailyBudget, 2)}
-                                                    /day
-                                                  </span>
-                                                )}
-                                                <StatusToggle
-                                                  compact
-                                                  metaId={set.metaId}
-                                                  level="adset"
-                                                  name={set.name}
-                                                  clientTag={c.clientTag}
-                                                  campaignName={c.campaignName}
-                                                  active={
-                                                    (set.effectiveStatus ??
-                                                      set.status) === "ACTIVE"
-                                                  }
-                                                />
-                                              </div>
-                                              <div className="mt-2 flex flex-wrap gap-3">
-                                                {tree
-                                                  .filter(
-                                                    (t: Campaign) =>
-                                                      t.kind === "ad" &&
-                                                      t.adsetId === set.metaId,
-                                                  )
-                                                  .map((ad: Campaign) => (
-                                                    <div
-                                                      key={ad._id}
-                                                      className="w-[340px]"
-                                                    >
-                                                      <div className="mb-1 flex items-center gap-1.5 text-[12px]">
-                                                        <StatusToggle
-                                                          compact
-                                                          metaId={ad.metaId}
-                                                          level="ad"
-                                                          name={ad.name}
-                                                          clientTag={
-                                                            c.clientTag
-                                                          }
-                                                          campaignName={
-                                                            c.campaignName
-                                                          }
-                                                          active={
-                                                            (ad.effectiveStatus ??
-                                                              ad.status) ===
-                                                            "ACTIVE"
-                                                          }
-                                                        />
-                                                        <span className="font-semibold">
-                                                          {ad.name}
-                                                        </span>
-                                                        <span className="text-muted-foreground">
-                                                          {ad.effectiveStatus ??
-                                                            ad.status}
-                                                        </span>
-                                                      </div>
-                                                      {ad.previewSrc ? (
-                                                        <iframe
-                                                          title={ad.name}
-                                                          src={ad.previewSrc}
-                                                          className="h-[560px] w-full rounded-md border bg-card"
-                                                        />
-                                                      ) : ad.thumbUrl ? (
-                                                        <a
-                                                          href={`https://business.facebook.com/adsmanager/manage/ads?selected_ad_ids=${ad.metaId}`}
-                                                          target="_blank"
-                                                          rel="noreferrer"
-                                                          className="block"
-                                                        >
-                                                          <img
-                                                            src={ad.thumbUrl}
-                                                            alt={ad.name}
-                                                            className="w-full rounded-md border bg-card object-cover"
-                                                          />
-                                                          <span className="mt-1 block text-[11px] text-muted-foreground">
-                                                            Still image — open
-                                                            in Ads Manager to
-                                                            play
-                                                          </span>
-                                                        </a>
-                                                      ) : (
-                                                        <a
-                                                          href={`https://business.facebook.com/adsmanager/manage/ads?selected_ad_ids=${ad.metaId}`}
-                                                          target="_blank"
-                                                          rel="noreferrer"
-                                                          className="block rounded-md border p-3 text-[12px] text-muted-foreground underline-offset-2 hover:underline"
-                                                        >
-                                                          Meta won't render this
-                                                          one — open it in Ads
-                                                          Manager
-                                                        </a>
-                                                      )}
-                                                    </div>
-                                                  ))}
-                                              </div>
-                                            </div>
-                                          ))}
-                                      </div>
-                                    ) : (
-                                      <div className="mt-3 text-[12px] text-muted-foreground">
-                                        Ad sets and creative can't be shown for
-                                        this account yet — it isn't shared with
-                                        our Meta partner ID.
-                                      </div>
-                                    )}
+                                    <LiveInMeta c={c} tree={tree} />
                                   </div>
                                 )}
                                 {mode === "reroute" && (
@@ -2389,7 +2408,7 @@ function Cockpit({ view }: { view: View }) {
                               </td>
                             </tr>
                           )}
-                        </>
+                        </Fragment>
                       );
                     })}
                 </tbody>

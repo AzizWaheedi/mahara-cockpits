@@ -1,6 +1,10 @@
 import { useQuery } from "convex/react";
 import { useState } from "react";
-import { CreativePreview } from "@/components/CreativePreview";
+import {
+  WinnerFilter,
+  type WinnerOrigin,
+  WinningAds,
+} from "@/components/WinningAds";
 import { api } from "../../convex/_generated/api";
 
 /**
@@ -9,6 +13,8 @@ import { api } from "../../convex/_generated/api";
  * Copied verbatim from the media buyer cockpit at Aziz's request, running over
  * the mirrored `marketPlays` rows. Do not "improve" it here: recopy it when the
  * cockpit version changes, so both roles read the same page. [aziz, 2026-09-07]
+ * The winning ads list uses the shared WinningAds component, with the same
+ * filters, badges and saved numbers as the media buyer's page.
  *
  * Every ad set we have ever run, grouped by service line, city and the shape of
  * the targeting, ranked by cost per lead. The point is not to admire the data:
@@ -18,6 +24,8 @@ import { api } from "../../convex/_generated/api";
 export function PlaybookPage() {
   const [service, setService] = useState("");
   const [city, setCity] = useState("");
+  const [origin, setOrigin] = useState<WinnerOrigin>("all");
+  const [savedBy, setSavedBy] = useState("");
   const dims = useQuery(api.market.dimensions, {});
   const rows = useQuery(api.market.playbook, {
     serviceLine: service || undefined,
@@ -29,6 +37,8 @@ export function PlaybookPage() {
   const winners = useQuery(api.market.winners, {
     serviceLine: service || undefined,
     limit: 40,
+    origin: origin === "all" ? undefined : origin,
+    savedBy: savedBy || undefined,
   });
 
   const verdictTone = (v: string) =>
@@ -186,12 +196,33 @@ export function PlaybookPage() {
 
       <CreativePatterns rows={patterns} />
 
-      <WinningAds rows={winners} />
+      <div className="mt-6 space-y-2">
+        <h2 className="text-[14px] font-bold">
+          The winning ads, word for word
+        </h2>
+        <WinnerFilter
+          rows={winners}
+          origin={origin}
+          onOrigin={setOrigin}
+          savedBy={savedBy}
+          onSavedBy={setSavedBy}
+        />
+        <WinningAds
+          rows={winners}
+          title=""
+          sub="Ads found by the weekly check spent at least $100 at $15 or less a lead. Ads marked Saved were picked by the team, with their numbers from the day they were saved. Click one to read its hook, its copy and, for video, what is actually said and shown on screen."
+          empty={
+            origin === "saved" || savedBy
+              ? "Nobody has saved an ad here yet. The media buyer saves one from the Ads table with Save as winner."
+              : "No winning ads in this service line yet."
+          }
+        />
+      </div>
 
       <p className="mt-3 text-[12px] text-muted-foreground">
-        Only ad sets with at least $100 spend and one lead are shown — below
-        that a cheap cost per lead is noise. "Proven" means it beat $15 for more
-        than one client.
+        Only ad sets with at least $100 spend and one lead are shown. Below
+        that, a cheap cost per lead is noise. "Proven" means it beat $15 for
+        more than one client.
       </p>
     </div>
   );
@@ -249,7 +280,7 @@ function CreativePatterns({
                         {r.key === "unknown" && (
                           <span className="text-muted-foreground">
                             {" "}
-                            (dynamic creative — Meta won't say)
+                            (dynamic creative, Meta won't say)
                           </span>
                         )}
                       </td>
@@ -264,169 +295,6 @@ function CreativePatterns({
                   ))}
                 </tbody>
               </table>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-/**
- * The winning ads themselves — copy, hook and script.
- *
- * Patterns tell you the shape; this is the actual ad. Aziz's ask: when
- * something like Arcturus performs, we should be able to open it, read what it
- * said, and reuse the angle for the next client. [aziz, 2026-09-06]
- */
-/** "2026-08-14" → "14 Aug". Blank stays blank rather than becoming a fake date. */
-function fmtDay(d: string | null | undefined): string {
-  if (!d) return "";
-  const t = Date.parse(d);
-  if (Number.isNaN(t)) return d;
-  return new Date(t).toLocaleDateString("en-GB", {
-    day: "numeric",
-    month: "short",
-  });
-}
-
-function WinningAds({
-  // biome-ignore lint/suspicious/noExplicitAny: query payload is untyped
-  rows,
-}: {
-  // biome-ignore lint/suspicious/noExplicitAny: query payload is untyped
-  rows: any[] | undefined;
-}) {
-  const [open, setOpen] = useState<string | null>(null);
-  if (!rows || rows.length === 0) return null;
-
-  return (
-    <div className="mt-6">
-      <h2 className="text-[14px] font-bold">The winning ads, word for word</h2>
-      <p className="mb-2 text-[12px] text-muted-foreground">
-        Every ad that spent at least $100 and stayed under $15 a lead, kept
-        permanently — switched off or not — with the dates it was winning in.
-        Click one to read its hook, its copy and, for video, what is actually
-        said and shown on screen.
-      </p>
-      <div className="divide-y rounded-lg border">
-        {rows.map(r => {
-          const isOpen = open === r.adId;
-          return (
-            <div key={r.adId}>
-              <div className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-muted/50">
-                <CreativePreview
-                  name={r.adName}
-                  thumbUrl={r.thumbUrl ?? undefined}
-                  previewSrc={r.previewSrc ?? undefined}
-                  metaAdId={r.adId}
-                />
-                <span className="w-14 shrink-0 text-right text-[13px] font-bold tabular-nums">
-                  ${r.cpl.toFixed(2)}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[13px] font-medium">
-                    {r.client}
-                  </span>
-                  <span className="block truncate text-[12px] text-muted-foreground">
-                    {r.hook || r.headline || r.adName}
-                  </span>
-                </span>
-                <span className="shrink-0 text-right text-[11px] text-muted-foreground">
-                  {r.leads} leads · ${r.spend} · {r.city}
-                  <span className="block">
-                    {r.wonFrom
-                      ? `won ${fmtDay(r.wonFrom)}${r.wonTo && r.wonTo !== r.wonFrom ? `–${fmtDay(r.wonTo)}` : ""}`
-                      : ""}
-                    {r.stillLive === false ? (
-                      <span
-                        className="ml-1 rounded bg-muted px-1 font-semibold uppercase"
-                        title={
-                          r.retiredOn
-                            ? `Off since ${r.retiredOn}`
-                            : "Not running"
-                        }
-                      >
-                        retired
-                      </span>
-                    ) : r.stillLive ? (
-                      <span className="ml-1 font-semibold txt-good">live</span>
-                    ) : null}
-                  </span>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setOpen(isOpen ? null : r.adId)}
-                  className="shrink-0 rounded border px-2 py-0.5 text-[12px] font-semibold text-muted-foreground hover:bg-muted"
-                >
-                  {isOpen ? "Hide" : "Read it"}
-                </button>
-              </div>
-              {isOpen && (
-                <div className="space-y-3 border-t bg-muted/30 px-3 py-3 text-[13px]">
-                  <div className="flex flex-wrap gap-1.5 text-[11px]">
-                    {[
-                      r.serviceLine,
-                      r.format,
-                      r.cta,
-                      r.voice,
-                      r.playType,
-                      ...(r.copyTraits ?? []),
-                    ]
-                      .filter(Boolean)
-                      .map((t: string) => (
-                        <span
-                          key={t}
-                          className="rounded border px-1.5 py-0.5 text-muted-foreground"
-                        >
-                          {t}
-                        </span>
-                      ))}
-                  </div>
-                  {r.headline && (
-                    <div>
-                      <div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
-                        Headline
-                      </div>
-                      <div dir="auto">{r.headline}</div>
-                    </div>
-                  )}
-                  {r.body && (
-                    <div>
-                      <div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
-                        Copy
-                      </div>
-                      <div dir="auto" className="whitespace-pre-wrap">
-                        {r.body}
-                      </div>
-                    </div>
-                  )}
-                  {r.transcript ? (
-                    <div>
-                      <div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
-                        What the video says and shows
-                      </div>
-                      <div dir="auto" className="whitespace-pre-wrap">
-                        {r.transcript}
-                      </div>
-                    </div>
-                  ) : (
-                    r.format === "video" && (
-                      <div className="text-muted-foreground">
-                        No script read for this one yet.
-                      </div>
-                    )
-                  )}
-                  {r.interests?.length > 0 && (
-                    <div>
-                      <div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
-                        Targeting
-                      </div>
-                      <div dir="auto">{r.interests.join(" · ")}</div>
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
           );
         })}

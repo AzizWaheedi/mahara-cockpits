@@ -11,6 +11,7 @@ import {
   buildMarketWinners,
   buildPlaybook,
 } from "./market";
+import { stillsCopyProblem } from "./previews";
 import { buildFreshness } from "./sync";
 import { buildWinnersList } from "./winners";
 
@@ -42,6 +43,17 @@ const CHECKS = [
   "sync.freshness",
 ] as const;
 
+/**
+ * Copies of the media buyer's saved ad stills. Checked once a day, in the
+ * 03:00 UTC run the media buyer also uses for its own picture checks, so the
+ * 15-minute check stays as cheap as it was.
+ */
+const STILLS_CHECK = "stills copy";
+
+function dailyWindow(now = new Date()): boolean {
+  return now.getUTCHours() === 3 && now.getUTCMinutes() < 15;
+}
+
 /** The two checks that need a client name from the roster check. */
 const PER_CLIENT = new Set<string>(["clients.detail", "funnels.list (client)"]);
 
@@ -61,7 +73,9 @@ export const run = internalAction({
   handler: async (ctx): Promise<Result> => {
     const checks: Check[] = [];
     let firstClient: string | undefined;
-    for (const name of CHECKS) {
+    const names: string[] = [...CHECKS];
+    if (dailyWindow()) names.push(STILLS_CHECK);
+    for (const name of names) {
       if (PER_CLIENT.has(name) && !firstClient) continue;
       const t0 = Date.now();
       try {
@@ -153,6 +167,11 @@ export const one = internalQuery({
             ? `feed stale (expected ${f.cadence}): ${f.stale.join(", ")}`
             : null,
         };
+      }
+      case STILLS_CHECK: {
+        const problem = await stillsCopyProblem(ctx);
+        if (problem) throw new Error(problem);
+        return null;
       }
       default:
         throw new Error(`unknown smoke check: ${name}`);

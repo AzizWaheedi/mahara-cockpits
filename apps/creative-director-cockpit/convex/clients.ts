@@ -13,6 +13,7 @@ import {
   rowInScope,
   userEmail,
 } from "./roles";
+import { isSaved, orderWinners } from "./winners";
 
 /**
  * The client database.
@@ -332,6 +333,9 @@ export async function buildDetail(
       n.kind === "ad" &&
       (n.effectiveStatus || n.status || "").toUpperCase() === "ACTIVE",
   );
+  const accountOf = new Map(
+    campaigns.map(k => [k.campaignName, k.metaAccountId]),
+  );
 
   return {
     /**
@@ -443,13 +447,19 @@ export async function buildDetail(
       costPerBooking: k.costPerBooking,
       boardAdStatus: k.boardAdStatus,
     })),
-    /** What is running right now, and what has run before. */
+    /**
+     * What is running right now, and what has run before. No preview links:
+     * the page shows the saved still and fetches a live preview on open.
+     */
     liveNow: liveAds.map(n => ({
       metaId: n.metaId,
       name: n.name,
       campaignName: n.campaignName,
-      previewSrc: n.previewSrc,
+      accountId: n.accountId ?? accountOf.get(n.campaignName),
       thumbUrl: n.thumbUrl,
+      stillKey: n.stillKey,
+      stillUrl: n.stillUrl,
+      stillTinyUrl: n.stillTinyUrl,
     })),
     history: ads
       .map(a => ({
@@ -460,7 +470,11 @@ export async function buildDetail(
         cpl: a.cpl,
         ctr: a.ctr,
         thumbnailUrl: a.thumbnailUrl,
-        previewSrc: a.previewSrc,
+        metaAdId: a.metaAdId,
+        accountId: accountOf.get(a.campaignName),
+        stillKey: a.stillKey,
+        stillUrl: a.stillUrl,
+        stillTinyUrl: a.stillTinyUrl,
       }))
       .sort((a, b) => b.spend - a.spend),
   };
@@ -511,8 +525,11 @@ export const winners = authenticatedQuery({
           ctr: a.ctr,
           costPerBooking: k.costPerBooking,
           thumbnailUrl: a.thumbnailUrl,
-          previewSrc: a.previewSrc,
           metaAdId: a.metaAdId,
+          accountId: k.metaAccountId,
+          stillKey: a.stillKey,
+          stillUrl: a.stillUrl,
+          stillTinyUrl: a.stillTinyUrl,
         };
       })
       .sort((a, b) => {
@@ -727,9 +744,14 @@ export const contextPack = authenticatedQuery({
     const tree = (await ctx.db.query("metaTree").collect()).filter(n =>
       campaignNames.has(n.campaignName),
     );
-    const winners = (await ctx.db.query("winnersArchive").collect()).filter(
-      w => norm(w.client) === norm(client.name),
-    );
+    // The rows What works shows for them, one per ad: the team's saves
+    // first, newest first, then the weekly check's winners by cost per lead.
+    const clientWinners = (
+      await ctx.db.query("winnersArchive").collect()
+    ).filter(w => norm(w.client) === norm(client.name));
+    const winners = orderWinners(clientWinners, {
+      limit: clientWinners.length,
+    });
     const plays = (await ctx.db.query("marketPlays").collect())
       .filter(p => norm(p.client) === norm(client.name))
       .sort((a, b) => (a.cpl ?? 1e9) - (b.cpl ?? 1e9));
@@ -845,7 +867,7 @@ export const contextPack = authenticatedQuery({
     );
     for (const a of ads) {
       L.push(
-        `- ${liveIds.has(a.adName) ? "LIVE NOW" : "not live"} · ${a.adName} · ${a.campaignName} · spend ${money(a.spend)} · ${a.leads} leads · CPL ${money(a.cpl)} · CTR ${a.ctr ? `${a.ctr.toFixed(2)}%` : "n/a"}${a.previewSrc ? ` · preview ${a.previewSrc}` : ""}`,
+        `- ${liveIds.has(a.adName) ? "LIVE NOW" : "not live"} · ${a.adName} · ${a.campaignName} · spend ${money(a.spend)} · ${a.leads} leads · CPL ${money(a.cpl)} · CTR ${a.ctr ? `${a.ctr.toFixed(2)}%` : "n/a"}${a.metaAdId ? ` · Meta ad id ${a.metaAdId}` : ""}`,
       );
     }
     if (ads.length === 0) L.push("Nothing on file.");
@@ -858,6 +880,23 @@ export const contextPack = authenticatedQuery({
     }
     for (const w of winners) {
       L.push(`### ${w.adName}`);
+      if (isSaved(w)) {
+        const who = w.savedByName || w.savedBy || "the team";
+        L.push(
+          w.savedNote ? `Saved by ${who}: ${w.savedNote}` : `Saved by ${who}`,
+          "",
+        );
+        if (w.savedStats) {
+          const r = w.savedRange;
+          const range = r
+            ? (r.label ?? `${r.start} to ${r.end}`)
+            : "when saved";
+          line(
+            "Numbers when saved",
+            `${range}: ${money(w.savedStats.spend)} spent, ${w.savedStats.leads} leads, ${money(w.savedStats.cpl)} a lead`,
+          );
+        }
+      }
       line("Format", w.format);
       line("Language", w.language);
       line("Hook", w.hook);

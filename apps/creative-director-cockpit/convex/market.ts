@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import type { QueryCtx } from "./_generated/server";
 import { authenticatedQuery } from "./functions";
 import { assertRole } from "./roles";
+import { isAuto, isSaved, type Origin, orderWinners, vOrigin } from "./winners";
 
 /**
  * "What works" — the media buyer's playbook, mirrored.
@@ -63,8 +64,9 @@ function winnersFrom(plays: any[]): Record<string, any>[] {
         transcript: cr.transcript,
         hook: cr.hook,
         voice: cr.voice,
-        previewSrc: cr.previewSrc,
         thumbUrl: cr.thumbUrl,
+        creativeId: cr.creativeId,
+        stillKey: cr.stillKey,
         language: p.language,
         copyTraits: p.copyTraits ?? [],
         playType: p.playType,
@@ -302,6 +304,10 @@ export async function buildCreativePatterns(ctx: QueryCtx, args: PatternArgs) {
 /**
  * The winning ads, read from the permanent archive so switched-off winners are
  * still there. Falls back to the live plays only if the archive is empty.
+ *
+ * Ads the team saved with "Save as winner" come first, newest first, and are
+ * never cut by `limit`; then the weekly check's winners by cost per lead. The
+ * rules live in winners.ts and match the media buyer's.
  */
 const winnerArgs = {
   serviceLine: v.optional(v.string()),
@@ -309,12 +315,18 @@ const winnerArgs = {
   limit: v.optional(v.number()),
   /** Default false: retired winners are still worth reusing. */
   liveOnly: v.optional(v.boolean()),
+  /** "saved": saved by the team. "auto": found by the weekly check. */
+  origin: vOrigin,
+  /** Only saves by this person (their email). */
+  savedBy: v.optional(v.string()),
 };
 type WinnerArgs = {
   serviceLine?: string;
   exclude?: string;
   limit?: number;
   liveOnly?: boolean;
+  origin?: Origin;
+  savedBy?: string;
 };
 
 export const winners = authenticatedQuery({
@@ -332,14 +344,19 @@ export async function buildMarketWinners(ctx: QueryCtx, args: WinnerArgs) {
     ? rows.map(r => ({ ...r }))
     : winnersFrom(await playsFor(ctx));
 
-  const out = source.filter(r => {
-    if (args.serviceLine && r.serviceLine !== args.serviceLine) return false;
-    if (args.exclude && r.client === args.exclude) return false;
-    if (args.liveOnly && r.stillLive === false) return false;
-    return true;
+  // Archive rows and play rows differ in shape; both carry what is read here.
+  const out: any[] = orderWinners(source as any[], {
+    origin: args.origin,
+    savedBy: args.savedBy,
+    limit: args.limit ?? 40,
+    keep: r => {
+      if (args.serviceLine && r.serviceLine !== args.serviceLine) return false;
+      if (args.exclude && r.client === args.exclude) return false;
+      if (args.liveOnly && r.stillLive === false) return false;
+      return true;
+    },
   });
-  out.sort((a, b) => (a.cpl as number) - (b.cpl as number));
-  return out.slice(0, args.limit ?? 40).map(r => ({
+  return out.map(r => ({
     adId: r.adId,
     adName: r.adName,
     client: r.client,
@@ -352,7 +369,6 @@ export async function buildMarketWinners(ctx: QueryCtx, args: WinnerArgs) {
     transcript: r.transcript ?? null,
     hook: r.hook ?? null,
     voice: r.voice ?? null,
-    previewSrc: r.previewSrc ?? null,
     thumbUrl: r.thumbUrl ?? null,
     language: r.language ?? null,
     copyTraits: r.copyTraits ?? [],
@@ -360,10 +376,24 @@ export async function buildMarketWinners(ctx: QueryCtx, args: WinnerArgs) {
     interests: r.interests ?? [],
     spend: r.spend,
     leads: r.leads,
-    cpl: r.cpl,
+    cpl: typeof r.cpl === "number" ? r.cpl : null,
     wonFrom: r.wonFrom ?? null,
     wonTo: r.wonTo ?? null,
     stillLive: r.stillLive ?? null,
     retiredOn: r.retiredOn ?? null,
+    origin: r.origin ?? "auto",
+    isSaved: isSaved(r),
+    isAuto: isAuto(r),
+    savedBy: r.savedBy ?? null,
+    savedByName: r.savedByName ?? null,
+    savedAt: r.savedAt ?? null,
+    savedNote: r.savedNote ?? null,
+    savedRange: r.savedRange ?? null,
+    savedStats: r.savedStats ?? null,
+    stillKey: r.stillKey ?? null,
+    stillUrl: r.stillUrl ?? null,
+    stillTinyUrl: r.stillTinyUrl ?? null,
+    accountId: r.accountId ?? null,
+    campaignName: r.campaignName ?? null,
   }));
 }
