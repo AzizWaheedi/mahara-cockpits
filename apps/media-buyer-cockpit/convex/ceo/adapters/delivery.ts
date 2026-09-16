@@ -1,14 +1,15 @@
 import { internal } from "../../_generated/api";
 import { OFF_STATUSES } from "../../board";
+import { CPB_GATE, CPL_GATE } from "../../constants";
 import type { DeliveryPayload, DeliveryWindow, Note } from "../payloads";
 import { addDays, kuwaitDay, monthStart } from "../time";
 import type { Adapter, DailyPoint, SourceStamp } from "../types";
 
 type Any = any;
 
-/** Decision 3 seeds (CEO_COCKPIT_PLAN.md 3.3) until Aziz sets the official gates. */
-const CPL_GATE = 15;
-const CPB_GATE = 80;
+// The gates come from convex/constants.ts, the one place the whole cockpit
+// reads them, so the delivery colours, the client risk points and the KPI
+// screens can never judge the same cost against two different numbers.
 /** Days from signup to launch (DEL-16 target); an onboarding client past it is stuck. */
 const LAUNCH_DAYS = 7;
 /** The sync runs every 10 minutes by day and hourly overnight; 3 hours behind is stale. */

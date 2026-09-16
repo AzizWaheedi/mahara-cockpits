@@ -1,0 +1,585 @@
+import { useMemo } from "react";
+import { BarList, type BarListItem } from "@/components/ceo/BarList";
+import { useTabParam } from "@/components/ceo/CeoTabs";
+import { type Column, DataTable } from "@/components/ceo/DataTable";
+import { Delta, type DeltaKind, type GoodWhen } from "@/components/ceo/Delta";
+import { FilterChips } from "@/components/ceo/FilterChips";
+import {
+  change,
+  count,
+  date,
+  diff,
+  isNum,
+  kuwaitDay,
+  money,
+  pct,
+  plural,
+  type Unit,
+} from "@/components/ceo/format";
+import { Na, Value } from "@/components/ceo/Na";
+import { SectionCard } from "@/components/ceo/SectionCard";
+import { StatTile } from "@/components/ceo/StatTile";
+import { TimeSeriesChart } from "@/components/ceo/TimeSeriesChart";
+import {
+  COMPARE_WITH,
+  range,
+  WINDOW_CHIPS,
+  WINDOW_KEYS,
+  WINDOW_LABEL,
+} from "@/components/ceo/windows";
+import type {
+  FunnelWindow,
+  GrowthPayload,
+  Note,
+} from "../../../convex/ceo/payloads";
+import type { CeoTabProps } from "./types";
+
+// --- Derived numbers, each null when its denominator is 0 ---
+
+/** Intro plus demo calls booked in the window. */
+function bookedCalls(w: FunnelWindow): number {
+  return w.introsBooked + w.demosBooked;
+}
+
+/** Booked calls over leads. Can pass 100%: a lead and its booking are dated on different days. */
+function bookedRate(w: FunnelWindow): number | null {
+  return w.leads > 0 ? bookedCalls(w) / w.leads : null;
+}
+
+/** Lead-gen ad spend per booked call. */
+function costPerBooked(w: FunnelWindow): number | null {
+  const n = bookedCalls(w);
+  return n > 0 ? w.spend / n : null;
+}
+
+/** Retargeting money, which the headline spend leaves out. Absent for a window the source did not give it for. */
+function retargeting(w: FunnelWindow): number | null {
+  const v = w.raw.spend_retargeting;
+  return isNum(v) ? v : null;
+}
+
+// --- Notes: each caveat beside the card it qualifies ---
+
+type CardKey = "spend" | "booked" | "ads" | "sources" | "daily";
+
+/**
+ * Caveats that qualify numbers on the Sales tab only, so they are not shown
+ * here. The reps note also carries the top ads rule, which this tab states in
+ * its own words on the ads card instead.
+ */
+const SALES_ONLY =
+  /^reps:|rep scorecard|demo show rate|demos due|outcome marked|contracted and cash come from|closed-deal form/i;
+
+/** Everything else lands on the spend card, so no marketing caveat is dropped. */
+const NOTE_ROUTES: readonly (readonly [RegExp, CardKey])[] = [
+  [/top ads/i, "ads"],
+  [/lead sources/i, "sources"],
+  [/daily series/i, "daily"],
+  [/each stage is dated|ghl calls/i, "booked"],
+];
+
+function routeNotes(notes: Note[] | null | undefined) {
+  const out: Partial<Record<CardKey, Note[]>> = {};
+  for (const note of notes ?? []) {
+    if (SALES_ONLY.test(note.text)) continue;
+    const key = NOTE_ROUTES.find(([re]) => re.test(note.text))?.[1] ?? "spend";
+    out[key] = [...(out[key] ?? []), note];
+  }
+  return out;
+}
+
+/** Caveats this tab owns: they belong to how the screen reads the numbers, not to the source. */
+const OWN_NOTES: Record<CardKey, Note[]> = {
+  spend: [
+    {
+      level: "info",
+      text: "Cost per lead divides the lead-gen spend by leads. The retargeting figure beside it is separate money and is not in it.",
+    },
+  ],
+  booked: [
+    {
+      level: "info",
+      text: "A lead is dated on the day it was created and a booking on the day it was booked, so a lead created on Monday and booked on Thursday lands in two different windows. The lead to booked call rate can pass 100% in a short window for that reason, and it is not a cohort conversion.",
+    },
+    {
+      level: "info",
+      text: "Cost per booked call divides this window's lead-gen ad spend by intro plus demo calls booked. Retargeting money is not in it.",
+    },
+  ],
+  ads: [
+    {
+      level: "info",
+      text: "The top 6 ads by spend over the last 7 days. This table includes retargeting spend, the opposite of the headline spend above, which is lead-gen only, so the two do not add up.",
+    },
+    {
+      level: "info",
+      text: "Leads are credited to an ad inside the B2B dashboard function. An ad with no lead tied to it shows n/a for cost per lead.",
+    },
+  ],
+  sources: [
+    {
+      level: "info",
+      text: "The top 10 sources by leads this month. A lead that arrived without a source reads as no source recorded.",
+    },
+  ],
+  daily: [
+    {
+      level: "info",
+      text: "Days run to yesterday. Today is still running, so a part day would read as a drop on every chart and is left off.",
+    },
+  ],
+};
+
+function cardNotes(
+  routed: Partial<Record<CardKey, Note[]>>,
+  key: CardKey,
+): Note[] {
+  return [...OWN_NOTES[key], ...(routed[key] ?? [])];
+}
+
+// --- What marketing has no source for at all ---
+
+const META_ONLY =
+  "The cockpit reads the Meta ad snapshots for spend and leads only. A Meta insights pull carrying this column would be needed.";
+const NO_ANALYTICS =
+  "No web analytics source is connected to the cockpit at all.";
+
+const NOT_MEASURED: { label: string; why: string }[] = [
+  { label: "Impressions", why: META_ONLY },
+  { label: "Clicks", why: META_ONLY },
+  { label: "Click through rate", why: META_ONLY },
+  { label: "Cost per click", why: META_ONLY },
+  { label: "Frequency", why: META_ONLY },
+  { label: "Landing page views", why: NO_ANALYTICS },
+  { label: "Landing page conversion rate", why: NO_ANALYTICS },
+  {
+    label: "Organic, content, email and social",
+    why: "Nothing in either Supabase project holds them, so no organic or owned channel can be reported.",
+  },
+  {
+    label: "Hook rate, thumbstop and video views",
+    why: "Creative level performance is not in the Meta snapshots and not in the Creative Triage project.",
+  },
+  {
+    label: "Leads by the ad that made them",
+    why: "Nothing exposes the ad on a lead, so a funnel by ad cannot be drawn. The ads card credits leads to an ad inside the B2B dashboard only.",
+  },
+];
+
+/** Metrics with no source at all: named, shown as n/a, each with what is missing. */
+function NotMeasured({ order }: { order: number }) {
+  return (
+    <SectionCard
+      kicker="Marketing"
+      title="Not measured yet"
+      order={order}
+      bodyClassName="mt-4"
+    >
+      <p className="mb-4 max-w-2xl text-xs leading-relaxed text-muted-foreground">
+        These are the marketing numbers a CEO would normally ask for that no
+        source the cockpit reads can give. They are named here rather than left
+        off, so nobody hunts for a number that does not exist.
+      </p>
+      <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-3">
+        {NOT_MEASURED.map(m => (
+          <div key={m.label} className="min-w-0">
+            <dt className="text-[13px] leading-5 text-muted-foreground">
+              {m.label}
+            </dt>
+            <dd className="mt-0.5 min-w-0">
+              <span className="text-base font-semibold tracking-tight">
+                <Na hint={m.why} />
+              </span>
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                {m.why}
+              </p>
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </SectionCard>
+  );
+}
+
+// --- The tab ---
+
+/** Marketing for Mahara itself: spend, leads, cost per lead and the calls they book. */
+export function MarketingTab({ sections, now, day }: CeoTabProps) {
+  const section = sections.growth;
+  const payload = section?.payload ?? null;
+  const today = day ?? kuwaitDay(now);
+  const [win, setWin] = useTabParam(WINDOW_KEYS, "mtd", "window");
+  const notes = useMemo(() => routeNotes(payload?.notes), [payload]);
+
+  const compareKey = COMPARE_WITH[win];
+  const current = payload?.windows?.[win] ?? null;
+  const previous = compareKey ? (payload?.windows?.[compareKey] ?? null) : null;
+
+  // With nothing to show, one card says so instead of five identical empty states.
+  if (!payload)
+    return (
+      <div className="grid gap-4 lg:gap-6">
+        <SectionCard title="Marketing" section={section}>
+          {() => null}
+        </SectionCard>
+        <NotMeasured order={1} />
+      </div>
+    );
+
+  return (
+    <div className="grid gap-4 lg:gap-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <FilterChips
+          options={WINDOW_CHIPS}
+          value={win}
+          onChange={setWin}
+          ariaLabel="Window for spend, leads and calls booked"
+        />
+        {current ? (
+          <p className="text-sm text-muted-foreground tabular-nums">
+            <span className="font-medium text-foreground">
+              {range(current.from, current.to)}
+            </span>
+            {previous
+              ? `, compared with ${range(previous.from, previous.to)}`
+              : ", shown without a comparison"}
+          </p>
+        ) : null}
+      </div>
+
+      <div className="grid gap-4 lg:gap-6 xl:grid-cols-12">
+        <SectionCard
+          kicker={WINDOW_LABEL[win]}
+          title="Spend and leads"
+          section={section}
+          notes={cardNotes(notes, "spend")}
+          order={0}
+          className="xl:col-span-7"
+        >
+          {p => (
+            <SpendAndLeads
+              w={p.windows[win]}
+              prev={compareKey ? p.windows[compareKey] : null}
+            />
+          )}
+        </SectionCard>
+        <SectionCard
+          kicker={WINDOW_LABEL[win]}
+          title="Calls booked"
+          section={section}
+          notes={cardNotes(notes, "booked")}
+          order={1}
+          className="xl:col-span-5"
+        >
+          {p => (
+            <CallsBooked
+              w={p.windows[win]}
+              prev={compareKey ? p.windows[compareKey] : null}
+            />
+          )}
+        </SectionCard>
+      </div>
+
+      <div className="mt-2 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h2 className="text-sm font-semibold text-foreground">
+          Ads, sources and the trend
+        </h2>
+        <p className="text-xs text-muted-foreground">
+          These keep their own ranges and do not follow the window above.
+        </p>
+      </div>
+
+      <div className="grid gap-4 lg:gap-6 xl:grid-cols-12">
+        <SectionCard
+          kicker="Last 7 days"
+          title="Ads by spend"
+          section={section}
+          notes={cardNotes(notes, "ads")}
+          order={2}
+          className="xl:col-span-7"
+        >
+          {p => <TopAds ads={p.topAds} />}
+        </SectionCard>
+        <SectionCard
+          kicker="Month to date"
+          title="Where leads come from"
+          section={section}
+          notes={cardNotes(notes, "sources")}
+          order={3}
+          className="xl:col-span-5"
+        >
+          {p => <LeadSources sources={p.leadSources} />}
+        </SectionCard>
+      </div>
+
+      <SectionCard
+        kicker="Daily, through yesterday"
+        title="Spend, leads and calls booked"
+        section={section}
+        notes={cardNotes(notes, "daily")}
+        order={4}
+      >
+        {p => <DailyBody rows={p.daily} today={today} />}
+      </SectionCard>
+
+      <NotMeasured order={5} />
+    </div>
+  );
+}
+
+// --- Card 1: spend and leads ---
+
+function SpendAndLeads({
+  w,
+  prev,
+}: {
+  w: FunnelWindow;
+  prev: FunnelWindow | null;
+}) {
+  const vs = prev ? `vs ${range(prev.from, prev.to)}` : undefined;
+  const delta = (
+    value: number | null,
+    goodWhen: GoodWhen,
+    kind: DeltaKind = "pct",
+  ) =>
+    prev && isNum(value) ? (
+      <Delta value={value} goodWhen={goodWhen} kind={kind} vs={vs} />
+    ) : undefined;
+
+  const retarget = retargeting(w);
+  const prevRetarget = prev ? retargeting(prev) : null;
+
+  return (
+    <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4">
+      <StatTile
+        variant="plain"
+        label="Lead-gen ad spend"
+        value={money(w.spend)}
+        delta={delta(change(w.spend, prev?.spend), "neither")}
+        hint="What Mahara spends on its own lead-gen campaigns, as on the B2B dashboard overview. Days are the Meta ad account's reporting day. Money spent on client ads is a different pool and sits on the Delivery tab."
+      />
+      <StatTile
+        variant="plain"
+        label="Leads"
+        value={count(w.leads)}
+        delta={delta(change(w.leads, prev?.leads), "up")}
+        hint="Every opted-in GHL contact with a phone or email, dated by the day it was created."
+      />
+      <StatTile
+        variant="plain"
+        label="Cost per lead"
+        value={money(w.cpl)}
+        delta={delta(change(w.cpl, prev?.cpl), "down")}
+        naHint="No leads in this window, so there is no cost per lead."
+      />
+      <StatTile
+        variant="plain"
+        label="Retargeting spend"
+        value={money(retarget)}
+        delta={delta(change(retarget, prevRetarget), "neither")}
+        hint="Retargeting money in this window, on top of the lead-gen spend. It is different money and is never part of cost per lead."
+        naHint="The B2B window function gave no retargeting figure for this window."
+      />
+    </div>
+  );
+}
+
+// --- Card 2: calls booked ---
+
+function CallsBooked({
+  w,
+  prev,
+}: {
+  w: FunnelWindow;
+  prev: FunnelWindow | null;
+}) {
+  const vs = prev ? `vs ${range(prev.from, prev.to)}` : undefined;
+  const delta = (
+    value: number | null,
+    goodWhen: GoodWhen,
+    kind: DeltaKind = "pct",
+  ) =>
+    prev && isNum(value) ? (
+      <Delta value={value} goodWhen={goodWhen} kind={kind} vs={vs} />
+    ) : undefined;
+
+  const booked = bookedCalls(w);
+  const rate = bookedRate(w);
+  const cost = costPerBooked(w);
+  const prevRate = prev ? bookedRate(prev) : null;
+  const prevCost = prev ? costPerBooked(prev) : null;
+
+  return (
+    <div className="grid grid-cols-2 gap-x-6 gap-y-5">
+      <StatTile
+        variant="plain"
+        label="Intro calls booked"
+        value={count(w.introsBooked)}
+        delta={delta(change(w.introsBooked, prev?.introsBooked), "up")}
+        hint="Intro calls on a rep's calendar, dated by the day they were booked."
+      />
+      <StatTile
+        variant="plain"
+        label="Demos booked"
+        value={count(w.demosBooked)}
+        delta={delta(change(w.demosBooked, prev?.demosBooked), "up")}
+        hint="Demos on a rep's calendar, dated by the day they were booked. What happens on the call is on the Sales tab."
+      />
+      <StatTile
+        variant="plain"
+        label="Lead to booked call"
+        value={pct(rate)}
+        delta={delta(diff(rate, prevRate), "up", "points")}
+        sub={
+          <span>
+            {plural(booked, "call")} booked, {plural(w.leads, "lead")}
+          </span>
+        }
+        hint="Intro plus demo calls booked in this window, divided by the leads created in it."
+        naHint="No leads in this window, so there is no rate."
+      />
+      <StatTile
+        variant="plain"
+        label="Cost per booked call"
+        value={money(cost)}
+        delta={delta(change(cost, prevCost), "down")}
+        hint="Lead-gen ad spend in this window divided by intro plus demo calls booked."
+        naHint="No calls were booked in this window."
+      />
+    </div>
+  );
+}
+
+// --- Card 3: ads ---
+
+type Ad = GrowthPayload["topAds"][number];
+
+const AD_COLUMNS: Column<Ad>[] = [
+  {
+    key: "name",
+    header: "Ad",
+    cell: a => (
+      <span
+        className="block min-w-0 max-w-[22rem] truncate text-foreground"
+        title={a.name}
+      >
+        {a.name}
+      </span>
+    ),
+    sortValue: a => a.name,
+  },
+  {
+    key: "spend",
+    header: "Spend",
+    cell: a => money(a.spend),
+    sortValue: a => a.spend,
+    numeric: true,
+  },
+  {
+    key: "leads",
+    header: "Leads",
+    cell: a => count(a.leads),
+    sortValue: a => a.leads,
+    numeric: true,
+  },
+  {
+    key: "cpl",
+    header: "Cost per lead",
+    cell: a => (
+      <Value
+        value={money(a.cpl)}
+        hint="No lead is tied to this ad in the last 7 days."
+      />
+    ),
+    sortValue: a => a.cpl,
+    numeric: true,
+  },
+];
+
+function TopAds({ ads }: { ads: Ad[] }) {
+  return (
+    <DataTable
+      rows={ads}
+      columns={AD_COLUMNS}
+      rowKey={(a, i) => `${a.name}-${i}`}
+      initialSort={{ key: "spend", dir: "desc" }}
+      caption="Top ads by spend over the last 7 days, with leads and cost per lead"
+      emptyText="No ad spend in the last 7 days."
+      stickyFirst
+    />
+  );
+}
+
+// --- Card 4: lead sources ---
+
+function LeadSources({ sources }: { sources: GrowthPayload["leadSources"] }) {
+  const items: BarListItem[] = sources.map((s, i) => ({
+    key: `${s.source}-${i}`,
+    label: s.source === "(none)" ? "No source recorded" : s.source,
+    value: s.leads,
+  }));
+  return (
+    <BarList
+      items={items}
+      format={count}
+      limit={10}
+      ariaLabel="Leads by source this month"
+      emptyText="No leads this month yet."
+    />
+  );
+}
+
+// --- Card 5: the trend ---
+
+const DAILY_SERIES: {
+  key: "spend" | "leads" | "booked";
+  title: string;
+  unit: Unit;
+  noun: string;
+}[] = [
+  {
+    key: "spend",
+    title: "Lead-gen ad spend",
+    unit: "money",
+    noun: "Lead-gen ad spend",
+  },
+  { key: "leads", title: "Leads", unit: "count", noun: "Leads created" },
+  {
+    key: "booked",
+    title: "Calls booked",
+    unit: "count",
+    noun: "Intro and demo calls booked",
+  },
+];
+
+function DailyBody({
+  rows,
+  today,
+}: {
+  rows: GrowthPayload["daily"];
+  today: string;
+}) {
+  // Today is still running; a partial last day would read as a drop on every chart.
+  const days = rows.filter(r => r.date < today);
+  const first = days[0]?.date;
+  const last = days[days.length - 1]?.date;
+  const span = first && last ? `from ${date(first)} to ${date(last)}` : "";
+
+  return (
+    <div className="grid gap-x-8 gap-y-8 sm:grid-cols-2 xl:grid-cols-3">
+      {DAILY_SERIES.map(s => (
+        <TimeSeriesChart
+          key={s.key}
+          data={days}
+          series={[{ key: s.key, label: s.title }]}
+          unit={s.unit}
+          title={s.title}
+          height={180}
+          syncId="ceo-marketing-daily"
+          ariaLabel={`${s.noun} per day ${span}.`}
+          emptyText="No days to plot yet."
+        />
+      ))}
+    </div>
+  );
+}

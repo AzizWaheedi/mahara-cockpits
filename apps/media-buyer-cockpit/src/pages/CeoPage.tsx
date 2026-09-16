@@ -17,6 +17,7 @@ import {
 } from "@/components/ceo/CeoTabs";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { kuwaitDay, longDate } from "@/components/ceo/format";
+import { highRiskCount } from "@/components/ceo/metrics";
 import { RefreshButton } from "@/components/ceo/RefreshButton";
 import { TrustPills } from "@/components/ceo/TrustPills";
 import {
@@ -26,57 +27,64 @@ import {
   useNow,
 } from "@/components/ceo/useCeo";
 import { api } from "../../convex/_generated/api";
+import { BackendTab } from "./ceo/BackendTab";
 import { CallsTab } from "./ceo/CallsTab";
-import { ClientsTab } from "./ceo/ClientsTab";
+import { ClientSuccessTab } from "./ceo/ClientSuccessTab";
 import { DeliveryTab } from "./ceo/DeliveryTab";
-import { GrowthTab } from "./ceo/GrowthTab";
+import { FrontendTab } from "./ceo/FrontendTab";
 import { MachineTab } from "./ceo/MachineTab";
+import { ManagementTab } from "./ceo/ManagementTab";
+import { MarketingTab } from "./ceo/MarketingTab";
 import { MoneyTab } from "./ceo/MoneyTab";
+import { SalesTab } from "./ceo/SalesTab";
 import { statusSentence } from "./ceo/statusSentence";
-import { TeamTab } from "./ceo/TeamTab";
 import { TodayTab } from "./ceo/TodayTab";
 import { CEO_TAB_KEYS, type CeoTabKey, type CeoTabProps } from "./ceo/types";
 
 const TAB_LABELS: Record<CeoTabKey, string> = {
   today: "Today",
-  money: "Money",
-  growth: "Growth",
+  frontend: "Frontend",
+  marketing: "Marketing",
+  sales: "Sales",
+  backend: "Backend",
   delivery: "Delivery",
   calls: "Calls",
-  clients: "Clients",
-  team: "Team",
+  "client-success": "Client success",
+  management: "Management",
+  money: "Money",
   machine: "Machine",
 };
 
 const TAB_VIEWS: Record<CeoTabKey, (props: CeoTabProps) => ReactNode> = {
   today: TodayTab,
-  money: MoneyTab,
-  growth: GrowthTab,
+  frontend: FrontendTab,
+  marketing: MarketingTab,
+  sales: SalesTab,
+  backend: BackendTab,
   delivery: DeliveryTab,
   calls: CallsTab,
-  clients: ClientsTab,
-  team: TeamTab,
+  "client-success": ClientSuccessTab,
+  management: ManagementTab,
+  money: MoneyTab,
   machine: MachineTab,
 };
 
 function tabsFor(sections: CeoSections): CeoTab<CeoTabKey>[] {
   const clients = sections.clients?.payload;
-  const highRisk = clients
-    ? clients.rows.filter(
-        r =>
-          r.risk.level === "high" &&
-          (r.bucket === "active" || r.bucket === "onboarding"),
-      ).length
-    : null;
+  const highRisk = clients ? highRiskCount(clients) : null;
   const machine = sections.machine?.payload;
   const failing = machine ? machine.failingJobs + machine.failingSources : null;
   return CEO_TAB_KEYS.map(key => ({
     key,
     label: TAB_LABELS[key],
     count:
-      key === "clients" ? highRisk : key === "machine" ? failing : undefined,
+      key === "client-success"
+        ? highRisk
+        : key === "machine"
+          ? failing
+          : undefined,
     countTone:
-      key === "clients"
+      key === "client-success"
         ? "serious"
         : key === "machine"
           ? "critical"
@@ -110,7 +118,7 @@ function useStickyTop() {
   return [ref, top] as const;
 }
 
-/** The founder's command center at /ceo: one header, eight tabs, every number with its trust. */
+/** The founder's command center at /ceo: one header, eleven tabs, every number with its trust. */
 export function CeoPage() {
   const me = useQuery(api.roles.me, {});
   const isCeo = me?.isCeo === true;

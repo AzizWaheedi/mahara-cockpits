@@ -322,13 +322,13 @@ function Headline({
     {
       key: "conversations",
       // A no-break space keeps "90 s" together when the label wraps.
-      label: "Calls over 90\u00a0s",
+      label: "Conversations over 90\u00a0s",
       format: count,
       pick: c => c.conversations90s,
       delta: (
         <Delta value={change(w.conversations90s, p.conversations90s)} vs={vs} />
       ),
-      hint: "Connected calls that lasted 90 seconds or more: real conversations.",
+      hint: "Connected calls that lasted 90 seconds or more. The Backend tab calls the same number conversations today.",
     },
   ];
 

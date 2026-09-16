@@ -1,6 +1,7 @@
 import { calls } from "./adapters/calls";
 import { clients } from "./adapters/clients";
 import { delivery } from "./adapters/delivery";
+import { expenses } from "./adapters/expenses";
 import { growth } from "./adapters/growth";
 import { machine } from "./adapters/machine";
 import { money } from "./adapters/money";
@@ -14,6 +15,7 @@ import type { Adapter } from "./types";
  */
 export const ADAPTERS: Adapter[] = [
   money,
+  expenses,
   growth,
   delivery,
   calls,

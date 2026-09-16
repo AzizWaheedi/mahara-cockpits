@@ -7,6 +7,7 @@ import {
   pct,
   plural,
 } from "@/components/ceo/format";
+import { cashHeadline, highRiskCount } from "@/components/ceo/metrics";
 import type { CeoSections } from "@/components/ceo/useCeo";
 
 /** The month before "YYYY-MM" as a long name, e.g. "August". */
@@ -31,7 +32,10 @@ export function statusSentence(sections: CeoSections): string {
 
   const moneyP = sections.money?.payload;
   if (moneyP) {
-    const pace = change(moneyP.cash.mtd, moneyP.cash.lastMonthToDate);
+    // The same cash the Today hero shows under this line: every connected
+    // rail (Whop, Tap, hand-logged), not Whop alone, so the two never disagree.
+    const rail = cashHeadline(moneyP).rail;
+    const pace = change(rail.mtd, rail.lastMonthToDate);
     const prev = previousMonthName(moneyP.month);
     const against = prev ? `${prev}'s pace` : "last month's pace";
     if (pace !== null)
@@ -44,12 +48,9 @@ export function statusSentence(sections: CeoSections): string {
 
   const clients = sections.clients?.payload;
   if (clients) {
-    // Same rule as the Clients tab badge, so the two numbers always agree.
-    const high = clients.rows.filter(
-      r =>
-        r.risk.level === "high" &&
-        (r.bucket === "active" || r.bucket === "onboarding"),
-    ).length;
+    // The shared rule, so this line, the tab badge, the Backend rollup and the
+    // Client success tab always show the same count.
+    const high = highRiskCount(clients);
     attention.push(
       high > 0
         ? `${plural(high, "client")} ${high === 1 ? "needs" : "need"} attention`

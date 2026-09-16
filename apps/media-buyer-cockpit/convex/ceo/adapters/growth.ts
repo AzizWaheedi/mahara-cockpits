@@ -223,6 +223,53 @@ function usd(x: number): string {
   return `$${x.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}`;
 }
 
+/** A 0..1 fraction as the tabs print it: whole percents, one decimal under 10%. */
+function pctText(x: number): string {
+  const p = x * 100;
+  return p > 0 && p < 10 ? `${Number(p.toFixed(1))}%` : `${Math.round(p)}%`;
+}
+
+/**
+ * The two demo show rates can sit far apart, and a marked rate of 0% beside a
+ * dashboard rate of 63% reads like a fault. Say plainly which calls each rate
+ * rests on, with this month's counts, so the Sales card can be trusted.
+ */
+function showRateNote(
+  w: FunnelWindow,
+  counts: { markedShown: number; markedNoshow: number; unmarked: number },
+): Note | null {
+  const due = num(w.raw.demos_due);
+  const dash = w.demoShowRate;
+  const strict = w.demoShowRateMarked;
+  const marked = counts.markedShown + counts.markedNoshow;
+  const manyUnmarked = due > 0 && counts.unmarked / due >= 0.2;
+  const gap = strict !== null && dash !== null ? dash - strict : null;
+  const split =
+    marked > 0 && strict !== null && (strict === 0 || (gap ?? 0) >= 0.15);
+  const parts: string[] = [];
+  if (manyUnmarked)
+    parts.push(
+      `${counts.unmarked} of ${due} demos due this month still have no outcome marked. The dashboard counts them as shows, so its show rate${
+        dash !== null ? ` of ${pctText(dash)}` : ""
+      } is likely too high.`,
+    );
+  if (split && strict === 0)
+    parts.push(
+      `Every demo with an outcome marked this month was a no-show: 0 of ${marked} showed, so the marked show rate of 0% is real, not a fault.`,
+    );
+  else if (split && strict !== null)
+    parts.push(
+      `Of the ${marked} demos with an outcome marked this month, ${counts.markedShown} showed (${pctText(strict)}), well under the dashboard's ${
+        dash !== null ? pctText(dash) : "rate"
+      }.`,
+    );
+  if (split && !manyUnmarked && counts.unmarked > 0)
+    parts.push(
+      `The dashboard's rate is higher because it also counts the ${counts.unmarked} past demos nobody marked as shows.`,
+    );
+  return parts.length ? { level: "warn", text: parts.join(" ") } : null;
+}
+
 /** Every numeric key of the function's JSON, as is (percents stay x100). */
 function rawNumbers(m: Row): Record<string, number | null> {
   const raw: Record<string, number | null> = {};
@@ -294,7 +341,7 @@ async function attempt<T>(
 
 export const growth: Adapter = {
   key: "growth",
-  label: "Growth",
+  label: "Marketing and sales",
   compute: async () => {
     const today = kuwaitDay();
     const ranges = windowRanges(today);
@@ -317,8 +364,8 @@ export const growth: Adapter = {
       lastMonth: toWindow(rowOf("lastMonth")),
     };
     const mtd = windows.mtd;
-    const mtdUnmarked = num(rowOf("mtd").unmarked_past);
-    const mtdDemosDue = num(mtd.raw.demos_due);
+    const mtdRow = rowOf("mtd");
+    const mtdUnmarked = num(mtdRow.unmarked_past);
 
     const daily = await attempt(
       "The 60-day daily series",
@@ -384,15 +431,16 @@ export const growth: Adapter = {
     );
 
     // Trust caveats, most important first.
-    if (mtdDemosDue > 0 && mtdUnmarked / mtdDemosDue >= 0.2)
-      notes.push({
-        level: "warn",
-        text: `${mtdUnmarked} of ${mtdDemosDue} demos due this month still have no outcome marked. The dashboard counts them as shows, so its show rate is likely too high.`,
-      });
+    const showRate = showRateNote(mtd, {
+      markedShown: num(mtdRow.marked_shown),
+      markedNoshow: num(mtdRow.marked_noshow),
+      unmarked: mtdUnmarked,
+    });
+    if (showRate) notes.push(showRate);
     notes.push(
       {
         level: "info",
-        text: "Demo show rate is the dashboard's: past calls still marked confirmed, and invalid calls, count as shows. The marked rate uses only calls marked showed, invalid or no-show.",
+        text: "Demo show rate is the dashboard's: demos shown over demos due, where past calls still marked confirmed, and invalid calls, count as shows and cancelled calls stay in the demos due. The marked rate uses only calls marked showed, invalid or no-show.",
       },
       {
         level: "info",

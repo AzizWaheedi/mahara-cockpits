@@ -61,13 +61,16 @@ const SOURCE_LABELS: Record<string, string> = {
   hermes: "Hermes",
 };
 
+// The name each section is known by on screen, matching the tab it feeds. Used
+// only when a section has never computed and so carries no label of its own.
 const SECTION_NAMES: Record<SectionKey, string> = {
   money: "Money",
-  growth: "Growth",
+  expenses: "Expenses and P&L",
+  growth: "Marketing and sales",
   delivery: "Client delivery",
   calls: "Calls",
-  clients: "Clients",
-  team: "Team",
+  clients: "Client success",
+  team: "Management",
   portal: "Client portal",
   machine: "Machine and data trust",
 };
@@ -125,6 +128,7 @@ export function MachineTab({ sections, now }: CeoTabProps) {
   return (
     <div className="grid gap-4 lg:gap-6">
       <SectionCard
+        kicker="Right now"
         title="Machine status"
         section={machine}
         notes={warn}
@@ -136,6 +140,7 @@ export function MachineTab({ sections, now }: CeoTabProps) {
       {payload ? (
         <>
           <SectionCard
+            kicker="Last successful run of each"
             title="Outside feeds"
             section={machine}
             notes={info}
@@ -144,10 +149,16 @@ export function MachineTab({ sections, now }: CeoTabProps) {
             {p => <Feeds feeds={p.feeds} now={now} />}
           </SectionCard>
           <div className="grid gap-4 2xl:grid-cols-2 2xl:items-start 2xl:gap-6">
-            <SectionCard title="Cockpit jobs" section={machine} order={2}>
+            <SectionCard
+              kicker="Last run of each"
+              title="Cockpit jobs"
+              section={machine}
+              order={2}
+            >
               {p => <Jobs jobs={p.jobs} now={now} />}
             </SectionCard>
             <SectionCard
+              kicker="Right now"
               title="Cockpit data sources"
               section={machine}
               order={3}
@@ -159,6 +170,7 @@ export function MachineTab({ sections, now }: CeoTabProps) {
       ) : null}
 
       <SectionCard
+        kicker="Last refresh of each"
         title="CEO sections"
         order={4}
         actions={<RetrySections sections={sections} now={now} />}

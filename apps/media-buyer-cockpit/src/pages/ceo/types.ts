@@ -1,13 +1,24 @@
 import type { CeoSections } from "@/components/ceo/useCeo";
 
+/**
+ * Every CEO tab, in screen order. The key is the value in ?tab=.
+ *
+ * Frontend is the curated rollup of Marketing and Sales, ending in cash won.
+ * Backend is the curated rollup of Delivery, Calls and Client success. The
+ * detail tabs sit next to the rollup they feed, so a number is always one
+ * click from the place it came from.
+ */
 export const CEO_TAB_KEYS = [
   "today",
-  "money",
-  "growth",
+  "frontend",
+  "marketing",
+  "sales",
+  "backend",
   "delivery",
   "calls",
-  "clients",
-  "team",
+  "client-success",
+  "management",
+  "money",
   "machine",
 ] as const;
 

@@ -79,3 +79,107 @@ deploys the site, then runs the smoke check. It stops at the first failure,
 so a broken change never replaces a working deployment. Ship the receiving
 cockpits before the media buyer when a bridge payload gains a field
 (`scripts/ship.sh all` does this in the right order).
+
+## Watchdog (the outside check)
+
+Everything above runs inside Convex, on the media buyer deployment. If Convex
+itself stalls, or its scheduled jobs stop, none of those alerts can go out.
+The watchdog closes that gap from outside: every 15 minutes Vercel runs
+`api/watchdog.ts` in the media buyer app (the schedule is in `vercel.json`;
+a cron every 15 minutes needs the Vercel Pro plan the team is on, since Hobby
+runs crons at most once a day).
+It calls the Convex address `/watchdog` with a secret token. That address
+only answers with how old things are, whether they pass, and the names of
+what is failing. It never sends client data, money figures or personal data.
+
+It sends Aziz a Slack DM from the same bot when:
+
+- Convex does not answer, refuses the token, or answers with an error;
+- the CEO cockpit numbers are more than 45 minutes old (they refresh every 15);
+- the smoke check has not run for 45 minutes, or its last run failed;
+- a CEO section is failing;
+- Convex cannot send Slack messages, so its own alerts are not arriving.
+
+The same problem is sent at most once every 6 hours. When everything is fine
+again it sends one "all clear". A problem that comes back within 6 hours of
+its alert is not sent again until the 6 hours are up, even after an all clear
+(otherwise a section that fails every other run would send an alert and an
+all clear every half hour); a new problem in that window is sent at once and
+lists the held ones. Each alert ends with a line such as
+`(ref watchdog:ceo-stale)`: the watchdog has no database, so it reads its own
+recent messages in the DM to remember what it already sent. Leave those lines
+alone.
+
+| Alert (ref) | What it means | What to do |
+| --- | --- | --- |
+| `convex-down` | Convex did not answer within 20 seconds. The portal, the scheduled jobs, the smoke check for all three cockpits and every other alert live there, so nothing else will tell you. | Check status.convex.dev, then the Convex dashboard (project mahara-media-buyer, production): Health, Logs, Schedules. If the last deploy failed, `scripts/ship.sh media-buyer`. |
+| `convex-token` | Convex is up but refused the watchdog's token. | `WATCHDOG_TOKEN` is missing on Convex, or different on Convex and on Vercel. Set both again with the commands below. |
+| `convex-route` | Convex is up but does not know `/watchdog`. | The backend is older than the watchdog: `scripts/ship.sh media-buyer`. |
+| `convex-error` | Convex answered with an error. | Convex dashboard, Logs, look for `/watchdog`; then `scripts/ship.sh media-buyer`. |
+| `setup-token` | `WATCHDOG_TOKEN` is missing on Vercel. | Set it (below) and ship the site again. |
+| `ceo-stale` | The CEO numbers, or the CEO refresh job, are more than 45 minutes old. The scheduled jobs have probably stopped. | Convex dashboard, Schedules and Logs, look for `ceo/refresh:refreshAll`. If nothing is running, `scripts/ship.sh media-buyer`. |
+| `ceo-section:<name>` | One CEO section keeps failing. The screen still shows its last good numbers. | The Machine tab names the slow or broken source. It retries every 15 minutes; if it is still failing after a few hours, fix that source (the table at the top). |
+| `smoke-stale` | The smoke check has not run for 45 minutes. It is a Convex job, so the sync, the feeds and Convex's own alerts have probably stopped too. | Same as `ceo-stale`. |
+| `smoke:<cockpit-check>` | The smoke check found a screen that throws. Convex has already sent its own alert and filed a fix job for Hermes. | Follow that alert (see "How you find out"). |
+| `convex-slack` | Convex's Slack messages fail, so its alerts are not reaching you. | The Slack row in the table at the top. |
+| all clear | Everything the watchdog checks is fine again. | Nothing. |
+
+"Repeats are not held back" at the bottom of an alert means Slack would not
+let the bot read the DM. The Slack app needs the `im:history` and `im:write`
+scopes (Slack app settings, OAuth & Permissions, then reinstall and set the
+new bot token on Convex and on Vercel). Until then every 15-minute run that
+finds a problem sends it again, and no all clear is sent. Whether the bot has
+these scopes was not checked when the watchdog was built: the `?test=1` reply
+in step 6 below tells you. Vercel keeps its own copy of the bot token: whenever the token changes on
+Convex, run step 4 below again with `--force`, or the watchdog goes quiet.
+
+If Convex is clearly down and no watchdog message arrives, the watchdog
+itself is broken: Vercel dashboard, project mahara-media-buyer, Cron Jobs and
+Logs for `/api/watchdog`. A 401 there means `CRON_SECRET` is missing on
+Vercel (the log says so) or the caller sent the wrong one; a 500 means
+`SLACK_BOT_TOKEN` is missing on Vercel; a 502 means Slack refused the
+message (the error is in the log). The watchdog and Convex post with the same
+Slack bot, so if that bot's token is revoked neither can reach you: the only
+sign is those 502s in the Vercel log and `slack` failing on the Machine tab.
+
+### Setting it up (once, Aziz)
+
+All in one terminal, in this order. The secrets are made with `openssl`,
+passed along through pipes and never printed. Add `--force` to a
+`vercel env add` line if that variable already exists.
+
+```bash
+cd ~/mahara-cockpits/apps/media-buyer-cockpit
+
+# 1. Make the two secrets (they live only in this terminal)
+WATCHDOG_TOKEN="$(openssl rand -hex 32)"
+CRON_SECRET="$(openssl rand -hex 32)"
+
+# 2. WATCHDOG_TOKEN, the same value on Convex production and on Vercel production
+printf %s "$WATCHDOG_TOKEN" | bunx convex env set --prod WATCHDOG_TOKEN
+printf %s "$WATCHDOG_TOKEN" | bunx vercel env add WATCHDOG_TOKEN production --sensitive
+
+# 3. CRON_SECRET on Vercel production (Vercel sends it with every cron call)
+printf %s "$CRON_SECRET" | bunx vercel env add CRON_SECRET production --sensitive
+
+# 4. SLACK_BOT_TOKEN on Vercel production: the bot token Convex already uses
+#    (copied through a variable so an empty value is never stored)
+SLACK_BOT_TOKEN="$(bunx convex env get --prod SLACK_BOT_TOKEN | tr -d '\r\n')"
+if [ -n "$SLACK_BOT_TOKEN" ]; then printf %s "$SLACK_BOT_TOKEN" | bunx vercel env add SLACK_BOT_TOKEN production --sensitive; else echo "SLACK_BOT_TOKEN is not set on Convex prod: stop here"; fi
+
+# 5. Ship backend and site (new Vercel variables only reach a new deployment)
+(cd ../.. && scripts/ship.sh media-buyer)
+
+# 6. Check it: the Convex answer, a dry run, then a test DM
+curl -s -H "Authorization: Bearer $WATCHDOG_TOKEN" https://adorable-seahorse-418.convex.site/watchdog; echo
+curl -s -H "Authorization: Bearer $CRON_SECRET" "https://cockpit.maharamedia.com/api/watchdog?dry=1"; echo
+curl -s -H "Authorization: Bearer $CRON_SECRET" "https://cockpit.maharamedia.com/api/watchdog?test=1"; echo
+
+# 7. Forget the secrets in this terminal
+unset WATCHDOG_TOKEN CRON_SECRET SLACK_BOT_TOKEN
+```
+
+The test run answers with `"memory":"slack"` when repeats can be held back,
+or `"memory":"unavailable (...)"` with Slack's reason when the scopes above
+are missing. `?dry=1` checks without sending anything; `?test=1` also sends a
+test DM that does not count as an alert.

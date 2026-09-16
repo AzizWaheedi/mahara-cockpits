@@ -1007,6 +1007,105 @@ const schema = defineSchema({
   })
     .index("by_metric_scope_date", ["metric", "scope", "date"])
     .index("by_date", ["date"]),
+  /**
+   * CEO cockpit writes (2026-09-16). Only Aziz writes these, only through a
+   * mutation that goes through convex/ceo/writeGuard.ts (the CEO gate plus an
+   * audit row in the same transaction). Nothing here is ever sent to
+   * Supabase, ClickUp, Whop, Tap or any outside system.
+   *
+   * ceoTeamStatus: one row per person on the Management tab, set by hand.
+   * `personKey` is exactly TeamPerson.key from the team adapter:
+   * "<role>:<first>", the raw role key ("media_buyer", "account_manager",
+   * "sales_rep", "sales_setter", ...) plus the lower case letters of the first
+   * word of the name ("media_buyer:nada"). A person with no row is active.
+   * Paused and left people are shown apart and owe no EOD from `since` on.
+   */
+  ceoTeamStatus: defineTable({
+    personKey: v.string(),
+    status: v.union(
+      v.literal("active"),
+      v.literal("paused"),
+      v.literal("left"),
+    ),
+    /** Kuwait day the status took effect, YYYY-MM-DD. */
+    since: v.string(),
+    note: v.optional(v.string()),
+    /** Email of who set it, from the CEO gate. */
+    setBy: v.string(),
+    setAt: v.number(),
+  }).index("by_person", ["personKey"]),
+  /**
+   * CEO cockpit: a payment Aziz logs by hand (decision of 2026-09-16: cash
+   * only, with an optional deal field). `amountUsd` adds to cash collected on
+   * the "manual" rail. `dealContractedUsd`, when set, adds to contracted and
+   * never to cash, so the two never double count. Money rows are never hard
+   * deleted: a removal sets `deletedAt` and `deletedBy`, and every total
+   * reads only rows with no `deletedAt`. A correction is a delete plus a new
+   * entry, both in the audit trail.
+   */
+  ceoManualPayments: defineTable({
+    /** Kuwait day the money was received, YYYY-MM-DD. */
+    day: v.string(),
+    /** The amount as typed, in `currency`. Always above 0. */
+    amount: v.number(),
+    currency: v.union(v.literal("USD"), v.literal("KWD")),
+    /** `amount` in USD at write time, with the fixed USD_PER table money.ts uses (convex/ceo/data/tap.ts). */
+    amountUsd: v.number(),
+    /** The USD per unit rate used for `amountUsd`, kept so a later rate change never rewrites a logged payment. */
+    usdPerUnit: v.number(),
+    /** The client name as typed. */
+    clientName: v.string(),
+    /** The ClickUp client card id, when the name was matched to a card. */
+    clickupTaskId: v.optional(v.string()),
+    rail: v.union(
+      v.literal("bank_transfer"),
+      v.literal("cheque"),
+      v.literal("cash"),
+      v.literal("tap"),
+      v.literal("other"),
+    ),
+    /** Contract value of a new deal signed with this payment, as typed, in `currency`. */
+    dealContracted: v.optional(v.number()),
+    /** `dealContracted` in USD at the same rate as `amountUsd`. Adds to contracted, never to cash. */
+    dealContractedUsd: v.optional(v.number()),
+    note: v.optional(v.string()),
+    /** Email of who logged it, from the CEO gate. */
+    addedBy: v.string(),
+    addedAt: v.number(),
+    /** Soft delete: set together, never cleared except by an audited restore. */
+    deletedAt: v.optional(v.number()),
+    deletedBy: v.optional(v.string()),
+  })
+    .index("by_day", ["day"])
+    .index("by_deleted_day", ["deletedAt", "day"])
+    .index("by_task_day", ["clickupTaskId", "day"]),
+  /**
+   * CEO cockpit: the audit trail of every CEO write, one row per change,
+   * written in the same transaction as the change by convex/ceo/writeGuard.ts.
+   * Same idea as manualChanges (what, by, at) and the campaignChat action
+   * rows, but kept apart on purpose: those two are keyed by campaign and the
+   * Management feed and the learning-period rule read them as media buying
+   * work, so a CEO payment or staff change must never land there.
+   */
+  ceoAudit: defineTable({
+    /** Which write, "<feature>.<verb>", e.g. "manualPayment.add", "teamStatus.set". */
+    action: v.string(),
+    /** The table the change landed in. */
+    table: v.string(),
+    /** The changed row's id (or the person key for ceoTeamStatus). */
+    rowId: v.string(),
+    /** One plain sentence, the manualChanges.what style: "Logged $1,500 by bank transfer from Ardon". */
+    what: v.string(),
+    /** The row's fields before the change, when it existed. */
+    before: v.optional(v.any()),
+    /** The row's fields after the change. */
+    after: v.optional(v.any()),
+    /** Email of who made the change, from the CEO gate. */
+    by: v.string(),
+    at: v.number(),
+  })
+    .index("by_at", ["at"])
+    .index("by_row", ["table", "rowId", "at"]),
   /** One row per scheduled job: last run, outcome, failure streak (see health.ts runJob). */
   cronRuns: defineTable({
     job: v.string(),

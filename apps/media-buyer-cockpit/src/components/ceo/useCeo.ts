@@ -6,6 +6,7 @@ import type {
   CallsPayload,
   ClientsPayload,
   DeliveryPayload,
+  ExpensesPayload,
   GrowthPayload,
   MachinePayload,
   MoneyPayload,
@@ -16,6 +17,7 @@ import type { SourceStamp } from "../../../convex/ceo/types";
 
 export const SECTION_KEYS = [
   "money",
+  "expenses",
   "growth",
   "delivery",
   "calls",
@@ -29,6 +31,7 @@ export type SectionKey = (typeof SECTION_KEYS)[number];
 
 export type PayloadMap = {
   money: MoneyPayload;
+  expenses: ExpensesPayload;
   growth: GrowthPayload;
   delivery: DeliveryPayload;
   calls: CallsPayload;

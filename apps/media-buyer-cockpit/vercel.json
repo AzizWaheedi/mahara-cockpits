@@ -1,4 +1,15 @@
 {
+  "functions": {
+    "api/watchdog.ts": {
+      "maxDuration": 60
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/watchdog",
+      "schedule": "*/15 * * * *"
+    }
+  ],
   "rewrites": [
     {
       "source": "/client-success/",
@@ -17,7 +28,7 @@
       "destination": "https://mahara-creative-director.vercel.app/creative/:path*"
     },
     {
-      "source": "/((?!assets/|__viktor_meta\\.json).*)",
+      "source": "/((?!api/|assets/|__viktor_meta\\.json).*)",
       "destination": "/index.html"
     }
   ]

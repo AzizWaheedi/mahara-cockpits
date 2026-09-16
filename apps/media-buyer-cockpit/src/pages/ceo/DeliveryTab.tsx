@@ -184,7 +184,12 @@ export function DeliveryTab({ sections, now, day }: CeoTabProps) {
         {d => <DailyCharts d={d} />}
       </SectionCard>
 
-      <SectionCard title="Campaign health" section={section} order={2}>
+      <SectionCard
+        kicker="Campaigns right now"
+        title="Campaign health"
+        section={section}
+        order={2}
+      >
         {d => <CampaignHealth d={d} />}
       </SectionCard>
 
@@ -200,6 +205,7 @@ export function DeliveryTab({ sections, now, day }: CeoTabProps) {
 
       <div className="grid min-w-0 items-start gap-4 lg:gap-6 @4xl:grid-cols-2">
         <SectionCard
+          kicker="In flight right now"
           title="Launches"
           section={section}
           notes={notes.launch}
@@ -208,6 +214,7 @@ export function DeliveryTab({ sections, now, day }: CeoTabProps) {
           {d => <Launches d={d} />}
         </SectionCard>
         <SectionCard
+          kicker="Open right now"
           title="Ad account issues"
           section={section}
           order={5}
@@ -324,7 +331,7 @@ function Headline({
       tile: (
         <StatTile
           variant="plain"
-          label="Ad spend"
+          label="Client ad spend"
           value={money(w.spend)}
           delta={
             <Delta
@@ -333,7 +340,7 @@ function Headline({
               vs={vs}
             />
           }
-          hint="Meta spend on campaigns on the Ads Management board, in USD."
+          hint="Meta spend on client campaigns on the Ads Management board, in USD. Mahara's own lead-gen spend is a different pool and sits on the Marketing tab. The two are never added."
         />
       ),
     },
@@ -426,10 +433,10 @@ function DailyCharts({ d }: { d: DeliveryPayload }) {
     <div className="grid min-w-0 gap-x-6 gap-y-8 @4xl:grid-cols-3">
       <TimeSeriesChart
         data={rows}
-        series={[{ key: "spend", label: "Ad spend" }]}
+        series={[{ key: "spend", label: "Client ad spend" }]}
         kind="area"
         unit="money"
-        title="Ad spend"
+        title="Client ad spend"
         summary={`${moneyCompact(spend)} total`}
         height={180}
         syncId="ceo-delivery-daily"

@@ -30,7 +30,10 @@ function actionText(s: unknown): string {
   return text.slice(0, 200);
 }
 
-/** Convex tables the CEO "team" adapter reads, in one bounded query. */
+/**
+ * Convex tables the CEO "team" adapter reads, in one bounded query, including
+ * the hand-set statuses (ceoTeamStatus) and their history (ceoAudit).
+ */
 export const load = internalQuery({
   args: {},
   returns: v.any(),
@@ -194,10 +197,63 @@ export const load = internalQuery({
       adEvents.set(key, ev);
     }
 
+    // Hand-set statuses from the Management tab (a handful of rows). The
+    // setter's email stays here.
+    const statusRows = await ctx.db.query("ceoTeamStatus").take(500);
+    const statuses = statusRows.map(r => ({
+      personKey: r.personKey,
+      status: r.status,
+      since: r.since,
+      note: r.note ?? null,
+      setAt: r.setAt,
+    }));
+    // Every status ever set, so a past pause stays "not due" after the person
+    // is back. Read per person (oldest first, bounded each), so a long trail
+    // for one person never cuts another person's history off. Only the
+    // status and its day leave this query.
+    const statusChanges: {
+      personKey: string;
+      status: string;
+      since: string;
+      at: number;
+    }[] = [];
+    // A shared budget keeps the whole read well under Convex's per-query
+    // document limit however long the trails grow; the row itself is still
+    // replayed last by the adapter, so the current status never depends on it.
+    let trailBudget = 3000;
+    for (const s of statusRows) {
+      if (trailBudget <= 0) break;
+      const trail = await ctx.db
+        .query("ceoAudit")
+        .withIndex("by_row", q =>
+          q.eq("table", "ceoTeamStatus").eq("rowId", s.personKey),
+        )
+        .order("desc")
+        .take(Math.min(200, trailBudget));
+      trailBudget -= trail.length;
+      for (const r of trail.reverse()) {
+        const after = r.after as { status?: unknown; since?: unknown } | null;
+        if (
+          r.action !== "teamStatus.set" ||
+          typeof after?.status !== "string" ||
+          typeof after?.since !== "string"
+        )
+          continue;
+        statusChanges.push({
+          personKey: r.rowId,
+          status: after.status,
+          since: after.since,
+          at: r.at,
+        });
+      }
+    }
+
     return {
       today,
       members,
       eods,
+      statuses,
+      statusChanges,
       decisions,
       manualChanges,
       chat,

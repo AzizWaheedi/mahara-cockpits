@@ -14,7 +14,124 @@
 export type Note = { level: "info" | "warn"; text: string };
 export type Point = { date: string; value: number };
 
-// --- Money (B2B Supabase: whop_payments, closed_deals, monthly_targets, expenses) ---
+// --- Money (B2B Supabase: whop_payments, closed_deals, monthly_targets; Tap API) ---
+
+/**
+ * One way money reaches Mahara. `connected` false means the rail is not wired
+ * up yet: every number on it is null and the screen shows n/a, never 0.
+ */
+export type CashRail = {
+  /** Plain name for the screen, e.g. "Whop", "Tap", "All rails". */
+  label: string;
+  connected: boolean;
+  today: number | null;
+  yesterday: number | null;
+  mtd: number | null;
+  lastMonthToDate: number | null;
+  lastMonth: number | null;
+  /** mtd / dayOfMonth * daysInMonth. */
+  projectedMonth: number | null;
+  /** Refunds booked this month on this rail, by the day the refund happened. */
+  refundsMtd: number | null;
+  /** Net cash per Kuwait day, last 90 days, oldest first, zero days included. Empty when not connected. */
+  daily: Point[];
+  /** Newest payment seen on this rail, epoch ms. */
+  lastPaymentAt: number | null;
+};
+
+/**
+ * How a hand-logged payment arrived. The same union as
+ * ceoManualPayments.rail in convex/schema.ts (writeGuard.ts `vManualRail`),
+ * so an adapter passing a stored row through is checked against it.
+ */
+export type ManualRail = "bank_transfer" | "cheque" | "cash" | "tap" | "other";
+
+/** One hand-logged payment as the Money tab shows it (ceoManualPayments). */
+export type ManualPaymentRow = {
+  /** The Convex row id, what the remove and restore mutations take. */
+  id: string;
+  /** Kuwait day the money was received. */
+  day: string;
+  /** The amount as typed, in `currency`. */
+  amount: number;
+  currency: "USD" | "KWD";
+  /** USD at the rate stored on the row at write time. */
+  amountUsd: number;
+  /** The client name as typed. Emails and phone numbers are masked. */
+  client: string;
+  /** The ClickUp card it was matched to, or null. */
+  clickupTaskId: string | null;
+  rail: ManualRail;
+  /** Deal value as typed, in `currency`, or null when this is not a new deal. */
+  dealContracted: number | null;
+  /** Deal value in USD, or null. Adds to contracted, never to cash. */
+  dealContractedUsd: number | null;
+  /** Free text, one line, emails and phone numbers masked. */
+  note: string | null;
+  /** Who logged it, as a name ("Aziz"), never an email. */
+  addedBy: string;
+  addedAt: number;
+  /** Set when the entry was removed; the row then counts in no total. */
+  deletedAt: number | null;
+  deletedBy: string | null;
+  /** True when a live entry appears in `possibleDuplicates`. */
+  possibleDuplicate: boolean;
+  /**
+   * Set when this entry is on the "tap" rail (so it was logged while Tap was
+   * not connected; the add mutation refuses Tap entries once it is) and the
+   * Tap rail now shows a matching charge, at most 3 days apart and within 5%.
+   * The entry is then left out of every manual total, so the money counts
+   * once, on the Tap rail. Null otherwise. Absent on older payloads.
+   * (Added 2026-09-16 by the manual payments feature.)
+   */
+  coveredByTap?: { chargeDay: string; chargeUsd: number } | null;
+};
+
+/**
+ * A hand entry that may be money another source already counts.
+ *
+ * The rule (2026-09-16): a live manual entry and a payment on Whop or Tap
+ * dated at most 3 days apart, whose USD amounts differ by at most 5% of the
+ * larger, for a similar client name. Tap charges carry no client name in the
+ * cockpit's read, so a Tap match is on day and amount alone and `why` says
+ * so. For a manual entry with a deal value, the same test runs against
+ * closer form deals (business name, submitted day, contracted value).
+ * Similar name means the two names match after lower casing and keeping
+ * letters and digits only, or one contains the other, or both resolve to the
+ * same ClickUp card.
+ */
+export type PossibleDuplicate = {
+  /** The manual entry's row id. */
+  manualId: string;
+  manualDay: string;
+  /** The manual side in USD: `amountUsd`, or `dealContractedUsd` when `against` is "closer_form". */
+  manualUsd: number;
+  manualClient: string;
+  /** What it may duplicate. */
+  against: "whop" | "tap" | "closer_form";
+  otherDay: string;
+  otherUsd: number;
+  /**
+   * The other side's client business name as the cockpit knows it (a
+   * matched ClickUp card name, or the closer form's business name), or null
+   * when that source gives none. Never a payer's personal name or email.
+   */
+  otherClient: string | null;
+  /**
+   * Whole days between the two: 0 to 3 for Whop and Tap. For "closer_form"
+   * it can be more, because a hand-logged deal whose client matches a closer
+   * form deal in the same Kuwait month is flagged whatever the gap.
+   */
+  daysApart: number;
+  /**
+   * |manual - other| / max(manual, other): 0 to 0.05 for Whop and Tap. For
+   * "closer_form" it can be more, for the same reason. A flagged deal value
+   * is left out of the hand-logged contracted figures.
+   */
+  amountGap: number;
+  /** One plain sentence: why this pair was flagged and what to do. */
+  why: string;
+};
 
 export type MoneyPayload = {
   /** Current Kuwait month, YYYY-MM. */
@@ -33,20 +150,100 @@ export type MoneyPayload = {
     /** Whop net cash per Kuwait day, last 90 days, oldest first, zero days included. */
     daily: Point[];
   };
+  /**
+   * The same cash split by rail, so Whop and Tap can be shown side by side and
+   * summed. `cash` above stays Whop only, which is what the rest of the
+   * cockpit already reads. `rails.total` adds up the connected rails only, and
+   * a rail that is not connected is named in the notes, so a total is never
+   * read as the whole business.
+   *
+   * The money adapter always fills this now. It stays optional because a
+   * payload stored before the adapter shipped has no `rails` and the store
+   * keeps the last good payload across a deploy, so a screen can still meet
+   * one. Read it through `cashHeadline` in `src/components/ceo/metrics.ts`,
+   * which falls back to `cash` and says the number is Whop only.
+   */
+  rails?: {
+    whop: CashRail;
+    /** Tap Payments. connected is false until TAP_SECRET_KEY is set on the deployment. */
+    tap: CashRail;
+    /**
+     * Payments Aziz logs by hand on the Money tab (ceoManualPayments, added
+     * 2026-09-16): bank transfers, cheques, cash, Tap links and other. Same
+     * shape as the other rails, from live entries only (no `deletedAt`),
+     * counted on the entry's `day` at its stored `amountUsd`.
+     *
+     * - `connected` is true once at least one live entry exists, ever. Before
+     *   that every number is null and the screen shows n/a, because an empty
+     *   log proves nothing about money that arrived off Whop.
+     * - `refundsMtd` is always null: refunds are not logged by hand.
+     * - `lastPaymentAt` is Kuwait midnight of the newest entry's `day` (a hand
+     *   entry has a day, not a time).
+     * - Only what was typed in: a transfer nobody logged is missing, not zero.
+     *   The adapter says so in `notes`.
+     *
+     * Optional only because payloads stored before the money adapter filled
+     * it have none. Read it as `m.rails?.manual`.
+     */
+    manual?: CashRail;
+    /**
+     * Whop plus Tap plus manual, over the connected rails only. Possible
+     * duplicates (below) are still inside it until Aziz deletes the entry.
+     */
+    total: CashRail;
+  };
+  /**
+   * This month's hand-logged payments for the Money tab, newest `day` first,
+   * then newest `addedAt`. Deleted entries of the month are included with
+   * `deletedAt` set, so a removal stays visible; no total counts them.
+   * Optional for payloads stored before the adapter filled it.
+   */
+  manualEntries?: ManualPaymentRow[];
+  /**
+   * Hand entries that may be the same money as a payment another rail
+   * already counts, or a deal value the closer form already counts. Never
+   * removed automatically: the entry stays in the totals until Aziz deletes
+   * it, and a warn note names the count and the dollars at stake. Covers
+   * live entries dated in the last 90 days. Optional for older payloads.
+   */
+  possibleDuplicates?: PossibleDuplicate[];
   /** Last 12 months including the current one, oldest first. */
   monthly: {
     month: string;
+    /** Whop only, as before. */
     cash: number;
     refunds: number;
+    /** Closer form only, as before. */
     contracted: number;
     deals: number;
+    /** Live hand-logged cash dated in the month (USD). Absent on older payloads. */
+    manualCash?: number;
+    /**
+     * Live hand-logged deal values dated in the month (USD), less any the
+     * closer form already has (listed in possibleDuplicates). Absent on older
+     * payloads, and absent when the deal check could not run.
+     */
+    manualContracted?: number;
   }[];
   refunds: { mtd: number; last90: number };
   deals: {
+    /** Closer form deals only. */
     mtd: number;
     lastMonth: number;
+    /** Closer form contracted value only. The monthly targets compare against this. */
     contractedMtd: number;
     contractedLastMonth: number;
+    /**
+     * Hand-logged deals this month: live manual entries with a deal value
+     * (decision of 2026-09-16, the deal field adds to contracted). Kept apart
+     * from `mtd` and `contractedMtd` so those keep their meaning; the
+     * contracted headline is `contractedMtd + manualContractedMtd`, and a
+     * manual deal the closer form also has is listed in possibleDuplicates.
+     * All three are absent on payloads stored before the adapter filled them.
+     */
+    manualMtd?: number;
+    manualContractedMtd?: number;
+    manualContractedLastMonth?: number;
     /** Mean contracted value of deals signed in the last 90 days that have one. */
     avgContract90d: number | null;
     /** Newest 10 deals. */
@@ -72,6 +269,77 @@ export type MoneyPayload = {
     month: string | null;
     items: { metric: string; target: number; actual: number | null }[];
   };
+  notes: Note[];
+};
+
+// --- Expenses and P&L (B2B Supabase: public.expenses, a bank statement import) ---
+
+/**
+ * One vendor line inside a P&L group. `vendor` is the bank card descriptor as
+ * it was imported, so one tool can appear under more than one name.
+ */
+export type ExpenseLine = {
+  vendor: string;
+  amount: number;
+  /** How many rows in the month carry this vendor. */
+  rows: number;
+  /** The category the import gave it: software, salaries, ad_spend, other, uncategorised. */
+  category: string;
+  /**
+   * Set when the line is not what its category says, so the screen can show it
+   * taken out of the group: "bank", "course", "transfer", "personal".
+   */
+  reclass: string | null;
+};
+
+/**
+ * One P&L line. `amount` is what can honestly be shown, `headline` is the raw
+ * category total before anything was moved out of it, and `excluded` lists
+ * what moved. `quality` says how far to trust `amount`: measured is the real
+ * number, floor is a known undercount, missing means nothing defensible exists
+ * and `amount` is null. `why` is the sentence the screen must show beside it.
+ */
+export type ExpenseGroup = {
+  amount: number | null;
+  headline: number | null;
+  /** Lines taken out of the headline, biggest first. */
+  excluded: { label: string; amount: number }[];
+  /** Vendors inside `amount`, biggest first. */
+  vendors: ExpenseLine[];
+  quality: "measured" | "floor" | "missing";
+  why: string | null;
+};
+
+export type ExpensesPayload = {
+  /** The month these numbers cover, YYYY-MM, or null when no rows are loaded. */
+  month: string | null;
+  /** Every month that has expense rows, oldest first. One entry means no trend can be drawn. */
+  monthsLoaded: string[];
+  /** When the expense rows were imported, epoch ms. */
+  importedAt: number | null;
+  /** Fixed USD per KWD the import used. Other parts of the stack use their own rate, so never mix the two. */
+  fxUsdPerKwd: number | null;
+  /** Every row in the month, card unload lines included. */
+  total: number | null;
+  /** `total` minus the card unload lines: what was actually spent. */
+  spend: number | null;
+  /** Money moved to a card, which is not a cost. */
+  unloads: number | null;
+  software: ExpenseGroup;
+  overhead: ExpenseGroup;
+  labour: ExpenseGroup;
+  /** Mahara's own lead-gen ad spend. The same money as growth spend, so never add the two. */
+  ownAdSpend: ExpenseGroup;
+  /** Every category in the month exactly as imported, biggest first, nothing moved. */
+  byCategory: { category: string; amount: number; rows: number }[];
+  /** Client media for the same month, carried so the screen can name it and keep it out of the P&L. */
+  clientAdSpend: { amount: number | null; clients: number | null };
+  /** Cash in for the same month, so a profit line can be drawn when both sides are real. */
+  revenue: number | null;
+  /** Revenue minus spend. null unless every line inside `spend` is measured; `why` says what is missing. */
+  profit: { amount: number | null; margin: number | null; why: string | null };
+  /** People who filed an EOD in the month, so labour can be judged against head count. */
+  peopleFilingEods: number | null;
   notes: Note[];
 };
 
@@ -253,6 +521,123 @@ export type ClientRow = {
   risk: { score: number; level: "high" | "medium" | "low"; reasons: string[] };
   /** Latest digested ClickUp comment summary for this client, if any. */
   latestUpdate: string | null;
+  /**
+   * The card's Launch Date, or null when the card has none (the client has
+   * not launched, and can never be logo churn or reach a term end).
+   * Absent on payloads stored before the churn rule shipped.
+   */
+  launchDate?: string | null;
+  /** launchDate + 90 days, or null. Absent on older payloads. */
+  termEnd?: string | null;
+  /**
+   * Where the client stands under the term rule: "in-term" (term end not yet
+   * reached), "renewed" (a payment dated after term end exists),
+   * "no-renewal" (term ended, no such payment, counted as churned) or
+   * "not-launched". Absent on older payloads.
+   */
+  termState?: "in-term" | "renewed" | "no-renewal" | "not-launched";
+};
+
+/** The payment that counts as a renewal under the 2026-09-16 rule. */
+export type RenewalEvidence = {
+  rail: "whop" | "tap" | "manual";
+  /** Kuwait day of the payment, always after the term end. */
+  day: string;
+  amountUsd: number;
+  /**
+   * How the payment was tied to this client, in plain words, e.g. "Whop
+   * payer email on the card", "ClickUp client picked on the hand entry".
+   * A payment that cannot be tied to a client is never evidence.
+   */
+  matchedBy: string;
+};
+
+/** A client named in a churn list. */
+export type ChurnClient = {
+  name: string;
+  clickupTaskId: string;
+  /** The card's stage today. */
+  stage: string | null;
+  /** The bucket the card is in today (the ClientRow rule), e.g. "active" for a term ended client whose card still says Active. */
+  cardBucket: string | null;
+  launchDate: string | null;
+  /**
+   * Kuwait day the loss is dated: the term end for a term ended with no
+   * renewal payment, otherwise the first day the cockpit's own daily history
+   * saw the client in the churned bucket. Clients whose loss cannot be dated
+   * are not in the month lists; the adapter counts them in a note.
+   */
+  day: string;
+  /** "term-ended-no-renewal" or "stopped". A client is listed once, under the earlier of the two that apply. */
+  reason: "term-ended-no-renewal" | "stopped";
+};
+
+/** A launched client seen through the 90 day term rule. */
+export type TermClient = {
+  name: string;
+  clickupTaskId: string;
+  stage: string | null;
+  cardBucket: string | null;
+  launchDate: string;
+  /** launchDate + 90 days. */
+  termEnd: string;
+  /** termEnd minus today in days: positive before the end, 0 on the day, negative after. */
+  daysToTermEnd: number;
+  /** The first payment on any rail dated after termEnd, or null. */
+  renewal: RenewalEvidence | null;
+};
+
+/**
+ * Churn and the 90 day term, under the decisions of 2026-09-16:
+ *
+ * - Decision 1, logo churn on launched clients only. A client with a Launch
+ *   Date that stops is churn. A client with no Launch Date that stops is
+ *   "lost before launch", a sales and onboarding number, never churn.
+ * - Decision 4, churn unless renewed, with the renewal rule. A launched
+ *   client is past term end when today is after launchDate + 90 days. Past
+ *   term end it counts as churned, dated on the term end, UNLESS a payment on
+ *   any rail (Whop, Tap or hand-logged) is dated after the term end; that
+ *   payment is the renewal. This applies even when the card still says
+ *   Active, which `cardBucket` shows.
+ *
+ * Every list is named. The known weaknesses are carried in `notes` and must
+ * stay on screen next to these numbers: a client who renews but pays late
+ * looks churned until the payment lands; a client paying instalments on the
+ * original contract can look renewed when it is not; a payment made before
+ * the term end never counts as a renewal; a Tap charge counts only when it
+ * can be tied to the client (the cockpit's Tap read carries no client, so in
+ * practice only a hand entry naming the client does).
+ */
+export type ChurnPayload = {
+  /** The Kuwait month the month lists cover, YYYY-MM. */
+  month: string;
+  /** Launched clients lost this month (logo churn), including term ended with no renewal payment dated this month. */
+  churnedThisMonth: ChurnClient[];
+  /** Clients with no Launch Date lost this month. Never part of churn or the churn rate. */
+  lostBeforeLaunchThisMonth: ChurnClient[];
+  /** Launched clients whose term ends from today to today + 15 days, soonest first. */
+  renewalDueSoon: TermClient[];
+  /** Past term end with a renewal payment, newest term end first. */
+  termEndedRenewed: TermClient[];
+  /** Past term end with no payment after it, counted as churned, newest term end first. */
+  termEndedNoRenewal: TermClient[];
+  /**
+   * Launched clients not yet lost at the start of the month, the churn
+   * rate's denominator, or null when a loss date it needs is unknown.
+   */
+  launchedAtMonthStart: number | null;
+  /** churnedThisMonth.length / launchedAtMonthStart, 0..1, or null. */
+  rate: number | null;
+  /** Why `rate` is null, one sentence, or null. */
+  rateWhy: string | null;
+  /**
+   * False while the cockpit's own daily history does not cover the whole
+   * month, so a stop earlier in the month may be missing. The screen says
+   * "partial" whenever this is false.
+   */
+  complete: boolean;
+  /** The weaknesses above and any read that failed, for the churn card. */
+  notes: Note[];
 };
 
 export type ClientsPayload = {
@@ -266,20 +651,47 @@ export type ClientsPayload = {
   /** Highest risk first, at most 8, active and onboarding clients only. */
   atRisk: ClientRow[];
   rows: ClientRow[];
+  /**
+   * Churn and term end under the 2026-09-16 decisions. Optional only because
+   * payloads stored before the clients adapter filled it have none.
+   */
+  churn?: ChurnPayload;
   notes: Note[];
 };
 
 // --- Team: EODs, activity and a live feed ---
 
+/** Set by hand on the Management tab (ceoTeamStatus). The same union as the table. */
+export type TeamStatus = "active" | "paused" | "left";
+
 export type TeamPerson = {
+  /**
+   * "<role>:<first>": the raw role key plus the lower case letters of the
+   * first name, e.g. "media_buyer:nada". The key ceoTeamStatus rows use and
+   * the one the teamStatus mutations take.
+   */
   key: string;
   name: string;
   role: string;
+  /** "not due" on a day the person was paused or had left. */
   eodYesterday: "on time" | "late" | "missed" | "not due";
+  /** Only working days before `statusSince` count as due for a paused or left person. */
   eod14: { due: number; filed: number; late: number; missed: number };
   lastActiveAt: number | null;
   actionsToday: number;
   energy: number | null;
+  /**
+   * The status Aziz set by hand, "active" when no row exists. The fields
+   * below are optional only because payloads stored before the team adapter
+   * read ceoTeamStatus have none: read a missing status as "active".
+   */
+  status?: TeamStatus;
+  /** Kuwait day the status took effect, or null when never set. */
+  statusSince?: string | null;
+  /** Aziz's note on the status, one line, or null. */
+  statusNote?: string | null;
+  /** When the status was last set, epoch ms, or null when never set. */
+  statusSetAt?: number | null;
 };
 
 export type FeedItem = {
@@ -292,7 +704,25 @@ export type FeedItem = {
 };
 
 export type TeamPayload = {
+  /**
+   * People active today: no status row, status "active", or a pause or leave
+   * dated ahead (they owe EODs until it starts, and carry that status and
+   * date). Everything that judges EOD discipline (the Today card, missed EOD
+   * counts) reads this list, so a paused or departed person is never counted
+   * as missing an EOD. The screens also lay teamStatus.list over it, so a
+   * change shows before the section is recomputed.
+   */
   people: TeamPerson[];
+  /**
+   * Paused and left people, shown apart on the Management tab, paused first,
+   * then by `statusSince` newest first. A status row is listed even when the
+   * person has not filed in 30 days (named from the key). A left person drops
+   * off this list 30 days after `statusSince` unless they filed an EOD after
+   * leaving (a warn note names them); the row stays in the table.
+   * Nobody here owes an EOD from `statusSince` on. Optional only because
+   * payloads stored before the team adapter read ceoTeamStatus have none.
+   */
+  inactive?: TeamPerson[];
   /** Newest first, at most 60. */
   feed: FeedItem[];
   notes: Note[];

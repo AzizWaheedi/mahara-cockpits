@@ -1,28 +1,25 @@
 import { internal } from "../../_generated/api";
-import type { FeedItem, Note, TeamPayload, TeamPerson } from "../payloads";
+import type {
+  FeedItem,
+  Note,
+  TeamPayload,
+  TeamPerson,
+  TeamStatus,
+} from "../payloads";
 import { B2B, num, sql } from "../sb";
+import {
+  buildTimeline,
+  maskText,
+  roleLabel,
+  type StatusSegment,
+  segmentOn,
+  splitPersonKey,
+  titleCase,
+} from "../teamRules";
 import { addDays, KUWAIT_OFFSET_MS, kuwaitDay } from "../time";
 import type { Adapter, DailyPoint, SourceStamp } from "../types";
 
 type Any = any;
-
-const ROLE_LABELS: Record<string, string> = {
-  media_buyer: "Media buyer",
-  creative_director: "Creative director",
-  video_editor: "Video editor",
-  systems_manager: "Systems manager",
-  client_sales_rep: "Client sales rep",
-  account_manager: "Account manager",
-  executive_assistant: "Executive assistant",
-  sales_rep: "Sales rep",
-  sales_setter: "Setter",
-  // Cockpit roles.
-  csm: "Account manager",
-  creative: "Creative director",
-};
-const roleLabel = (role: string) =>
-  ROLE_LABELS[role] ??
-  role.replace(/_/g, " ").replace(/^./, c => c.toUpperCase());
 
 /** Which EOD roles a portal seat can be. The first one is used if none match. */
 const SEAT_ROLES: Record<string, string[]> = {
@@ -43,7 +40,6 @@ const nameKey = (s: unknown) =>
     .split(/\s+/)[0]
     .toLowerCase()
     .replace(/[^\p{L}]/gu, "");
-const titleCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 const isFriday = (day: string) =>
   new Date(`${day}T00:00:00Z`).getUTCDay() === 5;
@@ -85,14 +81,7 @@ function shortName(name: string): string {
  * Plain text for the feed: no em dashes, one line, bounded. Typed notes and
  * digests are free text, so emails and phone numbers are masked on the way out.
  */
-const clean = (s: string, max = 200) =>
-  s
-    .replace(/[\w.+-]+@[\w-]+(\.[\w-]+)+/g, "[email]")
-    .replace(/\+?\d(?: ?\d){7,}/g, "[number]")
-    .replace(/\s*[—–]\s*/g, ", ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, max);
+const clean = (s: string, max = 200) => maskText(s, max);
 
 /** "12000" -> "12,000", without relying on Intl in the Convex runtime. */
 const thousands = (n: number) =>
@@ -140,7 +129,7 @@ type Event = FeedItem & { personKey: string | null };
 /** Team: EOD discipline over 14 working days, activity today and a live feed. */
 export const team: Adapter = {
   key: "team",
-  label: "Team",
+  label: "Management",
   compute: async ctx => {
     const now = Date.now();
     const today = kuwaitDay(now);
@@ -258,10 +247,63 @@ export const team: Adapter = {
       );
     }
 
-    // Only people still around: filed in the last 30 days, or hold a seat.
+    // --- Hand-set statuses (the Management tab's switch) ---
+    const STATUSES = new Set<string>(["active", "paused", "left"]);
+    const statusRows = new Map<
+      string,
+      { status: TeamStatus; since: string; note: string | null; setAt: number }
+    >();
+    for (const s of (data?.statuses ?? []) as Any[])
+      if (STATUSES.has(s.status) && typeof s.since === "string")
+        statusRows.set(String(s.personKey), {
+          status: s.status,
+          since: s.since,
+          note: s.note ? clean(String(s.note), 300) || null : null,
+          setAt: num(s.setAt),
+        });
+    const changesByKey = new Map<
+      string,
+      { status: TeamStatus; since: string; at: number }[]
+    >();
+    for (const c of (data?.statusChanges ?? []) as Any[]) {
+      if (!STATUSES.has(c.status)) continue;
+      const key = String(c.personKey);
+      const list = changesByKey.get(key) ?? [];
+      list.push({ status: c.status, since: String(c.since), at: num(c.at) });
+      changesByKey.set(key, list);
+    }
+    // Replay every change in the order it was set, then the row itself: the
+    // row is the truth for the latest state even if its trail is short.
+    const timelines = new Map<string, StatusSegment[]>();
+    for (const [key, row] of statusRows) {
+      const changes = (changesByKey.get(key) ?? []).sort((a, b) => a.at - b.at);
+      timelines.set(key, buildTimeline([...changes, row]));
+    }
+    const noStatus: StatusSegment = { status: "active", since: "" };
+    /** The status segment in force for a person on a Kuwait day. */
+    const segment = (key: string, day: string): StatusSegment => {
+      const t = timelines.get(key);
+      return t ? segmentOn(t, day) : noStatus;
+    };
+    /** Nobody owes an EOD on a day they were paused or had left. */
+    const offOn = (key: string, day: string) =>
+      segment(key, day).status !== "active";
+    const leftListedFrom = addDays(today, -30);
+    /** Listed apart today: paused, or left in the last 30 days. */
+    const listedApart = (key: string) => {
+      const s = segment(key, today);
+      return (
+        s.status === "paused" ||
+        (s.status === "left" && s.since >= leftListedFrom)
+      );
+    };
+
+    // Only people still around: filed in the last 30 days, or hold a seat,
+    // or are paused or recently left (listed apart even with no filing).
     const activeFrom = addDays(today, -30);
     for (const [key, p] of people)
-      if (![...p.days.keys()].some(d => d >= activeFrom)) people.delete(key);
+      if (!listedApart(key) && ![...p.days.keys()].some(d => d >= activeFrom))
+        people.delete(key);
 
     const seenAt = new Map<string, number>();
     for (const m of (data?.members ?? []) as Any[]) {
@@ -278,6 +320,51 @@ export const team: Adapter = {
       // A seat with no filings is due from the day it was added.
       if (!p.since && m.addedAt) p.since = kuwaitDay(num(m.addedAt));
       if (m.lastSeenAt) seenAt.set(p.key, num(m.lastSeenAt));
+    }
+
+    // A paused or recently left person with no filing and no seat is still
+    // listed apart, named from the key.
+    for (const key of timelines.keys()) {
+      if (people.has(key) || !listedApart(key)) continue;
+      const parts = splitPersonKey(key);
+      if (parts) personFor(parts.role, parts.first);
+    }
+
+    // A filing on a day the person is marked paused or left is not counted
+    // and does not flip the status back; it is named instead. Only the
+    // current stretch off counts (someone already back needs no nudge). The
+    // start day itself is often the last day worked ("left on 16 Sep", then
+    // the final EOD that evening), so only filings for later days are named.
+    /** People who filed while marked off: kept on the Not active list so the switch stays in reach. */
+    const filedWhileOff = new Set<string>();
+    for (const p of people.values()) {
+      if (!timelines.has(p.key)) continue;
+      const s = segment(p.key, today);
+      if (s.status === "active") continue;
+      const offDays = [...p.days.values()]
+        .filter(f => f.day > s.since)
+        .map(f => f.day)
+        .sort();
+      const last = offDays[offDays.length - 1];
+      if (!last) continue;
+      filedWhileOff.add(p.key);
+      const who = `${titleCase(p.first)} (${roleLabel(p.role)})`;
+      const name = titleCase(p.first);
+      const filed =
+        offDays.length > 1
+          ? `filed ${offDays.length} EODs since, the latest for ${dayLabel(last)}`
+          : `filed an EOD for ${dayLabel(last)}`;
+      notes.push(
+        s.status === "left"
+          ? {
+              level: "warn",
+              text: `${who} is marked as left from ${dayLabel(s.since)} but ${filed}. The status was not changed and the filing is not counted: set ${name} back to active on the Management tab if they are back.`,
+            }
+          : {
+              level: "info",
+              text: `${who} is marked as paused from ${dayLabel(s.since)} but ${filed}. Paused days owe no EOD, so the filing is not counted: set ${name} back to active on the Management tab if they are back.`,
+            },
+      );
     }
 
     /** The one active person an actor's first name points to, if it is not ambiguous. */
@@ -537,12 +624,19 @@ export const team: Adapter = {
     }
 
     const rows = [...people.values()].map((p): TeamPerson => {
-      const due = workDays.filter(d => !p.since || d >= p.since);
+      // Due: working days from the person's first filing or seat, minus the
+      // days they were paused or had left.
+      const due = workDays.filter(
+        d => (!p.since || d >= p.since) && !offOn(p.key, d),
+      );
       const filed = due.filter(d => p.days.has(d));
       const late = filed.filter(d => !p.days.get(d)?.onTime).length;
       const y = p.days.get(yesterday);
       const yesterdayDue =
-        !isFriday(yesterday) && (!p.since || yesterday >= p.since);
+        !isFriday(yesterday) &&
+        (!p.since || yesterday >= p.since) &&
+        !offOn(p.key, yesterday);
+      const set = statusRows.get(p.key);
       const lastActiveAt = Math.max(
         p.lastAt ?? 0,
         seenAt.get(p.key) ?? 0,
@@ -568,6 +662,10 @@ export const team: Adapter = {
         lastActiveAt: lastActiveAt || null,
         actionsToday: actionsToday.get(p.key) ?? 0,
         energy: p.energy?.value ?? null,
+        status: set?.status ?? "active",
+        statusSince: set?.since ?? null,
+        statusNote: set?.note ?? null,
+        statusSetAt: set?.setAt ?? null,
       };
     });
     rows.sort(
@@ -576,6 +674,28 @@ export const team: Adapter = {
         a.role.localeCompare(b.role) ||
         a.name.localeCompare(b.name),
     );
+
+    // Active today goes on `people`, which every EOD count reads (this tab,
+    // the Today card, the status sentence). That includes someone whose
+    // pause or leave starts on a later day. Paused and recently left people
+    // go on `inactive`, and so does anyone marked off who filed again (the
+    // note names them, and the switch must stay in reach); anyone else who
+    // left more than 30 days ago is on neither.
+    const activeRows = rows.filter(r => !offOn(r.key, today));
+    const statusRank: Record<TeamStatus, number> = {
+      paused: 0,
+      left: 1,
+      active: 2,
+    };
+    const inactiveRows = rows
+      .filter(r => listedApart(r.key) || filedWhileOff.has(r.key))
+      .sort(
+        (a, b) =>
+          statusRank[segment(a.key, today).status] -
+            statusRank[segment(b.key, today).status] ||
+          (b.statusSince ?? "").localeCompare(a.statusSince ?? "") ||
+          a.name.localeCompare(b.name),
+      );
 
     // --- Sources and trust ---
     let syncRows: Any[] = [];
@@ -642,7 +762,7 @@ export const team: Adapter = {
     notes.push(
       {
         level: "info",
-        text: "On time means filed by 22:00 Kuwait on the day. A filing between 00:00 and 04:00 counts for the previous working day and is late. Friday is off; holidays and leave are not known.",
+        text: "On time means filed by 22:00 Kuwait on the day. A filing between 00:00 and 04:00 counts for the previous working day and is late. Friday is off and public holidays are not known. Leave is known only when it is set on this tab.",
       },
       {
         level: "info",
@@ -658,8 +778,15 @@ export const team: Adapter = {
       },
     );
 
+    if (timelines.size > 0)
+      notes.push({
+        level: "info",
+        text: `Paused and left are set by hand on this tab (${inactiveRows.length ? `${inactiveRows.length} listed apart now` : "nobody listed apart now"}). From the day the status starts, the person owes no EOD and is left out of every EOD count, here and on Today. Days inside a past pause stay not due after the person is back. A left person drops off the list 30 days after leaving.`,
+      });
+
     const payload = {
-      people: rows,
+      people: activeRows,
+      inactive: inactiveRows,
       feed: unique
         .slice(0, 60)
         .map(({ personKey: _personKey, ...item }) => item),

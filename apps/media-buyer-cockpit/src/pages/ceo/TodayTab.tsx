@@ -1,6 +1,5 @@
 import {
   Bot,
-  ChevronRight,
   CircleAlert,
   CircleCheck,
   CircleDashed,
@@ -20,6 +19,7 @@ import * as f from "@/components/ceo/format";
 import { HeroFigure } from "@/components/ceo/HeroFigure";
 import { Hint } from "@/components/ceo/Hint";
 import { Meter } from "@/components/ceo/Meter";
+import { cashHeadline, contractedHeadline } from "@/components/ceo/metrics";
 import { Value } from "@/components/ceo/Na";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { Sparkline } from "@/components/ceo/Sparkline";
@@ -31,6 +31,7 @@ import {
   StatusChip,
   type StatusTone,
 } from "@/components/ceo/StatusChip";
+import { TabLink } from "@/components/ceo/TabLink";
 import type { CeoSections } from "@/components/ceo/useCeo";
 import { cn } from "@/lib/utils";
 import type {
@@ -43,7 +44,8 @@ import type {
   TeamPerson,
 } from "../../../convex/ceo/payloads";
 import { feedState, syncEvery, syncState } from "./machineState";
-import type { CeoTabKey, CeoTabProps } from "./types";
+import { buildRoster, useLiveStatuses } from "./teamRoster";
+import type { CeoTabProps } from "./types";
 
 type GoTab = CeoTabProps["goTab"];
 
@@ -77,7 +79,12 @@ export function TodayTab({ sections, now, day, goTab }: CeoTabProps) {
         </div>
         <div className="grid min-w-0 gap-4 lg:gap-6">
           <LiveFeedCard section={sections.team} now={now} goTab={goTab} />
-          <TeamTodayCard section={sections.team} now={now} goTab={goTab} />
+          <TeamTodayCard
+            section={sections.team}
+            now={now}
+            today={today}
+            goTab={goTab}
+          />
         </div>
       </div>
 
@@ -93,6 +100,30 @@ function warnings(notes: Note[] | null | undefined): Note[] {
   return (notes ?? []).filter(n => n.level === "warn");
 }
 
+// The cash card carries only warnings about what it shows: cash, the deals and
+// contracted rows, and the cash target meter. Expenses, the bank import, card
+// unloads, failed checkouts and the other targets are Money tab matters. The
+// bank import coverage warning names bank transfers, so it is skipped before
+// the cash rule can take it, and a warning neither list names stays on Money.
+const CASH_CARD_SKIP =
+  /expense|bank statement|card unload|failed charge|recent deals|revenue target|actuals for targets|no targets exist/i;
+const CASH_CARD_KEEP =
+  /cash|whop|\btap\b|rails?\b|refund|manual|by hand|hand entered|payment|deal|contracted|closer form|targets could not be read/i;
+
+function cashCardWarnings(notes: Note[] | null | undefined): Note[] {
+  return warnings(notes).filter(
+    n => !CASH_CARD_SKIP.test(n.text) && CASH_CARD_KEEP.test(n.text),
+  );
+}
+
+// The growth funnel card shows no rep table, ad table, lead sources or daily
+// chart, so a warning about one of those stays on the Sales and Marketing tabs.
+const GROWTH_CARD_SKIP = /rep scorecard|top ads|lead sources|daily series/i;
+
+function growthCardWarnings(notes: Note[] | null | undefined): Note[] {
+  return warnings(notes).filter(n => !GROWTH_CARD_SKIP.test(n.text));
+}
+
 const TONE_ICON: Record<StatusTone, LucideIcon> = {
   good: CircleCheck,
   warning: TriangleAlert,
@@ -100,34 +131,6 @@ const TONE_ICON: Record<StatusTone, LucideIcon> = {
   critical: OctagonAlert,
   neutral: CircleDashed,
 };
-
-/** Quiet link in a card header that opens the tab holding the full story. */
-function TabLink({
-  tab,
-  label,
-  goTab,
-  className,
-}: {
-  tab: CeoTabKey;
-  label: string;
-  goTab: GoTab;
-  className?: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={() => goTab(tab)}
-      aria-label={`Open the ${label} tab`}
-      className={cn(
-        "-my-1 inline-flex h-6 items-center gap-0.5 rounded-md pl-1.5 pr-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-[var(--ceo-hover)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        className,
-      )}
-    >
-      {label}
-      <ChevronRight className="size-3.5" aria-hidden />
-    </button>
-  );
-}
 
 /** The status icon for a cost against its gate, with the state spelled out for screen readers. */
 function GateIcon({
@@ -201,18 +204,6 @@ function conversion(
     : {};
 }
 
-function shiftMonth(ym: string, by: number): string | null {
-  const m = /^(\d{4})-(\d{2})/.exec(ym);
-  if (!m) return null;
-  const d = new Date(Date.UTC(+m[1], +m[2] - 1 + by, 1));
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
-}
-
-function daysInMonth(ym: string): number {
-  const [y, mo] = ym.split("-").map(Number);
-  return new Date(Date.UTC(y, mo, 0)).getUTCDate();
-}
-
 function daysBetween(from: string, to: string): number | null {
   const a = Date.parse(`${from.slice(0, 10)}T00:00:00Z`);
   const b = Date.parse(`${to.slice(0, 10)}T00:00:00Z`);
@@ -231,11 +222,17 @@ function CashHero({
   today: string;
   goTab: GoTab;
 }) {
+  const p = section?.payload ?? null;
+  const scopeNote = p ? cashHeadline(p).note : null;
   return (
     <SectionCard
+      kicker="This month"
       title="Cash"
       section={section}
-      notes={warnings(section?.payload?.notes)}
+      notes={[
+        ...(scopeNote ? [scopeNote] : []),
+        ...cashCardWarnings(section?.payload?.notes),
+      ]}
       actions={<TabLink tab="money" label="Money" goTab={goTab} />}
       order={0}
     >
@@ -245,21 +242,30 @@ function CashHero({
 }
 
 function CashHeroBody({ m, today }: { m: MoneyPayload; today: string }) {
-  const prev = shiftMonth(m.month, -1);
-  const sameDay = prev ? Math.min(m.dayOfMonth, daysInMonth(prev)) : null;
-  const pace = f.change(m.cash.mtd, m.cash.lastMonthToDate);
+  // The same rule the Frontend and Money tabs use, so the three headline cash
+  // figures are one number under one name.
+  const headline = cashHeadline(m);
+  const cash = headline.rail;
+  const tapConnected = headline.tap?.connected === true;
+  // Closer form plus deal values logged by hand, as on Money, Frontend and Sales.
+  const contracted = contractedHeadline(m);
+  const prev = f.shiftMonth(m.month, -1);
+  const prevLength = prev ? f.daysInMonth(prev) : null;
+  const sameDay = prevLength ? Math.min(m.dayOfMonth, prevLength) : null;
+  const pace = f.change(cash.mtd, cash.lastMonthToDate);
   const monthName = f.month(m.month, { long: true });
   const prevName = prev ? f.month(prev, { long: true }) : "last month";
   const vs =
     prev && sameDay
-      ? `vs ${f.money(m.cash.lastMonthToDate)} by ${sameDay} ${f.month(prev)}`
+      ? `vs ${f.money(cash.lastMonthToDate)} by ${sameDay} ${f.month(prev)}`
       : "vs last month to date";
 
   const target =
     m.targets.month === m.month
       ? m.targets.items.find(i => i.metric === "cash_collected" && i.target > 0)
       : undefined;
-  const share = target ? m.cash.projectedMonth / target.target : null;
+  const projected = cash.projectedMonth;
+  const share = target && f.isNum(projected) ? projected / target.target : null;
   const meterTone =
     share === null || share >= 1
       ? "emphasis"
@@ -268,7 +274,7 @@ function CashHeroBody({ m, today }: { m: MoneyPayload; today: string }) {
         : "serious";
 
   // Today is still running; its partial day would end the line on a false drop (as on the Money tab).
-  const daily = m.cash.daily.filter(p => p.date < today);
+  const daily = cash.daily.filter(p => p.date < today);
   const best = daily.reduce<Point | null>(
     (top, p) => (p.value > (top?.value ?? 0) ? p : top),
     null,
@@ -279,8 +285,8 @@ function CashHeroBody({ m, today }: { m: MoneyPayload; today: string }) {
     <div className="grid gap-6 @4xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] @4xl:gap-10">
       <div className="min-w-0">
         <HeroFigure
-          label="Cash collected this month"
-          value={m.cash.mtd}
+          label={headline.label}
+          value={cash.mtd}
           format={f.money}
           countKey="today-cash-mtd"
           delta={<Delta value={pace} size="md" vs={vs} />}
@@ -288,11 +294,12 @@ function CashHeroBody({ m, today }: { m: MoneyPayload; today: string }) {
             <>
               Projected{" "}
               <span className="font-medium text-foreground">
-                {f.money(m.cash.projectedMonth)}
+                {f.money(projected)}
               </span>{" "}
               for {monthName}
             </>
           }
+          naHint="No connected cash rail gives a figure for this month."
         />
         <div className="mt-6">
           {daily.length > 1 ? (
@@ -327,33 +334,40 @@ function CashHeroBody({ m, today }: { m: MoneyPayload; today: string }) {
         {target ? (
           <Meter
             label={`Projected cash vs ${monthName} target`}
-            value={m.cash.projectedMonth}
+            value={projected}
             target={target.target}
             format={f.money}
             tone={meterTone}
             sub={
               m.dayOfMonth < 5
                 ? "Early in the month, so the projection still moves a lot."
-                : `${f.money(m.cash.mtd)} collected so far.`
+                : `${f.money(cash.mtd)} collected so far.`
             }
             className="mb-5 border-b pb-5"
           />
         ) : null}
         <dl>
+          {/* The same names and figures as the Frontend and Sales tabs. */}
           <LedgerRow
-            label="Deals this month"
+            label="Deals signed this month"
             value={f.count(m.deals.mtd)}
-            sub={`${f.count(m.deals.lastMonth)} in ${prevName}`}
+            sub={`${f.count(m.deals.lastMonth)} in all of ${prevName}`}
           />
           <LedgerRow
-            label="Contracted this month"
-            value={f.money(m.deals.contractedMtd)}
-            sub={`${f.money(m.deals.contractedLastMonth)} in ${prevName}`}
+            label={contracted.label}
+            value={f.money(contracted.value)}
+            sub={`${contracted.split ? `${contracted.split}. ` : ""}${f.money(contracted.lastMonth)} in all of ${prevName}`}
           />
+          {/* Whop is the only rail that reports refunds, so this stays Whop
+              refunds even when the cash above covers more rails. */}
           <LedgerRow
             label="Refunds this month"
             value={f.money(m.refunds.mtd)}
-            sub={`${f.money(m.refunds.last90)} in the last 90 days`}
+            sub={
+              tapConnected
+                ? `Whop only, Tap refunds are not read yet. ${f.money(m.refunds.last90)} in the last 90 days.`
+                : `${f.money(m.refunds.last90)} in the last 90 days`
+            }
           />
         </dl>
       </div>
@@ -406,6 +420,7 @@ function KpiRow({
   goTab: GoTab;
 }) {
   const title = "Client delivery and calls";
+  const kicker = "Yesterday, today and the last 7 days";
   const actions = (
     <>
       <TabLink tab="delivery" label="Delivery" goTab={goTab} />
@@ -414,7 +429,13 @@ function KpiRow({
   );
   if (!delivery && !calls)
     return (
-      <SectionCard title={title} section={null} actions={actions} order={1} />
+      <SectionCard
+        kicker={kicker}
+        title={title}
+        section={null}
+        actions={actions}
+        order={1}
+      />
     );
 
   const d = delivery?.payload ?? null;
@@ -426,6 +447,7 @@ function KpiRow({
 
   return (
     <SectionCard
+      kicker={kicker}
       title={title}
       alsoReads={[delivery, calls]}
       notes={[...warnings(d?.notes), ...warnings(c?.notes)]}
@@ -436,7 +458,7 @@ function KpiRow({
       <div className="grid grid-cols-2 gap-x-6 gap-y-5 @2xl:grid-cols-3 @5xl:grid-cols-6">
         <StatTile
           variant="plain"
-          label="Ad spend yesterday"
+          label="Client ad spend yesterday"
           value={d ? f.money(d.yesterday.spend) : null}
           naHint={pendingD}
           delta={
@@ -452,7 +474,7 @@ function KpiRow({
         />
         <StatTile
           variant="plain"
-          label="Leads yesterday"
+          label="Client leads yesterday"
           value={d ? f.count(d.yesterday.leads) : null}
           naHint={pendingD}
           delta={
@@ -467,7 +489,7 @@ function KpiRow({
         />
         <StatTile
           variant="plain"
-          label="Cost per lead, 7 days"
+          label="Client cost per lead, 7 days"
           value={d ? f.money(d.last7.cpl) : null}
           naHint={
             pendingD ??
@@ -488,7 +510,7 @@ function KpiRow({
         />
         <StatTile
           variant="plain"
-          label="Bookings yesterday"
+          label="Client bookings yesterday"
           value={d ? f.count(d.yesterday.bookings) : null}
           naHint={pendingD}
           delta={
@@ -595,7 +617,7 @@ function DeliveryFunnelCard({
               ariaLabel="Client delivery funnel, last 7 days"
               context={[
                 {
-                  label: "Spend",
+                  label: "Client ad spend",
                   value: <Value value={f.money(d.last7.spend)} />,
                 },
                 {
@@ -633,8 +655,8 @@ function GrowthFunnelCard({
       kicker="Month to date"
       title="Mahara growth funnel"
       section={section}
-      notes={warnings(section?.payload?.notes)}
-      actions={<TabLink tab="growth" label="Growth" goTab={goTab} />}
+      notes={growthCardWarnings(section?.payload?.notes)}
+      actions={<TabLink tab="frontend" label="Frontend" goTab={goTab} />}
       order={4}
     >
       {g => {
@@ -660,16 +682,25 @@ function GrowthFunnelCard({
             steps={steps}
             ariaLabel="Mahara growth funnel, month to date"
             context={[
-              { label: "Spend", value: <Value value={f.money(w.spend)} /> },
+              {
+                label: "Lead-gen ad spend",
+                value: <Value value={f.money(w.spend)} />,
+              },
               {
                 label: "Cost per lead",
                 value: <Value value={f.money(w.cpl)} />,
               },
+              // Closer form only; the cash card's contracted figure also adds
+              // deal values logged by hand, so the two can differ.
               {
-                label: "Contracted",
+                label: "Contracted, closer form",
                 value: <Value value={f.money(w.contracted)} />,
               },
-              { label: "Cash", value: <Value value={f.money(w.cash)} /> },
+              // What the closer typed at signing, not the cash collected above.
+              {
+                label: "Cash typed on the form",
+                value: <Value value={f.money(w.cash)} />,
+              },
             ]}
           />
         );
@@ -698,10 +729,13 @@ function ClientsCard({
 }) {
   return (
     <SectionCard
+      kicker="The roster right now"
       title="Clients that need you"
       section={section}
       notes={warnings(section?.payload?.notes)}
-      actions={<TabLink tab="clients" label="Clients" goTab={goTab} />}
+      actions={
+        <TabLink tab="client-success" label="Client success" goTab={goTab} />
+      }
       order={5}
     >
       {p => {
@@ -747,10 +781,11 @@ function ClientsCard({
             {more > 0 ? (
               <button
                 type="button"
-                onClick={() => goTab("clients")}
+                onClick={() => goTab("client-success")}
                 className="mt-3 rounded-sm text-xs font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                {f.plural(more, "more client")} at risk on the Clients tab
+                {f.plural(more, "more client")} at risk on the Client success
+                tab
               </button>
             ) : null}
           </>
@@ -976,10 +1011,11 @@ function LiveFeedCard({
 }) {
   return (
     <SectionCard
+      kicker="Newest first"
       title="Live feed"
       section={section}
       notes={warnings(section?.payload?.notes)}
-      actions={<TabLink tab="team" label="Team" goTab={goTab} />}
+      actions={<TabLink tab="management" label="Management" goTab={goTab} />}
       order={5}
     >
       {t => (
@@ -1007,30 +1043,53 @@ const EOD: Record<
 function TeamTodayCard({
   section,
   now,
+  today,
   goTab,
 }: {
   section: CeoSections["team"];
   now: number;
+  today: string;
   goTab: GoTab;
 }) {
+  // The Management switch's live statuses, laid over the stored people so a
+  // person set to Paused or Left leaves this card the moment it is saved,
+  // the same as on the Management tab.
+  const live = useLiveStatuses();
   return (
     <SectionCard
+      kicker="Today, with yesterday's EODs"
       title="Team today"
       section={section}
-      actions={<TabLink tab="team" label="Team" goTab={goTab} />}
+      actions={<TabLink tab="management" label="Management" goTab={goTab} />}
       order={6}
     >
       {t => {
-        if (t.people.length === 0)
-          return <EmptyState title="No team members on record yet." compact />;
+        const roster = buildRoster(
+          t.people,
+          t.inactive ?? [],
+          live.rows,
+          today,
+        );
+        const active = roster.active;
+        if (active.length === 0)
+          return (
+            <EmptyState
+              title={
+                roster.inactive.length
+                  ? "Nobody active on the team list. Everyone listed is paused or left."
+                  : "No team members on record yet."
+              }
+              compact
+            />
+          );
         const eodOf = (p: TeamPerson) => EOD[p.eodYesterday] ?? EOD["not due"];
         // Whoever missed or was late comes first, so the list reads as a to-do.
-        const people = [...t.people].sort(
+        const people = [...active].sort(
           (a, b) =>
             eodOf(a).rank - eodOf(b).rank || a.name.localeCompare(b.name),
         );
         const tally = (k: TeamPerson["eodYesterday"]) =>
-          t.people.filter(p => p.eodYesterday === k).length;
+          active.filter(p => p.eodYesterday === k).length;
         const summary = [
           tally("on time") ? `${f.count(tally("on time"))} on time` : null,
           tally("late") ? `${f.count(tally("late"))} late` : null,

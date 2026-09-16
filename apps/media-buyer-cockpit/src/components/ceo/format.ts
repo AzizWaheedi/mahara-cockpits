@@ -261,6 +261,21 @@ export function hour(h: number | null | undefined): string {
   return isNum(h) ? `${pad(Math.max(0, Math.min(23, Math.floor(h))))}:00` : NA;
 }
 
+/** "2026-09" shifted by whole months, e.g. shiftMonth("2026-01", -1) is "2025-12". Null when the input is not a month. */
+export function shiftMonth(ym: string, by: number): string | null {
+  const m = /^(\d{4})-(\d{2})/.exec(ym);
+  if (!m) return null;
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1 + by, 1));
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}`;
+}
+
+/** How many days a "YYYY-MM" month has. Null when the input is not a month. */
+export function daysInMonth(ym: string): number | null {
+  const m = /^(\d{4})-(\d{2})/.exec(ym);
+  if (!m) return null;
+  return new Date(Date.UTC(+m[1], +m[2], 0)).getUTCDate();
+}
+
 /** "just now", "12 min ago", "3 h ago", "yesterday", "5 days ago", then the date. */
 export function relative(
   ms: number | null | undefined,
