@@ -19,7 +19,13 @@ import * as f from "@/components/ceo/format";
 import { HeroFigure } from "@/components/ceo/HeroFigure";
 import { Hint } from "@/components/ceo/Hint";
 import { Meter } from "@/components/ceo/Meter";
-import { cashHeadline, contractedHeadline } from "@/components/ceo/metrics";
+import {
+  CLOSE_RATE,
+  cashHeadline,
+  contractedHeadline,
+  INTRO_TO_DEMO,
+  SHOW_RATE,
+} from "@/components/ceo/metrics";
 import { Value } from "@/components/ceo/Na";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { Sparkline } from "@/components/ceo/Sparkline";
@@ -118,7 +124,11 @@ function cashCardWarnings(notes: Note[] | null | undefined): Note[] {
 
 // The growth funnel card shows no rep table, ad table, lead sources or daily
 // chart, so a warning about one of those stays on the Sales and Marketing tabs.
-const GROWTH_CARD_SKIP = /rep scorecard|top ads|lead sources|daily series/i;
+// The show rule and the count of past demos still marked confirmed are Sales
+// matters too: they are info notes today, and this keeps them off Today even
+// if one is ever raised to a warning.
+const GROWTH_CARD_SKIP =
+  /rep scorecard|top ads|lead sources|daily series|show rate|still marked confirmed/i;
 
 function growthCardWarnings(notes: Note[] | null | undefined): Note[] {
   return warnings(notes).filter(n => !GROWTH_CARD_SKIP.test(n.text));
@@ -664,18 +674,26 @@ function GrowthFunnelCard({
         const steps: FunnelStep[] = [
           { label: "Leads", value: w.leads },
           { label: "Intros booked", value: w.introsBooked },
+          // The dashboard's own rates: intro to demo on intros shown, show rate
+          // on demos that were due rather than every booking.
           {
             label: "Demos booked",
             value: w.demosBooked,
-            ...conversion(w.demosBooked, w.introsBooked),
+            rateFromPrevious: w.introToDemo ?? null,
+            rateFormat: INTRO_TO_DEMO.format,
           },
-          // The dashboard's own rates: show rate counts demos that were due, not every booking.
           {
             label: "Demos shown",
             value: w.demosShown,
             rateFromPrevious: w.demoShowRate,
+            rateFormat: SHOW_RATE.format,
           },
-          { label: "Closes", value: w.closes, rateFromPrevious: w.closeRate },
+          {
+            label: "Closes",
+            value: w.closes,
+            rateFromPrevious: w.closeRate,
+            rateFormat: CLOSE_RATE.format,
+          },
         ];
         return (
           <FunnelStrip

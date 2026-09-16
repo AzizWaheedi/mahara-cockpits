@@ -106,6 +106,18 @@ export function pct(fraction: number | null | undefined): string {
   return `${text === "0" ? "" : sign(p)}${text}%`;
 }
 
+/**
+ * A fraction as a percent to one decimal, as the B2B dashboard prints its show
+ * rates: 0.625 is "62.5%", 0.6 is "60%". Use it only for a rate the dashboard
+ * shows to one decimal, so the cockpit and the dashboard read the same.
+ */
+export function pct1(fraction: number | null | undefined): string {
+  if (!isNum(fraction)) return NA;
+  const p = fraction * 100;
+  const text = trimZero(Math.abs(p).toFixed(1));
+  return `${text === "0" ? "" : sign(p)}${text}%`;
+}
+
 /** Percent without decimals, for axis ticks. */
 export function pctCompact(fraction: number | null | undefined): string {
   if (!isNum(fraction)) return NA;

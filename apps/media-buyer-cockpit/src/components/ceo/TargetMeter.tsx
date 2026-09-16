@@ -1,5 +1,5 @@
 import type { MoneyPayload } from "../../../convex/ceo/payloads";
-import { count, humanize, isNum, money, pct } from "./format";
+import { count, humanize, isNum, money, pct, pct1 } from "./format";
 import { Meter } from "./Meter";
 import { gateTone } from "./StatusChip";
 
@@ -48,6 +48,10 @@ type TargetKind = {
 // dollars or counts. One rule for every tab, so the same target never changes
 // colour from one screen to the next.
 export function targetKind(metric: string): TargetKind {
+  // The dashboard's funnel rates read to one decimal, as on the dashboard and
+  // on the show rate, close rate and intro to demo tiles.
+  if (/(show_rate|close_rate|intro_to_demo)$/.test(metric))
+    return { format: pct1, judge: "higher" };
   if (/(_rate$|^ctr$|^lead_to_)/.test(metric))
     return { format: pct, judge: "higher" };
   if (/(^cost|cost$|^cp[abl]$|^cac$)/.test(metric))

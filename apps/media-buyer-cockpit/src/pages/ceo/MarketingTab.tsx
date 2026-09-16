@@ -46,10 +46,15 @@ function bookedRate(w: FunnelWindow): number | null {
   return w.leads > 0 ? bookedCalls(w) / w.leads : null;
 }
 
-/** Lead-gen ad spend per booked call. */
-function costPerBooked(w: FunnelWindow): number | null {
-  const n = bookedCalls(w);
-  return n > 0 ? w.spend / n : null;
+/**
+ * Lead-gen ad spend per intro call shown, worked out here from two of the B2B
+ * dashboard's own figures (`spend` and `intros_shown`). No B2B database
+ * function returns a cost per intro, so this is not labelled as the
+ * dashboard's. Null when the window has none, or the source gave no count.
+ */
+function costPerIntroShown(w: FunnelWindow): number | null {
+  const n = w.raw.intros_shown;
+  return isNum(n) && n > 0 ? w.spend / n : null;
 }
 
 /** Retargeting money, which the headline spend leaves out. Absent for a window the source did not give it for. */
@@ -68,7 +73,7 @@ type CardKey = "spend" | "booked" | "ads" | "sources" | "daily";
  * its own words on the ads card instead.
  */
 const SALES_ONLY =
-  /^reps:|rep scorecard|demo show rate|demos due|outcome marked|contracted and cash come from|closed-deal form/i;
+  /^reps:|rep scorecard|show rate|demos due|still marked confirmed|contracted and cash come from|closed-deal form/i;
 
 /** Everything else lands on the spend card, so no marketing caveat is dropped. */
 const NOTE_ROUTES: readonly (readonly [RegExp, CardKey])[] = [
@@ -103,7 +108,7 @@ const OWN_NOTES: Record<CardKey, Note[]> = {
     },
     {
       level: "info",
-      text: "Cost per booked call divides this window's lead-gen ad spend by intro plus demo calls booked. Retargeting money is not in it.",
+      text: "Cost per demo shown and cost per demo booked are the B2B dashboard's own figures: this window's lead-gen ad spend over demos shown, and over demos booked. Cost per intro shown is worked out here from two of the dashboard's figures: the same spend over intro calls shown. Retargeting money is in none of them.",
     },
   ],
   ads: [
@@ -265,7 +270,7 @@ export function MarketingTab({ sections, now, day }: CeoTabProps) {
         </SectionCard>
         <SectionCard
           kicker={WINDOW_LABEL[win]}
-          title="Calls booked"
+          title="Calls booked and cost per call"
           section={section}
           notes={cardNotes(notes, "booked")}
           order={1}
@@ -405,9 +410,9 @@ function CallsBooked({
 
   const booked = bookedCalls(w);
   const rate = bookedRate(w);
-  const cost = costPerBooked(w);
   const prevRate = prev ? bookedRate(prev) : null;
-  const prevCost = prev ? costPerBooked(prev) : null;
+  const perIntro = costPerIntroShown(w);
+  const prevPerIntro = prev ? costPerIntroShown(prev) : null;
 
   return (
     <div className="grid grid-cols-2 gap-x-6 gap-y-5">
@@ -440,11 +445,30 @@ function CallsBooked({
       />
       <StatTile
         variant="plain"
-        label="Cost per booked call"
-        value={money(cost)}
-        delta={delta(change(cost, prevCost), "down")}
-        hint="Lead-gen ad spend in this window divided by intro plus demo calls booked."
-        naHint="No calls were booked in this window."
+        label="Cost per intro shown"
+        value={money(perIntro)}
+        delta={delta(change(perIntro, prevPerIntro), "down")}
+        hint="Lead-gen ad spend in this window divided by the intro calls shown in it. The cockpit works this out from two of the B2B dashboard's figures; the dashboard's database functions give no cost per intro of their own."
+        naHint="No intro calls were shown in this window."
+      />
+      <StatTile
+        variant="plain"
+        label="Cost per demo shown"
+        value={money(w.costPerDemo)}
+        delta={delta(change(w.costPerDemo, prev?.costPerDemo), "down")}
+        hint="The B2B dashboard's cost per demo: lead-gen ad spend in this window divided by the demos shown in it."
+        naHint="No demos were shown in this window."
+      />
+      <StatTile
+        variant="plain"
+        label="Cost per demo booked"
+        value={money(w.costPerDemoBooked)}
+        delta={delta(
+          change(w.costPerDemoBooked, prev?.costPerDemoBooked),
+          "down",
+        )}
+        hint="The B2B dashboard's cost per demo booked: lead-gen ad spend in this window divided by the demos booked in it."
+        naHint="No demos were booked in this window."
       />
     </div>
   );

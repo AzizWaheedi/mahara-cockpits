@@ -15,7 +15,7 @@ import type {
   MoneyPayload,
   Note,
 } from "../../../convex/ceo/payloads";
-import { isNum, money, month as monthLabel, pct, plural } from "./format";
+import { isNum, money, month as monthLabel, pct, pct1, plural } from "./format";
 
 // --- Cash collected ------------------------------------------------------
 
@@ -318,54 +318,42 @@ export const COST_TO_WIN = {
   },
 } as const;
 
-// --- Demo show rate ------------------------------------------------------
-
-/** Points apart at which the dashboard and marked show rates are said to disagree. */
-const SHOW_RATES_SPLIT = 0.15;
+// --- Show rates ----------------------------------------------------------
 
 /**
- * The two demo show rates, one set of words for every tab that shows them.
- *
- * The B2B dashboard's rate is demos shown over demos due, where a past call
- * still marked confirmed and a call marked invalid both count as shown, and a
- * cancelled call stays in the demos due. The marked rate uses only calls
- * marked showed, invalid or no-show. A marked rate of 0 can only come from
- * marked calls that were all no-shows (nothing marked is null, not 0), and
- * the dashboard rate can only sit well above the marked one when past calls
- * nobody marked are being counted as shows, so both lines are facts, not
- * guesses. Checked against the B2B calls table on 2026-09-16: September 1 to
- * 16 had 16 demos due, 4 marked no-show, none marked showed or invalid, 10
- * past calls still marked confirmed and 2 cancelled.
+ * The show rule Aziz settled on 2026-09-16, "if it's confirmed or shown, it's
+ * counted as shown", as the B2B dashboard's `b2b_window_metrics` applies it.
+ * The cockpit shows only this rate, and it must equal the dashboard's.
+ */
+const SHOW_RULE =
+  "A call counts as shown when it is marked showed, or marked confirmed or invalid once its time has passed. Calls due are every call whose time has passed in the window, cancelled and no-show included. A future call is in neither count.";
+
+/**
+ * The demo show rate, one set of words for every tab that shows it: the
+ * dashboard's `demo_show_rate`, demos shown over demos due, printed to one
+ * decimal as the dashboard prints it. Checked against the B2B calls table on
+ * 2026-09-16: September 1 to 16 had 16 demos due and 10 shown, 62.5%, the
+ * same as the dashboard. All 10 shown were still marked confirmed.
  */
 export const SHOW_RATE = {
-  dashboardLabel: "Show rate, dashboard rule",
-  dashboardHint:
-    "The B2B dashboard's rule: demos shown over demos due. A past call still marked confirmed counts as a show, a call marked invalid counts as a show, and a cancelled call stays in the demos due.",
-  markedLabel: "Show rate, marked outcomes only",
-  markedHint:
-    "The stricter rule: only calls with a recorded outcome, which is showed, invalid or no-show. Invalid counts as shown, because the call did happen. A call nobody marked is left out instead of counted as a show, and a cancelled call is left out too.",
-  /** The sub line under the dashboard rate, when the marked outcomes say it is too generous. */
-  dashboardSub(w: FunnelWindow): string | undefined {
-    const strict = w.demoShowRateMarked;
-    const dash = w.demoShowRate;
-    if (strict === null || dash === null) return undefined;
-    if (dash - strict >= SHOW_RATES_SPLIT || (strict === 0 && dash > 0))
-      return "Likely too high: past demos nobody marked count as shows here.";
-    return undefined;
+  label: "Demo show rate",
+  hint: `The B2B dashboard's demo show rate: demos shown over demos due. ${SHOW_RULE}`,
+  naHint: "No demos were due in this window.",
+  format: pct1,
+  /** A neutral record-keeping line: past demos in the window still marked confirmed. */
+  sub(w: FunnelWindow): string | undefined {
+    const n = w.demosStillConfirmed;
+    if (!isNum(n) || n <= 0) return undefined;
+    return `${plural(n, "past demo")} still marked confirmed`;
   },
-  /** The sub line under the marked rate, when it sits far under the dashboard's. */
-  markedSub(w: FunnelWindow): string | undefined {
-    const strict = w.demoShowRateMarked;
-    const dash = w.demoShowRate;
-    if (strict === null) return undefined;
-    if (strict === 0)
-      return dash !== null && dash > 0
-        ? "Real, not a fault: every demo with an outcome marked in this window was a no-show. The dashboard rate is higher because it counts past demos nobody marked as shows."
-        : "Real, not a fault: every demo with an outcome marked in this window was a no-show.";
-    if (dash !== null && dash - strict >= SHOW_RATES_SPLIT)
-      return "Well under the dashboard rate, which counts past demos nobody marked as shows.";
-    return undefined;
-  },
+} as const;
+
+/** The intro show rate: the dashboard's `intro_show_rate`, the same rule for intro calls. */
+export const INTRO_SHOW_RATE = {
+  label: "Intro show rate",
+  hint: `The B2B dashboard's intro show rate: intro calls shown over intro calls due. ${SHOW_RULE}`,
+  naHint: "No intro calls were due in this window.",
+  format: pct1,
 } as const;
 
 /**
@@ -378,4 +366,14 @@ export const CLOSE_RATE = {
   hint: "Deals signed over the demos counted as shown in the same window, leaving out calls marked invalid, as the B2B dashboard computes it. A deal can be signed after the window its demo sat in, so this can pass 100%.",
   naHint:
     "No demo in this window counts as shown once calls marked invalid are left out.",
+  /** One decimal, as the dashboard prints it: 14.3%, not 14%. */
+  format: pct1,
+} as const;
+
+/**
+ * The dashboard's `intro_to_demo`: intros shown whose contact then booked a
+ * demo, over intros shown. Printed to one decimal like every dashboard rate.
+ */
+export const INTRO_TO_DEMO = {
+  format: pct1,
 } as const;

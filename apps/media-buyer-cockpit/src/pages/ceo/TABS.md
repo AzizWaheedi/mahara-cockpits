@@ -96,6 +96,12 @@ rollup and the department tab can never drift apart:
   number and its label, used by Today, Frontend and Money) and `highRiskCount`,
   `mediumRiskCount`, `isLiveClient` (used by the tab badge, the status line,
   Backend and Client success).
+- `src/components/ceo/metrics.ts` also holds `SHOW_RATE` and `INTRO_SHOW_RATE`,
+  the dashboard's show rates with one label and rule each, printed to one
+  decimal with `pct1` from `format.ts`. There is no second show rate.
+  `CLOSE_RATE.format` and `INTRO_TO_DEMO.format` print those two dashboard
+  rates to one decimal as well, so every funnel rate reads as the dashboard
+  rounds it (14.3%, 18.4%).
 - `src/components/ceo/TargetMeter.tsx` holds `TARGET_LABELS`, `targetKind()` and
   the meter itself, used by Frontend, Sales and Money.
 - `src/components/ceo/format.ts` holds `shiftMonth` and `daysInMonth`.
@@ -209,6 +215,7 @@ in a note that this is Whop only.
 | Cost per lead | `growth.windows.<w>.cpl` |
 | Intro calls booked | `growth.windows.<w>.introsBooked` |
 | Demos booked | `growth.windows.<w>.demosBooked` |
+| Intro to demo (the step into demos booked) | `growth.windows.<w>.introToDemo` |
 | Demos shown | `growth.windows.<w>.demosShown` |
 | Demo show rate | `growth.windows.<w>.demoShowRate` |
 | Closes | `growth.windows.<w>.closes` |
@@ -225,12 +232,12 @@ what was collected. Say so in a note on this card, every time both appear.
 
 | What it shows | Payload field |
 | --- | --- |
-| Cost to win a customer | `growth.windows.<w>.cac` |
+| Cost to win a customer | `COST_TO_WIN.of(growth.windows.<w>)` in `metrics.ts`: lead-gen plus retargeting spend over closes. Not `growth.windows.<w>.cac`, which is the dashboard's lead-gen only figure |
 | Return on ad spend | `growth.windows.<w>.roas` |
 | Cost per lead | `growth.windows.<w>.cpl` |
 | Average contract value, last 90 days | `money.deals.avgContract90d` |
 | Deals signed this month | `money.deals.mtd` against `money.deals.lastMonth` |
-| Contracted value this month | `money.deals.contractedMtd` against `money.deals.contractedLastMonth` |
+| Contracted value this month | `contractedHeadline(money)` in `metrics.ts`: `money.deals.contractedMtd` plus `money.deals.manualContractedMtd` (hand-logged deals), against the same for last month |
 
 ### Card 4: Trend
 
@@ -288,18 +295,23 @@ retargeting money and is currently computed but never rendered anywhere, so this
 card is its first home. Note that the two are different money and are not summed
 into `cpl`.
 
-### Card 2: Calls booked
+### Card 2: Calls booked and cost per call
 
 | What it shows | Payload field |
 | --- | --- |
 | Intro calls booked | `growth.windows.<w>.introsBooked` |
 | Demos booked | `growth.windows.<w>.demosBooked` |
 | Lead to booked call rate | derive: `(introsBooked + demosBooked) / leads`, name the rule in a note |
-| Cost per booked call | derive: `spend / (introsBooked + demosBooked)`, null when the denominator is 0 |
+| Cost per intro shown | derive: `spend / raw.intros_shown`, worked out in the cockpit from two dashboard figures (no B2B function returns a cost per intro), null when there are no intros shown |
+| Cost per demo shown | `growth.windows.<w>.costPerDemo` (the dashboard's `cost_per_demo`) |
+| Cost per demo booked | `growth.windows.<w>.costPerDemoBooked` (the dashboard's `cost_per_demo_booked`) |
 
-Both derived numbers date the lead and the booking on the day each happened, so
-a lead created on Monday and booked on Thursday lands in two different days.
-That caveat must be in a note on this card.
+The lead to booked call rate dates the lead and the booking on the day each
+happened, so a lead created on Monday and booked on Thursday lands in two
+different days. That caveat must be in a note on this card. Cost per demo shown
+and cost per demo booked are the dashboard's own figures and must be labelled so.
+Cost per intro shown is the cockpit's sum over the dashboard's spend and intros
+shown, and must not be labelled as the dashboard's.
 
 ### Card 3: Ads, last 7 days
 
@@ -367,15 +379,22 @@ Mahara's own sales: from a booked call to a signed deal.
 | --- | --- |
 | Demos booked | `growth.windows.<w>.demosBooked` |
 | Demos shown | `growth.windows.<w>.demosShown` |
-| Show rate, the dashboard rule | `growth.windows.<w>.demoShowRate` |
-| Show rate, marked outcomes only | `growth.windows.<w>.demoShowRateMarked` |
-| Demos due but not yet marked | `growth.windows.<w>.raw.demos_due` |
+| Demo show rate | `growth.windows.<w>.demoShowRate` |
+| Intro show rate | `growth.windows.<w>.introShowRate` |
+| Demos due | `growth.windows.<w>.raw.demos_due` |
+| Past demos still marked confirmed | `growth.windows.<w>.demosStillConfirmed` |
 | Intro calls booked | `growth.windows.<w>.introsBooked` |
 
-Show both rates side by side and say what separates them: the dashboard rule
-counts a past call still marked confirmed as a show, the marked rule counts only
-calls with a recorded outcome. `raw.demos_due` is computed but rendered nowhere
-today, so this card is its first home.
+The show rule, settled by Aziz on 2026-09-16 ("if it's confirmed or shown, it's
+counted as shown") and applied by the dashboard's `b2b_window_metrics`: a call
+counts as shown when it is marked showed, or marked confirmed or invalid once
+its time has passed. Show rate is calls shown over calls due, and due is every
+call whose time has passed in the window, cancelled and no-show included. A
+future call is in neither count. One show rate only; it must equal the
+dashboard's, printed to one decimal (62.5% for September 1 to 16). Past demos
+still marked confirmed is a record-keeping count, shown as a plain line under
+the rate and as an info note, never a warning: those demos count as shown, so a
+demo that did not happen has to be marked no-show in GHL.
 
 ### Card 2: Closing
 
@@ -387,12 +406,15 @@ today, so this card is its first home.
 | Cash typed on the form | `growth.windows.<w>.cash` |
 | Deals signed this month | `money.deals.mtd` |
 | Deals signed last month | `money.deals.lastMonth` |
-| Contracted this month | `money.deals.contractedMtd` |
-| Contracted last month | `money.deals.contractedLastMonth` |
+| Contracted this month | `contractedHeadline(money).value`: closer form plus hand-logged deal values |
+| Contracted last month | `contractedHeadline(money).lastMonth` |
+| Intro to demo (the funnel step into demos booked) | `growth.windows.<w>.introToDemo` |
 | Average contract, last 90 days | `money.deals.avgContract90d` |
 
-`closeRate` is closes over demos shown and can pass 100% in a short window
-because a close can land after the window the demo sat in. Note it.
+`closeRate` is the dashboard's `close_rate`: deals signed over qualified demos
+(demos counted as shown, leaving out calls marked invalid). It can pass 100% in
+a short window because a close can land after the window the demo sat in. Note
+it.
 `growth.windows.<w>.cash` is what the closer typed, never Whop cash. Note it.
 
 ### Card 3: Reps, month to date
@@ -427,8 +449,10 @@ Any of `business`, `closer`, `contracted`, `cash`, `plan` can be null: show
 
 ### Card 5: Targets that belong to sales
 
-Filter `money.targets.items[]` to the sales metrics (signed, revenue, close
-rate, demos shown) and show `metric`, `target`, `actual`. Leave the marketing
+Filter `money.targets.items[]` to the sales metrics (`SALES_TARGET_METRICS`:
+signed, revenue, cash collected, demos shown, close rate, demo show rate) and
+show `metric`, `target`, `actual`. A show rate target prints to one decimal,
+like the show rate tile. Leave the marketing
 targets to the Marketing tab and the whole list to Money.
 
 ### NO SOURCE YET on Sales

@@ -354,9 +354,18 @@ export type FunnelWindow = {
   introsBooked: number;
   demosBooked: number;
   demosShown: number;
+  /** The dashboard's `demo_show_rate`: demos shown over demos due, 0..1 to three places. */
   demoShowRate: number | null;
-  /** Show rate on calls with a marked outcome only (stricter than the dashboard). */
-  demoShowRateMarked: number | null;
+  /** The dashboard's `intro_show_rate`, the same rule for intro calls. */
+  introShowRate: number | null;
+  /** The dashboard's `intro_to_demo`: intros that went on to book a demo, over intros shown. */
+  introToDemo: number | null;
+  /** Past demos in the window still marked confirmed. They count as shown under the dashboard's rule. */
+  demosStillConfirmed: number;
+  /** The dashboard's `cost_per_demo`: lead-gen spend over demos shown. */
+  costPerDemo: number | null;
+  /** The dashboard's `cost_per_demo_booked`: lead-gen spend over demos booked. */
+  costPerDemoBooked: number | null;
   closes: number;
   closeRate: number | null;
   contracted: number;

@@ -16,7 +16,6 @@ import {
   money,
   month,
   NA,
-  pct,
   plural,
   shiftMonth,
   type Unit,
@@ -28,6 +27,7 @@ import {
   COST_TO_WIN,
   cashHeadline,
   contractedHeadline,
+  INTRO_TO_DEMO,
   SHOW_RATE,
 } from "@/components/ceo/metrics";
 import { SectionCard } from "@/components/ceo/SectionCard";
@@ -78,11 +78,14 @@ type GrowthRoute = CardKey | "otherTabs";
 // - The rep note also names top ads and retargeting, and the rep scorecard,
 //   top ads and lead sources are tables this tab does not show, so they are
 //   claimed first and left to the Sales and Marketing tabs.
+// - The show rule and the count of past demos still marked confirmed stay on
+//   Sales, which shows demos due; the show rate tile here carries the rule.
 // - The daily series feeds the trend card.
 // - The spend definition goes to the cost card, because cost per lead, cost
 //   to win and return on ad spend are all built on that same spend.
 const GROWTH_ROUTES: readonly (readonly [RegExp, GrowthRoute])[] = [
   [/rep scorecard|^reps:|top ads|lead sources/i, "otherTabs"],
+  [/still marked confirmed|show rate/i, "otherTabs"],
   [/daily series/i, "trend"],
   [/lead-gen campaigns only|retargeting/i, "costs"],
 ];
@@ -593,12 +596,11 @@ function FunnelBody({
       delta: delta(change(w.demosShown, prev?.demosShown), "up"),
     },
     {
-      label: SHOW_RATE.dashboardLabel,
-      value: pct(w.demoShowRate),
+      label: SHOW_RATE.label,
+      value: SHOW_RATE.format(w.demoShowRate),
       delta: delta(diff(w.demoShowRate, prev?.demoShowRate), "up", "points"),
-      sub: SHOW_RATE.dashboardSub(w),
-      hint: `${SHOW_RATE.dashboardHint} The stricter rate, on marked outcomes only, is on the Sales tab.`,
-      naHint: "No demos were due in this window.",
+      hint: SHOW_RATE.hint,
+      naHint: SHOW_RATE.naHint,
     },
     {
       label: "Closes",
@@ -607,7 +609,7 @@ function FunnelBody({
     },
     {
       label: "Close rate",
-      value: pct(w.closeRate),
+      value: CLOSE_RATE.format(w.closeRate),
       delta: delta(diff(w.closeRate, prev?.closeRate), "up", "points"),
       hint: CLOSE_RATE.hint,
       naHint: CLOSE_RATE.naHint,
@@ -633,14 +635,26 @@ function FunnelBody({
         steps={[
           { label: "Leads", value: w.leads },
           { label: "Intros booked", value: w.introsBooked },
-          { label: "Demos booked", value: w.demosBooked },
-          // The source's own rates: show rate by call day, close rate on demos shown.
+          // The dashboard's own rates: intro to demo on intros shown, show rate
+          // on calls due, close rate on qualified demos.
+          {
+            label: "Demos booked",
+            value: w.demosBooked,
+            rateFromPrevious: w.introToDemo ?? null,
+            rateFormat: INTRO_TO_DEMO.format,
+          },
           {
             label: "Demos shown",
             value: w.demosShown,
             rateFromPrevious: w.demoShowRate,
+            rateFormat: SHOW_RATE.format,
           },
-          { label: "Closes", value: w.closes, rateFromPrevious: w.closeRate },
+          {
+            label: "Closes",
+            value: w.closes,
+            rateFromPrevious: w.closeRate,
+            rateFormat: CLOSE_RATE.format,
+          },
         ]}
       />
       <div className="mt-6 grid grid-cols-2 gap-x-6 gap-y-5 border-t pt-5 sm:grid-cols-3 lg:grid-cols-5">
@@ -659,8 +673,8 @@ function FunnelBody({
       </div>
       {onOtherTabs > 0 ? (
         <p className="mt-5 border-t pt-3 text-xs text-muted-foreground">
-          {plural(onOtherTabs, "more caveat")} about the rep and ad tables{" "}
-          {onOtherTabs === 1 ? "sits" : "sit"} on the{" "}
+          {plural(onOtherTabs, "more caveat")} about call records and the rep
+          and ad tables {onOtherTabs === 1 ? "sits" : "sit"} on the{" "}
           <button
             type="button"
             onClick={() => goTab("sales")}

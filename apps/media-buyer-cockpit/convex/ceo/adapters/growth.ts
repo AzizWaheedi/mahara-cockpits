@@ -41,7 +41,9 @@ function windowRanges(today: string): Record<WindowKey, Range> {
 
 /**
  * One statement for all six windows: b2b_window_metrics per window (the
- * Overview tiles), plus demo outcomes as marked, for the stricter show rate.
+ * Overview tiles), plus a count of past demos still marked confirmed, a
+ * record-keeping fact for the Sales tab. The show rate itself is the
+ * dashboard's and is never worked out here.
  */
 function windowsSql(ranges: Record<WindowKey, Range>): string {
   const values = Object.entries(ranges)
@@ -51,11 +53,9 @@ function windowsSql(ranges: Record<WindowKey, Range>): string {
   values
     ${values}
 ),
-marked as (
+still_confirmed as (
   select w.k,
-    count(*) filter (where c.status in ('showed', 'invalid')) as marked_shown,
-    count(*) filter (where c.status = 'noshow') as marked_noshow,
-    count(*) filter (where c.status = 'confirmed' and c.start_at <= now()) as unmarked_past
+    count(*) filter (where c.status = 'confirmed' and c.start_at <= now()) as demos_still_confirmed
   from w
   join public.calls c on c.call_type = 'demo'
     and (c.start_at at time zone 'Asia/Riyadh')::date between w.f and w.t
@@ -63,10 +63,8 @@ marked as (
 )
 select w.k, w.f::text as d_from, w.t::text as d_to,
   public.b2b_window_metrics(w.f, w.t, null::text[]) as m,
-  coalesce(mk.marked_shown, 0) as marked_shown,
-  coalesce(mk.marked_noshow, 0) as marked_noshow,
-  coalesce(mk.unmarked_past, 0) as unmarked_past
-from w left join marked mk on mk.k = w.k`;
+  coalesce(sc.demos_still_confirmed, 0) as demos_still_confirmed
+from w left join still_confirmed sc on sc.k = w.k`;
 }
 
 /**
@@ -223,51 +221,20 @@ function usd(x: number): string {
   return `$${x.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}`;
 }
 
-/** A 0..1 fraction as the tabs print it: whole percents, one decimal under 10%. */
-function pctText(x: number): string {
-  const p = x * 100;
-  return p > 0 && p < 10 ? `${Number(p.toFixed(1))}%` : `${Math.round(p)}%`;
-}
-
 /**
- * The two demo show rates can sit far apart, and a marked rate of 0% beside a
- * dashboard rate of 63% reads like a fault. Say plainly which calls each rate
- * rests on, with this month's counts, so the Sales card can be trusted.
+ * A record-keeping fact, at info level so Today leaves it off its growth
+ * card: how many of this month's past demos are still marked confirmed. The
+ * dashboard's rule counts each of them as shown, which is correct, so a demo
+ * that did not happen has to be marked no-show in GHL for the rate to see it.
  */
-function showRateNote(
-  w: FunnelWindow,
-  counts: { markedShown: number; markedNoshow: number; unmarked: number },
-): Note | null {
+function stillConfirmedNote(w: FunnelWindow): Note | null {
+  const n = w.demosStillConfirmed;
+  if (n <= 0) return null;
   const due = num(w.raw.demos_due);
-  const dash = w.demoShowRate;
-  const strict = w.demoShowRateMarked;
-  const marked = counts.markedShown + counts.markedNoshow;
-  const manyUnmarked = due > 0 && counts.unmarked / due >= 0.2;
-  const gap = strict !== null && dash !== null ? dash - strict : null;
-  const split =
-    marked > 0 && strict !== null && (strict === 0 || (gap ?? 0) >= 0.15);
-  const parts: string[] = [];
-  if (manyUnmarked)
-    parts.push(
-      `${counts.unmarked} of ${due} demos due this month still have no outcome marked. The dashboard counts them as shows, so its show rate${
-        dash !== null ? ` of ${pctText(dash)}` : ""
-      } is likely too high.`,
-    );
-  if (split && strict === 0)
-    parts.push(
-      `Every demo with an outcome marked this month was a no-show: 0 of ${marked} showed, so the marked show rate of 0% is real, not a fault.`,
-    );
-  else if (split && strict !== null)
-    parts.push(
-      `Of the ${marked} demos with an outcome marked this month, ${counts.markedShown} showed (${pctText(strict)}), well under the dashboard's ${
-        dash !== null ? pctText(dash) : "rate"
-      }.`,
-    );
-  if (split && !manyUnmarked && counts.unmarked > 0)
-    parts.push(
-      `The dashboard's rate is higher because it also counts the ${counts.unmarked} past demos nobody marked as shows.`,
-    );
-  return parts.length ? { level: "warn", text: parts.join(" ") } : null;
+  return {
+    level: "info",
+    text: `${n} of the ${due} demos due this month are still marked confirmed. The dashboard counts a past confirmed demo as shown, so a demo that did not happen should be marked no-show in GHL.`,
+  };
 }
 
 /** Every numeric key of the function's JSON, as is (percents stay x100). */
@@ -295,8 +262,6 @@ function metricsOf(r: Row): Row {
 
 function toWindow(r: Row): FunnelWindow {
   const m = metricsOf(r);
-  const markedShown = num(r.marked_shown);
-  const marked = markedShown + num(r.marked_noshow);
   return {
     from: String(r.d_from),
     to: String(r.d_to),
@@ -307,9 +272,11 @@ function toWindow(r: Row): FunnelWindow {
     demosBooked: num(m.demos_booked),
     demosShown: num(m.demos_shown),
     demoShowRate: pct(m.demo_show_rate),
-    // Invalid calls did happen (the lead was disqualified), so they count as shown.
-    demoShowRateMarked:
-      marked > 0 ? Math.round((markedShown / marked) * 1000) / 1000 : null,
+    introShowRate: pct(m.intro_show_rate),
+    introToDemo: pct(m.intro_to_demo),
+    demosStillConfirmed: num(r.demos_still_confirmed),
+    costPerDemo: orNull(m.cost_per_demo),
+    costPerDemoBooked: orNull(m.cost_per_demo_booked),
     closes: num(m.signed),
     closeRate: pct(m.close_rate),
     contracted: num(m.revenue),
@@ -364,8 +331,6 @@ export const growth: Adapter = {
       lastMonth: toWindow(rowOf("lastMonth")),
     };
     const mtd = windows.mtd;
-    const mtdRow = rowOf("mtd");
-    const mtdUnmarked = num(mtdRow.unmarked_past);
 
     const daily = await attempt(
       "The 60-day daily series",
@@ -430,17 +395,13 @@ export const growth: Adapter = {
       () => sql(B2B, FRESHNESS_SQL),
     );
 
-    // Trust caveats, most important first.
-    const showRate = showRateNote(mtd, {
-      markedShown: num(mtdRow.marked_shown),
-      markedNoshow: num(mtdRow.marked_noshow),
-      unmarked: mtdUnmarked,
-    });
-    if (showRate) notes.push(showRate);
+    // Caveats, most important first.
+    const stillConfirmed = stillConfirmedNote(mtd);
+    if (stillConfirmed) notes.push(stillConfirmed);
     notes.push(
       {
         level: "info",
-        text: "Demo show rate is the dashboard's: demos shown over demos due, where past calls still marked confirmed, and invalid calls, count as shows and cancelled calls stay in the demos due. The marked rate uses only calls marked showed, invalid or no-show.",
+        text: "Show rate is the B2B dashboard's: calls shown over calls due. A call counts as shown when it is marked showed, or marked confirmed or invalid once its time has passed. Calls due are every call whose time has passed in the window, cancelled and no-show included. A future call is in neither count.",
       },
       {
         level: "info",
@@ -526,16 +487,17 @@ export const growth: Adapter = {
       notes,
     } satisfies GrowthPayload;
 
-    // Call outcomes are overwritten in place at the source, so keep today's
-    // month-to-date show rates here to see how they settle.
+    // Call statuses are overwritten in place at the source, so keep today's
+    // month-to-date show rate and past demos still marked confirmed here to
+    // see how they settle.
     const points: DailyPoint[] = [];
     const keep = (metric: string, value: number | null) => {
       if (value !== null)
         points.push({ date: today, metric, scope: "company", value });
     };
     keep("growth.demoShowRate.mtd", mtd.demoShowRate);
-    keep("growth.demoShowRateMarked.mtd", mtd.demoShowRateMarked);
-    keep("growth.demosUnmarked.mtd", mtdUnmarked);
+    // The key keeps its old name so the history stays one continuous series.
+    keep("growth.demosUnmarked.mtd", mtd.demosStillConfirmed);
 
     return { payload, daily: points, sources };
   },

@@ -23,6 +23,8 @@ import {
 import {
   CLOSE_RATE,
   contractedHeadline,
+  INTRO_SHOW_RATE,
+  INTRO_TO_DEMO,
   SHOW_RATE,
 } from "@/components/ceo/metrics";
 import { Na, Value } from "@/components/ceo/Na";
@@ -71,7 +73,7 @@ type GrowthCard = "calls" | "closing" | "daily" | "reps" | "marketing";
 const GROWTH_NOTE_ROUTES: readonly (readonly [RegExp, GrowthCard])[] = [
   [/rep scorecard|^reps:/i, "reps"],
   [/daily series/i, "daily"],
-  [/demos due|demo show rate|outcome marked|GHL calls/i, "calls"],
+  [/demos due|show rate|still marked confirmed|GHL calls/i, "calls"],
   [
     /closed-deal form|contracted and cash|each stage is dated|close rate/i,
     "closing",
@@ -391,30 +393,29 @@ function CallsBody({
       hint: "Dated by the day of the call, not the day it was booked, so a demo booked last week and held this week lands in two different windows.",
     },
     {
-      label: SHOW_RATE.dashboardLabel,
-      value: pct(w.demoShowRate),
+      label: SHOW_RATE.label,
+      value: SHOW_RATE.format(w.demoShowRate),
       delta: deltaFor(
         vs,
         diff(w.demoShowRate, prev?.demoShowRate),
         "up",
         "points",
       ),
-      sub: SHOW_RATE.dashboardSub(w),
-      hint: SHOW_RATE.dashboardHint,
-      naHint: "No demos were due in this window.",
+      sub: SHOW_RATE.sub(w),
+      hint: SHOW_RATE.hint,
+      naHint: SHOW_RATE.naHint,
     },
     {
-      label: SHOW_RATE.markedLabel,
-      value: pct(w.demoShowRateMarked),
+      label: INTRO_SHOW_RATE.label,
+      value: INTRO_SHOW_RATE.format(w.introShowRate),
       delta: deltaFor(
         vs,
-        diff(w.demoShowRateMarked, prev?.demoShowRateMarked),
+        diff(w.introShowRate, prev?.introShowRate),
         "up",
         "points",
       ),
-      sub: SHOW_RATE.markedSub(w),
-      hint: SHOW_RATE.markedHint,
-      naHint: "No demo in this window has an outcome marked yet.",
+      hint: INTRO_SHOW_RATE.hint,
+      naHint: INTRO_SHOW_RATE.naHint,
     },
     {
       label: "Demos due",
@@ -423,7 +424,7 @@ function CallsBody({
         isNum(demosDue) && demosDue - w.demosShown > 0
           ? `${count(demosDue - w.demosShown)} of them are not counted as shown`
           : undefined,
-      hint: "Demos whose call time has already passed in this window, cancelled ones included. The gap between demos due and demos shown is no-shows, cancellations and calls left in a new state. A past call nobody marked is not in the gap: the dashboard counts it as shown.",
+      hint: "Demos whose call time has passed in this window, cancelled and no-show included. This is what the show rate divides by. A past demo still marked confirmed or invalid counts as shown, so the gap is no-shows, cancellations and calls still marked new.",
       naHint: "The window function did not return a demos due count.",
     },
   ];
@@ -459,7 +460,7 @@ function ClosingBody({
     },
     {
       label: "Close rate",
-      value: pct(w.closeRate),
+      value: CLOSE_RATE.format(w.closeRate),
       delta: deltaFor(vs, diff(w.closeRate, prev?.closeRate), "up", "points"),
       hint: CLOSE_RATE.hint,
       naHint: CLOSE_RATE.naHint,
@@ -498,17 +499,24 @@ function ClosingBody({
           ariaLabel={`Booked calls to closes, ${label.toLowerCase()}`}
           steps={[
             { label: "Intros booked", value: w.introsBooked },
-            // An intro does not convert into a demo booking, so no rate here.
-            { label: "Demos booked", value: w.demosBooked, skipRate: true },
+            // The dashboard's intro to demo: intros shown that went on to book a demo.
+            {
+              label: "Demos booked",
+              value: w.demosBooked,
+              rateFromPrevious: w.introToDemo ?? null,
+              rateFormat: INTRO_TO_DEMO.format,
+            },
             {
               label: "Demos shown",
               value: w.demosShown,
               rateFromPrevious: w.demoShowRate,
+              rateFormat: SHOW_RATE.format,
             },
             {
               label: "Closes",
               value: w.closes,
               rateFromPrevious: w.closeRate,
+              rateFormat: CLOSE_RATE.format,
             },
           ]}
         />
@@ -662,7 +670,7 @@ const REP_COLUMNS: Column<Rep>[] = [
     header: "Close rate",
     cell: r => (
       <Value
-        value={pct(r.closeRate)}
+        value={CLOSE_RATE.format(r.closeRate)}
         hint="No demos shown for this rep this month."
       />
     ),

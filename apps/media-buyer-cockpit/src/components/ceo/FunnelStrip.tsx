@@ -11,15 +11,22 @@ export type FunnelStep = {
   label: string;
   /** Count at this step; null shows n/a and breaks the rates on either side. */
   value: number | null | undefined;
-  /** Rate from the previous step when the source computes it differently (e.g. show rate on marked calls); defaults to value / previous value. */
+  /** Rate from the previous step when the source computes it differently (e.g. the dashboard's show rate, which divides by calls due); defaults to value / previous value. */
   rateFromPrevious?: number | null;
+  /** Formatter for the rate into this step; whole percents by default. */
+  rateFormat?: (v: number) => string;
   /** Hide the rate into this step when it is not a conversion (dials per lead can pass 100%). */
   skipRate?: boolean;
   /** Formatter for the value; counts by default. */
   format?: (v: number) => string;
 };
 
-type Transition = { index: number; rate: number | null; skip: boolean };
+type Transition = {
+  index: number;
+  rate: number | null;
+  skip: boolean;
+  format: (v: number) => string;
+};
 
 /**
  * Ordered steps as horizontal bars on one scale (the largest step is the full
@@ -49,12 +56,14 @@ export function FunnelStrip({
 
   const transitions: Transition[] = steps.slice(1).map((s, k) => {
     const i = k + 1;
-    if (s.skipRate) return { index: i, rate: null, skip: true };
+    const format = s.rateFormat ?? pct;
+    if (s.skipRate) return { index: i, rate: null, skip: true, format };
     if (s.rateFromPrevious !== undefined)
       return {
         index: i,
         rate: isNum(s.rateFromPrevious) ? s.rateFromPrevious : null,
         skip: false,
+        format,
       };
     const prev = values[i - 1];
     const cur = values[i];
@@ -62,6 +71,7 @@ export function FunnelStrip({
       index: i,
       rate: prev !== null && cur !== null && prev > 0 ? cur / prev : null,
       skip: false,
+      format,
     };
   });
   const ranked = transitions.filter(t => t.rate !== null);
@@ -112,7 +122,7 @@ export function FunnelStrip({
                         aria-hidden
                       />
                       <span className="font-medium tabular-nums">
-                        {t.rate === null ? <Na /> : pct(t.rate)}
+                        {t.rate === null ? <Na /> : t.format(t.rate)}
                       </span>
                       <span className="truncate">{rateNoun}</span>
                     </>
