@@ -81,7 +81,7 @@ function routeDeliveryNotes(notes: Note[] | null | undefined) {
 
 // --- Shared bits ----------------------------------------------------------
 
-/** A cost against its gate. The gates are plan defaults, which the note says. */
+/** A cost against its gate. The gates are Aziz's official ones. */
 function gateChip(
   value: number | null | undefined,
   gate: number,
@@ -93,7 +93,7 @@ function gateChip(
     <StatusChip
       tone={tone}
       label={gateLabel(tone, gate)}
-      hint={`${noun} ${money(value)} against the ${money(gate)} gate, a plan default until the official gates are set.`}
+      hint={`${noun} ${money(value)} against the ${money(gate)} gate, Aziz's target.`}
     />
   );
 }

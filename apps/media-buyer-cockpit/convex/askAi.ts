@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalMutation, internalQuery } from "./_generated/server";
+import { readJobCounts, recordJobFinish } from "./migrations";
 
 /**
  * The "Ask AI" queue.
@@ -133,10 +134,14 @@ export const complete = internalMutation({
     if (job.status === "done") return { ok: true, applied: "already done" };
 
     if (error || !result) {
+      const status = job.tries >= 4 ? "failed" : "queued";
+      const doneAt = status === "queued" ? undefined : job.doneAt;
       await ctx.db.patch(id, {
-        status: job.tries >= 4 ? "failed" : "queued",
+        status,
+        doneAt,
         error: (error ?? "empty result").slice(0, 400),
       });
+      await recordJobFinish(ctx, { ...job, status, doneAt });
       return { ok: false, applied: "error recorded" };
     }
 
@@ -206,12 +211,14 @@ export const complete = internalMutation({
       }
     }
 
+    const doneAt = Date.now();
     await ctx.db.patch(id, {
       status: "done",
       result,
-      doneAt: Date.now(),
+      doneAt,
       error: undefined,
     });
+    await recordJobFinish(ctx, { ...job, status: "done", doneAt });
     return { ok: true, applied: job.kind };
   },
 });
@@ -229,6 +236,19 @@ export const health = internalQuery({
       .query("aiJobs")
       .withIndex("by_status", q => q.eq("status", "queued"))
       .collect();
+    const counts = await readJobCounts(ctx);
+    if (counts) {
+      const last = await ctx.db
+        .query("aiJobsDone")
+        .withIndex("by_status_doneAt", q => q.eq("status", "done"))
+        .order("desc")
+        .first();
+      return {
+        queued: queued.length,
+        failed: counts.failed,
+        lastDoneAt: last?.doneAt || undefined,
+      };
+    }
     const failed = await ctx.db
       .query("aiJobs")
       .withIndex("by_status", q => q.eq("status", "failed"))
@@ -255,6 +275,13 @@ export const heartbeat = internalMutation({
       .withIndex("by_source", q => q.eq("source", "hermes"))
       .unique();
     const now = Date.now();
+    if (
+      row?.ok &&
+      row.streak === 0 &&
+      !row.alertedAt &&
+      now - (row.lastOkAt ?? 0) < 2 * 60_000
+    )
+      return null;
     const doc = {
       source: "hermes",
       ok: true,
@@ -297,9 +324,19 @@ export const reap = internalMutation({
           error: "Hermes took the job four times and never answered.",
           doneAt: Date.now(),
         });
+        await recordJobFinish(ctx, {
+          ...j,
+          status: "failed",
+          doneAt: Date.now(),
+        });
         failed++;
       } else {
-        await ctx.db.patch(j._id, { status: "queued" });
+        await ctx.db.patch(j._id, { status: "queued", doneAt: undefined });
+        await recordJobFinish(ctx, {
+          ...j,
+          status: "queued",
+          doneAt: undefined,
+        });
         requeued++;
       }
     }
@@ -348,6 +385,11 @@ export const retire = internalMutation({
       await ctx.db.patch(id, {
         status: "failed",
         error: reason,
+        doneAt: Date.now(),
+      });
+      await recordJobFinish(ctx, {
+        ...j,
+        status: "failed",
         doneAt: Date.now(),
       });
       n++;

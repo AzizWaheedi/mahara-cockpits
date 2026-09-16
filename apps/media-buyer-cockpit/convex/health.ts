@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import type { ActionCtx } from "./_generated/server";
+import type { ActionCtx, QueryCtx } from "./_generated/server";
 import {
   internalAction,
   internalMutation,
@@ -24,6 +24,7 @@ import {
 type Any = any;
 
 export const ALERT_AFTER = 3;
+export const BEAT_WINDOW_MS = 5 * 60_000;
 const REALERT_AFTER_MS = 12 * 3600_000;
 
 /** What to do when a system keeps failing. Plain words, no engineer needed. */
@@ -193,6 +194,16 @@ export const recordMany = internalMutation({
         .query("sourceHealth")
         .withIndex("by_source", q => q.eq("source", e.source))
         .unique();
+      // Keep state changes immediate; coalesce repeated successful checks only.
+      if (
+        row &&
+        e.ok &&
+        row.ok &&
+        row.streak === 0 &&
+        !row.alertedAt &&
+        now - row.at < BEAT_WINDOW_MS
+      )
+        continue;
       const streak = e.ok ? 0 : (row?.streak ?? 0) + 1;
       const doc: Any = {
         source: e.source,
@@ -262,27 +273,29 @@ export const slack = internalMutation({
 });
 
 /** For the admin view: every source, with its runbook line. */
+export async function sourceRows(ctx: QueryCtx) {
+  const rows = await ctx.db.query("sourceHealth").collect();
+  return Object.entries(RUNBOOK).map(([key, rb]) => {
+    const r = rows.find(x => x.source === key);
+    return {
+      source: key,
+      label: rb.label,
+      owner: rb.owner,
+      fix: rb.fix,
+      ok: r ? r.ok : undefined,
+      streak: r?.streak ?? 0,
+      lastOkAt: r?.lastOkAt,
+      lastFailAt: r?.lastFailAt,
+      lastError: r?.lastError,
+      at: r?.at,
+    };
+  });
+}
+
 export const sources = internalQuery({
   args: {},
   returns: v.array(v.any()),
-  handler: async ctx => {
-    const rows = await ctx.db.query("sourceHealth").collect();
-    return Object.entries(RUNBOOK).map(([key, rb]) => {
-      const r = rows.find(x => x.source === key);
-      return {
-        source: key,
-        label: rb.label,
-        owner: rb.owner,
-        fix: rb.fix,
-        ok: r ? r.ok : undefined,
-        streak: r?.streak ?? 0,
-        lastOkAt: r?.lastOkAt,
-        lastFailAt: r?.lastFailAt,
-        lastError: r?.lastError,
-        at: r?.at,
-      };
-    });
-  },
+  handler: sourceRows,
 });
 
 // --- Scheduled jobs ---------------------------------------------------------------------
@@ -351,6 +364,15 @@ export const beat = internalMutation({
       .query("cronRuns")
       .withIndex("by_job", q => q.eq("job", a.job))
       .unique();
+    if (
+      a.ok &&
+      row?.ok &&
+      row.streak === 0 &&
+      row.everyMin === a.everyMin &&
+      Date.now() - row.at < BEAT_WINDOW_MS
+    ) {
+      return null;
+    }
     const streak = a.ok ? 0 : (row?.streak ?? 0) + 1;
     const doc = {
       job: a.job,
@@ -403,19 +425,22 @@ export const staleJobs = internalQuery({
 });
 
 /** For the admin view. */
+export async function jobRows(ctx: QueryCtx) {
+  return (await ctx.db.query("cronRuns").collect())
+    .map(r => ({
+      job: r.job,
+      ok: r.ok,
+      at: r.at,
+      ms: r.ms,
+      error: r.error,
+      streak: r.streak,
+      everyMin: r.everyMin,
+    }))
+    .sort((a, b) => a.job.localeCompare(b.job));
+}
+
 export const jobs = internalQuery({
   args: {},
   returns: v.array(v.any()),
-  handler: async ctx =>
-    (await ctx.db.query("cronRuns").collect())
-      .map(r => ({
-        job: r.job,
-        ok: r.ok,
-        at: r.at,
-        ms: r.ms,
-        error: r.error,
-        streak: r.streak,
-        everyMin: r.everyMin,
-      }))
-      .sort((a, b) => a.job.localeCompare(b.job)),
+  handler: jobRows,
 });

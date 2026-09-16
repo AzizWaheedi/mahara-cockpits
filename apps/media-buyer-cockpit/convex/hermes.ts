@@ -135,9 +135,12 @@ export const pending = internalQuery({
   args: {},
   returns: v.array(v.any()),
   handler: async ctx => {
-    const queued = (await ctx.db.query("hermesChat").collect()).filter(
-      m => m.role === "user" && m.status === "queued",
-    );
+    const queued = (
+      await ctx.db
+        .query("hermesChat")
+        .withIndex("by_status", q => q.eq("status", "queued"))
+        .collect()
+    ).filter(m => m.role === "user");
     const out: Any[] = [];
     for (const m of queued.slice(0, 10)) {
       const history = (

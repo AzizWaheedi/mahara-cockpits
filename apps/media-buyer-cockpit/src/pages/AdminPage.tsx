@@ -12,7 +12,7 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -36,6 +36,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useNow } from "@/lib/useNow";
+import { usePageVisible } from "@/lib/usePageVisible";
 import { api } from "../../convex/_generated/api";
 import { COCKPIT_META } from "./PortalHome";
 
@@ -72,9 +74,9 @@ const APP_KEY: Record<string, string> = {
   creative: "creative",
 };
 
-const ago = (ms?: number | null) => {
+const agoAt = (now: number, ms?: number | null) => {
   if (!ms) return "never";
-  const m = Math.round((Date.now() - ms) / 60000);
+  const m = Math.round((now - ms) / 60000);
   if (m < 1) return "just now";
   if (m < 60) return `${m} min ago`;
   if (m < 48 * 60) return `${Math.round(m / 60)} h ago`;
@@ -105,16 +107,84 @@ function RoleChip({ role }: { role: string }) {
  * me an admin view, make it completely amazing, and combine them all in one
  * project so I can switch to them whenever I want."
  */
+function useRetained<T>(
+  value: T | undefined,
+  key: string | undefined,
+): T | undefined {
+  const saved = useRef<{ key: string | undefined; value: T } | undefined>(
+    undefined,
+  );
+  useEffect(() => {
+    if (value !== undefined) saved.current = { key, value };
+    else if (saved.current?.key !== key) saved.current = undefined;
+  }, [value, key]);
+  return (
+    value ?? (saved.current?.key === key ? saved.current?.value : undefined)
+  );
+}
+
 export function AdminPage() {
   const me = useQuery(api.roles.me, {});
-  const members = useQuery(api.portal.members, {}) as Any[] | undefined;
-  const overview = useQuery(api.portal.overview, {}) as Any;
-  const clientNames = useQuery(api.portal.clientNames, {}) as
-    | string[]
-    | undefined;
-  const remove = useMutation(api.portal.removeMember);
+  const visible = usePageVisible();
+  const now = useNow();
+  const ago = (ms?: number | null) => agoAt(now, ms);
   const [editing, setEditing] = useState<Any | null | "new">(null);
   const [query, setQuery] = useState("");
+  const args = visible ? {} : "skip";
+  const cacheKey = me?.email ?? undefined;
+  const members = useRetained(useQuery(api.portal.members, args), cacheKey);
+  const cockpitHealth = useRetained(
+    useQuery(api.portal.adminHealth, args),
+    cacheKey,
+  );
+  const sources = useRetained(
+    useQuery(api.portal.adminSources, args),
+    cacheKey,
+  );
+  const scheduled = useRetained(useQuery(api.portal.adminJobs, args), cacheKey);
+  const activity = useRetained(
+    useQuery(api.portal.adminActivity, args),
+    cacheKey,
+  );
+  const actions = useRetained(
+    useQuery(api.portal.adminActions, args),
+    cacheKey,
+  );
+  const counts = useRetained(useQuery(api.portal.adminCounts, args), cacheKey);
+  const quarterHour = 15 * 60_000;
+  const since =
+    Math.floor(now / quarterHour) * quarterHour - 86400_000 - quarterHour;
+  const hermes = useRetained(
+    useQuery(api.portal.adminHermes, visible ? { since } : "skip"),
+    cacheKey,
+  );
+  const clientNames = useQuery(
+    api.portal.clientNames,
+    visible && editing ? {} : "skip",
+  );
+  const remove = useMutation(api.portal.removeMember);
+  const overview = useMemo(
+    () => ({
+      health: cockpitHealth,
+      sources,
+      scheduled,
+      ...activity,
+      counts,
+      hermesWaiting: hermes
+        ? { queued: hermes.queued, claimed: hermes.claimed }
+        : undefined,
+      hermes: hermes
+        ? {
+            queued: hermes.queued,
+            doneToday: hermes.recentDone.filter(at => at > now - 86400_000)
+              .length,
+            lastDone: hermes.lastDone,
+            actions: (actions ?? []).filter(a => a.at > now - 86400_000),
+          }
+        : undefined,
+    }),
+    [cockpitHealth, sources, scheduled, activity, counts, hermes, actions, now],
+  );
 
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -347,7 +417,8 @@ export function AdminPage() {
             <Activity className="size-4 text-teal-600" /> Data sources
             <span className="ml-2 text-xs font-normal text-muted-foreground">
               Three failures in a row send one Slack message with the fix. Green
-              means the last call worked.
+              means the last call worked. Repeated successful checks are
+              recorded at most every 5 minutes.
             </span>
           </CardTitle>
         </CardHeader>
@@ -439,7 +510,7 @@ export function AdminPage() {
               ) : (
                 (overview.scheduled as Any[]).map(j => {
                   const late =
-                    Date.now() - j.at > Math.max(3 * j.everyMin, 45) * 60_000;
+                    now - j.at > Math.max(3 * j.everyMin, 45) * 60_000;
                   return (
                     <TableRow key={j.job}>
                       <TableCell className="font-medium">{j.job}</TableCell>
@@ -456,6 +527,11 @@ export function AdminPage() {
                         }
                       >
                         {ago(j.at)}
+                        {j.everyMin < 5 && (
+                          <span className="block text-[11px]">
+                            Successful checks saved every 5 min
+                          </span>
+                        )}
                       </TableCell>
                       <TableCell className="text-muted-foreground">
                         {j.ms >= 1000

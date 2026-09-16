@@ -6,7 +6,7 @@ import {
   internalMutation,
   internalQuery,
 } from "./_generated/server";
-import { NEW_CAMPAIGN_FORM_URL } from "./constants";
+import { CPB_GATE, CPL_GATE, NEW_CAMPAIGN_FORM_URL } from "./constants";
 import { authenticatedAction } from "./functions";
 import { flush } from "./health";
 import {
@@ -49,9 +49,8 @@ const HER_LISTS = ["901817774521", "901816723196"];
 /** Marketing / ADs: everything open on it is her task list. [aziz, 2026-09-09] */
 const MARKETING_LIST = "901816723196";
 
-const CPL_GATE = 15;
 const BUDGET_FLOOR = 30;
-const CPB_GATE = 80;
+
 /** Days a change needs before its numbers mean anything. */
 const LEARNING_DAYS = 3;
 /** Below this spend, cost per lead is noise, not a signal. */
@@ -2570,23 +2569,12 @@ async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
   const bookingScoped = bookingRows.filter(b =>
     onBoardNames.has(b.campaignName),
   );
-  await ctx.runMutation(internal.sync.clearGrain, { since: since30 });
-  const CHUNK = 400;
-  for (let i = 0; i < dailyScoped.length; i += CHUNK) {
-    await ctx.runMutation(internal.sync.storeGrain, {
-      daily: dailyScoped.slice(i, i + CHUNK),
-      bookings: [],
-    });
-  }
-  for (let i = 0; i < bookingScoped.length; i += CHUNK) {
-    await ctx.runMutation(internal.sync.storeGrain, {
-      daily: [],
-      bookings: bookingScoped.slice(i, i + CHUNK),
-    });
-  }
-  console.log(
-    `grain: ${dailyScoped.length} daily rows, ${bookingScoped.length} bookings (${bookingScoped.filter(b => b.adId).length} tied to an ad)`,
-  );
+  await replaceGrainForSync(ctx, {
+    campaignCount: campaigns.length,
+    since: since30,
+    daily: dailyScoped,
+    bookings: bookingScoped,
+  });
 
   // Keep the permanent winners archive in step: it needs the fresh daily
   // grain for the winning window and the fresh Meta tree for whether the ad
@@ -2598,15 +2586,12 @@ async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
     await ctx.scheduler.runAfter(0, internal.fanout.runFanout, {
       withStats: true,
     });
-    // Judged on when this sync started (the 03:00 cron), not when it ends:
-    // a slow run must not skip the day's pass.
-    const clock = new Date(now);
-    if (clock.getUTCHours() === 3 && clock.getUTCMinutes() < 10) {
-      const arch = await ctx.runMutation(internal.market.archiveWinners, {});
-      console.log(
-        `winners archive: ${arch.archived} kept (${arch.added} new, ${arch.retired} newly off)`,
-      );
-    }
+    const arch = await ctx.runMutation(internal.market.archiveWinners, {
+      ifDue: true,
+    });
+    console.log(
+      `winners archive: ${arch.archived} kept (${arch.added} new, ${arch.retired} newly off)`,
+    );
   } catch (e) {
     console.error(`winners archive failed: ${String(e)}`);
   }
@@ -2763,6 +2748,32 @@ export const storeLaunchWatch = internalMutation({
     return null;
   },
 });
+
+/** Keep the last good history when the campaign fetch produced no snapshot. */
+export async function replaceGrainForSync(
+  ctx: ActionCtx,
+  data: {
+    campaignCount: number;
+    since: string;
+    daily: any[];
+    bookings: any[];
+  },
+) {
+  if (data.campaignCount === 0) return { preserved: true };
+  await ctx.runMutation(internal.sync.clearGrain, { since: data.since });
+  const chunk = 400;
+  for (let i = 0; i < data.daily.length; i += chunk)
+    await ctx.runMutation(internal.sync.storeGrain, {
+      daily: data.daily.slice(i, i + chunk),
+      bookings: [],
+    });
+  for (let i = 0; i < data.bookings.length; i += chunk)
+    await ctx.runMutation(internal.sync.storeGrain, {
+      daily: [],
+      bookings: data.bookings.slice(i, i + chunk),
+    });
+  return { preserved: false };
+}
 
 /**
  * Clear the window the sync is about to rewrite (the last 30 days) and keep

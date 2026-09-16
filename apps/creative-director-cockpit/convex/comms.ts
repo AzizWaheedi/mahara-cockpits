@@ -348,6 +348,12 @@ export const calendarLinkStatus = internalMutation({
     for (const st of statuses) {
       const l = all.find(x => x.calendarId === st.calendarId);
       if (!l) continue;
+      if (
+        l.status === String(st.status) &&
+        l.note === (st.note ? String(st.note) : undefined) &&
+        l.events === Number(st.events ?? 0)
+      )
+        continue;
       await ctx.db.patch(l._id, {
         status: String(st.status),
         note: st.note ? String(st.note) : undefined,

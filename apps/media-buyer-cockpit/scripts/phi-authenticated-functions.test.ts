@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -166,8 +166,29 @@ describe("checkConvexDir", () => {
     ]);
   });
 
-  test("the template's own convex/ source passes", () => {
+  test("only the two audited portal registrations use raw builders", () => {
     const convexDir = join(import.meta.dir, "..", "convex");
-    expect(checkConvexDir(convexDir)).toEqual([]);
+    // This app has public metadata and a manually authenticated SSO action.
+    // Their behavior is tested in usage/admin.test.ts. The PHI deploy scanner
+    // stays strict: this exception does not weaken its production policy.
+    const violations = checkConvexDir(convexDir).map(v => ({
+      file: v.file,
+      registrar: v.registrar,
+      registration: readFileSync(join(convexDir, v.file), "utf8")
+        .split("\n")
+        [v.line - 1].trim(),
+    }));
+    expect(violations).toEqual([
+      {
+        file: "portal.ts",
+        registrar: "action",
+        registration: "export const mintToken = action({",
+      },
+      {
+        file: "portal.ts",
+        registrar: "query",
+        registration: "export const info = query({",
+      },
+    ]);
   });
 });

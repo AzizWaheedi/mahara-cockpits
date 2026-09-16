@@ -1,5 +1,6 @@
 import { useQuery } from "convex/react";
 import type { ReactNode } from "react";
+import { CPB_GATE, CPL_GATE } from "@/lib/kpi";
 import type { Range } from "@/lib/range";
 import { rangeDays } from "@/lib/range";
 import { api } from "../../convex/_generated/api";
@@ -16,9 +17,6 @@ import { CampaignTrend } from "./Trends";
  * lead at every level: it is the number that actually decides whether an ad is
  * working. [aziz, 2026-09-07]
  */
-
-const CPL_GATE = 15;
-const CPB_GATE = 80;
 
 /** The ads that spent in the range, then every other ad Meta has in the campaign at $0. */
 function withQuietAds(rows: Row[], names?: string[]): Row[] {

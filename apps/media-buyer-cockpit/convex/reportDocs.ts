@@ -790,9 +790,12 @@ export const jobFor = internalQuery({
   args: { refId: v.string() },
   returns: v.any(),
   handler: async (ctx, { refId }) => {
-    const rows = (await ctx.db.query("aiJobs").collect()).filter(
-      j => j.kind === NARRATIVE_KIND && j.refId === refId,
-    );
+    const rows = (
+      await ctx.db
+        .query("aiJobs")
+        .withIndex("by_ref", q => q.eq("refId", refId))
+        .collect()
+    ).filter(j => j.kind === NARRATIVE_KIND);
     rows.sort((a, b) => b.createdAt - a.createdAt);
     const j = rows[0];
     return j

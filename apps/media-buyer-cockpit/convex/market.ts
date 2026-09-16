@@ -502,7 +502,7 @@ function winnersFrom(plays: any[]): Record<string, any>[] {
  * sync: it reads four whole tables.
  */
 export const archiveWinners = internalMutation({
-  args: {},
+  args: { ifDue: v.optional(v.boolean()) },
   returns: v.object({
     archived: v.number(),
     added: v.number(),
@@ -510,7 +510,14 @@ export const archiveWinners = internalMutation({
     updated: v.number(),
     stillsQueued: v.number(),
   }),
-  handler: async ctx => {
+  handler: async (ctx, { ifDue }) => {
+    const mark = await ctx.db
+      .query("jobMarks")
+      .withIndex("by_key", q => q.eq("key", "archiveWinners"))
+      .unique();
+    if (ifDue && mark && Date.now() - mark.at < 20 * 3600_000) {
+      return { archived: 0, added: 0, retired: 0, updated: 0, stillsQueued: 0 };
+    }
     const plays = await ctx.db.query("marketPlays").collect();
     const current = winnersFrom(plays);
 
@@ -748,6 +755,10 @@ export const archiveWinners = internalMutation({
       });
     }
 
+    const finished = { key: "archiveWinners", at: Date.now() };
+    if (mark) {
+      if (mark.at !== finished.at) await ctx.db.patch(mark._id, finished);
+    } else await ctx.db.insert("jobMarks", finished);
     return {
       archived: all.length,
       added,

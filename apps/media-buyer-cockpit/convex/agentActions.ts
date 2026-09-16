@@ -60,8 +60,12 @@ export const forJob = internalQuery({
   args: { jobId: v.string() },
   returns: v.array(v.any()),
   handler: async (ctx, { jobId }) =>
-    (await ctx.db.query("agentActions").collect())
-      .filter(a => a.jobId === jobId)
+    (
+      await ctx.db
+        .query("agentActions")
+        .withIndex("by_job", q => q.eq("jobId", jobId))
+        .collect()
+    )
       .sort((a, b) => a.at - b.at)
       .map(a => ({
         at: a.at,

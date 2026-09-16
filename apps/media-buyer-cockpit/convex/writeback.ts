@@ -6,7 +6,7 @@ import {
   internalMutation,
   internalQuery,
 } from "./_generated/server";
-import { AZIZ_SLACK_ID } from "./constants";
+import { AZIZ_SLACK_ID, CPB_GATE, CPL_GATE } from "./constants";
 import { callTool, unwrap } from "./tools";
 
 declare const process: { env: Record<string, string | undefined> };
@@ -28,10 +28,6 @@ const FIELD = {
   serviceType: "94ad466d-7a45-427f-83da-9cd93002ff97",
   priority: "4f884743-a582-4bfe-9588-db8f70f68afe",
 };
-
-/** Cost-per-lead gate, in USD, from the KPI SOP. */
-const CPL_GATE = 15;
-const CPB_GATE = 80;
 
 /** Deliver a tool call, or queue it for the sandbox bridge if unreachable. */
 async function callOrQueue(

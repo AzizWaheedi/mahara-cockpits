@@ -616,7 +616,22 @@ const schema = defineSchema({
     error: v.optional(v.string()),
     jobId: v.optional(v.string()),
     at: v.number(),
-  }).index("by_thread", ["thread"]),
+  })
+    .index("by_thread", ["thread"])
+    /** hermes.pending: an idle poll is an empty range, as on the CSM app. */
+    .index("by_status", ["status"]),
+  /**
+   * One row per fed table, written by that table's store mutation in the
+   * same transaction as the data: `fedAt` on every store call, `changedAt`
+   * only when rows really changed, `rows` the table's row count after the
+   * store. The freshness banner reads these instead of the tables.
+   */
+  feedMarks: defineTable({
+    table: v.string(),
+    rows: v.number(),
+    fedAt: v.number(),
+    changedAt: v.number(),
+  }).index("by_table", ["table"]),
 });
 
 export default schema;

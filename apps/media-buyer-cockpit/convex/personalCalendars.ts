@@ -81,6 +81,12 @@ export const setStatus = internalMutation({
     for (const s of statuses) {
       const l = all.find(x => x.calendarId === s.calendarId);
       if (!l) continue;
+      if (
+        l.status === String(s.status) &&
+        l.note === (s.note ? String(s.note) : undefined) &&
+        l.events === Number(s.events ?? 0)
+      )
+        continue;
       await ctx.db.patch(l._id, {
         status: String(s.status),
         note: s.note ? String(s.note) : undefined,
@@ -284,7 +290,7 @@ export const mine = authenticatedQuery({
 export const rowsFor = internalAction({
   args: {
     app: v.string(),
-    names: v.array(v.string()),
+    names: v.optional(v.array(v.string())),
     onlyPending: v.optional(v.boolean()),
   },
   returns: v.any(),
@@ -303,10 +309,12 @@ export const rowsFor = internalAction({
     for (const l of wanted) {
       try {
         const evs = await calendarEvents(String(l.calendarId), token);
+        if (evs.length && !names)
+          names = await ctx.runQuery(internal.comms.clientNames, {});
         for (const e of evs) {
           const clientName = matchClient(
             `${e.title} ${e.attendees.join(" ")} ${e.description ?? ""}`,
-            names,
+            names ?? [],
           );
           const emails: string[] = e.emails ?? [];
           rows.push({
@@ -344,13 +352,11 @@ export const checkPending = internalAction({
   args: {},
   returns: v.any(),
   handler: async (ctx): Promise<Any> => {
-    const names: string[] = await ctx.runQuery(internal.comms.clientNames, {});
     const out: Record<string, unknown> = {};
     for (const app of ["mb", "csm", "creative"]) {
       try {
         const r: Any = await ctx.runAction(internal.personalCalendars.rowsFor, {
           app,
-          names,
           onlyPending: true,
         });
         if (r.rows.length) {

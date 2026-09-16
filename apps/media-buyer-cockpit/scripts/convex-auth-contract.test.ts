@@ -14,6 +14,9 @@ mock.module("../convex/_generated/server", () => ({
   action: passthroughBuilder,
   mutation: passthroughBuilder,
   query: passthroughBuilder,
+  internalQuery: passthroughBuilder,
+  internalMutation: passthroughBuilder,
+  internalAction: passthroughBuilder,
 }));
 
 mock.module("@convex-dev/auth/server", () => ({

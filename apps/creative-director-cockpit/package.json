@@ -19,6 +19,7 @@
     "logs": "bunx convex logs",
     "logs:fetch": "bun run --bun scripts/logs.ts",
     "test": "bun run --bun scripts/test.ts",
+    "test:usage": "bun test scripts/usage",
     "test:auth": "bun run --bun scripts/auth.ts",
     "test:demo": "bun run --bun scripts/demo-test.ts",
     "test:viktor-spaces-access": "bun test scripts/viktor-spaces-access.test.tsx && bun test scripts/convex-auth-contract.test.ts",

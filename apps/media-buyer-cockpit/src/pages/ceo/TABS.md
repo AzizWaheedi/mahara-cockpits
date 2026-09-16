@@ -496,8 +496,8 @@ its own tab.
 | Clients whose delivery is bad | count `delivery.clients[]` where `status === "bad"` |
 | Clients on watch | count `delivery.clients[]` where `status === "watch"` |
 
-The gates are plan defaults until Aziz sets the official ones. That caveat must
-be on this card wherever a gate decides a colour.
+The gates are Aziz's official ones (2026-09-16): $15 per lead and $60 per
+booking, from convex/constants.ts. Name the gate wherever it decides a colour.
 
 ### Card 2: Call centre
 

@@ -1,9 +1,10 @@
 /**
- * The KPI gates, in one place. Aziz, 2026-09-03: anything above $15 a lead needs
- * action; cost per booking is judged against $80.
+ * The official KPI gates, in one place for the site. Aziz, 2026-09-16: $15 per
+ * lead and $60 per booking are what we aim for; anything above needs action.
+ * Keep in step with convex/constants.ts.
  */
 export const CPL_GATE = 15;
-export const CPB_GATE = 80;
+export const CPB_GATE = 60;
 /** Days a change needs before its numbers mean anything. */
 export const LEARNING_DAYS = 3;
 /** A new campaign is watched twice a day for this long. */

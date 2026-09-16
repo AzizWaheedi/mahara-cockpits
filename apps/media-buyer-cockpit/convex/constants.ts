@@ -1,10 +1,12 @@
 export const APP_NAME = "Mahara Cockpit";
 
-/** The cost-per-lead gate. Aziz, 2026-09-03: anything above $15 a lead needs action. Keep in step with src/lib/kpi.ts. */
+/**
+ * The official KPI gates. Aziz, 2026-09-16: $15 per lead and $60 per booking
+ * are what we aim for; anything above needs action. Every backend file imports
+ * these. Keep in step with src/lib/kpi.ts.
+ */
 export const CPL_GATE = 15;
-
-/** The cost-per-booking gate, judged against $80. Keep in step with src/lib/kpi.ts. */
-export const CPB_GATE = 80;
+export const CPB_GATE = 60;
 
 /** ClickUp form that creates the campaign card on the ads management board. Aziz, 2026-09-10. */
 export const NEW_CAMPAIGN_FORM_URL =

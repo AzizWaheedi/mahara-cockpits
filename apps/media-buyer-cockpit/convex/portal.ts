@@ -7,11 +7,13 @@ import {
   internalAction,
   internalMutation,
   internalQuery,
+  type QueryCtx,
   query,
 } from "./_generated/server";
 import { bridge } from "./comms";
 import { authenticatedMutation, authenticatedQuery } from "./functions";
-import { flush } from "./health";
+import { flush, jobRows, sourceRows } from "./health";
+import { readJobCounts } from "./migrations";
 import { accessFor, assertAdmin, COCKPITS, staticRoles } from "./roles";
 
 /**
@@ -288,69 +290,234 @@ export const recordHealth = internalMutation({
   },
 });
 
+// Separate subscriptions keep a routine heartbeat from re-reading job history,
+// campaign data and the audit log. Keep the old entry point during the rollout.
+const healthResult = v.array(
+  v.object({
+    app: v.string(),
+    ok: v.boolean(),
+    at: v.number(),
+    failing: v.array(v.string()),
+  }),
+);
+const sourceResult = v.array(
+  v.object({
+    source: v.string(),
+    label: v.string(),
+    owner: v.string(),
+    fix: v.string(),
+    ok: v.optional(v.boolean()),
+    streak: v.number(),
+    lastOkAt: v.optional(v.number()),
+    lastFailAt: v.optional(v.number()),
+    lastError: v.optional(v.string()),
+    at: v.optional(v.number()),
+  }),
+);
+const jobsResult = v.array(
+  v.object({
+    job: v.string(),
+    ok: v.boolean(),
+    at: v.number(),
+    ms: v.number(),
+    error: v.optional(v.string()),
+    streak: v.number(),
+    everyMin: v.number(),
+  }),
+);
+const activityResult = v.object({
+  lastSync: v.union(
+    v.null(),
+    v.object({
+      at: v.number(),
+      ok: v.boolean(),
+      problems: v.array(v.string()),
+    }),
+  ),
+  alerts: v.array(v.object({ text: v.string(), at: v.number() })),
+});
+const actionsResult = v.array(
+  v.object({ at: v.number(), note: v.string(), ok: v.boolean() }),
+);
+const hermesResult = v.object({
+  queued: v.number(),
+  claimed: v.number(),
+  recentDone: v.array(v.number()),
+  lastDone: v.union(v.number(), v.null()),
+});
+const countsResult = v.object({
+  campaigns: v.number(),
+  liveCampaigns: v.number(),
+  clients: v.number(),
+  members: v.number(),
+  admins: v.number(),
+});
+
+async function healthRows(ctx: QueryCtx) {
+  return (await ctx.db.query("cockpitHealth").take(20)).map(h => ({
+    app: h.app,
+    ok: h.ok,
+    at: h.at,
+    failing: h.checks.filter((c: Any) => !c.ok).map((c: Any) => String(c.name)),
+  }));
+}
+async function activityRows(ctx: QueryCtx) {
+  const lastSync = (
+    await ctx.db.query("syncRuns").withIndex("by_at").order("desc").take(10)
+  ).find(r => r.role !== "csm");
+  return {
+    lastSync: lastSync
+      ? { at: lastSync.at, ok: lastSync.ok, problems: lastSync.problems ?? [] }
+      : null,
+    alerts: (await ctx.db.query("alerts").order("desc").take(8)).map(a => ({
+      text: a.text,
+      at: a.at,
+    })),
+  };
+}
+async function actionRows(ctx: QueryCtx) {
+  // Use the event timestamp, including actions inserted by a later backfill.
+  return (
+    await ctx.db.query("agentActions").withIndex("by_at").order("desc").take(8)
+  ).map(a => ({ at: a.at, note: a.note ?? `${a.method} ${a.path}`, ok: a.ok }));
+}
+async function hermesRows(ctx: QueryCtx, since: number) {
+  const queued = await ctx.db
+    .query("aiJobs")
+    .withIndex("by_status", q => q.eq("status", "queued"))
+    .collect();
+  const claimed = await ctx.db
+    .query("aiJobs")
+    .withIndex("by_status", q => q.eq("status", "claimed"))
+    .collect();
+  // Preserve exact figures while the additive migration is being rolled out.
+  if (!(await readJobCounts(ctx))) {
+    const jobs = await ctx.db.query("aiJobs").collect();
+    return {
+      queued: queued.length,
+      claimed: claimed.length,
+      recentDone: jobs.filter(j => (j.doneAt ?? 0) > since).map(j => j.doneAt!),
+      lastDone: jobs.reduce((at, j) => Math.max(at, j.doneAt ?? 0), 0) || null,
+    };
+  }
+  const recent = await ctx.db
+    .query("aiJobsDone")
+    .withIndex("by_doneAt", q => q.gt("doneAt", since))
+    .collect();
+  const last = await ctx.db
+    .query("aiJobsDone")
+    .withIndex("by_doneAt")
+    .order("desc")
+    .first();
+  return {
+    queued: queued.length,
+    claimed: claimed.length,
+    recentDone: recent.map(j => j.doneAt!),
+    lastDone: last?.doneAt || null,
+  };
+}
+async function countRows(ctx: QueryCtx) {
+  // These current tables are intentionally independent of heartbeat changes.
+  // Do not read portalStats until every writer keeps it transactionally current.
+  const campaigns = await ctx.db.query("campaigns").collect();
+  const clients = await ctx.db.query("clients").collect();
+  const members = await ctx.db.query("members").collect();
+  return {
+    campaigns: campaigns.length,
+    liveCampaigns: campaigns.filter(
+      c => !c.internal && /live/i.test(String(c.boardAdStatus ?? "")),
+    ).length,
+    clients: clients.length,
+    members: members.length,
+    admins: members.filter(m => m.roles.includes("admin")).length,
+  };
+}
+
+export const adminHealth = authenticatedQuery({
+  args: {},
+  returns: healthResult,
+  handler: async ctx => {
+    await assertAdmin(ctx);
+    return healthRows(ctx);
+  },
+});
+export const adminSources = authenticatedQuery({
+  args: {},
+  returns: sourceResult,
+  handler: async ctx => {
+    await assertAdmin(ctx);
+    return sourceRows(ctx);
+  },
+});
+export const adminJobs = authenticatedQuery({
+  args: {},
+  returns: jobsResult,
+  handler: async ctx => {
+    await assertAdmin(ctx);
+    return jobRows(ctx);
+  },
+});
+export const adminActivity = authenticatedQuery({
+  args: {},
+  returns: activityResult,
+  handler: async ctx => {
+    await assertAdmin(ctx);
+    return activityRows(ctx);
+  },
+});
+export const adminActions = authenticatedQuery({
+  args: {},
+  returns: actionsResult,
+  handler: async ctx => {
+    await assertAdmin(ctx);
+    return actionRows(ctx);
+  },
+});
+export const adminHermes = authenticatedQuery({
+  args: { since: v.number() },
+  returns: hermesResult,
+  handler: async (ctx, { since }) => {
+    await assertAdmin(ctx);
+    // The UI requests a rolling day plus a small overlap, never unlimited history.
+    return hermesRows(ctx, Math.max(since, Date.now() - 26 * 3600_000));
+  },
+});
+export const adminCounts = authenticatedQuery({
+  args: {},
+  returns: countsResult,
+  handler: async ctx => {
+    await assertAdmin(ctx);
+    return countRows(ctx);
+  },
+});
+
 export const overview = authenticatedQuery({
   args: {},
   returns: v.any(),
   handler: async (ctx): Promise<Any> => {
     await assertAdmin(ctx);
-    const health = await ctx.db.query("cockpitHealth").collect();
-    // The main sync's own record; the client success feed writes its own rows.
-    const lastSync = (
-      await ctx.db.query("syncRuns").withIndex("by_at").order("desc").take(10)
-    ).find(r => r.role !== "csm");
-    const alerts = (await ctx.db.query("alerts").order("desc").take(8)).map(
-      a => ({ text: a.text, at: a.at }),
-    );
-    const jobs = await ctx.db.query("aiJobs").collect();
-    const dayAgo = Date.now() - 86400_000;
-    const actions = (await ctx.db.query("agentActions").collect())
-      .filter(a => a.at > dayAgo)
-      .sort((a, b) => b.at - a.at)
-      .slice(0, 8)
-      .map(a => ({
-        at: a.at,
-        note: a.note ?? `${a.method} ${a.path}`,
-        ok: a.ok,
-      }));
-    const campaigns = await ctx.db.query("campaigns").collect();
-    const clients = await ctx.db.query("clients").collect();
-    const members = await ctx.db.query("members").collect();
-    const sources = await ctx.runQuery(internal.health.sources, {});
-    const scheduled = await ctx.runQuery(internal.health.jobs, {});
-    const hermesWaiting = await ctx.runQuery(internal.askAi.waiting, {});
+    const since = Date.now() - 86400_000;
+    const hermes = await hermesRows(ctx, since);
+    const heartbeat = await ctx.db
+      .query("sourceHealth")
+      .withIndex("by_source", q => q.eq("source", "hermes"))
+      .unique();
     return {
-      sources,
-      scheduled,
-      hermesWaiting,
-      health: health.map(h => ({
-        app: h.app,
-        ok: h.ok,
-        at: h.at,
-        failing: h.checks.filter((c: Any) => !c.ok).map((c: Any) => c.name),
-      })),
-      lastSync: lastSync
-        ? {
-            at: lastSync.at,
-            ok: lastSync.ok,
-            problems: lastSync.problems ?? [],
-          }
-        : null,
-      alerts,
-      hermes: {
-        queued: jobs.filter(j => j.status === "queued").length,
-        doneToday: jobs.filter(j => (j.doneAt ?? 0) > dayAgo).length,
-        lastDone: Math.max(0, ...jobs.map(j => j.doneAt ?? 0)) || null,
-        actions,
+      health: await healthRows(ctx),
+      sources: await sourceRows(ctx),
+      scheduled: await jobRows(ctx),
+      ...(await activityRows(ctx)),
+      counts: await countRows(ctx),
+      hermesWaiting: {
+        queued: hermes.queued,
+        claimed: hermes.claimed,
+        lastPollAt: heartbeat?.lastOkAt,
       },
-      counts: {
-        campaigns: campaigns.length,
-        // "Live" on the ads board, client work only.
-        liveCampaigns: campaigns.filter(
-          c => !c.internal && /live/i.test(String(c.boardAdStatus ?? "")),
-        ).length,
-        clients: clients.length,
-        members: members.length,
-        admins: members.filter(m => m.roles.includes("admin")).length,
+      hermes: {
+        queued: hermes.queued,
+        doneToday: hermes.recentDone.length,
+        lastDone: hermes.lastDone,
+        actions: (await actionRows(ctx)).filter(a => a.at > since),
       },
     };
   },

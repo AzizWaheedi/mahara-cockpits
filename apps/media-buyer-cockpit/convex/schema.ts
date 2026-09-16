@@ -318,7 +318,9 @@ const schema = defineSchema({
     by: v.string(),
     at: v.number(),
     clickupTaskId: v.optional(v.string()),
-  }).index("by_campaign", ["campaignName"]),
+  })
+    .index("by_campaign", ["campaignName"])
+    .index("by_at", ["at"]),
 
   /** ClickUp people she can hand a task to, refreshed on every sync. */
   clickupMembers: defineTable({
@@ -964,7 +966,50 @@ const schema = defineSchema({
     createdAt: v.number(),
     claimedAt: v.optional(v.number()),
     doneAt: v.optional(v.number()),
-  }).index("by_status", ["status"]),
+  })
+    .index("by_status", ["status"])
+    /** reportDocs.jobFor: one row's jobs, optionally of one kind. */
+    .index("by_ref", ["refId", "kind"]),
+  /**
+   * One small row per finished Ask AI job, so the admin page and the CEO
+   * machine section never read the 6 KB job rows to count them.
+   * Written by the one helper that records a finish (askAi complete, reap
+   * and retire) and by the backfill in migrations.ts. `doneAt` is copied
+   * from the job and is missing when the job failed without one (complete's
+   * error path), exactly as on the job row. Pruned after 30 days, never the
+   * newest row of each status (retention.ts).
+   */
+  aiJobsDone: defineTable({
+    jobId: v.id("aiJobs"),
+    /** done | failed */
+    status: v.string(),
+    doneAt: v.optional(v.number()),
+  })
+    .index("by_job", ["jobId"])
+    .index("by_doneAt", ["doneAt"])
+    .index("by_status_doneAt", ["status", "doneAt"]),
+  /**
+   * All-time counts of finished Ask AI jobs (key "all"). Kept when old job
+   * rows are pruned, so the failed count stays all-time. `backfilledAt` is
+   * set once migrations.backfillAiJobs has seen every job; until then
+   * readers fall back to counting the jobs.
+   */
+  aiJobCounts: defineTable({
+    key: v.string(),
+    failed: v.number(),
+    done: v.number(),
+    backfilledAt: v.optional(v.number()),
+  }).index("by_key", ["key"]),
+  /**
+   * Named "last done" markers for gated work: `winnersArchive` (the daily
+   * winners pass), the smoke check's last green full run (`value` holds the
+   * build id), and similar. One row per key.
+   */
+  jobMarks: defineTable({
+    key: v.string(),
+    at: v.number(),
+    value: v.optional(v.string()),
+  }).index("by_key", ["key"]),
   rawFetch: defineTable({
     url: v.string(),
     part: v.number(),
@@ -1288,7 +1333,10 @@ const schema = defineSchema({
     error: v.optional(v.string()),
     jobId: v.optional(v.string()),
     at: v.number(),
-  }).index("by_thread", ["thread"]),
+  })
+    .index("by_thread", ["thread"])
+    /** hermes.pending: an idle poll is an empty range, as on the CSM app. */
+    .index("by_status", ["status"]),
   /** Chat messages relayed to Hermes and which job carries them. */
   chatRelay: defineTable({
     app: v.string(),
@@ -1297,7 +1345,10 @@ const schema = defineSchema({
     at: v.number(),
     readingAt: v.optional(v.number()),
     deliveredAt: v.optional(v.number()),
-  }),
+  })
+    /** openRelays: `eq("deliveredAt", undefined)` is the open rows only. */
+    .index("by_delivered", ["deliveredAt"])
+    .index("by_job", ["jobId"]),
   /** Every Meta call Hermes makes through /askai/meta, with its outcome. */
   agentActions: defineTable({
     at: v.number(),
@@ -1310,7 +1361,10 @@ const schema = defineSchema({
     jobId: v.optional(v.string()),
     note: v.optional(v.string()),
     campaignName: v.optional(v.string()),
-  }),
+  })
+    /** agentActions.forJob: one job's calls in time order. */
+    .index("by_at", ["at"])
+    .index("by_job", ["jobId", "at"]),
   /** Hermes's client-focused call briefs, keyed by the set of calls they cover. */
   callBriefs: defineTable({
     clientName: v.string(),

@@ -36,7 +36,7 @@ export const STATUS_COLOR: Record<StatusTone, string> = {
 
 /**
  * Tone of a cost against its gate (cost per lead vs $15, cost per booking vs
- * $80): at or under the gate is good, up to 25% over is a warning, beyond is
+ * $60): at or under the gate is good, up to 25% over is a warning, beyond is
  * serious. Pass higherIsBetter for rates that must stay above a floor.
  */
 export function gateTone(

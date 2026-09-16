@@ -3,7 +3,7 @@
  *
  * Two sources, nothing invented:
  * - The gates are Mahara's locked client KPI gates: CPL < $20 · lead→booking ≥ 25% ·
- *   cost per booking ≤ $80 · show rate ≥ 75% · close rate 20–30% · daily budget floor $30.
+ *   cost per booking ≤ $60 · show rate ≥ 75% · close rate 20–30% · daily budget floor $30.
  * - The diagnosis and the fixes are the company's doc "Diagnosing & Fixing Acquisition
  *   Constraints" (macro vs micro, the golden rule, scenarios 3–6, 9, 10).
  *

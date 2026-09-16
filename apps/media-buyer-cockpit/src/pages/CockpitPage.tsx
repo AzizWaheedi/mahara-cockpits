@@ -107,7 +107,7 @@ const FILTERS: { label: string; test: (c: Campaign) => boolean }[] = [
   },
   { label: "Under the floor", test: c => c.dayRate < 30 },
   {
-    label: "Cost per booking over $80",
+    label: `Cost per booking over $${CPB_GATE}`,
     test: c => (c.costPerBooking ?? 0) > 80,
   },
   { label: "No bookings", test: c => c.bookings7d === 0 && c.spend7d > 20 },

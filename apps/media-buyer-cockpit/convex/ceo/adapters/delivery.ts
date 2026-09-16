@@ -108,7 +108,7 @@ export const delivery: Adapter = {
     const warn = (text: string) => notes.push({ level: "warn", text });
     const info = (text: string) => notes.push({ level: "info", text });
     info(
-      `Spend and leads are Meta only, for campaigns on the Ads Management board, in USD after a fixed exchange table. A day is the ad account's reporting day. Gates are the plan defaults until decision 3: cost per lead $${CPL_GATE}, cost per booking $${CPB_GATE}. A client is good within both gates, bad with no leads or a cost per lead over $${(CPL_GATE * 1.5).toFixed(2)}, and on watch otherwise.`,
+      `Spend and leads are Meta only, for campaigns on the Ads Management board, in USD after a fixed exchange table. A day is the ad account's reporting day. Gates are Aziz's (2026-09-16): cost per lead $${CPL_GATE}, cost per booking $${CPB_GATE}. A client is good within both gates, bad with no leads or a cost per lead over $${(CPL_GATE * 1.5).toFixed(2)}, and on watch otherwise.`,
     );
 
     const grain: {

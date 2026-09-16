@@ -157,10 +157,11 @@ export const openRelays = internalQuery({
   args: {},
   returns: v.array(v.any()),
   handler: async ctx =>
-    // Newest few hundred only: the table grows forever and this runs every 20 s.
-    (await ctx.db.query("chatRelay").order("desc").take(300)).filter(
-      r => !r.deliveredAt,
-    ),
+    // Delivered history cannot push older waiting relays out of the sweep.
+    ctx.db
+      .query("chatRelay")
+      .withIndex("by_delivered", q => q.eq("deliveredAt", undefined))
+      .take(100),
 });
 
 export const addRelay = internalMutation({
