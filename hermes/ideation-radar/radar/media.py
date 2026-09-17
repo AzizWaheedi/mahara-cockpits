@@ -37,7 +37,7 @@ def probe(path: Path) -> dict:
                 "ffprobe", "-v", "error", "-print_format", "json",
                 "-show_format", "-show_streams", str(path),
             ],
-            capture_output=True, text=True, timeout=60, check=False,
+            capture_output=True, text=True, timeout=60, check=False, stdin=subprocess.DEVNULL,
         )
         info = json.loads(res.stdout or "{}")
         fmt = info.get("format", {})
@@ -80,11 +80,11 @@ def extract_frames(path: Path, out_dir: Path, *, every_sec: float = 2.5, max_fra
             target.unlink()
         res = subprocess.run(
             [
-                "ffmpeg", "-y", "-loglevel", "error", "-ss", str(ts), "-i", str(path),
+                "ffmpeg", "-nostdin", "-y", "-loglevel", "error", "-ss", str(ts), "-i", str(path),
                 "-frames:v", "1", "-q:v", "4", "-vf", "scale='min(720,iw)':-2",
                 "-strict", "unofficial", str(target),
             ],
-            capture_output=True, text=True, timeout=60, check=False,
+            capture_output=True, text=True, timeout=60, check=False, stdin=subprocess.DEVNULL,
         )
         if res.returncode == 0 and target.exists() and target.stat().st_size > 500:
             frames.append((ts, target))
@@ -96,8 +96,8 @@ def extract_audio(path: Path, dest: Path) -> Optional[Path]:
     if not has_ffmpeg():
         return None
     res = subprocess.run(
-        ["ffmpeg", "-y", "-loglevel", "error", "-i", str(path), "-vn", "-ac", "1", "-ar", "16000", "-b:a", "48k", str(dest)],
-        capture_output=True, text=True, timeout=180, check=False,
+        ["ffmpeg", "-nostdin", "-y", "-loglevel", "error", "-i", str(path), "-vn", "-ac", "1", "-ar", "16000", "-b:a", "48k", str(dest)],
+        capture_output=True, text=True, timeout=180, check=False, stdin=subprocess.DEVNULL,
     )
     if res.returncode != 0 or not dest.exists() or dest.stat().st_size < 200:
         return None

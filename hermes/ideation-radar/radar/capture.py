@@ -22,7 +22,7 @@ from .platforms.snapchat import Snapchat
 from .sinks import BridgeSink, JsonlSink, deliver
 from .state import State
 from .stills import attach_stills
-from .supabase import Supabase
+from .supabase import Supabase, SupabaseError
 from .understand import understand
 from .urls import Link, UnsupportedLink, canonicalize
 
@@ -247,7 +247,10 @@ def _deliver(cfg: Config, log: Callable[[str], None], idea: Idea, dry_run: bool,
             def to_supabase() -> None:
                 if idea.status == "captured":
                     attach_stills(sb, [row], log, max_items=1)
-                sb.store_idea(row, origin_key=cockpit_id or None)
+                try:
+                    sb.store_idea(row, origin_key=cockpit_id or None)
+                except SupabaseError as e:
+                    log(f"supabase: {e}")
             sinks.append(("supabase", to_supabase))
         if cfg.use_cockpit_sink:
             sinks.append(("cockpit", lambda: BridgeSink(cfg.bridge_url, cfg.bridge_token).store_ideas([row])))

@@ -113,7 +113,8 @@ that receives a TikTok video for a capture; TikTok media links exist only
 through that paid add-on, about USD 0.001 a video), `RADAR_TIKTOK_SUBTITLES`
 `DOWNLOAD_SUBTITLES`, `RADAR_SINK` `cockpit` (or `supabase`, or `both` for a deliberate
 mirror; one authoritative store is the rule), `RADAR_APIFY_CONCURRENCY` 4,
-`RADAR_APIFY_MAX_RUNS` 150 per scan, `RADAR_GEMINI_MODEL` `gemini-2.5-flash`,
+`RADAR_APIFY_MAX_RUNS` 150 per scan, `RADAR_GEMINI_MODEL` `gemini-3.6-flash` (Google closed 2.5 Flash to new keys on
+2026-09-17; `doctor` asks the model one word to prove the key can use it),
 `RADAR_TEXT_PROVIDER` `gemini,deepseek,openai`, `RADAR_MAX_DURATION_SEC` 600.
 
 ## Install on the VPS
@@ -298,7 +299,7 @@ Instagram row USD 0.0023, a TikTok row USD 0.002, a Snapchat profile USD
 0.002 plus USD 0.001 a run, a Spotlight link USD 0.0015, a TikTok video
 download USD 0.001. A weekly scan of 40 Instagram and 40 TikTok accounts, 20
 Snapchat accounts and 20 hashtags is roughly USD 6 to 9; a capture is well
-under one cent of Apify plus a fraction of a cent of Gemini 2.5 Flash for a
+under one cent of Apify plus a fraction of a cent of Gemini 3.6 Flash for a
 30-second clip. Apify is on the Starter plan with a USD 29 monthly credit,
 0.49 used on 2026-09-17, shared with the old Content Radar daemon. Fill the
 real numbers from the Apify and Google AI consoles after the first month.

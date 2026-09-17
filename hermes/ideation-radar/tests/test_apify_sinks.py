@@ -115,7 +115,7 @@ class SupabaseFlowTests(unittest.TestCase):
 
     def test_store_candidates_splits_new_proposed_and_decided(self):
         existing = json.dumps([{"key": "instagram:A", "status": "proposed"}, {"key": "instagram:B", "status": "saved", "still_path": "instagram/B.jpg"}]).encode()
-        fake = FakeHttp([(200, {}, existing), (204, {}, b""), (201, {}, b"")])
+        fake = FakeHttp([(200, {}, existing), (204, {}, b""), (201, {}, b""), (201, {}, b"")])
         http.request = fake
         sb = Supabase("https://x.supabase.co", "key")
         out = sb.store_candidates([
@@ -132,7 +132,7 @@ class SupabaseFlowTests(unittest.TestCase):
         self.assertNotIn("thumb_url", patched, "a row with its own still keeps it")
         self.assertEqual(patched["multiplier"], 4.0)
         self.assertEqual(methods[2][0], "POST")
-        upserted = body_of(fake.calls[2])
+        upserted = [r for c in fake.calls[2:] for r in body_of(c)]
         self.assertEqual({r["key"] for r in upserted}, {"instagram:A", "instagram:C"})
         self.assertTrue(all(r["status"] == "proposed" for r in upserted))
         self.assertNotIn("raw", upserted[0])
@@ -166,6 +166,17 @@ class SupabaseFlowTests(unittest.TestCase):
         self.assertIn("key=eq.tiktok%3A123", fake.calls[1]["url"])
         self.assertIn("key=eq.pasted%3Aabc", fake.calls[2]["url"])
 
+    def test_store_idea_refuses_a_bad_key_and_fails_the_pasted_row(self):
+        from radar.supabase import SupabaseError
+        fake = FakeHttp([(204, {}, b"")])
+        http.request = fake
+        sb = Supabase("https://x.supabase.co", "key")
+        out = sb.store_idea({"key": "unknown:https://x", "platform": "unknown", "url": "x", "status": "failed", "error": "not a link"}, origin_key="pasted:abc")
+        self.assertEqual(out, "pasted:abc")
+        self.assertEqual(body_of(fake.calls[0])["status"], "failed")
+        with self.assertRaises(SupabaseError):
+            sb.store_idea({"key": "unknown:https://x", "platform": "unknown", "url": "x", "status": "failed", "error": "not a link"})
+
     def test_store_idea_failure_keeps_the_reason(self):
         fake = FakeHttp([(200, {}, b"[]"), (201, {}, b"")])
         http.request = fake
@@ -190,6 +201,19 @@ class SupabaseFlowTests(unittest.TestCase):
         second = body_of(fake.calls[3])
         self.assertEqual(second["status"], "failed")
         self.assertEqual(second["attempts"], 5)
+
+    def test_upsert_groups_rows_by_key_set(self):
+        fake = FakeHttp([(201, {}, b""), (201, {}, b"")])
+        http.request = fake
+        sb = Supabase("https://x.supabase.co", "key")
+        n = sb.upsert("ideation_posts", [{"key": "a", "views": 1}, {"key": "b", "views": 2, "still_path": "p"}, {"key": "c", "views": 3}])
+        self.assertEqual(n, 3)
+        self.assertEqual(len(fake.calls), 2)
+        sizes = sorted(len(body_of(c)) for c in fake.calls)
+        self.assertEqual(sizes, [1, 2])
+        for c in fake.calls:
+            keysets = {tuple(sorted(r.keys())) for r in body_of(c)}
+            self.assertEqual(len(keysets), 1)
 
     def test_upload_still_path_and_headers(self):
         fake = FakeHttp([(200, {}, b'{"Key":"ideation-stills/instagram/A.jpg"}')])

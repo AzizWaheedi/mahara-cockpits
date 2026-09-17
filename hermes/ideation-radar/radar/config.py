@@ -122,8 +122,9 @@ class Config:
     apify_timeout_sec: int = 600
     apify_max_runs_per_scan: int = 150
     # Models
-    gemini_model: str = "gemini-2.5-flash"
-    gemini_text_model: str = "gemini-2.5-flash"
+    # Google retired gemini-2.5-flash for new keys on 2026-09-17 and points at 3.6 Flash.
+    gemini_model: str = "gemini-3.6-flash"
+    gemini_text_model: str = "gemini-3.6-flash"
     # High media resolution reads small Arabic text cards; three times the video tokens, still cents.
     gemini_resolution: str = "MEDIA_RESOLUTION_HIGH"
     groq_model: str = "whisper-large-v3"
@@ -184,8 +185,8 @@ class Config:
             apify_concurrency=_int("RADAR_APIFY_CONCURRENCY", 4),
             apify_timeout_sec=_int("RADAR_APIFY_TIMEOUT", 600),
             apify_max_runs_per_scan=_int("RADAR_APIFY_MAX_RUNS", 150),
-            gemini_model=key("RADAR_GEMINI_MODEL", "gemini-2.5-flash"),
-            gemini_text_model=key("RADAR_GEMINI_TEXT_MODEL", "gemini-2.5-flash"),
+            gemini_model=key("RADAR_GEMINI_MODEL", "gemini-3.6-flash"),
+            gemini_text_model=key("RADAR_GEMINI_TEXT_MODEL", "gemini-3.6-flash"),
             gemini_resolution=key("RADAR_GEMINI_RESOLUTION", "MEDIA_RESOLUTION_HIGH"),
             groq_model=key("RADAR_GROQ_MODEL", "whisper-large-v3"),
             openai_vision_model=key("RADAR_OPENAI_VISION_MODEL", "gpt-4o-mini"),

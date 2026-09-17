@@ -176,7 +176,8 @@ def gemini_upload(cfg: Config, path: Path, mime: str, display_name: str) -> dict
 def gemini_wait_active(cfg: Config, name: str, *, timeout_sec: float = 300, sleep: Callable[[float], None] = time.sleep) -> dict[str, Any]:
     deadline = time.monotonic() + timeout_sec
     while True:
-        info = http.get_json(f"{GEMINI}/v1beta/files/{name}?key={cfg.gemini_key}", timeout=30)
+        # The file's name already reads "files/<id>".
+        info = http.get_json(f"{GEMINI}/v1beta/{name.lstrip('/')}?key={cfg.gemini_key}", timeout=30)
         state = info.get("state")
         if state == "ACTIVE":
             return info
@@ -189,7 +190,7 @@ def gemini_wait_active(cfg: Config, name: str, *, timeout_sec: float = 300, slee
 
 def gemini_delete(cfg: Config, name: str) -> None:
     try:
-        http.request("DELETE", f"{GEMINI}/v1beta/files/{name}?key={cfg.gemini_key}", timeout=30, retries=0)
+        http.request("DELETE", f"{GEMINI}/v1beta/{name.lstrip('/')}?key={cfg.gemini_key}", timeout=30, retries=0)
     except http.HttpError:
         pass
 
@@ -331,7 +332,9 @@ def text_model_json(cfg: Config, prompt: str, log: Callable[[str], None]) -> tup
                     timeout=300,
                     retries=1,
                 )
-                return parse_json(out["choices"][0]["message"]["content"]), f"deepseek:{cfg.deepseek_model}"
+                msg = out["choices"][0]["message"]
+                text = msg.get("content") or msg.get("reasoning_content") or ""
+                return parse_json(text), f"deepseek:{cfg.deepseek_model}"
             if provider == "openai" and cfg.openai_key:
                 out = http.post_json(
                     "https://api.openai.com/v1/chat/completions",

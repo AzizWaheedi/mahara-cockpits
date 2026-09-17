@@ -74,13 +74,15 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
             except (http.HttpError, ApifyError, KeyError) as e:
                 add("apify api", False, f"{e}", True)
         if cfg.gemini_key:
+            # A listed model can still refuse a key ("no longer available to new users"), so ask it one word.
+            from radar.understand import gemini_generate
             try:
-                models = http.get_json(f"https://generativelanguage.googleapis.com/v1beta/models?key={cfg.gemini_key}&pageSize=200", timeout=30)
-                names = {m.get("name", "").split("/")[-1] for m in models.get("models", [])}
-                ok = cfg.gemini_model in names
-                add("gemini model", ok, f"{cfg.gemini_model} {'available' if ok else 'NOT in the model list; set RADAR_GEMINI_MODEL'}")
-            except (http.HttpError, AttributeError) as e:
-                add("gemini api", False, str(e))
+                out, usage = gemini_generate(cfg, cfg.gemini_model, [{"text": 'Reply with the JSON {"ok": true}.'}], {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]}, temperature=0)
+                add("gemini model", bool(out.get("ok")), f"{cfg.gemini_model} answered ({usage.get('totalTokenCount', '?')} tokens)")
+            except (http.HttpError, ValueError, KeyError) as e:
+                msg = http.scrub(str(e))
+                hint = " (set RADAR_GEMINI_MODEL to the model Google names in this message)" if "no longer available" in msg else ""
+                add("gemini model", False, f"{cfg.gemini_model}: {msg[:220]}{hint}")
         if cfg.groq_key:
             try:
                 http.get_json("https://api.groq.com/openai/v1/models", headers={"Authorization": f"Bearer {cfg.groq_key}"}, timeout=30)

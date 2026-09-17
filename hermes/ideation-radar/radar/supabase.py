@@ -19,6 +19,7 @@ Rules the writes follow:
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Optional
@@ -42,6 +43,7 @@ METRIC_COLUMNS = {
     "views", "likes", "comments", "shares", "saves", "author_followers", "multiplier", "tier", "engagement_rate", "reach_rate",
     "robust_z", "packaging_only", "provisional", "checkpoint", "baseline_views", "baseline_raw", "baseline_floored", "baseline_n",
     "baseline_confidence", "baseline_method", "baseline_rules", "scanned_at", "thumb_url", "media_url", "updated_at",
+    "still_path", "still_at", "still_error",
 }
 CAPTURE_COLUMNS = {
     "captured_at", "language", "dialect", "has_speech", "voice", "transcript", "on_screen_text", "format", "hook", "beats",
@@ -52,6 +54,8 @@ CAPTURE_COLUMNS = {
 }
 FETCH_TTL_MIN = 30
 MAX_ATTEMPTS = 4
+KEY_RE = re.compile(r"^(instagram|tiktok|snapchat):[A-Za-z0-9_.-]{1,120}$")
+PASTED_RE = re.compile(r"^pasted:[A-Za-z0-9_-]{1,64}$")
 
 
 def now_iso() -> str:
@@ -106,9 +110,16 @@ class Supabase:
         return rows if isinstance(rows, list) else []
 
     def upsert(self, table: str, rows: list[dict[str, Any]], on_conflict: str = "key") -> int:
+        """PostgREST requires every object in one request to carry the same keys
+        (PGRST102), so rows are sent in groups that share a key set."""
         if not rows:
             return 0
-        self.rest("POST", f"{table}?on_conflict={on_conflict}", json_body=rows, prefer="resolution=merge-duplicates,return=minimal")
+        groups: dict[tuple[str, ...], list[dict[str, Any]]] = {}
+        for row in rows:
+            groups.setdefault(tuple(sorted(row.keys())), []).append(row)
+        for group in groups.values():
+            for i in range(0, len(group), 200):
+                self.rest("POST", f"{table}?on_conflict={on_conflict}", json_body=group[i : i + 200], prefer="resolution=merge-duplicates,return=minimal")
         return len(rows)
 
     def patch(self, table: str, where: str, body: dict[str, Any]) -> None:
@@ -148,13 +159,13 @@ class Supabase:
     def store_candidates(self, rows: list[dict[str, Any]]) -> dict[str, int]:
         """Scan proposals: new rows inserted, proposed rows refreshed, decided rows take numbers only."""
         now = now_iso()
-        keys = [r.get("key") for r in rows if r.get("key")]
+        keys = [r.get("key") for r in rows if r.get("key") and KEY_RE.match(str(r.get("key")))]
         have = self.existing(keys)
         full: list[dict[str, Any]] = []
         patched = 0
         for r in rows:
             key = r.get("key")
-            if not key:
+            if not key or not KEY_RE.match(str(key)):
                 continue
             prev = have.get(key)
             if prev is None:
@@ -182,6 +193,12 @@ class Supabase:
         now = now_iso()
         real = row.get("key") or ""
         failed = row.get("status") == "failed" or (not row.get("transcript") and not row.get("hook") and row.get("error"))
+        if not KEY_RE.match(real):
+            # An unusable link (not a post, not a supported host). Only a queued row can carry it, as a failure.
+            if origin_key and PASTED_RE.match(origin_key):
+                self.patch(self.table, f"key=eq.{quote(origin_key, safe='')}", {"status": "failed", "error": str(row.get("error") or "not a usable link")[:400], "at": now, "updated_at": now})
+                return origin_key
+            raise SupabaseError(f"not a post key, nothing stored: {real[:60]}")
         body = self._post_row(row, CAPTURE_COLUMNS)
         body["updated_at"] = now
         body["at"] = now
