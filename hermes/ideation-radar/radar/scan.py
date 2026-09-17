@@ -28,8 +28,6 @@ from .state import State
 from .watchlist import load as load_watchlist
 
 FOLLOWERS_TTL_DAYS = 7
-HASHTAG_TOP_K = 5
-HASHTAG_PROFILE_CAP = 10
 
 
 @dataclass
@@ -182,27 +180,30 @@ def run_scan(
             if p.author_followers is None and followers is not None:
                 p.author_followers = followers
             state.remember_post(p, report.at)
-        base = compute_baseline(posts, now=now, sample_size=cfg.sample_size, trim=cfg.trim, min_n=cfg.min_baseline_n, min_age_hours=cfg.min_age_hours)
+        floor = cfg.floor_for(t.platform)
+        base = compute_baseline(posts, now=now, sample_size=cfg.sample_size, trim=cfg.trim, min_n=cfg.min_baseline_n, min_age_hours=cfg.baseline_min_age_hours, floor=floor, is_video=True)
         if base is None:
             old = state.baseline(t.key)
-            if old is None:
-                entry.update({"status": "no_baseline", "posts": len(posts)})
-                report.per_target.append(entry)
-                report.warnings.append(f"{t.key}: not enough dated posts for a baseline")
-                report.scanned += 1
-                report.posts += len(posts)
-                continue
-            base = old
-            report.warnings.append(f"{t.key}: using the previous baseline")
-        else:
-            state.set_baseline(t.key, base, followers, len(posts))
-        cands = find_candidates(posts, base, now=now, target_key=t.key, industry=t.industry, tags=t.tags, threshold=cfg.threshold, reverse_threshold=cfg.reverse_threshold, window_days=cfg.window_days, min_age_hours=cfg.min_age_hours, min_followers=cfg.min_followers_for_audience)
+            entry.update({"status": "no_baseline", "posts": len(posts)})
+            report.per_target.append(entry)
+            report.warnings.append(f"{t.key}: fewer than {cfg.min_baseline_n} settled posts for a baseline" + (" (previous one kept)" if old else ""))
+            report.scanned += 1
+            report.posts += len(posts)
+            continue
+        state.set_baseline(t.key, base, followers, len(posts))
+        cands = find_candidates(
+            posts, now=now, target_key=t.key, industry=t.industry, tags=t.tags,
+            threshold=cfg.threshold, reverse_threshold=cfg.reverse_threshold, window_days=cfg.window_days,
+            min_age_hours=cfg.min_age_hours, mature_hours=cfg.mature_hours, baseline_min_age_hours=cfg.baseline_min_age_hours,
+            sample_size=cfg.sample_size, trim=cfg.trim, min_n=cfg.min_baseline_n, floor=floor,
+            min_followers=cfg.min_followers_for_audience, min_engagement=cfg.min_engagement,
+        )
         fresh = [c for c in cands if state.propose(c)]
         new_candidates.extend(fresh)
         report.scanned += 1
         report.posts += len(posts)
         report.candidates_total += len(cands)
-        entry.update({"status": "ok", "posts": len(posts), "baseline": round(base.median), "baseline_n": base.n, "candidates": len(cands), "new": len(fresh), "followers": followers})
+        entry.update({"status": "ok", "posts": len(posts), "baseline": round(base.median), "baseline_n": base.n, "baseline_floored": base.floored, "candidates": len(cands), "new": len(fresh), "followers": followers})
         report.per_target.append(entry)
 
     # ---- hashtags: baseline only the promising authors -------------------------
@@ -219,24 +220,22 @@ def run_scan(
 def _score_hashtags(cfg: Config, log: Callable[[str], None], apify: Apify, state: State, hashtag_posts: dict[str, list[Post]], wanted: list[Target], now: datetime, report: ScanReport) -> list[Candidate]:
     out: list[Candidate] = []
     by_key = {t.key: t for t in wanted}
-    # Authors we already know a baseline for score immediately.
-    to_fetch: list[tuple[Target, str, str, list[Post]]] = []  # (hashtag target, author, platform, that author's posts seen under the tag)
+    watched = {(t.platform, t.value.lower()) for t in wanted if t.kind == "account"}
+    # A hashtag hit has no baseline of its own. Keep only hits worth a paid
+    # author fetch: enough views, one per author, author not already watched
+    # (watched accounts are scored on their own row anyway).
+    to_fetch: list[tuple[Target, str, str, list[Post]]] = []
     for hkey, posts in hashtag_posts.items():
         t = by_key[hkey]
         by_author: dict[str, list[Post]] = defaultdict(list)
         for p in posts:
             state.remember_post(p, report.at)
-            by_author[p.author_handle].append(p)
-        ranked = sorted(by_author.items(), key=lambda kv: max((p.views or 0) for p in kv[1]), reverse=True)
-        for author, aposts in ranked[:HASHTAG_TOP_K]:
-            akey = f"{t.platform}:account:{author}"
-            base = state.baseline(akey)
-            if base is not None:
-                cands = find_candidates(aposts, base, now=now, target_key=hkey, industry=t.industry, tags=t.tags + [f"via:#{t.value}"], threshold=cfg.threshold, reverse_threshold=cfg.reverse_threshold, window_days=cfg.window_days, min_age_hours=cfg.min_age_hours, min_followers=cfg.min_followers_for_audience)
-                out.extend(c for c in cands if state.propose(c))
-            elif author:
-                to_fetch.append((t, author, t.platform, aposts))
-    to_fetch = to_fetch[:HASHTAG_PROFILE_CAP]
+            if p.author_handle and (p.views or 0) >= cfg.hashtag_min_views and (t.platform, p.author_handle) not in watched:
+                by_author[p.author_handle].append(p)
+        ranked = sorted(by_author.items(), key=lambda kv: max((reach_or_views(p) for p in kv[1])), reverse=True)
+        for author, aposts in ranked[: cfg.hashtag_top_k]:
+            to_fetch.append((t, author, t.platform, aposts))
+    to_fetch = to_fetch[: cfg.hashtag_profile_cap]
     if not to_fetch:
         return out
     jobs: dict[str, list[tuple[str, dict[str, Any]]]] = defaultdict(list)
@@ -265,8 +264,10 @@ def _score_hashtags(cfg: Config, log: Callable[[str], None], apify: Apify, state
             ad = adapter_for(t.platform, cfg)
             posts = ad.parse_posts(r.items, handle=author)
             akey = f"{t.platform}:account:{author}"
-            base = compute_baseline(posts, now=now, sample_size=cfg.sample_size, trim=cfg.trim, min_n=cfg.min_baseline_n, min_age_hours=cfg.min_age_hours)
+            floor = cfg.floor_for(t.platform)
+            base = compute_baseline(posts, now=now, sample_size=cfg.sample_size, trim=cfg.trim, min_n=cfg.min_baseline_n, min_age_hours=cfg.baseline_min_age_hours, floor=floor, is_video=True)
             if base is None:
+                report.warnings.append(f"#{t.value} author {author}: fewer than {cfg.min_baseline_n} settled posts")
                 continue
             followers = next((p.author_followers for p in posts if p.author_followers is not None), None)
             state.set_baseline(akey, base, followers, len(posts))
@@ -275,9 +276,22 @@ def _score_hashtags(cfg: Config, log: Callable[[str], None], apify: Apify, state
             pool = {p.key: p for p in posts}
             for p in aposts:
                 pool.setdefault(p.key, p)
-            cands = find_candidates(list(pool.values()), base, now=now, target_key=t.key, industry=t.industry, tags=t.tags + [f"via:#{t.value}"], threshold=cfg.threshold, reverse_threshold=cfg.reverse_threshold, window_days=cfg.window_days, min_age_hours=cfg.min_age_hours, min_followers=cfg.min_followers_for_audience)
+            cands = find_candidates(
+                list(pool.values()), now=now, target_key=t.key, industry=t.industry, tags=t.tags + [f"via:#{t.value}"],
+                threshold=cfg.threshold, reverse_threshold=cfg.reverse_threshold, window_days=cfg.window_days,
+                min_age_hours=cfg.min_age_hours, mature_hours=cfg.mature_hours, baseline_min_age_hours=cfg.baseline_min_age_hours,
+                sample_size=cfg.sample_size, trim=cfg.trim, min_n=cfg.min_baseline_n, floor=floor,
+                min_followers=cfg.min_followers_for_audience, min_engagement=cfg.min_engagement, pool=list(pool.values()),
+            )
             out.extend(c for c in cands if state.propose(c))
     return out
+
+
+def reach_or_views(p: Post) -> float:
+    """Rank hashtag hits by reach (views over followers) when followers are known, else by views."""
+    if p.views and p.author_followers:
+        return p.views / float(p.author_followers) * 1e6
+    return float(p.views or 0)
 
 
 def digest_text(report: ScanReport) -> str:
@@ -295,7 +309,8 @@ def digest_text(report: ScanReport) -> str:
         views = c.get("views")
         vtxt = f"{views:,}" if isinstance(views, int) else "?"
         flag = " (tiny account)" if c.get("packaging_only") else ""
-        lines.append(f"- {c.get('multiplier')}x @{c.get('author_handle')} on {c.get('platform')}: {vtxt} views{flag} {c.get('url')}")
+        prov = " (provisional)" if c.get("provisional") else ""
+        lines.append(f"- {c.get('multiplier')}x @{c.get('author_handle')} on {c.get('platform')}: {vtxt} views{flag}{prov} {c.get('url')}")
     if report.warnings:
         lines.append(f"Warnings: {len(report.warnings)} (see the log).")
     lines.append(f"Apify: {report.apify_runs} runs, ${report.usage_usd:.2f}.")
@@ -311,9 +326,9 @@ def _finish(cfg: Config, log: Callable[[str], None], report: ScanReport, state: 
     rows = report.new_candidates
     sinks.append(("jsonl", lambda: (jsonl.write_candidates(rows) if rows else None, jsonl.write_latest({"scan": report.to_dict()}))))
     if not dry_run:
-        if cfg.bridge_url and cfg.bridge_token and rows:
-            sinks.append(("bridge", lambda: BridgeSink(cfg.bridge_url, cfg.bridge_token).store_candidates(rows)))
-        if cfg.supabase_url and cfg.supabase_key and rows:
+        if cfg.use_cockpit_sink and rows:
+            sinks.append(("cockpit", lambda: BridgeSink(cfg.bridge_url, cfg.bridge_token).store_candidates(rows)))
+        if cfg.use_supabase_sink and rows:
             sinks.append(("supabase", lambda: SupabaseSink(cfg.supabase_url, cfg.supabase_key, cfg.supabase_table).upsert(rows)))
         if cfg.slack_token and cfg.slack_channel:
             sinks.append(("slack", lambda: SlackSink(cfg.slack_token, cfg.slack_channel).post(digest_text(report))))

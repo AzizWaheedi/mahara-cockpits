@@ -709,6 +709,12 @@ const schema = defineSchema({
     dismissedAt: v.optional(v.number()),
     fetchingAt: v.optional(v.number()),
     attempts: v.optional(v.number()),
+    /** The cockpit's own copy of the picture: platform thumbnails expire within hours. */
+    stillStorageId: v.optional(v.id("_storage")),
+    stillUrl: v.optional(v.string()),
+    stillAt: v.optional(v.number()),
+    stillError: v.optional(v.string()),
+    stillAttempts: v.optional(v.number()),
   })
     .index("by_key", ["key"])
     .index("by_status_at", ["status", "at"])

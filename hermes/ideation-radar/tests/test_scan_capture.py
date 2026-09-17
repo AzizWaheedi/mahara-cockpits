@@ -35,8 +35,8 @@ class ScanTests(unittest.TestCase):
                 Target("tiktok", "account", "tk", industry="other"),
                 Target("tiktok", "account", "broken", industry="other"),
             ]
-            ig = [ig_item(f"p{i}", 1000 + i, 100 + i) for i in range(10)] + [ig_item("BIG", 12000, 72), ig_item("YOUNG", 90000, 6), ig_item("MID", 3300, 80)]
-            tt = [tt_item(f"t{i}", 5000, 200 + i) for i in range(8)] + [tt_item("tbig", 30000, 60)]
+            ig = [ig_item(f"p{i}", 1000 + i, 200 + i) for i in range(10)] + [ig_item("BIG", 12000, 72), ig_item("YOUNG", 90000, 6), ig_item("MID", 3300, 80)]
+            tt = [tt_item(f"t{i}", 5000, 200 + i) for i in range(9)] + [tt_item("tbig", 30000, 60)]
             fx = {"instagram:account:acct#posts": ig, "instagram:account:acct#details": [{"username": "acct", "followersCount": 12000, "fullName": "Acct"}], "tiktok:account:tk#posts": tt}
             fake = FakeApify(fx, fail={"tiktok:account:broken#posts"})
             lines, log = logs()
@@ -62,10 +62,12 @@ class ScanTests(unittest.TestCase):
             # State persisted and a second scan proposes nothing new
             st = State.load(cfg.state_path)
             self.assertEqual(st.status("instagram:BIG"), "proposed")
-            # 13 posts, YOUNG (6h) excluded by the age gate: 12 in the baseline pool,
-            # and the trim drops BIG from the median so it stays near 1000.
-            self.assertEqual(st.baseline("instagram:account:acct").n, 12)
+            # Only the ten settled posts (over seven days old) form the baseline;
+            # BIG, MID and YOUNG are too fresh to count in it.
+            self.assertEqual(st.baseline("instagram:account:acct").n, 10)
             self.assertLess(st.baseline("instagram:account:acct").median, 1100)
+            self.assertTrue(big["provisional"])
+            self.assertEqual(big["checkpoint"], "72h")
             self.assertEqual(st.last_scan()["candidates_new"], 3)
             rep2 = run_scan(cfg, log, now=NOW, apify=FakeApify(fx, fail={"tiktok:account:broken#posts", "instagram:account:acct#posts"}), targets=targets)
             self.assertEqual(rep2.candidates_new, 0)
@@ -79,7 +81,7 @@ class ScanTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             cfg = cfg_in(tmp)
             targets = [Target("instagram", "account", "acct")]
-            fx = {"instagram:account:acct#posts": [ig_item(f"p{i}", 1000, 100 + i) for i in range(6)] + [ig_item("BIG", 9000, 72)]}
+            fx = {"instagram:account:acct#posts": [ig_item(f"p{i}", 1000, 200 + i) for i in range(9)] + [ig_item("BIG", 9000, 72)]}
             lines, log = logs()
             rep = run_scan(cfg, log, now=NOW, apify=FakeApify(fx), targets=targets, dry_run=True)
             self.assertEqual(rep.candidates_new, 1)
@@ -90,16 +92,20 @@ class ScanTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             cfg = cfg_in(tmp)
             targets = [Target("tiktok", "hashtag", "interior", industry="other")]
-            tag_posts = [tt_item(f"h{i}", 100 * (i + 1), 80, author=f"a{i}", fans=1000 * (i + 1)) for i in range(9)]
+            # 12 authors: two under the 10,000 view gate, the rest ranked by reach; top 10 are fetched.
+            tag_posts = [tt_item(f"h{i}", 15000 * (i + 1), 80, author=f"a{i}", fans=20000) for i in range(10)]
+            tag_posts += [tt_item("small1", 500, 80, author="tiny1"), tt_item("small2", 9000, 80, author="tiny2")]
             fx = {"tiktok:hashtag:interior#posts": tag_posts}
-            for i in range(9):
-                fx[f"tiktok:account:a{i}#viatag"] = [tt_item(f"a{i}v{j}", 50, 300 + j, author=f"a{i}") for j in range(6)]
+            for i in range(10):
+                fx[f"tiktok:account:a{i}#viatag"] = [tt_item(f"a{i}v{j}", 2000, 300 + j, author=f"a{i}") for j in range(9)]
             fake = FakeApify(fx)
             lines, log = logs()
             rep = run_scan(cfg, log, now=NOW, apify=fake, targets=targets)
             via = [c for c in rep.new_candidates if any(t == "via:#interior" for t in c["tags"])]
             self.assertTrue(via)
-            self.assertLessEqual(len([c for c in fake.calls if c[1].endswith("#viatag")]), 5)  # HASHTAG_TOP_K
+            fetched = [c for c in fake.calls if c[1].endswith("#viatag")]
+            self.assertLessEqual(len(fetched), cfg.hashtag_top_k)
+            self.assertFalse(any("tiny" in c[1] for c in fetched), "hits under the view gate are never fetched")
             self.assertTrue(all(c["target_key"] == "tiktok:hashtag:interior" for c in via))
 
 

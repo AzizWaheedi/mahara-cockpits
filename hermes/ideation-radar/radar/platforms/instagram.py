@@ -23,6 +23,8 @@ class Instagram(Adapter):
             "resultsType": "posts",
             "resultsLimit": int(limit),
             "addParentData": False,
+            # Pinned posts are old favourites and cost a paid row each.
+            "skipPinnedPosts": True,
         }
 
     def details_job(self, handle: str) -> Optional[tuple[str, dict[str, Any]]]:

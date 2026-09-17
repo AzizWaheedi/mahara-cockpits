@@ -60,8 +60,9 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     add("GROQ_API_KEY", bool(cfg.groq_key), "set (speech fallback)" if cfg.groq_key else "missing")
     add("OPENAI_API_KEY", bool(cfg.openai_key), "set (frame vision fallback)" if cfg.openai_key else "missing")
     add("DEEPSEEK_API_KEY", bool(cfg.deepseek_key), "set (text fallback)" if cfg.deepseek_key else "missing")
-    add("cockpit door", bool(cfg.bridge_url and cfg.bridge_token), "configured" if cfg.bridge_url and cfg.bridge_token else "not configured (COCKPIT_IDEATION_URL/TOKEN)")
-    add("supabase", bool(cfg.supabase_url and cfg.supabase_key), "configured" if cfg.supabase_url and cfg.supabase_key else "not configured")
+    add("sink mode", cfg.sink_mode in ("cockpit", "supabase", "both"), f"{cfg.sink_mode} (RADAR_SINK)")
+    add("cockpit door", cfg.use_cockpit_sink, "configured" if cfg.use_cockpit_sink else "not configured (COCKPIT_IDEATION_URL/TOKEN)")
+    add("supabase", cfg.use_supabase_sink, "configured" if cfg.use_supabase_sink else "off (RADAR_SINK=supabase|both plus RADAR_SUPABASE_URL/KEY)")
     add("slack", bool(cfg.slack_token and cfg.slack_channel), "configured" if cfg.slack_token and cfg.slack_channel else "not configured (RADAR_SLACK_CHANNEL)")
     if not args.offline:
         if cfg.apify_token:

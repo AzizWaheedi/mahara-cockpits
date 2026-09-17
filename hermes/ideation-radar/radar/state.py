@@ -138,9 +138,13 @@ class State:
             median=float(b["median"]),
             n=int(b["n"]),
             computed_at=str(b["computed_at"]),
-            method=str(b.get("method", "trimmed_median")),
+            method=str(b.get("method", "median_after_rules_v1")),
             trim=float(b.get("trim", 0.1)),
-            min_age_hours=int(b.get("min_age_hours", 48)),
+            min_age_hours=int(b.get("min_age_hours", 168)),
+            raw_median=b.get("raw_median"),
+            floored=bool(b.get("floored", False)),
+            confidence=str(b.get("confidence", "low")),
+            rules=list(b.get("rules", [])),
         )
 
     def record_failure(self, target_key: str, when: str, error: str) -> int:

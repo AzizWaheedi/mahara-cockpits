@@ -4,6 +4,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import {
   type ActionCtx,
   internalMutation,
+  internalQuery,
   type MutationCtx,
   type QueryCtx,
 } from "./_generated/server";
@@ -176,14 +177,20 @@ export async function runIdeation(
   args: Record<string, any>,
 ): Promise<unknown> {
   switch (fn) {
-    case "storeIdeationCandidates":
-      return await ctx.runMutation(internal.ideation.storeCandidates, {
+    case "storeIdeationCandidates": {
+      const out = await ctx.runMutation(internal.ideation.storeCandidates, {
         rows: args.rows ?? [],
       });
-    case "storeIdeationIdeas":
-      return await ctx.runMutation(internal.ideation.storeIdeas, {
+      const stills = await copyStills(ctx, args.rows ?? []);
+      return { ...out, stills };
+    }
+    case "storeIdeationIdeas": {
+      const out = await ctx.runMutation(internal.ideation.storeIdeas, {
         rows: args.rows ?? [],
       });
+      const stills = await copyStills(ctx, args.rows ?? []);
+      return { ...out, stills };
+    }
     case "ideationPending":
       return await ctx.runMutation(internal.ideation.claimPending, {
         limit: Math.max(1, Math.min(25, Number(args.limit) || 10)),
@@ -194,6 +201,140 @@ export async function runIdeation(
       throw new Error("unknown ideation function");
   }
 }
+
+// ---------------------------------------------------------------------------
+// The cockpit's own still. Platform thumbnail links die within hours or days,
+// so the picture is copied into this deployment's storage when a row arrives,
+// the way the media buyer's ad stills are. Small, bounded, best effort.
+
+const STILL_MAX_BYTES = 250_000;
+const STILL_MIN_BYTES = 200;
+const STILL_PER_CALL = 20;
+const STILL_BUDGET_MS = 40_000;
+const STILL_MAX_ATTEMPTS = 3;
+
+async function fetchImage(
+  url: string,
+): Promise<{ blob: Blob } | { error: string }> {
+  if (!/^https:\/\//i.test(url) || url.length > 4000)
+    return { error: "not an https link" };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      redirect: "follow",
+    });
+    if (!res.ok) return { error: `HTTP ${res.status}` };
+    const type = res.headers.get("content-type") ?? "";
+    if (!type.startsWith("image/"))
+      return { error: `not an image (${type.slice(0, 40)})` };
+    const bytes = await res.arrayBuffer();
+    if (bytes.byteLength < STILL_MIN_BYTES) return { error: "empty image" };
+    if (bytes.byteLength > STILL_MAX_BYTES)
+      return { error: `over ${STILL_MAX_BYTES} bytes` };
+    return { blob: new Blob([bytes], { type }) };
+  } catch (e) {
+    return { error: String(e).slice(0, 120) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Copy the picture of each arriving row that has none yet. Never throws. */
+async function copyStills(
+  ctx: ActionCtx,
+  rows: Raw[],
+): Promise<{ copied: number; failed: number; skipped: number }> {
+  const started = Date.now();
+  let copied = 0;
+  let failed = 0;
+  let skipped = 0;
+  const keys = [
+    ...new Set(
+      rows
+        .map(r => str(r?.key, 160))
+        .filter((k): k is string => Boolean(k && KEY_RE.test(k))),
+    ),
+  ].slice(0, STILL_PER_CALL);
+  if (!keys.length) return { copied, failed, skipped };
+  const todo = await ctx.runQuery(internal.ideation.stillsWanted, { keys });
+  for (const t of todo) {
+    if (Date.now() - started > STILL_BUDGET_MS) {
+      skipped += 1;
+      continue;
+    }
+    const got = await fetchImage(t.thumbUrl);
+    if ("blob" in got) {
+      const storageId = await ctx.storage.store(got.blob);
+      const url = (await ctx.storage.getUrl(storageId)) ?? undefined;
+      await ctx.runMutation(internal.ideation.recordStill, {
+        id: t.id,
+        storageId,
+        url,
+        error: undefined,
+      });
+      copied += 1;
+    } else {
+      await ctx.runMutation(internal.ideation.recordStill, {
+        id: t.id,
+        storageId: undefined,
+        url: undefined,
+        error: got.error,
+      });
+      failed += 1;
+    }
+  }
+  return { copied, failed, skipped };
+}
+
+export const stillsWanted = internalQuery({
+  args: { keys: v.array(v.string()) },
+  returns: v.array(
+    v.object({ id: v.id("ideationPosts"), thumbUrl: v.string() }),
+  ),
+  handler: async (ctx, { keys }) => {
+    const out: { id: Id<"ideationPosts">; thumbUrl: string }[] = [];
+    for (const key of keys) {
+      const row = await byKey(ctx, key);
+      if (!row || !row.thumbUrl || row.stillStorageId) continue;
+      if ((row.stillAttempts ?? 0) >= STILL_MAX_ATTEMPTS) continue;
+      out.push({ id: row._id, thumbUrl: row.thumbUrl });
+    }
+    return out;
+  },
+});
+
+export const recordStill = internalMutation({
+  args: {
+    id: v.id("ideationPosts"),
+    storageId: v.optional(v.id("_storage")),
+    url: v.optional(v.string()),
+    error: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, { id, storageId, url, error }) => {
+    const row = await ctx.db.get(id);
+    if (!row) {
+      if (storageId) await ctx.storage.delete(storageId);
+      return null;
+    }
+    if (storageId && row.stillStorageId && row.stillStorageId !== storageId) {
+      await ctx.storage.delete(row.stillStorageId);
+    }
+    await ctx.db.patch(
+      id,
+      clean({
+        stillStorageId: storageId ?? row.stillStorageId,
+        stillUrl: url ?? row.stillUrl,
+        stillAt: storageId ? Date.now() : row.stillAt,
+        stillError: error,
+        stillAttempts: (row.stillAttempts ?? 0) + 1,
+      }),
+    );
+    return null;
+  },
+});
 
 /**
  * Proposals from a scan. One row per post key; a row he already saved,

@@ -194,13 +194,15 @@ def gemini_delete(cfg: Config, name: str) -> None:
         pass
 
 
-def gemini_generate(cfg: Config, model: str, parts: list[dict[str, Any]], schema: Optional[dict[str, Any]], *, temperature: float = 0.2) -> tuple[Any, dict[str, Any]]:
+def gemini_generate(cfg: Config, model: str, parts: list[dict[str, Any]], schema: Optional[dict[str, Any]], *, temperature: float = 0.2, resolution: Optional[str] = None) -> tuple[Any, dict[str, Any]]:
     body: dict[str, Any] = {
         "contents": [{"role": "user", "parts": parts}],
         "generationConfig": {"temperature": temperature, "response_mime_type": "application/json"},
     }
     if schema:
         body["generationConfig"]["response_schema"] = schema
+    if resolution:
+        body["generationConfig"]["mediaResolution"] = resolution
     out = http.post_json(f"{GEMINI}/v1beta/models/{model}:generateContent?key={cfg.gemini_key}", body, timeout=600, retries=2)
     cands = out.get("candidates") or []
     if not cands:
@@ -218,7 +220,7 @@ def understand_with_gemini_video(cfg: Config, video_path: Path, meta: dict[str, 
         active = gemini_wait_active(cfg, name)
         uri = active.get("uri") or file.get("uri")
         parts = [{"file_data": {"mime_type": mime, "file_uri": uri}}, {"text": video_prompt(meta)}]
-        result, usage = gemini_generate(cfg, cfg.gemini_model, parts, EXTRACTION_SCHEMA)
+        result, usage = gemini_generate(cfg, cfg.gemini_model, parts, EXTRACTION_SCHEMA, resolution=cfg.gemini_resolution or None)
         log(f"gemini video ok tokens={usage.get('totalTokenCount')}")
         result = normalise_result(result)
         result["method"] = {"transcribe": f"gemini:{cfg.gemini_model}", "on_screen": f"gemini:{cfg.gemini_model}", "breakdown": f"gemini:{cfg.gemini_model}"}

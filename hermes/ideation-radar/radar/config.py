@@ -85,22 +85,47 @@ class Config:
     reverse_threshold: float = 5.0
     sample_size: int = 30
     trim: float = 0.1
-    min_baseline_n: int = 5
-    min_age_hours: int = 48
+    min_baseline_n: int = 8
+    # Score nothing under a day old; the tier is provisional until day seven;
+    # baseline posts must be at least seven days old (their counts have settled).
+    min_age_hours: int = 24
+    mature_hours: int = 168
+    baseline_min_age_hours: int = 168
     window_days: int = 30
     min_followers_for_audience: int = 2000
+    floor_instagram: float = 1000.0
+    floor_tiktok: float = 1000.0
+    floor_snapchat: float = 300.0
+    min_engagement: float = 0.02
+    hashtag_min_views: int = 10000
+    hashtag_top_k: int = 10
+    hashtag_profile_cap: int = 20
     # Apify
     apify_base: str = "https://api.apify.com/v2"
     actor_instagram: str = "apify~instagram-scraper"
-    actor_instagram_hashtag: str = "apify~instagram-hashtag-scraper"
-    actor_tiktok: str = "clockworks~tiktok-scraper"
-    actor_snapchat: str = ""
+    # Empty: hashtags go through the main Instagram actor with an explore/tags URL
+    # (the dedicated hashtag actor is rated 3.4 against 4.7 for the main one).
+    actor_instagram_hashtag: str = ""
+    # Same Clockworks engine and fields as the flagship tiktok-scraper, without
+    # its run fee and at a lower per-result price (checked 2026-09-17).
+    actor_tiktok: str = "clockworks~free-tiktok-scraper"
+    actor_tiktok_profile: str = "clockworks~tiktok-profile-scraper"
+    # Snapchat (checked 2026-09-17): the most run actors. Profile rows carry the
+    # spotlights; a pasted Spotlight link goes through the spotlight actor.
+    actor_snapchat: str = "tri_angle~snapchat-scraper"
+    actor_snapchat_post: str = "tri_angle~snapchat-spotlight-scraper"
+    # TikTok media links only exist through the paid download add-on; the copy
+    # lands in this named key-value store on Apify.
+    tiktok_media_store: str = "ideation-radar-media"
+    tiktok_subtitles: str = "DOWNLOAD_SUBTITLES"
     apify_concurrency: int = 4
     apify_timeout_sec: int = 600
     apify_max_runs_per_scan: int = 150
     # Models
     gemini_model: str = "gemini-2.5-flash"
     gemini_text_model: str = "gemini-2.5-flash"
+    # High media resolution reads small Arabic text cards; three times the video tokens, still cents.
+    gemini_resolution: str = "MEDIA_RESOLUTION_HIGH"
     groq_model: str = "whisper-large-v3"
     openai_vision_model: str = "gpt-4o-mini"
     deepseek_model: str = "deepseek-flash"
@@ -115,6 +140,9 @@ class Config:
     supabase_key: str = ""
     supabase_table: str = "ideation_posts"
     slack_channel: str = ""
+    # One authoritative store for proposals and ideas (migration plan rule):
+    # "cockpit" (default), "supabase", or "both" only for a deliberate mirror.
+    sink_mode: str = "cockpit"
     extra: dict[str, str] = field(default_factory=dict)
 
     @staticmethod
@@ -129,21 +157,33 @@ class Config:
             reverse_threshold=_float("RADAR_REVERSE_THRESHOLD", 5.0),
             sample_size=_int("RADAR_SAMPLE", 30),
             trim=_float("RADAR_TRIM", 0.1),
-            min_baseline_n=_int("RADAR_MIN_N", 5),
-            min_age_hours=_int("RADAR_MIN_AGE_HOURS", 48),
+            min_baseline_n=_int("RADAR_MIN_N", 8),
+            min_age_hours=_int("RADAR_MIN_AGE_HOURS", 24),
+            mature_hours=_int("RADAR_MATURE_HOURS", 168),
+            baseline_min_age_hours=_int("RADAR_BASELINE_MIN_AGE_HOURS", 168),
             window_days=_int("RADAR_WINDOW_DAYS", 30),
             min_followers_for_audience=_int("RADAR_MIN_FOLLOWERS", 2000),
+            floor_instagram=_float("RADAR_FLOOR_INSTAGRAM", 1000.0),
+            floor_tiktok=_float("RADAR_FLOOR_TIKTOK", 1000.0),
+            floor_snapchat=_float("RADAR_FLOOR_SNAPCHAT", 300.0),
+            min_engagement=_float("RADAR_MIN_ENGAGEMENT", 0.02),
+            hashtag_min_views=_int("RADAR_HASHTAG_MIN_VIEWS", 10000),
+            hashtag_top_k=_int("RADAR_HASHTAG_TOP_K", 10),
+            hashtag_profile_cap=_int("RADAR_HASHTAG_PROFILE_CAP", 20),
             actor_instagram=key("RADAR_ACTOR_INSTAGRAM", "apify~instagram-scraper"),
-            actor_instagram_hashtag=key(
-                "RADAR_ACTOR_INSTAGRAM_HASHTAG", "apify~instagram-hashtag-scraper"
-            ),
-            actor_tiktok=key("RADAR_ACTOR_TIKTOK", "clockworks~tiktok-scraper"),
-            actor_snapchat=key("RADAR_ACTOR_SNAPCHAT", ""),
+            actor_instagram_hashtag=key("RADAR_ACTOR_INSTAGRAM_HASHTAG", ""),
+            actor_tiktok=key("RADAR_ACTOR_TIKTOK", "clockworks~free-tiktok-scraper"),
+            actor_tiktok_profile=key("RADAR_ACTOR_TIKTOK_PROFILE", "clockworks~tiktok-profile-scraper"),
+            actor_snapchat=key("RADAR_ACTOR_SNAPCHAT", "tri_angle~snapchat-scraper"),
+            actor_snapchat_post=key("RADAR_ACTOR_SNAPCHAT_POST", "tri_angle~snapchat-spotlight-scraper"),
+            tiktok_media_store=key("RADAR_TIKTOK_MEDIA_STORE", "ideation-radar-media"),
+            tiktok_subtitles=key("RADAR_TIKTOK_SUBTITLES", "DOWNLOAD_SUBTITLES"),
             apify_concurrency=_int("RADAR_APIFY_CONCURRENCY", 4),
             apify_timeout_sec=_int("RADAR_APIFY_TIMEOUT", 600),
             apify_max_runs_per_scan=_int("RADAR_APIFY_MAX_RUNS", 150),
             gemini_model=key("RADAR_GEMINI_MODEL", "gemini-2.5-flash"),
             gemini_text_model=key("RADAR_GEMINI_TEXT_MODEL", "gemini-2.5-flash"),
+            gemini_resolution=key("RADAR_GEMINI_RESOLUTION", "MEDIA_RESOLUTION_HIGH"),
             groq_model=key("RADAR_GROQ_MODEL", "whisper-large-v3"),
             openai_vision_model=key("RADAR_OPENAI_VISION_MODEL", "gpt-4o-mini"),
             deepseek_model=key("RADAR_DEEPSEEK_MODEL", "deepseek-flash"),
@@ -159,8 +199,20 @@ class Config:
             supabase_key=key("RADAR_SUPABASE_KEY", ""),
             supabase_table=key("RADAR_SUPABASE_TABLE", "ideation_posts"),
             slack_channel=key("RADAR_SLACK_CHANNEL", ""),
+            sink_mode=key("RADAR_SINK", "cockpit").lower(),
         )
         return cfg
+
+    def floor_for(self, platform: str) -> float:
+        return {"instagram": self.floor_instagram, "tiktok": self.floor_tiktok, "snapchat": self.floor_snapchat}.get(platform, 0.0)
+
+    @property
+    def use_cockpit_sink(self) -> bool:
+        return self.sink_mode in ("cockpit", "both") and bool(self.bridge_url and self.bridge_token)
+
+    @property
+    def use_supabase_sink(self) -> bool:
+        return self.sink_mode in ("supabase", "both") and bool(self.supabase_url and self.supabase_key)
 
     # Secrets are looked up lazily so a missing key only fails the step that
     # needs it, never the whole run.

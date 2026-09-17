@@ -147,7 +147,11 @@ function statusPill(r: Row) {
 /** The post's picture, or a grey box that says why there is none. */
 function Thumb({ r }: { r: Row }) {
   const [failed, setFailed] = useState(false);
-  const src = !failed && r.thumbUrl ? String(r.thumbUrl) : "";
+  // The cockpit's own copy first; the platform's link expires within hours.
+  const src =
+    !failed && (r.stillUrl || r.thumbUrl)
+      ? String(r.stillUrl || r.thumbUrl)
+      : "";
   if (!src) {
     return (
       <div

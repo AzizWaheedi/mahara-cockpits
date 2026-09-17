@@ -90,9 +90,13 @@ class Baseline:
     median: float
     n: int
     computed_at: str
-    method: str = "trimmed_median"
+    method: str = "median_after_rules_v1"
     trim: float = 0.1
-    min_age_hours: int = 48
+    min_age_hours: int = 168
+    raw_median: Optional[float] = None
+    floored: bool = False
+    confidence: str = "low"  # low (8 to 14 posts) | ok (15 or more)
+    rules: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -112,6 +116,10 @@ class Candidate:
     industry: str
     scanned_at: str
     tags: list[str] = field(default_factory=list)
+    provisional: bool = True  # under seven days old: the tier can still move
+    checkpoint: str = "24h"  # 24h | 72h | 7d | 30d | undated
+    robust_z: Optional[float] = None
+    reach_rate: Optional[float] = None
 
     @property
     def key(self) -> str:
@@ -128,8 +136,16 @@ class Candidate:
                 "industry": self.industry,
                 "tags": list(self.tags),
                 "baseline_views": self.baseline.median,
+                "baseline_raw": self.baseline.raw_median,
+                "baseline_floored": self.baseline.floored,
                 "baseline_n": self.baseline.n,
+                "baseline_confidence": self.baseline.confidence,
                 "baseline_method": self.baseline.method,
+                "baseline_rules": list(self.baseline.rules),
+                "provisional": self.provisional,
+                "checkpoint": self.checkpoint,
+                "robust_z": self.robust_z,
+                "reach_rate": None if self.reach_rate is None else round(self.reach_rate, 3),
                 "multiplier": round(self.multiplier, 2),
                 "tier": self.tier,
                 "engagement_rate": None

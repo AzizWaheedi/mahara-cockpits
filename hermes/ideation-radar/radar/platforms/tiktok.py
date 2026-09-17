@@ -26,8 +26,12 @@ class TikTok(Adapter):
 
     def profile_job(self, handle: str, limit: int) -> tuple[str, dict[str, Any]]:
         job = _common(limit)
-        job.update({"profiles": [handle.lstrip("@")], "profileSorting": "latest", "profileScrapeSections": ["videos"], "excludePinnedPosts": False})
-        return self.cfg.actor_tiktok, job
+        # Pinned posts are old favourites: they never belong in a 30-day scan and
+        # excluding them here saves a paid row each.
+        job.update({"profiles": [handle.lstrip("@")], "profileSorting": "latest", "profileScrapeSections": ["videos"], "excludePinnedPosts": True})
+        # The profile actor is cheaper per row than the general one and reports
+        # PROFILE_PRIVATE / NOT_FOUND as structured errors.
+        return (self.cfg.actor_tiktok_profile or self.cfg.actor_tiktok), job
 
     def hashtag_job(self, tag: str, limit: int) -> tuple[str, dict[str, Any]]:
         job = _common(limit)
@@ -37,6 +41,15 @@ class TikTok(Adapter):
     def post_job(self, canonical_url: str) -> tuple[str, dict[str, Any]]:
         job = _common(1)
         job.update({"postURLs": [canonical_url]})
+        # TikTok media links exist only through the download add-on (about
+        # USD 0.001 a video on Starter); the copy lands in a named store and
+        # its link comes back in mediaUrls. Subtitles are TikTok's own captions.
+        job["shouldDownloadVideos"] = True
+        if self.cfg.tiktok_media_store:
+            job["videoKvStoreIdOrName"] = self.cfg.tiktok_media_store
+        if self.cfg.tiktok_subtitles:
+            job["shouldDownloadSubtitles"] = True
+            job["downloadSubtitlesOptions"] = self.cfg.tiktok_subtitles
         return self.cfg.actor_tiktok, job
 
     def parse_posts(self, items: list[dict[str, Any]], *, handle: str = "") -> list[Post]:
@@ -93,5 +106,8 @@ def _trim_raw(it: dict[str, Any]) -> dict[str, Any]:
     keep = ("id", "createTimeISO", "playCount", "diggCount", "shareCount", "commentCount", "collectCount", "isPinned", "isAd", "hashtags", "musicMeta")
     out = {k: it[k] for k in keep if k in it}
     if isinstance(it.get("videoMeta"), dict):
-        out["videoMeta"] = {k: it["videoMeta"].get(k) for k in ("duration", "height", "width")}
+        vm = it["videoMeta"]
+        out["videoMeta"] = {k: vm.get(k) for k in ("duration", "height", "width")}
+        if isinstance(vm.get("subtitleLinks"), list):
+            out["subtitleLinks"] = vm["subtitleLinks"][:6]
     return out

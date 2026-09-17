@@ -15,10 +15,23 @@ the loop:
 
 The rule it applies is the one Aziz locked on 2026-05-15: 3x to 5x the
 baseline is worth studying, 5x and above is reverse engineered immediately,
-below 3x is noise. The baseline is the trimmed median of the account's last
-30 posts, excluding pinned posts and anything younger than 48 hours (a fresh
-post has not collected its views yet). A tiny account that spikes is flagged
-`packaging_only`: it proves packaging, not audience.
+below 3x is noise. The baseline is the median of the account's last 30 posts
+after these exclusions, recorded with every baseline: the candidate post
+itself (leave one out), pinned posts, posts under seven days old (their
+counts are still growing), posts of another kind (video against video). At
+least eight settled posts are needed for a tier; eight to fourteen is "low"
+confidence. The baseline is floored per platform (1,000 views on Instagram
+and TikTok, 300 on Snapchat) so a 300-view account does not produce a 10x
+from one 3,000-view post, and a floored baseline says so. Nothing under 24
+hours is scored; a score before day seven is provisional (checkpoint 24h or
+72h), day seven locks it, 30 days catches TikTok late bloomers. A candidate
+is proposed only when it also clears a gate: three times the floor in views,
+or an engagement rate of 2 percent by views. Each proposal carries a robust
+z-score (median and MAD on log views) and reach (views over followers), and
+the list ranks reverse-engineer first, then reach, then multiplier, so a tiny
+account never outranks a big one. A tiny account that spikes is also flagged
+`packaging_only`: it proves packaging, not audience. Sources: 1of10,
+ViewStats, vidIQ, OutlierKit, Handler, NIST 1.3.5.17; checked 2026-09-17.
 
 ## Why this shape
 
@@ -77,12 +90,29 @@ and `/opt/data/.env` (the Hermes key files). Never printed.
 
 Settings (all optional): `RADAR_HOME` (default `~/.ideation-radar`),
 `RADAR_THRESHOLD` 3, `RADAR_REVERSE_THRESHOLD` 5, `RADAR_SAMPLE` 30,
-`RADAR_TRIM` 0.1, `RADAR_MIN_N` 5, `RADAR_MIN_AGE_HOURS` 48,
-`RADAR_WINDOW_DAYS` 30, `RADAR_MIN_FOLLOWERS` 2000,
-`RADAR_ACTOR_INSTAGRAM` `apify~instagram-scraper`,
-`RADAR_ACTOR_INSTAGRAM_HASHTAG` `apify~instagram-hashtag-scraper`,
-`RADAR_ACTOR_TIKTOK` `clockworks~tiktok-scraper`, `RADAR_ACTOR_SNAPCHAT`
-(empty: Snapchat scans off), `RADAR_APIFY_CONCURRENCY` 4,
+`RADAR_MIN_N` 8, `RADAR_MIN_AGE_HOURS` 24 (score nothing younger),
+`RADAR_MATURE_HOURS` 168 (the tier locks), `RADAR_BASELINE_MIN_AGE_HOURS` 168
+(baseline posts must be this old), `RADAR_WINDOW_DAYS` 30,
+`RADAR_FLOOR_INSTAGRAM` 1000, `RADAR_FLOOR_TIKTOK` 1000, `RADAR_FLOOR_SNAPCHAT` 300,
+`RADAR_MIN_ENGAGEMENT` 0.02, `RADAR_MIN_FOLLOWERS` 2000, `RADAR_HASHTAG_MIN_VIEWS`
+10000, `RADAR_HASHTAG_TOP_K` 10 (authors fetched per hashtag),
+`RADAR_HASHTAG_PROFILE_CAP` 20 (per scan), `RADAR_GEMINI_RESOLUTION`
+`MEDIA_RESOLUTION_HIGH` (reads small Arabic text cards),
+`RADAR_ACTOR_INSTAGRAM` `apify~instagram-scraper` (profiles, single posts and,
+by default, hashtags through an explore/tags URL), `RADAR_ACTOR_INSTAGRAM_HASHTAG`
+(empty; set `apify~instagram-hashtag-scraper` to use the dedicated actor),
+`RADAR_ACTOR_TIKTOK` `clockworks~free-tiktok-scraper` (hashtags and single posts; the
+same Clockworks engine and fields as the flagship `tiktok-scraper` at USD 0.002
+a result on Starter with no run fee),
+`RADAR_ACTOR_TIKTOK_PROFILE` `clockworks~tiktok-profile-scraper` (account scans,
+cheaper per row), `RADAR_ACTOR_SNAPCHAT` `tri_angle~snapchat-scraper`
+(profiles; the most run Snapchat actor, USD 0.002 a profile), `RADAR_ACTOR_SNAPCHAT_POST`
+`tri_angle~snapchat-spotlight-scraper` (a pasted Spotlight link, USD 0.0015),
+`RADAR_TIKTOK_MEDIA_STORE` `ideation-radar-media` (the Apify key-value store
+that receives a TikTok video for a capture; TikTok media links exist only
+through that paid add-on, about USD 0.001 a video), `RADAR_TIKTOK_SUBTITLES`
+`DOWNLOAD_SUBTITLES`, `RADAR_SINK` `cockpit` (or `supabase`, or `both` for a deliberate
+mirror; one authoritative store is the rule), `RADAR_APIFY_CONCURRENCY` 4,
 `RADAR_APIFY_MAX_RUNS` 150 per scan, `RADAR_GEMINI_MODEL` `gemini-2.5-flash`,
 `RADAR_TEXT_PROVIDER` `gemini,deepseek,openai`, `RADAR_MAX_DURATION_SEC` 600.
 
@@ -104,28 +134,32 @@ Run it once after every key change.
 
 ### Schedule
 
-Hermes, script mode (survives model outages; the pattern the Work Gate and
-CSM Morning Sheet jobs use):
+Plain cron on the VPS host, as the `hermes` user (verified on 2026-09-17: that
+user has Python 3.12, ffmpeg 6.1 and can read the key files). Weekly scan on
+Saturday 07:07 Kuwait, links pasted in the cockpit every 5 minutes:
 
 ```
-hermes cron add --name "Ideation radar scan" --schedule "7 4 * * *" --no-agent \
-  --script "cd ~/mahara-cockpits/hermes/ideation-radar && python3 radar.py --quiet scan"
-hermes cron add --name "Ideation radar captures" --schedule "*/5 * * * *" --no-agent \
-  --script "cd ~/mahara-cockpits/hermes/ideation-radar && python3 radar.py --quiet pending"
-```
-
-Or plain cron on the host (07:07 Kuwait for the scan, every 5 minutes for
-links pasted in the cockpit):
-
-```
-7 4 * * *   cd $HOME/mahara-cockpits/hermes/ideation-radar && python3 radar.py --quiet scan >> $HOME/.ideation-radar/out/cron.log 2>&1
+7 4 * * 6   cd $HOME/mahara-cockpits/hermes/ideation-radar && python3 radar.py --quiet scan >> $HOME/.ideation-radar/out/cron.log 2>&1
 */5 * * * * cd $HOME/mahara-cockpits/hermes/ideation-radar && python3 radar.py --quiet pending >> $HOME/.ideation-radar/out/cron.log 2>&1
 ```
 
-A scan of 100 accounts takes roughly as long as the slowest actor run times
-the number of batches (`RADAR_APIFY_CONCURRENCY`), typically 10 to 25
-minutes. A capture takes 1 to 4 minutes: the Apify fetch, the download, the
-model call.
+Weekly, not daily: at the Starter rates checked on 2026-09-17 (Instagram
+about USD 2.30 per 1,000 rows, TikTok profiles USD 1.00 per 1,000, TikTok
+hashtags USD 1.70 per 1,000) a scan of 40 Instagram and 40 TikTok accounts
+plus 20 hashtags costs roughly USD 6 to 8, so weekly fits the USD 29 monthly
+Apify credit and daily would exhaust it in a week. The old Content Radar
+daemon (personal brand watchlist, `/home/aziz/.openclaw`) still runs daily on
+the same Apify key; retire it or budget for both.
+
+Hermes's own scheduler can run the same commands in `--no-agent --script`
+mode, which keeps working when the model credentials are down (the pattern the
+Work Gate and CSM Morning Sheet jobs use), but note it runs inside the Hermes
+container, which has its own filesystem: clone the repo there and point the
+script path at that clone.
+
+A scan takes roughly the slowest actor run times the number of batches
+(`RADAR_APIFY_CONCURRENCY`), typically 10 to 25 minutes for 100 targets. A
+capture takes 1 to 4 minutes: the Apify fetch, the download, the model call.
 
 ## What a scan writes
 
@@ -210,19 +244,65 @@ Creative Triage project with anonymous grants.
 ## Costs
 
 Every Apify run is billed; the runner records `usageTotalUsd` per run and the
-scan digest totals it. Model calls are billed per token or minute of audio.
-Fill the actual numbers from the Apify console and the Google AI console
-after the first week; the research notes in the shared context repo carry
-the published list prices at the time of writing.
+scan digest totals it. List prices checked on 2026-09-17 (Starter plan): an
+Instagram row USD 0.0023, a TikTok row USD 0.002, a Snapchat profile USD
+0.002 plus USD 0.001 a run, a Spotlight link USD 0.0015, a TikTok video
+download USD 0.001. A weekly scan of 40 Instagram and 40 TikTok accounts, 20
+Snapchat accounts and 20 hashtags is roughly USD 6 to 9; a capture is well
+under one cent of Apify plus a fraction of a cent of Gemini 2.5 Flash for a
+30-second clip. Apify is on the Starter plan with a USD 29 monthly credit,
+0.49 used on 2026-09-17, shared with the old Content Radar daemon. Fill the
+real numbers from the Apify and Google AI consoles after the first month.
+
+## Legal posture (for Aziz to confirm)
+
+Every platform's terms ban automated collection, and Snapchat's also ban
+downloading content. The exposure is contractual (blocking, account bans),
+not criminal, per the hiQ and Bright Data rulings; the safe posture the
+research recommends is: scrape logged out through the vendor only, never with
+staff accounts, keep the data internal, never send an item to a client, keep
+only the still, the transcript, the metrics and the link (the video file is
+deleted after the model call unless `--keep-media` is passed), store only the
+creator's handle and follower count, and delete on request.
+
+## Before trusting the numbers: five cheap runs
+
+Research on 2026-09-17 verified the actor prices and field names from the
+actors' own pages, but nobody has run them on Gulf accounts yet. Each of
+these costs cents; run them from the VPS and read the raw items in
+`out/dry/latest.json`:
+
+1. `radar.py scan --dry-run --only <one Instagram account>`: does the profile
+   run return 30 posts with `videoPlayCount`, and does the weekly "details"
+   run return `followersCount` (a third-party actor reported that Instagram
+   cut logged-out follower counts on 2 September 2026)?
+2. `radar.py scan --dry-run --only <one Instagram hashtag>`: are hashtag
+   posts "top" or "recent"? The actor's README says recent.
+3. `radar.py scan --dry-run --only <one TikTok account>`: `playCount`,
+   `authorMeta.fans` and `createTimeISO` present, `mediaUrls` empty (expected
+   without the download add-on).
+4. `radar.py capture <one TikTok link> --dry-run`: the download add-on
+   returns a link in `mediaUrls`, subtitles arrive, Gemini reads the clip.
+5. `radar.py scan --dry-run --only <one Snapchat account>`: how many
+   spotlights have a visible view count (on four of five Gulf contractor
+   profiles tested by hand, most were hidden).
+
+Then a 20-clip Kuwaiti bake-off (10 spoken, 10 silent motion graphics)
+judged by Sabry before the transcription model is locked: no vendor
+publishes Gulf-dialect accuracy.
 
 ## Known limits
 
-- Snapchat has no verified Apify actor. Profile scans are off until
-  `RADAR_ACTOR_SNAPCHAT` is set to one; a pasted Spotlight or story link is
-  read from the public page and carries a warning about missing counts.
+- Snapchat: Spotlight clips only. Stories have no public view count anywhere,
+  subscriber counts show as "0" (hidden) on most Gulf business profiles, only
+  the latest 18 or 19 Spotlights are exposed without login, and most clips on
+  Gulf contractor profiles had a hidden view count in the 2026-09-17 check. So
+  the Snapchat scan flags the few clips that broke out; it does not compute a
+  clean per-account baseline. Hashtags need another actor and are not wired.
 - Instagram follower counts come from a separate "details" run per account,
   refreshed weekly, so the first scan costs about two runs per Instagram
-  account.
+  account. Hashtag hits on Instagram carry no follower count, so their reach
+  cannot be judged until the author's profile is fetched.
 - The video model reads on-screen Arabic well but transcripts of dialect
   speech can mishear words: the idea carries a confidence and the transcript
   should never be quoted as fact without listening.

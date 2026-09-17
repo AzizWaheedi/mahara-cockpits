@@ -42,7 +42,7 @@ def resolve_link(url: str) -> Link:
 def fetch_post(cfg: Config, apify: Optional[Apify], link: Link, log: Callable[[str], None]) -> tuple[Optional[Post], list[str]]:
     ad = adapter_for(link.platform, cfg)
     warnings: list[str] = []
-    if isinstance(ad, Snapchat) and not cfg.actor_snapchat:
+    if isinstance(ad, Snapchat) and (not cfg.actor_snapchat_post or link.kind != "spotlight"):
         return ad.fetch_public_page(link.canonical_url)
     if apify is None:
         raise CaptureError("APIFY_API_KEY is not set")
@@ -119,7 +119,7 @@ def capture_url(
     mult: Optional[float] = None
     tier: Optional[str] = None
     base = state.baseline(f"{post.platform}:account:{post.author_handle}") if post.author_handle else None
-    if base is not None and post.views is not None:
+    if base is not None and post.views:
         mult, _ = score(post, base)
         tier = tier_for(mult, cfg.threshold, cfg.reverse_threshold)
 
@@ -141,6 +141,9 @@ def capture_url(
         if post.duration_sec is None and info.get("duration_sec"):
             post.duration_sec = info["duration_sec"]
         meta = {k: getattr(post, k) for k in ("platform", "author_handle", "author_name", "posted_at", "duration_sec", "views", "likes", "comments", "shares", "caption")}
+        captions = platform_captions(post, log)
+        if captions:
+            meta["platform_captions"] = captions[:6000]
         if video_path and post.duration_sec and post.duration_sec > cfg.max_duration_sec:
             warnings.append(f"video is {post.duration_sec:.0f}s, over the {cfg.max_duration_sec}s cap; not watched")
             video_path = None
@@ -149,6 +152,11 @@ def capture_url(
                 result = understand_fn(cfg, video_path, meta, workdir, log)
             except (http.HttpError, ValueError, KeyError) as e:
                 warnings.append(f"understanding failed: {http.scrub(str(e))[:200]}")
+        if not result and meta.get("platform_captions"):
+            # No model could watch it, but the platform's own auto-captions exist.
+            from .understand import normalise_result
+            result = normalise_result({"transcript": meta["platform_captions"], "has_speech": True, "voice": "voiceover", "language": "mixed", "on_screen_text": [], "format": "other", "hook": {"text": meta["platform_captions"].split("\n")[0][:200], "type": "opening line"}, "beats": [], "why_it_works": "", "transferable": "", "adaptations": [], "confidence": {"transcript": "medium", "on_screen_text": "low"}, "warnings": ["only the platform's auto-captions were available; no model watched the video"]})
+            result["method"] = {"transcribe": "platform_captions", "on_screen": "none", "breakdown": "none"}
         if not result:
             from .understand import normalise_result, text_model_json, text_prompt  # local import keeps the fallback lazy
             try:
@@ -190,6 +198,41 @@ def capture_url(
     return idea
 
 
+def platform_captions(post: Post, log: Callable[[str], None]) -> str:
+    """TikTok returns its own auto-caption tracks (videoMeta.subtitleLinks). They are
+    free and often good for Arabic speech; used as a hint for the model and as
+    the transcript of last resort."""
+    links = post.raw.get("subtitleLinks") if isinstance(post.raw, dict) else None
+    if not isinstance(links, list) or not links:
+        return ""
+    pick = None
+    for l in links:
+        if not isinstance(l, dict):
+            continue
+        lang = str(l.get("language") or "").lower()
+        if lang.startswith("ar"):
+            pick = l
+            break
+        pick = pick or l
+    url = pick.get("downloadLink") or pick.get("url") if isinstance(pick, dict) else None
+    if not url:
+        return ""
+    try:
+        _, _, body = http.request("GET", str(url), timeout=30, retries=1)
+    except http.HttpError as e:
+        log(f"captions fetch failed: {e}")
+        return ""
+    text = body.decode("utf-8", "replace")
+    lines = []
+    for line in text.splitlines():
+        s = line.strip()
+        if not s or s.startswith("WEBVTT") or "-->" in s or s.isdigit():
+            continue
+        if not lines or lines[-1] != s:
+            lines.append(s)
+    return "\n".join(lines)
+
+
 def _deliver(cfg: Config, log: Callable[[str], None], idea: Idea, dry_run: bool, *, cockpit_id: str = "") -> None:
     row = idea.to_dict()
     if cockpit_id:
@@ -197,9 +240,9 @@ def _deliver(cfg: Config, log: Callable[[str], None], idea: Idea, dry_run: bool,
     jsonl = JsonlSink(cfg.out_dir / ("dry" if dry_run else ""))
     sinks: list[tuple[str, Callable[[], Any]]] = [("jsonl", lambda: jsonl.write_ideas([row]))]
     if not dry_run:
-        if cfg.bridge_url and cfg.bridge_token:
-            sinks.append(("bridge", lambda: BridgeSink(cfg.bridge_url, cfg.bridge_token).store_ideas([row])))
-        if cfg.supabase_url and cfg.supabase_key:
+        if cfg.use_cockpit_sink:
+            sinks.append(("cockpit", lambda: BridgeSink(cfg.bridge_url, cfg.bridge_token).store_ideas([row])))
+        if cfg.use_supabase_sink:
             sinks.append(("supabase", lambda: SupabaseSink(cfg.supabase_url, cfg.supabase_key, cfg.supabase_table).upsert([row])))
     deliver(sinks, log)
 
