@@ -136,13 +136,27 @@ Run it once after every key change.
 ### Schedule
 
 Plain cron on the VPS host, as the `hermes` user (verified on 2026-09-17: that
-user has Python 3.12, ffmpeg 6.1 and can read the key files). Weekly scan on
-Saturday 07:07 Kuwait, links pasted in the cockpit every 5 minutes:
+user has Python 3.12, ffmpeg 6.1 and can read the key files). The Supabase
+pair and the Slack channel live in `~/.ideation-radar/env` (mode 600), the
+code is the repo clone at `~/mahara-cockpits` which the first line refreshes
+every Saturday so a pushed fix takes effect at the next run. Every job runs
+under a lock so two scans never overlap, and each writes to `cron.log`.
+Weekly scan on Saturday 07:07 Kuwait, links pasted in the cockpit every 5
+minutes:
 
 ```
-7 4 * * 6   cd $HOME/mahara-cockpits/hermes/ideation-radar && python3 radar.py --quiet scan >> $HOME/.ideation-radar/out/cron.log 2>&1
-*/5 * * * * cd $HOME/mahara-cockpits/hermes/ideation-radar && python3 radar.py --quiet pending >> $HOME/.ideation-radar/out/cron.log 2>&1
+0 4 * * 6   cd $HOME/mahara-cockpits && git pull -q --ff-only >> $HOME/.ideation-radar/out/cron.log 2>&1
+7 4 * * 6   flock -n $HOME/.ideation-radar/scan.lock    bash -c 'set -a; . $HOME/.ideation-radar/env; set +a; cd $HOME/mahara-cockpits/hermes/ideation-radar && python3 radar.py --quiet scan' >> $HOME/.ideation-radar/out/cron.log 2>&1
+*/5 * * * * flock -n $HOME/.ideation-radar/pending.lock bash -c 'set -a; . $HOME/.ideation-radar/env; set +a; cd $HOME/mahara-cockpits/hermes/ideation-radar && python3 radar.py --quiet pending' >> $HOME/.ideation-radar/out/cron.log 2>&1
 ```
+
+`~/.ideation-radar/env` holds `RADAR_SUPABASE_URL`, `RADAR_SUPABASE_KEY` and
+`RADAR_SLACK_CHANNEL` (Aziz's Slack user id, so the digest arrives as a DM
+like the cockpit alerts). The creative cockpit's smoke check watches the
+result: a scan older than eight days or a pasted link waiting over an hour
+sends the Slack DM and files the fix job (RUNBOOK.md, "Ideation radar").
+After any outage, `python3 radar.py resend` pushes the last scan's proposals
+and every captured idea from the local files again; every write is an upsert.
 
 Weekly, not daily: at the Starter rates checked on 2026-09-17 (Instagram
 about USD 2.30 per 1,000 rows, TikTok profiles USD 1.00 per 1,000, TikTok

@@ -7,6 +7,7 @@
     python3 radar.py pending [--limit 10]       capture links pasted in the cockpit
     python3 radar.py watchlist list|add|remove  manage the accounts and hashtags
     python3 radar.py digest                     print the last scan's digest
+    python3 radar.py resend                     after an outage: push the last scan and every captured idea again
 
 Standard library only. Keys are read by name from the environment or the
 Hermes key files; nothing is ever printed. Exit code is non-zero when a
@@ -69,8 +70,18 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     if not args.offline:
         if cfg.apify_token:
             try:
-                me = Apify(cfg.apify_token, base=cfg.apify_base).me()
-                add("apify api", True, f"user {me.get('username')} plan {((me.get('plan') or {}).get('id')) or '?'}", True)
+                ap = Apify(cfg.apify_token, base=cfg.apify_base)
+                me = ap.me()
+                plan = me.get("plan") or {}
+                add("apify api", True, f"user {me.get('username')} plan {plan.get('id') or '?'}", True)
+                try:
+                    usage = http.get_json(ap._url("users/me/usage/monthly"), timeout=30).get("data", {})
+                    used = usage.get("totalUsageCreditsUsdAfterVolumeDiscount", usage.get("totalUsageCreditsUsdBeforeVolumeDiscount"))
+                    credit = plan.get("monthlyUsageCreditsUsd")
+                    low = isinstance(used, (int, float)) and isinstance(credit, (int, float)) and credit > 0 and used > 0.85 * credit
+                    add("apify credit", not low, f"USD {float(used or 0):.2f} used of {credit} this month" + (" (nearly used up: scans will start failing with 402)" if low else ""))
+                except (http.HttpError, AttributeError, TypeError):
+                    add("apify credit", True, "usage not readable")
             except (http.HttpError, ApifyError, KeyError) as e:
                 add("apify api", False, f"{e}", True)
         if cfg.gemini_key:
@@ -220,6 +231,40 @@ def cmd_watchlist(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     return 2
 
 
+def cmd_resend(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    """After a Supabase outage: push the last scan's proposals and the captured ideas again."""
+    if not cfg.use_supabase_sink:
+        log.error("Supabase is not configured (RADAR_SUPABASE_URL, RADAR_SUPABASE_KEY)")
+        return 1
+    sb = Supabase(cfg.supabase_url, cfg.supabase_key, table=cfg.supabase_table, bucket=cfg.supabase_bucket)
+    out: dict[str, Any] = {}
+    latest = Path(args.scan) if args.scan else cfg.out_dir / "latest.json"
+    if latest.exists():
+        rep = json.loads(latest.read_text(encoding="utf-8")).get("scan", {})
+        rows = rep.get("new_candidates", [])
+        out["proposals"] = sb.store_candidates(rows) if rows else {"inserted": 0}
+    ideas = Path(args.ideas) if args.ideas else cfg.out_dir / "ideas.jsonl"
+    sent = skipped = 0
+    if ideas.exists():
+        for line in ideas.read_text(encoding="utf-8").splitlines():
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if row.get("status") != "captured":
+                skipped += 1
+                continue
+            try:
+                sb.store_idea(row, origin_key=row.get("cockpit_id") or None)
+                sent += 1
+            except (SupabaseError, http.HttpError) as e:
+                log.warn(f"idea {row.get('key')}: {e}")
+                skipped += 1
+    out["ideas"] = {"sent": sent, "skipped": skipped}
+    _print(out, args.json)
+    return 0
+
+
 def cmd_digest(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     st = State.load(cfg.state_path)
     last = st.last_scan()
@@ -241,13 +286,14 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("pending"); p.add_argument("--limit", type=int, default=10); p.add_argument("--dry-run", action="store_true")
     w = sub.add_parser("watchlist"); w.add_argument("action", choices=["list", "add", "remove", "push"]); w.add_argument("platform", nargs="?"); w.add_argument("value", nargs="?"); w.add_argument("--industry", default="other", choices=["ours", "other"]); w.add_argument("--tags"); w.add_argument("--note")
     sub.add_parser("digest")
+    rs = sub.add_parser("resend"); rs.add_argument("--scan", help="a latest.json to re-send (default out/latest.json)"); rs.add_argument("--ideas", help="an ideas.jsonl to re-send (default out/ideas.jsonl)")
     args = ap.parse_args(argv)
     cfg = Config.from_env()
     cfg.ensure_dirs()
     log = Logger(cfg.out_dir / "radar.log", quiet=args.quiet)
     if args.cmd in ("add", "remove") or (args.cmd == "watchlist" and args.action in ("add", "remove") and not (args.platform and args.value)):
         ap.error("watchlist add/remove need <platform> <value>")
-    handlers = {"doctor": cmd_doctor, "scan": cmd_scan, "capture": cmd_capture, "pending": cmd_pending, "watchlist": cmd_watchlist, "digest": cmd_digest}
+    handlers = {"doctor": cmd_doctor, "scan": cmd_scan, "capture": cmd_capture, "pending": cmd_pending, "watchlist": cmd_watchlist, "digest": cmd_digest, "resend": cmd_resend}
     try:
         return handlers[args.cmd](cfg, args, log)
     except KeyboardInterrupt:

@@ -491,7 +491,11 @@ export const setNote = authenticatedAction({
   },
 });
 
-/** The smoke check's view: the two lists the page opens on, no sign-in. */
+/**
+ * The smoke check's view, no sign-in: the two lists the page opens on, plus
+ * the radar's liveness. A throw here becomes a Slack DM with the fix and a
+ * fix job, like any other failing screen (RUNBOOK, "Ideation radar").
+ */
 export const smokeCheck = internalAction({
   args: {},
   returns: v.any(),
@@ -499,10 +503,38 @@ export const smokeCheck = internalAction({
     if (!SUPABASE_URL || !SUPABASE_KEY)
       return {
         skipped: true,
-        note: "Ideation is not connected on this deployment.",
+        note: "Ideation is not connected on this deployment (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY).",
       };
     const saved = await fetchList({ tab: "saved", limit: 20 });
     const proposed = await fetchList({ tab: "proposed", limit: 20 });
-    return { saved: saved.rows.length, proposed: proposed.rows.length };
+    const problems: string[] = [];
+    const { json: scans } = await rest(
+      "ideation_scans?select=at&dry_run=is.false&order=at.desc&limit=1",
+    );
+    const lastAt =
+      Array.isArray(scans) && scans[0]?.at
+        ? Date.parse(String(scans[0].at))
+        : Number.NaN;
+    if (Number.isFinite(lastAt) && Date.now() - lastAt > 8 * 24 * 3600_000) {
+      problems.push(
+        `The ideation radar has not scanned since ${new Date(lastAt).toISOString().slice(0, 10)}. Fix: on the VPS as the cron user, run "python3 radar.py doctor" and check "crontab -l" (RUNBOOK, Ideation radar).`,
+      );
+    }
+    const cutoff = new Date(Date.now() - 60 * 60_000).toISOString();
+    const { json: waiting } = await rest(
+      `${TABLE}?select=key&status=in.("queued","fetching")&at=lt.${encodeURIComponent(cutoff)}&limit=50`,
+    );
+    const n = Array.isArray(waiting) ? waiting.length : 0;
+    if (n > 0) {
+      problems.push(
+        `${n} pasted link${n === 1 ? " has" : "s have"} waited over an hour for the radar: its pending cron is not running or its keys broke. Fix: "python3 radar.py doctor" on the VPS (RUNBOOK, Ideation radar).`,
+      );
+    }
+    if (problems.length) throw new Error(problems.join(" "));
+    return {
+      saved: saved.rows.length,
+      proposed: proposed.rows.length,
+      lastScan: Number.isFinite(lastAt) ? new Date(lastAt).toISOString() : null,
+    };
   },
 });

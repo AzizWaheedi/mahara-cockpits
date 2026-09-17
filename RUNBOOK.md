@@ -95,6 +95,31 @@ account" when the client has not shared the account; both show the saved
 picture instead. "The media buyer system is offline" in the creative or
 client success cockpit means the media buyer deployment is not answering.
 
+## Ideation radar
+
+The Ideation board (creative director and media buyer cockpits, `/ideation`)
+reads and writes one Supabase table, `ideation_posts` in the Creative Triage
+project. A script on the VPS, the ideation radar (`hermes/ideation-radar`),
+scans the watchlist weekly and fetches links people paste every five minutes
+under the `hermes` user's cron. The creative cockpit's 15-minute smoke check
+watches both: a scan older than eight days, or a pasted link waiting over an
+hour, sends the Slack DM and files the fix job like any other broken screen.
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| Board says "Ideation is not connected" | `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are missing on that deployment: `cd apps/<app> && bunx convex env set --prod NAME value` | Aziz |
+| DM: "has not scanned since …" | On the VPS as `hermes`: `cd ~/mahara-cockpits/hermes/ideation-radar && python3 radar.py doctor`, then `crontab -l` must show the two radar lines from the README | Aziz |
+| DM: "pasted links have waited over an hour" | Same `doctor`; then `python3 radar.py pending` by hand once. If `doctor` shows an Apify or Gemini line failing, see below | Aziz |
+| `doctor`: Apify refuses the token or credit is used up | Apify console: check the token and the monthly credit (Starter, USD 29). The old Content Radar daemon shares the key | Aziz |
+| `doctor`: Gemini "no longer available to new users" | Set `RADAR_GEMINI_MODEL` in `~/.ideation-radar/env` to the model Google names in the message | Aziz |
+| Proposals or ideas missing after a Supabase outage | `python3 radar.py resend` pushes the last scan's proposals and every captured idea from the local files again; nothing is lost, every write is an upsert | Aziz |
+| A capture shows "Failed" on the board | Read the reason on the row. "private or removed" and "returned nothing" are the platform's answer; "Try again" queues it once more; four failures stop it for good | Creative director |
+
+Every scan writes a row to `ideation_scans` with its cost; a Slack digest goes
+to `RADAR_SLACK_CHANNEL` even when nothing was found, so silence is never
+ambiguous. Pictures come from the private `ideation-stills` bucket, signed for
+six hours when the page loads.
+
 ## What never needs a person
 
 - Rate limits: every Google, ClickUp and Meta call waits and retries.
