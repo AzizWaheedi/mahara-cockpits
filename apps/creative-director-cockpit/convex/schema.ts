@@ -632,6 +632,87 @@ const schema = defineSchema({
     fedAt: v.number(),
     changedAt: v.number(),
   }).index("by_table", ["table"]),
+  /**
+   * The creative director's own ideation database. Two ways in: the ideation
+   * radar (hermes/ideation-radar, a scheduled script on the VPS) proposes
+   * posts that ran far above their account's normal (origin "scan"), and he
+   * pastes links himself (origin "manual"). The radar's capture writes back
+   * the transcript, the on-screen text and the breakdown. This deployment
+   * owns these rows: nothing here is mirrored from the media buyer, and the
+   * table is read only through its indexes, never collected whole.
+   *
+   * status: proposed (by the scan) | queued (waiting for the radar to fetch
+   * it) | fetching | saved (captured and kept) | failed | dismissed.
+   */
+  ideationPosts: defineTable({
+    /** platform:postId; "pasted:<stamp>" until the radar resolves a pasted link. */
+    key: v.string(),
+    platform: v.string(),
+    postId: v.optional(v.string()),
+    url: v.string(),
+    origin: v.string(),
+    status: v.string(),
+    /** Last change, the sort key of every list. */
+    at: v.number(),
+    createdAt: v.number(),
+    authorHandle: v.optional(v.string()),
+    authorName: v.optional(v.string()),
+    authorFollowers: v.optional(v.number()),
+    postedAt: v.optional(v.string()),
+    views: v.optional(v.number()),
+    likes: v.optional(v.number()),
+    comments: v.optional(v.number()),
+    shares: v.optional(v.number()),
+    saves: v.optional(v.number()),
+    caption: v.optional(v.string()),
+    durationSec: v.optional(v.number()),
+    thumbUrl: v.optional(v.string()),
+    mediaUrl: v.optional(v.string()),
+    targetKey: v.optional(v.string()),
+    industry: v.optional(v.string()),
+    tags: v.optional(v.array(v.string())),
+    baselineViews: v.optional(v.number()),
+    baselineN: v.optional(v.number()),
+    multiplier: v.optional(v.number()),
+    tier: v.optional(v.string()),
+    engagementRate: v.optional(v.number()),
+    packagingOnly: v.optional(v.boolean()),
+    scannedAt: v.optional(v.string()),
+    capturedAt: v.optional(v.string()),
+    language: v.optional(v.string()),
+    dialect: v.optional(v.string()),
+    hasSpeech: v.optional(v.boolean()),
+    voice: v.optional(v.string()),
+    transcript: v.optional(v.string()),
+    onScreenText: v.optional(v.any()),
+    format: v.optional(v.string()),
+    hook: v.optional(v.any()),
+    beats: v.optional(v.any()),
+    cta: v.optional(v.string()),
+    whyItWorks: v.optional(v.string()),
+    transferable: v.optional(v.string()),
+    adaptations: v.optional(v.array(v.string())),
+    music: v.optional(v.string()),
+    method: v.optional(v.any()),
+    confidence: v.optional(v.any()),
+    warnings: v.optional(v.array(v.string())),
+    error: v.optional(v.string()),
+    pastedBy: v.optional(v.string()),
+    pastedByName: v.optional(v.string()),
+    pastedAt: v.optional(v.number()),
+    note: v.optional(v.string()),
+    savedBy: v.optional(v.string()),
+    savedByName: v.optional(v.string()),
+    savedAt: v.optional(v.number()),
+    savedNote: v.optional(v.string()),
+    dismissedBy: v.optional(v.string()),
+    dismissedAt: v.optional(v.number()),
+    fetchingAt: v.optional(v.number()),
+    attempts: v.optional(v.number()),
+  })
+    .index("by_key", ["key"])
+    .index("by_status_at", ["status", "at"])
+    .index("by_platform_at", ["platform", "at"]),
 });
 
 export default schema;

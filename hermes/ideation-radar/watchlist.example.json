@@ -1,0 +1,14 @@
+{
+ "version": 1,
+ "_how": "Copy to ~/.ideation-radar/watchlist.json (or set RADAR_WATCHLIST). platform: instagram | tiktok | snapchat. kind: account | hashtag. industry: ours (construction, architecture, interior design, contracting in the Gulf) | other. tags are free text and travel with every proposal. Set active=false to pause a target without deleting it. Replace the example handles with real ones; none below is verified.",
+ "targets": [
+  {"platform": "instagram", "kind": "account", "value": "example.interior.studio", "industry": "ours", "tags": ["saudi", "interior"], "note": "replace with a real Jeddah interior design account"},
+  {"platform": "instagram", "kind": "account", "value": "example.contractor", "industry": "ours", "tags": ["kuwait", "contracting"]},
+  {"platform": "tiktok", "kind": "account", "value": "example.kitchens", "industry": "ours", "tags": ["uae", "kitchens"]},
+  {"platform": "instagram", "kind": "hashtag", "value": "تصميم_داخلي", "industry": "ours", "tags": ["arabic"]},
+  {"platform": "tiktok", "kind": "hashtag", "value": "interiordesign", "industry": "ours"},
+  {"platform": "instagram", "kind": "account", "value": "example.dentist.clinic", "industry": "other", "tags": ["medical", "local-service"], "note": "another local service business: same buying journey, different industry"},
+  {"platform": "tiktok", "kind": "account", "value": "example.car.detailing", "industry": "other", "tags": ["before-after"]},
+  {"platform": "snapchat", "kind": "account", "value": "example.snap.creator", "industry": "other", "active": false, "note": "Snapchat scans need RADAR_ACTOR_SNAPCHAT; paste single links instead"}
+ ]
+}

@@ -9,6 +9,7 @@ export {
   WorkPage,
 } from "./DashboardPage";
 export { FunnelRow, FunnelsPage } from "./FunnelsPage";
+export { IdeationPage } from "./IdeationPage";
 export { KeyLinksPage } from "./KeyLinksPage";
 export { LandingPage } from "./LandingPage";
 export { LoginPage } from "./LoginPage";

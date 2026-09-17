@@ -1,0 +1,224 @@
+#!/usr/bin/env python3
+"""Ideation radar: outlier scans and link captures for the creative director.
+
+    python3 radar.py doctor                     check keys, binaries, services
+    python3 radar.py scan [--dry-run] [--platform tiktok] [--only handle]
+    python3 radar.py capture <url> [<url>...] [--by email] [--note ...] [--industry ours|other]
+    python3 radar.py pending [--limit 10]       capture links pasted in the cockpit
+    python3 radar.py watchlist list|add|remove  manage the accounts and hashtags
+    python3 radar.py digest                     print the last scan's digest
+
+Standard library only. Keys are read by name from the environment or the
+Hermes key files; nothing is ever printed. Exit code is non-zero when a
+scan failed every target, a capture failed, or doctor found a blocker.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import sys
+from pathlib import Path
+from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from radar import http  # noqa: E402
+from radar.apify import Apify, ApifyError  # noqa: E402
+from radar.capture import CaptureError, capture_pending, capture_url  # noqa: E402
+from radar.config import Config  # noqa: E402
+from radar.log import Logger  # noqa: E402
+from radar.scan import digest_text, run_scan  # noqa: E402
+from radar.sinks import BridgeSink, SinkError, SlackSink, SupabaseSink  # noqa: E402
+from radar.state import State  # noqa: E402
+from radar import watchlist as wl  # noqa: E402
+
+
+def _print(obj: Any, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(obj, ensure_ascii=False, indent=1))
+    elif isinstance(obj, str):
+        print(obj)
+    else:
+        print(json.dumps(obj, ensure_ascii=False, indent=1))
+
+
+def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    checks: list[dict[str, Any]] = []
+
+    def add(name: str, ok: bool, detail: str, required: bool = False) -> None:
+        checks.append({"check": name, "ok": ok, "detail": detail, "required": required})
+
+    add("python", sys.version_info >= (3, 9), sys.version.split()[0], True)
+    add("ffmpeg", shutil.which("ffmpeg") is not None, shutil.which("ffmpeg") or "missing: frames and audio extraction disabled")
+    add("ffprobe", shutil.which("ffprobe") is not None, shutil.which("ffprobe") or "missing: durations unknown")
+    add("home", True, str(cfg.home))
+    add("watchlist", cfg.watchlist_path.exists(), f"{cfg.watchlist_path} ({len(wl.load(cfg.watchlist_path))} targets)")
+    # Keys by name only.
+    add("APIFY_API_KEY", bool(cfg.apify_token), "set" if cfg.apify_token else "missing: scans and captures cannot run", True)
+    add("GOOGLE_AI_API_KEY", bool(cfg.gemini_key), "set (video understanding)" if cfg.gemini_key else "missing: falls back to Whisper plus frames")
+    add("GROQ_API_KEY", bool(cfg.groq_key), "set (speech fallback)" if cfg.groq_key else "missing")
+    add("OPENAI_API_KEY", bool(cfg.openai_key), "set (frame vision fallback)" if cfg.openai_key else "missing")
+    add("DEEPSEEK_API_KEY", bool(cfg.deepseek_key), "set (text fallback)" if cfg.deepseek_key else "missing")
+    add("cockpit door", bool(cfg.bridge_url and cfg.bridge_token), "configured" if cfg.bridge_url and cfg.bridge_token else "not configured (COCKPIT_IDEATION_URL/TOKEN)")
+    add("supabase", bool(cfg.supabase_url and cfg.supabase_key), "configured" if cfg.supabase_url and cfg.supabase_key else "not configured")
+    add("slack", bool(cfg.slack_token and cfg.slack_channel), "configured" if cfg.slack_token and cfg.slack_channel else "not configured (RADAR_SLACK_CHANNEL)")
+    if not args.offline:
+        if cfg.apify_token:
+            try:
+                me = Apify(cfg.apify_token, base=cfg.apify_base).me()
+                add("apify api", True, f"user {me.get('username')} plan {((me.get('plan') or {}).get('id')) or '?'}", True)
+            except (http.HttpError, ApifyError, KeyError) as e:
+                add("apify api", False, f"{e}", True)
+        if cfg.gemini_key:
+            try:
+                models = http.get_json(f"https://generativelanguage.googleapis.com/v1beta/models?key={cfg.gemini_key}&pageSize=200", timeout=30)
+                names = {m.get("name", "").split("/")[-1] for m in models.get("models", [])}
+                ok = cfg.gemini_model in names
+                add("gemini model", ok, f"{cfg.gemini_model} {'available' if ok else 'NOT in the model list; set RADAR_GEMINI_MODEL'}")
+            except (http.HttpError, AttributeError) as e:
+                add("gemini api", False, str(e))
+        if cfg.groq_key:
+            try:
+                http.get_json("https://api.groq.com/openai/v1/models", headers={"Authorization": f"Bearer {cfg.groq_key}"}, timeout=30)
+                add("groq api", True, "ok")
+            except http.HttpError as e:
+                add("groq api", False, str(e))
+        if cfg.bridge_url and cfg.bridge_token:
+            try:
+                BridgeSink(cfg.bridge_url, cfg.bridge_token).ping()
+                add("cockpit ping", True, "ok")
+            except (SinkError, http.HttpError) as e:
+                add("cockpit ping", False, str(e))
+        if cfg.supabase_url and cfg.supabase_key:
+            try:
+                http.request("GET", f"{cfg.supabase_url.rstrip('/')}/rest/v1/{cfg.supabase_table}?select=key&limit=1", headers={"apikey": cfg.supabase_key, "Authorization": f"Bearer {cfg.supabase_key}"}, timeout=30, retries=0)
+                add("supabase table", True, cfg.supabase_table)
+            except http.HttpError as e:
+                add("supabase table", False, f"{e} (see README for the DDL)")
+        if cfg.slack_token and cfg.slack_channel:
+            try:
+                out = http.post_json("https://slack.com/api/auth.test", {}, headers={"Authorization": f"Bearer {cfg.slack_token}"}, timeout=30, retries=0)
+                add("slack auth", bool(out and out.get("ok")), str((out or {}).get("user") or (out or {}).get("error")))
+            except http.HttpError as e:
+                add("slack auth", False, str(e))
+    blockers = [c for c in checks if c["required"] and not c["ok"]]
+    if args.json:
+        _print({"ok": not blockers, "checks": checks}, True)
+    else:
+        for c in checks:
+            mark = "OK " if c["ok"] else ("!! " if c["required"] else "-- ")
+            print(f"{mark} {c['check']:18s} {c['detail']}")
+        print("blockers: " + (", ".join(c["check"] for c in blockers) if blockers else "none"))
+    return 1 if blockers else 0
+
+
+def cmd_scan(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    report = run_scan(cfg, log.info, dry_run=args.dry_run, platforms=args.platform or None, only=args.only or None)
+    if args.json:
+        _print(report.to_dict(), True)
+    else:
+        print(digest_text(report))
+        if args.verbose:
+            for row in report.per_target:
+                print(" ", json.dumps(row, ensure_ascii=False))
+            for w in report.warnings:
+                print("  warn:", w)
+    return 1 if (report.targets and report.scanned == 0) else 0
+
+
+def cmd_capture(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    rc = 0
+    ideas = []
+    for url in args.url:
+        idea = capture_url(cfg, log.info, url, saved_by=args.by or "", note=args.note or "", industry=args.industry, tags=[t for t in (args.tags or "").split(",") if t], dry_run=args.dry_run, force=args.force, keep_media=args.keep_media)
+        ideas.append(idea.to_dict())
+        if idea.status != "captured":
+            rc = 1
+            log.warn(f"capture failed for {url}: {idea.error}")
+    if args.json:
+        _print(ideas if len(ideas) > 1 else ideas[0], True)
+    else:
+        for i in ideas:
+            print(f"{i['status']}: {i['url']}")
+            if i["status"] == "captured":
+                print(f"  {i.get('format')} | {i.get('voice')} | {i.get('language')} {i.get('dialect') or ''} | hook: {(i.get('hook') or {}).get('text','')[:120]}")
+                print(f"  why: {i.get('why_it_works','')[:300]}")
+                for a in i.get("adaptations", [])[:5]:
+                    print(f"  - {a}")
+            else:
+                print(f"  error: {i.get('error')}")
+            for w in i.get("warnings", [])[:5]:
+                print(f"  warn: {w}")
+    return rc
+
+
+def cmd_pending(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    try:
+        ideas = capture_pending(cfg, log.info, limit=args.limit, dry_run=args.dry_run)
+    except (CaptureError, SinkError, http.HttpError) as e:
+        log.error(str(e))
+        return 1
+    failed = [i for i in ideas if i.status != "captured"]
+    _print({"captured": len(ideas) - len(failed), "failed": len(failed), "keys": [i.key for i in ideas]}, args.json)
+    return 1 if failed and not ideas else 0
+
+
+def cmd_watchlist(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    if args.action == "list":
+        rows = wl.as_rows(wl.load(cfg.watchlist_path))
+        if args.json:
+            _print(rows, True)
+        else:
+            for r in rows:
+                flag = "" if r["active"] else " (inactive)"
+                print(f"{r['platform']:9s} {r['kind']:7s} {r['value']:30s} {r['industry']:6s} {','.join(r['tags'])}{flag}")
+            print(f"{len(rows)} targets in {cfg.watchlist_path}")
+        return 0
+    if args.action == "add":
+        t = wl.add(cfg.watchlist_path, args.platform, args.value, industry=args.industry, tags=[x for x in (args.tags or "").split(",") if x], note=args.note or "")
+        _print(t.to_dict(), args.json)
+        return 0
+    if args.action == "remove":
+        ok = wl.remove(cfg.watchlist_path, args.platform, args.value)
+        _print({"removed": ok}, args.json)
+        return 0 if ok else 1
+    return 2
+
+
+def cmd_digest(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    st = State.load(cfg.state_path)
+    last = st.last_scan()
+    if not last:
+        print("no scan recorded yet")
+        return 1
+    _print(last, args.json)
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="radar.py", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--json", action="store_true", help="machine readable output")
+    ap.add_argument("--quiet", action="store_true", help="only warnings and errors on stderr")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    d = sub.add_parser("doctor"); d.add_argument("--offline", action="store_true")
+    s = sub.add_parser("scan"); s.add_argument("--dry-run", action="store_true"); s.add_argument("--platform", action="append"); s.add_argument("--only", action="append"); s.add_argument("--verbose", action="store_true")
+    c = sub.add_parser("capture"); c.add_argument("url", nargs="+"); c.add_argument("--by"); c.add_argument("--note"); c.add_argument("--industry", default="other", choices=["ours", "other"]); c.add_argument("--tags"); c.add_argument("--dry-run", action="store_true"); c.add_argument("--force", action="store_true"); c.add_argument("--keep-media", action="store_true")
+    p = sub.add_parser("pending"); p.add_argument("--limit", type=int, default=10); p.add_argument("--dry-run", action="store_true")
+    w = sub.add_parser("watchlist"); w.add_argument("action", choices=["list", "add", "remove"]); w.add_argument("platform", nargs="?"); w.add_argument("value", nargs="?"); w.add_argument("--industry", default="other", choices=["ours", "other"]); w.add_argument("--tags"); w.add_argument("--note")
+    sub.add_parser("digest")
+    args = ap.parse_args(argv)
+    cfg = Config.from_env()
+    cfg.ensure_dirs()
+    log = Logger(cfg.out_dir / "radar.log", quiet=args.quiet)
+    if args.cmd in ("add", "remove") or (args.cmd == "watchlist" and args.action in ("add", "remove") and not (args.platform and args.value)):
+        ap.error("watchlist add/remove need <platform> <value>")
+    handlers = {"doctor": cmd_doctor, "scan": cmd_scan, "capture": cmd_capture, "pending": cmd_pending, "watchlist": cmd_watchlist, "digest": cmd_digest}
+    try:
+        return handlers[args.cmd](cfg, args, log)
+    except KeyboardInterrupt:
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main())

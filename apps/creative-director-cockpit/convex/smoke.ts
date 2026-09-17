@@ -5,6 +5,7 @@ import { buildDetail, buildRoster } from "./clients";
 import { buildOverview } from "./comms";
 import { buildCalendar, buildScriptQueue, buildSnapshot } from "./creative";
 import { buildFunnels } from "./funnels";
+import { buildList as buildIdeation } from "./ideation";
 import {
   buildCreativePatterns,
   buildDimensions,
@@ -41,6 +42,7 @@ const CHECKS = [
   "funnels.list",
   "winners.list",
   "sync.freshness",
+  "ideation.list",
 ] as const;
 
 /**
@@ -117,6 +119,10 @@ export const one = internalQuery({
     switch (name) {
       case "creative.snapshot":
         await buildSnapshot(ctx, null);
+        return null;
+      case "ideation.list":
+        await buildIdeation(ctx, { tab: "saved", limit: 100 });
+        await buildIdeation(ctx, { tab: "proposed", limit: 100 });
         return null;
       case "comms.overview":
         await buildOverview(ctx, true);

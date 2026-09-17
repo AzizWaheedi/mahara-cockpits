@@ -6,6 +6,7 @@ import {
   Clapperboard,
   Filter,
   LayoutGrid,
+  Lightbulb,
   Link2,
   LogOut,
   MessageSquare,
@@ -78,6 +79,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
     label: "Library",
     items: [
       { href: "/scripting", label: "Scripting database", icon: Sparkles },
+      { href: "/ideation", label: "Ideation", icon: Lightbulb },
       { href: "/what-works", label: "What works", icon: Trophy },
       { href: "/funnels", label: "Funnels and forms", icon: Filter },
       { href: "/links", label: "Key links", icon: Link2 },
