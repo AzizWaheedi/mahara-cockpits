@@ -29,7 +29,8 @@ from radar.capture import CaptureError, capture_pending, capture_url  # noqa: E4
 from radar.config import Config  # noqa: E402
 from radar.log import Logger  # noqa: E402
 from radar.scan import digest_text, run_scan  # noqa: E402
-from radar.sinks import BridgeSink, SinkError, SlackSink, SupabaseSink  # noqa: E402
+from radar.sinks import BridgeSink, SinkError, SlackSink  # noqa: E402
+from radar.supabase import Supabase, SupabaseError  # noqa: E402
 from radar.state import State  # noqa: E402
 from radar import watchlist as wl  # noqa: E402
 
@@ -60,9 +61,10 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     add("GROQ_API_KEY", bool(cfg.groq_key), "set (speech fallback)" if cfg.groq_key else "missing")
     add("OPENAI_API_KEY", bool(cfg.openai_key), "set (frame vision fallback)" if cfg.openai_key else "missing")
     add("DEEPSEEK_API_KEY", bool(cfg.deepseek_key), "set (text fallback)" if cfg.deepseek_key else "missing")
-    add("sink mode", cfg.sink_mode in ("cockpit", "supabase", "both"), f"{cfg.sink_mode} (RADAR_SINK)")
-    add("cockpit door", cfg.use_cockpit_sink, "configured" if cfg.use_cockpit_sink else "not configured (COCKPIT_IDEATION_URL/TOKEN)")
-    add("supabase", cfg.use_supabase_sink, "configured" if cfg.use_supabase_sink else "off (RADAR_SINK=supabase|both plus RADAR_SUPABASE_URL/KEY)")
+    add("store", cfg.effective_sink in ("supabase", "cockpit", "both"), f"{cfg.effective_sink} (RADAR_SINK={cfg.sink_mode})", True)
+    add("supabase", cfg.use_supabase_sink, "the ideation home" if cfg.use_supabase_sink else "not configured (RADAR_SUPABASE_URL and RADAR_SUPABASE_KEY)")
+    add("watchlist source", True, "Supabase ideation_watchlist" if cfg.watchlist_from_supabase else str(cfg.watchlist_path))
+    add("cockpit door", cfg.use_cockpit_sink, "mirror configured" if cfg.use_cockpit_sink else "off")
     add("slack", bool(cfg.slack_token and cfg.slack_channel), "configured" if cfg.slack_token and cfg.slack_channel else "not configured (RADAR_SLACK_CHANNEL)")
     if not args.offline:
         if cfg.apify_token:
@@ -91,12 +93,14 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
                 add("cockpit ping", True, "ok")
             except (SinkError, http.HttpError) as e:
                 add("cockpit ping", False, str(e))
-        if cfg.supabase_url and cfg.supabase_key:
+        if cfg.use_supabase_sink:
             try:
-                http.request("GET", f"{cfg.supabase_url.rstrip('/')}/rest/v1/{cfg.supabase_table}?select=key&limit=1", headers={"apikey": cfg.supabase_key, "Authorization": f"Bearer {cfg.supabase_key}"}, timeout=30, retries=0)
-                add("supabase table", True, cfg.supabase_table)
-            except http.HttpError as e:
-                add("supabase table", False, f"{e} (see README for the DDL)")
+                sb = Supabase(cfg.supabase_url, cfg.supabase_key, table=cfg.supabase_table, bucket=cfg.supabase_bucket)
+                sb.ping()
+                n = len(sb.load_watchlist())
+                add("supabase tables", True, f"{cfg.supabase_table} reachable, {n} active watchlist targets", True)
+            except (http.HttpError, SupabaseError) as e:
+                add("supabase tables", False, f"{e} (see README for the DDL)", True)
         if cfg.slack_token and cfg.slack_channel:
             try:
                 out = http.post_json("https://slack.com/api/auth.test", {}, headers={"Authorization": f"Bearer {cfg.slack_token}"}, timeout=30, retries=0)
@@ -166,6 +170,33 @@ def cmd_pending(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
 
 
 def cmd_watchlist(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    sb = Supabase(cfg.supabase_url, cfg.supabase_key, table=cfg.supabase_table, bucket=cfg.supabase_bucket) if cfg.watchlist_from_supabase else None
+    if sb is not None and args.action == "list":
+        rows = [t.to_dict() for t in sb.load_watchlist()]
+        if args.json:
+            _print(rows, True)
+        else:
+            for r in rows:
+                print(f"{r['platform']:9s} {r['kind']:7s} {r['value']:30s} {r['industry']:6s} {','.join(r['tags'])}")
+            print(f"{len(rows)} active targets in Supabase ideation_watchlist")
+        return 0
+    if sb is not None and args.action == "add":
+        from radar.models import Target
+        kind = "hashtag" if args.value.startswith("#") else "account"
+        t = Target(platform=args.platform.lower(), kind=kind, value=args.value.lstrip("@#"), industry=args.industry, tags=[x for x in (args.tags or "").split(",") if x], note=args.note or "")
+        sb.upsert_watchlist([t], added_by="cli")
+        _print(t.to_dict(), args.json)
+        return 0
+    if sb is not None and args.action == "remove":
+        kind = "hashtag" if args.value.startswith("#") else "account"
+        sb.mark_target(f"{args.platform.lower()}:{kind}:{args.value.lstrip('@#').lower()}", active=False)
+        _print({"deactivated": True}, args.json)
+        return 0
+    if sb is not None and args.action == "push":
+        targets = wl.load(cfg.watchlist_path)
+        n = sb.upsert_watchlist(targets, added_by="file")
+        _print({"pushed": n, "from": str(cfg.watchlist_path)}, args.json)
+        return 0
     if args.action == "list":
         rows = wl.as_rows(wl.load(cfg.watchlist_path))
         if args.json:
@@ -206,7 +237,7 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("scan"); s.add_argument("--dry-run", action="store_true"); s.add_argument("--platform", action="append"); s.add_argument("--only", action="append"); s.add_argument("--verbose", action="store_true")
     c = sub.add_parser("capture"); c.add_argument("url", nargs="+"); c.add_argument("--by"); c.add_argument("--note"); c.add_argument("--industry", default="other", choices=["ours", "other"]); c.add_argument("--tags"); c.add_argument("--dry-run", action="store_true"); c.add_argument("--force", action="store_true"); c.add_argument("--keep-media", action="store_true")
     p = sub.add_parser("pending"); p.add_argument("--limit", type=int, default=10); p.add_argument("--dry-run", action="store_true")
-    w = sub.add_parser("watchlist"); w.add_argument("action", choices=["list", "add", "remove"]); w.add_argument("platform", nargs="?"); w.add_argument("value", nargs="?"); w.add_argument("--industry", default="other", choices=["ours", "other"]); w.add_argument("--tags"); w.add_argument("--note")
+    w = sub.add_parser("watchlist"); w.add_argument("action", choices=["list", "add", "remove", "push"]); w.add_argument("platform", nargs="?"); w.add_argument("value", nargs="?"); w.add_argument("--industry", default="other", choices=["ours", "other"]); w.add_argument("--tags"); w.add_argument("--note")
     sub.add_parser("digest")
     args = ap.parse_args(argv)
     cfg = Config.from_env()

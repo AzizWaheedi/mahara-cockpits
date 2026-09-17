@@ -19,8 +19,10 @@ from .models import Idea, Post
 from .outliers import iso, score, tier_for, utcnow
 from .platforms import PlatformError, adapter_for
 from .platforms.snapchat import Snapchat
-from .sinks import BridgeSink, JsonlSink, SupabaseSink, deliver
+from .sinks import BridgeSink, JsonlSink, deliver
 from .state import State
+from .stills import attach_stills
+from .supabase import Supabase
 from .understand import understand
 from .urls import Link, UnsupportedLink, canonicalize
 
@@ -240,20 +242,30 @@ def _deliver(cfg: Config, log: Callable[[str], None], idea: Idea, dry_run: bool,
     jsonl = JsonlSink(cfg.out_dir / ("dry" if dry_run else ""))
     sinks: list[tuple[str, Callable[[], Any]]] = [("jsonl", lambda: jsonl.write_ideas([row]))]
     if not dry_run:
+        if cfg.use_supabase_sink:
+            sb = Supabase(cfg.supabase_url, cfg.supabase_key, table=cfg.supabase_table, bucket=cfg.supabase_bucket)
+            def to_supabase() -> None:
+                if idea.status == "captured":
+                    attach_stills(sb, [row], log, max_items=1)
+                sb.store_idea(row, origin_key=cockpit_id or None)
+            sinks.append(("supabase", to_supabase))
         if cfg.use_cockpit_sink:
             sinks.append(("cockpit", lambda: BridgeSink(cfg.bridge_url, cfg.bridge_token).store_ideas([row])))
-        if cfg.use_supabase_sink:
-            sinks.append(("supabase", lambda: SupabaseSink(cfg.supabase_url, cfg.supabase_key, cfg.supabase_table).upsert([row])))
     deliver(sinks, log)
 
 
 def capture_pending(cfg: Config, log: Callable[[str], None], *, limit: int = 10, dry_run: bool = False, apify: Optional[Apify] = None, state: Optional[State] = None) -> list[Idea]:
-    """Links pasted in the cockpit: fetch them from the bridge, capture each, push back."""
-    if not (cfg.bridge_url and cfg.bridge_token):
-        raise CaptureError("COCKPIT_IDEATION_URL and COCKPIT_IDEATION_TOKEN are not set")
-    bridge = BridgeSink(cfg.bridge_url, cfg.bridge_token)
-    rows = bridge.pending_captures(limit)
-    log(f"{len(rows)} pending capture(s) in the cockpit")
+    """Links pasted in the cockpit: claim them from the store, capture each, write back."""
+    if cfg.use_supabase_sink:
+        sb = Supabase(cfg.supabase_url, cfg.supabase_key, table=cfg.supabase_table, bucket=cfg.supabase_bucket)
+        rows = sb.claim_pending(limit)
+        id_field = "key"
+    elif cfg.bridge_url and cfg.bridge_token:
+        rows = BridgeSink(cfg.bridge_url, cfg.bridge_token).pending_captures(limit)
+        id_field = "id"
+    else:
+        raise CaptureError("no store configured: set RADAR_SUPABASE_URL and RADAR_SUPABASE_KEY (or the cockpit door)")
+    log(f"{len(rows)} pending capture(s)")
     out: list[Idea] = []
     for r in rows:
         url = str(r.get("url") or "")
@@ -263,7 +275,7 @@ def capture_pending(cfg: Config, log: Callable[[str], None], *, limit: int = 10,
             cfg, log, url,
             saved_by=str(r.get("savedBy") or r.get("saved_by") or ""), note=str(r.get("note") or ""),
             industry=str(r.get("industry") or "other"), tags=list(r.get("tags") or []),
-            cockpit_id=str(r.get("id") or ""), dry_run=dry_run, apify=apify, state=state,
+            cockpit_id=str(r.get(id_field) or ""), dry_run=dry_run, apify=apify, state=state, force=True,
         )
         out.append(idea)
     return out

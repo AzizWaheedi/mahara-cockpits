@@ -5,7 +5,8 @@ import unittest
 os.environ.setdefault("RADAR_HOME", "/tmp/radar-unit")
 import radar.http as http
 from radar.apify import Apify, first, to_int
-from radar.sinks import BridgeSink, SinkError, SupabaseSink
+from radar.sinks import BridgeSink, SinkError
+from radar.supabase import Supabase
 from radar.understand import normalise_result, parse_json
 from tests.fakes import FakeHttp
 
@@ -87,14 +88,117 @@ class SinkTests(unittest.TestCase):
         orig = http.request
         http.request = fake
         try:
-            n = SupabaseSink("https://x.supabase.co", "key", "ideation_posts").upsert([{"key": "a", "raw": {"drop": 1}, "tags": ["t"]}])
+            n = Supabase("https://x.supabase.co", "key", table="ideation_posts").upsert("ideation_posts", [{"key": "a", "tags": ["t"]}])
             self.assertEqual(n, 1)
             call = fake.calls[0]
             self.assertIn("on_conflict=key", call["url"])
             self.assertIn("merge-duplicates", call["headers"]["Prefer"])
-            self.assertNotIn("raw", call["json_body"][0])
+            self.assertEqual(call["headers"]["apikey"], "key")
         finally:
             http.request = orig
+
+
+def body_of(call):
+    """The JSON the Supabase client sent (it passes bytes, not json_body)."""
+    raw = call.get("data")
+    return json.loads(raw.decode("utf-8")) if raw else call.get("json_body")
+
+
+class SupabaseFlowTests(unittest.TestCase):
+    """The writer rules: decisions survive scans, pasted rows take the real key, claims lease."""
+
+    def setUp(self):
+        self.orig = http.request
+
+    def tearDown(self):
+        http.request = self.orig
+
+    def test_store_candidates_splits_new_proposed_and_decided(self):
+        existing = json.dumps([{"key": "instagram:A", "status": "proposed"}, {"key": "instagram:B", "status": "saved", "still_path": "instagram/B.jpg"}]).encode()
+        fake = FakeHttp([(200, {}, existing), (204, {}, b""), (201, {}, b"")])
+        http.request = fake
+        sb = Supabase("https://x.supabase.co", "key")
+        out = sb.store_candidates([
+            {"key": "instagram:A", "platform": "instagram", "url": "u", "views": 10, "raw": {"x": 1}, "is_video": True},
+            {"key": "instagram:B", "platform": "instagram", "url": "u", "views": 20, "multiplier": 4.0, "thumb_url": "https://t/b.jpg"},
+            {"key": "instagram:C", "platform": "instagram", "url": "u", "views": 30},
+        ])
+        self.assertEqual(out, {"inserted": 1, "refreshed": 1, "patched": 1})
+        methods = [(c["method"], c["url"].split("/rest/v1/")[1][:60]) for c in fake.calls]
+        self.assertEqual(methods[0][0], "GET")
+        self.assertEqual(methods[1][0], "PATCH")  # the saved row takes numbers only
+        patched = body_of(fake.calls[1])
+        self.assertNotIn("status", patched)
+        self.assertNotIn("thumb_url", patched, "a row with its own still keeps it")
+        self.assertEqual(patched["multiplier"], 4.0)
+        self.assertEqual(methods[2][0], "POST")
+        upserted = body_of(fake.calls[2])
+        self.assertEqual({r["key"] for r in upserted}, {"instagram:A", "instagram:C"})
+        self.assertTrue(all(r["status"] == "proposed" for r in upserted))
+        self.assertNotIn("raw", upserted[0])
+        self.assertNotIn("is_video", upserted[0])
+
+    def test_store_idea_takes_over_the_pasted_row(self):
+        existing = json.dumps([{"key": "pasted:abc", "status": "fetching", "saved_by": "sabry@x", "note": "nice", "industry": "ours", "tags": ["kw"], "attempts": 1}]).encode()
+        fake = FakeHttp([(200, {}, existing), (204, {}, b"")])
+        http.request = fake
+        sb = Supabase("https://x.supabase.co", "key")
+        key = sb.store_idea({"key": "tiktok:123", "platform": "tiktok", "url": "u", "status": "captured", "transcript": "hi", "hook": {"text": "hi"}, "captured_at": "2026-09-17T12:00:00Z"}, origin_key="pasted:abc")
+        self.assertEqual(key, "tiktok:123")
+        call = fake.calls[1]
+        self.assertEqual(call["method"], "PATCH")
+        self.assertIn("key=eq.pasted%3Aabc", call["url"])
+        body = body_of(call)
+        self.assertEqual(body["key"], "tiktok:123")
+        self.assertEqual(body["status"], "saved")
+        self.assertEqual(body["saved_by"], "sabry@x")
+        self.assertEqual(body["note"], "nice")
+        self.assertEqual(body["industry"], "ours")
+        self.assertEqual(body["origin"], "manual")
+
+    def test_store_idea_merges_into_existing_post_and_deletes_the_pasted_row(self):
+        existing = json.dumps([{"key": "tiktok:123", "status": "proposed"}, {"key": "pasted:abc", "status": "fetching", "saved_by": "sabry@x"}]).encode()
+        fake = FakeHttp([(200, {}, existing), (204, {}, b""), (204, {}, b"")])
+        http.request = fake
+        sb = Supabase("https://x.supabase.co", "key")
+        sb.store_idea({"key": "tiktok:123", "platform": "tiktok", "url": "u", "status": "captured", "transcript": "hi"}, origin_key="pasted:abc")
+        self.assertEqual([c["method"] for c in fake.calls], ["GET", "PATCH", "DELETE"])
+        self.assertIn("key=eq.tiktok%3A123", fake.calls[1]["url"])
+        self.assertIn("key=eq.pasted%3Aabc", fake.calls[2]["url"])
+
+    def test_store_idea_failure_keeps_the_reason(self):
+        fake = FakeHttp([(200, {}, b"[]"), (201, {}, b"")])
+        http.request = fake
+        sb = Supabase("https://x.supabase.co", "key")
+        sb.store_idea({"key": "instagram:GONE", "platform": "instagram", "url": "u", "status": "failed", "error": "private or removed"})
+        body = body_of(fake.calls[1])[0]
+        self.assertEqual(body["status"], "failed")
+        self.assertEqual(body["error"], "private or removed")
+        self.assertEqual(body["attempts"], 1)
+
+    def test_claim_pending_leases_and_gives_up_after_four(self):
+        queued = json.dumps([{"key": "pasted:1", "url": "https://www.tiktok.com/@a/video/1", "attempts": 0, "saved_by": "s@x"}, {"key": "pasted:2", "url": "u2", "attempts": 4}]).encode()
+        fake = FakeHttp([(200, {}, queued), (200, {}, b"[]"), (204, {}, b""), (204, {}, b"")])
+        http.request = fake
+        sb = Supabase("https://x.supabase.co", "key")
+        rows = sb.claim_pending(5)
+        self.assertEqual([r["key"] for r in rows], ["pasted:1"])
+        self.assertEqual(rows[0]["saved_by"], "s@x")
+        first = body_of(fake.calls[2])
+        self.assertEqual(first["status"], "fetching")
+        self.assertEqual(first["attempts"], 1)
+        second = body_of(fake.calls[3])
+        self.assertEqual(second["status"], "failed")
+        self.assertEqual(second["attempts"], 5)
+
+    def test_upload_still_path_and_headers(self):
+        fake = FakeHttp([(200, {}, b'{"Key":"ideation-stills/instagram/A.jpg"}')])
+        http.request = fake
+        sb = Supabase("https://x.supabase.co", "key")
+        path = sb.upload_still("instagram", "A", b"x" * 300, "image/jpeg")
+        self.assertEqual(path, "instagram/A.jpg")
+        self.assertIn("/storage/v1/object/ideation-stills/instagram/A.jpg", fake.calls[0]["url"])
+        self.assertEqual(fake.calls[0]["headers"]["x-upsert"], "true")
 
 
 class UnderstandParsingTests(unittest.TestCase):

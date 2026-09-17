@@ -139,10 +139,13 @@ class Config:
     supabase_url: str = ""
     supabase_key: str = ""
     supabase_table: str = "ideation_posts"
+    supabase_bucket: str = "ideation-stills"
     slack_channel: str = ""
-    # One authoritative store for proposals and ideas (migration plan rule):
-    # "cockpit" (default), "supabase", or "both" only for a deliberate mirror.
-    sink_mode: str = "cockpit"
+    # One authoritative store. Aziz, 2026-09-17: the ideation home is Supabase.
+    # "auto": Supabase when its keys are set, else the cockpit door, else files only.
+    sink_mode: str = "auto"
+    # "auto": the Supabase watchlist when Supabase is the sink, else the JSON file.
+    watchlist_source: str = "auto"
     extra: dict[str, str] = field(default_factory=dict)
 
     @staticmethod
@@ -198,8 +201,10 @@ class Config:
             supabase_url=key("RADAR_SUPABASE_URL", ""),
             supabase_key=key("RADAR_SUPABASE_KEY", ""),
             supabase_table=key("RADAR_SUPABASE_TABLE", "ideation_posts"),
+            supabase_bucket=key("RADAR_SUPABASE_BUCKET", "ideation-stills"),
             slack_channel=key("RADAR_SLACK_CHANNEL", ""),
-            sink_mode=key("RADAR_SINK", "cockpit").lower(),
+            sink_mode=key("RADAR_SINK", "auto").lower(),
+            watchlist_source=key("RADAR_WATCHLIST_SOURCE", "auto").lower(),
         )
         return cfg
 
@@ -207,12 +212,34 @@ class Config:
         return {"instagram": self.floor_instagram, "tiktok": self.floor_tiktok, "snapchat": self.floor_snapchat}.get(platform, 0.0)
 
     @property
+    def supabase_configured(self) -> bool:
+        return bool(self.supabase_url and self.supabase_key)
+
+    @property
+    def effective_sink(self) -> str:
+        if self.sink_mode == "auto":
+            if self.supabase_configured:
+                return "supabase"
+            if self.bridge_url and self.bridge_token:
+                return "cockpit"
+            return "files"
+        return self.sink_mode
+
+    @property
     def use_cockpit_sink(self) -> bool:
-        return self.sink_mode in ("cockpit", "both") and bool(self.bridge_url and self.bridge_token)
+        return self.effective_sink in ("cockpit", "both") and bool(self.bridge_url and self.bridge_token)
 
     @property
     def use_supabase_sink(self) -> bool:
-        return self.sink_mode in ("supabase", "both") and bool(self.supabase_url and self.supabase_key)
+        return self.effective_sink in ("supabase", "both") and self.supabase_configured
+
+    @property
+    def watchlist_from_supabase(self) -> bool:
+        if self.watchlist_source == "supabase":
+            return self.supabase_configured
+        if self.watchlist_source == "file":
+            return False
+        return self.use_supabase_sink
 
     # Secrets are looked up lazily so a missing key only fails the step that
     # needs it, never the whole run.

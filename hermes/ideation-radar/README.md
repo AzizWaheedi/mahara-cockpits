@@ -84,8 +84,8 @@ and `/opt/data/.env` (the Hermes key files). Never printed.
 | `GROQ_API_KEY` | speech transcription fallback |
 | `OPENAI_API_KEY` | frame vision fallback when Gemini is unavailable |
 | `DEEPSEEK_API_KEY` | text breakdown fallback |
-| `COCKPIT_IDEATION_URL`, `COCKPIT_IDEATION_TOKEN` | the creative director cockpit's dedicated `/ideation` door (`https://colorful-wombat-644.convex.site/ideation`, token `IDEATION_TOKEN` on that deployment): pushes proposals and ideas, pulls links pasted there |
-| `RADAR_SUPABASE_URL`, `RADAR_SUPABASE_KEY`, `RADAR_SUPABASE_TABLE` | optional Supabase table; opt-in only (the generic `SUPABASE_URL` in the Hermes key file points at another project) |
+| `RADAR_SUPABASE_URL`, `RADAR_SUPABASE_KEY` | the home: the Creative Triage project URL and its service role key (the generic `SUPABASE_URL` in the Hermes key file points at another project, so these are read by their own names) |
+| `COCKPIT_IDEATION_URL`, `COCKPIT_IDEATION_TOKEN` | optional mirror into a cockpit door; not used |
 | `SLACK_BOT_TOKEN`, `RADAR_SLACK_CHANNEL` | a digest line per scan, posted even when nothing was found |
 
 Settings (all optional): `RADAR_HOME` (default `~/.ideation-radar`),
@@ -208,38 +208,87 @@ functions:
 `capture` marks a pasted link `failed` with the reason instead of leaving a
 spinner, so the tab can show why.
 
-## Supabase (optional, for the move off Convex)
+## The home: Supabase
+
+Aziz, 2026-09-17: the ideation data lives in Supabase. The tables were created
+the same day in the Creative Triage project (`bldgtotkfmhoxmlzowdx`, the
+migration plan's "Mahara Core"), all with row security on and no policies,
+so only the service key can read or write them:
+
+- `public.ideation_posts`: one row per post, key `platform:postId`
+  (`pasted:…` until the radar resolves a pasted link); the scan's proposals,
+  the captured transcripts and breakdowns, and the creative director's
+  decisions (kept, dismissed, notes) all on the same row.
+- `public.ideation_watchlist`: the accounts and hashtags to scan, editable
+  from the cockpit later; `radar.py watchlist push` seeds it from the JSON
+  file, `watchlist add|remove|list` work on it directly.
+- `public.ideation_scans`: one row per scan with counts, cost and warnings.
+- Storage bucket `ideation-stills` (private): the cockpit's own copy of each
+  post's thumbnail, signed for six hours when the page loads.
+
+Keys by name: the worker reads `RADAR_SUPABASE_URL` and `RADAR_SUPABASE_KEY`
+(the service role key; put them in the Hermes key file or a `600` env file
+sourced by the cron line). The two cockpits read `SUPABASE_URL` and
+`SUPABASE_SERVICE_ROLE_KEY` on their Convex deployments and never send the
+key to the browser. Rules the writer follows: a proposal never overwrites a
+decision, a captured idea takes over the pasted row it answers, a queued link
+is leased for 30 minutes and fails after four tries with the reason.
+
+The DDL that was applied, for reference and for a second environment:
 
 ```sql
 create table if not exists public.ideation_posts (
   key text primary key,
   platform text not null,
-  post_id text not null,
+  post_id text,
   url text not null,
-  origin text not null,            -- scan | manual
-  status text not null,            -- proposed | captured | failed | saved | dismissed
+  origin text not null default 'scan',
+  status text not null default 'proposed',
+  at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
   author_handle text, author_name text, author_followers bigint,
   posted_at timestamptz, views bigint, likes bigint, comments bigint, shares bigint, saves bigint,
   caption text, duration_sec numeric, thumb_url text, media_url text,
-  industry text, tags jsonb default '[]', saved_by text, note text,
-  target_key text, baseline_views numeric, baseline_n int, baseline_method text,
-  multiplier numeric, tier text, engagement_rate numeric, packaging_only boolean,
-  scanned_at timestamptz, captured_at timestamptz,
-  language text, dialect text, has_speech boolean, voice text,
-  transcript text, on_screen_text jsonb default '[]', format text, hook jsonb, beats jsonb default '[]',
-  cta text, why_it_works text, transferable text, adaptations jsonb default '[]', music text,
-  method jsonb, confidence jsonb, warnings jsonb default '[]', error text,
-  cockpit_id text,
-  updated_at timestamptz default now()
+  target_key text, industry text not null default 'other', tags jsonb not null default '[]'::jsonb,
+  baseline_views numeric, baseline_raw numeric, baseline_floored boolean, baseline_n integer,
+  baseline_confidence text, baseline_method text, baseline_rules jsonb,
+  multiplier numeric, tier text, engagement_rate numeric, reach_rate numeric, robust_z numeric,
+  packaging_only boolean, provisional boolean, checkpoint text, scanned_at timestamptz,
+  captured_at timestamptz, language text, dialect text, has_speech boolean, voice text,
+  transcript text, on_screen_text jsonb not null default '[]'::jsonb, format text, hook jsonb,
+  beats jsonb not null default '[]'::jsonb, cta text, why_it_works text, transferable text,
+  adaptations jsonb not null default '[]'::jsonb, music text, method jsonb, confidence jsonb,
+  warnings jsonb not null default '[]'::jsonb, error text,
+  pasted_by text, pasted_by_name text, pasted_at timestamptz, note text,
+  saved_by text, saved_by_name text, saved_at timestamptz, saved_note text,
+  dismissed_by text, dismissed_at timestamptz, fetching_at timestamptz, attempts integer not null default 0,
+  still_path text, still_at timestamptz, still_error text,
+  updated_at timestamptz not null default now()
 );
-create index if not exists ideation_posts_status_idx on public.ideation_posts (status, scanned_at desc);
-create index if not exists ideation_posts_platform_idx on public.ideation_posts (platform, captured_at desc);
-alter table public.ideation_posts enable row level security;   -- service role writes; add read policies for the cockpit
+create index if not exists ideation_posts_status_at_idx on public.ideation_posts (status, at desc);
+create index if not exists ideation_posts_platform_at_idx on public.ideation_posts (platform, at desc);
+create table if not exists public.ideation_watchlist (
+  key text primary key, platform text not null, kind text not null default 'account', value text not null,
+  industry text not null default 'other', tags jsonb not null default '[]'::jsonb, active boolean not null default true,
+  note text, source text not null default 'manual', added_by text, added_at timestamptz not null default now(),
+  last_scanned_at timestamptz, last_status text, baseline_views numeric, baseline_n integer, followers bigint,
+  updated_at timestamptz not null default now()
+);
+create table if not exists public.ideation_scans (
+  id bigserial primary key, at timestamptz not null default now(),
+  targets integer, scanned integer, failed integer, skipped integer, posts integer,
+  candidates_total integer, candidates_new integer, apify_runs integer,
+  usage_usd numeric, duration_sec numeric, dry_run boolean,
+  warnings jsonb not null default '[]'::jsonb, per_target jsonb not null default '[]'::jsonb, sinks jsonb
+);
+alter table public.ideation_posts enable row level security;
+alter table public.ideation_watchlist enable row level security;
+alter table public.ideation_scans enable row level security;
+revoke all on table public.ideation_posts, public.ideation_watchlist, public.ideation_scans from anon, authenticated;
 ```
 
-The script upserts with `on_conflict=key`. Keep the table out of anonymous
-reach: the 2026-09-17 migration plan already flagged views and tables in the
-Creative Triage project with anonymous grants.
+The cockpit door (`COCKPIT_IDEATION_URL`/`TOKEN`, `RADAR_SINK=cockpit`) is
+kept only as a mirror option; nothing needs it now.
 
 ## Costs
 

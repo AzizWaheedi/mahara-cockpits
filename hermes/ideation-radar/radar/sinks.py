@@ -3,7 +3,7 @@ the audit trail and the recovery path when a remote store is down.
 
 - JsonlSink: out/candidates-YYYY-MM-DD.jsonl, out/ideas.jsonl, out/latest.json
 - BridgeSink: the creative director cockpit's POST /bridge door
-- SupabaseSink: PostgREST upsert into one table (for the Supabase move)
+- Supabase (radar/supabase.py): the ideation home, tables plus the stills bucket
 - SlackSink: a digest line per scan, posted even when nothing was found so
   silence is never ambiguous (the Radar rule from 2026-05-16)
 """
@@ -98,49 +98,7 @@ class BridgeSink:
         return self.call("ideationPing", {})
 
 
-class SupabaseSink:
-    """PostgREST upsert. Table columns must exist; see README for the DDL."""
-
-    def __init__(self, url: str, key: str, table: str, *, timeout: float = 60):
-        if not url or not key:
-            raise SinkError("supabase url and key are required")
-        self.url = url.rstrip("/")
-        self.key = key
-        self.table = table
-        self.timeout = timeout
-
-    def upsert(self, rows: list[dict[str, Any]], on_conflict: str = "key") -> int:
-        if not rows:
-            return 0
-        payload = [_flatten_for_sql(r) for r in rows]
-        url = f"{self.url}/rest/v1/{self.table}?on_conflict={on_conflict}"
-        http.request(
-            "POST",
-            url,
-            headers={
-                "apikey": self.key,
-                "Authorization": f"Bearer {self.key}",
-                "Content-Type": "application/json",
-                "Prefer": "resolution=merge-duplicates,return=minimal",
-            },
-            json_body=payload,
-            timeout=self.timeout,
-            retries=2,
-            ok_statuses=(200, 201, 204),
-        )
-        return len(payload)
-
-
-def _flatten_for_sql(row: dict[str, Any]) -> dict[str, Any]:
-    out: dict[str, Any] = {}
-    for k, v in row.items():
-        if k == "raw":
-            continue
-        if isinstance(v, (dict, list)):
-            out[k] = v  # PostgREST accepts JSON for jsonb columns
-        else:
-            out[k] = v
-    return out
+# Supabase lives in radar/supabase.py (the ideation home since 2026-09-17).
 
 
 class SlackSink:

@@ -5,7 +5,6 @@ import { buildDetail, buildRoster } from "./clients";
 import { buildOverview } from "./comms";
 import { buildCalendar, buildScriptQueue, buildSnapshot } from "./creative";
 import { buildFunnels } from "./funnels";
-import { buildList as buildIdeation } from "./ideation";
 import {
   buildCreativePatterns,
   buildDimensions,
@@ -42,7 +41,6 @@ const CHECKS = [
   "funnels.list",
   "winners.list",
   "sync.freshness",
-  "ideation.list",
 ] as const;
 
 /**
@@ -102,6 +100,28 @@ export const run = internalAction({
         });
       }
     }
+    // The Ideation tab reads Supabase through an action, so it is checked here, not in `one`.
+    {
+      const t0 = Date.now();
+      try {
+        const out: { skipped?: boolean; note?: string } | null =
+          await ctx.runAction(internal.ideation.smokeCheck, {});
+        const check: Check = {
+          name: "ideation.list",
+          ok: true,
+          ms: Date.now() - t0,
+        };
+        if (out?.note) check.note = out.note;
+        checks.push(check);
+      } catch (e) {
+        checks.push({
+          name: "ideation.list",
+          ok: false,
+          error: String(e).slice(0, 300),
+          ms: Date.now() - t0,
+        });
+      }
+    }
     return { app: "creative", ok: checks.every(c => c.ok), checks };
   },
 });
@@ -119,10 +139,6 @@ export const one = internalQuery({
     switch (name) {
       case "creative.snapshot":
         await buildSnapshot(ctx, null);
-        return null;
-      case "ideation.list":
-        await buildIdeation(ctx, { tab: "saved", limit: 100 });
-        await buildIdeation(ctx, { tab: "proposed", limit: 100 });
         return null;
       case "comms.overview":
         await buildOverview(ctx, true);

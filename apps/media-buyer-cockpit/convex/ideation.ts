@@ -3,10 +3,12 @@ import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { internalAction, internalQuery } from "./_generated/server";
 import { authenticatedAction } from "./functions";
-import { hasAccess } from "./roles";
+import { accessFor } from "./roles";
 
 /**
- * The Ideation tab's backend: Supabase is the home (Aziz, 2026-09-17).
+ * The Ideation board, mirrored from the creative director cockpit (Aziz,
+ * 2026-09-17: "this board can also go to the media buyer"). Same Supabase
+ * home, same functions; only the seat check differs.
  *
  * Every row lives in the Creative Triage project's `ideation_posts` table,
  * written by the ideation radar on the VPS (scans and captures) and by the
@@ -214,19 +216,16 @@ export const gate = internalQuery({
   returns: v.object({ ok: v.boolean(), email: v.string(), name: v.string() }),
   handler: async (ctx, { userId }) => {
     const user = await ctx.db.get(userId);
-    const email = String(user?.email ?? "")
-      .trim()
-      .toLowerCase();
-    const ok = await hasAccess(ctx, email);
-    let name = String(user?.name ?? "");
-    if (!name && email) {
-      const member = await ctx.db
-        .query("portalMembers")
-        .withIndex("by_email", q => q.eq("email", email))
-        .unique();
-      name = member?.name ?? email.split("@")[0];
-    }
-    return { ok, email, name };
+    const a = await accessFor(ctx, user?.email, userId);
+    const ok =
+      a.isAdmin ||
+      a.roles.includes("media_buyer") ||
+      a.roles.includes("creative");
+    return {
+      ok,
+      email: a.email,
+      name: String(a.name ?? user?.name ?? a.email.split("@")[0]),
+    };
   },
 });
 

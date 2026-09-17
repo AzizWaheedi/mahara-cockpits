@@ -18,13 +18,16 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
+from . import http
 from .apify import Apify, ApifyError, RunResult
 from .config import Config
 from .models import Baseline, Candidate, Post, Target
 from .outliers import compute_baseline, find_candidates, iso, parse_iso, utcnow
 from .platforms import PlatformError, adapter_for
-from .sinks import BridgeSink, JsonlSink, SlackSink, SupabaseSink, deliver
+from .sinks import BridgeSink, JsonlSink, SlackSink, deliver
 from .state import State
+from .stills import attach_stills
+from .supabase import Supabase
 from .watchlist import load as load_watchlist
 
 FOLLOWERS_TTL_DAYS = 7
@@ -85,7 +88,18 @@ def run_scan(
     report = ScanReport(at=iso(now), dry_run=dry_run)
     cfg.ensure_dirs()
     state = state or State.load(cfg.state_path)
-    all_targets = targets if targets is not None else load_watchlist(cfg.watchlist_path)
+    sb: Optional[Supabase] = Supabase(cfg.supabase_url, cfg.supabase_key, table=cfg.supabase_table, bucket=cfg.supabase_bucket) if cfg.use_supabase_sink else None
+    if targets is not None:
+        all_targets = targets
+    elif sb is not None and cfg.watchlist_from_supabase:
+        try:
+            all_targets = sb.load_watchlist()
+            log(f"watchlist from Supabase: {len(all_targets)} targets")
+        except Exception as e:  # noqa: BLE001 - fall back to the file, say so
+            report.warnings.append(f"could not read the Supabase watchlist ({http.scrub(str(e))[:120]}); using the file")
+            all_targets = load_watchlist(cfg.watchlist_path)
+    else:
+        all_targets = load_watchlist(cfg.watchlist_path)
     wanted = [t for t in all_targets if t.active and (not platforms or t.platform in platforms) and (not only or t.value.lower() in [o.lower().lstrip("@#") for o in only])]
     report.targets = len(wanted)
     if not wanted:
@@ -214,7 +228,15 @@ def run_scan(
     report.apify_runs = apify.runs_started
     report.usage_usd = apify.usage_usd
     report.new_candidates = [c.to_dict() for c in new_candidates]
-    return _finish(cfg, log, report, state, started, dry_run)
+    if sb is not None and not dry_run and report.new_candidates:
+        attach_stills(sb, report.new_candidates, log, max_items=40)
+    if sb is not None and not dry_run:
+        for entry in report.per_target:
+            try:
+                sb.mark_target(entry["target"], last_scanned_at=report.at, last_status=entry.get("status"), baseline_views=entry.get("baseline"), baseline_n=entry.get("baseline_n"), followers=entry.get("followers"))
+            except Exception as e:  # noqa: BLE001 - bookkeeping only
+                log(f"watchlist mark failed for {entry.get('target')}: {e}")
+    return _finish(cfg, log, report, state, started, dry_run, sb=sb)
 
 
 def _score_hashtags(cfg: Config, log: Callable[[str], None], apify: Apify, state: State, hashtag_posts: dict[str, list[Post]], wanted: list[Target], now: datetime, report: ScanReport) -> list[Candidate]:
@@ -319,20 +341,25 @@ def digest_text(report: ScanReport) -> str:
     return "\n".join(lines)
 
 
-def _finish(cfg: Config, log: Callable[[str], None], report: ScanReport, state: State, started: float, dry_run: bool) -> ScanReport:
+def _finish(cfg: Config, log: Callable[[str], None], report: ScanReport, state: State, started: float, dry_run: bool, sb: Optional[Supabase] = None) -> ScanReport:
     report.duration_sec = time.monotonic() - started
     jsonl = JsonlSink(cfg.out_dir / ("dry" if dry_run else ""))
     sinks: list[tuple[str, Callable[[], Any]]] = []
     rows = report.new_candidates
     sinks.append(("jsonl", lambda: (jsonl.write_candidates(rows) if rows else None, jsonl.write_latest({"scan": report.to_dict()}))))
     if not dry_run:
+        if sb is not None and rows:
+            sinks.append(("supabase", lambda: sb.store_candidates(rows)))
         if cfg.use_cockpit_sink and rows:
             sinks.append(("cockpit", lambda: BridgeSink(cfg.bridge_url, cfg.bridge_token).store_candidates(rows)))
-        if cfg.use_supabase_sink and rows:
-            sinks.append(("supabase", lambda: SupabaseSink(cfg.supabase_url, cfg.supabase_key, cfg.supabase_table).upsert(rows)))
         if cfg.slack_token and cfg.slack_channel:
             sinks.append(("slack", lambda: SlackSink(cfg.slack_token, cfg.slack_channel).post(digest_text(report))))
     report.sinks = deliver(sinks, log)
+    if sb is not None and not dry_run:
+        try:
+            sb.log_scan(report.to_dict())
+        except Exception as e:  # noqa: BLE001 - the log line is not worth failing the scan
+            log(f"scan log to Supabase failed: {e}")
     record = report.to_dict()
     record.pop("per_target", None)
     record.pop("new_candidates", None)
