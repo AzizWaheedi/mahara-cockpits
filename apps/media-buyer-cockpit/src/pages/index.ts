@@ -10,6 +10,7 @@ export {
 export { CsmPage } from "./CsmPage";
 export { DashboardPage } from "./DashboardPage";
 export { GoPage } from "./GoPage";
+export { IdeationPage } from "./IdeationPage";
 export { LandingPage } from "./LandingPage";
 export { LoginPage } from "./LoginPage";
 export { PlaybookPage } from "./PlaybookPage";

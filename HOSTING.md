@@ -101,7 +101,12 @@ Meetings and messages (both other cockpits, fed by the media buyer backend every
 | `FATHOM_API_KEY` | recorded calls on the client cards. Without it, calls loaded into the `fathomCache` table (one-off backfills from the Fathom connector) still show for 90 days |
 
 Only the media buyer cockpit talks to integrations today. The other two receive data through
-the bridge (below) and only need the boot variables.
+the bridge (below) and only need the boot variables, plus, since 2026-09-17, the Ideation board's
+Supabase pair on the creative and media buyer deployments:
+
+| Variable | Used by |
+|---|---|
+| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | the Ideation board (`convex/ideation.ts` on the creative and media buyer deployments): reads and writes `ideation_posts` in the Creative Triage project through actions, never from the browser. The radar on the VPS uses the same project through `RADAR_SUPABASE_URL` and `RADAR_SUPABASE_KEY` |
 
 ## Vercel (frontend)
 
