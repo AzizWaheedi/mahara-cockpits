@@ -11,6 +11,7 @@ import {
   ClientUpdateList,
   relevantUpdates,
 } from "@/components/ClientUpdates";
+import { CockpitSelect } from "@/components/CockpitSelect";
 import { CreativePreview } from "@/components/CreativePreview";
 import { DosDontsList, parseDosDonts } from "@/components/DosDonts";
 import { EditPanel } from "@/components/EditPanel";
@@ -25,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ViktorStatus } from "@/components/ViktorStatus";
+import { useContentTransition } from "@/hooks/use-content-transition";
 import { CPB_GATE, CPL_GATE, LEARNING_DAYS } from "@/lib/kpi";
 import { defaultRange, type Range } from "@/lib/range";
 import { api } from "../../convex/_generated/api";
@@ -312,7 +314,7 @@ function ClientHeader({
   const hasRules = parseDosDonts(links?.dosDonts).length > 0;
   return (
     <>
-      {name}
+      <span className="campaign-client-name">{name}</span>
       <ClientLinks
         links={links}
         dosOpen={open}
@@ -421,7 +423,7 @@ function ClientLinks({
       </span>
     );
   return (
-    <span className="ml-2 inline-flex flex-wrap gap-2 text-[11px] font-normal">
+    <span className="campaign-client-assets ml-2 inline-flex flex-wrap gap-2 text-[11px] font-normal">
       {item(links.driveLink, "Drive")}
       {item(links.brandDnaDoc, "Brand DNA")}
       {item(links.offerCheatSheet, "Offer")}
@@ -478,13 +480,15 @@ function AdStatusPicker({
   if (!hasCard) return null;
   const list = options.length ? options : status ? [status] : [];
   return (
-    <select
-      className="ml-1 rounded border bg-background px-1 py-0.5 text-[11px] font-semibold"
+    <CockpitSelect
       value={status ?? ""}
       disabled={busy}
-      title="Ad Status on the ClickUp board, the source of truth for on or off"
-      onChange={async e => {
-        const next = e.target.value;
+      label={`Ad Status for ${campaignName}`}
+      placeholder="No status"
+      options={Array.from(new Set([...(status ? [status] : []), ...list])).map(
+        value => ({ value, label: value }),
+      )}
+      onValueChange={async next => {
         setBusy(true);
         try {
           const r = await setStatus({
@@ -500,14 +504,7 @@ function AdStatusPicker({
           setBusy(false);
         }
       }}
-    >
-      {!status && <option value="">no status</option>}
-      {list.map(o => (
-        <option key={o} value={o}>
-          {o}
-        </option>
-      ))}
-    </select>
+    />
   );
 }
 
@@ -798,6 +795,7 @@ const TITLES: Record<View, { title: string; sub: string }> = {
 };
 
 function Cockpit({ view }: { view: View }) {
+  const adsTransition = useContentTransition();
   const snap = useQuery(api.cockpit.snapshot, {});
   const toggleCheck = useMutation(api.cockpit.toggleCheck);
   const decide = useMutation(api.cockpit.decide);
@@ -1462,7 +1460,8 @@ function Cockpit({ view }: { view: View }) {
                   <button
                     key={key}
                     type="button"
-                    onClick={() => setAdsTab(key)}
+                    onClick={() => adsTransition.change(() => setAdsTab(key))}
+                    aria-pressed={adsTab === key}
                     className={`rounded-md border px-3 py-1.5 text-[12px] font-bold uppercase tracking-widest ${adsTab === key ? "border-teal-400 bg-teal-50 text-teal-800 dark:border-teal-700 dark:bg-teal-950 dark:text-teal-200" : "bg-background text-muted-foreground"}`}
                   >
                     {label} · {n}
@@ -1508,7 +1507,10 @@ function Cockpit({ view }: { view: View }) {
                   <button
                     key={f.label}
                     type="button"
-                    onClick={() => setFilter(f.label)}
+                    onClick={() =>
+                      adsTransition.change(() => setFilter(f.label))
+                    }
+                    aria-pressed={filter === f.label}
                     className={`rounded-md border px-2.5 py-1 text-[12px] font-semibold ${f.label === filter ? "border-teal-400 bg-teal-50 text-teal-800" : "bg-background"}`}
                   >
                     {f.label} · {n}
@@ -1516,8 +1518,8 @@ function Cockpit({ view }: { view: View }) {
                 );
               })}
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-[14px]">
+            <div className="overflow-x-auto" ref={adsTransition.ref}>
+              <table className="campaign-board w-full text-[14px]">
                 <thead>
                   <tr className="border-b text-[11px] uppercase tracking-wide text-muted-foreground">
                     <th className="py-2 pr-2 text-left font-bold">Campaign</th>
@@ -1651,7 +1653,7 @@ function Cockpit({ view }: { view: View }) {
                             <tr>
                               <td
                                 colSpan={8}
-                                className="pt-3 pb-1 text-[12px] font-bold text-teal-700 dark:text-teal-300"
+                                className="campaign-client-header"
                               >
                                 <ClientHeader
                                   name={clientOf(c)}
@@ -1663,7 +1665,7 @@ function Cockpit({ view }: { view: View }) {
                           )}
                           <tr
                             key={c._id}
-                            className={`border-b align-top ${isOpen ? "bg-muted/40" : ""} ${adsTab === "off" && !isOpen ? "opacity-80" : ""}`}
+                            className={`campaign-summary border-b align-top ${isOpen ? "bg-muted/40" : ""} ${adsTab === "off" && !isOpen ? "opacity-80" : ""}`}
                           >
                             <td className="py-2.5 pr-2">
                               <button

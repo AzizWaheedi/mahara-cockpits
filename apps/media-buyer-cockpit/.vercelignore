@@ -1,0 +1,10 @@
+# Upload locally generated Convex types for the frontend build, never credentials.
+node_modules/
+.git/
+.vercel/
+.env*
+tmp/
+dist/
+test-results/
+playwright-report/
+*.log

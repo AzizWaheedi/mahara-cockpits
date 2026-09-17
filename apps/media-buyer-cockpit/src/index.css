@@ -189,6 +189,73 @@
 }
 
 @layer components {
+  /* Shared with Mahara B2B: one spring-driven lamp, not six flashing backgrounds. */
+  .campaign-board { min-width: 1060px; border-collapse: separate; border-spacing: 0; }
+  .campaign-board th:last-child { width: 23%; }
+  .campaign-client-header { padding: 14px; border-left: 3px solid #00cfc8; background: color-mix(in oklch, var(--muted) 55%, var(--card)); }
+  .campaign-client-name { display: inline-block; font-size: 20px; font-weight: 600; line-height: 1.3; letter-spacing: -.4px; color: var(--foreground); }
+  .campaign-client-header .campaign-client-assets { float: right; gap: 14px; margin-top: 5px; font-size: 12px; }
+  .campaign-client-header .campaign-client-assets a, .campaign-client-header .campaign-client-assets button { color: var(--muted-foreground); font-weight: 400; text-underline-offset: 3px; }
+  .campaign-client-header > div { clear: both; }
+  .campaign-summary > td { padding-top: 22px; padding-bottom: 22px; border-bottom: 1px solid var(--border); }
+  .campaign-summary > td:first-child { padding-left: 14px; }
+  .campaign-summary > td:nth-child(n+2):nth-child(-n+7) { font-size: 16px; font-variant-numeric: tabular-nums; }
+  .campaign-summary > td:first-child > button { font-size: 14px; font-weight: 600; }
+  .campaign-summary > td:first-child > div:first-of-type { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; font-size: 12px; }
+  .campaign-summary > td:first-child > div:first-of-type > button:not(.cockpit-select-trigger) { font-size: 11px; font-weight: 400; }
+  .cockpit-nav-link {
+    position: relative;
+    isolation: isolate;
+    border-radius: 12px;
+    transition: color 180ms ease;
+  }
+  .cockpit-nav-link[data-active="true"] { background: transparent; }
+  .cockpit-nav-lamp {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: 12px;
+    background: rgb(0 207 200 / 12%);
+    box-shadow: inset 0 0 0 1px rgb(0 207 200 / 30%);
+    pointer-events: none;
+  }
+  .cockpit-nav-lamp::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 3px;
+    height: 56%;
+    border-radius: 0 3px 3px 0;
+    background: #00cfc8;
+    box-shadow: 0 0 12px 1px rgb(0 207 200 / 70%);
+  }
+  [data-slot="select-trigger"].cockpit-select-trigger {
+    display: inline-flex;
+    width: auto;
+    max-width: 100%;
+    height: 30px;
+    gap: 8px;
+    border-radius: 999px;
+    padding: 4px 10px;
+    background: var(--background);
+    font-size: 12px;
+    line-height: 20px;
+    vertical-align: middle;
+  }
+  .cockpit-select-trigger > svg { transition: transform 200ms cubic-bezier(.2,.8,.2,1); }
+  .cockpit-select-trigger[data-state="open"] > svg { transform: rotate(180deg); }
+  .cockpit-select-trigger[data-state="open"] { border-color: #00aaa4; box-shadow: 0 0 0 3px rgb(0 207 200 / 8%); }
+  [data-slot="select-content"].cockpit-select-menu { border-radius: 12px; box-shadow: 0 14px 35px rgb(9 19 51 / 14%); animation-duration: 190ms; }
+  .cockpit-select-menu [data-slot="select-item"][data-state="checked"] { background: rgb(0 207 200 / 10%); color: var(--foreground); }
+  .cockpit-select-menu [data-state="checked"] svg { color: #009c90; }
+  [data-slot="tabs-content"][data-state="active"] { animation: cockpit-content-in 180ms cubic-bezier(.2,.8,.2,1); }
+  @keyframes cockpit-content-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
+  @media (prefers-reduced-motion: reduce) {
+    .cockpit-select-trigger > svg, .cockpit-nav-link { transition: none; }
+    [data-slot="tabs-content"], [data-slot="select-content"].cockpit-select-menu { animation: none; }
+  }
   .container {
     width: 100%;
     margin-left: auto;

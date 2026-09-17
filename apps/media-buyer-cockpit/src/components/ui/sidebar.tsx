@@ -24,9 +24,9 @@ import { cn } from "@/lib/utils";
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state";
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
-const SIDEBAR_WIDTH = "16rem";
+const SIDEBAR_WIDTH = "14rem";
 const SIDEBAR_WIDTH_MOBILE = "100vw";
-const SIDEBAR_WIDTH_ICON = "3rem";
+const SIDEBAR_WIDTH_ICON = "4rem";
 const SIDEBAR_KEYBOARD_SHORTCUT = "b";
 
 type SidebarContextProps = {
@@ -75,11 +75,28 @@ const SidebarProvider = React.forwardRef<
 
     // This is the internal state of the sidebar.
     // We use openProp and setOpenProp for control from outside the component.
-    const [_open, _setOpen] = React.useState(defaultOpen);
+    const [_open, _setOpen] = React.useState(() => {
+      try {
+        return (
+          localStorage.getItem("mahara-buyer-sidebar") !== "collapsed" &&
+          defaultOpen
+        );
+      } catch {
+        return defaultOpen;
+      }
+    });
     const open = openProp ?? _open;
     const setOpen = React.useCallback(
       (value: boolean | ((value: boolean) => boolean)) => {
         const openState = typeof value === "function" ? value(open) : value;
+        try {
+          localStorage.setItem(
+            "mahara-buyer-sidebar",
+            openState ? "expanded" : "collapsed",
+          );
+        } catch {
+          /* Storage may be disabled. */
+        }
         if (setOpenProp) {
           setOpenProp(openState);
         } else {
@@ -231,18 +248,25 @@ const Sidebar = React.forwardRef<
         {/* This is what handles the sidebar gap on desktop */}
         <div
           className={cn(
-            "relative bg-transparent transition-[width] duration-200 ease-linear",
+            "relative bg-transparent",
             "group-data-[collapsible=offcanvas]:w-0",
             "group-data-[side=right]:rotate-180",
             variant === "floating" || variant === "inset"
               ? "group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)_+_theme(spacing.4))]"
               : "group-data-[collapsible=icon]:w-(--sidebar-width-icon)",
           )}
-          style={{ width: "var(--sidebar-width)" }}
+          style={{
+            width:
+              state === "collapsed"
+                ? collapsible === "icon"
+                  ? "var(--sidebar-width-icon)"
+                  : 0
+                : "var(--sidebar-width)",
+          }}
         />
         <div
           className={cn(
-            "fixed inset-y-0 z-10 hidden h-svh transition-[left,right,width] duration-200 ease-linear md:flex",
+            "fixed inset-y-0 z-10 hidden h-svh transition-[left,right,width] duration-150 ease-[cubic-bezier(.4,0,.2,1)] motion-reduce:transition-none md:flex",
             side === "left"
               ? "left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]"
               : "right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]",
@@ -251,7 +275,12 @@ const Sidebar = React.forwardRef<
               : "group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-r group-data-[side=right]:border-l",
             className,
           )}
-          style={{ width: "var(--sidebar-width)" }}
+          style={{
+            width:
+              state === "collapsed" && collapsible === "icon"
+                ? "var(--sidebar-width-icon)"
+                : "var(--sidebar-width)",
+          }}
           {...props}
         >
           <div
