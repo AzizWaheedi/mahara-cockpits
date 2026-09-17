@@ -370,6 +370,14 @@ publishes Gulf-dialect accuracy.
   refreshed weekly, so the first scan costs about two runs per Instagram
   account. Hashtag hits on Instagram carry no follower count, so their reach
   cannot be judged until the author's profile is fetched.
+- Instagram hashtags do not discover authors. Checked with paid runs on
+  2026-09-17: both `apify~instagram-scraper` (explore/tags URL) and
+  `apify~instagram-hashtag-scraper` return the tag's recent stream only, posts
+  minutes old, mostly photos and carousels, zero likes, no view counts; the
+  "details" result type returns statistics only, no top posts. The engagement
+  floor (`RADAR_HASHTAG_MIN_ENGAGEMENT`) is kept for the day an actor returns
+  top posts. Until then Instagram proposals come from watched accounts, whose
+  profile scans carry reel plays. TikTok hashtags work as designed.
 - The video model reads on-screen Arabic well but transcripts of dialect
   speech can mishear words: the idea carries a confidence and the transcript
   should never be quoted as fact without listening.

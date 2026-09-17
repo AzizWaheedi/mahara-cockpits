@@ -311,7 +311,7 @@ def _score_hashtags(cfg: Config, log: Callable[[str], None], apify: Apify, state
 
 def engagement(p: Post) -> int:
     """Likes plus comments: the only public numbers on an Instagram tag page."""
-    return int(p.likes or 0) + int(p.comments or 0)
+    return max(0, int(p.likes or 0)) + max(0, int(p.comments or 0))  # -1 means hidden
 
 
 def _worth_a_fetch(p: Post, cfg: Config) -> bool:
