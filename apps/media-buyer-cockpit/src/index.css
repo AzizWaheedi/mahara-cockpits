@@ -188,7 +188,7 @@
   }
 }
 
-@layer components {
+
   /* Shared with Mahara B2B: one spring-driven lamp, not six flashing backgrounds. */
   .campaign-board { min-width: 1060px; border-collapse: separate; border-spacing: 0; }
   .campaign-board th:last-child { width: 23%; }
@@ -256,6 +256,8 @@
     .cockpit-select-trigger > svg, .cockpit-nav-link { transition: none; }
     [data-slot="tabs-content"], [data-slot="select-content"].cockpit-select-menu { animation: none; }
   }
+
+@layer components {
   .container {
     width: 100%;
     margin-left: auto;
@@ -332,3 +334,4 @@
     color: color-mix(in oklch, var(--warning) 80%, var(--foreground));
   }
 }
+
