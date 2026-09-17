@@ -109,6 +109,34 @@ class ScanTests(unittest.TestCase):
             self.assertTrue(all(c["target_key"] == "tiktok:hashtag:interior" for c in via))
 
 
+    def test_instagram_hashtag_hits_without_views_are_ranked_by_engagement(self):
+        # Instagram tag pages hide reel plays from a logged-out fetch. A hit with no
+        # view count still earns its author a profile scan when likes plus comments
+        # clear the engagement floor; the profile scan is where real views come from.
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = cfg_in(tmp)
+            targets = [Target("instagram", "hashtag", "decor", industry="ours")]
+
+            def tag_hit(code, likes, owner):
+                it = ig_item(code, 0, 80, likes=likes, owner=owner)
+                it.pop("videoPlayCount")
+                it.pop("videoViewCount")
+                return it
+
+            tag_posts = [tag_hit("t1", 900, "big1"), tag_hit("t2", 600, "big2"), tag_hit("t3", 400, "big3"), tag_hit("t4", 50, "quiet")]
+            fx = {"instagram:hashtag:decor#posts": tag_posts}
+            for a in ("big1", "big2", "big3"):
+                fx[f"instagram:account:{a}#viatag"] = [ig_item(f"{a}v{j}", 2000, 300 + j, owner=a) for j in range(9)] + [ig_item(f"{a}hit", 12000, 80, owner=a)]
+            fake = FakeApify(fx)
+            lines, log = logs()
+            rep = run_scan(cfg, log, now=NOW, apify=fake, targets=targets)
+            fetched = sorted(c[1] for c in fake.calls if c[1].endswith("#viatag"))
+            self.assertEqual(fetched, [f"instagram:account:{a}#viatag" for a in ("big1", "big2", "big3")], "authors over the engagement floor are fetched, the quiet one is not")
+            via = [c for c in rep.new_candidates if "via:#decor" in c["tags"]]
+            self.assertEqual(sorted(c["author_handle"] for c in via), ["big1", "big2", "big3"])
+            self.assertTrue(all(c["views"] == 12000 for c in via), "candidates are scored on the profile scan's real views")
+
+
 class CaptureTests(unittest.TestCase):
     def test_capture_uses_fake_understanding_and_is_idempotent(self):
         with tempfile.TemporaryDirectory() as tmp:

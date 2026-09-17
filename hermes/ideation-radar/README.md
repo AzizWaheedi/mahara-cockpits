@@ -95,7 +95,10 @@ Settings (all optional): `RADAR_HOME` (default `~/.ideation-radar`),
 (baseline posts must be this old), `RADAR_WINDOW_DAYS` 30,
 `RADAR_FLOOR_INSTAGRAM` 1000, `RADAR_FLOOR_TIKTOK` 1000, `RADAR_FLOOR_SNAPCHAT` 300,
 `RADAR_MIN_ENGAGEMENT` 0.02, `RADAR_MIN_FOLLOWERS` 2000, `RADAR_HASHTAG_MIN_VIEWS`
-10000, `RADAR_HASHTAG_TOP_K` 10 (authors fetched per hashtag),
+10000, `RADAR_HASHTAG_MIN_ENGAGEMENT` 300 (likes plus comments; used instead of
+views for a hashtag hit that carries no view count, as Instagram tag pages hide
+reel plays from a logged-out fetch; the author's profile scan then supplies real
+views), `RADAR_HASHTAG_TOP_K` 10 (authors fetched per hashtag),
 `RADAR_HASHTAG_PROFILE_CAP` 20 (per scan), `RADAR_GEMINI_RESOLUTION`
 `MEDIA_RESOLUTION_HIGH` (reads small Arabic text cards),
 `RADAR_ACTOR_INSTAGRAM` `apify~instagram-scraper` (profiles, single posts and,

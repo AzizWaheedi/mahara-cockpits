@@ -252,7 +252,7 @@ def _score_hashtags(cfg: Config, log: Callable[[str], None], apify: Apify, state
         by_author: dict[str, list[Post]] = defaultdict(list)
         for p in posts:
             state.remember_post(p, report.at)
-            if p.author_handle and (p.views or 0) >= cfg.hashtag_min_views and (t.platform, p.author_handle) not in watched:
+            if p.author_handle and _worth_a_fetch(p, cfg) and (t.platform, p.author_handle) not in watched:
                 by_author[p.author_handle].append(p)
         ranked = sorted(by_author.items(), key=lambda kv: max((reach_or_views(p) for p in kv[1])), reverse=True)
         for author, aposts in ranked[: cfg.hashtag_top_k]:
@@ -309,11 +309,32 @@ def _score_hashtags(cfg: Config, log: Callable[[str], None], apify: Apify, state
     return out
 
 
+def engagement(p: Post) -> int:
+    """Likes plus comments: the only public numbers on an Instagram tag page."""
+    return int(p.likes or 0) + int(p.comments or 0)
+
+
+def _worth_a_fetch(p: Post, cfg: Config) -> bool:
+    """Is this hashtag hit worth a paid author fetch?
+
+    With a view count: views must clear ``hashtag_min_views``. Without one
+    (Instagram hides reel plays on tag pages from a logged-out fetch): likes
+    plus comments must clear ``hashtag_min_engagement``. The author's profile
+    scan then supplies real view counts, so the outlier rule itself is untouched.
+    """
+    if p.views is not None:
+        return p.views >= cfg.hashtag_min_views
+    return engagement(p) >= cfg.hashtag_min_engagement
+
+
 def reach_or_views(p: Post) -> float:
-    """Rank hashtag hits by reach (views over followers) when followers are known, else by views."""
+    """Rank hashtag hits by reach (views over followers) when followers are known,
+    else by views, else by likes plus comments when the platform hides views."""
     if p.views and p.author_followers:
         return p.views / float(p.author_followers) * 1e6
-    return float(p.views or 0)
+    if p.views is not None:
+        return float(p.views)
+    return float(engagement(p))
 
 
 def digest_text(report: ScanReport) -> str:

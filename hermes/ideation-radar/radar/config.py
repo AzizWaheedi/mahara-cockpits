@@ -98,6 +98,10 @@ class Config:
     floor_snapchat: float = 300.0
     min_engagement: float = 0.02
     hashtag_min_views: int = 10000
+    # Instagram tag pages hide reel play counts from a logged-out fetch. A hit
+    # with no view count is kept when likes plus comments clear this floor;
+    # its author still gets a real profile scan, which is where views come from.
+    hashtag_min_engagement: int = 300
     hashtag_top_k: int = 10
     hashtag_profile_cap: int = 20
     # Apify
@@ -172,6 +176,7 @@ class Config:
             floor_snapchat=_float("RADAR_FLOOR_SNAPCHAT", 300.0),
             min_engagement=_float("RADAR_MIN_ENGAGEMENT", 0.02),
             hashtag_min_views=_int("RADAR_HASHTAG_MIN_VIEWS", 10000),
+            hashtag_min_engagement=_int("RADAR_HASHTAG_MIN_ENGAGEMENT", 300),
             hashtag_top_k=_int("RADAR_HASHTAG_TOP_K", 10),
             hashtag_profile_cap=_int("RADAR_HASHTAG_PROFILE_CAP", 20),
             actor_instagram=key("RADAR_ACTOR_INSTAGRAM", "apify~instagram-scraper"),
