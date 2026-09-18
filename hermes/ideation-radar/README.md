@@ -27,6 +27,13 @@ discovery without handles, the small polishes"):
   (`RADAR_SPEECH_PROVIDER`), and Gemini watches the video with that
   transcript in hand; when both heard speech the speech model's words are
   kept. `radar.py speechtest <url>...` compares the three on real clips.
+  Checked on ten TikTok clips from the board on 2026-09-18: Scribe won three
+  of the four clips a judge model could score, Gemini one, Whisper none;
+  Scribe kept Egyptian dialect and English code switching ("shower rain")
+  and returned nothing for the three silent CGI clips where Whisper invented
+  "Thank you", the classic hallucination on silence. Gemini's own quota ran
+  out during the test (429), which is the reason the chain does not rely
+  on it for speech.
 - Keyword search targets (Instagram, kind `search`): the search actor lists
   accounts for a keyword such as "ديكور الكويت"; the public ones with 2,000
   followers or more and a reel in the last 90 days get a profile scan like
@@ -427,6 +434,13 @@ publishes Gulf-dialect accuracy.
   same format with unlike captions can miss each other, and the threshold
   (`RADAR_TREND_SIMILARITY`) trades that against false trends. A trend needs
   three distinct accounts inside 14 days; two is a coincidence.
+- The Gemini key has a daily quota. A burst of calls (the speech test plus
+  the first trend run on 2026-09-18) exhausted it with "exceeded your
+  current quota" (429) and "high demand" (503). Everything degrades rather
+  than stops: captures use Scribe plus OpenAI frames plus DeepSeek and say
+  so in `method`, trend descriptors use OpenAI, embeddings use OpenAI (a
+  vector carries its provider, so vectors from the two spaces never
+  compare). Billing on the Google AI Studio project removes the ceiling.
 - ElevenLabs Scribe on the key's plan: the Hermes key is on the free plan
   (checked 2026-09-18), where speech to text is metered separately from
   the character quota. If Scribe starts answering 402 or 429, the chain
