@@ -11,7 +11,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Optional
 
-PLATFORMS = ("instagram", "tiktok", "snapchat")
+PLATFORMS = ("instagram", "tiktok", "snapchat", "youtube", "facebook")
+AD_PLATFORMS = ("meta_ads", "google_ads", "linkedin_ads")
 TIERS = ("noise", "study", "reverse_engineer")
 
 

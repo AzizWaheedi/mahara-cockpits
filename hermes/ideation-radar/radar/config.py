@@ -113,6 +113,19 @@ class Config:
     search_profile_cap: int = 15
     search_retry_days: int = 90
     search_autowatch: bool = True
+    # On-demand scrapes from the cockpit (ScrapeCreators). A page: three pages
+    # of reels or videos (about 30), its best by views when no baseline forms;
+    # ads: two pages per pull, proposed from `ads_min_days` running, tiers by
+    # longevity (a paid ad still running is a paid ad that works).
+    profile_pages: int = 3
+    profile_top_n: int = 5
+    profile_window_days: int = 120
+    ads_pages: int = 2
+    ads_max: int = 40
+    ads_min_days: int = 7
+    ads_study_days: int = 21
+    ads_reverse_days: int = 60
+    ads_country: str = "KW"
     # Trends: the same format from several accounts inside the window.
     trend_window_days: int = 14
     trend_min_authors: int = 3
@@ -205,6 +218,15 @@ class Config:
             search_profile_cap=_int("RADAR_SEARCH_PROFILE_CAP", 15),
             search_retry_days=_int("RADAR_SEARCH_RETRY_DAYS", 90),
             search_autowatch=key("RADAR_SEARCH_AUTOWATCH", "1").lower() not in ("0", "false", "no"),
+            profile_pages=_int("RADAR_PROFILE_PAGES", 3),
+            profile_top_n=_int("RADAR_PROFILE_TOP_N", 5),
+            profile_window_days=_int("RADAR_PROFILE_WINDOW_DAYS", 120),
+            ads_pages=_int("RADAR_ADS_PAGES", 2),
+            ads_max=_int("RADAR_ADS_MAX", 40),
+            ads_min_days=_int("RADAR_ADS_MIN_DAYS", 7),
+            ads_study_days=_int("RADAR_ADS_STUDY_DAYS", 21),
+            ads_reverse_days=_int("RADAR_ADS_REVERSE_DAYS", 60),
+            ads_country=key("RADAR_ADS_COUNTRY", "KW"),
             trend_window_days=_int("RADAR_TREND_WINDOW_DAYS", 14),
             trend_min_authors=_int("RADAR_TREND_MIN_AUTHORS", 3),
             trend_similarity=_float("RADAR_TREND_SIMILARITY", 0.82),
@@ -308,6 +330,10 @@ class Config:
     @property
     def slack_token(self) -> str:
         return key("SLACK_BOT_TOKEN")
+
+    @property
+    def scrapecreators_key(self) -> str:
+        return key("SCRAPECREATORS_API_KEY")
 
     @property
     def elevenlabs_key(self) -> str:

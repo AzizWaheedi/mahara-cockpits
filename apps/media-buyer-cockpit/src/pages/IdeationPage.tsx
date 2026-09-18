@@ -1,10 +1,12 @@
 import { useAction } from "convex/react";
 import {
   ExternalLink,
+  Eye,
   ImageOff,
   Keyboard,
   Lightbulb,
   LoaderCircle,
+  Radar,
   RefreshCw,
   Search,
   Star,
@@ -43,7 +45,11 @@ import { api } from "../../convex/_generated/api";
  *
  * Since 2026-09-18: a Trends tab (the same format from three accounts or
  * more inside two weeks, flagged by the radar), a three-frame storyboard
- * instead of one still, and keyboard shortcuts (press ? for the list).
+ * instead of one still, keyboard shortcuts (press ? for the list), a Scrape
+ * box (any creator or brand page, or the Meta and Google ad libraries; the
+ * radar runs it within two minutes), the watchlist editable here, and ads
+ * as rows: a paid ad still running after weeks is a proven ad, so ad rows
+ * carry "running N days" instead of a multiplier.
  *
  * This file is the same in the creative director and media buyer cockpits.
  */
@@ -58,7 +64,28 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "dismissed", label: "Dismissed" },
 ];
 
-type Platform = "" | "instagram" | "tiktok" | "snapchat";
+type Platform =
+  | ""
+  | "instagram"
+  | "tiktok"
+  | "snapchat"
+  | "youtube"
+  | "facebook"
+  | "meta_ads"
+  | "google_ads";
+const PLATFORM_CHIPS: [Platform, string][] = [
+  ["", "All"],
+  ["instagram", "Instagram"],
+  ["tiktok", "TikTok"],
+  ["snapchat", "Snapchat"],
+  ["youtube", "YouTube"],
+  ["facebook", "Facebook"],
+  ["meta_ads", "Meta ads"],
+  ["google_ads", "Google ads"],
+];
+function isAd(r: Row): boolean {
+  return r.platform === "meta_ads" || r.platform === "google_ads";
+}
 type Industry = "" | "ours" | "other";
 
 // biome-ignore lint/suspicious/noExplicitAny: rows come straight from Supabase
@@ -160,13 +187,23 @@ function fmtWhen(s: string | number | null | undefined): string {
 }
 
 function platformLabel(p: string): string {
-  return p === "instagram"
-    ? "Instagram"
-    : p === "tiktok"
-      ? "TikTok"
-      : p === "snapchat"
-        ? "Snapchat"
-        : p;
+  const found = PLATFORM_CHIPS.find(([k]) => k === p);
+  if (found?.[0] === "meta_ads") return "Meta ad";
+  if (found?.[0] === "google_ads") return "Google ad";
+  return found?.[1] ?? p;
+}
+
+/** Ads are judged by how long they have run, not by views. */
+function runningPill(
+  r: Row,
+): { text: string; tone: "good" | "warn" | "neutral" } | null {
+  if (!isAd(r)) return null;
+  const d = num(r.running_days);
+  if (d === null) return null;
+  const text = `running ${d} day${d === 1 ? "" : "s"}${r.ad_active === false ? ", ended" : ""}`;
+  if (r.tier === "reverse_engineer") return { text, tone: "good" };
+  if (r.tier === "study") return { text, tone: "warn" };
+  return { text, tone: "neutral" };
 }
 
 function tierLabel(
@@ -531,6 +568,8 @@ export function IdeationPage() {
       ) : null}
 
       <PasteBox onDone={refresh} />
+      <ScrapeBox onDone={refresh} />
+      <WatchlistPanel />
 
       <div className="mb-3 flex flex-wrap gap-1 border-b">
         {TABS.map(t => (
@@ -556,14 +595,7 @@ export function IdeationPage() {
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="flex flex-wrap items-center gap-1.5">
-          {(
-            [
-              ["", "All platforms"],
-              ["instagram", "Instagram"],
-              ["tiktok", "TikTok"],
-              ["snapchat", "Snapchat"],
-            ] as [Platform, string][]
-          ).map(([k, label]) => (
+          {PLATFORM_CHIPS.map(([k, label]) => (
             <button
               key={k || "all"}
               type="button"
@@ -663,7 +695,7 @@ function emptyText(tab: Tab, q: string): string {
     case "saved":
       return "Nothing saved yet. Paste an Instagram, TikTok or Snapchat link above, or keep one of the scan's proposals.";
     case "proposed":
-      return "The scan has not proposed anything yet. It proposes posts doing three times an account's usual views or more.";
+      return "Nothing proposed yet. The scan proposes posts doing three times an account's usual views or more; a scrape proposes a page's best videos and its longest running ads.";
     case "trends":
       return "No trend yet. A trend is the same format from three accounts or more inside two weeks; the radar flags them after every scan.";
     case "working":
@@ -766,6 +798,504 @@ function PasteBox({ onDone }: { onDone: () => Promise<void> }) {
 
 // ---------------------------------------------------------------------------
 
+type ScrapeKind = "profile" | "meta" | "google";
+
+/** Paste any page, or name a page, advertiser or keyword: the radar scrapes it within two minutes. */
+function ScrapeBox({ onDone }: { onDone: () => Promise<void> }) {
+  const request = useAction(api.ideation.requestScrape);
+  const listRequests = useAction(api.ideation.requestsList);
+  const [open, setOpen] = useState(false);
+  const [kind, setKind] = useState<ScrapeKind>("profile");
+  const [input, setInput] = useState("");
+  const [platform, setPlatform] = useState("");
+  const [country, setCountry] = useState("KW");
+  const [industry, setIndustry] = useState<"ours" | "other">("other");
+  const [client, setClient] = useState("");
+  const [watch, setWatch] = useState(true);
+  const [ads, setAds] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState<{
+    tone: "warn" | "bad";
+    text: string;
+  } | null>(null);
+  const [requests, setRequests] = useState<Row[] | undefined>(undefined);
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+  const load = useCallback(async () => {
+    try {
+      const rows = await listRequests({ limit: 12 });
+      if (alive.current) setRequests(rows);
+    } catch {
+      /* the list is a convenience; the board still works */
+    }
+  }, [listRequests]);
+  useEffect(() => {
+    if (open) void load();
+  }, [open, load]);
+  useEffect(() => {
+    if (!open) return;
+    const t = setInterval(() => {
+      if (document.visibilityState === "visible") void load();
+    }, 20_000);
+    return () => clearInterval(t);
+  }, [open, load]);
+
+  const submit = async () => {
+    const value = input.trim();
+    if (!value) return;
+    setBusy(true);
+    setFeedback(null);
+    try {
+      await request({
+        kind: kind === "profile" ? "profile" : "ads",
+        input: value,
+        platform: kind === "profile" ? platform || undefined : kind,
+        country: kind === "profile" ? undefined : country || undefined,
+        industry,
+        client: client.trim() || undefined,
+        watch: kind === "profile" ? watch : undefined,
+        ads: kind === "profile" ? ads : undefined,
+      });
+      setInput("");
+      setFeedback({
+        tone: "warn",
+        text:
+          kind === "profile"
+            ? "Queued. Within two minutes the radar reads the page, proposes its best videos, watches the account and pulls its current Meta ads."
+            : "Queued. Within two minutes the radar pulls the active ads and proposes the ones running a week or more, longest first.",
+      });
+      await load();
+      await onDone();
+    } catch (e) {
+      setFeedback({ tone: "bad", text: `Not queued: ${serverMessage(e)}` });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="mb-4 rounded-lg border p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Radar className="h-4 w-4" />
+        <h3 className="text-[14px] font-bold">
+          Scrape a page or an ad library
+        </h3>
+        <span className="text-[12px] text-muted-foreground">
+          any creator or brand page; or the Meta and Google ad libraries, where
+          an ad still running after weeks is a proven one
+        </span>
+        <button
+          type="button"
+          onClick={() => setOpen(o => !o)}
+          aria-expanded={open}
+          className="ml-auto rounded border px-2 py-0.5 text-[12px] font-semibold text-muted-foreground hover:bg-muted"
+        >
+          {open ? "Hide" : "Open"}
+        </button>
+      </div>
+      {open ? (
+        <div className="mt-2 space-y-2">
+          <div className="flex flex-wrap gap-1.5">
+            {(
+              [
+                [
+                  "profile",
+                  "A page (Instagram, TikTok, YouTube, Facebook, Snapchat)",
+                ],
+                ["meta", "Meta Ad Library (Facebook and Instagram ads)"],
+                ["google", "Google Ads Transparency"],
+              ] as [ScrapeKind, string][]
+            ).map(([k, label]) => (
+              <button
+                key={k}
+                type="button"
+                onClick={() => setKind(k)}
+                aria-pressed={kind === k}
+                className={`rounded-full border px-2.5 py-0.5 text-[12px] font-semibold ${
+                  kind === k
+                    ? "bg-foreground text-background"
+                    : "text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_150px_130px_auto]">
+            <input
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === "Enter") void submit();
+              }}
+              placeholder={
+                kind === "profile"
+                  ? "https://www.instagram.com/brand/ or @handle with the platform"
+                  : kind === "meta"
+                    ? "Page name, Instagram handle, page id, or a keyword"
+                    : "Advertiser name"
+              }
+              dir="auto"
+              className="rounded border bg-transparent px-2 py-1 text-[13px]"
+            />
+            {kind === "profile" ? (
+              <select
+                value={platform}
+                onChange={e => setPlatform(e.target.value)}
+                aria-label="Platform for a bare handle"
+                className="rounded border bg-transparent px-2 py-1 text-[13px]"
+              >
+                <option value="">Platform (from the link)</option>
+                <option value="instagram">Instagram</option>
+                <option value="tiktok">TikTok</option>
+                <option value="youtube">YouTube</option>
+                <option value="facebook">Facebook</option>
+                <option value="snapchat">Snapchat</option>
+              </select>
+            ) : (
+              <input
+                value={country}
+                onChange={e =>
+                  setCountry(e.target.value.toUpperCase().slice(0, 2))
+                }
+                aria-label="Country"
+                placeholder="Country (KW)"
+                className="rounded border bg-transparent px-2 py-1 text-[13px]"
+              />
+            )}
+            <select
+              value={industry}
+              onChange={e => setIndustry(e.target.value as "ours" | "other")}
+              className="rounded border bg-transparent px-2 py-1 text-[13px]"
+            >
+              <option value="ours">Our industry</option>
+              <option value="other">Another industry</option>
+            </select>
+            <Button
+              size="sm"
+              onClick={() => void submit()}
+              disabled={busy || !input.trim()}
+            >
+              {busy ? "Queuing…" : "Scrape"}
+            </Button>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 text-[12px] text-muted-foreground">
+            <input
+              value={client}
+              onChange={e => setClient(e.target.value)}
+              placeholder="Client it is for (optional)"
+              dir="auto"
+              className="rounded border bg-transparent px-2 py-0.5 text-[12px]"
+            />
+            {kind === "profile" ? (
+              <>
+                <label className="flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={watch}
+                    onChange={e => setWatch(e.target.checked)}
+                  />
+                  watch this account every week
+                </label>
+                <label className="flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={ads}
+                    onChange={e => setAds(e.target.checked)}
+                  />
+                  pull its current Meta ads too
+                </label>
+              </>
+            ) : (
+              <span>
+                TikTok and Snapchat publish no public ad library outside Europe;
+                their organic pages still work above.
+              </span>
+            )}
+          </div>
+          {feedback ? (
+            <div
+              className={`callout-${feedback.tone} rounded-md border p-2 text-[13px]`}
+            >
+              {feedback.text}
+            </div>
+          ) : null}
+          <RequestsList rows={requests} />
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function requestStatus(r: Row): {
+  text: string;
+  tone: "good" | "warn" | "bad" | "neutral";
+} {
+  switch (r.status) {
+    case "done":
+      return { text: "Done", tone: "good" };
+    case "running":
+      return { text: "Running", tone: "warn" };
+    case "failed":
+      return { text: "Failed", tone: "bad" };
+    default:
+      return { text: "Queued", tone: "neutral" };
+  }
+}
+
+function requestSummary(r: Row): string {
+  const res = r.result ?? {};
+  if (r.status === "failed") return String(r.error ?? "failed");
+  if (r.status !== "done") return "";
+  const parts: string[] = [];
+  if (r.kind === "profile") {
+    if (num(res.posts) !== null) parts.push(`${n(res.posts)} posts read`);
+    if (num(res.proposals) !== null) parts.push(`${n(res.proposals)} proposed`);
+    if (num(res.ads) !== null) parts.push(`${n(res.ads)} ads`);
+    if (res.watched) parts.push("now watched");
+  } else {
+    if (num(res.ads_seen) !== null) parts.push(`${n(res.ads_seen)} ads seen`);
+    if (num(res.proposals) !== null) parts.push(`${n(res.proposals)} proposed`);
+    if (num(res.longest_days) !== null)
+      parts.push(`longest ${n(res.longest_days)} days`);
+    if (res.matched?.name) parts.push(`page: ${res.matched.name}`);
+  }
+  const w: string[] = Array.isArray(res.warnings) ? res.warnings : [];
+  if (w.length) parts.push(w[0]);
+  return parts.join(" · ");
+}
+
+function RequestsList({ rows }: { rows: Row[] | undefined }) {
+  if (!rows) return null;
+  if (!rows.length)
+    return <p className="text-[12px] text-muted-foreground">No scrapes yet.</p>;
+  return (
+    <div className="divide-y rounded-md border text-[12px]">
+      {rows.map((r: Row) => {
+        const st = requestStatus(r);
+        return (
+          <div
+            key={r.id}
+            className="flex flex-wrap items-center gap-2 px-2 py-1"
+          >
+            <Pill tone={st.tone}>{st.text}</Pill>
+            <span className="font-semibold">
+              {r.kind === "profile"
+                ? "Page"
+                : r.platform === "google"
+                  ? "Google ads"
+                  : "Meta ads"}
+            </span>
+            <span className="truncate" dir="auto" title={r.input}>
+              {r.input}
+            </span>
+            <span className="text-muted-foreground">
+              {r.requested_by_name ? `by ${r.requested_by_name} · ` : ""}
+              {fmtWhen(r.created_at)}
+            </span>
+            <span className="basis-full text-muted-foreground" dir="auto">
+              {requestSummary(r)}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** The accounts, hashtags and keyword searches the Saturday scan reads. */
+function WatchlistPanel() {
+  const list = useAction(api.ideation.watchlistList);
+  const add = useAction(api.ideation.watchlistAdd);
+  const remove = useAction(api.ideation.watchlistRemove);
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState<Row[] | undefined>(undefined);
+  const [platform, setPlatform] = useState("instagram");
+  const [kind, setKind] = useState("account");
+  const [value, setValue] = useState("");
+  const [industry, setIndustry] = useState<"ours" | "other">("ours");
+  const [busy, setBusy] = useState(false);
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+  const load = useCallback(async () => {
+    try {
+      const out = await list({});
+      if (alive.current) setRows(out);
+    } catch (e) {
+      if (alive.current) toast.error(serverMessage(e));
+    }
+  }, [list]);
+  useEffect(() => {
+    if (open && rows === undefined) void load();
+  }, [open, rows, load]);
+
+  const submit = async () => {
+    if (!value.trim()) return;
+    setBusy(true);
+    try {
+      await add({ platform, kind, value: value.trim(), industry });
+      setValue("");
+      toast.success(
+        kind === "search"
+          ? "Keyword added. The scan searches it every Saturday."
+          : "Added. The scan reads it every Saturday.",
+      );
+      await load();
+    } catch (e) {
+      toast.error(serverMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="mb-4 rounded-lg border p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Eye className="h-4 w-4" />
+        <h3 className="text-[14px] font-bold">Watchlist</h3>
+        <span className="text-[12px] text-muted-foreground">
+          what the Saturday scan reads: accounts, hashtags and Instagram keyword
+          searches
+          {rows ? ` · ${rows.length} entries` : ""}
+        </span>
+        <button
+          type="button"
+          onClick={() => setOpen(o => !o)}
+          aria-expanded={open}
+          className="ml-auto rounded border px-2 py-0.5 text-[12px] font-semibold text-muted-foreground hover:bg-muted"
+        >
+          {open ? "Hide" : "Open"}
+        </button>
+      </div>
+      {open ? (
+        <div className="mt-2 space-y-2">
+          <div className="grid gap-2 md:grid-cols-[130px_150px_minmax(0,1fr)_130px_auto]">
+            <select
+              value={platform}
+              onChange={e => setPlatform(e.target.value)}
+              className="rounded border bg-transparent px-2 py-1 text-[13px]"
+              aria-label="Platform"
+            >
+              <option value="instagram">Instagram</option>
+              <option value="tiktok">TikTok</option>
+              <option value="snapchat">Snapchat</option>
+            </select>
+            <select
+              value={kind}
+              onChange={e => setKind(e.target.value)}
+              className="rounded border bg-transparent px-2 py-1 text-[13px]"
+              aria-label="Kind"
+            >
+              <option value="account">Account</option>
+              <option value="hashtag">Hashtag</option>
+              <option value="search">Keyword search</option>
+            </select>
+            <input
+              value={value}
+              onChange={e => setValue(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === "Enter") void submit();
+              }}
+              placeholder={
+                kind === "account"
+                  ? "@handle"
+                  : kind === "hashtag"
+                    ? "#hashtag"
+                    : "keyword, e.g. ديكور الكويت"
+              }
+              dir="auto"
+              className="rounded border bg-transparent px-2 py-1 text-[13px]"
+            />
+            <select
+              value={industry}
+              onChange={e => setIndustry(e.target.value as "ours" | "other")}
+              className="rounded border bg-transparent px-2 py-1 text-[13px]"
+              aria-label="Industry"
+            >
+              <option value="ours">Our industry</option>
+              <option value="other">Another industry</option>
+            </select>
+            <Button
+              size="sm"
+              onClick={() => void submit()}
+              disabled={busy || !value.trim()}
+            >
+              {busy ? "Adding…" : "Add"}
+            </Button>
+          </div>
+          {rows === undefined ? (
+            <p className="text-[12px] text-muted-foreground">Loading…</p>
+          ) : rows.length === 0 ? (
+            <p className="text-[12px] text-muted-foreground">
+              Nothing watched yet.
+            </p>
+          ) : (
+            <div className="divide-y rounded-md border text-[12px]">
+              {rows.map((w: Row) => (
+                <div
+                  key={w.key}
+                  className="flex flex-wrap items-center gap-2 px-2 py-1"
+                >
+                  <Pill>{platformLabel(w.platform)}</Pill>
+                  <span className="text-muted-foreground">
+                    {w.kind === "search" ? "keyword" : w.kind}
+                  </span>
+                  <span className="font-semibold" dir="auto">
+                    {w.kind === "hashtag"
+                      ? `#${w.value}`
+                      : w.kind === "account"
+                        ? `@${w.value}`
+                        : w.value}
+                  </span>
+                  {w.industry === "ours" ? <Pill>Our industry</Pill> : null}
+                  <span className="text-muted-foreground">
+                    {w.source === "search"
+                      ? "found by keyword search"
+                      : w.source === "cockpit"
+                        ? "added here"
+                        : ""}
+                    {num(w.followers) ? ` · ${n(w.followers)} followers` : ""}
+                    {num(w.baseline_views)
+                      ? ` · normal ${n(Math.round(num(w.baseline_views) ?? 0))} views`
+                      : ""}
+                    {w.last_scanned_at
+                      ? ` · read ${fmtDay(w.last_scanned_at)}`
+                      : " · not read yet"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void remove({ key: w.key })
+                        .then(async () => {
+                          toast.success("Removed from the watchlist.");
+                          await load();
+                        })
+                        .catch(e => toast.error(serverMessage(e)))
+                    }
+                    className="ml-auto rounded border px-2 py-0.5 text-[11px] font-semibold text-muted-foreground hover:bg-muted"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 /** The Trends tab: one block per trend, its label on top, the posts under it. */
 function TrendGroups({
   rows,
@@ -856,6 +1386,7 @@ function IdeaRow({
   const restore = useAction(api.ideation.restore);
   const retry = useAction(api.ideation.retry);
   const tier = tierLabel(r);
+  const running = runningPill(r);
   const title = r.hook?.text || r.caption || r.url;
   const who =
     r.saved_by_name ??
@@ -892,6 +1423,15 @@ function IdeaRow({
               <Pill>Other industry</Pill>
             )}
             {tier ? <Pill tone={tier.tone}>{tier.text}</Pill> : null}
+            {running ? (
+              <Pill
+                tone={running.tone}
+                title="How long this ad has been in the library. Weeks of spend on one creative means it works."
+              >
+                {running.text}
+              </Pill>
+            ) : null}
+            {r.client ? <Pill title="Our client">{r.client}</Pill> : null}
             {r.packaging_only ? (
               <span
                 className="text-[11px] text-muted-foreground"
@@ -934,15 +1474,40 @@ function IdeaRow({
           )}
         </div>
         <div className="shrink-0 text-right text-[12px] text-muted-foreground">
-          <div className="tabular-nums">
-            {n(r.views)} views · {n(r.likes)} likes
-          </div>
-          <div>
-            {r.posted_at ? `posted ${fmtDay(r.posted_at)}` : ""}
-            {num(r.author_followers)
-              ? ` · ${n(r.author_followers)} followers`
-              : ""}
-          </div>
+          {isAd(r) ? (
+            <>
+              <div className="tabular-nums">
+                {r.ad_started_at ? `since ${fmtDay(r.ad_started_at)}` : ""}
+                {Array.isArray(r.ad_platforms) && r.ad_platforms.length
+                  ? ` · ${r.ad_platforms
+                      .map((p: string) => String(p).toLowerCase())
+                      .join(", ")}`
+                  : ""}
+              </div>
+              <div className="tabular-nums">
+                {num(r.spend) !== null
+                  ? `$${n(Math.round(num(r.spend) ?? 0))} spent`
+                  : ""}
+                {num(r.leads) !== null ? ` · ${n(r.leads)} leads` : ""}
+                {num(r.cpl) !== null
+                  ? ` · $${(num(r.cpl) ?? 0).toFixed(0)} per lead`
+                  : ""}
+                {r.ad_format ? ` · ${String(r.ad_format)}` : ""}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="tabular-nums">
+                {n(r.views)} views · {n(r.likes)} likes
+              </div>
+              <div>
+                {r.posted_at ? `posted ${fmtDay(r.posted_at)}` : ""}
+                {num(r.author_followers)
+                  ? ` · ${n(r.author_followers)} followers`
+                  : ""}
+              </div>
+            </>
+          )}
           <div className="mt-1 flex flex-wrap justify-end gap-1">
             {r.status === "proposed" ? (
               <button

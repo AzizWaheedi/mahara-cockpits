@@ -1,11 +1,14 @@
-import { Star } from "lucide-react";
+import { useAction } from "convex/react";
+import { Lightbulb, Star } from "lucide-react";
 import { useRef, useState } from "react";
+import { toast } from "sonner";
 import {
   CreativePreview,
   type LocalStill,
   stillPropsFor,
   useLocalStills,
 } from "@/components/CreativePreview";
+import { api } from "../../convex/_generated/api";
 
 /**
  * The winning ads, word for word.
@@ -324,16 +327,19 @@ export function WinningAds({
                       <span dir="auto">{r.interests.join(" · ")}</span>
                     </Field>
                   )}
-                  <CopyButton
-                    text={[
-                      r.hook && `HOOK: ${r.hook}`,
-                      r.headline && `HEADLINE: ${r.headline}`,
-                      r.body && `COPY:\n${r.body}`,
-                      r.transcript && `SCRIPT:\n${r.transcript}`,
-                    ]
-                      .filter(Boolean)
-                      .join("\n\n")}
-                  />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <CopyButton
+                      text={[
+                        r.hook && `HOOK: ${r.hook}`,
+                        r.headline && `HEADLINE: ${r.headline}`,
+                        r.body && `COPY:\n${r.body}`,
+                        r.transcript && `SCRIPT:\n${r.transcript}`,
+                      ]
+                        .filter(Boolean)
+                        .join("\n\n")}
+                    />
+                    <SaveToIdeation adId={String(r.adId)} />
+                  </div>
                 </div>
               )}
             </div>
@@ -358,6 +364,40 @@ function Field({
       </div>
       <div>{children}</div>
     </div>
+  );
+}
+
+/** One click puts this ad, script and all, on the Ideation board (Aziz, 2026-09-18). */
+export function SaveToIdeation({ adId }: { adId: string }) {
+  const save = useAction(api.ideation.saveFromWinner);
+  const [state, setState] = useState<"idle" | "busy" | "done">("idle");
+  return (
+    <button
+      type="button"
+      disabled={state !== "idle"}
+      onClick={() => {
+        setState("busy");
+        void save({ adId })
+          .then(() => {
+            setState("done");
+            toast.success("On the Ideation board, under Saved ideas.");
+            setTimeout(() => setState("idle"), 2500);
+          })
+          .catch(e => {
+            setState("idle");
+            toast.error(String((e as Error)?.message ?? e).split("\n")[0]);
+          });
+      }}
+      className="rounded border px-2 py-0.5 text-[12px] font-semibold text-muted-foreground hover:bg-muted disabled:opacity-60"
+      title="Save this ad to the Ideation board"
+    >
+      <Lightbulb className="mr-1 inline h-3 w-3" />
+      {state === "busy"
+        ? "Saving…"
+        : state === "done"
+          ? "Saved"
+          : "Save to Ideation"}
+    </button>
   );
 }
 

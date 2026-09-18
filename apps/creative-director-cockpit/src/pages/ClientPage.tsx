@@ -1,15 +1,17 @@
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import {
   ArrowLeft,
   Download,
   ExternalLink,
   FileText,
   Film,
+  Lightbulb,
   MessageSquare,
   Rocket,
 } from "lucide-react";
 import { useState } from "react";
 import { Link, useParams } from "react-router";
+import { toast } from "sonner";
 import { ClientUpdates } from "@/components/ClientUpdates";
 import {
   CreativePreview,
@@ -242,6 +244,50 @@ function ClientStats({ s }: { s: any }) {
 
 /** What the client's ads did, per day, last 90 days: the creative director's scoreboard. */
 // biome-ignore lint/suspicious/noExplicitAny: client row
+/** One click puts a client's own ad on the Ideation board (Aziz, 2026-09-18). */
+function SaveAdToIdeation(props: {
+  metaAdId: string;
+  client: string;
+  name?: string;
+  campaignName?: string;
+  thumbUrl?: string;
+  spend?: number;
+  leads?: number;
+  cpl?: number;
+  live?: boolean;
+}) {
+  const save = useAction(api.ideation.saveFromClientAd);
+  const [state, setState] = useState<"idle" | "busy" | "done">("idle");
+  return (
+    <button
+      type="button"
+      disabled={state !== "idle"}
+      onClick={() => {
+        setState("busy");
+        void save(props)
+          .then(() => {
+            setState("done");
+            toast.success("On the Ideation board, under Saved ideas.");
+            setTimeout(() => setState("idle"), 2500);
+          })
+          .catch(e => {
+            setState("idle");
+            toast.error(String((e as Error)?.message ?? e).split("\n")[0]);
+          });
+      }}
+      className="shrink-0 rounded border px-2 py-0.5 text-[11px] font-semibold text-muted-foreground hover:bg-muted disabled:opacity-60"
+      title="Save this ad to the Ideation board"
+    >
+      <Lightbulb className="mr-1 inline h-3 w-3" />
+      {state === "busy"
+        ? "Saving…"
+        : state === "done"
+          ? "Saved"
+          : "To Ideation"}
+    </button>
+  );
+}
+
 function ClientTrends({ client }: { client: any }) {
   // biome-ignore lint/suspicious/noExplicitAny: series rows
   const daily: any[] = client?.daily ?? [];
@@ -455,7 +501,7 @@ function ScriptFromHere({ d }: { d: any }) {
                   {...stillPropsFor(a, stills)}
                   size="md"
                 />
-                <span className="min-w-0 text-[12px]">
+                <span className="min-w-0 flex-1 text-[12px]">
                   <span className="block truncate font-medium" dir="auto">
                     {a.name}
                   </span>
@@ -463,6 +509,14 @@ function ScriptFromHere({ d }: { d: any }) {
                     {a.campaignName}
                   </span>
                 </span>
+                <SaveAdToIdeation
+                  metaAdId={String(a.metaId)}
+                  client={d.client.name}
+                  name={a.name}
+                  campaignName={a.campaignName}
+                  thumbUrl={a.thumbUrl ?? undefined}
+                  live
+                />
               </div>
             ))}
           </div>
@@ -495,6 +549,18 @@ function ScriptFromHere({ d }: { d: any }) {
                 <span className="shrink-0 text-[12px] text-muted-foreground">
                   {money(a.spend)} spend · {a.leads} leads · {money(a.cpl)} CPL
                 </span>
+                {a.metaAdId ? (
+                  <SaveAdToIdeation
+                    metaAdId={String(a.metaAdId)}
+                    client={d.client.name}
+                    name={a.adName}
+                    campaignName={a.campaignName}
+                    thumbUrl={a.thumbnailUrl ?? undefined}
+                    spend={a.spend}
+                    leads={a.leads}
+                    cpl={a.cpl}
+                  />
+                ) : null}
               </div>
             ))}
           </div>

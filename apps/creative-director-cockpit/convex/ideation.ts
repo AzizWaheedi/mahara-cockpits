@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { internalAction, internalQuery } from "./_generated/server";
 import { authenticatedAction } from "./functions";
@@ -100,6 +100,18 @@ const LIGHT = [
   "trend_id",
   "trend_label",
   "trend_n",
+  "ad_id",
+  "advertiser",
+  "ad_started_at",
+  "ad_last_seen_at",
+  "running_days",
+  "ad_platforms",
+  "ad_format",
+  "ad_active",
+  "client",
+  "spend",
+  "leads",
+  "cpl",
 ].join(",");
 
 // biome-ignore lint/suspicious/noExplicitAny: Supabase rows are untyped here
@@ -503,6 +515,402 @@ export const setNote = authenticatedAction({
     const n = clip(note, NOTE_MAX) ?? null;
     await patch(key, { note: n, saved_note: n, updated_at: now() });
     return null;
+  },
+});
+
+// ---------------------------------------------------------------------------
+// The watchlist and the scrapes (Aziz, 2026-09-18: "add our people to the
+// watchlist", "put a link to any social media", "manually run a scrape of
+// the Facebook Ads Library and all of that"). The radar on the VPS reads the
+// watchlist every Saturday and the requests every two minutes.
+
+const WATCH_PLATFORMS = ["instagram", "tiktok", "snapchat"];
+const WATCH_KINDS = ["account", "hashtag", "search"];
+const SCRAPE_KINDS = ["profile", "ads"];
+const AD_LIBRARIES = ["meta", "google"];
+
+function cleanHandle(value: string, kind: string): string {
+  const v = value.trim();
+  if (kind === "search") return v.replace(/\s+/g, " ").slice(0, 80);
+  return v
+    .replace(/^[@#]+/, "")
+    .replace(/\/+$/, "")
+    .split(/[/?\s]/)[0]
+    .toLowerCase()
+    .slice(0, 80);
+}
+
+export const watchlistList = authenticatedAction({
+  args: {},
+  returns: v.any(),
+  handler: async ctx => {
+    await who(ctx);
+    const { json } = await rest(
+      "ideation_watchlist?select=key,platform,kind,value,industry,tags,note,source,added_by,last_scanned_at,last_status,baseline_views,baseline_n,followers,added_at&active=eq.true&order=platform.asc,kind.asc,value.asc&limit=500",
+    );
+    return Array.isArray(json) ? json : [];
+  },
+});
+
+export const watchlistAdd = authenticatedAction({
+  args: {
+    platform: v.string(),
+    kind: v.string(),
+    value: v.string(),
+    industry: v.optional(v.string()),
+    note: v.optional(v.string()),
+  },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const { email, name } = await who(ctx);
+    const platform = args.platform.toLowerCase();
+    const kind = args.kind.toLowerCase();
+    if (!WATCH_KINDS.includes(kind))
+      throw new Error("Pick account, hashtag or keyword search.");
+    if (!WATCH_PLATFORMS.includes(platform))
+      throw new Error(
+        "The weekly scan watches Instagram, TikTok and Snapchat. For a YouTube or Facebook page use Scrape.",
+      );
+    if (kind === "search" && platform !== "instagram")
+      throw new Error("Keyword search is Instagram only for now.");
+    const value = cleanHandle(args.value, kind);
+    if (!value) throw new Error("Type a handle, a hashtag or a keyword.");
+    const key = `${platform}:${kind}:${value.toLowerCase()}`;
+    const stamp = now();
+    await rest("ideation_watchlist?on_conflict=key", {
+      method: "POST",
+      prefer: "resolution=merge-duplicates,return=minimal",
+      body: [
+        {
+          key,
+          platform,
+          kind,
+          value,
+          industry: args.industry === "ours" ? "ours" : "other",
+          tags: ["via:cockpit"],
+          active: true,
+          note:
+            clip(args.note, NOTE_MAX) ??
+            `added from the cockpit by ${name || email} on ${stamp.slice(0, 10)}`,
+          source: "cockpit",
+          added_by: email,
+          updated_at: stamp,
+        },
+      ],
+    });
+    return { key };
+  },
+});
+
+export const watchlistRemove = authenticatedAction({
+  args: { key: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { key }) => {
+    await who(ctx);
+    await rest(`ideation_watchlist?key=eq.${enc(key)}`, {
+      method: "PATCH",
+      prefer: "return=minimal",
+      body: { active: false, updated_at: now() },
+    });
+    return null;
+  },
+});
+
+/** Ask the radar to scrape a page (its best videos and its current ads) or an ad library. */
+export const requestScrape = authenticatedAction({
+  args: {
+    kind: v.string(),
+    input: v.string(),
+    platform: v.optional(v.string()),
+    country: v.optional(v.string()),
+    industry: v.optional(v.string()),
+    client: v.optional(v.string()),
+    watch: v.optional(v.boolean()),
+    ads: v.optional(v.boolean()),
+    minDays: v.optional(v.number()),
+  },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const { email, name } = await who(ctx);
+    const kind = args.kind.toLowerCase();
+    if (!SCRAPE_KINDS.includes(kind))
+      throw new Error("Pick a page scrape or an ad library pull.");
+    const input = args.input.trim().slice(0, 300);
+    if (!input)
+      throw new Error(
+        "Paste a page link, or type a page name, advertiser or keyword.",
+      );
+    const platform = (args.platform ?? "").toLowerCase();
+    if (kind === "ads" && !AD_LIBRARIES.includes(platform))
+      throw new Error(
+        "Pick the Meta Ad Library or Google Ads. TikTok and Snapchat publish no public ad library outside Europe.",
+      );
+    if (
+      kind === "profile" &&
+      !/^https?:\/\//i.test(input) &&
+      !platform &&
+      !/^(instagram|tiktok|youtube|facebook|snapchat):/i.test(input)
+    )
+      throw new Error(
+        "For a bare handle, pick the platform too, or paste the page link.",
+      );
+    const id = `req_${Date.now().toString(36)}${Math.floor(Math.random() * 1e9).toString(36)}`;
+    const stamp = now();
+    const params: Record<string, unknown> = {
+      platform: platform || undefined,
+      country:
+        (args.country ?? "").trim().toUpperCase().slice(0, 2) || undefined,
+      industry: args.industry === "ours" ? "ours" : "other",
+      client: clip(args.client, 120),
+      watch: args.watch ?? true,
+      ads: args.ads ?? true,
+      min_days:
+        typeof args.minDays === "number" && args.minDays >= 0
+          ? Math.floor(args.minDays)
+          : undefined,
+    };
+    for (const k of Object.keys(params))
+      if (params[k] === undefined) delete params[k];
+    await rest("ideation_requests", {
+      method: "POST",
+      prefer: "return=minimal",
+      body: {
+        id,
+        kind,
+        platform: platform || null,
+        input,
+        params,
+        status: "queued",
+        requested_by: email,
+        requested_by_name: name,
+        created_at: stamp,
+        updated_at: stamp,
+        attempts: 0,
+      },
+    });
+    return { id };
+  },
+});
+
+export const requestsList = authenticatedAction({
+  args: { limit: v.optional(v.number()) },
+  returns: v.any(),
+  handler: async (ctx, { limit }) => {
+    await who(ctx);
+    const n = Math.max(1, Math.min(50, limit ?? 15));
+    const { json } = await rest(
+      `ideation_requests?select=id,kind,platform,input,params,status,requested_by_name,created_at,started_at,finished_at,attempts,result,error&order=created_at.desc&limit=${n}`,
+    );
+    return Array.isArray(json) ? json : [];
+  },
+});
+
+// ---------------------------------------------------------------------------
+// "Save to Ideation" from the scripting database and a client's ads (Aziz,
+// 2026-09-18). Our own ads carry their script already, so they land as saved
+// ideas, industry ours, tagged with the client.
+
+export const winnerRow = internalQuery({
+  args: { adId: v.string() },
+  returns: v.any(),
+  handler: async (ctx, { adId }) => {
+    const rows = await ctx.db
+      .query("winnersArchive")
+      .withIndex("by_ad", q => q.eq("adId", adId))
+      .take(5);
+    return rows.find(r => r.savedAt && !r.unsavedAt) ?? rows[0] ?? null;
+  },
+});
+
+function clientSlug(client: string): string {
+  return (
+    client
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9\u0600-\u06ff]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 60) || "client"
+  );
+}
+
+async function upsertOurs(row: Row): Promise<void> {
+  await rest(`${TABLE}?on_conflict=key`, {
+    method: "POST",
+    prefer: "resolution=merge-duplicates,return=minimal",
+    body: [row],
+  });
+}
+
+export const saveFromWinner = authenticatedAction({
+  args: { adId: v.string(), note: v.optional(v.string()) },
+  returns: v.any(),
+  handler: async (ctx, { adId, note }) => {
+    const { email, name } = await who(ctx);
+    // biome-ignore lint/suspicious/noExplicitAny: winnersArchive row
+    const w = (await ctx.runQuery(internal.ideation.winnerRow, {
+      adId,
+    })) as any;
+    if (!w)
+      throw new Error("That ad is not in the scripting database any more.");
+    const key = `meta_ads:${adId}`;
+    const existing = await one(
+      key,
+      "key,status,saved_at,saved_by,saved_by_name,note,saved_note,tags",
+    );
+    const stamp = now();
+    const client = String(w.client ?? "");
+    const caption = [w.headline, w.body]
+      .filter(Boolean)
+      .join("\n\n")
+      .slice(0, 3000);
+    const n = clip(note, NOTE_MAX);
+    const body: Row = {
+      key,
+      platform: "meta_ads",
+      post_id: adId,
+      url: w.previewSrc
+        ? String(w.previewSrc)
+        : `https://www.facebook.com/ads/library/?id=${adId}`,
+      origin: "library",
+      status:
+        existing?.status === "dismissed"
+          ? "saved"
+          : (existing?.status ?? "saved"),
+      at: stamp,
+      updated_at: stamp,
+      author_handle: clientSlug(client),
+      author_name: client,
+      advertiser: client,
+      client,
+      caption,
+      transcript: String(w.transcript ?? ""),
+      hook: w.hook ? { text: String(w.hook), type: "" } : null,
+      voice: w.voice ?? null,
+      language:
+        w.language === "Arabic"
+          ? "ar"
+          : w.language === "English"
+            ? "en"
+            : w.language
+              ? "mixed"
+              : null,
+      cta: w.cta ?? null,
+      ad_format: w.format ?? null,
+      ad_started_at: w.wonFrom ? new Date(w.wonFrom).toISOString() : null,
+      ad_active: w.stillLive ?? null,
+      thumb_url: w.stillUrl ?? w.thumbUrl ?? null,
+      industry: "ours",
+      tags: [
+        ...new Set(
+          [
+            ...(existing?.tags ?? []),
+            "ours",
+            "winner",
+            `client:${clientSlug(client)}`,
+            w.serviceLine ? `service:${String(w.serviceLine)}` : "",
+          ].filter(Boolean),
+        ),
+      ],
+      spend: typeof w.spend === "number" ? w.spend : null,
+      leads: typeof w.leads === "number" ? w.leads : null,
+      cpl: typeof w.cpl === "number" ? w.cpl : null,
+      why_it_works: w.savedNote ? String(w.savedNote) : "",
+      saved_by: existing?.saved_by ?? email,
+      saved_by_name: existing?.saved_by_name ?? name,
+      saved_at: existing?.saved_at ?? stamp,
+      saved_note: n ?? existing?.saved_note ?? null,
+      note: n ?? existing?.note ?? null,
+      captured_at: w.transcript ? stamp : null,
+      method: w.transcript
+        ? {
+            transcribe: "winners archive",
+            on_screen: "none",
+            breakdown: "none",
+          }
+        : {},
+    };
+    if (!existing) body.created_at = stamp;
+    await upsertOurs(body);
+    return { key, status: body.status };
+  },
+});
+
+export const saveFromClientAd = authenticatedAction({
+  args: {
+    metaAdId: v.string(),
+    client: v.string(),
+    name: v.optional(v.string()),
+    campaignName: v.optional(v.string()),
+    thumbUrl: v.optional(v.string()),
+    spend: v.optional(v.number()),
+    leads: v.optional(v.number()),
+    cpl: v.optional(v.number()),
+    live: v.optional(v.boolean()),
+  },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const { email, name } = await who(ctx);
+    // The scripting database may hold this ad with its script: prefer that copy.
+    // biome-ignore lint/suspicious/noExplicitAny: winnersArchive row
+    const w = (await ctx.runQuery(internal.ideation.winnerRow, {
+      adId: args.metaAdId,
+    })) as any;
+    if (w) {
+      // biome-ignore lint/suspicious/noExplicitAny: action handle
+      return await (ctx as any).runAction(api.ideation.saveFromWinner, {
+        adId: args.metaAdId,
+      });
+    }
+    const key = `meta_ads:${args.metaAdId}`;
+    const existing = await one(
+      key,
+      "key,status,saved_at,saved_by,saved_by_name,note,saved_note,tags",
+    );
+    const stamp = now();
+    const client = args.client.trim();
+    const body: Row = {
+      key,
+      platform: "meta_ads",
+      post_id: args.metaAdId,
+      url: `https://www.facebook.com/ads/library/?id=${args.metaAdId}`,
+      origin: "library",
+      status:
+        existing?.status === "dismissed"
+          ? "saved"
+          : (existing?.status ?? "saved"),
+      at: stamp,
+      updated_at: stamp,
+      author_handle: clientSlug(client),
+      author_name: client,
+      advertiser: client,
+      client,
+      caption: [args.name, args.campaignName]
+        .filter(Boolean)
+        .join(" · ")
+        .slice(0, 500),
+      thumb_url: args.thumbUrl ?? null,
+      ad_active: args.live ?? null,
+      industry: "ours",
+      tags: [
+        ...new Set([
+          ...(existing?.tags ?? []),
+          "ours",
+          `client:${clientSlug(client)}`,
+        ]),
+      ],
+      spend: typeof args.spend === "number" ? args.spend : null,
+      leads: typeof args.leads === "number" ? args.leads : null,
+      cpl: typeof args.cpl === "number" ? args.cpl : null,
+      saved_by: existing?.saved_by ?? email,
+      saved_by_name: existing?.saved_by_name ?? name,
+      saved_at: existing?.saved_at ?? stamp,
+      warnings: [
+        "Saved from the client's ads: no script on file yet. The scripting database fills it in when the weekly check transcribes this ad.",
+      ],
+    };
+    if (!existing) body.created_at = stamp;
+    await upsertOurs(body);
+    return { key, status: body.status };
   },
 });
 

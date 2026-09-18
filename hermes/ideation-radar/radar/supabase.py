@@ -31,6 +31,7 @@ from .models import Target
 POST_COLUMNS = {
     "key", "platform", "post_id", "url", "origin", "status", "at", "created_at",
     "format_label", "hook_kind", "topic", "format_vec", "trend_id", "trend_label", "trend_n", "trend_at",
+    "ad_id", "ad_page_id", "advertiser", "ad_started_at", "ad_last_seen_at", "running_days", "ad_platforms", "ad_format", "ad_active", "source_request", "client",
     "author_handle", "author_name", "author_followers", "posted_at", "views", "likes", "comments", "shares", "saves",
     "caption", "duration_sec", "thumb_url", "media_url", "target_key", "industry", "tags",
     "baseline_views", "baseline_raw", "baseline_floored", "baseline_n", "baseline_confidence", "baseline_method", "baseline_rules",
@@ -44,7 +45,7 @@ METRIC_COLUMNS = {
     "views", "likes", "comments", "shares", "saves", "author_followers", "multiplier", "tier", "engagement_rate", "reach_rate",
     "robust_z", "packaging_only", "provisional", "checkpoint", "baseline_views", "baseline_raw", "baseline_floored", "baseline_n",
     "baseline_confidence", "baseline_method", "baseline_rules", "scanned_at", "thumb_url", "media_url", "updated_at",
-    "still_path", "still_at", "still_error",
+    "still_path", "still_at", "still_error", "running_days", "ad_last_seen_at", "ad_active",
 }
 CAPTURE_COLUMNS = {
     "captured_at", "language", "dialect", "has_speech", "voice", "transcript", "on_screen_text", "format", "hook", "beats",
@@ -55,7 +56,7 @@ CAPTURE_COLUMNS = {
 }
 FETCH_TTL_MIN = 30
 MAX_ATTEMPTS = 4
-KEY_RE = re.compile(r"^(instagram|tiktok|snapchat):[A-Za-z0-9_.-]{1,120}$")
+KEY_RE = re.compile(r"^(instagram|tiktok|snapchat|youtube|facebook|meta_ads|google_ads|linkedin_ads):[A-Za-z0-9_.-]{1,140}$")
 PASTED_RE = re.compile(r"^pasted:[A-Za-z0-9_-]{1,64}$")
 
 
@@ -171,7 +172,7 @@ class Supabase:
             prev = have.get(key)
             if prev is None:
                 row = self._post_row(r, POST_COLUMNS)
-                row.update({"origin": "scan", "status": "proposed", "at": now, "created_at": now, "updated_at": now})
+                row.update({"origin": r.get("origin") or "scan", "status": "proposed", "at": now, "created_at": now, "updated_at": now})
                 full.append(row)
             elif prev.get("status") == "proposed":
                 row = self._post_row(r, POST_COLUMNS)
@@ -298,6 +299,10 @@ class Supabase:
     def mark_target(self, key: str, **fields: Any) -> None:
         fields["updated_at"] = now_iso()
         self.patch("ideation_watchlist", f"key=eq.{quote(key, safe='')}", fields)
+
+    def request_row(self, request_id: str) -> Optional[dict[str, Any]]:
+        rows = self.select("ideation_requests", f"select=*&id=eq.{quote(request_id, safe='')}&limit=1")
+        return rows[0] if rows else None
 
     def log_scan(self, report: dict[str, Any]) -> None:
         row = {k: report.get(k) for k in ("at", "targets", "scanned", "failed", "skipped", "posts", "candidates_total", "candidates_new", "apify_runs", "usage_usd", "duration_sec", "dry_run", "warnings", "sinks")}

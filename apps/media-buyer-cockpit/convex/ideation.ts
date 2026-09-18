@@ -102,6 +102,18 @@ const LIGHT = [
   "trend_id",
   "trend_label",
   "trend_n",
+  "ad_id",
+  "advertiser",
+  "ad_started_at",
+  "ad_last_seen_at",
+  "running_days",
+  "ad_platforms",
+  "ad_format",
+  "ad_active",
+  "client",
+  "spend",
+  "leads",
+  "cpl",
 ].join(",");
 
 // biome-ignore lint/suspicious/noExplicitAny: Supabase rows are untyped here
@@ -502,6 +514,193 @@ export const setNote = authenticatedAction({
     const n = clip(note, NOTE_MAX) ?? null;
     await patch(key, { note: n, saved_note: n, updated_at: now() });
     return null;
+  },
+});
+
+// ---------------------------------------------------------------------------
+// The watchlist and the scrapes (Aziz, 2026-09-18: "add our people to the
+// watchlist", "put a link to any social media", "manually run a scrape of
+// the Facebook Ads Library and all of that"). The radar on the VPS reads the
+// watchlist every Saturday and the requests every two minutes.
+
+const WATCH_PLATFORMS = ["instagram", "tiktok", "snapchat"];
+const WATCH_KINDS = ["account", "hashtag", "search"];
+const SCRAPE_KINDS = ["profile", "ads"];
+const AD_LIBRARIES = ["meta", "google"];
+
+function cleanHandle(value: string, kind: string): string {
+  const v = value.trim();
+  if (kind === "search") return v.replace(/\s+/g, " ").slice(0, 80);
+  return v
+    .replace(/^[@#]+/, "")
+    .replace(/\/+$/, "")
+    .split(/[/?\s]/)[0]
+    .toLowerCase()
+    .slice(0, 80);
+}
+
+export const watchlistList = authenticatedAction({
+  args: {},
+  returns: v.any(),
+  handler: async ctx => {
+    await who(ctx);
+    const { json } = await rest(
+      "ideation_watchlist?select=key,platform,kind,value,industry,tags,note,source,added_by,last_scanned_at,last_status,baseline_views,baseline_n,followers,added_at&active=eq.true&order=platform.asc,kind.asc,value.asc&limit=500",
+    );
+    return Array.isArray(json) ? json : [];
+  },
+});
+
+export const watchlistAdd = authenticatedAction({
+  args: {
+    platform: v.string(),
+    kind: v.string(),
+    value: v.string(),
+    industry: v.optional(v.string()),
+    note: v.optional(v.string()),
+  },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const { email, name } = await who(ctx);
+    const platform = args.platform.toLowerCase();
+    const kind = args.kind.toLowerCase();
+    if (!WATCH_KINDS.includes(kind))
+      throw new Error("Pick account, hashtag or keyword search.");
+    if (!WATCH_PLATFORMS.includes(platform))
+      throw new Error(
+        "The weekly scan watches Instagram, TikTok and Snapchat. For a YouTube or Facebook page use Scrape.",
+      );
+    if (kind === "search" && platform !== "instagram")
+      throw new Error("Keyword search is Instagram only for now.");
+    const value = cleanHandle(args.value, kind);
+    if (!value) throw new Error("Type a handle, a hashtag or a keyword.");
+    const key = `${platform}:${kind}:${value.toLowerCase()}`;
+    const stamp = now();
+    await rest("ideation_watchlist?on_conflict=key", {
+      method: "POST",
+      prefer: "resolution=merge-duplicates,return=minimal",
+      body: [
+        {
+          key,
+          platform,
+          kind,
+          value,
+          industry: args.industry === "ours" ? "ours" : "other",
+          tags: ["via:cockpit"],
+          active: true,
+          note:
+            clip(args.note, NOTE_MAX) ??
+            `added from the cockpit by ${name || email} on ${stamp.slice(0, 10)}`,
+          source: "cockpit",
+          added_by: email,
+          updated_at: stamp,
+        },
+      ],
+    });
+    return { key };
+  },
+});
+
+export const watchlistRemove = authenticatedAction({
+  args: { key: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { key }) => {
+    await who(ctx);
+    await rest(`ideation_watchlist?key=eq.${enc(key)}`, {
+      method: "PATCH",
+      prefer: "return=minimal",
+      body: { active: false, updated_at: now() },
+    });
+    return null;
+  },
+});
+
+/** Ask the radar to scrape a page (its best videos and its current ads) or an ad library. */
+export const requestScrape = authenticatedAction({
+  args: {
+    kind: v.string(),
+    input: v.string(),
+    platform: v.optional(v.string()),
+    country: v.optional(v.string()),
+    industry: v.optional(v.string()),
+    client: v.optional(v.string()),
+    watch: v.optional(v.boolean()),
+    ads: v.optional(v.boolean()),
+    minDays: v.optional(v.number()),
+  },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const { email, name } = await who(ctx);
+    const kind = args.kind.toLowerCase();
+    if (!SCRAPE_KINDS.includes(kind))
+      throw new Error("Pick a page scrape or an ad library pull.");
+    const input = args.input.trim().slice(0, 300);
+    if (!input)
+      throw new Error(
+        "Paste a page link, or type a page name, advertiser or keyword.",
+      );
+    const platform = (args.platform ?? "").toLowerCase();
+    if (kind === "ads" && !AD_LIBRARIES.includes(platform))
+      throw new Error(
+        "Pick the Meta Ad Library or Google Ads. TikTok and Snapchat publish no public ad library outside Europe.",
+      );
+    if (
+      kind === "profile" &&
+      !/^https?:\/\//i.test(input) &&
+      !platform &&
+      !/^(instagram|tiktok|youtube|facebook|snapchat):/i.test(input)
+    )
+      throw new Error(
+        "For a bare handle, pick the platform too, or paste the page link.",
+      );
+    const id = `req_${Date.now().toString(36)}${Math.floor(Math.random() * 1e9).toString(36)}`;
+    const stamp = now();
+    const params: Record<string, unknown> = {
+      platform: platform || undefined,
+      country:
+        (args.country ?? "").trim().toUpperCase().slice(0, 2) || undefined,
+      industry: args.industry === "ours" ? "ours" : "other",
+      client: clip(args.client, 120),
+      watch: args.watch ?? true,
+      ads: args.ads ?? true,
+      min_days:
+        typeof args.minDays === "number" && args.minDays >= 0
+          ? Math.floor(args.minDays)
+          : undefined,
+    };
+    for (const k of Object.keys(params))
+      if (params[k] === undefined) delete params[k];
+    await rest("ideation_requests", {
+      method: "POST",
+      prefer: "return=minimal",
+      body: {
+        id,
+        kind,
+        platform: platform || null,
+        input,
+        params,
+        status: "queued",
+        requested_by: email,
+        requested_by_name: name,
+        created_at: stamp,
+        updated_at: stamp,
+        attempts: 0,
+      },
+    });
+    return { id };
+  },
+});
+
+export const requestsList = authenticatedAction({
+  args: { limit: v.optional(v.number()) },
+  returns: v.any(),
+  handler: async (ctx, { limit }) => {
+    await who(ctx);
+    const n = Math.max(1, Math.min(50, limit ?? 15));
+    const { json } = await rest(
+      `ideation_requests?select=id,kind,platform,input,params,status,requested_by_name,created_at,started_at,finished_at,attempts,result,error&order=created_at.desc&limit=${n}`,
+    );
+    return Array.isArray(json) ? json : [];
   },
 });
 

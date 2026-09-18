@@ -8,6 +8,7 @@
     python3 radar.py watchlist list|add|remove  manage the accounts and hashtags
     python3 radar.py digest                     print the last scan's digest
     python3 radar.py resend                     after an outage: push the last scan and every captured idea again
+    python3 radar.py requests [--limit 3]       run the scrapes the cockpit asked for (pages and ad libraries); pending runs them too
     python3 radar.py trends                     describe, embed and cluster the recent rows into trends (the scan does this too)
     python3 radar.py speechtest <url> [<url>...] compare ElevenLabs Scribe, Whisper and Gemini on real clips (Arabic dialects)
 
@@ -65,6 +66,7 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     add("GROQ_API_KEY", bool(cfg.groq_key), "set (speech fallback)" if cfg.groq_key else "missing")
     add("OPENAI_API_KEY", bool(cfg.openai_key), "set (frame vision fallback)" if cfg.openai_key else "missing")
     add("DEEPSEEK_API_KEY", bool(cfg.deepseek_key), "set (text fallback)" if cfg.deepseek_key else "missing")
+    add("SCRAPECREATORS_API_KEY", bool(cfg.scrapecreators_key), "set (pages and ad libraries on demand)" if cfg.scrapecreators_key else "missing: the cockpit's scrape requests will fail")
     add("store", cfg.effective_sink in ("supabase", "cockpit", "both"), f"{cfg.effective_sink} (RADAR_SINK={cfg.sink_mode})", True)
     add("supabase", cfg.use_supabase_sink, "the ideation home" if cfg.use_supabase_sink else "not configured (RADAR_SUPABASE_URL and RADAR_SUPABASE_KEY)")
     add("watchlist source", True, "Supabase ideation_watchlist" if cfg.watchlist_from_supabase else str(cfg.watchlist_path))
@@ -103,6 +105,13 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
                 add("groq api", True, "ok")
             except http.HttpError as e:
                 add("groq api", False, str(e))
+        if cfg.scrapecreators_key:
+            from radar.sources.scrapecreators import ScrapeCreators
+            try:
+                left = ScrapeCreators(cfg.scrapecreators_key).credit_balance()
+                add("scrapecreators credits", left >= 20, f"{left} credits left" + (" (top up at app.scrapecreators.com: a page scrape costs about 5, an ad pull about 3)" if left < 20 else ""))
+            except http.HttpError as e:
+                add("scrapecreators credits", False, http.scrub(str(e))[:200])
         if cfg.elevenlabs_key:
             try:
                 sub_ = http.get_json("https://api.elevenlabs.io/v1/user/subscription", headers={"xi-api-key": cfg.elevenlabs_key}, timeout=30)
@@ -196,8 +205,36 @@ def cmd_pending(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
         log.error(str(e))
         return 1
     failed = [i for i in ideas if i.status != "captured"]
-    _print({"captured": len(ideas) - len(failed), "failed": len(failed), "keys": [i.key for i in ideas]}, args.json)
+    summary: dict[str, Any] = {"captured": len(ideas) - len(failed), "failed": len(failed), "keys": [i.key for i in ideas]}
+    if cfg.use_supabase_sink:
+        # The cockpit's scrape requests ride the same cron.
+        from radar.requests import run_requests
+        try:
+            done = run_requests(cfg, log.info, limit=3, dry_run=args.dry_run)
+            summary["requests"] = [{k: d.get(k) for k in ("id", "kind", "input", "status", "error")} for d in done]
+        except (SupabaseError, http.HttpError) as e:
+            log.error(f"requests: {e}")
+            summary["requests_error"] = str(e)[:200]
+    _print(summary, args.json)
     return 1 if failed and not ideas else 0
+
+
+def cmd_requests(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    from radar.requests import run_requests
+    try:
+        done = run_requests(cfg, log.info, limit=args.limit, dry_run=args.dry_run)
+    except (SupabaseError, http.HttpError) as e:
+        log.error(str(e))
+        return 1
+    if args.json:
+        _print(done, True)
+    else:
+        for d in done:
+            r = d.get("result") or {}
+            print(f"{d.get('status')}: {d.get('kind')} {d.get('input')} " + (f"-> {r.get('proposals')} proposals, {r.get('ads', '')} ads, credits {r.get('credits')}" if r else f"({d.get('error')})"))
+        if not done:
+            print("nothing queued")
+    return 1 if any(d.get("status") == "failed" for d in done) else 0
 
 
 def cmd_watchlist(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
@@ -415,6 +452,7 @@ def main(argv: list[str] | None = None) -> int:
     w = sub.add_parser("watchlist"); w.add_argument("action", choices=["list", "add", "remove", "push"]); w.add_argument("platform", nargs="?"); w.add_argument("value", nargs="?"); w.add_argument("--industry", default="other", choices=["ours", "other"]); w.add_argument("--tags"); w.add_argument("--note"); w.add_argument("--kind", choices=["account", "hashtag", "search"], help="search: an Instagram keyword such as 'ديكور الكويت'")
     sub.add_parser("digest")
     sub.add_parser("trends")
+    rq = sub.add_parser("requests"); rq.add_argument("--limit", type=int, default=3); rq.add_argument("--dry-run", action="store_true")
     st = sub.add_parser("speechtest"); st.add_argument("url", nargs="+")
     rs = sub.add_parser("resend"); rs.add_argument("--scan", help="a latest.json to re-send (default out/latest.json)"); rs.add_argument("--ideas", help="an ideas.jsonl to re-send (default out/ideas.jsonl)")
     args = ap.parse_args(argv)
@@ -423,7 +461,7 @@ def main(argv: list[str] | None = None) -> int:
     log = Logger(cfg.out_dir / "radar.log", quiet=args.quiet)
     if args.cmd in ("add", "remove") or (args.cmd == "watchlist" and args.action in ("add", "remove") and not (args.platform and args.value)):
         ap.error("watchlist add/remove need <platform> <value>")
-    handlers = {"doctor": cmd_doctor, "scan": cmd_scan, "capture": cmd_capture, "pending": cmd_pending, "watchlist": cmd_watchlist, "digest": cmd_digest, "resend": cmd_resend, "trends": cmd_trends, "speechtest": cmd_speechtest}
+    handlers = {"doctor": cmd_doctor, "scan": cmd_scan, "capture": cmd_capture, "pending": cmd_pending, "watchlist": cmd_watchlist, "digest": cmd_digest, "resend": cmd_resend, "trends": cmd_trends, "speechtest": cmd_speechtest, "requests": cmd_requests}
     try:
         return handlers[args.cmd](cfg, args, log)
     except KeyboardInterrupt:
