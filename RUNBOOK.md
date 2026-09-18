@@ -144,7 +144,10 @@ hour, notes hourly, each under its own lock; log `~/.editor-desk/out/cron.log`.
 | A job says "No brief and no script on the card" | The card has no description and no References doc. Add one; a video request made from the creative cockpit carries it automatically | Creative director |
 | A job says "the footage link could not be opened" | The Google refresh token on the VPS was revoked, or the folder is not shared. `python3 desk.py doctor` names which, on the `google token` line | Aziz |
 | Transcripts come back empty | Usually correct: most of our footage is silent CGI and b-roll over music. `desk.py doctor` shows the ElevenLabs line; the card's comment says "No speech was found in any file" when that is what happened | Nobody, unless someone is talking in the clip |
-| The desk stopped posting to cards | `DESK_CLICKUP_WRITEBACK` is `0` in `~/.editor-desk/env`. It ships off on purpose; set it to `1` when the team wants the comments | Aziz |
+| The desk stopped posting to cards | `DESK_CLICKUP_WRITEBACK` in `~/.editor-desk/env`. Aziz turned it on 2026-09-18; `0` switches it off again | Aziz |
+| A job says the tag matches no company | The tag on the video card is the client and has to match a card on Clients - Mahara. Fix the tag; the brand rules appear within half an hour | Whoever made the card |
+| "Send to client review" did nothing | `desk.py requests` drains the cockpit's queue every three minutes. The row's `error` in `editor_requests` says why; four failures park it as `failed` | Aziz |
+| Somebody cannot sign in to the editor cockpit | Their address has to be on `editor_people` and active, and have an auth user. Aziz adds both in the Supabase dashboard | Aziz |
 | `doctor`: "Bucket not found" on stills | The private `editor-stills` bucket is missing; the one-line curl to create it is in the README | Aziz |
 
 ## What never needs a person

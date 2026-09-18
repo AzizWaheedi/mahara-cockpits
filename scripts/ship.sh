@@ -3,7 +3,7 @@
 # build and deploy the site, then run the smoke check. Stops at the first
 # failure so a broken build never replaces a working one.
 #
-#   scripts/ship.sh media-buyer | client-success | creative | all
+#   scripts/ship.sh media-buyer | client-success | creative | video-editor | all
 #
 # Order matters when a bridge payload gains a field: ship the receiving app
 # (client-success, creative) before the media buyer that sends it. "all" does.
@@ -16,14 +16,24 @@ ship() {
     media-buyer)     dir=apps/media-buyer-cockpit;       url=https://adorable-seahorse-418.convex.cloud ;;
     client-success)  dir=apps/client-success-cockpit;    url=https://impressive-dinosaur-375.convex.cloud ;;
     creative)        dir=apps/creative-director-cockpit; url=https://colorful-wombat-644.convex.cloud ;;
+    # The fourth cockpit has no Convex: it reads Supabase straight from the
+    # browser, so there is no backend to deploy, only a site.
+    video-editor)    dir=apps/video-editor-cockpit;      url= ;;
     *) echo "unknown app: $app"; exit 2 ;;
   esac
   echo "== $app: lint"
-  (cd "$dir" && bunx biome check convex src >/dev/null) || { echo "lint failed in $dir (run: cd $dir && bunx biome check --write convex src)"; exit 1; }
+  # The path is tested here, not inside the subshell, where it would be
+  # resolved against the app directory instead of the repository root.
+  local lint_dirs="src"
+  [ -d "$dir/convex" ] && lint_dirs="convex src"
+  # shellcheck disable=SC2086
+  (cd "$dir" && bunx biome check $lint_dirs >/dev/null) || { echo "lint failed in $dir (run: cd $dir && bunx biome check --write $lint_dirs)"; exit 1; }
   echo "== $app: typecheck"
   (cd "$dir" && bun run typecheck)
-  echo "== $app: backend"
-  (cd "$dir" && bunx convex deploy --yes --typecheck enable)
+  if [ -n "$url" ]; then
+    echo "== $app: backend"
+    (cd "$dir" && bunx convex deploy --yes --typecheck enable)
+  fi
   echo "== $app: site"
   (cd "$dir" && VITE_CONVEX_URL="$url" bun run build)
   # The Vercel CLI prints JSON when not on a terminal and can exit 0 without a
@@ -37,7 +47,7 @@ ship() {
 }
 
 case "${1:-all}" in
-  all) ship client-success; ship creative; ship media-buyer ;;
+  all) ship client-success; ship creative; ship media-buyer; ship video-editor ;;
   *)   ship "$1" ;;
 esac
 

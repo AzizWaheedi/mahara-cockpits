@@ -10,6 +10,7 @@ they are hosted now and what was changed to get there. Started 2026-09-09.
 | Media buyer | https://cockpit.maharamedia.com | `adorable-seahorse-418` → https://adorable-seahorse-418.convex.cloud | `wonderful-woodpecker-707` |
 | Client success | https://mahara-client-success.vercel.app | `impressive-dinosaur-375` → https://impressive-dinosaur-375.convex.cloud | `successful-gnu-925` |
 | Creative director | https://mahara-creative-director.vercel.app | `colorful-wombat-644` → https://colorful-wombat-644.convex.cloud | `diligent-koala-992` |
+| Video editor | https://mahara-video-editor.vercel.app | none — Supabase, read from the browser | none |
 
 Convex team `aziz-00129`, projects `mahara-media-buyer`, `mahara-client-success`,
 `mahara-creative-director`. Vercel team `aziz-6097s-projects`, same three project names.
@@ -29,12 +30,22 @@ bunx vercel deploy --prod --yes # frontend
 apps/media-buyer-cockpit        Convex deployment + Vercel project, one each
 apps/client-success-cockpit     same
 apps/creative-director-cockpit  same
+apps/video-editor-cockpit       Vercel project only; Supabase is the backend
 viktor-side-scripts/            reference only (Viktor SDK imports), see "Still pending"
 context/                        data spine and workflow docs, read before changing behaviour
 ```
 
-Each app is its own Convex project and its own Vercel project, exactly as on Viktor. They do
-not share a database.
+The first three are each their own Convex project and their own Vercel project, exactly as on
+Viktor. They do not share a database.
+
+The video editor cockpit, added 2026-09-18, is the first without Convex. It reads the Creative
+Triage Supabase project (`bldgtotkfmhoxmlzowdx`) directly with the anon key, which is public by
+design: every `editor_*` table has row security on with one policy calling `public.is_editor()`,
+true only for an active address on `editor_people`. The browser holds no other credential.
+Anything that has to touch ClickUp or Drive is written to `editor_requests` and drained by
+`hermes/editor-desk` on the VPS every three minutes. Sign-in is email and password; accounts are
+created confirmed through the admin API rather than by email, because this project sends on
+Supabase's shared mail server, which allows two messages an hour.
 
 ## What changed versus the export (and nothing else)
 
