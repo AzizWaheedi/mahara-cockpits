@@ -50,6 +50,11 @@ EOF
 chmod 600 ~/.editor-desk/env
 cd hermes/editor-desk
 set -a; . ~/.editor-desk/env; set +a
+# once: the private bucket the storyboards go into
+curl -s -X POST "$DESK_SUPABASE_URL/storage/v1/bucket" \
+  -H "Authorization: Bearer $DESK_SUPABASE_KEY" -H "apikey: $DESK_SUPABASE_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"id":"editor-stills","name":"editor-stills","public":false}'
 python3 desk.py doctor
 ```
 
@@ -110,6 +115,32 @@ cockpit embeds that and the desk moves no bytes it does not have to.
   its reason and retried, up to four attempts.
 - Keys by name, never printed; every error is scrubbed before it is logged,
   stored or posted to a card.
+
+## What the footage actually is here, measured 2026-09-18
+
+The first real run across all five open jobs found something worth knowing
+before anyone expects too much of the transcript. Mahara's footage is mostly
+silent: architectural animations, site b-roll and phone clips over music.
+
+| Job | Files | Total |
+|---|---|---|
+| ardon | 11 | 4.8 min |
+| castello industries | 4 | 1.4 min |
+| qatar technology | 4 | 1.2 min |
+| marble and more | 0 | nothing in the folder |
+| alkhalil | 0 | nothing in the folder |
+
+The longest clip, an 84 second commercial building animation, contains music
+and no speech. Both engines were run against it through the same code path:
+Scribe returned nothing, which is correct, and Whisper returned
+`🎵 🎵 © BF-WATCH TV 2021 Thank you. Thank you.`, which is the invented-text
+failure this order was chosen to avoid.
+
+So on this corpus the transcript is not the win the research promised; it
+will pay on interviews and testimonials when they are shot. What pays today
+is the readiness check (two of five open jobs have no footage at all in the
+linked folder, which an editor would otherwise discover by opening the job),
+the shot map, and the storyboards.
 
 ## Known limits
 

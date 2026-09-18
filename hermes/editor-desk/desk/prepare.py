@@ -278,6 +278,11 @@ def comment_text(job: dict[str, Any], assets: list[dict[str, Any]], summary: dic
         if a.get("scenes"):
             bits.append(f"{len(a['scenes'])} shots")
         lines.append(f"- {a.get('name')}: " + ", ".join(bits))
+    spoke = [a for a in assets if (a.get("transcript") or "").strip()]
+    heard = [a for a in assets if a.get("has_audio") is not False and not a.get("error")]
+    if heard and not spoke:
+        lines.append("")
+        lines.append("No speech was found in any file, so there is nothing to search. That is normal for b-roll; if someone is talking in these, tell Aziz and the desk will look again.")
     hits = [h for a in assets for h in (a.get("script_hits") or [])]
     if hits:
         lines.append(f"Script lines found in the footage: {len(hits)}.")

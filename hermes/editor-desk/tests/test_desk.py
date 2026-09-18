@@ -260,6 +260,17 @@ class PrepareTests(unittest.TestCase):
             self.assertEqual(sb.job("86abc")["attempts"], 1)
             self.assertIn("could not download", sb.assets("86abc")[0]["error"])
 
+    def test_the_comment_says_when_nothing_was_spoken(self):
+        job = job_row(task(), now_iso=NOW)
+        assets = [
+            {"name": "a.mp4", "seconds": 19.0, "has_audio": True, "transcript": "", "scenes": [1, 2]},
+            {"name": "b.mp4", "seconds": 18.0, "has_audio": True, "transcript": "", "scenes": [1]},
+        ]
+        text = prepare.comment_text(job, assets, {"files": 2, "read": 2, "seconds": 37.0, "ready": True, "missing": [], "warnings": []})
+        self.assertIn("No speech was found in any file", text)
+        spoken = prepare.comment_text(job, [{**assets[0], "transcript": "hello there"}], {"files": 1, "read": 1, "seconds": 19.0, "ready": True, "missing": [], "warnings": []})
+        self.assertNotIn("No speech was found", spoken)
+
     def test_the_comment_says_what_was_found(self):
         job = job_row(task(), now_iso=NOW)
         assets = [
