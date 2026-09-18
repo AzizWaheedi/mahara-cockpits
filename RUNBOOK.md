@@ -114,6 +114,10 @@ hour, sends the Slack DM and files the fix job like any other broken screen.
 | `doctor`: Gemini "no longer available to new users" | Set `RADAR_GEMINI_MODEL` in `~/.ideation-radar/env` to the model Google names in the message | Aziz |
 | Proposals or ideas missing after a Supabase outage | `python3 radar.py resend` pushes the last scan's proposals and every captured idea from the local files again; nothing is lost, every write is an upsert | Aziz |
 | A capture shows "Failed" on the board | Read the reason on the row. "private or removed" and "returned nothing" are the platform's answer; "Try again" queues it once more; four failures stop it for good | Creative director |
+| Trends tab stays empty for weeks | `doctor` must show the `embeddings` line OK; then `python3 radar.py trends` on the VPS prints how many rows were described and clustered and any model errors. A trend needs the same format on three accounts inside 14 days, so an empty tab on a quiet fortnight is correct | Aziz |
+| Transcripts read worse than before | `method.transcribe` on the idea says who listened. Scribe failing (plan, 402, 429) drops to Whisper by itself; `python3 radar.py speechtest <url>...` compares Scribe, Whisper and Gemini on real clips; `RADAR_SPEECH_PROVIDER` in `~/.ideation-radar/env` sets the order | Aziz |
+| The digest reaches Aziz but not Sabry (or the other way) | `RADAR_SLACK_CHANNEL` in `~/.ideation-radar/env` is a comma separated list of Slack ids; the scan log names the recipient that failed | Aziz |
+| Keyword search added an account nobody wants | `python3 radar.py watchlist remove instagram <handle>`; rows the search added carry source `search` in `ideation_watchlist` | Creative director or Aziz |
 
 Every scan writes a row to `ideation_scans` with its cost; a Slack digest goes
 to `RADAR_SLACK_CHANNEL` even when nothing was found, so silence is never

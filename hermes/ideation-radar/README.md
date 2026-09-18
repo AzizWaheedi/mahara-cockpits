@@ -13,6 +13,32 @@ the loop:
   graphics), and save the structured breakdown: hook, beats, format, language
   and dialect, why it works, how a construction or design firm could use it.
 
+Since 2026-09-18 (Aziz: "flag trends, better Arabic transcripts, Instagram
+discovery without handles, the small polishes"):
+
+- Trends: every active row of the last two weeks gets a short format
+  descriptor ("before after renovation reveal with text overlay"), the
+  descriptors are embedded and clustered, and the same format from three
+  accounts or more becomes a trend (`trend_id`, `trend_label`, `trend_n` on
+  the rows, a Trends tab and a Trend chip on the board, a block in the
+  digest). `radar/trends.py`; the scan runs it after storing, `radar.py
+  trends` runs it by hand.
+- Speech: ElevenLabs Scribe transcribes first, Groq Whisper second
+  (`RADAR_SPEECH_PROVIDER`), and Gemini watches the video with that
+  transcript in hand; when both heard speech the speech model's words are
+  kept. `radar.py speechtest <url>...` compares the three on real clips.
+- Keyword search targets (Instagram, kind `search`): the search actor lists
+  accounts for a keyword such as "ديكور الكويت"; the public ones with 2,000
+  followers or more and a reel in the last 90 days get a profile scan like
+  hashtag authors, and every account that yields a baseline joins the
+  watchlist by itself (source `search`, tag `via:search`), not to be tried
+  again for 90 days. `radar.py watchlist add instagram "ديكور الكويت" --kind search`.
+- Storyboards: three frames (start, middle, end) side by side replace the
+  single still whenever the clip can be fetched; captures reuse their own
+  download. Stored as `<platform>/<post_id>.story.jpg`.
+- The digest goes to a list of recipients (`RADAR_SLACK_CHANNEL` comma
+  separated: Aziz and Sabry).
+
 The rule it applies is the one Aziz locked on 2026-05-15: 3x to 5x the
 baseline is worth studying, 5x and above is reverse engineered immediately,
 below 3x is noise. The baseline is the median of the account's last 30 posts
@@ -81,12 +107,13 @@ and `/opt/data/.env` (the Hermes key files). Never printed.
 |---|---|
 | `APIFY_API_KEY` | scans and captures (required) |
 | `GOOGLE_AI_API_KEY` | video understanding (preferred) |
+| `ELEVENLABS_API_KEY` | speech transcription, first choice (Scribe; `ELEVENLABS_API_KEY_V2` in the Hermes key file is a key id, not a key) |
 | `GROQ_API_KEY` | speech transcription fallback |
 | `OPENAI_API_KEY` | frame vision fallback when Gemini is unavailable |
 | `DEEPSEEK_API_KEY` | text breakdown fallback |
 | `RADAR_SUPABASE_URL`, `RADAR_SUPABASE_KEY` | the home: the Creative Triage project URL and its service role key (the generic `SUPABASE_URL` in the Hermes key file points at another project, so these are read by their own names) |
 | `COCKPIT_IDEATION_URL`, `COCKPIT_IDEATION_TOKEN` | optional mirror into a cockpit door; not used |
-| `SLACK_BOT_TOKEN`, `RADAR_SLACK_CHANNEL` | a digest line per scan, posted even when nothing was found |
+| `SLACK_BOT_TOKEN`, `RADAR_SLACK_CHANNEL` | a digest per scan, posted even when nothing was found; one channel or user id, or a comma separated list (Aziz `U09305KE2KS`, Sabry `U0B2SHGS1JA`) |
 
 Settings (all optional): `RADAR_HOME` (default `~/.ideation-radar`),
 `RADAR_THRESHOLD` 3, `RADAR_REVERSE_THRESHOLD` 5, `RADAR_SAMPLE` 30,
@@ -119,6 +146,18 @@ mirror; one authoritative store is the rule), `RADAR_APIFY_CONCURRENCY` 4,
 `RADAR_APIFY_MAX_RUNS` 150 per scan, `RADAR_GEMINI_MODEL` `gemini-3.6-flash` (Google closed 2.5 Flash to new keys on
 2026-09-17; `doctor` asks the model one word to prove the key can use it),
 `RADAR_TEXT_PROVIDER` `gemini,deepseek,openai`, `RADAR_MAX_DURATION_SEC` 600.
+
+Since 2026-09-18: `RADAR_SEARCH_LIMIT` 20 (accounts listed per keyword),
+`RADAR_SEARCH_TOP_K` 8 (profiles scanned per keyword per scan),
+`RADAR_SEARCH_PROFILE_CAP` 15 (per scan), `RADAR_SEARCH_RETRY_DAYS` 90,
+`RADAR_SEARCH_AUTOWATCH` 1 (accounts with a baseline join the watchlist),
+`RADAR_TREND_WINDOW_DAYS` 14, `RADAR_TREND_MIN_AUTHORS` 3,
+`RADAR_TREND_SIMILARITY` 0.82 (cosine on the descriptor embeddings),
+`RADAR_TREND_MAX_DESCRIBE` 40 (descriptors per run), `RADAR_EMBED_MODEL`
+`gemini-embedding-001` with `RADAR_EMBED_DIMS` 256 (`RADAR_OPENAI_EMBED_MODEL`
+`text-embedding-3-small` as the fallback), `RADAR_SPEECH_PROVIDER`
+`elevenlabs,groq`, `RADAR_ELEVENLABS_STT_MODEL` `scribe_v1`,
+`RADAR_ACTOR_INSTAGRAM_SEARCH` `apify~instagram-search-scraper`.
 
 ## Install on the VPS
 
@@ -189,7 +228,13 @@ capture takes 1 to 4 minutes: the Apify fetch, the download, the model call.
   proposal status, the last 60 scan records with Apify cost. Written
   atomically. A dry run never touches it.
 - Slack digest (when configured), even on a zero day: silence is never
-  ambiguous.
+  ambiguous. Since 2026-09-18 it also lists the trends of the fortnight and
+  the accounts a keyword search found and now watches.
+- Trends, after the rows are stored: `format_label`, `hook_kind`, `topic`,
+  `format_vec` on every active row of the window, `trend_*` on the members
+  of a trend; the report carries `trends` and `watch_added`.
+- Storyboards in the `ideation-stills` bucket for the proposals whose clip
+  could be fetched (five minutes of budget per scan), the thumbnail otherwise.
 
 Failure rules: an empty or failed fetch keeps the previous baseline and is
 counted as a failure for that target; a target that returns under half its
@@ -206,7 +251,10 @@ original language, `on_screen_text` with seconds, `format`, `hook` (text and
 type), `beats` (hook, problem, mechanism, proof, offer, cta), `cta`,
 `why_it_works`, `transferable`, `adaptations`, `method`, `confidence`,
 `warnings`. When the author is on the watchlist the idea also carries its
-`multiplier` and `tier` against the stored baseline.
+`multiplier` and `tier` against the stored baseline. `method.transcribe`
+names who heard the words: `elevenlabs:scribe_v1`, `groq:whisper-large-v3`
+or `gemini:<model>` when only the video model listened; the capture's
+storyboard is built from its own download.
 
 ## The cockpit door
 
@@ -281,10 +329,14 @@ create table if not exists public.ideation_posts (
   saved_by text, saved_by_name text, saved_at timestamptz, saved_note text,
   dismissed_by text, dismissed_at timestamptz, fetching_at timestamptz, attempts integer not null default 0,
   still_path text, still_at timestamptz, still_error text,
+  -- 2026-09-18: trends (radar/trends.py)
+  format_label text, hook_kind text, topic text, format_vec jsonb,
+  trend_id text, trend_label text, trend_n integer, trend_at timestamptz,
   updated_at timestamptz not null default now()
 );
 create index if not exists ideation_posts_status_at_idx on public.ideation_posts (status, at desc);
 create index if not exists ideation_posts_platform_at_idx on public.ideation_posts (platform, at desc);
+create index if not exists ideation_posts_trend_idx on public.ideation_posts (trend_id, at desc) where trend_id is not null;
 create table if not exists public.ideation_watchlist (
   key text primary key, platform text not null, kind text not null default 'account', value text not null,
   industry text not null default 'other', tags jsonb not null default '[]'::jsonb, active boolean not null default true,
@@ -370,6 +422,21 @@ publishes Gulf-dialect accuracy.
   refreshed weekly, so the first scan costs about two runs per Instagram
   account. Hashtag hits on Instagram carry no follower count, so their reach
   cannot be judged until the author's profile is fetched.
+- Trends are as good as the descriptors: a proposal the radar never watched
+  is labelled from its caption and storyboard only, so two videos of the
+  same format with unlike captions can miss each other, and the threshold
+  (`RADAR_TREND_SIMILARITY`) trades that against false trends. A trend needs
+  three distinct accounts inside 14 days; two is a coincidence.
+- ElevenLabs Scribe on the key's plan: the Hermes key is on the free plan
+  (checked 2026-09-18), where speech to text is metered separately from
+  the character quota. If Scribe starts answering 402 or 429, the chain
+  drops to Whisper by itself and `method.transcribe` says so; upgrade the
+  plan or set `RADAR_SPEECH_PROVIDER=groq`.
+- Keyword search finds accounts, not posts: the search actor lists at most
+  20 accounts per keyword with their latest posts, and only public accounts
+  with 2,000 followers or more and a recent reel are scanned. Junk that
+  slips through is one `radar.py watchlist remove instagram <handle>` away
+  (auto-added rows carry source `search`).
 - Instagram hashtags do not discover authors. Checked with paid runs on
   2026-09-17: both `apify~instagram-scraper` (explore/tags URL) and
   `apify~instagram-hashtag-scraper` return the tag's recent stream only, posts
