@@ -2,11 +2,13 @@ import { useAction } from "convex/react";
 import {
   ExternalLink,
   ImageOff,
+  Keyboard,
   Lightbulb,
   LoaderCircle,
   RefreshCw,
   Search,
   Star,
+  TrendingUp,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -39,13 +41,18 @@ import { api } from "../../convex/_generated/api";
  * It never pretends a fetch already happened: a pasted link shows as
  * "Fetching" until the transcript is in, or "Failed" with the reason.
  *
+ * Since 2026-09-18: a Trends tab (the same format from three accounts or
+ * more inside two weeks, flagged by the radar), a three-frame storyboard
+ * instead of one still, and keyboard shortcuts (press ? for the list).
+ *
  * This file is the same in the creative director and media buyer cockpits.
  */
 
-type Tab = "saved" | "proposed" | "working" | "failed" | "dismissed";
+type Tab = "saved" | "proposed" | "trends" | "working" | "failed" | "dismissed";
 const TABS: { key: Tab; label: string }[] = [
   { key: "saved", label: "Saved ideas" },
   { key: "proposed", label: "Proposed by the scan" },
+  { key: "trends", label: "Trends" },
   { key: "working", label: "Fetching" },
   { key: "failed", label: "Failed" },
   { key: "dismissed", label: "Dismissed" },
@@ -60,16 +67,60 @@ type Row = any;
 function Pill({
   children,
   tone = "neutral",
+  title,
 }: {
   children: React.ReactNode;
   tone?: "good" | "warn" | "bad" | "neutral";
+  title?: string;
 }) {
   return (
     <span
+      title={title}
       className={`tone-${tone} rounded-full px-2 py-0.5 text-[11px] font-medium`}
     >
       {children}
     </span>
+  );
+}
+
+function isStoryboard(r: Row): boolean {
+  return typeof r.still_path === "string" && r.still_path.includes(".story.");
+}
+
+function TrendPill({ r }: { r: Row }) {
+  if (!r.trend_id) return null;
+  const n = num(r.trend_n);
+  return (
+    <Pill
+      tone="good"
+      title={`${r.trend_label ?? "Trend"}: the same format on ${n ?? "several"} accounts in the last two weeks.`}
+    >
+      <TrendingUp className="mr-1 inline h-3 w-3" />
+      Trend{n ? ` · ${n} accounts` : ""}
+    </Pill>
+  );
+}
+
+const SHORTCUTS: [string, string][] = [
+  ["j / k", "next / previous idea"],
+  ["Enter", "read it / hide it"],
+  ["s", "keep it (a proposal)"],
+  ["x", "dismiss, or restore a dismissed one"],
+  ["o", "open the post in a new tab"],
+  ["/", "search"],
+  ["1 to 6", "switch tab"],
+  ["?", "this list"],
+];
+
+function typingTarget(el: EventTarget | null): boolean {
+  if (!(el instanceof HTMLElement)) return false;
+  const tag = el.tagName;
+  return (
+    tag === "INPUT" ||
+    tag === "TEXTAREA" ||
+    tag === "SELECT" ||
+    el.isContentEditable ||
+    Boolean(el.closest("[role=dialog]"))
   );
 }
 
@@ -164,13 +215,14 @@ function serverMessage(e: unknown): string {
   return msg.replace(/^.*Uncaught Error: /, "").split("\n")[0];
 }
 
-/** The post's picture: the cockpit's own copy first, the platform's link second, else a grey box that says why. */
+/** The post's picture: the cockpit's own copy first (a three-frame storyboard when the radar could fetch the clip), the platform's link second, else a grey box that says why. */
 function Thumb({ r }: { r: Row }) {
   const [failed, setFailed] = useState(false);
   const src =
     !failed && (r.still_url || r.thumb_url)
       ? String(r.still_url || r.thumb_url)
       : "";
+  const wide = isStoryboard(r) && Boolean(r.still_url) && !failed;
   if (!src) {
     return (
       <div
@@ -193,7 +245,10 @@ function Thumb({ r }: { r: Row }) {
       decoding="async"
       referrerPolicy="no-referrer"
       onError={() => setFailed(true)}
-      className="h-14 w-10 shrink-0 rounded object-cover"
+      title={
+        wide ? "Storyboard: start, middle and end of the clip." : undefined
+      }
+      className={`h-14 shrink-0 rounded object-cover ${wide ? "w-[100px]" : "w-10"}`}
     />
   );
 }
@@ -252,6 +307,13 @@ export function IdeationPage() {
   );
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [openKeys, setOpenKeys] = useState<Set<string>>(() => new Set());
+  const [keepingKey, setKeepingKey] = useState<string | null>(null);
+  const [showKeys, setShowKeys] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const dismissIdea = useAction(api.ideation.dismiss);
+  const restoreIdea = useAction(api.ideation.restore);
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
@@ -309,6 +371,108 @@ export function IdeationPage() {
   const countOf = (t: Tab) =>
     counts && typeof counts[t] === "number" ? String(counts[t]) : "";
 
+  const toggleOpen = useCallback((key: string) => {
+    setOpenKeys(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  // Keyboard: j/k move, Enter reads, s keeps, x dismisses or restores, o opens, / searches, 1-6 tabs, ? help.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (typingTarget(e.target)) {
+        if (e.key === "Escape" && e.target instanceof HTMLElement)
+          e.target.blur();
+        return;
+      }
+      const list = rows ?? [];
+      const at = cursor ? list.findIndex((r: Row) => r.key === cursor) : -1;
+      const current = at >= 0 ? list[at] : null;
+      const move = (delta: number) => {
+        if (!list.length) return;
+        const idx = Math.max(
+          0,
+          Math.min(
+            list.length - 1,
+            (at < 0 ? (delta > 0 ? -1 : list.length) : at) + delta,
+          ),
+        );
+        const key = list[idx].key;
+        setCursor(key);
+        document
+          .querySelector(`[data-idea="${CSS.escape(key)}"]`)
+          ?.scrollIntoView({ block: "nearest" });
+      };
+      switch (e.key) {
+        case "j":
+        case "ArrowDown":
+          e.preventDefault();
+          move(1);
+          break;
+        case "k":
+        case "ArrowUp":
+          e.preventDefault();
+          move(-1);
+          break;
+        case "Enter":
+          if (current) {
+            e.preventDefault();
+            toggleOpen(current.key);
+          }
+          break;
+        case "s":
+          if (current?.status === "proposed") setKeepingKey(current.key);
+          break;
+        case "x":
+          if (current) {
+            const fn =
+              current.status === "dismissed"
+                ? () => restoreIdea({ key: current.key })
+                : () => dismissIdea({ key: current.key });
+            void fn()
+              .then(async () => {
+                toast.success(
+                  current.status === "dismissed"
+                    ? "Back in the list."
+                    : "Dismissed.",
+                );
+                await refresh();
+              })
+              .catch(err => toast.error(serverMessage(err)));
+          }
+          break;
+        case "o":
+          if (current?.url)
+            window.open(String(current.url), "_blank", "noopener");
+          break;
+        case "/":
+          e.preventDefault();
+          searchRef.current?.focus();
+          break;
+        case "?":
+          setShowKeys(v => !v);
+          break;
+        case "Escape":
+          setShowKeys(false);
+          break;
+        default: {
+          const n = Number(e.key);
+          if (n >= 1 && n <= TABS.length) setTab(TABS[n - 1].key);
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [rows, cursor, toggleOpen, refresh, dismissIdea, restoreIdea]);
+
+  const keepingRow = keepingKey
+    ? (rows ?? []).find((r: Row) => r.key === keepingKey)
+    : undefined;
+
   return (
     <div className="mx-auto w-full max-w-5xl">
       <div className="mb-1 flex flex-wrap items-center gap-2">
@@ -330,7 +494,29 @@ export function IdeationPage() {
           />
           Refresh
         </button>
+        <button
+          type="button"
+          onClick={() => setShowKeys(v => !v)}
+          aria-pressed={showKeys}
+          className="rounded border px-2 py-0.5 text-[12px] font-semibold text-muted-foreground hover:bg-muted"
+          title="Keyboard shortcuts (?)"
+        >
+          <Keyboard className="mr-1 inline h-3 w-3" />
+          Keys
+        </button>
       </div>
+      {showKeys ? (
+        <div className="mb-3 grid grid-cols-2 gap-x-6 gap-y-0.5 rounded-md border bg-muted/30 px-3 py-2 text-[12px] md:grid-cols-4">
+          {SHORTCUTS.map(([k, what]) => (
+            <div key={k}>
+              <kbd className="rounded border bg-background px-1 font-mono text-[11px]">
+                {k}
+              </kbd>{" "}
+              <span className="text-muted-foreground">{what}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
       <p className="mb-3 text-[13px] text-muted-foreground">
         Posts that ran far above their account's normal, from our industry and
         from others, with what they say, what is on screen and why they work.
@@ -415,6 +601,7 @@ export function IdeationPage() {
         <div className="ml-auto flex items-center gap-1.5 rounded-md border px-2 py-1">
           <Search className="h-3.5 w-3.5 text-muted-foreground" />
           <input
+            ref={searchRef}
             value={q}
             onChange={e => setQ(e.target.value)}
             placeholder="Search hooks, captions, transcripts, notes"
@@ -427,13 +614,39 @@ export function IdeationPage() {
         <p className="text-[13px] text-muted-foreground">Loading…</p>
       ) : rows.length === 0 ? (
         <p className="text-[13px] text-muted-foreground">{emptyText(tab, q)}</p>
+      ) : tab === "trends" ? (
+        <TrendGroups
+          rows={rows}
+          cursor={cursor}
+          openKeys={openKeys}
+          onToggleOpen={toggleOpen}
+          onKeep={setKeepingKey}
+          onFocus={setCursor}
+          onChanged={refresh}
+        />
       ) : (
         <div className="divide-y rounded-lg border">
           {rows.map((r: Row) => (
-            <IdeaRow key={r.key} r={r} onChanged={refresh} />
+            <IdeaRow
+              key={r.key}
+              r={r}
+              active={cursor === r.key}
+              open={openKeys.has(r.key)}
+              onToggleOpen={() => toggleOpen(r.key)}
+              onKeep={() => setKeepingKey(r.key)}
+              onFocus={() => setCursor(r.key)}
+              onChanged={refresh}
+            />
           ))}
         </div>
       )}
+      {keepingRow ? (
+        <KeepDialog
+          r={keepingRow}
+          onClose={() => setKeepingKey(null)}
+          onKept={refresh}
+        />
+      ) : null}
       {data?.capped ? (
         <p className="mt-2 text-[12px] text-muted-foreground">
           Showing the newest 150. Narrow the filter or search to find older
@@ -451,6 +664,8 @@ function emptyText(tab: Tab, q: string): string {
       return "Nothing saved yet. Paste an Instagram, TikTok or Snapchat link above, or keep one of the scan's proposals.";
     case "proposed":
       return "The scan has not proposed anything yet. It proposes posts doing three times an account's usual views or more.";
+    case "trends":
+      return "No trend yet. A trend is the same format from three accounts or more inside two weeks; the radar flags them after every scan.";
     case "working":
       return "Nothing is being fetched right now.";
     case "failed":
@@ -551,9 +766,92 @@ function PasteBox({ onDone }: { onDone: () => Promise<void> }) {
 
 // ---------------------------------------------------------------------------
 
-function IdeaRow({ r, onChanged }: { r: Row; onChanged: () => Promise<void> }) {
-  const [open, setOpen] = useState(false);
-  const [keeping, setKeeping] = useState(false);
+/** The Trends tab: one block per trend, its label on top, the posts under it. */
+function TrendGroups({
+  rows,
+  cursor,
+  openKeys,
+  onToggleOpen,
+  onKeep,
+  onFocus,
+  onChanged,
+}: {
+  rows: Row[];
+  cursor: string | null;
+  openKeys: Set<string>;
+  onToggleOpen: (key: string) => void;
+  onKeep: (key: string) => void;
+  onFocus: (key: string) => void;
+  onChanged: () => Promise<void>;
+}) {
+  const groups: { id: string; label: string; n: number | null; rows: Row[] }[] =
+    [];
+  for (const r of rows) {
+    const id = String(r.trend_id ?? "");
+    let g = groups.find(x => x.id === id);
+    if (!g) {
+      g = {
+        id,
+        label: String(r.trend_label ?? "Trend"),
+        n: num(r.trend_n),
+        rows: [],
+      };
+      groups.push(g);
+    }
+    g.rows.push(r);
+  }
+  return (
+    <div className="space-y-3">
+      {groups.map(g => (
+        <section key={g.id} className="rounded-lg border">
+          <div className="flex flex-wrap items-center gap-2 border-b bg-muted/30 px-3 py-1.5 text-[13px]">
+            <TrendingUp className="h-4 w-4 text-muted-foreground" />
+            <span className="font-semibold" dir="auto">
+              {g.label}
+            </span>
+            <span className="text-[12px] text-muted-foreground">
+              {g.n ? `${g.n} accounts` : ""}
+              {g.n ? " · " : ""}
+              {g.rows.length} post{g.rows.length === 1 ? "" : "s"} here
+            </span>
+          </div>
+          <div className="divide-y">
+            {g.rows.map((r: Row) => (
+              <IdeaRow
+                key={r.key}
+                r={r}
+                active={cursor === r.key}
+                open={openKeys.has(r.key)}
+                onToggleOpen={() => onToggleOpen(r.key)}
+                onKeep={() => onKeep(r.key)}
+                onFocus={() => onFocus(r.key)}
+                onChanged={onChanged}
+              />
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function IdeaRow({
+  r,
+  active,
+  open,
+  onToggleOpen,
+  onKeep,
+  onFocus,
+  onChanged,
+}: {
+  r: Row;
+  active: boolean;
+  open: boolean;
+  onToggleOpen: () => void;
+  onKeep: () => void;
+  onFocus: () => void;
+  onChanged: () => Promise<void>;
+}) {
   const dismiss = useAction(api.ideation.dismiss);
   const restore = useAction(api.ideation.restore);
   const retry = useAction(api.ideation.retry);
@@ -575,13 +873,19 @@ function IdeaRow({ r, onChanged }: { r: Row; onChanged: () => Promise<void> }) {
   };
 
   return (
-    <div>
-      <div className="flex items-start gap-3 px-3 py-2 hover:bg-muted/50">
+    <div data-idea={r.key}>
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: the keyboard path is the page-level shortcut handler */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: a click only moves the keyboard cursor; every action has its own button */}
+      <div
+        className={`flex items-start gap-3 px-3 py-2 hover:bg-muted/50 ${active ? "ring-1 ring-inset ring-primary/60 bg-muted/40" : ""}`}
+        onClick={onFocus}
+      >
         <Thumb r={r} />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5 text-[13px]">
             <span className="font-semibold">@{r.author_handle || "?"}</span>
             <Pill>{platformLabel(r.platform)}</Pill>
+            <TrendPill r={r} />
             {r.industry === "ours" ? (
               <Pill tone="neutral">Our industry</Pill>
             ) : (
@@ -606,6 +910,17 @@ function IdeaRow({ r, onChanged }: { r: Row; onChanged: () => Promise<void> }) {
           <div className="truncate text-[13px]" dir="auto" title={title}>
             {title}
           </div>
+          {r.format_label ? (
+            <div
+              className="truncate text-[12px] text-muted-foreground"
+              title="How the video is built, as the radar read it"
+            >
+              {r.format_label}
+              {r.hook_kind && r.hook_kind !== "other"
+                ? ` · ${r.hook_kind} hook`
+                : ""}
+            </div>
+          ) : null}
           {r.status === "failed" && r.error ? (
             <div className="text-[12px] txt-bad">{r.error}</div>
           ) : null}
@@ -632,7 +947,7 @@ function IdeaRow({ r, onChanged }: { r: Row; onChanged: () => Promise<void> }) {
             {r.status === "proposed" ? (
               <button
                 type="button"
-                onClick={() => setKeeping(true)}
+                onClick={onKeep}
                 className="rounded border px-2 py-0.5 text-[12px] font-semibold text-muted-foreground hover:bg-muted"
               >
                 Keep it
@@ -681,7 +996,7 @@ function IdeaRow({ r, onChanged }: { r: Row; onChanged: () => Promise<void> }) {
             </a>
             <button
               type="button"
-              onClick={() => setOpen(o => !o)}
+              onClick={onToggleOpen}
               className="rounded border px-2 py-0.5 text-[12px] font-semibold text-muted-foreground hover:bg-muted"
             >
               {open ? "Hide" : "Read it"}
@@ -690,13 +1005,6 @@ function IdeaRow({ r, onChanged }: { r: Row; onChanged: () => Promise<void> }) {
         </div>
       </div>
       {open ? <IdeaDetail keyId={r.key} onChanged={onChanged} /> : null}
-      {keeping ? (
-        <KeepDialog
-          r={r}
-          onClose={() => setKeeping(false)}
-          onKept={onChanged}
-        />
-      ) : null}
     </div>
   );
 }
@@ -777,6 +1085,27 @@ function IdeaDetail({
   const notCaptured = r.status !== "saved" || !r.captured_at;
   return (
     <div className="space-y-3 border-t bg-muted/30 px-3 py-3 text-[13px]">
+      {isStoryboard(r) && r.still_url ? (
+        <img
+          src={String(r.still_url)}
+          alt="Storyboard: start, middle and end of the clip"
+          loading="lazy"
+          decoding="async"
+          referrerPolicy="no-referrer"
+          className="max-h-56 rounded border"
+        />
+      ) : null}
+      {r.trend_id || r.format_label ? (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <TrendPill r={r} />
+          {r.format_label ? (
+            <span className="text-[12px] text-muted-foreground">
+              {r.format_label}
+              {r.topic ? ` · ${r.topic}` : ""}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
       <div className="flex flex-wrap gap-1.5">
         {[
           r.format,

@@ -34,6 +34,7 @@ const LINK_RE =
 const TABS: Record<string, string[]> = {
   saved: ["saved"],
   proposed: ["proposed"],
+  trends: ["proposed", "queued", "fetching", "saved"],
   working: ["queued", "fetching"],
   failed: ["failed"],
   dismissed: ["dismissed"],
@@ -93,6 +94,12 @@ const LIGHT = [
   "attempts",
   "still_path",
   "warnings",
+  "format_label",
+  "hook_kind",
+  "topic",
+  "trend_id",
+  "trend_label",
+  "trend_n",
 ].join(",");
 
 // biome-ignore lint/suspicious/noExplicitAny: Supabase rows are untyped here
@@ -257,7 +264,13 @@ async function fetchList(args: {
   const params = new URLSearchParams();
   params.set("select", LIGHT);
   params.set("status", `in.(${statuses.map(s => `"${s}"`).join(",")})`);
-  params.set("order", "at.desc");
+  if (args.tab === "trends") {
+    // The same format on several accounts inside two weeks (radar/trends.py).
+    params.set("trend_id", "not.is.null");
+    params.set("order", "trend_n.desc,trend_label.asc,at.desc");
+  } else {
+    params.set("order", "at.desc");
+  }
   params.set("limit", String(limit));
   if (args.platform)
     params.set("platform", `eq.${args.platform.toLowerCase()}`);
@@ -302,7 +315,7 @@ export const detail = authenticatedAction({
   },
 });
 
-/** Exact per-tab counts from the database, five cheap HEAD requests. */
+/** Exact per-tab counts from the database, six cheap HEAD requests. */
 export const counts = authenticatedAction({
   args: {},
   returns: v.any(),
@@ -314,6 +327,7 @@ export const counts = authenticatedAction({
       const params = new URLSearchParams();
       params.set("select", "key");
       params.set("status", `in.(${statuses.map(s => `"${s}"`).join(",")})`);
+      if (tab === "trends") params.set("trend_id", "not.is.null");
       params.set("limit", "1");
       const res = await fetch(
         `${SUPABASE_URL}/rest/v1/${TABLE}?${params.toString()}`,
