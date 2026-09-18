@@ -339,7 +339,10 @@ def text_model_json(cfg: Config, prompt: str, log: Callable[[str], None]) -> tup
             if provider == "deepseek" and cfg.deepseek_key:
                 out = http.post_json(
                     "https://api.deepseek.com/chat/completions",
-                    {"model": cfg.deepseek_model, "messages": [{"role": "user", "content": prompt}], "response_format": {"type": "json_object"}, "temperature": 0.2, "max_tokens": 4000},
+                    # A reasoning model: its thinking is spent before any content appears and counts
+                    # against max_tokens, so a small cap returns truncated JSON (seen 2026-09-18 as
+                    # "Expecting ',' delimiter"). The breakdown carries a transcript, so give it room.
+                    {"model": cfg.deepseek_model, "messages": [{"role": "user", "content": prompt}], "response_format": {"type": "json_object"}, "temperature": 0.2, "max_tokens": cfg.deepseek_max_tokens},
                     headers={"Authorization": f"Bearer {cfg.deepseek_key}"},
                     timeout=300,
                     retries=1,

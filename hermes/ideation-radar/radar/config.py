@@ -170,6 +170,8 @@ class Config:
     groq_model: str = "whisper-large-v3"
     openai_vision_model: str = "gpt-4o-mini"
     deepseek_model: str = "deepseek-flash"
+    # Reasoning tokens count against this; the text breakdown needs the room (shared context, DEEPSEEK.md).
+    deepseek_max_tokens: int = 12000
     frame_every_sec: float = 2.5
     max_frames: int = 24
     max_video_bytes: int = 200 * 1024 * 1024
@@ -257,6 +259,7 @@ class Config:
             groq_model=key("RADAR_GROQ_MODEL", "whisper-large-v3"),
             openai_vision_model=key("RADAR_OPENAI_VISION_MODEL", "gpt-4o-mini"),
             deepseek_model=key("RADAR_DEEPSEEK_MODEL", "deepseek-flash"),
+            deepseek_max_tokens=_int("RADAR_DEEPSEEK_MAX_TOKENS", 12000),
             frame_every_sec=_float("RADAR_FRAME_EVERY_SEC", 2.5),
             max_frames=_int("RADAR_MAX_FRAMES", 24),
             max_video_bytes=_int("RADAR_MAX_VIDEO_BYTES", 200 * 1024 * 1024),
