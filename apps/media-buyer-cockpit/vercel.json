@@ -28,6 +28,14 @@
       "destination": "https://mahara-creative-director.vercel.app/creative/:path*"
     },
     {
+      "source": "/editor/",
+      "destination": "https://mahara-video-editor.vercel.app/editor/"
+    },
+    {
+      "source": "/editor/:path*",
+      "destination": "https://mahara-video-editor.vercel.app/editor/:path*"
+    },
+    {
       "source": "/((?!api/|assets/|__viktor_meta\\.json).*)",
       "destination": "/index.html"
     }

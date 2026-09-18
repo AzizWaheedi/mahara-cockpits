@@ -11,22 +11,44 @@ import { authenticatedQuery } from "./functions";
  * Enforced on the server: hiding a menu is not the lock.
  */
 const STATIC: Record<string, string[]> = {
-  "aziz@maharamedia.com": ["admin", "media_buyer", "csm", "creative"],
-  "awaheedi2008@gmail.com": ["admin", "media_buyer", "csm", "creative"],
+  "aziz@maharamedia.com": ["admin", "media_buyer", "csm", "creative", "editor"],
+  "awaheedi2008@gmail.com": [
+    "admin",
+    "media_buyer",
+    "csm",
+    "creative",
+    "editor",
+  ],
   "nada@maharamedia.com": ["media_buyer"],
   "abdulelah@maharamedia.com": ["csm"],
   "abdu@maharamedia.com": ["csm"],
+  // The one editor on the Video Pipeline board (Aziz, 2026-09-18).
+  "karim@maharamedia.com": ["editor"],
 };
 
-export const COCKPITS = ["media_buyer", "csm", "creative"] as const;
+export const COCKPITS = ["media_buyer", "csm", "creative", "editor"] as const;
 
-/** Where each role lands. The portal routes csm and creative to their own apps. */
+/** Where each role lands. The portal routes the other three to their own apps. */
 const HOME: Record<string, string> = {
   admin: "/admin",
   media_buyer: "/dashboard",
   csm: "/go/csm",
   creative: "/go/creative",
+  editor: "/go/editor",
 };
+
+/** The fallback directory as rows, for the pushes that leave this deployment. */
+export function staticPeople(): {
+  email: string;
+  name: string;
+  roles: string[];
+}[] {
+  return Object.entries(STATIC).map(([email, roles]) => ({
+    email,
+    name: "",
+    roles,
+  }));
+}
 
 export function staticRoles(email: string | undefined | null): string[] {
   const key = (email ?? "").trim().toLowerCase();

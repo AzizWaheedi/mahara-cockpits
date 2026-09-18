@@ -139,6 +139,7 @@ function SidebarNav() {
   const others = [
     { key: "csm", label: "Client success", href: "/go/csm" },
     { key: "creative", label: "Creative director", href: "/go/creative" },
+    { key: "editor", label: "Editor desk", href: "/go/editor" },
   ].filter(c => cockpits.includes(c.key));
 
   return (

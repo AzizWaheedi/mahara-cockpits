@@ -140,6 +140,12 @@ function PortalGroup() {
       href: `${portal}/go/creative`,
       show: false,
     },
+    {
+      key: "editor",
+      label: "Editor desk",
+      href: `${portal}/go/editor`,
+      show: isAdmin || roles.includes("editor"),
+    },
   ].filter(d => d.show);
   if (doors.length === 0) return null;
   return (

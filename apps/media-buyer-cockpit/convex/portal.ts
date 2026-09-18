@@ -144,6 +144,11 @@ export const pushMember = internalAction({
         out[app] = `FAILED ${String(e).slice(0, 120)}`;
       }
     }
+    // The editor cockpit has no Convex of its own; its seat list is a
+    // Supabase table this deployment writes.
+    out.editor = JSON.stringify(
+      await ctx.runAction(internal.editorPortal.pushOne, { email: m.email }),
+    );
     await flush(ctx);
     return out;
   },
@@ -162,6 +167,11 @@ export const pushMembers = internalAction({
       } catch (e) {
         out[app] = `FAILED ${String(e).slice(0, 120)}`;
       }
+    }
+    try {
+      out.editor = await ctx.runAction(internal.editorPortal.syncPeople, {});
+    } catch (e) {
+      out.editor = `FAILED ${String(e).slice(0, 120)}`;
     }
     return out;
   },
@@ -204,7 +214,7 @@ export const removeMember = authenticatedMutation({
 export const revoke = internalAction({
   args: { email: v.string() },
   returns: v.any(),
-  handler: async (_ctx, { email }) => {
+  handler: async (ctx, { email }) => {
     const out: Record<string, string> = {};
     for (const app of ["csm", "creative"] as const) {
       try {
@@ -214,6 +224,11 @@ export const revoke = internalAction({
         out[app] = `FAILED ${String(e).slice(0, 120)}`;
       }
     }
+    // With no roles left, this switches their seat off in editor_people, so
+    // every row policy in the editor cockpit stops answering for them.
+    out.editor = JSON.stringify(
+      await ctx.runAction(internal.editorPortal.pushOne, { email }),
+    );
     return out;
   },
 });
@@ -592,10 +607,18 @@ export const mintToken = action({
       name: a.name ?? undefined,
       roles: a.roles,
       clients: a.clients,
+      // So a child can draw the switcher without asking the portal again.
+      cockpits: a.cockpits,
       cockpit,
     });
     await ctx.runMutation(internal.portal.touch, { email: a.email, cockpit });
-    return { token, path: cockpit === "csm" ? "/client-success" : "/creative" };
+    const path =
+      cockpit === "csm"
+        ? "/client-success"
+        : cockpit === "editor"
+          ? "/editor"
+          : "/creative";
+    return { token, path };
   },
 });
 

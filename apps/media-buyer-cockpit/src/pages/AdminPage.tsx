@@ -65,6 +65,11 @@ const ROLE_META: { key: string; label: string; hint: string }[] = [
     label: "Creative director",
     hint: "Briefs, scripts, winners, brand DNA.",
   },
+  {
+    key: "editor",
+    label: "Editor desk",
+    hint: "Video jobs, footage, brand rules, cuts.",
+  },
 ];
 
 /** Cockpit key → the app name its smoke check reports under. */
@@ -72,6 +77,7 @@ const APP_KEY: Record<string, string> = {
   media_buyer: "media-buyer",
   csm: "client-success",
   creative: "creative",
+  editor: "video-editor",
 };
 
 const agoAt = (now: number, ms?: number | null) => {
@@ -91,7 +97,9 @@ function RoleChip({ role }: { role: string }) {
         ? "bg-sky-100 text-sky-900 dark:bg-sky-900/40 dark:text-sky-100"
         : role === "csm"
           ? "bg-teal-100 text-teal-900 dark:bg-teal-900/40 dark:text-teal-100"
-          : "bg-violet-100 text-violet-900 dark:bg-violet-900/40 dark:text-violet-100";
+          : role === "editor"
+            ? "bg-rose-100 text-rose-900 dark:bg-rose-900/40 dark:text-rose-100"
+            : "bg-violet-100 text-violet-900 dark:bg-violet-900/40 dark:text-violet-100";
   return (
     <span
       className={`rounded-md px-1.5 py-0.5 text-[11px] font-semibold ${tone}`}

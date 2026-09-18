@@ -30,6 +30,81 @@ function authorized(request: Request): boolean {
   );
 }
 
+/**
+ * The editor cockpit's door. It is a browser app with no backend of its own,
+ * so it swaps the portal's pass here for a Supabase sign-in token. Only the
+ * cockpit's own origins may ask, and the pass itself is what proves who the
+ * caller is: nothing in the request body chooses an address.
+ */
+const EDITOR_ORIGINS = [
+  "https://cockpit.maharamedia.com",
+  "https://mahara-media-buyer.vercel.app",
+  "https://mahara-video-editor.vercel.app",
+  "http://localhost:5178",
+  "http://localhost:5173",
+];
+
+function editorCors(request: Request): Record<string, string> {
+  const origin = request.headers.get("origin") ?? "";
+  return {
+    "Access-Control-Allow-Origin": EDITOR_ORIGINS.includes(origin)
+      ? origin
+      : "null",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Max-Age": "86400",
+    Vary: "Origin",
+  };
+}
+
+http.route({
+  path: "/portal/editor-session",
+  method: "OPTIONS",
+  handler: httpAction(async (_ctx, request) => {
+    return new Response(null, { status: 204, headers: editorCors(request) });
+  }),
+});
+
+http.route({
+  path: "/portal/editor-session",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const headers = editorCors(request);
+    if (headers["Access-Control-Allow-Origin"] === "null")
+      return Response.json(
+        { ok: false, error: "not an allowed origin" },
+        { status: 403, headers },
+      );
+    let token = "";
+    try {
+      const body = (await request.json()) as { token?: string };
+      token = String(body?.token ?? "");
+    } catch {
+      return Response.json(
+        { ok: false, error: "send a JSON body" },
+        { status: 400, headers },
+      );
+    }
+    if (!token)
+      return Response.json(
+        { ok: false, error: "no pass in the request" },
+        { status: 400, headers },
+      );
+    try {
+      const out = await ctx.runAction(internal.editorPortal.exchangeToken, {
+        token,
+      });
+      return Response.json({ ok: true, ...out }, { headers });
+    } catch (e) {
+      // The reason is safe to show: it is about the pass, never about a key.
+      return Response.json(
+        { ok: false, error: String((e as Error).message ?? e).slice(0, 200) },
+        { status: 401, headers },
+      );
+    }
+  }),
+});
+
 http.route({
   path: "/askai/pending",
   method: "GET",

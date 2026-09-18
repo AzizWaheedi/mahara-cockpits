@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
-import { Route, Routes } from "react-router";
+import { Navigate, Route, Routes } from "react-router";
+import { PortalAutoSignIn } from "./components/PortalAutoSignIn";
 import { SessionProvider, useWho } from "./lib/auth";
 import { useMe } from "./lib/data";
+import { otherCockpits, portalUrl } from "./lib/portal";
 import JobPage from "./pages/JobPage";
 import JobsPage from "./pages/JobsPage";
 import SignInPage from "./pages/SignInPage";
@@ -31,21 +33,77 @@ function ThemeToggle() {
   );
 }
 
+/** The portal's other doors, so switching cockpits is one click. */
+function SwitchCockpit({ cockpits, isAdmin }: { cockpits: string[]; isAdmin: boolean }) {
+  const [open, setOpen] = useState(false);
+  const doors = otherCockpits(cockpits, isAdmin);
+  if (!doors.length) return null;
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="muted text-xs"
+      >
+        Switch cockpit
+      </button>
+      {open && (
+        <div className="panel absolute right-0 z-20 mt-2 w-48 overflow-hidden p-1">
+          {doors.map((d) => (
+            <a
+              key={d.key}
+              href={d.href}
+              className="block rounded px-2.5 py-1.5 text-sm hover:bg-[color:var(--raised)]"
+            >
+              {d.label}
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Shell() {
-  const { session, email, name, ready, signOut } = useWho();
+  const { session, email, name, cockpits, isAdmin, ready, signOut } = useWho();
+  const [bumped, setBumped] = useState(0);
   const me = useMe(session ? email : null);
 
-  if (!ready) return null;
-  if (!session) return <SignInPage />;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a portal sign-in reloads the seat
+  useEffect(() => {
+    if (bumped) me.reload();
+  }, [bumped]);
 
-  // The session is real but the address is not on the list. Say so plainly
-  // rather than showing a working page with nothing in it.
+  const portalBanner = (
+    <PortalAutoSignIn
+      hasSession={Boolean(session)}
+      ready={ready}
+      onSignedIn={() => setBumped((b) => b + 1)}
+    />
+  );
+
+  if (!ready) return null;
+  if (!session)
+    return (
+      <>
+        {portalBanner}
+        <SignInPage />
+      </>
+    );
+
+  // The session is real but the address is not on the seat list. Say so
+  // plainly rather than showing a working page with nothing in it.
   if (!me.loading && !me.data) {
     return (
       <div className="mx-auto max-w-md px-4 py-20 text-center">
         <h1 className="text-lg font-semibold">Not on the editor list</h1>
         <p className="muted mt-2 text-sm">
-          {email} can sign in but cannot see any jobs. Ask Aziz to add the address.
+          {email} can sign in but has no seat on the editor desk. An admin adds one in the portal at{" "}
+          <a className="underline underline-offset-2" href={`${portalUrl()}/admin`}>
+            {portalUrl().replace(/^https?:\/\//, "")}/admin
+          </a>
+          .
         </p>
         <button
           type="button"
@@ -58,15 +116,19 @@ function Shell() {
     );
   }
 
+  const admin = isAdmin || me.data?.role === "admin";
+
   return (
     <div className="min-h-full">
+      {portalBanner}
       <header
         className="sticky z-10 border-b hairline bg-[color:var(--page)]/90 backdrop-blur"
         style={{ top: "env(safe-area-inset-top, 0px)" }}
       >
         <div className="mx-auto flex max-w-5xl items-center gap-4 px-4 py-2.5">
           <span className="text-sm font-semibold tracking-tight">Editor desk</span>
-          <span className="muted ml-auto text-xs">{me.data?.name || name}</span>
+          <span className="muted ml-auto hidden text-xs sm:inline">{me.data?.name || name}</span>
+          <SwitchCockpit cockpits={cockpits} isAdmin={admin} />
           <ThemeToggle />
           <button type="button" onClick={signOut} className="muted text-xs">
             Sign out
@@ -76,6 +138,8 @@ function Shell() {
 
       <Routes>
         <Route path="/" element={<JobsPage />} />
+        {/* The portal's door lands on /dashboard in every cockpit. */}
+        <Route path="/dashboard" element={<Navigate to="/" replace />} />
         <Route path="/job/:taskId" element={<JobPage />} />
         <Route
           path="*"

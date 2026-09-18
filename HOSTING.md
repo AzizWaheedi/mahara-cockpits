@@ -10,7 +10,7 @@ they are hosted now and what was changed to get there. Started 2026-09-09.
 | Media buyer | https://cockpit.maharamedia.com | `adorable-seahorse-418` → https://adorable-seahorse-418.convex.cloud | `wonderful-woodpecker-707` |
 | Client success | https://mahara-client-success.vercel.app | `impressive-dinosaur-375` → https://impressive-dinosaur-375.convex.cloud | `successful-gnu-925` |
 | Creative director | https://mahara-creative-director.vercel.app | `colorful-wombat-644` → https://colorful-wombat-644.convex.cloud | `diligent-koala-992` |
-| Video editor | https://mahara-video-editor.vercel.app | none — Supabase, read from the browser | none |
+| Video editor | https://cockpit.maharamedia.com/editor/ (own domain https://mahara-video-editor.vercel.app) | none — Supabase, read from the browser | none |
 
 Convex team `aziz-00129`, projects `mahara-media-buyer`, `mahara-client-success`,
 `mahara-creative-director`. Vercel team `aziz-6097s-projects`, same three project names.
@@ -43,9 +43,21 @@ Triage Supabase project (`bldgtotkfmhoxmlzowdx`) directly with the anon key, whi
 design: every `editor_*` table has row security on with one policy calling `public.is_editor()`,
 true only for an active address on `editor_people`. The browser holds no other credential.
 Anything that has to touch ClickUp or Drive is written to `editor_requests` and drained by
-`hermes/editor-desk` on the VPS every three minutes. Sign-in is email and password; accounts are
-created confirmed through the admin API rather than by email, because this project sends on
-Supabase's shared mail server, which allows two messages an hour.
+`hermes/editor-desk` on the VPS every three minutes.
+
+It joins the portal the same way the other two children do: proxied at `/editor/`, reached
+through `/go/editor`, and listed in the sidebar switcher and on the portal's front door. The
+difference is the swap. A Convex child trades the portal's two-minute pass for its own session
+inside its own backend (`portalAuth.ts`); the editor cockpit has no backend, so it posts the
+pass to the portal at `/portal/editor-session` (`convex/editorPortal.ts` on the media buyer
+deployment), which verifies its own signature and returns a Supabase sign-in token the browser
+finishes with `verifyOtp`. Nothing in that request chooses an address: the address comes out of
+the signature. Seats follow the same directory as everything else — the `members` table at
+`/admin` — and `portal.pushMember`, `pushMembers` and `revoke` write them into `editor_people`,
+switching a removed seat off rather than deleting it. Portal roles ride in Supabase
+`app_metadata`, which only the service key can write, so the switcher cannot be edited by the
+person looking at it. Email and password still works as a direct way in on a day the portal is
+down.
 
 ## What changed versus the export (and nothing else)
 

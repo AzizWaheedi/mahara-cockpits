@@ -28,6 +28,12 @@ export const COCKPIT_META: Record<
     to: "/go/creative",
     external: true,
   },
+  editor: {
+    label: "Editor desk",
+    blurb: "Video jobs, footage, brand rules, cuts.",
+    to: "/go/editor",
+    external: true,
+  },
 };
 
 /**
