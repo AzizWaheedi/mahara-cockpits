@@ -130,6 +130,23 @@ to `RADAR_SLACK_CHANNEL` even when nothing was found, so silence is never
 ambiguous. Pictures come from the private `ideation-stills` bucket, signed for
 six hours when the page loads.
 
+## Editor desk
+
+The worker on the VPS (`hermes/editor-desk`) that reads the ClickUp Video
+Pipeline, finds each job's footage in Drive, transcribes it, maps the shots and
+checks the cuts that come back. It builds no timeline and generates nothing:
+the cut is the editor's. Cron as the `hermes` user: sync and prepare every half
+hour, notes hourly, each under its own lock; log `~/.editor-desk/out/cron.log`.
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| A job says "The footage folder has no video in it yet" | The Client Footage Folder on the ClickUp card is empty or not shared with us. Put the footage in it; the desk reads it again within half an hour | Whoever films it |
+| A job says "No brief and no script on the card" | The card has no description and no References doc. Add one; a video request made from the creative cockpit carries it automatically | Creative director |
+| A job says "the footage link could not be opened" | The Google refresh token on the VPS was revoked, or the folder is not shared. `python3 desk.py doctor` names which, on the `google token` line | Aziz |
+| Transcripts come back empty | Usually correct: most of our footage is silent CGI and b-roll over music. `desk.py doctor` shows the ElevenLabs line; the card's comment says "No speech was found in any file" when that is what happened | Nobody, unless someone is talking in the clip |
+| The desk stopped posting to cards | `DESK_CLICKUP_WRITEBACK` is `0` in `~/.editor-desk/env`. It ships off on purpose; set it to `1` when the team wants the comments | Aziz |
+| `doctor`: "Bucket not found" on stills | The private `editor-stills` bucket is missing; the one-line curl to create it is in the README | Aziz |
+
 ## What never needs a person
 
 - Rate limits: every Google, ClickUp and Meta call waits and retries.
