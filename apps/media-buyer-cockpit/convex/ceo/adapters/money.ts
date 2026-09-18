@@ -1,4 +1,5 @@
 import { internal } from "../../_generated/api";
+import { type BillingRow, LIVE_GROUPS, summariseBilling } from "../billing";
 import { byNewest, type ManualLoad, type ManualRow } from "../data/money";
 import {
   capturedCharges,
@@ -1063,6 +1064,120 @@ export const money: Adapter = {
       lastPaymentAt: lastPayments.length ? Math.max(...lastPayments) : null,
     };
 
+    // --- The MRR field on the ClickUp client cards ---------------------
+    // Read for the first time on 2026-09-18. Nothing in the cockpit had ever
+    // read it, so the money a client is on record as paying every month was
+    // written on 20-odd cards and shown on no screen.
+    let mrr: MoneyPayload["mrr"];
+    const mrrDaily: DailyPoint[] = [];
+    try {
+      const rows: BillingRow[] = await ctx.runQuery(
+        internal.ceo.billing.allBilling,
+        {},
+      );
+      const b = summariseBilling(rows);
+      if (b.cards === 0) {
+        notes.push({
+          level: "warn",
+          text: "The client cards' billing fields have not been read yet, so MRR is missing, not zero. They are written by the CSM sync, which runs every 10 minutes through the working day.",
+        });
+      } else {
+        mrr = {
+          groups: (
+            ["active", "paused", "pipeline", "sales", "gone"] as const
+          ).map(group => ({ group, ...b.mrr[group] })),
+          blank: b.mrrBlank.map(r => ({ ...r, stage: r.stage ?? null })),
+          ltv: b.ltv,
+          paymentMethod: b.paymentMethod,
+          lifecycle: b.lifecycle,
+          cards: b.cards,
+          internalCards: b.internalCards,
+          syncedAt: b.syncedAt,
+        };
+
+        const live = LIVE_GROUPS.map(g => b.mrr[g]);
+        const liveRecurring = usd(live.reduce((t, g) => t + g.recurringUsd, 0));
+        const liveOneOff = usd(live.reduce((t, g) => t + g.oneOffUsd, 0));
+        const liveUnclassified = usd(
+          live.reduce((t, g) => t + g.unclassifiedUsd, 0),
+        );
+
+        notes.push({
+          level: "info",
+          text: `MRR is the figure typed in the MRR field on each ClickUp client card, not a measured charge. Cards are grouped by their Client Status and never added together, because who counts as a paying client is not settled. Active ${usdWords(b.mrr.active.bookUsd)} over ${b.mrr.active.filled} of ${b.mrr.active.cards} cards, paused ${usdWords(b.mrr.paused.bookUsd)} over ${b.mrr.paused.filled} of ${b.mrr.paused.cards}, not yet live ${usdWords(b.mrr.pipeline.bookUsd)} over ${b.mrr.pipeline.filled} of ${b.mrr.pipeline.cards}. The ${b.mrr.sales.cards} cards parked on the sales list are counted apart, because they are not clients yet${b.internalCards ? `, as are ${b.internalCards} of Mahara's own cards` : ""}.`,
+        });
+        if (liveOneOff > 0 || liveUnclassified > 0)
+          notes.push({
+            level: "warn",
+            text: `Not all of it is monthly money. Of the live cards, ${usdWords(liveRecurring)} sits on a recurring plan, ${usdWords(liveOneOff)} on Paid In Full or Split Pay, which is a share of a one-off contract, and ${usdWords(liveUnclassified)} on cards with no Payment Plan at all. How a one-off contract converts to MRR is undecided, so the three are never added into one figure here.`,
+          });
+        if (b.mrrBlank.length)
+          notes.push({
+            level: "warn",
+            text: `${b.mrrBlank.length} ${says(b.mrrBlank.length, "live client card carries", "live client cards carry")} no MRR figure, so ${b.mrrBlank.length === 1 ? "its" : "their"} money is missing from every total, not zero: ${b.mrrBlank
+              .slice(0, 8)
+              .map(r => r.name)
+              .join(
+                ", ",
+              )}${b.mrrBlank.length > 8 ? ` and ${b.mrrBlank.length - 8} more` : ""}.`,
+          });
+        if (b.paymentMethod.filled === 0)
+          notes.push({
+            level: "warn",
+            text: `Payment Method is filled on none of the ${b.cards} client cards, so there is no way to tell which clients pay off Whop. That single field is the cheapest fix for the cash rails: one dropdown per client.`,
+          });
+        if (b.lifecycle.gone > b.lifecycle.goneWithChurnDate)
+          notes.push({
+            level: "warn",
+            text: `${b.lifecycle.gone - b.lifecycle.goneWithChurnDate} of ${b.lifecycle.gone} stopped or cancelled clients have no Churn Date, and ${b.lifecycle.gone - b.lifecycle.goneWithChurnReason} have no Churn Reason. Tenure, average client life and any cohort view stay uncomputable until those cells are filled.`,
+          });
+        if (b.lifecycle.paused > b.lifecycle.pausedWithDate)
+          notes.push({
+            level: "warn",
+            text: `${b.lifecycle.paused - b.lifecycle.pausedWithDate} of ${b.lifecycle.paused} paused clients have no Paused On date, so the 14-day pause clock is not running on ${b.lifecycle.paused - b.lifecycle.pausedWithDate === 1 ? "that one" : "them"}.`,
+          });
+
+        // History starts the first day this runs. ClickUp keeps none of its
+        // own, so a month-on-month MRR comparison is only possible from the
+        // day these points begin: today.
+        const point = (metric: string, value: number): DailyPoint => ({
+          date: today,
+          metric,
+          scope: "company",
+          value,
+        });
+        mrrDaily.push(
+          point("money.mrr.activeBook", b.mrr.active.bookUsd),
+          point("money.mrr.activeRecurring", b.mrr.active.recurringUsd),
+          point("money.mrr.pausedBook", b.mrr.paused.bookUsd),
+          point("money.mrr.pipelineBook", b.mrr.pipeline.bookUsd),
+          point("money.mrr.liveRecurring", liveRecurring),
+          point(
+            "money.mrr.liveFilled",
+            live.reduce((t, g) => t + g.filled, 0),
+          ),
+          point("money.mrr.liveBlank", b.mrrBlank.length),
+          point("money.ltv.fieldTotal", b.ltv.totalUsd),
+        );
+        // Each card's own MRR and payment plan, so a client's money has a past
+        // even after somebody retypes the field or the card leaves the list.
+        for (const r of rows) {
+          if (typeof r.mrrUsd !== "number") continue;
+          mrrDaily.push({
+            date: today,
+            metric: "money.mrr.card",
+            scope: `client:${r.taskId}`,
+            value: r.mrrUsd,
+          });
+        }
+      }
+    } catch (e) {
+      notes.push({
+        level: "warn",
+        text: `The client cards' MRR could not be read this run (${String(e).slice(0, 160)}).`,
+      });
+    }
+
     const byMonth = manualByMonth;
     const payload = {
       month,
@@ -1096,6 +1211,9 @@ export const money: Adapter = {
       failedCharges: { count30d: failedCount, amount30d: failedAmount },
       expenses,
       targets,
+      // Left off when the cards could not be read, so the screen says "not
+      // read" rather than showing a book of zero.
+      ...(mrr ? { mrr } : {}),
       notes,
     } satisfies MoneyPayload;
 
@@ -1114,6 +1232,7 @@ export const money: Adapter = {
         scope: "company",
         value: failedAmount,
       },
+      ...mrrDaily,
     ];
 
     return { payload, daily, sources };

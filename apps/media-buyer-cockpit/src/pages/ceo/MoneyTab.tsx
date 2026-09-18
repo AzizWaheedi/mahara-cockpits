@@ -57,6 +57,7 @@ type CardKey =
   | "tiles"
   | "monthly"
   | "targets"
+  | "mrr"
   | "expenses"
   | "deals";
 /** The cards on the P&L half, which reads the expenses section. */
@@ -70,6 +71,12 @@ type PnlKey = "month" | "software" | "overhead" | "labour" | "ads" | "totals";
 // and "Expenses and bank transfers" the expenses card before it. Anything
 // unmatched lands on the cash card, so no note is ever dropped.
 const NOTE_ROUTES: readonly (readonly [RegExp, CardKey])[] = [
+  // The MRR card's own notes first: several of them name Whop, a target or a
+  // client, which the generic routes further down would otherwise claim.
+  [
+    /^mrr is the figure typed|^not all of it is monthly money|live client cards? carr(y|ies) no mrr|^payment method is filled on none|have no churn date|have no paused on date|client cards' (mrr|billing fields)/i,
+    "mrr",
+  ],
   [/possible duplicates|duplicate check/i, "dupes"],
   [/failed charge/i, "tiles"],
   [/closer form (last|has never) synced|deal check/i, "tiles"],
@@ -256,13 +263,23 @@ export function MoneyTab({ sections, now, day }: CeoTabProps) {
             {p => <TargetsBody p={p} />}
           </SectionCard>
 
+          <SectionCard
+            kicker="What the client cards say, not a measured charge"
+            title="MRR on the books"
+            section={section}
+            notes={notes.mrr}
+            order={7}
+          >
+            {p => <MrrBody p={p} />}
+          </SectionCard>
+
           <div className="grid gap-4 lg:gap-6 xl:grid-cols-12">
             <SectionCard
               kicker="Last 12 months"
               title="Cash and contracted by month"
               section={section}
               notes={notes.monthly}
-              order={7}
+              order={8}
               className={showLegacy ? "xl:col-span-8" : "xl:col-span-12"}
             >
               {p => <MonthlyBody p={p} />}
@@ -273,7 +290,7 @@ export function MoneyTab({ sections, now, day }: CeoTabProps) {
                 title="Expenses"
                 section={section}
                 notes={notes.expenses}
-                order={8}
+                order={9}
                 className="xl:col-span-4"
               >
                 {p => <LegacyExpensesBody p={p} />}
@@ -286,7 +303,7 @@ export function MoneyTab({ sections, now, day }: CeoTabProps) {
             title="Recent deals"
             section={section}
             notes={notes.deals}
-            order={9}
+            order={10}
           >
             {p => <DealsTable deals={p.deals.recent} />}
           </SectionCard>
@@ -661,6 +678,201 @@ function RailsBody({
           payment is logged by hand.
         </p>
       )}
+    </div>
+  );
+}
+
+// --- MRR on the client cards ---
+
+/** How each Client Status group is named on screen. */
+const MRR_GROUP: Record<string, { label: string; hint: string }> = {
+  active: {
+    label: "Active",
+    hint: "Cards whose Client Status is Active.",
+  },
+  paused: {
+    label: "Paused",
+    hint: "Cards whose Client Status is Paused. Still on the books, not yet gone.",
+  },
+  pipeline: {
+    label: "Not yet live",
+    hint: "Signed or onboarding cards that have not reached Active: Launch Booked, Ready For Launch, Brand Blueprint Booked and the rest.",
+  },
+};
+
+/**
+ * The MRR field on the ClickUp client cards.
+ *
+ * The three groups are never added into one figure. Who counts as a paying
+ * client is Aziz's decision and it is still open, so this card shows the parts
+ * and lets him read whichever total he means. The split underneath says how
+ * much of the money is a real subscription and how much is a slice of a
+ * one-off contract, because the same field holds both.
+ */
+function MrrBody({ p }: { p: MoneyPayload }) {
+  const [showBlank, setShowBlank] = useState(false);
+  const mrr = p.mrr;
+  if (!mrr)
+    return (
+      <EmptyState
+        title="The client cards have not been read yet"
+        text="The CSM sync writes these fields every ten minutes through the working day. Until it runs, MRR is missing, not zero."
+        icon={Wallet}
+      />
+    );
+
+  const live = mrr.groups.filter(
+    g => g.group !== "gone" && g.group !== "sales",
+  );
+  const sales = mrr.groups.find(g => g.group === "sales");
+  const recurring = sum(live.map(g => g.recurringUsd));
+  const oneOff = sum(live.map(g => g.oneOffUsd));
+  const unclassified = sum(live.map(g => g.unclassifiedUsd));
+  const blank = mrr.blank;
+  const shown = showBlank ? blank : blank.slice(0, 6);
+
+  return (
+    <div className="grid gap-6">
+      <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4">
+        {live.map(g => {
+          const meta = MRR_GROUP[g.group];
+          return (
+            <StatTile
+              key={g.group}
+              variant="plain"
+              label={meta?.label ?? g.group}
+              value={money(g.bookUsd)}
+              sub={`${g.filled} of ${plural(g.cards, "card")} filled`}
+              hint={`${meta?.hint ?? ""} The figure is the MRR field added up over those cards, as typed.`}
+              naHint="No card in this group carries an MRR figure."
+            />
+          );
+        })}
+        <StatTile
+          variant="plain"
+          label="On the sales list"
+          value={plural(sales?.cards ?? 0, "card")}
+          sub="Not clients yet, counted apart"
+          hint="Cards parked on SALES TEAM TO CONTACT. The CSM roster drops the whole stage, and eleven of these are clients the payment sheet already marks cancelled, so their money is never added to the groups beside them."
+        />
+      </div>
+
+      <div className="border-t pt-4">
+        <p className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Of the live cards, what kind of money it is
+        </p>
+        <div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-3">
+          <StatTile
+            variant="plain"
+            label="On a recurring plan"
+            value={money(recurring)}
+            sub="Monthly money"
+            hint="Cards whose Payment Plan is a subscription rather than Paid In Full or Split Pay."
+          />
+          <StatTile
+            variant="plain"
+            label="On Paid In Full or Split Pay"
+            value={money(oneOff)}
+            sub="A slice of a one-off contract, not monthly money"
+            hint="The MRR field is filled on these cards too, but the contract was paid once. How that converts to MRR is undecided, so it is never added to the recurring figure here."
+            status={
+              oneOff > 0 ? (
+                <StatusChip tone="warning" label="Not recurring" />
+              ) : undefined
+            }
+          />
+          <StatTile
+            variant="plain"
+            label="Payment Plan blank"
+            value={money(unclassified)}
+            sub="Cannot be sorted into either"
+            hint="Cards carrying an MRR figure with no Payment Plan set, so nobody can say whether that money repeats."
+            naHint="Every live card with an MRR figure has a Payment Plan."
+          />
+        </div>
+      </div>
+
+      <div className="border-t pt-4">
+        <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4">
+          <StatTile
+            variant="plain"
+            label="Payment Method filled"
+            value={`${mrr.paymentMethod.filled} of ${mrr.cards}`}
+            sub={
+              mrr.paymentMethod.filled === 0
+                ? "Nobody has ever set it"
+                : mrr.paymentMethod.mix
+                    .map(m => `${m.method} ${m.cards}`)
+                    .join(", ")
+            }
+            hint="Which rail a client pays on. Filling this is the cheapest way to find the cash that never touches Whop."
+            status={
+              mrr.paymentMethod.filled === 0 ? (
+                <StatusChip tone="serious" label="Empty" />
+              ) : undefined
+            }
+          />
+          <StatTile
+            variant="plain"
+            label="LTV field total"
+            value={money(mrr.ltv.totalUsd)}
+            sub={`${mrr.ltv.filled} of ${plural(mrr.cards, "card")} filled`}
+            hint="The LTV field added up. It is a number typed once by hand, not cash received, and it disagrees with Whop on most of the cards that have both."
+          />
+          <StatTile
+            variant="plain"
+            label="Stopped clients with a churn date"
+            value={`${mrr.lifecycle.goneWithChurnDate} of ${mrr.lifecycle.gone}`}
+            sub="Tenure and cohorts need this filled"
+            status={
+              mrr.lifecycle.goneWithChurnDate < mrr.lifecycle.gone ? (
+                <StatusChip tone="serious" label="Mostly empty" />
+              ) : undefined
+            }
+            hint="A stopped card with no Churn Date cannot be dated, so average client life and any cohort view leave it out."
+          />
+          <StatTile
+            variant="plain"
+            label="Paused clients with a start date"
+            value={`${mrr.lifecycle.pausedWithDate} of ${mrr.lifecycle.paused}`}
+            sub="The 14-day pause clock needs this"
+            status={
+              mrr.lifecycle.pausedWithDate < mrr.lifecycle.paused ? (
+                <StatusChip tone="serious" label="No clock running" />
+              ) : undefined
+            }
+            hint="Your rule ends an engagement after a 14-day pause. Without a Paused On date there is nothing to count from."
+          />
+        </div>
+      </div>
+
+      {blank.length ? (
+        <div className="border-t pt-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {`Live cards with no MRR figure (${blank.length})`}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Their money is missing from every total above, not zero.
+          </p>
+          <ul className="mt-3 grid gap-1 sm:grid-cols-2">
+            {shown.map(c => (
+              <li key={c.taskId} className="text-sm">
+                {c.name}
+                <span className="text-muted-foreground">
+                  {c.stage ? ` · ${c.stage}` : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {blank.length > 6 ? (
+            <ShowMore
+              total={blank.length}
+              expanded={showBlank}
+              onToggle={() => setShowBlank(v => !v)}
+            />
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

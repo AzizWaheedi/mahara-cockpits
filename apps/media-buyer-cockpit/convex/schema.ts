@@ -1182,6 +1182,59 @@ const schema = defineSchema({
     lastError: v.optional(v.string()),
     alertedAt: v.optional(v.number()),
   }).index("by_source", ["source"]),
+  /**
+   * CEO cockpit: the billing and lifecycle fields on each ClickUp client card
+   * (convex/ceo/billing.ts), one row per card, rewritten on every CSM sync.
+   *
+   * These fields are the only place Mahara records what a client pays, how
+   * they pay it, and when they paused or left. Nothing read them before
+   * 2026-09-18, so none of it reached a screen and none of it had history.
+   * ClickUp keeps no field history of its own and never will, so a value not
+   * snapshotted here is gone the moment somebody edits the card.
+   *
+   * Every card on the list is kept, including Stopped and Cancelled ones: the
+   * churn and pause dates only matter on cards that have left, and the CSM
+   * roster (the `clients` table) deliberately drops those.
+   *
+   * A field nobody has filled in stays undefined. It is never written as 0 or
+   * as an empty string, because "missing" and "zero" are different answers and
+   * most of these fields are missing on most cards today.
+   */
+  ceoClientBilling: defineTable({
+    /** The ClickUp task id: the one client key the whole CEO cockpit joins on. */
+    taskId: v.string(),
+    name: v.string(),
+    taskUrl: v.optional(v.string()),
+    /** Client Status dropdown, as ClickUp spells it (Active, Paused, Stopped, ...). */
+    stage: v.optional(v.string()),
+    /**
+     * The MRR field, converted to USD with the fixed table in ceo/data/tap.ts.
+     * This is what somebody typed on the card, not a measured recurring
+     * charge, and on a Paid In Full or Split Pay client it is not monthly
+     * money at all. `paymentPlan` below is what says which it is.
+     */
+    mrrUsd: v.optional(v.number()),
+    /** The LTV field in USD. A number typed once by hand, not a running total of cash. */
+    ltvUsd: v.optional(v.number()),
+    nextPaymentAmountUsd: v.optional(v.number()),
+    /** The currency each money field declared, kept so a converted figure can always be traced back. */
+    currency: v.optional(v.string()),
+    /** YYYY-MM-DD, Kuwait. */
+    nextPaymentDate: v.optional(v.string()),
+    signupDate: v.optional(v.string()),
+    launchDate: v.optional(v.string()),
+    pausedOn: v.optional(v.string()),
+    churnDate: v.optional(v.string()),
+    nextContractRenewal: v.optional(v.string()),
+    paymentPlan: v.optional(v.string()),
+    paymentMethod: v.optional(v.string()),
+    contractStatus: v.optional(v.string()),
+    churnReason: v.optional(v.string()),
+    churnType: v.optional(v.string()),
+    closer: v.optional(v.string()),
+    leadSource: v.optional(v.string()),
+    syncedAt: v.number(),
+  }).index("by_task", ["taskId"]),
   /** CEO cockpit: the latest prepared payload per section (convex/ceo). A failed compute keeps the last good payload. */
   ceoSections: defineTable({
     key: v.string(),

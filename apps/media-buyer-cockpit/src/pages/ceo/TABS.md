@@ -604,10 +604,13 @@ payment date on the ClickUp card).
 
 ### NO SOURCE YET on Client success
 
-- **Revenue per client and MRR.** The ClickUp client card has MRR, LTV and Next
-  Payment Amount fields, but the cockpit's `clients` adapter does not read them
-  and no payment is joined to a client. Adding them is a `clients` adapter change.
-- **Churn reason.** No field records why a client left.
+- **Revenue per client.** The card's MRR, LTV and Next Payment Amount are now
+  read and stored per card (`ceoClientBilling`, 2026-09-18) and shown on Money
+  as `money.mrr.*`. What is still missing here is the join from a payment to a
+  client, so cash received per client still cannot be shown.
+- **Churn reason.** The field is read now and is filled on 1 of 65 cards, and
+  that one is the internal test card. Treat it as empty until real exits fill
+  it: `money.mrr.lifecycle.goneWithChurnReason` says how many have one.
 
 ---
 
@@ -652,6 +655,41 @@ Two halves. Cash in, which exists today, and the P&L, which is new.
 Already built and to be kept: `money.cash.*`, `money.monthly[]`,
 `money.refunds.*`, `money.deals.*`, `money.failedCharges.*`, `money.targets.*`,
 `money.expenses.*`, `money.notes[]`.
+
+### New card: MRR on the books
+
+Everything here comes from the MRR and lifecycle fields on the ClickUp client
+cards, read into `ceoClientBilling` by the CSM sync and summarised by the money
+adapter into `money.mrr` (2026-09-18). It is optional: when `money.mrr` is
+`undefined` the card shows the "cards have not been read yet" empty state.
+
+| What it shows | Payload field |
+| --- | --- |
+| MRR book per stage group | `money.mrr.groups[].bookUsd` |
+| Cards in the group, and how many carry a figure | `money.mrr.groups[].cards`, `.filled` |
+| The part that is a real subscription | `money.mrr.groups[].recurringUsd` |
+| The part on Paid In Full or Split Pay | `money.mrr.groups[].oneOffUsd` |
+| The part with no Payment Plan set | `money.mrr.groups[].unclassifiedUsd` |
+| Live cards carrying no MRR figure | `money.mrr.blank[]` |
+| LTV field coverage and total | `money.mrr.ltv.filled`, `.totalUsd` |
+| Payment Method coverage and mix | `money.mrr.paymentMethod.filled`, `.mix[]` |
+| Churn date, churn reason, pause date and renewal coverage | `money.mrr.lifecycle.*` |
+
+Three rules this card must never break.
+
+1. **The groups are never added into one figure.** Who counts as a paying
+   client is Aziz's decision and it is still open, so the card shows active,
+   paused and not-yet-live apart. Sales-list cards and Mahara's own cards are
+   counted apart again and are never a client.
+2. **The book is not monthly money.** `bookUsd` mixes a subscription with a
+   slice of a Paid In Full or Split Pay contract. Show `recurringUsd` and
+   `oneOffUsd` beside it, and never convert one into the other: how a one-off
+   contract becomes MRR is undecided.
+3. **Blank is not zero.** A live card with no MRR figure is named in
+   `money.mrr.blank[]` and the card says the money is missing, not nil.
+
+Every figure is a number somebody typed on a card. Nothing here is measured, and
+the card says so.
 
 ### New card: Cash by rail
 

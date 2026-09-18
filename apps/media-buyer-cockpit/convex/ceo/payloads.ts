@@ -269,6 +269,62 @@ export type MoneyPayload = {
     month: string | null;
     items: { metric: string; target: number; actual: number | null }[];
   };
+  /**
+   * The MRR field on the ClickUp client cards, added up by stage
+   * (convex/ceo/billing.ts, first read 2026-09-18).
+   *
+   * Read every figure here as "what somebody typed on a card", never as
+   * measured recurring revenue. Three things have to stay visible beside it:
+   *
+   * - It is not all monthly money. A client on Paid In Full or Split Pay has a
+   *   share of a one-off contract in the same field, so `recurringUsd` and
+   *   `oneOffUsd` are kept apart and `bookUsd` (their sum) mixes the two.
+   * - Who counts as a client is undecided, so the groups are never added up
+   *   here. Active, paused and pipeline are reported separately.
+   * - Blank is not zero. `blank` names the live cards carrying no figure.
+   *
+   * Optional: a payload stored before this shipped has none, and the store
+   * keeps the last good payload across a deploy.
+   */
+  mrr?: {
+    /**
+     * Per stage group: active, paused, pipeline (signed, not yet live), sales
+     * (parked on the sales list, not a client) and gone.
+     */
+    groups: {
+      group: "active" | "paused" | "pipeline" | "sales" | "gone";
+      cards: number;
+      filled: number;
+      bookUsd: number;
+      recurringUsd: number;
+      oneOffUsd: number;
+      /** On cards whose Payment Plan is blank, so it is in neither of the two above. */
+      unclassifiedUsd: number;
+    }[];
+    /**
+     * Live cards with no MRR figure. Sales-list cards and Mahara's own
+     * internal cards are left out: neither is a client whose money is missing.
+     */
+    blank: { taskId: string; name: string; stage: string | null }[];
+    /** Mahara's own cards (playing account, lifecycle test) inside `cards`. */
+    internalCards: number;
+    /** The LTV field: a number typed by hand on a card, not a total of cash received. */
+    ltv: { filled: number; totalUsd: number };
+    /** Payment Method coverage. Empty `mix` means the field is filled on no card. */
+    paymentMethod: { filled: number; mix: { method: string; cards: number }[] };
+    /** How much of the lifecycle record exists at all: churn dates, pause dates, renewal dates. */
+    lifecycle: {
+      gone: number;
+      goneWithChurnDate: number;
+      goneWithChurnReason: number;
+      paused: number;
+      pausedWithDate: number;
+      withRenewalDate: number;
+    };
+    cards: number;
+    /** When the CSM sync last rewrote these rows, epoch ms. */
+    syncedAt: number | null;
+  };
   notes: Note[];
 };
 

@@ -6,6 +6,7 @@ import {
   internalMutation,
   internalQuery,
 } from "./_generated/server";
+import { type BillingRow, billingRows, writeBilling } from "./ceo/billing";
 import { authenticatedAction } from "./functions";
 import { metaImageUsable } from "./metaMedia";
 import { latestStillAt } from "./previews";
@@ -477,6 +478,13 @@ export const store = internalMutation({
     tasks: v.array(v.any()),
     // biome-ignore lint/suspicious/noExplicitAny: checklist rows
     checks: v.array(v.any()),
+    /**
+     * The CEO cockpit's billing fields off the same cards. Optional so an
+     * older caller still works; when it is left out the stored rows are kept
+     * rather than emptied, because "not sent" is not "nobody pays anything".
+     */
+    // biome-ignore lint/suspicious/noExplicitAny: billing rows
+    billing: v.optional(v.array(v.any())),
   },
   returns: v.object({ clients: v.number(), tasks: v.number() }),
   handler: async (ctx, args) => {
@@ -486,6 +494,8 @@ export const store = internalMutation({
       await ctx.db.delete(row._id);
     for (const c of args.clients) await ctx.db.insert("clients", c);
     for (const t of args.tasks) await ctx.db.insert("csTasks", t);
+
+    await writeBilling(ctx, (args.billing ?? []) as BillingRow[]);
 
     const day = kuwaitToday();
     const existing = await ctx.db
@@ -886,7 +896,13 @@ export const buildCsmSnapshot = internalAction({
       },
     ].filter(Boolean);
 
-    return { clients, tasks, checks };
+    // The CEO cockpit's billing and lifecycle fields, off the same cards. The
+    // roster above drops Stopped and Cancelled clients, which is right for a
+    // CSM's day; billing keeps every card, because a churn date only ever
+    // exists on a client who has already gone.
+    const billing = billingRows(clientTasks, now);
+
+    return { clients, tasks, checks, billing: billing.rows };
   },
 });
 
@@ -903,6 +919,7 @@ export const runCsmSync = internalAction({
       clients: payload.clients,
       tasks: payload.tasks,
       checks: payload.checks,
+      billing: payload.billing,
     })) as CsmSyncResult;
   },
 });
