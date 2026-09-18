@@ -24,6 +24,7 @@ import {
   MeetingsPage,
   PlaybookPage,
   ScriptDatabasePage,
+  ScriptsPage,
   SettingsPage,
   SignupPage,
   TouchpointsPage,
@@ -63,6 +64,7 @@ export function AuthenticatedRoutes() {
             <Route path="/funnels" element={<FunnelsPage />} />
             <Route path="/calendar" element={<CalendarPage />} />
             <Route path="/scripting" element={<ScriptDatabasePage />} />
+            <Route path="/scripts" element={<ScriptsPage />} />
             <Route path="/ideation" element={<IdeationPage />} />
             <Route path="/profiles" element={<ClientsPage />} />
             <Route path="/eod" element={<CreativeEodPage />} />

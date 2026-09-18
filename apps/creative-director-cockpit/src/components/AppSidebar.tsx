@@ -4,6 +4,7 @@ import {
   ArrowRightLeft,
   CalendarDays,
   Clapperboard,
+  FileText,
   Filter,
   LayoutGrid,
   Lightbulb,
@@ -79,6 +80,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
     label: "Library",
     items: [
       { href: "/scripting", label: "Scripting database", icon: Sparkles },
+      { href: "/scripts", label: "Scripts we made", icon: FileText },
       { href: "/ideation", label: "Ideation", icon: Lightbulb },
       { href: "/what-works", label: "What works", icon: Trophy },
       { href: "/funnels", label: "Funnels and forms", icon: Filter },

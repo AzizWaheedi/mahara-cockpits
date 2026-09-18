@@ -54,6 +54,8 @@ const schema = defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
     notes: v.optional(v.string()),
+    /** The task's description: the script itself, for script tasks (2026-09-18). */
+    script: v.optional(v.string()),
     syncedAt: v.number(),
   }).index("by_task", ["taskId"]),
 

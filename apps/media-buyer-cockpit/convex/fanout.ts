@@ -587,6 +587,14 @@ async function gatherCreative(clients: Any[]) {
       notes: f["Additional Notes"]
         ? String(f["Additional Notes"]).slice(0, 400)
         : undefined,
+      // The script itself: the task's description, for the creative cockpit's
+      // "Scripts we made" page (Aziz, 2026-09-18). Script tasks only.
+      script:
+        kindOf(name) === "script" && !t.parent
+          ? String(t.description ?? t.text_content ?? "")
+              .trim()
+              .slice(0, 12000) || undefined
+          : undefined,
     };
   });
 
