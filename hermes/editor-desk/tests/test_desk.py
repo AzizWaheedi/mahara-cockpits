@@ -289,6 +289,10 @@ if __name__ == "__main__":
     unittest.main()
 
 
+def _restore_media(was):
+    media.probe, media.extract_audio, media.scenes, media.storyboard = was
+
+
 class ClientTests(unittest.TestCase):
     """The tag on a video card is the client, and the client card holds the
     brand work (Aziz, 2026-09-18). These are the joins that have to hold."""
@@ -389,8 +393,17 @@ class ClientTests(unittest.TestCase):
             self.assertTrue(ready, f"a job with footage and a brief is ready: {missing}")
 
     def test_an_unmatched_tag_is_noted_on_the_job_not_used_to_block_it(self):
+        # ffmpeg is real on the worker and absent on the laptop, so a stub file
+        # probed differently in each place and this test disagreed with itself.
+        # Pin the media layer, and put it back afterwards.
         with tempfile.TemporaryDirectory() as tmp:
             c = cfg_in(tmp)
+            was = (media.probe, media.extract_audio, media.scenes, media.storyboard)
+            self.addCleanup(lambda: _restore_media(was))
+            media.probe = lambda p: {"seconds": 30.0, "width": 1080, "height": 1920, "has_audio": True, "bytes": 2048}
+            media.extract_audio = lambda p, d, seconds=None: d if d.write_bytes(b"x") is None else d
+            media.scenes = lambda p, threshold=0.35, limit=400: []
+            media.storyboard = lambda p, w, seconds=None, count=3, width=480: b"jpegbytes"
             sb = FakeSupabase()
             drive = FakeDrive({"1tTO2R44N3I3uKaFYKYwBa0gdVkrpHi": [drive_file("1AbCdEfGhIjKlMnOpQrStUvWxYz01", "a.mp4")]})
             job = {"task_id": "t1", "clients": ["nobody ltd"], "editor": "Karim", "brief": "Cut it.",
