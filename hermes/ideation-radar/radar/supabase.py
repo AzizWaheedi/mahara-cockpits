@@ -30,6 +30,7 @@ from .models import Target
 
 POST_COLUMNS = {
     "key", "platform", "post_id", "url", "origin", "status", "at", "created_at",
+    "format_label", "hook_kind", "topic", "format_vec", "trend_id", "trend_label", "trend_n", "trend_at",
     "author_handle", "author_name", "author_followers", "posted_at", "views", "likes", "comments", "shares", "saves",
     "caption", "duration_sec", "thumb_url", "media_url", "target_key", "industry", "tags",
     "baseline_views", "baseline_raw", "baseline_floored", "baseline_n", "baseline_confidence", "baseline_method", "baseline_rules",
@@ -272,6 +273,11 @@ class Supabase:
         headers = self._headers(extra={"Content-Type": content_type, "x-upsert": "true"})
         http.request("POST", f"{self.url}/storage/v1/object/{self.bucket}/{quote(path, safe='/')}", headers=headers, data=blob, timeout=self.timeout, retries=1, ok_statuses=(200, 201))
         return path
+
+    def download_still(self, path: str) -> bytes:
+        """The stored picture, read with the service key (the bucket is private)."""
+        _, _, body = http.request("GET", f"{self.url}/storage/v1/object/{self.bucket}/{quote(path, safe='/')}", headers=self._headers(), timeout=self.timeout, retries=1)
+        return body
 
     # ---- watchlist and scans --------------------------------------------------
     def load_watchlist(self) -> list[Target]:

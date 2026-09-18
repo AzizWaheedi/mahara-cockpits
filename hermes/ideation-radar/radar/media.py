@@ -91,6 +91,36 @@ def extract_frames(path: Path, out_dir: Path, *, every_sec: float = 2.5, max_fra
     return frames
 
 
+def frame_at(path: Path, ts: float, target: Path, *, width: int = 480, height: int = 854) -> bool:
+    """One frame at `ts` seconds, letterboxed into width x height (9:16 by default) so frames stack."""
+    if not has_ffmpeg():
+        return False
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        target.unlink()
+    vf = f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black"
+    res = subprocess.run(
+        ["ffmpeg", "-nostdin", "-y", "-loglevel", "error", "-ss", str(ts), "-i", str(path), "-frames:v", "1", "-q:v", "4", "-vf", vf, "-strict", "unofficial", str(target)],
+        capture_output=True, text=True, timeout=60, check=False, stdin=subprocess.DEVNULL,
+    )
+    return res.returncode == 0 and target.exists() and target.stat().st_size > 500
+
+
+def hstack(frames: list[Path], out: Path) -> bool:
+    """Frames side by side, left to right, one JPEG."""
+    if not has_ffmpeg() or not frames:
+        return False
+    if len(frames) == 1:
+        cmd = ["ffmpeg", "-nostdin", "-y", "-loglevel", "error", "-i", str(frames[0]), "-q:v", "5", str(out)]
+    else:
+        cmd = ["ffmpeg", "-nostdin", "-y", "-loglevel", "error"]
+        for f in frames:
+            cmd += ["-i", str(f)]
+        cmd += ["-filter_complex", f"hstack=inputs={len(frames)}", "-q:v", "5", str(out)]
+    res = subprocess.run(cmd, capture_output=True, text=True, timeout=60, check=False, stdin=subprocess.DEVNULL)
+    return res.returncode == 0 and out.exists() and out.stat().st_size > 500
+
+
 def extract_audio(path: Path, dest: Path) -> Optional[Path]:
     """Mono 16 kHz mp3, small enough to upload quickly. None without ffmpeg."""
     if not has_ffmpeg():

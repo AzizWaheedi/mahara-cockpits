@@ -32,6 +32,14 @@ def tt_item(vid: str, views: int, hours_ago: float, author: str = "tk", fans: in
     }
 
 
+def ig_search_item(username: str, followers: int, latest: list[dict[str, Any]] | None = None, private: bool = False) -> dict[str, Any]:
+    return {
+        "username": username, "fullName": f"{username} name", "followersCount": followers, "postsCount": 120,
+        "private": private, "verified": False, "businessCategoryName": "Contractor", "url": f"https://www.instagram.com/{username}/",
+        "latestPosts": latest or [],
+    }
+
+
 class FakeApify:
     """Serves items per (actor, label) and counts runs like the real one."""
 

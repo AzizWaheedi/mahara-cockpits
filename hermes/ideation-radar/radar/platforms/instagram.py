@@ -45,6 +45,31 @@ class Instagram(Adapter):
             }
         return actor, {"hashtags": [tag], "resultsLimit": int(limit)}
 
+    def search_job(self, query: str, limit: int) -> tuple[str, dict[str, Any]]:
+        """Accounts matching a keyword (checked 2026-09-18: returns username, followersCount, private, latestPosts)."""
+        return self.cfg.actor_instagram_search, {"search": query, "searchType": "user", "searchLimit": int(limit)}
+
+    def parse_search(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for it in items:
+            if not isinstance(it, dict) or it.get("error"):
+                continue
+            username = str(first(it, "username", default="") or "").strip().lstrip("@").lower()
+            if not username:
+                continue
+            latest = self.parse_posts([p for p in (it.get("latestPosts") or []) if isinstance(p, dict)], handle=username)
+            out.append({
+                "username": username,
+                "name": str(first(it, "fullName", "full_name", default="") or ""),
+                "followers": to_int(first(it, "followersCount", "followers")),
+                "posts_count": to_int(first(it, "postsCount", "posts")),
+                "private": bool(first(it, "private", "isPrivate", default=False)),
+                "verified": bool(first(it, "verified", "isVerified", default=False)),
+                "category": str(first(it, "businessCategoryName", default="") or ""),
+                "latest": latest,
+            })
+        return out
+
     def post_job(self, canonical_url: str) -> tuple[str, dict[str, Any]]:
         return self.cfg.actor_instagram, {
             "directUrls": [canonical_url],

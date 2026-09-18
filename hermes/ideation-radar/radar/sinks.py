@@ -109,16 +109,29 @@ class SlackSink:
         self.channel = channel
         self.timeout = timeout
 
+    @property
+    def channels(self) -> list[str]:
+        return [c.strip() for c in str(self.channel).split(",") if c.strip()]
+
     def post(self, text: str) -> None:
-        out = http.post_json(
-            "https://slack.com/api/chat.postMessage",
-            {"channel": self.channel, "text": text[:3900], "unfurl_links": False},
-            headers={"Authorization": f"Bearer {self.token}"},
-            timeout=self.timeout,
-            retries=1,
-        )
-        if not out or not out.get("ok"):
-            raise SinkError(f"slack: {str(out)[:200]}")
+        """One message per recipient (a channel id or a user id for a DM); every failure is reported, none hides another."""
+        failures: list[str] = []
+        for channel in self.channels:
+            try:
+                out = http.post_json(
+                    "https://slack.com/api/chat.postMessage",
+                    {"channel": channel, "text": text[:3900], "unfurl_links": False},
+                    headers={"Authorization": f"Bearer {self.token}"},
+                    timeout=self.timeout,
+                    retries=1,
+                )
+            except http.HttpError as e:
+                failures.append(f"{channel}: {e}")
+                continue
+            if not out or not out.get("ok"):
+                failures.append(f"{channel}: {str((out or {}).get('error') or out)[:120]}")
+        if failures:
+            raise SinkError("slack: " + "; ".join(failures)[:600])
 
 
 def deliver(sinks: list[tuple[str, Callable[[], Any]]], log: Callable[[str], None]) -> dict[str, str]:

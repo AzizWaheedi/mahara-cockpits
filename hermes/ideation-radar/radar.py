@@ -8,6 +8,8 @@
     python3 radar.py watchlist list|add|remove  manage the accounts and hashtags
     python3 radar.py digest                     print the last scan's digest
     python3 radar.py resend                     after an outage: push the last scan and every captured idea again
+    python3 radar.py trends                     describe, embed and cluster the recent rows into trends (the scan does this too)
+    python3 radar.py speechtest <url> [<url>...] compare ElevenLabs Scribe, Whisper and Gemini on real clips (Arabic dialects)
 
 Standard library only. Keys are read by name from the environment or the
 Hermes key files; nothing is ever printed. Exit code is non-zero when a
@@ -59,6 +61,7 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     # Keys by name only.
     add("APIFY_API_KEY", bool(cfg.apify_token), "set" if cfg.apify_token else "missing: scans and captures cannot run", True)
     add("GOOGLE_AI_API_KEY", bool(cfg.gemini_key), "set (video understanding)" if cfg.gemini_key else "missing: falls back to Whisper plus frames")
+    add("ELEVENLABS_API_KEY", bool(cfg.elevenlabs_key), f"set (speech first: {cfg.elevenlabs_stt_model})" if cfg.elevenlabs_key else "missing: Arabic speech goes to Whisper")
     add("GROQ_API_KEY", bool(cfg.groq_key), "set (speech fallback)" if cfg.groq_key else "missing")
     add("OPENAI_API_KEY", bool(cfg.openai_key), "set (frame vision fallback)" if cfg.openai_key else "missing")
     add("DEEPSEEK_API_KEY", bool(cfg.deepseek_key), "set (text fallback)" if cfg.deepseek_key else "missing")
@@ -100,6 +103,20 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
                 add("groq api", True, "ok")
             except http.HttpError as e:
                 add("groq api", False, str(e))
+        if cfg.elevenlabs_key:
+            try:
+                sub_ = http.get_json("https://api.elevenlabs.io/v1/user/subscription", headers={"xi-api-key": cfg.elevenlabs_key}, timeout=30)
+                tier = str(sub_.get("tier") or sub_.get("status") or "?")
+                add("elevenlabs api", True, f"plan {tier}; speech to text is metered separately from the character quota")
+            except http.HttpError as e:
+                add("elevenlabs api", False, http.scrub(str(e))[:200])
+        if cfg.gemini_key or cfg.openai_key:
+            from radar.trends import embed
+            try:
+                vec = embed(cfg, ["ok"])
+                add("embeddings", bool(vec and vec[0]), f"{cfg.embed_model if cfg.gemini_key else cfg.openai_embed_model}: {len(vec[0]) if vec and vec[0] else 0} dims (trends)")
+            except (http.HttpError, ValueError, KeyError) as e:
+                add("embeddings", False, f"{http.scrub(str(e))[:200]} (trends will not be flagged)")
         if cfg.bridge_url and cfg.bridge_token:
             try:
                 BridgeSink(cfg.bridge_url, cfg.bridge_token).ping()
@@ -195,14 +212,17 @@ def cmd_watchlist(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
         return 0
     if sb is not None and args.action == "add":
         from radar.models import Target
-        kind = "hashtag" if args.value.startswith("#") else "account"
-        t = Target(platform=args.platform.lower(), kind=kind, value=args.value.lstrip("@#"), industry=args.industry, tags=[x for x in (args.tags or "").split(",") if x], note=args.note or "")
+        kind = args.kind or ("hashtag" if args.value.startswith("#") else "account")
+        if kind == "search" and args.platform.lower() != "instagram":
+            log.error("keyword search targets are Instagram only for now")
+            return 2
+        t = Target(platform=args.platform.lower(), kind=kind, value=args.value.lstrip("@#") if kind != "search" else args.value.strip(), industry=args.industry, tags=[x for x in (args.tags or "").split(",") if x], note=args.note or "")
         sb.upsert_watchlist([t], added_by="cli")
         _print(t.to_dict(), args.json)
         return 0
     if sb is not None and args.action == "remove":
-        kind = "hashtag" if args.value.startswith("#") else "account"
-        sb.mark_target(f"{args.platform.lower()}:{kind}:{args.value.lstrip('@#').lower()}", active=False)
+        kind = args.kind or ("hashtag" if args.value.startswith("#") else "account")
+        sb.mark_target(f"{args.platform.lower()}:{kind}:{(args.value.lstrip('@#') if kind != 'search' else args.value.strip()).lower()}", active=False)
         _print({"deactivated": True}, args.json)
         return 0
     if sb is not None and args.action == "push":
@@ -275,6 +295,113 @@ def cmd_digest(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     return 0
 
 
+def cmd_trends(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    if not cfg.use_supabase_sink:
+        log.error("trends need the Supabase home (RADAR_SUPABASE_URL and RADAR_SUPABASE_KEY)")
+        return 2
+    from radar.trends import detect, digest_lines
+    sb = Supabase(cfg.supabase_url, cfg.supabase_key, table=cfg.supabase_table, bucket=cfg.supabase_bucket)
+    summary = detect(cfg, sb, log.info)
+    if args.json:
+        _print(summary, True)
+    else:
+        print(f"{summary['rows']} rows in the last {cfg.trend_window_days} days, {summary['described']} described, {summary['embedded']} embedded, {len(summary['trends'])} trends")
+        for line in digest_lines(summary):
+            print(line)
+        for e in summary.get("errors", [])[:10]:
+            print(f"  error: {e}")
+    return 0
+
+
+def cmd_speechtest(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    """Ten clips, three ears: which one reads Gulf Arabic best. Prints the transcripts and a model's verdict."""
+    import base64
+    import tempfile
+
+    from radar import media
+    from radar.capture import fetch_post, resolve_link
+    from radar.speech import elevenlabs_transcribe, groq_transcribe
+    from radar.understand import gemini_generate
+
+    apify = Apify(cfg.apify_token, base=cfg.apify_base, timeout_sec=cfg.apify_timeout_sec, max_runs=cfg.apify_max_runs_per_scan, log=log.info) if cfg.apify_token else None
+    rows: list[dict[str, Any]] = []
+    for url in args.url:
+        row: dict[str, Any] = {"url": url, "transcripts": {}, "errors": {}}
+        rows.append(row)
+        try:
+            link = resolve_link(url)
+            post, _w = fetch_post(cfg, apify, link, log.info)
+            if post is None or not post.media_url:
+                row["errors"]["fetch"] = "no media URL"
+                continue
+            row["author"] = post.author_handle
+            with tempfile.TemporaryDirectory(prefix="radar-speech-") as tmp:
+                work = Path(tmp)
+                video = work / "video.mp4"
+                media.download_video(post.media_url, video, max_bytes=cfg.max_video_bytes)
+                audio = media.extract_audio(video, work / "audio.mp3") or video
+                row["seconds"] = media.probe(video).get("duration_sec")
+                if cfg.elevenlabs_key:
+                    try:
+                        tr = elevenlabs_transcribe(cfg, audio)
+                        row["transcripts"]["elevenlabs"] = tr["text"]
+                        row["elevenlabs_language"] = f"{tr.get('language')} ({tr.get('language_probability')})"
+                    except (http.HttpError, ValueError, KeyError) as e:
+                        row["errors"]["elevenlabs"] = http.scrub(str(e))[:200]
+                if cfg.groq_key:
+                    try:
+                        row["transcripts"]["groq"] = groq_transcribe(cfg, audio)["text"]
+                    except (http.HttpError, ValueError, KeyError) as e:
+                        row["errors"]["groq"] = http.scrub(str(e))[:200]
+                if cfg.gemini_key:
+                    try:
+                        blob = base64.b64encode(audio.read_bytes()).decode("ascii")
+                        out, _u = gemini_generate(
+                            cfg, cfg.gemini_model,
+                            [{"inline_data": {"mime_type": "audio/mpeg" if audio.suffix == ".mp3" else "video/mp4", "data": blob}}, {"text": "Transcribe the speech verbatim in its original language and dialect. Never translate, never summarise. Return ONLY JSON {\"transcript\": string, \"language\": string, \"dialect\": string or null}."}],
+                            {"type": "object", "properties": {"transcript": {"type": "string"}, "language": {"type": "string"}, "dialect": {"type": "string", "nullable": True}}, "required": ["transcript", "language"]},
+                            temperature=0,
+                        )
+                        row["transcripts"]["gemini"] = str(out.get("transcript") or "")
+                        row["gemini_dialect"] = out.get("dialect")
+                    except (http.HttpError, ValueError, KeyError) as e:
+                        row["errors"]["gemini"] = http.scrub(str(e))[:200]
+            if cfg.gemini_key and len(row["transcripts"]) >= 2:
+                listing = "\n\n".join(f"[{name}]\n{text or '(empty)'}" for name, text in row["transcripts"].items())
+                try:
+                    verdict, _u = gemini_generate(
+                        cfg, cfg.gemini_text_model,
+                        [{"text": f"Three speech-to-text systems transcribed the same short Gulf Arabic social video (it may mix dialect, English words and music). Judge each transcript on: dialect fidelity (keeps the spoken dialect rather than normalising to MSA), completeness, and garbling (invented or broken words). Score 1 to 5 each and name the best. Return ONLY JSON {{\"scores\": {{\"<name>\": {{\"dialect\": n, \"completeness\": n, \"garbling\": n, \"note\": string}}}}, \"best\": \"<name>\", \"reason\": string}}. No em dashes.\n\n{listing}"}],
+                        None, temperature=0,
+                    )
+                    row["verdict"] = verdict
+                except (http.HttpError, ValueError, KeyError) as e:
+                    row["errors"]["judge"] = http.scrub(str(e))[:200]
+        except Exception as e:  # noqa: BLE001 - one clip must not stop the comparison
+            row["errors"]["clip"] = http.scrub(str(e))[:200]
+    if args.json:
+        _print(rows, True)
+        return 0
+    wins: dict[str, int] = {}
+    for r in rows:
+        print(f"\n== {r.get('author', '?')} {r['url']} ({r.get('seconds') or '?'}s)")
+        for name, text in r["transcripts"].items():
+            print(f"  [{name}] {len(text)} chars: {text[:220]}")
+        for name, err in r["errors"].items():
+            print(f"  [{name}] ERROR {err}")
+        v = r.get("verdict") or {}
+        if v:
+            best = str(v.get("best") or "")
+            wins[best] = wins.get(best, 0) + 1
+            print(f"  judge: best={best} ({str(v.get('reason') or '')[:200]})")
+            for name, sc in (v.get("scores") or {}).items():
+                if isinstance(sc, dict):
+                    print(f"    {name}: dialect {sc.get('dialect')} completeness {sc.get('completeness')} garbling {sc.get('garbling')} {str(sc.get('note') or '')[:120]}")
+    if wins:
+        print("\nJudge's wins: " + ", ".join(f"{k} {v}" for k, v in sorted(wins.items(), key=lambda kv: -kv[1])))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="radar.py", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--json", action="store_true", help="machine readable output")
@@ -284,8 +411,10 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("scan"); s.add_argument("--dry-run", action="store_true"); s.add_argument("--platform", action="append"); s.add_argument("--only", action="append"); s.add_argument("--verbose", action="store_true")
     c = sub.add_parser("capture"); c.add_argument("url", nargs="+"); c.add_argument("--by"); c.add_argument("--note"); c.add_argument("--industry", default="other", choices=["ours", "other"]); c.add_argument("--tags"); c.add_argument("--dry-run", action="store_true"); c.add_argument("--force", action="store_true"); c.add_argument("--keep-media", action="store_true")
     p = sub.add_parser("pending"); p.add_argument("--limit", type=int, default=10); p.add_argument("--dry-run", action="store_true")
-    w = sub.add_parser("watchlist"); w.add_argument("action", choices=["list", "add", "remove", "push"]); w.add_argument("platform", nargs="?"); w.add_argument("value", nargs="?"); w.add_argument("--industry", default="other", choices=["ours", "other"]); w.add_argument("--tags"); w.add_argument("--note")
+    w = sub.add_parser("watchlist"); w.add_argument("action", choices=["list", "add", "remove", "push"]); w.add_argument("platform", nargs="?"); w.add_argument("value", nargs="?"); w.add_argument("--industry", default="other", choices=["ours", "other"]); w.add_argument("--tags"); w.add_argument("--note"); w.add_argument("--kind", choices=["account", "hashtag", "search"], help="search: an Instagram keyword such as 'ديكور الكويت'")
     sub.add_parser("digest")
+    sub.add_parser("trends")
+    st = sub.add_parser("speechtest"); st.add_argument("url", nargs="+")
     rs = sub.add_parser("resend"); rs.add_argument("--scan", help="a latest.json to re-send (default out/latest.json)"); rs.add_argument("--ideas", help="an ideas.jsonl to re-send (default out/ideas.jsonl)")
     args = ap.parse_args(argv)
     cfg = Config.from_env()
@@ -293,7 +422,7 @@ def main(argv: list[str] | None = None) -> int:
     log = Logger(cfg.out_dir / "radar.log", quiet=args.quiet)
     if args.cmd in ("add", "remove") or (args.cmd == "watchlist" and args.action in ("add", "remove") and not (args.platform and args.value)):
         ap.error("watchlist add/remove need <platform> <value>")
-    handlers = {"doctor": cmd_doctor, "scan": cmd_scan, "capture": cmd_capture, "pending": cmd_pending, "watchlist": cmd_watchlist, "digest": cmd_digest, "resend": cmd_resend}
+    handlers = {"doctor": cmd_doctor, "scan": cmd_scan, "capture": cmd_capture, "pending": cmd_pending, "watchlist": cmd_watchlist, "digest": cmd_digest, "resend": cmd_resend, "trends": cmd_trends, "speechtest": cmd_speechtest}
     try:
         return handlers[args.cmd](cfg, args, log)
     except KeyboardInterrupt:

@@ -10,7 +10,7 @@ from radar.config import Config
 from radar.models import Target
 from radar.scan import digest_text, run_scan
 from radar.state import State
-from tests.fakes import NOW, FakeApify, ig_item, tt_item
+from tests.fakes import NOW, FakeApify, ig_item, ig_search_item, tt_item
 
 
 def cfg_in(tmp: str) -> Config:
@@ -135,6 +135,40 @@ class ScanTests(unittest.TestCase):
             via = [c for c in rep.new_candidates if "via:#decor" in c["tags"]]
             self.assertEqual(sorted(c["author_handle"] for c in via), ["big1", "big2", "big3"])
             self.assertTrue(all(c["views"] == 12000 for c in via), "candidates are scored on the profile scan's real views")
+
+
+    def test_instagram_keyword_search_scans_promising_accounts_and_remembers_them(self):
+        # A "search" target lists accounts by keyword; public ones with enough followers and a
+        # recent reel get a profile scan (like hashtag authors) and are not retried for 90 days.
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = cfg_in(tmp)
+            targets = [Target("instagram", "search", "ديكور الكويت", industry="ours", tags=["kw"])]
+            recent = [ig_item("r1", 5000, 24 * 10, owner="bigshot")]
+            hits = [
+                ig_search_item("bigshot", 24000, recent),
+                ig_search_item("quiet", 30000, [ig_item("old", 900, 24 * 200, owner="quiet")]),   # nothing recent
+                ig_search_item("tiny", 500, recent),                                              # under the follower floor
+                ig_search_item("hidden", 90000, recent, private=True),                            # private
+            ]
+            fx = {"instagram:search:ديكور الكويت#posts": hits}
+            fx["instagram:account:bigshot#viasearch"] = [ig_item(f"b{j}", 2000, 300 + j, owner="bigshot") for j in range(9)] + [ig_item("bhit", 14000, 80, owner="bigshot")]
+            fake = FakeApify(fx)
+            lines, log = logs()
+            rep = run_scan(cfg, log, now=NOW, apify=fake, targets=targets)
+            fetched = [c[1] for c in fake.calls if c[1].endswith("#viasearch")]
+            self.assertEqual(fetched, ["instagram:account:bigshot#viasearch"])
+            via = [c for c in rep.new_candidates if "via:search:ديكور الكويت" in c["tags"]]
+            self.assertEqual([c["author_handle"] for c in via], ["bigshot"])
+            self.assertEqual(rep.watch_added, ["instagram:bigshot"], "it joins the watchlist (recorded even without Supabase)")
+            self.assertIn("instagram:bigshot", rep.to_dict()["watch_added"])
+            # A second scan the same month does not pay for the same profile again.
+            st = State.load(cfg.state_path)
+            self.assertIn("instagram:bigshot", st.data["search_seen"])
+            fake2 = FakeApify(fx)
+            run_scan(cfg, log, now=NOW, apify=fake2, targets=targets, state=st)
+            self.assertFalse([c for c in fake2.calls if c[1].endswith("#viasearch")])
+            text = digest_text(rep)
+            self.assertIn("Found by keyword search and now watched: @bigshot", text)
 
 
 class CaptureTests(unittest.TestCase):

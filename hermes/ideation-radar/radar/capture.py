@@ -21,7 +21,7 @@ from .platforms import PlatformError, adapter_for
 from .platforms.snapchat import Snapchat
 from .sinks import BridgeSink, JsonlSink, deliver
 from .state import State
-from .stills import attach_stills
+from .stills import attach_stills, storyboard_from_file
 from .supabase import Supabase, SupabaseError
 from .understand import understand
 from .urls import Link, UnsupportedLink, canonicalize
@@ -127,6 +127,7 @@ def capture_url(
 
     workdir = Path(tempfile.mkdtemp(prefix="radar-capture-"))
     result: dict[str, Any] = {}
+    storyboard: Optional[bytes] = None
     try:
         video_path: Optional[Path] = None
         if post.media_url:
@@ -150,6 +151,10 @@ def capture_url(
             warnings.append(f"video is {post.duration_sec:.0f}s, over the {cfg.max_duration_sec}s cap; not watched")
             video_path = None
         if video_path:
+            try:
+                storyboard = storyboard_from_file(video_path, workdir / "story", duration=post.duration_sec)
+            except Exception as e:  # noqa: BLE001 - the picture is a bonus
+                log(f"storyboard failed: {e}")
             try:
                 result = understand_fn(cfg, video_path, meta, workdir, log)
             except (http.HttpError, ValueError, KeyError) as e:
@@ -196,7 +201,7 @@ def capture_url(
     state.mark(link.key, "captured" if result else "failed", when)
     if not dry_run:
         state.save()
-    _deliver(cfg, log, idea, dry_run, cockpit_id=cockpit_id)
+    _deliver(cfg, log, idea, dry_run, cockpit_id=cockpit_id, storyboard=storyboard)
     return idea
 
 
@@ -235,7 +240,7 @@ def platform_captions(post: Post, log: Callable[[str], None]) -> str:
     return "\n".join(lines)
 
 
-def _deliver(cfg: Config, log: Callable[[str], None], idea: Idea, dry_run: bool, *, cockpit_id: str = "") -> None:
+def _deliver(cfg: Config, log: Callable[[str], None], idea: Idea, dry_run: bool, *, cockpit_id: str = "", storyboard: Optional[bytes] = None) -> None:
     row = idea.to_dict()
     if cockpit_id:
         row["cockpit_id"] = cockpit_id
@@ -246,7 +251,10 @@ def _deliver(cfg: Config, log: Callable[[str], None], idea: Idea, dry_run: bool,
             sb = Supabase(cfg.supabase_url, cfg.supabase_key, table=cfg.supabase_table, bucket=cfg.supabase_bucket)
             def to_supabase() -> None:
                 if idea.status == "captured":
+                    if storyboard:
+                        row["_storyboard"] = storyboard  # the capture's own download: no second fetch
                     attach_stills(sb, [row], log, max_items=1)
+                    row.pop("_storyboard", None)
                 try:
                     sb.store_idea(row, origin_key=cockpit_id or None)
                 except SupabaseError as e:

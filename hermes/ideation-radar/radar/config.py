@@ -104,12 +104,33 @@ class Config:
     hashtag_min_engagement: int = 300
     hashtag_top_k: int = 10
     hashtag_profile_cap: int = 20
+    # Instagram discovery without handles (Aziz, 2026-09-17): a "search" target
+    # is a keyword such as "ديكور الكويت"; the search actor lists matching
+    # accounts, the promising public ones get a profile scan, and those with a
+    # baseline join the watchlist by themselves (source "search").
+    search_limit: int = 20
+    search_top_k: int = 8
+    search_profile_cap: int = 15
+    search_retry_days: int = 90
+    search_autowatch: bool = True
+    # Trends: the same format from several accounts inside the window.
+    trend_window_days: int = 14
+    trend_min_authors: int = 3
+    trend_similarity: float = 0.82
+    trend_max_describe: int = 40
+    embed_model: str = "gemini-embedding-001"
+    embed_dims: int = 256
+    openai_embed_model: str = "text-embedding-3-small"
+    # Speech: ElevenLabs Scribe first for Arabic dialects, Groq Whisper second.
+    speech_providers: str = "elevenlabs,groq"
+    elevenlabs_stt_model: str = "scribe_v1"
     # Apify
     apify_base: str = "https://api.apify.com/v2"
     actor_instagram: str = "apify~instagram-scraper"
     # Empty: hashtags go through the main Instagram actor with an explore/tags URL
     # (the dedicated hashtag actor is rated 3.4 against 4.7 for the main one).
     actor_instagram_hashtag: str = ""
+    actor_instagram_search: str = "apify~instagram-search-scraper"
     # Same Clockworks engine and fields as the flagship tiktok-scraper, without
     # its run fee and at a lower per-result price (checked 2026-09-17).
     actor_tiktok: str = "clockworks~free-tiktok-scraper"
@@ -179,8 +200,23 @@ class Config:
             hashtag_min_engagement=_int("RADAR_HASHTAG_MIN_ENGAGEMENT", 300),
             hashtag_top_k=_int("RADAR_HASHTAG_TOP_K", 10),
             hashtag_profile_cap=_int("RADAR_HASHTAG_PROFILE_CAP", 20),
+            search_limit=_int("RADAR_SEARCH_LIMIT", 20),
+            search_top_k=_int("RADAR_SEARCH_TOP_K", 8),
+            search_profile_cap=_int("RADAR_SEARCH_PROFILE_CAP", 15),
+            search_retry_days=_int("RADAR_SEARCH_RETRY_DAYS", 90),
+            search_autowatch=key("RADAR_SEARCH_AUTOWATCH", "1").lower() not in ("0", "false", "no"),
+            trend_window_days=_int("RADAR_TREND_WINDOW_DAYS", 14),
+            trend_min_authors=_int("RADAR_TREND_MIN_AUTHORS", 3),
+            trend_similarity=_float("RADAR_TREND_SIMILARITY", 0.82),
+            trend_max_describe=_int("RADAR_TREND_MAX_DESCRIBE", 40),
+            embed_model=key("RADAR_EMBED_MODEL", "gemini-embedding-001"),
+            embed_dims=_int("RADAR_EMBED_DIMS", 256),
+            openai_embed_model=key("RADAR_OPENAI_EMBED_MODEL", "text-embedding-3-small"),
+            speech_providers=key("RADAR_SPEECH_PROVIDER", "elevenlabs,groq"),
+            elevenlabs_stt_model=key("RADAR_ELEVENLABS_STT_MODEL", "scribe_v1"),
             actor_instagram=key("RADAR_ACTOR_INSTAGRAM", "apify~instagram-scraper"),
             actor_instagram_hashtag=key("RADAR_ACTOR_INSTAGRAM_HASHTAG", ""),
+            actor_instagram_search=key("RADAR_ACTOR_INSTAGRAM_SEARCH", "apify~instagram-search-scraper"),
             actor_tiktok=key("RADAR_ACTOR_TIKTOK", "clockworks~free-tiktok-scraper"),
             actor_tiktok_profile=key("RADAR_ACTOR_TIKTOK_PROFILE", "clockworks~tiktok-profile-scraper"),
             actor_snapchat=key("RADAR_ACTOR_SNAPCHAT", "tri_angle~snapchat-scraper"),
@@ -272,6 +308,16 @@ class Config:
     @property
     def slack_token(self) -> str:
         return key("SLACK_BOT_TOKEN")
+
+    @property
+    def elevenlabs_key(self) -> str:
+        # ELEVENLABS_API_KEY_V2 in the Hermes key file is a key id, not a key (checked 2026-09-18).
+        return key("ELEVENLABS_API_KEY")
+
+    @property
+    def slack_channels(self) -> list[str]:
+        """RADAR_SLACK_CHANNEL takes one id or a comma separated list (Aziz and Sabry)."""
+        return [c.strip() for c in self.slack_channel.split(",") if c.strip()]
 
     def ensure_dirs(self) -> None:
         self.home.mkdir(parents=True, exist_ok=True)

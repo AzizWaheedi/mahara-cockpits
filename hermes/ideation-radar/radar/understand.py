@@ -22,6 +22,7 @@ from typing import Any, Callable, Optional
 
 from . import http, media
 from .config import Config
+from .speech import groq_transcribe, transcribe  # noqa: F401 - groq_transcribe kept importable from here
 
 GEMINI = "https://generativelanguage.googleapis.com"
 
@@ -105,7 +106,17 @@ def _meta_lines(meta: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def video_prompt(meta: dict[str, Any]) -> str:
+def speech_block(speech: Optional[dict[str, Any]]) -> str:
+    if not speech or not speech.get("text"):
+        return ""
+    return f"""
+A dedicated speech model ({speech.get('method')}) already transcribed the audio; detected language: {speech.get('language') or 'unknown'}. Treat it as the spoken words: keep its dialect and wording, fix only what you can clearly hear differently, and if the audio is music with no speech say so in warnings instead of copying lyrics as a transcript.
+Speech transcript:
+{str(speech.get('text'))[:8000]}
+"""
+
+
+def video_prompt(meta: dict[str, Any], speech: Optional[dict[str, Any]] = None) -> str:
     return f"""You are reading a short social video for the creative director of Mahara Media, a growth partner for construction, architecture and interior design firms in the Gulf. He collects posts that performed far above their account's normal, from his industry and from unrelated ones, to ideate from.
 
 Watch the frames AND listen to the audio. Many Gulf videos are silent motion graphics with Arabic text on screen; those are not empty, read the text.
@@ -127,7 +138,8 @@ Return ONLY JSON matching the schema. Rules:
 - No em dashes anywhere. Do not invent anything that is not in the video.
 
 Known metadata:
-{_meta_lines(meta)}"""
+{_meta_lines(meta)}
+{speech_block(speech)}"""
 
 
 # ---------------------------------------------------------------------------
@@ -212,7 +224,25 @@ def gemini_generate(cfg: Config, model: str, parts: list[dict[str, Any]], schema
     return parse_json(text), out.get("usageMetadata") or {}
 
 
-def understand_with_gemini_video(cfg: Config, video_path: Path, meta: dict[str, Any], log: Callable[[str], None]) -> dict[str, Any]:
+def merge_speech(result: dict[str, Any], speech: Optional[dict[str, Any]]) -> dict[str, Any]:
+    """The speech model's words win over the video model's when both heard speech."""
+    if not speech or not speech.get("text"):
+        return result
+    if result.get("has_speech") is False and not result.get("transcript"):
+        result["warnings"] = list(result.get("warnings") or []) + [f"the speech model heard words the video model called silent (maybe lyrics): {str(speech['text'])[:80]}"]
+        return result
+    result["transcript"] = str(speech["text"])[:12000]
+    result["has_speech"] = True
+    method = result.setdefault("method", {})
+    method["transcribe"] = speech.get("method") or method.get("transcribe")
+    conf = result.setdefault("confidence", {})
+    conf["transcript"] = speech.get("confidence") or conf.get("transcript") or "medium"
+    if speech.get("segments"):
+        result["transcript_segments"] = speech["segments"][:200]
+    return result
+
+
+def understand_with_gemini_video(cfg: Config, video_path: Path, meta: dict[str, Any], log: Callable[[str], None], speech: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     mime = "video/mp4"
     log(f"gemini upload {video_path.name} ({os.path.getsize(video_path)} bytes)")
     file = gemini_upload(cfg, video_path, mime, video_path.name)
@@ -220,12 +250,15 @@ def understand_with_gemini_video(cfg: Config, video_path: Path, meta: dict[str, 
     try:
         active = gemini_wait_active(cfg, name)
         uri = active.get("uri") or file.get("uri")
-        parts = [{"file_data": {"mime_type": mime, "file_uri": uri}}, {"text": video_prompt(meta)}]
+        parts = [{"file_data": {"mime_type": mime, "file_uri": uri}}, {"text": video_prompt(meta, speech)}]
         result, usage = gemini_generate(cfg, cfg.gemini_model, parts, EXTRACTION_SCHEMA, resolution=cfg.gemini_resolution or None)
         log(f"gemini video ok tokens={usage.get('totalTokenCount')}")
         result = normalise_result(result)
         result["method"] = {"transcribe": f"gemini:{cfg.gemini_model}", "on_screen": f"gemini:{cfg.gemini_model}", "breakdown": f"gemini:{cfg.gemini_model}"}
         result["usage"] = {"gemini_tokens": usage.get("totalTokenCount")}
+        result = merge_speech(result, speech)
+        if speech and speech.get("warnings"):
+            result["warnings"] = list(result.get("warnings") or []) + list(speech["warnings"])
         return result
     finally:
         gemini_delete(cfg, name)
@@ -233,27 +266,6 @@ def understand_with_gemini_video(cfg: Config, video_path: Path, meta: dict[str, 
 
 # ---------------------------------------------------------------------------
 # Fallbacks: Groq Whisper, frame vision, text breakdown
-
-
-def groq_transcribe(cfg: Config, path: Path, *, language: Optional[str] = None) -> dict[str, Any]:
-    with open(path, "rb") as fh:
-        blob = fh.read()
-    fields = {"model": cfg.groq_model, "response_format": "verbose_json", "temperature": "0"}
-    if language:
-        fields["language"] = language
-    out = http.post_multipart(
-        "https://api.groq.com/openai/v1/audio/transcriptions",
-        fields,
-        {"file": (path.name, blob, "audio/mpeg" if path.suffix == ".mp3" else "video/mp4")},
-        headers={"Authorization": f"Bearer {cfg.groq_key}"},
-        timeout=300,
-        retries=1,
-    )
-    return {
-        "text": (out or {}).get("text", "").strip(),
-        "language": (out or {}).get("language"),
-        "segments": [{"start": s.get("start"), "end": s.get("end"), "text": s.get("text")} for s in (out or {}).get("segments", [])][:200],
-    }
 
 
 def _b64(path: Path) -> str:
@@ -350,24 +362,15 @@ def text_model_json(cfg: Config, prompt: str, log: Callable[[str], None]) -> tup
     raise http.HttpError(0, f"no text model available: {last}")
 
 
-def understand_with_fallback(cfg: Config, video_path: Path, meta: dict[str, Any], workdir: Path, log: Callable[[str], None]) -> dict[str, Any]:
+def understand_with_fallback(cfg: Config, video_path: Path, meta: dict[str, Any], workdir: Path, log: Callable[[str], None], speech: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     warnings: list[str] = []
     info = media.probe(video_path)
-    transcript = ""
-    lang = None
-    method: dict[str, Any] = {"transcribe": "none", "on_screen": "none", "breakdown": "none"}
-    if cfg.groq_key and info.get("has_audio") is not False:
-        audio = media.extract_audio(video_path, workdir / "audio.mp3") or video_path
-        try:
-            tr = groq_transcribe(cfg, audio)
-            transcript, lang = tr["text"], tr.get("language")
-            method["transcribe"] = f"groq:{cfg.groq_model}"
-            log(f"groq transcript {len(transcript)} chars lang={lang}")
-        except http.HttpError as e:
-            warnings.append(f"speech transcription failed: {e}")
-            log(f"groq failed: {e}")
-    elif not cfg.groq_key:
-        warnings.append("no speech transcription key available")
+    if speech is None:
+        speech = transcribe(cfg, video_path, workdir, log, has_audio=info.get("has_audio"))
+    transcript = str(speech.get("text") or "")
+    lang = speech.get("language")
+    method: dict[str, Any] = {"transcribe": speech.get("method") or "none", "on_screen": "none", "breakdown": "none"}
+    warnings += list(speech.get("warnings") or [])
     frames = media.extract_frames(video_path, workdir / "frames", every_sec=cfg.frame_every_sec, max_frames=cfg.max_frames, duration=info.get("duration_sec"))
     on_screen, visual_notes, vision_method = frames_on_screen_text(cfg, frames, log)
     method["on_screen"] = vision_method
@@ -384,20 +387,27 @@ def understand_with_fallback(cfg: Config, video_path: Path, meta: dict[str, Any]
         result["language"] = "ar" if str(lang).startswith("ar") else ("en" if str(lang).startswith("en") else result.get("language"))
     result["warnings"] = list(result.get("warnings") or []) + warnings
     result["method"] = method
+    if transcript:
+        result["confidence"]["transcript"] = speech.get("confidence") or result["confidence"].get("transcript") or "medium"
+        if speech.get("segments"):
+            result["transcript_segments"] = speech["segments"][:200]
     return result
 
 
 def understand(cfg: Config, video_path: Path, meta: dict[str, Any], workdir: Path, log: Callable[[str], None]) -> dict[str, Any]:
-    """Gemini video when possible, the fallback chain otherwise."""
+    """The speech chain first (ElevenLabs Scribe, then Whisper), then Gemini watches
+    the video with that transcript in hand; the frames-plus-text chain when Gemini fails."""
+    info = media.probe(video_path)
+    speech = transcribe(cfg, video_path, workdir, log, has_audio=info.get("has_audio"))
     if cfg.gemini_key:
         try:
-            return understand_with_gemini_video(cfg, video_path, meta, log)
+            return understand_with_gemini_video(cfg, video_path, meta, log, speech=speech)
         except (http.HttpError, ValueError, KeyError) as e:
             log(f"gemini video failed, falling back: {e}")
-            out = understand_with_fallback(cfg, video_path, meta, workdir, log)
+            out = understand_with_fallback(cfg, video_path, meta, workdir, log, speech=speech)
             out["warnings"] = list(out.get("warnings") or []) + [f"video model failed, used fallback: {http.scrub(str(e))[:160]}"]
             return out
-    return understand_with_fallback(cfg, video_path, meta, workdir, log)
+    return understand_with_fallback(cfg, video_path, meta, workdir, log, speech=speech)
 
 
 # ---------------------------------------------------------------------------

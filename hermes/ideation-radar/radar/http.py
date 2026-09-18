@@ -178,3 +178,8 @@ def resolve_redirect(url: str, timeout: float = 20) -> str:
 
 def encode_query(params: dict[str, Any]) -> str:
     return urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
+
+
+def quote_key(key: str) -> str:
+    """A row key inside a PostgREST filter (`key=eq.<value>`), percent encoded."""
+    return urllib.parse.quote(str(key), safe="")
