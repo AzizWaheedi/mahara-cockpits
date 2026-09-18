@@ -22,14 +22,14 @@ from typing import Any, Iterable, Optional
 from . import http
 
 JOB_COLUMNS = {
-    "task_id", "name", "url", "status", "client", "clients", "editor", "editors", "request_type",
+    "task_id", "name", "url", "status", "client", "clients", "client_task_id", "editor", "editors", "request_type",
     "brief", "script_task_id", "script", "footage_url", "raw_url", "edited_url", "website",
     "due_at", "opened_at", "state", "ready", "missing", "files", "seconds", "transcript_chars",
     "prepared_at", "attempts", "error", "synced_at", "updated_at",
 }
 # What a board sync is allowed to touch. Worker state is not in this set.
 BOARD_COLUMNS = {
-    "name", "url", "status", "client", "clients", "editor", "editors", "request_type", "brief",
+    "name", "url", "status", "client", "clients", "client_task_id", "editor", "editors", "request_type", "brief",
     "footage_url", "raw_url", "edited_url", "website", "due_at", "opened_at", "synced_at", "updated_at",
 }
 ASSET_COLUMNS = {
@@ -42,8 +42,14 @@ VERSION_COLUMNS = {
     "ratio", "loudness", "transcript", "checks", "passed", "waived", "by_email", "by_name", "at", "updated_at",
 }
 NOTE_COLUMNS = {"id", "task_id", "version", "at_sec", "text", "by_email", "by_name", "source", "done", "at"}
+# The client card behind a job: the brand work, read once per company.
+CLIENT_COLUMNS = {
+    "task_id", "name", "url", "status", "aliases", "dos_donts", "brand_dna_url", "brand_dna",
+    "offer_url", "offer", "drive_url", "website", "instagram", "docs_read_at", "docs_error",
+    "synced_at", "updated_at",
+}
 
-JSON_COLUMNS = ("clients", "editors", "missing", "words", "scenes", "script_hits", "method", "checks", "waived")
+JSON_COLUMNS = ("clients", "editors", "aliases", "missing", "words", "scenes", "script_hits", "method", "checks", "waived")
 
 
 def now_iso() -> str:
@@ -214,6 +220,37 @@ class Supabase:
 
     def notes(self, task_id: str) -> list[dict[str, Any]]:
         return self.select("editor_notes", f"select=*&task_id=eq.{http.quote(task_id)}&order=at.asc")
+
+    # ---- clients ---------------------------------------------------------
+    def store_clients(self, rows: list[dict[str, Any]]) -> int:
+        """The roster from Clients - Mahara. A company already known keeps the
+        document text it has unless this row carries fresher text."""
+        stamp = now_iso()
+        clean = []
+        for r in rows:
+            body = self._row(r, CLIENT_COLUMNS)
+            if not body.get("task_id"):
+                continue
+            body.setdefault("synced_at", stamp)
+            body["updated_at"] = stamp
+            clean.append(body)
+        return self.upsert("editor_clients", clean, "task_id")
+
+    def clients(self, task_ids: Optional[Iterable[str]] = None) -> list[dict[str, Any]]:
+        if task_ids is None:
+            return self.select("editor_clients", "select=*&order=name.asc&limit=400")
+        ids = [t for t in dict.fromkeys(task_ids) if t]
+        if not ids:
+            return []
+        out: list[dict[str, Any]] = []
+        for i in range(0, len(ids), 100):
+            chunk = ids[i : i + 100]
+            out += self.select("editor_clients", f"select=*&task_id=in.({','.join(_q(t) for t in chunk)})")
+        return out
+
+    def client(self, task_id: str) -> Optional[dict[str, Any]]:
+        rows = self.select("editor_clients", f"select=*&task_id=eq.{http.quote(task_id)}&limit=1")
+        return rows[0] if rows else None
 
     # ---- stills ----------------------------------------------------------
     def upload_still(self, task_id: str, name: str, blob: bytes, content_type: str = "image/jpeg") -> str:

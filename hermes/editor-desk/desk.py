@@ -31,7 +31,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from desk import checks as checks_mod  # noqa: E402
 from desk import drive as drive_mod  # noqa: E402
 from desk import http, prepare  # noqa: E402
-from desk.clickup import ClickUp, is_open, job_row  # noqa: E402
+from desk import clients as clients_mod  # noqa: E402
+from desk.clickup import ClickUp, fields_of, is_open, job_row  # noqa: E402
 from desk.config import Config  # noqa: E402
 from desk.drive import Drive  # noqa: E402
 from desk.log import Logger  # noqa: E402
@@ -121,33 +122,88 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
 
 
 def cmd_sync(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
-    """The board is the source of truth for jobs; this brings it in."""
+    """The board is the source of truth for jobs; this brings it in.
+
+    Two boards, not one. The Video Pipeline says what is owed, and Clients -
+    Mahara says who it is for and what the brand rules are, joined by the tag
+    on the card (Aziz, 2026-09-18).
+    """
     sb = _sb(cfg)
     cu = ClickUp(cfg, log.info)
     stamp = now_iso()
     tasks = cu.tasks(include_closed=args.closed)
     rows = [job_row(t, now_iso=stamp) for t in tasks]
-    rows = [r for r in rows if r["task_id"] and (args.closed or is_open(r["status"]))]
+    keep = [(r, t) for r, t in zip(rows, tasks) if r["task_id"] and (args.closed or is_open(r["status"]))]
+    rows = [r for r, _ in keep]
 
-    # The brief often lives in a Google Doc linked from the card's References field.
+    # The client card carries the brand work. Resolve it here so a job always
+    # knows who it is for, even when nobody filled the video card in.
+    people: list[dict[str, Any]] = []
+    try:
+        people = clients_mod.roster(cfg, log.info)
+    except http.HttpError as e:
+        log.warn(f"client roster not read: {http.scrub(str(e))[:160]}")
+    matched = 0
+    by_job: dict[str, dict[str, Any]] = {}
+    if people:
+        for r in rows:
+            hit = clients_mod.match(r.get("clients") or [], people)
+            if hit:
+                r["client_task_id"] = hit["task_id"]
+                by_job[r["task_id"]] = hit
+                matched += 1
+        sb.store_clients([{**c, "synced_at": stamp} for c in people])
+
+    # Documents: read once per company, and only for companies with live work.
+    docs_read = 0
+    drive: Optional[Drive] = None
     if cfg.google_configured and not args.no_docs:
         try:
-            d = Drive(cfg, log.info)
-            for r, t in zip(rows, [t for t in tasks if t.get("id")]):
-                from desk.clickup import fields_of
-                refs = str(fields_of(t).get("references") or "")
-                m = DOC_RE.search(refs)
-                if not m:
-                    continue
-                doc_id = drive_mod.parse_id(m.group(0))
-                if not doc_id:
-                    continue
-                text = d.doc_text(doc_id)
-                if text:
-                    r["script"] = text[:40000]
-                    r["script_task_id"] = doc_id
+            drive = Drive(cfg, log.info)
         except http.HttpError as e:
-            log.warn(f"scripts not read from Docs: {http.scrub(str(e))[:160]}")
+            log.warn(f"Drive not available: {http.scrub(str(e))[:160]}")
+    if drive is not None and by_job:
+        wanted = {c["task_id"]: c for c in by_job.values()}
+        have = {c["task_id"]: c for c in sb.clients(wanted.keys())}
+        fresh: list[dict[str, Any]] = []
+        for tid, c in wanted.items():
+            was = have.get(tid) or {}
+            unchanged = (
+                (was.get("brand_dna_url") or "") == (c.get("brand_dna_url") or "")
+                and (was.get("offer_url") or "") == (c.get("offer_url") or "")
+                and (was.get("brand_dna") or was.get("offer"))
+            )
+            if unchanged and not args.force_docs:
+                c["brand_dna"] = was.get("brand_dna")
+                c["offer"] = was.get("offer")
+                continue
+            row = clients_mod.read_docs(drive, dict(c), log.info)
+            row["docs_read_at"] = stamp
+            fresh.append(row)
+            c["brand_dna"] = row.get("brand_dna")
+            c["offer"] = row.get("offer")
+            docs_read += 1
+        if fresh:
+            sb.store_clients(fresh)
+
+    # The script often lives in a Google Doc linked from the card's References field.
+    if drive is not None:
+        for r, t in keep:
+            refs = str(fields_of(t).get("references") or "")
+            m = DOC_RE.search(refs)
+            if not m:
+                continue
+            doc_id = drive_mod.parse_id(m.group(0))
+            if not doc_id:
+                continue
+            try:
+                text = drive.doc_text(doc_id)
+            except http.HttpError as e:
+                log.warn(f"{r['task_id']}: script doc not read: {http.scrub(str(e))[:120]}")
+                continue
+            if text:
+                r["script"] = text[:40000]
+                r["script_task_id"] = doc_id
 
     out = sb.store_jobs(rows)
     # A job whose board fields changed after preparation is read again.
@@ -159,7 +215,10 @@ def cmd_sync(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
         if (job.get("footage_url") or "") != (r.get("footage_url") or ""):
             sb.mark_job(r["task_id"], state="stale", attempts=0)
             stale += 1
-    summary = {"tasks": len(rows), **out, "stale": stale}
+    summary = {
+        "tasks": len(rows), **out, "stale": stale,
+        "clients": len(people), "matched": matched, "docs_read": docs_read,
+    }
     log.info(f"sync: {summary}")
     _print(summary, args.json)
     return 0
@@ -180,10 +239,16 @@ def cmd_prepare(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     if not jobs:
         _print({"prepared": 0, "note": "nothing waiting"}, args.json)
         return 0
+    # One read of the client cards these jobs belong to, so the brand rules
+    # travel with the job instead of being looked up per file.
+    by_client = {c["task_id"]: c for c in sb.clients([j.get("client_task_id") for j in jobs])}
     out = []
     for job in jobs:
         try:
-            out.append(prepare.prepare_job(cfg, log.info, sb, drive, job, clickup=cu, force=args.force))
+            out.append(prepare.prepare_job(
+                cfg, log.info, sb, drive, job, clickup=cu, force=args.force,
+                client=by_client.get(str(job.get("client_task_id") or "")),
+            ))
         except (http.HttpError, SupabaseError, OSError) as e:
             msg = http.scrub(str(e))[:300]
             log.error(f"{job.get('task_id')}: {msg}")
@@ -315,7 +380,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     d = sub.add_parser("doctor"); d.add_argument("--offline", action="store_true")
-    sy = sub.add_parser("sync"); sy.add_argument("--closed", action="store_true"); sy.add_argument("--no-docs", action="store_true")
+    sy = sub.add_parser("sync"); sy.add_argument("--closed", action="store_true"); sy.add_argument("--no-docs", action="store_true"); sy.add_argument("--force-docs", action="store_true")
     pr = sub.add_parser("prepare"); pr.add_argument("--task"); pr.add_argument("--limit", type=int); pr.add_argument("--force", action="store_true")
     ck = sub.add_parser("check")
     ck.add_argument("--task", required=True); ck.add_argument("--url", required=True)

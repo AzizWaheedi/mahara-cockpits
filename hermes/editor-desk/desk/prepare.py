@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from . import clients
 from . import drive as drive_mod
 from . import http, media, speech
 from .clickup import ClickUp
@@ -32,16 +33,32 @@ def _asset_id(task_id: str, drive_id: str) -> str:
     return f"{task_id}:{drive_id}"
 
 
-def readiness(job: dict[str, Any], assets: list[dict[str, Any]], cfg: Config) -> tuple[bool, list[str]]:
+def readiness(
+    job: dict[str, Any],
+    assets: list[dict[str, Any]],
+    cfg: Config,
+    client: Optional[dict[str, Any]] = None,
+) -> tuple[bool, list[str]]:
     """What is still missing before an editor can start. Plain sentences: this
-    text is shown to a person and copied into ClickUp."""
+    text is shown to a person and copied into ClickUp.
+
+    The client card is not one of these things. Its brand work is context an
+    editor should have, but a job with no brand doc still has a video to make,
+    so a missing document is reported on the job and never blocks it.
+    """
     missing: list[str] = []
     if not job.get("footage_url"):
         missing.append("No footage folder on the card. Add the Client Footage Folder or Raw Video Link.")
     elif not assets:
         missing.append("The footage folder has no video in it yet, or it is not shared with us.")
     if not (job.get("brief") or "").strip() and not (job.get("script") or "").strip():
-        missing.append("No brief and no script on the card.")
+        if client:
+            missing.append(
+                f"Nothing on this card says what to make. The brand rules for {client.get('name')} "
+                "are on the client card, but no brief and no script were written for this video."
+            )
+        else:
+            missing.append("No brief and no script on the card.")
     if cfg.require_script and not (job.get("script") or "").strip():
         missing.append("No script linked to this job.")
     if not job.get("editor"):
@@ -62,6 +79,7 @@ def prepare_job(
     clickup: Optional[ClickUp] = None,
     force: bool = False,
     transcribe_fn: Callable[..., dict[str, Any]] = speech.transcribe,
+    client: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Read every video in the job's folder. Returns a summary for the caller."""
     task_id = str(job.get("task_id") or "")
@@ -74,13 +92,13 @@ def prepare_job(
     folder_id = drive_mod.parse_id(folder_link)
     if not folder_id:
         summary["warnings"].append("no usable Drive link on the card" if folder_link else "no footage link on the card")
-        return _finish(cfg, log, sb, job, [], summary, stamp, clickup)
+        return _finish(cfg, log, sb, job, [], summary, stamp, clickup, client)
 
     try:
         node = drive.get(folder_id)
     except http.HttpError as e:
         summary["warnings"].append(f"the footage link could not be opened: {http.scrub(str(e))[:160]}")
-        return _finish(cfg, log, sb, job, [], summary, stamp, clickup)
+        return _finish(cfg, log, sb, job, [], summary, stamp, clickup, client)
 
     if node.get("mimeType") == drive_mod.FOLDER_MIME:
         files = drive.videos_under(folder_id, depth=2, limit=cfg.max_files_per_job * 3)
@@ -88,7 +106,7 @@ def prepare_job(
         files = [node]
     else:
         summary["warnings"].append("that link is not a folder and not a video")
-        return _finish(cfg, log, sb, job, [], summary, stamp, clickup)
+        return _finish(cfg, log, sb, job, [], summary, stamp, clickup, client)
 
     files = files[: cfg.max_files_per_job]
     summary["files"] = len(files)
@@ -112,7 +130,7 @@ def prepare_job(
         except Exception as e:  # noqa: BLE001 - one bad row must not lose the rest
             log(f"could not store {fid}: {http.scrub(str(e))[:140]}")
 
-    return _finish(cfg, log, sb, job, rows, summary, stamp, clickup)
+    return _finish(cfg, log, sb, job, rows, summary, stamp, clickup, client)
 
 
 def _read_file(
@@ -223,9 +241,16 @@ def _finish(
     summary: dict[str, Any],
     stamp: str,
     clickup: Optional[ClickUp],
+    client: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     task_id = str(job.get("task_id") or "")
-    ready, missing = readiness(job, assets, cfg)
+    if not client:
+        tags = job.get("clients") or []
+        summary["warnings"].append(
+            f"the tag {tags[0]!r} matches no company on Clients - Mahara, so the brand rules are missing"
+            if tags else "this card has no client tag, so the brand rules could not be found"
+        )
+    ready, missing = readiness(job, assets, cfg, client)
     state = "ready" if ready else "blocked"
     if summary["failed"] and not summary["read"]:
         state = "stale"
@@ -249,16 +274,25 @@ def _finish(
     summary["missing"] = missing
     if clickup is not None and cfg.clickup_writeback and (summary["read"] or missing):
         try:
-            clickup.comment(task_id, comment_text(job, assets, summary))
+            clickup.comment(task_id, comment_text(job, assets, summary, client))
         except http.HttpError as e:
             log(f"ClickUp comment failed for {task_id}: {http.scrub(str(e))[:140]}")
     log(f"{task_id}: {state}, {summary['read']} read, {summary['skipped']} skipped, {summary['failed']} failed")
     return summary
 
 
-def comment_text(job: dict[str, Any], assets: list[dict[str, Any]], summary: dict[str, Any]) -> str:
+def comment_text(
+    job: dict[str, Any],
+    assets: list[dict[str, Any]],
+    summary: dict[str, Any],
+    client: Optional[dict[str, Any]] = None,
+) -> str:
     """What the editor reads on the card. Plain, short, and useful on a phone."""
     lines: list[str] = []
+    for line in clients.brand_lines(client):
+        lines.append(line)
+    if lines:
+        lines.append("")
     total_min = round(float(summary.get("seconds") or 0) / 60, 1)
     if summary.get("read") or summary.get("skipped"):
         lines.append(f"Footage read: {summary.get('files', 0)} file(s), {total_min} minutes in total.")
