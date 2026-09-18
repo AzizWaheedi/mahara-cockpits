@@ -119,6 +119,27 @@ export function useRequests(taskId: string): Loaded<WorkRequest[]> {
   );
 }
 
+/**
+ * May this session open the desk at all?
+ *
+ * This asks `is_editor()`, which is the very function every row policy calls,
+ * rather than looking for a row and guessing. An admin with no seat row still
+ * gets in, because the function says so, and the screen can never disagree
+ * with the database about who is allowed.
+ */
+export function useCanOpen(email: string | null): Loaded<boolean> {
+  return useQuery<boolean>(
+    () =>
+      email
+        ? (supabase.rpc("is_editor").then(({ data, error }) => ({
+            data: data === true,
+            error,
+          })) as PromiseLike<{ data: boolean | null; error: { message: string } | null }>)
+        : Promise.resolve({ data: null, error: null }),
+    [email],
+  );
+}
+
 export function useMe(email: string | null): Loaded<EditorPerson> {
   return useQuery<EditorPerson>(
     () =>

@@ -4,6 +4,22 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="dark light" />
+    <script>
+      // Set the theme before the first paint, so the page never flashes the
+      // other one. Same key and same class as the other three cockpits.
+      (function () {
+        try {
+          var s = localStorage.getItem("theme");
+          var dark =
+            s === "dark" ||
+            (s !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+          document.documentElement.classList.toggle("dark", dark);
+          document.documentElement.style.colorScheme = dark ? "dark" : "light";
+        } catch (e) {
+          /* a private window; the app sets it again once it loads */
+        }
+      })();
+    </script>
     <meta name="robots" content="noindex, nofollow" />
     <title>Editor desk · Mahara</title>
   </head>

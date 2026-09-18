@@ -77,7 +77,7 @@ export function PortalAutoSignIn({
   return (
     <div
       className="px-4 py-2 text-center text-sm"
-      style={{ background: "color-mix(in oklch, var(--color-blocked) 12%, transparent)" }}
+      style={{ background: "color-mix(in oklch, var(--destructive) 12%, transparent)" }}
     >
       The portal pass was not accepted ({failed}). Open the portal again at{" "}
       <a className="underline underline-offset-2" href={portalUrl()}>

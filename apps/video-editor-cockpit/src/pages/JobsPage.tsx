@@ -100,7 +100,7 @@ export default function JobsPage() {
             <li key={job.task_id}>
               <Link
                 to={`/job/${job.task_id}`}
-                className="panel block px-4 py-3 transition-colors hover:bg-[color:var(--raised)]"
+                className="panel block px-4 py-3 transition-colors hover:bg-[color:var(--secondary)]"
               >
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                   <span className="font-medium">{job.client ?? "No client tag"}</span>
@@ -112,7 +112,7 @@ export default function JobsPage() {
 
                 <div className="muted mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
                   <span>{job.editor ?? "No editor assigned"}</span>
-                  <span style={due.late ? { color: "var(--color-blocked)" } : undefined}>
+                  <span style={due.late ? { color: "var(--destructive)" } : undefined}>
                     {due.text}
                     {job.due_at ? ` · ${day(job.due_at)}` : ""}
                   </span>
@@ -125,7 +125,7 @@ export default function JobsPage() {
                 </div>
 
                 {job.missing?.length ? (
-                  <p className="mt-2 text-xs" style={{ color: "var(--color-blocked)" }}>
+                  <p className="mt-2 text-xs" style={{ color: "var(--destructive)" }}>
                     {job.missing[0]}
                     {job.missing.length > 1 ? ` (+${job.missing.length - 1} more)` : ""}
                   </p>

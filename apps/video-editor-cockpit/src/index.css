@@ -1,48 +1,80 @@
+/* Geist for everything, Geist Mono for numbers and labels (brand guidelines §3). */
+@import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap");
 @import "tailwindcss";
 
-/* An editor works in a dark room in front of a colour-managed monitor, so the
-   tool is dark first and the light theme is the one that adapts. Neutrals are
-   pulled very slightly blue so a still frame sitting on them reads as neutral. */
-@theme {
-  --color-ink-950: oklch(0.17 0.008 250);
-  --color-ink-900: oklch(0.21 0.009 250);
-  --color-ink-850: oklch(0.25 0.010 250);
-  --color-ink-800: oklch(0.30 0.011 250);
-  --color-ink-700: oklch(0.40 0.012 250);
-  --color-ink-500: oklch(0.60 0.013 250);
-  --color-ink-300: oklch(0.78 0.010 250);
-  --color-ink-100: oklch(0.93 0.006 250);
-  --color-ink-50: oklch(0.97 0.004 250);
+@custom-variant dark (&:is(.dark *));
 
-  --color-ready: oklch(0.72 0.15 155);
-  --color-blocked: oklch(0.70 0.17 35);
-  --color-waiting: oklch(0.80 0.14 85);
-  --color-accent: oklch(0.72 0.13 230);
+/*
+ * The same palette as the other three cockpits. This app has no shadcn layer,
+ * so it keeps the brand's token names and adds a handful of plain utilities on
+ * top of them; nothing here invents a second set of colours.
+ */
+@theme inline {
+  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
-  --font-sans: "Inter var", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --color-mahara-teal: var(--mahara-teal);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+  --color-destructive: var(--destructive);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
 }
 
 :root {
-  color-scheme: dark;
-  --page: var(--color-ink-950);
-  --panel: var(--color-ink-900);
-  --raised: var(--color-ink-850);
-  --line: var(--color-ink-800);
-  --text: var(--color-ink-50);
-  --muted: var(--color-ink-500);
-  --dim: var(--color-ink-300);
+  --mahara-teal: #00cfc8;
+  --deep-space: #091333;
+  --royal-blue: #2e5bd6;
+
+  --primary: var(--mahara-teal);
+  --primary-foreground: var(--deep-space);
+
+  --success: oklch(0.6 0.13 158);
+  --warning: oklch(0.7 0.17 55);
+
+  /* Corner radius md = 12px (brand §4). */
+  --radius: 0.75rem;
+  --background: oklch(0.985 0.003 250);
+  --foreground: oklch(0.2 0.045 270);
+  --card: oklch(1 0 0);
+  --secondary: oklch(0.96 0.008 250);
+  --muted: oklch(0.96 0.008 250);
+  --muted-foreground: oklch(0.48 0.02 265);
+  --destructive: oklch(0.55 0.22 25);
+  --border: oklch(0.91 0.008 250);
+  --ring: var(--mahara-teal);
 }
 
-:root[data-theme="light"] {
-  color-scheme: light;
-  --page: var(--color-ink-50);
-  --panel: #fff;
-  --raised: var(--color-ink-100);
-  --line: oklch(0.88 0.006 250);
-  --text: var(--color-ink-950);
-  --muted: var(--color-ink-700);
-  --dim: var(--color-ink-850);
+.dark {
+  --primary: var(--mahara-teal);
+  --primary-foreground: var(--deep-space);
+
+  --success: oklch(0.72 0.15 158);
+  --warning: oklch(0.78 0.15 60);
+
+  /* Deep Space #091333 is the canvas; cards sit one step lighter. */
+  --background: #091333;
+  --foreground: oklch(0.95 0.008 250);
+  --card: #0f1b45;
+  --secondary: oklch(1 0 0 / 8%);
+  --muted: oklch(1 0 0 / 7%);
+  --muted-foreground: oklch(0.68 0.015 250);
+  --destructive: oklch(0.65 0.2 25);
+  --border: oklch(1 0 0 / 10%);
+  --ring: var(--mahara-teal);
 }
 
 html,
@@ -53,50 +85,62 @@ body,
 
 body {
   margin: 0;
-  background: var(--page);
-  color: var(--text);
+  background: var(--background);
+  color: var(--foreground);
   font-family: var(--font-sans);
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
+  font-feature-settings: "ss01", "cv11";
+}
+
+h1,
+h2,
+h3 {
+  letter-spacing: -0.015em;
 }
 
 /* One place for the surfaces, so a panel is a panel everywhere. */
 @utility panel {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 0.75rem;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 0.25rem);
 }
 
 @utility raised {
-  background: var(--raised);
+  background: var(--secondary);
 }
 
 @utility hairline {
-  border-color: var(--line);
+  border-color: var(--border);
 }
 
 @utility muted {
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 @utility dim {
-  color: var(--dim);
+  color: color-mix(in oklch, var(--foreground) 82%, transparent);
 }
 
 :where(button, a, input, textarea, select):focus-visible {
-  outline: 2px solid var(--color-accent);
+  outline: 2px solid var(--ring);
   outline-offset: 2px;
-  border-radius: 0.375rem;
+  border-radius: var(--radius-md);
 }
 
 ::selection {
-  background: color-mix(in oklch, var(--color-accent) 40%, transparent);
+  background: color-mix(in oklch, var(--mahara-teal) 35%, transparent);
 }
 
 /* Arabic scripts need more line height than Latin to stay legible at 14px. */
 .rtl-safe {
   line-height: 1.9;
   word-break: break-word;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
 }
 
 @media (prefers-reduced-motion: reduce) {

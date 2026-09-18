@@ -70,10 +70,7 @@ export default function Footage({ assets }: { assets: Asset[] }) {
                         onClick={() => setOpenId(h.asset.id)}
                         className="raised flex w-full gap-3 rounded-md px-3 py-2 text-left text-sm"
                       >
-                        <span
-                          className="font-mono text-xs"
-                          style={{ color: "var(--color-accent)" }}
-                        >
+                        <span className="font-mono text-xs" style={{ color: "var(--primary)" }}>
                           {clock(h.at)}
                         </span>
                         <span dir="auto" className="rtl-safe min-w-0 flex-1 truncate">
@@ -100,7 +97,7 @@ export default function Footage({ assets }: { assets: Asset[] }) {
                 type="button"
                 onClick={() => setOpenId(a.id)}
                 className={`w-full overflow-hidden rounded-lg border text-left ${
-                  active ? "border-[color:var(--color-accent)]" : "hairline"
+                  active ? "border-[color:var(--primary)]" : "hairline"
                 }`}
               >
                 <div className="raised relative aspect-video w-full overflow-hidden">
@@ -148,7 +145,7 @@ export default function Footage({ assets }: { assets: Asset[] }) {
           </div>
 
           {open.error ? (
-            <p className="px-4 py-3 text-sm" style={{ color: "var(--color-blocked)" }}>
+            <p className="px-4 py-3 text-sm" style={{ color: "var(--destructive)" }}>
               {open.error}
             </p>
           ) : (
@@ -212,10 +209,7 @@ export default function Footage({ assets }: { assets: Asset[] }) {
                     <ul className="space-y-1">
                       {open.script_hits.map((h) => (
                         <li key={h.line} className="flex gap-2 text-sm">
-                          <span
-                            className="font-mono text-xs"
-                            style={{ color: "var(--color-accent)" }}
-                          >
+                          <span className="font-mono text-xs" style={{ color: "var(--primary)" }}>
                             {clock(h.at_sec)}
                           </span>
                           <span dir="auto" className="rtl-safe min-w-0 flex-1">

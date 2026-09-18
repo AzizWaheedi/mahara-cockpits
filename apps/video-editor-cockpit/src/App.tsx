@@ -1,34 +1,45 @@
 import { useEffect, useState } from "react";
 import { Navigate, Route, Routes } from "react-router";
 import { PortalAutoSignIn } from "./components/PortalAutoSignIn";
+import { Wordmark } from "./components/Wordmark";
 import { SessionProvider, useWho } from "./lib/auth";
-import { useMe } from "./lib/data";
+import { useCanOpen, useMe } from "./lib/data";
 import { otherCockpits, portalUrl } from "./lib/portal";
 import JobPage from "./pages/JobPage";
 import JobsPage from "./pages/JobsPage";
 import SignInPage from "./pages/SignInPage";
 
+/**
+ * The same switch as the other cockpits: a `dark` class on the root element
+ * and the key "theme". Under the portal they share an origin, so a person who
+ * picks light in the media buyer finds light here too.
+ */
 function ThemeToggle() {
-  const [light, setLight] = useState(() => {
+  const [dark, setDark] = useState(() => {
     try {
-      return localStorage.getItem("desk-theme") === "light";
+      const stored = localStorage.getItem("theme");
+      if (stored === "light" || stored === "dark") return stored === "dark";
     } catch {
-      return false;
+      // A private window forbids this; fall through to the system setting.
     }
+    return (
+      typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches
+    );
   });
 
   useEffect(() => {
-    document.documentElement.dataset.theme = light ? "light" : "dark";
+    document.documentElement.classList.toggle("dark", dark);
+    document.documentElement.style.colorScheme = dark ? "dark" : "light";
     try {
-      localStorage.setItem("desk-theme", light ? "light" : "dark");
+      localStorage.setItem("theme", dark ? "dark" : "light");
     } catch {
-      // A private window forbids this. The tool still works, it just forgets.
+      // The tool still works, it just forgets.
     }
-  }, [light]);
+  }, [dark]);
 
   return (
-    <button type="button" onClick={() => setLight((l) => !l)} className="muted text-xs">
-      {light ? "Dark" : "Light"}
+    <button type="button" onClick={() => setDark((d) => !d)} className="muted text-xs">
+      {dark ? "Light" : "Dark"}
     </button>
   );
 }
@@ -54,7 +65,7 @@ function SwitchCockpit({ cockpits, isAdmin }: { cockpits: string[]; isAdmin: boo
             <a
               key={d.key}
               href={d.href}
-              className="block rounded px-2.5 py-1.5 text-sm hover:bg-[color:var(--raised)]"
+              className="block rounded px-2.5 py-1.5 text-sm hover:bg-[color:var(--secondary)]"
             >
               {d.label}
             </a>
@@ -69,10 +80,14 @@ function Shell() {
   const { session, email, name, cockpits, isAdmin, ready, signOut } = useWho();
   const [bumped, setBumped] = useState(0);
   const me = useMe(session ? email : null);
+  const canOpen = useCanOpen(session ? email : null);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: a portal sign-in reloads the seat
   useEffect(() => {
-    if (bumped) me.reload();
+    if (bumped) {
+      me.reload();
+      canOpen.reload();
+    }
   }, [bumped]);
 
   const portalBanner = (
@@ -92,9 +107,9 @@ function Shell() {
       </>
     );
 
-  // The session is real but the address is not on the seat list. Say so
-  // plainly rather than showing a working page with nothing in it.
-  if (!me.loading && !me.data) {
+  // The session is real but the database will not answer for this address.
+  // Say so plainly rather than showing a working page with nothing in it.
+  if (!canOpen.loading && canOpen.data === false) {
     return (
       <div className="mx-auto max-w-md px-4 py-20 text-center">
         <h1 className="text-lg font-semibold">Not on the editor list</h1>
@@ -117,17 +132,19 @@ function Shell() {
   }
 
   const admin = isAdmin || me.data?.role === "admin";
+  const who = me.data?.name || name;
 
   return (
     <div className="min-h-full">
       {portalBanner}
       <header
-        className="sticky z-10 border-b hairline bg-[color:var(--page)]/90 backdrop-blur"
+        className="sticky z-10 border-b hairline bg-[color:var(--background)]/90 backdrop-blur"
         style={{ top: "env(safe-area-inset-top, 0px)" }}
       >
         <div className="mx-auto flex max-w-5xl items-center gap-4 px-4 py-2.5">
-          <span className="text-sm font-semibold tracking-tight">Editor desk</span>
-          <span className="muted ml-auto hidden text-xs sm:inline">{me.data?.name || name}</span>
+          <Wordmark size="sm" />
+          <span className="text-sm font-medium tracking-tight">Editor desk</span>
+          <span className="muted ml-auto hidden text-xs sm:inline">{who}</span>
           <SwitchCockpit cockpits={cockpits} isAdmin={admin} />
           <ThemeToggle />
           <button type="button" onClick={signOut} className="muted text-xs">

@@ -2,17 +2,17 @@ import { type ReactNode, useId, useState } from "react";
 import type { JobState } from "../lib/types";
 
 const STATE_WORDS: Record<string, { label: string; tone: string }> = {
-  ready: { label: "Ready to start", tone: "var(--color-ready)" },
-  blocked: { label: "Blocked", tone: "var(--color-blocked)" },
-  new: { label: "Not read yet", tone: "var(--color-waiting)" },
-  stale: { label: "Reading again", tone: "var(--color-waiting)" },
-  delivered: { label: "Delivered", tone: "var(--color-accent)" },
+  ready: { label: "Ready to start", tone: "var(--success)" },
+  blocked: { label: "Blocked", tone: "var(--destructive)" },
+  new: { label: "Not read yet", tone: "var(--warning)" },
+  stale: { label: "Reading again", tone: "var(--warning)" },
+  delivered: { label: "Delivered", tone: "var(--primary)" },
 };
 
 export function StateBadge({ state }: { state: JobState | string | null }) {
   const it = STATE_WORDS[String(state ?? "")] ?? {
     label: String(state ?? "unknown"),
-    tone: "var(--muted)",
+    tone: "var(--muted-foreground)",
   };
   return (
     <span
@@ -87,7 +87,7 @@ export function Empty({ children }: { children: ReactNode }) {
 
 export function Problem({ children }: { children: ReactNode }) {
   return (
-    <p className="rounded-md border border-[color:var(--color-blocked)]/40 bg-[color:var(--color-blocked)]/10 px-3 py-2 text-sm">
+    <p className="rounded-md border border-[color:var(--destructive)]/40 bg-[color:var(--destructive)]/10 px-3 py-2 text-sm">
       {children}
     </p>
   );
@@ -129,7 +129,7 @@ export function Out({ href, children }: { href: string | null | undefined; child
       href={href}
       target="_blank"
       rel="noreferrer noopener"
-      className="text-[color:var(--color-accent)] underline underline-offset-2"
+      className="text-[color:var(--primary)] underline underline-offset-2"
     >
       {children}
     </a>

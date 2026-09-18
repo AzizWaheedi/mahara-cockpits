@@ -117,7 +117,7 @@ export default function JobPage() {
         <div className="mt-3 grid gap-x-8 gap-y-0 sm:grid-cols-2">
           <Row label="Editor">{j.editor ?? "Nobody assigned"}</Row>
           <Row label="Due">
-            <span style={due.late ? { color: "var(--color-blocked)" } : undefined}>
+            <span style={due.late ? { color: "var(--destructive)" } : undefined}>
               {due.text} {j.due_at ? `· ${day(j.due_at)}` : ""}
             </span>
           </Row>
@@ -140,7 +140,7 @@ export default function JobPage() {
           <ul className="space-y-1.5">
             {j.missing.map((m) => (
               <li key={m} className="flex gap-2 text-sm">
-                <span style={{ color: "var(--color-blocked)" }}>•</span>
+                <span style={{ color: "var(--destructive)" }}>•</span>
                 <span>{m}</span>
               </li>
             ))}
@@ -257,7 +257,7 @@ export default function JobPage() {
               type="button"
               disabled={busy}
               onClick={() => send("deliver")}
-              className="rounded-md bg-[color:var(--color-accent)] px-3 py-1.5 text-sm font-medium text-[color:var(--color-ink-950)] disabled:opacity-50"
+              className="rounded-md bg-[color:var(--primary)] px-3 py-1.5 text-sm font-medium text-[color:var(--primary-foreground)] disabled:opacity-50"
             >
               Send to client review
             </button>
@@ -281,7 +281,7 @@ export default function JobPage() {
                     </span>
                     <span
                       className="text-xs"
-                      style={{ color: v.passed ? "var(--color-ready)" : "var(--color-waiting)" }}
+                      style={{ color: v.passed ? "var(--success)" : "var(--warning)" }}
                     >
                       {v.passed ? "everything checked out" : "worth a look"}
                     </span>
@@ -289,9 +289,7 @@ export default function JobPage() {
                   <ul className="mt-1.5 space-y-0.5">
                     {(v.checks ?? []).map((ch) => (
                       <li key={ch.name} className="flex gap-2 text-xs">
-                        <span
-                          style={{ color: ch.ok ? "var(--color-ready)" : "var(--color-waiting)" }}
-                        >
+                        <span style={{ color: ch.ok ? "var(--success)" : "var(--warning)" }}>
                           {ch.ok ? "ok" : "!"}
                         </span>
                         <span className="muted">{ch.detail}</span>
@@ -352,7 +350,7 @@ export default function JobPage() {
                       {n.at_sec !== null && n.at_sec !== undefined ? (
                         <span
                           className="mr-2 font-mono text-xs"
-                          style={{ color: "var(--color-accent)" }}
+                          style={{ color: "var(--primary)" }}
                         >
                           {clock(n.at_sec)}
                         </span>
