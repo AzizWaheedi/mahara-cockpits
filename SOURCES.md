@@ -171,3 +171,13 @@ Aziz, 2026-09-13: "there should always be a fallback source for these types of t
 | Trend labels and embeddings | Gemini | OpenAI (vectors carry their provider so the two spaces never compare) |
 | Ideation pictures | a three-frame storyboard from the clip | the platform thumbnail, with the failure noted on the row |
 | Scrape requests | ScrapeCreators, run by the two-minute cron | retried up to three times, then failed with the reason shown under the Scrape box |
+
+## Editor desk (added 2026-09-18)
+
+| What | Where it comes from | Where it lands | Read by |
+| --- | --- | --- | --- |
+| Video jobs | ClickUp Video Pipeline `901816720767` | Supabase `editor_jobs` | video editor cockpit |
+| The brand work behind a job | ClickUp Clients - Mahara `901816559981`, matched on the tag, plus the Brand DNA and Offer Cheat Sheet Google Docs | Supabase `editor_clients` | video editor cockpit |
+| Footage, transcripts, shot maps, storyboards | Google Drive, ElevenLabs Scribe, ffmpeg | Supabase `editor_assets`, bucket `editor-stills` | video editor cockpit |
+| What the cockpit asked the worker to do | the cockpit | Supabase `editor_requests` | `hermes/editor-desk` every 3 minutes |
+| Who may open the cockpit | Aziz | Supabase `editor_people` | every `editor_*` row policy |
