@@ -25,7 +25,15 @@ ship() {
   echo "== $app: backend"
   (cd "$dir" && bunx convex deploy --yes --typecheck enable)
   echo "== $app: site"
-  (cd "$dir" && VITE_CONVEX_URL="$url" bun run build && bunx vercel deploy --prod --yes | tail -1)
+  (cd "$dir" && VITE_CONVEX_URL="$url" bun run build)
+  # The Vercel CLI prints JSON when not on a terminal and can exit 0 without a
+  # production deployment (seen 2026-09-18: the creative site kept the old
+  # bundle while the log showed one "}"), so the confirmation is checked, not
+  # assumed.
+  local out
+  out=$(cd "$dir" && bunx vercel deploy --prod --yes 2>&1) || { echo "$out" | tail -20; echo "vercel deploy failed for $app"; exit 1; }
+  echo "$out" | grep -E '"url"|readyState|target|Production|Aliased|rror' | head -8
+  echo "$out" | grep -Eq '"readyState": *"READY"|Aliased +https|Production +https' || { echo "vercel did not confirm a production deployment for $app:"; echo "$out" | tail -20; exit 1; }
 }
 
 case "${1:-all}" in
