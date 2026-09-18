@@ -9,6 +9,7 @@
                                                read a cut the editor uploaded and report on it
     python3 desk.py deliver --task ID --url LINK [--status "client review"]
                                                write the edited link and move the card
+    python3 desk.py requests [--limit N]        carry out what the cockpit asked for
     python3 desk.py notes [--task ID]          pull ClickUp comments in as timestamped notes
     python3 desk.py jobs [--mine EMAIL]        what is open, and what is blocking it
 
@@ -32,6 +33,7 @@ from desk import checks as checks_mod  # noqa: E402
 from desk import drive as drive_mod  # noqa: E402
 from desk import http, prepare  # noqa: E402
 from desk import clients as clients_mod  # noqa: E402
+from desk import queue as queue_mod  # noqa: E402
 from desk.clickup import ClickUp, fields_of, is_open, job_row  # noqa: E402
 from desk.config import Config  # noqa: E402
 from desk.drive import Drive  # noqa: E402
@@ -315,6 +317,15 @@ def cmd_deliver(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     return 0
 
 
+def cmd_requests(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    """Carry out what the cockpit asked for. The browser holds no keys."""
+    sb = _sb(cfg)
+    out = queue_mod.run_requests(cfg, log.info, sb, limit=args.limit or 10)
+    log.info(f"requests: {out}")
+    _print(out, args.json)
+    return 0
+
+
 def cmd_notes(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     """ClickUp comments in as notes, with the timestamp an editor wrote inside them."""
     sb = _sb(cfg)
@@ -380,6 +391,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     d = sub.add_parser("doctor"); d.add_argument("--offline", action="store_true")
+    rq = sub.add_parser("requests"); rq.add_argument("--limit", type=int, default=10)
     sy = sub.add_parser("sync"); sy.add_argument("--closed", action="store_true"); sy.add_argument("--no-docs", action="store_true"); sy.add_argument("--force-docs", action="store_true")
     pr = sub.add_parser("prepare"); pr.add_argument("--task"); pr.add_argument("--limit", type=int); pr.add_argument("--force", action="store_true")
     ck = sub.add_parser("check")
@@ -397,6 +409,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     handlers = {
         "doctor": cmd_doctor, "sync": cmd_sync, "prepare": cmd_prepare,
         "check": cmd_check, "deliver": cmd_deliver, "notes": cmd_notes, "jobs": cmd_jobs,
+        "requests": cmd_requests,
     }
     try:
         return handlers[args.cmd](cfg, args, log)

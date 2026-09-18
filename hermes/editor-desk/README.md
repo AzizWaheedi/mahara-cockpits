@@ -17,12 +17,40 @@ Link and the status. Nothing is posted to any platform.
 | Command | What happens |
 |---|---|
 | `doctor` | every key, binary, disk and service, with the blocker named |
-| `sync` | the ClickUp Video Pipeline into `editor_jobs`, with the brief and, when the card links one, the script from its Google Doc |
+| `sync` | the ClickUp Video Pipeline into `editor_jobs`, plus the client card behind each job: the tag on a video card is the client, and Clients - Mahara is where the brand work lives |
 | `prepare` | for each video in the job's Drive folder: read it, transcribe the speech with word timings, find the shot boundaries, take a three-frame storyboard, note where each script line was said, then say whether the job is ready to start or what is blocking it |
 | `check` | read a cut the editor uploaded: shape, length, loudness, and the export's own transcript against the approved script, so a missing line is caught before the client sees it |
 | `deliver` | write the Edited Video Link and move the card to client review |
+| `requests` | carry out what the cockpit asked for: deliver, check, comment, rescan |
 | `notes` | pull the card's comments in as timestamped notes |
 | `jobs` | what is open, who owns it, and what is blocking each one |
+
+## The brief is on the client card, not the video card
+
+Aziz, 2026-09-18: *"the tag on the task is the client and aligns with the
+clients board in clickup with all the docs."*
+
+Every one of the six live video cards has an empty description, so the desk
+was reporting "no brief" on all of them and it was reporting the wrong thing.
+What an editor needs is on the client's card on Clients - Mahara (`901816559981`),
+the same spine the other three cockpits read: the Do's and Don'ts, the Brand
+DNA document and the Offer Cheat Sheet. Measured on 2026-09-18, the five open
+jobs carry between 569 and 1,404 characters of do's and don'ts, about 10,000
+of Brand DNA and between 8,500 and 23,700 of offer sheet each.
+
+The join is the tag, and the matching is deliberately plain: a name becomes a
+small set of forms (itself, without a trailing company word, its first word,
+and with the spaces squeezed out) and two names match when their sets overlap.
+So a card tagged `alkhalil` finds the company called `Alkhalil`. Exact name
+wins first, a generic word like "design" never carries a match on its own, and
+when the match is wrong it is visible on the job rather than buried in a score.
+
+A client card that cannot be found never blocks a job. It is a note on the
+job, because an editor with footage and a script can still cut.
+
+One trap worth recording: a ClickUp dropdown's value is an index, and index 0
+is a real choice. Reading it as falsy is how a first probe decided two live
+clients had no Client Status and lost them.
 
 ## Why a transcript is the point
 
@@ -67,11 +95,14 @@ scope, checked 2026-09-18), `ELEVENLABS_API_KEY`, `GROQ_API_KEY`.
 ```
 2,32 * * * *  flock -n $HOME/.editor-desk/sync.lock    bash -c "set -a; . $HOME/.editor-desk/env; set +a; cd $HOME/mahara-cockpits/hermes/editor-desk && python3 desk.py --quiet sync"   >> $HOME/.editor-desk/out/cron.log 2>&1
 7,37 * * * *  flock -n $HOME/.editor-desk/prepare.lock bash -c "set -a; . $HOME/.editor-desk/env; set +a; cd $HOME/mahara-cockpits/hermes/editor-desk && python3 desk.py --quiet prepare" >> $HOME/.editor-desk/out/cron.log 2>&1
+*/3 * * * *   flock -n $HOME/.editor-desk/requests.lock bash -c "set -a; . $HOME/.editor-desk/env; set +a; cd $HOME/mahara-cockpits/hermes/editor-desk && python3 desk.py --quiet requests" >> $HOME/.editor-desk/out/cron.log 2>&1
 17 * * * *    flock -n $HOME/.editor-desk/notes.lock   bash -c "set -a; . $HOME/.editor-desk/env; set +a; cd $HOME/mahara-cockpits/hermes/editor-desk && python3 desk.py --quiet notes"   >> $HOME/.editor-desk/out/cron.log 2>&1
 ```
 
-Sync every half hour, prepare every half hour offset from it, notes hourly.
-Each under its own lock, so a long read never overlaps itself.
+Sync every half hour, prepare every half hour offset from it, notes hourly,
+and the cockpit's queue every three minutes so a person pressing "send to
+client review" does not wait. Each under its own lock, so a long read never
+overlaps itself.
 
 ## Settings
 
@@ -97,6 +128,12 @@ security on with no policies, so only the service key reaches them.
   timings), `scenes`, `script_hits`, `preview_url` and `still_path`.
 - `editor_versions`: one row per uploaded cut with its `checks` report.
 - `editor_notes`: timestamped feedback, from the cockpit or pulled from ClickUp.
+- `editor_clients`: one row per company on Clients - Mahara, with its brand
+  documents read in as text.
+- `editor_requests`: what the cockpit asked for and what became of it.
+- `editor_people`: who may open the cockpit. Row security everywhere is a
+  single policy calling `public.is_editor()`, which is true only for an active
+  address in this table, so the browser's anon key reads nothing on its own.
 
 Storage bucket `editor-stills` holds the three-frame storyboards. No proxies
 are stored anywhere: Drive already plays video in its own preview frame, so the
@@ -159,13 +196,24 @@ the shot map, and the storyboards.
   mistakes are visible, which is the point; it marks material and never
   selects it.
 
+## The cockpit
+
+`apps/video-editor-cockpit` is the screen for all of this. It reads Supabase
+directly with the anon key and holds no other credential: anything that has to
+touch ClickUp or Drive is written to `editor_requests` and drained here by
+`desk.py requests`. A request is claimed with a conditional update before it is
+acted on, so the same delivery is never written twice, and a failure records
+its reason and stops after four tries.
+
 ## Tests
 
 ```bash
 cd hermes/editor-desk && python3 -m unittest discover -s tests -t .
 ```
 
-Twenty tests, no network: the board parser, the readiness rules, the script
-matcher, the export checks, and the prepare flow against a fake Drive,
-Supabase and ClickUp, including the second run that downloads nothing twice
-and the oversized file that is recorded rather than fetched.
+Forty-one tests, no network: the board parser, the readiness rules, the script
+matcher, the export checks, and the client matcher, the request
+queue, and the prepare flow against a fake Drive, Supabase and ClickUp,
+including the second run that downloads nothing twice, the oversized file that
+is recorded rather than fetched, and the delivery that must never be written
+to the board twice.

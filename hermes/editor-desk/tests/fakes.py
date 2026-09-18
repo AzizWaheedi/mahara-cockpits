@@ -120,6 +120,8 @@ class FakeSupabase:
 
     def __init__(self):
         self.jobs: dict[str, dict[str, Any]] = {}
+        self.requests_rows: dict[str, dict[str, Any]] = {}
+        self.clients_rows: dict[str, dict[str, Any]] = {}
         self.assets_rows: dict[str, dict[str, Any]] = {}
         self.versions_rows: dict[str, dict[str, Any]] = {}
         self.notes_rows: dict[str, dict[str, Any]] = {}
@@ -177,7 +179,56 @@ class FakeSupabase:
     def select(self, table, params):
         if table == "editor_jobs":
             return list(self.jobs.values())
+        if table == "editor_requests":
+            rows = [r for r in self.requests_rows.values() if r.get("status") == "queued"]
+            if "attempts=lt.4" in params:
+                rows = [r for r in rows if int(r.get("attempts") or 0) < 4]
+            return sorted(rows, key=lambda r: str(r.get("created_at") or ""))
+        if table == "editor_clients":
+            return list(self.clients_rows.values())
         return []
+
+    # requests, the queue the cockpit writes to
+    def store_clients(self, rows):
+        for r in rows:
+            self.clients_rows[r["task_id"]] = {**self.clients_rows.get(r["task_id"], {}), **r}
+        return len(rows)
+
+    def clients(self, task_ids=None):
+        if task_ids is None:
+            return list(self.clients_rows.values())
+        want = {t for t in task_ids if t}
+        return [c for c in self.clients_rows.values() if c["task_id"] in want]
+
+    def client(self, task_id):
+        return self.clients_rows.get(task_id)
+
+    def queue(self, row):
+        self.requests_rows[row["id"]] = {"status": "queued", "attempts": 0, **row}
+
+    def rest(self, method, path, *, json_body=None, prefer=None, retries=2):
+        """Only the conditional claim the drain uses is modelled here."""
+        if method == "PATCH" and path.startswith("editor_requests?id=eq."):
+            rid = path.split("id=eq.", 1)[1].split("&", 1)[0]
+            row = self.requests_rows.get(rid)
+            if row is None:
+                return []
+            if "&status=eq.queued" in path and row.get("status") != "queued":
+                return []
+            row.update(json_body or {})
+            return [row] if prefer and "representation" in prefer else None
+        raise AssertionError(f"unexpected rest call: {method} {path}")
+
+    def patch(self, table, where, body):
+        if table == "editor_requests":
+            rid = where.split("id=eq.", 1)[1]
+            self.requests_rows.setdefault(rid, {"id": rid}).update(body)
+            return
+        if table == "editor_jobs":
+            tid = where.split("task_id=eq.", 1)[1]
+            self.jobs.setdefault(tid, {"task_id": tid}).update(body)
+            return
+        raise AssertionError(f"unexpected patch: {table}")
 
     def upload_still(self, task_id, name, blob, content_type="image/jpeg"):
         path = f"{task_id}/{name}"

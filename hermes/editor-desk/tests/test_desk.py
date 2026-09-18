@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 os.environ.setdefault("DESK_HOME", "/tmp/desk-unit")
-from desk import checks, clients, media, prepare, speech
+from desk import checks, clients, media, prepare, queue, speech
 from desk.clickup import editors_of, fields_of, is_open, job_row
 from desk.config import Config
 from desk.drive import parse_id
@@ -411,3 +411,96 @@ class ClientTests(unittest.TestCase):
             out = prepare.prepare_job(c, lambda m: None, sb, drive, job, transcribe_fn=no_speech, client=None)
             self.assertTrue(any("matches no company" in w for w in out["warnings"]))
             self.assertEqual(out["state"], "ready")
+
+
+class QueueTests(unittest.TestCase):
+    """The cockpit holds no keys, so everything it wants done arrives here.
+    These are the guarantees a person pressing a button is relying on."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.cfg = cfg_in(self.tmp.name)
+        self.sb = FakeSupabase()
+        self.sb.store_jobs([job_row(task(), now_iso=NOW)])
+        self.cu = FakeClickUp([task()])
+        self.log: list[str] = []
+
+    def drain(self, **kw):
+        # The drain builds its own ClickUp and Drive; hand it the fakes.
+        real_clickup, real_drive = queue.ClickUp, queue.Drive
+        queue.ClickUp = lambda cfg, log: self.cu
+        queue.Drive = kw.get("drive_factory", lambda cfg, log: None)
+        self.addCleanup(lambda: (setattr(queue, "ClickUp", real_clickup), setattr(queue, "Drive", real_drive)))
+        return queue.run_requests(self.cfg, self.log.append, self.sb, limit=kw.get("limit", 10))
+
+    def test_a_delivery_writes_the_link_the_status_and_nothing_else(self):
+        self.sb.queue({
+            "id": "r1", "kind": "deliver", "task_id": "86abc", "created_at": NOW,
+            "input": "https://drive.google.com/file/d/1FinalCutAAAAAAAAAAAAAAAAAAA/view",
+            "requested_by": "karim@maharamedia.com", "requested_by_name": "Karim",
+        })
+        out = self.drain()
+        self.assertEqual(out["done"], 1)
+        self.assertEqual(self.cu.fields, [("86abc", "edited_video",
+                                           "https://drive.google.com/file/d/1FinalCutAAAAAAAAAAAAAAAAAAA/view")])
+        self.assertEqual(self.cu.statuses, [("86abc", "client review")])
+        self.assertEqual(self.sb.job("86abc")["state"], "delivered")
+        self.assertEqual(self.sb.requests_rows["r1"]["status"], "done")
+        # The comment names the person who pressed the button.
+        self.assertEqual(len(self.cu.posted), 1)
+        self.assertIn("Karim", self.cu.posted[0][1])
+
+    def test_a_claimed_request_is_never_carried_out_twice(self):
+        self.sb.queue({"id": "r1", "kind": "deliver", "task_id": "86abc", "created_at": NOW,
+                       "input": "https://drive.google.com/file/d/1FinalCutAAAAAAAAAAAAAAAAAAA/view"})
+        self.drain()
+        self.drain()
+        self.assertEqual(len(self.cu.fields), 1, "the link must be written once, not once per run")
+
+    def test_a_request_with_no_link_is_told_why_and_tried_again(self):
+        self.sb.queue({"id": "r1", "kind": "deliver", "task_id": "86abc", "created_at": NOW, "input": ""})
+        out = self.drain()
+        self.assertEqual(out["failed"], 1)
+        row = self.sb.requests_rows["r1"]
+        self.assertEqual(row["status"], "queued", "one bad try goes back in the queue")
+        self.assertIn("no link", row["error"])
+        self.assertEqual(row["attempts"], 1)
+
+    def test_a_request_that_keeps_failing_stops_after_four_tries(self):
+        self.sb.queue({"id": "r1", "kind": "deliver", "task_id": "86abc", "created_at": NOW, "input": ""})
+        for _ in range(4):
+            self.sb.requests_rows["r1"]["status"] = "queued"
+            self.drain()
+        self.assertEqual(self.sb.requests_rows["r1"]["status"], "failed")
+        self.assertEqual(self.sb.requests_rows["r1"]["attempts"], 4)
+
+    def test_a_kind_the_desk_does_not_know_is_refused_outright(self):
+        self.sb.queue({"id": "r1", "kind": "delete everything", "task_id": "86abc", "created_at": NOW})
+        out = self.drain()
+        self.assertEqual(out["failed"], 1)
+        self.assertEqual(self.sb.requests_rows["r1"]["status"], "failed")
+        self.assertFalse(self.cu.fields)
+        self.assertFalse(self.cu.statuses)
+
+    def test_a_request_for_a_job_that_is_gone_says_so(self):
+        self.sb.queue({"id": "r1", "kind": "deliver", "task_id": "nosuchjob", "created_at": NOW,
+                       "input": "https://drive.google.com/file/d/1FinalCutAAAAAAAAAAAAAAAAAAA/view"})
+        self.drain()
+        self.assertIn("not on the desk", self.sb.requests_rows["r1"]["error"])
+
+    def test_a_rescan_only_asks_for_the_footage_to_be_read_again(self):
+        self.sb.mark_job("86abc", state="ready", attempts=3)
+        self.sb.queue({"id": "r1", "kind": "rescan", "task_id": "86abc", "created_at": NOW})
+        self.drain()
+        self.assertEqual(self.sb.job("86abc")["state"], "stale")
+        self.assertEqual(self.sb.job("86abc")["attempts"], 0)
+        self.assertFalse(self.cu.fields, "a rescan must not touch the board")
+
+    def test_a_comment_is_refused_when_writeback_is_off(self):
+        self.cfg.clickup_writeback = False
+        self.sb.queue({"id": "r1", "kind": "comment", "task_id": "86abc", "created_at": NOW,
+                       "input": "Waiting on the logo file."})
+        self.drain()
+        self.assertFalse(self.cu.posted)
+        self.assertIn("switched off", self.sb.requests_rows["r1"]["error"])
