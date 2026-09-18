@@ -227,6 +227,8 @@ const schema = defineSchema({
       v.object({
         tab: v.string(),
         booked: v.number(),
+        /** Appointments whose time has passed and that carry a status: the show rate's denominator (Aziz, 2026-09-18). */
+        due: v.optional(v.number()),
         shows: v.number(),
         quotes: v.number(),
         closes: v.number(),

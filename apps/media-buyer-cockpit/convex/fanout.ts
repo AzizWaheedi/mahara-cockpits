@@ -7,6 +7,7 @@ import {
   clientDataFor,
   readClientData,
 } from "./clientData";
+import { daysBetween, kuwaitToday, parseAdded, parseAppt } from "./csmProfiles";
 import { cleanDosDonts } from "./dosDonts";
 import { flush } from "./health";
 import { loadSheetCache, type SheetCache, saveSheetCache } from "./sheetCache";
@@ -371,7 +372,16 @@ const yes = (cell: unknown) =>
     .toUpperCase()
     .startsWith("Y");
 
-/** Columns are fixed by the template: Name(0) … Show(9) Quotation(10) Closed(11). */
+/**
+ * Columns are fixed by the template: Name(0) Added(1) Appointment(2) …
+ * Show(9) Quotation(10) Closed(11).
+ *
+ * Aziz, 2026-09-18: the show rate counts only appointments whose time has
+ * passed AND that carry a status in the Show column. A booking for next
+ * week is not a no-show yet, and a past one nobody marked is not decided.
+ * `booked` still counts every booking (the booking rate needs it); `due`
+ * is the show rate's denominator.
+ */
 async function readStatSheet(
   sheetId: string,
   tab: string,
@@ -391,17 +401,25 @@ async function readStatSheet(
     }
   }
   let booked = 0,
+    due = 0,
     shows = 0,
     quotes = 0,
     closes = 0;
+  const today = kuwaitToday();
   for (const r of rows) {
     if (!String(r[0] ?? "").trim()) continue;
     booked++;
-    if (yes(r[9])) shows++;
     if (yes(r[10])) quotes++;
     if (yes(r[11])) closes++;
+    const status = String(r[9] ?? "").trim();
+    if (!status) continue;
+    const appt = parseAppt(r[2], today, parseAdded(r[1], today));
+    // No readable date: the team marked it, so it happened. A future date: not yet.
+    if (appt && daysBetween(appt, today) > 0) continue;
+    due++;
+    if (yes(status)) shows++;
   }
-  return booked ? { tab, booked, shows, quotes, closes } : undefined;
+  return booked ? { tab, booked, due, shows, quotes, closes } : undefined;
 }
 
 /** Leads and spend per day per client from the ad grain, for the creative trend charts. */

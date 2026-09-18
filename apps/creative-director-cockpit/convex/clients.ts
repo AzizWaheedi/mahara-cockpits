@@ -343,8 +343,9 @@ export async function buildDetail(
      * not enough, the writing has to be judged against what happens after the
      * lead. Rates are computed here so there is one definition of each:
      * booking rate is appointments against leads Meta reported in 30 days,
-     * show rate is shows against appointments, quotation rate is quotations
-     * against shows, close rate is closes against quotations.
+     * show rate is shows against the appointments that came due (their time
+     * passed and someone marked the Show column; Aziz, 2026-09-18), quotation
+     * rate is quotations against shows, close rate is closes against quotations.
      */
     stats: (() => {
       const s2 = client.stats;
@@ -352,15 +353,17 @@ export async function buildDetail(
       const leads30 = ads.reduce((n, a) => n + a.leads, 0);
       const pct = (a: number, b: number) =>
         b > 0 ? Math.round((a / b) * 100) : null;
+      const due = s2.due ?? s2.booked;
       return {
         month: s2.tab,
         booked: s2.booked,
+        due,
         shows: s2.shows,
         quotes: s2.quotes,
         closes: s2.closes,
         leads30,
         bookingRate: pct(s2.booked, leads30),
-        showRate: pct(s2.shows, s2.booked),
+        showRate: pct(s2.shows, due),
         quotationRate: pct(s2.quotes, s2.shows),
         closeRate: pct(s2.closes, s2.quotes),
         scannedAt: client.statsScannedAt ?? null,

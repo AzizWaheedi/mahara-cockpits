@@ -203,7 +203,7 @@ function ClientStats({ s }: { s: any }) {
     {
       label: "Show rate",
       value: s.showRate,
-      sub: `${s.shows} showed off ${s.booked} booked`,
+      sub: `${s.shows} showed of ${s.due ?? s.booked} that came due`,
     },
     {
       label: "Quotation rate",

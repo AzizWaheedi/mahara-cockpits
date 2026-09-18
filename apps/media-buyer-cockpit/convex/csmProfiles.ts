@@ -127,15 +127,15 @@ async function pool<T, R>(
   return out;
 }
 
-type Day = { y: number; m: number; d: number };
-function kuwaitToday(): Day {
+export type Day = { y: number; m: number; d: number };
+export function kuwaitToday(): Day {
   const t = new Date(Date.now() + 3 * 3600_000);
   return { y: t.getUTCFullYear(), m: t.getUTCMonth() + 1, d: t.getUTCDate() };
 }
 function toDate(x: Day): Date {
   return new Date(Date.UTC(x.y, x.m - 1, x.d));
 }
-function daysBetween(a: Day, b: Day): number {
+export function daysBetween(a: Day, b: Day): number {
   return Math.round((toDate(a).getTime() - toDate(b).getTime()) / 86400_000);
 }
 function valid(y: number, m: number, d: number): Day | undefined {
@@ -166,7 +166,7 @@ const money = (c: unknown) =>
  * "Date Added", which the team fills two different ways: `8/19/2026`
  * (month/day/year) and hand-typed `28/06` (day/month, year implied).
  */
-function parseAdded(cell: unknown, today: Day): Day | undefined {
+export function parseAdded(cell: unknown, today: Day): Day | undefined {
   const text = String(cell ?? "").trim();
   if (!text) return undefined;
   const nums = text
@@ -191,7 +191,11 @@ function parseAdded(cell: unknown, today: Day): Day | undefined {
 }
 
 /** The appointment date column: `9/12/2026`, `12/9`, or `Wed 12 5:00 PM`. */
-function parseAppt(cell: unknown, today: Day, added?: Day): Day | undefined {
+export function parseAppt(
+  cell: unknown,
+  today: Day,
+  added?: Day,
+): Day | undefined {
   const text = String(cell ?? "").trim();
   if (!text) return undefined;
   const nums = text
