@@ -114,7 +114,8 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
             from radar.trends import embed
             try:
                 vec = embed(cfg, ["ok"])
-                add("embeddings", bool(vec and vec[0]), f"{cfg.embed_model if cfg.gemini_key else cfg.openai_embed_model}: {len(vec[0]) if vec and vec[0] else 0} dims (trends)")
+                provider = {1.0: cfg.embed_model, 2.0: cfg.openai_embed_model}.get(vec[0][0] if vec and vec[0] else 0.0, "?")
+                add("embeddings", bool(vec and vec[0]), f"{provider}: {len(vec[0]) - 1 if vec and vec[0] else 0} dims (trends)")
             except (http.HttpError, ValueError, KeyError) as e:
                 add("embeddings", False, f"{http.scrub(str(e))[:200]} (trends will not be flagged)")
         if cfg.bridge_url and cfg.bridge_token:

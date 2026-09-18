@@ -44,7 +44,43 @@ class FakeSupabase(Supabase):
 
 
 def vec(*xs: float) -> list[float]:
-    return list(xs)
+    return [1.0, *xs]  # provider tag first (1 = Gemini), as embed() returns
+
+
+class DescribeFallbackTests(unittest.TestCase):
+    def test_openai_reads_the_row_when_gemini_is_out_of_quota(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = cfg_in(tmp)
+            from radar import understand
+            calls: list[str] = []
+
+            def gemini_out(*a, **kw):
+                calls.append("gemini")
+                raise trends.http.HttpError(429, "quota")
+
+            def openai_ok(url, payload, **kw):
+                calls.append("openai")
+                return {"choices": [{"message": {"content": '{"format_label": "talking head listing three mistakes", "hook_kind": "list", "topic": "bathroom tiling"}'}}]}
+
+            orig_gen, orig_post = understand.gemini_generate, trends.http.post_json
+            understand.gemini_generate = gemini_out  # type: ignore[assignment]
+            trends.http.post_json = openai_ok  # type: ignore[assignment]
+            try:
+                os.environ["GOOGLE_AI_API_KEY"] = "g"
+                os.environ["OPENAI_API_KEY"] = "o"
+                d = trends.describe(cfg, {"key": "tiktok:1", "caption": "x"}, b"jpegbytes", lambda m: None)
+                self.assertEqual(d["format_label"], "talking head listing three mistakes")
+                self.assertEqual(d["hook_kind"], "list")
+                self.assertEqual(calls, ["gemini", "openai"])
+            finally:
+                understand.gemini_generate = orig_gen  # type: ignore[assignment]
+                trends.http.post_json = orig_post  # type: ignore[assignment]
+                os.environ.pop("GOOGLE_AI_API_KEY", None)
+                os.environ.pop("OPENAI_API_KEY", None)
+
+    def test_vectors_from_different_providers_never_match(self):
+        self.assertAlmostEqual(trends.cosine([1.0, 1.0, 0.0], [1.0, 1.0, 0.0]), 1.0)
+        self.assertEqual(trends.cosine([1.0, 1.0, 0.0], [2.0, 1.0, 0.0]), 0.0)
 
 
 class TrendTests(unittest.TestCase):

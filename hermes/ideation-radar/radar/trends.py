@@ -73,19 +73,49 @@ Use the storyboard image when given (three frames: start, middle, end) and these
 
 
 def describe(cfg: Config, row: dict[str, Any], image: Optional[bytes], log: Callable[[str], None]) -> dict[str, Any]:
-    """One short descriptor per row: a text plus image call, cents at most."""
+    """One short descriptor per row: a text plus image call, cents at most.
+
+    Gemini first; when it is out of quota or down (429, 503 seen 2026-09-18)
+    OpenAI reads the same prompt and storyboard; DeepSeek reads the text alone.
+    """
+    import base64
+
     from .understand import gemini_generate, parse_json, text_model_json  # lazy: keeps trends importable without models
 
-    parts: list[dict[str, Any]] = [{"text": describe_prompt(row)}]
-    if image and cfg.gemini_key:
-        import base64
-
-        parts.append({"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(image).decode("ascii")}})
+    prompt = describe_prompt(row)
+    result: Optional[dict[str, Any]] = None
+    errors: list[str] = []
     if cfg.gemini_key:
-        result, _usage = gemini_generate(cfg, cfg.gemini_text_model, parts, DESCRIBE_SCHEMA, temperature=0.1)
-    else:
-        raw, _method = text_model_json(cfg, describe_prompt(row) + '\nReturn exactly {"format_label": string, "hook_kind": string, "topic": string}.', log)
-        result = raw if isinstance(raw, dict) else parse_json(str(raw))
+        parts: list[dict[str, Any]] = [{"text": prompt}]
+        if image:
+            parts.append({"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(image).decode("ascii")}})
+        try:
+            result, _usage = gemini_generate(cfg, cfg.gemini_text_model, parts, DESCRIBE_SCHEMA, temperature=0.1)
+        except (http.HttpError, ValueError, KeyError) as e:
+            errors.append(f"gemini: {http.scrub(str(e))[:120]}")
+    if result is None and cfg.openai_key:
+        content: list[dict[str, Any]] = [{"type": "text", "text": prompt + '\nReturn exactly {"format_label": string, "hook_kind": string, "topic": string}.'}]
+        if image:
+            content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64.b64encode(image).decode('ascii')}", "detail": "low"}})
+        try:
+            out = http.post_json(
+                "https://api.openai.com/v1/chat/completions",
+                {"model": cfg.openai_vision_model, "messages": [{"role": "user", "content": content}], "response_format": {"type": "json_object"}, "temperature": 0.1},
+                headers={"Authorization": f"Bearer {cfg.openai_key}"},
+                timeout=120,
+                retries=1,
+            )
+            result = parse_json(out["choices"][0]["message"]["content"])
+        except (http.HttpError, ValueError, KeyError) as e:
+            errors.append(f"openai: {http.scrub(str(e))[:120]}")
+    if result is None:
+        try:
+            raw, _method = text_model_json(cfg, prompt + '\nReturn exactly {"format_label": string, "hook_kind": string, "topic": string}.', log)
+            result = raw if isinstance(raw, dict) else parse_json(str(raw))
+        except (http.HttpError, ValueError, KeyError) as e:
+            errors.append(f"text: {http.scrub(str(e))[:120]}")
+    if not isinstance(result, dict):
+        raise http.HttpError(0, "no model could describe the row: " + "; ".join(errors)[:300])
     label = str(result.get("format_label") or "").strip()[:120]
     kind = result.get("hook_kind") if result.get("hook_kind") in HOOK_KINDS else "other"
     topic = str(result.get("topic") or "").strip()[:60]
@@ -99,9 +129,14 @@ def descriptor_text(row: dict[str, Any]) -> str:
 
 
 def embed(cfg: Config, texts: list[str]) -> list[list[float]]:
-    """Gemini embeddings (256 dims, semantic similarity), OpenAI as the fallback."""
+    """Gemini embeddings (256 dims, semantic similarity); OpenAI when Gemini has no key, no quota or is down.
+
+    The two models' spaces differ, so a row's provider is part of the vector
+    (first element flags it) and rows from different providers never compare.
+    """
     if not texts:
         return []
+    gemini_error = ""
     if cfg.gemini_key:
         body = {
             "requests": [
@@ -109,11 +144,14 @@ def embed(cfg: Config, texts: list[str]) -> list[list[float]]:
                 for t in texts
             ]
         }
-        out = http.post_json(f"{GEMINI}/v1beta/models/{cfg.embed_model}:batchEmbedContents?key={cfg.gemini_key}", body, timeout=120, retries=2)
-        vecs = [list(map(float, e.get("values") or [])) for e in (out.get("embeddings") or [])]
-        if len(vecs) == len(texts):
-            return vecs
-        raise http.HttpError(0, f"embeddings: got {len(vecs)} for {len(texts)} texts")
+        try:
+            out = http.post_json(f"{GEMINI}/v1beta/models/{cfg.embed_model}:batchEmbedContents?key={cfg.gemini_key}", body, timeout=120, retries=2)
+            vecs = [list(map(float, e.get("values") or [])) for e in (out.get("embeddings") or [])]
+            if len(vecs) == len(texts):
+                return [[1.0] + v for v in vecs]
+            gemini_error = f"got {len(vecs)} for {len(texts)} texts"
+        except (http.HttpError, ValueError, KeyError) as e:
+            gemini_error = http.scrub(str(e))[:120]
     if cfg.openai_key:
         out = http.post_json(
             "https://api.openai.com/v1/embeddings",
@@ -123,13 +161,15 @@ def embed(cfg: Config, texts: list[str]) -> list[list[float]]:
             retries=2,
         )
         data = sorted(out.get("data") or [], key=lambda d: d.get("index", 0))
-        return [list(map(float, d.get("embedding") or [])) for d in data]
-    raise http.HttpError(0, "no embedding model available (GOOGLE_AI_API_KEY or OPENAI_API_KEY)")
+        return [[2.0] + list(map(float, d.get("embedding") or [])) for d in data]
+    raise http.HttpError(0, f"no embedding model available (GOOGLE_AI_API_KEY or OPENAI_API_KEY): {gemini_error}")
 
 
 def cosine(a: list[float], b: list[float]) -> float:
-    if not a or not b or len(a) != len(b):
+    """Cosine over the vector body; the first element names the provider and must match."""
+    if not a or not b or len(a) != len(b) or a[0] != b[0]:
         return 0.0
+    a, b = a[1:], b[1:]
     dot = sum(x * y for x, y in zip(a, b))
     na = math.sqrt(sum(x * x for x in a))
     nb = math.sqrt(sum(y * y for y in b))
