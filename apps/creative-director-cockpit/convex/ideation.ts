@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { api, internal } from "./_generated/api";
+import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { internalAction, internalQuery } from "./_generated/server";
 import { authenticatedAction } from "./functions";
@@ -741,17 +741,16 @@ async function upsertOurs(row: Row): Promise<void> {
   });
 }
 
-export const saveFromWinner = authenticatedAction({
-  args: { adId: v.string(), note: v.optional(v.string()) },
-  returns: v.any(),
-  handler: async (ctx, { adId, note }) => {
-    const { email, name } = await who(ctx);
-    // biome-ignore lint/suspicious/noExplicitAny: winnersArchive row
-    const w = (await ctx.runQuery(internal.ideation.winnerRow, {
-      adId,
-    })) as any;
-    if (!w)
-      throw new Error("That ad is not in the scripting database any more.");
+/** The winner row as a saved idea. A plain function: an action calling itself through `api` is a circular type. */
+async function storeWinner(
+  // biome-ignore lint/suspicious/noExplicitAny: winnersArchive row
+  w: any,
+  adId: string,
+  email: string,
+  name: string,
+  note: string | undefined,
+): Promise<{ key: string; status: string }> {
+  {
     const key = `meta_ads:${adId}`;
     const existing = await one(
       key,
@@ -831,7 +830,22 @@ export const saveFromWinner = authenticatedAction({
     };
     if (!existing) body.created_at = stamp;
     await upsertOurs(body);
-    return { key, status: body.status };
+    return { key, status: String(body.status) };
+  }
+}
+
+export const saveFromWinner = authenticatedAction({
+  args: { adId: v.string(), note: v.optional(v.string()) },
+  returns: v.any(),
+  handler: async (ctx, { adId, note }) => {
+    const { email, name } = await who(ctx);
+    // biome-ignore lint/suspicious/noExplicitAny: winnersArchive row
+    const w = (await ctx.runQuery(internal.ideation.winnerRow, {
+      adId,
+    })) as any;
+    if (!w)
+      throw new Error("That ad is not in the scripting database any more.");
+    return await storeWinner(w, adId, email, name, note);
   },
 });
 
@@ -855,12 +869,7 @@ export const saveFromClientAd = authenticatedAction({
     const w = (await ctx.runQuery(internal.ideation.winnerRow, {
       adId: args.metaAdId,
     })) as any;
-    if (w) {
-      // biome-ignore lint/suspicious/noExplicitAny: action handle
-      return await (ctx as any).runAction(api.ideation.saveFromWinner, {
-        adId: args.metaAdId,
-      });
-    }
+    if (w) return await storeWinner(w, args.metaAdId, email, name, undefined);
     const key = `meta_ads:${args.metaAdId}`;
     const existing = await one(
       key,
