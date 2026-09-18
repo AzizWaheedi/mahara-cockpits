@@ -46,6 +46,42 @@ discovery without handles, the small polishes"):
 - The digest goes to a list of recipients (`RADAR_SLACK_CHANNEL` comma
   separated: Aziz and Sabry).
 
+Since 2026-09-18, later (Aziz: "put a link to any social media", "manually
+run a scrape of the Facebook Ads Library", "add our people to the
+watchlist", "paid ads that have been running for a long time"):
+
+- On-demand scrapes from the cockpit, through ScrapeCreators
+  (`radar/sources/scrapecreators.py`, key `SCRAPECREATORS_API_KEY`, one
+  credit per request, credits never expire; USD 47 buys 25,000). The board's
+  Scrape box writes a row to `ideation_requests`; the pending cron (every
+  two minutes) runs it (`radar/requests.py`, `radar.py requests` by hand):
+  - a page (Instagram, TikTok, YouTube, Facebook, Snapchat): about thirty
+    recent videos, the ones that beat the page's own normal proposed under
+    the locked rule, else its best by views; the account joins the
+    watchlist (Instagram, TikTok, Snapchat); the brand's current Meta ads
+    are pulled when its Ad Library page matches the handle. About 5 credits.
+  - an ad library pull (Meta by page name, Instagram handle, page id or
+    keyword; Google by advertiser), one country, active ads only, ranked by
+    running days: proposed from 7 days, "study" from 21, "reverse engineer"
+    from 60 (`RADAR_ADS_MIN_DAYS`, `_STUDY_DAYS`, `_REVERSE_DAYS`,
+    `RADAR_ADS_COUNTRY` KW). About 3 credits. Google ad details are never
+    requested (25 credits each); Google rows are image and text only.
+- Ads are rows on the board: platform `meta_ads` or `google_ads`, key
+  `meta_ads:<ad_archive_id>`, `running_days`, `ad_started_at`,
+  `ad_platforms`, `advertiser`, `ad_format`, the Ad Library link as `url`.
+  Keeping a Meta ad captures it like any post (fresh media through the
+  vendor, then Scribe and Gemini). A YouTube or Facebook video is captured
+  from the vendor's transcript plus a text breakdown, no download.
+- The watchlist is editable on the board (accounts, hashtags, Instagram
+  keyword searches; source `cockpit`), and the creative cockpit's scripting
+  database rows and a client's ads carry "Save to Ideation" (origin
+  `library`, industry ours, the client on the row, script and numbers when
+  the archive has them).
+- Checked 2026-09-18 with the research note in the shared context: Meta's
+  and Google's libraries are public for Kuwait; TikTok's public library
+  covers Europe only and its Creative Center needs a session; Snapchat has
+  no commercial library outside Europe. Their organic pages still scrape.
+
 The rule it applies is the one Aziz locked on 2026-05-15: 3x to 5x the
 baseline is worth studying, 5x and above is reverse engineered immediately,
 below 3x is noise. The baseline is the median of the account's last 30 posts
@@ -114,6 +150,7 @@ and `/opt/data/.env` (the Hermes key files). Never printed.
 |---|---|
 | `APIFY_API_KEY` | scans and captures (required) |
 | `GOOGLE_AI_API_KEY` | video understanding (preferred) |
+| `SCRAPECREATORS_API_KEY` | on-demand page and ad library scrapes from the cockpit (`radar/requests.py`); credits at app.scrapecreators.com |
 | `ELEVENLABS_API_KEY` | speech transcription, first choice (Scribe; `ELEVENLABS_API_KEY_V2` in the Hermes key file is a key id, not a key) |
 | `GROQ_API_KEY` | speech transcription fallback |
 | `OPENAI_API_KEY` | frame vision fallback when Gemini is unavailable |
@@ -296,6 +333,9 @@ so only the service key can read or write them:
   from the cockpit later; `radar.py watchlist push` seeds it from the JSON
   file, `watchlist add|remove|list` work on it directly.
 - `public.ideation_scans`: one row per scan with counts, cost and warnings.
+- `public.ideation_requests`: the cockpit's scrape requests (kind `profile`
+  or `ads`, input, params, status queued, running, done or failed, result or
+  error), claimed by the pending cron; three failures stay failed.
 - Storage bucket `ideation-stills` (private): the cockpit's own copy of each
   post's thumbnail, signed for six hours when the page loads.
 
@@ -351,6 +391,18 @@ create table if not exists public.ideation_watchlist (
   last_scanned_at timestamptz, last_status text, baseline_views numeric, baseline_n integer, followers bigint,
   updated_at timestamptz not null default now()
 );
+create table if not exists public.ideation_requests (
+  id text primary key, kind text not null, platform text, input text not null,
+  params jsonb not null default '{}'::jsonb, status text not null default 'queued',
+  requested_by text, requested_by_name text, created_at timestamptz not null default now(),
+  started_at timestamptz, finished_at timestamptz, attempts integer not null default 0,
+  result jsonb, error text, updated_at timestamptz not null default now()
+);
+create index if not exists ideation_requests_status_idx on public.ideation_requests (status, created_at);
+-- 2026-09-18, ads and our own ads on ideation_posts:
+--   ad_id text, ad_page_id text, advertiser text, ad_started_at timestamptz, ad_last_seen_at timestamptz,
+--   running_days integer, ad_platforms jsonb, ad_format text, ad_active boolean, source_request text,
+--   client text, spend numeric, leads integer, cpl numeric
 create table if not exists public.ideation_scans (
   id bigserial primary key, at timestamptz not null default now(),
   targets integer, scanned integer, failed integer, skipped integer, posts integer,
@@ -361,6 +413,7 @@ create table if not exists public.ideation_scans (
 alter table public.ideation_posts enable row level security;
 alter table public.ideation_watchlist enable row level security;
 alter table public.ideation_scans enable row level security;
+alter table public.ideation_requests enable row level security;
 revoke all on table public.ideation_posts, public.ideation_watchlist, public.ideation_scans from anon, authenticated;
 ```
 
