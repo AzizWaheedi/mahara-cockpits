@@ -80,8 +80,13 @@ def _norm(s: str) -> str:
     return re.sub(r"[^a-z0-9؀-ۿ]+", "", (s or "").lower())
 
 
-def match_company(companies: list[dict[str, Any]], *, handle: str = "", name: str = "") -> Optional[dict[str, Any]]:
-    """The Ad Library page that is this brand: same Instagram handle first, then the same name."""
+def match_company(companies: list[dict[str, Any]], *, handle: str = "", name: str = "", min_likes: int = 0) -> Optional[dict[str, Any]]:
+    """The Ad Library page that is this brand: same Instagram handle first, then the same name.
+
+    A name match can accept a page only when it has `min_likes` likes or
+    more: a keyword such as "interior design" is also the name of a dozen
+    empty pages (seen 2026-09-18), and those must not swallow the search.
+    """
     h = _norm(handle)
     n = _norm(name)
     for c in companies:
@@ -91,7 +96,7 @@ def match_company(companies: list[dict[str, Any]], *, handle: str = "", name: st
         if h and _norm(str(c.get("page_alias") or "")) == h:
             return c
     for c in companies:
-        if n and _norm(str(c.get("name") or "")) == n:
+        if n and _norm(str(c.get("name") or "")) == n and int(c.get("likes") or 0) >= min_likes:
             return c
     return None
 
@@ -321,15 +326,17 @@ def run_ads(cfg: Config, log: Callable[[str], None], sb: Supabase, sc: ScrapeCre
             matched = {"page_id": query}
         else:
             companies = sc.fb_search_companies(query)
-            page = match_company(companies, handle=query.lstrip("@"), name=query)
+            page = match_company(companies, handle=query.lstrip("@"), name=query, min_likes=cfg.ads_page_min_likes)
             if page is None and companies and params.get("mode") == "page":
                 page = companies[0]
+            ads = []
             if page is not None:
                 ads = sc.fb_company_ads(str(page.get("page_id")), country=country, pages=cfg.ads_pages)
                 matched = {"page_id": page.get("page_id"), "name": page.get("name"), "ig_username": page.get("ig_username")}
-            else:
+            if not ads:
+                # No page, or a page with nothing running: the words themselves, across every advertiser.
                 ads = sc.fb_search_ads(query, country=country, pages=cfg.ads_pages)
-                matched = {"keyword": query, "country": country or "ALL"}
+                matched = {"keyword": query, "country": country or "ALL", **({"page_tried": page.get("name")} if page is not None else {})}
     elif platform == "google":
         advertisers = sc.google_advertisers(query, region=country)
         pick = next((a for a in advertisers if _norm(str(a.get("name") or "")) == _norm(query)), advertisers[0] if advertisers else None)

@@ -120,10 +120,23 @@ class ParseTests(unittest.TestCase):
             rq.parse_profile("brand")
 
     def test_company_match_prefers_the_instagram_handle(self):
-        companies = [{"page_id": "1", "name": "IKEA Kuwait fans", "ig_username": "ikeafans"}, {"page_id": "2", "name": "Brand X", "ig_username": "brandx"}, {"page_id": "3", "name": "brand x", "ig_username": None}]
+        companies = [{"page_id": "1", "name": "IKEA Kuwait fans", "ig_username": "ikeafans"}, {"page_id": "2", "name": "Brand X", "ig_username": "brandx", "likes": 5000}, {"page_id": "3", "name": "brand x", "ig_username": None, "likes": 12}]
         self.assertEqual(rq.match_company(companies, handle="brandx")["page_id"], "2")
-        self.assertEqual(rq.match_company(companies, name="Brand X")["page_id"], "2")
+        self.assertEqual(rq.match_company(companies, name="Brand X", min_likes=1000)["page_id"], "2")
         self.assertIsNone(rq.match_company(companies, handle="nobody"))
+        self.assertIsNone(rq.match_company([{"page_id": "9", "name": "تصميم داخلي", "likes": 3}], name="تصميم داخلي", min_likes=1000), "an empty page named like the keyword does not swallow the search")
+
+    def test_keyword_pull_falls_back_to_search_when_the_page_has_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = cfg_in(tmp)
+            fx = {"fb_companies:تصميم داخلي": [{"page_id": "9", "name": "تصميم داخلي", "likes": 3}], "fb_page_ads:9": [], "fb_search_ads:تصميم داخلي": [meta_ad("k1", 30, page="Studio A")]}
+            sc = FakeSC(fx)
+            sb = FakeSB([{"id": "a3", "kind": "ads", "platform": "meta", "input": "تصميم داخلي", "params": {"country": "KW"}, "status": "queued", "attempts": 0}])
+            done = rq.run_requests(cfg, lambda m: None, sc=sc, sb=sb, state=State(Path(tmp) / "s.json"), now=NOW)
+            r = done[0]["result"]
+            self.assertNotIn("fb_page_ads:9", sc.calls, "a tiny same-name page is not a match")
+            self.assertEqual(r["matched"]["keyword"], "تصميم داخلي")
+            self.assertEqual(r["proposals"], 1)
 
     def test_ad_rows_and_tiers(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -126,6 +126,8 @@ class Config:
     ads_study_days: int = 21
     ads_reverse_days: int = 60
     ads_country: str = "KW"
+    # A page name match in the Meta library counts only for a page this big; smaller same-name pages are noise.
+    ads_page_min_likes: int = 1000
     # Trends: the same format from several accounts inside the window.
     trend_window_days: int = 14
     trend_min_authors: int = 3
@@ -227,6 +229,7 @@ class Config:
             ads_study_days=_int("RADAR_ADS_STUDY_DAYS", 21),
             ads_reverse_days=_int("RADAR_ADS_REVERSE_DAYS", 60),
             ads_country=key("RADAR_ADS_COUNTRY", "KW"),
+            ads_page_min_likes=_int("RADAR_ADS_PAGE_MIN_LIKES", 1000),
             trend_window_days=_int("RADAR_TREND_WINDOW_DAYS", 14),
             trend_min_authors=_int("RADAR_TREND_MIN_AUTHORS", 3),
             trend_similarity=_float("RADAR_TREND_SIMILARITY", 0.82),
