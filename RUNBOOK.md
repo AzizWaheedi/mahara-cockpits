@@ -121,6 +121,8 @@ hour, sends the Slack DM and files the fix job like any other broken screen.
 | The digest reaches Aziz but not Sabry (or the other way) | `RADAR_SLACK_CHANNEL` in `~/.ideation-radar/env` is a comma separated list of Slack ids; the scan log names the recipient that failed | Aziz |
 | A scrape on the board stays "Queued" for more than five minutes | The pending cron (every two minutes) runs requests after captures. On the VPS: `python3 radar.py doctor` (the `SCRAPECREATORS_API_KEY` and `scrapecreators credits` lines), then `python3 radar.py requests` by hand; the row's error says what stopped it | Aziz |
 | `doctor`: "scrapecreators credits" low | Top up at app.scrapecreators.com (USD 47 for 25,000 credits, never expire). A page scrape costs about five, an ad pull about three | Aziz |
+| Scripts we made shows a script with "no text on the task" | The ClickUp task's description is empty, or the media buyer sync has not run since the field was added. Put the script in the task description in ClickUp; it syncs within 15 minutes | Creative director |
+| "Send to the editors" on Scripts we made says the task has no client tag | The ClickUp script task carries no client tag, so the video request cannot be tagged. Add the tag in ClickUp, or use the embedded form | Creative director |
 | Keyword search added an account nobody wants | `python3 radar.py watchlist remove instagram <handle>`; rows the search added carry source `search` in `ideation_watchlist` | Creative director or Aziz |
 
 Every scan writes a row to `ideation_scans` with its cost; a Slack digest goes

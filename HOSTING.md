@@ -106,7 +106,14 @@ Supabase pair on the creative and media buyer deployments:
 
 | Variable | Used by |
 |---|---|
-| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | the Ideation board (`convex/ideation.ts` on the creative and media buyer deployments): reads and writes `ideation_posts` in the Creative Triage project through actions, never from the browser. The radar on the VPS uses the same project through `RADAR_SUPABASE_URL` and `RADAR_SUPABASE_KEY` |
+| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | the Ideation board (`convex/ideation.ts` on the creative and media buyer deployments): reads and writes `ideation_posts`, `ideation_watchlist` and `ideation_requests` in the Creative Triage project through actions, never from the browser. The radar on the VPS uses the same project through `RADAR_SUPABASE_URL` and `RADAR_SUPABASE_KEY` |
+
+The radar itself runs on the VPS as the `hermes` user, not on Convex or Vercel. It reads its keys by
+name from `~/.ideation-radar/env` and the Hermes key files: `RADAR_SUPABASE_URL`, `RADAR_SUPABASE_KEY`,
+`RADAR_SLACK_CHANNEL` (Aziz and Sabry), `APIFY_API_KEY`, `SCRAPECREATORS_API_KEY`, `GOOGLE_AI_API_KEY`,
+`ELEVENLABS_API_KEY`, `GROQ_API_KEY`, `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `SLACK_BOT_TOKEN`.
+`python3 radar.py doctor` on the VPS checks every one of them; `hermes/ideation-radar/README.md` has
+the install and the cron lines.
 
 ## Vercel (frontend)
 

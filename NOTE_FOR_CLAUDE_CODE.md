@@ -34,6 +34,10 @@ Now it has the real numbers:
 | Show rate on confirmed | 75% or more |
 | Close rate | 20% to 30% |
 
+Show rate, since 2026-09-18: shows divided by the appointments that came due,
+meaning the date passed and the Show column carries a status. A booking for
+next week is not a no-show yet, and a past one nobody marked is not decided.
+
 And the diagnostic order: macro before micro. If every metric is bad at once
 that is one problem, almost always the offer or the messaging, not five
 problems to fix separately.

@@ -19,7 +19,9 @@ Service account for every sheet, Drive folder and calendar:
 | Live campaign structure, previews, ad ids | Meta Marketing API, business `767701513092162`, system-user token | `sync.ts`, `fanout.ts`, `marketCollect.ts` |
 | Campaign card, KPI columns the team reads in ClickUp | ClickUp **Ads Managment** list `901817774521`, card name = Meta campaign name, tag = client | `sync.ts`, `writeback.ts` |
 | Bookings, shows, lost-lead reasons | GoHighLevel sub-account (location id + `pit-` token from Client Data) | `sync.ts`, `csmProfiles.ts` |
-| Appointments, shows, quotes, closes per month | The client's own stat sheet (`Sheet Link` on the card, else Client Data) | `csmProfiles.ts`, `fanout.ts` |
+| Appointments, shows, quotes, closes per month | The client's own stat sheet (`Sheet Link` on the card, else Client Data). Since 2026-09-18 the show rate divides shows by the appointments that came due (date passed, Show column filled), never by every booking | `csmProfiles.ts`, `fanout.ts` |
+| Outlier posts, trends, scraped pages and long-running ads for ideation | Supabase `ideation_posts`, `ideation_watchlist`, `ideation_requests`, `ideation_scans` in the Creative Triage project `bldgtotkfmhoxmlzowdx`, written by the ideation radar on the VPS (Apify for the Saturday scan, ScrapeCreators on demand) and by the boards' own actions | `hermes/ideation-radar`, `ideation.ts` (creative, media buyer) |
+| The text of every finished script | The ClickUp creative board task's description, carried as `creativeTasks.script` on the creative cockpit | `fanout.ts` (`gatherCreative`), `scripts.ts` |
 | Leads per client (month, last month, 7 days, since launch) | Meta, via the `data_fb` grain rolled up per client in `csmProfiles.adLeadsByClient`; the sheet's own count is kept as `sheetLeads` for comparison | `csmProfiles.ts` |
 | Scripts and footage | The client's Drive folder (card `Drive Folder`/`Drive Link`, else Client Data `Google Drive Link`) | `fanout.ts` |
 | Recorded calls | Fathom (`FATHOM_API_KEY`), plus backfills in `fathomCache` | `csmProfiles.ts` |
@@ -112,6 +114,9 @@ Full sync every 10 minutes 06:00–22:00 Kuwait, hourly overnight; each run
 feeds the other two cockpits and re-stores the media buyer's own roster.
 Outbox drains every 5 minutes. Board KPI columns written hourly through the
 working day. Tracking audit daily 05:30 Kuwait. Playbook mining Fridays.
+Ideation radar (VPS, `hermes` user's cron): watchlist scan Saturdays 04:07 UTC
+with the trend step and the Slack digest after it; pasted links and scrape
+requests every two minutes.
 
 ## Smoke checks
 
@@ -120,7 +125,9 @@ cockpit's main screens (start of day, meetings and messages, data backlog,
 creative dashboard) exactly as a browser would, minus the sign-in. The first
 time one throws, Aziz gets a Slack DM with the app, the screen and the error;
 the same error is not repeated for six hours. `smoke.check` on the media buyer
-deployment, `smoke.run` in the other two.
+deployment, `smoke.run` in the other two. The creative check also covers the
+Ideation board: a scan older than eight days, or a pasted link waiting over an
+hour, sends the DM with the fix (RUNBOOK, "Ideation radar").
 
 ## Where it can still break quietly
 
@@ -134,6 +141,9 @@ deployment, `smoke.run` in the other two.
 - Typeform notes with a wrong task id are dropped silently.
 - Fathom matches only by title or invitee containing the client name.
 - Google Sheets allows 60 reads a minute for the service account; reads retry on 429 and Client Data is memoized for two minutes, but adding many more sheets per run would need pacing.
+- Gemini's daily quota: ideation captures and trend labels fall back to OpenAI, DeepSeek and Scribe and say so in the row's `method`; the board keeps working, the breakdowns read a little flatter.
+- ScrapeCreators credits: a page scrape costs about five, an ad pull about three; `radar.py doctor` shows the balance and a request that finds no credits fails with the reason on the board.
+- A script task with an empty description in ClickUp shows on Scripts we made with "no text on the task"; the text has to live in the ClickUp description to sync.
 
 
 ## Fallbacks
@@ -156,3 +166,8 @@ Aziz, 2026-09-13: "there should always be a fallback source for these types of t
 | Seats | `members` table | static list in `roles.ts` (first five people), and each cockpit's own `portalMembers` copy |
 | Campaign snapshot | this sync | an empty or failed read keeps the previous snapshot; grain outside the 30-day window is kept for a year |
 | Hermes | the agent on the VPS | jobs wait in the queue, reaped and retried; no second model by design |
+| Ideation speech | ElevenLabs Scribe | Groq Whisper, then the video model's own hearing, then TikTok's auto captions |
+| Ideation video understanding | Gemini 3.6 Flash on the video | sampled frames read by OpenAI plus a text breakdown by DeepSeek or OpenAI, named in `method` |
+| Trend labels and embeddings | Gemini | OpenAI (vectors carry their provider so the two spaces never compare) |
+| Ideation pictures | a three-frame storyboard from the clip | the platform thumbnail, with the failure noted on the row |
+| Scrape requests | ScrapeCreators, run by the two-minute cron | retried up to three times, then failed with the reason shown under the Scrape box |

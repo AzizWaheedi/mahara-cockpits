@@ -56,6 +56,18 @@ Look for how the client describes their own work, the objections they say they
 hear, and the results they claim. Those three things are the spine of a good
 script and you do not have to invent any of them.
 
+## Then look at what already works
+
+The creative cockpit keeps two libraries next to the winning ads. The
+**Ideation board** (`/ideation`) holds posts that ran far above their
+account's normal, from our industry and others, with the transcript, the
+on-screen text, the hook and why it works, plus trends (the same format on
+several accounts inside two weeks) and paid ads ranked by how long they have
+run. **Scripts we made** (`/scripts`) holds every finished script from the
+creative board, word for word. Use them for structure, hooks and pacing.
+Never lift a competitor's claim, number or offer into a client's script: the
+claim has to be the client's own, from the sections above.
+
 ## The structure
 
 Direct response, in this order. Full rules in the
