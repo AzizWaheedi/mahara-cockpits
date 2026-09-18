@@ -119,17 +119,26 @@ async function signInTokenFor(
   return String(hashed);
 }
 
-/** The editor cockpit's own allowlist, kept level with the portal's seats. */
+/**
+ * The editor cockpit's own allowlist, kept level with the portal's seats.
+ *
+ * A null name leaves whatever is stored alone. PostgREST only writes the
+ * columns present in the payload, and the portal's directory often has no
+ * name at all, so passing one through unconditionally replaced
+ * "Karim Abdelrahman" with "karim" the first time this ran.
+ */
 async function putPerson(
   email: string,
-  name: string,
+  name: string | null,
   role: "admin" | "editor",
   active: boolean,
 ): Promise<void> {
+  const row: Record<string, unknown> = { email, role, active };
+  if (name?.trim()) row.name = name.trim();
   await sb("/rest/v1/editor_people?on_conflict=email", {
     method: "POST",
     headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-    body: JSON.stringify([{ email, name, role, active }]),
+    body: JSON.stringify([row]),
   });
 }
 
@@ -200,7 +209,12 @@ export const syncPeople = internalAction({
     for (const [email, who] of seen) {
       const isAdmin = who.roles.includes("admin");
       const may = isAdmin || who.roles.includes(COCKPIT);
-      await putPerson(email, who.name, isAdmin ? "admin" : "editor", may);
+      await putPerson(
+        email,
+        who.name || null,
+        isAdmin ? "admin" : "editor",
+        may,
+      );
       if (may) on++;
       else off++;
     }
@@ -235,7 +249,11 @@ export const exchangeToken = internalAction({
     const isAdmin = roles.includes("admin");
     if (!isAdmin && !roles.includes(COCKPIT))
       throw new Error("The editor cockpit is not on your access. Ask Aziz.");
-    const name = String(payload.name ?? "").trim() || email.split("@")[0];
+    // The portal's own name if it has one. A name derived from the address is
+    // good enough for a brand new Supabase user and not good enough to write
+    // over a real one on the seat list.
+    const given = String(payload.name ?? "").trim();
+    const name = given || email.split("@")[0];
 
     const cockpits: string[] = Array.isArray(payload.cockpits)
       ? (payload.cockpits as string[])
@@ -243,7 +261,7 @@ export const exchangeToken = internalAction({
         ? ["media_buyer", "csm", "creative", "editor"]
         : roles.filter(r => r !== "admin");
     // The seat is written before the session exists, so row security sees it.
-    await putPerson(email, name, isAdmin ? "admin" : "editor", true);
+    await putPerson(email, given || null, isAdmin ? "admin" : "editor", true);
     const hashed = await signInTokenFor(email, name, roles, cockpits);
     return { email, name, roles, cockpits, token_hash: hashed };
   },

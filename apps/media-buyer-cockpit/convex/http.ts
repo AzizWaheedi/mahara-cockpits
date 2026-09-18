@@ -96,9 +96,22 @@ http.route({
       });
       return Response.json({ ok: true, ...out }, { headers });
     } catch (e) {
-      // The reason is safe to show: it is about the pass, never about a key.
+      // Say what a person can act on. The raw error is a jose stack trace or
+      // a Convex "Uncaught Error at handler(...)", which helps nobody.
+      const raw = String((e as Error).message ?? e);
+      const plain = /different cockpit/.test(raw)
+        ? "That pass is for a different cockpit."
+        : /not on your access/.test(raw)
+          ? "The editor desk is not on your access. Ask Aziz."
+          : /"exp"|expired/i.test(raw)
+            ? "That pass has expired. Open the editor desk from the portal again."
+            : /JWS|JWT|signature|Compact/i.test(raw)
+              ? "That pass was not signed by the portal."
+              : /no address/.test(raw)
+                ? "That pass carries no address."
+                : "That pass was not accepted. Open the editor desk from the portal again.";
       return Response.json(
-        { ok: false, error: String((e as Error).message ?? e).slice(0, 200) },
+        { ok: false, error: plain },
         { status: 401, headers },
       );
     }
