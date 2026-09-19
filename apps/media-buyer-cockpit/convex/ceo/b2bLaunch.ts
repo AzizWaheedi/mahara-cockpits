@@ -139,7 +139,6 @@ function stamp(day: string): string {
   return `${Number(d)}-${Number(m)}-${y.slice(2)}`;
 }
 
-const isArabic = (s: string) => /[؀-ۿ]/.test(s);
 
 /**
  * The best ad set of this kind in the last 90 days: most demos shown, then
