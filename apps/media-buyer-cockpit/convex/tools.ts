@@ -156,11 +156,43 @@ function pemToDer(pem: string): ArrayBuffer {
   return out.buffer;
 }
 
-let googleToken: { token: string; expiresAt: number } | null = null;
+/** The scopes the service account has always held, for files and calendars. */
+const FILE_SCOPES =
+  "https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/calendar.readonly";
+
+/** Reading the Workspace user directory. Needs domain-wide delegation. */
+export const DIRECTORY_SCOPE =
+  "https://www.googleapis.com/auth/admin.directory.user.readonly";
+
+/**
+ * The admin the service account acts as when reading the directory.
+ *
+ * The Admin SDK refuses a bare service account: it must impersonate a real
+ * administrator. This is deliberately NOT set on the file scopes above, so
+ * every existing Sheets, Drive and Docs call keeps acting as the service
+ * account itself and nothing about those integrations changes.
+ */
+const DIRECTORY_SUBJECT = "aziz@maharamedia.com";
+
+const googleTokens = new Map<string, { token: string; expiresAt: number }>();
 
 export async function googleAccessToken(): Promise<string> {
-  if (googleToken && googleToken.expiresAt > Date.now() + 60_000) {
-    return googleToken.token;
+  return googleTokenFor(FILE_SCOPES);
+}
+
+/** A token that may read the Workspace user directory, as an administrator. */
+export async function googleDirectoryToken(): Promise<string> {
+  return googleTokenFor(DIRECTORY_SCOPE, DIRECTORY_SUBJECT);
+}
+
+async function googleTokenFor(
+  scope: string,
+  subject?: string,
+): Promise<string> {
+  const cacheKey = `${scope}|${subject ?? ""}`;
+  const cached = googleTokens.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now() + 60_000) {
+    return cached.token;
   }
   const sa = JSON.parse(env("GOOGLE_SERVICE_ACCOUNT_JSON")) as {
     client_email: string;
@@ -171,8 +203,8 @@ export async function googleAccessToken(): Promise<string> {
   const claims = base64url(
     JSON.stringify({
       iss: sa.client_email,
-      scope:
-        "https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/calendar.readonly",
+      ...(subject ? { sub: subject } : {}),
+      scope,
       aud: "https://oauth2.googleapis.com/token",
       iat: now,
       exp: now + 3600,
@@ -204,11 +236,12 @@ export async function googleAccessToken(): Promise<string> {
   if (!res.ok || !json?.access_token) {
     throw new Error(`Google token exchange failed: ${brief(json)}`);
   }
-  googleToken = {
-    token: json.access_token,
+  const token = {
+    token: String(json.access_token),
     expiresAt: Date.now() + Number(json.expires_in ?? 3600) * 1000,
   };
-  return googleToken.token;
+  googleTokens.set(cacheKey, token);
+  return token.token;
 }
 
 // ---------------------------------------------------------------------------

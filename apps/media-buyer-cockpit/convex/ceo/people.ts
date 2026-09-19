@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import { internalQuery } from "../_generated/server";
 import { authenticatedAction } from "../functions";
+import { googleDirectoryToken } from "../tools";
 import { USD_PER } from "./data/tap";
 import { isCeoEmail } from "./gate";
 
@@ -309,5 +310,79 @@ export const setActive = authenticatedAction({
         "The people table does not exist yet. Run supabase/migrations/20260919b_people.sql first.",
       );
     return { ok: true };
+  },
+});
+
+/**
+ * The Workspace directory, when domain-wide delegation allows it.
+ *
+ * Returns everyone the directory lists with their name, address and whether
+ * the account is suspended, so the roster can be seeded and so somebody who
+ * has left Workspace but is still on payroll stands out.
+ */
+export const workspace = authenticatedAction({
+  args: {},
+  returns: v.any(),
+  handler: async (
+    ctx,
+  ): Promise<{
+    ok: boolean;
+    problem?: string;
+    users: {
+      name: string;
+      email: string;
+      suspended: boolean;
+      title: string | null;
+    }[];
+  }> => {
+    await ctx.runQuery(internal.ceo.people.gate, { userId: ctx.userId });
+    try {
+      const token = await googleDirectoryToken();
+      const out: {
+        name: string;
+        email: string;
+        suspended: boolean;
+        title: string | null;
+      }[] = [];
+      let pageToken: string | undefined;
+      for (let page = 0; page < 10; page++) {
+        const url = new URL(
+          "https://admin.googleapis.com/admin/directory/v1/users",
+        );
+        url.searchParams.set("customer", "my_customer");
+        url.searchParams.set("maxResults", "200");
+        url.searchParams.set("orderBy", "email");
+        if (pageToken) url.searchParams.set("pageToken", pageToken);
+        const res = await fetch(url.toString(), {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const text = await res.text();
+        if (!res.ok)
+          return {
+            ok: false,
+            problem: `Workspace refused the directory read (${res.status}): ${text.slice(0, 200)}`,
+            users: [],
+          };
+        const json = JSON.parse(text) as Row;
+        for (const u of (json.users ?? []) as Row[])
+          out.push({
+            name: String(u.name?.fullName ?? u.primaryEmail ?? ""),
+            email: String(u.primaryEmail ?? ""),
+            suspended: Boolean(u.suspended),
+            title: u.organizations?.[0]?.title
+              ? String(u.organizations[0].title)
+              : null,
+          });
+        pageToken = json.nextPageToken ? String(json.nextPageToken) : undefined;
+        if (!pageToken) break;
+      }
+      return { ok: true, users: out };
+    } catch (e) {
+      return {
+        ok: false,
+        problem: String(e instanceof Error ? e.message : e).slice(0, 220),
+        users: [],
+      };
+    }
   },
 });
