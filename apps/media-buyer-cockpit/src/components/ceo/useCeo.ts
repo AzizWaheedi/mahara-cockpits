@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { api } from "../../../convex/_generated/api";
 import type {
   AssetsPayload,
+  B2bAdsPayload,
   CallsPayload,
   ClientsPayload,
   DeliveryPayload,
@@ -20,6 +21,7 @@ export const SECTION_KEYS = [
   "money",
   "expenses",
   "growth",
+  "b2bAds",
   "delivery",
   "calls",
   "clients",
@@ -35,6 +37,7 @@ export type PayloadMap = {
   money: MoneyPayload;
   expenses: ExpensesPayload;
   growth: GrowthPayload;
+  b2bAds: B2bAdsPayload;
   delivery: DeliveryPayload;
   calls: CallsPayload;
   clients: ClientsPayload;
