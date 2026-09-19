@@ -3,6 +3,9 @@ import { B2B, num, type Row, sql } from "../sb";
 import { addDays, daysInMonth, kuwaitDay, monthStart } from "../time";
 import type { Adapter, DailyPoint, SourceStamp } from "../types";
 
+// biome-ignore lint/suspicious/noExplicitAny: the B2B functions return jsonb
+type Any = any;
+
 /**
  * Mahara's own acquisition funnel, read through the B2B dashboard's own
  * read-only functions so every number matches mahara-b2-b.vercel.app. The
@@ -478,12 +481,115 @@ export const growth: Adapter = {
         });
     }
 
+    // --- What the sales system is waiting on -----------------------------
+    // Counts only. Every row these return carries a contact's name, email and
+    // phone, and none of it comes into the payload: the CEO screens carry
+    // client business names and team first names, never a lead's identity.
+    const actionQueue = await attempt(
+      "The action queue",
+      notes,
+      undefined as GrowthPayload["actionQueue"],
+      async () => {
+        const rows = await sql(
+          B2B,
+          `select (public.b2b_action_queue(1)::jsonb) as q`,
+        );
+        const q = (rows[0]?.q ?? {}) as Any;
+        const buckets = ((q.buckets ?? []) as Any[]).map(b => ({
+          key: String(b.key ?? ""),
+          label: String(b.label ?? b.key ?? ""),
+          hint: String(b.hint ?? ""),
+          count: num(b.count),
+        }));
+        return { total: num(q.total), buckets };
+      },
+    );
+    if (actionQueue && actionQueue.total > 0) {
+      const worst = [...actionQueue.buckets].sort(
+        (a, b) => b.count - a.count,
+      )[0];
+      notes.push({
+        level: "warn",
+        text: `${actionQueue.total.toLocaleString("en-US")} records are waiting on somebody${
+          worst
+            ? `, ${worst.count.toLocaleString("en-US")} of them ${worst.label.toLowerCase()}. ${worst.hint}`
+            : "."
+        } Every rate on this tab is computed over those records, so they are soft until the backlog is cleared.`,
+      });
+    }
+
+    const stalled = await attempt(
+      "Stalled deals",
+      notes,
+      undefined as GrowthPayload["stalled"],
+      async () => {
+        const rows = await sql(
+          B2B,
+          `select (public.b2b_stalled_deals(${day(addDays(today, -120))}, ${day(today)}, 14)::jsonb) as s`,
+        );
+        const q = (rows[0]?.s ?? {}) as Any;
+        const byOwner = new Map<string, { deals: number; value: number }>();
+        for (const r of (q.rows ?? []) as Any[]) {
+          const owner = String(r.owner ?? "unassigned");
+          const o = byOwner.get(owner) ?? { deals: 0, value: 0 };
+          o.deals += 1;
+          o.value += num(r.deal_value);
+          byOwner.set(owner, o);
+        }
+        return {
+          staleDays: num(q.stale_days) || 14,
+          total: num(q.total),
+          stale: num(q.stale_total),
+          buckets: ((q.buckets ?? []) as Any[]).map(b => ({
+            age: String(b.age ?? ""),
+            deals: num(b.n),
+          })),
+          byOwner: [...byOwner.entries()]
+            .map(([owner, o]) => ({ owner, ...o }))
+            .sort((a, b) => b.deals - a.deals)
+            .slice(0, 8),
+        };
+      },
+    );
+    if (stalled && stalled.stale > 0)
+      notes.push({
+        level: "warn",
+        text: `${stalled.stale} of ${stalled.total} open deals have not been touched in ${stalled.staleDays} days${
+          stalled.buckets.find(b => b.age === ">30d")
+            ? `, ${stalled.buckets.find(b => b.age === ">30d")?.deals} of them for over a month`
+            : ""
+        }. Owner counts come from the deals the function returns, which is a capped sample, so read them as a shape rather than a total.`,
+      });
+
+    const pacing = await attempt(
+      "Pacing",
+      notes,
+      undefined as GrowthPayload["pacing"],
+      async () => {
+        const rows = await sql(
+          B2B,
+          `select (public.b2b_pacing_pipeline(${day(monthStart(today))}, ${day(today)})::jsonb) as p`,
+        );
+        const q = (rows[0]?.p ?? {}) as Any;
+        const n = (x: unknown) =>
+          x === null || x === undefined ? null : num(x);
+        return {
+          openDemosLeft: n(q.open_demos_left),
+          closeRate: n(q.close_rate),
+          avgDealValue: n(q.avg_deal_value),
+        };
+      },
+    );
+
     const payload = {
       windows,
       daily,
       reps,
       topAds,
       leadSources,
+      ...(actionQueue ? { actionQueue } : {}),
+      ...(stalled ? { stalled } : {}),
+      ...(pacing ? { pacing } : {}),
       notes,
     } satisfies GrowthPayload;
 

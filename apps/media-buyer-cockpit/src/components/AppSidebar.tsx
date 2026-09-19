@@ -131,9 +131,11 @@ function SidebarNav() {
   const location = useLocation();
   const me = useQuery(api.roles.me, {});
   const allowed = me?.roles ?? [];
-  const items = navItems.filter(
-    item => me?.isAdmin || allowed.includes(item.role),
-  );
+  // Admin no longer drags the media buyer's working screens in with it. Being
+  // an administrator is a job about people and access, not about running ads,
+  // and mixing the two put "Start of day" above "CEO" for the one person who
+  // holds both.
+  const items = navItems.filter(item => allowed.includes(item.role));
   // Other cockpits this person may open, so switching is one click.
   const cockpits: string[] = me?.cockpits ?? [];
   const others = [
@@ -163,18 +165,27 @@ function SidebarNav() {
                 isActive={location.pathname === "/admin"}
               />
             ) : null}
-            {items.map(item => (
-              <NavLink
-                key={item.href}
-                href={item.href}
-                label={item.label}
-                icon={item.icon}
-                isActive={location.pathname === item.href}
-              />
-            ))}
           </SidebarMenu>
         </SidebarGroupContent>
       </SidebarGroup>
+      {items.length ? (
+        <SidebarGroup>
+          <SidebarGroupLabel>Media buyer</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {items.map(item => (
+                <NavLink
+                  key={item.href}
+                  href={item.href}
+                  label={item.label}
+                  icon={item.icon}
+                  isActive={location.pathname === item.href}
+                />
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      ) : null}
       {others.length ? (
         <SidebarGroup>
           <SidebarGroupLabel>Switch cockpit</SidebarGroupLabel>

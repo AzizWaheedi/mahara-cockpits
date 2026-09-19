@@ -59,6 +59,7 @@ import type {
   TeamPerson,
   TeamStatus,
 } from "../../../convex/ceo/payloads";
+import { PeopleCard } from "./peopleCard";
 import {
   buildRoster,
   saveError,
@@ -361,6 +362,7 @@ export function ManagementTab({ sections, now, day }: CeoTabProps) {
   if (!payload)
     return (
       <div className="grid gap-4 lg:gap-6">
+        <PeopleCard order={0} />
         <SectionCard title="Management" section={team}>
           {() => null}
         </SectionCard>
@@ -374,6 +376,8 @@ export function ManagementTab({ sections, now, day }: CeoTabProps) {
   return (
     <StatusUiContext.Provider value={ui}>
       <div className="grid gap-4 lg:gap-6">
+        <PeopleCard order={0} />
+
         <SectionCard
           kicker="Yesterday and the last 14 working days"
           title={

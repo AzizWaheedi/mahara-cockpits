@@ -1,6 +1,7 @@
 import { internal } from "../../_generated/api";
 import { OFF_STATUSES } from "../../board";
 import { CPB_GATE, CPL_GATE } from "../../constants";
+import { clientDelivery, type TriageDelivery } from "../data/triage";
 import type { DeliveryPayload, DeliveryWindow, Note } from "../payloads";
 import { addDays, kuwaitDay, monthStart } from "../time";
 import type { Adapter, DailyPoint, SourceStamp } from "../types";
@@ -96,6 +97,16 @@ export const delivery: Adapter = {
     const now = Date.now();
     const today: string = data?.today ?? kuwaitDay(now);
     const yesterday = addDays(today, -1);
+    // Creative Triage is the source of truth for what a client was delivered
+    // (see ../data/triage.ts). It is read for the whole 30-day series plus the
+    // previous week, which is every window this section shows.
+    let triage: TriageDelivery | null = null;
+    let triageError: string | null = null;
+    try {
+      triage = await clientDelivery(addDays(today, -30), today);
+    } catch (e) {
+      triageError = String(e instanceof Error ? e.message : e).slice(0, 200);
+    }
     const campaigns: Any[] = data?.campaigns ?? [];
     // Nothing on the board usually means the sync is mid-rewrite; keep the
     // last good payload instead of showing an empty section.
@@ -108,8 +119,14 @@ export const delivery: Adapter = {
     const warn = (text: string) => notes.push({ level: "warn", text });
     const info = (text: string) => notes.push({ level: "info", text });
     info(
-      `Spend and leads are Meta only, for campaigns on the Ads Management board, in USD after a fixed exchange table. A day is the ad account's reporting day. Gates are Aziz's (2026-09-16): cost per lead $${CPL_GATE}, cost per booking $${CPB_GATE}. A client is good within both gates, bad with no leads or a cost per lead over $${(CPL_GATE * 1.5).toFixed(2)}, and on watch otherwise.`,
+      triage
+        ? `Spend, leads and bookings come from the Creative Triage database, which holds every client ad account and every appointment, not only the campaigns carrying an Ads Management card. Spend is Meta only, converted to USD with the one fixed rate table the cockpit uses; a day is the ad account's reporting day, and a booking is dated by the day it is for. Gates are Aziz's (2026-09-16): cost per lead $${CPL_GATE}, cost per booking $${CPB_GATE}. A client is good within both gates, bad with no leads or a cost per lead over $${(CPL_GATE * 1.5).toFixed(2)}, and on watch otherwise.`
+        : `Spend and leads are Meta only, for campaigns on the Ads Management board, in USD after a fixed exchange table. A day is the ad account's reporting day. Gates are Aziz's (2026-09-16): cost per lead $${CPL_GATE}, cost per booking $${CPB_GATE}. A client is good within both gates, bad with no leads or a cost per lead over $${(CPL_GATE * 1.5).toFixed(2)}, and on watch otherwise.`,
     );
+    if (triageError)
+      warn(
+        `The Creative Triage database could not be read this run, so these numbers fall back to the Ads Management board, which counts only campaigns carrying a card and undercounts both spend and bookings (${triageError}).`,
+      );
 
     const grain: {
       campaignName: string;
@@ -168,7 +185,35 @@ export const delivery: Adapter = {
       return out;
     };
 
-    const windowOf = (from: string, to: string): DeliveryWindow => {
+    /** Triage totals over an inclusive day range, or null when it could not be read. */
+    const triageWindow = (from: string, to: string): DeliveryWindow | null => {
+      if (!triage) return null;
+      let spend = 0;
+      let leads = 0;
+      let bookings = 0;
+      for (const d of triage.days)
+        if (d.date >= from && d.date <= to) {
+          spend += d.spend;
+          leads += d.leads;
+        }
+      // Only appointments that have come due are counted, so the figure means
+      // the same thing as the board's did and a month's number does not grow
+      // as future bookings arrive. The ones still to come are named in a note.
+      for (const b of triage.bookings)
+        if (b.date >= from && b.date <= to) bookings += b.count - b.future;
+      return {
+        spend: usd(spend),
+        leads,
+        cpl: leads > 0 ? usd(spend / leads) : null,
+        bookings,
+        // Every client's spend divides the bookings here: Triage carries
+        // appointments for every client, not only those whose GHL the board
+        // sync reads, so there is no untracked remainder to hold back.
+        cpb: bookings > 0 && spend > 0 ? usd(spend / bookings) : null,
+      };
+    };
+
+    const boardWindow = (from: string, to: string): DeliveryWindow => {
       let spend = 0;
       let leads = 0;
       let bookings = 0;
@@ -193,6 +238,9 @@ export const delivery: Adapter = {
       };
     };
 
+    const windowOf = (from: string, to: string): DeliveryWindow =>
+      triageWindow(from, to) ?? boardWindow(from, to);
+
     // Full Kuwait days ending yesterday; the month to date includes today.
     const last7From = addDays(today, -7);
     const prevFrom = addDays(today, -14);
@@ -205,16 +253,26 @@ export const delivery: Adapter = {
         string,
         { spend: number; leads: number; bookings: number }
       >();
-      for (const d of grain) {
-        const r = byDay.get(d.date) ?? { spend: 0, leads: 0, bookings: 0 };
-        r.spend += d.spend;
-        r.leads += d.leads;
-        byDay.set(d.date, r);
-      }
-      for (const b of booked) {
-        const r = byDay.get(b.date) ?? { spend: 0, leads: 0, bookings: 0 };
-        r.bookings += b.count;
-        byDay.set(b.date, r);
+      const at = (date: string) => {
+        const r = byDay.get(date) ?? { spend: 0, leads: 0, bookings: 0 };
+        byDay.set(date, r);
+        return r;
+      };
+      if (triage) {
+        for (const d of triage.days) {
+          const r = at(d.date);
+          r.spend += d.spend;
+          r.leads += d.leads;
+        }
+        for (const b of triage.bookings)
+          at(b.date).bookings += b.count - b.future;
+      } else {
+        for (const d of grain) {
+          const r = at(d.date);
+          r.spend += d.spend;
+          r.leads += d.leads;
+        }
+        for (const b of booked) at(b.date).bookings += b.count;
       }
       for (let date = seriesFrom; date <= yesterday; date = addDays(date, 1)) {
         const r = byDay.get(date);
@@ -225,6 +283,99 @@ export const delivery: Adapter = {
           bookings: r?.bookings ?? 0,
         });
       }
+    }
+
+    // --- Triage against the board: say it, never hide it -------------------
+    if (triage) {
+      const mine = triageWindow(last7From, yesterday);
+      const board = boardWindow(last7From, yesterday);
+      if (mine) {
+        const gap = usd(mine.spend - board.spend);
+        const bookGap = mine.bookings - board.bookings;
+        if (Math.abs(gap) >= 50 || Math.abs(bookGap) >= 3)
+          info(
+            `Cross-check, last 7 days: the Ads Management board sees ${dollars(board.spend)} and ${plural(board.bookings, "booking")}; this database sees ${dollars(mine.spend)} and ${plural(mine.bookings, "booking")}. The figures above are this database's. ${
+              gap >= 0
+                ? "It reads higher because the board carries only campaigns with a card."
+                : "The board reads higher on spend here, which usually means this database's ad sync is a day behind on the most recent days rather than that the money is missing. Read a same-day comparison with that in mind."
+            }`,
+          );
+      }
+      const future = triage.bookings
+        .filter(b => b.date >= monthStart(today) && b.date <= today)
+        .reduce((n, b) => n + b.future, 0);
+      if (future > 0)
+        info(
+          `${plural(future, "appointment")} booked for later this month ${future === 1 ? "is" : "are"} not in the booking counts above, which include only appointments that have come due. The board's own figure could never see them at all.`,
+        );
+      // Say what a booking is and, just as important, what it is not. The
+      // provisional and callback calendars are configured on dozens of client
+      // locations and have never produced a row, so a reader who knows they
+      // exist should be told they are not hiding inside this number.
+      const KIND_WORDS: Record<string, string> = {
+        provisional: "provisional holds",
+        callback: "callback requests",
+        reschedule: "reschedules of an appointment already counted",
+        other: "appointments on calendars that are not a booking calendar",
+      };
+      const held = triage.notBookings.filter(k => k.count > 0);
+      info(
+        `A booking is an appointment on a client's own appointment calendar, the main one or the online one, counted on the day it is for. ${
+          held.length
+            ? `Left out of it: ${held.map(k => `${plural(k.count, "row")} from ${KIND_WORDS[k.kind] ?? k.kind}`).join(", ")}.`
+            : "Your provisional and callback calendars are set up on dozens of client locations but have never produced a single appointment row, so nothing from either is inside this figure, and no provisional booking or agent callback is visible anywhere in the cockpit."
+        }`,
+      );
+      // Spend on a client we have already lost is money leaving for nothing,
+      // and it is the kind of thing a total hides. The headline above still
+      // counts every client account, because which clients belong in "what we
+      // delivered" is Aziz's definition to set, not this adapter's: both
+      // figures are given so either can be read.
+      {
+        const gone = new Set(
+          triage.clients
+            .filter(c => /cancel|stopped|churn/i.test(c.status ?? ""))
+            .map(c => c.clientId),
+        );
+        if (gone.size) {
+          const from = monthStart(today);
+          let lost = 0;
+          let leads = 0;
+          for (const d of triage.days)
+            if (gone.has(d.clientId) && d.date >= from && d.date <= today) {
+              lost += d.spend;
+              leads += d.leads;
+            }
+          const month = windowOf(from, today);
+          if (lost > 0)
+            warn(
+              `${dollars(lost)} of this month's spend is on ${plural(gone.size, "client")} already marked cancelled, and it brought in ${plural(leads, "lead")}: ${triage.clients
+                .filter(c => gone.has(c.clientId))
+                .map(c => c.name)
+                .join(
+                  ", ",
+                )}. That money is inside the totals above. Without ${gone.size === 1 ? "it" : "them"} the month reads ${dollars(month.spend - lost)} and ${plural(month.leads - leads, "lead")}.`,
+            );
+        }
+      }
+      if (triage.unmapped.length)
+        warn(
+          `${plural(triage.unmapped.length, "ad account")} spending in this window ${triage.unmapped.length === 1 ? "is" : "are"} tied to no client card, so ${triage.unmapped.length === 1 ? "its" : "their"} spend is in the totals but has no client row: ${triage.unmapped.slice(0, 5).join(", ")}${triage.unmapped.length > 5 ? ` and ${triage.unmapped.length - 5} more` : ""}.`,
+        );
+      if (triage.unknownCurrencies.length)
+        warn(
+          `Spend in ${triage.unknownCurrencies.join(", ")} is left out entirely: the cockpit has no exchange rate for ${triage.unknownCurrencies.length === 1 ? "it" : "them"}, and counting it at one to one would be wrong rather than approximate.`,
+        );
+      const noMode = triage.clients.filter(
+        c => c.clickupTaskId && !c.serviceMode,
+      );
+      if (noMode.length)
+        info(
+          `${plural(noMode.length, "client")} ${noMode.length === 1 ? "has" : "have"} a blank Service Mode, so nothing here knows whether we book their appointments or they do: ${noMode
+            .map(c => c.name)
+            .slice(0, 4)
+            .join(", ")}.`,
+        );
     }
 
     // --- Client cards: ClickUp task id by client name --------------------
@@ -315,7 +466,62 @@ export const delivery: Adapter = {
       }
       groups.set(key, g);
     }
-    const clients: DeliveryPayload["clients"] = [...groups.values()]
+    // Triage knows every client with spend, not only those on the board, and
+    // ties an ad account to a ClickUp card through ghl_client_ad_accounts
+    // (16 of 17 accounts on 2026-09-19, every one an exact Meta match), which
+    // is a firmer join than matching typed names.
+    const triageClients: DeliveryPayload["clients"] | null = triage
+      ? (() => {
+          const spendBy = new Map<string, { spend: number; leads: number }>();
+          for (const d of triage.days)
+            if (d.date >= last7From && d.date <= yesterday) {
+              const r = spendBy.get(d.clientId) ?? { spend: 0, leads: 0 };
+              r.spend += d.spend;
+              r.leads += d.leads;
+              spendBy.set(d.clientId, r);
+            }
+          const bookBy = new Map<string, number>();
+          for (const b of triage.bookings)
+            if (b.date >= last7From && b.date <= yesterday)
+              bookBy.set(
+                b.clientId,
+                (bookBy.get(b.clientId) ?? 0) + b.count - b.future,
+              );
+          return triage.clients
+            .map(c => {
+              const r = spendBy.get(c.clientId);
+              if (!r || r.spend <= 0) return null;
+              const bookings = bookBy.get(c.clientId) ?? 0;
+              const cpl = r.leads > 0 ? usd(r.spend / r.leads) : null;
+              const cpb = bookings > 0 ? usd(r.spend / bookings) : null;
+              // Done With You clients book their own appointments, so none of
+              // ours exist to count and cost per lead is the only number we
+              // own. A client we do book for is judged on both, even in a week
+              // that produced nothing.
+              const weBook =
+                bookings > 0 || /dfy|done for/i.test(c.serviceMode ?? "");
+              return {
+                client: c.name,
+                clickupTaskId: c.clickupTaskId,
+                spend7d: usd(r.spend),
+                leads7d: r.leads,
+                cpl7d: cpl,
+                bookings7d: bookings,
+                cpb7d: cpb,
+                campaigns: c.campaigns,
+                status: statusOf(r.spend, r.leads, cpl, cpb, weBook),
+              };
+            })
+            .filter((x): x is NonNullable<typeof x> => x !== null)
+            .sort(
+              (a, b) =>
+                STATUS_ORDER[a.status] - STATUS_ORDER[b.status] ||
+                b.spend7d - a.spend7d,
+            );
+        })()
+      : null;
+
+    const boardClients: DeliveryPayload["clients"] = [...groups.values()]
       .map(g => {
         const cpl = g.leads > 0 ? usd(g.spend / g.leads) : null;
         const cpb =
@@ -339,6 +545,8 @@ export const delivery: Adapter = {
           STATUS_ORDER[a.status] - STATUS_ORDER[b.status] ||
           b.spend7d - a.spend7d,
       );
+
+    const clients: DeliveryPayload["clients"] = triageClients ?? boardClients;
 
     // --- Blocked ad accounts, one row per account --------------------------
     const accountIssues: DeliveryPayload["accountIssues"] = [];
@@ -427,10 +635,25 @@ export const delivery: Adapter = {
     const untracked = [...groups.values()]
       .filter(g => !g.tracked)
       .map(g => g.client);
-    warn(
-      `Bookings come from GHL for Done For You clients with a working GHL connection (${clients.length - untracked.length} of ${clients.length} clients with spend). The sync reads appointments up to now only, so a booking made for a later date is counted once that day comes and the latest days read low.`,
-    );
-    if (untracked.length)
+    if (triage) {
+      const dwy = triage.clients.filter(
+        c => c.serviceMode && !/dfy|done for/i.test(c.serviceMode),
+      );
+      warn(
+        `${
+          dwy.length
+            ? `${plural(dwy.length, "Done With You client")} ${dwy.length === 1 ? "books" : "book"} their own, so no cost per booking is worked out for them: ${dwy
+                .map(c => c.name)
+                .slice(0, 4)
+                .join(", ")}.`
+            : "Every client with spend is one we book appointments for."
+        }`,
+      );
+    } else
+      warn(
+        `Bookings come from GHL for Done For You clients with a working GHL connection (${clients.length - untracked.length} of ${clients.length} clients with spend). The sync reads appointments up to now only, so a booking made for a later date is counted once that day comes and the latest days read low.`,
+      );
+    if (!triage && untracked.length)
       info(
         `${plural(untracked.length, "client")} without booking data (${untracked.join(", ")}) ${untracked.length === 1 ? "is" : "are"} judged on cost per lead alone, and cost per booking leaves out their spend.`,
       );
@@ -489,6 +712,22 @@ export const delivery: Adapter = {
         ? `Failing ${plural(Number(health[source].streak ?? 1), "time")} in a row`
         : undefined;
     const sources: SourceStamp[] = [
+      {
+        name: "Creative Triage client ad snapshots",
+        freshestAt: triage?.adsFreshAt,
+        ok: !!triage,
+        note: triage
+          ? undefined
+          : (triageError ?? "Not read; falling back to the board"),
+      },
+      {
+        name: "Creative Triage appointments",
+        freshestAt: triage?.bookingsFreshAt,
+        ok: !!triage,
+        note: triage
+          ? undefined
+          : (triageError ?? "Not read; falling back to GHL through the board"),
+      },
       {
         name: "Meta ads (media buyer sync)",
         freshestAt: syncAt || undefined,

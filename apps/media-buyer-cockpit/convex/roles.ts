@@ -11,8 +11,16 @@ import { authenticatedQuery } from "./functions";
  * Enforced on the server: hiding a menu is not the lock.
  */
 const STATIC: Record<string, string[]> = {
-  "aziz@maharamedia.com": ["admin", "media_buyer", "csm", "creative", "editor"],
+  "aziz@maharamedia.com": [
+    "ceo",
+    "admin",
+    "media_buyer",
+    "csm",
+    "creative",
+    "editor",
+  ],
   "awaheedi2008@gmail.com": [
+    "ceo",
     "admin",
     "media_buyer",
     "csm",
@@ -30,6 +38,7 @@ export const COCKPITS = ["media_buyer", "csm", "creative", "editor"] as const;
 
 /** Where each role lands. The portal routes the other three to their own apps. */
 const HOME: Record<string, string> = {
+  ceo: "/ceo",
   admin: "/admin",
   media_buyer: "/dashboard",
   csm: "/go/csm",
@@ -80,6 +89,7 @@ export type Access = {
   roles: string[];
   clients: string[];
   isAdmin: boolean;
+  isCeo: boolean;
   cockpits: string[];
   home: string | null;
 };
@@ -104,16 +114,28 @@ export async function accessFor(
       ? await spaceSessionRoles(ctx, userId)
       : staticRoles(key);
   const isAdmin = roles.includes("admin");
+  // The CEO section is its own role now, so it can be given to somebody who
+  // should see the business and nothing else. The two founder addresses keep
+  // working through the old email list whatever the members table says, so
+  // nobody can lock Aziz out of his own numbers by editing a row.
+  const isCeo = roles.includes("ceo") || isCeoEmail(key);
   const cockpits = isAdmin
     ? [...COCKPITS]
     : COCKPITS.filter(c => roles.includes(c));
-  const first = isAdmin ? "admin" : (roles.find(r => HOME[r]) ?? null);
+  // Land on the business before the admin screen, and on the admin screen
+  // before a working cockpit.
+  const first = isCeo
+    ? "ceo"
+    : isAdmin
+      ? "admin"
+      : (roles.find(r => HOME[r]) ?? null);
   return {
     email: key,
     name: row?.name,
     roles,
     clients: row?.clients ?? [],
     isAdmin,
+    isCeo,
     cockpits,
     home: first ? HOME[first] : null,
   };
@@ -164,7 +186,7 @@ export const me = authenticatedQuery({
       cockpits: a.cockpits,
       clients: a.clients,
       isAdmin: a.isAdmin,
-      isCeo: isCeoEmail(user?.email),
+      isCeo: a.isCeo,
       home: a.home,
     };
   },

@@ -46,9 +46,14 @@ type Any = any;
 
 const ROLE_META: { key: string; label: string; hint: string }[] = [
   {
+    key: "ceo",
+    label: "CEO",
+    hint: "The business: money, delivery, calls, clients, team. Nothing else, unless another role is ticked too.",
+  },
+  {
     key: "admin",
     label: "Admin",
-    hint: "This view, every cockpit, every client.",
+    hint: "People and access. Every cockpit, every client. Not the CEO view.",
   },
   {
     key: "media_buyer",

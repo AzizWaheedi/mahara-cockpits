@@ -1069,6 +1069,10 @@ export const feedCsm = internalAction({
         clients: payload.clients,
         tasks: payload.tasks,
         checks: payload.checks,
+        // The CEO cockpit's billing and lifecycle fields off the same cards.
+        // Deliberately not in the bridge payload below: the child cockpits
+        // have no use for what a client pays. [2026-09-18]
+        billing: payload.billing,
       });
       await bridge("csm", "store", {
         clients: payload.clients,

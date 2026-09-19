@@ -269,6 +269,105 @@ export type MoneyPayload = {
     month: string | null;
     items: { metric: string; target: number; actual: number | null }[];
   };
+  /**
+   * The MRR field on the ClickUp client cards, added up by stage
+   * (convex/ceo/billing.ts, first read 2026-09-18).
+   *
+   * Read every figure here as "what somebody typed on a card", never as
+   * measured recurring revenue. Three things have to stay visible beside it:
+   *
+   * - It is not all monthly money. A client on Paid In Full or Split Pay has a
+   *   share of a one-off contract in the same field, so `recurringUsd` and
+   *   `oneOffUsd` are kept apart and `bookUsd` (their sum) mixes the two.
+   * - Who counts as a client is undecided, so the groups are never added up
+   *   here. Active, paused and pipeline are reported separately.
+   * - Blank is not zero. `blank` names the live cards carrying no figure.
+   *
+   * Optional: a payload stored before this shipped has none, and the store
+   * keeps the last good payload across a deploy.
+   */
+  mrr?: {
+    /**
+     * Per stage group: active, paused, pipeline (signed, not yet live), sales
+     * (parked on the sales list, not a client) and gone.
+     */
+    groups: {
+      group: "active" | "paused" | "pipeline" | "sales" | "gone";
+      cards: number;
+      filled: number;
+      bookUsd: number;
+      recurringUsd: number;
+      oneOffUsd: number;
+      /** On cards whose Payment Plan is blank, so it is in neither of the two above. */
+      unclassifiedUsd: number;
+    }[];
+    /**
+     * Live cards with no MRR figure. Sales-list cards and Mahara's own
+     * internal cards are left out: neither is a client whose money is missing.
+     */
+    blank: { taskId: string; name: string; stage: string | null }[];
+    /** Mahara's own cards (playing account, lifecycle test) inside `cards`. */
+    internalCards: number;
+    /** The LTV field: a number typed by hand on a card, not a total of cash received. */
+    ltv: { filled: number; totalUsd: number };
+    /** Payment Method coverage. Empty `mix` means the field is filled on no card. */
+    paymentMethod: { filled: number; mix: { method: string; cards: number }[] };
+    /** How much of the lifecycle record exists at all: churn dates, pause dates, renewal dates. */
+    lifecycle: {
+      gone: number;
+      goneWithChurnDate: number;
+      goneWithChurnReason: number;
+      paused: number;
+      pausedWithDate: number;
+      withRenewalDate: number;
+    };
+    cards: number;
+    /** When the CSM sync last rewrote these rows, epoch ms. */
+    syncedAt: number | null;
+  };
+  /**
+   * Signed deals against the cash that can actually be tied to them
+   * (b2b_deal_cash(), first read 2026-09-19).
+   *
+   * Read `linkedCash` as "cash we can prove belongs to a deal", never as
+   * "cash collected". The link is `whop_payments.deal_response_id`, and the
+   * only rule that fills it is an email match between the payer and the
+   * closing form: on 2026-09-19 it had linked 42 of 124 paid rows. The other
+   * 82 rows are real money that reaches no deal.
+   *
+   * So a deal with no linked cash has not been shown to be unpaid. It has been
+   * shown to have no payment matched to it, which is a different and much
+   * weaker statement, and every figure here is labelled that way.
+   */
+  collection?: {
+    deals: number;
+    contracted: number;
+    /** Whop cash tied to a deal by response id. */
+    linkedCash: number;
+    /** Deals with at least one payment linked. */
+    dealsWithCash: number;
+    /** Paid Whop cash tied to no deal at all. */
+    unlinkedCash: number;
+    unlinkedRows: number;
+    /** Of the unlinked money, how much predates the closing form and can never be tied. */
+    beforeFormCash: number;
+    /** The month the closing form's first deal was submitted, YYYY-MM. */
+    formStarted: string | null;
+    /** Per month: what was contracted and what cash is linked to those deals. */
+    byMonth: {
+      month: string;
+      deals: number;
+      contracted: number;
+      linked: number;
+    }[];
+    /** Signed deals carrying a contract value with no payment linked, biggest first. */
+    unmatched: {
+      client: string;
+      month: string;
+      contracted: number;
+      plan: string | null;
+    }[];
+  };
   notes: Note[];
 };
 
@@ -408,6 +507,39 @@ export type GrowthPayload = {
   topAds: { name: string; spend: number; leads: number; cpl: number | null }[];
   /** Month to date. */
   leadSources: { source: string; leads: number }[];
+  /**
+   * Records the sales system is waiting on somebody to fix
+   * (b2b_action_queue, first read 2026-09-19).
+   *
+   * Counts only. The function returns the contact's name, email and phone on
+   * every row and none of that comes into the payload: the CEO screens carry
+   * client business names and team first names, never a lead's identity.
+   *
+   * The largest bucket is calls with no outcome, which is the same rot behind
+   * the show rate: a past call still marked booked counts as neither shown nor
+   * missed, so every rate computed over it is soft.
+   */
+  actionQueue?: {
+    total: number;
+    buckets: { key: string; label: string; hint: string; count: number }[];
+  };
+  /**
+   * Deals that have not moved (b2b_stalled_deals). Counts and value by age
+   * bucket and by owner, never the contact behind them.
+   */
+  stalled?: {
+    staleDays: number;
+    total: number;
+    stale: number;
+    buckets: { age: string; deals: number }[];
+    byOwner: { owner: string; deals: number; value: number }[];
+  };
+  /** Pace against the month (b2b_pacing_pipeline). */
+  pacing?: {
+    openDemosLeft: number | null;
+    closeRate: number | null;
+    avgDealValue: number | null;
+  };
   notes: Note[];
 };
 
