@@ -1,8 +1,9 @@
 import { Play, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Fold, Out, Problem, Prose, Spinner } from "../components/bits";
+import { currentBoards, ForeplayLinks, isNew } from "../components/Foreplay";
 import { useWho } from "../lib/auth";
-import { saveIdea, useIdeas, useStills } from "../lib/data";
+import { saveIdea, useBoards, useIdeas, useStills } from "../lib/data";
 import { clock, moment } from "../lib/format";
 import { IDEA_STILLS_BUCKET } from "../lib/supabase";
 import type { Idea } from "../lib/types";
@@ -179,6 +180,7 @@ function Row({
 
 export default function IdeasPage() {
   const ideas = useIdeas();
+  const boards = useBoards();
   const { email, name } = useWho();
   const [tab, setTab] = useState<Tab>("saved");
   const [platform, setPlatform] = useState("");
@@ -211,6 +213,12 @@ export default function IdeasPage() {
     IDEA_STILLS_BUCKET,
   );
 
+  // A board added in Foreplay this week. Worth saying once, up here, rather
+  // than leaving somebody to notice a new chip on another page.
+  const live = useMemo(() => currentBoards(boards.data), [boards.data]);
+  const added = live.filter(isNew);
+  const dropBox = live.find((b) => b.feeds_ideation);
+
   async function toggle(idea: Idea) {
     setBusy(idea.key);
     setProblem(null);
@@ -229,6 +237,25 @@ export default function IdeasPage() {
         the team saves into the Foreplay drop box lands here on its own. The winning ads we ran
         ourselves stay on What works.
       </p>
+
+      <div className="mb-4 rounded-[var(--radius-md)] border hairline p-3">
+        <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+          <p className="text-[13px] font-semibold">Go looking in Foreplay</p>
+          <p className="muted text-xs">
+            {dropBox
+              ? `Anything saved to ${dropBox.name} lands on this board by itself.`
+              : "No board is feeding this one yet."}
+          </p>
+        </div>
+        <ForeplayLinks />
+        {added.length ? (
+          <p className="muted mt-2 text-xs">
+            New {added.length === 1 ? "board" : "boards"} this week:{" "}
+            {added.map((b) => b.name ?? "untitled").join(", ")}. Saves on{" "}
+            {added.length === 1 ? "it" : "them"} show up under Swipe file, kept separate.
+          </p>
+        ) : null}
+      </div>
 
       {(ideas.error || problem) && <Problem>{ideas.error ?? problem}</Problem>}
 

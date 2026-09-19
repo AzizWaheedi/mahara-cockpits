@@ -298,6 +298,13 @@ def credits_left(usage: dict[str, Any]) -> Optional[int]:
     return None
 
 
+def _hours_ago(hours: int) -> str:
+    from datetime import datetime, timedelta, timezone
+
+    at = datetime.now(timezone.utc) - timedelta(hours=max(0, hours))
+    return at.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
 def _norm(name: Any) -> str:
     return " ".join(str(name or "").lower().split())
 
@@ -365,6 +372,8 @@ def sync(
     full: bool = False,
     floor: int = 500,
     drop_box: str = "",
+    max_board_ads: int = 400,
+    board_every_hours: int = 24,
 ) -> dict[str, Any]:
     """The swipe file into our own table, newest save first, stopping early.
 
@@ -425,30 +434,75 @@ def sync(
 
     # The drop box. Aziz, 2026-09-19: anything anyone saves into this board,
     # from any device, should turn up on the shared ideation board without
-    # a second action. Only this board is read ad by ad, because that is
-    # what costs credits.
-    forwarded = 0
+    # a second action.
     box = find_board(boards, drop_box) if drop_box else None
-    if box:
-        if _norm(box.get("name")) != _norm(drop_box):
-            log(f"  drop box: using {box.get('name')!r} for {drop_box!r}")
-        try:
-            on_box = board_ads(fp, box)
-            for r in on_box:
-                rows[r["id"]] = r
-            forwarded = _forward_to_ideation(sb, on_box, log)
-        except http.HttpError as e:
-            problems.append(f"{drop_box}: {http.scrub(str(e))[:100]}")
-    elif drop_box:
+    if box and _norm(box.get("name")) != _norm(drop_box):
+        log(f"  drop box: using {box.get('name')!r} for {drop_box!r}")
+    if drop_box and not box:
         names = ", ".join(sorted(str(b.get("name") or "") for b in boards)) or "none at all"
-        problems.append(
-            f"no board matching {drop_box!r}; the boards are: {names}"[:300]
+        problems.append(f"no board matching {drop_box!r}; the boards are: {names}"[:300])
+
+    # Which boards to read ad by ad, and which to leave alone.
+    #
+    # Reading a board costs a credit per ad. At a twenty minute cron that is
+    # 72 runs a day, so reading every board every run would spend the whole
+    # monthly allowance in a day. The drop box is read every run because it
+    # is the feeder and it is small. Every other board is read when it is
+    # new, and then no more than once a day.
+    box_id = str((box or {}).get("id") or (box or {}).get("board_id") or "")
+    stale_before = _hours_ago(board_every_hours)
+    seen_before = sb.board_state()
+    forwarded = 0
+    per_board: list[dict[str, Any]] = []
+    budget = max_board_ads
+    for b in boards:
+        bid = str(b.get("id") or b.get("board_id") or "")
+        if not bid:
+            continue
+        was = seen_before.get(bid) or {}
+        is_drop_box = bool(box_id) and bid == box_id
+        due = (
+            full
+            or is_drop_box
+            or not was
+            or str(was.get("ads_synced_at") or "") < stale_before
         )
+        if not due or budget <= 0:
+            per_board.append({
+                "id": bid, "name": str(b.get("name") or ""),
+                "feeds_ideation": is_drop_box,
+                "ads": int(was.get("ads") or 0), "read": False,
+            })
+            continue
+        try:
+            on_board = board_ads(fp, b, cap=min(200, budget))
+        except http.HttpError as e:
+            problems.append(f"{b.get('name')}: {http.scrub(str(e))[:90]}")
+            continue
+        budget -= len(on_board)
+        for r in on_board:
+            rows[r["id"]] = r
+        per_board.append({
+            "id": bid, "name": str(b.get("name") or ""),
+            "feeds_ideation": is_drop_box, "ads": len(on_board), "read": True,
+        })
+        if is_drop_box:
+            forwarded = _forward_to_ideation(sb, on_board, log)
+
+    new_boards: list[str] = []
+    if per_board:
+        try:
+            new_boards = sb.store_boards(per_board)
+        except Exception as e:  # noqa: BLE001 - a board list is not worth losing the ads over
+            problems.append(f"boards not stored: {http.scrub(str(e))[:90]}")
+        for name in new_boards:
+            log(f"  new board: {name}")
 
     stored = sb.store_foreplay(list(rows.values())) if rows else 0
     result = {
         "ads_read": seen, "new_or_changed": len(rows), "stored": stored,
-        "boards": len(boards), "forwarded_to_ideation": forwarded,
+        "boards": len(boards), "new_boards": new_boards,
+        "forwarded_to_ideation": forwarded,
         "calls": fp.calls, "credits_left": left,
     }
     if problems:

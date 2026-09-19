@@ -191,6 +191,21 @@ class FakeSupabase:
     def notes(self, task_id):
         return [n for n in self.notes_rows.values() if n.get("task_id") == task_id]
 
+    def board_state(self):
+        return dict(getattr(self, "boards_rows", {}))
+
+    def store_boards(self, boards):
+        if not hasattr(self, "boards_rows"):
+            self.boards_rows = {}
+        fresh = [b for b in boards if str(b.get("id")) not in self.boards_rows]
+        for b in boards:
+            row = dict(self.boards_rows.get(str(b["id"]), {}))
+            row.update({k: v for k, v in b.items() if k != "read"})
+            if b.get("read"):
+                row["ads_synced_at"] = "2026-09-19T00:00:00Z"
+            self.boards_rows[str(b["id"])] = row
+        return [str(b.get("name") or b.get("id")) for b in fresh]
+
     def known_ideation_keys(self, keys):
         return [k for k in keys if k in self.ideation_rows]
 

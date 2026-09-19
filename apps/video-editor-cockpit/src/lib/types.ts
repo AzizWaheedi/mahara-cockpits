@@ -291,3 +291,15 @@ export interface SwipeAd {
   full_transcription: string | null;
   persona: string | null;
 }
+
+/** A Foreplay board, whether or not any of its ads have reached us yet. */
+export interface ForeplayBoard {
+  id: string;
+  name: string | null;
+  /** The drop box: saves here become ideation posts on their own. */
+  feeds_ideation: boolean;
+  ads: number;
+  first_seen_at: string;
+  last_seen_at: string;
+  ads_synced_at: string | null;
+}

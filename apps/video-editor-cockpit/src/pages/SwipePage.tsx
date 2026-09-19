@@ -2,8 +2,9 @@ import { Lightbulb } from "lucide-react";
 import { useMemo, useState } from "react";
 import AdPreviewFrame from "../components/AdPreview";
 import { Empty, Fold, Out, Problem, Prose, Spinner } from "../components/bits";
+import { BoardStrip, currentBoards, ForeplayLinks } from "../components/Foreplay";
 import { useWho } from "../lib/auth";
-import { askFor, useSwipe } from "../lib/data";
+import { askFor, useBoards, useSwipe } from "../lib/data";
 import { clock } from "../lib/format";
 import type { SwipeAd } from "../lib/types";
 
@@ -140,24 +141,30 @@ function Card({ ad }: { ad: SwipeAd }) {
 
 export default function SwipePage() {
   const swipe = useSwipe();
+  const boards = useBoards();
   const [board, setBoard] = useState("");
   const [longRunning, setLongRunning] = useState(false);
 
-  const boards = useMemo(() => {
-    const counts = new Map<string, number>();
+  // Every board Foreplay had at the last sync, in name order, so adding one
+  // over there shows up here even before anybody saves into it.
+  const live = useMemo(() => currentBoards(boards.data), [boards.data]);
+
+  const counts = useMemo(() => {
+    const n = new Map<string, number>();
     for (const a of swipe.data ?? []) {
-      const key = a.board_name ?? "Unsorted";
-      counts.set(key, (counts.get(key) ?? 0) + 1);
+      if (a.board_id) n.set(a.board_id, (n.get(a.board_id) ?? 0) + 1);
     }
-    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+    return n;
   }, [swipe.data]);
 
   const shown = useMemo(() => {
     let rows = swipe.data ?? [];
-    if (board) rows = rows.filter((a) => (a.board_name ?? "Unsorted") === board);
+    if (board) rows = rows.filter((a) => a.board_id === board);
     if (longRunning) rows = rows.filter((a) => (a.running_duration ?? 0) >= 60);
     return rows;
   }, [swipe.data, board, longRunning]);
+
+  const fresh = live.filter((b) => (counts.get(b.id) ?? 0) === 0 && b.ads === 0);
 
   return (
     <div className="mx-auto w-full max-w-4xl px-4 py-8">
@@ -169,39 +176,13 @@ export default function SwipePage() {
         </p>
       </header>
 
-      <div className="mb-5 flex flex-wrap gap-1.5">
-        <button
-          type="button"
-          onClick={() => setBoard("")}
-          aria-pressed={board === ""}
-          className={`rounded-full px-3 py-1.5 text-xs font-medium ${
-            board === ""
-              ? "bg-[color:var(--primary)] text-[color:var(--primary-foreground)]"
-              : "raised muted"
-          }`}
-        >
-          All {swipe.data?.length ? `(${swipe.data.length})` : ""}
-        </button>
-        {boards.slice(0, 12).map(([name, n]) => (
-          <button
-            key={name}
-            type="button"
-            onClick={() => setBoard(name)}
-            aria-pressed={board === name}
-            className={`rounded-full px-3 py-1.5 text-xs font-medium ${
-              board === name
-                ? "bg-[color:var(--primary)] text-[color:var(--primary-foreground)]"
-                : "raised muted"
-            }`}
-          >
-            {name} <span className="tabular-nums opacity-70">{n}</span>
-          </button>
-        ))}
+      <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+        <ForeplayLinks />
         <button
           type="button"
           onClick={() => setLongRunning((v) => !v)}
           aria-pressed={longRunning}
-          className={`ml-auto rounded-full px-3 py-1.5 text-xs font-medium ${
+          className={`ml-auto rounded-full px-3 py-1.5 text-[12px] font-semibold ${
             longRunning
               ? "bg-[color:var(--primary)] text-[color:var(--primary-foreground)]"
               : "raised muted"
@@ -209,6 +190,22 @@ export default function SwipePage() {
         >
           On air 60+ days
         </button>
+      </div>
+
+      <div className="mb-5">
+        <BoardStrip
+          boards={live}
+          counts={counts}
+          chosen={board}
+          onChoose={setBoard}
+          total={swipe.data?.length ?? 0}
+        />
+        {fresh.length ? (
+          <p className="muted mt-2 text-xs">
+            Nothing saved yet on {fresh.map((b) => b.name ?? "an untitled board").join(", ")}.
+            Whatever the team puts there turns up here within twenty minutes.
+          </p>
+        ) : null}
       </div>
 
       {swipe.error && <Problem>The swipe file could not be read: {swipe.error}</Problem>}

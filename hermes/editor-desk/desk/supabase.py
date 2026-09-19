@@ -324,6 +324,41 @@ class Supabase:
         rows = self.select("foreplay_ads", f"select=id&limit={int(limit)}")
         return [str(r.get("id")) for r in rows if r.get("id")]
 
+    def board_state(self) -> dict[str, dict[str, Any]]:
+        """What we already know about each board, so a sync can skip the
+        ones it read recently rather than paying for them again."""
+        rows = self.select("foreplay_boards", "select=id,name,ads,ads_synced_at&limit=500")
+        return {str(r["id"]): r for r in rows if r.get("id")}
+
+    def store_boards(self, boards: list[dict[str, Any]]) -> list[str]:
+        """Record every board and return the names of the ones we had never
+        seen, so a board somebody adds is noticed rather than ignored."""
+        if not boards:
+            return []
+        stamp = now_iso()
+        known = {
+            str(r.get("id"))
+            for r in self.select("foreplay_boards", "select=id&limit=500")
+        }
+        fresh = [b for b in boards if str(b.get("id")) not in known]
+        rows = []
+        for b in boards:
+            if not b.get("id"):
+                continue
+            row = {
+                "id": str(b["id"]), "name": b.get("name"),
+                "feeds_ideation": bool(b.get("feeds_ideation")),
+                "ads": int(b.get("ads") or 0),
+                "last_seen_at": stamp,
+            }
+            # Only a board we actually read gets a fresh read time, or a
+            # skipped board would look current and never be read again.
+            if b.get("read"):
+                row["ads_synced_at"] = stamp
+            rows.append(row)
+        self.upsert("foreplay_boards", rows, "id")
+        return [str(b.get("name") or b.get("id")) for b in fresh]
+
     def store_foreplay(self, rows: list[dict[str, Any]]) -> int:
         stamp = now_iso()
         clean = []

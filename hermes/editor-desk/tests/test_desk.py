@@ -1060,6 +1060,9 @@ class ForeplayCreditTests(unittest.TestCase):
         def boards(self):
             return [{"id": "b1", "name": "Ardon"}]
 
+        def board_ads(self, bid, *, limit=100, cursor=""):
+            return {"data": []}
+
     def run_sync(self, fake, known=(), **kw):
         sb = FakeSupabase()
         sb.foreplay_rows = {k: {"id": k} for k in known}

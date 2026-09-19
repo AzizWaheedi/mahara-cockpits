@@ -4,6 +4,7 @@ import type {
   Asset,
   Client,
   EditorPerson,
+  ForeplayBoard,
   Idea,
   Job,
   Note,
@@ -260,6 +261,20 @@ export function useSwipe(): Loaded<SwipeAd[]> {
         .select("*")
         .order("running_duration", { ascending: false, nullsFirst: false })
         .limit(300),
+    [],
+  );
+}
+
+/**
+ * Every Foreplay board, including one nobody has saved to yet.
+ *
+ * Read from our own table rather than counted off the mirrored ads, because
+ * a board with no ads in it still has to appear -- otherwise adding a board
+ * looks like nothing happened until somebody saves into it.
+ */
+export function useBoards(): Loaded<ForeplayBoard[]> {
+  return useQuery<ForeplayBoard[]>(
+    () => supabase.from("foreplay_boards").select("*").order("name").limit(200),
     [],
   );
 }
