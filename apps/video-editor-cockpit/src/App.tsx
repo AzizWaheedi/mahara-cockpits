@@ -174,9 +174,10 @@ function Shell() {
         className="sticky z-10 border-b hairline bg-[color:var(--background)]/90 backdrop-blur"
         style={{ top: "env(safe-area-inset-top, 0px)" }}
       >
-        <div className="mx-auto flex max-w-5xl items-center gap-4 px-4 py-2.5">
+        <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-2.5 sm:gap-4">
           <Wordmark size="sm" />
-          <span className="text-sm font-medium tracking-tight">Editor desk</span>
+          {/* The wordmark alone carries it on a phone; the label needs room. */}
+          <span className="hidden text-sm font-medium tracking-tight sm:inline">Editor desk</span>
           <span className="muted ml-auto hidden text-xs sm:inline">{who}</span>
           <SwitchCockpit cockpits={cockpits} isAdmin={admin} />
           <ThemeToggle />

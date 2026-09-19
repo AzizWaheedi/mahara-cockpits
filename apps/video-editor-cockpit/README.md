@@ -11,10 +11,19 @@ generator and no caption burner. What there is:
 - every open job with what is blocking it, in plain sentences;
 - the brand work for that client, joined by the tag on the card: the do's and
   don'ts, the Brand DNA and the offer cheat sheet, which live on Clients -
-  Mahara and which an editor otherwise never opens;
+  Mahara and which an editor otherwise never opens. These stay current: a
+  brand document is edited in place, so the desk compares the document's own
+  revision in Drive rather than its link, and reads it again only when it
+  actually changed. The job page says when it last did;
 - the footage, each file with its storyboard frame, its shape, whether it has
   sound, and where its shots change;
 - one search box across everything anyone said in any file, with the second;
+- a way to ask for what is missing. The reason a job is blocked and the
+  buttons to do something about it sit in the same panel, because the moment
+  a person reads "the footage folder has no video in it yet" is the moment
+  they want to ask for it. One click puts it on the ClickUp card in the words
+  a colleague would use, and the job remembers it was asked so nobody asks
+  twice;
 - the cut: paste a link, have it checked, send it to client review;
 - notes, including the ones people left on the ClickUp card.
 

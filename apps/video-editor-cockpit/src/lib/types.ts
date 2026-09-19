@@ -36,6 +36,10 @@ export interface Job {
   prepared_at: string | null;
   attempts: number | null;
   error: string | null;
+  /** What the editor last asked for on this job, and when. */
+  asked_for: string | null;
+  asked_at: string | null;
+  asked_by: string | null;
   synced_at: string | null;
 }
 
@@ -48,8 +52,11 @@ export interface Client {
   dos_donts: string | null;
   brand_dna_url: string | null;
   brand_dna: string | null;
+  /** Drive's modifiedTime for the document, so the desk can tell it changed. */
+  brand_dna_rev: string | null;
   offer_url: string | null;
   offer: string | null;
+  offer_rev: string | null;
   drive_url: string | null;
   website: string | null;
   instagram: string | null;
@@ -136,7 +143,18 @@ export interface Note {
   at: string | null;
 }
 
-export type RequestKind = "deliver" | "check" | "comment" | "rescan";
+export type RequestKind = "deliver" | "check" | "comment" | "rescan" | "ask";
+
+/** What an editor can be short of. Mirrors ASK_FOR in the worker. */
+export type AskTopic =
+  | "footage"
+  | "brief"
+  | "script"
+  | "brand"
+  | "music"
+  | "access"
+  | "approval"
+  | "other";
 
 export interface WorkRequest {
   id: string;
