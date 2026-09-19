@@ -285,11 +285,14 @@ def _forward_to_ideation(sb: Any, ads: list[dict[str, Any]], log: Callable[[str]
 def credits_left(usage: dict[str, Any]) -> Optional[int]:
     """However they spell it. None means we could not tell, which is not the
     same as none left and must not stop the sync."""
-    for key in ("credits_remaining", "remaining", "credits_left", "available"):
+    # "remaining_credits" is what the live API returns; the others are
+    # guesses kept in case they rename it.
+    for key in ("remaining_credits", "credits_remaining", "remaining", "credits_left", "available"):
         v = usage.get(key)
         if isinstance(v, (int, float)):
             return int(v)
-    used, total = usage.get("credits_used"), usage.get("credits_total") or usage.get("credits")
+    used = usage.get("credits_used")
+    total = usage.get("total_credits") or usage.get("credits_total") or usage.get("credits")
     if isinstance(used, (int, float)) and isinstance(total, (int, float)):
         return int(total) - int(used)
     return None

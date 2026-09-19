@@ -1110,6 +1110,9 @@ class ForeplayCreditTests(unittest.TestCase):
 
     def test_the_balance_is_read_however_they_spell_it(self):
         for shape, want in (
+            # What the live API actually returns, read from Aziz's account
+            # on 2026-09-19.
+            ({"remaining_credits": 9689, "total_credits": 10000}, 9689),
             ({"credits_remaining": 42}, 42),
             ({"remaining": 7}, 7),
             ({"credits_used": 100, "credits_total": 1000}, 900),
