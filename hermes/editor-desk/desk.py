@@ -12,6 +12,7 @@
     python3 desk.py requests [--limit N]        carry out what the cockpit asked for
     python3 desk.py meetings [--days N]        team meetings from Fathom
     python3 desk.py foreplay [--limit N]       the Foreplay swipe file into our own store
+    python3 desk.py archive [--limit N]        keep our own copy of the ads we ran
     python3 desk.py notes [--task ID]          pull ClickUp comments in as timestamped notes
     python3 desk.py jobs [--mine EMAIL]        what is open, and what is blocking it
 
@@ -363,6 +364,17 @@ def cmd_meetings(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     return 0
 
 
+def cmd_archive(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    """Keep our own copy of the ads we ran."""
+    from desk import ads as ads_mod
+
+    sb = _sb(cfg)
+    out = ads_mod.archive(cfg, log.info, sb, limit=args.limit or 25, retry_failed=args.retry)
+    log.info(f"archive: {out}")
+    _print(out, args.json)
+    return 0
+
+
 def cmd_foreplay(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     """The Foreplay swipe file into our own store."""
     from desk import foreplay as fp_mod
@@ -447,6 +459,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     d = sub.add_parser("doctor"); d.add_argument("--offline", action="store_true")
+    ar = sub.add_parser("archive"); ar.add_argument("--limit", type=int, default=25); ar.add_argument("--retry", action="store_true")
     fp = sub.add_parser("foreplay"); fp.add_argument("--limit", type=int, default=250); fp.add_argument("--full", action="store_true")
     mt = sub.add_parser("meetings"); mt.add_argument("--days", type=int, default=45)
     rq = sub.add_parser("requests"); rq.add_argument("--limit", type=int, default=10)
@@ -467,7 +480,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     handlers = {
         "doctor": cmd_doctor, "sync": cmd_sync, "prepare": cmd_prepare,
         "check": cmd_check, "deliver": cmd_deliver, "notes": cmd_notes, "jobs": cmd_jobs,
-        "requests": cmd_requests, "meetings": cmd_meetings, "foreplay": cmd_foreplay,
+        "requests": cmd_requests, "meetings": cmd_meetings, "foreplay": cmd_foreplay, "archive": cmd_archive,
     }
     try:
         return handlers[args.cmd](cfg, args, log)

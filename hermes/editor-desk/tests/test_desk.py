@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 os.environ.setdefault("DESK_HOME", "/tmp/desk-unit")
-from desk import brand, checks, clients, foreplay, media, meetings, prepare, queue, sheets, speech
+from desk import ads, brand, checks, clients, foreplay, media, meetings, prepare, queue, sheets, speech
 from desk.clickup import editors_of, fields_of, is_open, job_row
 from desk.config import Config
 from desk.drive import parse_id
@@ -176,6 +176,14 @@ class CheckTests(unittest.TestCase):
 
 
 class PrepareTests(unittest.TestCase):
+    def setUp(self):
+        # free_bytes reads the machine this runs on. A laptop with 6 GB spare
+        # tripped the worker's 8 GB floor and skipped every download, which
+        # failed three tests for a reason that was not about the desk.
+        was = media.free_bytes
+        media.free_bytes = lambda _p: 500 * 1024**3
+        self.addCleanup(lambda: setattr(media, "free_bytes", was))
+
     def _run(self, cfg, sb, drive, job, **kw):
         return prepare.prepare_job(cfg, lambda m: None, sb, drive, job, **kw)
 
@@ -1155,3 +1163,98 @@ class IdeationHandoffTests(unittest.TestCase):
 
     def test_a_platformless_ad_still_lands_somewhere_sensible(self):
         self.assertEqual(foreplay.as_idea({**self.AD, "publisher_platform": []})["platform"], "meta")
+
+
+class AdArchiveTests(unittest.TestCase):
+    """Our own copy of the ads we ran. Measured 2026-09-19: 19 of 29 winners
+    have already stopped, so they are gone from the Ad Library and no tool
+    that reads it can fetch them. The Page token can."""
+
+    def test_the_video_id_is_found_in_all_four_places_it_hides(self):
+        cases = [
+            ({"creative": {"video_id": "v1"}}, "v1"),
+            ({"creative": {"object_story_spec": {"video_data": {"video_id": "v2"}}}}, "v2"),
+            (
+                {"creative": {"object_story_spec": {"link_data": {
+                    "child_attachments": [{"image_hash": "x"}, {"video_id": "v3"}]}}}},
+                "v3",
+            ),
+            ({"creative": {"asset_feed_spec": {"videos": [{"video_id": "v4"}]}}}, "v4"),
+        ]
+        for payload, want in cases:
+            was = ads.graph
+            ads.graph = lambda *a, **k: payload
+            try:
+                self.assertEqual(ads.video_id_of("ad", "t"), want, payload)
+            finally:
+                ads.graph = was
+
+    def test_an_image_ad_has_no_video_and_says_so(self):
+        was = ads.graph
+        ads.graph = lambda *a, **k: {"creative": {"image_url": "https://x/y.jpg"}}
+        try:
+            self.assertIsNone(ads.video_id_of("ad", "t"))
+        finally:
+            ads.graph = was
+
+    def test_the_page_token_is_tried_when_the_account_token_is_refused(self):
+        calls = []
+
+        def fake(path, token, fields="", extra=""):
+            calls.append(token)
+            if token == "account":
+                # What Meta actually does: the field is simply absent.
+                return {"from": {"id": "page9"}}
+            return {"source": "https://cdn/x.mp4"}
+
+        was = ads.graph
+        ads.graph = fake
+        try:
+            got = ads.source_for("v1", "account", {"page9": "pagetoken"})
+        finally:
+            ads.graph = was
+        self.assertEqual(got, "https://cdn/x.mp4")
+        self.assertEqual(calls, ["account", "pagetoken"], "the account is tried first")
+
+    def test_a_page_we_do_not_administer_returns_nothing_rather_than_guessing(self):
+        was = ads.graph
+        ads.graph = lambda *a, **k: {"from": {"id": "somebody_elses_page"}}
+        try:
+            self.assertIsNone(ads.source_for("v1", "account", {"page9": "t"}))
+        finally:
+            ads.graph = was
+
+    def test_the_account_token_is_used_when_it_does_work(self):
+        calls = []
+
+        def fake(path, token, fields="", extra=""):
+            calls.append(token)
+            return {"source": "https://cdn/x.mp4"}
+
+        was = ads.graph
+        ads.graph = fake
+        try:
+            ads.source_for("v1", "account", {"page9": "pagetoken"})
+        finally:
+            ads.graph = was
+        self.assertEqual(calls, ["account"], "no second call when the first one answers")
+
+    def test_a_file_over_the_cap_is_refused_rather_than_filling_the_bucket(self):
+        import io
+        import urllib.request as ur
+
+        class Resp(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        was = ur.urlopen
+        ur.urlopen = lambda *a, **k: Resp(b"x" * 500)
+        try:
+            with self.assertRaises(ValueError):
+                ads.fetch("https://cdn/x.mp4", max_bytes=100)
+            self.assertEqual(len(ads.fetch("https://cdn/x.mp4", max_bytes=1000)), 500)
+        finally:
+            ur.urlopen = was

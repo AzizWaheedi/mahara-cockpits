@@ -205,6 +205,10 @@ class Config:
         return key("FOREPLAY_API_KEY")
 
     @property
+    def meta_token(self) -> str:
+        return key("META_ACCESS_TOKEN") or key("META_SYSTEM_TOKEN")
+
+    @property
     def slack_token(self) -> str:
         return key("SLACK_BOT_TOKEN")
 

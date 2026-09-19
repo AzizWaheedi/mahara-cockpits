@@ -352,6 +352,24 @@ class Supabase:
         rows = self.select("editor_clients", f"select=*&task_id=eq.{http.quote(task_id)}&limit=1")
         return rows[0] if rows else None
 
+    # ---- our own copy of an ad -------------------------------------------
+    def store_winner_file(self, row: dict[str, Any]) -> None:
+        body = {k: v for k, v in row.items() if k in
+                {"ad_id", "video_id", "file_path", "file_bytes", "file_error"}}
+        if not body.get("ad_id"):
+            return
+        body["file_at"] = now_iso()
+        self.upsert("winner_ads", [body], "ad_id")
+
+    def upload_ad_video(self, ad_id: str, blob: bytes) -> str:
+        path = f"{ad_id}.mp4"
+        headers = self._headers(extra={"Content-Type": "video/mp4", "x-upsert": "true"})
+        http.request(
+            "POST", f"{self.url}/storage/v1/object/ad-videos/{http.quote(path)}",
+            headers=headers, data=blob, timeout=300, retries=1, ok_statuses=(200, 201),
+        )
+        return path
+
     # ---- stills ----------------------------------------------------------
     def upload_still(self, task_id: str, name: str, blob: bytes, content_type: str = "image/jpeg") -> str:
         path = f"{task_id}/{name}"
