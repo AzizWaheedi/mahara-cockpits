@@ -121,6 +121,7 @@ class FakeSupabase:
     def __init__(self):
         self.jobs: dict[str, dict[str, Any]] = {}
         self.requests_rows: dict[str, dict[str, Any]] = {}
+        self.people_rows: dict[str, dict[str, Any]] = {}
         self.clients_rows: dict[str, dict[str, Any]] = {}
         self.assets_rows: dict[str, dict[str, Any]] = {}
         self.versions_rows: dict[str, dict[str, Any]] = {}
@@ -175,6 +176,18 @@ class FakeSupabase:
 
     def notes(self, task_id):
         return [n for n in self.notes_rows.values() if n.get("task_id") == task_id]
+
+    def seats_from_board(self, people, stamp):
+        want = {p["email"].lower(): p.get("name") or "" for p in people if p.get("email")}
+        for email, name in want.items():
+            row = self.people_rows.setdefault(email, {"email": email})
+            row.update({"via_clickup": True, "clickup_seen_at": stamp})
+            if name:
+                row["name"] = name
+        stale = [e for e, r in self.people_rows.items() if r.get("via_clickup") and e not in want]
+        for email in stale:
+            self.people_rows[email]["via_clickup"] = False
+        return {"granted": len(want), "revoked": len(stale)}
 
     def select(self, table, params):
         if table == "editor_jobs":

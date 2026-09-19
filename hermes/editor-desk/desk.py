@@ -215,6 +215,15 @@ def cmd_sync(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
                 r["script"] = text[:40000]
                 r["script_task_id"] = doc_id
 
+    # Whoever the board says is editing gets a seat in the cockpit, so adding
+    # someone on ClickUp is enough (Aziz, 2026-09-19). Only our own domain,
+    # and only ever as an editor: admin is the portal's to give.
+    seats = {"granted": 0, "revoked": 0}
+    try:
+        seats = sb.seats_from_board(clients_mod.seat_people([t for _, t in keep]), stamp)
+    except Exception as e:  # noqa: BLE001 - a seat is not worth losing the sync over
+        log.warn(f"seats not updated: {http.scrub(str(e))[:160]}")
+
     out = sb.store_jobs(rows)
     # A job whose board fields changed after preparation is read again.
     stale = 0
@@ -228,6 +237,7 @@ def cmd_sync(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     summary = {
         "tasks": len(rows), **out, "stale": stale,
         "clients": len(people), "matched": matched, "docs_read": docs_read,
+        "seats": seats,
     }
     log.info(f"sync: {summary}")
     _print(summary, args.json)

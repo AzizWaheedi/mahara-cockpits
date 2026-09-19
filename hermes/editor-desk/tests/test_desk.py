@@ -623,3 +623,58 @@ class BrandFreshnessTests(unittest.TestCase):
     def test_a_card_with_no_document_has_no_revision(self):
         d = self.Drive("x")
         self.assertIsNone(clients.revisions(d, {"brand_dna_url": "", "offer_url": ""})["brand_dna_rev"])
+
+
+class SeatTests(unittest.TestCase):
+    """Adding someone as Assigned Editor on a ClickUp card is enough to let
+    them into the cockpit (Aziz, 2026-09-19). Two syncs write this table, so
+    the rule that matters is that neither can undo the other."""
+
+    def test_only_our_own_domain_gets_a_seat(self):
+        cards = [
+            task("a", editor=("Karim Abdelrahman", "karim@maharamedia.com")),
+            task("b", editor=("A Freelancer", "someone@gmail.com")),
+            task("c", editor=("Moaz", "moaz@maharamedia.com")),
+        ]
+        got = {p["email"] for p in clients.seat_people(cards)}
+        self.assertEqual(got, {"karim@maharamedia.com", "moaz@maharamedia.com"})
+
+    def test_a_name_is_kept_and_a_person_appears_once(self):
+        cards = [
+            task("a", editor=("Karim Abdelrahman", "karim@maharamedia.com")),
+            task("b", editor=("", "karim@maharamedia.com")),
+        ]
+        people = clients.seat_people(cards)
+        self.assertEqual(len(people), 1)
+        self.assertEqual(people[0]["name"], "Karim Abdelrahman")
+
+    def test_a_card_with_nobody_on_it_grants_nothing(self):
+        self.assertEqual(clients.seat_people([task("a", editor=None)]), [])
+        self.assertEqual(clients.seat_people([]), [])
+
+    def test_the_desk_writes_its_own_flag_and_never_the_answer(self):
+        sb = FakeSupabase()
+        sb.seats_from_board([{"email": "moaz@maharamedia.com", "name": "Moaz"}], NOW)
+        row = sb.people_rows["moaz@maharamedia.com"]
+        self.assertTrue(row["via_clickup"])
+        self.assertNotIn("active", row, "active is computed by the database, never written")
+        self.assertNotIn("role", row, "admin is the portal's to give, not the board's")
+
+    def test_a_seat_the_board_gave_is_taken_back_when_the_card_changes(self):
+        sb = FakeSupabase()
+        sb.seats_from_board([{"email": "moaz@maharamedia.com", "name": "Moaz"}], NOW)
+        out = sb.seats_from_board([{"email": "karim@maharamedia.com", "name": "Karim"}], NOW)
+        self.assertEqual(out["revoked"], 1)
+        self.assertFalse(sb.people_rows["moaz@maharamedia.com"]["via_clickup"])
+        self.assertTrue(sb.people_rows["karim@maharamedia.com"]["via_clickup"])
+
+    def test_the_board_never_touches_a_seat_the_portal_gave(self):
+        sb = FakeSupabase()
+        sb.people_rows["sabry@maharamedia.com"] = {
+            "email": "sabry@maharamedia.com", "role": "editor", "via_portal": True, "via_clickup": False,
+        }
+        sb.seats_from_board([{"email": "karim@maharamedia.com", "name": "Karim"}], NOW)
+        self.assertTrue(
+            sb.people_rows["sabry@maharamedia.com"]["via_portal"],
+            "the desk must leave the portal's own flag alone",
+        )

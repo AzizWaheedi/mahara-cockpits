@@ -144,6 +144,28 @@ def roster(cfg: Config, log: Callable[[str], None]) -> list[dict[str, Any]]:
     return out
 
 
+# Only our own people get a seat from the board. A ClickUp card can be edited
+# by anyone with access to the workspace, and a seat opens client material, so
+# the address has to be ours before it counts.
+SEAT_DOMAINS = ("maharamedia.com",)
+
+
+def seat_people(tasks: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Everyone named as Assigned Editor on these cards, at our own domain."""
+    from .clickup import editors_of
+
+    out: dict[str, str] = {}
+    for t in tasks:
+        for person in editors_of(t):
+            email = str(person.get("email") or "").strip().lower()
+            if not email or not any(email.endswith("@" + d) for d in SEAT_DOMAINS):
+                continue
+            name = str(person.get("name") or "").strip()
+            if name or email not in out:
+                out[email] = name or out.get(email, "")
+    return [{"email": e, "name": n} for e, n in sorted(out.items())]
+
+
 def match(tags: Iterable[Any], people: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
     """The client a video card's tags point at, or nothing.
 

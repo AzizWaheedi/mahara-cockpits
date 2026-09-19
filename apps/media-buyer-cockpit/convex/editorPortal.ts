@@ -123,6 +123,11 @@ async function signInTokenFor(
 /**
  * The editor cockpit's own allowlist, kept level with the portal's seats.
  *
+ * This writes `via_portal`, never `active`. The Assigned Editor field on a
+ * ClickUp card also grants a seat, through `via_clickup`, and if both wrote
+ * the same flag they would undo each other every half hour. `active` is
+ * computed by the database from the two, so neither can.
+ *
  * A null name leaves whatever is stored alone. PostgREST only writes the
  * columns present in the payload, and the portal's directory often has no
  * name at all, so passing one through unconditionally replaced
@@ -132,9 +137,9 @@ async function putPerson(
   email: string,
   name: string | null,
   role: "admin" | "editor",
-  active: boolean,
+  viaPortal: boolean,
 ): Promise<void> {
-  const row: Record<string, unknown> = { email, role, active };
+  const row: Record<string, unknown> = { email, role, via_portal: viaPortal };
   if (name?.trim()) row.name = name.trim();
   await sb("/rest/v1/editor_people?on_conflict=email", {
     method: "POST",
