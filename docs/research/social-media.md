@@ -176,7 +176,7 @@ Then every one of them was asked what it could do:
 | --- | --- |
 | tokens that reach the Social Planner | **42** |
 | tokens refused for a missing scope | **5** — AEA Designs, amheco, Grandiocity Projects, Inverse group, Pidco Group |
-| sub-accounts with a social account connected | **0** |
+| sub-accounts with a social account connected | **0 of 49**, Mahara's own two included |
 
 The five say *"The token is not authorized for this scope"*, which is a
 different thing from the "Invalid JWT" the panel token gave and needs a
@@ -184,6 +184,23 @@ different fix: the token is real, it was just generated without the
 `socialplanner/*` boxes ticked. Regenerate it in that sub-account's
 settings. The cockpit now tells those two apart, because they need
 different people.
+
+**Cloudflare's error 1010 is a bot rule, not a permission.** `/users` and
+`/locations` refuse a client with no browser signature and say "access
+denied", which reads like a scope problem. A plain `User-Agent` header
+gets straight through. That unblocked both remaining unknowns:
+
+- the **`userId`** `createPost` requires is now read from the sub-account
+  itself rather than pasted into an environment variable per client -- the
+  client's own GHL user, which is the honest author since the post is
+  theirs. Resolved and stored for 42 of 47.
+- the agency's **`companyId`** is `gE0FY1DYWEG4Dalo1SfR`, which is the
+  other half `/oauth/locationToken` needs. If an agency token ever appears,
+  minting works without another round of research.
+
+**Mahara's own two sub-accounts** are in the same sheet, on an `Internal
+Accounts` tab: `Main` (the B2B sub) and `MaharaMediaDIY`. Both answer, and
+both have zero connected accounts too.
 
 **The last row is the one that matters.** The path is authenticated and
 every endpoint answers, but not one client has ever connected an Instagram

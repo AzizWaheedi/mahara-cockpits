@@ -7,6 +7,7 @@ import {
   accounts as ghlAccounts,
   createPost as ghlCreatePost,
   posts as ghlPosts,
+  users as ghlUsers,
   locationToken,
   ourStatus,
   USER_ID,
@@ -684,6 +685,37 @@ async function tokenFor(locationId: string): Promise<string> {
   return got.token;
 }
 
+/**
+ * Who a post is authored by in a sub-account.
+ *
+ * The environment variable wins if somebody set one, otherwise the
+ * sub-account's own first user -- which is the honest author, since the
+ * post is theirs. Cached on the auth row so this is one call per client
+ * ever, not one per post.
+ */
+async function authorFor(locationId: string, token: string): Promise<string> {
+  if (USER_ID) return USER_ID;
+  const row = rows(
+    await rest(
+      `social_ghl_auth?select=user_id&id=eq.${enc(locationId)}&limit=1`,
+    ),
+  )[0];
+  if (row?.user_id) return String(row.user_id);
+  const found = await ghlUsers(locationId, token);
+  const id = String(found[0]?.id ?? found[0]?._id ?? "");
+  if (!id)
+    throw new Error(
+      `GoHighLevel lists no user on that sub-account, so there is nobody to ` +
+        "author the post as. Set GHL_SOCIAL_USER_ID, or add a user in GHL.",
+    );
+  await rest("social_ghl_auth?on_conflict=id", {
+    method: "POST",
+    prefer: "resolution=merge-duplicates,return=minimal",
+    body: [{ id: locationId, user_id: id, updated_at: now() }],
+  });
+  return id;
+}
+
 /** The client's row, or a sentence saying what is not set up. */
 async function clientOrWhy(clientTaskId: string): Promise<Row> {
   const c = rows(
@@ -852,6 +884,7 @@ export const sendToClient = authenticatedAction({
     if (!ready.length)
       throw new Error("Nothing in that batch has passed internal review yet.");
 
+    const author = await authorFor(location, token);
     const slots = spread(String(b.month), ready.length);
     let sent = 0;
     const problems: string[] = [];
@@ -865,7 +898,7 @@ export const sendToClient = authenticatedAction({
               url: u,
             }),
           ),
-          userId: USER_ID,
+          userId: author,
           scheduleDate: slots[i],
           approverUserId: args.approverUserId,
         });

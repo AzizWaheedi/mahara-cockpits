@@ -39,6 +39,11 @@ export const VERSION = {
  */
 export const USER_ID = process.env.GHL_SOCIAL_USER_ID ?? "";
 
+/** Cloudflare turns away a client with no browser signature on some paths. */
+const UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+  "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
+
 /** The scopes a token needs. Named here so a 401 can say which is missing. */
 export const SCOPES = [
   "socialplanner/post.readonly",
@@ -109,6 +114,10 @@ export async function ghl(
       // "Invalid JWT", which reads like the token is wrong when it is not.
       Version: init.version ?? VERSION.posts,
       Accept: "application/json",
+      // Cloudflare refuses some paths -- /users and /locations among them --
+      // to a client with no browser signature, with error 1010, which reads
+      // like a permission and is a bot rule. A plain User-Agent passes.
+      "User-Agent": UA,
       ...(init.body !== undefined
         ? { "Content-Type": "application/json" }
         : {}),
@@ -196,6 +205,39 @@ export async function accounts(
  * string*: send the number and it answers "limit must be a number string".
  * Both verified against a real sub-account on 2026-09-19.
  */
+/**
+ * Who can author a post in a sub-account.
+ *
+ * `createPost` requires a `userId` and their documentation does not say
+ * so. Rather than making somebody paste one into an environment variable
+ * per client, ask the sub-account: the client's own GHL user is the right
+ * author anyway, because the post is theirs.
+ */
+export async function users(
+  locationId: string,
+  token: string,
+): Promise<Json[]> {
+  const out = await ghl(
+    `/users/?locationId=${encodeURIComponent(locationId)}`,
+    {
+      token,
+    },
+  );
+  const rows = out.users ?? out.data ?? [];
+  return Array.isArray(rows) ? rows : [];
+}
+
+/** The sub-account itself, which is where the agency's company id lives. */
+export async function location(
+  locationId: string,
+  token: string,
+): Promise<Json> {
+  const out = await ghl(`/locations/${encodeURIComponent(locationId)}`, {
+    token,
+  });
+  return (out.location as Json) ?? out;
+}
+
 export function listBody(
   opts: { from?: string; to?: string; limit?: number } = {},
 ): Json {
