@@ -237,6 +237,15 @@ export function SalesTab({ sections, now, day, goTab }: CeoTabProps) {
       </SectionCard>
 
       <SectionCard
+        kicker="Right now"
+        title="What the funnel is waiting on"
+        section={growthSection}
+        order={4}
+      >
+        {p => <BacklogBody p={p} />}
+      </SectionCard>
+
+      <SectionCard
         kicker="Month to date"
         title="Reps"
         section={growthSection}
@@ -926,6 +935,103 @@ function NotMeasured() {
           </div>
         ))}
       </dl>
+    </div>
+  );
+}
+
+/**
+ * What the sales system is waiting on somebody to fix.
+ *
+ * Counts only, deliberately. Every row behind these numbers carries a lead's
+ * name, email and phone, and none of that reaches the payload.
+ */
+function BacklogBody({ p }: { p: GrowthPayload }) {
+  const q = p.actionQueue;
+  const st = p.stalled;
+  if (!q && !st)
+    return (
+      <EmptyState
+        title="The backlog has not been read yet"
+        text="It arrives on the next refresh."
+        icon={Lock}
+      />
+    );
+  const worst = q ? [...q.buckets].sort((a, b) => b.count - a.count) : [];
+  const ageLabel = (age: string) =>
+    age === ">30d"
+      ? "Over a month"
+      : age === "<14d"
+        ? "Still warm"
+        : "Two to four weeks";
+  return (
+    <div className="grid gap-6">
+      {q ? (
+        <div>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3">
+            <StatTile
+              variant="plain"
+              label="Records waiting on someone"
+              value={count(q.total)}
+              status={<StatusChip tone="serious" label="Backlog" />}
+              hint="Every rate on this tab is computed over these records, so they stay soft until it is cleared."
+            />
+            {worst.slice(0, 2).map(b => (
+              <StatTile
+                key={b.key}
+                variant="plain"
+                label={b.label}
+                value={count(b.count)}
+                hint={b.hint}
+              />
+            ))}
+          </div>
+          {worst.length > 2 ? (
+            <ul className="mt-4 grid gap-1 border-t pt-3 sm:grid-cols-2">
+              {worst.slice(2).map(b => (
+                <li key={b.key} className="text-sm">
+                  <span className="text-muted-foreground">{`${b.label}: `}</span>
+                  {count(b.count)}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+
+      {st ? (
+        <div className="border-t pt-4">
+          <p className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {`Open deals not touched in ${st.staleDays} days`}
+          </p>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4">
+            <StatTile
+              variant="plain"
+              label="Gone quiet"
+              value={`${st.stale} of ${st.total}`}
+              status={
+                st.stale > st.total / 2 ? (
+                  <StatusChip tone="serious" label="Most of them" />
+                ) : undefined
+              }
+            />
+            {st.buckets.map(b => (
+              <StatTile
+                key={b.age}
+                variant="plain"
+                label={ageLabel(b.age)}
+                value={count(b.deals)}
+              />
+            ))}
+          </div>
+          {st.byOwner.length ? (
+            <p className="mt-3 text-muted-foreground">
+              {`Owners, from the sample the database returns rather than the whole set: ${st.byOwner
+                .map(o => `${o.owner || "unassigned"} ${o.deals}`)
+                .join(", ")}.`}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
