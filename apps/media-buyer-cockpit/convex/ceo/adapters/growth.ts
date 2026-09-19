@@ -153,6 +153,42 @@ order by (e.value->>'spend')::numeric desc, e.ordinality
 limit 6`;
 }
 
+/**
+ * Every ad with something to show for itself, over a long enough window that a
+ * close can be attributed. Ranked by outcome, not by spend.
+ */
+function winningAdsSql(from: string, to: string): string {
+  return `select
+  e.value->>'ad_id' as ad_id,
+  coalesce(nullif(btrim(e.value->>'ad_name'), ''), 'Ad ' || (e.value->>'ad_id')) as name,
+  e.value->>'thumbnail_url' as thumbnail,
+  e.value->>'status' as status,
+  e.value->>'in_meta' as in_meta,
+  e.value->>'spend' as spend,
+  e.value->>'impressions' as impressions,
+  e.value->>'clicks' as clicks,
+  e.value->>'ctr' as ctr,
+  e.value->>'leads' as leads,
+  e.value->>'cpl' as cpl,
+  e.value->>'qualified_leads' as qualified,
+  e.value->>'qualified_pct' as qualified_pct,
+  e.value->>'demos_booked' as demos,
+  e.value->>'cost_per_demo' as cost_per_demo,
+  e.value->>'sales' as sales,
+  e.value->>'revenue' as revenue,
+  e.value->>'cash' as cash,
+  e.value->>'cpa' as cpa,
+  e.value->>'rev_roas' as rev_roas
+from json_array_elements(public.b2b_marketing_ads(${day(from)}, ${day(to)}, null::text[])) with ordinality e
+where coalesce((e.value->>'leads')::numeric, 0) > 0
+   or coalesce((e.value->>'spend')::numeric, 0) > 0
+order by coalesce((e.value->>'sales')::numeric, 0) desc,
+         coalesce((e.value->>'demos_booked')::numeric, 0) desc,
+         coalesce((e.value->>'leads')::numeric, 0) desc,
+         e.ordinality
+limit 24`;
+}
+
 /** Lead sources with the same rule as b2b_cockpit's sources list. */
 function leadSourcesSql(from: string, to: string): string {
   return `select coalesce(nullif(btrim(source), ''), '(none)') as source, count(*) as leads
@@ -561,6 +597,51 @@ export const growth: Adapter = {
         }. Owner counts come from the deals the function returns, which is a capped sample, so read them as a shape rather than a total.`,
       });
 
+    const WINNING_DAYS = 90;
+    const winningAds = await attempt(
+      "The ad breakdown",
+      notes,
+      undefined as GrowthPayload["winningAds"],
+      async () => {
+        const rows = await sql(
+          B2B,
+          winningAdsSql(addDays(today, -WINNING_DAYS), today),
+        );
+        const opt = (x: unknown) =>
+          x === null || x === undefined || x === "" ? null : num(x);
+        return {
+          windowDays: WINNING_DAYS,
+          rows: rows.map(r => ({
+            adId: String(r.ad_id),
+            name: String(r.name),
+            thumbnail: r.thumbnail ? String(r.thumbnail) : null,
+            status: r.status ? String(r.status) : null,
+            inMeta: String(r.in_meta) === "true",
+            spend: num(r.spend),
+            impressions: num(r.impressions),
+            clicks: num(r.clicks),
+            ctr: opt(r.ctr),
+            leads: num(r.leads),
+            cpl: opt(r.cpl),
+            qualified: num(r.qualified),
+            qualifiedPct: opt(r.qualified_pct),
+            demos: num(r.demos),
+            costPerDemo: opt(r.cost_per_demo),
+            sales: num(r.sales),
+            revenue: num(r.revenue),
+            cash: num(r.cash),
+            cpa: opt(r.cpa),
+            revRoas: opt(r.rev_roas),
+          })),
+        };
+      },
+    );
+    if (winningAds?.rows.length)
+      notes.push({
+        level: "info",
+        text: `Ads are ranked by what they produced over ${WINNING_DAYS} days, closes first, then demos, then leads, because the biggest spender is rarely the winner. An ad Meta no longer has a snapshot for still appears when leads or demos are attributed to it, with its spend shown as unknown rather than zero. Thumbnails come from Facebook on an expiring link, so one that stops loading is not a fault in the data.`,
+      });
+
     const pacing = await attempt(
       "Pacing",
       notes,
@@ -590,6 +671,7 @@ export const growth: Adapter = {
       ...(actionQueue ? { actionQueue } : {}),
       ...(stalled ? { stalled } : {}),
       ...(pacing ? { pacing } : {}),
+      ...(winningAds ? { winningAds } : {}),
       notes,
     } satisfies GrowthPayload;
 
