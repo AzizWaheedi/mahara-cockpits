@@ -26,7 +26,7 @@ Salma drains it.
 | kind | who does it | where |
 | --- | --- | --- |
 | `plan` | DeepSeek — extraction and drafting, per the routing rule | here |
-| `caption` | Anthropic, or OpenAI if that key is missing. Never the cheap model: a client's dialect is judgment | here |
+| `caption` | **OpenAI (`gpt-4.1`)** today. Anthropic if that key is ever set. Never the cheap model: a client's dialect is judgment | here |
 | `generate` | Higgsfield MCP | **not here** — deferred back to the queue for the openclaw agent session |
 
 `generate` raises `Deferred`, which puts the job back to `queued` rather
@@ -52,9 +52,9 @@ guide and six real audience questions:
 - twelve posts planned, four per pillar, all four Education topics taken
   from the client's own bank rather than invented, two of them verbatim in
   Arabic;
-- captions written in Gulf Arabic, naming Schuco, Technal and Alumil --
-  checked afterwards and all three are in the client's brand documents, so
-  transliterated rather than invented;
+- captions written in Gulf Arabic by `gpt-4.1`, naming Schuco, Technal and
+  Alumil -- checked afterwards and all three are in the client's brand
+  documents, so transliterated rather than invented;
 - the em-dash guard fired on a caption the model wrote with one anyway.
 
 ## What it will not do
@@ -62,3 +62,17 @@ guide and six real audience questions:
 No GoHighLevel credentials are in this process and none should be added.
 Posting is the cockpit's; publishing is GHL's. Salma writes `social_posts`
 and her own memory, and never moves a batch — moving one is a decision.
+
+## Why not Higgsfield for the words
+
+Higgsfield makes pictures. A caption is text, and Higgsfield has no text
+model to call -- the two jobs are not interchangeable and no single tool
+does both.
+
+The words come from a language model, and that is already settled:
+`gpt-4.1` writes the captions on the OpenAI key the box already has, and
+the plans go to DeepSeek. **Nothing is missing and nothing is waiting on a
+new subscription.** The Anthropic branch is there only because the
+variable exists on the box and is empty; if a key ever lands in it,
+captions move over and the job result records which model wrote each one,
+so it is never a silent change.
