@@ -27,6 +27,7 @@ import {
   ScriptsPage,
   SettingsPage,
   SignupPage,
+  SocialPage,
   SwipePage,
   TouchpointsPage,
   WorkPage,
@@ -68,6 +69,7 @@ export function AuthenticatedRoutes() {
             <Route path="/scripts" element={<ScriptsPage />} />
             <Route path="/ideation" element={<IdeationPage />} />
             <Route path="/swipe" element={<SwipePage />} />
+            <Route path="/social" element={<SocialPage />} />
             <Route path="/profiles" element={<ClientsPage />} />
             <Route path="/eod" element={<CreativeEodPage />} />
             <Route path="/meetings" element={<MeetingsPage />} />

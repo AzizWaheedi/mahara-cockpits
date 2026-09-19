@@ -15,6 +15,7 @@ import {
   Moon,
   MoonStar,
   Settings,
+  Share2,
   ShieldCheck,
   Sparkles,
   Sun,
@@ -82,6 +83,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
     items: [
       { href: "/scripting", label: "Scripting database", icon: Sparkles },
       { href: "/scripts", label: "Scripts we made", icon: FileText },
+      { href: "/social", label: "Social media", icon: Share2 },
       { href: "/ideation", label: "Ideation", icon: Lightbulb },
       { href: "/swipe", label: "Swipe file", icon: Bookmark },
       { href: "/what-works", label: "What works", icon: Trophy },
