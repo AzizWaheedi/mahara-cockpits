@@ -326,6 +326,38 @@ export const delivery: Adapter = {
             : "Your provisional and callback calendars are set up on dozens of client locations but have never produced a single appointment row, so nothing from either is inside this figure, and no provisional booking or agent callback is visible anywhere in the cockpit."
         }`,
       );
+      // Spend on a client we have already lost is money leaving for nothing,
+      // and it is the kind of thing a total hides. The headline above still
+      // counts every client account, because which clients belong in "what we
+      // delivered" is Aziz's definition to set, not this adapter's: both
+      // figures are given so either can be read.
+      {
+        const gone = new Set(
+          triage.clients
+            .filter(c => /cancel|stopped|churn/i.test(c.status ?? ""))
+            .map(c => c.clientId),
+        );
+        if (gone.size) {
+          const from = monthStart(today);
+          let lost = 0;
+          let leads = 0;
+          for (const d of triage.days)
+            if (gone.has(d.clientId) && d.date >= from && d.date <= today) {
+              lost += d.spend;
+              leads += d.leads;
+            }
+          const month = windowOf(from, today);
+          if (lost > 0)
+            warn(
+              `${dollars(lost)} of this month's spend is on ${plural(gone.size, "client")} already marked cancelled, and it brought in ${plural(leads, "lead")}: ${triage.clients
+                .filter(c => gone.has(c.clientId))
+                .map(c => c.name)
+                .join(
+                  ", ",
+                )}. That money is inside the totals above. Without ${gone.size === 1 ? "it" : "them"} the month reads ${dollars(month.spend - lost)} and ${plural(month.leads - leads, "lead")}.`,
+            );
+        }
+      }
       if (triage.unmapped.length)
         warn(
           `${plural(triage.unmapped.length, "ad account")} spending in this window ${triage.unmapped.length === 1 ? "is" : "are"} tied to no client card, so ${triage.unmapped.length === 1 ? "its" : "their"} spend is in the totals but has no client row: ${triage.unmapped.slice(0, 5).join(", ")}${triage.unmapped.length > 5 ? ` and ${triage.unmapped.length - 5} more` : ""}.`,
