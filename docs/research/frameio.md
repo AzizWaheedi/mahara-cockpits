@@ -21,23 +21,24 @@ cannot see what they asked for last time.
 
 ## What the flow becomes
 
-One Frame.io project per client, mirroring the ClickUp client card.
+One project, a folder per client, mirroring the ClickUp client card.
 
-1. **The editor uploads a cut.** From the Premiere panel, which is built in,
-   or the web app. It becomes a version on that project.
-2. **The creative director reviews first, privately.** On the Team plan,
-   comments can be marked internal -- the client never sees them. Sabry
-   points at frames; the editor gets timecoded notes; nothing has left the
-   building yet.
-3. **The client reviews on a share link.** External reviewers are free and
-   unlimited: no account, no seat, no cost. Passphrase-protected and
-   custom-branded on Pro and above.
+1. **The editor uploads a cut.** From the Premiere panel, which is built
+   in, or the web app. It becomes a version in that client's folder.
+2. **The creative director reviews, when the video needs it.** Sabry
+   comments in the project, pointing at frames; the editor gets timecoded
+   notes. Nothing has left the building, because no share link exists yet.
+3. **The client reviews on a share link, created after that pass.**
+   External reviewers are free and unlimited: no account, no seat, no cost.
+   Where Sabry is not needed, the share is created straight after step 1.
 4. **Approval closes the job.** A comment marked complete, or the client's
    approval on the share, and the desk moves the ClickUp card.
 
-The order matters and is the point: the client sees a cut the creative
-director has already been through, and the editor gets both sets of notes
-in the same place, at the right frames.
+The order is the point, and it is also what keeps this free: the client
+sees a cut the creative director has already been through, without paying
+for the Team plan's internal comments, because the share simply does not
+exist while Sabry is still looking. The editor gets both sets of notes in
+the same place, at the right frames.
 
 ## How it plugs into what is already here
 
@@ -87,9 +88,10 @@ Frame.io V4 authenticates with Adobe IMS OAuth. There are two kinds:
 - **User OAuth** -- needs `offline_access` for a refresh token, and that
   refresh token expires in about 30 days for a standard OAuth app.
 
-So on a Pro or Team plan, anything the worker *pushes* to Frame.io needs a
-token a human re-authorises roughly monthly. That is exactly the kind of
-thing that works for five weeks and then quietly stops.
+So on anything short of Enterprise -- free tier included -- whatever the
+worker *pushes* to Frame.io needs a token a human re-authorises roughly
+monthly. That is exactly the kind of thing that works for five weeks and
+then quietly stops.
 
 **Which is why the plan starts webhook-only.** Inbound needs no token: they
 push to us, we verify a signature. Everything in the table above works with
@@ -98,51 +100,106 @@ stays manual at first -- it is a few clicks per client, done once -- and
 only becomes a candidate for automation if Mahara ever moves to Enterprise,
 or if the monthly re-authorisation turns out to be tolerable.
 
-## Cost
+## Cost: nothing, for a long time
 
-| plan | seats | what it gives | monthly |
-| --- | --- | --- | --- |
-| Frame.io for Creative Cloud | 2 | 5 projects, 100 GB. Included with Premiere Pro or All Apps. | 0 |
-| Pro | up to 5 | unlimited projects, 2 TB, branded and passphrase shares | $15/seat |
-| Team | up to 15 | 3 TB, **internal comments**, restricted projects | $25/seat |
+Aziz's three answers on 2026-09-19 changed this section completely. Karim
+has a Premiere subscription; Sabry's review is not always needed; and the
+spend depends on how much.
 
-Clients cost nothing on any plan: reviewers on a share link are free and
-unlimited, and do not count toward the seat total.
+**Frame.io comes free with Karim's Premiere subscription**, and not the
+crippled public free tier -- the Creative Cloud entitlement is **two users,
+five projects, 100 GB, and unlimited free reviewers**. The public free plan
+is two projects and 2 GB; this is not that.
 
-The step that matters is **internal comments, which are Team only**. Without
-them the creative director's notes and the client's notes are the same
-conversation, and the whole "Sabry first, then the client" order collapses.
+Two users is Karim and Sabry, which is the whole internal side of this.
+Every client is free on any plan: a reviewer on a share link needs no
+account and no seat.
 
-Realistic shape: seats for the editors, Sabry, the media buyer and Aziz,
-call it six -- **$150/month, about $130 annual**. Against Foreplay's $389
-that is small, but it is the second recurring bill this quarter, so it
-should earn its place in a pilot before it is signed.
+**Five projects against forty-one clients sounds fatal and is not.** A
+Frame.io project holds folders. One project, "Client videos", a folder per
+client -- the same shape as the Drive folders the desk already reads. Five
+projects is then four spare, not a ceiling.
 
-Storage is not a worry. The footage survey found the open jobs holding
-minutes, not hours; 3 TB is far past what Mahara makes.
+**100 GB is about three years.** Mahara's exports are short -- the footage
+survey found open jobs holding minutes, not hours -- so a finished cut is
+roughly 60 to 120 MB. At thirty videos a month that is about 3 GB a month,
+and deleting delivered work pushes it further out.
+
+### The Team plan is no longer needed
+
+Internal comments were the only reason to pay $25 a seat, and they were
+only needed to keep the creative director's notes off the client's screen.
+Since Sabry does not review everything, and since **a share link is a thing
+you create when you are ready**, the order does the same job for free:
+
+- Sabry reviews in the project. His comments live there.
+- The editor fixes, and uploads the next version.
+- *Then* the share link is created, pointed at that version. The client sees
+  the cut Sabry has already been through.
+- Where Sabry is not needed, the share is created straight after the upload.
+
+The one thing this does not give you is Sabry replying privately to a
+comment the client has already made -- that thread is shared. That is a $10
+a seat a month problem, and not one worth paying for until it bites.
+
+### So the real numbers
+
+| when | cost |
+| --- | --- |
+| now: Karim and Sabry, all 41 clients in folders | **$0** |
+| a third person needs to comment internally | Pro, $15/seat, 5 members, unlimited projects, 2 TB |
+| Sabry needs to talk past a client mid-thread | Team, $25/seat |
+
+The first of those is the one to do. The other two are decisions for later,
+with a real reason attached, rather than a subscription bought on spec.
 
 ## Phases
 
-**0. Pilot on the free tier -- no spend, about half a day.** Frame.io for
-Creative Cloud gives two seats to anyone with a Premiere subscription.
-Karim and Sabry, one client, five real videos. What we are testing is
-whether the review actually moves there or whether people keep going back
-to WhatsApp. Nothing is built.
+**0. Set it up free, and find out the one thing nobody documents -- half a
+day, no spend.** Karim signs in to Frame.io with his Adobe account, adds
+Sabry as the second user, makes one project with a folder for one client,
+and runs five real videos through it end to end including a client share.
 
-**1. The webhook -- two days.** `api/frameio.ts` on the media buyer
-deployment: verify the HMAC, map the event, write `editor_notes` with real
-`at_sec`, mirror the Frame.io link onto the job. Tests around the signature
-check and the mapping, in the shape the worker's 145 already have. Still no
-OAuth, nothing scheduled, nothing that can expire.
+Two things get answered here, and they are why this is a phase and not a
+build:
 
-**2. The loop closes -- two days.** First client comment moves the ClickUp
-card to Update required; an approval moves it to done. The editor's job page
-shows the notes against the frames. The existing status buttons stay, so a
-failure here is inconvenient, not blocking.
+1. **Can Sabry be the second user without his own Creative Cloud
+   subscription?** The entitlement says two users share the account, and
+   that Frame.io users are separate from Creative Cloud users, but Adobe's
+   own wording hedges. Five minutes to find out.
+2. **Can a webhook be created on this account at all?** Creating one needs
+   an OAuth app in the Adobe Developer Console, and nothing documents
+   whether a Creative-Cloud-backed account may do that. It is the hinge for
+   everything below, so test it before writing any code.
 
-**3. Only if phase 0 says yes -- Team plan, internal comments, every
-client.** One project per client card. This is the paid step and the one to
-decide last.
+And the real question underneath both: does the review actually move there,
+or does everybody go back to WhatsApp.
+
+**Worth saying plainly: phase 0 is most of the value.** Frame-accurate
+review with the client, at no cost, is the bulk of what Frame.io is for.
+Everything below only saves re-typing.
+
+**1. The webhook -- two days, only if phase 0 says the account can make
+one.** `api/frameio.ts` beside `api/watchdog.ts` on the media buyer
+deployment, which already holds the Supabase service key. Verify the HMAC,
+map the event, write `editor_notes` with a real `at_sec`, put the review
+link on the job. Tests around the signature check and the mapping, in the
+shape the worker's 145 already have. No OAuth in the running path and
+nothing scheduled, so there is nothing to expire.
+
+*If the account cannot create a webhook*, the fallback is polling the
+comments endpoint with a user OAuth token that a human re-authorises about
+monthly. That is worse, and worth doing only once phase 0 has proved the
+review loop is real.
+
+**2. The loop closes -- two days.** A first client comment moves the ClickUp
+card to Update required; an approval moves it to done. The job page shows
+the notes against their frames. The status buttons in the cockpit stay, so
+a failure here is inconvenient rather than blocking.
+
+**3. Pay for something, only with a reason.** Pro when a third person needs
+to comment internally. Team when Sabry actually needs to answer a client
+privately. Not before.
 
 ## What could break, and what happens when it does
 
@@ -161,13 +218,13 @@ decide last.
 - **Somebody adds a fourth cockpit.** The webhook writes to `editor_notes`,
   which every cockpit already reads through its own gate. Nothing to change.
 
-## What I need from Aziz
+## Answered, 2026-09-19
 
-1. **Does Karim have a Premiere Pro or Creative Cloud subscription, and does
-   Sabry?** If yes, phase 0 costs nothing and can start today.
-2. **Is a second recurring bill acceptable if the pilot works?** About
-   $130/month for six seats, on top of Foreplay's $389.
-3. **Who reviews first?** The plan above puts Sabry before the client. If
-   some clients should see cuts directly, that is fine, but it wants saying
-   now because it changes whether internal comments are needed at all.
-
+- **Karim has a Premiere subscription**, so the free entitlement is real and
+  phase 0 costs nothing. Sabry's own subscription status is the thing to
+  check in the first five minutes.
+- **Cost depends on how much.** It is nothing to start, and the two paid
+  steps each have a trigger rather than a date.
+- **Sabry does not review everything.** So internal comments, and the Team
+  plan with them, are off the plan; sequencing the share link after his pass
+  does the same job for free.
