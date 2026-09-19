@@ -193,6 +193,30 @@ class Config:
         return key("GOOGLE_REFRESH_TOKEN")
 
     @property
+    def frameio_client_id(self) -> str:
+        return key("FRAMEIO_CLIENT_ID")
+
+    @property
+    def frameio_client_secret(self) -> str:
+        return key("FRAMEIO_CLIENT_SECRET")
+
+    @property
+    def frameio_timestamp_unit(self) -> str:
+        """What a Frame.io comment's `timestamp` counts in.
+
+        Their migration guide says framestamps from 1. Their create-comment
+        example looks like seconds. Until one real comment settles it this
+        stays a setting, and `unknown` writes no timecode rather than a
+        wrong one.
+        """
+        want = key("FRAMEIO_TIMESTAMP_UNIT", "frames").strip().lower()
+        return want if want in ("frames", "seconds", "unknown") else "frames"
+
+    @property
+    def frameio_configured(self) -> bool:
+        return bool(self.frameio_client_id and self.frameio_client_secret)
+
+    @property
     def elevenlabs_key(self) -> str:
         return key("ELEVENLABS_API_KEY")
 

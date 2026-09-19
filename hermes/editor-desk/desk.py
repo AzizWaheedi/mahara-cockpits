@@ -88,6 +88,9 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
         ("FOREPLAY_API_KEY set" if cfg.foreplay_key
          else "through Composio (COMPOSIO_API_KEY set)") if have_fp
         else "neither FOREPLAY_API_KEY nor COMPOSIO_API_KEY: the swipe file page stays empty")
+    add("frameio", cfg.frameio_configured,
+        "client id and secret set" if cfg.frameio_configured
+        else "not set: review comments stay in Frame.io (optional)")
     add("supabase", cfg.supabase_configured, "configured" if cfg.supabase_configured else "missing DESK_SUPABASE_URL and DESK_SUPABASE_KEY", True)
     add("clickup writeback", cfg.clickup_writeback, "on: the desk comments on cards" if cfg.clickup_writeback else "off")
 
@@ -377,6 +380,29 @@ def cmd_archive(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     return 0
 
 
+def cmd_frameio(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    """Review comments out of Frame.io and into the notes on the job.
+
+    Runs as a sweep over the open jobs that have a cut there. A webhook, if
+    the account can make one, only makes this prompt -- it is not needed
+    for the thing to work.
+    """
+    from desk import frameio as fio
+
+    sb = _sb(cfg)
+    if not cfg.frameio_configured:
+        log.warn("FRAMEIO_CLIENT_ID and FRAMEIO_CLIENT_SECRET are not set")
+        return 2
+    fp = fio.Frameio(cfg, sb, log.info)
+    out = fio.sync(
+        fp, sb, log=log.info,
+        unit=args.unit or cfg.frameio_timestamp_unit,
+        limit=args.limit or 40,
+    )
+    _print(out, args.json)
+    return 0
+
+
 def cmd_foreplay(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     """The Foreplay swipe file into our own store."""
     from desk import foreplay as fp_mod
@@ -465,6 +491,9 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     d = sub.add_parser("doctor"); d.add_argument("--offline", action="store_true")
     ar = sub.add_parser("archive"); ar.add_argument("--limit", type=int, default=25); ar.add_argument("--retry", action="store_true")
+    fi = sub.add_parser("frameio")
+    fi.add_argument("--limit", type=int, default=40)
+    fi.add_argument("--unit", default="", choices=["", "frames", "seconds", "unknown"])
     fp = sub.add_parser("foreplay"); fp.add_argument("--limit", type=int, default=250); fp.add_argument("--full", action="store_true"); fp.add_argument("--board", default="")
     mt = sub.add_parser("meetings"); mt.add_argument("--days", type=int, default=45)
     rq = sub.add_parser("requests"); rq.add_argument("--limit", type=int, default=10)
@@ -485,7 +514,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     handlers = {
         "doctor": cmd_doctor, "sync": cmd_sync, "prepare": cmd_prepare,
         "check": cmd_check, "deliver": cmd_deliver, "notes": cmd_notes, "jobs": cmd_jobs,
-        "requests": cmd_requests, "meetings": cmd_meetings, "foreplay": cmd_foreplay, "archive": cmd_archive,
+        "requests": cmd_requests, "meetings": cmd_meetings, "foreplay": cmd_foreplay, "frameio": cmd_frameio, "archive": cmd_archive,
     }
     try:
         return handlers[args.cmd](cfg, args, log)

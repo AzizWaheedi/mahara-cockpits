@@ -389,3 +389,46 @@ privately. Not before.
 - **Sabry does not review everything.** So internal comments, and the Team
   plan with them, are off the plan; sequencing the share link after his pass
   does the same job for free.
+
+## Built, 2026-09-19
+
+Everything that does not need the account to exist. Nothing here is
+reachable until a job has a `frameio_file_id`, so all of it is inert on
+today's board.
+
+**Schema** (`supabase/migrations/20260919e_frameio.sql`). Five columns on
+`editor_jobs` for the cut, and a `frameio_auth` table with no policies and
+no grants, because Adobe's refresh token rotates on every use and a token
+that changes cannot live in a file the worker only reads. `editor_notes`
+needed nothing: `at_sec`, `source`, `done` and `version` were already
+there.
+
+**The worker** (`hermes/editor-desk/desk/frameio.py`, `desk.py frameio`).
+The token dance, the three read endpoints, and the sweep over open jobs
+with a cut in Frame.io. It runs on its own with no webhook at all.
+
+**The webhook** (`apps/media-buyer-cockpit/api/frameio.ts`). Verifies the
+HMAC, rejects anything older than five minutes, queues one row, stops. No
+token, no outbound call. The request queue drains every three minutes, so
+this is what makes a comment arrive promptly rather than within twenty.
+
+**The job page.** A line above the Drive box when a job has a cut there --
+version, whether the client has it, how many notes are open, a link out.
+Notes from Frame.io show their timecode as a link that opens the cut at
+that frame, and say where they came from.
+
+Thirty tests, the most of them on `at_seconds`, which is the one
+calculation here that can be wrong without anybody noticing.
+
+### What is left, and what it waits on
+
+| | needs |
+| --- | --- |
+| the OAuth app, and the first refresh token in `frameio_auth` | the account to exist, and the Adobe Developer Console |
+| the webhook itself, and its signing secret in Vercel | the same, plus whether this account may create one |
+| `FRAMEIO_TIMESTAMP_UNIT` set from evidence | one real comment |
+| putting `frameio_file_id` on a job | a decision: by hand at first, or matched on the file name |
+| the ClickUp status moves on first comment and approval | the above working |
+| Sabry's "waiting on me" list | somebody wanting it |
+
+Nothing above is blocked on code.

@@ -1,3 +1,4 @@
+import { ExternalLink } from "lucide-react";
 import { useState } from "react";
 import { Link, useParams } from "react-router";
 import AddRule from "../components/AddRule";
@@ -27,6 +28,7 @@ import {
   useVersions,
 } from "../lib/data";
 import { clock, day, minutes, moment, whenDue } from "../lib/format";
+import type { Job, Note } from "../lib/types";
 
 function Fact({
   label,
@@ -43,6 +45,91 @@ function Fact({
   );
 }
 
+/**
+ * The cut in Frame.io, when there is one.
+ *
+ * Absent for a job nobody has uploaded there, which is every job today and
+ * will be most of them for a while. That is the point: Frame.io is added
+ * beside the Drive link below, never in place of it, so a job without it
+ * is exactly the page it was before and nothing here can become the reason
+ * an editor cannot deliver.
+ */
+function FrameioCut({ job, openNotes }: { job: Job; openNotes: number }) {
+  if (!job.frameio_url) return null;
+  const withClient = Boolean(job.frameio_share_url);
+  return (
+    <div className="raised flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-[var(--radius-md)] border hairline px-3 py-2">
+      <span className="text-sm font-medium">
+        {job.frameio_version ? `v${job.frameio_version}` : "In review"}
+      </span>
+      <span className="muted text-xs">
+        {withClient
+          ? `with the client${job.frameio_seen_at ? ` since ${moment(job.frameio_seen_at)}` : ""}`
+          : "not shared with the client yet"}
+      </span>
+      {openNotes ? (
+        <span
+          className="text-xs font-medium"
+          style={{ color: "var(--warning)" }}
+        >
+          {openNotes} {openNotes === 1 ? "note" : "notes"} open
+        </span>
+      ) : null}
+      <a
+        href={job.frameio_url}
+        target="_blank"
+        rel="noreferrer noopener"
+        className="ml-auto flex items-center gap-1 text-xs font-medium"
+        style={{ color: "var(--primary)" }}
+      >
+        Open in Frame.io
+        <ExternalLink className="size-3" />
+      </a>
+    </div>
+  );
+}
+
+/**
+ * A note's timecode, which opens the cut at that frame when it came from
+ * Frame.io and is plain text when it did not.
+ *
+ * `at_sec` is null more often than not, and that is deliberate on the
+ * worker's side: a note at the wrong second sends the editor to the wrong
+ * part of the cut and looks certain doing it.
+ */
+function At({ note, url }: { note: Note; url: string | null }) {
+  if (note.at_sec === null || note.at_sec === undefined) return null;
+  const shown = clock(note.at_sec);
+  if (!url || note.source !== "frameio")
+    return (
+      <span
+        className="mr-2 font-mono text-xs"
+        style={{ color: "var(--primary)" }}
+      >
+        {shown}
+      </span>
+    );
+  return (
+    <a
+      href={`${url}${url.includes("?") ? "&" : "?"}t=${Math.floor(note.at_sec)}`}
+      target="_blank"
+      rel="noreferrer noopener"
+      className="mr-2 font-mono text-xs underline underline-offset-2"
+      style={{ color: "var(--primary)" }}
+    >
+      {shown}
+    </a>
+  );
+}
+
+/** Where a note came from. "The client said this" and "Sabry said this"
+ *  should not look the same. */
+function whose(note: Note): string {
+  if (note.source === "frameio") return " · Frame.io";
+  if (note.source === "clickup") return " · from the card";
+  return "";
+}
+
 export default function JobPage() {
   const { taskId = "" } = useParams();
   const { email, name } = useWho();
@@ -51,6 +138,9 @@ export default function JobPage() {
   const assets = useAssets(taskId);
   const versions = useVersions(taskId);
   const notes = useNotes(taskId);
+  // How many notes are still open, which is the number that tells an
+  // editor whether the cut is waiting on them.
+  const openNotes = (notes.data ?? []).filter(n => !n.done).length;
   const requests = useRequests(taskId);
 
   const [link, setLink] = useState("");
@@ -333,6 +423,7 @@ export default function JobPage() {
 
         <Section title="The cut">
           <div className="space-y-3">
+            <FrameioCut job={j} openNotes={openNotes} />
             <label
               htmlFor="cut-link"
               className="muted block text-[11px] uppercase tracking-wide"
@@ -472,19 +563,12 @@ export default function JobPage() {
                       dir="auto"
                       className={`rtl-safe text-sm ${n.done ? "muted line-through" : ""}`}
                     >
-                      {n.at_sec !== null && n.at_sec !== undefined ? (
-                        <span
-                          className="mr-2 font-mono text-xs"
-                          style={{ color: "var(--primary)" }}
-                        >
-                          {clock(n.at_sec)}
-                        </span>
-                      ) : null}
+                      <At note={n} url={j.frameio_url} />
                       {n.text}
                     </p>
                     <p className="muted mt-0.5 text-[11px]">
                       {n.by_name || n.by_email || "someone"} · {moment(n.at)}
-                      {n.source === "clickup" ? " · from the card" : ""}
+                      {whose(n)}
                     </p>
                   </div>
                 </li>

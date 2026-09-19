@@ -30,6 +30,15 @@ export interface Job {
   footage_url: string | null;
   raw_url: string | null;
   edited_url: string | null;
+  /** The cut in Frame.io. Null on every job until somebody uploads one
+   *  there, and every screen treats null as "not using Frame.io here". */
+  frameio_file_id: string | null;
+  frameio_url: string | null;
+  frameio_version: number | null;
+  /** The client's review link. Its presence is what "the client has it"
+   *  means -- there is no separate flag to get out of step. */
+  frameio_share_url: string | null;
+  frameio_seen_at: string | null;
   website: string | null;
   due_at: string | null;
   opened_at: string | null;

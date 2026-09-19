@@ -22,7 +22,7 @@ from .config import Config
 from .drive import Drive
 from .supabase import Supabase, now_iso
 
-KINDS = ("deliver", "check", "comment", "rescan", "ask", "status", "eod", "dosdonts", "toideation")
+KINDS = ("deliver", "check", "comment", "rescan", "ask", "status", "eod", "dosdonts", "toideation", "frameio")
 
 # Where an editor may move a card from the cockpit. Aziz, 2026-09-19: pressing
 # "started" should move it to In progress, and a round of comments should move
@@ -301,6 +301,56 @@ def run_comment(cfg: Config, log: Callable[[str], None], cu: ClickUp, req: dict[
     return {"posted": True}
 
 
+def run_frameio_event(cfg: Config, log: Callable[[str], None], sb: Supabase, req: dict[str, Any]) -> dict[str, Any]:
+    """One webhook event: fetch what it points at and file it as a note.
+
+    The payload gave us a type and a resource id and nothing else, so the
+    content has to be fetched. A comment on a file we do not have a job for
+    is not an error -- somebody may be using Frame.io for something that is
+    not a Mahara cut -- it is simply ignored.
+    """
+    from . import frameio as fio
+
+    if not cfg.frameio_configured:
+        return {"skipped": "Frame.io is not configured on this worker"}
+    kind = str(req.get("input") or "")
+    resource = str(req.get("task_id") or "")
+    if not resource:
+        return {"skipped": "no resource id"}
+
+    fp = fio.Frameio(cfg, sb, log)
+    if kind.startswith("comment."):
+        comment = fp.comment(resource)
+        file_id = str(comment.get("file_id") or comment.get("file", {}).get("id") or "")
+        job = sb.job_by_frameio_file(file_id) if file_id else None
+        if not job:
+            return {"ignored": "no job has that file"}
+        task_id = str(job.get("task_id"))
+        fps, duration = fio.measured(sb.versions(task_id))
+        row = fio.note_row(
+            comment, task_id=task_id, version=job.get("frameio_version"),
+            unit=cfg.frameio_timestamp_unit, fps=fps, duration=duration,
+        )
+        if not row:
+            return {"ignored": "nothing in that comment"}
+        sb.store_notes([row])
+        return {"note": row["id"], "task_id": task_id, "at_sec": row["at_sec"]}
+
+    # A new version or a share being opened changes the job, not the notes.
+    if kind in ("file.versioned", "file.ready", "share.viewed"):
+        job = sb.job_by_frameio_file(resource)
+        if not job:
+            return {"ignored": "no job has that file"}
+        sb.store_jobs([{
+            "task_id": str(job.get("task_id")),
+            "frameio_seen_at": now_iso(),
+            "updated_at": now_iso(),
+        }])
+        return {"touched": str(job.get("task_id"))}
+
+    return {"ignored": f"nothing to do for {kind!r}"}
+
+
 def run_requests(cfg: Config, log: Callable[[str], None], sb: Supabase, *, limit: int = 10) -> dict[str, Any]:
     """Drain the queue. Returns a small summary for the caller and the log."""
     rows = sb.select(
@@ -337,6 +387,15 @@ def run_requests(cfg: Config, log: Callable[[str], None], sb: Supabase, *, limit
 
         try:
             # These belong to a person or a client, not to a job.
+            # A Frame.io webhook, which carries an id and no content. The
+            # drain runs every three minutes, so this is what makes a
+            # review comment arrive promptly; the twenty minute sweep in
+            # `desk.py frameio` is the net that catches whatever a missed
+            # or unsigned event dropped.
+            if kind == "frameio":
+                _done(sb, rid, run_frameio_event(cfg, log, sb, req))
+                out["done"] += 1
+                continue
             if kind == "toideation":
                 _done(sb, rid, run_to_ideation(cfg, log, sb, req))
                 out["done"] += 1

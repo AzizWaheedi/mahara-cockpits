@@ -191,6 +191,25 @@ class FakeSupabase:
     def notes(self, task_id):
         return [n for n in self.notes_rows.values() if n.get("task_id") == task_id]
 
+    # ---- Frame.io --------------------------------------------------------
+    def frameio_auth(self):
+        return dict(getattr(self, "fio_auth", {"account_id": "acct1", "refresh_token": "r0"}))
+
+    def frameio_refreshed(self, refresh_token):
+        self.fio_auth = {**self.frameio_auth(), "refresh_token": refresh_token, "error": None}
+
+    def frameio_failed(self, why):
+        self.fio_auth = {**self.frameio_auth(), "error": why}
+
+    def job_by_frameio_file(self, file_id):
+        for j in self.jobs.values():
+            if j.get("frameio_file_id") == file_id:
+                return j
+        return {}
+
+    def frameio_jobs(self, *, limit=40):
+        return list(getattr(self, "fio_jobs", []))[:limit]
+
     def board_state(self):
         return dict(getattr(self, "boards_rows", {}))
 

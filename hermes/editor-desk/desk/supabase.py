@@ -26,6 +26,9 @@ JOB_COLUMNS = {
     "brief", "script_task_id", "script", "footage_url", "raw_url", "edited_url", "website",
     "due_at", "opened_at", "state", "ready", "missing", "files", "seconds", "transcript_chars",
     "prepared_at", "attempts", "error", "asked_for", "asked_at", "asked_by", "synced_at", "updated_at",
+    # The cut in Frame.io. Not in BOARD_COLUMNS: a ClickUp sync must never
+    # clear these, because ClickUp knows nothing about Frame.io.
+    "frameio_file_id", "frameio_url", "frameio_version", "frameio_share_url", "frameio_seen_at",
 }
 # What a board sync is allowed to touch. Worker state is not in this set.
 BOARD_COLUMNS = {
@@ -323,6 +326,54 @@ class Supabase:
         """What we already hold, so a sync can stop rather than pay again."""
         rows = self.select("foreplay_ads", f"select=id&limit={int(limit)}")
         return [str(r.get("id")) for r in rows if r.get("id")]
+
+    # ---- Frame.io --------------------------------------------------------
+    def frameio_auth(self) -> dict[str, Any]:
+        rows = self.select("frameio_auth", "select=*&id=eq.default&limit=1")
+        return rows[0] if rows else {}
+
+    def frameio_refreshed(self, refresh_token: str) -> None:
+        """Write the new refresh token down. Adobe spends the old one on
+        every refresh, so failing to store this locks the worker out."""
+        self.upsert(
+            "frameio_auth",
+            [{
+                "id": "default",
+                "refresh_token": refresh_token,
+                "refreshed_at": now_iso(),
+                "error": None,
+                "updated_at": now_iso(),
+            }],
+            "id",
+        )
+
+    def frameio_failed(self, why: str) -> None:
+        self.upsert(
+            "frameio_auth",
+            [{"id": "default", "error": why[:300], "updated_at": now_iso()}],
+            "id",
+        )
+
+    def job_by_frameio_file(self, file_id: str) -> dict[str, Any]:
+        """The job whose cut is that Frame.io file, if any. A comment on
+        something that is not one of our cuts is ignored, not an error."""
+        if not file_id:
+            return {}
+        rows = self.select(
+            "editor_jobs",
+            "select=task_id,frameio_file_id,frameio_version"
+            f"&frameio_file_id=eq.{http.quote(file_id)}&limit=1",
+        )
+        return rows[0] if rows else {}
+
+    def frameio_jobs(self, *, limit: int = 40) -> list[dict[str, Any]]:
+        """Open jobs with a cut in Frame.io, newest first."""
+        return self.select(
+            "editor_jobs",
+            "select=task_id,frameio_file_id,frameio_version,status"
+            "&frameio_file_id=not.is.null"
+            f"&order=updated_at.desc&limit={int(limit)}",
+        )
 
     def board_state(self) -> dict[str, dict[str, Any]]:
         """What we already know about each board, so a sync can skip the

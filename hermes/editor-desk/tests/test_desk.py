@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 os.environ.setdefault("DESK_HOME", "/tmp/desk-unit")
-from desk import ads, brand, checks, clients, foreplay, media, meetings, prepare, queue, sheets, speech
+from desk import ads, brand, checks, clients, foreplay, frameio, http, media, meetings, prepare, queue, sheets, speech
 from desk.clickup import editors_of, fields_of, is_open, job_row
 from desk.config import Config
 from desk.drive import parse_id
@@ -1530,3 +1530,328 @@ class IdeaRowShapeTests(unittest.TestCase):
         self.assertEqual(row["caption"], "Ardon kitchen reveal")
         long = foreplay.as_idea(self.ad(headline="x" * 5000))
         self.assertEqual(len(long["caption"]), 2000)
+
+
+class FrameioTimecodeTests(unittest.TestCase):
+    """Where a Frame.io comment points, in seconds.
+
+    This is the one calculation in the integration that can be wrong
+    without anybody noticing, so it is the one with the most tests. Their
+    docs say a comment's `timestamp` is a framestamp counting from 1; their
+    own create-comment example looks like seconds; their forum has people
+    caught between the two. Until a real comment settles it the unit is
+    configured, and anything we cannot justify writes no timecode at all --
+    a note at the wrong second sends the editor to the wrong part of the
+    cut and looks authoritative doing it.
+    """
+
+    def test_framestamps_count_from_one(self) -> None:
+        # Frame 1 is the first frame, so it is time zero, not 1/25th.
+        self.assertEqual(
+            frameio.at_seconds(1, unit="frames", fps=25, duration=60), 0.0
+        )
+        self.assertEqual(
+            frameio.at_seconds(251, unit="frames", fps=25, duration=60), 10.0
+        )
+
+    def test_seconds_pass_through(self) -> None:
+        self.assertEqual(
+            frameio.at_seconds(42.5, unit="seconds", fps=25, duration=60), 42.5
+        )
+
+    def test_a_framestamp_with_no_frame_rate_is_not_a_time(self) -> None:
+        self.assertIsNone(frameio.at_seconds(251, unit="frames", fps=None, duration=60))
+        self.assertIsNone(frameio.at_seconds(251, unit="frames", fps=0, duration=60))
+
+    def test_unknown_unit_writes_nothing(self) -> None:
+        self.assertIsNone(frameio.at_seconds(251, unit="unknown", fps=25, duration=60))
+
+    def test_past_the_end_of_the_cut_is_refused(self) -> None:
+        # 2500 frames at 25fps is 100 seconds, on a 60 second cut: the unit
+        # is set wrong. Say nothing rather than point past the end.
+        self.assertIsNone(frameio.at_seconds(2500, unit="frames", fps=25, duration=60))
+        # A second past the end is rounding, not a wrong unit.
+        self.assertIsNotNone(
+            frameio.at_seconds(1501, unit="frames", fps=25, duration=60)
+        )
+
+    def test_rubbish_is_refused_rather_than_zero(self) -> None:
+        for bad in (None, "", "abc", [], {}, -5):
+            self.assertIsNone(
+                frameio.at_seconds(bad, unit="frames", fps=25, duration=60), bad
+            )
+
+    def test_no_duration_still_converts(self) -> None:
+        # We do not always have a checked version; the conversion is still
+        # sound, we just cannot sanity check it.
+        self.assertEqual(
+            frameio.at_seconds(251, unit="frames", fps=25, duration=None), 10.0
+        )
+
+    def test_our_own_measurement_is_the_one_used(self) -> None:
+        # ffprobe ran over the export when the editor pressed Check it
+        # first. Frame.io is not asked, and the newest cut wins.
+        fps, secs = frameio.measured([
+            {"n": 1, "fps": 25, "seconds": 30},
+            {"n": 2, "fps": 50, "seconds": 28},
+        ])
+        self.assertEqual((fps, secs), (50.0, 28.0))
+        self.assertEqual(frameio.measured([]), (None, None))
+        self.assertEqual(frameio.measured([{"n": 1, "fps": None}]), (None, None))
+
+
+class FrameioNoteTests(unittest.TestCase):
+    def comment(self, **over: Any) -> dict[str, Any]:
+        base = {
+            "id": "c-123",
+            "text": "Cut the pause before she says the price",
+            "timestamp": 251,
+            "owner": {"email": "Sabry@maharamedia.com", "name": "Sabry"},
+            "inserted_at": "2026-09-19T10:00:00Z",
+        }
+        base.update(over)
+        return base
+
+    def test_the_comment_id_is_the_key(self) -> None:
+        # The sweep and the webhook will both read some comments. One row.
+        row = frameio.note_row(self.comment(), task_id="t1", fps=25)
+        assert row
+        self.assertEqual(row["id"], "frameio:c-123")
+
+    def test_it_carries_the_frame_the_author_and_the_source(self) -> None:
+        row = frameio.note_row(self.comment(), task_id="t1", fps=25, duration=60)
+        assert row
+        self.assertEqual(row["at_sec"], 10.0)
+        self.assertEqual(row["by_email"], "sabry@maharamedia.com")
+        self.assertEqual(row["by_name"], "Sabry")
+        self.assertEqual(row["source"], "frameio")
+        self.assertEqual(row["task_id"], "t1")
+
+    def test_resolved_over_there_is_ticked_over_here(self) -> None:
+        row = frameio.note_row(
+            self.comment(completed_at="2026-09-19T11:00:00Z"), task_id="t1", fps=25
+        )
+        assert row
+        self.assertTrue(row["done"])
+        self.assertFalse(frameio.note_row(self.comment(), task_id="t1", fps=25)["done"])
+
+    def test_an_empty_comment_is_not_a_note(self) -> None:
+        self.assertIsNone(frameio.note_row(self.comment(text="   "), task_id="t1"))
+        self.assertIsNone(frameio.note_row(self.comment(id=""), task_id="t1"))
+
+    def test_an_anonymous_client_comment_still_lands(self) -> None:
+        # A reviewer on a share link has no account, so there may be no
+        # owner at all. Losing the note would be much worse than losing the
+        # name.
+        row = frameio.note_row(self.comment(owner=None), task_id="t1", fps=25)
+        assert row
+        self.assertIsNone(row["by_email"])
+        self.assertEqual(row["text"], "Cut the pause before she says the price")
+
+
+class FrameioSyncTests(unittest.TestCase):
+    class Fake:
+        def __init__(self, comments: dict[str, list[dict[str, Any]]]):
+            self._c = comments
+            self.calls = 0
+
+        def comments(self, file_id: str) -> list[dict[str, Any]]:
+            self.calls += 1
+            if file_id not in self._c:
+                raise http.HttpError(404, "no such file")
+            return self._c[file_id]
+
+    def setUp(self) -> None:
+        self.sb = FakeSupabase()
+        self.sb.fio_jobs = [
+            {"task_id": "t1", "frameio_file_id": "f1", "frameio_version": 2},
+            {"task_id": "t2", "frameio_file_id": "f2", "frameio_version": 1},
+        ]
+        self.sb.versions_rows = {
+            "v1": {"task_id": "t1", "n": 1, "fps": 25, "seconds": 60},
+        }
+
+    def test_it_reads_every_job_and_stores_the_notes(self) -> None:
+        fake = self.Fake({
+            "f1": [{"id": "a", "text": "tighten the open", "timestamp": 26}],
+            "f2": [{"id": "b", "text": "logo bottom right", "timestamp": 51}],
+        })
+        out = frameio.sync(fake, self.sb, log=lambda m: None, unit="frames")
+        self.assertEqual(out["jobs"], 2)
+        self.assertEqual(out["notes"], 2)
+        keys = set(self.sb.notes_rows)
+        self.assertEqual(keys, {"frameio:a", "frameio:b"})
+
+    def test_one_unreadable_job_does_not_stop_the_others(self) -> None:
+        fake = self.Fake({"f1": [{"id": "a", "text": "tighten", "timestamp": 26}]})
+        out = frameio.sync(fake, self.sb, log=lambda m: None, unit="frames")
+        self.assertEqual(out["notes"], 1)
+        self.assertIn("problems", out)
+        self.assertTrue(any("t2" in p for p in out["problems"]))
+
+    def test_a_job_with_no_checked_version_has_no_frame_rate(self) -> None:
+        # t2 was never checked, so there is no fps and therefore no
+        # timecode -- but the note itself still arrives.
+        fake = self.Fake({
+            "f1": [],
+            "f2": [{"id": "b", "text": "logo bottom right", "timestamp": 51}],
+        })
+        out = frameio.sync(fake, self.sb, log=lambda m: None, unit="frames")
+        self.assertEqual(out["notes"], 1)
+        self.assertEqual(out["without_timecode"], 1)
+        self.assertIsNone(next(iter(self.sb.notes_rows.values()))["at_sec"])
+
+    def test_reading_twice_is_one_note(self) -> None:
+        fake = self.Fake({"f1": [{"id": "a", "text": "tighten", "timestamp": 26}], "f2": []})
+        frameio.sync(fake, self.sb, log=lambda m: None, unit="frames")
+        frameio.sync(fake, self.sb, log=lambda m: None, unit="frames")
+        self.assertEqual(len(self.sb.notes_rows), 1)
+
+    def test_it_says_so_when_no_timecode_survived(self) -> None:
+        said: list[str] = []
+        fake = self.Fake({"f1": [], "f2": [{"id": "b", "text": "x", "timestamp": 5}]})
+        frameio.sync(fake, self.sb, log=said.append, unit="frames")
+        self.assertTrue(any("FRAMEIO_TIMESTAMP_UNIT" in m for m in said))
+
+
+class FrameioEventTests(unittest.TestCase):
+    """A webhook event, drained by the request queue.
+
+    The event carries an id and no content, so everything interesting
+    happens here: fetch the comment, find the job whose cut it is on, file
+    it. A comment on something that is not one of our cuts is ignored, not
+    an error -- somebody may be using Frame.io for work that has nothing to
+    do with a Mahara job.
+    """
+
+    class FakeFio:
+        def __init__(self, comment: dict[str, Any]):
+            self._c = comment
+            self.asked: list[str] = []
+
+        def comment(self, cid: str) -> dict[str, Any]:
+            self.asked.append(cid)
+            return self._c
+
+    def setUp(self) -> None:
+        self.cfg = cfg_in(tempfile.mkdtemp())
+        os.environ["FRAMEIO_CLIENT_ID"] = "id"
+        os.environ["FRAMEIO_CLIENT_SECRET"] = "secret"
+        os.environ["FRAMEIO_TIMESTAMP_UNIT"] = "frames"
+        self.sb = FakeSupabase()
+        self.sb.jobs["t1"] = {"task_id": "t1", "frameio_file_id": "f1", "frameio_version": 2}
+        self.sb.versions_rows = {"v": {"task_id": "t1", "n": 1, "fps": 25, "seconds": 60}}
+
+    def tearDown(self) -> None:
+        for k in ("FRAMEIO_CLIENT_ID", "FRAMEIO_CLIENT_SECRET", "FRAMEIO_TIMESTAMP_UNIT"):
+            os.environ.pop(k, None)
+
+    def run_it(self, fio_fake: Any, req: dict[str, Any]) -> dict[str, Any]:
+        import desk.frameio as fio_mod
+
+        real = fio_mod.Frameio
+        fio_mod.Frameio = lambda *a, **k: fio_fake  # type: ignore[assignment]
+        try:
+            return queue.run_frameio_event(self.cfg, lambda m: None, self.sb, req)
+        finally:
+            fio_mod.Frameio = real  # type: ignore[assignment]
+
+    def test_a_comment_becomes_a_note_on_the_right_job(self) -> None:
+        fake = self.FakeFio({
+            "id": "c9", "text": "tighten the open", "timestamp": 251,
+            "file_id": "f1", "owner": {"email": "sabry@maharamedia.com"},
+        })
+        out = self.run_it(fake, {"input": "comment.created", "task_id": "c9"})
+        self.assertEqual(out["task_id"], "t1")
+        self.assertEqual(out["at_sec"], 10.0)
+        self.assertEqual(self.sb.notes_rows["frameio:c9"]["text"], "tighten the open")
+
+    def test_a_comment_on_someone_elses_file_is_ignored(self) -> None:
+        fake = self.FakeFio({"id": "c9", "text": "hello", "file_id": "nope"})
+        out = self.run_it(fake, {"input": "comment.created", "task_id": "c9"})
+        self.assertIn("ignored", out)
+        self.assertFalse(self.sb.notes_rows)
+
+    def test_the_nested_file_shape_is_also_understood(self) -> None:
+        # Their payloads are not consistent about file_id versus file.id.
+        fake = self.FakeFio({
+            "id": "c9", "text": "tighten", "timestamp": 26, "file": {"id": "f1"},
+        })
+        out = self.run_it(fake, {"input": "comment.created", "task_id": "c9"})
+        self.assertEqual(out["task_id"], "t1")
+
+    def test_an_event_with_no_resource_is_not_an_error(self) -> None:
+        out = self.run_it(self.FakeFio({}), {"input": "comment.created", "task_id": ""})
+        self.assertIn("skipped", out)
+
+    def test_an_unconfigured_worker_says_so_rather_than_failing(self) -> None:
+        os.environ.pop("FRAMEIO_CLIENT_ID", None)
+        out = self.run_it(self.FakeFio({}), {"input": "comment.created", "task_id": "c9"})
+        self.assertIn("skipped", out)
+
+    def test_frameio_is_a_kind_the_queue_knows(self) -> None:
+        self.assertIn("frameio", queue.KINDS)
+
+
+class FrameioTokenTests(unittest.TestCase):
+    """The refresh token rotates, so the new one has to be written down.
+
+    Adobe spends the refresh token on every refresh and hands back another.
+    Google's never changes and lives in the env file; this one cannot, and
+    a worker that refreshes without storing the replacement locks itself
+    out fourteen days later -- or immediately, on the next run.
+    """
+
+    def setUp(self) -> None:
+        self.cfg = cfg_in(tempfile.mkdtemp())
+        os.environ["FRAMEIO_CLIENT_ID"] = "id"
+        os.environ["FRAMEIO_CLIENT_SECRET"] = "secret"
+        self.sb = FakeSupabase()
+        self.sb.fio_auth = {"account_id": "acct1", "refresh_token": "old"}
+
+    def tearDown(self) -> None:
+        for k in ("FRAMEIO_CLIENT_ID", "FRAMEIO_CLIENT_SECRET"):
+            os.environ.pop(k, None)
+
+    def with_token_response(self, out: Any) -> Any:
+        from desk import frameio as fio_mod
+
+        real = fio_mod.http.post_form
+        fio_mod.http.post_form = lambda *a, **k: out  # type: ignore[assignment]
+        self.addCleanup(lambda: setattr(fio_mod.http, "post_form", real))
+        return fio_mod.Frameio(self.cfg, self.sb, lambda m: None)
+
+    def test_the_new_refresh_token_replaces_the_old(self) -> None:
+        fp = self.with_token_response(
+            {"access_token": "at", "refresh_token": "new", "expires_in": 3600}
+        )
+        self.assertEqual(fp.token(), "at")
+        self.assertEqual(self.sb.fio_auth["refresh_token"], "new")
+
+    def test_the_token_is_reused_until_it_is_nearly_out(self) -> None:
+        fp = self.with_token_response(
+            {"access_token": "at", "refresh_token": "new", "expires_in": 3600}
+        )
+        fp.token()
+        calls: list[int] = []
+        from desk import frameio as fio_mod
+
+        fio_mod.http.post_form = lambda *a, **k: calls.append(1) or {  # type: ignore[assignment]
+            "access_token": "other", "expires_in": 3600
+        }
+        self.assertEqual(fp.token(), "at")
+        self.assertEqual(calls, [])
+
+    def test_a_refusal_is_recorded_and_says_what_to_do(self) -> None:
+        fp = self.with_token_response({"error": "invalid_grant"})
+        with self.assertRaises(http.HttpError) as caught:
+            fp.token()
+        self.assertIn("sign in again", str(caught.exception))
+        self.assertIn("refused", self.sb.fio_auth["error"])
+
+    def test_never_authorised_is_a_different_message(self) -> None:
+        self.sb.fio_auth = {"account_id": "acct1", "refresh_token": ""}
+        fp = self.with_token_response({"access_token": "at"})
+        with self.assertRaises(http.HttpError) as caught:
+            fp.token()
+        self.assertIn("never been authorised", str(caught.exception))
