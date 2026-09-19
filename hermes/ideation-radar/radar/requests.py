@@ -76,6 +76,12 @@ def parse_profile(text: str, platform_hint: str = "") -> tuple[str, str]:
     return platform_hint.lower(), handle
 
 
+def normalise_industry(value: Any) -> str:
+    """The three boards: `ours` (clients' construction and design), `mahara`
+    (Mahara's own competitors and teachers), else `other`."""
+    return value if value in ("ours", "mahara") else "other"
+
+
 def _norm(s: str) -> str:
     return re.sub(r"[^a-z0-9؀-ۿ]+", "", (s or "").lower())
 
@@ -209,7 +215,7 @@ def fetch_profile_posts(sc: ScrapeCreators, platform: str, handle: str, cfg: Con
 def run_profile(cfg: Config, log: Callable[[str], None], sb: Supabase, sc: ScrapeCreators, state: State, req: dict[str, Any], now: datetime) -> dict[str, Any]:
     params = req.get("params") if isinstance(req.get("params"), dict) else {}
     platform, handle = parse_profile(str(req.get("input") or ""), str(params.get("platform") or req.get("platform") or ""))
-    industry = "ours" if params.get("industry") == "ours" else "other"
+    industry = normalise_industry(params.get("industry"))
     stamp = iso(now)
     posts, followers, warnings = fetch_profile_posts(sc, platform, handle, cfg, log)
     log(f"profile {platform}:{handle}: {len(posts)} posts, followers {followers}")
@@ -316,7 +322,7 @@ def run_ads(cfg: Config, log: Callable[[str], None], sb: Supabase, sc: ScrapeCre
     if not query:
         raise ValueError("no page, advertiser or keyword given")
     country = str(params.get("country") or cfg.ads_country or "")
-    industry = "ours" if params.get("industry") == "ours" else "other"
+    industry = normalise_industry(params.get("industry"))
     tags = [f"via:ads:{query}"] + ([str(params["client"])] if params.get("client") else [])
     warnings: list[str] = []
     matched: dict[str, Any] = {}

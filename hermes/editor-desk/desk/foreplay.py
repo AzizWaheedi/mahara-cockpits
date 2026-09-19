@@ -256,12 +256,14 @@ def row(ad: dict[str, Any], *, board_id: str = "", board_name: str = "") -> Opti
     }
 
 
-def _forward_to_ideation(sb: Any, ads: list[dict[str, Any]], log: Callable[[str], None]) -> int:
-    """Put anything new from the drop box on the shared ideation board.
+def _forward_to_ideation(sb: Any, ads: list[dict[str, Any]], log: Callable[[str], None], *, industry: str = "other") -> int:
+    """Put anything new from a drop box on the shared ideation board.
 
     Only ads the board has never seen. Something the creative director
     already dismissed must not come back every half hour just because it is
-    still sitting in the Foreplay folder.
+    still sitting in the Foreplay folder. `industry` is which board it lands
+    on: the client box feeds the clients' industry, the `#mahara_b2b` box
+    feeds Mahara's own competitor board.
     """
     if not ads:
         return 0
@@ -273,7 +275,7 @@ def _forward_to_ideation(sb: Any, ads: list[dict[str, Any]], log: Callable[[str]
     rows = []
     for a in fresh:
         try:
-            rows.append(as_idea(a, by_name=str(a.get("board_name") or "Foreplay")))
+            rows.append(as_idea(a, by_name=str(a.get("board_name") or "Foreplay"), industry=industry))
         except ValueError:
             continue
     if rows:
@@ -372,6 +374,7 @@ def sync(
     full: bool = False,
     floor: int = 500,
     drop_box: str = "",
+    mahara_box: str = "",
     max_board_ads: int = 400,
     board_every_hours: int = 24,
 ) -> dict[str, Any]:
@@ -441,6 +444,13 @@ def sync(
     if drop_box and not box:
         names = ", ".join(sorted(str(b.get("name") or "") for b in boards)) or "none at all"
         problems.append(f"no board matching {drop_box!r}; the boards are: {names}"[:300])
+    # Aziz's own swipe file, 2026-09-19: `#mahara_b2b` is where he saves
+    # competitors' and teachers' ads from his phone. It feeds the CEO
+    # cockpit's Mahara board the same way, read every run.
+    mbox = find_board(boards, mahara_box) if mahara_box else None
+    if mahara_box and not mbox:
+        problems.append(f"no board matching {mahara_box!r} for the Mahara B2B board"[:300])
+    mbox_id = str((mbox or {}).get("id") or (mbox or {}).get("board_id") or "")
 
     # Which boards to read ad by ad, and which to leave alone.
     #
@@ -461,16 +471,18 @@ def sync(
             continue
         was = seen_before.get(bid) or {}
         is_drop_box = bool(box_id) and bid == box_id
+        is_mahara_box = bool(mbox_id) and bid == mbox_id
         due = (
             full
             or is_drop_box
+            or is_mahara_box
             or not was
             or str(was.get("ads_synced_at") or "") < stale_before
         )
         if not due or budget <= 0:
             per_board.append({
                 "id": bid, "name": str(b.get("name") or ""),
-                "feeds_ideation": is_drop_box,
+                "feeds_ideation": is_drop_box or is_mahara_box,
                 "ads": int(was.get("ads") or 0), "read": False,
             })
             continue
@@ -484,10 +496,12 @@ def sync(
             rows[r["id"]] = r
         per_board.append({
             "id": bid, "name": str(b.get("name") or ""),
-            "feeds_ideation": is_drop_box, "ads": len(on_board), "read": True,
+            "feeds_ideation": is_drop_box or is_mahara_box, "ads": len(on_board), "read": True,
         })
         if is_drop_box:
-            forwarded = _forward_to_ideation(sb, on_board, log)
+            forwarded += _forward_to_ideation(sb, on_board, log)
+        elif is_mahara_box:
+            forwarded += _forward_to_ideation(sb, on_board, log, industry="mahara")
 
     new_boards: list[str] = []
     if per_board:
@@ -511,7 +525,7 @@ def sync(
     return result
 
 
-def as_idea(ad: dict[str, Any], *, by: str = "", by_name: str = "", note: str = "") -> dict[str, Any]:
+def as_idea(ad: dict[str, Any], *, by: str = "", by_name: str = "", note: str = "", industry: str = "other") -> dict[str, Any]:
     """A saved Foreplay ad as a row on the shared ideation board.
 
     The board is what the creative director works from, so an ad the editor
@@ -535,6 +549,7 @@ def as_idea(ad: dict[str, Any], *, by: str = "", by_name: str = "", note: str = 
         "url": url,
         "origin": "foreplay",
         "status": "saved",
+        "industry": industry if industry in ("ours", "mahara") else "other",
         "author_name": ad.get("name"),
         "caption": caption[:2000] or None,
         "thumb_url": ad.get("thumbnail") or ad.get("image"),

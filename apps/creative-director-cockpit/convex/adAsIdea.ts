@@ -39,6 +39,8 @@ export function adAsIdea(
     url,
     origin: "foreplay",
     status: "saved",
+    // Which board it lands on; the desk's second drop box files Mahara's own.
+    industry: "other",
     author_name: ad.name ?? null,
     caption: caption.slice(0, 2000) || null,
     thumb_url: ad.thumbnail ?? ad.image ?? null,
@@ -67,6 +69,7 @@ export const IDEA_FIELDS = [
   "author_name",
   "caption",
   "duration_sec",
+  "industry",
   "key",
   "media_url",
   "origin",

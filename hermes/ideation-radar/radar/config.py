@@ -96,6 +96,8 @@ class Config:
     floor_instagram: float = 1000.0
     floor_tiktok: float = 1000.0
     floor_snapchat: float = 300.0
+    # Long-form B2B channels are small; five hundred real views is a video.
+    floor_youtube: float = 500.0
     min_engagement: float = 0.02
     hashtag_min_views: int = 10000
     # Instagram tag pages hide reel play counts from a logged-out fetch. A hit
@@ -154,6 +156,7 @@ class Config:
     # spotlights; a pasted Spotlight link goes through the spotlight actor.
     actor_snapchat: str = "tri_angle~snapchat-scraper"
     actor_snapchat_post: str = "tri_angle~snapchat-spotlight-scraper"
+    actor_youtube: str = "streamers~youtube-channel-scraper"
     # TikTok media links only exist through the paid download add-on; the copy
     # lands in this named key-value store on Apify.
     tiktok_media_store: str = "ideation-radar-media"
@@ -212,6 +215,7 @@ class Config:
             floor_instagram=_float("RADAR_FLOOR_INSTAGRAM", 1000.0),
             floor_tiktok=_float("RADAR_FLOOR_TIKTOK", 1000.0),
             floor_snapchat=_float("RADAR_FLOOR_SNAPCHAT", 300.0),
+            floor_youtube=_float("RADAR_FLOOR_YOUTUBE", 500.0),
             min_engagement=_float("RADAR_MIN_ENGAGEMENT", 0.02),
             hashtag_min_views=_int("RADAR_HASHTAG_MIN_VIEWS", 10000),
             hashtag_min_engagement=_int("RADAR_HASHTAG_MIN_ENGAGEMENT", 300),
@@ -248,6 +252,7 @@ class Config:
             actor_tiktok_profile=key("RADAR_ACTOR_TIKTOK_PROFILE", "clockworks~tiktok-profile-scraper"),
             actor_snapchat=key("RADAR_ACTOR_SNAPCHAT", "tri_angle~snapchat-scraper"),
             actor_snapchat_post=key("RADAR_ACTOR_SNAPCHAT_POST", "tri_angle~snapchat-spotlight-scraper"),
+            actor_youtube=key("RADAR_ACTOR_YOUTUBE", "streamers~youtube-channel-scraper"),
             tiktok_media_store=key("RADAR_TIKTOK_MEDIA_STORE", "ideation-radar-media"),
             tiktok_subtitles=key("RADAR_TIKTOK_SUBTITLES", "DOWNLOAD_SUBTITLES"),
             apify_concurrency=_int("RADAR_APIFY_CONCURRENCY", 4),
@@ -279,7 +284,7 @@ class Config:
         return cfg
 
     def floor_for(self, platform: str) -> float:
-        return {"instagram": self.floor_instagram, "tiktok": self.floor_tiktok, "snapchat": self.floor_snapchat}.get(platform, 0.0)
+        return {"instagram": self.floor_instagram, "tiktok": self.floor_tiktok, "snapchat": self.floor_snapchat, "youtube": self.floor_youtube}.get(platform, 0.0)
 
     @property
     def supabase_configured(self) -> bool:

@@ -286,8 +286,8 @@ async function fetchList(args: {
   params.set("limit", String(limit));
   if (args.platform)
     params.set("platform", `eq.${args.platform.toLowerCase()}`);
-  if (args.industry)
-    params.set("industry", `eq.${args.industry.toLowerCase()}`);
+  const ind = industryFilter(args.industry);
+  if (ind) params.set("industry", ind);
   const q = (args.q ?? "").replace(/[,()"'*\\%]/g, " ").trim();
   if (q.length >= 2) {
     const pat = `*${q}*`;
@@ -329,16 +329,18 @@ export const detail = authenticatedAction({
 
 /** Exact per-tab counts from the database, six cheap HEAD requests. */
 export const counts = authenticatedAction({
-  args: {},
+  args: { industry: v.optional(v.string()) },
   returns: v.any(),
-  handler: async ctx => {
+  handler: async (ctx, args) => {
     await who(ctx);
     ready();
     const out: Record<string, number> = {};
+    const ind = industryFilter(args.industry);
     for (const [tab, statuses] of Object.entries(TABS)) {
       const params = new URLSearchParams();
       params.set("select", "key");
       params.set("status", `in.(${statuses.map(s => `"${s}"`).join(",")})`);
+      if (ind) params.set("industry", ind);
       if (tab === "trends") params.set("trend_id", "not.is.null");
       params.set("limit", "1");
       const res = await fetch(
@@ -398,7 +400,7 @@ export const paste = authenticatedAction({
         at: stamp,
         created_at: stamp,
         updated_at: stamp,
-        industry: args.industry === "ours" ? "ours" : "other",
+        industry: normIndustry(args.industry),
         tags: (args.tags ?? [])
           .map(t => t.trim())
           .filter(Boolean)
@@ -524,14 +526,44 @@ export const setNote = authenticatedAction({
 // the Facebook Ads Library and all of that"). The radar on the VPS reads the
 // watchlist every Saturday and the requests every two minutes.
 
-const WATCH_PLATFORMS = ["instagram", "tiktok", "snapchat"];
+/**
+ * The weekly scan reads these. YouTube (channels, long-form) joined on
+ * 2026-09-19 for Mahara's own competitor board; Facebook pages still go
+ * through Scrape.
+ */
+const WATCH_PLATFORMS = ["instagram", "tiktok", "snapchat", "youtube"];
+
+/**
+ * Three boards share the tables. `ours` is the clients' industry
+ * (construction and design), `mahara` is Mahara's own competitors and
+ * teachers for the CEO cockpit, `other` is everything else. The shared
+ * boards leave `mahara` out unless asked, so Sabry's proposals are never
+ * mixed with agency marketing.
+ */
+function normIndustry(x?: string): "ours" | "mahara" | "other" {
+  return x === "ours" || x === "mahara" ? x : "other";
+}
+
+/** PostgREST filter for an industry choice: a board, every board, or all but Mahara's. */
+function industryFilter(x?: string): string | null {
+  if (x === "all") return null;
+  if (x) return `eq.${normIndustry(x)}`;
+  return "neq.mahara";
+}
 const WATCH_KINDS = ["account", "hashtag", "search"];
 const SCRAPE_KINDS = ["profile", "ads"];
 const AD_LIBRARIES = ["meta", "google"];
 
-function cleanHandle(value: string, kind: string): string {
+function cleanHandle(value: string, kind: string, platform = ""): string {
   const v = value.trim();
   if (kind === "search") return v.replace(/\s+/g, " ").slice(0, 80);
+  // A YouTube channel is a link, a UC… id or a handle; the radar turns any
+  // of them into the channel's Videos page, so a link is kept whole.
+  if (platform === "youtube" && /^https?:\/\//i.test(v))
+    return v
+      .split(/[?#\s]/)[0]
+      .replace(/\/+$/, "")
+      .slice(0, 200);
   return v
     .replace(/^[@#]+/, "")
     .replace(/\/+$/, "")
@@ -569,11 +601,15 @@ export const watchlistAdd = authenticatedAction({
       throw new Error("Pick account, hashtag or keyword search.");
     if (!WATCH_PLATFORMS.includes(platform))
       throw new Error(
-        "The weekly scan watches Instagram, TikTok and Snapchat. For a YouTube or Facebook page use Scrape.",
+        "The weekly scan watches Instagram, TikTok, Snapchat and YouTube channels. For a Facebook page use Scrape.",
+      );
+    if (platform === "youtube" && kind !== "account")
+      throw new Error(
+        "On YouTube the scan watches channels: paste the channel link or its @handle.",
       );
     if (kind === "search" && platform !== "instagram")
       throw new Error("Keyword search is Instagram only for now.");
-    const value = cleanHandle(args.value, kind);
+    const value = cleanHandle(args.value, kind, platform);
     if (!value) throw new Error("Type a handle, a hashtag or a keyword.");
     const key = `${platform}:${kind}:${value.toLowerCase()}`;
     const stamp = now();
@@ -586,7 +622,7 @@ export const watchlistAdd = authenticatedAction({
           platform,
           kind,
           value,
-          industry: args.industry === "ours" ? "ours" : "other",
+          industry: normIndustry(args.industry),
           tags: ["via:cockpit"],
           active: true,
           note:
@@ -660,7 +696,7 @@ export const requestScrape = authenticatedAction({
       platform: platform || undefined,
       country:
         (args.country ?? "").trim().toUpperCase().slice(0, 2) || undefined,
-      industry: args.industry === "ours" ? "ours" : "other",
+      industry: normIndustry(args.industry),
       client: clip(args.client, 120),
       watch: args.watch ?? true,
       ads: args.ads ?? true,

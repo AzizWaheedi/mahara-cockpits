@@ -87,7 +87,23 @@ const PLATFORM_CHIPS: [Platform, string][] = [
 function isAd(r: Row): boolean {
   return r.platform === "meta_ads" || r.platform === "google_ads";
 }
-type Industry = "" | "ours" | "other";
+type Industry = "" | "ours" | "other" | "mahara";
+/** The three boards that share the tables; "" on the filter means every client board. */
+type Board = "ours" | "other" | "mahara";
+const BOARD_LABEL: Record<Board, string> = {
+  ours: "Our industry",
+  other: "Another industry",
+  mahara: "Mahara B2B",
+};
+function BoardOptions() {
+  return (
+    <>
+      <option value="ours">{BOARD_LABEL.ours}</option>
+      <option value="other">{BOARD_LABEL.other}</option>
+      <option value="mahara">{BOARD_LABEL.mahara}</option>
+    </>
+  );
+}
 
 // biome-ignore lint/suspicious/noExplicitAny: rows come straight from Supabase
 type Row = any;
@@ -328,10 +344,18 @@ function useDebounced<T>(value: T, ms: number): T {
 
 // ---------------------------------------------------------------------------
 
-export function IdeationPage() {
+export function IdeationPage({
+  board,
+  embedded = false,
+}: {
+  /** Pin the page to one board (the CEO cockpit pins "mahara"): the industry choice disappears and every form defaults to it. */
+  board?: Board;
+  /** Inside another screen: no title, no watchlist panel; the host shows its own. */
+  embedded?: boolean;
+} = {}) {
   const [tab, setTab] = useState<Tab>("saved");
   const [platform, setPlatform] = useState<Platform>("");
-  const [industry, setIndustry] = useState<Industry>("");
+  const [industry, setIndustry] = useState<Industry>(board ?? "");
   const [q, setQ] = useState("");
   const qd = useDebounced(q, 300);
   const [sort, setSort] = useState<"newest" | "multiplier">("newest");
@@ -371,7 +395,7 @@ export function IdeationPage() {
           q: qd.trim() || undefined,
           limit: 150,
         }),
-        countIdeas({}),
+        countIdeas({ industry: industry || undefined }),
       ]);
       if (!alive.current) return;
       setData(d);
@@ -514,8 +538,12 @@ export function IdeationPage() {
   return (
     <div className="mx-auto w-full max-w-5xl">
       <div className="mb-1 flex flex-wrap items-center gap-2">
-        <Lightbulb className="h-4 w-4 text-muted-foreground" />
-        <h2 className="text-[15px] font-bold tracking-tight">Ideation</h2>
+        {embedded ? null : (
+          <>
+            <Lightbulb className="h-4 w-4 text-muted-foreground" />
+            <h2 className="text-[15px] font-bold tracking-tight">Ideation</h2>
+          </>
+        )}
         <span className="text-[13px] text-muted-foreground">
           {counts
             ? `${countOf("saved")} saved, ${countOf("proposed")} proposed by the scan`
@@ -556,10 +584,9 @@ export function IdeationPage() {
         </div>
       ) : null}
       <p className="mb-3 text-[13px] text-muted-foreground">
-        Posts that ran far above their account's normal, from our industry and
-        from others, with what they say, what is on screen and why they work.
-        Paste a link to add your own; the scan proposes the rest. The winning
-        ads we ran ourselves stay on What works.
+        {board === "mahara"
+          ? "Posts from the people Mahara competes with and learns from that ran far above their account's normal, with what they say, what is on screen and why they work. Paste a link to add your own; the Saturday scan proposes the rest, and anything saved to the #mahara_b2b board on Foreplay lands here too."
+          : "Posts that ran far above their account's normal, from our industry and from others, with what they say, what is on screen and why they work. Paste a link to add your own; the scan proposes the rest. The winning ads we ran ourselves stay on What works."}
       </p>
 
       {error ? (
@@ -569,9 +596,9 @@ export function IdeationPage() {
       ) : null}
 
       <ForeplayLinks />
-      <PasteBox onDone={refresh} />
-      <ScrapeBox onDone={refresh} />
-      <WatchlistPanel />
+      <PasteBox onDone={refresh} board={board} />
+      <ScrapeBox onDone={refresh} board={board} />
+      {embedded ? null : <WatchlistPanel />}
 
       <div className="mb-3 flex flex-wrap gap-1 border-b">
         {TABS.map(t => (
@@ -613,16 +640,19 @@ export function IdeationPage() {
             </button>
           ))}
         </div>
-        <select
-          value={industry}
-          onChange={e => setIndustry(e.target.value as Industry)}
-          aria-label="Industry"
-          className="h-7 rounded-md border bg-background px-2 text-[12px]"
-        >
-          <option value="">Every industry</option>
-          <option value="ours">Our industry</option>
-          <option value="other">Other industries</option>
-        </select>
+        {board ? null : (
+          <select
+            value={industry}
+            onChange={e => setIndustry(e.target.value as Industry)}
+            aria-label="Industry"
+            className="h-7 rounded-md border bg-background px-2 text-[12px]"
+          >
+            <option value="">Every client industry</option>
+            <option value="ours">Our industry</option>
+            <option value="other">Other industries</option>
+            <option value="mahara">Mahara B2B</option>
+          </select>
+        )}
         <select
           value={sort}
           onChange={e => setSort(e.target.value as "newest" | "multiplier")}
@@ -695,7 +725,7 @@ function emptyText(tab: Tab, q: string): string {
   if (q.trim()) return "No idea here matches that search.";
   switch (tab) {
     case "saved":
-      return "Nothing saved yet. Paste an Instagram, TikTok or Snapchat link above, or keep one of the scan's proposals.";
+      return "Nothing saved yet. Paste an Instagram, TikTok, Snapchat, YouTube or Facebook link above, or keep one of the scan's proposals.";
     case "proposed":
       return "Nothing proposed yet. The scan proposes posts doing three times an account's usual views or more; a scrape proposes a page's best videos and its longest running ads.";
     case "trends":
@@ -711,11 +741,17 @@ function emptyText(tab: Tab, q: string): string {
 
 // ---------------------------------------------------------------------------
 
-function PasteBox({ onDone }: { onDone: () => Promise<void> }) {
+function PasteBox({
+  onDone,
+  board,
+}: {
+  onDone: () => Promise<void>;
+  board?: Board;
+}) {
   const paste = useAction(api.ideation.paste);
   const [url, setUrl] = useState("");
   const [note, setNote] = useState("");
-  const [industry, setIndustry] = useState<"ours" | "other">("other");
+  const [industry, setIndustry] = useState<Board>(board ?? "other");
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<{
     tone: "warn" | "bad";
@@ -749,10 +785,12 @@ function PasteBox({ onDone }: { onDone: () => Promise<void> }) {
         <Lightbulb className="h-4 w-4" />
         <h3 className="text-[14px] font-bold">Add a post</h3>
         <span className="text-[12px] text-muted-foreground">
-          paste the link from Instagram, TikTok or Snapchat
+          paste a link from Instagram, TikTok, Snapchat, YouTube or Facebook
         </span>
       </div>
-      <div className="mt-2 grid gap-2 md:grid-cols-[minmax(0,1fr)_150px_auto]">
+      <div
+        className={`mt-2 grid gap-2 ${board ? "md:grid-cols-[minmax(0,1fr)_auto]" : "md:grid-cols-[minmax(0,1fr)_150px_auto]"}`}
+      >
         <input
           value={url}
           onChange={e => setUrl(e.target.value)}
@@ -763,14 +801,15 @@ function PasteBox({ onDone }: { onDone: () => Promise<void> }) {
           dir="ltr"
           className="rounded border bg-transparent px-2 py-1 text-[13px]"
         />
-        <select
-          value={industry}
-          onChange={e => setIndustry(e.target.value as "ours" | "other")}
-          className="rounded border bg-transparent px-2 py-1 text-[13px]"
-        >
-          <option value="ours">Our industry</option>
-          <option value="other">Another industry</option>
-        </select>
+        {board ? null : (
+          <select
+            value={industry}
+            onChange={e => setIndustry(e.target.value as Board)}
+            className="rounded border bg-transparent px-2 py-1 text-[13px]"
+          >
+            <BoardOptions />
+          </select>
+        )}
         <Button
           size="sm"
           onClick={() => void submit()}
@@ -803,7 +842,13 @@ function PasteBox({ onDone }: { onDone: () => Promise<void> }) {
 type ScrapeKind = "profile" | "meta" | "google";
 
 /** Paste any page, or name a page, advertiser or keyword: the radar scrapes it within two minutes. */
-function ScrapeBox({ onDone }: { onDone: () => Promise<void> }) {
+function ScrapeBox({
+  onDone,
+  board,
+}: {
+  onDone: () => Promise<void>;
+  board?: Board;
+}) {
   const request = useAction(api.ideation.requestScrape);
   const listRequests = useAction(api.ideation.requestsList);
   const [open, setOpen] = useState(false);
@@ -811,7 +856,7 @@ function ScrapeBox({ onDone }: { onDone: () => Promise<void> }) {
   const [input, setInput] = useState("");
   const [platform, setPlatform] = useState("");
   const [country, setCountry] = useState("KW");
-  const [industry, setIndustry] = useState<"ours" | "other">("other");
+  const [industry, setIndustry] = useState<Board>(board ?? "other");
   const [client, setClient] = useState("");
   const [watch, setWatch] = useState(true);
   const [ads, setAds] = useState(true);
@@ -970,14 +1015,15 @@ function ScrapeBox({ onDone }: { onDone: () => Promise<void> }) {
                 className="rounded border bg-transparent px-2 py-1 text-[13px]"
               />
             )}
-            <select
-              value={industry}
-              onChange={e => setIndustry(e.target.value as "ours" | "other")}
-              className="rounded border bg-transparent px-2 py-1 text-[13px]"
-            >
-              <option value="ours">Our industry</option>
-              <option value="other">Another industry</option>
-            </select>
+            {board ? null : (
+              <select
+                value={industry}
+                onChange={e => setIndustry(e.target.value as Board)}
+                className="rounded border bg-transparent px-2 py-1 text-[13px]"
+              >
+                <BoardOptions />
+              </select>
+            )}
             <Button
               size="sm"
               onClick={() => void submit()}
@@ -1120,7 +1166,7 @@ function WatchlistPanel() {
   const [platform, setPlatform] = useState("instagram");
   const [kind, setKind] = useState("account");
   const [value, setValue] = useState("");
-  const [industry, setIndustry] = useState<"ours" | "other">("ours");
+  const [industry, setIndustry] = useState<Board>("ours");
   const [busy, setBusy] = useState(false);
   const alive = useRef(true);
   useEffect(() => {
@@ -1191,6 +1237,7 @@ function WatchlistPanel() {
               <option value="instagram">Instagram</option>
               <option value="tiktok">TikTok</option>
               <option value="snapchat">Snapchat</option>
+              <option value="youtube">YouTube channel</option>
             </select>
             <select
               value={kind}
@@ -1210,7 +1257,9 @@ function WatchlistPanel() {
               }}
               placeholder={
                 kind === "account"
-                  ? "@handle"
+                  ? platform === "youtube"
+                    ? "@handle or channel link"
+                    : "@handle"
                   : kind === "hashtag"
                     ? "#hashtag"
                     : "keyword, e.g. ديكور الكويت"
@@ -1220,12 +1269,11 @@ function WatchlistPanel() {
             />
             <select
               value={industry}
-              onChange={e => setIndustry(e.target.value as "ours" | "other")}
+              onChange={e => setIndustry(e.target.value as Board)}
               className="rounded border bg-transparent px-2 py-1 text-[13px]"
               aria-label="Industry"
             >
-              <option value="ours">Our industry</option>
-              <option value="other">Another industry</option>
+              <BoardOptions />
             </select>
             <Button
               size="sm"
@@ -1259,7 +1307,11 @@ function WatchlistPanel() {
                         ? `@${w.value}`
                         : w.value}
                   </span>
-                  {w.industry === "ours" ? <Pill>Our industry</Pill> : null}
+                  {w.industry === "ours" ? (
+                    <Pill>Our industry</Pill>
+                  ) : w.industry === "mahara" ? (
+                    <Pill>Mahara B2B</Pill>
+                  ) : null}
                   <span className="text-muted-foreground">
                     {w.source === "search"
                       ? "found by keyword search"
@@ -1421,6 +1473,8 @@ function IdeaRow({
             <TrendPill r={r} />
             {r.industry === "ours" ? (
               <Pill tone="neutral">Our industry</Pill>
+            ) : r.industry === "mahara" ? (
+              <Pill tone="neutral">Mahara B2B</Pill>
             ) : (
               <Pill>Other industry</Pill>
             )}

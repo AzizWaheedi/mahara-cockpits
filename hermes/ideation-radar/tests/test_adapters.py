@@ -112,3 +112,59 @@ class AdapterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class YouTubeAdapterTests(unittest.TestCase):
+    def setUp(self):
+        os.environ.setdefault("RADAR_HOME", "/tmp/radar-unit")
+        self.cfg = Config.from_env()
+
+    def test_channel_url_forms(self):
+        from radar.platforms.youtube import channel_url
+        self.assertEqual(channel_url("@maharamedia"), "https://www.youtube.com/@maharamedia/videos")
+        self.assertEqual(channel_url("maharamedia"), "https://www.youtube.com/@maharamedia/videos")
+        self.assertEqual(channel_url("UCnJqIFZlyCKeeW6Jkp5HZHw"), "https://www.youtube.com/channel/UCnJqIFZlyCKeeW6Jkp5HZHw/videos")
+        self.assertEqual(channel_url("https://www.youtube.com/@AlexHormozi/shorts?x=1"), "https://www.youtube.com/@AlexHormozi/videos")
+        self.assertEqual(channel_url("https://youtube.com/@AlexHormozi"), "https://youtube.com/@AlexHormozi/videos")
+
+    def test_jobs_and_parse(self):
+        from radar.platforms.youtube import duration_seconds
+        ad = adapter_for("youtube", self.cfg)
+        actor, job = ad.profile_job("@AlexHormozi", 30)
+        self.assertEqual(actor, "streamers~youtube-channel-scraper")
+        self.assertEqual(job["startUrls"], [{"url": "https://www.youtube.com/@AlexHormozi/videos"}])
+        self.assertEqual((job["maxResults"], job["maxResultsShorts"], job["maxResultStreams"], job["sortVideosBy"]), (30, 0, 0, "NEWEST"))
+        actor, job = ad.post_job("https://www.youtube.com/watch?v=abc123xyz")
+        self.assertEqual(job["maxResults"], 1)
+        items = [
+            {"id": "v1", "title": "How I Would Build a $10M Service Business", "text": "Long description", "url": "https://www.youtube.com/watch?v=v1",
+             "viewCount": 1156395, "likes": 30000, "commentsCount": 900, "date": "2026-08-29T13:55:28.203Z", "duration": "00:26:46",
+             "channelName": "Alex Hormozi", "channelUrl": "https://www.youtube.com/@AlexHormozi", "numberOfSubscribers": 3400000, "thumbnailUrl": "https://i.ytimg.com/vi/v1/hq720.jpg", "type": "video"},
+            {"id": "s1", "title": "a short", "type": "short", "viewCount": 5},
+            {"error": "nope"},
+            {"url": "https://youtu.be/zzz999", "title": "No id field", "viewCount": "12"},
+        ]
+        posts = ad.parse_posts(items, handle="@AlexHormozi")
+        self.assertEqual([p.post_id for p in posts], ["v1", "zzz999"])
+        p = posts[0]
+        self.assertEqual(p.platform, "youtube")
+        self.assertEqual(p.author_handle, "alexhormozi")
+        self.assertEqual(p.author_followers, 3400000)
+        self.assertEqual(p.views, 1156395)
+        self.assertEqual(p.posted_at, "2026-08-29T13:55:28Z")
+        self.assertEqual(p.duration_sec, 1606.0)
+        self.assertTrue(p.caption.startswith("How I Would Build"))
+        self.assertIn("Long description", p.caption)
+        self.assertEqual(p.thumb_url, "https://i.ytimg.com/vi/v1/hq720.jpg")
+        self.assertEqual(posts[1].author_handle, "alexhormozi")
+        self.assertEqual(ad.parse_details(items), {"followers": 3400000})
+        self.assertEqual(duration_seconds("1:02"), 62.0)
+        self.assertEqual(duration_seconds(90), 90.0)
+        self.assertIsNone(duration_seconds("soon"))
+
+    def test_industry_normalisation(self):
+        from radar.requests import normalise_industry
+        self.assertEqual(normalise_industry("mahara"), "mahara")
+        self.assertEqual(normalise_industry("ours"), "ours")
+        self.assertEqual(normalise_industry("anything"), "other")
+        self.assertEqual(self.cfg.floor_for("youtube"), 500.0)

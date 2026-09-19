@@ -1483,7 +1483,7 @@ class IdeaRowShapeTests(unittest.TestCase):
 
     #: Kept identical to IDEA_FIELDS in apps/*/…/adAsIdea.ts.
     FIELDS = sorted([
-        "author_name", "caption", "duration_sec", "key", "media_url", "origin",
+        "author_name", "caption", "duration_sec", "industry", "key", "media_url", "origin",
         "pasted_by", "pasted_by_name", "platform", "running_days", "saved_by",
         "saved_by_name", "saved_note", "status", "thumb_url", "transcript",
         "url", "why_it_works",

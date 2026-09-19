@@ -203,6 +203,21 @@ Since 2026-09-18: `RADAR_SEARCH_LIMIT` 20 (accounts listed per keyword),
 `elevenlabs,groq`, `RADAR_ELEVENLABS_STT_MODEL` `scribe_v1`,
 `RADAR_ACTOR_INSTAGRAM_SEARCH` `apify~instagram-search-scraper`.
 
+### Three boards, one radar (2026-09-19)
+
+`industry` on the watchlist and on every post is one of three: `ours` (the
+clients' construction and design industry, Sabry's board), `mahara`
+(Mahara's own competitors and teachers, the CEO cockpit's board) and
+`other`. The shared Ideation pages leave `mahara` out unless it is chosen;
+the CEO tab pins it. `radar.py watchlist add youtube @handle --industry
+mahara` (or a channel link, or a `UC…` id) watches a YouTube channel:
+long-form only, the newest thirty videos through `RADAR_ACTOR_YOUTUBE`
+(default `streamers~youtube-channel-scraper`, about a tenth of a cent per
+video), baseline and 3x/5x rule as everywhere else, floor
+`RADAR_FLOOR_YOUTUBE` (default 500 views). The editor desk's Foreplay sync
+reads the `#mahara_b2b` board (`FOREPLAY_MAHARA_BOX`) every run and files
+its saves under `mahara`, next to the client drop box.
+
 ## Install on the VPS
 
 ```bash

@@ -23,7 +23,7 @@ class Target:
     platform: str
     kind: str  # "account" | "hashtag"
     value: str  # handle without @, or hashtag without #
-    industry: str = "other"  # "ours" (construction and design) | "other"
+    industry: str = "other"  # "ours" (construction and design) | "mahara" (Mahara's own competitors) | "other"
     tags: list[str] = field(default_factory=list)
     active: bool = True
     note: str = ""

@@ -111,7 +111,17 @@ const LIGHT = [
   "cpl",
 ].join(",");
 
-const WATCH_PLATFORMS = ["instagram", "tiktok", "snapchat"];
+/** The weekly scan reads these; YouTube channels joined on 2026-09-19. Facebook pages go through Scrape. */
+const WATCH_PLATFORMS = ["instagram", "tiktok", "snapchat", "youtube"];
+
+/**
+ * Three boards share the tables: `ours` (the clients' industry), `mahara`
+ * (Mahara's own competitors, for the CEO cockpit) and `other`. The shared
+ * boards leave `mahara` out unless asked.
+ */
+function normIndustry(x?: string): "ours" | "mahara" | "other" {
+  return x === "ours" || x === "mahara" ? x : "other";
+}
 const WATCH_KINDS = ["account", "hashtag", "search"];
 const SCRAPE_KINDS = ["profile", "ads"];
 const AD_LIBRARIES = ["meta", "google"];
@@ -134,9 +144,16 @@ function stamp36(): string {
   return `${Date.now().toString(36)}${Math.floor(Math.random() * 1e9).toString(36)}`;
 }
 
-function cleanHandle(value: string, kind: string): string {
+function cleanHandle(value: string, kind: string, platform = ""): string {
   const v = value.trim();
   if (kind === "search") return v.replace(/\s+/g, " ").slice(0, 80);
+  // A YouTube channel is a link, a UC… id or a handle; the radar turns any
+  // of them into the channel's Videos page, so a link is kept whole.
+  if (platform === "youtube" && /^https?:\/\//i.test(v))
+    return v
+      .split(/[?#\s]/)[0]
+      .replace(/\/+$/, "")
+      .slice(0, 200);
   return v
     .replace(/^[@#]+/, "")
     .replace(/\/+$/, "")
@@ -256,7 +273,11 @@ async function list(args: {
     query = query.order("at", { ascending: false });
   }
   if (args.platform) query = query.eq("platform", args.platform.toLowerCase());
-  if (args.industry) query = query.eq("industry", args.industry.toLowerCase());
+  if (args.industry === "all") {
+    // every board at once
+  } else if (args.industry)
+    query = query.eq("industry", normIndustry(args.industry));
+  else query = query.neq("industry", "mahara");
   const q = (args.q ?? "").replace(/[,()"'*\\%]/g, " ").trim();
   if (q.length >= 2) {
     const pat = `*${q}*`;
@@ -285,7 +306,7 @@ async function detail({ key }: { key: string }) {
  * could not be read.
  */
 async function counts(
-  _args: Record<string, never> = {},
+  args: { industry?: string } = {},
 ): Promise<Record<string, number>> {
   const pairs = await Promise.all(
     Object.entries(TABS).map(async ([tab, statuses]) => {
@@ -293,6 +314,11 @@ async function counts(
         .from(TABLE)
         .select("key", { count: "exact", head: true })
         .in("status", statuses);
+      if (args.industry === "all") {
+        // every board at once
+      } else if (args.industry)
+        query = query.eq("industry", normIndustry(args.industry));
+      else query = query.neq("industry", "mahara");
       if (tab === "trends") query = query.not("trend_id", "is", null);
       const { count, error } = await query;
       boom(error);
@@ -331,7 +357,7 @@ async function paste(args: {
     at,
     created_at: at,
     updated_at: at,
-    industry: args.industry === "ours" ? "ours" : "other",
+    industry: normIndustry(args.industry),
     tags: (args.tags ?? [])
       .map(t => t.trim())
       .filter(Boolean)
@@ -461,11 +487,15 @@ async function watchlistAdd(args: {
     throw new Error("Pick account, hashtag or keyword search.");
   if (!WATCH_PLATFORMS.includes(platform))
     throw new Error(
-      "The weekly scan watches Instagram, TikTok and Snapchat. For a YouTube or Facebook page use Scrape.",
+      "The weekly scan watches Instagram, TikTok, Snapchat and YouTube channels. For a Facebook page use Scrape.",
+    );
+  if (platform === "youtube" && kind !== "account")
+    throw new Error(
+      "On YouTube the scan watches channels: paste the channel link or its @handle.",
     );
   if (kind === "search" && platform !== "instagram")
     throw new Error("Keyword search is Instagram only for now.");
-  const value = cleanHandle(args.value, kind);
+  const value = cleanHandle(args.value, kind, platform);
   if (!value) throw new Error("Type a handle, a hashtag or a keyword.");
   const key = `${platform}:${kind}:${value.toLowerCase()}`;
   const at = now();
@@ -475,7 +505,7 @@ async function watchlistAdd(args: {
       platform,
       kind,
       value,
-      industry: args.industry === "ours" ? "ours" : "other",
+      industry: normIndustry(args.industry),
       tags: ["via:cockpit"],
       active: true,
       note:
@@ -540,7 +570,7 @@ async function requestScrape(args: {
   const params: Record<string, unknown> = {
     platform: platform || undefined,
     country: (args.country ?? "").trim().toUpperCase().slice(0, 2) || undefined,
-    industry: args.industry === "ours" ? "ours" : "other",
+    industry: normIndustry(args.industry),
     client: clip(args.client, 120),
     watch: args.watch ?? true,
     ads: args.ads ?? true,

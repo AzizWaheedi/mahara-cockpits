@@ -411,6 +411,7 @@ def cmd_foreplay(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     out = fp_mod.sync(
         cfg, log.info, sb, max_ads=args.limit or 250, full=args.full,
         drop_box=args.board or cfg.foreplay_drop_box,
+        mahara_box=cfg.foreplay_mahara_box,
     )
     _print(out, args.json)
     return 0
