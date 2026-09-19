@@ -7,6 +7,7 @@ import type {
   Idea,
   Job,
   Note,
+  TeamMeeting,
   Version,
   WinnerAd,
   WorkRequest,
@@ -184,7 +185,7 @@ export function useIdeas(): Loaded<Idea[]> {
       supabase
         .from("ideation_posts")
         .select(
-          "key,platform,url,status,author_handle,author_name,posted_at,views,likes,comments,caption,duration_sec,thumb_url,still_path,industry,multiplier,tier,format,hook,why_it_works,transcript,saved_by_name,saved_at,saved_note",
+          "key,platform,url,status,author_handle,author_name,posted_at,views,likes,comments,caption,duration_sec,thumb_url,still_path,media_url,industry,multiplier,tier,format,hook,why_it_works,transcript,saved_by_name,saved_at,saved_note",
         )
         .in("status", ["proposed", "saved"])
         .order("multiplier", { ascending: false, nullsFirst: false })
@@ -233,6 +234,19 @@ export function useEodToday(day: string): Loaded<WorkRequest[]> {
         .order("created_at", { ascending: false })
         .limit(1),
     [day],
+  );
+}
+
+/** Team meetings. A row policy decides which ones: the ones you were on. */
+export function useMeetings(): Loaded<TeamMeeting[]> {
+  return useQuery<TeamMeeting[]>(
+    () =>
+      supabase
+        .from("team_meetings")
+        .select("*")
+        .order("started_at", { ascending: false, nullsFirst: false })
+        .limit(60),
+    [],
   );
 }
 

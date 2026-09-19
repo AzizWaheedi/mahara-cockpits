@@ -10,6 +10,7 @@
     python3 desk.py deliver --task ID --url LINK [--status "client review"]
                                                write the edited link and move the card
     python3 desk.py requests [--limit N]        carry out what the cockpit asked for
+    python3 desk.py meetings [--days N]        team meetings from Fathom
     python3 desk.py notes [--task ID]          pull ClickUp comments in as timestamped notes
     python3 desk.py jobs [--mine EMAIL]        what is open, and what is blocking it
 
@@ -347,6 +348,17 @@ def cmd_deliver(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     return 0
 
 
+def cmd_meetings(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    """Team meetings from Fathom, for everyone who was on the invite."""
+    from desk import meetings as meetings_mod
+
+    sb = _sb(cfg)
+    out = meetings_mod.sync(cfg, log.info, sb, days=args.days or 45)
+    log.info(f"meetings: {out}")
+    _print(out, args.json)
+    return 0
+
+
 def cmd_requests(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     """Carry out what the cockpit asked for. The browser holds no keys."""
     sb = _sb(cfg)
@@ -421,6 +433,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     d = sub.add_parser("doctor"); d.add_argument("--offline", action="store_true")
+    mt = sub.add_parser("meetings"); mt.add_argument("--days", type=int, default=45)
     rq = sub.add_parser("requests"); rq.add_argument("--limit", type=int, default=10)
     sy = sub.add_parser("sync"); sy.add_argument("--closed", action="store_true"); sy.add_argument("--no-docs", action="store_true"); sy.add_argument("--force-docs", action="store_true")
     pr = sub.add_parser("prepare"); pr.add_argument("--task"); pr.add_argument("--limit", type=int); pr.add_argument("--force", action="store_true")
@@ -439,7 +452,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     handlers = {
         "doctor": cmd_doctor, "sync": cmd_sync, "prepare": cmd_prepare,
         "check": cmd_check, "deliver": cmd_deliver, "notes": cmd_notes, "jobs": cmd_jobs,
-        "requests": cmd_requests,
+        "requests": cmd_requests, "meetings": cmd_meetings,
     }
     try:
         return handlers[args.cmd](cfg, args, log)

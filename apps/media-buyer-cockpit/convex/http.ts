@@ -119,6 +119,85 @@ http.route({
 });
 
 http.route({
+  path: "/portal/editor-preview",
+  method: "OPTIONS",
+  handler: httpAction(async (_ctx, request) => {
+    const h = editorCors(request);
+    return new Response(null, {
+      status: 204,
+      headers: {
+        ...h,
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/portal/editor-preview",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const cors = editorCors(request);
+    const allowed = cors["Access-Control-Allow-Origin"] !== "null";
+    const headers: Record<string, string> = {
+      ...cors,
+      "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      "Cache-Control": "no-store",
+    };
+    if (!allowed)
+      return Response.json(
+        { ok: false, error: "not an allowed origin" },
+        { status: 403, headers },
+      );
+    const auth = request.headers.get("authorization") ?? "";
+    const token = auth.toLowerCase().startsWith("bearer ")
+      ? auth.slice(7).trim()
+      : "";
+    let adId = "";
+    let format: string | undefined;
+    try {
+      const body = (await request.json()) as {
+        adId?: unknown;
+        format?: unknown;
+      };
+      adId = String(body?.adId ?? "");
+      format = body?.format ? String(body.format) : undefined;
+    } catch {
+      return Response.json(
+        { ok: false, error: "send a JSON body" },
+        { status: 400, headers },
+      );
+    }
+    if (!token || !adId)
+      return Response.json(
+        { ok: false, error: "a session and an ad are both needed" },
+        { status: 400, headers },
+      );
+    try {
+      const out = await ctx.runAction(internal.editorPortal.previewForEditor, {
+        token,
+        adId,
+        format,
+      });
+      return Response.json({ ok: true, ...out }, { headers });
+    } catch (e) {
+      const raw = String((e as Error).message ?? e);
+      const plain = /not on your access/.test(raw)
+        ? "The editor desk is not on your access."
+        : /no address/.test(raw)
+          ? "That session carries no address."
+          : /JWS|JWT|signature|Compact|exp/i.test(raw)
+            ? "That session is not valid any more. Sign in again."
+            : "The preview could not be fetched.";
+      return Response.json(
+        { ok: false, error: plain },
+        { status: 401, headers },
+      );
+    }
+  }),
+});
+
+http.route({
   path: "/askai/pending",
   method: "GET",
   handler: httpAction(async (ctx, request) => {

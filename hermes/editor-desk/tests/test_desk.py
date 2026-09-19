@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 os.environ.setdefault("DESK_HOME", "/tmp/desk-unit")
-from desk import checks, clients, media, prepare, queue, sheets, speech
+from desk import checks, clients, media, meetings, prepare, queue, sheets, speech
 from desk.clickup import editors_of, fields_of, is_open, job_row
 from desk.config import Config
 from desk.drive import parse_id
@@ -832,3 +832,68 @@ class EodTests(unittest.TestCase):
         self.assertEqual(seen["tab"], "Video Editors")
         self.assertEqual(len(seen["values"]), 11)
         self.assertEqual(out["columns"], 11)
+
+
+class MeetingTests(unittest.TestCase):
+    """Team meetings, not client calls. The difference is on the invite, not
+    in the title, which is written by whoever made the calendar entry."""
+
+    def meeting(self, *invitees, **kw):
+        m = {
+            "recording_id": kw.get("rid", "825247413"),
+            "meeting_title": kw.get("title", "Fulfillment — Weekly Wrap"),
+            "recording_start_time": "2026-09-17T10:02:27Z",
+            "recording_end_time": "2026-09-17T10:30:00Z",
+            "url": "https://fathom.video/calls/825247413",
+            "share_url": "https://fathom.video/share/abc",
+            "recorded_by": {"name": "Abdulaziz Waheedi"},
+            "calendar_invitees": [
+                {"name": n, "email": e, "is_external": x} for n, e, x in invitees
+            ],
+            "default_summary": {"markdown_formatted": "## الغرض من الاجتماع\n\nمراجعة"},
+            "action_items": [{"description": "Send the cut", "assignee": {"name": "Karim"}}],
+            "transcript_language": "ar",
+        }
+        m.update({k: v for k, v in kw.items() if k not in ("rid", "title")})
+        return m
+
+    TEAM = (
+        ("Karim (Editor)", "karim@maharamedia.com", False),
+        ("Sabry (Creative Director)", "sabry@maharamedia.com", False),
+    )
+    CLIENT = (
+        ("Abdulaziz Waheedi", "aziz@maharamedia.com", False),
+        ("Khaled Hasan", "khaled@somewhereelse.com", True),
+    )
+
+    def test_a_call_with_an_outsider_is_not_a_team_meeting(self):
+        self.assertFalse(meetings.is_team_meeting(self.meeting(*self.CLIENT)))
+
+    def test_a_call_with_only_our_own_people_is(self):
+        self.assertTrue(meetings.is_team_meeting(self.meeting(*self.TEAM)))
+
+    def test_a_meeting_with_nobody_on_the_invite_is_not_assumed_internal(self):
+        self.assertFalse(meetings.is_team_meeting(self.meeting()))
+
+    def test_the_title_never_decides(self):
+        # A client call named like a team meeting stays a client call.
+        disguised = self.meeting(*self.CLIENT, title="🛠️ Fulfillment — Weekly Wrap")
+        self.assertFalse(meetings.is_team_meeting(disguised))
+
+    def test_the_row_carries_who_was_there_in_lowercase(self):
+        r = meetings.row(self.meeting(("Karim", "Karim@MaharaMedia.com", False)))
+        self.assertEqual(r["invitee_emails"], ["karim@maharamedia.com"])
+
+    def test_the_row_keeps_the_summary_the_link_and_the_actions(self):
+        r = meetings.row(self.meeting(*self.TEAM))
+        self.assertIn("الغرض من الاجتماع", r["summary_md"])
+        self.assertEqual(r["share_url"], "https://fathom.video/share/abc")
+        self.assertEqual(r["action_items"][0]["text"], "Send the cut")
+        self.assertEqual(r["action_items"][0]["for"], "Karim")
+
+    def test_the_transcript_is_left_behind(self):
+        r = meetings.row(self.meeting(*self.TEAM, transcript="a very long transcript"))
+        self.assertNotIn("transcript", r)
+
+    def test_a_meeting_with_no_recording_id_is_dropped(self):
+        self.assertIsNone(meetings.row({"meeting_title": "x"}))

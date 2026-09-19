@@ -1,3 +1,4 @@
+import { Play } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Empty, Fold, Out, Problem, Prose, Spinner } from "../components/bits";
 import { useWho } from "../lib/auth";
@@ -34,21 +35,45 @@ function IdeaCard({
 }) {
   const kept = idea.status === "saved";
   const hook = typeof idea.hook === "object" && idea.hook ? idea.hook.line : null;
+  // Seven of thirty-seven posts have a playable file; the rest are a frame
+  // and a link out. Nothing here pretends to embed TikTok.
+  const [playing, setPlaying] = useState(false);
+  const frame = still ?? idea.thumb_url ?? "";
   return (
     <li className="panel overflow-hidden">
       <div className="flex gap-3 p-3">
-        {still || idea.thumb_url ? (
-          <img
-            src={still ?? idea.thumb_url ?? ""}
-            alt=""
-            loading="lazy"
-            className="raised h-28 w-20 shrink-0 rounded-[var(--radius-sm)] object-cover"
-          />
-        ) : (
-          <div className="raised muted grid h-28 w-20 shrink-0 place-items-center rounded-[var(--radius-sm)] text-[10px]">
-            no frame
-          </div>
-        )}
+        <div className="raised relative h-28 w-20 shrink-0 overflow-hidden rounded-[var(--radius-sm)]">
+          {playing && idea.media_url ? (
+            // biome-ignore lint/a11y/useMediaCaption: a scraped clip has none
+            <video
+              src={idea.media_url}
+              controls
+              autoPlay
+              playsInline
+              className="size-full object-cover"
+            />
+          ) : (
+            <>
+              {frame ? (
+                <img src={frame} alt="" loading="lazy" className="size-full object-cover" />
+              ) : (
+                <span className="muted absolute inset-0 grid place-items-center text-[10px]">
+                  no frame
+                </span>
+              )}
+              {idea.media_url ? (
+                <button
+                  type="button"
+                  onClick={() => setPlaying(true)}
+                  aria-label="Play this clip"
+                  className="absolute inset-0 grid place-items-center"
+                >
+                  <Play className="size-6 text-white drop-shadow" strokeWidth={2} />
+                </button>
+              ) : null}
+            </>
+          )}
+        </div>
 
         <div className="min-w-0 flex-1">
           <div className="flex items-start gap-2">

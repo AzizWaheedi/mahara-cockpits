@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import AdPreviewFrame from "../components/AdPreview";
 import { Empty, Fold, Problem, Prose, Spinner } from "../components/bits";
 import { useWinners } from "../lib/data";
 import type { WinnerAd } from "../lib/types";
@@ -21,19 +22,10 @@ function money(n: number | null): string {
 function Card({ ad }: { ad: WinnerAd }) {
   return (
     <li className="panel overflow-hidden">
-      <div className="flex gap-3 p-3">
-        {ad.thumb_url ? (
-          <img
-            src={ad.thumb_url}
-            alt=""
-            loading="lazy"
-            className="raised size-20 shrink-0 rounded-[var(--radius-sm)] object-cover"
-          />
-        ) : (
-          <div className="raised muted grid size-20 shrink-0 place-items-center rounded-[var(--radius-sm)] text-[10px]">
-            no frame
-          </div>
-        )}
+      <div className="grid gap-3 p-3 sm:grid-cols-[13rem_1fr]">
+        <div className="max-w-52">
+          <AdPreviewFrame adId={ad.ad_id} thumbUrl={ad.thumb_url} format={ad.format} />
+        </div>
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium">{ad.client ?? "—"}</p>
           <p className="muted truncate text-xs">{ad.service_line ?? ad.ad_name ?? ""}</p>

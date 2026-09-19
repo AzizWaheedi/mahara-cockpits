@@ -66,6 +66,47 @@ export async function signInWithPortalToken(token: string): Promise<PortalWho> {
   };
 }
 
+export interface AdPreview {
+  ok: boolean;
+  error?: string;
+  /** Meta's own preview frame. Good for hours, not days. */
+  src?: string;
+  width?: number;
+  height?: number;
+  /** A picture we captured, which does not expire. */
+  stillUrl?: string;
+  thumbUrl?: string;
+  /** Meta's own words when it will not render one. */
+  reason?: string;
+  message?: string;
+}
+
+/**
+ * The Facebook preview of one winning ad.
+ *
+ * Meta's preview links die within a day, which is why none is stored. The
+ * media buyer deployment fetches a fresh one on demand; this asks it, proving
+ * who is asking with the Supabase session the cockpit already holds.
+ */
+export async function adPreview(adId: string, format?: string): Promise<AdPreview> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) return { ok: false, error: "Sign in again to load previews." };
+  try {
+    const res = await fetch(`${portalSite()}/portal/editor-preview`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ adId, format }),
+    });
+    const body = (await res.json().catch(() => null)) as AdPreview | null;
+    if (!res.ok || !body?.ok)
+      return { ok: false, error: body?.error ?? `the portal answered ${res.status}` };
+    return body;
+  } catch (e) {
+    return { ok: false, error: String((e as Error).message ?? e) };
+  }
+}
+
 /** Where to send someone who needs a pass. */
 export function portalDoor(next: string): string {
   return `${portalUrl()}/go/${COCKPIT}?next=${encodeURIComponent(next)}`;

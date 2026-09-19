@@ -214,6 +214,8 @@ export interface Idea {
   duration_sec: number | null;
   thumb_url: string | null;
   still_path: string | null;
+  /** The radar keeps one when the platform gave a playable file. Often not. */
+  media_url: string | null;
   industry: string | null;
   multiplier: number | null;
   tier: string | null;
@@ -224,4 +226,19 @@ export interface Idea {
   saved_by_name: string | null;
   saved_at: string | null;
   saved_note: string | null;
+}
+
+/** A team meeting from Fathom, shown to the people who were on the invite. */
+export interface TeamMeeting {
+  recording_id: string;
+  title: string | null;
+  started_at: string | null;
+  ended_at: string | null;
+  url: string | null;
+  share_url: string | null;
+  host: string | null;
+  invitees: { name: string; email: string; external: boolean }[] | null;
+  summary_md: string | null;
+  action_items: { text: string; for: string }[] | null;
+  language: string | null;
 }

@@ -1,3 +1,15 @@
+import {
+  ArrowRightLeft,
+  CalendarDays,
+  Clapperboard,
+  Film,
+  Lightbulb,
+  ListChecks,
+  type LucideIcon,
+  MoonStar,
+  ShieldCheck,
+  Trophy,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { NavLink } from "react-router";
 import { useWho } from "../lib/auth";
@@ -5,32 +17,43 @@ import { otherCockpits, portalUrl } from "../lib/portal";
 import { Wordmark } from "./Wordmark";
 
 /**
- * The same shape as the other three cockpits: grouped navigation down the
- * left, the portal's other doors underneath, the person at the bottom.
+ * The same shape as the other three cockpits: an icon and a label per row,
+ * grouped down the left, the portal's other doors underneath, the person at
+ * the bottom.
  *
  * The shared sections keep the names they have elsewhere. "Ideation" and
  * "What works" are literally the same rows the creative director sees, so
  * calling them something else here would make switching cockpits feel like
  * two products.
+ *
+ * A count beside a row is only drawn when it is something to act on: jobs
+ * ready to start, meetings you have not opened. A badge that is always there
+ * stops being read.
  */
-const GROUPS: { label: string; items: { to: string; label: string }[] }[] = [
+interface Item {
+  to: string;
+  label: string;
+  icon: LucideIcon;
+  /** The key in `counts` whose number, when above zero, is worth a badge. */
+  badge?: string;
+}
+
+const GROUPS: { label: string; items: Item[] }[] = [
   {
     label: "Your day",
     items: [
-      { to: "/", label: "Jobs" },
-      { to: "/pipeline", label: "Pipeline" },
-      { to: "/eod", label: "End of day" },
+      { to: "/", label: "Jobs", icon: ListChecks, badge: "ready" },
+      { to: "/pipeline", label: "Pipeline", icon: Clapperboard },
+      { to: "/meetings", label: "Meetings", icon: CalendarDays, badge: "meetings" },
+      { to: "/eod", label: "End of day", icon: MoonStar, badge: "eod" },
     ],
   },
-  {
-    label: "The work",
-    items: [{ to: "/videos", label: "Footage" }],
-  },
+  { label: "The work", items: [{ to: "/videos", label: "Footage", icon: Film }] },
   {
     label: "Library",
     items: [
-      { to: "/ideas", label: "Ideation" },
-      { to: "/winners", label: "What works" },
+      { to: "/ideas", label: "Ideation", icon: Lightbulb },
+      { to: "/winners", label: "What works", icon: Trophy },
     ],
   },
 ];
@@ -65,13 +88,33 @@ function ThemeToggle() {
   );
 }
 
+function Badge({ n, tone }: { n: number; tone?: "urgent" }) {
+  return (
+    <span
+      className="ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums"
+      style={
+        tone === "urgent"
+          ? { background: "var(--destructive)", color: "#fff" }
+          : {
+              background: "color-mix(in oklch, var(--primary) 22%, transparent)",
+              color: "var(--primary)",
+            }
+      }
+    >
+      {n}
+    </span>
+  );
+}
+
 export default function Sidebar({
   name,
   isAdmin,
+  counts,
   onNavigate,
 }: {
   name: string;
   isAdmin: boolean;
+  counts: Record<string, number>;
   onNavigate?: () => void;
 }) {
   const { cockpits, signOut } = useWho();
@@ -86,35 +129,53 @@ export default function Sidebar({
       <nav className="flex flex-col gap-5">
         {GROUPS.map((g) => (
           <div key={g.label}>
-            <p className="muted mb-1 px-2 text-[11px] font-medium tracking-wide uppercase">
+            <p className="muted mb-1 px-2 text-[10px] font-semibold tracking-[0.12em] uppercase">
               {g.label}
             </p>
             <ul className="space-y-0.5">
-              {g.items.map((item) => (
-                <li key={item.to}>
-                  <NavLink
-                    to={item.to}
-                    end={item.to === "/"}
-                    onClick={onNavigate}
-                    className={({ isActive }) =>
-                      `block rounded-[var(--radius-md)] px-2 py-1.5 text-sm transition-colors ${
-                        isActive
-                          ? "bg-[color:var(--secondary)] font-medium"
-                          : "muted hover:bg-[color:var(--secondary)] hover:text-[color:var(--foreground)]"
-                      }`
-                    }
-                  >
-                    {item.label}
-                  </NavLink>
-                </li>
-              ))}
+              {g.items.map(({ to, label, icon: Icon, badge }) => {
+                const n = badge ? (counts[badge] ?? 0) : 0;
+                return (
+                  <li key={to}>
+                    <NavLink
+                      to={to}
+                      end={to === "/"}
+                      onClick={onNavigate}
+                      className={({ isActive }) =>
+                        `relative flex items-center gap-2.5 rounded-[var(--radius-md)] py-1.5 pr-2 pl-3 text-sm transition-colors ${
+                          isActive
+                            ? "bg-[color:var(--secondary)] font-medium"
+                            : "muted hover:bg-[color:var(--secondary)] hover:text-[color:var(--foreground)]"
+                        }`
+                      }
+                    >
+                      {({ isActive }) => (
+                        <>
+                          {isActive ? (
+                            <span
+                              aria-hidden
+                              className="absolute top-1.5 bottom-1.5 left-0 w-0.5 rounded-full"
+                              style={{ background: "var(--primary)" }}
+                            />
+                          ) : null}
+                          <Icon className="size-4 shrink-0" strokeWidth={1.75} />
+                          <span className="truncate">{label}</span>
+                          {n > 0 ? (
+                            <Badge n={n} tone={badge === "eod" ? "urgent" : undefined} />
+                          ) : null}
+                        </>
+                      )}
+                    </NavLink>
+                  </li>
+                );
+              })}
             </ul>
           </div>
         ))}
 
         {doors.length ? (
           <div>
-            <p className="muted mb-1 px-2 text-[11px] font-medium tracking-wide uppercase">
+            <p className="muted mb-1 px-2 text-[10px] font-semibold tracking-[0.12em] uppercase">
               Switch cockpit
             </p>
             <ul className="space-y-0.5">
@@ -122,9 +183,14 @@ export default function Sidebar({
                 <li key={d.key}>
                   <a
                     href={d.href}
-                    className="muted block rounded-[var(--radius-md)] px-2 py-1.5 text-sm transition-colors hover:bg-[color:var(--secondary)] hover:text-[color:var(--foreground)]"
+                    className="muted flex items-center gap-2.5 rounded-[var(--radius-md)] py-1.5 pr-2 pl-3 text-sm transition-colors hover:bg-[color:var(--secondary)] hover:text-[color:var(--foreground)]"
                   >
-                    {d.label}
+                    {d.key === "admin" ? (
+                      <ShieldCheck className="size-4 shrink-0" strokeWidth={1.75} />
+                    ) : (
+                      <ArrowRightLeft className="size-4 shrink-0" strokeWidth={1.75} />
+                    )}
+                    <span className="truncate">{d.label}</span>
                   </a>
                 </li>
               ))}

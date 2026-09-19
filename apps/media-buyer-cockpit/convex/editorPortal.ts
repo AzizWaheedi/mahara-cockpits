@@ -229,6 +229,58 @@ export const mirrorWinners = internalAction({
   },
 });
 
+/**
+ * Who is asking, proved by their own Supabase session.
+ *
+ * The other cockpits reach the ad previews over a bridge guarded by a shared
+ * bearer token. A browser cannot hold one of those, so the editor cockpit
+ * presents the session it already has and this verifies it against
+ * Supabase's published keys: ES256, no shared secret, the same shape as the
+ * portal pass. Then it checks the seat, because a valid session is not the
+ * same as permission.
+ */
+const SUPABASE_ISSUER = () => `${supabase().url}/auth/v1`;
+let sbJwks: ReturnType<typeof createRemoteJWKSet> | null = null;
+function supabaseJwks() {
+  if (!sbJwks)
+    sbJwks = createRemoteJWKSet(
+      new URL(`${SUPABASE_ISSUER()}/.well-known/jwks.json`),
+    );
+  return sbJwks;
+}
+
+async function editorFromSession(token: string): Promise<string> {
+  const { payload } = await jwtVerify(token, supabaseJwks(), {
+    issuer: SUPABASE_ISSUER(),
+  });
+  const email = String(payload.email ?? "")
+    .trim()
+    .toLowerCase();
+  if (!email) throw new Error("that session carries no address");
+  const rows = await sb(
+    `/rest/v1/editor_people?select=email,role,active&email=eq.${encodeURIComponent(email)}`,
+  );
+  const me = Array.isArray(rows) ? rows[0] : null;
+  if (!me || !(me.active || me.role === "admin"))
+    throw new Error("the editor desk is not on your access");
+  return email;
+}
+
+/** One ad's Facebook preview, for the editor cockpit. */
+export const previewForEditor = internalAction({
+  args: { token: v.string(), adId: v.string(), format: v.optional(v.string()) },
+  returns: v.any(),
+  handler: async (ctx, { token, adId, format }): Promise<Any> => {
+    const who = await editorFromSession(token);
+    const out: Any = await ctx.runAction(internal.previews.freshFor, {
+      adId,
+      format,
+      caller: "editor",
+    });
+    return { ...out, who };
+  },
+});
+
 export const peopleFromMembers = internalQuery({
   args: {},
   returns: v.array(v.any()),

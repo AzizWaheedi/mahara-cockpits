@@ -192,6 +192,10 @@ class Config:
         return key("GROQ_API_KEY")
 
     @property
+    def fathom_key(self) -> str:
+        return key("FATHOM_API_KEY")
+
+    @property
     def slack_token(self) -> str:
         return key("SLACK_BOT_TOKEN")
 

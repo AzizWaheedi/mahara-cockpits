@@ -1,19 +1,27 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router";
 import { PortalAutoSignIn } from "./components/PortalAutoSignIn";
 import Sidebar from "./components/Sidebar";
 import { Wordmark } from "./components/Wordmark";
 import { SessionProvider, useWho } from "./lib/auth";
-import { useCanOpen, useMe } from "./lib/data";
+import { useCanOpen, useEodToday, useJobs, useMe, useMeetings } from "./lib/data";
 import { portalUrl } from "./lib/portal";
 import EodPage from "./pages/EodPage";
 import IdeasPage from "./pages/IdeasPage";
 import JobPage from "./pages/JobPage";
 import JobsPage from "./pages/JobsPage";
+import MeetingsPage from "./pages/MeetingsPage";
 import PipelinePage from "./pages/PipelinePage";
 import SignInPage from "./pages/SignInPage";
 import VideosPage from "./pages/VideosPage";
 import WinnersPage from "./pages/WinnersPage";
+
+/** Kuwait's day, which is the day the end of day is filed for. */
+function kuwaitDay(): string {
+  const now = new Date();
+  const kuwait = new Date(now.getTime() + (3 * 60 + now.getTimezoneOffset()) * 60_000);
+  return kuwait.toISOString().slice(0, 10);
+}
 
 function Shell() {
   const { session, email, name, isAdmin, ready, signOut } = useWho();
@@ -22,6 +30,20 @@ function Shell() {
   const location = useLocation();
   const me = useMe(session ? email : null);
   const canOpen = useCanOpen(session ? email : null);
+  // The numbers beside the navigation. Only things to act on get one.
+  const jobs = useJobs();
+  const meetings = useMeetings();
+  const eodDay = useMemo(kuwaitDay, []);
+  const eodToday = useEodToday(eodDay);
+  const counts = useMemo(
+    () => ({
+      ready: (jobs.data ?? []).filter((j) => j.state === "ready").length,
+      meetings: (meetings.data ?? []).length,
+      // One, until the day has been filed. A nudge, not a tally.
+      eod: eodToday.data?.length ? 0 : 1,
+    }),
+    [jobs.data, meetings.data, eodToday.data],
+  );
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: a portal sign-in reloads the seat
   useEffect(() => {
@@ -117,7 +139,7 @@ function Shell() {
       {/* Fixed on a desktop, a drawer on a phone: the same shape as the
           other cockpits without pulling in their sidebar library. */}
       <aside className="hidden w-56 shrink-0 border-r hairline bg-[color:var(--card)] md:block">
-        <Sidebar name={who} isAdmin={admin} />
+        <Sidebar name={who} isAdmin={admin} counts={counts} />
       </aside>
 
       {drawer ? (
@@ -129,7 +151,12 @@ function Shell() {
             className="absolute inset-0 bg-black/50"
           />
           <aside className="absolute inset-y-0 left-0 w-60 border-r hairline bg-[color:var(--card)]">
-            <Sidebar name={who} isAdmin={admin} onNavigate={() => setDrawer(false)} />
+            <Sidebar
+              name={who}
+              isAdmin={admin}
+              counts={counts}
+              onNavigate={() => setDrawer(false)}
+            />
           </aside>
         </div>
       ) : null}
@@ -156,6 +183,7 @@ function Shell() {
           {/* The portal's door lands on /dashboard in every cockpit. */}
           <Route path="/dashboard" element={<Navigate to="/" replace />} />
           <Route path="/pipeline" element={<PipelinePage />} />
+          <Route path="/meetings" element={<MeetingsPage />} />
           <Route path="/videos" element={<VideosPage />} />
           <Route path="/winners" element={<WinnersPage />} />
           <Route path="/ideas" element={<IdeasPage />} />
