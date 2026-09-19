@@ -68,6 +68,50 @@ Run it with `python3 desk.py foreplay`; `doctor` reports whether the key is
 set. Six tests cover the mapping, including the null-heavy shape their schema
 actually returns.
 
+## The API is metered, and that changes the sync
+
+**One ad returned is one credit. The plan includes 10,000 a month, 20,000 on
+annual, granted upfront.** A nightly sync that re-read a 1,000-ad library
+would spend 30,000 a month against a 10,000 allowance, so the first version
+of this was wrong and was rewritten before it ever ran.
+
+What it does now: reads the balance first and refuses below a 500-credit
+floor, asks for the most recently saved ads first, and stops the moment a
+page holds nothing new. On a normal week that is one page. `--full` walks
+the whole library and is for the first run only. Seven tests hold those
+guards, including the case where the balance cannot be read at all, which
+must not be treated as "none left".
+
+## What the reviews say, and the two corrections that matter
+
+Read 2026-09-19 across G2 (127 reviews, 4.8), Trustpilot and Reddit.
+
+**Permanence is confirmed by their own FAQ**, which is the thing that
+mattered: *"Even if the ad library link of the ad you saved expires it will
+be available in your Swipe File forever."* Per-ad download of the video, and
+board-level bulk download as a ZIP. No report anywhere of a saved video
+disappearing or a thumbnail breaking. That is the claim we needed to hold.
+
+**The cost is lower than I first said, if Spyder is the point.** I quoted
+about $1,400 a month for 30 clients. That assumed Lens, their analytics
+product, for every client. If what you want is Spyder watching your clients'
+Ad Library pages, **Agency covers 50 Spyder brands at $389 a month on annual
+billing** and 30 clients fits inside it. Lens is the expensive axis at $50
+per brand beyond ten, and we already have the performance numbers.
+
+Smaller things worth knowing: the trial now takes a card, although the
+pricing page still says otherwise; the commonest complaint on G2 is simply
+"expensive", seven mentions; the Chrome extension occasionally stops for a
+few minutes; and the discovery feed carries low-quality ads that cannot be
+filtered out.
+
+**On the other two.** Motion locks you into three months, needs one workspace
+per client with no report spanning them, exports GIFs rather than video, and
+documents that age or geo restricted ads never appear in Brand Intel, which
+is a live risk for Gulf advertisers. Atria has a run of billing complaints on
+Trustpilot, five of seven reviews at one star, mostly about being upgraded
+and charged during a trial.
+
 ## Still needed, and it is only one thing
 
 **A Foreplay account and an API key.** There is no key on the VPS or in any

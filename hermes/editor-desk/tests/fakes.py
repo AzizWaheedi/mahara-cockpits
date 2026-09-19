@@ -122,6 +122,7 @@ class FakeSupabase:
         self.jobs: dict[str, dict[str, Any]] = {}
         self.requests_rows: dict[str, dict[str, Any]] = {}
         self.people_rows: dict[str, dict[str, Any]] = {}
+        self.foreplay_rows: dict[str, dict[str, Any]] = {}
         self.clients_rows: dict[str, dict[str, Any]] = {}
         self.assets_rows: dict[str, dict[str, Any]] = {}
         self.versions_rows: dict[str, dict[str, Any]] = {}
@@ -188,6 +189,14 @@ class FakeSupabase:
 
     def notes(self, task_id):
         return [n for n in self.notes_rows.values() if n.get("task_id") == task_id]
+
+    def known_foreplay_ids(self, limit=5000):
+        return list(self.foreplay_rows)
+
+    def store_foreplay(self, rows):
+        for r in rows:
+            self.foreplay_rows[r["id"]] = r
+        return len(rows)
 
     def seats_from_board(self, people, stamp):
         want = {p["email"].lower(): p.get("name") or "" for p in people if p.get("email")}

@@ -368,7 +368,7 @@ def cmd_foreplay(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     from desk import foreplay as fp_mod
 
     sb = _sb(cfg)
-    out = fp_mod.sync(cfg, log.info, sb, max_ads=args.limit or 1000)
+    out = fp_mod.sync(cfg, log.info, sb, max_ads=args.limit or 250, full=args.full)
     _print(out, args.json)
     return 0
 
@@ -447,7 +447,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     d = sub.add_parser("doctor"); d.add_argument("--offline", action="store_true")
-    fp = sub.add_parser("foreplay"); fp.add_argument("--limit", type=int, default=1000)
+    fp = sub.add_parser("foreplay"); fp.add_argument("--limit", type=int, default=250); fp.add_argument("--full", action="store_true")
     mt = sub.add_parser("meetings"); mt.add_argument("--days", type=int, default=45)
     rq = sub.add_parser("requests"); rq.add_argument("--limit", type=int, default=10)
     sy = sub.add_parser("sync"); sy.add_argument("--closed", action="store_true"); sy.add_argument("--no-docs", action="store_true"); sy.add_argument("--force-docs", action="store_true")

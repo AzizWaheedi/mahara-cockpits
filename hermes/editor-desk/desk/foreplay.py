@@ -15,6 +15,14 @@ Two fields here are worth more than the rest. `running_duration` is how many
 days an ad has been on air, which is the strongest single signal that it is
 working, and `timestamped_transcription` is what was said and when, which is
 what a script is actually built from.
+
+**The API is metered: one ad returned is one credit, and the plan includes
+10,000 a month (20,000 on annual).** So this never re-reads the library. It
+asks for the most recently saved ads first and stops the moment a page holds
+nothing new, which on a normal week costs a handful of credits rather than
+the whole allowance. It also reads the remaining balance first and refuses to
+start when it is nearly gone, because running out silently would take the
+board down rather than the sync.
 """
 from __future__ import annotations
 
@@ -45,7 +53,9 @@ class Foreplay:
         return out if isinstance(out, dict) else {}
 
     def usage(self) -> dict[str, Any]:
-        return self.get("/api/usage")
+        """Credits left. Reading this is free and tells us whether to start."""
+        out = self.get("/api/usage")
+        return out.get("data") if isinstance(out.get("data"), dict) else out
 
     def boards(self, limit: int = 100) -> list[dict[str, Any]]:
         out = self.get("/api/boards", limit=limit)
@@ -110,62 +120,92 @@ def row(ad: dict[str, Any], *, board_id: str = "", board_name: str = "") -> Opti
     }
 
 
-def sync(cfg: Config, log: Callable[[str], None], sb: Any, *, max_ads: int = 1000) -> dict[str, Any]:
-    """Every board, then the swipe file, into our own table.
+def credits_left(usage: dict[str, Any]) -> Optional[int]:
+    """However they spell it. None means we could not tell, which is not the
+    same as none left and must not stop the sync."""
+    for key in ("credits_remaining", "remaining", "credits_left", "available"):
+        v = usage.get(key)
+        if isinstance(v, (int, float)):
+            return int(v)
+    used, total = usage.get("credits_used"), usage.get("credits_total") or usage.get("credits")
+    if isinstance(used, (int, float)) and isinstance(total, (int, float)):
+        return int(total) - int(used)
+    return None
 
-    Bounded: a runaway board cannot pull the whole library, and a board that
-    fails is reported rather than losing the boards after it.
+
+def sync(
+    cfg: Config,
+    log: Callable[[str], None],
+    sb: Any,
+    *,
+    max_ads: int = 250,
+    full: bool = False,
+    floor: int = 500,
+) -> dict[str, Any]:
+    """The swipe file into our own table, newest save first, stopping early.
+
+    One ad returned costs one credit, so this reads only as far as the ads it
+    has not seen. `full` walks the whole library and is for the first run.
     """
     fp = Foreplay(cfg, log)
-    rows: dict[str, dict[str, Any]] = {}
     problems: list[str] = []
 
+    left = None
+    try:
+        left = credits_left(fp.usage())
+    except http.HttpError as e:
+        problems.append(f"usage: {http.scrub(str(e))[:100]}")
+    if left is not None:
+        log(f"foreplay: {left} credits left")
+        if left < floor and not full:
+            return {"ads": 0, "stored": 0, "credits_left": left,
+                    "note": f"under the {floor} credit floor, so nothing was read"}
+        max_ads = min(max_ads, max(0, left - floor)) if not full else max_ads
+
+    known = set(sb.known_foreplay_ids()) if not full else set()
+    log(f"foreplay: {len(known)} ads already ours")
+
+    rows: dict[str, dict[str, Any]] = {}
+    offset, page_size, seen = 0, min(250, max_ads or 250), 0
+    while seen < max_ads:
+        try:
+            out = fp.swipefile(limit=min(page_size, max_ads - seen), offset=offset, order="saved_newest")
+        except http.HttpError as e:
+            problems.append(f"swipe file: {http.scrub(str(e))[:120]}")
+            break
+        ads = [a for a in (out.get("data") or []) if isinstance(a, dict)]
+        if not ads:
+            break
+        seen += len(ads)
+        offset += len(ads)
+        fresh = 0
+        for a in ads:
+            r = row(a)
+            if not r:
+                continue
+            if r["id"] not in known:
+                fresh += 1
+            rows[r["id"]] = r
+        # Newest first, so a page with nothing new means the rest is older
+        # and already ours. Stopping here is what keeps the credits.
+        if fresh == 0 and not full:
+            log("  reached ads we already have; stopping")
+            break
+
+    # Which board each ad sits on, for the cockpit's filters. Boards are
+    # cheap: they are not ads, so they are not credits.
     boards = []
     try:
         boards = fp.boards()
     except http.HttpError as e:
-        problems.append(f"boards: {http.scrub(str(e))[:120]}")
-    log(f"foreplay: {len(boards)} boards")
-
-    for b in boards:
-        bid = str(b.get("id") or b.get("board_id") or "")
-        bname = str(b.get("name") or "")
-        if not bid:
-            continue
-        cursor = ""
-        for _page in range(10):
-            try:
-                out = fp.board_ads(bid, limit=100, cursor=cursor)
-            except http.HttpError as e:
-                problems.append(f"{bname or bid}: {http.scrub(str(e))[:100]}")
-                break
-            ads = [a for a in (out.get("data") or []) if isinstance(a, dict)]
-            for a in ads:
-                r = row(a, board_id=bid, board_name=bname)
-                if r:
-                    rows[r["id"]] = r
-            cursor = str(((out.get("metadata") or {}).get("cursor")) or "")
-            if not cursor or not ads or len(rows) >= max_ads:
-                break
-        log(f"  {bname or bid}: {len(rows)} so far")
-        if len(rows) >= max_ads:
-            break
-
-    # Anything saved but not on a board.
-    if len(rows) < max_ads:
-        try:
-            out = fp.swipefile(limit=100)
-            for a in (out.get("data") or []):
-                if isinstance(a, dict):
-                    r = row(a)
-                    if r and r["id"] not in rows:
-                        rows[r["id"]] = r
-        except http.HttpError as e:
-            problems.append(f"swipe file: {http.scrub(str(e))[:120]}")
+        problems.append(f"boards: {http.scrub(str(e))[:100]}")
 
     stored = sb.store_foreplay(list(rows.values())) if rows else 0
-    out = {"boards": len(boards), "ads": len(rows), "stored": stored, "calls": fp.calls}
+    result = {
+        "ads_read": seen, "new_or_changed": len(rows), "stored": stored,
+        "boards": len(boards), "calls": fp.calls, "credits_left": left,
+    }
     if problems:
-        out["problems"] = problems[:5]
-    log(f"foreplay: {out}")
-    return out
+        result["problems"] = problems[:5]
+    log(f"foreplay: {result}")
+    return result

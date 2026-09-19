@@ -305,6 +305,11 @@ class Supabase:
         return self.upsert("team_meetings", clean, "recording_id")
 
     # ---- the swipe file --------------------------------------------------
+    def known_foreplay_ids(self, limit: int = 5000) -> list[str]:
+        """What we already hold, so a sync can stop rather than pay again."""
+        rows = self.select("foreplay_ads", f"select=id&limit={int(limit)}")
+        return [str(r.get("id")) for r in rows if r.get("id")]
+
     def store_foreplay(self, rows: list[dict[str, Any]]) -> int:
         stamp = now_iso()
         clean = []

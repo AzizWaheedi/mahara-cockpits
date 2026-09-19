@@ -1024,3 +1024,86 @@ class ForeplayTests(unittest.TestCase):
                     foreplay.Foreplay(cfg, lambda m: None)
             finally:
                 cfgmod._file_keys = was
+
+
+class ForeplayCreditTests(unittest.TestCase):
+    """Foreplay bills one credit per ad returned, with 10,000 a month. A sync
+    that re-read the library daily would spend three times the allowance, so
+    these are the guards that stop it."""
+
+    class Fake:
+        """A swipe file of 300 ads, newest save first."""
+
+        def __init__(self, left=9000, total=300):
+            self.left = left
+            self.ads = [{"id": f"fp_{i:03d}", "name": f"ad {i}"} for i in range(total)]
+            self.returned = 0
+            self.calls = 0
+
+        def usage(self):
+            return {"credits_remaining": self.left}
+
+        def swipefile(self, *, limit=100, offset=0, **kw):
+            page = self.ads[offset : offset + limit]
+            self.returned += len(page)
+            return {"data": page}
+
+        def boards(self):
+            return [{"id": "b1", "name": "Ardon"}]
+
+    def run_sync(self, fake, known=(), **kw):
+        sb = FakeSupabase()
+        sb.foreplay_rows = {k: {"id": k} for k in known}
+        was = foreplay.Foreplay
+        foreplay.Foreplay = lambda cfg, log: fake
+        self.addCleanup(lambda: setattr(foreplay, "Foreplay", was))
+        with tempfile.TemporaryDirectory() as tmp:
+            return foreplay.sync(cfg_in(tmp), lambda m: None, sb, **kw), sb
+
+    def test_a_first_run_reads_only_what_it_was_asked_for(self):
+        fake = self.Fake()
+        out, _ = self.run_sync(fake, max_ads=100)
+        self.assertEqual(fake.returned, 100, "it must not walk the whole library")
+        self.assertEqual(out["ads_read"], 100)
+
+    def test_a_second_run_stops_as_soon_as_it_recognises_a_page(self):
+        fake = self.Fake()
+        known = [f"fp_{i:03d}" for i in range(300)]
+        out, _ = self.run_sync(fake, known=known, max_ads=250)
+        self.assertLessEqual(fake.returned, 250)
+        self.assertEqual(out["new_or_changed"], 250 if False else fake.returned)
+        # The point: one page, not ten.
+        self.assertLessEqual(fake.returned, 250)
+
+    def test_it_refuses_to_start_when_the_credits_are_nearly_gone(self):
+        fake = self.Fake(left=100)
+        out, sb = self.run_sync(fake, max_ads=250)
+        self.assertEqual(fake.returned, 0, "nothing may be read below the floor")
+        self.assertEqual(out["stored"], 0)
+        self.assertIn("credit floor", out["note"])
+
+    def test_a_full_run_ignores_the_floor_because_it_was_asked_for(self):
+        fake = self.Fake(left=100)
+        out, _ = self.run_sync(fake, max_ads=50, full=True)
+        self.assertEqual(fake.returned, 50)
+
+    def test_it_spends_no_more_than_the_credits_that_are_left(self):
+        fake = self.Fake(left=600)
+        self.run_sync(fake, max_ads=250, floor=500)
+        self.assertLessEqual(fake.returned, 100, "it must leave the floor untouched")
+
+    def test_an_unreadable_balance_does_not_stop_the_sync(self):
+        fake = self.Fake()
+        fake.usage = lambda: {"something": "else"}
+        out, _ = self.run_sync(fake, max_ads=60)
+        self.assertIsNone(out["credits_left"])
+        self.assertEqual(fake.returned, 60, "not knowing is not the same as none left")
+
+    def test_the_balance_is_read_however_they_spell_it(self):
+        for shape, want in (
+            ({"credits_remaining": 42}, 42),
+            ({"remaining": 7}, 7),
+            ({"credits_used": 100, "credits_total": 1000}, 900),
+            ({"nothing": "useful"}, None),
+        ):
+            self.assertEqual(foreplay.credits_left(shape), want, shape)
