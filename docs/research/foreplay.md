@@ -178,6 +178,72 @@ create or that you do not own. For this reason, a bulk export option is not
 available."* Around 3,000 teams lost their libraries with no way to take them
 out. That is the precise failure our copy prevents.
 
+## Connected through Composio, 2026-09-19
+
+Aziz connected it and added the editor, the creative director and the media
+buyer to the team. Checked live.
+
+**Seven tools are registered and answer**: the swipe file, an ad by id, ads
+by brand, and four Spyder reads. **Boards, usage, discovery and brand
+analytics are in Foreplay's REST API but not in the Composio toolkit**, so
+the worker's own key is still what the mirror needs. Composio is the
+assistant's door; the key is the cockpit's.
+
+The account works and is empty, which is what a new account looks like. The
+useful error came from Spyder: *"You are not subscribed to this page"*. That
+names the next step exactly.
+
+## The pages to subscribe in Spyder
+
+Every client Page the Meta token can reach, with the Ad Library link Spyder
+takes. Starred pages already have a winning ad on the board, so they are
+worth subscribing first.
+
+| Page | Ad Library link for Spyder |
+|---|---|
+| City Wood ★ | https://www.facebook.com/ads/library/?view_all_page_id=897705726763618 |
+| Olivar Design ★ | https://www.facebook.com/ads/library/?view_all_page_id=1125105954024321 |
+| Joe And Sera Interiors ★ | https://www.facebook.com/ads/library/?view_all_page_id=994381073767658 |
+| Amheco | https://www.facebook.com/ads/library/?view_all_page_id=968223123034166 |
+| Ardon | https://www.facebook.com/ads/library/?view_all_page_id=589378320933628 |
+| Mass Design | https://www.facebook.com/ads/library/?view_all_page_id=664243990104297 |
+| AIVE Designs  | https://www.facebook.com/ads/library/?view_all_page_id=1142527915610445 |
+| Alkhalil Group | https://www.facebook.com/ads/library/?view_all_page_id=222784320921690 |
+| Arch Home - بيت العمارة | https://www.facebook.com/ads/library/?view_all_page_id=1064333810100591 |
+| Arcturus World | https://www.facebook.com/ads/library/?view_all_page_id=164284610092821 |
+| Castello Industries Co. | https://www.facebook.com/ads/library/?view_all_page_id=912332345468258 |
+| Design & Architect Studio | https://www.facebook.com/ads/library/?view_all_page_id=102624045167440 |
+| Evan Home | https://www.facebook.com/ads/library/?view_all_page_id=1216166304916112 |
+| JG Designs | https://www.facebook.com/ads/library/?view_all_page_id=1134052333120274 |
+| Kesan Engineering | https://www.facebook.com/ads/library/?view_all_page_id=1091098027421795 |
+| Kesan_engineer | https://www.facebook.com/ads/library/?view_all_page_id=112757315091134 |
+| MaharaMedia | https://www.facebook.com/ads/library/?view_all_page_id=587094101153861 |
+| Marble and More - ماربل آند مور | https://www.facebook.com/ads/library/?view_all_page_id=950773658117275 |
+| Mohammad Aladwani Architects | https://www.facebook.com/ads/library/?view_all_page_id=101889371229734 |
+| Overview Construction | https://www.facebook.com/ads/library/?view_all_page_id=1001079039765147 |
+| Phoenix.Building | https://www.facebook.com/ads/library/?view_all_page_id=825704310625799 |
+| Qatar uPVC Windows + Doors | https://www.facebook.com/ads/library/?view_all_page_id=112231963847120 |
+| Repalo | https://www.facebook.com/ads/library/?view_all_page_id=118101257980222 |
+| Rising Najd - نهوض نجد للمقاولات | https://www.facebook.com/ads/library/?view_all_page_id=1043926628806388 |
+| Shamal khaleej | https://www.facebook.com/ads/library/?view_all_page_id=714995608369269 |
+| The last step construction | https://www.facebook.com/ads/library/?view_all_page_id=1099300543260931 |
+| Triple Edge | https://www.facebook.com/ads/library/?view_all_page_id=607417982447098 |
+| atlantis.sa أتلانتس للتصميم والديكور | https://www.facebook.com/ads/library/?view_all_page_id=101053351568857 |
+| أنظمة شمال الخليج  | https://www.facebook.com/ads/library/?view_all_page_id=1043495078856785 |
+| النخبة المثالية للمشاريع المتكاملة | https://www.facebook.com/ads/library/?view_all_page_id=770050646194710 |
+| اورب | https://www.facebook.com/ads/library/?view_all_page_id=411116355412660 |
+| اوشن  | https://www.facebook.com/ads/library/?view_all_page_id=149136041609841 |
+| اوشن تكييف | https://www.facebook.com/ads/library/?view_all_page_id=165293533340806 |
+| ايليت ايكسيلانس | https://www.facebook.com/ads/library/?view_all_page_id=838248542715600 |
+| ديزاين | https://www.facebook.com/ads/library/?view_all_page_id=164083210117844 |
+| شاليهات فينيكس | https://www.facebook.com/ads/library/?view_all_page_id=325454820657906 |
+| شركة العلا لتشييد المبانى  Al-Ola Building Construction Company | https://www.facebook.com/ads/library/?view_all_page_id=795733830298068 |
+| شركة حول العمران للمقاولات | https://www.facebook.com/ads/library/?view_all_page_id=1149064044964024 |
+| شركة عمق الحياة للهندسة | https://www.facebook.com/ads/library/?view_all_page_id=1089044817620442 |
+| منشآت خالدة للإستشارات الهندسية | https://www.facebook.com/ads/library/?view_all_page_id=1215892868273680 |
+
+★ = already has a winning ad on the board
+
 ## Still needed, and it is only one thing
 
 **A Foreplay account and an API key.** There is no key on the VPS or in any
