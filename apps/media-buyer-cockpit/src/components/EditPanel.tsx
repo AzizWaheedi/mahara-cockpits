@@ -2,8 +2,13 @@ import { useAction } from "convex/react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { assistLabel, useAssist } from "@/components/useAssist";
+import {
+  assistLabel,
+  creativeWaitLabel,
+  useAssist,
+} from "@/components/useAssist";
 import { api } from "../../convex/_generated/api";
+import { isDriveLink } from "../../convex/driveCreative";
 
 /**
  * "Change what's already running" — the other half of the builder.
@@ -493,10 +498,29 @@ function AddCreative({
   const [headline, setHeadline] = useState("");
   const [busy, setBusy] = useState(false);
 
+  /** A Drive link belongs in the Drive box: move it there and start the fetch, no dead end. */
+  async function fetchFromDrive(links: string[]) {
+    await driveAssist.ask({
+      campaignName: campaign.campaignName,
+      client: campaign.clientName ?? campaign.accountName,
+      driveLinks: links,
+    });
+  }
+
   async function submit() {
     if (!source) return toast.error("Pick an ad to copy the setup from.");
     if (!picked && !url.trim())
       return toast.error("Paste a Drive link, or a direct link to the file.");
+    if (!picked && isDriveLink(url)) {
+      const link = url.trim();
+      setDrive(link);
+      setUrl("");
+      await fetchFromDrive([link]);
+      toast.info(
+        "That's a Drive link — fetching it into the ad account now. Press Use this when it appears above.",
+      );
+      return;
+    }
     setBusy(true);
     try {
       const res = await add({
@@ -521,6 +545,12 @@ function AddCreative({
         setName("");
         setMessage("");
         setHeadline("");
+      } else if (res.assistId) {
+        // The action queued a Drive fetch for her; follow it in the Drive box.
+        driveAssist.watch(res.assistId);
+        setDrive(url.trim());
+        setUrl("");
+        toast.info(res.error ?? "Fetching it from Drive.");
       } else {
         toast.error(res.error ?? "Meta refused it.");
       }
@@ -586,23 +616,31 @@ function AddCreative({
             className="h-8 text-[12px]"
             disabled={driveAssist.waiting || !drive.trim()}
             onClick={async () => {
-              await driveAssist.ask({
-                campaignName: campaign.campaignName,
-                client: campaign.clientName ?? campaign.accountName,
-                driveLinks: drive
+              await fetchFromDrive(
+                drive
                   .split(/[\s,]+/)
                   .map(x => x.trim())
                   .filter(Boolean),
-              });
+              );
               toast.info("Fetching it from Drive.");
             }}
           >
             {driveAssist.waiting ? "Fetching…" : "Get it from Drive"}
           </Button>
         </div>
-        {assistLabel(driveAssist.row, driveAssist.waiting) && (
-          <p className="mt-1 text-[12px] text-muted-foreground">
-            {assistLabel(driveAssist.row, driveAssist.waiting)}
+        {creativeWaitLabel(
+          driveAssist.row,
+          driveAssist.waiting,
+          driveAssist.now,
+        ) && (
+          <p
+            className={`mt-1 text-[12px] ${driveAssist.row?.status === "failed" ? "txt-bad" : "text-muted-foreground"}`}
+          >
+            {creativeWaitLabel(
+              driveAssist.row,
+              driveAssist.waiting,
+              driveAssist.now,
+            )}
           </p>
         )}
         {(driveAssist.row?.media ?? []).map(m => (
@@ -654,10 +692,10 @@ function AddCreative({
           </Button>
         ))}
       </div>
-      {!picked && (
+      {!picked && !driveAssist.waiting && (
         <input
           className="w-full rounded border bg-background p-1.5"
-          placeholder="Or a direct link to the file, if you already have one"
+          placeholder="Or a direct link to the file (a Drive link pasted here is fetched for you)"
           value={url}
           onChange={e => setUrl(e.target.value)}
         />

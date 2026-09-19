@@ -836,6 +836,17 @@ const schema = defineSchema({
           videoId: v.optional(v.string()),
           thumbUrl: v.optional(v.string()),
           error: v.optional(v.string()),
+          /** A chunked video upload in flight, so a killed action resumes instead of restarting. */
+          progress: v.optional(
+            v.object({
+              sessionId: v.string(),
+              videoId: v.string(),
+              start: v.number(),
+              end: v.number(),
+              size: v.number(),
+            }),
+          ),
+          percent: v.optional(v.number()),
         }),
       ),
     ),
