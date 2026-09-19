@@ -27,6 +27,7 @@ import {
   useNow,
 } from "@/components/ceo/useCeo";
 import { api } from "../../convex/_generated/api";
+import { AdsTab } from "./ceo/AdsTab";
 import { BackendTab } from "./ceo/BackendTab";
 import { CallsTab } from "./ceo/CallsTab";
 import { ClientSuccessTab } from "./ceo/ClientSuccessTab";
@@ -45,6 +46,7 @@ const TAB_LABELS: Record<CeoTabKey, string> = {
   today: "Today",
   frontend: "Frontend",
   marketing: "Marketing",
+  ads: "Ads",
   sales: "Sales",
   backend: "Backend",
   delivery: "Delivery",
@@ -59,6 +61,7 @@ const TAB_VIEWS: Record<CeoTabKey, (props: CeoTabProps) => ReactNode> = {
   today: TodayTab,
   frontend: FrontendTab,
   marketing: MarketingTab,
+  ads: AdsTab,
   sales: SalesTab,
   backend: BackendTab,
   delivery: DeliveryTab,

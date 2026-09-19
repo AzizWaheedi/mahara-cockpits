@@ -1,4 +1,5 @@
 import { assets } from "./adapters/assets";
+import { b2bAds } from "./adapters/b2bAds";
 import { calls } from "./adapters/calls";
 import { clients } from "./adapters/clients";
 import { delivery } from "./adapters/delivery";
@@ -18,6 +19,7 @@ export const ADAPTERS: Adapter[] = [
   money,
   expenses,
   growth,
+  b2bAds,
   delivery,
   calls,
   clients,

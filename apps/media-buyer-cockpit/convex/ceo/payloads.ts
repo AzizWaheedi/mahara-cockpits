@@ -1004,3 +1004,102 @@ export type AssetsPayload = {
   };
   notes: Note[];
 };
+
+// --- Our own ads (B2B Supabase: meta_ad_snapshots + leads, calls, closed_deals by ad id) ---
+
+/** One window of the funnel for an ad, an ad set, a campaign or the account. */
+export type B2bAdWindow = {
+  spend: number;
+  impressions: number;
+  linkClicks: number;
+  /** What Meta says the ad produced. */
+  metaLeads: number;
+  /** What actually arrived in the CRM attributed to the ad. */
+  leads: number;
+  introsBooked: number;
+  introsShown: number;
+  demosBooked: number;
+  demosShown: number;
+  closes: number;
+  contracted: number;
+  cash: number;
+  /** Highest of the children on a parent, never a sum. */
+  frequency: number | null;
+  /** spend / CRM leads. */
+  cpl: number | null;
+  /** spend / demos shown. Shown, never judged: no gate has been set. */
+  costPerDemo: number | null;
+  /** contracted / spend. */
+  roas: number | null;
+};
+
+export type B2bVerdict = {
+  verdict:
+    | "off"
+    | "no delivery"
+    | "kill"
+    | "hold"
+    | "scale"
+    | "fatiguing"
+    | "leads do not book"
+    | "intros do not convert"
+    | "demos do not close";
+  reason: string;
+  /** Whose problem it is. Null when the ad is off and there is nothing to judge. */
+  owner: "ads" | "setter" | "closer" | null;
+};
+
+export type B2bAdNode = {
+  id: string;
+  name: string;
+  /** Meta's effective_status, e.g. ACTIVE, PAUSED, ADSET_PAUSED, CAMPAIGN_PAUSED, WITH_ISSUES. */
+  status: string;
+  running: boolean;
+  /** Facebook CDN url with an expiring token. */
+  thumbnail: string | null;
+  w7: B2bAdWindow;
+  w30: B2bAdWindow;
+  verdict: B2bVerdict;
+};
+
+export type B2bAdsPayload = {
+  accountId: string;
+  windows: { from7: string; from30: string; to: string };
+  account: { w7: B2bAdWindow; w30: B2bAdWindow };
+  running: number;
+  total: number;
+  /** Running ads by verdict. */
+  verdicts: Record<string, number>;
+  campaigns: {
+    id: string;
+    name: string;
+    /** lead_gen, retargeting, excluded, unknown: from b2b_campaign_type. */
+    type: string;
+    status: string;
+    running: boolean;
+    w7: B2bAdWindow;
+    w30: B2bAdWindow;
+    /**
+     * The weakest stage of this campaign's funnel against the account, when
+     * it is at least a fifth worse and there is enough volume to judge. Null
+     * when nothing stands out.
+     */
+    constraint: {
+      stage: string;
+      owner: "ads" | "landing" | "setter" | "closer";
+      mine: number;
+      account: number;
+    } | null;
+    adsets: {
+      id: string;
+      name: string;
+      running: boolean;
+      w7: B2bAdWindow;
+      w30: B2bAdWindow;
+      ads: B2bAdNode[];
+    }[];
+  }[];
+  /** The newest day Meta has a snapshot for. */
+  lastSnapshotDay: string | null;
+  notes: Note[];
+};
