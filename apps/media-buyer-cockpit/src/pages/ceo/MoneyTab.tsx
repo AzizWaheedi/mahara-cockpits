@@ -58,6 +58,7 @@ type CardKey =
   | "monthly"
   | "targets"
   | "mrr"
+  | "collection"
   | "expenses"
   | "deals";
 /** The cards on the P&L half, which reads the expenses section. */
@@ -76,6 +77,10 @@ const NOTE_ROUTES: readonly (readonly [RegExp, CardKey])[] = [
   [
     /^mrr is the figure typed|^not all of it is monthly money|live client cards? carr(y|ies) no mrr|^payment method is filled on none|have no churn date|have no paused on date|client cards' (mrr|billing fields)/i,
     "mrr",
+  ],
+  [
+    /can be tied to a signed deal|not been shown to be unpaid|^contracted is what the closing form|deal collection could not be read/i,
+    "collection",
   ],
   [/possible duplicates|duplicate check/i, "dupes"],
   [/failed charge/i, "tiles"],
@@ -273,13 +278,23 @@ export function MoneyTab({ sections, now, day }: CeoTabProps) {
             {p => <MrrBody p={p} />}
           </SectionCard>
 
+          <SectionCard
+            kicker="What was signed, against what we can prove arrived"
+            title="Deals and collection"
+            section={section}
+            notes={notes.collection}
+            order={8}
+          >
+            {p => <CollectionBody p={p} />}
+          </SectionCard>
+
           <div className="grid gap-4 lg:gap-6 xl:grid-cols-12">
             <SectionCard
               kicker="Last 12 months"
               title="Cash and contracted by month"
               section={section}
               notes={notes.monthly}
-              order={8}
+              order={9}
               className={showLegacy ? "xl:col-span-8" : "xl:col-span-12"}
             >
               {p => <MonthlyBody p={p} />}
@@ -290,7 +305,7 @@ export function MoneyTab({ sections, now, day }: CeoTabProps) {
                 title="Expenses"
                 section={section}
                 notes={notes.expenses}
-                order={9}
+                order={10}
                 className="xl:col-span-4"
               >
                 {p => <LegacyExpensesBody p={p} />}
@@ -303,7 +318,7 @@ export function MoneyTab({ sections, now, day }: CeoTabProps) {
             title="Recent deals"
             section={section}
             notes={notes.deals}
-            order={10}
+            order={11}
           >
             {p => <DealsTable deals={p.deals.recent} />}
           </SectionCard>
@@ -678,6 +693,135 @@ function RailsBody({
           payment is logged by hand.
         </p>
       )}
+    </div>
+  );
+}
+
+// --- Signed deals against the cash tied to them ---
+
+/**
+ * Contracted value beside the cash that can actually be matched to a deal.
+ *
+ * The one thing this card must never imply is that an unmatched deal went
+ * unpaid. Two thirds of collected Whop money is tied to no deal at all, so an
+ * empty row here is a gap in the matching, not evidence of a debt.
+ */
+function CollectionBody({ p }: { p: MoneyPayload }) {
+  const [showAll, setShowAll] = useState(false);
+  const c = p.collection;
+  if (!c)
+    return (
+      <EmptyState
+        title="Deal collection has not been read yet"
+        text="It comes from the B2B database's own deal-to-cash function on the next refresh."
+        icon={Receipt}
+      />
+    );
+
+  const total = c.linkedCash + c.unlinkedCash;
+  const share = total > 0 ? c.linkedCash / total : null;
+  const rows = showAll ? c.unmatched : c.unmatched.slice(0, 5);
+
+  return (
+    <div className="grid gap-6">
+      <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4">
+        <StatTile
+          variant="plain"
+          label="Contracted, all deals"
+          value={money(c.contracted)}
+          sub={`${plural(c.deals, "signed deal")}`}
+          hint="What the closing form recorded. April 2026 reads as nothing because the form did not ask for a contract value yet."
+        />
+        <StatTile
+          variant="plain"
+          label="Cash tied to a deal"
+          value={money(c.linkedCash)}
+          sub={share === null ? undefined : `${pct(share)} of Whop cash`}
+          hint="Whop payments carrying a deal response id. This is cash we can prove belongs to a deal, not cash collected."
+        />
+        <StatTile
+          variant="plain"
+          label="Cash tied to nothing"
+          value={money(c.unlinkedCash)}
+          sub={`${plural(c.unlinkedRows, "payment")}, no deal or client`}
+          status={<StatusChip tone="serious" label="Unattributed" />}
+          hint="Real money, collected, that reaches no deal, no client and no lifetime value."
+        />
+        <StatTile
+          variant="plain"
+          label="Deals with no payment matched"
+          value={`${c.deals - c.dealsWithCash} of ${c.deals}`}
+          sub="Not the same as unpaid"
+          hint="No Whop payment carries their deal id. Because the only matching rule is an email match, this is very likely a matching gap rather than a debt."
+        />
+      </div>
+
+      <div className="border-t pt-4">
+        <p className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Contracted and matched cash, by month signed
+        </p>
+        <div className="overflow-x-auto">
+          <table
+            className="w-full text-sm"
+            style={{ fontVariantNumeric: "tabular-nums" }}
+          >
+            <thead>
+              <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
+                <th className="pb-2 pr-4 font-medium">Month</th>
+                <th className="pb-2 pr-4 text-right font-medium">Deals</th>
+                <th className="pb-2 pr-4 text-right font-medium">Contracted</th>
+                <th className="pb-2 text-right font-medium">Cash matched</th>
+              </tr>
+            </thead>
+            <tbody>
+              {c.byMonth.map(m => (
+                <tr key={m.month} className="border-t">
+                  <td className="py-1.5 pr-4">
+                    {month(m.month, { long: true })}
+                  </td>
+                  <td className="py-1.5 pr-4 text-right">{count(m.deals)}</td>
+                  <td className="py-1.5 pr-4 text-right">
+                    {m.contracted > 0 ? (
+                      money(m.contracted)
+                    ) : (
+                      <span className="text-muted-foreground">not asked</span>
+                    )}
+                  </td>
+                  <td className="py-1.5 text-right">{money(m.linked)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {rows.length ? (
+        <div className="border-t pt-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {`Signed, with no payment matched (${c.unmatched.length})`}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Check Whop before treating any of these as money owed.
+          </p>
+          <ul className="mt-3 grid gap-1">
+            {rows.map(u => (
+              <li key={`${u.client}-${u.month}`} className="text-sm">
+                {u.client}
+                <span className="text-muted-foreground">
+                  {` · ${money(u.contracted)} · ${month(u.month, { long: true })}${u.plan ? ` · ${u.plan}` : ""}`}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {c.unmatched.length > 5 ? (
+            <ShowMore
+              total={c.unmatched.length}
+              expanded={showAll}
+              onToggle={() => setShowAll(v => !v)}
+            />
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

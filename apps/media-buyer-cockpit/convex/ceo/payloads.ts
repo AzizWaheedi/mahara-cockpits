@@ -325,6 +325,49 @@ export type MoneyPayload = {
     /** When the CSM sync last rewrote these rows, epoch ms. */
     syncedAt: number | null;
   };
+  /**
+   * Signed deals against the cash that can actually be tied to them
+   * (b2b_deal_cash(), first read 2026-09-19).
+   *
+   * Read `linkedCash` as "cash we can prove belongs to a deal", never as
+   * "cash collected". The link is `whop_payments.deal_response_id`, and the
+   * only rule that fills it is an email match between the payer and the
+   * closing form: on 2026-09-19 it had linked 42 of 124 paid rows. The other
+   * 82 rows are real money that reaches no deal.
+   *
+   * So a deal with no linked cash has not been shown to be unpaid. It has been
+   * shown to have no payment matched to it, which is a different and much
+   * weaker statement, and every figure here is labelled that way.
+   */
+  collection?: {
+    deals: number;
+    contracted: number;
+    /** Whop cash tied to a deal by response id. */
+    linkedCash: number;
+    /** Deals with at least one payment linked. */
+    dealsWithCash: number;
+    /** Paid Whop cash tied to no deal at all. */
+    unlinkedCash: number;
+    unlinkedRows: number;
+    /** Of the unlinked money, how much predates the closing form and can never be tied. */
+    beforeFormCash: number;
+    /** The month the closing form's first deal was submitted, YYYY-MM. */
+    formStarted: string | null;
+    /** Per month: what was contracted and what cash is linked to those deals. */
+    byMonth: {
+      month: string;
+      deals: number;
+      contracted: number;
+      linked: number;
+    }[];
+    /** Signed deals carrying a contract value with no payment linked, biggest first. */
+    unmatched: {
+      client: string;
+      month: string;
+      contracted: number;
+      plan: string | null;
+    }[];
+  };
   notes: Note[];
 };
 
