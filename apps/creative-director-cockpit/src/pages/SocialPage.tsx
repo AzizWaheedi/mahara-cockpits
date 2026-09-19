@@ -4,6 +4,7 @@ import {
   Check,
   ChevronRight,
   LoaderCircle,
+  PlugZap,
   Plus,
   Share2,
 } from "lucide-react";
@@ -363,6 +364,54 @@ function Bank({ clientTaskId }: { clientTaskId: string }) {
   );
 }
 
+/**
+ * Ask GoHighLevel what it actually holds for this client.
+ *
+ * Worth a button rather than a stored tick: GHL keeps an account row
+ * after the OAuth behind it has lapsed, so the only honest answer comes
+ * from asking. Run it at onboarding and again whenever a post fails.
+ */
+function Connection({ clientTaskId }: { clientTaskId: string }) {
+  const check = useAction(api.social.checkConnection);
+  const [state, setState] = useState<"idle" | "checking">("idle");
+  const [said, setSaid] = useState<string | null>(null);
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        disabled={state === "checking"}
+        onClick={async () => {
+          setState("checking");
+          setSaid(null);
+          try {
+            const out = (await check({ clientTaskId })) as {
+              connected: number;
+              platforms: string[];
+            };
+            setSaid(
+              out.connected
+                ? `${out.platforms.join(", ")} connected`
+                : "GoHighLevel holds no social account for this client yet.",
+            );
+          } catch (e) {
+            setSaid(serverMessage(e));
+          } finally {
+            setState("idle");
+          }
+        }}
+        className="flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-[12px] font-semibold hover:bg-muted disabled:opacity-50"
+      >
+        <PlugZap className="h-3 w-3" />
+        {state === "checking" ? "Asking GoHighLevel" : "Check the connection"}
+      </button>
+      {said ? (
+        <span className="text-[12px] text-muted-foreground">{said}</span>
+      ) : null}
+    </div>
+  );
+}
+
 function ClientPanel({
   c,
   onChanged,
@@ -534,6 +583,9 @@ function ClientPanel({
             the moment it is connected, so broken auth shows up now and not
             three weeks later.
           </p>
+          <div className="mt-2">
+            <Connection clientTaskId={c.taskId} />
+          </div>
         </div>
 
         <div>

@@ -29,7 +29,8 @@
     "generate:phi-statics": "bun run --bun scripts/generate-phi-console-statics.ts",
     "screenshot": "bun run --bun /work/.viktor-spaces-internal/creative-e94cd85de6ab-fd0e67b25a286080/screenshot.ts",
     "env:get": "bunx convex env get",
-    "env:list": "bunx convex env list"
+    "env:list": "bunx convex env list",
+    "test:social": "bun test scripts/social.test.ts"
   },
   "dependencies": {
     "@convex-dev/auth": "^0.0.94",

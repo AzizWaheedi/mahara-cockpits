@@ -21,6 +21,13 @@ if [ -f apps/media-buyer-cockpit/scripts/frameio-webhook.test.ts ]; then
     || { echo "the Frame.io webhook signature tests fail"; exit 1; }
 fi
 
+# What GHL's statuses mean and when posts go out: wrong either way is a
+# client's month published at the wrong time or marked live when it is not.
+if [ -f apps/creative-director-cockpit/scripts/social.test.ts ]; then
+  (cd apps/creative-director-cockpit && bun test scripts/social.test.ts >/dev/null 2>&1) \
+    || { echo "the social planner tests fail"; exit 1; }
+fi
+
 ship() {
   local app="$1" dir url
   case "$app" in

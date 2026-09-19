@@ -3,6 +3,13 @@ import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { internalQuery } from "./_generated/server";
 import { authenticatedAction } from "./functions";
+import {
+  accounts as ghlAccounts,
+  createPost as ghlCreatePost,
+  posts as ghlPosts,
+  locationToken,
+  ourStatus,
+} from "./ghlSocial";
 import { hasAccess } from "./roles";
 
 /**
@@ -106,6 +113,32 @@ function clip(x: unknown, max = TEXT_MAX): string | null {
 /** A short unique suffix, the shape the rest of the codebase writes. */
 function rid(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}${Math.floor(Math.random() * 1e9).toString(36)}`;
+}
+
+/**
+ * When each post in a month goes out.
+ *
+ * Spread across the working days of the month rather than scheduled
+ * together, because eight posts at the same minute is not a content
+ * calendar. Mid-morning Kuwait, which is 07:00 UTC.
+ */
+export function spread(month: string, n: number): string[] {
+  const year = Number(month.slice(0, 4));
+  const mon = Number(month.slice(5, 7));
+  const days = new Date(Date.UTC(year, mon, 0)).getUTCDate();
+  const out: string[] = [];
+  // Start a day in, so a batch approved on the 1st is never scheduled for
+  // a moment that has already passed.
+  const first = 2;
+  const usable = Math.max(1, days - first);
+  for (let i = 0; i < n; i++) {
+    const day = Math.min(
+      days,
+      first + Math.round((i * usable) / Math.max(1, n)),
+    );
+    out.push(new Date(Date.UTC(year, mon - 1, day, 7, 0, 0)).toISOString());
+  }
+  return out;
 }
 
 /** This month in Kuwait, which is the month a batch belongs to. */
@@ -601,3 +634,286 @@ export const editPlan = authenticatedAction({
 });
 
 export { BATCH_FLOW };
+
+// ---------------------------------------------------------------------------
+// GoHighLevel: the posting engine underneath.
+//
+// Staff never open GHL. It holds the Meta and LinkedIn connections, shows
+// the client the approval link, and publishes natively. Everything below
+// is the cockpit talking to it in the background.
+
+/**
+ * A usable token for one client's sub-account, minting and storing one if
+ * the stored one is missing or spent.
+ *
+ * A Private Integration Token made in the sub-account's own settings never
+ * expires; one minted from the agency token does, so it is written back
+ * with its expiry. Either way the caller does not know which it got.
+ */
+async function tokenFor(locationId: string): Promise<string> {
+  const stored = rows(
+    await rest(`social_ghl_auth?select=*&id=eq.${enc(locationId)}&limit=1`),
+  )[0];
+  const agencyRow = rows(
+    await rest("social_ghl_auth?select=*&id=eq.agency&limit=1"),
+  )[0];
+  const got = await locationToken(
+    locationId,
+    stored ? { token: stored.token, expiresAt: stored.expires_at } : null,
+    agencyRow
+      ? { token: agencyRow.token, companyId: agencyRow.scopes ?? null }
+      : null,
+  );
+  if (got.minted) {
+    await rest("social_ghl_auth?on_conflict=id", {
+      method: "POST",
+      prefer: "resolution=merge-duplicates,return=minimal",
+      body: [
+        {
+          id: locationId,
+          token: got.token,
+          expires_at: got.expiresAt,
+          error: null,
+          checked_at: now(),
+          updated_at: now(),
+        },
+      ],
+    });
+  }
+  return got.token;
+}
+
+/** The client's row, or a sentence saying what is not set up. */
+async function clientOrWhy(clientTaskId: string): Promise<Row> {
+  const c = rows(
+    await rest(
+      `social_clients?select=*&client_task_id=eq.${enc(clientTaskId)}&limit=1`,
+    ),
+  )[0];
+  if (!c) throw new Error("That client is not on social media management.");
+  if (!c.ghl_location_id)
+    throw new Error(
+      "That client has no GoHighLevel sub-account set. Add the location id first.",
+    );
+  return c;
+}
+
+/**
+ * Which socials GHL actually holds for a client, read fresh and stored.
+ *
+ * Run it at onboarding, right after connecting, and again whenever a post
+ * fails: GHL keeps an account row after the OAuth behind it has lapsed, so
+ * the only honest check is asking.
+ */
+export const checkConnection = authenticatedAction({
+  args: { clientTaskId: v.string() },
+  returns: v.any(),
+  handler: async (ctx, { clientTaskId }) => {
+    await who(ctx);
+    const c = await clientOrWhy(clientTaskId);
+    const location = String(c.ghl_location_id);
+    const token = await tokenFor(location);
+    const found = await ghlAccounts(location, token);
+    const stamp = now();
+    if (found.length) {
+      await rest("social_accounts?on_conflict=id", {
+        method: "POST",
+        prefer: "resolution=merge-duplicates,return=minimal",
+        body: found.map(a => ({
+          id: String(a.id ?? a._id ?? ""),
+          client_task_id: clientTaskId,
+          location_id: location,
+          platform: String(a.platform ?? a.type ?? "").toLowerCase() || null,
+          name: a.name ?? a.pageName ?? null,
+          avatar: a.avatar ?? a.picture ?? null,
+          ok: true,
+          seen_at: stamp,
+        })),
+      });
+    }
+    return {
+      connected: found.length,
+      platforms: [
+        ...new Set(
+          found
+            .map(a => String(a.platform ?? a.type ?? "").toLowerCase())
+            .filter(Boolean),
+        ),
+      ],
+    };
+  },
+});
+
+/**
+ * Pull a client's month out of GHL into our own store.
+ *
+ * On a timer and on demand, never on a page load: the cockpit shows what
+ * it last saw and says when, so a slow GHL leaves the calendar stale
+ * rather than blank.
+ */
+export const syncCalendar = authenticatedAction({
+  args: { clientTaskId: v.string(), month: v.optional(v.string()) },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    await who(ctx);
+    const c = await clientOrWhy(args.clientTaskId);
+    const location = String(c.ghl_location_id);
+    const month = args.month || thisMonth();
+    const from = `${month}-01T00:00:00Z`;
+    const to = new Date(
+      Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 1),
+    ).toISOString();
+    const token = await tokenFor(location);
+    const theirs = await ghlPosts(location, token, { from, to });
+
+    // Only posts the cockpit pushed are matched back. Anything somebody
+    // made in GHL directly is left alone rather than adopted, because we
+    // have no plan, no pillar and no batch to file it under.
+    const mine = rows(
+      await rest(
+        `social_posts?select=id,ghl_post_id,status&client_task_id=eq.${enc(args.clientTaskId)}` +
+          "&ghl_post_id=not.is.null&limit=200",
+      ),
+    );
+    const byGhl = new Map(mine.map(p => [String(p.ghl_post_id), p]));
+    const stamp = now();
+    const updates: Row[] = [];
+    for (const t of theirs) {
+      const id = String(t.id ?? t._id ?? "");
+      const ours = byGhl.get(id);
+      if (!ours) continue;
+      const status = ourStatus(String(t.status ?? ""));
+      updates.push({
+        id: ours.id,
+        status,
+        ghl_status: t.status ?? null,
+        ghl_synced_at: stamp,
+        scheduled_at: t.scheduleDate ?? null,
+        published_at: status === "published" ? (t.publishedAt ?? stamp) : null,
+        updated_at: stamp,
+      });
+    }
+    if (updates.length)
+      await rest("social_posts?on_conflict=id", {
+        method: "POST",
+        prefer: "resolution=merge-duplicates,return=minimal",
+        body: updates,
+      });
+    return { inGhl: theirs.length, ours: updates.length, at: stamp };
+  },
+});
+
+/**
+ * Phase 6: the internally-approved batch goes to the client.
+ *
+ * The only moment GHL becomes visible to anyone outside Mahara, and it is
+ * client-facing by design. Posts go in as `in_review`, so GHL sends the
+ * approval link and publishes natively once the client says yes.
+ *
+ * Posts are spread across the month rather than scheduled together: eight
+ * posts at the same minute is not a content calendar.
+ */
+export const sendToClient = authenticatedAction({
+  args: { batchId: v.string(), approverUserId: v.optional(v.string()) },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    await who(ctx);
+    const b = rows(
+      await rest(`social_batches?select=*&id=eq.${enc(args.batchId)}&limit=1`),
+    )[0];
+    if (!b) throw new Error("That month is not set up yet.");
+    if (b.status !== "review")
+      throw new Error(
+        b.status === "with_client"
+          ? "That batch is already with the client."
+          : "Only a batch that has passed internal review goes to the client.",
+      );
+    const c = await clientOrWhy(String(b.client_task_id));
+    const location = String(c.ghl_location_id);
+    const token = await tokenFor(location);
+
+    const connected = rows(
+      await rest(
+        `social_accounts?select=id&client_task_id=eq.${enc(String(b.client_task_id))}&ok=is.true`,
+      ),
+    ).map(a => String(a.id));
+    if (!connected.length)
+      throw new Error(
+        "No connected social account for that client. Run the connection check.",
+      );
+
+    const ready = rows(
+      await rest(
+        `social_posts?select=*&batch_id=eq.${enc(args.batchId)}` +
+          "&status=eq.internal_ok&order=n.asc",
+      ),
+    );
+    if (!ready.length)
+      throw new Error("Nothing in that batch has passed internal review yet.");
+
+    const slots = spread(String(b.month), ready.length);
+    let sent = 0;
+    const problems: string[] = [];
+    for (const [i, post] of ready.entries()) {
+      try {
+        const made = await ghlCreatePost(location, token, {
+          accountIds: connected,
+          summary: String(post.caption ?? ""),
+          media: (Array.isArray(post.images) ? post.images : []).map(
+            (u: string) => ({
+              url: u,
+            }),
+          ),
+          scheduleDate: slots[i],
+          approverUserId: args.approverUserId,
+        });
+        const ghlId = String(made.id ?? made._id ?? made.results?.id ?? "");
+        await rest(`social_posts?id=eq.${enc(String(post.id))}`, {
+          method: "PATCH",
+          prefer: "return=minimal",
+          body: {
+            status: "with_client",
+            ghl_post_id: ghlId || null,
+            ghl_status: "in_review",
+            scheduled_at: slots[i],
+            ghl_synced_at: now(),
+            error: null,
+            updated_at: now(),
+          },
+        });
+        sent += 1;
+      } catch (e) {
+        const why = e instanceof Error ? e.message : String(e);
+        problems.push(`${post.topic ?? post.id}: ${why.slice(0, 140)}`);
+        await rest(`social_posts?id=eq.${enc(String(post.id))}`, {
+          method: "PATCH",
+          prefer: "return=minimal",
+          body: { error: why.slice(0, 500), updated_at: now() },
+        });
+      }
+    }
+
+    // The batch only moves if all of it went. A half-sent month that says
+    // "with client" is the kind of thing nobody notices until the client
+    // asks where the rest is.
+    if (sent && !problems.length)
+      await rest(`social_batches?id=eq.${enc(args.batchId)}`, {
+        method: "PATCH",
+        prefer: "return=minimal",
+        body: {
+          status: "with_client",
+          sent_at: now(),
+          error: null,
+          updated_at: now(),
+        },
+      });
+    else if (problems.length)
+      await rest(`social_batches?id=eq.${enc(args.batchId)}`, {
+        method: "PATCH",
+        prefer: "return=minimal",
+        body: { error: problems.join(" · ").slice(0, 500), updated_at: now() },
+      });
+
+    return { sent, of: ready.length, problems };
+  },
+});

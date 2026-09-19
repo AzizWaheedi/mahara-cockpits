@@ -31,9 +31,12 @@ been answered or built.
 
 ## The API, grounded
 
-GHL is already reachable from a Convex action -- `convex/ghlCalendar.ts`
-has been calling `services.leadconnectorhq.com` with a bearer token for
-months, so there is no new integration to stand up, only new endpoints.
+**`convex/ghlCalendar.ts` is the appointment calendars, not this.** It
+proves a Convex action can reach `services.leadconnectorhq.com` with a
+bearer token, and that is all it shares: the Social Planner is its own API
+surface, with its own scopes, its own version header and a token scoped to
+the *client's* sub-account rather than to Mahara's. It lives in
+`convex/ghlSocial.ts` and does not touch the calendar code.
 
 | what | call |
 | --- | --- |
@@ -43,9 +46,23 @@ months, so there is no new integration to stand up, only new endpoints.
 | change one | `PUT /social-media-posting/{locationId}/posts/{id}` |
 | drop one | `DELETE /social-media-posting/{locationId}/posts/{id}` |
 
-Header `Version: v3` on the Social Planner calls, which is not the
-`2021-04-15` the calendar code sends -- the same base URL, two different
-versions.
+**The version header is the trap.** Their create-post page says
+`Version: v3`; the rest of the v2 API wants a date, and the community
+thread titled "Invalid JWT with a sub-account Private Integration Token"
+turns out to be a *missing* Version header, not a bad token. So the client
+keeps a separate version per endpoint, both overridable from the
+environment, and translates that error into what is actually wrong rather
+than passing "Invalid JWT" to a person.
+
+Scopes: `socialplanner/post.readonly`, `socialplanner/post.write`,
+`socialplanner/account.readonly`.
+
+Two ways to authenticate, and the cockpit takes whichever exists. A
+**Private Integration Token** made in a sub-account's own settings
+(`pit_…`, never expires, no app to build) or the **agency token** minting
+one per location through `/oauth/locationToken`. Starting with a couple of
+PITs and moving to the agency token later changes nothing above
+`locationToken()`.
 
 The field that makes the client-approval step work without building
 anything is `status: "in_review"` with `postApprovalDetails`: GHL holds the
@@ -102,9 +119,48 @@ twelve clients.
 | Phase 2, plan generation | a decision on which model writes the plan. Extraction and drafting is DeepSeek work; the Arabic captions are not |
 | Phase 4, generation | the MCP job runner, and which agent owns it |
 | Phase 5, internal review | the screen, once there is something to review |
-| Phase 6, GHL push and the unified calendar | the agency token, and the per-location tier check |
+| a real push to GHL | a token: either one `pit_…` per client, or the agency token plus its company id |
 | the ClickUp form that seeds a calendar | the pattern exists in client-launch-campaign; nobody has said what the form asks |
 | LinkedIn | a live test before it is promised |
 | pricing to the client | Aziz's target margin |
 
 Nothing above is blocked on code except the last three.
+
+## Posting, end to end
+
+What happens to one post, and who does each part.
+
+1. **The plan.** A row in `social_posts` with a topic, a slide count and a
+   caption direction. No picture, no caption. This is the checkpoint.
+2. **Approved.** `social.approvePlan` moves the batch and every planned
+   post in it. A batch with no plan in it cannot be approved, and a mix
+   cannot be changed after this, because it would stop describing what was
+   made.
+3. **Generated.** The cockpit writes a `social_jobs` row; an agent that can
+   reach Higgsfield's MCP picks it up and writes the images and the caption
+   back. The cockpit never calls Higgsfield.
+4. **Internal review.** Somebody who did not generate it reads the batch.
+   Posts move to `internal_ok`.
+5. **`social.sendToClient`.** Each post goes to GHL as `status: in_review`
+   with `postApprovalDetails`, scheduled across the month. GHL sends the
+   client a password-protected approval link and publishes natively on
+   approval. There is no publish step of ours, and no client login.
+6. **`social.syncCalendar`.** Reads the month back and maps GHL's status
+   onto ours. On a timer and on demand, never on a page load.
+
+Three decisions inside that worth keeping:
+
+**Posts are spread, not stacked.** `spread()` places them across the
+working days of the month at 10am Kuwait, starting from the 2nd so a batch
+approved on the 1st is never scheduled for a moment that has already
+passed. Eight posts at the same minute is not a content calendar.
+
+**A half-sent batch does not say "with client".** If any post fails to
+reach GHL the batch keeps its old status and records why. A month that
+claims to be with the client when three posts never arrived is the kind of
+thing nobody notices until the client asks where the rest is.
+
+**Only posts the cockpit pushed are matched back.** Anything made in GHL
+directly is left alone rather than adopted -- there is no plan, no pillar
+and no batch to file it under, and guessing would put a stranger's post in
+somebody's month.
