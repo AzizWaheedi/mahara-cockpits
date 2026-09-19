@@ -1275,9 +1275,20 @@ export const money: Adapter = {
         level: "warn",
         text: `So a deal with no cash against it has not been shown to be unpaid, only to have no payment matched to it. ${deals - dealsWithCash} of ${deals} signed deals are in that position. Do not chase anyone on this figure alone: check Whop first.`,
       });
+      // The closing form gained its contracted-value question in May 2026, so
+      // April's rows came from the form with nothing in that column. Muhammed's
+      // backfill fills them from the closer tracker. Whether that has been
+      // applied is a fact about the database, not something to assert here.
+      const firstMonth = byMonth[0];
+      const earlyBlank =
+        firstMonth && firstMonth.deals > 0 && firstMonth.contracted === 0;
       notes.push({
         level: "info",
-        text: `Contracted is what the closing form recorded, ${usdWords(contracted)} over ${deals} deals. April 2026's deals carry no contract value because the form did not ask for one yet, so that month reads as nothing contracted while still collecting cash.`,
+        text: `Contracted is what the closing form recorded, ${usdWords(contracted)} over ${deals} deals.${
+          earlyBlank
+            ? ` ${firstMonth.month} reads as nothing contracted while still collecting cash, because the form had no contracted-value question that early.`
+            : ""
+        }`,
       });
 
       const point = (metric: string, value: number): DailyPoint => ({
