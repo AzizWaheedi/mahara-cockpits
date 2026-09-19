@@ -1,3 +1,4 @@
+import { assets } from "./adapters/assets";
 import { calls } from "./adapters/calls";
 import { clients } from "./adapters/clients";
 import { delivery } from "./adapters/delivery";
@@ -22,5 +23,6 @@ export const ADAPTERS: Adapter[] = [
   clients,
   team,
   portal,
+  assets,
   machine,
 ];

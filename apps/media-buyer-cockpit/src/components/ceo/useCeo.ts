@@ -3,6 +3,7 @@ import { useCallback, useMemo, useRef, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import { api } from "../../../convex/_generated/api";
 import type {
+  AssetsPayload,
   CallsPayload,
   ClientsPayload,
   DeliveryPayload,
@@ -24,6 +25,7 @@ export const SECTION_KEYS = [
   "clients",
   "team",
   "portal",
+  "assets",
   "machine",
 ] as const;
 
@@ -38,6 +40,7 @@ export type PayloadMap = {
   clients: ClientsPayload;
   team: TeamPayload;
   portal: PortalPayload;
+  assets: AssetsPayload;
   machine: MachinePayload;
 };
 

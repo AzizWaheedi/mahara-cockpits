@@ -72,6 +72,7 @@ const SECTION_NAMES: Record<SectionKey, string> = {
   clients: "Client success",
   team: "Management",
   portal: "Client portal",
+  assets: "Sales assets",
   machine: "Machine and data trust",
 };
 
