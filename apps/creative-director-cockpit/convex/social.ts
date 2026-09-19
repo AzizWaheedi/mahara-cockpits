@@ -919,3 +919,231 @@ export const sendToClient = authenticatedAction({
     return { sent, of: ready.length, problems };
   },
 });
+
+// ---------------------------------------------------------------------------
+// Handing work to Salma.
+//
+// The cockpit does not write plans or captions and cannot generate images:
+// Higgsfield is MCP-only and a Convex action cannot speak MCP. So it queues
+// and Salma, on the VPS, drains. Every button below writes a row and
+// returns; nothing here waits on a model.
+
+/** Ask for the month to be planned. Phase 2, the cheap checkpoint. */
+export const writePlan = authenticatedAction({
+  args: { clientTaskId: v.string(), month: v.optional(v.string()) },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const { email } = await who(ctx);
+    const month = args.month || thisMonth();
+    const batchId = `${args.clientTaskId}:${month}`;
+    const found = rows(
+      await rest(`social_batches?select=*&id=eq.${enc(batchId)}&limit=1`),
+    )[0];
+    if (!found) throw new Error("Set the pillar mix for the month first.");
+    if (!["planning", "planned"].includes(String(found.status)))
+      throw new Error(
+        `This month is already ${found.status}. Re-planning would not match what has been made.`,
+      );
+
+    // One outstanding plan job per month. Pressing twice is a person being
+    // impatient, not a request for two plans.
+    const already = rows(
+      await rest(
+        `social_jobs?select=id&batch_id=eq.${enc(batchId)}&kind=eq.plan` +
+          "&status=in.(queued,running)&limit=1",
+      ),
+    );
+    if (already.length) return { queued: false, why: "already on the queue" };
+
+    const id = rid("job");
+    await rest("social_jobs", {
+      method: "POST",
+      prefer: "return=minimal",
+      body: [
+        {
+          id,
+          kind: "plan",
+          client_task_id: args.clientTaskId,
+          batch_id: batchId,
+          status: "queued",
+          requested_by: email,
+          created_at: now(),
+          updated_at: now(),
+        },
+      ],
+    });
+    return { queued: true, job: id };
+  },
+});
+
+/**
+ * Generate the approved plan: a caption and images for every post.
+ *
+ * One job per post rather than one for the batch, so a single bad post
+ * fails on its own instead of taking eleven good ones with it.
+ */
+export const generateBatch = authenticatedAction({
+  args: { batchId: v.string() },
+  returns: v.any(),
+  handler: async (ctx, { batchId }) => {
+    const { email } = await who(ctx);
+    const b = rows(
+      await rest(`social_batches?select=*&id=eq.${enc(batchId)}&limit=1`),
+    )[0];
+    if (!b) throw new Error("That month is not set up yet.");
+    if (b.status !== "approved")
+      throw new Error(
+        b.status === "planned"
+          ? "Read the plan and approve it first. That is the checkpoint the cost of this rests on."
+          : `This month is ${b.status}, not waiting to be generated.`,
+      );
+
+    const posts = rows(
+      await rest(
+        `social_posts?select=id&batch_id=eq.${enc(batchId)}&status=eq.approved&order=n.asc`,
+      ),
+    );
+    if (!posts.length) throw new Error("Nothing in that plan is approved.");
+
+    const jobs = posts.flatMap(p => [
+      {
+        id: rid("job"),
+        kind: "caption",
+        client_task_id: b.client_task_id,
+        batch_id: batchId,
+        post_id: p.id,
+        status: "queued",
+        requested_by: email,
+        created_at: now(),
+        updated_at: now(),
+      },
+      {
+        id: rid("job"),
+        kind: "generate",
+        client_task_id: b.client_task_id,
+        batch_id: batchId,
+        post_id: p.id,
+        status: "queued",
+        requested_by: email,
+        created_at: now(),
+        updated_at: now(),
+      },
+    ]);
+    await rest("social_jobs", {
+      method: "POST",
+      prefer: "return=minimal",
+      body: jobs,
+    });
+    await rest(`social_batches?id=eq.${enc(batchId)}`, {
+      method: "PATCH",
+      prefer: "return=minimal",
+      body: { status: "generating", updated_at: now() },
+    });
+    await rest(`social_posts?batch_id=eq.${enc(batchId)}&status=eq.approved`, {
+      method: "PATCH",
+      prefer: "return=minimal",
+      body: { status: "generating", updated_at: now() },
+    });
+    return { queued: jobs.length, posts: posts.length };
+  },
+});
+
+/**
+ * Phase 5: somebody who did not generate it has read the batch.
+ *
+ * The rule is in the workflow and worth keeping in the code: the reviewer
+ * is not the person who ran generation. There is nobody to enforce that
+ * against in a two-person team, so this records who signed it off and
+ * leaves the honesty to them.
+ */
+export const passReview = authenticatedAction({
+  args: { batchId: v.string() },
+  returns: v.any(),
+  handler: async (ctx, { batchId }) => {
+    const { email, name } = await who(ctx);
+    const b = rows(
+      await rest(`social_batches?select=*&id=eq.${enc(batchId)}&limit=1`),
+    )[0];
+    if (!b) throw new Error("That month is not set up yet.");
+    if (!["generating", "review"].includes(String(b.status)))
+      throw new Error(`This month is ${b.status}, not waiting on review.`);
+
+    const missing = rows(
+      await rest(
+        `social_posts?select=id,n,topic&batch_id=eq.${enc(batchId)}&caption=is.null&limit=5`,
+      ),
+    );
+    if (missing.length)
+      throw new Error(
+        `${missing.length} post(s) have no caption yet, starting with #${missing[0].n}. ` +
+          "Salma has not finished, or something failed.",
+      );
+
+    await rest(`social_posts?batch_id=eq.${enc(batchId)}&status=eq.generated`, {
+      method: "PATCH",
+      prefer: "return=minimal",
+      body: { status: "internal_ok", updated_at: now() },
+    });
+    await rest(`social_batches?id=eq.${enc(batchId)}`, {
+      method: "PATCH",
+      prefer: "return=minimal",
+      body: {
+        status: "review",
+        reviewed_at: now(),
+        reviewed_by: name || email,
+        updated_at: now(),
+      },
+    });
+    return { status: "review" };
+  },
+});
+
+/**
+ * A rejection, with its reason, kept as a correction.
+ *
+ * The reason is the point. It goes into the Content Bank so the next batch
+ * is written knowing it, rather than being fixed once in a message nobody
+ * can find again.
+ */
+export const rejectPost = authenticatedAction({
+  args: { postId: v.string(), reason: v.string() },
+  returns: v.any(),
+  handler: async (ctx, { postId, reason }) => {
+    const { email } = await who(ctx);
+    const why = clip(reason, 1000);
+    if (!why)
+      throw new Error(
+        "A rejection needs a written reason, or the next batch repeats it.",
+      );
+    const p = rows(
+      await rest(`social_posts?select=*&id=eq.${enc(postId)}&limit=1`),
+    )[0];
+    if (!p) throw new Error("That post is gone.");
+    await rest(`social_posts?id=eq.${enc(postId)}`, {
+      method: "PATCH",
+      prefer: "return=minimal",
+      body: {
+        status: "client_rejected",
+        rejected_reason: why,
+        updated_at: now(),
+      },
+    });
+    await rest("social_bank", {
+      method: "POST",
+      prefer: "return=minimal",
+      body: [
+        {
+          id: rid("bank"),
+          client_task_id: p.client_task_id,
+          kind: "correction",
+          text: why,
+          pillar: p.pillar ?? null,
+          source: "correction",
+          added_by: email,
+          at: now(),
+        },
+      ],
+    });
+    return { corrected: true };
+  },
+});

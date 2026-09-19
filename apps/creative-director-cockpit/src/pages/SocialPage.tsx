@@ -412,6 +412,265 @@ function Connection({ clientTaskId }: { clientTaskId: string }) {
   );
 }
 
+type Post = {
+  id: string;
+  n: number;
+  pillar: string;
+  topic: string | null;
+  slides: number;
+  caption_direction: string | null;
+  caption: string | null;
+  status: string;
+};
+
+/**
+ * One client's month: the mix, the plan, and the two decisions.
+ *
+ * The plan is the cheap checkpoint the whole cost model rests on -- a
+ * wrong direction caught here costs nothing and caught after generation
+ * costs money. So the topics are shown in full and the approve button is
+ * below all of them, not above.
+ */
+function Month({ c, onChanged }: { c: Client; onChanged: () => void }) {
+  const read = useAction(api.social.batch);
+  const setMix = useAction(api.social.setMix);
+  const writePlan = useAction(api.social.writePlan);
+  const approve = useAction(api.social.approvePlan);
+  const generate = useAction(api.social.generateBatch);
+  const pass = useAction(api.social.passReview);
+
+  const alive = useRef(true);
+  // biome-ignore lint/suspicious/noExplicitAny: the batch row as GHL/Supabase give it
+  const [batch, setBatch] = useState<any>(null);
+  const [posts, setPosts] = useState<Post[]>([]);
+  const [month, setMonth] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [mix, setLocalMix] = useState<Record<string, number>>({
+    portfolio: 4,
+    craft: 4,
+    education: 4,
+  });
+
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+
+  const load = useCallback(async () => {
+    try {
+      const out = (await read({ clientTaskId: c.taskId })) as {
+        month: string;
+        // biome-ignore lint/suspicious/noExplicitAny: same
+        batch: any;
+        posts: Post[];
+      };
+      if (!alive.current) return;
+      setMonth(out.month);
+      setBatch(out.batch);
+      setPosts(out.posts ?? []);
+      if (out.batch?.mix) setLocalMix({ ...mix, ...out.batch.mix });
+    } catch (e) {
+      toast.error(serverMessage(e));
+    }
+    // biome-ignore lint/correctness/useExhaustiveDependencies: mix is seeded, not tracked
+  }, [read, c.taskId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function run(what: () => Promise<unknown>, said: string) {
+    setBusy(true);
+    try {
+      await what();
+      toast.success(said);
+      await load();
+      onChanged();
+    } catch (e) {
+      toast.error(serverMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const status = String(batch?.status ?? "");
+  const total = PILLARS.reduce((n, p) => n + (mix[p] ?? 0), 0);
+  const withCaption = posts.filter(p => p.caption).length;
+
+  return (
+    <div>
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <p className="text-[12px] font-semibold">This month</p>
+        <span className="text-[12px] text-muted-foreground">{month}</span>
+        {status ? (
+          <span className="rounded-full border px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">
+            {status.replace(/_/g, " ")}
+          </span>
+        ) : null}
+      </div>
+
+      {/* Phase 1: how many of each, on what material exists this cycle. */}
+      <div className="mb-2 flex flex-wrap items-end gap-3">
+        {PILLARS.map(p => (
+          <label
+            key={p}
+            htmlFor={`mix-${c.taskId}-${p}`}
+            className="text-[12px] font-semibold"
+          >
+            {PILLAR_LABEL[p]}
+            <input
+              id={`mix-${c.taskId}-${p}`}
+              type="number"
+              min={0}
+              max={30}
+              value={mix[p] ?? 0}
+              disabled={busy || !["", "planning", "planned"].includes(status)}
+              onChange={e =>
+                setLocalMix({ ...mix, [p]: Number(e.target.value) })
+              }
+              className="mt-1 block h-8 w-16 rounded-md border bg-background px-2 text-[13px] font-normal tabular-nums disabled:opacity-50"
+            />
+          </label>
+        ))}
+        <span className="pb-1.5 text-[12px] text-muted-foreground tabular-nums">
+          {total} posts
+        </span>
+        {["", "planning", "planned"].includes(status) ? (
+          <button
+            type="button"
+            disabled={busy || !total}
+            onClick={() =>
+              run(
+                () => setMix({ clientTaskId: c.taskId, mix }),
+                "Mix saved for the month.",
+              )
+            }
+            className="mb-0.5 h-8 rounded-md border px-2.5 text-[12px] font-semibold hover:bg-muted disabled:opacity-50"
+          >
+            Save the mix
+          </button>
+        ) : null}
+      </div>
+
+      {!batch ? (
+        <p className="text-[12px] text-muted-foreground">
+          No batch yet for {month}. Set the mix and save it to start one.
+        </p>
+      ) : null}
+
+      {status === "planning" ? (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() =>
+            run(
+              () => writePlan({ clientTaskId: c.taskId }),
+              "Queued. Salma writes the plan within five minutes.",
+            )
+          }
+          className="h-8 rounded-md border px-2.5 text-[12px] font-semibold hover:bg-muted disabled:opacity-50"
+        >
+          Write the plan
+        </button>
+      ) : null}
+
+      {posts.length ? (
+        <>
+          <ol className="my-2 space-y-1.5 border-t pt-2">
+            {posts.map(p => (
+              <li key={p.id} className="text-[13px]">
+                <span className="mr-1.5 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                  {p.pillar}
+                </span>
+                <span dir="auto">{p.topic}</span>
+                <span className="ml-1.5 text-[11px] text-muted-foreground tabular-nums">
+                  {p.slides} {p.slides === 1 ? "slide" : "slides"}
+                </span>
+                {p.caption_direction ? (
+                  <p className="text-[12px] text-muted-foreground" dir="auto">
+                    {p.caption_direction}
+                  </p>
+                ) : null}
+                {p.caption ? (
+                  <p
+                    className="mt-0.5 rounded bg-muted/40 px-2 py-1 text-[12px]"
+                    dir="auto"
+                  >
+                    {p.caption}
+                  </p>
+                ) : null}
+              </li>
+            ))}
+          </ol>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {status === "planned" ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() =>
+                  run(
+                    () => approve({ batchId: String(batch.id) }),
+                    "Approved. Nothing is generated until you press the next one.",
+                  )
+                }
+                className="h-8 rounded-md border border-transparent bg-foreground px-2.5 text-[12px] font-semibold text-background disabled:opacity-50"
+              >
+                The plan is right
+              </button>
+            ) : null}
+            {status === "approved" ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() =>
+                  run(
+                    () => generate({ batchId: String(batch.id) }),
+                    "Queued. Captions come back first, then images.",
+                  )
+                }
+                className="h-8 rounded-md border border-transparent bg-foreground px-2.5 text-[12px] font-semibold text-background disabled:opacity-50"
+              >
+                Generate the batch
+              </button>
+            ) : null}
+            {status === "generating" ? (
+              <>
+                <span className="text-[12px] text-muted-foreground tabular-nums">
+                  {withCaption} of {posts.length} written
+                </span>
+                <button
+                  type="button"
+                  disabled={busy || withCaption < posts.length}
+                  onClick={() =>
+                    run(
+                      () => pass({ batchId: String(batch.id) }),
+                      "Marked reviewed. It can go to the client now.",
+                    )
+                  }
+                  className="h-8 rounded-md border px-2.5 text-[12px] font-semibold hover:bg-muted disabled:opacity-50"
+                >
+                  I have read it all
+                </button>
+              </>
+            ) : null}
+            {batch?.error ? (
+              <span
+                className="text-[12px]"
+                style={{ color: "var(--destructive)" }}
+              >
+                {String(batch.error).slice(0, 160)}
+              </span>
+            ) : null}
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 function ClientPanel({
   c,
   onChanged,
@@ -586,6 +845,10 @@ function ClientPanel({
           <div className="mt-2">
             <Connection clientTaskId={c.taskId} />
           </div>
+        </div>
+
+        <div>
+          <Month c={c} onChanged={onChanged} />
         </div>
 
         <div>
