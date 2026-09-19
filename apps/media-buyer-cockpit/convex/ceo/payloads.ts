@@ -1101,5 +1101,75 @@ export type B2bAdsPayload = {
   }[];
   /** The newest day Meta has a snapshot for. */
   lastSnapshotDay: string | null;
+  /** Meta's own word on the account: null when Meta could not be read. */
+  accountStatus: {
+    code: number;
+    label: string;
+    disableReason: string | null;
+    /** Outstanding balance in account currency, when Meta reports one. */
+    balance: number | null;
+    currency: string | null;
+  } | null;
+  notes: Note[];
+};
+
+// --- Organic (Graph API for the Facebook Page and Instagram; YouTube Data API; B2B asset library for cadence) ---
+
+export type OrganicPayload = {
+  facebook: {
+    pageId: string;
+    name: string;
+    url: string | null;
+    followers: number;
+    /** 28-day page views. Null when Meta returns nothing for the page; impressions metrics no longer exist on this API version. */
+    views28: number | null;
+    engagements28: number | null;
+    newFollowers28: number | null;
+  } | null;
+  instagram: {
+    id: string;
+    username: string;
+    followers: number;
+    mediaCount: number;
+    reach28: number | null;
+    engaged28: number | null;
+    /** Posts in the last 28 days, from the live media list. */
+    published28: number;
+    posts: {
+      id: string;
+      type: string;
+      at: string;
+      likes: number;
+      comments: number;
+      url: string;
+      thumbnail: string | null;
+      caption: string | null;
+    }[];
+  } | null;
+  youtube: {
+    /** False until the YouTube Data API is enabled on the Cloud project. */
+    enabled: boolean;
+    enableUrl: string;
+    channelId: string | null;
+    subscribers: number | null;
+    views: number | null;
+    videos: number | null;
+    recent: {
+      id: string;
+      title: string;
+      at: string;
+      views: number;
+      likes: number;
+      comments: number;
+      thumbnail: string | null;
+    }[];
+  };
+  /** How often each platform is being published to, from the asset library. */
+  cadence: {
+    platform: string;
+    last28: number;
+    last90: number;
+    newest: string | null;
+  }[];
   notes: Note[];
 };

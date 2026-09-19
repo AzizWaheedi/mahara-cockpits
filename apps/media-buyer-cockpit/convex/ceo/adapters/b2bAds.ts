@@ -1,8 +1,11 @@
 import { CPL_GATE } from "../../constants";
+import { graph } from "../../tools";
 import type { B2bAdNode, B2bAdsPayload, B2bVerdict, Note } from "../payloads";
 import { B2B, num, sql } from "../sb";
 import { addDays, kuwaitDay } from "../time";
 import type { Adapter, DailyPoint, SourceStamp } from "../types";
+
+type Any = Record<string, any>;
 
 /**
  * Mahara's own ad account, campaign by ad set by ad, with the whole funnel
@@ -34,6 +37,39 @@ import type { Adapter, DailyPoint, SourceStamp } from "../types";
  */
 
 const ACCOUNT = "746108264865897";
+
+/** Meta's account_status codes. Anything but 1 means the account is not delivering. */
+const ACCOUNT_STATUS: Record<number, string> = {
+  1: "active",
+  2: "disabled",
+  3: "unsettled",
+  7: "pending risk review",
+  8: "pending settlement",
+  9: "in grace period",
+  100: "pending closure",
+  101: "closed",
+  201: "any active",
+  202: "any closed",
+};
+
+const DISABLE_REASON: Record<number, string> = {
+  1: "ads integrity policy",
+  2: "ads IP review",
+  3: "risk payment",
+  4: "gray account shut down",
+  5: "ads AFC review",
+  6: "business integrity RAR",
+  7: "permanent close",
+  8: "unused reseller account",
+  9: "unused account",
+  10: "umbrella ad account",
+  11: "business manager integrity policy",
+  12: "misrepresented ad account",
+  13: "AOAB desmotivate unused account",
+  14: "CTA review",
+  15: "AWS account review",
+  16: "AB review",
+};
 
 /** How the funnel is read: shown means showed, or confirmed or invalid once past. */
 const SHOWN = `status in ('showed','confirmed','invalid') and start_at < now()`;
@@ -413,6 +449,34 @@ export const b2bAds: Adapter = {
     // Yesterday is the newest day Meta can reasonably have closed out.
     const staleSince = lastDay && lastDay < addDays(today, -1) ? lastDay : null;
 
+    // The account itself, from Meta: a disabled or unsettled account explains
+    // an empty week better than any verdict can, and nothing can be created
+    // on it until it is fixed.
+    let accountStatus: B2bAdsPayload["accountStatus"] = null;
+    let accountNote: string | undefined;
+    try {
+      const acct: Any = await graph(`act_${ACCOUNT}`, {
+        fields:
+          "account_status,disable_reason,balance,currency,amount_spent,spend_cap",
+      });
+      const code = num(acct.account_status);
+      const reason = num(acct.disable_reason);
+      accountStatus = {
+        code,
+        label: ACCOUNT_STATUS[code] ?? `status ${code}`,
+        disableReason: reason
+          ? (DISABLE_REASON[reason] ?? `reason ${reason}`)
+          : null,
+        balance:
+          acct.balance !== undefined && acct.balance !== null
+            ? num(acct.balance) / 100
+            : null,
+        currency: acct.currency ? String(acct.currency) : null,
+      };
+    } catch (e) {
+      accountNote = String(e instanceof Error ? e.message : e).slice(0, 160);
+    }
+
     const rows = await sql(B2B, treeSql(from7, from30, today));
 
     const account7 = emptyWin();
@@ -508,6 +572,11 @@ export const b2bAds: Adapter = {
       if (a.running)
         verdicts[a.verdict.verdict] = (verdicts[a.verdict.verdict] ?? 0) + 1;
 
+    if (accountStatus && accountStatus.code !== 1)
+      notes.push({
+        level: "warn",
+        text: `Meta reports the ad account as ${accountStatus.label}${accountStatus.disableReason ? ` (${accountStatus.disableReason})` : ""}${accountStatus.balance ? `, with a balance of ${accountStatus.currency ?? ""} ${accountStatus.balance.toFixed(2)} outstanding` : ""}. Nothing delivers and nothing can be created or edited on the account until that is resolved in Ads Manager. It is the first thing to fix; every verdict below is about the past.`,
+      });
     if (staleSince)
       notes.push({
         level: "warn",
@@ -560,12 +629,20 @@ export const b2bAds: Adapter = {
       verdicts,
       campaigns: list,
       lastSnapshotDay: lastDay,
+      accountStatus,
       notes,
     };
 
     const sources: SourceStamp[] = [
       { name: "B2B Meta ad snapshots", freshestAt, ok: true },
       { name: "B2B leads, calls and closed deals (ad attribution)", ok: true },
+      accountStatus
+        ? {
+            name: "Meta ad account (Graph API)",
+            ok: true,
+            freshestAt: Date.now(),
+          }
+        : { name: "Meta ad account (Graph API)", ok: false, note: accountNote },
     ];
 
     const daily: DailyPoint[] = [

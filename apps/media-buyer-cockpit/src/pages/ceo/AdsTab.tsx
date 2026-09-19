@@ -18,6 +18,7 @@ import type {
   B2bAdWindow,
   B2bVerdict,
 } from "../../../convex/ceo/payloads";
+import { LaunchCard } from "./LaunchCard";
 import type { CeoTabProps } from "./types";
 
 /**
@@ -404,22 +405,30 @@ export function AdsTab({ sections }: CeoTabProps) {
         section={section}
         notes={p.notes}
         actions={
-          <div className="flex gap-1">
-            {(["w7", "w30"] as Win[]).map(k => (
-              <button
-                key={k}
-                type="button"
-                onClick={() => setWin(k)}
-                aria-pressed={win === k}
-                className={`rounded-full border px-2.5 py-0.5 text-xs ${
-                  win === k
-                    ? "bg-foreground text-background"
-                    : "text-muted-foreground"
-                }`}
-              >
-                {k === "w7" ? "7 days" : "30 days"}
-              </button>
-            ))}
+          <div className="flex items-center gap-2">
+            {p.accountStatus && p.accountStatus.code !== 1 ? (
+              <StatusChip
+                tone="critical"
+                label={`Account ${p.accountStatus.label}`}
+              />
+            ) : null}
+            <div className="flex gap-1">
+              {(["w7", "w30"] as Win[]).map(k => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => setWin(k)}
+                  aria-pressed={win === k}
+                  className={`rounded-full border px-2.5 py-0.5 text-xs ${
+                    win === k
+                      ? "bg-foreground text-background"
+                      : "text-muted-foreground"
+                  }`}
+                >
+                  {k === "w7" ? "7 days" : "30 days"}
+                </button>
+              ))}
+            </div>
           </div>
         }
         order={0}
@@ -520,6 +529,8 @@ export function AdsTab({ sections }: CeoTabProps) {
           )}
         </SectionCard>
       )}
+
+      <LaunchCard ads={p} order={2} />
     </div>
   );
 }

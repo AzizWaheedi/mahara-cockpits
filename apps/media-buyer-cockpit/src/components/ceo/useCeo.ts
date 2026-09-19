@@ -12,6 +12,7 @@ import type {
   GrowthPayload,
   MachinePayload,
   MoneyPayload,
+  OrganicPayload,
   PortalPayload,
   TeamPayload,
 } from "../../../convex/ceo/payloads";
@@ -28,6 +29,7 @@ export const SECTION_KEYS = [
   "team",
   "portal",
   "assets",
+  "organic",
   "machine",
 ] as const;
 
@@ -44,6 +46,7 @@ export type PayloadMap = {
   team: TeamPayload;
   portal: PortalPayload;
   assets: AssetsPayload;
+  organic: OrganicPayload;
   machine: MachinePayload;
 };
 

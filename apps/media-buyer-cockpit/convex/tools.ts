@@ -180,6 +180,11 @@ export async function googleAccessToken(): Promise<string> {
   return googleTokenFor(FILE_SCOPES);
 }
 
+/** A token for the public YouTube Data API, as the service account itself. */
+export async function googleYoutubeToken(): Promise<string> {
+  return googleTokenFor("https://www.googleapis.com/auth/youtube.readonly");
+}
+
 /** A token that may read the Workspace user directory, as an administrator. */
 export async function googleDirectoryToken(): Promise<string> {
   return googleTokenFor(DIRECTORY_SCOPE, DIRECTORY_SUBJECT);
