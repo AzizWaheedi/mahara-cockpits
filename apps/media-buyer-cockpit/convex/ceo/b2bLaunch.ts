@@ -139,7 +139,6 @@ function stamp(day: string): string {
   return `${Number(d)}-${Number(m)}-${y.slice(2)}`;
 }
 
-
 /**
  * The best ad set of this kind in the last 90 days: most demos shown, then
  * CRM leads, then spend. Retargeting rarely earns last-touch attribution, so
