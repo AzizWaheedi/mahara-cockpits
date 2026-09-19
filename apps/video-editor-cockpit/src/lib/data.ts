@@ -188,7 +188,7 @@ export function useIdeas(): Loaded<Idea[]> {
         .select(
           "key,platform,url,status,origin,running_days,author_handle,author_name,posted_at,views,likes,comments,caption,duration_sec,thumb_url,still_path,media_url,industry,multiplier,tier,format,hook,why_it_works,transcript,saved_by_name,saved_at,saved_note",
         )
-        .in("status", ["proposed", "saved"])
+        .in("status", ["proposed", "saved", "dismissed"])
         .order("multiplier", { ascending: false, nullsFirst: false })
         .limit(300),
     [],

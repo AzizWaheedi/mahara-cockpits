@@ -16,29 +16,56 @@ import { moment } from "../lib/format";
  * worker appends the row, the same way everything else that leaves this
  * cockpit works.
  */
-const QUESTIONS: { key: string; label: string; hint?: string; rows?: number }[] = [
+/**
+ * The Typeform's seven questions, in its order, grouped into three blocks.
+ * Seven separate cards for seven questions was a wall; the grouping is only
+ * visual and the answers still go to the same seven columns.
+ */
+interface Question {
+  key: string;
+  label: string;
+  hint?: string;
+  rows?: number;
+}
+
+const BLOCKS: { title: string; questions: Question[] }[] = [
   {
-    key: "completed",
-    label: "Videos completed today",
-    hint: "count, client and the delivery link",
-    rows: 3,
+    title: "What you did",
+    questions: [
+      {
+        key: "completed",
+        label: "Videos completed",
+        hint: "count, client and the delivery link",
+        rows: 3,
+      },
+      { key: "in_progress", label: "In progress or pending", hint: "with how far along", rows: 2 },
+      { key: "revisions", label: "Revisions handled", hint: "count and client", rows: 2 },
+    ],
   },
   {
-    key: "in_progress",
-    label: "Videos in progress or pending",
-    hint: "with how far along",
-    rows: 3,
+    title: "What got in the way",
+    questions: [
+      {
+        key: "blockers",
+        label: "Blockers",
+        hint: "missing footage, unclear brief, waiting on someone",
+        rows: 2,
+      },
+      {
+        key: "recommendations",
+        label: "Recommendations",
+        hint: "anything that would make this easier",
+        rows: 2,
+      },
+    ],
   },
-  { key: "revisions", label: "Revisions handled today", hint: "count and client", rows: 2 },
   {
-    key: "blockers",
-    label: "Blockers",
-    hint: "missing footage, unclear brief, waiting on someone",
-    rows: 3,
+    title: "What is next",
+    questions: [
+      { key: "tomorrow", label: "Tomorrow's plan", rows: 2 },
+      { key: "summary", label: "Day summary", hint: "the one line Aziz reads first", rows: 3 },
+    ],
   },
-  { key: "recommendations", label: "Recommendations or process improvements", rows: 2 },
-  { key: "tomorrow", label: "Tomorrow's plan", rows: 3 },
-  { key: "summary", label: "Day summary", rows: 3 },
 ];
 
 /** Kuwait's day, which is what the sheet records. */
@@ -114,41 +141,53 @@ export default function EodPage() {
       ) : null}
 
       <form onSubmit={send} className="mt-4 space-y-4">
-        <Section title="Who">
-          <label htmlFor="eod-name" className="block">
-            <span className="muted mb-1.5 block text-[11px] uppercase tracking-wide">Name</span>
-            <input
-              id="eod-name"
-              value={who}
-              onChange={(e) => setWho(e.target.value)}
-              className="h-10 w-full rounded-[var(--radius-md)] border hairline bg-[color:var(--background)] px-3 text-sm"
-            />
-          </label>
+        <Section title="Who" side={<span className="muted text-xs">{day}</span>}>
+          <input
+            id="eod-name"
+            value={who}
+            onChange={(e) => setWho(e.target.value)}
+            aria-label="Name"
+            className="h-10 w-full rounded-[var(--radius-md)] border hairline bg-[color:var(--background)] px-3 text-sm"
+          />
         </Section>
 
-        {QUESTIONS.map((q) => (
-          <Section key={q.key} title={q.label}>
-            {q.hint ? <p className="muted mb-2 text-xs">{q.hint}</p> : null}
-            <textarea
-              id={`eod-${q.key}`}
-              rows={q.rows ?? 2}
-              value={answers[q.key] ?? ""}
-              onChange={(e) => setAnswers((a) => ({ ...a, [q.key]: e.target.value }))}
-              className={field}
-            />
+        {BLOCKS.map((block) => (
+          <Section key={block.title} title={block.title}>
+            <div className="space-y-4">
+              {block.questions.map((q) => (
+                <div key={q.key}>
+                  <label htmlFor={`eod-${q.key}`} className="mb-1 block text-[13px] font-medium">
+                    {q.label}
+                  </label>
+                  {q.hint ? <p className="muted mb-1.5 text-xs">{q.hint}</p> : null}
+                  <textarea
+                    id={`eod-${q.key}`}
+                    rows={q.rows ?? 2}
+                    value={answers[q.key] ?? ""}
+                    onChange={(e) => setAnswers((a) => ({ ...a, [q.key]: e.target.value }))}
+                    className={field}
+                  />
+                </div>
+              ))}
+            </div>
           </Section>
         ))}
 
         {problem && <Problem>{problem}</Problem>}
         {said && <p className="muted text-sm">{said}</p>}
 
-        <button
-          type="submit"
-          disabled={busy}
-          className="h-11 w-full rounded-[var(--radius-md)] bg-[color:var(--primary)] text-sm font-medium text-[color:var(--primary-foreground)] disabled:opacity-50"
-        >
-          {busy ? "Filing" : "File the day"}
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            type="submit"
+            disabled={busy}
+            className="h-11 flex-1 rounded-[var(--radius-md)] bg-[color:var(--primary)] text-sm font-medium text-[color:var(--primary-foreground)] disabled:opacity-50"
+          >
+            {busy ? "Filing" : "File the day"}
+          </button>
+          <p className="muted max-w-56 text-xs leading-snug">
+            Goes straight onto the Video Editors tab of the EOD Reports sheet.
+          </p>
+        </div>
       </form>
     </div>
   );

@@ -88,7 +88,9 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
-  font-size: 14px;
+  /* No base font-size. The other three cockpits inherit the browser's 16px
+     and setting 14px here made every inherited size a step smaller than
+     theirs, which is what "the fonts look a bit different" was. */
   -webkit-font-smoothing: antialiased;
   font-feature-settings: "ss01", "cv11";
 }
