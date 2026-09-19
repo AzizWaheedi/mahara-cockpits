@@ -1,0 +1,250 @@
+/* Geist for everything, Geist Mono for numbers and labels (brand guidelines §3). */
+@import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap");
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* Brand palette (brand guidelines §2). Teal is an accent, never a large fill. */
+  --color-mahara-teal: var(--mahara-teal);
+  --color-deep-space: var(--deep-space);
+  --color-royal-blue: var(--royal-blue);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+:root {
+  --mahara-teal: #00cfc8;
+  --deep-space: #091333;
+  --royal-blue: #2e5bd6;
+
+  /* Teal as the primary action colour, Deep Space text on it for contrast. */
+  --primary: var(--mahara-teal);
+  --primary-foreground: var(--deep-space);
+  --sidebar-primary: var(--mahara-teal);
+  --sidebar-primary-foreground: var(--deep-space);
+
+  --success: var(--color-emerald-600);
+  --success-foreground: var(--color-white);
+  /* Orange, not amber: gold belongs to no Mahara asset. */
+  --warning: var(--color-orange-500);
+  --warning-foreground: var(--color-orange-950);
+  --info: var(--royal-blue);
+  --info-foreground: var(--color-white);
+
+  /* Corner radius md = 12px; cards get 16px (brand §4). */
+  --radius: 0.75rem;
+  --background: oklch(0.985 0.003 250);
+  --foreground: oklch(0.2 0.045 270);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.2 0.045 270);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.2 0.045 270);
+  --secondary: oklch(0.96 0.008 250);
+  --secondary-foreground: oklch(0.3 0.03 270);
+  --muted: oklch(0.96 0.008 250);
+  --muted-foreground: oklch(0.48 0.02 265);
+  --accent: oklch(0.95 0.02 195);
+  --accent-foreground: oklch(0.2 0.045 270);
+  --destructive: oklch(0.55 0.22 25);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(0.91 0.008 250);
+  --input: oklch(0.91 0.008 250);
+  --ring: var(--mahara-teal);
+  --sidebar: oklch(0.975 0.004 250);
+  --sidebar-foreground: oklch(0.2 0.045 270);
+  --sidebar-accent: oklch(0.94 0.02 195);
+  --sidebar-accent-foreground: oklch(0.2 0.045 270);
+  --sidebar-border: oklch(0.91 0.008 250);
+  --sidebar-ring: var(--mahara-teal);
+
+  /* Section-label teal that still passes contrast on white. */
+  --color-teal-600: #0a9e98;
+}
+
+.dark {
+  --primary: var(--mahara-teal);
+  --primary-foreground: var(--deep-space);
+  --sidebar-primary: var(--mahara-teal);
+  --sidebar-primary-foreground: var(--deep-space);
+
+  --success: var(--color-emerald-400);
+  --success-foreground: var(--color-emerald-950);
+  --warning: var(--color-orange-400);
+  --warning-foreground: var(--color-orange-950);
+  --info: #6f8fe8;
+  --info-foreground: var(--deep-space);
+
+  /* Deep Space #091333 is the canvas; cards sit one step lighter. */
+  --background: #091333;
+  --foreground: oklch(0.95 0.008 250);
+  --card: #0f1b45;
+  --card-foreground: oklch(0.95 0.008 250);
+  --popover: #0f1b45;
+  --popover-foreground: oklch(0.95 0.008 250);
+  --secondary: oklch(1 0 0 / 8%);
+  --secondary-foreground: oklch(0.92 0.008 250);
+  --muted: oklch(1 0 0 / 7%);
+  --muted-foreground: oklch(0.68 0.015 250);
+  --accent: color-mix(in oklch, var(--mahara-teal) 14%, transparent);
+  --accent-foreground: oklch(0.95 0.008 250);
+  --destructive: oklch(0.65 0.2 25);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 12%);
+  --ring: var(--mahara-teal);
+  --sidebar: #070f2a;
+  --sidebar-foreground: oklch(0.95 0.008 250);
+  --sidebar-accent: color-mix(in oklch, var(--mahara-teal) 14%, transparent);
+  --sidebar-accent-foreground: oklch(0.97 0.008 250);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: var(--mahara-teal);
+
+  --color-teal-600: var(--mahara-teal);
+}
+
+/*
+ * Memory Core colour roles. Adapted from the CEO kit's ceo.css so the two
+ * cockpits read as one system: the same emphasis, status and hairline values,
+ * re-derived here rather than reached for across the app boundary.
+ */
+.mc-root {
+  --mc-emphasis: #0d9488;
+  --mc-emphasis-wash: color-mix(in srgb, var(--mc-emphasis) 10%, transparent);
+  /* Status, never used for series. Color goes on an icon or a dot only. */
+  --mc-good: #0ca30c;
+  --mc-warning: #fab219;
+  --mc-serious: #ec835a;
+  --mc-critical: #d03b3b;
+  /* Context marks drawn behind the one that matters. */
+  --mc-deemphasis: #c3c7d1;
+  --mc-grid: #e8eaf0;
+  --mc-surface: var(--card);
+  --mc-card-shadow: 0 1px 2px rgba(9, 19, 51, 0.04), 0 1px 1px rgba(9, 19, 51, 0.02);
+}
+
+.dark .mc-root {
+  --mc-emphasis: #12aaa4;
+  --mc-deemphasis: rgba(255, 255, 255, 0.22);
+  --mc-grid: rgba(255, 255, 255, 0.08);
+  --mc-card-shadow: none;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "ss01", "cv11";
+  }
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.015em;
+  }
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+  button:not(:disabled),
+  [type="button"]:not(:disabled),
+  [type="submit"]:not(:disabled),
+  a[href],
+  select:not(:disabled),
+  input[type="checkbox"]:not(:disabled) {
+    @apply cursor-pointer;
+  }
+}
+
+.mc-root .mc-card {
+  box-shadow: var(--mc-card-shadow);
+}
+
+/* The stale banner: a warm wash that works in both themes. */
+.mc-root .mc-stale {
+  background-color: color-mix(in srgb, var(--mc-warning) 9%, transparent);
+  border-color: color-mix(in srgb, var(--mc-warning) 38%, transparent);
+}
+
+/*
+ * The core beam: one hairline under the page header, teal at the left where the
+ * search box sits and fading into the card surface to the right. It is the one
+ * decorative mark in the app and it marks the thing the app is: a single line
+ * running through everything it remembers.
+ */
+.mc-beam {
+  height: 1px;
+  background-image: linear-gradient(
+    90deg,
+    var(--mahara-teal) 0%,
+    color-mix(in srgb, var(--royal-blue) 55%, transparent) 38%,
+    color-mix(in srgb, var(--mc-grid) 80%, transparent) 100%
+  );
+}
+
+/* A source mark in a result row: a dot, coloured by where the item lives. */
+.mc-source-mark {
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 14%, transparent);
+}
+
+/* The numbered chip on a grounded answer, and the excerpt it points at. */
+.mc-cite {
+  font-variant-numeric: tabular-nums;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+.mc-cite[data-active="true"] {
+  background-color: var(--mahara-teal);
+  border-color: var(--mahara-teal);
+  color: var(--deep-space);
+}
+.mc-excerpt[data-active="true"] {
+  border-color: color-mix(in srgb, var(--mahara-teal) 60%, transparent);
+  background-color: color-mix(in srgb, var(--mahara-teal) 7%, transparent);
+}
+
+/* Answer text is read, not scanned: a little more air than the tables. */
+.mc-answer {
+  line-height: 1.65;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mc-root .mc-spin {
+    animation-duration: 2.4s;
+  }
+}
