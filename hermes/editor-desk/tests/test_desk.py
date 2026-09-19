@@ -1280,10 +1280,20 @@ class DropBoxTests(unittest.TestCase):
             got = foreplay.find_board(self.BOARDS, typed)
             self.assertEqual((got or {}).get("id"), "b2", typed)
 
-    def test_a_board_that_does_not_exist_is_not_guessed_at(self):
-        self.assertIsNone(foreplay.find_board(self.BOARDS, "Ideas"))
+    def test_a_near_miss_still_finds_the_one_ideation_board(self):
+        # Deliberate: "Ideas" matches nothing exactly, but there is exactly
+        # one board with "ideation" in it, so that is plainly what was
+        # meant. The run logs which board it used.
+        self.assertEqual(foreplay.find_board(self.BOARDS, "Ideas")["name"], "Ideation")
+
+    def test_no_name_and_no_boards_find_nothing(self):
         self.assertIsNone(foreplay.find_board(self.BOARDS, ""))
         self.assertIsNone(foreplay.find_board([], "Ideation"))
+
+    def test_a_name_unlike_anything_finds_nothing(self):
+        self.assertIsNone(
+            foreplay.find_board([{"id": "b1", "name": "Ardon"}], "Client Ideation")
+        )
 
     def test_a_new_ad_in_the_box_reaches_the_board(self):
         sb = FakeSupabase()
@@ -1421,3 +1431,37 @@ class ComposioRouteTests(unittest.TestCase):
             fp = foreplay.Foreplay(self.cfg_with(tmp, composio="c"), lambda m: None)
             with self.assertRaises(Exception):
                 fp.get("/api/lens/reporting")
+
+
+class DropBoxNamingTests(unittest.TestCase):
+    """The board was renamed from "Ideation" to "Client Ideation" within a
+    day of being set up. A config that demands an exact string breaks that
+    way, so these are the ways it is allowed to find it."""
+
+    def board(self, *names):
+        return [{"id": f"b{i}", "name": n} for i, n in enumerate(names)]
+
+    def test_the_exact_name_wins(self):
+        got = foreplay.find_board(self.board("Client Ideation", "Ideation"), "Ideation")
+        self.assertEqual(got["name"], "Ideation")
+
+    def test_case_and_spacing_do_not_matter(self):
+        got = foreplay.find_board(self.board("  client   IDEATION "), "Client Ideation")
+        self.assertIsNotNone(got)
+
+    def test_a_renamed_board_is_still_found(self):
+        # The real case: configured "Ideation", the board is "Client Ideation".
+        got = foreplay.find_board(self.board("Ardon", "Client Ideation"), "Ideation")
+        self.assertEqual(got["name"], "Client Ideation")
+
+    def test_two_plausible_boards_means_it_refuses_to_guess(self):
+        got = foreplay.find_board(
+            self.board("Client Ideation", "Team Ideation"), "Ideation"
+        )
+        self.assertIsNone(got, "picking one of two would be worse than picking none")
+
+    def test_nothing_like_it_returns_nothing(self):
+        self.assertIsNone(foreplay.find_board(self.board("Ardon", "Qatar"), "Ideation"))
+
+    def test_no_boards_at_all_is_not_an_error(self):
+        self.assertIsNone(foreplay.find_board([], "Ideation"))

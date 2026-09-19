@@ -298,14 +298,39 @@ def credits_left(usage: dict[str, Any]) -> Optional[int]:
     return None
 
 
+def _norm(name: Any) -> str:
+    return " ".join(str(name or "").lower().split())
+
+
 def find_board(boards: list[dict[str, Any]], want: str) -> Optional[dict[str, Any]]:
-    """The drop box board, by name, however it was capitalised."""
-    target = " ".join(str(want or "").lower().split())
+    """The drop box board, found the way a person would find it.
+
+    Someone renamed it from "Ideation" to "Client Ideation" within a day of
+    it being set up, which is exactly how a config that demands an exact
+    string breaks. So this widens out rather than giving up: the exact name,
+    then the name ignoring case and spacing, then any board that contains
+    the configured words, then any board that contains "ideation" at all --
+    but only when there is exactly one, because picking one of three would
+    be worse than picking none.
+    """
+    if not boards:
+        return None
+    target = _norm(want)
     if not target:
         return None
+
     for b in boards:
-        if " ".join(str(b.get("name") or "").lower().split()) == target:
+        if str(b.get("name") or "") == want:
             return b
+    for b in boards:
+        if _norm(b.get("name")) == target:
+            return b
+    contains = [b for b in boards if target in _norm(b.get("name"))]
+    if len(contains) == 1:
+        return contains[0]
+    loose = [b for b in boards if "ideation" in _norm(b.get("name"))]
+    if len(loose) == 1:
+        return loose[0]
     return None
 
 
@@ -405,6 +430,8 @@ def sync(
     forwarded = 0
     box = find_board(boards, drop_box) if drop_box else None
     if box:
+        if _norm(box.get("name")) != _norm(drop_box):
+            log(f"  drop box: using {box.get('name')!r} for {drop_box!r}")
         try:
             on_box = board_ads(fp, box)
             for r in on_box:
@@ -413,7 +440,10 @@ def sync(
         except http.HttpError as e:
             problems.append(f"{drop_box}: {http.scrub(str(e))[:100]}")
     elif drop_box:
-        problems.append(f"no board named {drop_box!r}; nothing was forwarded")
+        names = ", ".join(sorted(str(b.get("name") or "") for b in boards)) or "none at all"
+        problems.append(
+            f"no board matching {drop_box!r}; the boards are: {names}"[:300]
+        )
 
     stored = sb.store_foreplay(list(rows.values())) if rows else 0
     result = {
