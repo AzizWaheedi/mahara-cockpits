@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { Upload } from "lucide-react";
 import { type ChangeEvent, useMemo, useRef, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
@@ -449,6 +449,159 @@ export function ImportPaymentsCard({ order }: { order?: number }) {
           </div>
         </div>
       )}
+    </SectionCard>
+  );
+}
+
+/**
+ * Lifetime value on the client cards: what the cockpit would write, and why.
+ *
+ * Nothing is written until the button is pressed, and the table above it is the
+ * whole argument: the baseline that was already on the card, the payments
+ * logged since, and the figure the two add up to. A card whose field is already
+ * right never appears, because there is nothing to say about it.
+ */
+export function LtvWriteCard({ order }: { order?: number }) {
+  const plan = useQuery(api.ceo.ltv.preview, {});
+  const apply = useAction(api.ceo.ltv.apply);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<string | null>(null);
+
+  async function run() {
+    setBusy(true);
+    try {
+      const r = await apply({});
+      setDone(
+        `${plural(r.written, "card")} updated${r.skipped ? `, ${r.skipped} already correct` : ""}${
+          r.errors.length ? `. Refused: ${r.errors.join("; ")}` : "."
+        }`,
+      );
+    } catch (e) {
+      setDone(String(e instanceof Error ? e.message : e).slice(0, 240));
+    }
+    setBusy(false);
+  }
+
+  return (
+    <SectionCard
+      id="money-ltv"
+      kicker="Active and onboarding clients only"
+      title="Lifetime value on the cards"
+      order={order}
+    >
+      {() => {
+        if (!plan) return null;
+        const rows = plan.rows ?? [];
+        const missing = plan.missing ?? [];
+        return (
+          <div className="grid gap-5">
+            <p className="text-sm text-muted-foreground">
+              Each card's LTV is the figure already typed on it, frozen as a
+              baseline, plus every payment logged against that client since.
+              Part of it was typed from memory and nothing can check it, so it
+              is carried rather than trusted. Whop money is left out: only 42 of
+              124 paid rows carry a deal id, so counting it would credit some
+              clients and not others for reasons unrelated to what they paid.
+            </p>
+
+            {rows.length ? (
+              <div className="overflow-x-auto rounded-md border">
+                <table
+                  className="w-full text-sm"
+                  style={{ fontVariantNumeric: "tabular-nums" }}
+                >
+                  <thead>
+                    <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
+                      <th className="p-2 font-medium">Client</th>
+                      <th className="p-2 text-right font-medium">Baseline</th>
+                      <th className="p-2 text-right font-medium">
+                        Logged since
+                      </th>
+                      <th className="p-2 text-right font-medium">
+                        On the card now
+                      </th>
+                      <th className="p-2 text-right font-medium">
+                        Would become
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map(r => (
+                      <tr key={r.clickupTaskId} className="border-t">
+                        <td className="p-2">
+                          {r.client}
+                          <span className="block text-xs text-muted-foreground">
+                            {`baseline taken ${r.baselineDay}`}
+                          </span>
+                        </td>
+                        <td className="p-2 text-right">{money(r.baseline)}</td>
+                        <td className="p-2 text-right">
+                          {money(r.logged)}
+                          <span className="block text-xs text-muted-foreground">
+                            {plural(r.loggedCount, "payment")}
+                          </span>
+                        </td>
+                        <td className="p-2 text-right text-muted-foreground">
+                          {r.current === null ? "—" : money(r.current)}
+                        </td>
+                        <td className="p-2 text-right font-medium">
+                          {money(r.target)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <EmptyState
+                title="Every card is already right"
+                text="No active or onboarding client has a logged payment that the card does not already account for."
+                icon={Upload}
+                compact
+              />
+            )}
+
+            {missing.length ? (
+              <div className="border-t pt-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  {`No LTV figure at all (${missing.length})`}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  There is no baseline to build on, so these are left alone.
+                  Type a figure on the card and they join on the next refresh.
+                </p>
+                <ul className="mt-3 grid gap-1 sm:grid-cols-2">
+                  {missing.map(m => (
+                    <li key={m.clickupTaskId} className="text-sm">
+                      {m.client}
+                      <span className="text-muted-foreground">
+                        {m.stage ? ` · ${m.stage}` : ""}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            <div>
+              <button
+                type="button"
+                onClick={run}
+                disabled={busy || !rows.length}
+                className="rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background hover:opacity-90 disabled:opacity-50"
+              >
+                {busy
+                  ? "Writing…"
+                  : `Write ${plural(rows.length, "card")} to ClickUp`}
+              </button>
+              {done ? <p className="mt-2 text-sm">{done}</p> : null}
+              <p className="mt-2 text-xs text-muted-foreground">
+                {`${plan.outOfScope} paused, stopped and internal cards are never touched.`}
+              </p>
+            </div>
+          </div>
+        );
+      }}
     </SectionCard>
   );
 }
