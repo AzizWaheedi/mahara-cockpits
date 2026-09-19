@@ -3,6 +3,7 @@ import { useQuery } from "convex/react";
 import { motion } from "framer-motion";
 import {
   ArrowRightLeft,
+  Bookmark,
   Gauge,
   LayoutDashboard,
   Lightbulb,
@@ -81,6 +82,12 @@ const navItems = [
     href: "/ideation",
     label: "Ideation",
     icon: Lightbulb,
+    role: "media_buyer",
+  },
+  {
+    href: "/swipe",
+    label: "Swipe file",
+    icon: Bookmark,
     role: "media_buyer",
   },
   { href: "/eod", label: "End of day", icon: MoonStar, role: "media_buyer" },

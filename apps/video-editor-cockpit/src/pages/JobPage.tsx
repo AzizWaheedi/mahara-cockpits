@@ -2,7 +2,16 @@ import { useState } from "react";
 import { Link, useParams } from "react-router";
 import AddRule from "../components/AddRule";
 import Ask from "../components/Ask";
-import { Empty, Fold, Out, Problem, Prose, Section, Spinner, StateBadge } from "../components/bits";
+import {
+  Empty,
+  Fold,
+  Out,
+  Problem,
+  Prose,
+  Section,
+  Spinner,
+  StateBadge,
+} from "../components/bits";
 import Footage from "../components/Footage";
 import MoveCard from "../components/MoveCard";
 import { useWho } from "../lib/auth";
@@ -19,7 +28,13 @@ import {
 } from "../lib/data";
 import { clock, day, minutes, moment, whenDue } from "../lib/format";
 
-function Fact({ label, children }: { label: string; children: React.ReactNode }) {
+function Fact({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
   return (
     <div>
       <dt className="muted text-[11px] uppercase tracking-wide">{label}</dt>
@@ -53,7 +68,9 @@ export default function JobPage() {
   if (!job.data)
     return (
       <div className="mx-auto max-w-3xl p-4">
-        <Empty>That job is not on the desk. It may have been closed on the board.</Empty>
+        <Empty>
+          That job is not on the desk. It may have been closed on the board.
+        </Empty>
       </div>
     );
 
@@ -61,7 +78,7 @@ export default function JobPage() {
   const c = client.data;
   const due = whenDue(j.due_at);
   const waiting = (requests.data ?? []).filter(
-    (r) => r.status === "queued" || r.status === "running",
+    r => r.status === "queued" || r.status === "running",
   );
   const blocked = Boolean(j.missing?.length);
 
@@ -97,7 +114,10 @@ export default function JobPage() {
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 pt-6 pb-16">
-      <Link to="/" className="muted mb-4 inline-block text-sm hover:text-[color:var(--foreground)]">
+      <Link
+        to="/"
+        className="muted mb-4 inline-block text-sm hover:text-[color:var(--foreground)]"
+      >
         ← All jobs
       </Link>
 
@@ -117,9 +137,13 @@ export default function JobPage() {
         <dl className="mt-5 grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-4">
           <Fact label="Editor">{j.editor ?? "nobody"}</Fact>
           <Fact label="Due">
-            <span style={due.late ? { color: "var(--destructive)" } : undefined}>
+            <span
+              style={due.late ? { color: "var(--destructive)" } : undefined}
+            >
               {due.text}
-              {j.due_at ? <span className="muted"> · {day(j.due_at)}</span> : null}
+              {j.due_at ? (
+                <span className="muted"> · {day(j.due_at)}</span>
+              ) : null}
             </span>
           </Fact>
           <Fact label="Footage">
@@ -145,14 +169,18 @@ export default function JobPage() {
           <section
             className="overflow-hidden rounded-[calc(var(--radius)+0.25rem)] border"
             style={{
-              borderColor: "color-mix(in oklch, var(--destructive) 35%, transparent)",
-              background: "color-mix(in oklch, var(--destructive) 7%, transparent)",
+              borderColor:
+                "color-mix(in oklch, var(--destructive) 35%, transparent)",
+              background:
+                "color-mix(in oklch, var(--destructive) 7%, transparent)",
             }}
           >
             <div className="px-4 py-3.5">
-              <h2 className="text-sm font-semibold tracking-tight">Not ready to start</h2>
+              <h2 className="text-sm font-semibold tracking-tight">
+                Not ready to start
+              </h2>
               <ul className="mt-2 space-y-1.5">
-                {j.missing?.map((m) => (
+                {j.missing?.map(m => (
                   <li key={m} className="flex gap-2 text-sm leading-relaxed">
                     <span aria-hidden style={{ color: "var(--destructive)" }}>
                       •
@@ -162,8 +190,13 @@ export default function JobPage() {
                 ))}
               </ul>
             </div>
-            <div className="border-t px-4 py-3.5" style={{ borderColor: "inherit" }}>
-              <p className="muted mb-2.5 text-xs uppercase tracking-wide">Ask for it</p>
+            <div
+              className="border-t px-4 py-3.5"
+              style={{ borderColor: "inherit" }}
+            >
+              <p className="muted mb-2.5 text-xs uppercase tracking-wide">
+                Ask for it
+              </p>
               <Ask job={j} onSent={() => job.reload()} />
             </div>
           </section>
@@ -183,8 +216,9 @@ export default function JobPage() {
           {client.loading && <Spinner what="Reading the client card" />}
           {!client.loading && !c && (
             <p className="muted text-sm">
-              The tag on this card does not match a company on Clients - Mahara, so the brand rules
-              could not be found. Fixing the tag on the card is enough.
+              The tag on this card does not match a company on Clients - Mahara,
+              so the brand rules could not be found. Fixing the tag on the card
+              is enough.
             </p>
           )}
           {c && (
@@ -246,7 +280,9 @@ export default function JobPage() {
                     <Out href={c.instagram}>Instagram</Out>
                   </>
                 ) : null}
-                {c.docs_error ? <span> · a document could not be read: {c.docs_error}</span> : null}
+                {c.docs_error ? (
+                  <span> · a document could not be read: {c.docs_error}</span>
+                ) : null}
               </p>
             </div>
           )}
@@ -263,7 +299,11 @@ export default function JobPage() {
               </div>
             ) : null}
             {j.script ? (
-              <Fold title="Script" hint={`${j.script.length} characters`} open={!j.brief}>
+              <Fold
+                title="Script"
+                hint={`${j.script.length} characters`}
+                open={!j.brief}
+              >
                 <Prose text={j.script} />
               </Fold>
             ) : null}
@@ -293,13 +333,16 @@ export default function JobPage() {
 
         <Section title="The cut">
           <div className="space-y-3">
-            <label htmlFor="cut-link" className="muted block text-[11px] uppercase tracking-wide">
+            <label
+              htmlFor="cut-link"
+              className="muted block text-[11px] uppercase tracking-wide"
+            >
               Link to the cut in Drive
             </label>
             <input
               id="cut-link"
               value={link}
-              onChange={(e) => setLink(e.target.value)}
+              onChange={e => setLink(e.target.value)}
               placeholder={j.edited_url ?? "https://drive.google.com/file/d/…"}
               className="raised h-11 w-full rounded-[var(--radius-md)] border hairline px-3 text-sm"
             />
@@ -329,30 +372,42 @@ export default function JobPage() {
             {saying && <p className="muted text-sm">{saying}</p>}
             {waiting.length > 0 && (
               <p className="muted text-sm">
-                The desk has {waiting.length} job{waiting.length === 1 ? "" : "s"} queued here. It
-                picks work up every few minutes.
+                The desk has {waiting.length} job
+                {waiting.length === 1 ? "" : "s"} queued here. It picks work up
+                every few minutes.
               </p>
             )}
 
             {versions.data?.length ? (
               <ul className="space-y-2 pt-1">
-                {versions.data.map((v) => (
-                  <li key={v.id} className="raised rounded-[var(--radius-md)] px-3 py-2.5">
+                {versions.data.map(v => (
+                  <li
+                    key={v.id}
+                    className="raised rounded-[var(--radius-md)] px-3 py-2.5"
+                  >
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="text-sm font-medium">
                         Version {v.n} · {moment(v.at)}
                       </span>
                       <span
                         className="text-xs"
-                        style={{ color: v.passed ? "var(--success)" : "var(--warning)" }}
+                        style={{
+                          color: v.passed ? "var(--success)" : "var(--warning)",
+                        }}
                       >
                         {v.passed ? "everything checked out" : "worth a look"}
                       </span>
                     </div>
                     <ul className="mt-1.5 space-y-0.5">
-                      {(v.checks ?? []).map((ch) => (
+                      {(v.checks ?? []).map(ch => (
                         <li key={ch.name} className="flex gap-2 text-xs">
-                          <span style={{ color: ch.ok ? "var(--success)" : "var(--warning)" }}>
+                          <span
+                            style={{
+                              color: ch.ok
+                                ? "var(--success)"
+                                : "var(--warning)",
+                            }}
+                          >
                             {ch.ok ? "ok" : "!"}
                           </span>
                           <span className="muted">{ch.detail}</span>
@@ -378,8 +433,8 @@ export default function JobPage() {
               <input
                 id="new-note"
                 value={noteText}
-                onChange={(e) => setNoteText(e.target.value)}
-                onKeyDown={(e) => {
+                onChange={e => setNoteText(e.target.value)}
+                onKeyDown={e => {
                   if (e.key === "Enter") say();
                 }}
                 placeholder="Add a note for this job"
@@ -396,15 +451,17 @@ export default function JobPage() {
             </div>
 
             {notes.loading && <Spinner what="Reading the notes" />}
-            {!notes.loading && !notes.data?.length && <Empty>No notes on this job yet.</Empty>}
+            {!notes.loading && !notes.data?.length && (
+              <Empty>No notes on this job yet.</Empty>
+            )}
             <ul className="space-y-1.5">
-              {(notes.data ?? []).map((n) => (
+              {(notes.data ?? []).map(n => (
                 <li key={n.id} className="flex items-start gap-2.5 py-1">
                   <input
                     type="checkbox"
                     id={`note-${n.id}`}
                     checked={Boolean(n.done)}
-                    onChange={async (e) => {
+                    onChange={async e => {
                       await markNoteDone(n.id, e.target.checked);
                       notes.reload();
                     }}
@@ -436,7 +493,9 @@ export default function JobPage() {
           </div>
         </Section>
 
-        {j.error ? <p className="muted px-1 text-xs">Last read reported: {j.error}</p> : null}
+        {j.error ? (
+          <p className="muted px-1 text-xs">Last read reported: {j.error}</p>
+        ) : null}
       </div>
     </div>
   );

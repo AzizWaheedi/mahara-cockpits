@@ -36,11 +36,16 @@ function Card({ ad, ours }: { ad: WinnerAd; ours?: string }) {
         </div>
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium">{ad.client ?? "—"}</p>
-          <p className="muted truncate text-xs">{ad.service_line ?? ad.ad_name ?? ""}</p>
+          <p className="muted truncate text-xs">
+            {ad.service_line ?? ad.ad_name ?? ""}
+          </p>
           <dl className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-xs">
             <div className="flex gap-1.5">
               <dt className="muted">cost per lead</dt>
-              <dd className="tabular-nums font-medium" style={{ color: "var(--success)" }}>
+              <dd
+                className="tabular-nums font-medium"
+                style={{ color: "var(--success)" }}
+              >
                 {money(ad.cpl)}
               </dd>
             </div>
@@ -58,7 +63,9 @@ function Card({ ad, ours }: { ad: WinnerAd; ours?: string }) {
 
       {ad.hook ? (
         <p dir="auto" className="rtl-safe border-t hairline px-3 py-2 text-sm">
-          <span className="muted mr-2 text-[11px] uppercase tracking-wide">Hook</span>
+          <span className="muted mr-2 text-[11px] uppercase tracking-wide">
+            Hook
+          </span>
           {ad.hook}
         </p>
       ) : null}
@@ -70,7 +77,10 @@ function Card({ ad, ours }: { ad: WinnerAd; ours?: string }) {
           </Fold>
         ) : null}
         {ad.transcript ? (
-          <Fold title="What is said in it" hint={`${ad.transcript.length} characters`}>
+          <Fold
+            title="What is said in it"
+            hint={`${ad.transcript.length} characters`}
+          >
             <Prose text={ad.transcript} />
           </Fold>
         ) : null}
@@ -93,30 +103,34 @@ export default function WinnersPage() {
   }, [winners.data]);
 
   const shown = useMemo(
-    () => (client ? (winners.data ?? []).filter((a) => a.client === client) : (winners.data ?? [])),
+    () =>
+      client
+        ? (winners.data ?? []).filter(a => a.client === client)
+        : (winners.data ?? []),
     [winners.data, client],
   );
 
   // Our own copies, signed in one batch. These are the ads nobody can take
   // away from us: downloaded from Meta while the link still worked.
   const ourCopies = useStills(
-    shown.map((a) => a.file_path),
+    shown.map(a => a.file_path),
     AD_VIDEOS_BUCKET,
   );
-  const mine = shown.filter((a) => a.file_path).length;
+  const mine = shown.filter(a => a.file_path).length;
 
   return (
     <div className="mx-auto w-full max-w-4xl px-4 py-8">
       <header className="mb-5">
         <h1 className="text-2xl font-semibold tracking-tight">Winning ads</h1>
         <p className="muted mt-1 text-sm">
-          Ads that already paid, cheapest cost per lead first. The same list the media buyer and the
-          creative director work from. Other clients' ads on purpose: this is copy meant to be
-          reused.
+          Ads that already paid, cheapest cost per lead first. The same list the
+          media buyer and the creative director work from. Other clients' ads on
+          purpose: this is copy meant to be reused.
         </p>
         <p className="muted mt-1.5 text-sm">
-          {mine} of {shown.length} play from our own copy, downloaded from Meta while the link still
-          worked. Most of these ads have already stopped, so no ad library could get them back.
+          {mine} of {shown.length} play from our own copy, downloaded from Meta
+          while the link still worked. Most of these ads have already stopped,
+          so no ad library could get them back.
         </p>
       </header>
 
@@ -150,15 +164,21 @@ export default function WinnersPage() {
         ))}
       </div>
 
-      {winners.error && <Problem>These could not be read: {winners.error}</Problem>}
+      {winners.error && (
+        <Problem>These could not be read: {winners.error}</Problem>
+      )}
       {winners.loading && <Spinner what="Reading the winners" />}
       {!winners.loading && !shown.length && (
         <Empty>No winning ads have been mirrored here yet.</Empty>
       )}
 
       <ul className="space-y-3">
-        {shown.map((ad) => (
-          <Card key={ad.ad_id} ad={ad} ours={ad.file_path ? ourCopies[ad.file_path] : undefined} />
+        {shown.map(ad => (
+          <Card
+            key={ad.ad_id}
+            ad={ad}
+            ours={ad.file_path ? ourCopies[ad.file_path] : undefined}
+          />
         ))}
       </ul>
     </div>

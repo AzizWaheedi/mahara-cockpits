@@ -23,13 +23,18 @@ export function portalUrl(): string {
   if (env) return env.replace(/\/$/, "");
   if (typeof window === "undefined") return PORTAL_URL;
   // Proxied under the portal's own domain: the portal is this origin.
-  if (!OWN_HOSTS.includes(window.location.host) && !window.location.host.startsWith("localhost"))
+  if (
+    !OWN_HOSTS.includes(window.location.host) &&
+    !window.location.host.startsWith("localhost")
+  )
     return window.location.origin;
   return PORTAL_URL;
 }
 
 function portalSite(): string {
-  const env = (import.meta.env.VITE_PORTAL_SITE_URL as string | undefined)?.trim();
+  const env = (
+    import.meta.env.VITE_PORTAL_SITE_URL as string | undefined
+  )?.trim();
   return (env || PORTAL_SITE).replace(/\/$/, "");
 }
 
@@ -48,7 +53,11 @@ export async function signInWithPortalToken(token: string): Promise<PortalWho> {
     body: JSON.stringify({ token }),
   });
   const body = (await res.json().catch(() => null)) as
-    | ({ ok: boolean; error?: string; token_hash?: string } & Partial<PortalWho>)
+    | ({
+        ok: boolean;
+        error?: string;
+        token_hash?: string;
+      } & Partial<PortalWho>)
     | null;
   if (!res.ok || !body?.ok || !body.token_hash)
     throw new Error(body?.error ?? `the portal answered ${res.status}`);
@@ -88,19 +97,28 @@ export interface AdPreview {
  * media buyer deployment fetches a fresh one on demand; this asks it, proving
  * who is asking with the Supabase session the cockpit already holds.
  */
-export async function adPreview(adId: string, format?: string): Promise<AdPreview> {
+export async function adPreview(
+  adId: string,
+  format?: string,
+): Promise<AdPreview> {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
   if (!token) return { ok: false, error: "Sign in again to load previews." };
   try {
     const res = await fetch(`${portalSite()}/portal/editor-preview`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
       body: JSON.stringify({ adId, format }),
     });
     const body = (await res.json().catch(() => null)) as AdPreview | null;
     if (!res.ok || !body?.ok)
-      return { ok: false, error: body?.error ?? `the portal answered ${res.status}` };
+      return {
+        ok: false,
+        error: body?.error ?? `the portal answered ${res.status}`,
+      };
     return body;
   } catch (e) {
     return { ok: false, error: String((e as Error).message ?? e) };
@@ -135,5 +153,5 @@ export function otherCockpits(cockpits: string[], isAdmin: boolean) {
       href: `${portal}/go/creative`,
       show: isAdmin || cockpits.includes("creative"),
     },
-  ].filter((d) => d.show);
+  ].filter(d => d.show);
 }

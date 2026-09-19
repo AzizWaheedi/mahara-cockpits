@@ -24,7 +24,10 @@ export default function MeetingsPage() {
 
   const mine = useMemo(() => meetings.data ?? [], [meetings.data]);
   const actions = useMemo(
-    () => mine.flatMap((m) => (m.action_items ?? []).map((a) => ({ ...a, from: m.title }))),
+    () =>
+      mine.flatMap(m =>
+        (m.action_items ?? []).map(a => ({ ...a, from: m.title })),
+      ),
     [mine],
   );
 
@@ -33,11 +36,14 @@ export default function MeetingsPage() {
       <header className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">Meetings</h1>
         <p className="muted mt-1 text-sm">
-          The team meetings you were on, recorded by Fathom. Client calls are not here.
+          The team meetings you were on, recorded by Fathom. Client calls are
+          not here.
         </p>
       </header>
 
-      {meetings.error && <Problem>These could not be read: {meetings.error}</Problem>}
+      {meetings.error && (
+        <Problem>These could not be read: {meetings.error}</Problem>
+      )}
       {meetings.loading && <Spinner what="Reading the meetings" />}
       {!meetings.loading && !mine.length && (
         <Empty>No team meetings you were on in the last few weeks.</Empty>
@@ -46,11 +52,16 @@ export default function MeetingsPage() {
       {actions.length ? (
         <section className="panel mb-5 overflow-hidden">
           <header className="border-b hairline px-4 py-2.5">
-            <h2 className="text-sm font-semibold tracking-tight">What came out of them</h2>
+            <h2 className="text-sm font-semibold tracking-tight">
+              What came out of them
+            </h2>
           </header>
           <ul className="divide-y divide-[color:var(--border)]">
-            {actions.slice(0, 12).map((a) => (
-              <li key={`${a.from}-${a.text}`} className="flex gap-3 px-4 py-2.5 text-sm">
+            {actions.slice(0, 12).map(a => (
+              <li
+                key={`${a.from}-${a.text}`}
+                className="flex gap-3 px-4 py-2.5 text-sm"
+              >
                 <span
                   aria-hidden
                   className="mt-1.5 size-1.5 shrink-0 rounded-full"
@@ -59,7 +70,9 @@ export default function MeetingsPage() {
                 <span dir="auto" className="rtl-safe min-w-0 flex-1">
                   {a.text}
                 </span>
-                {a.for ? <span className="muted shrink-0 text-xs">{a.for}</span> : null}
+                {a.for ? (
+                  <span className="muted shrink-0 text-xs">{a.for}</span>
+                ) : null}
               </li>
             ))}
           </ul>
@@ -67,7 +80,7 @@ export default function MeetingsPage() {
       ) : null}
 
       <ul className="space-y-3">
-        {mine.map((m) => (
+        {mine.map(m => (
           <li key={m.recording_id} className="panel overflow-hidden">
             <div className="flex flex-wrap items-start gap-3 px-4 py-3">
               <CalendarDays
@@ -88,7 +101,7 @@ export default function MeetingsPage() {
                 </p>
                 {m.invitees?.length ? (
                   <p className="muted mt-1 truncate text-xs">
-                    {m.invitees.map((i) => i.name || i.email).join(", ")}
+                    {m.invitees.map(i => i.name || i.email).join(", ")}
                   </p>
                 ) : null}
               </div>

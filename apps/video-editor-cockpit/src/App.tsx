@@ -4,10 +4,17 @@ import { PortalAutoSignIn } from "./components/PortalAutoSignIn";
 import Sidebar from "./components/Sidebar";
 import { Wordmark } from "./components/Wordmark";
 import { SessionProvider, useWho } from "./lib/auth";
-import { useCanOpen, useEodToday, useJobs, useMe, useMeetings } from "./lib/data";
+import {
+  useCanOpen,
+  useEodToday,
+  useJobs,
+  useMe,
+  useMeetings,
+} from "./lib/data";
 import { portalUrl } from "./lib/portal";
+import { Toaster } from "./lib/toast";
 import EodPage from "./pages/EodPage";
-import IdeasPage from "./pages/IdeasPage";
+import { IdeationPage } from "./pages/IdeationPage";
 import JobPage from "./pages/JobPage";
 import JobsPage from "./pages/JobsPage";
 import MeetingsPage from "./pages/MeetingsPage";
@@ -20,7 +27,9 @@ import WinnersPage from "./pages/WinnersPage";
 /** Kuwait's day, which is the day the end of day is filed for. */
 function kuwaitDay(): string {
   const now = new Date();
-  const kuwait = new Date(now.getTime() + (3 * 60 + now.getTimezoneOffset()) * 60_000);
+  const kuwait = new Date(
+    now.getTime() + (3 * 60 + now.getTimezoneOffset()) * 60_000,
+  );
   return kuwait.toISOString().slice(0, 10);
 }
 
@@ -38,7 +47,7 @@ function Shell() {
   const eodToday = useEodToday(eodDay);
   const counts = useMemo(
     () => ({
-      ready: (jobs.data ?? []).filter((j) => j.state === "ready").length,
+      ready: (jobs.data ?? []).filter(j => j.state === "ready").length,
       meetings: (meetings.data ?? []).length,
       // One, until the day has been filed. A nudge, not a tally.
       eod: eodToday.data?.length ? 0 : 1,
@@ -62,7 +71,7 @@ function Shell() {
     <PortalAutoSignIn
       hasSession={Boolean(session)}
       ready={ready}
-      onSignedIn={() => setBumped((b) => b + 1)}
+      onSignedIn={() => setBumped(b => b + 1)}
     />
   );
 
@@ -83,8 +92,8 @@ function Shell() {
       <div className="mx-auto max-w-md px-4 py-20 text-center">
         <h1 className="text-lg font-semibold">The desk could not be opened</h1>
         <p className="muted mt-2 text-sm">
-          Signed in as {email}, but the database refused the request. This is a fault, not a
-          permission: nobody needs to add you to anything.
+          Signed in as {email}, but the database refused the request. This is a
+          fault, not a permission: nobody needs to add you to anything.
         </p>
         <p className="muted mt-3 rounded-[var(--radius-md)] bg-[color:var(--muted)] px-3 py-2 font-mono text-xs">
           {canOpen.error}
@@ -115,8 +124,12 @@ function Shell() {
       <div className="mx-auto max-w-md px-4 py-20 text-center">
         <h1 className="text-lg font-semibold">Not on the editor list</h1>
         <p className="muted mt-2 text-sm">
-          {email} can sign in but has no seat on the editor desk. An admin adds one in the portal at{" "}
-          <a className="underline underline-offset-2" href={`${portalUrl()}/admin`}>
+          {email} can sign in but has no seat on the editor desk. An admin adds
+          one in the portal at{" "}
+          <a
+            className="underline underline-offset-2"
+            href={`${portalUrl()}/admin`}
+          >
             {portalUrl().replace(/^https?:\/\//, "")}/admin
           </a>
           , or being named Assigned Editor on a ClickUp card is enough.
@@ -187,13 +200,17 @@ function Shell() {
           <Route path="/meetings" element={<MeetingsPage />} />
           <Route path="/videos" element={<VideosPage />} />
           <Route path="/winners" element={<WinnersPage />} />
-          <Route path="/ideas" element={<IdeasPage />} />
+          <Route path="/ideas" element={<IdeationPage />} />
           <Route path="/swipe" element={<SwipePage />} />
           <Route path="/eod" element={<EodPage />} />
           <Route path="/job/:taskId" element={<JobPage />} />
           <Route
             path="*"
-            element={<p className="muted p-10 text-center text-sm">That page does not exist.</p>}
+            element={
+              <p className="muted p-10 text-center text-sm">
+                That page does not exist.
+              </p>
+            }
           />
         </Routes>
       </div>
@@ -205,6 +222,7 @@ export default function App() {
   return (
     <SessionProvider>
       <Shell />
+      <Toaster />
     </SessionProvider>
   );
 }

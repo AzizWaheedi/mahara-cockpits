@@ -1,6 +1,12 @@
 /** The four tables the desk fills, as the cockpit reads them. */
 
-export type JobState = "new" | "stale" | "ready" | "blocked" | "delivered" | "gone";
+export type JobState =
+  | "new"
+  | "stale"
+  | "ready"
+  | "blocked"
+  | "delivered"
+  | "gone";
 
 export interface Person {
   email?: string | null;
@@ -264,42 +270,3 @@ export interface TeamMeeting {
 }
 
 /** An ad saved in Foreplay, mirrored into our own store. */
-export interface SwipeAd {
-  id: string;
-  ad_id: string | null;
-  name: string | null;
-  board_id: string | null;
-  board_name: string | null;
-  video: string | null;
-  image: string | null;
-  thumbnail: string | null;
-  foreplay_url: string | null;
-  link_url: string | null;
-  headline: string | null;
-  description: string | null;
-  cta_title: string | null;
-  display_format: string | null;
-  publisher_platform: string[] | null;
-  niches: string[] | null;
-  languages: string[] | null;
-  market_target: string | null;
-  live: boolean | null;
-  started_running: string | null;
-  /** Days on air: the strongest single signal that an ad is working. */
-  running_duration: number | null;
-  video_duration: number | null;
-  full_transcription: string | null;
-  persona: string | null;
-}
-
-/** A Foreplay board, whether or not any of its ads have reached us yet. */
-export interface ForeplayBoard {
-  id: string;
-  name: string | null;
-  /** The drop box: saves here become ideation posts on their own. */
-  feeds_ideation: boolean;
-  ads: number;
-  first_seen_at: string;
-  last_seen_at: string;
-  ads_synced_at: string | null;
-}

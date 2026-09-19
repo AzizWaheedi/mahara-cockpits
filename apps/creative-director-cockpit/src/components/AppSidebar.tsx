@@ -2,6 +2,7 @@ import { useAuthActions } from "@convex-dev/auth/react";
 import { useQuery } from "convex/react";
 import {
   ArrowRightLeft,
+  Bookmark,
   CalendarDays,
   Clapperboard,
   FileText,
@@ -82,6 +83,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
       { href: "/scripting", label: "Scripting database", icon: Sparkles },
       { href: "/scripts", label: "Scripts we made", icon: FileText },
       { href: "/ideation", label: "Ideation", icon: Lightbulb },
+      { href: "/swipe", label: "Swipe file", icon: Bookmark },
       { href: "/what-works", label: "What works", icon: Trophy },
       { href: "/funnels", label: "Funnels and forms", icon: Filter },
       { href: "/links", label: "Key links", icon: Link2 },

@@ -94,14 +94,18 @@ export default function AdPreviewFrame({
               />
             </div>
           ) : state === "loading" ? (
-            <p className="muted p-10 text-center text-sm">Asking Meta for a preview…</p>
+            <p className="muted p-10 text-center text-sm">
+              Asking Meta for a preview…
+            </p>
           ) : preview?.ok && preview.src ? (
             <div className="space-y-2 p-3">
               <iframe
                 src={preview.src}
                 title={title}
                 className="w-full border-0"
-                style={{ height: Math.min(720, Math.max(420, preview.height ?? 560)) }}
+                style={{
+                  height: Math.min(720, Math.max(420, preview.height ?? 560)),
+                }}
               />
               <p className="muted text-[11px] leading-snug">
                 Blank?{" "}
@@ -113,13 +117,18 @@ export default function AdPreviewFrame({
                 >
                   Open it in a tab
                 </a>
-                . Meta only draws this one for a browser signed in to the ad account.
+                . Meta only draws this one for a browser signed in to the ad
+                account.
               </p>
             </div>
           ) : (
             <div className="space-y-3 p-4 text-center">
               {still ? (
-                <img src={still} alt="" className="mx-auto max-h-96 rounded-[var(--radius-md)]" />
+                <img
+                  src={still}
+                  alt=""
+                  className="mx-auto max-h-96 rounded-[var(--radius-md)]"
+                />
               ) : null}
               <p className="muted text-sm">
                 {preview?.error ??

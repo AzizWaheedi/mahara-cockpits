@@ -54,8 +54,15 @@ export default function Lightbox({
         className="panel relative flex max-h-full w-full max-w-lg flex-col overflow-hidden"
       >
         <header className="flex items-center gap-3 border-b hairline px-4 py-2.5">
-          <h2 className="min-w-0 flex-1 truncate text-sm font-medium">{title}</h2>
-          <button type="button" onClick={onClose} aria-label="Close" className="muted">
+          <h2 className="min-w-0 flex-1 truncate text-sm font-medium">
+            {title}
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="muted"
+          >
             <X className="size-4" strokeWidth={2} />
           </button>
         </header>

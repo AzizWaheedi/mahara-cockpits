@@ -24,6 +24,7 @@ import {
   SettingsPage,
   SignupPage,
   StartOfDayPage,
+  SwipePage,
   TaskListPage,
   TouchpointsPage,
 } from "@/pages";
@@ -64,6 +65,7 @@ export function AuthenticatedRoutes() {
             <Route path="/eod" element={<EndOfDayPage />} />
             <Route path="/playbook" element={<PlaybookPage />} />
             <Route path="/ideation" element={<IdeationPage />} />
+            <Route path="/swipe" element={<SwipePage />} />
           </Route>
           {/* Client success cockpit — separate link, separate view. */}
           {/* biome-ignore lint/a11y/useValidAriaRole: RoleRoute's role prop is a seat name, not an ARIA role */}

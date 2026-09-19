@@ -17,3 +17,4 @@ export { PlaybookPage } from "./PlaybookPage";
 export { PortalHome } from "./PortalHome";
 export { SettingsPage } from "./SettingsPage";
 export { SignupPage } from "./SignupPage";
+export { SwipePage } from "./SwipePage";

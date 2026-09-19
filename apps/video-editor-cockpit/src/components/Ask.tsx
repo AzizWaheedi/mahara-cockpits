@@ -38,7 +38,13 @@ export default function Ask({ job, onSent }: { job: Job; onSent: () => void }) {
       return;
     }
     setBusy(true);
-    const err = await askFor("ask", job.task_id, note.trim(), { email, name }, { topic });
+    const err = await askFor(
+      "ask",
+      job.task_id,
+      note.trim(),
+      { email, name },
+      { topic },
+    );
     setBusy(false);
     if (err) {
       setSaid(`That did not send: ${err}`);
@@ -54,12 +60,13 @@ export default function Ask({ job, onSent }: { job: Job; onSent: () => void }) {
     <div className="space-y-3">
       {job.asked_for ? (
         <p className="muted text-sm">
-          Last asked for {job.asked_for} by {job.asked_by || "someone"} on {moment(job.asked_at)}.
+          Last asked for {job.asked_for} by {job.asked_by || "someone"} on{" "}
+          {moment(job.asked_at)}.
         </p>
       ) : null}
 
       <div className="flex flex-wrap gap-1.5">
-        {TOPICS.map((t) => (
+        {TOPICS.map(t => (
           <button
             key={t.key}
             type="button"
@@ -84,10 +91,12 @@ export default function Ask({ job, onSent }: { job: Job; onSent: () => void }) {
           <textarea
             id="ask-note"
             value={note}
-            onChange={(e) => setNote(e.target.value)}
+            onChange={e => setNote(e.target.value)}
             rows={2}
             placeholder={
-              topic === "other" ? "What do you need?" : "Anything worth adding (optional)"
+              topic === "other"
+                ? "What do you need?"
+                : "Anything worth adding (optional)"
             }
             className="raised w-full resize-y rounded-[var(--radius-md)] border hairline px-3 py-2 text-sm"
           />

@@ -45,11 +45,19 @@ const GROUPS: { label: string; items: Item[] }[] = [
     items: [
       { to: "/", label: "Jobs", icon: ListChecks, badge: "ready" },
       { to: "/pipeline", label: "Pipeline", icon: Clapperboard },
-      { to: "/meetings", label: "Meetings", icon: CalendarDays, badge: "meetings" },
+      {
+        to: "/meetings",
+        label: "Meetings",
+        icon: CalendarDays,
+        badge: "meetings",
+      },
       { to: "/eod", label: "End of day", icon: MoonStar, badge: "eod" },
     ],
   },
-  { label: "The work", items: [{ to: "/videos", label: "Footage", icon: Film }] },
+  {
+    label: "The work",
+    items: [{ to: "/videos", label: "Footage", icon: Film }],
+  },
   {
     label: "Library",
     items: [
@@ -69,7 +77,8 @@ function ThemeToggle() {
       // A private window forbids this; fall through to the system setting.
     }
     return (
-      typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches
     );
   });
 
@@ -84,7 +93,11 @@ function ThemeToggle() {
   }, [dark]);
 
   return (
-    <button type="button" onClick={() => setDark((d) => !d)} className="muted text-xs">
+    <button
+      type="button"
+      onClick={() => setDark(d => !d)}
+      className="muted text-xs"
+    >
       {dark ? "Light" : "Dark"}
     </button>
   );
@@ -98,7 +111,8 @@ function Badge({ n, tone }: { n: number; tone?: "urgent" }) {
         tone === "urgent"
           ? { background: "var(--destructive)", color: "#fff" }
           : {
-              background: "color-mix(in oklch, var(--primary) 22%, transparent)",
+              background:
+                "color-mix(in oklch, var(--primary) 22%, transparent)",
               color: "var(--primary)",
             }
       }
@@ -129,7 +143,7 @@ export default function Sidebar({
       </a>
 
       <nav className="flex flex-col gap-5">
-        {GROUPS.map((g) => (
+        {GROUPS.map(g => (
           <div key={g.label}>
             <p className="muted mb-1 px-2 text-[10px] font-semibold tracking-[0.12em] uppercase">
               {g.label}
@@ -160,10 +174,16 @@ export default function Sidebar({
                               style={{ background: "var(--primary)" }}
                             />
                           ) : null}
-                          <Icon className="size-4 shrink-0" strokeWidth={1.75} />
+                          <Icon
+                            className="size-4 shrink-0"
+                            strokeWidth={1.75}
+                          />
                           <span className="truncate">{label}</span>
                           {n > 0 ? (
-                            <Badge n={n} tone={badge === "eod" ? "urgent" : undefined} />
+                            <Badge
+                              n={n}
+                              tone={badge === "eod" ? "urgent" : undefined}
+                            />
                           ) : null}
                         </>
                       )}
@@ -181,16 +201,22 @@ export default function Sidebar({
               Switch cockpit
             </p>
             <ul className="space-y-0.5">
-              {doors.map((d) => (
+              {doors.map(d => (
                 <li key={d.key}>
                   <a
                     href={d.href}
                     className="muted flex items-center gap-2.5 rounded-[var(--radius-md)] py-1.5 pr-2 pl-3 text-sm transition-colors hover:bg-[color:var(--secondary)] hover:text-[color:var(--foreground)]"
                   >
                     {d.key === "admin" ? (
-                      <ShieldCheck className="size-4 shrink-0" strokeWidth={1.75} />
+                      <ShieldCheck
+                        className="size-4 shrink-0"
+                        strokeWidth={1.75}
+                      />
                     ) : (
-                      <ArrowRightLeft className="size-4 shrink-0" strokeWidth={1.75} />
+                      <ArrowRightLeft
+                        className="size-4 shrink-0"
+                        strokeWidth={1.75}
+                      />
                     )}
                     <span className="truncate">{d.label}</span>
                   </a>

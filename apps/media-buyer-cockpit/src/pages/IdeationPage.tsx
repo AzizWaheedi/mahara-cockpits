@@ -26,7 +26,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "../../convex/_generated/api";
-import ForeplayLinks from "../components/ForeplayLinks";
+import ForeplayLinks from "../components/Foreplay";
 
 /**
  * Ideation.

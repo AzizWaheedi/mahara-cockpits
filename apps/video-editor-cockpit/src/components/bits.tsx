@@ -18,7 +18,10 @@ export function StateBadge({ state }: { state: JobState | string | null }) {
   return (
     <span
       className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium"
-      style={{ color: it.tone, background: `color-mix(in oklch, ${it.tone} 14%, transparent)` }}
+      style={{
+        color: it.tone,
+        background: `color-mix(in oklch, ${it.tone} 14%, transparent)`,
+      }}
     >
       <span className="size-1.5 rounded-full" style={{ background: it.tone }} />
       {it.label}
@@ -66,7 +69,7 @@ export function Fold({
         type="button"
         aria-expanded={open}
         aria-controls={id}
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => setOpen(o => !o)}
         className="flex w-full items-center justify-between gap-3 py-2.5 text-left"
       >
         <span className="text-sm font-medium">{title}</span>
@@ -108,13 +111,22 @@ export function Spinner({ what = "Loading" }: { what?: string }) {
  * carries English product names inside Arabic sentences. */
 export function Prose({ text }: { text: string }) {
   return (
-    <div dir="auto" className="rtl-safe dim max-h-96 overflow-y-auto whitespace-pre-wrap text-sm">
+    <div
+      dir="auto"
+      className="rtl-safe dim max-h-96 overflow-y-auto whitespace-pre-wrap text-sm"
+    >
       {text}
     </div>
   );
 }
 
-export function Row({ label, children }: { label: string; children: ReactNode }) {
+export function Row({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
   return (
     <div className="flex gap-3 py-1 text-sm">
       <span className="muted w-28 shrink-0">{label}</span>
@@ -123,7 +135,13 @@ export function Row({ label, children }: { label: string; children: ReactNode })
   );
 }
 
-export function Out({ href, children }: { href: string | null | undefined; children: ReactNode }) {
+export function Out({
+  href,
+  children,
+}: {
+  href: string | null | undefined;
+  children: ReactNode;
+}) {
   if (!href) return <span className="muted">--</span>;
   return (
     <a

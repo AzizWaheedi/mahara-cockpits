@@ -31,7 +31,9 @@ export function Wordmark({
           aria-hidden
         />
       </span>
-      <span className={`${scale.sub} muted mt-1 font-mono font-medium tracking-[0.32em] uppercase`}>
+      <span
+        className={`${scale.sub} muted mt-1 font-mono font-medium tracking-[0.32em] uppercase`}
+      >
         Media
       </span>
     </span>

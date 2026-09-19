@@ -4,11 +4,8 @@ import type {
   Asset,
   Client,
   EditorPerson,
-  ForeplayBoard,
-  Idea,
   Job,
   Note,
-  SwipeAd,
   TeamMeeting,
   Version,
   WinnerAd,
@@ -52,7 +49,7 @@ function useQuery<T>(
     };
   }, [fetcher]);
 
-  return { data, error, loading, reload: () => setTick((t) => t + 1) };
+  return { data, error, loading, reload: () => setTick(t => t + 1) };
 }
 
 export function useJobs(): Loaded<Job[]> {
@@ -68,16 +65,27 @@ export function useJobs(): Loaded<Job[]> {
 
 export function useJob(taskId: string): Loaded<Job> {
   return useQuery<Job>(
-    () => supabase.from("editor_jobs").select("*").eq("task_id", taskId).maybeSingle(),
+    () =>
+      supabase
+        .from("editor_jobs")
+        .select("*")
+        .eq("task_id", taskId)
+        .maybeSingle(),
     [taskId],
   );
 }
 
-export function useClient(clientTaskId: string | null | undefined): Loaded<Client> {
+export function useClient(
+  clientTaskId: string | null | undefined,
+): Loaded<Client> {
   return useQuery<Client>(
     () =>
       clientTaskId
-        ? supabase.from("editor_clients").select("*").eq("task_id", clientTaskId).maybeSingle()
+        ? supabase
+            .from("editor_clients")
+            .select("*")
+            .eq("task_id", clientTaskId)
+            .maybeSingle()
         : Promise.resolve({ data: null, error: null }),
     [clientTaskId],
   );
@@ -98,7 +106,12 @@ export function useAssets(taskId: string): Loaded<Asset[]> {
 /** Every file the desk has read, newest first, for the gallery. */
 export function useAllAssets(limit = 300): Loaded<Asset[]> {
   return useQuery<Asset[]>(
-    () => supabase.from("editor_assets").select("*").order("at", { ascending: false }).limit(limit),
+    () =>
+      supabase
+        .from("editor_assets")
+        .select("*")
+        .order("at", { ascending: false })
+        .limit(limit),
     [limit],
   );
 }
@@ -161,7 +174,10 @@ export function useCanOpen(email: string | null): Loaded<boolean> {
         ? (supabase.rpc("is_editor").then(({ data, error }) => ({
             data: error ? null : data === true,
             error,
-          })) as PromiseLike<{ data: boolean | null; error: { message: string } | null }>)
+          })) as PromiseLike<{
+            data: boolean | null;
+            error: { message: string } | null;
+          }>)
         : Promise.resolve({ data: null, error: null }),
     [email],
   );
@@ -178,50 +194,6 @@ export function useWinners(): Loaded<WinnerAd[]> {
         .limit(300),
     [],
   );
-}
-
-/** The ideation board, shared with the creative director. */
-export function useIdeas(): Loaded<Idea[]> {
-  return useQuery<Idea[]>(
-    () =>
-      supabase
-        .from("ideation_posts")
-        .select(
-          "key,platform,url,status,origin,running_days,author_handle,author_name,posted_at,views,likes,comments,caption,duration_sec,thumb_url,still_path,media_url,industry,multiplier,tier,format,hook,why_it_works,transcript,saved_by_name,saved_at,saved_note",
-        )
-        .in("status", ["proposed", "saved", "dismissed"])
-        .order("multiplier", { ascending: false, nullsFirst: false })
-        .limit(300),
-    [],
-  );
-}
-
-/**
- * Keep or release an idea. The same row the creative director sees, so a
- * save here is a save there: one board, not a copy each (Aziz, 2026-09-19).
- * Only these columns are writable from a browser; the scan's own numbers are
- * granted away at the column level in Postgres.
- */
-export async function saveIdea(
-  key: string,
-  keep: boolean,
-  by: { email: string; name: string },
-): Promise<string | null> {
-  const { error } = await supabase
-    .from("ideation_posts")
-    .update(
-      keep
-        ? {
-            status: "saved",
-            saved_by: by.email,
-            saved_by_name: by.name,
-            saved_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          }
-        : { status: "proposed", updated_at: new Date().toISOString() },
-    )
-    .eq("key", key);
-  return error ? error.message : null;
 }
 
 /** Has an end of day already been filed for this day, and did it land? */
@@ -252,38 +224,15 @@ export function useMeetings(): Loaded<TeamMeeting[]> {
   );
 }
 
-/** The Foreplay swipe file, longest-running first. */
-export function useSwipe(): Loaded<SwipeAd[]> {
-  return useQuery<SwipeAd[]>(
-    () =>
-      supabase
-        .from("foreplay_ads")
-        .select("*")
-        .order("running_duration", { ascending: false, nullsFirst: false })
-        .limit(300),
-    [],
-  );
-}
-
-/**
- * Every Foreplay board, including one nobody has saved to yet.
- *
- * Read from our own table rather than counted off the mirrored ads, because
- * a board with no ads in it still has to appear -- otherwise adding a board
- * looks like nothing happened until somebody saves into it.
- */
-export function useBoards(): Loaded<ForeplayBoard[]> {
-  return useQuery<ForeplayBoard[]>(
-    () => supabase.from("foreplay_boards").select("*").order("name").limit(200),
-    [],
-  );
-}
-
 export function useMe(email: string | null): Loaded<EditorPerson> {
   return useQuery<EditorPerson>(
     () =>
       email
-        ? supabase.from("editor_people").select("*").ilike("email", email).maybeSingle()
+        ? supabase
+            .from("editor_people")
+            .select("*")
+            .ilike("email", email)
+            .maybeSingle()
         : Promise.resolve({ data: null, error: null }),
     [email],
   );
@@ -362,7 +311,13 @@ export async function addNote(
   return error ? error.message : null;
 }
 
-export async function markNoteDone(id: string, done: boolean): Promise<string | null> {
-  const { error } = await supabase.from("editor_notes").update({ done }).eq("id", id);
+export async function markNoteDone(
+  id: string,
+  done: boolean,
+): Promise<string | null> {
+  const { error } = await supabase
+    .from("editor_notes")
+    .update({ done })
+    .eq("id", id);
   return error ? error.message : null;
 }

@@ -1,5 +1,12 @@
 import type { Session } from "@supabase/supabase-js";
-import { createContext, type ReactNode, useContext, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  type ReactNode,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { supabase } from "./supabase";
 
 interface Who {
@@ -35,13 +42,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setSession(data.session);
       setReady(true);
     });
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, next) => setSession(next));
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, next) =>
+      setSession(next),
+    );
     return () => sub.subscription.unsubscribe();
   }, []);
 
   const value = useMemo<Who>(() => {
     const email = session?.user?.email ?? "";
-    const meta = session?.user?.user_metadata as { name?: string; full_name?: string } | undefined;
+    const meta = session?.user?.user_metadata as
+      | { name?: string; full_name?: string }
+      | undefined;
     const app = session?.user?.app_metadata as
       | { roles?: string[]; cockpits?: string[] }
       | undefined;

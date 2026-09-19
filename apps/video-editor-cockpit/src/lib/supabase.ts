@@ -4,7 +4,9 @@ const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const anon = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 
 if (!url || !anon) {
-  throw new Error("VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY must be set. See .env.example.");
+  throw new Error(
+    "VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY must be set. See .env.example.",
+  );
 }
 
 /**
@@ -13,7 +15,11 @@ if (!url || !anon) {
  * the address on the signed-in session has to be on `editor_people`.
  */
 export const supabase = createClient(url, anon, {
-  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+  },
 });
 
 export const STILLS_BUCKET = "editor-stills";

@@ -18,3 +18,4 @@ export { PlaybookPage } from "./PlaybookPage";
 export { ScriptsPage } from "./ScriptsPage";
 export { SettingsPage } from "./SettingsPage";
 export { SignupPage } from "./SignupPage";
+export { SwipePage } from "./SwipePage";

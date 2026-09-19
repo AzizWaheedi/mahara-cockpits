@@ -22,11 +22,12 @@ function search(assets: Asset[], term: string): Found[] {
     for (let i = 0; i < words.length; i++) {
       const window = words
         .slice(i, i + 12)
-        .map((w) => w.w)
+        .map(w => w.w)
         .join(" ");
       if (!window.toLowerCase().includes(needle)) continue;
       const at = words[i].t;
-      if (out.some((f) => f.asset.id === a.id && Math.abs(f.at - at) < 2)) continue;
+      if (out.some(f => f.asset.id === a.id && Math.abs(f.at - at) < 2))
+        continue;
       out.push({ asset: a, at, text: window });
       if (out.length >= 60) return out;
     }
@@ -43,11 +44,11 @@ export default function Footage({ assets }: { assets: Asset[] }) {
   // still back.
   const [playing, setPlaying] = useState<string | null>(null);
   const [term, setTerm] = useState("");
-  const stills = useStills(assets.map((a) => a.still_path));
+  const stills = useStills(assets.map(a => a.still_path));
   const hits = useMemo(() => search(assets, term), [assets, term]);
-  const open = assets.find((a) => a.id === openId) ?? null;
+  const open = assets.find(a => a.id === openId) ?? null;
   const openStill = open?.still_path ? stills[open.still_path] : undefined;
-  const anyWords = assets.some((a) => (a.words ?? []).length > 0);
+  const anyWords = assets.some(a => (a.words ?? []).length > 0);
 
   if (!assets.length) {
     return <Empty>No footage has been read for this job yet.</Empty>;
@@ -60,7 +61,7 @@ export default function Footage({ assets }: { assets: Asset[] }) {
           <input
             id="transcript-search"
             value={term}
-            onChange={(e) => setTerm(e.target.value)}
+            onChange={e => setTerm(e.target.value)}
             placeholder="Search everything that was said"
             className="raised w-full rounded-md border hairline px-3 py-2 text-sm"
           />
@@ -70,7 +71,7 @@ export default function Footage({ assets }: { assets: Asset[] }) {
                 <p className="muted py-2 text-sm">Nothing said matches that.</p>
               ) : (
                 <ul className="space-y-1">
-                  {hits.map((h) => (
+                  {hits.map(h => (
                     <li key={`${h.asset.id}-${h.at}`}>
                       <button
                         type="button"
@@ -80,13 +81,21 @@ export default function Footage({ assets }: { assets: Asset[] }) {
                         }}
                         className="raised flex w-full gap-3 rounded-md px-3 py-2 text-left text-sm"
                       >
-                        <span className="font-mono text-xs" style={{ color: "var(--primary)" }}>
+                        <span
+                          className="font-mono text-xs"
+                          style={{ color: "var(--primary)" }}
+                        >
                           {clock(h.at)}
                         </span>
-                        <span dir="auto" className="rtl-safe min-w-0 flex-1 truncate">
+                        <span
+                          dir="auto"
+                          className="rtl-safe min-w-0 flex-1 truncate"
+                        >
                           {h.text}
                         </span>
-                        <span className="muted shrink-0 truncate text-xs">{h.asset.name}</span>
+                        <span className="muted shrink-0 truncate text-xs">
+                          {h.asset.name}
+                        </span>
                       </button>
                     </li>
                   ))}
@@ -98,7 +107,7 @@ export default function Footage({ assets }: { assets: Asset[] }) {
       )}
 
       <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-        {assets.map((a) => {
+        {assets.map(a => {
           const still = a.still_path ? stills[a.still_path] : undefined;
           const active = a.id === openId;
           return (
@@ -115,7 +124,12 @@ export default function Footage({ assets }: { assets: Asset[] }) {
               >
                 <div className="raised relative aspect-video w-full overflow-hidden">
                   {still ? (
-                    <img src={still} alt="" className="size-full object-cover" loading="lazy" />
+                    <img
+                      src={still}
+                      alt=""
+                      className="size-full object-cover"
+                      loading="lazy"
+                    />
                   ) : (
                     <span className="muted absolute inset-0 grid place-items-center text-xs">
                       {a.error ? "not read" : "no frame"}
@@ -130,9 +144,13 @@ export default function Footage({ assets }: { assets: Asset[] }) {
                 <div className="px-2 py-1.5">
                   <p className="truncate text-xs font-medium">{a.name}</p>
                   <p className="muted mt-0.5 flex flex-wrap gap-x-2 text-[11px]">
-                    {shape(a.width, a.height) && <span>{shape(a.width, a.height)}</span>}
+                    {shape(a.width, a.height) && (
+                      <span>{shape(a.width, a.height)}</span>
+                    )}
                     {a.has_audio === false && <span>silent</span>}
-                    {a.scenes?.length ? <span>{a.scenes.length} shots</span> : null}
+                    {a.scenes?.length ? (
+                      <span>{a.scenes.length} shots</span>
+                    ) : null}
                   </p>
                 </div>
               </button>
@@ -158,7 +176,10 @@ export default function Footage({ assets }: { assets: Asset[] }) {
           </div>
 
           {open.error ? (
-            <p className="px-4 py-3 text-sm" style={{ color: "var(--destructive)" }}>
+            <p
+              className="px-4 py-3 text-sm"
+              style={{ color: "var(--destructive)" }}
+            >
               {open.error}
             </p>
           ) : (
@@ -200,7 +221,7 @@ export default function Footage({ assets }: { assets: Asset[] }) {
                       Shot changes ({open.scenes.length})
                     </p>
                     <div className="flex flex-wrap gap-1">
-                      {open.scenes.slice(0, 40).map((s) => (
+                      {open.scenes.slice(0, 40).map(s => (
                         <span
                           key={s}
                           className="raised rounded px-1.5 py-0.5 font-mono text-[11px]"
@@ -213,10 +234,13 @@ export default function Footage({ assets }: { assets: Asset[] }) {
                 ) : null}
 
                 <div>
-                  <p className="muted mb-1 text-xs uppercase tracking-wide">What was said</p>
+                  <p className="muted mb-1 text-xs uppercase tracking-wide">
+                    What was said
+                  </p>
                   {open.has_audio === false ? (
                     <p className="muted text-sm">
-                      This file has no audio track, so there is nothing to search.
+                      This file has no audio track, so there is nothing to
+                      search.
                     </p>
                   ) : open.transcript ? (
                     <p
@@ -227,7 +251,8 @@ export default function Footage({ assets }: { assets: Asset[] }) {
                     </p>
                   ) : (
                     <p className="muted text-sm">
-                      No speech was found. That is normal for b-roll and animation over music.
+                      No speech was found. That is normal for b-roll and
+                      animation over music.
                     </p>
                   )}
                 </div>
@@ -238,9 +263,12 @@ export default function Footage({ assets }: { assets: Asset[] }) {
                       Script lines heard here
                     </p>
                     <ul className="space-y-1">
-                      {open.script_hits.map((h) => (
+                      {open.script_hits.map(h => (
                         <li key={h.line} className="flex gap-2 text-sm">
-                          <span className="font-mono text-xs" style={{ color: "var(--primary)" }}>
+                          <span
+                            className="font-mono text-xs"
+                            style={{ color: "var(--primary)" }}
+                          >
                             {clock(h.at_sec)}
                           </span>
                           <span dir="auto" className="rtl-safe min-w-0 flex-1">

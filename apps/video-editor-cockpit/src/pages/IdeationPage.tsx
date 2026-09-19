@@ -1,4 +1,3 @@
-import { useAction } from "convex/react";
 import {
   ExternalLink,
   Eye,
@@ -13,7 +12,6 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -25,8 +23,9 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { api } from "../../convex/_generated/api";
 import ForeplayLinks from "../components/Foreplay";
+import { api, useAction } from "../lib/ideation";
+import { toast } from "../lib/toast";
 
 /**
  * Ideation.

@@ -50,7 +50,7 @@ export default function AddRule({
   return (
     <div className="space-y-2.5">
       <div className="flex flex-wrap items-center gap-2">
-        {(["DO", "DON'T"] as const).map((k) => (
+        {(["DO", "DON'T"] as const).map(k => (
           <button
             key={k}
             type="button"
@@ -68,7 +68,11 @@ export default function AddRule({
             Add a {k === "DO" ? "do" : "don't"}
           </button>
         ))}
-        {!kind ? <span className="muted text-xs">from what you were told in revisions</span> : null}
+        {!kind ? (
+          <span className="muted text-xs">
+            from what you were told in revisions
+          </span>
+        ) : null}
       </div>
 
       {kind ? (
@@ -77,7 +81,7 @@ export default function AddRule({
             id="new-rule"
             rows={2}
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={e => setText(e.target.value)}
             placeholder={
               kind === "DO"
                 ? "Hold the logo for the last two seconds"
@@ -106,8 +110,8 @@ export default function AddRule({
             </button>
           </div>
           <p className="muted text-xs">
-            This is added to the client card, signed with your name and today's date. Nothing
-            already written can be replaced from here.
+            This is added to the client card, signed with your name and today's
+            date. Nothing already written can be replaced from here.
           </p>
         </div>
       ) : null}

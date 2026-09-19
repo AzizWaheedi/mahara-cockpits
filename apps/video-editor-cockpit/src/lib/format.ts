@@ -3,7 +3,8 @@
 const KUWAIT = "Asia/Kuwait";
 
 export function clock(seconds: number | null | undefined): string {
-  if (seconds === null || seconds === undefined || Number.isNaN(seconds)) return "--:--";
+  if (seconds === null || seconds === undefined || Number.isNaN(seconds))
+    return "--:--";
   const s = Math.max(0, Math.floor(seconds));
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
@@ -43,7 +44,10 @@ export function moment(iso: string | null | undefined): string {
 }
 
 /** "3 days late", "due today", "in 2 days". Plain words, no colour logic here. */
-export function whenDue(iso: string | null | undefined): { text: string; late: boolean } {
+export function whenDue(iso: string | null | undefined): {
+  text: string;
+  late: boolean;
+} {
   if (!iso) return { text: "no date", late: false };
   const due = new Date(iso);
   if (Number.isNaN(due.getTime())) return { text: "no date", late: false };
@@ -66,6 +70,8 @@ export function shape(width: number | null, height: number | null): string {
 }
 
 /** A Drive file id embedded in a preview frame. */
-export function drivePreview(driveId: string | null | undefined): string | null {
+export function drivePreview(
+  driveId: string | null | undefined,
+): string | null {
   return driveId ? `https://drive.google.com/file/d/${driveId}/preview` : null;
 }

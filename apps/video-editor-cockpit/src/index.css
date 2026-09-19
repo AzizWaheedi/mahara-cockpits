@@ -101,6 +101,35 @@ h3 {
   letter-spacing: -0.015em;
 }
 
+/* A bare `border` means the theme's border, not currentColor. The other
+   three cockpits get this from shadcn's base layer; the ideation page is
+   the same file in all four, so this one needs it too. */
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+}
+
+/* Callout panels, the same recipe as the other cockpits: a tinted strip that
+   survives dark mode. */
+.callout-warn {
+  background-color: color-mix(in oklch, var(--warning) 12%, transparent);
+  border-color: color-mix(in oklch, var(--warning) 45%, transparent);
+  color: color-mix(in oklch, var(--warning) 80%, var(--foreground));
+}
+
+.callout-bad {
+  background-color: color-mix(in oklch, var(--destructive) 12%, transparent);
+  border-color: color-mix(in oklch, var(--destructive) 45%, transparent);
+  color: color-mix(in oklch, var(--destructive) 80%, var(--foreground));
+}
+
+.callout-good {
+  background-color: color-mix(in oklch, var(--success) 12%, transparent);
+  border-color: color-mix(in oklch, var(--success) 45%, transparent);
+  color: color-mix(in oklch, var(--success) 80%, var(--foreground));
+}
+
 /* One place for the surfaces, so a panel is a panel everywhere. */
 @utility panel {
   background: var(--card);

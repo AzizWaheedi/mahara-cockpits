@@ -17,7 +17,9 @@ export default function SignInPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
-  const [mode, setMode] = useState<"password" | "code" | "codeSent">("password");
+  const [mode, setMode] = useState<"password" | "code" | "codeSent">(
+    "password",
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [said, setSaid] = useState<string | null>(null);
@@ -80,10 +82,12 @@ export default function SignInPage() {
             <div className="mb-6 flex justify-center">
               <Wordmark size="lg" />
             </div>
-            <h1 className="text-2xl font-semibold tracking-tight">Sign in to Mahara</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">
+              Sign in to Mahara
+            </h1>
             <p className="muted text-sm">
-              One sign-in for every cockpit. This is the editor desk; normally the portal opens it
-              for you.
+              One sign-in for every cockpit. This is the editor desk; normally
+              the portal opens it for you.
             </p>
           </div>
 
@@ -92,7 +96,10 @@ export default function SignInPage() {
             className="space-y-4 rounded-[calc(var(--radius)+0.25rem)] border-0 bg-gradient-to-br from-[color:var(--card)] to-[color:var(--muted)] p-6 shadow-lg"
           >
             <div className="space-y-2">
-              <label htmlFor="signin-email" className="block text-sm font-medium">
+              <label
+                htmlFor="signin-email"
+                className="block text-sm font-medium"
+              >
                 Email
               </label>
               <input
@@ -101,7 +108,7 @@ export default function SignInPage() {
                 autoComplete="username"
                 required
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={e => setEmail(e.target.value)}
                 className={field}
                 placeholder="you@maharamedia.com"
               />
@@ -109,7 +116,10 @@ export default function SignInPage() {
 
             {mode === "password" && (
               <div className="space-y-2">
-                <label htmlFor="signin-password" className="block text-sm font-medium">
+                <label
+                  htmlFor="signin-password"
+                  className="block text-sm font-medium"
+                >
                   Password
                 </label>
                 <input
@@ -118,7 +128,7 @@ export default function SignInPage() {
                   autoComplete="current-password"
                   required
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={e => setPassword(e.target.value)}
                   className={field}
                   placeholder="••••••••"
                 />
@@ -127,7 +137,10 @@ export default function SignInPage() {
 
             {mode === "codeSent" && (
               <div className="space-y-2">
-                <label htmlFor="signin-code" className="block text-sm font-medium">
+                <label
+                  htmlFor="signin-code"
+                  className="block text-sm font-medium"
+                >
                   Code from the email
                 </label>
                 <input
@@ -136,7 +149,7 @@ export default function SignInPage() {
                   autoComplete="one-time-code"
                   required
                   value={code}
-                  onChange={(e) => setCode(e.target.value)}
+                  onChange={e => setCode(e.target.value)}
                   className={`${field} font-mono tracking-widest`}
                 />
               </div>
@@ -172,7 +185,9 @@ export default function SignInPage() {
               }}
               className="muted w-full text-center text-xs underline underline-offset-4"
             >
-              {mode === "password" ? "Use an emailed code instead" : "Use a password instead"}
+              {mode === "password"
+                ? "Use an emailed code instead"
+                : "Use a password instead"}
             </button>
           </form>
 

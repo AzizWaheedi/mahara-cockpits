@@ -38,8 +38,18 @@ const BLOCKS: { title: string; questions: Question[] }[] = [
         hint: "count, client and the delivery link",
         rows: 3,
       },
-      { key: "in_progress", label: "In progress or pending", hint: "with how far along", rows: 2 },
-      { key: "revisions", label: "Revisions handled", hint: "count and client", rows: 2 },
+      {
+        key: "in_progress",
+        label: "In progress or pending",
+        hint: "with how far along",
+        rows: 2,
+      },
+      {
+        key: "revisions",
+        label: "Revisions handled",
+        hint: "count and client",
+        rows: 2,
+      },
     ],
   },
   {
@@ -63,7 +73,12 @@ const BLOCKS: { title: string; questions: Question[] }[] = [
     title: "What is next",
     questions: [
       { key: "tomorrow", label: "Tomorrow's plan", rows: 2 },
-      { key: "summary", label: "Day summary", hint: "the one line Aziz reads first", rows: 3 },
+      {
+        key: "summary",
+        label: "Day summary",
+        hint: "the one line Aziz reads first",
+        rows: 3,
+      },
     ],
   },
 ];
@@ -71,7 +86,9 @@ const BLOCKS: { title: string; questions: Question[] }[] = [
 /** Kuwait's day, which is what the sheet records. */
 function today(): string {
   const now = new Date();
-  const kuwait = new Date(now.getTime() + (3 * 60 + now.getTimezoneOffset()) * 60_000);
+  const kuwait = new Date(
+    now.getTime() + (3 * 60 + now.getTimezoneOffset()) * 60_000,
+  );
   return kuwait.toISOString().slice(0, 10);
 }
 
@@ -90,7 +107,9 @@ export default function EodPage() {
   async function send(e: FormEvent) {
     e.preventDefault();
     if (!answers.summary?.trim()) {
-      setProblem("The day summary is the one line Aziz reads first. Fill that in at least.");
+      setProblem(
+        "The day summary is the one line Aziz reads first. Fill that in at least.",
+      );
       return;
     }
     setBusy(true);
@@ -118,15 +137,16 @@ export default function EodPage() {
       <header className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">End of day</h1>
         <p className="muted mt-1 text-sm">
-          The same questions as the Video Editors form, filed straight into the EOD Reports sheet.
-          For {day}.
+          The same questions as the Video Editors form, filed straight into the
+          EOD Reports sheet. For {day}.
         </p>
       </header>
 
       {already ? (
         <Section title="Already filed today">
           <p className="text-sm">
-            Filed {already.finished_at ? moment(already.finished_at) : "just now"}
+            Filed{" "}
+            {already.finished_at ? moment(already.finished_at) : "just now"}
             {already.status === "queued" || already.status === "running"
               ? ", on its way to the sheet."
               : already.status === "failed"
@@ -134,37 +154,47 @@ export default function EodPage() {
                 : "."}
           </p>
           <p className="muted mt-2 text-sm">
-            Filing again adds a second row rather than replacing the first, so only do it if the
-            first one was wrong.
+            Filing again adds a second row rather than replacing the first, so
+            only do it if the first one was wrong.
           </p>
         </Section>
       ) : null}
 
       <form onSubmit={send} className="mt-4 space-y-4">
-        <Section title="Who" side={<span className="muted text-xs">{day}</span>}>
+        <Section
+          title="Who"
+          side={<span className="muted text-xs">{day}</span>}
+        >
           <input
             id="eod-name"
             value={who}
-            onChange={(e) => setWho(e.target.value)}
+            onChange={e => setWho(e.target.value)}
             aria-label="Name"
             className="h-10 w-full rounded-[var(--radius-md)] border hairline bg-[color:var(--background)] px-3 text-sm"
           />
         </Section>
 
-        {BLOCKS.map((block) => (
+        {BLOCKS.map(block => (
           <Section key={block.title} title={block.title}>
             <div className="space-y-4">
-              {block.questions.map((q) => (
+              {block.questions.map(q => (
                 <div key={q.key}>
-                  <label htmlFor={`eod-${q.key}`} className="mb-1 block text-[13px] font-medium">
+                  <label
+                    htmlFor={`eod-${q.key}`}
+                    className="mb-1 block text-[13px] font-medium"
+                  >
                     {q.label}
                   </label>
-                  {q.hint ? <p className="muted mb-1.5 text-xs">{q.hint}</p> : null}
+                  {q.hint ? (
+                    <p className="muted mb-1.5 text-xs">{q.hint}</p>
+                  ) : null}
                   <textarea
                     id={`eod-${q.key}`}
                     rows={q.rows ?? 2}
                     value={answers[q.key] ?? ""}
-                    onChange={(e) => setAnswers((a) => ({ ...a, [q.key]: e.target.value }))}
+                    onChange={e =>
+                      setAnswers(a => ({ ...a, [q.key]: e.target.value }))
+                    }
                     className={field}
                   />
                 </div>

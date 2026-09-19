@@ -49,7 +49,7 @@ export function PortalAutoSignIn({
           onSignedIn();
           navigate(to.startsWith("/") ? to : "/", { replace: true });
         })
-        .catch((e) => setFailed(String((e as Error).message ?? e)));
+        .catch(e => setFailed(String((e as Error).message ?? e)));
       return;
     }
 
@@ -71,13 +71,22 @@ export function PortalAutoSignIn({
     acted.current = true;
     const wanted = location.pathname + location.search;
     window.location.replace(portalDoor(wanted === "/" ? "/" : wanted));
-  }, [hasSession, ready, navigate, onSignedIn, location.pathname, location.search]);
+  }, [
+    hasSession,
+    ready,
+    navigate,
+    onSignedIn,
+    location.pathname,
+    location.search,
+  ]);
 
   if (!failed) return null;
   return (
     <div
       className="px-4 py-2 text-center text-sm"
-      style={{ background: "color-mix(in oklch, var(--destructive) 12%, transparent)" }}
+      style={{
+        background: "color-mix(in oklch, var(--destructive) 12%, transparent)",
+      }}
     >
       The portal pass was not accepted ({failed}). Open the portal again at{" "}
       <a className="underline underline-offset-2" href={portalUrl()}>

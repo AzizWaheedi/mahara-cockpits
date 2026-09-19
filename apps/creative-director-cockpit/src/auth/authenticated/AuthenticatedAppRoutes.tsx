@@ -27,6 +27,7 @@ import {
   ScriptsPage,
   SettingsPage,
   SignupPage,
+  SwipePage,
   TouchpointsPage,
   WorkPage,
 } from "@/pages";
@@ -66,6 +67,7 @@ export function AuthenticatedRoutes() {
             <Route path="/scripting" element={<ScriptDatabasePage />} />
             <Route path="/scripts" element={<ScriptsPage />} />
             <Route path="/ideation" element={<IdeationPage />} />
+            <Route path="/swipe" element={<SwipePage />} />
             <Route path="/profiles" element={<ClientsPage />} />
             <Route path="/eod" element={<CreativeEodPage />} />
             <Route path="/meetings" element={<MeetingsPage />} />
