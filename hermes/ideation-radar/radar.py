@@ -219,6 +219,28 @@ def cmd_pending(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     return 1 if failed and not ideas else 0
 
 
+def cmd_posts(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    """The posting desk: drain the cockpit's jobs, or say what is missing."""
+    from radar.posting import jobs as posting_jobs
+    from radar.posting import youtube as posting_youtube
+
+    if args.auth_url:
+        print(posting_youtube.auth_url())
+        return 0
+    if args.doctor:
+        rows = posting_jobs.doctor(cfg)
+        for status, what, note in rows:
+            print(f"{status:8} {what:16} {note}")
+        return 1 if any(r[0] == "MISSING" for r in rows) else 0
+    try:
+        done = posting_jobs.run_jobs(cfg, log.info, limit=args.limit, dry_run=args.dry_run)
+    except (SupabaseError, http.HttpError) as e:
+        log.error(str(e))
+        return 1
+    _print({"jobs": done}, args.json)
+    return 1 if any(d.get("status") == "failed" for d in done) else 0
+
+
 def cmd_requests(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     from radar.requests import run_requests
     try:
@@ -454,6 +476,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("trends")
     rq = sub.add_parser("requests"); rq.add_argument("--limit", type=int, default=3); rq.add_argument("--dry-run", action="store_true")
     st = sub.add_parser("speechtest"); st.add_argument("url", nargs="+")
+    ps = sub.add_parser("posts", help="the posting desk: drain the cockpit's jobs"); ps.add_argument("--limit", type=int, default=2); ps.add_argument("--dry-run", action="store_true"); ps.add_argument("--doctor", action="store_true"); ps.add_argument("--auth-url", action="store_true", help="print the YouTube consent link")
     rs = sub.add_parser("resend"); rs.add_argument("--scan", help="a latest.json to re-send (default out/latest.json)"); rs.add_argument("--ideas", help="an ideas.jsonl to re-send (default out/ideas.jsonl)")
     args = ap.parse_args(argv)
     cfg = Config.from_env()
@@ -461,7 +484,7 @@ def main(argv: list[str] | None = None) -> int:
     log = Logger(cfg.out_dir / "radar.log", quiet=args.quiet)
     if args.cmd in ("add", "remove") or (args.cmd == "watchlist" and args.action in ("add", "remove") and not (args.platform and args.value)):
         ap.error("watchlist add/remove need <platform> <value>")
-    handlers = {"doctor": cmd_doctor, "scan": cmd_scan, "capture": cmd_capture, "pending": cmd_pending, "watchlist": cmd_watchlist, "digest": cmd_digest, "resend": cmd_resend, "trends": cmd_trends, "speechtest": cmd_speechtest, "requests": cmd_requests}
+    handlers = {"doctor": cmd_doctor, "scan": cmd_scan, "capture": cmd_capture, "pending": cmd_pending, "watchlist": cmd_watchlist, "digest": cmd_digest, "resend": cmd_resend, "trends": cmd_trends, "speechtest": cmd_speechtest, "requests": cmd_requests, "posts": cmd_posts}
     try:
         return handlers[args.cmd](cfg, args, log)
     except KeyboardInterrupt:

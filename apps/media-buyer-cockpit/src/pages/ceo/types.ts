@@ -15,6 +15,7 @@ export const CEO_TAB_KEYS = [
   "ads",
   "organic",
   "ideation",
+  "posting",
   "sales",
   "backend",
   "delivery",
