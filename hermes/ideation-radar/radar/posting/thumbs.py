@@ -150,6 +150,29 @@ def _fill(frame_path: Path, size: tuple[int, int], centering=(0.5, 0.35)):
     return ImageOps.fit(img, size, method=Image.LANCZOS, centering=centering)
 
 
+def _stage(frame_path: Path, W: int, H: int, rtl: bool):
+    """The frame on a 16:9 stage.
+
+    A landscape frame fills it, kept high so a head is never cut. A portrait
+    frame (a reel) is never stretched or cropped to a strip: it stands whole
+    at full height on the side the text leaves free, over a blurred, darkened
+    copy of itself, the way a broadcast pillarboxes a phone clip.
+    """
+    from PIL import Image, ImageFilter, ImageOps
+
+    src = Image.open(frame_path).convert("RGB")
+    if src.height <= src.width:
+        return ImageOps.fit(src, (W, H), method=Image.LANCZOS, centering=(0.35 if rtl else 0.65, 0.28))
+    stage = ImageOps.fit(src, (W, H), method=Image.LANCZOS, centering=(0.5, 0.3)).filter(ImageFilter.GaussianBlur(26))
+    stage = Image.blend(stage, Image.new("RGB", (W, H), MIDNIGHT), 0.55)
+    scale = H / src.height
+    portrait = src.resize((max(1, int(src.width * scale)), H), Image.LANCZOS)
+    free_w = W - int(W * 0.47)
+    x = (0 if rtl else W - free_w) + max(0, (free_w - portrait.width) // 2)
+    stage.paste(portrait, (x, 0))
+    return stage
+
+
 def _to_jpeg(img, *, max_bytes: int = 1_900_000) -> bytes:
     for q in (92, 86, 80, 74, 68, 60):
         buf = io.BytesIO()
@@ -168,7 +191,7 @@ def render_youtube(frame_path: Path, text: str, *, fonts: Optional[dict[str, Pat
     fonts = fonts or ensure_fonts(log)
     W, H = 1280, 720
     rtl = is_arabic(text)
-    img = _fill(frame_path, (W, H), centering=(0.35 if rtl else 0.65, 0.35))
+    img = _stage(frame_path, W, H, rtl)
     field_w = int(W * 0.47)
     # A soft field so the frame is still Aziz, not a wallpaper.
     overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
