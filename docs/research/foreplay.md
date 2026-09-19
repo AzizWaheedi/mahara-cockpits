@@ -141,6 +141,43 @@ Gulf commercial ads actually are. The Ad Library web interface covers all six
 GCC countries with Arabic keyword search; Foreplay's own library does not
 reach them.
 
+## The API is on the cheapest tier, so the plan costs less again
+
+Verified from their own spec and pricing on 2026-09-19: **the REST API and
+the MCP server are included on every plan, Basic at $59 a month included.**
+Everything built here runs on that tier. Agency at $389 annual is only
+needed if Spyder is watching all 30 clients; the integration itself is not
+what forces the tier.
+
+Also worth knowing before paying anything: **Motion's Creative Research,
+which includes a swipe file, is free forever with no card.** Their $750 tier
+is the analytics, which we do not need because the media buyer cockpit
+already has the numbers. It costs nothing to try the free half first.
+
+## The one thing that does not work for us
+
+**Their transcription is English in practice.** The API exposes
+`full_transcription` and `timestamped_transcription` and the language filter
+does list Arabic, but their own feedback board carries an unresolved report
+that a French video was transcribed into English automatically. For an
+agency whose ads are Gulf Arabic, do not plan on their transcripts.
+
+We are not short of transcription anyway. The desk already runs ElevenLabs
+Scribe, which beat Whisper on our own Gulf clips on 2026-09-18. Worth knowing
+for later: the Open Universal Arabic ASR Leaderboard puts Whisper large-v3 at
+about 60% word error on Khaliji and about 91% on code-switched Arabic and
+English, which is our actual case, and Cohere Transcribe Arabic scores
+materially better. That is a candidate to test against Scribe, not a reason
+to change a working chain.
+
+## Why the mirror is not paranoia
+
+MagicBrief shut down on 31 July 2026 and its own FAQ said a bulk export was
+**not available**: *"Inspire collections may contain content that you did not
+create or that you do not own. For this reason, a bulk export option is not
+available."* Around 3,000 teams lost their libraries with no way to take them
+out. That is the precise failure our copy prevents.
+
 ## Still needed, and it is only one thing
 
 **A Foreplay account and an API key.** There is no key on the VPS or in any
