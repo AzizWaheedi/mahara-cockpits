@@ -13,6 +13,7 @@ import JobsPage from "./pages/JobsPage";
 import MeetingsPage from "./pages/MeetingsPage";
 import PipelinePage from "./pages/PipelinePage";
 import SignInPage from "./pages/SignInPage";
+import SwipePage from "./pages/SwipePage";
 import VideosPage from "./pages/VideosPage";
 import WinnersPage from "./pages/WinnersPage";
 
@@ -187,6 +188,7 @@ function Shell() {
           <Route path="/videos" element={<VideosPage />} />
           <Route path="/winners" element={<WinnersPage />} />
           <Route path="/ideas" element={<IdeasPage />} />
+          <Route path="/swipe" element={<SwipePage />} />
           <Route path="/eod" element={<EodPage />} />
           <Route path="/job/:taskId" element={<JobPage />} />
           <Route

@@ -201,6 +201,10 @@ class Config:
         return key("FATHOM_API_KEY")
 
     @property
+    def foreplay_key(self) -> str:
+        return key("FOREPLAY_API_KEY")
+
+    @property
     def slack_token(self) -> str:
         return key("SLACK_BOT_TOKEN")
 

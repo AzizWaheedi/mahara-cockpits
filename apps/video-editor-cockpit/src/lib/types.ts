@@ -254,3 +254,32 @@ export interface TeamMeeting {
   action_items: { text: string; for: string }[] | null;
   language: string | null;
 }
+
+/** An ad saved in Foreplay, mirrored into our own store. */
+export interface SwipeAd {
+  id: string;
+  ad_id: string | null;
+  name: string | null;
+  board_id: string | null;
+  board_name: string | null;
+  video: string | null;
+  image: string | null;
+  thumbnail: string | null;
+  foreplay_url: string | null;
+  link_url: string | null;
+  headline: string | null;
+  description: string | null;
+  cta_title: string | null;
+  display_format: string | null;
+  publisher_platform: string[] | null;
+  niches: string[] | null;
+  languages: string[] | null;
+  market_target: string | null;
+  live: boolean | null;
+  started_running: string | null;
+  /** Days on air: the strongest single signal that an ad is working. */
+  running_duration: number | null;
+  video_duration: number | null;
+  full_transcription: string | null;
+  persona: string | null;
+}

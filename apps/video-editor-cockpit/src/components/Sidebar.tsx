@@ -1,5 +1,6 @@
 import {
   ArrowRightLeft,
+  Bookmark,
   CalendarDays,
   Clapperboard,
   Film,
@@ -53,6 +54,7 @@ const GROUPS: { label: string; items: Item[] }[] = [
     label: "Library",
     items: [
       { to: "/ideas", label: "Ideation", icon: Lightbulb },
+      { to: "/swipe", label: "Swipe file", icon: Bookmark },
       { to: "/winners", label: "What works", icon: Trophy },
     ],
   },

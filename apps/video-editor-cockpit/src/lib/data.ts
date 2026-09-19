@@ -7,6 +7,7 @@ import type {
   Idea,
   Job,
   Note,
+  SwipeAd,
   TeamMeeting,
   Version,
   WinnerAd,
@@ -246,6 +247,19 @@ export function useMeetings(): Loaded<TeamMeeting[]> {
         .select("*")
         .order("started_at", { ascending: false, nullsFirst: false })
         .limit(60),
+    [],
+  );
+}
+
+/** The Foreplay swipe file, longest-running first. */
+export function useSwipe(): Loaded<SwipeAd[]> {
+  return useQuery<SwipeAd[]>(
+    () =>
+      supabase
+        .from("foreplay_ads")
+        .select("*")
+        .order("running_duration", { ascending: false, nullsFirst: false })
+        .limit(300),
     [],
   );
 }

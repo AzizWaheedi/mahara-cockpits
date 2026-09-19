@@ -11,6 +11,7 @@
                                                write the edited link and move the card
     python3 desk.py requests [--limit N]        carry out what the cockpit asked for
     python3 desk.py meetings [--days N]        team meetings from Fathom
+    python3 desk.py foreplay [--limit N]       the Foreplay swipe file into our own store
     python3 desk.py notes [--task ID]          pull ClickUp comments in as timestamped notes
     python3 desk.py jobs [--mine EMAIL]        what is open, and what is blocking it
 
@@ -81,6 +82,9 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     add("google oauth", cfg.google_configured, "client id, secret and refresh token set" if cfg.google_configured else "missing: Drive cannot be read", True)
     add("ELEVENLABS_API_KEY", bool(cfg.elevenlabs_key), "set (speech first)" if cfg.elevenlabs_key else "missing: transcripts fall back to Whisper")
     add("GROQ_API_KEY", bool(cfg.groq_key), "set (speech fallback)" if cfg.groq_key else "missing")
+    add("FOREPLAY_API_KEY", bool(cfg.foreplay_key),
+        "set (the swipe file mirrors)" if cfg.foreplay_key
+        else "missing: the swipe file page stays empty until Aziz adds one")
     add("supabase", cfg.supabase_configured, "configured" if cfg.supabase_configured else "missing DESK_SUPABASE_URL and DESK_SUPABASE_KEY", True)
     add("clickup writeback", cfg.clickup_writeback, "on: the desk comments on cards" if cfg.clickup_writeback else "off")
 
@@ -359,6 +363,16 @@ def cmd_meetings(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     return 0
 
 
+def cmd_foreplay(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    """The Foreplay swipe file into our own store."""
+    from desk import foreplay as fp_mod
+
+    sb = _sb(cfg)
+    out = fp_mod.sync(cfg, log.info, sb, max_ads=args.limit or 1000)
+    _print(out, args.json)
+    return 0
+
+
 def cmd_requests(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     """Carry out what the cockpit asked for. The browser holds no keys."""
     sb = _sb(cfg)
@@ -433,6 +447,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     d = sub.add_parser("doctor"); d.add_argument("--offline", action="store_true")
+    fp = sub.add_parser("foreplay"); fp.add_argument("--limit", type=int, default=1000)
     mt = sub.add_parser("meetings"); mt.add_argument("--days", type=int, default=45)
     rq = sub.add_parser("requests"); rq.add_argument("--limit", type=int, default=10)
     sy = sub.add_parser("sync"); sy.add_argument("--closed", action="store_true"); sy.add_argument("--no-docs", action="store_true"); sy.add_argument("--force-docs", action="store_true")
@@ -452,7 +467,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     handlers = {
         "doctor": cmd_doctor, "sync": cmd_sync, "prepare": cmd_prepare,
         "check": cmd_check, "deliver": cmd_deliver, "notes": cmd_notes, "jobs": cmd_jobs,
-        "requests": cmd_requests, "meetings": cmd_meetings,
+        "requests": cmd_requests, "meetings": cmd_meetings, "foreplay": cmd_foreplay,
     }
     try:
         return handlers[args.cmd](cfg, args, log)

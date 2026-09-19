@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 os.environ.setdefault("DESK_HOME", "/tmp/desk-unit")
-from desk import brand, checks, clients, media, meetings, prepare, queue, sheets, speech
+from desk import brand, checks, clients, foreplay, media, meetings, prepare, queue, sheets, speech
 from desk.clickup import editors_of, fields_of, is_open, job_row
 from desk.config import Config
 from desk.drive import parse_id
@@ -965,3 +965,62 @@ class BrandEditTests(unittest.TestCase):
             brand.entry("- already dashed", "Karim", "2026-09-19"),
             "- already dashed (Karim, 2026-09-19)",
         )
+
+
+class ForeplayTests(unittest.TestCase):
+    """Foreplay's schema marks almost every field "anyOf", meaning any of
+    them can be null. Only `id` is load-bearing, so nothing may assume the
+    rest is there."""
+
+    FULL = {
+        "id": "fp_1", "ad_id": "120251088280190566", "name": "Olivar spring",
+        "brand_id": "b1", "video": "https://storage.googleapis.com/foreplay/x.mp4",
+        "thumbnail": "https://t/x.jpg", "foreplay_url": "https://app.foreplay.co/ad/fp_1",
+        "headline": "Build it right", "display_format": "video",
+        "publisher_platform": ["facebook", "instagram"], "niches": ["home"],
+        "languages": ["ar"], "market_target": "B2C", "live": True,
+        "started_running": "2026-07-01T00:00:00Z", "running_duration": 80,
+        "video_duration": 29.06, "full_transcription": "لو عندك أرض",
+        "timestamped_transcription": [{"t": 0, "text": "لو عندك أرض"}],
+        "emotional_drivers": ["trust"], "persona": "landowner",
+    }
+
+    def test_a_full_ad_maps_across(self):
+        r = foreplay.row(self.FULL, board_id="bd1", board_name="Ardon")
+        self.assertEqual(r["id"], "fp_1")
+        self.assertEqual(r["board_name"], "Ardon")
+        self.assertEqual(r["running_duration"], 80)
+        self.assertEqual(r["languages"], ["ar"])
+        self.assertEqual(r["timestamped_transcription"], [{"t": 0, "text": "لو عندك أرض"}])
+
+    def test_an_ad_that_is_almost_all_nulls_still_maps(self):
+        r = foreplay.row({"id": "fp_2", "ad_id": None, "name": None})
+        self.assertEqual(r["id"], "fp_2")
+        self.assertIsNone(r["name"])
+        self.assertEqual(r["niches"], [], "a null list must become an empty list, not None")
+
+    def test_an_ad_with_no_id_is_dropped(self):
+        self.assertIsNone(foreplay.row({"ad_id": "x", "name": "no id"}))
+        self.assertIsNone(foreplay.row({"id": "   "}))
+
+    def test_a_single_value_where_a_list_was_expected_is_wrapped(self):
+        r = foreplay.row({"id": "fp_3", "publisher_platform": "facebook"})
+        self.assertEqual(r["publisher_platform"], ["facebook"])
+
+    def test_days_on_air_survives_a_string(self):
+        self.assertEqual(foreplay.row({"id": "a", "running_duration": "80"})["running_duration"], 80)
+        self.assertIsNone(foreplay.row({"id": "b", "running_duration": "ages"})["running_duration"])
+        self.assertIsNone(foreplay.row({"id": "c"})["running_duration"])
+
+    def test_no_key_is_refused_before_any_call_is_made(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = cfg_in(tmp)
+            os.environ.pop("FOREPLAY_API_KEY", None)
+            import desk.config as cfgmod
+            was = cfgmod._file_keys
+            cfgmod._file_keys = {}
+            try:
+                with self.assertRaises(Exception):
+                    foreplay.Foreplay(cfg, lambda m: None)
+            finally:
+                cfgmod._file_keys = was

@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "foreplay": {
+      "type": "http",
+      "url": "https://public.api.foreplay.co/mcp",
+      "headers": {
+        "Authorization": "Bearer ${FOREPLAY_API_KEY}"
+      }
+    }
+  }
+}
