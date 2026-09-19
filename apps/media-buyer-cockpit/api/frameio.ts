@@ -27,11 +27,11 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 /** How far out of date a signed event may be. Their signature covers the
  *  timestamp, so this is what stops a captured request being replayed. */
-const MAX_AGE_SECONDS = 300;
+export const MAX_AGE_SECONDS = 300;
 
 /** Events worth queueing. Anything else is acknowledged and dropped, so a
  *  webhook configured too broadly does not fill the queue with noise. */
-const WANTED = new Set([
+export const WANTED = new Set([
   "comment.created",
   "comment.updated",
   "comment.completed",
@@ -47,36 +47,59 @@ function short(e: unknown): string {
 
 /**
  * Their scheme: HMAC SHA256 over `v0:<timestamp>:<body>`, compared against
- * the `X-Frameio-Signature` header, which arrives as `v0=<hex>`.
+ * the `X-Frameio-Signature` header, which arrives as `t=…,v0=<hex>`.
  *
- * The body has to be the bytes as sent. Parsing the JSON and re-encoding it
- * changes the whitespace and the signature stops matching, which is why the
- * raw text is read first and parsed afterwards.
+ * The body has to be the bytes as sent. Parsing the JSON and re-encoding
+ * it changes the whitespace and the signature stops matching, which is why
+ * the raw text is read first and parsed afterwards.
+ *
+ * **The timestamp used for freshness is the one inside the signed
+ * message**, not a separate header. That matters more than it looks: the
+ * signature covers the timestamp, so if freshness were judged on an
+ * unsigned header, anyone holding a captured request could replay it
+ * forever just by putting today's date in the header the signature does
+ * not cover. Checking the signed one means a replay needs the secret.
  */
-function signed(raw: string, header: string | null, secret: string): boolean {
-  if (!header) return false;
-  const parts = Object.fromEntries(
-    header.split(",").map(p => {
-      const i = p.indexOf("=");
-      return [p.slice(0, i).trim(), p.slice(i + 1).trim()];
-    }),
-  ) as Record<string, string>;
-  // Frame.io sends the timestamp in its own header and repeats it in the
-  // signed message; both forms are accepted so a change of shape on their
-  // side does not silently start rejecting everything.
-  const given = parts.v0 ?? header.replace(/^v0=/, "");
-  const stamp = parts.t ?? "";
-  if (!given) return false;
+export function verify(
+  raw: string,
+  signature: string | null,
+  fallbackStamp: string | null,
+  secret: string,
+): { ok: boolean; why: string } {
+  if (!signature) return { ok: false, why: "unsigned" };
+  const parts: Record<string, string> = {};
+  for (const piece of signature.split(",")) {
+    const i = piece.indexOf("=");
+    if (i > 0) parts[piece.slice(0, i).trim()] = piece.slice(i + 1).trim();
+  }
+  const given =
+    parts.v0 ?? (signature.startsWith("v0=") ? signature.slice(3) : "");
+  // Their own header carries `t=`; the separate request-timestamp header is
+  // accepted only as a fallback, and either way the value goes into the
+  // signed message, so neither can be changed without breaking the hash.
+  const stamp = parts.t ?? fallbackStamp ?? "";
+  if (!given || !stamp) return { ok: false, why: "malformed" };
+
+  if (!fresh(stamp)) return { ok: false, why: "stale" };
+
   const want = createHmac("sha256", secret)
     .update(`v0:${stamp}:${raw}`)
     .digest("hex");
-  const a = Buffer.from(given, "hex");
+  let a: Buffer;
+  try {
+    a = Buffer.from(given, "hex");
+  } catch {
+    return { ok: false, why: "malformed" };
+  }
   const b = Buffer.from(want, "hex");
-  return a.length === b.length && timingSafeEqual(a, b);
+  if (a.length !== b.length) return { ok: false, why: "malformed" };
+  return timingSafeEqual(a, b)
+    ? { ok: true, why: "" }
+    : { ok: false, why: "bad signature" };
 }
 
-function fresh(header: string | null): boolean {
-  const t = Number(header);
+export function fresh(stamp: string | null): boolean {
+  const t = Number(stamp);
   if (!Number.isFinite(t) || t <= 0) return false;
   return Math.abs(Date.now() / 1000 - t) <= MAX_AGE_SECONDS;
 }
@@ -95,12 +118,16 @@ export async function POST(request: Request): Promise<Response> {
     request.headers.get("x-frameio-request-timestamp") ??
     request.headers.get("x-frameio-timestamp");
 
-  if (!fresh(stamp)) {
-    return Response.json({ ok: false, why: "stale" }, { status: 400 });
-  }
-  if (!signed(raw, request.headers.get("x-frameio-signature"), secret)) {
-    // No detail in the response: a caller who cannot sign does not get
-    // told which half they got wrong.
+  const check = verify(
+    raw,
+    request.headers.get("x-frameio-signature"),
+    stamp,
+    secret,
+  );
+  if (!check.ok) {
+    // The reason goes to our log, not to the caller: somebody who cannot
+    // sign a request does not get told which half they got wrong.
+    console.error(`frameio: refused a call (${check.why})`);
     return Response.json({ ok: false }, { status: 401 });
   }
 
@@ -118,7 +145,10 @@ export async function POST(request: Request): Promise<Response> {
   const type = String(event.type ?? "");
   const resource = String(event.resource?.id ?? "");
   if (!type || !resource) {
-    return Response.json({ ok: false, why: "no type or resource" }, { status: 400 });
+    return Response.json(
+      { ok: false, why: "no type or resource" },
+      { status: 400 },
+    );
   }
   // Acknowledged, not queued. Frame.io retries anything it is not told was
   // received, and an event we will never act on should not come back.
@@ -128,7 +158,7 @@ export async function POST(request: Request): Promise<Response> {
 
   // One row per event, keyed so the same event delivered twice -- which
   // their retries will do -- is one row and not two notes.
-  const id = `fio:${type}:${resource}:${stamp}`;
+  const id = `fio:${type}:${resource}:${stamp ?? ""}`;
   const now = new Date().toISOString();
   const res = await fetch(`${url}/rest/v1/editor_requests?on_conflict=id`, {
     method: "POST",
@@ -148,7 +178,10 @@ export async function POST(request: Request): Promise<Response> {
         // for this would be worse than the small lie.
         input: type,
         task_id: resource,
-        params: { project: event.project?.id ?? null, resource_type: event.resource?.type ?? null },
+        params: {
+          project: event.project?.id ?? null,
+          resource_type: event.resource?.type ?? null,
+        },
         status: "queued",
         requested_by: "frame.io",
         requested_by_name: "Frame.io",

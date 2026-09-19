@@ -13,6 +13,14 @@ cd "$(dirname "$0")/.."
 # Nothing ships if the copies of a shared page have drifted apart.
 scripts/check-shared.sh || exit 1
 
+# The Frame.io webhook is a public URL that writes to our notes, so its
+# signature check is tested on every ship rather than when somebody
+# remembers.
+if [ -f apps/media-buyer-cockpit/scripts/frameio-webhook.test.ts ]; then
+  (cd apps/media-buyer-cockpit && bun test scripts/frameio-webhook.test.ts >/dev/null 2>&1) \
+    || { echo "the Frame.io webhook signature tests fail"; exit 1; }
+fi
+
 ship() {
   local app="$1" dir url
   case "$app" in
