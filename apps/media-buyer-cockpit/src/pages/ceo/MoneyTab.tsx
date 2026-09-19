@@ -47,6 +47,7 @@ import {
   LogPaymentCard,
   ManualEntriesCard,
 } from "./moneyManual";
+import { PayerMappingCard } from "./moneyPayers";
 import type { CeoTabProps } from "./types";
 
 type Deal = MoneyPayload["deals"]["recent"][number];
@@ -290,7 +291,8 @@ export function MoneyTab({ sections, now, day }: CeoTabProps) {
             {p => <CollectionBody p={p} />}
           </SectionCard>
 
-          <LtvWriteCard order={10} />
+          <PayerMappingCard order={10} />
+          <LtvWriteCard order={11} />
 
           <div className="grid gap-4 lg:gap-6 xl:grid-cols-12">
             <SectionCard
@@ -298,7 +300,7 @@ export function MoneyTab({ sections, now, day }: CeoTabProps) {
               title="Cash and contracted by month"
               section={section}
               notes={notes.monthly}
-              order={11}
+              order={12}
               className={showLegacy ? "xl:col-span-8" : "xl:col-span-12"}
             >
               {p => <MonthlyBody p={p} />}
@@ -309,7 +311,7 @@ export function MoneyTab({ sections, now, day }: CeoTabProps) {
                 title="Expenses"
                 section={section}
                 notes={notes.expenses}
-                order={12}
+                order={13}
                 className="xl:col-span-4"
               >
                 {p => <LegacyExpensesBody p={p} />}
@@ -322,7 +324,7 @@ export function MoneyTab({ sections, now, day }: CeoTabProps) {
             title="Recent deals"
             section={section}
             notes={notes.deals}
-            order={13}
+            order={14}
           >
             {p => <DealsTable deals={p.deals.recent} />}
           </SectionCard>
