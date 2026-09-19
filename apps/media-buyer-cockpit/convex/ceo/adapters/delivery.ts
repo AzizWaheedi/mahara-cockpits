@@ -308,6 +308,24 @@ export const delivery: Adapter = {
         info(
           `${plural(future, "appointment")} booked for later this month ${future === 1 ? "is" : "are"} not in the booking counts above, which include only appointments that have come due. The board's own figure could never see them at all.`,
         );
+      // Say what a booking is and, just as important, what it is not. The
+      // provisional and callback calendars are configured on dozens of client
+      // locations and have never produced a row, so a reader who knows they
+      // exist should be told they are not hiding inside this number.
+      const KIND_WORDS: Record<string, string> = {
+        provisional: "provisional holds",
+        callback: "callback requests",
+        reschedule: "reschedules of an appointment already counted",
+        other: "appointments on calendars that are not a booking calendar",
+      };
+      const held = triage.notBookings.filter(k => k.count > 0);
+      info(
+        `A booking is an appointment on a client's own appointment calendar, the main one or the online one, counted on the day it is for. ${
+          held.length
+            ? `Left out of it: ${held.map(k => `${plural(k.count, "row")} from ${KIND_WORDS[k.kind] ?? k.kind}`).join(", ")}.`
+            : "Your provisional and callback calendars are set up on dozens of client locations but have never produced a single appointment row, so nothing from either is inside this figure, and no provisional booking or agent callback is visible anywhere in the cockpit."
+        }`,
+      );
       if (triage.unmapped.length)
         warn(
           `${plural(triage.unmapped.length, "ad account")} spending in this window ${triage.unmapped.length === 1 ? "is" : "are"} tied to no client card, so ${triage.unmapped.length === 1 ? "its" : "their"} spend is in the totals but has no client row: ${triage.unmapped.slice(0, 5).join(", ")}${triage.unmapped.length > 5 ? ` and ${triage.unmapped.length - 5} more` : ""}.`,
@@ -590,13 +608,13 @@ export const delivery: Adapter = {
         c => c.serviceMode && !/dfy|done for/i.test(c.serviceMode),
       );
       warn(
-        `A booking is an appointment on our own calendars, counted on the day it is for. ${
+        `${
           dwy.length
             ? `${plural(dwy.length, "Done With You client")} ${dwy.length === 1 ? "books" : "book"} their own, so no cost per booking is worked out for them: ${dwy
                 .map(c => c.name)
                 .slice(0, 4)
                 .join(", ")}.`
-            : "Every client with spend is one we book for."
+            : "Every client with spend is one we book appointments for."
         }`,
       );
     } else

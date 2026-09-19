@@ -64,10 +64,47 @@ export type TriageDay = {
   leads: number;
 };
 
+/**
+ * What a client's calendar is for. A client location carries several, and only
+ * some of them mean "an appointment was booked".
+ *
+ * Checked against every calendar in the project on 2026-09-19. The two that
+ * feed the booking count are `Main Appointment Calendar` and
+ * `A. Appointment Calendar (Online)`; the In Office and In Home variants are
+ * the same kind of thing and count too, they simply had none that month.
+ *
+ * The other two Aziz named are configured on 46 and 47 client locations and
+ * have produced **zero** appointment rows, ever: `Not Confirmed Appointments`
+ * (a provisional hold, not a booking) and `Callback Calendar [AGENTS ONLY]`
+ * (an agent's callback queue, not a client appointment). They are classified
+ * here anyway, so that the day they do start syncing they are counted apart
+ * instead of silently inflating every booking figure on the tab.
+ *
+ * A reschedule is also held apart: the original appointment is already on the
+ * main calendar, so counting both would book one meeting twice.
+ */
+export type CalendarKind =
+  | "booking"
+  | "provisional"
+  | "callback"
+  | "reschedule"
+  | "other";
+
+export function calendarKind(name: string | null | undefined): CalendarKind {
+  const n = String(name ?? "").toLowerCase();
+  if (!n) return "other";
+  if (/callback|call-back|معاودة/.test(n)) return "callback";
+  if (/not confirmed|provisional|tentative/.test(n)) return "provisional";
+  if (/reschedul/.test(n)) return "reschedule";
+  if (/appointment calendar|main appointment/.test(n)) return "booking";
+  return "other";
+}
+
 export type TriageBooking = {
   clientId: string;
   /** The Kuwait day the appointment is for. */
   date: string;
+  kind: CalendarKind;
   count: number;
   /** Of `count`, how many start after now and so cannot have happened yet. */
   future: number;
@@ -87,6 +124,8 @@ export type TriageDelivery = {
   unmapped: string[];
   /** Currencies Meta reported that the fixed table has no rate for. */
   unknownCurrencies: string[];
+  /** Rows kept out of the booking count, by calendar kind, over the window. */
+  notBookings: { kind: CalendarKind; count: number; calendars: string[] }[];
 };
 
 /** A Kuwait day as a checked SQL date literal. */
@@ -148,14 +187,16 @@ export async function clientDelivery(
       TRIAGE,
       `select ap.client_id::text as client_id,
               to_char(ap.start_at at time zone 'Asia/Kuwait', 'YYYY-MM-DD') as date,
+              coalesce(cal.name, '') as calendar,
               count(*) as count,
               count(*) filter (where ap.start_at > now()) as future,
               count(*) filter (where ap.attended is true) as attended,
               max(extract(epoch from ap.updated_at) * 1000) as fresh_ms
        from public.appointments ap
+       left join public.ghl_calendars cal on cal.calendar_id = ap.calendar_id
        where (ap.start_at at time zone 'Asia/Kuwait')::date between ${day(from)} and ${day(to)}
          and ap.client_id is not null
-       group by ap.client_id, 2`,
+       group by ap.client_id, 2, 3`,
     ),
   ]);
 
@@ -202,13 +243,24 @@ export async function clientDelivery(
 
   let bookingsFresh = 0;
   const bookings: TriageBooking[] = [];
+  const held = new Map<CalendarKind, { count: number; names: Set<string> }>();
   for (const r of bookingRows) {
     const clientId = String(r.client_id);
     bookingsFresh = Math.max(bookingsFresh, num(r.fresh_ms));
     if (own.has(clientId) || !rate.has(clientId)) continue;
+    const calendar = String(r.calendar ?? "");
+    const kind = calendarKind(calendar);
+    if (kind !== "booking") {
+      const h = held.get(kind) ?? { count: 0, names: new Set<string>() };
+      h.count += num(r.count);
+      if (calendar) h.names.add(calendar);
+      held.set(kind, h);
+      continue;
+    }
     bookings.push({
       clientId,
       date: String(r.date),
+      kind,
       count: num(r.count),
       future: num(r.future),
       attended: num(r.attended),
@@ -229,5 +281,12 @@ export async function clientDelivery(
     bookingsFreshAt: bookingsFresh > 0 ? bookingsFresh : undefined,
     unmapped,
     unknownCurrencies: [...unknown].sort(),
+    notBookings: [...held.entries()]
+      .map(([kind, h]) => ({
+        kind,
+        count: h.count,
+        calendars: [...h.names].sort(),
+      }))
+      .sort((a, b) => b.count - a.count),
   };
 }
