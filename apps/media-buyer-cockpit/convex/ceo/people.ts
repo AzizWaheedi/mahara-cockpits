@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
-import { internalQuery } from "../_generated/server";
+import { internalAction, internalQuery } from "../_generated/server";
 import { authenticatedAction } from "../functions";
 import { googleDirectoryToken } from "../tools";
 import { USD_PER } from "./data/tap";
@@ -59,6 +59,15 @@ async function rest(
   if (!res.ok) throw new Error(`Supabase ${res.status}: ${text.slice(0, 220)}`);
   return text ? JSON.parse(text) : [];
 }
+
+export type DirUser = {
+  name: string;
+  email: string;
+  suspended: boolean;
+  title: string | null;
+};
+
+export type Directory = { ok: boolean; problem?: string; users: DirUser[] };
 
 export type Person = {
   id: number;
@@ -320,12 +329,10 @@ export const setActive = authenticatedAction({
  * the account is suspended, so the roster can be seeded and so somebody who
  * has left Workspace but is still on payroll stands out.
  */
-export const workspace = authenticatedAction({
+export const directory = internalAction({
   args: {},
   returns: v.any(),
-  handler: async (
-    ctx,
-  ): Promise<{
+  handler: async (): Promise<{
     ok: boolean;
     problem?: string;
     users: {
@@ -335,7 +342,6 @@ export const workspace = authenticatedAction({
       title: string | null;
     }[];
   }> => {
-    await ctx.runQuery(internal.ceo.people.gate, { userId: ctx.userId });
     try {
       const token = await googleDirectoryToken();
       const out: {
@@ -384,5 +390,93 @@ export const workspace = authenticatedAction({
         users: [],
       };
     }
+  },
+});
+
+/**
+ * Add Workspace people who are not on the roster yet.
+ *
+ * Seeding only. It never edits somebody already there, never sets a cost, and
+ * never removes anybody: an account existing in Workspace says a person has a
+ * login, not what they are paid or whether they are still engaged. Everyone
+ * arrives as staff with no cost, which is what makes them show up under
+ * "nobody has costed yet" until a figure is typed.
+ *
+ * Matching is by email first, then by folded name, so somebody added by hand
+ * before the import existed is recognised rather than duplicated.
+ */
+export const importWorkspace = authenticatedAction({
+  args: { emails: v.optional(v.array(v.string())) },
+  returns: v.any(),
+  handler: async (
+    ctx,
+    { emails },
+  ): Promise<{ added: string[]; alreadyThere: number; problem?: string }> => {
+    const by: string = await ctx.runQuery(internal.ceo.people.gate, {
+      userId: ctx.userId,
+    });
+    const dir: Directory = await ctx.runAction(
+      internal.ceo.people.directory,
+      {},
+    );
+    if (!dir.ok) return { added: [], alreadyThere: 0, problem: dir.problem };
+
+    const existing = await rest(`${TABLE}?select=name,email`);
+    if (existing === null)
+      throw new Error(
+        "The people table does not exist yet. Run supabase/migrations/20260919b_people.sql first.",
+      );
+    const fold = (s: unknown) =>
+      String(s ?? "")
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}]/gu, "");
+    const haveEmail = new Set(
+      existing.map(r => String(r.email ?? "").toLowerCase()).filter(Boolean),
+    );
+    const haveName = new Set(existing.map(r => fold(r.name)));
+
+    const pick = emails?.length
+      ? new Set(emails.map(e => e.toLowerCase()))
+      : null;
+    const wanted = dir.users.filter(
+      u =>
+        !u.suspended &&
+        (!pick || pick.has(u.email.toLowerCase())) &&
+        !haveEmail.has(u.email.toLowerCase()) &&
+        !haveName.has(fold(u.name)),
+    );
+    if (!wanted.length)
+      return { added: [], alreadyThere: dir.users.length - wanted.length };
+
+    const done = await rest(TABLE, {
+      method: "POST",
+      prefer: "return=representation",
+      body: wanted.map(u => ({
+        name: u.name || u.email,
+        email: u.email,
+        role: u.title,
+        engagement: "staff",
+        monthly_cost: null,
+        currency: "USD",
+        is_sales: false,
+        source: "workspace",
+        added_by: by,
+      })),
+    });
+    if (done === null) throw new Error("Could not reach the people table.");
+    return {
+      added: wanted.map(u => u.name || u.email),
+      alreadyThere: dir.users.length - wanted.length,
+    };
+  },
+});
+
+/** The Workspace directory, for the screen. */
+export const workspace = authenticatedAction({
+  args: {},
+  returns: v.any(),
+  handler: async (ctx): Promise<Directory> => {
+    await ctx.runQuery(internal.ceo.people.gate, { userId: ctx.userId });
+    return await ctx.runAction(internal.ceo.people.directory, {});
   },
 });
