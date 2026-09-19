@@ -50,6 +50,8 @@ export type TriageClient = {
   matchedBy: string | null;
   /** DFY, DWY, or null when the CSM has not set Service Mode. */
   serviceMode: string | null;
+  /** The client's status in GHL (Active, Cancelled, ...), or null when untied. */
+  status: string | null;
   /** The account's own currency, as Meta reports it. */
   currency: string;
   /** Distinct Meta campaigns with a row in the window. */
@@ -157,6 +159,7 @@ export async function clientDelivery(
               g.client_name as name,
               g.clickup_id,
               g.service_mode,
+              g.status,
               m.matched_by,
               (select count(distinct a.campaign_id) from public.ads_daily_snapshots a
                 where a.client_id = c.id and a.date between ${day(from)} and ${day(to)}) as campaigns
@@ -219,6 +222,7 @@ export async function clientDelivery(
       clickupTaskId: r.clickup_id ? String(r.clickup_id) : null,
       matchedBy: r.matched_by ? String(r.matched_by) : null,
       serviceMode: r.service_mode ? String(r.service_mode) : null,
+      status: r.status ? String(r.status) : null,
       currency,
       campaigns: num(r.campaigns),
     });
