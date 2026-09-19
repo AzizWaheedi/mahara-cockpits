@@ -1,5 +1,10 @@
 # Memory Core
 
+> **⏸ PAUSED (2026-09-19).** Working code, pushed, not deployed. Do not build
+> further on this until Aziz un-pauses it. See "Status" below before touching
+> the Anthropic wiring — the API-key answer model is a known, intentional gap,
+> not a bug to silently fix.
+
 One search box over **Notion, Gmail and Google Drive**, plus the facts you save
 yourself. Ask a question and the answer is written only from what the search
 found, with a numbered citation back to every item it used.
@@ -72,10 +77,36 @@ Set with `bunx convex env set NAME value` (never in `.env.example`):
 |---|---|
 | `COMPOSIO_API_KEY` | The one door to Notion, Gmail and Drive (`x-consumer-api-key` against `https://connect.composio.dev/mcp`) |
 | `MEMORY_CORE_ACCESS_CODE` | The access code every read and write checks **on the server**. Without it the app is closed to everyone |
-| `ANTHROPIC_API_KEY` | Claude writes the grounded answers |
-| `ANTHROPIC_MODEL` | Optional, defaults to `claude-opus-5` |
-| `OPENAI_API_KEY` | The fallback that writes answers when Claude has no key on the deployment |
+| `ANTHROPIC_API_KEY` | **Do not set this.** Aziz uses the Claude subscription (OAuth), not console API-key billing — see "Status" below |
+| `ANTHROPIC_MODEL` | Optional, defaults to `claude-opus-5`, only relevant once the auth question below is resolved |
+| `OPENAI_API_KEY` | The fallback that writes answers when Claude is not wired |
 | `OPENAI_MODEL` | Optional, defaults to `gpt-4.1-mini` |
+
+## Status (2026-09-19)
+
+**Paused by Aziz.** The build passed its full verification bar — typecheck,
+lint, `sync:build`, a 7/7 smoke test, and live calls against real Notion,
+Gmail and Drive data — but is not deployed and should not be extended further
+right now.
+
+**The open question is the answer model, and it is an auth question, not a
+missing key.** `ANTHROPIC_API_KEY` was empty at build time, so `chat.ts`
+currently falls back to `gpt-4.1-mini`. Aziz's instruction: **Anthropic should
+authenticate the way his subscription already does (OAuth / Claude
+Code-style session auth), not through a console API key** — the same reason
+his personal Hermes setup runs on OAuth credentials rather than
+`ANTHROPIC_API_KEY` billing. `convex/tools.ts`'s `callAnthropic()` currently
+assumes a bearer API key, which is the wrong shape for that auth model and
+needs to change, not just receive a value.
+
+Before resuming: work out how a Convex **action** (a server-side, non-interactive
+context — no browser, no local `claude` CLI) can call Claude under subscription
+auth rather than console billing. That is a real constraint worth checking with
+Aziz directly rather than guessing at a workaround, since it may mean the
+answer step needs to happen through a different execution path than a plain
+Convex action (for example, proxied through Hermes's own already-authenticated
+session instead of a raw Anthropic API call from Convex). Do not silently swap
+in `ANTHROPIC_API_KEY` to make the red state go away.
 
 The Sources view always names the model that actually answered, and says so in
 plain words when Claude is not connected.
