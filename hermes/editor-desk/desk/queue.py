@@ -22,7 +22,7 @@ from .config import Config
 from .drive import Drive
 from .supabase import Supabase, now_iso
 
-KINDS = ("deliver", "check", "comment", "rescan", "ask", "status", "eod", "dosdonts")
+KINDS = ("deliver", "check", "comment", "rescan", "ask", "status", "eod", "dosdonts", "toideation")
 
 # Where an editor may move a card from the cockpit. Aziz, 2026-09-19: pressing
 # "started" should move it to In progress, and a round of comments should move
@@ -259,6 +259,37 @@ def run_dosdonts(cfg: Config, log: Callable[[str], None], sb: Supabase, cu: Clic
     return {"added": True, "kind": kind, "client": row.get("name")}
 
 
+def run_to_ideation(cfg: Config, log: Callable[[str], None], sb: Supabase,
+                    req: dict[str, Any]) -> dict[str, Any]:
+    """Put a saved Foreplay ad on the shared ideation board.
+
+    Sabry works from that board, so an ad the editor or the media buyer saved
+    on their phone reaches him without anybody forwarding a link. It is
+    marked `origin=foreplay` so a hand-saved ad is never mistaken for
+    something the radar scored.
+    """
+    from . import foreplay as fp
+
+    ad_id = str(req.get("input") or "").strip()
+    if not ad_id:
+        raise ValueError("no ad was named")
+    rows = sb.select("foreplay_ads", f"select=*&id=eq.{http.quote(ad_id)}&limit=1")
+    if not rows:
+        raise ValueError("that ad is not in our copy of the swipe file yet")
+    note = str((req.get("params") or {}).get("note") or "")
+    row = fp.as_idea(
+        rows[0],
+        by=str(req.get("requested_by") or ""),
+        by_name=str(req.get("requested_by_name") or ""),
+        note=note,
+    )
+    row["saved_at"] = now_iso()
+    row["pasted_at"] = now_iso()
+    sb.upsert("ideation_posts", [row], "key")
+    log(f"ideation: {row['key']} saved by {row.get('saved_by_name')}")
+    return {"key": row["key"], "board": "ideation"}
+
+
 def run_comment(cfg: Config, log: Callable[[str], None], cu: ClickUp, req: dict[str, Any]) -> dict[str, Any]:
     text = str(req.get("input") or "").strip()
     if not text:
@@ -306,6 +337,10 @@ def run_requests(cfg: Config, log: Callable[[str], None], sb: Supabase, *, limit
 
         try:
             # These belong to a person or a client, not to a job.
+            if kind == "toideation":
+                _done(sb, rid, run_to_ideation(cfg, log, sb, req))
+                out["done"] += 1
+                continue
             if kind == "dosdonts":
                 cu = cu or ClickUp(cfg, log)
                 _done(sb, rid, run_dosdonts(cfg, log, sb, cu, req))

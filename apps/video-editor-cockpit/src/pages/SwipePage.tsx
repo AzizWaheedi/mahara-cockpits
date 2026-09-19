@@ -1,7 +1,9 @@
+import { Lightbulb } from "lucide-react";
 import { useMemo, useState } from "react";
 import AdPreviewFrame from "../components/AdPreview";
 import { Empty, Fold, Out, Problem, Prose, Spinner } from "../components/bits";
-import { useSwipe } from "../lib/data";
+import { useWho } from "../lib/auth";
+import { askFor, useSwipe } from "../lib/data";
 import { clock } from "../lib/format";
 import type { SwipeAd } from "../lib/types";
 
@@ -18,6 +20,45 @@ import type { SwipeAd } from "../lib/types";
  * ad is working, and it is the one thing the Meta Ad Library will not tell
  * you once the ad stops.
  */
+/**
+ * The loop that makes the subscription pay for itself: somebody saves an ad
+ * on their phone, and one press puts it on the board the creative director
+ * works from. Nobody forwards a link.
+ */
+function SendToIdeation({ ad }: { ad: SwipeAd }) {
+  const { email, name } = useWho();
+  const [state, setState] = useState<"idle" | "sending" | "sent" | "failed">("idle");
+  const [why, setWhy] = useState<string | null>(null);
+
+  async function send() {
+    setState("sending");
+    const err = await askFor("toideation", `idea:${ad.id}`, ad.id, { email, name });
+    if (err) {
+      setWhy(err);
+      setState("failed");
+    } else {
+      setState("sent");
+    }
+  }
+
+  if (state === "sent") return <span className="muted text-xs">On the ideation board.</span>;
+
+  return (
+    <span className="flex items-center gap-2">
+      <button
+        type="button"
+        disabled={state === "sending"}
+        onClick={send}
+        className="raised flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium disabled:opacity-50"
+      >
+        <Lightbulb className="size-3" strokeWidth={2} />
+        {state === "sending" ? "Sending" : "Send to ideation"}
+      </button>
+      {state === "failed" && why ? <span className="muted text-xs">{why}</span> : null}
+    </span>
+  );
+}
+
 function Card({ ad }: { ad: SwipeAd }) {
   const days = ad.running_duration;
   return (
@@ -71,10 +112,11 @@ function Card({ ad }: { ad: SwipeAd }) {
             </p>
           ) : null}
 
-          <p className="muted mt-2 flex flex-wrap gap-x-3 text-xs">
+          <div className="muted mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
+            <SendToIdeation ad={ad} />
             {ad.foreplay_url ? <Out href={ad.foreplay_url}>Open in Foreplay</Out> : null}
             {ad.link_url ? <Out href={ad.link_url}>Where it sent people</Out> : null}
-          </p>
+          </div>
         </div>
       </div>
 

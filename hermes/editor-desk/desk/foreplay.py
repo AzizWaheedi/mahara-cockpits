@@ -209,3 +209,43 @@ def sync(
         result["problems"] = problems[:5]
     log(f"foreplay: {result}")
     return result
+
+
+def as_idea(ad: dict[str, Any], *, by: str = "", by_name: str = "", note: str = "") -> dict[str, Any]:
+    """A saved Foreplay ad as a row on the shared ideation board.
+
+    The board is what the creative director works from, so an ad the editor
+    or the media buyer saved on their phone turns up in Sabry's cockpit
+    without anybody forwarding a link. `origin` says where it came from, so a
+    hand-saved ad is never mistaken for something the radar scored.
+    """
+    platforms = ad.get("publisher_platform") or []
+    platform = (platforms[0] if isinstance(platforms, list) and platforms else None) or "meta"
+    url = ad.get("link_url") or ad.get("foreplay_url") or ""
+    if not url:
+        raise ValueError("that ad has no link to save")
+    caption = ad.get("headline") or ad.get("description") or ad.get("name") or ""
+    days = ad.get("running_duration")
+    why = None
+    if isinstance(days, int) and days > 0:
+        why = f"Still running after {days} days, which is why it was kept."
+    return {
+        "key": f"foreplay:{ad.get('id')}",
+        "platform": str(platform).lower(),
+        "url": url,
+        "origin": "foreplay",
+        "status": "saved",
+        "author_name": ad.get("name"),
+        "caption": caption[:2000] or None,
+        "thumb_url": ad.get("thumbnail") or ad.get("image"),
+        "media_url": ad.get("video"),
+        "transcript": (str(ad.get("full_transcription") or "") or None),
+        "duration_sec": ad.get("video_duration"),
+        "why_it_works": why,
+        "running_days": days if isinstance(days, int) else None,
+        "saved_by": by or None,
+        "saved_by_name": by_name or None,
+        "saved_note": note[:1000] or None,
+        "pasted_by": by or None,
+        "pasted_by_name": by_name or None,
+    }

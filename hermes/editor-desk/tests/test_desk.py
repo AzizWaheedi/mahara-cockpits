@@ -1107,3 +1107,51 @@ class ForeplayCreditTests(unittest.TestCase):
             ({"nothing": "useful"}, None),
         ):
             self.assertEqual(foreplay.credits_left(shape), want, shape)
+
+
+class IdeationHandoffTests(unittest.TestCase):
+    """An ad somebody saved on their phone has to reach the board the
+    creative director works from, without anybody forwarding a link."""
+
+    AD = {
+        "id": "fp_9", "name": "Olivar spring", "headline": "ابدأ من تقييم القرار",
+        "thumbnail": "https://t/x.jpg", "video": "https://storage.googleapis.com/f/x.mp4",
+        "link_url": "https://olivar.example/land", "foreplay_url": "https://app.foreplay.co/ad/fp_9",
+        "publisher_platform": ["facebook", "instagram"], "running_duration": 94,
+        "full_transcription": "لو عندك أرض", "video_duration": 29.06,
+    }
+
+    def test_a_saved_ad_becomes_a_board_row(self):
+        row = foreplay.as_idea(self.AD, by="karim@maharamedia.com", by_name="Karim")
+        self.assertEqual(row["key"], "foreplay:fp_9")
+        self.assertEqual(row["platform"], "facebook")
+        self.assertEqual(row["url"], "https://olivar.example/land")
+        self.assertEqual(row["status"], "saved")
+        self.assertEqual(row["saved_by_name"], "Karim")
+
+    def test_where_it_came_from_is_never_lost(self):
+        row = foreplay.as_idea(self.AD)
+        self.assertEqual(
+            row["origin"], "foreplay",
+            "a hand-saved ad must never look like something the radar scored",
+        )
+
+    def test_how_long_it_ran_becomes_the_reason_it_was_kept(self):
+        row = foreplay.as_idea(self.AD)
+        self.assertIn("94 days", row["why_it_works"])
+        self.assertEqual(row["running_days"], 94)
+
+    def test_an_ad_that_never_ran_claims_no_reason(self):
+        row = foreplay.as_idea({**self.AD, "running_duration": None})
+        self.assertIsNone(row["why_it_works"])
+
+    def test_the_foreplay_page_stands_in_when_there_is_no_landing_page(self):
+        row = foreplay.as_idea({**self.AD, "link_url": None})
+        self.assertEqual(row["url"], "https://app.foreplay.co/ad/fp_9")
+
+    def test_an_ad_with_no_link_at_all_is_refused(self):
+        with self.assertRaises(ValueError):
+            foreplay.as_idea({**self.AD, "link_url": None, "foreplay_url": None})
+
+    def test_a_platformless_ad_still_lands_somewhere_sensible(self):
+        self.assertEqual(foreplay.as_idea({**self.AD, "publisher_platform": []})["platform"], "meta")

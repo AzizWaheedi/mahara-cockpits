@@ -152,7 +152,8 @@ export type RequestKind =
   | "ask"
   | "status"
   | "eod"
-  | "dosdonts";
+  | "dosdonts"
+  | "toideation";
 
 /** What an editor can be short of. Mirrors ASK_FOR in the worker. */
 export type AskTopic =
