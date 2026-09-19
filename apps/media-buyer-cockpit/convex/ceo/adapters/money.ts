@@ -1162,13 +1162,25 @@ export const money: Adapter = {
         // Each card's own MRR and payment plan, so a client's money has a past
         // even after somebody retypes the field or the card leaves the list.
         for (const r of rows) {
-          if (typeof r.mrrUsd !== "number") continue;
-          mrrDaily.push({
-            date: today,
-            metric: "money.mrr.card",
-            scope: `client:${r.taskId}`,
-            value: r.mrrUsd,
-          });
+          if (typeof r.mrrUsd === "number")
+            mrrDaily.push({
+              date: today,
+              metric: "money.mrr.card",
+              scope: `client:${r.taskId}`,
+              value: r.mrrUsd,
+            });
+          // The card's LTV field, per card and per day. The earliest of these
+          // is what convex/ceo/ltv.ts treats as the baseline: what a person
+          // had typed before the cockpit ever wrote to the field. Recording it
+          // every day costs nothing and means the hand-typed figure survives
+          // even after the cockpit starts writing over it.
+          if (typeof r.ltvUsd === "number")
+            mrrDaily.push({
+              date: today,
+              metric: "money.ltv.card",
+              scope: `client:${r.taskId}`,
+              value: r.ltvUsd,
+            });
         }
       }
     } catch (e) {

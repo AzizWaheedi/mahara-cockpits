@@ -41,7 +41,7 @@ import type {
   MoneyPayload,
   Note,
 } from "../../../convex/ceo/payloads";
-import { ImportPaymentsCard } from "./moneyImport";
+import { ImportPaymentsCard, LtvWriteCard } from "./moneyImport";
 import {
   DuplicatesCard,
   LogPaymentCard,
@@ -290,13 +290,15 @@ export function MoneyTab({ sections, now, day }: CeoTabProps) {
             {p => <CollectionBody p={p} />}
           </SectionCard>
 
+          <LtvWriteCard order={10} />
+
           <div className="grid gap-4 lg:gap-6 xl:grid-cols-12">
             <SectionCard
               kicker="Last 12 months"
               title="Cash and contracted by month"
               section={section}
               notes={notes.monthly}
-              order={10}
+              order={11}
               className={showLegacy ? "xl:col-span-8" : "xl:col-span-12"}
             >
               {p => <MonthlyBody p={p} />}
@@ -307,7 +309,7 @@ export function MoneyTab({ sections, now, day }: CeoTabProps) {
                 title="Expenses"
                 section={section}
                 notes={notes.expenses}
-                order={11}
+                order={12}
                 className="xl:col-span-4"
               >
                 {p => <LegacyExpensesBody p={p} />}
@@ -320,7 +322,7 @@ export function MoneyTab({ sections, now, day }: CeoTabProps) {
             title="Recent deals"
             section={section}
             notes={notes.deals}
-            order={12}
+            order={13}
           >
             {p => <DealsTable deals={p.deals.recent} />}
           </SectionCard>
