@@ -1154,6 +1154,8 @@ export type OrganicPayload = {
     subscribers: number | null;
     views: number | null;
     videos: number | null;
+    /** Uploads in the last 28 days, from the live upload list (a floor once it hits the page size). */
+    published28: number | null;
     recent: {
       id: string;
       title: string;
