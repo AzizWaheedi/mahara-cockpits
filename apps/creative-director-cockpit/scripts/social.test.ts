@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { GhlError, ourStatus, VERSION } from "../convex/ghlSocial";
+import { GhlError, listBody, ourStatus, VERSION } from "../convex/ghlSocial";
 import { spread } from "../convex/social";
 
 /**
@@ -110,5 +110,36 @@ describe("VERSION", () => {
     // Their create-post page says v3 while the rest of v2 says a date.
     // Conflating them is what produces the Invalid JWT above.
     expect(VERSION.write).not.toBe(VERSION.posts);
+  });
+});
+
+/**
+ * The three ways the live API disagreed with its own documentation, each
+ * found by calling it against a real sub-account on 2026-09-19 and each
+ * now pinned so a tidy-up cannot quietly undo them.
+ */
+describe("what the live API actually wants", () => {
+  it("sends limit as a number string", () => {
+    // Send the number and it answers "limit must be a number string".
+    const body = listBody({ limit: 10 });
+    expect(body.limit).toBe("10");
+    expect(typeof body.limit).toBe("string");
+    expect(typeof body.skip).toBe("string");
+  });
+
+  it("clamps the limit but keeps it a string", () => {
+    expect(listBody({ limit: 5000 }).limit).toBe("100");
+    expect(listBody({ limit: 0 }).limit).toBe("1");
+    expect(listBody().limit).toBe("100");
+  });
+
+  it("passes a window through only when given one", () => {
+    expect(listBody().fromDate).toBeUndefined();
+    const w = listBody({
+      from: "2026-09-01T00:00:00Z",
+      to: "2026-10-01T00:00:00Z",
+    });
+    expect(w.fromDate).toBe("2026-09-01T00:00:00Z");
+    expect(w.toDate).toBe("2026-10-01T00:00:00Z");
   });
 });

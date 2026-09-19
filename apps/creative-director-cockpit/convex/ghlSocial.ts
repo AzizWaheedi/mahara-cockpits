@@ -33,6 +33,12 @@ export const VERSION = {
   oauth: process.env.GHL_OAUTH_VERSION ?? "2021-07-28",
 } as const;
 
+/**
+ * Who the post is authored by in GHL. One user id for the whole agency;
+ * the client is the approver, not the author.
+ */
+export const USER_ID = process.env.GHL_SOCIAL_USER_ID ?? "";
+
 /** The scopes a token needs. Named here so a 401 can say which is missing. */
 export const SCOPES = [
   "socialplanner/post.readonly",
@@ -174,19 +180,37 @@ export async function accounts(
   return Array.isArray(rows) ? rows : [];
 }
 
-/** Posts in a window, for the cockpit's own calendar. */
+/**
+ * Posts in a window, for the cockpit's own calendar.
+ *
+ * Listing is `POST /posts/list`, not the `GET /posts` their documentation
+ * shows -- the GET 404s on the live API. And `limit` has to be a *number
+ * string*: send the number and it answers "limit must be a number string".
+ * Both verified against a real sub-account on 2026-09-19.
+ */
+export function listBody(
+  opts: { from?: string; to?: string; limit?: number } = {},
+): Json {
+  const body: Json = {
+    type: "all",
+    // A number string, not a number. Theirs, not a style choice.
+    limit: String(Math.max(1, Math.min(100, opts.limit ?? 100))),
+    skip: "0",
+  };
+  if (opts.from) body.fromDate = opts.from;
+  if (opts.to) body.toDate = opts.to;
+  return body;
+}
+
 export async function posts(
   locationId: string,
   token: string,
   opts: { from?: string; to?: string; limit?: number } = {},
 ): Promise<Json[]> {
-  const q = new URLSearchParams();
-  if (opts.from) q.set("fromDate", opts.from);
-  if (opts.to) q.set("toDate", opts.to);
-  q.set("limit", String(Math.max(1, Math.min(100, opts.limit ?? 100))));
+  const body = listBody(opts);
   const out = await ghl(
-    `/social-media-posting/${encodeURIComponent(locationId)}/posts?${q}`,
-    { token },
+    `/social-media-posting/${encodeURIComponent(locationId)}/posts/list`,
+    { token, method: "POST", body },
   );
   const rows = out.results?.posts ?? out.posts ?? out.data ?? [];
   return Array.isArray(rows) ? rows : [];
@@ -207,6 +231,12 @@ export async function createPost(
   post: {
     accountIds: string[];
     summary: string;
+    /**
+     * The GHL user the post is authored by. Required, although their
+     * documentation lists only an optional `createdBy` -- the live API
+     * answers "userId must be a string, userId should not be empty".
+     */
+    userId: string;
     media?: { url: string; type?: string; caption?: string }[];
     scheduleDate: string;
     type?: "post" | "story" | "reel";
@@ -217,9 +247,14 @@ export async function createPost(
     throw new Error("That client has no connected social account to post to.");
   if (!post.summary.trim())
     throw new Error("A post with no caption is not ready to go to the client.");
+  if (!post.userId)
+    throw new Error(
+      "GoHighLevel needs a user id to author the post. Set GHL_SOCIAL_USER_ID.",
+    );
   const body: Json = {
     accountIds: post.accountIds,
     summary: post.summary,
+    userId: post.userId,
     type: post.type ?? "post",
     status: "in_review",
     scheduleDate: post.scheduleDate,

@@ -9,6 +9,7 @@ import {
   posts as ghlPosts,
   locationToken,
   ourStatus,
+  USER_ID,
 } from "./ghlSocial";
 import { hasAccess } from "./roles";
 
@@ -864,6 +865,7 @@ export const sendToClient = authenticatedAction({
               url: u,
             }),
           ),
+          userId: USER_ID,
           scheduleDate: slots[i],
           approverUserId: args.approverUserId,
         });
