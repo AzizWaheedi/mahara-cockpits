@@ -120,6 +120,32 @@ def row(ad: dict[str, Any], *, board_id: str = "", board_name: str = "") -> Opti
     }
 
 
+def _forward_to_ideation(sb: Any, ads: list[dict[str, Any]], log: Callable[[str], None]) -> int:
+    """Put anything new from the drop box on the shared ideation board.
+
+    Only ads the board has never seen. Something the creative director
+    already dismissed must not come back every half hour just because it is
+    still sitting in the Foreplay folder.
+    """
+    if not ads:
+        return 0
+    keys = [f"foreplay:{a['id']}" for a in ads]
+    known = set(sb.known_ideation_keys(keys))
+    fresh = [a for a in ads if f"foreplay:{a['id']}" not in known]
+    if not fresh:
+        return 0
+    rows = []
+    for a in fresh:
+        try:
+            rows.append(as_idea(a, by_name=str(a.get("board_name") or "Foreplay")))
+        except ValueError:
+            continue
+    if rows:
+        sb.upsert("ideation_posts", rows, "key")
+        log(f"  forwarded {len(rows)} to the ideation board")
+    return len(rows)
+
+
 def credits_left(usage: dict[str, Any]) -> Optional[int]:
     """However they spell it. None means we could not tell, which is not the
     same as none left and must not stop the sync."""
@@ -133,6 +159,39 @@ def credits_left(usage: dict[str, Any]) -> Optional[int]:
     return None
 
 
+def find_board(boards: list[dict[str, Any]], want: str) -> Optional[dict[str, Any]]:
+    """The drop box board, by name, however it was capitalised."""
+    target = " ".join(str(want or "").lower().split())
+    if not target:
+        return None
+    for b in boards:
+        if " ".join(str(b.get("name") or "").lower().split()) == target:
+            return b
+    return None
+
+
+def board_ads(fp: "Foreplay", board: dict[str, Any], *, cap: int = 200) -> list[dict[str, Any]]:
+    """Every ad on one board. Costs a credit each, so only the drop box is
+    read this way; everything else comes from the incremental swipe file."""
+    bid = str(board.get("id") or board.get("board_id") or "")
+    if not bid:
+        return []
+    name = str(board.get("name") or "")
+    out: list[dict[str, Any]] = []
+    cursor = ""
+    for _page in range(5):
+        page = fp.board_ads(bid, limit=min(100, cap - len(out)), cursor=cursor)
+        ads = [a for a in (page.get("data") or []) if isinstance(a, dict)]
+        for a in ads:
+            r = row(a, board_id=bid, board_name=name)
+            if r:
+                out.append(r)
+        cursor = str(((page.get("metadata") or {}).get("cursor")) or "")
+        if not cursor or not ads or len(out) >= cap:
+            break
+    return out
+
+
 def sync(
     cfg: Config,
     log: Callable[[str], None],
@@ -141,6 +200,7 @@ def sync(
     max_ads: int = 250,
     full: bool = False,
     floor: int = 500,
+    drop_box: str = "",
 ) -> dict[str, Any]:
     """The swipe file into our own table, newest save first, stopping early.
 
@@ -192,18 +252,35 @@ def sync(
             log("  reached ads we already have; stopping")
             break
 
-    # Which board each ad sits on, for the cockpit's filters. Boards are
-    # cheap: they are not ads, so they are not credits.
+    # Which board each ad sits on. Listing boards is free: they are not ads.
     boards = []
     try:
         boards = fp.boards()
     except http.HttpError as e:
         problems.append(f"boards: {http.scrub(str(e))[:100]}")
 
+    # The drop box. Aziz, 2026-09-19: anything anyone saves into this board,
+    # from any device, should turn up on the shared ideation board without
+    # a second action. Only this board is read ad by ad, because that is
+    # what costs credits.
+    forwarded = 0
+    box = find_board(boards, drop_box) if drop_box else None
+    if box:
+        try:
+            on_box = board_ads(fp, box)
+            for r in on_box:
+                rows[r["id"]] = r
+            forwarded = _forward_to_ideation(sb, on_box, log)
+        except http.HttpError as e:
+            problems.append(f"{drop_box}: {http.scrub(str(e))[:100]}")
+    elif drop_box:
+        problems.append(f"no board named {drop_box!r}; nothing was forwarded")
+
     stored = sb.store_foreplay(list(rows.values())) if rows else 0
     result = {
         "ads_read": seen, "new_or_changed": len(rows), "stored": stored,
-        "boards": len(boards), "calls": fp.calls, "credits_left": left,
+        "boards": len(boards), "forwarded_to_ideation": forwarded,
+        "calls": fp.calls, "credits_left": left,
     }
     if problems:
         result["problems"] = problems[:5]

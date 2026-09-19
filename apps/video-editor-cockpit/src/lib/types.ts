@@ -209,6 +209,10 @@ export interface WinnerAd {
   /** Facebook's ordinary video embed. Public, and it does not expire. */
   watch_url: string | null;
   video_id: string | null;
+  /** Our own copy in the ad-videos bucket. The only one nobody can take. */
+  file_path: string | null;
+  file_bytes: number | null;
+  file_error: string | null;
 }
 
 /** A post on the ideation board, shared with the creative director. */
@@ -217,6 +221,9 @@ export interface Idea {
   platform: string | null;
   url: string;
   status: string | null;
+  /** "scan" from the radar, "foreplay" when somebody saved it themselves. */
+  origin: string | null;
+  running_days: number | null;
   author_handle: string | null;
   author_name: string | null;
   posted_at: string | null;

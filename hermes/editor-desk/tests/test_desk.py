@@ -1258,3 +1258,60 @@ class AdArchiveTests(unittest.TestCase):
             self.assertEqual(len(ads.fetch("https://cdn/x.mp4", max_bytes=1000)), 500)
         finally:
             ur.urlopen = was
+
+
+class DropBoxTests(unittest.TestCase):
+    """Aziz, 2026-09-19: anything anyone saves into one Foreplay board, from
+    any device, should reach the shared ideation board with no second action.
+    These are the rules that stop it becoming a nuisance."""
+
+    BOARDS = [
+        {"id": "b1", "name": "Ardon"},
+        {"id": "b2", "name": "Ideation"},
+        {"id": "b3", "name": "Qatar Technology"},
+    ]
+
+    def test_the_drop_box_is_found_however_it_was_typed(self):
+        for typed in ("Ideation", "ideation", "  IDEATION  "):
+            got = foreplay.find_board(self.BOARDS, typed)
+            self.assertEqual((got or {}).get("id"), "b2", typed)
+
+    def test_a_board_that_does_not_exist_is_not_guessed_at(self):
+        self.assertIsNone(foreplay.find_board(self.BOARDS, "Ideas"))
+        self.assertIsNone(foreplay.find_board(self.BOARDS, ""))
+        self.assertIsNone(foreplay.find_board([], "Ideation"))
+
+    def test_a_new_ad_in_the_box_reaches_the_board(self):
+        sb = FakeSupabase()
+        ads = [{"id": "fp_1", "name": "a", "link_url": "https://x/1", "board_name": "Ideation"}]
+        n = foreplay._forward_to_ideation(sb, ads, lambda m: None)
+        self.assertEqual(n, 1)
+        self.assertIn("foreplay:fp_1", sb.ideation_rows)
+        self.assertEqual(sb.ideation_rows["foreplay:fp_1"]["origin"], "foreplay")
+
+    def test_something_already_on_the_board_is_not_sent_twice(self):
+        sb = FakeSupabase()
+        sb.ideation_rows["foreplay:fp_1"] = {"key": "foreplay:fp_1", "status": "saved"}
+        ads = [{"id": "fp_1", "name": "a", "link_url": "https://x/1"}]
+        self.assertEqual(foreplay._forward_to_ideation(sb, ads, lambda m: None), 0)
+
+    def test_something_the_creative_director_dismissed_stays_dismissed(self):
+        # The ad is still sitting in the Foreplay folder. It must not come
+        # back every half hour just because nobody removed it there.
+        sb = FakeSupabase()
+        sb.ideation_rows["foreplay:fp_1"] = {"key": "foreplay:fp_1", "status": "dismissed"}
+        ads = [{"id": "fp_1", "name": "a", "link_url": "https://x/1"}]
+        self.assertEqual(foreplay._forward_to_ideation(sb, ads, lambda m: None), 0)
+        self.assertEqual(sb.ideation_rows["foreplay:fp_1"]["status"], "dismissed")
+
+    def test_an_ad_with_no_link_is_skipped_rather_than_failing_the_batch(self):
+        sb = FakeSupabase()
+        ads = [
+            {"id": "bad", "name": "no link"},
+            {"id": "fp_2", "name": "fine", "link_url": "https://x/2"},
+        ]
+        self.assertEqual(foreplay._forward_to_ideation(sb, ads, lambda m: None), 1)
+        self.assertIn("foreplay:fp_2", sb.ideation_rows)
+
+    def test_an_empty_box_does_nothing(self):
+        self.assertEqual(foreplay._forward_to_ideation(FakeSupabase(), [], lambda m: None), 0)

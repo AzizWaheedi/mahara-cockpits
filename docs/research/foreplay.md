@@ -244,6 +244,44 @@ worth subscribing first.
 
 ★ = already has a winning ad on the board
 
+## The drop box
+
+Aziz, 2026-09-19: *"any ads that get added to the Foreplay folder for that
+get added to the ideation section as well... even if they save it on their
+phone."*
+
+**Make a board in Foreplay called `Ideation`.** Anything anyone drops into
+it, from any device, reaches the shared ideation board within twenty
+minutes. The media buyer, the creative director and the editor all feed the
+same place, and nobody forwards a link.
+
+Three rules keep it from becoming a nuisance. Only ads the board has never
+seen are forwarded, so something the creative director dismissed does not
+come back every twenty minutes just because it is still sitting in the
+Foreplay folder. An ad with no link is skipped rather than failing the
+batch. And only the drop box is read ad by ad, because that is what costs
+credits; everything else comes from the incremental swipe file.
+
+The board name is `FOREPLAY_DROP_BOX` on the worker, defaulting to
+`Ideation`. A forwarded ad shows as **saved** on the ideation page with how
+long it ran, never as a radar tier, so a human's pick is never mistaken for
+a machine's score.
+
+## Our own copy, which is the part no vendor can take
+
+Measured 2026-09-19: **19 of our 29 winning ads have already stopped.** A
+stopped commercial ad is gone from the Meta Ad Library, so Foreplay, Spyder
+and every other tool that reads it can never fetch those 19. They were never
+reachable that way.
+
+They are reachable through the Page token, and **23 of the 29 are now in our
+own `ad-videos` bucket**, 110 MB, downloaded while the links still worked.
+`desk.py archive` runs nightly and the cockpit plays our copy first, the
+public Facebook embed second, and Meta's expiring preview last.
+
+So: Foreplay is the net from today forward. The archive is the backlog and
+the guarantee.
+
 ## Still needed, and it is only one thing
 
 **A Foreplay account and an API key.** There is no key on the VPS or in any

@@ -123,6 +123,7 @@ class FakeSupabase:
         self.requests_rows: dict[str, dict[str, Any]] = {}
         self.people_rows: dict[str, dict[str, Any]] = {}
         self.foreplay_rows: dict[str, dict[str, Any]] = {}
+        self.ideation_rows: dict[str, dict[str, Any]] = {}
         self.clients_rows: dict[str, dict[str, Any]] = {}
         self.assets_rows: dict[str, dict[str, Any]] = {}
         self.versions_rows: dict[str, dict[str, Any]] = {}
@@ -189,6 +190,16 @@ class FakeSupabase:
 
     def notes(self, task_id):
         return [n for n in self.notes_rows.values() if n.get("task_id") == task_id]
+
+    def known_ideation_keys(self, keys):
+        return [k for k in keys if k in self.ideation_rows]
+
+    def upsert(self, table, rows, on_conflict):
+        if table == "ideation_posts":
+            for r in rows:
+                self.ideation_rows[r["key"]] = r
+            return len(rows)
+        raise AssertionError(f"unexpected upsert: {table}")
 
     def known_foreplay_ids(self, limit=5000):
         return list(self.foreplay_rows)

@@ -21,12 +21,15 @@ export default function AdPreviewFrame({
   thumbUrl,
   format,
   watchUrl,
+  ourCopy,
 }: {
   adId: string;
   title: string;
   thumbUrl?: string | null;
   format?: string | null;
   watchUrl?: string | null;
+  /** A signed link to our own stored file. The best of the three. */
+  ourCopy?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [state, setState] = useState<"idle" | "loading" | "done">("idle");
@@ -34,7 +37,7 @@ export default function AdPreviewFrame({
 
   async function openIt() {
     setOpen(true);
-    if (watchUrl || state !== "idle") return;
+    if (ourCopy || watchUrl || state !== "idle") return;
     setState("loading");
     setPreview(await adPreview(adId, format ?? undefined));
     setState("done");
@@ -67,7 +70,20 @@ export default function AdPreviewFrame({
 
       {open ? (
         <Lightbox title={title} onClose={() => setOpen(false)}>
-          {watchUrl ? (
+          {ourCopy ? (
+            // Our own file. No Facebook, no Foreplay, no expiry.
+            <div className="bg-black">
+              {/* biome-ignore lint/a11y/useMediaCaption: an ad carries none */}
+              <video
+                src={ourCopy}
+                poster={thumbUrl ?? undefined}
+                controls
+                autoPlay
+                playsInline
+                className="max-h-[75vh] w-full object-contain"
+              />
+            </div>
+          ) : watchUrl ? (
             <div className="aspect-[9/16] w-full">
               <iframe
                 src={watchUrl}

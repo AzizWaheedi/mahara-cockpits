@@ -132,6 +132,9 @@ class Config:
     ratio_tolerance: float = 0.02
 
     # Speech.
+    # The Foreplay board that acts as a drop box: anything saved into it,
+    # by anyone on any device, reaches the shared ideation board.
+    foreplay_drop_box: str = "Ideation"
     speech_providers: str = "elevenlabs"
     elevenlabs_stt_model: str = "scribe_v1"
 
@@ -162,6 +165,7 @@ class Config:
             loudness_target=_float("DESK_LOUDNESS_TARGET", -14.0),
             loudness_tolerance=_float("DESK_LOUDNESS_TOLERANCE", 3.0),
             ratio_tolerance=_float("DESK_RATIO_TOLERANCE", 0.02),
+            foreplay_drop_box=key("FOREPLAY_DROP_BOX", "Ideation"),
             speech_providers=key("DESK_SPEECH_PROVIDER", "elevenlabs"),
             elevenlabs_stt_model=key("DESK_ELEVENLABS_STT_MODEL", "scribe_v1"),
             supabase_url=key("DESK_SUPABASE_URL") or key("RADAR_SUPABASE_URL", ""),

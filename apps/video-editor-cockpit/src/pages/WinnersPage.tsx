@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import AdPreviewFrame from "../components/AdPreview";
 import { Empty, Fold, Problem, Prose, Spinner } from "../components/bits";
-import { useWinners } from "../lib/data";
+import { useStills, useWinners } from "../lib/data";
+import { AD_VIDEOS_BUCKET } from "../lib/supabase";
 import type { WinnerAd } from "../lib/types";
 
 /**
@@ -19,7 +20,7 @@ function money(n: number | null): string {
   return n === null || n === undefined ? "—" : `${n.toFixed(1)}`;
 }
 
-function Card({ ad }: { ad: WinnerAd }) {
+function Card({ ad, ours }: { ad: WinnerAd; ours?: string }) {
   return (
     <li className="panel overflow-hidden">
       <div className="grid gap-3 p-3 sm:grid-cols-[13rem_1fr]">
@@ -30,6 +31,7 @@ function Card({ ad }: { ad: WinnerAd }) {
             thumbUrl={ad.thumb_url}
             format={ad.format}
             watchUrl={ad.watch_url}
+            ourCopy={ours}
           />
         </div>
         <div className="min-w-0 flex-1">
@@ -95,6 +97,14 @@ export default function WinnersPage() {
     [winners.data, client],
   );
 
+  // Our own copies, signed in one batch. These are the ads nobody can take
+  // away from us: downloaded from Meta while the link still worked.
+  const ourCopies = useStills(
+    shown.map((a) => a.file_path),
+    AD_VIDEOS_BUCKET,
+  );
+  const mine = shown.filter((a) => a.file_path).length;
+
   return (
     <div className="mx-auto w-full max-w-4xl px-4 py-8">
       <header className="mb-5">
@@ -103,6 +113,10 @@ export default function WinnersPage() {
           Ads that already paid, cheapest cost per lead first. The same list the media buyer and the
           creative director work from. Other clients' ads on purpose: this is copy meant to be
           reused.
+        </p>
+        <p className="muted mt-1.5 text-sm">
+          {mine} of {shown.length} play from our own copy, downloaded from Meta while the link still
+          worked. Most of these ads have already stopped, so no ad library could get them back.
         </p>
       </header>
 
@@ -144,7 +158,7 @@ export default function WinnersPage() {
 
       <ul className="space-y-3">
         {shown.map((ad) => (
-          <Card key={ad.ad_id} ad={ad} />
+          <Card key={ad.ad_id} ad={ad} ours={ad.file_path ? ourCopies[ad.file_path] : undefined} />
         ))}
       </ul>
     </div>

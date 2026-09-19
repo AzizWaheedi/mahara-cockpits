@@ -305,6 +305,20 @@ class Supabase:
         return self.upsert("team_meetings", clean, "recording_id")
 
     # ---- the swipe file --------------------------------------------------
+    def known_ideation_keys(self, keys: Iterable[str]) -> list[str]:
+        """Which of these the ideation board has already seen, in any state.
+        A dismissed idea must not come back on the next sync."""
+        wanted = [k for k in dict.fromkeys(keys) if k]
+        out: list[str] = []
+        for i in range(0, len(wanted), 100):
+            chunk = wanted[i : i + 100]
+            rows = self.select(
+                "ideation_posts",
+                f"select=key&key=in.({','.join(_q(k) for k in chunk)})",
+            )
+            out += [str(r.get("key")) for r in rows if r.get("key")]
+        return out
+
     def known_foreplay_ids(self, limit: int = 5000) -> list[str]:
         """What we already hold, so a sync can stop rather than pay again."""
         rows = self.select("foreplay_ads", f"select=id&limit={int(limit)}")

@@ -87,7 +87,19 @@ function IdeaCard({
                 {idea.duration_sec ? ` · ${clock(idea.duration_sec)}` : ""}
               </p>
             </div>
-            {idea.tier ? (
+            {/* A saved ad has no radar score, so it says how long it ran
+                instead. Where it came from is always visible: something a
+                person kept is not the same as something the radar found. */}
+            {idea.origin === "foreplay" ? (
+              <span
+                className="shrink-0 text-[11px] font-medium"
+                style={{ color: "var(--primary)" }}
+                title="saved by someone on the team, through Foreplay"
+              >
+                saved
+                {idea.running_days ? ` · ${idea.running_days}d on air` : ""}
+              </span>
+            ) : idea.tier ? (
               <span
                 className="shrink-0 text-[11px] font-medium"
                 style={{ color: TIERS[idea.tier] ?? "var(--muted-foreground)" }}
