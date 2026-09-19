@@ -150,6 +150,18 @@ class FakeSupabase:
     def jobs_to_prepare(self, limit):
         return [j for j in self.jobs.values() if j.get("state") in ("new", "stale") and int(j.get("attempts") or 0) < 4][:limit]
 
+    def retire_missing(self, on_board, stamp):
+        have = {str(t) for t in on_board if t}
+        stored = [j for j in self.jobs.values() if j.get("state") != "gone"]
+        if not stored:
+            return {"retired": 0}
+        if len(have) < max(1, len(stored) // 2):
+            return {"retired": 0, "refused": f"only {len(have)} cards"}
+        missing = [j["task_id"] for j in stored if j.get("task_id") not in have]
+        for tid in missing:
+            self.jobs[tid].update({"state": "gone", "error": "the card is no longer on the board"})
+        return {"retired": len(missing), "task_ids": missing}
+
     def mark_job(self, task_id, **fields):
         self.jobs.setdefault(task_id, {"task_id": task_id}).update(fields)
 

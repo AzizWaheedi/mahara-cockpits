@@ -189,6 +189,33 @@ class Supabase:
         )
         return rows
 
+    def retire_missing(self, on_board: Iterable[str], stamp: str) -> dict[str, Any]:
+        """Mark jobs whose card is no longer on the board.
+
+        A card deleted in ClickUp used to leave a job here forever: "jg
+        design" sat in the cockpit as Blocked for a day after the card was
+        deleted (found 2026-09-19). Rows are kept rather than deleted, because
+        the transcripts and storyboards under them cost real money to make;
+        they move to `gone` and drop out of every view.
+
+        This refuses to run on a suspiciously small board. A half-failed
+        ClickUp read returning three cards must not retire the other thirty.
+        """
+        have = {str(t) for t in on_board if t}
+        stored = self.select("editor_jobs", "select=task_id,state&state=neq.gone&limit=1000")
+        if not stored:
+            return {"retired": 0}
+        if len(have) < max(1, len(stored) // 2):
+            return {"retired": 0, "refused": f"the board returned only {len(have)} cards for {len(stored)} jobs"}
+        missing = [r["task_id"] for r in stored if r.get("task_id") not in have]
+        for task_id in missing:
+            self.patch(
+                "editor_jobs",
+                f"task_id=eq.{http.quote(task_id)}",
+                {"state": "gone", "error": "the card is no longer on the board", "updated_at": stamp},
+            )
+        return {"retired": len(missing), "task_ids": missing}
+
     def mark_job(self, task_id: str, **fields: Any) -> None:
         fields["updated_at"] = now_iso()
         self.patch("editor_jobs", f"task_id=eq.{http.quote(task_id)}", fields)

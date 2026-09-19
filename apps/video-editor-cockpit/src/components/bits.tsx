@@ -7,6 +7,7 @@ const STATE_WORDS: Record<string, { label: string; tone: string }> = {
   new: { label: "Not read yet", tone: "var(--warning)" },
   stale: { label: "Reading again", tone: "var(--warning)" },
   delivered: { label: "Delivered", tone: "var(--primary)" },
+  gone: { label: "Card deleted", tone: "var(--muted-foreground)" },
 };
 
 export function StateBadge({ state }: { state: JobState | string | null }) {

@@ -44,6 +44,12 @@ const GROUPS: { key: string; title: string; hint: string; has: (j: Job) => boole
     hint: "sent for client review",
     has: (j) => j.state === "delivered",
   },
+  {
+    key: "gone",
+    title: "Card deleted",
+    hint: "the ClickUp card no longer exists",
+    has: (j) => j.state === "gone",
+  },
 ];
 
 function JobRow({ job }: { job: Job }) {
@@ -106,7 +112,11 @@ export default function JobsPage() {
   const [showDone, setShowDone] = useState(false);
 
   const shown = useMemo(() => {
-    let all = (jobs ?? []).filter((j) => showDone || !DONE.has((j.status ?? "").toLowerCase()));
+    // A deleted card leaves its job behind, with the transcripts and frames
+    // that cost money to make. It is kept, and shown only on purpose.
+    let all = (jobs ?? []).filter(
+      (j) => showDone || (j.state !== "gone" && !DONE.has((j.status ?? "").toLowerCase())),
+    );
     if (onlyMine) all = all.filter((j) => isMine(j, email));
     return all;
   }, [jobs, onlyMine, showDone, email]);
@@ -153,7 +163,7 @@ export default function JobsPage() {
               : "raised muted"
           }`}
         >
-          Include closed
+          Include closed and deleted
         </button>
         <button type="button" onClick={reload} className="muted ml-auto text-xs">
           Refresh

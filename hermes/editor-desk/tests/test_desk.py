@@ -730,3 +730,37 @@ class StatusTests(unittest.TestCase):
         out = self.move("in progress")
         self.assertEqual(out["done"], 1)
         self.assertFalse(self.cu.statuses, "no pointless write to the board")
+
+
+class RetireTests(unittest.TestCase):
+    """A card deleted in ClickUp used to leave a job in the cockpit forever.
+    "jg design" sat there as Blocked for a day after the card was deleted."""
+
+    def board(self, *ids):
+        sb = FakeSupabase()
+        sb.store_jobs([job_row(task(t), now_iso=NOW) for t in ids])
+        return sb
+
+    def test_a_job_whose_card_is_gone_is_retired_not_deleted(self):
+        sb = self.board("a", "b", "c", "d")
+        out = sb.retire_missing(["a", "b", "c"], NOW)
+        self.assertEqual(out["retired"], 1)
+        self.assertEqual(sb.job("d")["state"], "gone")
+        self.assertIn("no longer on the board", sb.job("d")["error"])
+        self.assertIsNotNone(sb.job("d"), "the row is kept: its transcripts cost money to make")
+
+    def test_a_job_still_on_the_board_is_left_alone(self):
+        sb = self.board("a", "b", "c", "d")
+        sb.retire_missing(["a", "b", "c", "d"], NOW)
+        self.assertNotEqual(sb.job("a")["state"], "gone")
+
+    def test_a_half_failed_board_read_retires_nothing(self):
+        sb = self.board("a", "b", "c", "d", "e", "f")
+        out = sb.retire_missing(["a"], NOW)
+        self.assertEqual(out["retired"], 0)
+        self.assertIn("refused", out)
+        for t in ("b", "c", "d", "e", "f"):
+            self.assertNotEqual(sb.job(t)["state"], "gone", t)
+
+    def test_an_empty_desk_is_not_an_error(self):
+        self.assertEqual(FakeSupabase().retire_missing(["a"], NOW)["retired"], 0)

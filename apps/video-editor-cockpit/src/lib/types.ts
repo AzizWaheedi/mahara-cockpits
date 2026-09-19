@@ -1,6 +1,6 @@
 /** The four tables the desk fills, as the cockpit reads them. */
 
-export type JobState = "new" | "stale" | "ready" | "blocked" | "delivered";
+export type JobState = "new" | "stale" | "ready" | "blocked" | "delivered" | "gone";
 
 export interface Person {
   email?: string | null;

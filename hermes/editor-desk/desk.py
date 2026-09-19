@@ -133,7 +133,10 @@ def cmd_sync(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     sb = _sb(cfg)
     cu = ClickUp(cfg, log.info)
     stamp = now_iso()
-    tasks = cu.tasks(include_closed=args.closed)
+    # Everything on the board, closed included, so a card that has merely
+    # been completed is not mistaken for one that was deleted.
+    every = cu.tasks(include_closed=True)
+    tasks = every if args.closed else [t for t in every if is_open(str((t.get("status") or {}).get("status") or ""))]
     rows = [job_row(t, now_iso=stamp) for t in tasks]
     keep = [(r, t) for r, t in zip(rows, tasks) if r["task_id"] and (args.closed or is_open(r["status"]))]
     rows = [r for r, _ in keep]
@@ -224,6 +227,15 @@ def cmd_sync(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     except Exception as e:  # noqa: BLE001 - a seat is not worth losing the sync over
         log.warn(f"seats not updated: {http.scrub(str(e))[:160]}")
 
+    # A card deleted in ClickUp leaves a job here that nobody can act on.
+    retired = {"retired": 0}
+    try:
+        retired = sb.retire_missing([str(t.get("id") or "") for t in every], stamp)
+        if retired.get("refused"):
+            log.warn(f"not retiring anything: {retired['refused']}")
+    except Exception as e:  # noqa: BLE001
+        log.warn(f"jobs not retired: {http.scrub(str(e))[:160]}")
+
     out = sb.store_jobs(rows)
     # A job whose board fields changed after preparation is read again.
     stale = 0
@@ -237,7 +249,7 @@ def cmd_sync(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     summary = {
         "tasks": len(rows), **out, "stale": stale,
         "clients": len(people), "matched": matched, "docs_read": docs_read,
-        "seats": seats,
+        "seats": seats, "retired": retired.get("retired", 0),
     }
     log.info(f"sync: {summary}")
     _print(summary, args.json)

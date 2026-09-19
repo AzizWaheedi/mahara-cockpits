@@ -56,7 +56,9 @@ export default function PipelinePage() {
   const { data: jobs, error, loading } = useJobs();
 
   const columns = useMemo(() => {
-    const all = (jobs ?? []).filter((j) => !CLOSED.has((j.status ?? "").toLowerCase()));
+    const all = (jobs ?? []).filter(
+      (j) => j.state !== "gone" && !CLOSED.has((j.status ?? "").toLowerCase()),
+    );
     const seen = new Map<string, Job[]>();
     for (const j of all) {
       const key = (j.status ?? "no status").toLowerCase();
