@@ -46,6 +46,7 @@ import {
 } from "@/components/ceo/windows";
 import { cn } from "@/lib/utils";
 import type {
+  AssetsPayload,
   FunnelWindow,
   GrowthPayload,
   MoneyPayload,
@@ -234,6 +235,15 @@ export function SalesTab({ sections, now, day, goTab }: CeoTabProps) {
         order={3}
       >
         {p => <DailyBody rows={p.daily} today={today} />}
+      </SectionCard>
+
+      <SectionCard
+        kicker="What a rep has to send"
+        title="Sales assets"
+        section={sections.assets}
+        order={5}
+      >
+        {(a: AssetsPayload) => <AssetsBody p={a} />}
       </SectionCard>
 
       <SectionCard
@@ -1030,6 +1040,106 @@ function BacklogBody({ p }: { p: GrowthPayload }) {
                 .join(", ")}.`}
             </p>
           ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * What a rep has to send, and whether anybody sends it.
+ *
+ * The two readings pull apart and are kept apart. Coverage is what exists to
+ * reach for; sends are whether it was reached for. 203 assets against four
+ * sends ever is not a performance ranking, it is a library nobody opens, and
+ * the card says that rather than dressing four sends as a top ten.
+ */
+function AssetsBody({ p }: { p: AssetsPayload }) {
+  const lt = p.liveTraining;
+  return (
+    <div className="grid gap-6">
+      <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4">
+        <StatTile
+          variant="plain"
+          label="Assets ready to send"
+          value={count(p.live)}
+          sub={`${count(p.arabic)} in Arabic`}
+          hint="Each one carries what it proves, the objection it answers, where in a call it belongs, and paste-ready text."
+        />
+        <StatTile
+          variant="plain"
+          label="Sends ever recorded"
+          value={count(p.sends)}
+          status={
+            p.sends < 20 ? (
+              <StatusChip tone="serious" label="Barely used" />
+            ) : undefined
+          }
+          hint="From asset_sends: what a rep actually sent. Small numbers make every performance figure an anecdote."
+        />
+        <StatTile
+          variant="plain"
+          label="Gaps in the library"
+          value={`${p.gaps.length} of ${p.combinations}`}
+          sub="objection and stage pairs with nothing"
+          status={
+            p.gaps.length ? (
+              <StatusChip tone="warning" label="Nothing to send" />
+            ) : undefined
+          }
+        />
+        <StatTile
+          variant="plain"
+          label="Broken links"
+          value={count(p.broken)}
+          sub={p.broken ? "sending one sends a dead page" : "all resolving"}
+          status={
+            p.broken ? <StatusChip tone="serious" label="Dead" /> : undefined
+          }
+        />
+      </div>
+
+      {p.byType.length ? (
+        <p className="text-xs text-muted-foreground">
+          {p.byType
+            .map(
+              (t: AssetsPayload["byType"][number]) =>
+                `${t.type.replace(/_/g, " ")} ${t.count}`,
+            )
+            .join(" · ")}
+        </p>
+      ) : null}
+
+      {p.gaps.length ? (
+        <div className="border-t pt-4">
+          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Moments in a call with nothing to send
+          </p>
+          <ul className="grid gap-1 sm:grid-cols-2">
+            {p.gaps.map((g: AssetsPayload["gaps"][number]) => (
+              <li key={`${g.stage}-${g.objection}`} className="text-sm">
+                <span className="text-muted-foreground">{`${g.stage}: `}</span>
+                {g.objection}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {lt && !lt.everUsed ? (
+        <div className="border-t pt-4">
+          <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Live Training
+          </p>
+          <p className="text-sm text-muted-foreground">
+            Built, wired and never run. Six tables and eight views are waiting:
+            registrants with their full UTM and ad, adset and campaign ids,
+            attendance, engagement, a retention curve, pitch attribution, and
+            outcomes carrying contract value and cash collected. That is
+            attribution from a webinar through to closed money. No figure is
+            shown, because zero events and a webinar that went badly would print
+            the same zeros.
+          </p>
         </div>
       ) : null}
     </div>

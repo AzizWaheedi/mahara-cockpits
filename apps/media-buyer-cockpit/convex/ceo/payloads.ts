@@ -958,3 +958,49 @@ export type MachinePayload = {
   }[];
   notes: Note[];
 };
+
+// --- Sales assets (B2B Supabase: assets, asset_sends, b2b_asset_* functions) ---
+
+/**
+ * The sales asset library. Two readings that pull apart, kept apart:
+ * coverage is what a rep has to reach for, performance is whether anybody
+ * reached for it. On 2026-09-19 the library held 203 assets and four sends.
+ */
+export type AssetsPayload = {
+  total: number;
+  /** Assets whose status is live, the ones a rep would actually send. */
+  live: number;
+  arabic: number;
+  /** Assets whose link last checked as broken: sending one sends a dead page. */
+  broken: number;
+  byType: { type: string; count: number }[];
+  /** Objection and stage pairs with no asset at all. */
+  gaps: { objection: string; stage: string }[];
+  /** How many objection-by-stage combinations exist in total. */
+  combinations: number;
+  /** Sends ever recorded. Small numbers here make every rate below unreadable. */
+  sends: number;
+  performance: {
+    slug: string;
+    title: string;
+    assetType: string;
+    sends: number;
+    contacts: number;
+    closesAfter: number;
+    revenue: number;
+    lastSentAt: number | null;
+  }[];
+  /**
+   * The Live Training webinar pipeline. Present so the capability is visible;
+   * `everUsed` false means no event has ever run and no rate is computed,
+   * because zero events and a failed webinar would print identical zeros.
+   */
+  liveTraining?: {
+    events: number;
+    registrants: number;
+    attendance: number;
+    outcomes: number;
+    everUsed: boolean;
+  };
+  notes: Note[];
+};
