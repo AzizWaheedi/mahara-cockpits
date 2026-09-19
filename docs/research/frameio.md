@@ -164,29 +164,35 @@ to the Creative Cloud account that claimed it. And Adobe's own advice for
 teams is that "your administrator be the first person to sign in to
 Frame.io and create the account" -- whoever signs in first owns it.
 
-So the first sign-in is the decision, and there are three cases:
+**Mahara pays for the subscriptions, individually** (Aziz, 2026-09-19).
+That settles most of it: the subscriptions sit on `@maharamedia.com`
+addresses, so whichever one signs in, the Adobe account is on a domain Aziz
+controls and can recover. The account cannot walk out with an employee.
 
-1. **Mahara pays for Karim's Premiere through Creative Cloud for teams.**
-   Then Aziz is already the administrator, and he should create it. That
-   path is not the 100 GB entitlement -- Creative Cloud for teams carries
-   **3 TB of pooled Frame.io storage plus 2 TB per licence**, and the admin
-   can add up to 15 members. Better than the Team plan this document was
-   costing at $25 a seat, at no extra charge.
-2. **Aziz has his own Premiere or All Apps subscription.** He creates it,
-   owns it, and gets two users, five projects, 100 GB. Karim is the second
-   user. This is the plan as written.
-3. **Only Karim has a subscription, bought personally.** Aziz can still
-   make an account, but with no Adobe subscription behind it that is the
-   public free tier: two users, **two projects, 2 GB**. Two gigabytes is a
-   handful of cuts, so it does not work.
+So, in order:
 
-Case 3 is the one to avoid, and the way to avoid it is not to have Karim
-sign up with a personal Adobe account. **Whatever the case, the Adobe login
-that creates the Frame.io account should be a Mahara address Aziz
-controls.** Otherwise the account, and every client's review history in it,
-belongs to an employee, and the entitlement cannot be moved off him when he
-leaves. That is the same failure as a key in somebody's personal password
-manager, and it costs nothing to avoid on day one.
+1. **If any Mahara-paid subscription is on an address Aziz uses himself,
+   sign in with that one.** Cleanest: the account is his, and it does not
+   depend on Karim's licence staying active.
+2. **Otherwise sign in with `karim@maharamedia.com`** -- it carries the
+   Premiere subscription, so it claims the entitlement, and it is a Mahara
+   mailbox rather than a personal one. Then add Sabry as the second user.
+   The one thing to watch is that cancelling Karim's licence would take the
+   entitlement with it, because Adobe says it is not transferable.
+3. **Do not sign in with a personal Adobe account**, anyone's. That is the
+   only way to end up with the company's review history attached to a
+   person.
+
+Either way the tier is the same: **two users, five projects, 100 GB,
+unlimited free reviewers.**
+
+Worth a thought at renewal, not now: consolidating those individual
+subscriptions onto **Creative Cloud for teams** would put Aziz in the Adobe
+Admin Console as administrator and raise the Frame.io side to **3 TB pooled
+plus 2 TB per licence, up to 15 members** -- more than the $25-a-seat Team
+plan this document was originally costing, bundled. It is a billing change
+rather than a Frame.io decision, so it belongs at the next renewal, once
+the pilot has said whether any of this is worth keeping.
 
 There is also a **30-day Frame.io Team trial** on first sign-up, which
 includes internal comments and up to 15 members. Worth spending it during
@@ -196,8 +202,9 @@ find out whether internal comments are wanted before deciding they are not.
 ## Phases
 
 **0. Set it up free, and find out the one thing nobody documents -- half a
-day, no spend.** Aziz signs in to Frame.io first, from a Mahara address, so
-the account is the company's (see above). He adds Karim and Sabry, makes one project with a folder for one client,
+day, no spend.** Aziz signs in to frame.io first, with the Mahara Adobe
+login that holds a Premiere subscription, so the account is the company's
+and claims the entitlement (see above). He adds Karim and Sabry, makes one project with a folder for one client,
 and runs five real videos through it end to end including a client share.
 
 Two things get answered here, and they are why this is a phase and not a
@@ -260,9 +267,12 @@ privately. Not before.
 
 ## Answered, 2026-09-19
 
-- **Karim has a Premiere subscription**, so the free entitlement is real and
-  phase 0 costs nothing. Sabry's own subscription status is the thing to
-  check in the first five minutes.
+- **Karim has a Premiere subscription and Mahara pays for it**, as an
+  individual subscription rather than through Creative Cloud for teams. So
+  the free entitlement is real, phase 0 costs nothing, and the Adobe login
+  is on a Mahara address either way. Whether Sabry can be the second user
+  without his own subscription is the thing to check in the first five
+  minutes.
 - **Cost depends on how much.** It is nothing to start, and the two paid
   steps each have a trigger rather than a date.
 - **Sabry does not review everything.** So internal comments, and the Team
