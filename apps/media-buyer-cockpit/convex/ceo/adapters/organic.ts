@@ -211,6 +211,7 @@ export const organic: Adapter = {
       subscribers: null,
       views: null,
       videos: null,
+      published28: null,
       recent: [],
     };
     try {
@@ -265,6 +266,7 @@ export const organic: Adapter = {
             }
           }
         }
+        const from28Ms = new Date(`${from28}T00:00:00Z`).getTime();
         youtube = {
           enabled: true,
           enableUrl: YT_ENABLE_URL,
@@ -272,6 +274,7 @@ export const organic: Adapter = {
           subscribers: num(stats.subscriberCount),
           views: num(stats.viewCount),
           videos: num(stats.videoCount),
+          published28: recent.filter(v => Date.parse(v.at) >= from28Ms).length,
           recent,
         };
         sources.push({ name: "YouTube Data API", ok: true, freshestAt: now });

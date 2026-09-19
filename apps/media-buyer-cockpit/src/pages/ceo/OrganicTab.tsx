@@ -235,12 +235,13 @@ export function OrganicTab({ sections }: CeoTabProps) {
                 <StatTile
                   variant="plain"
                   label="Published, 28 days"
-                  value={ytC ? count(ytC.last28) : "—"}
+                  value={na(yt.published28)}
                   sub={
                     ytC
-                      ? `${count(ytC.last90)} in 90 · newest ${ytC.newest ?? "—"}`
+                      ? `library: ${count(ytC.last90)} in 90 · newest ${ytC.newest ?? "—"}`
                       : undefined
                   }
+                  hint="Counted from the live upload list. The asset library lags it by days."
                 />
               </div>
               {yt.recent.length ? (
