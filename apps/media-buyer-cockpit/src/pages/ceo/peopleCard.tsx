@@ -45,6 +45,7 @@ export function PeopleCard({ order }: { order?: number }) {
   const save = useAction(api.ceo.people.save);
   const setActive = useAction(api.ceo.people.setActive);
   const remove = useAction(api.ceo.people.remove);
+  const importWorkspace = useAction(api.ceo.people.importWorkspace);
 
   const [data, setData] = useState<Roster | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -52,6 +53,7 @@ export function PeopleCard({ order }: { order?: number }) {
   const [form, setForm] = useState({ ...blank });
   const [editing, setEditing] = useState<number | null>(null);
   const [showGone, setShowGone] = useState(false);
+  const [imported, setImported] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -393,7 +395,7 @@ export function PeopleCard({ order }: { order?: number }) {
                 Their job is selling
               </label>
             </div>
-            <div className="mt-3 flex items-center gap-2">
+            <div className="mt-3 flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 disabled={busy || !form.name.trim() || !data.ready}
@@ -414,7 +416,30 @@ export function PeopleCard({ order }: { order?: number }) {
                   Cancel
                 </button>
               )}
+              <button
+                type="button"
+                disabled={busy || !data.ready}
+                onClick={() =>
+                  act(async () => {
+                    const r = await importWorkspace({});
+                    setImported(
+                      r.problem
+                        ? r.problem
+                        : r.added.length
+                          ? `Added ${plural(r.added.length, "person", "people")} from Workspace. Give them a monthly cost and they leave the uncosted list.`
+                          : "Everyone in Workspace is already on the roster.",
+                    );
+                  })
+                }
+                className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
+                title="Adds Workspace accounts that are not here yet. It never edits or removes anybody, and never sets a cost."
+              >
+                Add from Workspace
+              </button>
             </div>
+            {imported ? (
+              <p className="mt-2 text-sm text-muted-foreground">{imported}</p>
+            ) : null}
           </div>
 
           {gone.length ? (
