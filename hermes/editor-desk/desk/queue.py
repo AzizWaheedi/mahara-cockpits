@@ -22,7 +22,7 @@ from .config import Config
 from .drive import Drive
 from .supabase import Supabase, now_iso
 
-KINDS = ("deliver", "check", "comment", "rescan", "ask", "status", "eod")
+KINDS = ("deliver", "check", "comment", "rescan", "ask", "status", "eod", "dosdonts")
 
 # Where an editor may move a card from the cockpit. Aziz, 2026-09-19: pressing
 # "started" should move it to In progress, and a round of comments should move
@@ -219,6 +219,46 @@ def run_eod(cfg: Config, log: Callable[[str], None], req: dict[str, Any]) -> dic
     return sheets.file_eod(token, answers, log)
 
 
+def run_dosdonts(cfg: Config, log: Callable[[str], None], sb: Supabase, cu: ClickUp,
+                 req: dict[str, Any]) -> dict[str, Any]:
+    """Add one line to a client's Do's & Don'ts, on the client card itself.
+
+    Appends. The field is the one list every cockpit reads and it was written
+    from onboarding calls over months, so an editor adds to it and can never
+    paste over it.
+    """
+    from . import brand
+    from .config import CLIENT_FIELD
+
+    client_id = str(req.get("task_id") or "").replace("client:", "")
+    params = req.get("params") or {}
+    kind = str(params.get("kind") or "").upper().replace("DONT", "DON'T")
+    text = str(req.get("input") or "").strip()
+    if not client_id:
+        raise ValueError("no client on this request")
+    if kind not in (brand.DO, brand.DONT):
+        raise ValueError("say whether it is a do or a don't")
+    if not text:
+        raise ValueError("there is nothing to add")
+
+    row = sb.client(client_id)
+    if not row:
+        raise ValueError("that client is not on the desk")
+    current = str(row.get("dos_donts") or "")
+    if brand.already_there(current, text):
+        return {"added": False, "note": "that line is already on the card"}
+
+    who = str(req.get("requested_by_name") or req.get("requested_by") or "").split("@")[0]
+    day = now_iso()[:10]
+    updated = brand.add(current, text, kind=kind, who=who, day=day)
+    cu.set_field_by_id(client_id, CLIENT_FIELD["dos_donts"], updated)
+    # And straight into the desk's own copy, so the cockpit shows it now
+    # rather than at the next sync.
+    sb.store_clients([{"task_id": client_id, "dos_donts": updated}])
+    log(f"{row.get('name')}: a {kind} added by {who}")
+    return {"added": True, "kind": kind, "client": row.get("name")}
+
+
 def run_comment(cfg: Config, log: Callable[[str], None], cu: ClickUp, req: dict[str, Any]) -> dict[str, Any]:
     text = str(req.get("input") or "").strip()
     if not text:
@@ -265,6 +305,12 @@ def run_requests(cfg: Config, log: Callable[[str], None], sb: Supabase, *, limit
             continue
 
         try:
+            # These belong to a person or a client, not to a job.
+            if kind == "dosdonts":
+                cu = cu or ClickUp(cfg, log)
+                _done(sb, rid, run_dosdonts(cfg, log, sb, cu, req))
+                out["done"] += 1
+                continue
             # An end of day belongs to a person and a date, not to a job.
             if kind == "eod":
                 _done(sb, rid, run_eod(cfg, log, req))

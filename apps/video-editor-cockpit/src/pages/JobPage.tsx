@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router";
+import AddRule from "../components/AddRule";
 import Ask from "../components/Ask";
 import { Empty, Fold, Out, Problem, Prose, Section, Spinner, StateBadge } from "../components/bits";
 import Footage from "../components/Footage";
@@ -224,6 +225,13 @@ export default function JobPage() {
                   <Out href={c.offer_url}>Offer cheat sheet</Out>
                 </div>
               ) : null}
+              <div className="border-t hairline pt-3">
+                <AddRule
+                  clientTaskId={c.task_id}
+                  clientName={c.name}
+                  onSent={() => client.reload()}
+                />
+              </div>
               <p className="muted border-t hairline pt-2.5 text-xs">
                 The desk re-reads these whenever the document changes.
                 {c.website ? (

@@ -75,6 +75,11 @@ def _bool(name: str, default: bool) -> bool:
     return key(name, "1" if default else "0").strip().lower() not in ("0", "false", "no", "off", "")
 
 
+# Clients - Mahara, and the one field on it the cockpit may add to.
+# Read live 2026-09-19.
+CLIENT_LIST = "901816559981"
+CLIENT_FIELD = {"dos_donts": "0f06a523-64f9-4f20-90a1-f76cb6f85318"}
+
 # The ClickUp Video Pipeline. Ids checked live on 2026-09-18.
 VIDEO_LIST = "901816720767"
 FIELD = {

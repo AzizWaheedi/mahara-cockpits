@@ -137,6 +137,16 @@ class ClickUp:
             timeout=60,
         )
 
+    def set_field_by_id(self, task_id: str, field_id: str, value: Any) -> None:
+        """A field on a card outside the Video Pipeline, by its own id."""
+        self.calls += 1
+        http.post_json(
+            f"{BASE}/task/{http.quote(task_id)}/field/{field_id}",
+            {"value": value},
+            headers=self._h(),
+            timeout=60,
+        )
+
     def set_status(self, task_id: str, status: str) -> None:
         self.calls += 1
         http.request("PUT", f"{BASE}/task/{http.quote(task_id)}", json_body={"status": status}, headers=self._h(), timeout=60)

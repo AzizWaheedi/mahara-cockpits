@@ -26,6 +26,7 @@ function Card({ ad }: { ad: WinnerAd }) {
         <div className="max-w-52">
           <AdPreviewFrame
             adId={ad.ad_id}
+            title={`${ad.client ?? "Ad"} · ${ad.service_line ?? ad.ad_name ?? ""}`.trim()}
             thumbUrl={ad.thumb_url}
             format={ad.format}
             watchUrl={ad.watch_url}

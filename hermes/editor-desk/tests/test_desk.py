@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 os.environ.setdefault("DESK_HOME", "/tmp/desk-unit")
-from desk import checks, clients, media, meetings, prepare, queue, sheets, speech
+from desk import brand, checks, clients, media, meetings, prepare, queue, sheets, speech
 from desk.clickup import editors_of, fields_of, is_open, job_row
 from desk.config import Config
 from desk.drive import parse_id
@@ -897,3 +897,71 @@ class MeetingTests(unittest.TestCase):
 
     def test_a_meeting_with_no_recording_id_is_dropped(self):
         self.assertIsNone(meetings.row({"meeting_title": "x"}))
+
+
+class BrandEditTests(unittest.TestCase):
+    """An editor adds what they were told in revisions. The field is the one
+    list every cockpit reads and was written over months of onboarding calls,
+    so adding must never be able to overwrite."""
+
+    LIVE = (
+        "DO\n"
+        "- Run separate B2C and B2B messaging tracks (Onboarding, 2026-09-12)\n"
+        "- Position brand as selective and professional (Onboarding, 2026-09-12)\n"
+        "\n"
+        "DON'T\n"
+        "- Don't quote fixed prices without a technical review (Onboarding, 2026-09-10)"
+    )
+
+    def test_a_do_lands_at_the_end_of_the_do_block(self):
+        out = brand.add(self.LIVE, "Keep the logo on for the last two seconds",
+                        kind=brand.DO, who="Karim", day="2026-09-19")
+        lines = out.split("\n")
+        i = lines.index("- Keep the logo on for the last two seconds (Karim, 2026-09-19)")
+        self.assertLess(lines.index("DO"), i)
+        self.assertGreater(lines.index("DON'T"), i, "it must stay inside the DO block")
+
+    def test_a_dont_lands_in_the_dont_block(self):
+        out = brand.add(self.LIVE, "Use the old teal", kind=brand.DONT, who="Karim", day="2026-09-19")
+        lines = out.split("\n")
+        self.assertGreater(
+            lines.index("- Use the old teal (Karim, 2026-09-19)"), lines.index("DON'T")
+        )
+
+    def test_nothing_that_was_already_there_is_lost(self):
+        out = brand.add(self.LIVE, "Anything", kind=brand.DO, who="K", day="2026-09-19")
+        for line in self.LIVE.split("\n"):
+            if line.strip():
+                self.assertIn(line, out, "an existing line was dropped")
+
+    def test_an_empty_field_gets_both_headings(self):
+        out = brand.add("", "Shoot wider", kind=brand.DO, who="Karim", day="2026-09-19")
+        self.assertIn("DO\n- Shoot wider (Karim, 2026-09-19)", out)
+        self.assertIn("DON'T", out)
+
+    def test_a_field_with_no_headings_keeps_what_is_there(self):
+        out = brand.add("some free text somebody typed", "Shoot wider",
+                        kind=brand.DO, who="K", day="2026-09-19")
+        self.assertTrue(out.startswith("some free text somebody typed"))
+        self.assertIn("DO\n- Shoot wider (K, 2026-09-19)", out)
+
+    def test_a_curly_apostrophe_heading_is_still_the_dont_block(self):
+        odd = "DO\n- a (x, 1)\n\nDon’t\n- b (x, 1)"
+        out = brand.add(odd, "c", kind=brand.DONT, who="K", day="2026-09-19")
+        self.assertEqual(out.count("DO"), 1, "it must not start a second block")
+        self.assertTrue(out.rstrip().endswith("- c (K, 2026-09-19)"))
+
+    def test_saying_the_same_thing_twice_is_noticed(self):
+        self.assertTrue(brand.already_there(self.LIVE, "Position brand as selective and professional"))
+        self.assertTrue(brand.already_there(self.LIVE, "  position BRAND as selective and professional "))
+        self.assertFalse(brand.already_there(self.LIVE, "Something nobody has said"))
+
+    def test_an_empty_line_is_refused(self):
+        with self.assertRaises(ValueError):
+            brand.entry("   ", "Karim", "2026-09-19")
+
+    def test_a_leading_dash_is_not_doubled(self):
+        self.assertEqual(
+            brand.entry("- already dashed", "Karim", "2026-09-19"),
+            "- already dashed (Karim, 2026-09-19)",
+        )
