@@ -92,12 +92,34 @@ scope, checked 2026-09-18), `ELEVENLABS_API_KEY`, `GROQ_API_KEY`.
 
 ### Cron
 
+**The whole set, so it can be restored from here.** On 2026-09-19 a careless
+`crontab -` with a stale backup wiped it, and only four of the seven were
+written down -- `meetings` had to be recovered from the mtime of its lock
+file. If you add a job, add its row here in the same commit.
+
 ```
 2,32 * * * *  flock -n $HOME/.editor-desk/sync.lock    bash -c "set -a; . $HOME/.editor-desk/env; set +a; cd $HOME/mahara-cockpits/hermes/editor-desk && python3 desk.py --quiet sync"   >> $HOME/.editor-desk/out/cron.log 2>&1
 7,37 * * * *  flock -n $HOME/.editor-desk/prepare.lock bash -c "set -a; . $HOME/.editor-desk/env; set +a; cd $HOME/mahara-cockpits/hermes/editor-desk && python3 desk.py --quiet prepare" >> $HOME/.editor-desk/out/cron.log 2>&1
-*/3 * * * *   flock -n $HOME/.editor-desk/requests.lock bash -c "set -a; . $HOME/.editor-desk/env; set +a; cd $HOME/mahara-cockpits/hermes/editor-desk && python3 desk.py --quiet requests" >> $HOME/.editor-desk/out/cron.log 2>&1
 17 * * * *    flock -n $HOME/.editor-desk/notes.lock   bash -c "set -a; . $HOME/.editor-desk/env; set +a; cd $HOME/mahara-cockpits/hermes/editor-desk && python3 desk.py --quiet notes"   >> $HOME/.editor-desk/out/cron.log 2>&1
+*/3 * * * *   flock -n $HOME/.editor-desk/requests.lock bash -c "set -a; . $HOME/.editor-desk/env; set +a; cd $HOME/mahara-cockpits/hermes/editor-desk && python3 desk.py --quiet requests" >> $HOME/.editor-desk/out/cron.log 2>&1
+27 * * * *    flock -n $HOME/.editor-desk/meetings.lock bash -c "set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; set +a; cd $HOME/mahara-cockpits/hermes/editor-desk && python3 desk.py --quiet meetings" >> $HOME/.editor-desk/out/cron.log 2>&1
+*/20 * * * *  flock -n $HOME/.editor-desk/foreplay.lock bash -c "set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; set +a; cd $HOME/mahara-cockpits/hermes/editor-desk && python3 desk.py --quiet foreplay" >> $HOME/.editor-desk/out/cron.log 2>&1
+41 3 * * *    flock -n $HOME/.editor-desk/archive.lock bash -c "set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; set +a; cd $HOME/mahara-cockpits/hermes/editor-desk && python3 desk.py --quiet archive --limit 25" >> $HOME/.editor-desk/out/cron.log 2>&1
 ```
+
+Sync every half hour, prepare every half hour offset from it, notes and
+meetings hourly on their own minutes, foreplay every twenty, archive
+overnight, and the cockpit's queue every three minutes so a person pressing
+"send to client review" does not wait. Each under its own lock, so a long
+read never overlaps itself.
+
+Salma, the social media producer, is also on this crontab -- see
+`hermes/salma/README.md`.
+
+**Editing it:** `crontab -l > f`, edit `f`, `crontab f`. Never pipe
+something you have not just read from `crontab -l` in the same command;
+`/tmp` may hold another user's stale copy, and it did.
+
 
 Sync every half hour, prepare every half hour offset from it, notes hourly,
 and the cockpit's queue every three minutes so a person pressing "send to
