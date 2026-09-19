@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
@@ -1356,36 +1357,61 @@ class ComposioRouteTests(unittest.TestCase):
             with self.assertRaises(Exception):
                 foreplay.Foreplay(self.cfg_with(tmp), lambda m: None)
 
-    def test_composio_wraps_the_answer_one_layer_deeper_and_it_is_unwrapped(self):
+    def _mcp(self, fp, answer, *, sent=None):
+        """Stand in for the MCP server: a session header, then one
+        server-sent-event answer shaped the way Composio shapes it."""
+        def fake(method, url, *, headers=None, data=None, timeout=60, retries=0, **kw):
+            body = json.loads(data.decode()) if data else {}
+            if body.get("method") == "initialize":
+                return 200, {"mcp-session-id": "sess-1"}, b"event: message\ndata: {}\n"
+            if sent is not None and body.get("method") == "tools/call":
+                sent.update(body["params"])
+            payload = {"result": {"content": [{"text": json.dumps(answer)}]}}
+            return 200, {}, ("data: " + json.dumps(payload)).encode()
+
+        was = foreplay.http.request
+        foreplay.http.request = fake
+        self.addCleanup(lambda: setattr(foreplay.http, "request", was))
+
+    def test_composio_wraps_the_answer_three_layers_deep_and_it_is_unwrapped(self):
         with tempfile.TemporaryDirectory() as tmp:
             fp = foreplay.Foreplay(self.cfg_with(tmp, composio="c"), lambda m: None)
             sent = {}
-
-            def fake_post(url, body, headers=None, timeout=60):
-                sent["url"] = url
-                sent["body"] = body
-                return {"successful": True, "data": {"data": [{"id": "fp_1"}], "metadata": {}}}
-
-            was = foreplay.http.post_json
-            foreplay.http.post_json = fake_post
-            try:
-                out = fp.get("/api/swipefile/ads", limit=5)
-            finally:
-                foreplay.http.post_json = was
-            self.assertTrue(sent["url"].endswith("CUSTOM_FOREPLAY_GET_SWIPEFILE_ADS"))
-            self.assertEqual(sent["body"]["arguments"], {"limit": 5})
+            self._mcp(fp, {"data": {"results": [{"response": {
+                "successful": True,
+                "data": {"data": [{"id": "fp_1"}], "metadata": {}},
+            }}]}}, sent=sent)
+            out = fp.get("/api/swipefile/ads", limit=5)
+            self.assertEqual(sent["name"], "COMPOSIO_MULTI_EXECUTE_TOOL")
+            one = sent["arguments"]["tools"][0]
+            self.assertEqual(one["tool_slug"], "CUSTOM_FOREPLAY_GET_SWIPEFILE_ADS")
+            self.assertEqual(one["arguments"], {"limit": 5})
             self.assertEqual(out["data"], [{"id": "fp_1"}], "the caller sees the same shape either way")
 
-    def test_a_refusal_from_composio_is_raised_not_swallowed(self):
+    def test_the_session_is_opened_once_and_reused(self):
         with tempfile.TemporaryDirectory() as tmp:
             fp = foreplay.Foreplay(self.cfg_with(tmp, composio="c"), lambda m: None)
-            was = foreplay.http.post_json
-            foreplay.http.post_json = lambda *a, **k: {"successful": False, "error": "no seat"}
-            try:
-                with self.assertRaises(Exception):
-                    fp.get("/api/swipefile/ads")
-            finally:
-                foreplay.http.post_json = was
+            self._mcp(fp, {"data": {"results": [{"response": {"successful": True, "data": {}}}]}})
+            fp.get("/api/swipefile/ads")
+            first = fp._session
+            fp.get("/api/boards")
+            self.assertEqual(fp._session, first)
+            self.assertTrue(first, "a session was established")
+
+    def test_a_refusal_from_the_tool_is_raised_not_swallowed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fp = foreplay.Foreplay(self.cfg_with(tmp, composio="c"), lambda m: None)
+            self._mcp(fp, {"data": {"results": [{"response": {
+                "successful": False, "error": "no seat"}}]}})
+            with self.assertRaises(Exception):
+                fp.get("/api/swipefile/ads")
+
+    def test_an_empty_batch_is_raised_rather_than_read_as_no_ads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fp = foreplay.Foreplay(self.cfg_with(tmp, composio="c"), lambda m: None)
+            self._mcp(fp, {"data": {"results": []}})
+            with self.assertRaises(Exception):
+                fp.get("/api/swipefile/ads")
 
     def test_an_endpoint_composio_does_not_carry_says_so(self):
         with tempfile.TemporaryDirectory() as tmp:

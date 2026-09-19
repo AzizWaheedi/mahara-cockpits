@@ -26,6 +26,7 @@ board down rather than the sync.
 """
 from __future__ import annotations
 
+import json
 from typing import Any, Callable, Optional
 
 from . import http
@@ -38,7 +39,15 @@ MCP = f"{BASE}/mcp"
 # Composio fronts the same API as a tool per endpoint. Aziz connected it
 # there on 2026-09-19, so the worker can carry one Composio key instead of a
 # key per vendor. Slugs confirmed live against his account the same day.
-COMPOSIO = "https://backend.composio.dev/api/v3/tools/execute"
+#
+# The key on the VPS is a consumer key (`ck_...`), which is an MCP client
+# credential, not a REST one. Checked live: the REST execute endpoint
+# ignores `x-consumer-api-key` entirely and rejects the key under every
+# other header. The MCP server accepts it. So this speaks MCP: initialize,
+# then call COMPOSIO_MULTI_EXECUTE_TOOL, which is the executor the server
+# exposes for arbitrary tool slugs.
+COMPOSIO_MCP = "https://connect.composio.dev/mcp"
+MCP_EXECUTOR = "COMPOSIO_MULTI_EXECUTE_TOOL"
 VIA_COMPOSIO = {
     "/api/usage": "CUSTOM_FOREPLAY_GET_USER_USAGE",
     "/api/boards": "CUSTOM_FOREPLAY_GET_BOARDS",
@@ -66,6 +75,7 @@ class Foreplay:
             raise http.HttpError(0, "neither FOREPLAY_API_KEY nor COMPOSIO_API_KEY is set")
         self.log = log or (lambda m: None)
         self.calls = 0
+        self._session = ""
 
     def _h(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.cfg.foreplay_key}", "Accept": "application/json"}
@@ -79,23 +89,104 @@ class Foreplay:
         out = http.get_json(f"{BASE}{path}?{q}", headers=self._h(), timeout=60)
         return out if isinstance(out, dict) else {}
 
+    # --- the MCP transport ------------------------------------------------
+    def _mcp_headers(self) -> dict[str, str]:
+        h = {
+            "x-consumer-api-key": self.cfg.composio_key,
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
+        if self._session:
+            h["mcp-session-id"] = self._session
+        return h
+
+    @staticmethod
+    def _sse(body: bytes) -> dict[str, Any]:
+        """One JSON-RPC answer out of a server-sent-event body."""
+        for raw in body.decode("utf-8", "replace").splitlines():
+            line = raw.strip()
+            if line.startswith("data:"):
+                line = line[5:].strip()
+            if line.startswith("{"):
+                try:
+                    return json.loads(line)
+                except ValueError:
+                    continue
+        return {}
+
+    def _open(self) -> None:
+        """Handshake once, then reuse the session for every call."""
+        if self._session:
+            return
+        status, headers, body = http.request(
+            "POST", COMPOSIO_MCP,
+            headers=self._mcp_headers(),
+            data=json.dumps({
+                "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18", "capabilities": {},
+                    "clientInfo": {"name": "editor-desk", "version": "1"},
+                },
+            }).encode(),
+            timeout=60, retries=1,
+        )
+        sid = ""
+        for k, v in (headers or {}).items():
+            if str(k).lower() == "mcp-session-id":
+                sid = str(v).strip()
+        if not sid:
+            answer = self._sse(body or b"")
+            raise http.HttpError(status or 0, f"Composio gave no MCP session: {json.dumps(answer)[:160]}")
+        self._session = sid
+        # Politeness the protocol asks for; the server does not answer it.
+        try:
+            http.request("POST", COMPOSIO_MCP, headers=self._mcp_headers(),
+                         data=json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}).encode(),
+                         timeout=30, retries=0)
+        except http.HttpError:
+            pass
+
     def _composio(self, path: str, args: dict[str, Any]) -> dict[str, Any]:
         slug = VIA_COMPOSIO.get(path)
         if not slug:
             raise http.HttpError(0, f"{path} has no Composio tool; use a Foreplay key for it")
-        out = http.post_json(
-            f"{COMPOSIO}/{slug}",
-            {"arguments": args, "user_id": self.cfg.composio_user or "default"},
-            headers={"x-api-key": self.cfg.composio_key, "Accept": "application/json"},
-            timeout=90,
+        self._open()
+        _st, _h, body = http.request(
+            "POST", COMPOSIO_MCP,
+            headers=self._mcp_headers(),
+            data=json.dumps({
+                "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                "params": {
+                    "name": MCP_EXECUTOR,
+                    "arguments": {"tools": [{"tool_slug": slug, "arguments": args}]},
+                },
+            }).encode(),
+            timeout=120, retries=1,
         )
-        if not isinstance(out, dict):
-            return {}
-        if out.get("successful") is False:
-            raise http.HttpError(0, f"Composio refused {slug}: {str(out.get('error'))[:160]}")
-        # Composio wraps the answer one layer deeper than Foreplay does.
-        inner = out.get("data")
-        return inner if isinstance(inner, dict) else out
+        answer = self._sse(body or b"")
+        if answer.get("error"):
+            raise http.HttpError(0, f"Composio refused {slug}: {json.dumps(answer['error'])[:160]}")
+        # result.content[0].text is a JSON string wrapping the batch result,
+        # and the tool's own answer sits three layers inside that.
+        text = ""
+        for c in ((answer.get("result") or {}).get("content") or []):
+            if isinstance(c, dict) and c.get("text"):
+                text = str(c["text"])
+                break
+        if not text:
+            raise http.HttpError(0, f"Composio returned nothing for {slug}")
+        try:
+            outer = json.loads(text)
+        except ValueError:
+            raise http.HttpError(0, f"Composio returned unreadable JSON for {slug}")
+        results = ((outer.get("data") or {}).get("results") or [])
+        if not results:
+            raise http.HttpError(0, f"Composio ran nothing for {slug}: {json.dumps(outer)[:160]}")
+        response = results[0].get("response") or {}
+        if response.get("successful") is False:
+            raise http.HttpError(0, f"{slug} failed: {str(response.get('error'))[:160]}")
+        inner = response.get("data")
+        return inner if isinstance(inner, dict) else {}
 
     def usage(self) -> dict[str, Any]:
         """Credits left. Reading this is free and tells us whether to start."""
