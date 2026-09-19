@@ -41,6 +41,7 @@ import type {
   MoneyPayload,
   Note,
 } from "../../../convex/ceo/payloads";
+import { ImportPaymentsCard } from "./moneyImport";
 import {
   DuplicatesCard,
   LogPaymentCard,
@@ -235,24 +236,25 @@ export function MoneyTab({ sections, now, day }: CeoTabProps) {
         recentDeals={payload?.deals.recent ?? null}
         order={2}
       />
+      <ImportPaymentsCard order={3} />
       <ManualEntriesCard
         section={section}
         payload={payload}
         today={today}
         now={now}
         notes={notes.manual}
-        order={3}
+        order={4}
       />
       {payload === null ? null : (
         <>
-          <DuplicatesCard section={section} notes={notes.dupes} order={4} />
+          <DuplicatesCard section={section} notes={notes.dupes} order={5} />
 
           <SectionCard
             kicker="This month, with the last 30 and 90 days beside it"
             title="Deals, refunds and failed checkouts"
             section={section}
             notes={notes.tiles}
-            order={5}
+            order={6}
           >
             {p => <MoneyTiles p={p} />}
           </SectionCard>
@@ -263,7 +265,7 @@ export function MoneyTab({ sections, now, day }: CeoTabProps) {
             title="Targets"
             section={section}
             notes={notes.targets}
-            order={6}
+            order={7}
           >
             {p => <TargetsBody p={p} />}
           </SectionCard>
@@ -273,7 +275,7 @@ export function MoneyTab({ sections, now, day }: CeoTabProps) {
             title="MRR on the books"
             section={section}
             notes={notes.mrr}
-            order={7}
+            order={8}
           >
             {p => <MrrBody p={p} />}
           </SectionCard>
@@ -283,7 +285,7 @@ export function MoneyTab({ sections, now, day }: CeoTabProps) {
             title="Deals and collection"
             section={section}
             notes={notes.collection}
-            order={8}
+            order={9}
           >
             {p => <CollectionBody p={p} />}
           </SectionCard>
@@ -294,7 +296,7 @@ export function MoneyTab({ sections, now, day }: CeoTabProps) {
               title="Cash and contracted by month"
               section={section}
               notes={notes.monthly}
-              order={9}
+              order={10}
               className={showLegacy ? "xl:col-span-8" : "xl:col-span-12"}
             >
               {p => <MonthlyBody p={p} />}
@@ -305,7 +307,7 @@ export function MoneyTab({ sections, now, day }: CeoTabProps) {
                 title="Expenses"
                 section={section}
                 notes={notes.expenses}
-                order={10}
+                order={11}
                 className="xl:col-span-4"
               >
                 {p => <LegacyExpensesBody p={p} />}
@@ -318,7 +320,7 @@ export function MoneyTab({ sections, now, day }: CeoTabProps) {
             title="Recent deals"
             section={section}
             notes={notes.deals}
-            order={11}
+            order={12}
           >
             {p => <DealsTable deals={p.deals.recent} />}
           </SectionCard>
