@@ -2,6 +2,13 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalAction } from "./_generated/server";
+import {
+  accessHint,
+  driveId,
+  type Media,
+  type Progress,
+  percent,
+} from "./driveCreative";
 import { callTool, googleAccessToken, unwrap } from "./tools";
 
 /**
@@ -45,15 +52,6 @@ type Variant = {
   message: string;
   description?: string;
   angle?: string;
-};
-type Media = {
-  name: string;
-  link: string;
-  kind?: string;
-  imageHash?: string;
-  videoId?: string;
-  thumbUrl?: string;
-  error?: string;
 };
 type Step = { label: string; state: string; detail?: string };
 // biome-ignore lint/suspicious/noExplicitAny: request and context rows
@@ -207,15 +205,22 @@ proof, question, direct offer. Write in ${language}. Name the angle in English.
 
 // --- Drive → Meta ------------------------------------------------------------
 
-const DRIVE_ID = /(?:\/d\/|id=|\/file\/d\/|folders\/)([A-Za-z0-9_-]{16,})/;
-
-/** The file id inside any shape of Drive link, or a bare id. */
-function driveId(link: string): string | undefined {
-  const m = DRIVE_ID.exec(link);
-  if (m) return m[1];
-  const bare = link.trim();
-  return /^[A-Za-z0-9_-]{16,}$/.test(bare) ? bare : undefined;
+/** The identity Drive files must be shared with; an email, never a secret. */
+function serviceAccountEmail(): string {
+  try {
+    return String(
+      JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON ?? "{}")
+        .client_email ?? "",
+    );
+  } catch {
+    return "";
+  }
 }
+
+/** How long one worker run may spend before it hands the rest to the next run. */
+const RUN_BUDGET_MS = 7 * 60_000;
+/** Persist upload progress at least this often, so a killed run loses little. */
+const PERSIST_EVERY_BYTES = 6 * 1024 * 1024;
 
 type DriveFile = { id: string; name: string; mimeType: string; size?: string };
 
@@ -226,9 +231,13 @@ async function driveMeta(id: string, token: string): Promise<DriveFile> {
   );
   const json = await res.json();
   if (!res.ok) {
+    // Google answers 404 for a file that exists but is not shared with the
+    // caller. "File not found" would send her checking the link; the fix is
+    // the sharing, so say that.
+    if (res.status === 404 || res.status === 403)
+      throw new Error(accessHint(res.status, serviceAccountEmail()));
     throw new Error(
-      json?.error?.message ??
-        "Drive would not hand the file over — is it shared with the service account?",
+      json?.error?.message ?? accessHint(res.status, serviceAccountEmail()),
     );
   }
   return json as DriveFile;
@@ -256,6 +265,131 @@ async function driveDownload(id: string, token: string): Promise<ArrayBuffer> {
   );
   if (!res.ok) throw new Error(`Drive download failed: HTTP ${res.status}`);
   return await res.arrayBuffer();
+}
+
+/** One byte range of a Drive file; Drive honours Range on alt=media. */
+async function driveRange(
+  id: string,
+  token: string,
+  start: number,
+  endExclusive: number,
+): Promise<ArrayBuffer> {
+  const res = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${id}?alt=media&supportsAllDrives=true`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Range: `bytes=${start}-${endExclusive - 1}`,
+      },
+    },
+  );
+  if (!res.ok && res.status !== 206)
+    throw new Error(`Drive download failed: HTTP ${res.status}`);
+  const buf = await res.arrayBuffer();
+  if (buf.byteLength !== endExclusive - start)
+    throw new Error(
+      `Drive sent ${buf.byteLength} bytes for a ${endExclusive - start} byte chunk`,
+    );
+  return buf;
+}
+
+// biome-ignore lint/suspicious/noExplicitAny: Meta payload
+async function metaForm(
+  path: string,
+  fields: Record<string, any>,
+): Promise<any> {
+  const token = process.env.META_SYSTEM_TOKEN;
+  if (!token) throw new Error("META_SYSTEM_TOKEN not set");
+  const form = new FormData();
+  form.append("access_token", token);
+  for (const [k, val] of Object.entries(fields)) {
+    if (val === undefined || val === null) continue;
+    if (val instanceof Blob) form.append(k, val, fields.__name ?? "chunk");
+    else if (k !== "__name") form.append(k, String(val));
+  }
+  const res = await fetch(`https://graph.facebook.com/v21.0/${path}`, {
+    method: "POST",
+    body: form,
+  });
+  const body = await res.json();
+  if (body.error)
+    throw new Error(String(body.error.message ?? body.error).slice(0, 300));
+  return body;
+}
+
+/**
+ * A video into the ad account in Meta's own resumable chunks, each byte range
+ * read from Drive as it is needed. Nothing bigger than a chunk is ever in
+ * memory, and the progress lives on the request row: a run that hits its
+ * time budget hands the upload to the next run at the same byte instead of
+ * starting over. This is what a 67 MB file needed and did not have on
+ * 2026-09-19, when one run pushed the whole file at once, was killed at ten
+ * minutes, and the retry landed fifty minutes later.
+ */
+async function metaChunkedVideo(
+  act: string,
+  file: DriveFile,
+  token: string,
+  prior: Progress | undefined,
+  deadline: number,
+  onProgress: (p: Progress) => Promise<void>,
+): Promise<{ done: boolean; progress: Progress }> {
+  const size = Number(file.size ?? 0);
+  if (!(size > 0)) throw new Error("Drive did not say how big the video is");
+  let p: Progress =
+    prior ??
+    (await (async () => {
+      const started = await metaForm(`${act}/advideos`, {
+        upload_phase: "start",
+        file_size: size,
+      });
+      return {
+        sessionId: String(started.upload_session_id),
+        videoId: String(started.video_id),
+        start: Number(started.start_offset),
+        end: Number(started.end_offset),
+        size,
+      };
+    })());
+  let sinceSave = 0;
+  while (p.start < size) {
+    if (Date.now() > deadline) {
+      await onProgress(p);
+      return { done: false, progress: p };
+    }
+    const end = Math.min(
+      p.end > p.start ? p.end : p.start + 4 * 1024 * 1024,
+      size,
+    );
+    const bytes = await driveRange(file.id, token, p.start, end);
+    const moved = await metaForm(`${act}/advideos`, {
+      upload_phase: "transfer",
+      upload_session_id: p.sessionId,
+      start_offset: p.start,
+      video_file_chunk: new Blob([bytes], {
+        type: file.mimeType || "video/mp4",
+      }),
+      __name: file.name,
+    });
+    p = {
+      ...p,
+      start: Number(moved.start_offset ?? end),
+      end: Number(moved.end_offset ?? size),
+    };
+    sinceSave += bytes.byteLength;
+    if (sinceSave >= PERSIST_EVERY_BYTES) {
+      await onProgress(p);
+      sinceSave = 0;
+    }
+  }
+  const finished = await metaForm(`${act}/advideos`, {
+    upload_phase: "finish",
+    upload_session_id: p.sessionId,
+    title: file.name.replace(/\.[a-z0-9]+$/i, ""),
+  });
+  if (finished?.success === false)
+    throw new Error("Meta did not accept the finished upload");
+  return { done: true, progress: p };
 }
 
 /**
@@ -291,19 +425,45 @@ async function metaUpload(
   return { hash: first.hash, url: first.url };
 }
 
+type LoadOpts = {
+  /** When this run must stop and hand the rest to the next one. */
+  deadline: number;
+  /** Write the media list to the row mid-flight, so the panel shows percent and a killed run resumes. */
+  persist: (media: Media[]) => Promise<unknown>;
+};
+
 /** Pull each Drive link into the client's Meta ad account, ready to use. */
 async function loadCreatives(
   req: Req,
   ctx: Ctx,
-): Promise<{ media: Media[]; note: string }> {
+  opts: LoadOpts = {
+    deadline: Date.now() + RUN_BUDGET_MS,
+    persist: async () => undefined,
+  },
+): Promise<{ media: Media[]; note: string; pending?: boolean }> {
   const c = ctx.campaign ?? {};
   const account: string | undefined =
     c.metaAccountId || ctx.onboarding?.accountId || ctx.launchWatch?.accountId;
   const links: string[] = req.driveLinks ?? [];
+  // What an earlier run already did for this row: finished files are kept,
+  // a half-uploaded video carries on from its byte.
+  const prior: Media[] = Array.isArray(req.media) ? req.media : [];
   const media: Media[] = [];
   let token: string | undefined;
+  let yielded = false;
 
   for (const link of links) {
+    const already = prior.filter(
+      m => m.link === link && (m.videoId || m.imageHash) && !m.error,
+    );
+    if (already.length) {
+      media.push(...already);
+      continue;
+    }
+    if (yielded) {
+      // Out of time this run; the row goes back to the queue with what is done.
+      continue;
+    }
     const fid = driveId(link);
     if (!fid) {
       media.push({
@@ -337,19 +497,54 @@ async function loadCreatives(
         continue;
       }
       for (const file of files) {
+        const before = prior.find(
+          m => m.link === link && m.name === file.name.slice(0, 120),
+        );
         const entry: Media = { name: file.name.slice(0, 120), link };
+        if (before?.videoId || before?.imageHash) {
+          media.push(before);
+          continue;
+        }
+        if (yielded) continue;
         try {
           const isVideo =
             file.mimeType.startsWith("video") ||
             /\.(mp4|mov|m4v)$/i.test(file.name);
           entry.kind = isVideo ? "video" : "image";
-          const bytes = await driveDownload(file.id, token);
-          const up = await metaUpload(account, file, bytes, isVideo);
-          if (isVideo) entry.videoId = up.id;
-          else {
-            entry.imageHash = up.hash;
-            entry.thumbUrl = up.url;
+          if (isVideo) {
+            const act = account.startsWith("act_") ? account : `act_${account}`;
+            const idx = media.push(entry) - 1;
+            const out = await metaChunkedVideo(
+              act,
+              file,
+              token,
+              before?.progress,
+              opts.deadline,
+              async p => {
+                media[idx] = { ...entry, progress: p, percent: percent(p) };
+                await opts.persist([...media]);
+              },
+            );
+            if (!out.done) {
+              media[idx] = {
+                ...entry,
+                progress: out.progress,
+                percent: percent(out.progress),
+              };
+              yielded = true;
+              continue;
+            }
+            media[idx] = {
+              ...entry,
+              videoId: out.progress.videoId,
+              percent: 100,
+            };
+            continue;
           }
+          const bytes = await driveDownload(file.id, token);
+          const up = await metaUpload(account, file, bytes, false);
+          entry.imageHash = up.hash;
+          entry.thumbUrl = up.url;
         } catch (e) {
           // one bad file must not kill the batch
           entry.error = String(e instanceof Error ? e.message : e).slice(
@@ -357,7 +552,7 @@ async function loadCreatives(
             300,
           );
         }
-        media.push(entry);
+        if (!media.includes(entry)) media.push(entry);
       }
     } catch (e) {
       media.push({
@@ -368,6 +563,16 @@ async function loadCreatives(
     }
   }
 
+  if (yielded) {
+    const moving = media.find(m => m.progress);
+    return {
+      media,
+      pending: true,
+      note: moving
+        ? `${moving.name}: ${moving.percent ?? 0}% loaded into the ad account; carrying on.`
+        : "Carrying on in the next run.",
+    };
+  }
   const ok = media.filter(m => !m.error);
   const bad = media.filter(m => m.error);
   let note = `${ok.length} of ${media.length} creatives are in the ad account and ready to use.`;
@@ -481,6 +686,7 @@ export const run = internalAction({
   args: {},
   returns: v.object({ done: v.number(), failed: v.number() }),
   handler: async ctx => {
+    const deadline = Date.now() + RUN_BUDGET_MS;
     // biome-ignore lint/suspicious/noExplicitAny: queue rows
     const pending: any[] = await ctx.runQuery(internal.assist.pending, {});
     enqueueAi = (refId, prompt) =>
@@ -502,7 +708,14 @@ export const run = internalAction({
           req.kind === "copy"
             ? await writeCopy(req, context ?? {})
             : req.kind === "creative"
-              ? await loadCreatives(req, context ?? {})
+              ? await loadCreatives(req, context ?? {}, {
+                  deadline,
+                  persist: media =>
+                    ctx.runMutation(internal.assist.progress, {
+                      id: req.id,
+                      media,
+                    }),
+                })
               : req.kind === "launch"
                 ? await setUpLaunch(req, context ?? {})
                 : (() => {
@@ -510,6 +723,16 @@ export const run = internalAction({
                   })();
         // biome-ignore lint/suspicious/noExplicitAny: handler output
         const o: any = out;
+        if (req.kind === "creative" && o.pending === true) {
+          // Time is up mid-upload: back to the queue with the byte we reached,
+          // and a fresh run picks it up at once.
+          await ctx.runMutation(internal.assist.requeue, {
+            id: req.id,
+            media: o.media,
+          });
+          await ctx.scheduler.runAfter(0, internal.assistWorker.run, {});
+          break;
+        }
         // An empty variants list while Ask AI is still writing must not be
         // stored as "no copy": leave the field alone until the answer lands.
         const pendingCopy = o.pending === true;

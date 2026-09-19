@@ -1,7 +1,8 @@
 import { useMutation, useQuery } from "convex/react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
+import { waitingLabel } from "../../convex/driveCreative";
 
 /**
  * Hand a job over and watch it come back.
@@ -35,6 +36,7 @@ export type AssistRow = {
     videoId?: string;
     thumbUrl?: string;
     error?: string;
+    percent?: number;
   }[];
   steps?: { label: string; state: string; detail?: string }[];
 } | null;
@@ -62,7 +64,34 @@ export function useAssist(kind: AssistKind) {
   const waiting =
     !!id && (!row || row.status === "queued" || row.status === "working");
 
-  return { ask, row, waiting, reset: () => setId(null) };
+  // A clock for the wait, so "working" is never a spinner with no age.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!waiting) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [waiting]);
+
+  /** Follow a request somebody else queued (the add-creative action does, for a Drive link). */
+  const watch = useCallback(
+    (requestId: Id<"assistRequests">) => setId(requestId),
+    [],
+  );
+
+  return { ask, watch, row, waiting, now, reset: () => setId(null) };
+}
+
+/** The wait on a Drive fetch, with its age and the upload percent when there is one. */
+export function creativeWaitLabel(
+  row: AssistRow,
+  waiting: boolean,
+  now: number,
+): string | null {
+  if (!waiting)
+    return row?.status === "failed" ? (row.error ?? "That one failed.") : null;
+  if (!row || row.status === "queued")
+    return "Queued. Picked up within a few seconds.";
+  return waitingLabel(row.media ?? undefined, row.requestedAt, now);
 }
 
 /** What to show her while she waits — plain words, never a spinner alone. */

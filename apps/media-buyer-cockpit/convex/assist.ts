@@ -36,6 +36,16 @@ const MEDIA = v.object({
   videoId: v.optional(v.string()),
   thumbUrl: v.optional(v.string()),
   error: v.optional(v.string()),
+  progress: v.optional(
+    v.object({
+      sessionId: v.string(),
+      videoId: v.string(),
+      start: v.number(),
+      end: v.number(),
+      size: v.number(),
+    }),
+  ),
+  percent: v.optional(v.number()),
 });
 
 const STEP = v.object({
@@ -209,6 +219,54 @@ export const fulfill = internalMutation({
   handler: async (ctx, { id, ...rest }) => {
     await ctx.db.patch(id, { ...rest, completedAt: Date.now() });
     return null;
+  },
+});
+
+/** The worker moved another chunk: keep the row's media current so the panel shows it. */
+export const progress = internalMutation({
+  args: { id: v.id("assistRequests"), media: v.array(MEDIA) },
+  returns: v.null(),
+  handler: async (ctx, { id, media }) => {
+    await ctx.db.patch(id, { media });
+    return null;
+  },
+});
+
+/**
+ * The worker ran out of its time budget mid-upload: back to the queue with
+ * the progress kept, and the next run carries on from the same byte. This is
+ * what stops a big video being started over every ten minutes.
+ */
+export const requeue = internalMutation({
+  args: { id: v.id("assistRequests"), media: v.array(MEDIA) },
+  returns: v.null(),
+  handler: async (ctx, { id, media }) => {
+    await ctx.db.patch(id, { media, status: "queued", startedAt: undefined });
+    return null;
+  },
+});
+
+/** Files the worker already loaded for this campaign, newest first, so a repeated link is reused. */
+export const readyMediaFor = internalQuery({
+  args: { campaignName: v.string() },
+  returns: v.any(),
+  handler: async (ctx, { campaignName }) => {
+    const since = Date.now() - 30 * 86_400_000;
+    const rows = await ctx.db
+      .query("assistRequests")
+      .withIndex("by_status", (i: any) => i.eq("status", "ready"))
+      .collect();
+    return rows
+      .filter(
+        r =>
+          r.kind === "creative" &&
+          r.campaignName === campaignName &&
+          r.requestedAt >= since &&
+          (r.media ?? []).length > 0,
+      )
+      .sort((a, b) => b.requestedAt - a.requestedAt)
+      .slice(0, 20)
+      .map(r => ({ media: r.media }));
   },
 });
 

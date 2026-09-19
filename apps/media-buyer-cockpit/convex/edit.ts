@@ -1,6 +1,8 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import { AZIZ_SLACK_ID } from "./constants";
+import { isDriveLink, reusable } from "./driveCreative";
 import { authenticatedAction } from "./functions";
 import { refusal } from "./gate";
 import { callTool, graph, graphPost, unwrap } from "./tools";
@@ -369,9 +371,12 @@ export const suggestCopy = authenticatedAction({
  * ad account and dropped into a copy of an existing ad's creative spec —
  * everything except the video/image and the copy is carried over untouched.
  *
- * Meta needs a directly downloadable URL. A Google Drive "share" link is a HTML
- * page, not a file, so it is rejected up front with an explanation rather than
- * failing deep inside the Graph call with something unreadable.
+ * Meta needs a directly downloadable URL, and a Google Drive "share" link is
+ * an HTML page, not a file. So a Drive link pasted here is never refused: if
+ * the worker already loaded that file into the account it is used as is,
+ * otherwise the fetch is queued for her and the panel watches it. On
+ * 2026-09-19 this box told Aziz to "paste it in the Drive box above" while
+ * that box was mid-upload; that dead end is gone.
  */
 export const addCreativeToCampaign = authenticatedAction({
   args: {
@@ -393,24 +398,57 @@ export const addCreativeToCampaign = authenticatedAction({
     ok: v.boolean(),
     adId: v.optional(v.string()),
     error: v.optional(v.string()),
+    /** Set when a Drive link was queued for the worker instead; the panel watches it. */
+    assistId: v.optional(v.id("assistRequests")),
   }),
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    ok: boolean;
+    adId?: string;
+    error?: string;
+    assistId?: Id<"assistRequests">;
+  }> => {
     const no = await refused(ctx, args.campaignName);
     if (no) return { ok: false, error: no };
     if (!args.videoUrl && !args.imageUrl && !args.videoId && !args.imageHash) {
       return { ok: false, error: "Give me a video or an image to use." };
     }
     const url = args.videoUrl ?? args.imageUrl ?? "";
-    if (/drive\.google\.com|docs\.google\.com/.test(url)) {
+    if (isDriveLink(url)) {
       // Meta downloads the Drive preview page, not the file. She should never
-      // have to know that: paste the Drive link in the creative box instead and
-      // Viktor fetches it and loads it into the account. [aziz, 2026-09-07]
-      return {
-        ok: false,
-        error:
-          "Meta can't read a Drive share link directly. Paste it in the Drive box above instead — " +
-          "I'll fetch the file and load it into the ad account, then this will work.",
-      };
+      // have to know that: the file the worker already loaded is used, or the
+      // fetch is queued right here and the panel follows it.
+      // biome-ignore lint/suspicious/noExplicitAny: rows of media
+      const rows: any[] = await ctx.runQuery(internal.assist.readyMediaFor, {
+        campaignName: args.campaignName,
+      });
+      const hit = reusable(rows, url);
+      if (hit?.videoId || hit?.imageHash) {
+        args = {
+          ...args,
+          videoId: hit.videoId,
+          imageHash: hit.imageHash,
+          videoUrl: undefined,
+          imageUrl: undefined,
+        };
+      } else {
+        const assistId: Id<"assistRequests"> = await ctx.runMutation(
+          internal.assist.enqueueInternal,
+          {
+            kind: "creative",
+            campaignName: args.campaignName,
+            driveLinks: [url],
+          },
+        );
+        return {
+          ok: false,
+          assistId,
+          error:
+            "That's a Drive link, so I'm fetching the file into the ad account now. It shows up above with a Use this button in a few minutes; a big video takes longer. Nothing else to paste.",
+        };
+      }
     }
 
     try {
