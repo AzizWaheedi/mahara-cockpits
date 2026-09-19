@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 os.environ.setdefault("DESK_HOME", "/tmp/desk-unit")
-from desk import checks, clients, media, prepare, queue, speech
+from desk import checks, clients, media, prepare, queue, sheets, speech
 from desk.clickup import editors_of, fields_of, is_open, job_row
 from desk.config import Config
 from desk.drive import parse_id
@@ -764,3 +764,71 @@ class RetireTests(unittest.TestCase):
 
     def test_an_empty_desk_is_not_an_error(self):
         self.assertEqual(FakeSupabase().retire_missing(["a"], NOW)["retired"], 0)
+
+
+class EodTests(unittest.TestCase):
+    """The cockpit's end of day has to be indistinguishable from the
+    Typeform's: same tab, same columns, in the tab's own order."""
+
+    # The live header on the "Video Editors" tab, read 2026-09-19.
+    HEADER = [
+        "Submitted At", "Name", "Response ID", "Date For", "Videos Completed",
+        "In Progress / Pending", "Revisions Handled", "Blockers",
+        "Recommendations", "Tomorrow's Plan", "Day Summary",
+    ]
+    ANSWERS = {
+        "_submitted_at": "2026-09-19 15:00:00",
+        "name": "Karim",
+        "_response_id": "cockpit-2026-09-19",
+        "_date_for": "19-09-2026",
+        "completed": "2 for Ardon",
+        "in_progress": "Qatar Technology, 60%",
+        "revisions": "1 for Castello",
+        "blockers": "Waiting on the logo",
+        "recommendations": "Shoot b-roll wider",
+        "tomorrow": "Finish Qatar",
+        "summary": "Good day",
+    }
+
+    def test_the_row_follows_the_tab_not_our_own_order(self):
+        row = sheets.eod_row(self.HEADER, self.ANSWERS)
+        self.assertEqual(len(row), len(self.HEADER))
+        self.assertEqual(row[1], "Karim")
+        self.assertEqual(row[3], "19-09-2026")
+        self.assertEqual(row[4], "2 for Ardon")
+        self.assertEqual(row[10], "Good day")
+
+    def test_a_reordered_tab_still_gets_the_right_values(self):
+        swapped = [self.HEADER[i] for i in (0, 1, 2, 3, 10, 9, 8, 7, 6, 5, 4)]
+        row = sheets.eod_row(swapped, self.ANSWERS)
+        self.assertEqual(row[4], "Good day", "Day Summary moved, and its value moved with it")
+        self.assertEqual(row[10], "2 for Ardon")
+
+    def test_a_column_we_do_not_know_is_left_empty_not_guessed(self):
+        row = sheets.eod_row([*self.HEADER, "Something New"], self.ANSWERS)
+        self.assertEqual(row[-1], "", "an unknown column is never filled with a neighbour's value")
+
+    def test_a_missing_answer_is_an_empty_cell(self):
+        row = sheets.eod_row(self.HEADER, {"name": "Moaz"})
+        self.assertEqual(row[1], "Moaz")
+        self.assertEqual(row[4], "")
+
+    def test_a_tab_with_no_header_is_refused_rather_than_written_blind(self):
+        with self.assertRaises(ValueError):
+            sheets.file_eod("t", self.ANSWERS, lambda m: None, header_fn=lambda *a, **k: [])
+
+    def test_filing_appends_exactly_one_row(self):
+        seen = {}
+
+        def fake_append(token, sheet, tab, values, timeout=60):
+            seen["tab"] = tab
+            seen["values"] = values
+            return {}
+
+        out = sheets.file_eod(
+            "t", self.ANSWERS, lambda m: None,
+            header_fn=lambda *a, **k: self.HEADER, append_fn=fake_append,
+        )
+        self.assertEqual(seen["tab"], "Video Editors")
+        self.assertEqual(len(seen["values"]), 11)
+        self.assertEqual(out["columns"], 11)

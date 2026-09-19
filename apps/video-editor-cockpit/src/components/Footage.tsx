@@ -36,10 +36,17 @@ function search(assets: Asset[], term: string): Found[] {
 
 export default function Footage({ assets }: { assets: Asset[] }) {
   const [openId, setOpenId] = useState<string | null>(assets[0]?.id ?? null);
+  // The Drive frame is the expensive thing on this page: it is a whole
+  // embedded player, and mounting one for every job opened costs more than
+  // everything else here put together. So the still stands in for it until
+  // somebody actually wants to watch, and picking another file puts the
+  // still back.
+  const [playing, setPlaying] = useState<string | null>(null);
   const [term, setTerm] = useState("");
   const stills = useStills(assets.map((a) => a.still_path));
   const hits = useMemo(() => search(assets, term), [assets, term]);
   const open = assets.find((a) => a.id === openId) ?? null;
+  const openStill = open?.still_path ? stills[open.still_path] : undefined;
   const anyWords = assets.some((a) => (a.words ?? []).length > 0);
 
   if (!assets.length) {
@@ -67,7 +74,10 @@ export default function Footage({ assets }: { assets: Asset[] }) {
                     <li key={`${h.asset.id}-${h.at}`}>
                       <button
                         type="button"
-                        onClick={() => setOpenId(h.asset.id)}
+                        onClick={() => {
+                          setOpenId(h.asset.id);
+                          setPlaying(null);
+                        }}
                         className="raised flex w-full gap-3 rounded-md px-3 py-2 text-left text-sm"
                       >
                         <span className="font-mono text-xs" style={{ color: "var(--primary)" }}>
@@ -95,7 +105,10 @@ export default function Footage({ assets }: { assets: Asset[] }) {
             <li key={a.id}>
               <button
                 type="button"
-                onClick={() => setOpenId(a.id)}
+                onClick={() => {
+                  setOpenId(a.id);
+                  setPlaying(null);
+                }}
                 className={`w-full overflow-hidden rounded-lg border text-left ${
                   active ? "border-[color:var(--primary)]" : "hairline"
                 }`}
@@ -150,8 +163,8 @@ export default function Footage({ assets }: { assets: Asset[] }) {
             </p>
           ) : (
             <div className="grid gap-4 p-4 lg:grid-cols-2">
-              <div className="raised aspect-video overflow-hidden rounded-md">
-                {drivePreview(open.drive_id) ? (
+              <div className="raised relative aspect-video overflow-hidden rounded-md">
+                {playing === open.id && drivePreview(open.drive_id) ? (
                   <iframe
                     key={open.id}
                     src={drivePreview(open.drive_id) ?? ""}
@@ -159,7 +172,25 @@ export default function Footage({ assets }: { assets: Asset[] }) {
                     allow="autoplay"
                     className="size-full border-0"
                   />
-                ) : null}
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setPlaying(open.id)}
+                    disabled={!open.drive_id}
+                    className="group absolute inset-0 grid place-items-center"
+                  >
+                    {openStill ? (
+                      <img
+                        src={openStill}
+                        alt=""
+                        className="absolute inset-0 size-full object-cover"
+                      />
+                    ) : null}
+                    <span className="relative flex items-center gap-2 rounded-full bg-black/70 px-3 py-1.5 text-xs font-medium text-white">
+                      {open.drive_id ? "Play in Drive" : "No preview"}
+                    </span>
+                  </button>
+                )}
               </div>
 
               <div className="min-w-0 space-y-3">

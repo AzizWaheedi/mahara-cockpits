@@ -12,6 +12,7 @@ so a bad link stops after four tries instead of retrying every minute forever.
 """
 from __future__ import annotations
 
+import json
 from typing import Any, Callable, Optional
 
 from . import checks as checks_mod
@@ -21,7 +22,7 @@ from .config import Config
 from .drive import Drive
 from .supabase import Supabase, now_iso
 
-KINDS = ("deliver", "check", "comment", "rescan", "ask", "status")
+KINDS = ("deliver", "check", "comment", "rescan", "ask", "status", "eod")
 
 # Where an editor may move a card from the cockpit. Aziz, 2026-09-19: pressing
 # "started" should move it to In progress, and a round of comments should move
@@ -187,6 +188,37 @@ def run_status(cfg: Config, log: Callable[[str], None], sb: Supabase, cu: ClickU
     return {"status": want, "was": was}
 
 
+def run_eod(cfg: Config, log: Callable[[str], None], req: dict[str, Any]) -> dict[str, Any]:
+    """File an end of day onto the Video Editors tab of the EOD sheet.
+
+    The cockpit sends the answers; everything the sheet needs and the person
+    cannot type is filled here, so a filing from the cockpit sits next to a
+    filing from the Typeform and reads the same.
+    """
+    from . import sheets
+    from .drive import Drive
+
+    try:
+        answers = json.loads(str(req.get("input") or "{}"))
+    except ValueError:
+        raise ValueError("the end of day could not be read")
+    if not isinstance(answers, dict):
+        raise ValueError("the end of day could not be read")
+
+    day = str((req.get("params") or {}).get("day") or "")[:10]
+    if not day:
+        raise ValueError("no day on this filing")
+    y, m, d = (day.split("-") + ["", "", ""])[:3]
+    answers["_date_for"] = f"{d}-{m}-{y}"
+    answers["_submitted_at"] = now_iso().replace("T", " ").replace("Z", "")
+    # The Typeform's own rows carry its response id; a cockpit filing says so.
+    answers["_response_id"] = f"cockpit-{day}"
+    answers.setdefault("name", req.get("requested_by_name") or req.get("requested_by") or "")
+
+    token = Drive(cfg, log).token()
+    return sheets.file_eod(token, answers, log)
+
+
 def run_comment(cfg: Config, log: Callable[[str], None], cu: ClickUp, req: dict[str, Any]) -> dict[str, Any]:
     text = str(req.get("input") or "").strip()
     if not text:
@@ -233,6 +265,12 @@ def run_requests(cfg: Config, log: Callable[[str], None], sb: Supabase, *, limit
             continue
 
         try:
+            # An end of day belongs to a person and a date, not to a job.
+            if kind == "eod":
+                _done(sb, rid, run_eod(cfg, log, req))
+                out["done"] += 1
+                log(f"eod {task_id}: filed")
+                continue
             job = sb.job(task_id)
             if not job:
                 raise ValueError("that job is not on the desk")

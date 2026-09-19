@@ -143,7 +143,7 @@ export interface Note {
   at: string | null;
 }
 
-export type RequestKind = "deliver" | "check" | "comment" | "rescan" | "ask" | "status";
+export type RequestKind = "deliver" | "check" | "comment" | "rescan" | "ask" | "status" | "eod";
 
 /** What an editor can be short of. Mirrors ASK_FOR in the worker. */
 export type AskTopic =

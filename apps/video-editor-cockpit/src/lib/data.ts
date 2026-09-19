@@ -221,6 +221,21 @@ export async function saveIdea(
   return error ? error.message : null;
 }
 
+/** Has an end of day already been filed for this day, and did it land? */
+export function useEodToday(day: string): Loaded<WorkRequest[]> {
+  return useQuery<WorkRequest[]>(
+    () =>
+      supabase
+        .from("editor_requests")
+        .select("*")
+        .eq("kind", "eod")
+        .eq("task_id", `eod:${day}`)
+        .order("created_at", { ascending: false })
+        .limit(1),
+    [day],
+  );
+}
+
 export function useMe(email: string | null): Loaded<EditorPerson> {
   return useQuery<EditorPerson>(
     () =>
