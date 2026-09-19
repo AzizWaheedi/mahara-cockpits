@@ -174,6 +174,49 @@ comment on table public.cockpit_metric_days is
 create index if not exists cockpit_metric_days_metric_idx
   on public.cockpit_metric_days (metric, scope, day desc);
 
+
+-- ---------------------------------------------------------------------------
+-- 5. Who a Whop payer actually is
+-- ---------------------------------------------------------------------------
+-- $75,471 of collected Whop cash belongs to no deal and no client: two thirds
+-- of everything ever collected. It cannot be recovered by better string
+-- matching, because the payer is a person and the client is a company. The
+-- biggest single payer is "Abdullah Alhussaini", six payments worth $8,479,
+-- which is AMHECO; nothing in any system says so.
+--
+-- 50 payers account for all of it and 28 of them account for $67,947, so this
+-- is a short list of human decisions, made once. A mapping here attributes
+-- every past AND future payment from that payer, which is what turns lifetime
+-- value from a typed guess into a measurement.
+--
+-- The match is deliberately a person's judgement with a note attached, never
+-- an inferred one: crediting the wrong client with money is worse than leaving
+-- it unattributed, and the cockpit only ever suggests.
+
+create table if not exists public.cockpit_payer_clients (
+  id              bigint generated always as identity primary key,
+  /** The payer as Whop records them: billing_name, or the account email when blank. */
+  payer           text        not null check (length(btrim(payer)) > 0),
+  /** Lower-cased, punctuation stripped, so one payer cannot be mapped twice. */
+  payer_key       text        not null,
+  clickup_task_id text        not null check (length(btrim(clickup_task_id)) > 0),
+  client_name     text        not null,
+  /** Why this person is that client, in the mapper's own words. */
+  note            text,
+  mapped_by       text        not null,
+  mapped_at       timestamptz not null default now(),
+  unique (payer_key)
+);
+
+comment on table public.cockpit_payer_clients is
+  'Who a Whop payer really is. Always set by a person: the cockpit suggests a card when the names match, and never assigns one on its own.';
+
+create index if not exists cockpit_payer_clients_card_idx
+  on public.cockpit_payer_clients (clickup_task_id);
+
+alter table public.cockpit_payer_clients enable row level security;
+revoke all on public.cockpit_payer_clients from anon, authenticated;
+
 -- ---------------------------------------------------------------------------
 -- Access: service role only
 -- ---------------------------------------------------------------------------
