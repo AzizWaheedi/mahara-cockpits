@@ -1178,6 +1178,114 @@ export const money: Adapter = {
       });
     }
 
+    // --- Signed deals against the cash that can be tied to them ----------
+    // b2b_deal_cash() joins each closing-form deal to payments through
+    // whop_payments.deal_response_id and transfers.deal_response_id. The
+    // second is empty because no off-Whop payment has ever been logged, and
+    // the first is only as good as its matching rule, which is email alone.
+    let collection: MoneyPayload["collection"];
+    const collectionDaily: DailyPoint[] = [];
+    try {
+      const [byMonthRows, linkRows, unmatchedRows] = await Promise.all([
+        sql(
+          B2B,
+          `select to_char(d.submitted_at at time zone 'Asia/Kuwait', 'YYYY-MM') as month,
+                  count(*) as deals,
+                  coalesce(sum(d.contracted_revenue), 0) as contracted,
+                  coalesce(sum(d.whop_cash), 0) as linked,
+                  count(*) filter (where coalesce(d.whop_cash, 0) > 0) as with_cash
+           from public.b2b_deal_cash() d
+           group by 1 order by 1`,
+        ),
+        sql(
+          B2B,
+          `select count(*) filter (where deal_response_id is null) as unlinked_rows,
+                  coalesce(sum(net_amount) filter (where deal_response_id is null), 0) as unlinked_cash,
+                  coalesce(sum(net_amount) filter (where deal_response_id is null
+                    and paid_on < (select min((submitted_at at time zone 'Asia/Kuwait')::date)
+                                   from public.closed_deals)), 0) as before_form,
+                  (select to_char(min(submitted_at at time zone 'Asia/Kuwait'), 'YYYY-MM')
+                     from public.closed_deals) as form_started
+           from public.whop_payments where status = 'paid'`,
+        ),
+        sql(
+          B2B,
+          `select d.business_name, d.payment_structure,
+                  to_char(d.submitted_at at time zone 'Asia/Kuwait', 'YYYY-MM') as month,
+                  d.contracted_revenue
+           from public.b2b_deal_cash() d
+           where coalesce(d.whop_cash, 0) = 0 and coalesce(d.ledger_cash, 0) = 0
+             and coalesce(d.contracted_revenue, 0) > 0
+           order by d.contracted_revenue desc limit 12`,
+        ),
+      ]);
+
+      const byMonth = byMonthRows.map(r => ({
+        month: String(r.month),
+        deals: num(r.deals),
+        contracted: usd(num(r.contracted)),
+        linked: usd(num(r.linked)),
+      }));
+      const deals = byMonth.reduce((n, m) => n + m.deals, 0);
+      const contracted = usd(byMonth.reduce((n, m) => n + m.contracted, 0));
+      const linkedCash = usd(byMonth.reduce((n, m) => n + m.linked, 0));
+      const dealsWithCash = byMonthRows.reduce(
+        (n, r) => n + num(r.with_cash),
+        0,
+      );
+      const link = linkRows[0] ?? {};
+      const unlinkedCash = usd(num(link.unlinked_cash));
+      const beforeFormCash = usd(num(link.before_form));
+
+      collection = {
+        deals,
+        contracted,
+        linkedCash,
+        dealsWithCash,
+        unlinkedCash,
+        unlinkedRows: num(link.unlinked_rows),
+        beforeFormCash,
+        formStarted: link.form_started ? String(link.form_started) : null,
+        byMonth,
+        unmatched: unmatchedRows.map(r => ({
+          client: String(r.business_name ?? "(no name)"),
+          month: String(r.month),
+          contracted: usd(num(r.contracted_revenue)),
+          plan: r.payment_structure ? String(r.payment_structure) : null,
+        })),
+      };
+
+      notes.push({
+        level: "warn",
+        text: `Of ${usdWords(linkedCash + unlinkedCash)} collected on Whop, only ${usdWords(linkedCash)} can be tied to a signed deal. The other ${usdWords(unlinkedCash)} across ${collection.unlinkedRows} payments belongs to no deal, no client and no lifetime value. ${beforeFormCash > 0 ? `${usdWords(beforeFormCash)} of that arrived before the closing form existed in ${collection.formStarted ?? "its first month"} and can never be tied. ` : ""}The rest fails because the only rule that ties a payment to a deal is an email match between the payer and the form, and clients often pay from a different address.`,
+      });
+      notes.push({
+        level: "warn",
+        text: `So a deal with no cash against it has not been shown to be unpaid, only to have no payment matched to it. ${deals - dealsWithCash} of ${deals} signed deals are in that position. Do not chase anyone on this figure alone: check Whop first.`,
+      });
+      notes.push({
+        level: "info",
+        text: `Contracted is what the closing form recorded, ${usdWords(contracted)} over ${deals} deals. April 2026's deals carry no contract value because the form did not ask for one yet, so that month reads as nothing contracted while still collecting cash.`,
+      });
+
+      const point = (metric: string, value: number): DailyPoint => ({
+        date: today,
+        metric,
+        scope: "company",
+        value,
+      });
+      collectionDaily.push(
+        point("money.collection.linkedCash", linkedCash),
+        point("money.collection.unlinkedCash", unlinkedCash),
+        point("money.collection.dealsNoCash", deals - dealsWithCash),
+      );
+    } catch (e) {
+      notes.push({
+        level: "warn",
+        text: `Deal collection could not be read this run (${String(e).slice(0, 160)}).`,
+      });
+    }
+
     const byMonth = manualByMonth;
     const payload = {
       month,
@@ -1214,6 +1322,7 @@ export const money: Adapter = {
       // Left off when the cards could not be read, so the screen says "not
       // read" rather than showing a book of zero.
       ...(mrr ? { mrr } : {}),
+      ...(collection ? { collection } : {}),
       notes,
     } satisfies MoneyPayload;
 
@@ -1233,6 +1342,7 @@ export const money: Adapter = {
         value: failedAmount,
       },
       ...mrrDaily,
+      ...collectionDaily,
     ];
 
     return { payload, daily, sources };
