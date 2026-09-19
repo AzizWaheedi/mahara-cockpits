@@ -30,9 +30,113 @@ export function stateOf(status: string): "paying" | "paused" | "lost" {
   return "paying";
 }
 
+export type RosterRow = {
+  key: string;
+  name: string;
+  status: string;
+  paying: boolean;
+};
+
+export type RosterEvent = {
+  key: string;
+  name: string;
+  from: string;
+  to: string;
+  kind: string;
+};
+
 /**
- * Write today's roster and diff it against the last one we stored. Runs on every sync,
- * so the transition is caught the same day it happens rather than remembered later.
+ * What changed between two rosters. Pure, so the rule can be checked without a
+ * database: see scripts/roster-diff.test.ts.
+ *
+ * A client that appears is new, one that vanishes from the board is removed
+ * (and counts as lost if it was paying), and one whose paying state changed is
+ * lost, regained or paused. A status edit that does not cross a paying
+ * boundary is not an event: moving between two onboarding stages is work in
+ * progress, not a churn signal.
+ */
+export function rosterDiff(
+  before: RosterRow[],
+  now: RosterRow[],
+): RosterEvent[] {
+  const was = new Map(before.map(r => [r.key, r]));
+  const out: RosterEvent[] = [];
+  for (const row of now) {
+    const prev = was.get(row.key);
+    if (!prev) {
+      out.push({
+        key: row.key,
+        name: row.name,
+        from: "-",
+        to: row.status,
+        kind: row.paying ? "new" : "new_inactive",
+      });
+      continue;
+    }
+    const a = stateOf(prev.status);
+    const b = stateOf(row.status);
+    if (a === b) continue;
+    out.push({
+      key: row.key,
+      name: row.name,
+      from: prev.status,
+      to: row.status,
+      kind: b === "paying" ? "regained" : b === "lost" ? "lost" : "paused",
+    });
+  }
+  for (const [key, prev] of was) {
+    if (now.some(r => r.key === key)) continue;
+    out.push({
+      key,
+      name: prev.name,
+      from: prev.status,
+      to: "removed from the board",
+      kind: prev.paying ? "lost" : "removed",
+    });
+  }
+  return out;
+}
+
+/** A derived event's identity, used to reconcile today's rows against the diff. */
+export const rosterEventId = (e: {
+  key: string;
+  from: string;
+  to: string;
+  kind: string;
+}) => `${e.key}|${e.from}|${e.to}|${e.kind}`;
+
+/**
+ * The event kinds this diff owns. The end-of-day form writes its own kinds
+ * (offboarded, extension, paused_by_csm) into the same table, and reconciling
+ * must never touch those: they are a person's report, not a derived row.
+ */
+const ROSTER_KINDS = new Set([
+  "new",
+  "new_inactive",
+  "regained",
+  "lost",
+  "paused",
+  "removed",
+]);
+
+/**
+ * Write today's roster and diff it against yesterday's. Runs on every sync, so a
+ * status change is caught the same day it happens rather than remembered later.
+ *
+ * The bug this replaces, found 2026-09-16 and fixed 2026-09-19. The diff used to
+ * read the newest stored roster, which after the first sync of the day is today's
+ * own row, and then returned early because that row's day matched today's. So a
+ * status a CSM changed at eleven in the morning was folded into today's roster
+ * without ever producing an event, and by the next morning the two days agreed
+ * again and the change was gone. The table held 0 rows and could not fill itself.
+ *
+ * Two changes make it work. The comparison is explicitly against the newest day
+ * BEFORE today, so it no longer compares today against itself. And because the
+ * diff now runs on every sync rather than only the first, it reconciles rather
+ * than inserts: today's derived events are made to match what yesterday-to-today
+ * currently implies. A status changed and changed back during the same day
+ * therefore leaves nothing behind, which is correct, and repeated syncs never
+ * pile up duplicates.
  */
 async function recordRoster(
   // biome-ignore lint/suspicious/noExplicitAny: convex mutation ctx
@@ -49,7 +153,13 @@ async function recordRoster(
     paying: payingState(String(c.stage ?? c.status ?? "")),
   }));
 
-  const previous = await ctx.db.query("rosterDays").order("desc").first();
+  // The newest day BEFORE today. Reading the newest row of all would return
+  // today's own roster once the first sync of the day has written it.
+  const previous = await ctx.db
+    .query("rosterDays")
+    .withIndex("by_day", (q: any) => q.lt("day", day))
+    .order("desc")
+    .first();
   const today = await ctx.db
     .query("rosterDays")
     .withIndex("by_day", (q: any) => q.eq("day", day))
@@ -65,53 +175,25 @@ async function recordRoster(
   if (today) await ctx.db.patch(today._id, doc);
   else await ctx.db.insert("rosterDays", doc);
 
-  // Diff against the most recent *earlier* day, so repeated same-day syncs stay quiet.
-  if (!previous || previous.day === day) return;
-  const before = new Map(
-    (previous.clients as typeof rows).map(r => [r.key, r]),
-  );
-  for (const now of rows) {
-    const was = before.get(now.key);
-    if (!was) {
-      await ctx.db.insert("churnEvents", {
-        day,
-        month,
-        key: now.key,
-        name: now.name,
-        from: "-",
-        to: now.status,
-        kind: now.paying ? "new" : "new_inactive",
-        at: Date.now(),
-      });
-      continue;
-    }
-    const a = stateOf(was.status);
-    const b = stateOf(now.status);
-    if (a === b) continue;
-    await ctx.db.insert("churnEvents", {
-      day,
-      month,
-      key: now.key,
-      name: now.name,
-      from: was.status,
-      to: now.status,
-      kind: b === "paying" ? "regained" : b === "lost" ? "lost" : "paused",
-      at: Date.now(),
-    });
-  }
-  for (const [key, was] of before) {
-    if (rows.some(r => r.key === key)) continue;
-    await ctx.db.insert("churnEvents", {
-      day,
-      month,
-      key,
-      name: was.name,
-      from: was.status,
-      to: "removed from the board",
-      kind: was.paying ? "lost" : "removed",
-      at: Date.now(),
-    });
-  }
+  if (!previous) return;
+  const want = rosterDiff(previous.clients as RosterRow[], rows);
+
+  // Reconcile today's derived events to that, leaving the CSM's own rows alone.
+  const existing = (
+    await ctx.db
+      .query("churnEvents")
+      .withIndex("by_month", (q: any) => q.eq("month", month))
+      .collect()
+  ).filter((e: any) => e.day === day && ROSTER_KINDS.has(e.kind));
+
+  const id = rosterEventId;
+  const wanted = new Set(want.map(id));
+  const held = new Set(existing.map((e: any) => id(e)));
+
+  for (const e of existing) if (!wanted.has(id(e))) await ctx.db.delete(e._id);
+  for (const e of want)
+    if (!held.has(id(e)))
+      await ctx.db.insert("churnEvents", { day, month, ...e, at: Date.now() });
 }
 
 export const store = internalMutation({
