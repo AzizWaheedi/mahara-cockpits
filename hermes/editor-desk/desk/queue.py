@@ -21,7 +21,21 @@ from .config import Config
 from .drive import Drive
 from .supabase import Supabase, now_iso
 
-KINDS = ("deliver", "check", "comment", "rescan")
+KINDS = ("deliver", "check", "comment", "rescan", "ask")
+
+# What an editor can be short of. The wording is what lands on the card, so
+# it reads as a person asking a colleague rather than a system raising a
+# ticket. "something else" carries only the note.
+ASK_FOR = {
+    "footage": "more footage",
+    "brief": "a brief: what this video is meant to do",
+    "script": "the script",
+    "brand": "brand assets: logo files, fonts, colours",
+    "music": "music, or permission to pick some",
+    "access": "access to the footage folder",
+    "approval": "a decision before this can go further",
+    "other": "something else",
+}
 MAX_ATTEMPTS = 4
 
 
@@ -94,6 +108,47 @@ def run_check(cfg: Config, log: Callable[[str], None], sb: Supabase, cu: Optiona
             "checks": row.get("checks"), "id": row.get("id")}
 
 
+def run_ask(cfg: Config, log: Callable[[str], None], sb: Supabase, cu: ClickUp,
+            job: dict[str, Any], req: dict[str, Any]) -> dict[str, Any]:
+    """The editor is short of something. Say so on the card, where the person
+    who can fix it is already looking, and remember that it was asked."""
+    task_id = str(req.get("task_id") or "")
+    topic = str((req.get("params") or {}).get("topic") or "other")
+    note = str(req.get("input") or "").strip()
+    if topic not in ASK_FOR:
+        topic = "other"
+    if topic == "other" and not note:
+        raise ValueError("say what is needed")
+    who = str(req.get("requested_by_name") or req.get("requested_by") or "the editor")
+    wanted = ASK_FOR[topic]
+    stamp = now_iso()
+
+    if cfg.clickup_writeback:
+        lines = [f"{who} needs {wanted} before this can move."]
+        if note:
+            lines += ["", note]
+        lines += ["", "Asked from the editor desk. Reply on this card and the editor will see it."]
+        cu.comment(task_id, "\n".join(lines))
+
+    try:
+        sb.store_notes([{
+            "id": f"ask:{task_id}:{req.get('id')}",
+            "task_id": task_id,
+            "text": f"Asked for {wanted}." + (f" {note}" if note else ""),
+            "by_email": req.get("requested_by"),
+            "by_name": req.get("requested_by_name"),
+            "source": "cockpit",
+            "done": False,
+            "at": stamp,
+        }])
+    except Exception as e:  # noqa: BLE001 - the card already carries it
+        log(f"{task_id}: ask not stored as a note: {http.scrub(str(e))[:120]}")
+
+    sb.mark_job(task_id, asked_for=wanted, asked_at=stamp,
+                asked_by=str(req.get("requested_by_name") or req.get("requested_by") or ""))
+    return {"asked_for": wanted, "posted": bool(cfg.clickup_writeback)}
+
+
 def run_comment(cfg: Config, log: Callable[[str], None], cu: ClickUp, req: dict[str, Any]) -> dict[str, Any]:
     text = str(req.get("input") or "").strip()
     if not text:
@@ -149,6 +204,9 @@ def run_requests(cfg: Config, log: Callable[[str], None], sb: Supabase, *, limit
             elif kind == "comment":
                 cu = cu or ClickUp(cfg, log)
                 result = run_comment(cfg, log, cu, req)
+            elif kind == "ask":
+                cu = cu or ClickUp(cfg, log)
+                result = run_ask(cfg, log, sb, cu, job, req)
             elif kind == "deliver":
                 cu = cu or ClickUp(cfg, log)
                 result = run_deliver(cfg, log, sb, cu, job, req)

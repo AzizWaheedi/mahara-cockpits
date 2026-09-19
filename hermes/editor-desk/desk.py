@@ -170,21 +170,29 @@ def cmd_sync(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
         fresh: list[dict[str, Any]] = []
         for tid, c in wanted.items():
             was = have.get(tid) or {}
-            unchanged = (
-                (was.get("brand_dna_url") or "") == (c.get("brand_dna_url") or "")
-                and (was.get("offer_url") or "") == (c.get("offer_url") or "")
-                and (was.get("brand_dna") or was.get("offer"))
+            # A brand document is edited in place, so the link does not change
+            # when the rules do. Ask Drive what each document's revision is and
+            # compare that; one cheap metadata call keeps the brand current.
+            now_rev = clients_mod.revisions(drive, c)
+            same_links = (was.get("brand_dna_url") or "") == (c.get("brand_dna_url") or "") and (
+                was.get("offer_url") or ""
+            ) == (c.get("offer_url") or "")
+            same_revs = all(
+                (was.get(k) or "") == (v or "") for k, v in now_rev.items() if v is not None
             )
-            if unchanged and not args.force_docs:
-                c["brand_dna"] = was.get("brand_dna")
-                c["offer"] = was.get("offer")
+            have_text = bool(was.get("brand_dna") or was.get("offer"))
+            if same_links and same_revs and have_text and not args.force_docs:
+                for key in ("brand_dna", "offer", "brand_dna_rev", "offer_rev"):
+                    c[key] = was.get(key)
                 continue
             row = clients_mod.read_docs(drive, dict(c), log.info)
             row["docs_read_at"] = stamp
             fresh.append(row)
-            c["brand_dna"] = row.get("brand_dna")
-            c["offer"] = row.get("offer")
+            for key in ("brand_dna", "offer", "brand_dna_rev", "offer_rev"):
+                c[key] = row.get(key)
             docs_read += 1
+            if have_text:
+                log.info(f"  {c.get('name')}: a brand document changed, read again")
         if fresh:
             sb.store_clients(fresh)
 

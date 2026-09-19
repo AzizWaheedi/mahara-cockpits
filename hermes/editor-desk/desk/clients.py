@@ -172,29 +172,64 @@ def match(tags: Iterable[Any], people: list[dict[str, Any]]) -> Optional[dict[st
     return None
 
 
+DOCS = (
+    ("brand_dna_url", "brand_dna", "brand_dna_rev"),
+    ("offer_url", "offer", "offer_rev"),
+)
+
+
+def doc_id_in(link: Any) -> Optional[str]:
+    """The Google Doc a client-card field points at, however it was pasted."""
+    from . import drive as drive_mod
+
+    text = str(link or "")
+    m = DOC_RE.search(text)
+    if m:
+        return drive_mod.parse_id(m.group(0))
+    return drive_mod.parse_id(text) if "docs.google.com" in text else None
+
+
+def revisions(drive: Any, row: dict[str, Any]) -> dict[str, Optional[str]]:
+    """What Drive currently says each of this client's documents was last
+    changed at. A brand document is edited in place, so the link is the same
+    afterwards and only this tells the desk to read it again."""
+    out: dict[str, Optional[str]] = {}
+    for url_key, _text_key, rev_key in DOCS:
+        doc_id = doc_id_in(row.get(url_key))
+        if not doc_id:
+            out[rev_key] = None
+            continue
+        try:
+            out[rev_key] = str((drive.get(doc_id) or {}).get("modifiedTime") or "") or None
+        except Exception:  # noqa: BLE001 - unreadable means "read it again"
+            out[rev_key] = None
+    return out
+
+
 def read_docs(drive: Any, row: dict[str, Any], log: Callable[[str], None], *, limit: int = 40000) -> dict[str, Any]:
     """Pull the Brand DNA and the Offer Cheat Sheet in as text.
 
     These are Google Docs, so the desk reads them with the same token it reads
     footage with. A document that will not open is recorded on the row and the
     job still works; brand rules are context, never a gate.
-    """
-    from . import drive as drive_mod
 
+    Each document's revision is recorded beside its text, so the next sync can
+    tell an edited document from an unchanged one without reading it.
+    """
     errors: list[str] = []
-    for url_key, text_key in (("brand_dna_url", "brand_dna"), ("offer_url", "offer")):
-        link = str(row.get(url_key) or "")
-        m = DOC_RE.search(link)
-        doc_id = drive_mod.parse_id(m.group(0)) if m else (drive_mod.parse_id(link) if "docs.google.com" in link else None)
+    for url_key, text_key, rev_key in DOCS:
+        doc_id = doc_id_in(row.get(url_key))
         if not doc_id:
             continue
         try:
+            meta = drive.get(doc_id) or {}
             text = drive.doc_text(doc_id)
         except Exception as e:  # noqa: BLE001 - a document is context, never a gate
             errors.append(f"{text_key}: {http.scrub(str(e))[:120]}")
             continue
         if text:
             row[text_key] = text[:limit]
+            row[rev_key] = str(meta.get("modifiedTime") or "") or None
     row["docs_error"] = "; ".join(errors)[:300] or None
     if errors:
         log(f"  {row.get('name')}: {row['docs_error']}")

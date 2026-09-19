@@ -25,7 +25,7 @@ JOB_COLUMNS = {
     "task_id", "name", "url", "status", "client", "clients", "client_task_id", "editor", "editors", "request_type",
     "brief", "script_task_id", "script", "footage_url", "raw_url", "edited_url", "website",
     "due_at", "opened_at", "state", "ready", "missing", "files", "seconds", "transcript_chars",
-    "prepared_at", "attempts", "error", "synced_at", "updated_at",
+    "prepared_at", "attempts", "error", "asked_for", "asked_at", "asked_by", "synced_at", "updated_at",
 }
 # What a board sync is allowed to touch. Worker state is not in this set.
 BOARD_COLUMNS = {
@@ -45,8 +45,8 @@ NOTE_COLUMNS = {"id", "task_id", "version", "at_sec", "text", "by_email", "by_na
 # The client card behind a job: the brand work, read once per company.
 CLIENT_COLUMNS = {
     "task_id", "name", "url", "status", "aliases", "dos_donts", "brand_dna_url", "brand_dna",
-    "offer_url", "offer", "drive_url", "website", "instagram", "docs_read_at", "docs_error",
-    "synced_at", "updated_at",
+    "brand_dna_rev", "offer_url", "offer", "offer_rev", "drive_url", "website", "instagram",
+    "docs_read_at", "docs_error", "synced_at", "updated_at",
 }
 
 JSON_COLUMNS = ("clients", "editors", "aliases", "missing", "words", "scenes", "script_hits", "method", "checks", "waived")

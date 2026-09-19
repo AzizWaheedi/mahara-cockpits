@@ -504,3 +504,122 @@ class QueueTests(unittest.TestCase):
         self.drain()
         self.assertFalse(self.cu.posted)
         self.assertIn("switched off", self.sb.requests_rows["r1"]["error"])
+
+
+class AskTests(unittest.TestCase):
+    """An editor short of something has to be able to say so, on the card
+    where the person who can fix it is already looking."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.cfg = cfg_in(self.tmp.name)
+        self.sb = FakeSupabase()
+        self.sb.store_jobs([job_row(task(), now_iso=NOW)])
+        self.cu = FakeClickUp([task()])
+        real_clickup, real_drive = queue.ClickUp, queue.Drive
+        queue.ClickUp = lambda cfg, log: self.cu
+        queue.Drive = lambda cfg, log: None
+        self.addCleanup(
+            lambda: (setattr(queue, "ClickUp", real_clickup), setattr(queue, "Drive", real_drive))
+        )
+
+    def ask(self, topic, note=""):
+        self.sb.queue({
+            "id": f"r-{topic}", "kind": "ask", "task_id": "86abc", "created_at": NOW,
+            "input": note, "params": {"topic": topic},
+            "requested_by": "karim@maharamedia.com", "requested_by_name": "Karim",
+        })
+        return queue.run_requests(self.cfg, lambda m: None, self.sb)
+
+    def test_asking_for_footage_lands_on_the_card_and_is_remembered(self):
+        out = self.ask("footage", "The two clips we have are both under ten seconds.")
+        self.assertEqual(out["done"], 1)
+        self.assertEqual(len(self.cu.posted), 1)
+        text = self.cu.posted[0][1]
+        self.assertIn("Karim needs more footage", text)
+        self.assertIn("under ten seconds", text)
+        job = self.sb.job("86abc")
+        self.assertEqual(job["asked_for"], "more footage")
+        self.assertTrue(job["asked_at"])
+        self.assertEqual(job["asked_by"], "Karim")
+        # And it shows up in the job's own history, not only on the card.
+        self.assertTrue(any("more footage" in (n.get("text") or "") for n in self.sb.notes("86abc")))
+
+    def test_every_topic_reads_as_a_sentence(self):
+        for topic, wanted in queue.ASK_FOR.items():
+            if topic == "other":
+                continue
+            self.cu.posted.clear()
+            self.ask(topic)
+            self.assertIn(f"needs {wanted}", self.cu.posted[0][1], topic)
+
+    def test_something_else_has_to_say_what(self):
+        out = self.ask("other")
+        self.assertEqual(out["failed"], 1)
+        self.assertIn("say what is needed", self.sb.requests_rows["r-other"]["error"])
+        self.assertFalse(self.cu.posted)
+
+    def test_an_unknown_topic_falls_back_to_the_note(self):
+        out = self.ask("nonsense", "Need the client's logo in vector.")
+        self.assertEqual(out["done"], 1)
+        self.assertIn("something else", self.cu.posted[0][1])
+        self.assertIn("logo in vector", self.cu.posted[0][1])
+
+    def test_nothing_is_posted_when_writeback_is_off(self):
+        self.cfg.clickup_writeback = False
+        out = self.ask("footage", "please")
+        self.assertEqual(out["done"], 1, "the ask is still recorded for the cockpit")
+        self.assertFalse(self.cu.posted)
+        self.assertEqual(self.sb.job("86abc")["asked_for"], "more footage")
+
+
+class BrandFreshnessTests(unittest.TestCase):
+    """A brand document is edited in place, so the link is the same afterwards.
+    Only the document's own revision says the rules changed."""
+
+    class Drive:
+        def __init__(self, rev):
+            self.rev = rev
+            self.reads = 0
+
+        def get(self, _id):
+            return {"modifiedTime": self.rev}
+
+        def doc_text(self, _id):
+            self.reads += 1
+            return f"brand text at {self.rev}"
+
+    ROW = {
+        "task_id": "c1",
+        "name": "Ardon",
+        "brand_dna_url": "https://docs.google.com/document/d/1mBrandDnaAAAAAAAAAAAAAAAAA/edit",
+        "offer_url": "",
+    }
+
+    def test_the_revision_is_recorded_beside_the_text(self):
+        d = self.Drive("2026-09-19T08:00:00.000Z")
+        row = clients.read_docs(d, dict(self.ROW), lambda m: None)
+        self.assertEqual(row["brand_dna"], "brand text at 2026-09-19T08:00:00.000Z")
+        self.assertEqual(row["brand_dna_rev"], "2026-09-19T08:00:00.000Z")
+
+    def test_an_unchanged_document_reports_the_same_revision(self):
+        d = self.Drive("2026-09-19T08:00:00.000Z")
+        first = clients.read_docs(d, dict(self.ROW), lambda m: None)
+        self.assertEqual(clients.revisions(d, self.ROW)["brand_dna_rev"], first["brand_dna_rev"])
+
+    def test_an_edited_document_reports_a_new_one(self):
+        old = clients.read_docs(self.Drive("2026-09-19T08:00:00.000Z"), dict(self.ROW), lambda m: None)
+        now = clients.revisions(self.Drive("2026-09-19T18:30:00.000Z"), self.ROW)
+        self.assertNotEqual(now["brand_dna_rev"], old["brand_dna_rev"])
+
+    def test_a_document_that_will_not_open_asks_to_be_read_again(self):
+        class Broken:
+            def get(self, _id):
+                raise OSError("no")
+
+        self.assertIsNone(clients.revisions(Broken(), self.ROW)["brand_dna_rev"])
+
+    def test_a_card_with_no_document_has_no_revision(self):
+        d = self.Drive("x")
+        self.assertIsNone(clients.revisions(d, {"brand_dna_url": "", "offer_url": ""})["brand_dna_rev"])
