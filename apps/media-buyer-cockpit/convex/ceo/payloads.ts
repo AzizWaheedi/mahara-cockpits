@@ -507,6 +507,39 @@ export type GrowthPayload = {
   topAds: { name: string; spend: number; leads: number; cpl: number | null }[];
   /** Month to date. */
   leadSources: { source: string; leads: number }[];
+  /**
+   * Records the sales system is waiting on somebody to fix
+   * (b2b_action_queue, first read 2026-09-19).
+   *
+   * Counts only. The function returns the contact's name, email and phone on
+   * every row and none of that comes into the payload: the CEO screens carry
+   * client business names and team first names, never a lead's identity.
+   *
+   * The largest bucket is calls with no outcome, which is the same rot behind
+   * the show rate: a past call still marked booked counts as neither shown nor
+   * missed, so every rate computed over it is soft.
+   */
+  actionQueue?: {
+    total: number;
+    buckets: { key: string; label: string; hint: string; count: number }[];
+  };
+  /**
+   * Deals that have not moved (b2b_stalled_deals). Counts and value by age
+   * bucket and by owner, never the contact behind them.
+   */
+  stalled?: {
+    staleDays: number;
+    total: number;
+    stale: number;
+    buckets: { age: string; deals: number }[];
+    byOwner: { owner: string; deals: number; value: number }[];
+  };
+  /** Pace against the month (b2b_pacing_pipeline). */
+  pacing?: {
+    openDemosLeft: number | null;
+    closeRate: number | null;
+    avgDealValue: number | null;
+  };
   notes: Note[];
 };
 
