@@ -1,8 +1,10 @@
+import { Image as ImageIcon } from "lucide-react";
 import { useMemo } from "react";
 import { BarList, type BarListItem } from "@/components/ceo/BarList";
 import { useTabParam } from "@/components/ceo/CeoTabs";
 import { type Column, DataTable } from "@/components/ceo/DataTable";
 import { Delta, type DeltaKind, type GoodWhen } from "@/components/ceo/Delta";
+import { EmptyState } from "@/components/ceo/EmptyState";
 import { FilterChips } from "@/components/ceo/FilterChips";
 import {
   change,
@@ -12,6 +14,7 @@ import {
   isNum,
   kuwaitDay,
   money,
+  NA,
   pct,
   plural,
   type Unit,
@@ -327,7 +330,16 @@ export function MarketingTab({ sections, now, day }: CeoTabProps) {
         {p => <DailyBody rows={p.daily} today={today} />}
       </SectionCard>
 
-      <NotMeasured order={5} />
+      <SectionCard
+        kicker={`Last ${payload?.winningAds?.windowDays ?? 90} days, best first`}
+        title="Winning ads"
+        section={section}
+        order={5}
+      >
+        {p => <WinningAdsBody p={p} />}
+      </SectionCard>
+
+      <NotMeasured order={6} />
     </div>
   );
 }
@@ -604,6 +616,128 @@ function DailyBody({
           emptyText="No days to plot yet."
         />
       ))}
+    </div>
+  );
+}
+
+/**
+ * Our own ads, judged on what they produced.
+ *
+ * Ranked closes first, then demos, then leads, because the biggest spender is
+ * rarely the winner: the best ad here turned $2,256 into 46 demos and 4 closes
+ * while one costing nearly as much produced none.
+ */
+function WinningAdsBody({ p }: { p: GrowthPayload }) {
+  const w = p.winningAds;
+  if (!w?.rows.length)
+    return (
+      <EmptyState
+        title="No ad rows yet"
+        text="They arrive on the next refresh."
+        icon={ImageIcon}
+        compact
+      />
+    );
+
+  // Two ads can carry the same name (a relaunch under a new id), so say which
+  // rows share one rather than let the reader think a number contradicts itself.
+  const seen = new Map<string, number>();
+  for (const r of w.rows) seen.set(r.name, (seen.get(r.name) ?? 0) + 1);
+
+  return (
+    <div className="grid gap-4">
+      <div className="overflow-x-auto rounded-md border">
+        <table
+          className="w-full text-sm"
+          style={{ fontVariantNumeric: "tabular-nums" }}
+        >
+          <thead>
+            <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
+              <th className="p-2 font-medium">Ad</th>
+              <th className="p-2 text-right font-medium">Spend</th>
+              <th className="p-2 text-right font-medium">Leads</th>
+              <th className="p-2 text-right font-medium">Cost/lead</th>
+              <th className="p-2 text-right font-medium">Qualified</th>
+              <th className="p-2 text-right font-medium">Demos</th>
+              <th className="p-2 text-right font-medium">Cost/demo</th>
+              <th className="p-2 text-right font-medium">Closes</th>
+              <th className="p-2 text-right font-medium">ROAS</th>
+            </tr>
+          </thead>
+          <tbody>
+            {w.rows.map(r => (
+              <tr key={r.adId} className="border-t align-middle">
+                <td className="p-2">
+                  <div className="flex items-center gap-3">
+                    {r.thumbnail ? (
+                      // Facebook serves these on an expiring link, so a broken
+                      // one is not a fault in the data: drop it and keep the row.
+                      <img
+                        src={r.thumbnail}
+                        alt=""
+                        loading="lazy"
+                        className="size-10 shrink-0 rounded object-cover"
+                        onError={e => {
+                          e.currentTarget.style.display = "none";
+                        }}
+                      />
+                    ) : null}
+                    <div className="min-w-0">
+                      <div className="truncate font-medium">{r.name}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {[
+                          r.inMeta ? null : "Meta has no snapshot",
+                          (seen.get(r.name) ?? 0) > 1
+                            ? "two ads share this name"
+                            : null,
+                          r.status?.includes("PAUSED") ? "paused" : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ") || null}
+                      </div>
+                    </div>
+                  </div>
+                </td>
+                <td className="p-2 text-right">
+                  {r.inMeta ? (
+                    money(r.spend)
+                  ) : (
+                    <span className="text-muted-foreground">unknown</span>
+                  )}
+                </td>
+                <td className="p-2 text-right">{count(r.leads)}</td>
+                <td className="p-2 text-right">
+                  <Value value={r.cpl === null ? NA : money(r.cpl)} />
+                </td>
+                <td className="p-2 text-right">
+                  {count(r.qualified)}
+                  {r.qualifiedPct === null ? null : (
+                    <span className="block text-xs text-muted-foreground">
+                      {`${r.qualifiedPct}%`}
+                    </span>
+                  )}
+                </td>
+                <td className="p-2 text-right">{count(r.demos)}</td>
+                <td className="p-2 text-right">
+                  <Value
+                    value={r.costPerDemo === null ? NA : money(r.costPerDemo)}
+                  />
+                </td>
+                <td className="p-2 text-right font-medium">
+                  {r.sales > 0 ? count(r.sales) : "—"}
+                </td>
+                <td className="p-2 text-right">
+                  {r.revRoas === null ? (
+                    <span className="text-muted-foreground">—</span>
+                  ) : (
+                    `${r.revRoas.toFixed(1)}x`
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

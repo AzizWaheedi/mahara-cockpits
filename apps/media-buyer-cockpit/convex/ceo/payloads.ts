@@ -505,6 +505,46 @@ export type GrowthPayload = {
   }[];
   /** Last 7 days, top 6 by spend. */
   topAds: { name: string; spend: number; leads: number; cpl: number | null }[];
+  /**
+   * Our own ads, judged on what they produced rather than what they cost
+   * (b2b_marketing_ads, first read in full 2026-09-19).
+   *
+   * The B2B dashboard's per-ad row, kept whole: every field the media buyer
+   * needs to say which creative is working. Ranked by outcome — closes first,
+   * then demos, then leads — because the biggest spender is not the winner.
+   *
+   * `inMeta` false means Meta has no snapshot for the ad at all, usually
+   * because it was deleted or archived. It appears anyway when leads or demos
+   * are attributed to it, and its spend is unknown rather than zero.
+   *
+   * `thumbnail` is a Facebook CDN url with an expiring token, so it can stop
+   * resolving without anything being wrong. The card falls back to the name.
+   */
+  winningAds?: {
+    windowDays: number;
+    rows: {
+      adId: string;
+      name: string;
+      thumbnail: string | null;
+      status: string | null;
+      inMeta: boolean;
+      spend: number;
+      impressions: number;
+      clicks: number;
+      ctr: number | null;
+      leads: number;
+      cpl: number | null;
+      qualified: number;
+      qualifiedPct: number | null;
+      demos: number;
+      costPerDemo: number | null;
+      sales: number;
+      revenue: number;
+      cash: number;
+      cpa: number | null;
+      revRoas: number | null;
+    }[];
+  };
   /** Month to date. */
   leadSources: { source: string; leads: number }[];
   /**
