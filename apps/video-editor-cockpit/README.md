@@ -39,15 +39,43 @@ cp .env.example .env.local   # fill in VITE_SUPABASE_ANON_KEY
 bun run dev
 ```
 
-## The five screens
+## The screens
 
-| | |
-|---|---|
-| Jobs | grouped by what can be started, what is stuck, what is unread, what is delivered |
-| Pipeline | the same jobs as columns by their ClickUp status, so it matches what the board looks like |
-| Videos | every clip the desk has read, across all jobs, filtered by client or by whether anyone speaks |
-| Winners | the ads that already paid, mirrored from the media buyer which owns what "winning" means |
-| Ideas | the ideation board, the same rows the creative director works from; keeping something here keeps it for both |
+Grouped down the left exactly as the other three cockpits are.
+
+| Group | | |
+|---|---|---|
+| Your day | Jobs | grouped by what can be started, what is stuck, what is unread, what is delivered |
+| | Pipeline | the same jobs as columns by their ClickUp status, so it matches the board |
+| | End of day | the Video Editors Typeform's own questions, filed to the same sheet |
+| The work | Footage | every clip the desk has read, across all jobs |
+| Library | Ideation | the board the creative director works from; keeping something keeps it for both |
+| | What works | the ads that already paid, mirrored from the media buyer |
+
+Ideation and What works keep the names they have in the creative cockpit
+because they are literally the same rows. Renaming them here would make
+switching cockpits feel like two products.
+
+## End of day
+
+The seven questions are the Video Editors EOD form's own, in its order, and
+an answer lands on the same `Video Editors` tab of the EOD Reports sheet
+(`1EhPp7x0jZfV8dNjUvmuWv_alNvduMGpe_COjUAB13bw`) that the Typeform writes to.
+That sheet is the accountability record for every role, so a filing from here
+has to be indistinguishable from a filing from the form.
+
+Columns are read off the tab's live header row rather than hard-coded. A
+column added on the sheet cannot shift every value one to the left, and a
+column this does not recognise is left empty rather than filled with its
+neighbour's value. Only ever append.
+
+## Why it stays light
+
+The Drive frame is the most expensive thing on a job page: a whole embedded
+player. It does not mount on its own. The storyboard still stands in for it
+until somebody presses play, and picking another file puts the still back.
+Everything else on these screens is a stored frame, signed in one batch per
+page and lazily loaded.
 
 Winners and Ideas are shared on purpose (Aziz, 2026-09-19). Winners are
 mirrored into `winner_ads` by the media buyer deployment, so there is one
