@@ -24,7 +24,12 @@ function Card({ ad }: { ad: WinnerAd }) {
     <li className="panel overflow-hidden">
       <div className="grid gap-3 p-3 sm:grid-cols-[13rem_1fr]">
         <div className="max-w-52">
-          <AdPreviewFrame adId={ad.ad_id} thumbUrl={ad.thumb_url} format={ad.format} />
+          <AdPreviewFrame
+            adId={ad.ad_id}
+            thumbUrl={ad.thumb_url}
+            format={ad.format}
+            watchUrl={ad.watch_url}
+          />
         </div>
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium">{ad.client ?? "—"}</p>

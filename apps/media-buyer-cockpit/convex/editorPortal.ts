@@ -266,6 +266,98 @@ async function editorFromSession(token: string): Promise<string> {
   return email;
 }
 
+/**
+ * The public watch link for one ad's video.
+ *
+ * Checked live on 2026-09-19, three ways: `source` is withheld on the video
+ * node, the ad's video is not in the account's advideos library because a
+ * reel is published by the page rather than uploaded to the account, and the
+ * page's video edge returns nothing. So Meta will not hand over the file.
+ *
+ * What it will give is the video's permalink, and Facebook's ordinary video
+ * plugin renders that for anybody, signed in or not, and does not expire.
+ * That is what the editor actually needs: to watch the ad, months later,
+ * without being in the ad account.
+ */
+async function watchLinkFor(
+  ctx: Any,
+  adId: string,
+): Promise<{ video_id?: string; watch_url?: string }> {
+  const creative: Any = await ctx.runAction(internal.editorPortal.graph, {
+    path: adId,
+    fields: "creative{id,video_id,object_story_spec}",
+  });
+  const cr = creative?.creative ?? {};
+  const videoId =
+    cr.video_id ?? cr?.object_story_spec?.video_data?.video_id ?? undefined;
+  if (!videoId) return {};
+  const video: Any = await ctx.runAction(internal.editorPortal.graph, {
+    path: String(videoId),
+    fields: "permalink_url",
+  });
+  const permalink = String(video?.permalink_url ?? "");
+  if (!permalink) return { video_id: String(videoId) };
+  const href = permalink.startsWith("http")
+    ? permalink
+    : `https://www.facebook.com${permalink}`;
+  return {
+    video_id: String(videoId),
+    watch_url: `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(href)}&show_text=false`,
+  };
+}
+
+/** One read from the Graph API, with this deployment's own token. */
+export const graph = internalAction({
+  args: { path: v.string(), fields: v.optional(v.string()) },
+  returns: v.any(),
+  handler: async (_ctx, { path, fields }): Promise<Any> => {
+    const token =
+      process.env.META_ACCESS_TOKEN ?? process.env.META_SYSTEM_TOKEN ?? "";
+    if (!token) throw new Error("no Meta token on this deployment");
+    const q = new URLSearchParams({ access_token: token });
+    if (fields) q.set("fields", fields);
+    const res = await fetch(`https://graph.facebook.com/v21.0/${path}?${q}`);
+    if (!res.ok)
+      throw new Error(`Meta said ${res.status} for ${path.split("?")[0]}`);
+    return await res.json();
+  },
+});
+
+/** Fill in the watch links the mirror does not have yet. */
+export const mirrorWatchLinks = internalAction({
+  args: { limit: v.optional(v.number()) },
+  returns: v.any(),
+  handler: async (ctx, { limit }): Promise<Any> => {
+    const rows: Any[] = await sb(
+      "/rest/v1/winner_ads?select=ad_id&watch_checked_at=is.null&limit=" +
+        String(limit ?? 40),
+    );
+    let found = 0;
+    for (const r of rows ?? []) {
+      let out: { video_id?: string; watch_url?: string } = {};
+      try {
+        out = await watchLinkFor(ctx, String(r.ad_id));
+      } catch {
+        // A single ad Meta will not answer for must not stop the rest.
+      }
+      if (out.watch_url) found++;
+      await sb("/rest/v1/winner_ads?on_conflict=ad_id", {
+        method: "POST",
+        headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify([
+          {
+            ad_id: String(r.ad_id),
+            video_id: out.video_id ?? null,
+            watch_url: out.watch_url ?? null,
+            watch_checked_at: new Date().toISOString(),
+          },
+        ]),
+      });
+    }
+    return { looked: (rows ?? []).length, found };
+  },
+});
+
 /** One ad's Facebook preview, for the editor cockpit. */
 export const previewForEditor = internalAction({
   args: { token: v.string(), adId: v.string(), format: v.optional(v.string()) },

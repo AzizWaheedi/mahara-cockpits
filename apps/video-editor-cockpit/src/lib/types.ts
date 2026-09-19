@@ -196,6 +196,9 @@ export interface WinnerAd {
   leads: number | null;
   cpl: number | null;
   origin: string | null;
+  /** Facebook's ordinary video embed. Public, and it does not expire. */
+  watch_url: string | null;
+  video_id: string | null;
 }
 
 /** A post on the ideation board, shared with the creative director. */
