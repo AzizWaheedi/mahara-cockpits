@@ -1,9 +1,8 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import { internalQuery } from "./_generated/server";
+import { adAsIdea } from "./adAsIdea";
 import { authenticatedAction } from "./functions";
-import { accessFor } from "./roles";
 
 /**
  * The swipe file: what the team saved in Foreplay.
@@ -51,27 +50,15 @@ async function rest(
   return text ? (JSON.parse(text) as Row[] | Row) : null;
 }
 
-export const gate = internalQuery({
-  args: { userId: v.id("users") },
-  returns: v.object({ ok: v.boolean(), email: v.string(), name: v.string() }),
-  handler: async (ctx, { userId }) => {
-    const user = await ctx.db.get(userId);
-    const a = await accessFor(ctx, user?.email, userId);
-    const ok =
-      a.isAdmin ||
-      a.roles.includes("media_buyer") ||
-      a.roles.includes("creative");
-    return {
-      ok,
-      email: a.email,
-      name: String(a.name ?? user?.name ?? a.email.split("@")[0]),
-    };
-  },
-});
-
+/**
+ * The same seat check the ideation board uses. The swipe file is the same
+ * material for the same people, and two gates over one audience is one
+ * gate too many -- this way the cockpits' own role rules live in exactly
+ * one place each.
+ */
 // biome-ignore lint/suspicious/noExplicitAny: action ctx
 async function who(ctx: any): Promise<{ email: string; name: string }> {
-  const g = (await ctx.runQuery(internal.foreplay.gate, {
+  const g = (await ctx.runQuery(internal.ideation.gate, {
     userId: ctx.userId as Id<"users">,
   })) as { ok: boolean; email: string; name: string };
   if (!g.ok)
@@ -130,41 +117,10 @@ export const toIdeation = authenticatedAction({
     );
     const ad = Array.isArray(found) && found.length ? found[0] : null;
     if (!ad) throw new Error("That ad is no longer in the swipe file.");
-    const at = new Date().toISOString();
     await rest("ideation_posts?on_conflict=key", {
       method: "POST",
       prefer: "resolution=merge-duplicates,return=minimal",
-      body: [
-        {
-          key: `foreplay:${ad.id}`,
-          platform: "meta_ads",
-          url: ad.foreplay_url ?? ad.link_url ?? null,
-          origin: "foreplay",
-          status: "saved",
-          at,
-          created_at: at,
-          updated_at: at,
-          industry: "other",
-          tags: [
-            "via:foreplay",
-            ...(ad.board_name ? [`board:${ad.board_name}`] : []),
-          ],
-          author_name: ad.name ?? null,
-          caption: ad.headline ?? ad.description ?? null,
-          transcript: ad.full_transcription ?? null,
-          thumb_url: ad.thumbnail ?? ad.image ?? null,
-          media_url: ad.video ?? null,
-          duration_sec: ad.video_duration ?? null,
-          running_days: ad.running_duration ?? null,
-          ad_active: ad.live ?? null,
-          ad_format: ad.display_format ?? null,
-          captured_at: at,
-          saved_by: email,
-          saved_by_name: name,
-          saved_at: at,
-          attempts: 0,
-        },
-      ],
+      body: [adAsIdea(ad, { by: email, byName: name })],
     });
     return { key: `foreplay:${ad.id}` };
   },

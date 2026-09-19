@@ -1468,3 +1468,65 @@ class DropBoxNamingTests(unittest.TestCase):
 
     def test_no_boards_at_all_is_not_an_error(self):
         self.assertIsNone(foreplay.find_board([], "Ideation"))
+
+
+class IdeaRowShapeTests(unittest.TestCase):
+    """The worker and the three cockpits write the same ideation row.
+
+    Both forward a saved Foreplay ad under the key `foreplay:<id>`, and both
+    upsert on it. If they disagreed about a field, whichever ran last would
+    quietly overwrite the other's version -- a press of "Send to ideation"
+    could wipe what the sync wrote, or the next sync could wipe the press.
+    The cockpits' copy is `adAsIdea()` in TypeScript, which cannot import
+    this one, so the two are pinned to the same list here and there.
+    """
+
+    #: Kept identical to IDEA_FIELDS in apps/*/…/adAsIdea.ts.
+    FIELDS = sorted([
+        "author_name", "caption", "duration_sec", "key", "media_url", "origin",
+        "pasted_by", "pasted_by_name", "platform", "running_days", "saved_by",
+        "saved_by_name", "saved_note", "status", "thumb_url", "transcript",
+        "url", "why_it_works",
+    ])
+
+    def ad(self, **over: Any) -> dict[str, Any]:
+        base = {
+            "id": "abc123",
+            "name": "Ardon kitchen reveal",
+            "link_url": "https://example.com/go",
+            "foreplay_url": "https://app.foreplay.co/ads/abc123",
+            "headline": "Your new kitchen in three weeks",
+            "publisher_platform": ["facebook", "instagram"],
+            "running_duration": 128,
+        }
+        base.update(over)
+        return base
+
+    def test_field_list_is_pinned(self) -> None:
+        self.assertEqual(sorted(foreplay.as_idea(self.ad())), self.FIELDS)
+
+    def test_key_is_the_ad_id(self) -> None:
+        self.assertEqual(foreplay.as_idea(self.ad())["key"], "foreplay:abc123")
+
+    def test_platform_is_the_first_publisher_not_a_guess(self) -> None:
+        self.assertEqual(foreplay.as_idea(self.ad())["platform"], "facebook")
+        row = foreplay.as_idea(self.ad(publisher_platform=[]))
+        self.assertEqual(row["platform"], "meta")
+
+    def test_link_url_wins_over_the_foreplay_page(self) -> None:
+        # Where the ad sent people is worth more than where we filed it.
+        self.assertEqual(foreplay.as_idea(self.ad())["url"], "https://example.com/go")
+
+    def test_an_ad_with_no_link_is_refused_not_stored_blank(self) -> None:
+        with self.assertRaises(ValueError):
+            foreplay.as_idea(self.ad(link_url=None, foreplay_url=None))
+
+    def test_days_on_air_become_the_reason(self) -> None:
+        self.assertIn("128 days", foreplay.as_idea(self.ad())["why_it_works"])
+        self.assertIsNone(foreplay.as_idea(self.ad(running_duration=0))["why_it_works"])
+
+    def test_caption_falls_back_and_is_clipped(self) -> None:
+        row = foreplay.as_idea(self.ad(headline=None, description=None))
+        self.assertEqual(row["caption"], "Ardon kitchen reveal")
+        long = foreplay.as_idea(self.ad(headline="x" * 5000))
+        self.assertEqual(len(long["caption"]), 2000)

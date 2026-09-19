@@ -1,5 +1,5 @@
-import { useWho } from "./auth";
-import { boom, rememberSigner } from "./ideation";
+import { adAsIdea } from "./adAsIdea";
+import { boom, who } from "./ideation";
 import { supabase } from "./supabase";
 
 /**
@@ -51,6 +51,7 @@ async function boards(_args: Record<string, never> = {}) {
  * rather than duplicating.
  */
 async function toIdeation({ id }: { id: string }) {
+  const { email, name } = await who();
   const { data, error: read } = await supabase
     .from("foreplay_ads")
     .select("*")
@@ -59,62 +60,18 @@ async function toIdeation({ id }: { id: string }) {
   boom(read);
   const ad = data as Row | null;
   if (!ad) throw new Error("That ad is no longer in the swipe file.");
-  const at = new Date().toISOString();
-  const { error } = await supabase.from("ideation_posts").upsert(
-    {
-      key: `foreplay:${ad.id}`,
-      platform: "meta_ads",
-      url: ad.foreplay_url ?? ad.link_url ?? null,
-      origin: "foreplay",
-      status: "saved",
-      at,
-      created_at: at,
-      updated_at: at,
-      industry: "other",
-      tags: [
-        "via:foreplay",
-        ...(ad.board_name ? [`board:${ad.board_name}`] : []),
-      ],
-      author_name: ad.name ?? null,
-      caption: ad.headline ?? ad.description ?? null,
-      transcript: ad.full_transcription ?? null,
-      thumb_url: ad.thumbnail ?? ad.image ?? null,
-      media_url: ad.video ?? null,
-      duration_sec: ad.video_duration ?? null,
-      running_days: ad.running_duration ?? null,
-      ad_active: ad.live ?? null,
-      ad_format: ad.display_format ?? null,
-      captured_at: at,
-      saved_by: signerEmail(),
-      saved_by_name: signerName(),
-      saved_at: at,
-      attempts: 0,
-    },
-    { onConflict: "key" },
-  );
+  const { error } = await supabase
+    .from("ideation_posts")
+    .upsert(adAsIdea(ad, { by: email, byName: name }), {
+      onConflict: "key",
+    });
   boom(error);
   return { key: `foreplay:${ad.id}` };
-}
-
-// The page calls the verbs without passing an identity, exactly as it does
-// over Convex, so the verbs read the session themselves. `useAction` below
-// keeps it current; ideation.ts owns the one copy of it.
-let seen = { email: "", name: "" };
-
-function signerEmail(): string {
-  return seen.email;
-}
-
-function signerName(): string {
-  return seen.name;
 }
 
 export const api = { foreplay: { ads, boards, toIdeation } };
 
 /** Convex's hook, minus Convex. See the note on the one in `ideation.ts`. */
 export function useAction<T>(fn: T): T {
-  const { email, name } = useWho();
-  seen = { email, name };
-  rememberSigner(email, name);
   return fn;
 }

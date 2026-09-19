@@ -1,4 +1,3 @@
-import { useWho } from "./auth";
 import { IDEA_STILLS_BUCKET, supabase } from "./supabase";
 
 /**
@@ -213,17 +212,25 @@ async function patch(key: string, body: Row): Promise<void> {
 
 // ---------------------------------------------------------------------------
 // Who is doing this. The page calls the verbs without passing an identity,
-// exactly as it does over Convex, so the verbs read the session themselves.
+// exactly as it does over Convex, so the verbs ask the session themselves.
+//
+// Read at the moment of writing rather than stashed when the page rendered:
+// a stashed copy can be stale, can be empty if a verb runs before the render
+// that set it, and writing it during render is a side effect React is
+// allowed to throw away. getSession() is local -- it reads the stored token,
+// not the network -- so this costs nothing.
 
-let signer = { email: "", name: "" };
-
-/** Kept current by the page's own `useWho`; see `useAction` below. */
-export function rememberSigner(email: string, name: string): void {
-  signer = { email, name };
-}
-
-function who(): { email: string; name: string } {
-  return signer;
+export async function who(): Promise<{ email: string; name: string }> {
+  const { data } = await supabase.auth.getSession();
+  const user = data.session?.user;
+  const email = user?.email ?? "";
+  const meta = user?.user_metadata as
+    | { name?: string; full_name?: string }
+    | undefined;
+  return {
+    email,
+    name: meta?.name || meta?.full_name || email.split("@")[0] || "",
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -269,23 +276,30 @@ async function detail({ key }: { key: string }) {
   return (await signStills([row]))[0];
 }
 
-/** Exact per-tab counts from the database, six cheap head requests. */
+/**
+ * Exact per-tab counts from the database, six cheap head requests.
+ *
+ * A failure is raised rather than counted as zero. Six tabs all reading
+ * "0" because the request was refused looks exactly like an empty board,
+ * and a board that lies about being empty is worse than one that says it
+ * could not be read.
+ */
 async function counts(
   _args: Record<string, never> = {},
 ): Promise<Record<string, number>> {
-  const out: Record<string, number> = {};
-  await Promise.all(
+  const pairs = await Promise.all(
     Object.entries(TABS).map(async ([tab, statuses]) => {
       let query = supabase
         .from(TABLE)
         .select("key", { count: "exact", head: true })
         .in("status", statuses);
       if (tab === "trends") query = query.not("trend_id", "is", null);
-      const { count } = await query;
-      out[tab] = count ?? 0;
+      const { count, error } = await query;
+      boom(error);
+      return [tab, count ?? 0] as const;
     }),
   );
-  return out;
+  return Object.fromEntries(pairs);
 }
 
 /** A link is pasted: queued for the radar to fetch and read. */
@@ -295,7 +309,7 @@ async function paste(args: {
   industry?: string;
   tags?: string[];
 }) {
-  const { email, name } = who();
+  const { email, name } = await who();
   const url = args.url.trim();
   if (!LINK_RE.test(url))
     throw new Error("Paste an Instagram, TikTok or Snapchat post link.");
@@ -338,7 +352,7 @@ async function paste(args: {
 
 /** Keep a proposal: it is queued so the radar captures the transcript. */
 async function keep({ key, note }: { key: string; note?: string }) {
-  const { email, name } = who();
+  const { email, name } = await who();
   const row = await one(
     key,
     "key,status,captured_at,saved_by,saved_by_name,saved_at,saved_note,note,attempts",
@@ -363,7 +377,7 @@ async function keep({ key, note }: { key: string; note?: string }) {
 }
 
 async function dismiss({ key }: { key: string }) {
-  const { email } = who();
+  const { email } = await who();
   const at = now();
   await patch(key, {
     status: "dismissed",
@@ -440,7 +454,7 @@ async function watchlistAdd(args: {
   industry?: string;
   note?: string;
 }) {
-  const { email, name } = who();
+  const { email, name } = await who();
   const platform = args.platform.toLowerCase();
   const kind = args.kind.toLowerCase();
   if (!WATCH_KINDS.includes(kind))
@@ -498,7 +512,7 @@ async function requestScrape(args: {
   ads?: boolean;
   minDays?: number;
 }) {
-  const { email, name } = who();
+  const { email, name } = await who();
   const kind = args.kind.toLowerCase();
   if (!SCRAPE_KINDS.includes(kind))
     throw new Error("Pick a page scrape or an ad library pull.");
@@ -593,12 +607,10 @@ export const api = {
 /**
  * Convex's hook, minus Convex. It returns the function unchanged -- the
  * references above are module constants, so they are stable across renders
- * and safe in the dependency arrays the page already has. Calling it is also
- * where the signed-in identity is refreshed, which is what lets the verbs
- * stamp a name onto a row without the page passing one.
+ * and safe in the dependency arrays the page already has. It does nothing
+ * else on purpose: the verbs read the session themselves, so there is no
+ * order in which the page can call them wrongly.
  */
 export function useAction<T>(fn: T): T {
-  const { email, name } = useWho();
-  rememberSigner(email, name);
   return fn;
 }

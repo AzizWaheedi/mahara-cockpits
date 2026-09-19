@@ -10,6 +10,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Nothing ships if the copies of a shared page have drifted apart.
+scripts/check-shared.sh || exit 1
+
 ship() {
   local app="$1" dir url
   case "$app" in
