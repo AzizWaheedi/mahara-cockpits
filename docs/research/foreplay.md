@@ -112,6 +112,35 @@ is a live risk for Gulf advertisers. Atria has a run of billing complaints on
 Trustpilot, five of seven reviews at one star, mostly about being upgraded
 and charged during a trial.
 
+## What it is good at here, and what it is not
+
+Checked 2026-09-19 against their own FAQ and their OpenAPI spec.
+
+**Their Discovery library is not a crawl.** Foreplay's own words: *"Ads added
+to the Foreplay inspiration library are those saved from other users on the
+platform... it only displays winning ads that have been saved by our users."*
+Their users are overwhelmingly American and European direct-to-consumer
+brands, so searching it for Gulf construction and engineering ads will
+return very little. There is also **no country filter** anywhere in the
+discovery API: the parameters are language, niche, format, platform, market
+target and dates, and `country` appears only as a breakdown on your own
+connected account. Arabic is in the language list, which helps, but Arabic is
+not the same as Kuwait.
+
+**Spyder is a different mechanism and it is the one we want.** It tracks a
+named brand by reading the Meta Ad Library for that page, so it works for any
+advertiser we can name. Our own 30 clients are exactly that: named. We are
+not discovering anybody, we are watching people we already know.
+
+So the shape of the purchase is: **Spyder, boards and permanence, not
+Discovery and not Lens.** That is also the cheap half.
+
+**And we already have the better tool for Gulf discovery.** The ideation
+radar reads the Meta Ad Library and ScrapeCreators directly, which is where
+Gulf commercial ads actually are. The Ad Library web interface covers all six
+GCC countries with Arabic keyword search; Foreplay's own library does not
+reach them.
+
 ## Still needed, and it is only one thing
 
 **A Foreplay account and an API key.** There is no key on the VPS or in any
