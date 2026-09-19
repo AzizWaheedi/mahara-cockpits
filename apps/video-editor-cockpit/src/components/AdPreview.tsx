@@ -32,13 +32,30 @@ export default function AdPreviewFrame({
 
   if (state === "done" && preview?.ok && preview.src) {
     return (
-      <div className="raised overflow-hidden rounded-[var(--radius-md)]">
-        <iframe
-          src={preview.src}
-          title="The ad on Facebook"
-          className="w-full border-0"
-          style={{ height: Math.min(760, Math.max(420, preview.height ?? 560)) }}
-        />
+      <div className="space-y-1.5">
+        <div className="raised overflow-hidden rounded-[var(--radius-md)]">
+          <iframe
+            src={preview.src}
+            title="The ad on Facebook"
+            className="w-full border-0"
+            style={{ height: Math.min(760, Math.max(420, preview.height ?? 560)) }}
+          />
+        </div>
+        {/* Meta only draws this frame for a browser signed in to the ad
+            account. Anyone else sees an empty box, so there is always a way
+            through to the same preview in a tab. */}
+        <p className="muted text-[11px] leading-snug">
+          Blank?{" "}
+          <a
+            href={preview.src}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="text-[color:var(--primary)] underline underline-offset-2"
+          >
+            Open it in a tab
+          </a>
+          . Meta only draws it for a browser signed in to the ad account.
+        </p>
       </div>
     );
   }
