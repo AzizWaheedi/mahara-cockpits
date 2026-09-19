@@ -119,12 +119,43 @@ twelve clients.
 | Phase 2, plan generation | a decision on which model writes the plan. Extraction and drafting is DeepSeek work; the Arabic captions are not |
 | Phase 4, generation | the MCP job runner, and which agent owns it |
 | Phase 5, internal review | the screen, once there is something to review |
-| a real push to GHL | a token: either one `pit_…` per client, or the agency token plus its company id |
+| a real push to GHL | a social account connected in a sub-account, and `GHL_SOCIAL_USER_ID` |
 | the ClickUp form that seeds a calendar | the pattern exists in client-launch-campaign; nobody has said what the form asks |
 | LinkedIn | a live test before it is promised |
 | pricing to the client | Aziz's target margin |
 
 Nothing above is blocked on code except the last three.
+
+## Proved against the live API, 2026-09-19
+
+A Private Integration Token from the "Zeiad Playing Account" sub-account
+(`TlMDKng1udH71eYiddF4`, a cancelled sandbox) reached the Social Planner,
+and the token now lives in `social_ghl_auth` rather than in the repo or an
+env file.
+
+**The token in `ghl_clients.panel_token` is not a GoHighLevel token** --
+48 characters, no `pit_` prefix, written by the panel provisioning job. It
+answers 401 "Invalid JWT" on every version header, so that is a wrong
+token type rather than the missing-header case.
+
+Three things the live API does that its documentation does not say, each
+found by calling it and each now pinned by a test:
+
+| documented | actual |
+| --- | --- |
+| `GET /posts` lists posts | it 404s. Listing is `POST /posts/list` |
+| `limit` is a number | it must be a number *string*: `"10"`, not `10` |
+| `createdBy` is optional | `userId` is **required**: "userId must be a string" |
+
+And one thing that is less bad than feared: `Version` was accepted as
+`2021-07-28`, `2023-02-21` and `v3` on the read endpoints, so the header
+is not as brittle as the Invalid JWT reports suggest. The per-endpoint
+setting stays, because the write path is the one nobody has exercised.
+
+`/users` and `/locations` are blocked by Cloudflare for a plain client
+(error 1010) while `/social-media-posting/*` is not -- the same block the
+calendar code notes. So the GHL **user id** for `userId` cannot be read
+from here; it has to be supplied.
 
 ## Posting, end to end
 
