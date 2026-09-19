@@ -40,65 +40,166 @@ for the Team plan's internal comments, because the share simply does not
 exist while Sabry is still looking. The editor gets both sets of notes in
 the same place, at the right frames.
 
+## Where it lands in the cockpit
+
+Two screens change, both in the editor cockpit, and both are sections that
+already exist. Nothing new gets built that Frame.io could take away.
+
+### Job page, "The cut" -- the review link beside the Drive link
+
+Today this section is a text box for a Drive link and two buttons, Check it
+first and Deliver. It gains one line above them:
+
+```
+The cut
+┌──────────────────────────────────────────────────────────┐
+│  v3 · with the client since Tuesday · 2 notes open       │
+│  [ Open in Frame.io ↗ ]                                  │
+└──────────────────────────────────────────────────────────┘
+  Link to the cut in Drive
+  [ https://drive.google.com/file/d/…            ]
+  [ Check it first ]  [ Deliver ]
+```
+
+The Drive box stays. Frame.io is additive: if a job has no Frame.io file
+the line is absent and the page is exactly what it is now. That is the
+whole defence against this becoming load-bearing.
+
+The version and the state come from `GET /files/{file}`; "2 notes open" is
+a count of `editor_notes` rows for this job with `done` false.
+
+### Job page, "Notes" -- the notes get a frame
+
+The notes list already has a checkbox per note and already renders
+`at_sec`. What changes is that `at_sec` is finally populated, because today
+it comes from a regular expression hunting for something shaped like `1:24`
+in ClickUp comment text, and is usually null.
+
+```
+Notes
+  ☐  0:42  Cut the pause before she says the price     Sabry · Frame.io
+  ☑  1:07  Logo should be bottom-right here            Client · Frame.io
+  ☐  —     Client wants it 15s for stories             Aziz · ClickUp
+```
+
+Three small things, all cheap:
+
+- the timecode is a link that opens Frame.io at that frame;
+- a source badge, because "the client said this" and "Sabry said this"
+  should not look the same;
+- the checkbox follows `comment.completed` both ways -- ticking it here
+  marks it resolved there, so the editor is not keeping two lists.
+
+### Pipeline and Jobs -- nothing new, just true
+
+The pipeline board already mirrors ClickUp status. Frame.io is what makes
+those columns move on their own: a first client comment sets Update
+required, an approval sets the card done. The status buttons Aziz asked for
+stay exactly where they are, because somebody still has to be able to move
+a card when the automation is wrong or not involved.
+
+### The creative director's cockpit -- one list, and only if wanted
+
+Sabry's review happens in Frame.io; that is the tool. The only thing worth
+adding to his cockpit is a list of cuts waiting on him, on the Work page he
+already opens. It is a read of `editor_jobs` filtered to "has a Frame.io
+file, not yet shared with the client" -- no new table, no new backend.
+
+Optional on purpose. If he would rather work from Frame.io's own inbox,
+nothing is lost.
+
+### The media buyer, and the client
+
+The media buyer's cockpit gets nothing. There is no step here that is his.
+
+**The client never touches the cockpit**, and that is the point of choosing
+Frame.io over building a review screen: a share link needs no account, no
+seat and no support. There is nothing to provision for forty-one clients
+and nothing to revoke when one leaves.
+
 ## How it plugs into what is already here
 
 Very little new. `editor_notes` was built for this and has been waiting:
 
-| column | today | with Frame.io |
-| --- | --- | --- |
-| `at_sec` | a regex over the comment text, usually null | the comment's own frame, exact |
-| `text` | the ClickUp comment | the Frame.io comment |
-| `by_email` / `by_name` | the ClickUp user | the commenter, or the client's name on the share |
-| `source` | `clickup` or `cockpit` | `frameio` |
-| `done` | never set | `comment.completed` from the webhook |
-| `version` | the cut number | the version stack position |
+## The APIs, and a correction
 
-Three touch points, in order of value:
+I said earlier that the inbound half needs no OAuth. **That was wrong, and
+it is worth being exact about why.** A Frame.io webhook payload is a thin
+envelope: it carries IDs and nothing else. Here is their own example,
+verbatim:
 
-- **Inbound: a webhook.** Frame.io pushes `comment.created`,
-  `comment.completed`, `file.versioned`, `file.upload.completed` and
-  `share.viewed`, signed HMAC SHA256, scoped to a workspace. A Vercel
-  function on the media buyer deployment (beside `api/watchdog.ts`, which
-  already holds the Supabase service key) verifies the signature and writes
-  `editor_notes`. **This needs no OAuth at all** -- see the next section for
-  why that matters more than it sounds.
-- **The cockpit reads it.** The job page already lists notes and already
-  has a place for a preview; a Frame.io review link is the same shape as the
-  Drive link it shows now. No new data layer.
-- **ClickUp keeps moving.** The desk's existing writeback already sets the
-  status and the Edited Video Link. A first comment becomes "Update
-  required", an approval becomes done -- the buttons Aziz asked for in the
-  cockpit, driven by what actually happened in review instead of by
-  somebody remembering to press them.
+```json
+{
+  "account":   { "id": "6f70f1bd-…" },
+  "project":   { "id": "7e46e495-…" },
+  "resource":  { "id": "d3075547-…", "type": "file" },
+  "type":      "file.ready",
+  "user":      { "id": "56556a3f-…" },
+  "workspace": { "id": "378fcbf7-…" }
+}
+```
 
-One more that is nearly free: the Do's and Don'ts path already exists
-(`desk/brand.py` appends, never replaces). A note the client repeats across
-three videos is a house rule, and this is the first time we would have the
-data to notice.
+A `comment.created` event tells you a comment exists and gives you its id.
+It does not give you the text, the frame, or who wrote it. To get those you
+call the API back -- and that needs a token.
 
-## The one hard constraint: authentication
+### The endpoints we would actually use
 
-Frame.io V4 authenticates with Adobe IMS OAuth. There are two kinds:
+| what | call |
+| --- | --- |
+| the comment the webhook just named | `GET /v4/accounts/{account}/comments/{comment}` |
+| every comment on a cut (the polling fallback) | `GET /v4/accounts/{account}/files/{file}/comments` |
+| the cut itself, for its version and name | `GET /v4/accounts/{account}/files/{file}` |
+| a client review link | `POST /v4/accounts/{account}/projects/{project}/shares` |
 
-- **Server-to-server** -- client credentials, no refresh token, nothing to
-  expire. This is what an unattended worker wants. It is **Enterprise only**
-  (Frame.io staff, on their forum: "If you're on an enterprise plan, you
-  should have access to S2S"), and needs the account administered through
-  the Adobe Admin Console.
-- **User OAuth** -- needs `offline_access` for a refresh token, and that
-  refresh token expires in about 30 days for a standard OAuth app.
+All on `https://api.frame.io`, bearer token, and all read-only except the
+last.
 
-So on anything short of Enterprise -- free tier included -- whatever the
-worker *pushes* to Frame.io needs a token a human re-authorises roughly
-monthly. That is exactly the kind of thing that works for five weeks and
-then quietly stops.
+**A trap worth writing down now:** the comment's `timestamp` is a
+**framestamp, counting from 1**, not seconds -- their migration guide says
+so explicitly, and their own forum has people caught by it. `editor_notes`
+stores `at_sec`, so it needs the frame rate to convert, and the file object
+does not obviously carry one. First thing to check against a real comment
+during the pilot, before any of this is written.
 
-**Which is why the plan starts webhook-only.** Inbound needs no token: they
-push to us, we verify a signature. Everything in the table above works with
-zero OAuth and nothing that can expire. Creating projects and share links
-stays manual at first -- it is a few clicks per client, done once -- and
-only becomes a candidate for automation if Mahara ever moves to Enterprise,
-or if the monthly re-authorisation turns out to be tolerable.
+### What that means for tokens
+
+| | |
+| --- | --- |
+| access token | 24 hours |
+| refresh token | **14 days**, and using one returns a new one |
+| server-to-server, no expiry | Enterprise only |
+
+So it rolls: anything refreshing more often than fortnightly should keep
+going indefinitely. Adobe does not actually promise that in writing, so the
+right assumption is that it will break one day, and the job is to make the
+break loud and the fix one click.
+
+**Which is exactly what the desk already does for Google Drive.** It finds
+footage through a stored OAuth refresh token it renews on every run. This
+is the same pattern, in the same worker, with the same failure handling --
+not a new class of fragility, just a second token in a place that already
+has one.
+
+### So the shape is: dumb webhook, worker does the work
+
+1. **A Vercel function receives the event.** Verifies the HMAC, checks the
+   timestamp is recent, writes one row to `editor_requests` with the event
+   type and the resource id. No token, no API call, nothing that can fail
+   slowly. It is about twenty lines.
+2. **The worker drains it**, the same way it drains everything else the
+   cockpit asks for. It holds the Frame.io refresh token beside the Google
+   one, fetches the comment, and writes `editor_notes`.
+
+Two things fall out of that split, and both matter:
+
+- **A token failure loses nothing.** The events are already queued. When the
+  token is fixed the backlog drains.
+- **The webhook is an optimisation, not a dependency.** If phase 0 finds
+  this account cannot create one, the worker polls
+  `GET /files/{id}/comments` for the open jobs on the run it already makes
+  every twenty minutes. Same token, same code, one less moving part. The
+  plan does not collapse on the one unknown.
 
 ## Cost: nothing, for a long time
 
@@ -214,10 +315,15 @@ build:
    subscription?** The entitlement says two users share the account, and
    that Frame.io users are separate from Creative Cloud users, but Adobe's
    own wording hedges. Five minutes to find out.
-2. **Can a webhook be created on this account at all?** Creating one needs
-   an OAuth app in the Adobe Developer Console, and nothing documents
-   whether a Creative-Cloud-backed account may do that. It is the hinge for
-   everything below, so test it before writing any code.
+2. **Can an OAuth app be created in the Adobe Developer Console for this
+   account?** This is the real hinge -- not the webhook, which is optional,
+   but the token. Without one, nothing can read a comment back and the
+   integration is off; the review loop still works, by hand, and still
+   costs nothing.
+3. **What unit is a comment's `timestamp`?** Their docs say a framestamp
+   from 1, their create example looks like seconds, and their forum has
+   people caught between the two. One real comment settles it, and it
+   decides how `at_sec` is computed.
 
 And the real question underneath both: does the review actually move there,
 or does everybody go back to WhatsApp.
@@ -226,18 +332,23 @@ or does everybody go back to WhatsApp.
 review with the client, at no cost, is the bulk of what Frame.io is for.
 Everything below only saves re-typing.
 
-**1. The webhook -- two days, only if phase 0 says the account can make
-one.** `api/frameio.ts` beside `api/watchdog.ts` on the media buyer
-deployment, which already holds the Supabase service key. Verify the HMAC,
-map the event, write `editor_notes` with a real `at_sec`, put the review
-link on the job. Tests around the signature check and the mapping, in the
-shape the worker's 145 already have. No OAuth in the running path and
-nothing scheduled, so there is nothing to expire.
+**1. Notes arrive with their frames -- two to three days.** Two pieces, in
+this order, because the second is useful without the first:
 
-*If the account cannot create a webhook*, the fallback is polling the
-comments endpoint with a user OAuth token that a human re-authorises about
-monthly. That is worse, and worth doing only once phase 0 has proved the
-review loop is real.
+*The worker half, which is the part that matters.* A Frame.io refresh
+token stored beside the Google one, renewed on every run. A `frameio`
+command that reads the open jobs' comments and writes `editor_notes` with
+a real `at_sec`. Tests around the framestamp conversion and the token
+refresh, in the shape the worker's 145 already have. This works on its own,
+polling every twenty minutes, with no webhook at all.
+
+*The webhook half, if phase 0 says the account can create one.*
+`api/frameio.ts` beside `api/watchdog.ts`: verify the HMAC, check the
+timestamp, queue one row. Twenty lines, no token. It turns twenty minutes
+into seconds and nothing depends on it.
+
+Also here: the review link and version on the job page, which is a read of
+one field.
 
 **2. The loop closes -- two days.** A first client comment moves the ClickUp
 card to Update required; an approval moves it to done. The job page shows
