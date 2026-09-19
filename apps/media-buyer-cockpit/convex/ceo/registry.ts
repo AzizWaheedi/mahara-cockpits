@@ -7,6 +7,7 @@ import { expenses } from "./adapters/expenses";
 import { growth } from "./adapters/growth";
 import { machine } from "./adapters/machine";
 import { money } from "./adapters/money";
+import { organic } from "./adapters/organic";
 import { portal } from "./adapters/portal";
 import { team } from "./adapters/team";
 import type { Adapter } from "./types";
@@ -26,5 +27,6 @@ export const ADAPTERS: Adapter[] = [
   team,
   portal,
   assets,
+  organic,
   machine,
 ];

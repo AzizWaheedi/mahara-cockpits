@@ -37,6 +37,7 @@ import { MachineTab } from "./ceo/MachineTab";
 import { ManagementTab } from "./ceo/ManagementTab";
 import { MarketingTab } from "./ceo/MarketingTab";
 import { MoneyTab } from "./ceo/MoneyTab";
+import { OrganicTab } from "./ceo/OrganicTab";
 import { SalesTab } from "./ceo/SalesTab";
 import { statusSentence } from "./ceo/statusSentence";
 import { TodayTab } from "./ceo/TodayTab";
@@ -47,6 +48,7 @@ const TAB_LABELS: Record<CeoTabKey, string> = {
   frontend: "Frontend",
   marketing: "Marketing",
   ads: "Ads",
+  organic: "Organic",
   sales: "Sales",
   backend: "Backend",
   delivery: "Delivery",
@@ -62,6 +64,7 @@ const TAB_VIEWS: Record<CeoTabKey, (props: CeoTabProps) => ReactNode> = {
   frontend: FrontendTab,
   marketing: MarketingTab,
   ads: AdsTab,
+  organic: OrganicTab,
   sales: SalesTab,
   backend: BackendTab,
   delivery: DeliveryTab,
