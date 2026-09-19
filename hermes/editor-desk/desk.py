@@ -83,9 +83,11 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     add("google oauth", cfg.google_configured, "client id, secret and refresh token set" if cfg.google_configured else "missing: Drive cannot be read", True)
     add("ELEVENLABS_API_KEY", bool(cfg.elevenlabs_key), "set (speech first)" if cfg.elevenlabs_key else "missing: transcripts fall back to Whisper")
     add("GROQ_API_KEY", bool(cfg.groq_key), "set (speech fallback)" if cfg.groq_key else "missing")
-    add("FOREPLAY_API_KEY", bool(cfg.foreplay_key),
-        "set (the swipe file mirrors)" if cfg.foreplay_key
-        else "missing: the swipe file page stays empty until Aziz adds one")
+    have_fp = bool(cfg.foreplay_key or cfg.composio_key)
+    add("foreplay", have_fp,
+        ("FOREPLAY_API_KEY set" if cfg.foreplay_key
+         else "through Composio (COMPOSIO_API_KEY set)") if have_fp
+        else "neither FOREPLAY_API_KEY nor COMPOSIO_API_KEY: the swipe file page stays empty")
     add("supabase", cfg.supabase_configured, "configured" if cfg.supabase_configured else "missing DESK_SUPABASE_URL and DESK_SUPABASE_KEY", True)
     add("clickup writeback", cfg.clickup_writeback, "on: the desk comments on cards" if cfg.clickup_writeback else "off")
 

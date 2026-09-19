@@ -35,11 +35,35 @@ BASE = "https://public.api.foreplay.co"
 MCP = f"{BASE}/mcp"
 
 
+# Composio fronts the same API as a tool per endpoint. Aziz connected it
+# there on 2026-09-19, so the worker can carry one Composio key instead of a
+# key per vendor. Slugs confirmed live against his account the same day.
+COMPOSIO = "https://backend.composio.dev/api/v3/tools/execute"
+VIA_COMPOSIO = {
+    "/api/usage": "CUSTOM_FOREPLAY_GET_USER_USAGE",
+    "/api/boards": "CUSTOM_FOREPLAY_GET_BOARDS",
+    "/api/board/ads": "CUSTOM_FOREPLAY_GET_BOARD_ADS",
+    "/api/swipefile/ads": "CUSTOM_FOREPLAY_GET_SWIPEFILE_ADS",
+    "/api/discovery/ads": "CUSTOM_FOREPLAY_SEARCH_DISCOVERY_ADS",
+    "/api/spyder/brands": "CUSTOM_FOREPLAY_GET_SPYDER_BRANDS",
+    "/api/spyder/brand/ads": "CUSTOM_FOREPLAY_GET_SPYDER_BRAND_ADS",
+}
+
+
 class Foreplay:
+    """One client, two ways in.
+
+    With a Foreplay key it calls Foreplay. With a Composio key it calls the
+    same endpoints through Composio, which is where Aziz keeps the
+    connection. Either one secret is enough; the rest of the worker cannot
+    tell which is in use.
+    """
+
     def __init__(self, cfg: Config, log: Optional[Callable[[str], None]] = None):
-        if not cfg.foreplay_key:
-            raise http.HttpError(0, "FOREPLAY_API_KEY is not set")
         self.cfg = cfg
+        self.via_composio = bool(cfg.composio_key and not cfg.foreplay_key)
+        if not cfg.foreplay_key and not cfg.composio_key:
+            raise http.HttpError(0, "neither FOREPLAY_API_KEY nor COMPOSIO_API_KEY is set")
         self.log = log or (lambda m: None)
         self.calls = 0
 
@@ -48,9 +72,30 @@ class Foreplay:
 
     def get(self, path: str, **params: Any) -> dict[str, Any]:
         self.calls += 1
-        q = http.encode_query({k: v for k, v in params.items() if v not in (None, "")})
+        args = {k: v for k, v in params.items() if v not in (None, "")}
+        if self.via_composio:
+            return self._composio(path, args)
+        q = http.encode_query(args)
         out = http.get_json(f"{BASE}{path}?{q}", headers=self._h(), timeout=60)
         return out if isinstance(out, dict) else {}
+
+    def _composio(self, path: str, args: dict[str, Any]) -> dict[str, Any]:
+        slug = VIA_COMPOSIO.get(path)
+        if not slug:
+            raise http.HttpError(0, f"{path} has no Composio tool; use a Foreplay key for it")
+        out = http.post_json(
+            f"{COMPOSIO}/{slug}",
+            {"arguments": args, "user_id": self.cfg.composio_user or "default"},
+            headers={"x-api-key": self.cfg.composio_key, "Accept": "application/json"},
+            timeout=90,
+        )
+        if not isinstance(out, dict):
+            return {}
+        if out.get("successful") is False:
+            raise http.HttpError(0, f"Composio refused {slug}: {str(out.get('error'))[:160]}")
+        # Composio wraps the answer one layer deeper than Foreplay does.
+        inner = out.get("data")
+        return inner if isinstance(inner, dict) else out
 
     def usage(self) -> dict[str, Any]:
         """Credits left. Reading this is free and tells us whether to start."""

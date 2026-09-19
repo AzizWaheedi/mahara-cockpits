@@ -282,11 +282,59 @@ public Facebook embed second, and Meta's expiring preview last.
 So: Foreplay is the net from today forward. The archive is the backlog and
 the guarantee.
 
+## What the MCP actually holds, checked live
+
+Twenty-one tools, not the seven I first found. My earlier probe guessed at
+slug names and guessed wrong; `composio search` returns the real list.
+Boards, usage, discovery and Spyder brands are all there.
+
+Two things that were open are now settled:
+
+**Their media is their own.** A Discovery ad's `video` comes from
+`r2.foreplay.co`, Cloudflare R2, and the thumbnail from their Google Cloud
+bucket. Nothing points at an fbcdn link. So a saved ad really does outlive
+the Meta link, which is the claim the whole choice rested on.
+
+**The account is fresh and untouched**: 10,000 credits, none used, no
+boards, no Spyder brands, nothing saved. The period runs to 19 October.
+
+## Discovery, measured rather than guessed
+
+Both my earlier reports were wrong in opposite directions. It is not useless
+for the Gulf, and it is not rich either.
+
+| Arabic search | Ads | With a video file |
+|---|---|---|
+| everything | 25 | 12 |
+| تصميم داخلي | 25 | 19 |
+| real estate | 25 | 8 |
+| مقاولات | 14 | 6 |
+| villa | 0 | 0 |
+
+Across five queries there were **25 distinct Arabic ads with 8 playable
+files, and seven of those eight are the same advertiser**. Dubai real estate
+and one interior studio. Nothing in construction or engineering.
+
+So Discovery is not where the value is for us, and I did not seed the
+ideation board from it: eight ads from two advertisers would be noise on a
+board Sabry reads. The value is Spyder on our own clients, the team's own
+saves, and the fact that Foreplay keeps the file.
+
+## One key, either kind
+
+The worker now takes **either** `FOREPLAY_API_KEY` or `COMPOSIO_API_KEY`.
+With the Composio key it calls the same endpoints through the toolkit Aziz
+already connected, so there is no second vendor secret to manage; with the
+Foreplay key it calls Foreplay directly, which is one hop instead of two and
+wins when both are set. Seven tests cover the routing, the unwrapping and
+the endpoints Composio does not carry. `doctor` says which one is in use.
+
 ## Still needed, and it is only one thing
 
-**A Foreplay account and an API key.** There is no key on the VPS or in any
-deployment. Nothing here runs until there is one, and the swipe file page
-says so rather than looking broken.
+**One key on the worker**, either a Foreplay API key or a Composio API key.
+The Composio connection Aziz made is authed to his laptop, not to the VPS,
+so the cron needs a key of its own. Nothing runs until there is one, and the
+swipe file page says so rather than looking broken.
 
 On the plan: seats are not the constraint, brands are. Basic has no Lens at
 all, Workflow covers 1, Agency 10, and 30 clients needs Enterprise. If the

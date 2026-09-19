@@ -1315,3 +1315,80 @@ class DropBoxTests(unittest.TestCase):
 
     def test_an_empty_box_does_nothing(self):
         self.assertEqual(foreplay._forward_to_ideation(FakeSupabase(), [], lambda m: None), 0)
+
+
+class ComposioRouteTests(unittest.TestCase):
+    """Aziz keeps the Foreplay connection in Composio, so the worker should
+    be able to carry one Composio key instead of a key per vendor."""
+
+    def cfg_with(self, tmp, *, foreplay="", composio=""):
+        c = cfg_in(tmp)
+        import desk.config as cfgmod
+        was = cfgmod._file_keys
+        cfgmod._file_keys = {}
+        self.addCleanup(lambda: setattr(cfgmod, "_file_keys", was))
+        for name, val in (("FOREPLAY_API_KEY", foreplay), ("COMPOSIO_API_KEY", composio)):
+            if val:
+                os.environ[name] = val
+            else:
+                os.environ.pop(name, None)
+        self.addCleanup(lambda: [os.environ.pop(n, None) for n in
+                                 ("FOREPLAY_API_KEY", "COMPOSIO_API_KEY")])
+        return c
+
+    def test_a_foreplay_key_calls_foreplay_directly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fp = foreplay.Foreplay(self.cfg_with(tmp, foreplay="k"), lambda m: None)
+            self.assertFalse(fp.via_composio)
+
+    def test_a_composio_key_alone_routes_through_composio(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fp = foreplay.Foreplay(self.cfg_with(tmp, composio="c"), lambda m: None)
+            self.assertTrue(fp.via_composio)
+
+    def test_the_direct_key_wins_when_both_are_present(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fp = foreplay.Foreplay(self.cfg_with(tmp, foreplay="k", composio="c"), lambda m: None)
+            self.assertFalse(fp.via_composio, "one hop is better than two")
+
+    def test_neither_key_is_refused_before_any_call(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(Exception):
+                foreplay.Foreplay(self.cfg_with(tmp), lambda m: None)
+
+    def test_composio_wraps_the_answer_one_layer_deeper_and_it_is_unwrapped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fp = foreplay.Foreplay(self.cfg_with(tmp, composio="c"), lambda m: None)
+            sent = {}
+
+            def fake_post(url, body, headers=None, timeout=60):
+                sent["url"] = url
+                sent["body"] = body
+                return {"successful": True, "data": {"data": [{"id": "fp_1"}], "metadata": {}}}
+
+            was = foreplay.http.post_json
+            foreplay.http.post_json = fake_post
+            try:
+                out = fp.get("/api/swipefile/ads", limit=5)
+            finally:
+                foreplay.http.post_json = was
+            self.assertTrue(sent["url"].endswith("CUSTOM_FOREPLAY_GET_SWIPEFILE_ADS"))
+            self.assertEqual(sent["body"]["arguments"], {"limit": 5})
+            self.assertEqual(out["data"], [{"id": "fp_1"}], "the caller sees the same shape either way")
+
+    def test_a_refusal_from_composio_is_raised_not_swallowed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fp = foreplay.Foreplay(self.cfg_with(tmp, composio="c"), lambda m: None)
+            was = foreplay.http.post_json
+            foreplay.http.post_json = lambda *a, **k: {"successful": False, "error": "no seat"}
+            try:
+                with self.assertRaises(Exception):
+                    fp.get("/api/swipefile/ads")
+            finally:
+                foreplay.http.post_json = was
+
+    def test_an_endpoint_composio_does_not_carry_says_so(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fp = foreplay.Foreplay(self.cfg_with(tmp, composio="c"), lambda m: None)
+            with self.assertRaises(Exception):
+                fp.get("/api/lens/reporting")

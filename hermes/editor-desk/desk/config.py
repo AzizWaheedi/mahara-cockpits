@@ -209,6 +209,14 @@ class Config:
         return key("FOREPLAY_API_KEY")
 
     @property
+    def composio_key(self) -> str:
+        return key("COMPOSIO_API_KEY")
+
+    @property
+    def composio_user(self) -> str:
+        return key("COMPOSIO_USER_ID", "default")
+
+    @property
     def meta_token(self) -> str:
         return key("META_ACCESS_TOKEN") or key("META_SYSTEM_TOKEN")
 
