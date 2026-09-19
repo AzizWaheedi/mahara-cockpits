@@ -1,13 +1,17 @@
 import { useEffect, useState } from "react";
-import { Navigate, Route, Routes } from "react-router";
+import { Navigate, NavLink, Route, Routes } from "react-router";
 import { PortalAutoSignIn } from "./components/PortalAutoSignIn";
 import { Wordmark } from "./components/Wordmark";
 import { SessionProvider, useWho } from "./lib/auth";
 import { useCanOpen, useMe } from "./lib/data";
 import { otherCockpits, portalUrl } from "./lib/portal";
+import IdeasPage from "./pages/IdeasPage";
 import JobPage from "./pages/JobPage";
 import JobsPage from "./pages/JobsPage";
+import PipelinePage from "./pages/PipelinePage";
 import SignInPage from "./pages/SignInPage";
+import VideosPage from "./pages/VideosPage";
+import WinnersPage from "./pages/WinnersPage";
 
 /**
  * The same switch as the other cockpits: a `dark` class on the root element
@@ -174,10 +178,32 @@ function Shell() {
         className="sticky z-10 border-b hairline bg-[color:var(--background)]/90 backdrop-blur"
         style={{ top: "env(safe-area-inset-top, 0px)" }}
       >
-        <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-2.5 sm:gap-4">
+        <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-2.5 sm:gap-4">
           <Wordmark size="sm" />
-          {/* The wordmark alone carries it on a phone; the label needs room. */}
-          <span className="hidden text-sm font-medium tracking-tight sm:inline">Editor desk</span>
+          <nav className="flex items-center gap-1">
+            {[
+              { to: "/", label: "Jobs" },
+              { to: "/pipeline", label: "Pipeline" },
+              { to: "/videos", label: "Videos" },
+              { to: "/winners", label: "Winners" },
+              { to: "/ideas", label: "Ideas" },
+            ].map((t) => (
+              <NavLink
+                key={t.to}
+                to={t.to}
+                end={t.to === "/"}
+                className={({ isActive }) =>
+                  `rounded-[var(--radius-sm)] px-2.5 py-1 text-sm transition-colors ${
+                    isActive
+                      ? "bg-[color:var(--secondary)] font-medium"
+                      : "muted hover:text-[color:var(--foreground)]"
+                  }`
+                }
+              >
+                {t.label}
+              </NavLink>
+            ))}
+          </nav>
           <span className="muted ml-auto hidden text-xs sm:inline">{who}</span>
           <SwitchCockpit cockpits={cockpits} isAdmin={admin} />
           <ThemeToggle />
@@ -191,6 +217,10 @@ function Shell() {
         <Route path="/" element={<JobsPage />} />
         {/* The portal's door lands on /dashboard in every cockpit. */}
         <Route path="/dashboard" element={<Navigate to="/" replace />} />
+        <Route path="/pipeline" element={<PipelinePage />} />
+        <Route path="/videos" element={<VideosPage />} />
+        <Route path="/winners" element={<WinnersPage />} />
+        <Route path="/ideas" element={<IdeasPage />} />
         <Route path="/job/:taskId" element={<JobPage />} />
         <Route
           path="*"

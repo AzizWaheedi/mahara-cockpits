@@ -175,6 +175,60 @@ export const pushOne = internalAction({
   },
 });
 
+/**
+ * Mirror the winning ads into Supabase, so the editor cockpit reads the same
+ * rows as the other three.
+ *
+ * This deployment owns what "winning" means; nothing is recomputed here. The
+ * creative cockpit gets these rows over the Convex bridge and the editor
+ * cockpit, which has no Convex, reads them from a table instead. Same rows,
+ * one definition in the company.
+ */
+export const mirrorWinners = internalAction({
+  args: {},
+  returns: v.any(),
+  handler: async (ctx): Promise<Any> => {
+    const rows: Any[] = await ctx.runQuery(internal.fanout.winnerRows, {});
+    if (!rows.length)
+      return { rows: 0, note: "none to mirror, kept what is there" };
+    const at = new Date().toISOString();
+    const out = rows
+      .filter(r => r.adId)
+      .map(r => ({
+        ad_id: String(r.adId),
+        ad_name: r.adName ?? null,
+        client: r.client ?? null,
+        service_line: r.serviceLine ?? null,
+        city: r.city ?? null,
+        country: r.country ?? null,
+        format: r.format ?? null,
+        cta: r.cta ?? null,
+        headline: r.headline ?? null,
+        body: r.body ?? null,
+        transcript: r.transcript ?? null,
+        hook: r.hook ?? null,
+        voice: r.voice ?? null,
+        thumb_url: r.thumbUrl ?? null,
+        creative_id: r.creativeId ?? null,
+        account_id: r.accountId ?? null,
+        spend: typeof r.spend === "number" ? r.spend : null,
+        leads: typeof r.leads === "number" ? r.leads : null,
+        cpl: typeof r.cpl === "number" ? r.cpl : null,
+        origin: r.origin ?? null,
+        mirrored_at: at,
+      }));
+    // In batches, so one oversized payload cannot lose the lot.
+    for (let i = 0; i < out.length; i += 200) {
+      await sb("/rest/v1/winner_ads?on_conflict=ad_id", {
+        method: "POST",
+        headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify(out.slice(i, i + 200)),
+      });
+    }
+    return { rows: out.length, at };
+  },
+});
+
 export const peopleFromMembers = internalQuery({
   args: {},
   returns: v.array(v.any()),

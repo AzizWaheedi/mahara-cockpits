@@ -1017,6 +1017,15 @@ export const feedCreative = internalAction({
     } catch (e) {
       fail("winners", e);
     }
+    // The editor cockpit has no Convex, so the same rows go to Supabase.
+    try {
+      report.winnersMirror = await ctx.runAction(
+        internal.editorPortal.mirrorWinners,
+        {},
+      );
+    } catch (e) {
+      fail("winners mirror", e);
+    }
     console.log(`creative feed: ${JSON.stringify(report)}`);
     return report;
   },

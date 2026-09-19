@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router";
 import Ask from "../components/Ask";
 import { Empty, Fold, Out, Problem, Prose, Section, Spinner, StateBadge } from "../components/bits";
 import Footage from "../components/Footage";
+import MoveCard from "../components/MoveCard";
 import { useWho } from "../lib/auth";
 import {
   addNote,
@@ -276,6 +277,10 @@ export default function JobPage() {
           ) : (
             <Footage assets={assets.data ?? []} />
           )}
+        </Section>
+
+        <Section title="Where it is">
+          <MoveCard job={j} onMoved={() => job.reload()} />
         </Section>
 
         <Section title="The cut">

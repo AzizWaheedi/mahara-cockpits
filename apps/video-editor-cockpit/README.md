@@ -24,6 +24,10 @@ generator and no caption burner. What there is:
   they want to ask for it. One click puts it on the ClickUp card in the words
   a colleague would use, and the job remembers it was asked so nobody asks
   twice;
+- where the job is on the board. Pressing "I've started" moves the ClickUp
+  card to In progress and "Needs changes" moves it to Update required.
+  Finishing and cancelling are deliberately absent: those are somebody else's
+  decision, and the worker refuses them even if this screen asks;
 - the cut: paste a link, have it checked, send it to client review;
 - notes, including the ones people left on the ClickUp card.
 
@@ -34,6 +38,23 @@ bun install
 cp .env.example .env.local   # fill in VITE_SUPABASE_ANON_KEY
 bun run dev
 ```
+
+## The five screens
+
+| | |
+|---|---|
+| Jobs | grouped by what can be started, what is stuck, what is unread, what is delivered |
+| Pipeline | the same jobs as columns by their ClickUp status, so it matches what the board looks like |
+| Videos | every clip the desk has read, across all jobs, filtered by client or by whether anyone speaks |
+| Winners | the ads that already paid, mirrored from the media buyer which owns what "winning" means |
+| Ideas | the ideation board, the same rows the creative director works from; keeping something here keeps it for both |
+
+Winners and Ideas are shared on purpose (Aziz, 2026-09-19). Winners are
+mirrored into `winner_ads` by the media buyer deployment, so there is one
+definition of a proven ad in the company rather than two that drift. Ideas are
+not mirrored at all: this reads and writes the same `ideation_posts` rows the
+creative cockpit does, and Postgres grants the browser exactly the columns a
+save touches, so a scan's own numbers can never be edited from here.
 
 ## Getting in
 

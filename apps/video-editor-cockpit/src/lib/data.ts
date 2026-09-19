@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { STILLS_BUCKET, supabase } from "./supabase";
-import type { Asset, Client, EditorPerson, Job, Note, Version, WorkRequest } from "./types";
+import type {
+  Asset,
+  Client,
+  EditorPerson,
+  Idea,
+  Job,
+  Note,
+  Version,
+  WinnerAd,
+  WorkRequest,
+} from "./types";
 
 /** One shape for every read: what came back, whether it is still loading, and
  * why it failed. A screen that cannot say "this failed" lies quietly. */
@@ -82,6 +92,14 @@ export function useAssets(taskId: string): Loaded<Asset[]> {
   );
 }
 
+/** Every file the desk has read, newest first, for the gallery. */
+export function useAllAssets(limit = 300): Loaded<Asset[]> {
+  return useQuery<Asset[]>(
+    () => supabase.from("editor_assets").select("*").order("at", { ascending: false }).limit(limit),
+    [limit],
+  );
+}
+
 export function useVersions(taskId: string): Loaded<Version[]> {
   return useQuery<Version[]>(
     () =>
@@ -146,6 +164,63 @@ export function useCanOpen(email: string | null): Loaded<boolean> {
   );
 }
 
+/** The winning ads, cheapest cost per lead first: the ones worth copying. */
+export function useWinners(): Loaded<WinnerAd[]> {
+  return useQuery<WinnerAd[]>(
+    () =>
+      supabase
+        .from("winner_ads")
+        .select("*")
+        .order("cpl", { ascending: true, nullsFirst: false })
+        .limit(300),
+    [],
+  );
+}
+
+/** The ideation board, shared with the creative director. */
+export function useIdeas(): Loaded<Idea[]> {
+  return useQuery<Idea[]>(
+    () =>
+      supabase
+        .from("ideation_posts")
+        .select(
+          "key,platform,url,status,author_handle,author_name,posted_at,views,likes,comments,caption,duration_sec,thumb_url,still_path,industry,multiplier,tier,format,hook,why_it_works,transcript,saved_by_name,saved_at,saved_note",
+        )
+        .in("status", ["proposed", "saved"])
+        .order("multiplier", { ascending: false, nullsFirst: false })
+        .limit(300),
+    [],
+  );
+}
+
+/**
+ * Keep or release an idea. The same row the creative director sees, so a
+ * save here is a save there: one board, not a copy each (Aziz, 2026-09-19).
+ * Only these columns are writable from a browser; the scan's own numbers are
+ * granted away at the column level in Postgres.
+ */
+export async function saveIdea(
+  key: string,
+  keep: boolean,
+  by: { email: string; name: string },
+): Promise<string | null> {
+  const { error } = await supabase
+    .from("ideation_posts")
+    .update(
+      keep
+        ? {
+            status: "saved",
+            saved_by: by.email,
+            saved_by_name: by.name,
+            saved_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }
+        : { status: "proposed", updated_at: new Date().toISOString() },
+    )
+    .eq("key", key);
+  return error ? error.message : null;
+}
+
 export function useMe(email: string | null): Loaded<EditorPerson> {
   return useQuery<EditorPerson>(
     () =>
@@ -156,8 +231,11 @@ export function useMe(email: string | null): Loaded<EditorPerson> {
   );
 }
 
-/** Storyboard frames live in a private bucket, so each one needs its own signed link. */
-export function useStills(paths: (string | null)[]): Record<string, string> {
+/** Frames live in private buckets, so each one needs its own signed link. */
+export function useStills(
+  paths: (string | null)[],
+  bucket: string = STILLS_BUCKET,
+): Record<string, string> {
   const [urls, setUrls] = useState<Record<string, string>>({});
   const key = paths.filter(Boolean).join("|");
 
@@ -166,7 +244,7 @@ export function useStills(paths: (string | null)[]): Record<string, string> {
     if (!wanted.length) return;
     let alive = true;
     supabase.storage
-      .from(STILLS_BUCKET)
+      .from(bucket)
       .createSignedUrls(wanted, 3600)
       .then(({ data }) => {
         if (!alive || !data) return;
@@ -179,7 +257,7 @@ export function useStills(paths: (string | null)[]): Record<string, string> {
     return () => {
       alive = false;
     };
-  }, [key]);
+  }, [key, bucket]);
 
   return urls;
 }

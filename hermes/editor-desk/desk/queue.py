@@ -21,7 +21,21 @@ from .config import Config
 from .drive import Drive
 from .supabase import Supabase, now_iso
 
-KINDS = ("deliver", "check", "comment", "rescan", "ask")
+KINDS = ("deliver", "check", "comment", "rescan", "ask", "status")
+
+# Where an editor may move a card from the cockpit. Aziz, 2026-09-19: pressing
+# "started" should move it to In progress, and a round of comments should move
+# it to Update required.
+#
+# "complete" and "cancelled" are deliberately not here. Finishing a job is a
+# decision somebody else makes on the board, and a button that could close a
+# client's video by mistake is not worth the two seconds it saves. Client
+# review has its own action, because it writes the link as well.
+MOVE_TO = {
+    "in progress": "In progress",
+    "update required": "Update required",
+    "new video request": "New video request",
+}
 
 # What an editor can be short of. The wording is what lands on the card, so
 # it reads as a person asking a colleague rather than a system raising a
@@ -149,6 +163,30 @@ def run_ask(cfg: Config, log: Callable[[str], None], sb: Supabase, cu: ClickUp,
     return {"asked_for": wanted, "posted": bool(cfg.clickup_writeback)}
 
 
+def run_status(cfg: Config, log: Callable[[str], None], sb: Supabase, cu: ClickUp,
+               job: dict[str, Any], req: dict[str, Any]) -> dict[str, Any]:
+    """Move the card on the board, from the cockpit."""
+    task_id = str(req.get("task_id") or "")
+    want = str((req.get("params") or {}).get("to") or "").strip().lower()
+    if want not in MOVE_TO:
+        raise ValueError(f"{want!r} is not a status the cockpit may set")
+    was = str(job.get("status") or "")
+    if was.strip().lower() == want:
+        return {"status": want, "note": "already there"}
+    cu.set_status(task_id, want)
+    sb.mark_job(task_id, status=want)
+    if cfg.clickup_writeback:
+        who = req.get("requested_by_name") or req.get("requested_by") or "the editor"
+        note = str(req.get("input") or "").strip()
+        line = f"{who} moved this to {MOVE_TO[want]}" + (f": {note}" if note else ".")
+        try:
+            cu.comment(task_id, f"{line}\n\nMoved from the editor desk.")
+        except http.HttpError:
+            pass
+    log(f"{task_id}: {was or 'no status'} -> {want}")
+    return {"status": want, "was": was}
+
+
 def run_comment(cfg: Config, log: Callable[[str], None], cu: ClickUp, req: dict[str, Any]) -> dict[str, Any]:
     text = str(req.get("input") or "").strip()
     if not text:
@@ -207,6 +245,9 @@ def run_requests(cfg: Config, log: Callable[[str], None], sb: Supabase, *, limit
             elif kind == "ask":
                 cu = cu or ClickUp(cfg, log)
                 result = run_ask(cfg, log, sb, cu, job, req)
+            elif kind == "status":
+                cu = cu or ClickUp(cfg, log)
+                result = run_status(cfg, log, sb, cu, job, req)
             elif kind == "deliver":
                 cu = cu or ClickUp(cfg, log)
                 result = run_deliver(cfg, log, sb, cu, job, req)

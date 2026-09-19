@@ -678,3 +678,55 @@ class SeatTests(unittest.TestCase):
             sb.people_rows["sabry@maharamedia.com"]["via_portal"],
             "the desk must leave the portal's own flag alone",
         )
+
+
+class StatusTests(unittest.TestCase):
+    """Moving the card from the cockpit. Aziz, 2026-09-19: pressing started
+    should move it to In progress, comments to Update required."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.cfg = cfg_in(self.tmp.name)
+        self.sb = FakeSupabase()
+        self.sb.store_jobs([job_row(task(status="new video request"), now_iso=NOW)])
+        self.cu = FakeClickUp([task()])
+        real = (queue.ClickUp, queue.Drive)
+        queue.ClickUp = lambda cfg, log: self.cu
+        queue.Drive = lambda cfg, log: None
+        self.addCleanup(lambda: (setattr(queue, "ClickUp", real[0]), setattr(queue, "Drive", real[1])))
+
+    def move(self, to, note=""):
+        # No spaces in the id: the claim quotes it into the URL, and a fixture
+        # id like "s-in progress" would not match itself once encoded.
+        self.sb.queue({
+            "id": "s-" + to.replace(" ", "-"), "kind": "status", "task_id": "86abc", "created_at": NOW,
+            "input": note, "params": {"to": to},
+            "requested_by": "karim@maharamedia.com", "requested_by_name": "Karim",
+        })
+        return queue.run_requests(self.cfg, lambda m: None, self.sb)
+
+    def test_started_moves_the_card_to_in_progress(self):
+        out = self.move("in progress")
+        self.assertEqual(out["done"], 1)
+        self.assertEqual(self.cu.statuses, [("86abc", "in progress")])
+        self.assertEqual(self.sb.job("86abc")["status"], "in progress")
+        self.assertIn("Karim moved this to In progress", self.cu.posted[0][1])
+
+    def test_a_note_travels_with_the_move(self):
+        self.move("update required", "Client wants the logo bigger.")
+        self.assertIn("logo bigger", self.cu.posted[0][1])
+
+    def test_the_cockpit_cannot_close_or_cancel_a_job(self):
+        for bad in ("complete", "cancelled", "closed", "anything"):
+            self.cu.statuses.clear()
+            self.sb.requests_rows.clear()
+            out = self.move(bad)
+            self.assertEqual(out["failed"], 1, bad)
+            self.assertFalse(self.cu.statuses, f"{bad} must not reach the board")
+
+    def test_moving_to_where_it_already_is_changes_nothing(self):
+        self.sb.mark_job("86abc", status="in progress")
+        out = self.move("in progress")
+        self.assertEqual(out["done"], 1)
+        self.assertFalse(self.cu.statuses, "no pointless write to the board")

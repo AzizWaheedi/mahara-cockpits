@@ -17,3 +17,5 @@ export const supabase = createClient(url, anon, {
 });
 
 export const STILLS_BUCKET = "editor-stills";
+/** The ideation radar keeps its frames in its own bucket. */
+export const IDEA_STILLS_BUCKET = "ideation-stills";

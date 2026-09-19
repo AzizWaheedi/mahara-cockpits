@@ -143,7 +143,7 @@ export interface Note {
   at: string | null;
 }
 
-export type RequestKind = "deliver" | "check" | "comment" | "rescan" | "ask";
+export type RequestKind = "deliver" | "check" | "comment" | "rescan" | "ask" | "status";
 
 /** What an editor can be short of. Mirrors ASK_FOR in the worker. */
 export type AskTopic =
@@ -175,4 +175,53 @@ export interface EditorPerson {
   name: string | null;
   role: "editor" | "admin" | string;
   active: boolean;
+}
+
+/** A winning ad, mirrored out of the media buyer, which owns the definition. */
+export interface WinnerAd {
+  ad_id: string;
+  ad_name: string | null;
+  client: string | null;
+  service_line: string | null;
+  city: string | null;
+  format: string | null;
+  cta: string | null;
+  headline: string | null;
+  body: string | null;
+  transcript: string | null;
+  hook: string | null;
+  voice: string | null;
+  thumb_url: string | null;
+  spend: number | null;
+  leads: number | null;
+  cpl: number | null;
+  origin: string | null;
+}
+
+/** A post on the ideation board, shared with the creative director. */
+export interface Idea {
+  key: string;
+  platform: string | null;
+  url: string;
+  status: string | null;
+  author_handle: string | null;
+  author_name: string | null;
+  posted_at: string | null;
+  views: number | null;
+  likes: number | null;
+  comments: number | null;
+  caption: string | null;
+  duration_sec: number | null;
+  thumb_url: string | null;
+  still_path: string | null;
+  industry: string | null;
+  multiplier: number | null;
+  tier: string | null;
+  format: string | null;
+  hook: { line?: string; kind?: string } | null;
+  why_it_works: string | null;
+  transcript: string | null;
+  saved_by_name: string | null;
+  saved_at: string | null;
+  saved_note: string | null;
 }
