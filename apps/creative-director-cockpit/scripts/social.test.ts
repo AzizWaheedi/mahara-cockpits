@@ -81,6 +81,19 @@ describe("spread", () => {
 });
 
 describe("GhlError", () => {
+  it("tells a missing scope apart from a bad token", () => {
+    // Both are 401 and they need different people to fix them: one is a
+    // token regenerated with the right boxes ticked, the other is the
+    // wrong token entirely. Seen for real on 2026-09-19, minutes apart.
+    const scope = GhlError.explain(
+      401,
+      '{"statusCode":401,"message":"The token is not authorized for this scope."}',
+    );
+    expect(scope).toContain("Social Planner scopes");
+    expect(scope).toContain("Regenerate");
+    expect(scope).not.toContain("Version header");
+  });
+
   it("translates Invalid JWT into the thing that is actually wrong", () => {
     // It reads like a bad token and it is almost always a missing Version
     // header. Saying so is the difference between a minute and an evening.

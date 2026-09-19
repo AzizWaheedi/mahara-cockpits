@@ -68,10 +68,18 @@ export class GhlError extends Error {
    */
   static explain(status: number, body: string): string {
     const short = body.slice(0, 200);
+    // Two refusals that look the same and are not. Both were seen for
+    // real on 2026-09-19 and they need different people to fix them.
+    if (/not authorized for this scope/i.test(short))
+      return (
+        "That sub-account's Private Integration Token exists but was made " +
+        "without the Social Planner scopes. Regenerate it in that " +
+        `sub-account's Settings with ${SCOPES.join(", ")} ticked.`
+      );
     if (/invalid jwt/i.test(short))
       return (
-        "GoHighLevel refused the token as an invalid JWT. That is usually a " +
-        "missing or wrong Version header rather than a bad token -- see " +
+        "GoHighLevel refused the token outright. Either it is not a " +
+        "GoHighLevel token at all, or the Version header is missing -- see " +
         "GHL_SOCIAL_VERSION_POSTS and GHL_SOCIAL_VERSION_WRITE."
       );
     if (status === 401 || status === 403)

@@ -157,6 +157,41 @@ setting stays, because the write path is the one nobody has exercised.
 calendar code notes. So the GHL **user id** for `userId` cannot be read
 from here; it has to be supplied.
 
+## Where the tokens live, and what they can do
+
+**`DATABASE - MAHARA🌌` → tab `Client Data` is the join nothing else has.**
+Columns: Status, Client Name, **Clickup ID**, **GHL ID**, **GHL API** (the
+Private Integration Token), WA group, report doc, Drive, sheet, ad
+accounts. It is the only place the ClickUp client card, the GoHighLevel
+sub-account and that sub-account's token sit on one row.
+
+Loaded on 2026-09-19: **47 tokens** into `social_ghl_auth`, and 47 clients
+wired to their sub-account on `social_clients`. Wiring only records which
+sub-account is whose; it turns the package on for nobody. Twelve rows in
+the sheet have no token yet.
+
+Then every one of them was asked what it could do:
+
+| | |
+| --- | --- |
+| tokens that reach the Social Planner | **42** |
+| tokens refused for a missing scope | **5** — AEA Designs, amheco, Grandiocity Projects, Inverse group, Pidco Group |
+| sub-accounts with a social account connected | **0** |
+
+The five say *"The token is not authorized for this scope"*, which is a
+different thing from the "Invalid JWT" the panel token gave and needs a
+different fix: the token is real, it was just generated without the
+`socialplanner/*` boxes ticked. Regenerate it in that sub-account's
+settings. The cockpit now tells those two apart, because they need
+different people.
+
+**The last row is the one that matters.** The path is authenticated and
+every endpoint answers, but not one client has ever connected an Instagram
+in GoHighLevel, so there is nothing anywhere to post to. That is
+onboarding step 2, it takes about five minutes in the GHL UI per client,
+and until one is done the create path cannot be proved against a real
+post -- `createPost` refuses an empty `accountIds` and so does GHL.
+
 ## Posting, end to end
 
 What happens to one post, and who does each part.
