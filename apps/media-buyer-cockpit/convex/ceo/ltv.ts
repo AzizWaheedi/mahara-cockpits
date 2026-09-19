@@ -1,6 +1,10 @@
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
-import { internalMutation, internalQuery } from "../_generated/server";
+import {
+  internalAction,
+  internalMutation,
+  internalQuery,
+} from "../_generated/server";
 import { authenticatedAction, authenticatedQuery } from "../functions";
 import { callTool, unwrap } from "../tools";
 import { CFB, groupOf, isInternalCard } from "./billing";
@@ -174,6 +178,85 @@ export const plan = internalQuery({
       missing: missing.sort((a, b) => a.client.localeCompare(b.client)),
       outOfScope,
     };
+  },
+});
+
+/**
+ * Put a starting LTV on a card that has none, so it gains a baseline.
+ *
+ * A card with an empty LTV field is left out of every figure here, because
+ * assuming zero would erase whatever the client actually paid before the
+ * cockpit existed. The only cure is somebody who knows the number typing it in,
+ * and this is that door. It refuses a card that already carries a figure:
+ * changing an existing baseline is a different and much riskier act, and it
+ * belongs in the recompute above rather than here.
+ */
+export const setStartingFigures = internalAction({
+  args: {
+    userId: v.id("users"),
+    entries: v.array(v.object({ taskId: v.string(), value: v.number() })),
+  },
+  returns: v.any(),
+  handler: async (
+    ctx,
+    { userId, entries },
+  ): Promise<{
+    written: { client: string; value: number }[];
+    errors: string[];
+  }> => {
+    const by: string = await ctx.runQuery(internal.ceo.ltv.whoami, { userId });
+    const cards: { taskId: string; name: string; ltvUsd?: number }[] =
+      await ctx.runQuery(internal.ceo.billing.allBilling, {});
+    const errors: string[] = [];
+    const written: { client: string; value: number }[] = [];
+    const audit: LtvRow[] = [];
+
+    for (const e of entries) {
+      const card = cards.find(c => c.taskId === e.taskId);
+      if (!card) {
+        errors.push(`${e.taskId}: no client card with that id`);
+        continue;
+      }
+      if (typeof card.ltvUsd === "number") {
+        errors.push(
+          `${card.name}: already carries $${card.ltvUsd}, so it has a baseline already`,
+        );
+        continue;
+      }
+      if (!Number.isFinite(e.value) || e.value < 0) {
+        errors.push(
+          `${card.name}: ${e.value} is not a figure that can be written`,
+        );
+        continue;
+      }
+      try {
+        unwrap(
+          await callTool("pd_clickup_proxy_post", {
+            url: `https://api.clickup.com/api/v2/task/${e.taskId}/field/${CFB.ltv}`,
+            json_body: { value: e.value },
+          }),
+        );
+        written.push({ client: card.name, value: e.value });
+        audit.push({
+          clickupTaskId: e.taskId,
+          client: card.name,
+          baseline: e.value,
+          baselineDay: "(set by hand)",
+          logged: 0,
+          loggedCount: 0,
+          target: e.value,
+          current: null,
+          delta: e.value,
+        });
+      } catch (err) {
+        errors.push(
+          `${card.name}: ${String(err instanceof Error ? err.message : err).slice(0, 140)}`,
+        );
+      }
+    }
+    if (audit.length)
+      await ctx.runMutation(internal.ceo.ltv.recordWrite, { rows: audit, by });
+    return { written, errors };
   },
 });
 
