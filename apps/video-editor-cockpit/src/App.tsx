@@ -107,8 +107,41 @@ function Shell() {
       </>
     );
 
-  // The session is real but the database will not answer for this address.
-  // Say so plainly rather than showing a working page with nothing in it.
+  // The database refused the question rather than answering it. Show what it
+  // said: this is not the same as being turned away, and guessing which one
+  // it was is how the owner of the place got told he had no seat.
+  if (canOpen.error) {
+    return (
+      <div className="mx-auto max-w-md px-4 py-20 text-center">
+        <h1 className="text-lg font-semibold">The desk could not be opened</h1>
+        <p className="muted mt-2 text-sm">
+          Signed in as {email}, but the database refused the request. This is a fault, not a
+          permission: nobody needs to add you to anything.
+        </p>
+        <p className="muted mt-3 rounded-[var(--radius-md)] bg-[color:var(--muted)] px-3 py-2 font-mono text-xs">
+          {canOpen.error}
+        </p>
+        <div className="mt-6 flex justify-center gap-4">
+          <button
+            type="button"
+            onClick={() => canOpen.reload()}
+            className="muted text-sm underline underline-offset-4"
+          >
+            Try again
+          </button>
+          <button
+            type="button"
+            onClick={signOut}
+            className="muted text-sm underline underline-offset-4"
+          >
+            Sign out
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // The database answered, and the answer was no.
   if (!canOpen.loading && canOpen.data === false) {
     return (
       <div className="mx-auto max-w-md px-4 py-20 text-center">

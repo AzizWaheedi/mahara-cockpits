@@ -90,6 +90,7 @@ async function signInTokenFor(
   const body = {
     email,
     email_confirm: true,
+    role: "authenticated",
     user_metadata: { name },
     app_metadata: { roles, cockpits, portal: true },
   };

@@ -126,13 +126,19 @@ export function useRequests(taskId: string): Loaded<WorkRequest[]> {
  * rather than looking for a row and guessing. An admin with no seat row still
  * gets in, because the function says so, and the screen can never disagree
  * with the database about who is allowed.
+ *
+ * A refused request is not the same as a "no". On 2026-09-19 four accounts
+ * made by another project carried a Postgres role that does not exist, so
+ * every request came back 401, and a screen that read that as "no seat" told
+ * the owner of the place he had not been invited. So an error leaves `data`
+ * null and travels in `error`, and the caller has to tell them apart.
  */
 export function useCanOpen(email: string | null): Loaded<boolean> {
   return useQuery<boolean>(
     () =>
       email
         ? (supabase.rpc("is_editor").then(({ data, error }) => ({
-            data: data === true,
+            data: error ? null : data === true,
             error,
           })) as PromiseLike<{ data: boolean | null; error: { message: string } | null }>)
         : Promise.resolve({ data: null, error: null }),

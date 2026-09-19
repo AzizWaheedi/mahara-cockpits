@@ -148,6 +148,7 @@ hour, notes hourly, each under its own lock; log `~/.editor-desk/out/cron.log`.
 | A job says the tag matches no company | The tag on the video card is the client and has to match a card on Clients - Mahara. Fix the tag; the brand rules appear within half an hour | Whoever made the card |
 | "Send to client review" did nothing | `desk.py requests` drains the cockpit's queue every three minutes. The row's `error` in `editor_requests` says why; four failures park it as `failed` | Aziz |
 | Somebody cannot sign in to the editor cockpit | Their address has to be on `editor_people` and active, and have an auth user. Aziz adds both in the Supabase dashboard | Aziz |
+| The editor cockpit says "The desk could not be opened" and names a role | That account's Supabase `role` is not `authenticated`, so PostgREST refuses everything it asks. Four accounts made by another project carried `mahara_dialer_identity`, which is not a Postgres role here (2026-09-19). Signing in through the portal repairs it; otherwise set `role` to `authenticated` on the user in the Supabase dashboard. Sign out and in afterwards: the old role is baked into the session until then | Aziz |
 | `doctor`: "Bucket not found" on stills | The private `editor-stills` bucket is missing; the one-line curl to create it is in the README | Aziz |
 
 ## What never needs a person
