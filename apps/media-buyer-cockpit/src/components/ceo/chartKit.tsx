@@ -71,15 +71,21 @@ function shiftMonths(month: string, n: number): string {
 }
 
 /** The first x kept for a preset, given the newest x in the data. */
-function rangeStart(key: RangeKey, last: string): string | null {
+export function rangeStart(key: RangeKey, last: string): string | null {
   if (key === "all" || key === "custom") return null;
   if (isMonth(last)) {
     const months = { "7d": 1, "30d": 1, "90d": 3, "6m": 6, "12m": 12 }[key];
     return shiftMonths(last, -(months - 1));
   }
   if (key === "6m" || key === "12m") {
+    // The same day of the month, that many months back, clamped to the
+    // month's length (31 March minus six months is 30 September), then
+    // the day after: the window is everything since.
     const back = shiftMonths(last.slice(0, 7), key === "6m" ? -6 : -12);
-    return shiftDays(`${back}-${last.slice(8, 10)}`, 1);
+    const [y, m] = back.split("-").map(Number);
+    const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    const day = Math.min(Number(last.slice(8, 10)), daysInMonth);
+    return shiftDays(`${back}-${String(day).padStart(2, "0")}`, 1);
   }
   const days = { "7d": 7, "30d": 30, "90d": 90 }[key];
   return shiftDays(last, -(days - 1));

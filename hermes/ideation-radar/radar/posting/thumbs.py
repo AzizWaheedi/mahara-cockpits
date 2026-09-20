@@ -341,6 +341,46 @@ def render_cover(frame_path: Path, text: str, *, lines: Optional[list[str]] = No
     return _to_jpeg(img.convert("RGB"), max_bytes=7_500_000)
 
 
+IG_MIN_RATIO = 4 / 5
+IG_MAX_RATIO = 1.91
+IG_MAX_WIDTH = 1440
+IG_MAX_BYTES = 8_000_000
+
+
+def instagram_image(data: bytes) -> bytes:
+    """What Instagram accepts for a post: a JPEG, at most 1440 wide, inside
+    the 4:5 to 1.91:1 aspect window (padded with the navy of the house
+    style, never cropped), under 8 MB. Anything Pillow can open goes in:
+    PNG, HEIC where a plugin exists, a phone photo with its rotation tag."""
+    import io
+
+    from PIL import Image, ImageOps
+
+    img = Image.open(io.BytesIO(data))
+    img = ImageOps.exif_transpose(img)
+    if img.mode in ("RGBA", "LA", "P"):
+        base = Image.new("RGB", img.size, NAVY)
+        base.paste(img.convert("RGBA"), mask=img.convert("RGBA").getchannel("A"))
+        img = base
+    else:
+        img = img.convert("RGB")
+    w, h = img.size
+    ratio = w / max(1, h)
+    if ratio < IG_MIN_RATIO:
+        new_w = int(round(h * IG_MIN_RATIO))
+        canvas = Image.new("RGB", (new_w, h), NAVY)
+        canvas.paste(img, ((new_w - w) // 2, 0))
+        img = canvas
+    elif ratio > IG_MAX_RATIO:
+        new_h = int(round(w / IG_MAX_RATIO))
+        canvas = Image.new("RGB", (w, new_h), NAVY)
+        canvas.paste(img, (0, (new_h - h) // 2))
+        img = canvas
+    if img.width > IG_MAX_WIDTH:
+        img = img.resize((IG_MAX_WIDTH, int(round(img.height * IG_MAX_WIDTH / img.width))), Image.LANCZOS)
+    return _to_jpeg(img, max_bytes=IG_MAX_BYTES)
+
+
 def sharpness(path: Path) -> float:
     """How much edge there is: a still, focused face scores high, a motion-blurred pan low."""
     from PIL import Image, ImageFilter, ImageStat

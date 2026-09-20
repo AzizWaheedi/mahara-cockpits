@@ -54,22 +54,33 @@ def pick_frame(frames: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
 
 
 def run_post(cfg: Config, log: Callable[[str], None], store: PostStore, post: dict[str, Any]) -> dict[str, Any]:
-    """An image post: the caption from the brief; the images are already in the bucket."""
+    """An image post: every image made into what Instagram takes (a JPEG in
+    its aspect window), then the caption from the brief."""
     pid = int(post["id"])
-    images = post.get("images") if isinstance(post.get("images"), list) else []
+    images = [str(p) for p in (post.get("images") if isinstance(post.get("images"), list) else []) if p]
     if not images:
         raise ValueError("this post has no images")
+    if len(images) > 10:
+        raise ValueError("Instagram takes ten images at most in one post")
+    fixed: list[str] = []
+    for i, path in enumerate(images):
+        try:
+            data = thumbs.instagram_image(store.download(path))
+        except Exception as e:  # noqa: BLE001 - the row says which image, the job retries once more
+            raise ValueError(f"image {i + 1} could not be read as a picture: {str(e)[:120]}") from e
+        fixed.append(store.upload(f"posts/{pid}/images/{i}.jpg", data, "image/jpeg"))
     copy, copy_method = write.compose_post(cfg, log, post)
     store.patch_post(pid, {
         "status": "ready",
         "error": None,
+        "images": fixed,
         "language": copy.get("language"),
         "ig_caption": copy["ig_caption"],
         "ig_hashtags": copy["ig_hashtags"],
-        "method": {"copy": copy_method, "notes": copy.get("notes"), "at": now_iso()},
+        "method": {"copy": copy_method, "render": "pillow", "notes": copy.get("notes"), "at": now_iso()},
     })
-    log(f"post {pid}: caption written for {len(images)} image(s)")
-    return {"images": len(images), "copy": copy_method}
+    log(f"post {pid}: {len(fixed)} image(s) made ready, caption written")
+    return {"images": len(fixed), "copy": copy_method}
 
 
 def run(cfg: Config, log: Callable[[str], None], store: PostStore, post: dict[str, Any], workdir: Path) -> dict[str, Any]:

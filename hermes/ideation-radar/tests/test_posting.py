@@ -197,3 +197,125 @@ class KindsTest(unittest.TestCase):
         self.assertEqual(thumbs.split_cover("a b | c d"), ["a b", "c d"])
         self.assertEqual(thumbs.split_cover("one two three four"), ["one two", "three four"])
         self.assertEqual(thumbs.split_cover("one"), ["one"])
+
+
+class HardeningTest(unittest.TestCase):
+    def test_normalise_survives_garbage(self):
+        from radar.posting import write
+
+        for raw in (None, [], "text", {"yt_title_options": "not a list", "chapters": {"a": 1}, "ig_hashtags": 42, "thumb_text_options": [None, 3, {"x": 1}]}):
+            out = write.normalise(raw, duration=500, kind="video")
+            self.assertEqual(out["chapters"], [])
+            self.assertIsNone(out["yt_title"])
+            self.assertEqual(out["ig_hashtags"], [])
+        huge = {"yt_title_options": ["x" * 5000], "yt_description": "y" * 20000, "ig_caption": "z" * 9000, "ig_hashtags": ["#" + "h" * 200] * 50, "thumb_text_options": ["one two three four five six seven eight"], "cover_lines": ["a" * 100, "b"]}
+        out = write.normalise(huge, duration=500, kind="video")
+        self.assertLessEqual(len(out["yt_title"]), 100)
+        self.assertLessEqual(len(out["yt_description"]), 4800)
+        self.assertLessEqual(len(out["ig_caption"]), 2200)
+        self.assertLessEqual(len(out["ig_hashtags"]), 12)
+        self.assertEqual(out["thumb_text_options"], [])
+        reel = write.normalise(huge, duration=40, kind="reel")
+        # An eight-word line without a bar is split into a pair; the hundred-letter cover line is refused.
+        self.assertEqual(reel["thumb_text_options"], ["one two three four | five six seven eight"])
+        self.assertEqual(reel["thumb_text"], "one two three four | five six seven eight")
+
+    def test_chapters_are_cleaned_and_anchored(self):
+        from radar.posting import write
+
+        raw = {"chapters": [{"at_sec": "12", "title": "  two  "}, {"at_sec": 900, "title": "past the end"}, {"at_sec": -5, "title": "neg"}, {"at_sec": 40, "title": "three"}, {"at_sec": 12, "title": "dup"}, {"at_sec": 80, "title": "four"}], "yt_description": "d"}
+        out = write.normalise(raw, duration=300, kind="video")
+        # 12 s is kept and a 00:00 anchor is added before it; the out-of-range, negative and duplicate ones go.
+        self.assertEqual([c["at_sec"] for c in out["chapters"]], [0, 12, 40, 80])
+        self.assertIn("00:00", out["yt_description"])
+
+    def test_post_normalise_hashtags_and_limits(self):
+        from radar.posting import write
+
+        out = write.normalise_post({"ig_caption": "x" * 3000, "ig_hashtags": ["#مقاولات", "#", "##a", "b c"]})
+        self.assertEqual(len(out["ig_caption"]), 2200)
+        self.assertEqual(out["ig_hashtags"], ["#مقاولات", "#a", "#bc"])
+
+    def test_instagram_image_shapes_and_formats(self):
+        import io
+
+        from PIL import Image
+
+        from radar.posting import thumbs
+
+        def img(w, h, mode="RGB", fmt="PNG"):
+            buf = io.BytesIO()
+            Image.new(mode, (w, h), (10, 20, 30) if mode == "RGB" else (10, 20, 30, 128)).save(buf, fmt)
+            return buf.getvalue()
+
+        tall = Image.open(io.BytesIO(thumbs.instagram_image(img(600, 1200))))
+        self.assertEqual(tall.format, "JPEG")
+        self.assertGreaterEqual(tall.width / tall.height, 0.8 - 0.01)
+        wide = Image.open(io.BytesIO(thumbs.instagram_image(img(4000, 800))))
+        self.assertLessEqual(wide.width, 1440)
+        self.assertLessEqual(wide.width / wide.height, 1.91 + 0.01)
+        alpha = Image.open(io.BytesIO(thumbs.instagram_image(img(800, 800, "RGBA"))))
+        self.assertEqual(alpha.mode, "RGB")
+        with self.assertRaises(Exception):
+            thumbs.instagram_image(b"not an image at all")
+
+    def test_run_post_makes_images_ready_and_names_a_bad_one(self):
+        import io
+
+        from PIL import Image
+
+        from radar.posting import prepare, write
+
+        class Store:
+            def __init__(self):
+                self.blobs = {}
+                self.patched = {}
+
+            def download(self, path):
+                if path == "bad.bin":
+                    return b"nope"
+                buf = io.BytesIO()
+                Image.new("RGB", (900, 1500), (1, 2, 3)).save(buf, "PNG")
+                return buf.getvalue()
+
+            def upload(self, path, data, content_type):
+                self.blobs[path] = (len(data), content_type)
+                return path
+
+            def patch_post(self, pid, patch):
+                self.patched = patch
+
+        store = Store()
+        original = write.compose_post
+        write.compose_post = lambda cfg, log, post: ({"language": "ar", "ig_caption": "hook", "ig_hashtags": ["#a"], "notes": None}, "stub")
+        try:
+            out = prepare.run_post(None, lambda m: None, store, {"id": 7, "kind": "post", "images": ["a.png", "b.png"], "brief": "x"})
+            self.assertEqual(out["images"], 2)
+            self.assertEqual(store.patched["images"], ["posts/7/images/0.jpg", "posts/7/images/1.jpg"])
+            self.assertEqual(store.patched["status"], "ready")
+            self.assertEqual(store.blobs["posts/7/images/0.jpg"][1], "image/jpeg")
+            with self.assertRaises(ValueError) as caught:
+                prepare.run_post(None, lambda m: None, store, {"id": 8, "kind": "post", "images": ["a.png", "bad.bin"], "brief": "x"})
+            self.assertIn("image 2", str(caught.exception))
+            with self.assertRaises(ValueError):
+                prepare.run_post(None, lambda m: None, store, {"id": 9, "kind": "post", "images": ["a.png"] * 11, "brief": "x"})
+        finally:
+            write.compose_post = original
+
+    def test_render_cover_edge_cases(self):
+        import io
+
+        from PIL import Image
+
+        from radar.posting import thumbs
+
+        fonts = thumbs.ensure_fonts()
+        frame = Path(__file__).with_name("_frame.jpg")
+        Image.new("RGB", (64, 36), (90, 90, 90)).save(frame, "JPEG")
+        try:
+            for text in ("x", "a very long english headline that should still fit on the cover somehow | and a punch", "|", "  "):
+                out = thumbs.render_cover(frame, text, fonts=fonts)
+                img = Image.open(io.BytesIO(out))
+                self.assertEqual(img.size, (1080, 1920))
+        finally:
+            frame.unlink(missing_ok=True)

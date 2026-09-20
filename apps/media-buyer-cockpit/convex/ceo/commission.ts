@@ -70,3 +70,36 @@ export function commissionText(
     : `${currency} ${c.rate.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
   return `${amount} ${COMMISSION_LABEL[c.basis]}`;
 }
+
+/**
+ * The one place the rule is checked. Returns the columns to store, or throws
+ * a sentence for the screen. `pct` is the old form (a share of what they
+ * close) and only counts when no basis is given.
+ */
+export function commissionRule(input: {
+  basis?: CommissionBasis | null;
+  rate?: number | null;
+  pct?: number | null;
+}): { basis: CommissionBasis; rate: number | null; pct: number | null } {
+  const basis: CommissionBasis =
+    input.basis ??
+    (input.pct !== undefined && input.pct !== null ? "closed_cash" : "none");
+  if (!(COMMISSION_BASES as readonly string[]).includes(basis))
+    throw new Error("That is not a commission basis this cockpit knows.");
+  let rate: number | null =
+    basis === "none"
+      ? null
+      : (input.rate ??
+        (input.basis === undefined || input.basis === null
+          ? (input.pct ?? null)
+          : null));
+  if (rate !== null && !Number.isFinite(rate))
+    throw new Error("A commission rate is a number.");
+  if (rate !== null && rate < 0)
+    throw new Error("A commission rate cannot be below zero.");
+  if (SHARE_BASES.has(basis) && rate !== null && rate > 1)
+    throw new Error("A share is between 0 and 1, so 0.1 is 10%.");
+  if (basis === "other") rate = null;
+  if (rate !== null) rate = Math.round(rate * 10000) / 10000;
+  return { basis, rate, pct: SHARE_BASES.has(basis) ? rate : null };
+}

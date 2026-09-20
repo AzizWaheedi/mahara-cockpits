@@ -6,7 +6,7 @@ import { googleDirectoryToken } from "../tools";
 import {
   COMMISSION_BASES,
   type CommissionBasis,
-  SHARE_BASES,
+  commissionRule,
 } from "./commission";
 import { USD_PER } from "./data/tap";
 import { isCeoEmail } from "./gate";
@@ -245,20 +245,11 @@ export const save = authenticatedAction({
     )
       throw new Error("Commission is a share between 0 and 1, so 0.1 is 10%.");
     // The rule: what it is paid on, then the rate in the unit that basis takes.
-    const basis: CommissionBasis =
-      a.commissionBasis ??
-      (a.commissionPct !== undefined && a.commissionPct !== null
-        ? "closed_cash"
-        : "none");
-    const rate =
-      basis === "none"
-        ? null
-        : (a.commissionRate ??
-          (a.commissionBasis === undefined ? (a.commissionPct ?? null) : null));
-    if (rate !== null && rate < 0)
-      throw new Error("A commission rate cannot be below zero.");
-    if (SHARE_BASES.has(basis) && rate !== null && rate > 1)
-      throw new Error("A share is between 0 and 1, so 0.1 is 10%.");
+    const rule = commissionRule({
+      basis: a.commissionBasis,
+      rate: a.commissionRate,
+      pct: a.commissionPct,
+    });
     if (a.startedOn && !/^\d{4}-\d{2}-\d{2}$/.test(a.startedOn))
       throw new Error("A start date looks like 2026-09-19.");
 
@@ -269,10 +260,10 @@ export const save = authenticatedAction({
       engagement: a.engagement,
       monthly_cost: a.monthlyCost ?? null,
       currency: (a.currency ?? "USD").toUpperCase(),
-      commission_basis: basis,
-      commission_rate: rate,
+      commission_basis: rule.basis,
+      commission_rate: rule.rate,
       // Mirrored for anything that still reads the percent.
-      commission_pct: SHARE_BASES.has(basis) ? rate : null,
+      commission_pct: rule.pct,
       commission_note: a.commissionNote?.trim().slice(0, 500) || null,
       is_sales: a.isSales ?? false,
       started_on: a.startedOn || null,
