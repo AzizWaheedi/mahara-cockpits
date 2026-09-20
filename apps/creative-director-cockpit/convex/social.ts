@@ -6,6 +6,7 @@ import { authenticatedAction } from "./functions";
 import {
   accounts as ghlAccounts,
   createPost as ghlCreatePost,
+  deletePost as ghlDeletePost,
   posts as ghlPosts,
   users as ghlUsers,
   locationToken,
@@ -1102,15 +1103,26 @@ export const passReview = authenticatedAction({
     if (!["generating", "review"].includes(String(b.status)))
       throw new Error(`This month is ${b.status}, not waiting on review.`);
 
-    const missing = rows(
+    const all = rows(
       await rest(
-        `social_posts?select=id,n,topic&batch_id=eq.${enc(batchId)}&caption=is.null&limit=5`,
+        `social_posts?select=id,n,topic,caption,images&batch_id=eq.${enc(batchId)}`,
       ),
     );
-    if (missing.length)
+    const noCaption = all.filter(p => !p.caption);
+    const noImage = all.filter(
+      p => !Array.isArray(p.images) || p.images.length === 0,
+    );
+    if (noCaption.length)
       throw new Error(
-        `${missing.length} post(s) have no caption yet, starting with #${missing[0].n}. ` +
+        `${noCaption.length} post(s) have no caption yet, starting with #${noCaption[0].n}. ` +
           "Salma has not finished, or something failed.",
+      );
+    // A post with no picture is not a post, and it would reach the client
+    // looking like a mistake somebody else made.
+    if (noImage.length)
+      throw new Error(
+        `${noImage.length} post(s) have no image yet, starting with #${noImage[0].n}. ` +
+          "Make them from the prompts and attach them first.",
       );
 
     await rest(`social_posts?batch_id=eq.${enc(batchId)}&status=eq.generated`, {
@@ -1179,5 +1191,139 @@ export const rejectPost = authenticatedAction({
       ],
     });
     return { corrected: true };
+  },
+});
+
+/**
+ * Onboarding step 3: a private draft, straight after connecting.
+ *
+ * Aziz's workflow asks for exactly this, and for a good reason -- it
+ * "catches broken auth now instead of three weeks later when the first
+ * real batch is due". GoHighLevel keeps an account row after the OAuth
+ * behind it lapses, so the accounts list saying "Instagram" is not proof
+ * that Instagram will accept a post. Writing one is.
+ *
+ * A draft notifies nobody, reaches no client and publishes nothing. It is
+ * created, read back and deleted, so the client's planner is exactly as it
+ * was. Nothing about this is visible outside Mahara.
+ */
+export const testPost = authenticatedAction({
+  args: { clientTaskId: v.string() },
+  returns: v.any(),
+  handler: async (ctx, { clientTaskId }) => {
+    await who(ctx);
+    const c = await clientOrWhy(clientTaskId);
+    const location = String(c.ghl_location_id);
+    const token = await tokenFor(location);
+
+    const connected = await ghlAccounts(location, token);
+    if (!connected.length)
+      throw new Error(
+        "GoHighLevel holds no social account for this client, so there is " +
+          "nothing to test. Connect one in Social Planner first.",
+      );
+    const ids = connected.map(a => String(a.id ?? a._id ?? "")).filter(Boolean);
+    const author = await authorFor(location, token);
+
+    // Three days out: far enough that a draft accidentally left behind
+    // could not fire before somebody noticed.
+    const when = new Date(Date.now() + 3 * 86400_000).toISOString();
+    const made = await ghlCreatePost(location, token, {
+      accountIds: ids,
+      summary:
+        "Connection test from the Mahara cockpit. A draft, not scheduled, " +
+        "removed straight away.",
+      userId: author,
+      scheduleDate: when,
+      status: "draft",
+    });
+    const postId = postIdOf(made);
+
+    let removed = false;
+    let leftBehind: string | null = null;
+    if (postId) {
+      try {
+        await ghlDeletePost(location, token, postId);
+        removed = true;
+      } catch (e) {
+        leftBehind = postId;
+        console.error(
+          `social: could not delete the test draft ${postId}: ${e}`,
+        );
+      }
+    } else {
+      // No id means we cannot clean up, and saying "fine" would leave a
+      // stray draft in a client's planner with nobody looking for it.
+      leftBehind = "unknown";
+    }
+
+    await rest("social_clients?on_conflict=client_task_id", {
+      method: "POST",
+      prefer: "resolution=merge-duplicates,return=minimal",
+      body: [
+        {
+          client_task_id: clientTaskId,
+          test_post_at: now(),
+          updated_at: now(),
+        },
+      ],
+    });
+
+    return {
+      ok: true,
+      platforms: [
+        ...new Set(
+          connected
+            .map(a => String(a.platform ?? "").toLowerCase())
+            .filter(Boolean),
+        ),
+      ],
+      removed,
+      leftBehind,
+    };
+  },
+});
+
+/**
+ * The pictures, once somebody has made them.
+ *
+ * The prompts are written by Salma; the images themselves come from
+ * Higgsfield, by hand today and by API later. Either way they arrive here
+ * as URLs.
+ *
+ * They must be **publicly fetchable**. GoHighLevel pulls media by URL at
+ * publish time, which can be days after we push the post, so a
+ * short-lived signed link would pass every test and 404 on the morning it
+ * matters. The `social-images` bucket is public for exactly this reason.
+ */
+export const attachImages = authenticatedAction({
+  args: { postId: v.string(), urls: v.array(v.string()) },
+  returns: v.any(),
+  handler: async (ctx, { postId, urls }) => {
+    const { email } = await who(ctx);
+    const clean = urls.map(u => u.trim()).filter(Boolean);
+    if (!clean.length) throw new Error("No image URLs given.");
+    const bad = clean.find(u => !/^https:\/\//i.test(u));
+    if (bad)
+      throw new Error(
+        `"${bad.slice(0, 60)}" is not an https URL. GoHighLevel fetches these ` +
+          "itself, so a local path or a data URL cannot work.",
+      );
+    const p = rows(
+      await rest(`social_posts?select=*&id=eq.${enc(postId)}&limit=1`),
+    )[0];
+    if (!p) throw new Error("That post is gone.");
+    await rest(`social_posts?id=eq.${enc(postId)}`, {
+      method: "PATCH",
+      prefer: "return=minimal",
+      body: {
+        images: clean,
+        images_by: email,
+        status: p.caption ? "generated" : p.status,
+        error: null,
+        updated_at: now(),
+      },
+    });
+    return { images: clean.length, status: p.caption ? "generated" : p.status };
   },
 });

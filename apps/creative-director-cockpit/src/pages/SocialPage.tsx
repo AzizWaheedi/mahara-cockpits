@@ -3,6 +3,7 @@ import {
   CalendarClock,
   Check,
   ChevronRight,
+  Copy,
   LoaderCircle,
   PlugZap,
   Plus,
@@ -421,7 +422,108 @@ type Post = {
   caption_direction: string | null;
   caption: string | null;
   status: string;
+  prompts: string[] | null;
+  images: string[] | null;
 };
+
+/**
+ * The prompts, and somewhere to put the pictures they produce.
+ *
+ * Salma writes one prompt per slide; the images are made in Higgsfield,
+ * by hand for now. So the prompt has to be easy to take out and the
+ * result easy to bring back, and until that loop is quick nobody will use
+ * any of this.
+ */
+function Images({ post, onChanged }: { post: Post; onChanged: () => void }) {
+  const attach = useAction(api.social.attachImages);
+  const [urls, setUrls] = useState("");
+  const [busy, setBusy] = useState(false);
+  const prompts = post.prompts ?? [];
+  const images = post.images ?? [];
+
+  if (!prompts.length && !images.length) return null;
+
+  return (
+    <div className="mt-1.5 rounded border bg-muted/20 p-2">
+      {images.length ? (
+        <div className="flex flex-wrap gap-1.5">
+          {images.map(u => (
+            <a key={u} href={u} target="_blank" rel="noreferrer noopener">
+              <img
+                src={u}
+                alt=""
+                loading="lazy"
+                className="h-16 w-16 rounded border object-cover"
+              />
+            </a>
+          ))}
+        </div>
+      ) : (
+        <>
+          <div className="mb-1.5 flex items-center gap-2">
+            <p className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+              {prompts.length} {prompts.length === 1 ? "prompt" : "prompts"} for
+              Higgsfield
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                void navigator.clipboard?.writeText(prompts.join("\n\n"));
+                toast.success("Prompts copied.");
+              }}
+              className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+            >
+              <Copy className="h-3 w-3" />
+              copy all
+            </button>
+          </div>
+          <ol className="mb-2 space-y-1">
+            {prompts.map((t, i) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: a slide is its position
+              <li key={i} className="text-[12px] text-muted-foreground">
+                <span className="mr-1 font-mono">{i + 1}.</span>
+                {t}
+              </li>
+            ))}
+          </ol>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <input
+              id={`img-${post.id}`}
+              value={urls}
+              onChange={e => setUrls(e.target.value)}
+              placeholder="Paste the image URLs, one per line or comma separated"
+              className="h-8 min-w-0 flex-1 rounded-md border bg-background px-2 text-[12px]"
+            />
+            <button
+              type="button"
+              disabled={busy || !urls.trim()}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  const list = urls
+                    .split(/[\s,]+/)
+                    .map(u => u.trim())
+                    .filter(Boolean);
+                  await attach({ postId: post.id, urls: list });
+                  setUrls("");
+                  toast.success(`${list.length} attached.`);
+                  onChanged();
+                } catch (e) {
+                  toast.error(serverMessage(e));
+                } finally {
+                  setBusy(false);
+                }
+              }}
+              className="h-8 rounded-md border px-2.5 text-[12px] font-semibold hover:bg-muted disabled:opacity-50"
+            >
+              Attach
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 /**
  * One client's month: the mix, the plan, and the two decisions.
@@ -601,6 +703,7 @@ function Month({ c, onChanged }: { c: Client; onChanged: () => void }) {
                     {p.caption}
                   </p>
                 ) : null}
+                <Images post={p} onChanged={() => void load()} />
               </li>
             ))}
           </ol>

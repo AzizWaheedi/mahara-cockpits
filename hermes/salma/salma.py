@@ -399,20 +399,84 @@ def do_caption(sb: Store, job: dict) -> dict:
     return {"post": post_id, "characters": len(caption), "model": model}
 
 
+PROMPT_SYSTEM = """You write image prompts for a Gulf construction and design
+business's social posts. One prompt per slide.
+
+House rules, not preferences:
+- **Never describe a generated human face.** If a person is needed, the
+  prompt says to composite the client's own supplied photograph. A
+  generated face on a real client's account is how you lose the client.
+- Use the brand's own colours where they are given.
+- No text in the image unless the slide is meant to carry text, and then
+  say only where it sits, never what it says. Generated lettering is
+  unreliable and the caption carries the words.
+- Describe what is in frame, the light, and the framing. Not the mood.
+- A carousel is one shoot: the same place, the same light, the same
+  materials across every slide.
+
+Framing by pillar:
+- portfolio: the project as an object. Wide or three-quarter, architectural,
+  even light, room in frame for a caption block.
+- craft: close. One joint, one edge, one material. Shallow depth, raking
+  light so the surface reads.
+- education: a clean, high-contrast frame with deliberate empty space for
+  text to sit over.
+
+Return JSON only: {"prompts":["slide 1 prompt","slide 2 prompt", ...]}"""
+
+
 def do_generate(sb: Store, job: dict) -> dict:
-    """Higgsfield lives behind an MCP tool, which this process cannot speak.
+    """Turn an approved plan into image prompts.
 
-    Left for the openclaw session that can, rather than half-done here.
-    The job stays queued; it is not a failure and should not read as one.
+    Not into images. Higgsfield is reached either through its MCP, which
+    this process cannot speak, or through its metered API, which is not
+    wired. Either way the prompt is the part worth getting right and the
+    part worth reviewing: a wrong prompt is cheap to spot in text and
+    expensive to spot in a picture.
+
+    So this writes the prompts and stops. Whoever makes the pictures --
+    a person pasting them into Higgsfield today, an API call later --
+    works from the same text.
     """
-    raise Deferred(
-        "generation needs Higgsfield's MCP, which the drainer cannot reach. "
-        "Left queued for the agent session."
+    post_id = str(job.get("post_id") or "")
+    found = sb.get(f"social_posts?select=*&id=eq.{urllib.parse.quote(post_id)}&limit=1")
+    if not found:
+        raise ValueError("that post is gone")
+    post = found[0]
+    client_task_id = str(post.get("client_task_id"))
+    b = brand_of(sb, client_task_id)
+
+    assets = sb.get(
+        f"social_assets?select=kind,caption,url,path&client_task_id="
+        f"{urllib.parse.quote('eq.' + client_task_id)}&active=is.true&limit=20"
     )
+    have = ", ".join(
+        f"{a.get('kind')}: {a.get('caption') or a.get('url') or a.get('path')}"
+        for a in assets
+    ) or "none on file"
 
+    slides = max(1, min(10, int(post.get("slides") or 1)))
+    answer = deepseek(
+        PROMPT_SYSTEM,
+        f"{brief(b)}\n\nTHE CLIENT'S OWN PHOTOGRAPHS AVAILABLE TO COMPOSITE:\n{have}"
+        f"\n\nPILLAR: {post.get('pillar')}\nTOPIC: {post.get('topic')}\n"
+        f"CAPTION DIRECTION: {post.get('caption_direction')}\n"
+        f"SLIDES: {slides}\n\nReturn exactly {slides} prompt(s).",
+    )
+    parsed = only_json(answer)
+    prompts = parsed.get("prompts") if isinstance(parsed, dict) else parsed
+    if not isinstance(prompts, list) or not prompts:
+        raise ValueError("the model returned no prompts")
+    prompts = [str(p).strip() for p in prompts if str(p).strip()][:slides]
 
-class Deferred(Exception):
-    pass
+    sb.patch(
+        f"social_posts?id=eq.{urllib.parse.quote(post_id)}",
+        {"prompts": prompts, "updated_at": now()},
+    )
+    if len(prompts) < slides:
+        note(f"  {post_id}: {len(prompts)} prompts for {slides} slides")
+    return {"post": post_id, "prompts": len(prompts), "slides": slides,
+            "images": "still to be made from these"}
 
 
 HANDLERS = {"plan": do_plan, "caption": do_caption, "generate": do_generate}
@@ -428,7 +492,7 @@ def main() -> int:
     if not jobs:
         return 0
     note(f"woke to {len(jobs)} job(s)")
-    done = failed = deferred = 0
+    done = failed = 0
     for job in jobs:
         jid = str(job.get("id"))
         kind = str(job.get("kind") or "")
@@ -443,18 +507,12 @@ def main() -> int:
             sb.done(jid, result)
             done += 1
             note(f"  {kind} {jid}: {json.dumps(result)[:160]}")
-        except Deferred as d:
-            sb.patch(
-                f"social_jobs?id=eq.{urllib.parse.quote(jid)}",
-                {"status": "queued", "error": str(d)[:300], "updated_at": now()},
-            )
-            deferred += 1
         except Exception as e:  # noqa: BLE001 - one bad job must not stop the rest
             why = f"{type(e).__name__}: {e}"
             sb.failed(jid, why)
             failed += 1
             note(f"  {kind} {jid} FAILED: {why[:200]}")
-    note(f"done {done}, failed {failed}, deferred {deferred}")
+    note(f"done {done}, failed {failed}")
     return 0
 
 

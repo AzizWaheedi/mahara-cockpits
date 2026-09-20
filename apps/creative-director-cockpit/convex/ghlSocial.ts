@@ -291,6 +291,12 @@ export async function createPost(
     scheduleDate: string;
     type?: "post" | "story" | "reel";
     approverUserId?: string;
+    /**
+     * `in_review` unless told otherwise, because that is what a client
+     * post is. `draft` exists for the connection test, which must not
+     * reach anybody.
+     */
+    status?: "in_review" | "draft";
   },
 ): Promise<Json> {
   if (!post.accountIds.length)
@@ -306,7 +312,7 @@ export async function createPost(
     summary: post.summary,
     userId: post.userId,
     type: post.type ?? "post",
-    status: "in_review",
+    status: post.status ?? "in_review",
     scheduleDate: post.scheduleDate,
   };
   if (post.media?.length)

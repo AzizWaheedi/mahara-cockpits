@@ -29,9 +29,20 @@ Salma drains it.
 | `caption` | **OpenAI (`gpt-4.1`)** today. Anthropic if that key is ever set. Never the cheap model: a client's dialect is judgment | here |
 | `generate` | Higgsfield MCP | **not here** — deferred back to the queue for the openclaw agent session |
 
-`generate` raises `Deferred`, which puts the job back to `queued` rather
-than failing it. A queue read by people needs `failed` to mean something
-went wrong.
+**`generate` does not generate.** It writes the prompts and stops.
+Higgsfield is reachable either through its MCP, which a cron-driven
+script cannot speak, or through its metered API, which is not wired. The
+prompt is the part worth getting right and the part worth reviewing:
+wrong is cheap to spot in text and expensive to spot in a picture. So
+whoever makes the pictures -- a person pasting into Higgsfield today, an
+API call later -- works from the same text, and nothing above this
+changes when that switches.
+
+The finished images go back on the post as URLs. They have to be
+**publicly fetchable**: GoHighLevel pulls media by URL at publish time,
+which can be days after the push, so a short-lived signed link passes
+every test and 404s on the morning it matters. That is what the public
+`social-images` bucket is for, and nothing private goes in it.
 
 ## Two memories, kept apart
 
