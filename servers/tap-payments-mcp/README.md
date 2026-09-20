@@ -49,6 +49,16 @@ Two ways to run this, pick one per client (or mix):
 Aziz's decision on 2026-09-20: **one shared HTTP server on the VPS**, every
 LLM tool points at the same URL instead of each spawning a local process.
 
+**Known gap, found during deployment**: the VPS's inbound firewall only let
+1 of 59 external test checkpoints reach a known-open port (`:8080`, the
+existing dashboard) — same result for the newly bound `:8420`. This is a
+VPS/network-level restriction, not an app bug: binding `0.0.0.0` inside the
+container is not enough by itself. **A firewall rule opening the chosen
+port needs to be added on the VPS/hosting panel before any external
+client (off-box) can actually reach this server.** Anything running
+inside the same box (this Hermes instance, another local tool) can already
+reach it over `localhost` today, no waiting required.
+
 ## Setup
 
 ```bash
@@ -92,16 +102,21 @@ handshake → real `tap_retrieve_charge` call against the same live test
 charge from the stdio tests (`chg_TS05A5120260638r8JT2009852`), same data
 came back, over HTTP this time.
 
-**Running it persistently:** `deploy/tap-payments-mcp.service` is a
-systemd unit template. Fill in the real env values (ideally via
-`EnvironmentFile=` pointing at a 600-permission file outside the repo,
-never hardcoded in the unit itself), then:
+**Running it persistently:** this container has no systemd and no root
+(`sudo` isn't installed), so `deploy/tap-payments-mcp.service` is a
+reference template for a real VPS/host that has both — it is **not** what
+actually keeps this instance up.
 
-```bash
-sudo cp deploy/tap-payments-mcp.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now tap-payments-mcp
-```
+What actually runs it here: a plain background process plus a cron-driven
+watchdog (`scripts/tap-payments-mcp-watchdog.sh` in Hermes's own
+`~/.hermes/scripts/`), firing every 2 minutes. It hits `/health`; if the
+server is down it starts it via `nohup` and confirms the restart actually
+worked before exiting quiet. Logs to `/opt/data/secrets/tap-payments-mcp.log`.
+Credentials (`TAP_SECRET_KEY_TEST`, `MCP_BEARER_TOKEN`, etc.) live in
+`/opt/data/secrets/tap-payments-mcp.env`, mode 600, outside the repo.
+
+If this ever moves to a real VPS with systemd, swap the watchdog for the
+`.service` file and drop the cron entry.
 
 ## Wiring an LLM tool into the shared server
 
