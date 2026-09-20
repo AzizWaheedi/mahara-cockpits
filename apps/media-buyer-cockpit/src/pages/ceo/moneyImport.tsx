@@ -526,7 +526,7 @@ export function LtvWriteCard({ order }: { order?: number }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map(r => (
+                    {rows.map((r: any) => (
                       <tr key={r.clickupTaskId} className="border-t">
                         <td className="p-2">
                           {r.client}
@@ -571,7 +571,7 @@ export function LtvWriteCard({ order }: { order?: number }) {
                   Type a figure on the card and they join on the next refresh.
                 </p>
                 <ul className="mt-3 grid gap-1 sm:grid-cols-2">
-                  {missing.map(m => (
+                  {missing.map((m: any) => (
                     <li key={m.clickupTaskId} className="text-sm">
                       {m.client}
                       <span className="text-muted-foreground">
