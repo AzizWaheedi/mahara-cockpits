@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
-import { count, money, pct } from "@/components/ceo/format";
+import { count, countCompact, money, pct } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip, type StatusTone } from "@/components/ceo/StatusChip";
@@ -16,23 +16,27 @@ import type {
   B2bAdNode,
   B2bAdsPayload,
   B2bAdWindow,
+  B2bPeople,
   B2bVerdict,
 } from "../../../convex/ceo/payloads";
 import { LaunchCard } from "./LaunchCard";
 import type { CeoTabProps } from "./types";
 
 /**
- * Mahara's own ad account, campaign by ad set by ad, with the whole funnel
- * under every row and a switch on each one.
+ * Mahara's own ad account, read the way the old B2B dashboard read it and
+ * further: the whole funnel from the impression to the signed contract on
+ * every campaign, ad set and ad, with the unit cost at each stage, the
+ * conversion between stages, the stage that is holding the campaign back,
+ * and the people who worked its calls. A switch on every row.
  *
- * The client Ads Management screen was the model, but this one has more to
- * show, because Mahara's own leads, calls and deals all carry the ad they came
- * from. So a row here runs from impressions to the signed contract, and the
- * verdict beside it says whose problem a bad number is: the ad, the setter or
- * the closer.
+ * Two ways to look at it. The funnel view is one ribbon per row: nine
+ * stages left to right, the conversion on the arrow between them, the cost
+ * under each. The table view is the old dashboard's marketing lab: every
+ * ad in one sortable table, so the eye can run down a column.
  */
 
 type Win = "w7" | "w30";
+type View = "funnel" | "table";
 
 const TONE: Record<B2bVerdict["verdict"], StatusTone> = {
   scale: "good",
@@ -53,10 +57,20 @@ const OWNER: Record<NonNullable<B2bVerdict["owner"]>, string> = {
 };
 
 const CONSTRAINT_OWNER: Record<string, string> = {
-  ads: "creative",
-  landing: "landing page",
-  setter: "setter",
-  closer: "closer",
+  ads: "the creative",
+  landing: "the landing page",
+  setter: "the setter",
+  closer: "the closer",
+};
+
+/** Which ribbon stage a constraint points at. */
+const CONSTRAINT_STAGE: Record<string, string> = {
+  "impressions to link clicks": "clicks",
+  "clicks to leads": "leads",
+  "leads to intros booked": "booked",
+  "intros booked to shown": "shown",
+  "intros shown to demos booked": "demos",
+  "demos shown to closes": "signed",
 };
 
 function adsManagerUrl(
@@ -73,41 +87,172 @@ function adsManagerUrl(
   return `https://adsmanager.facebook.com/adsmanager/manage/${level === "ad" ? "ads" : level === "adset" ? "adsets" : "campaigns"}?act=${account}&${key}=${id}`;
 }
 
-/** The funnel as a short row of numbers, in order, so the eye reads left to right. */
-function Funnel({ w }: { w: B2bAdWindow }) {
-  const cells: { label: string; value: string; dim?: boolean }[] = [
-    { label: "spend", value: money(w.spend) },
-    { label: "Meta leads", value: count(w.metaLeads), dim: true },
-    { label: "leads", value: count(w.leads) },
-    { label: "cost/lead", value: w.cpl === null ? "—" : money(w.cpl) },
+const dash = (v: number | null, f: (x: number) => string) =>
+  v === null ? "—" : f(v);
+const x = (v: number | null) => (v === null ? "—" : `${v.toFixed(1)}×`);
+
+type Stage = {
+  key: string;
+  label: string;
+  value: string;
+  /** Under the value: the unit cost or the rate that belongs to this stage. */
+  unit: string;
+  /** Conversion from the stage before, shown on the arrow into this one. */
+  from: number | null;
+  dim?: boolean;
+};
+
+function stagesOf(w: B2bAdWindow): Stage[] {
+  return [
     {
-      label: "intros",
-      value: `${count(w.introsShown)}/${count(w.introsBooked)}`,
+      key: "impressions",
+      label: "Impressions",
+      value: countCompact(w.impressions),
+      unit: `CPM ${dash(w.cpm, money)}${w.frequency !== null ? ` · freq ${w.frequency.toFixed(1)}` : ""}`,
+      from: null,
     },
-    { label: "demos", value: `${count(w.demosShown)}/${count(w.demosBooked)}` },
     {
-      label: "cost/demo",
-      value: w.costPerDemo === null ? "—" : money(w.costPerDemo),
+      key: "clicks",
+      label: "Link clicks",
+      value: countCompact(w.linkClicks),
+      unit: `CPC ${dash(w.cpc, money)} · CTR ${dash(w.ctrLink, pct)}`,
+      from: w.ctrLink,
     },
-    { label: "closes", value: count(w.closes) },
-    { label: "contracted", value: money(w.contracted) },
-    { label: "ROAS", value: w.roas === null ? "—" : `${w.roas.toFixed(1)}x` },
+    {
+      key: "leads",
+      label: "Leads",
+      value: count(w.leads),
+      unit: `CPL ${dash(w.cpl, money)}${w.leads ? ` · ${dash(w.qualifiedPct, pct)} a fit` : ""}${w.metaLeads !== w.leads ? ` · Meta ${count(w.metaLeads)}` : ""}`,
+      from: w.linkClicks > 0 ? w.leads / w.linkClicks : null,
+    },
+    {
+      key: "booked",
+      label: "Intros booked",
+      value: count(w.introsBooked),
+      unit: `${dash(w.costPerIntroBooked, money)} each`,
+      from: w.bookRate,
+    },
+    {
+      key: "shown",
+      label: "Intros shown",
+      value: `${count(w.introsShown)}${w.introsDue ? ` of ${count(w.introsDue)}` : ""}`,
+      unit: `show ${dash(w.introShowRate, pct)} · ${dash(w.costPerIntroShown, money)} each`,
+      from: w.introShowRate,
+    },
+    {
+      key: "demos",
+      label: "Demos booked",
+      value: count(w.demosBooked),
+      unit: `${dash(w.costPerDemoBooked, money)} each`,
+      from: w.introToDemo,
+    },
+    {
+      key: "demoshown",
+      label: "Demos shown",
+      value: `${count(w.demosShown)}${w.demosDue ? ` of ${count(w.demosDue)}` : ""}`,
+      unit: `show ${dash(w.demoShowRate, pct)} · ${dash(w.costPerDemo, money)} each`,
+      from: w.demoShowRate,
+    },
+    {
+      key: "signed",
+      label: "Signed",
+      value: count(w.closes),
+      unit: `close ${dash(w.closeRate, pct)} · CAC ${dash(w.cac, money)}`,
+      from: w.closeRate,
+    },
+    {
+      key: "revenue",
+      label: "Contracted",
+      value: money(w.contracted),
+      unit: `ROAS ${x(w.roas)} · cash ${x(w.cashRoas)}`,
+      from: null,
+    },
   ];
+}
+
+/**
+ * The funnel as one ribbon. Each cell is a stage: the count, then the unit
+ * cost. The arrow into a cell carries the conversion from the stage before.
+ * The stage a campaign is stuck on is outlined, so the eye lands on the fix.
+ */
+function FunnelRibbon({
+  w,
+  spend,
+  constraint,
+  compact = false,
+}: {
+  w: B2bAdWindow;
+  spend: number;
+  constraint?: string | null;
+  compact?: boolean;
+}) {
+  const stages = stagesOf(w);
+  const stuck = constraint ? CONSTRAINT_STAGE[constraint] : undefined;
   return (
     <div
-      className="grid grid-cols-5 gap-x-4 gap-y-2 text-sm sm:grid-cols-10"
+      className="ceo-scroll-x -mx-1 flex items-stretch overflow-x-auto px-1 pb-1"
       style={{ fontVariantNumeric: "tabular-nums" }}
     >
-      {cells.map(c => (
-        <div key={c.label} className="min-w-0">
-          <div className="truncate text-[10px] uppercase tracking-wide text-muted-foreground">
-            {c.label}
-          </div>
-          <div className={c.dim ? "text-muted-foreground" : "font-medium"}>
-            {c.value}
+      <div
+        className={`flex shrink-0 flex-col justify-center pr-3 ${compact ? "w-20" : "w-24"}`}
+      >
+        <div className={`font-semibold ${compact ? "text-sm" : "text-base"}`}>
+          {money(spend)}
+        </div>
+        <div className="text-[11px] text-muted-foreground">spent</div>
+      </div>
+      {stages.map((s, i) => (
+        <div key={s.key} className="flex shrink-0 items-stretch">
+          {i > 0 ? (
+            <div className="flex w-10 flex-col items-center justify-center text-muted-foreground">
+              <span
+                className="text-[10px] leading-none"
+                title="Conversion from the stage before"
+              >
+                {dash(s.from, pct)}
+              </span>
+              <ChevronRight className="size-3.5 opacity-60" aria-hidden />
+            </div>
+          ) : null}
+          <div
+            className={`flex ${compact ? "w-[7.5rem]" : "w-36"} flex-col justify-center rounded-md px-2 py-1 ${
+              stuck === s.key
+                ? "ring-1 ring-[var(--ceo-serious)] bg-[color-mix(in_srgb,var(--ceo-serious)_8%,transparent)]"
+                : ""
+            }`}
+          >
+            <div
+              className={`truncate font-semibold ${compact ? "text-sm" : "text-base"} ${s.dim ? "text-muted-foreground" : ""}`}
+            >
+              {s.value}
+            </div>
+            <div className="truncate text-[11px] text-muted-foreground">
+              {s.label}
+            </div>
+            <div className="truncate text-[11px]" title={s.unit}>
+              {s.unit}
+            </div>
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function People({ p }: { p: B2bPeople }) {
+  if (!p.setter && !p.closer) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+      {p.setter ? (
+        <span title="The setter with the most intro calls on this in thirty days, and their show rate on them">
+          {`Setter ${p.setter.name}: ${count(p.setter.shown)} of ${count(p.setter.due)} shown`}
+        </span>
+      ) : null}
+      {p.closer ? (
+        <span title="The closer with the most signed deals from this in thirty days">
+          {`Closer ${p.closer.name}: ${count(p.closer.closes)} signed`}
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -123,39 +268,45 @@ function Toggle({
   level: "campaign" | "adset" | "ad";
   name: string;
   running: boolean;
-  onDone: (msg: string) => void;
+  onDone: (m: string) => void;
 }) {
   const setStatus = useAction(api.ceo.b2bControl.setStatus);
   const [busy, setBusy] = useState(false);
-  const [local, setLocal] = useState<boolean | null>(null);
-  const on = local ?? running;
   return (
     <button
       type="button"
+      role="switch"
+      aria-checked={running}
+      aria-label={`${running ? "Turn off" : "Turn on"} ${level} ${name}`}
       disabled={busy}
       onClick={async e => {
         e.stopPropagation();
         setBusy(true);
-        const next = !on;
-        const r = await setStatus({ metaId, level, active: next, name });
-        if (r.ok) {
-          setLocal(next);
+        try {
+          const res = await setStatus({
+            metaId,
+            level,
+            active: !running,
+            name,
+          });
           onDone(
-            `${next ? "Turned on" : "Turned off"} ${level} "${name}". Meta accepted it; the numbers here update on the next refresh.`,
+            res.ok
+              ? `${running ? "Turned off" : "Turned on"} ${name}. The next refresh re-reads Meta.`
+              : (res.error ?? "Meta refused it."),
           );
-        } else onDone(r.error ?? "Meta refused the change.");
-        setBusy(false);
+        } catch (err) {
+          onDone(
+            String(err instanceof Error ? err.message : err).slice(0, 200),
+          );
+        } finally {
+          setBusy(false);
+        }
       }}
-      className={`shrink-0 rounded-full border px-2.5 py-0.5 text-xs font-medium ${
-        on
-          ? "border-[var(--ceo-good)] text-[var(--ceo-good)]"
-          : "border-border text-muted-foreground"
-      } disabled:opacity-50`}
-      title={
-        on ? "On in Meta. Click to pause." : "Off in Meta. Click to turn on."
-      }
+      className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${running ? "bg-[var(--ceo-emphasis)]" : "bg-muted-foreground/40"} disabled:opacity-50`}
     >
-      {busy ? "…" : on ? "On" : "Off"}
+      <span
+        className={`absolute top-0.5 size-4 rounded-full bg-background transition-[left] ${running ? "left-[18px]" : "left-0.5"}`}
+      />
     </button>
   );
 }
@@ -180,7 +331,7 @@ function AdRow({
             src={ad.thumbnail}
             alt=""
             loading="lazy"
-            className="size-14 shrink-0 rounded object-cover"
+            className="size-12 shrink-0 rounded object-cover"
             onError={e => {
               e.currentTarget.style.display = "none";
             }}
@@ -188,7 +339,7 @@ function AdRow({
         ) : null}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="truncate font-medium">{ad.name}</span>
+            <span className="truncate text-sm font-medium">{ad.name}</span>
             <StatusChip
               tone={TONE[ad.verdict.verdict]}
               label={ad.verdict.verdict}
@@ -220,9 +371,10 @@ function AdRow({
           <p className="mt-0.5 text-xs text-muted-foreground">
             {ad.verdict.reason}
           </p>
+          <People p={ad.people} />
         </div>
       </div>
-      <Funnel w={w} />
+      <FunnelRibbon w={w} spend={w.spend} compact />
     </div>
   );
 }
@@ -298,7 +450,7 @@ function CampaignCard({
           {c.constraint ? (
             <p className="mt-1 text-xs">
               <span className="font-medium text-[var(--ceo-serious)]">
-                The constraint is {CONSTRAINT_OWNER[c.constraint.owner]}:{" "}
+                {`Stuck at ${CONSTRAINT_OWNER[c.constraint.owner]}: `}
               </span>
               <span className="text-muted-foreground">
                 {`${c.constraint.stage} runs at ${pct(c.constraint.mine)} against ${pct(c.constraint.account)} across the account.`}
@@ -306,7 +458,14 @@ function CampaignCard({
             </p>
           ) : null}
           <div className="mt-2">
-            <Funnel w={w} />
+            <FunnelRibbon
+              w={w}
+              spend={w.spend}
+              constraint={c.constraint?.stage ?? null}
+            />
+          </div>
+          <div className="mt-1">
+            <People p={c.people} />
           </div>
         </div>
       </button>
@@ -335,7 +494,7 @@ function CampaignCard({
                   )}
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium">{s.name}</span>
+                      <span className="text-sm font-medium">{s.name}</span>
                       <span className="text-xs text-muted-foreground">{`${s.ads.length} ads`}</span>
                       <span className="ml-auto">
                         <Toggle
@@ -348,7 +507,7 @@ function CampaignCard({
                       </span>
                     </div>
                     <div className="mt-2">
-                      <Funnel w={sw} />
+                      <FunnelRibbon w={sw} spend={sw.spend} compact />
                     </div>
                   </div>
                 </button>
@@ -374,10 +533,271 @@ function CampaignCard({
   );
 }
 
+// ---- the table: every ad in one sortable grid, the old marketing lab -------
+
+type Col = {
+  key: string;
+  label: string;
+  title?: string;
+  get: (w: B2bAdWindow) => number | null;
+  fmt: (v: number) => string;
+  /** Lower is better, so the sort arrow and the tint read the right way. */
+  low?: boolean;
+};
+
+const COLS: Col[] = [
+  { key: "spend", label: "Spend", get: w => w.spend, fmt: money },
+  {
+    key: "impressions",
+    label: "Impr.",
+    get: w => w.impressions,
+    fmt: countCompact,
+  },
+  { key: "cpm", label: "CPM", get: w => w.cpm, fmt: money, low: true },
+  {
+    key: "ctrLink",
+    label: "CTR",
+    title: "Link clicks over impressions",
+    get: w => w.ctrLink,
+    fmt: pct,
+  },
+  { key: "cpc", label: "CPC", get: w => w.cpc, fmt: money, low: true },
+  {
+    key: "leads",
+    label: "Leads",
+    title: "Leads that reached the CRM",
+    get: w => w.leads,
+    fmt: count,
+  },
+  { key: "cpl", label: "CPL", get: w => w.cpl, fmt: money, low: true },
+  {
+    key: "qualifiedPct",
+    label: "Fit",
+    title:
+      "Leads whose stage reached demo booked, confirmed, closed or hot lead",
+    get: w => w.qualifiedPct,
+    fmt: pct,
+  },
+  {
+    key: "introsBooked",
+    label: "Intros",
+    title: "Intro calls booked",
+    get: w => w.introsBooked,
+    fmt: count,
+  },
+  {
+    key: "introShowRate",
+    label: "Show",
+    title: "Intros shown over intros due",
+    get: w => w.introShowRate,
+    fmt: pct,
+  },
+  {
+    key: "costPerIntroShown",
+    label: "$/intro",
+    title: "Spend over intros shown",
+    get: w => w.costPerIntroShown,
+    fmt: money,
+    low: true,
+  },
+  {
+    key: "demosBooked",
+    label: "Demos",
+    title: "Demos booked",
+    get: w => w.demosBooked,
+    fmt: count,
+  },
+  {
+    key: "demoShowRate",
+    label: "Show",
+    title: "Demos shown over demos due",
+    get: w => w.demoShowRate,
+    fmt: pct,
+  },
+  {
+    key: "costPerDemo",
+    label: "$/demo",
+    title: "Spend over demos shown",
+    get: w => w.costPerDemo,
+    fmt: money,
+    low: true,
+  },
+  { key: "closes", label: "Signed", get: w => w.closes, fmt: count },
+  {
+    key: "closeRate",
+    label: "Close",
+    title: "Signed over demos shown",
+    get: w => w.closeRate,
+    fmt: pct,
+  },
+  {
+    key: "cac",
+    label: "CAC",
+    title: "Spend over signed",
+    get: w => w.cac,
+    fmt: money,
+    low: true,
+  },
+  { key: "contracted", label: "Revenue", get: w => w.contracted, fmt: money },
+  {
+    key: "roas",
+    label: "ROAS",
+    title: "Contracted over spend",
+    get: w => w.roas,
+    fmt: v => `${v.toFixed(1)}×`,
+  },
+];
+
+function AdTable({
+  p,
+  win,
+  onDone,
+}: {
+  p: B2bAdsPayload;
+  win: Win;
+  onDone: (m: string) => void;
+}) {
+  const [sort, setSort] = useState<{ key: string; dir: 1 | -1 }>({
+    key: "spend",
+    dir: -1,
+  });
+  const rows = useMemo(() => {
+    const all = p.campaigns.flatMap(c =>
+      c.adsets.flatMap(s =>
+        s.ads.map(a => ({ a, campaign: c.name, type: c.type, adset: s.name })),
+      ),
+    );
+    const col = COLS.find(c => c.key === sort.key) ?? COLS[0];
+    return all.sort((x, y) => {
+      const vx = col.get(x.a[win]);
+      const vy = col.get(y.a[win]);
+      if (vx === null && vy === null) return 0;
+      if (vx === null) return 1;
+      if (vy === null) return -1;
+      return (vx - vy) * sort.dir;
+    });
+  }, [p, win, sort]);
+
+  return (
+    <div className="ceo-scroll-x overflow-x-auto">
+      <table
+        className="w-full text-xs"
+        style={{ fontVariantNumeric: "tabular-nums" }}
+      >
+        <thead>
+          <tr className="border-b text-left text-muted-foreground">
+            <th className="sticky left-0 z-10 bg-card py-2 pr-3 font-medium">
+              Ad
+            </th>
+            {COLS.map(c => (
+              <th key={c.key} className="px-2 py-2 text-right font-medium">
+                <button
+                  type="button"
+                  title={c.title}
+                  onClick={() =>
+                    setSort(s =>
+                      s.key === c.key
+                        ? { key: c.key, dir: s.dir === 1 ? -1 : 1 }
+                        : { key: c.key, dir: c.low ? 1 : -1 },
+                    )
+                  }
+                  className={`whitespace-nowrap hover:text-foreground ${sort.key === c.key ? "text-foreground" : ""}`}
+                >
+                  {c.label}
+                  {sort.key === c.key ? (sort.dir === 1 ? " ↑" : " ↓") : ""}
+                </button>
+              </th>
+            ))}
+            <th className="px-2 py-2 text-right font-medium">Who</th>
+            <th className="px-2 py-2 text-right font-medium">Verdict</th>
+            <th className="px-2 py-2 text-right font-medium">On</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(({ a, campaign, adset, type }) => {
+            const w = a[win];
+            return (
+              <tr
+                key={a.id}
+                className="border-b last:border-b-0 hover:bg-muted/30"
+              >
+                <td className="sticky left-0 z-10 max-w-[240px] bg-card py-2 pr-3">
+                  <div className="flex items-center gap-2">
+                    {a.thumbnail ? (
+                      <img
+                        src={a.thumbnail}
+                        alt=""
+                        loading="lazy"
+                        className="size-7 shrink-0 rounded object-cover"
+                        onError={e => {
+                          e.currentTarget.style.display = "none";
+                        }}
+                      />
+                    ) : null}
+                    <div className="min-w-0">
+                      <div className="truncate font-medium text-foreground">
+                        {a.name}
+                      </div>
+                      <div className="truncate text-[10px] text-muted-foreground">{`${type === "retargeting" ? "retargeting · " : ""}${campaign} · ${adset}`}</div>
+                    </div>
+                  </div>
+                </td>
+                {COLS.map(c => {
+                  const v = c.get(w);
+                  return (
+                    <td
+                      key={c.key}
+                      className="whitespace-nowrap px-2 py-2 text-right"
+                    >
+                      {v === null ? (
+                        <span className="text-muted-foreground">—</span>
+                      ) : (
+                        c.fmt(v)
+                      )}
+                    </td>
+                  );
+                })}
+                <td className="whitespace-nowrap px-2 py-2 text-right text-muted-foreground">
+                  {[
+                    a.people.setter
+                      ? `S ${a.people.setter.name.split(" ")[0]}`
+                      : null,
+                    a.people.closer
+                      ? `C ${a.people.closer.name.split(" ")[0]}`
+                      : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ") || "—"}
+                </td>
+                <td className="px-2 py-2 text-right">
+                  <StatusChip
+                    tone={TONE[a.verdict.verdict]}
+                    label={a.verdict.verdict}
+                  />
+                </td>
+                <td className="px-2 py-2 text-right">
+                  <Toggle
+                    metaId={a.id}
+                    level="ad"
+                    name={a.name}
+                    running={a.running}
+                    onDone={onDone}
+                  />
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export function AdsTab({ sections }: CeoTabProps) {
   const section = sections.b2bAds;
   const p = section?.payload ?? null;
   const [win, setWin] = useState<Win>("w7");
+  const [view, setView] = useState<View>("funnel");
   const [msg, setMsg] = useState<string | null>(null);
 
   const verdictChips = useMemo(() => {
@@ -405,7 +825,7 @@ export function AdsTab({ sections }: CeoTabProps) {
         section={section}
         notes={p.notes}
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {p.accountStatus && p.accountStatus.code !== 1 ? (
               <StatusChip
                 tone="critical"
@@ -429,6 +849,23 @@ export function AdsTab({ sections }: CeoTabProps) {
                 </button>
               ))}
             </div>
+            <div className="flex gap-1">
+              {(["funnel", "table"] as View[]).map(k => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => setView(k)}
+                  aria-pressed={view === k}
+                  className={`rounded-full border px-2.5 py-0.5 text-xs ${
+                    view === k
+                      ? "bg-foreground text-background"
+                      : "text-muted-foreground"
+                  }`}
+                >
+                  {k === "funnel" ? "Funnel" : "Table"}
+                </button>
+              ))}
+            </div>
           </div>
         }
         order={0}
@@ -438,50 +875,54 @@ export function AdsTab({ sections }: CeoTabProps) {
             <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4 xl:grid-cols-8">
               <StatTile
                 variant="plain"
-                label="Lead-gen ad spend"
+                label="Lead-gen spend"
                 value={money(a.spend)}
-              />
-              <StatTile
-                variant="plain"
-                label="Leads in the CRM"
-                value={count(a.leads)}
-                sub={`Meta counts ${count(a.metaLeads)}`}
-                hint="Meta counts a form fill. The CRM counts a contact that arrived with its attribution. The gap is a diagnosis, not noise."
+                sub={`CPM ${dash(a.cpm, money)}${p.retargetingSpend[win] ? ` · +${money(p.retargetingSpend[win])} retargeting` : ""}`}
+                hint="Lead-gen campaigns only, the way the B2B dashboard reads the account. Retargeting is beside it, never inside a cost per lead."
               />
               <StatTile
                 variant="plain"
                 label="Cost per lead"
-                value={a.cpl === null ? "—" : money(a.cpl)}
-                sub="against the $15 gate"
+                value={dash(a.cpl, money)}
+                sub={`${count(a.leads)} leads · $15 gate`}
+                hint="Spend over the leads that reached the CRM. Meta's own count is on the ribbon."
               />
               <StatTile
                 variant="plain"
-                label="Intros shown"
-                value={count(a.introsShown)}
-                sub={`of ${count(a.introsBooked)} booked`}
+                label="Link CTR"
+                value={dash(a.ctrLink, pct)}
+                sub={`CPC ${dash(a.cpc, money)}`}
               />
               <StatTile
                 variant="plain"
-                label="Demos shown"
-                value={count(a.demosShown)}
-                sub={`of ${count(a.demosBooked)} booked`}
+                label="Intro show rate"
+                value={dash(a.introShowRate, pct)}
+                sub={`${count(a.introsShown)} of ${count(a.introsDue)} due`}
+                hint="Intros shown over intros whose time has passed. Confirmed or showed counts as shown."
+              />
+              <StatTile
+                variant="plain"
+                label="Demo show rate"
+                value={dash(a.demoShowRate, pct)}
+                sub={`${count(a.demosShown)} of ${count(a.demosDue)} due`}
               />
               <StatTile
                 variant="plain"
                 label="Cost per demo"
-                value={a.costPerDemo === null ? "—" : money(a.costPerDemo)}
-                sub="no gate set"
+                value={dash(a.costPerDemo, money)}
+                sub="spend over demos shown"
               />
               <StatTile
                 variant="plain"
-                label="Closes"
-                value={count(a.closes)}
-                sub={money(a.contracted)}
+                label="Close rate"
+                value={dash(a.closeRate, pct)}
+                sub={`${count(a.closes)} signed · CAC ${dash(a.cac, money)}`}
               />
               <StatTile
                 variant="plain"
-                label="ROAS on contracted"
-                value={a.roas === null ? "—" : `${a.roas.toFixed(1)}x`}
+                label="ROAS"
+                value={x(a.roas)}
+                sub={`${money(a.contracted)} contracted`}
                 status={
                   p.running === 0 ? (
                     <StatusChip tone="critical" label="Nothing running" />
@@ -489,9 +930,12 @@ export function AdsTab({ sections }: CeoTabProps) {
                 }
               />
             </div>
-
+            <FunnelRibbon w={a} spend={a.spend} />
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               <span>{`${count(p.running)} of ${count(p.total)} ads running.`}</span>
+              <span title="Everything in the CRM for the window against what carries an ad id. The rest is organic, WhatsApp or typed in by hand.">
+                {`${count(p.coverage[win].adLeads)} of ${count(p.coverage[win].leads)} leads and ${count(p.coverage[win].adCloses)} of ${count(p.coverage[win].closes)} signed deals carry an ad.`}
+              </span>
               {verdictChips.map(v => (
                 <StatusChip
                   key={v.key}
@@ -500,24 +944,34 @@ export function AdsTab({ sections }: CeoTabProps) {
                 />
               ))}
             </div>
-
             {msg ? <p className="text-sm">{msg}</p> : null}
           </div>
         )}
       </SectionCard>
 
       {p.campaigns.length ? (
-        <div className="grid gap-3">
-          {p.campaigns.map(c => (
-            <CampaignCard
-              key={c.id}
-              c={c}
-              win={win}
-              account={p.accountId}
-              onDone={setMsg}
-            />
-          ))}
-        </div>
+        view === "table" ? (
+          <SectionCard
+            title="Every ad"
+            kicker={`${label} · click a column to sort`}
+            section={section}
+            order={1}
+          >
+            {() => <AdTable p={p} win={win} onDone={setMsg} />}
+          </SectionCard>
+        ) : (
+          <div className="grid gap-3">
+            {p.campaigns.map(c => (
+              <CampaignCard
+                key={c.id}
+                c={c}
+                win={win}
+                account={p.accountId}
+                onDone={setMsg}
+              />
+            ))}
+          </div>
+        )
       ) : (
         <SectionCard title="Campaigns" section={section} order={1}>
           {() => (

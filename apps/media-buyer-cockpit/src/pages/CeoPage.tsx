@@ -1,31 +1,15 @@
 import "@/components/ceo/ceo.css";
 import { useQuery } from "convex/react";
 import { LoaderCircle, ShieldOff } from "lucide-react";
-import {
-  type ReactNode,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import {
-  type CeoTab,
-  CeoTabs,
-  panelId,
-  tabId,
-  useTabParam,
-} from "@/components/ceo/CeoTabs";
+import { type ReactNode, useMemo } from "react";
+import { panelId, tabId, useTabParam } from "@/components/ceo/CeoTabs";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { kuwaitDay, longDate } from "@/components/ceo/format";
 import { highRiskCount } from "@/components/ceo/metrics";
 import { RefreshButton } from "@/components/ceo/RefreshButton";
 import { TrustPills } from "@/components/ceo/TrustPills";
-import {
-  type CeoSections,
-  trustSummary,
-  useCeo,
-  useNow,
-} from "@/components/ceo/useCeo";
+import type { CeoSections } from "@/components/ceo/useCeo";
+import { trustSummary, useCeo, useNow } from "@/components/ceo/useCeo";
 import { api } from "../../convex/_generated/api";
 import { AdsTab } from "./ceo/AdsTab";
 import { BackendTab } from "./ceo/BackendTab";
@@ -38,30 +22,14 @@ import { MachineTab } from "./ceo/MachineTab";
 import { ManagementTab } from "./ceo/ManagementTab";
 import { MarketingTab } from "./ceo/MarketingTab";
 import { MoneyTab } from "./ceo/MoneyTab";
+import { CEO_LABELS } from "./ceo/nav";
 import { OrganicTab } from "./ceo/OrganicTab";
 import { PostingTab } from "./ceo/PostingTab";
 import { SalesTab } from "./ceo/SalesTab";
 import { statusSentence } from "./ceo/statusSentence";
+import { TeamTab } from "./ceo/TeamTab";
 import { TodayTab } from "./ceo/TodayTab";
 import { CEO_TAB_KEYS, type CeoTabKey, type CeoTabProps } from "./ceo/types";
-
-const TAB_LABELS: Record<CeoTabKey, string> = {
-  today: "Today",
-  frontend: "Frontend",
-  marketing: "Marketing",
-  ads: "Ads",
-  organic: "Organic",
-  ideation: "Ideation",
-  posting: "Posting",
-  sales: "Sales",
-  backend: "Backend",
-  delivery: "Delivery",
-  calls: "Calls",
-  "client-success": "Client success",
-  management: "Management",
-  money: "Money",
-  machine: "Machine",
-};
 
 const TAB_VIEWS: Record<CeoTabKey, (props: CeoTabProps) => ReactNode> = {
   today: TodayTab,
@@ -77,70 +45,40 @@ const TAB_VIEWS: Record<CeoTabKey, (props: CeoTabProps) => ReactNode> = {
   calls: CallsTab,
   "client-success": ClientSuccessTab,
   management: ManagementTab,
+  team: TeamTab,
   money: MoneyTab,
   machine: MachineTab,
 };
 
-function tabsFor(sections: CeoSections): CeoTab<CeoTabKey>[] {
+/** Counts that ride the section names in the rail: risk on client success, failures on machine. */
+export function ceoBadges(
+  sections: CeoSections,
+): Partial<Record<CeoTabKey, { count: number; tone: "serious" | "critical" }>> {
   const clients = sections.clients?.payload;
-  const highRisk = clients ? highRiskCount(clients) : null;
   const machine = sections.machine?.payload;
-  const failing = machine ? machine.failingJobs + machine.failingSources : null;
-  return CEO_TAB_KEYS.map(key => ({
-    key,
-    label: TAB_LABELS[key],
-    count:
-      key === "client-success"
-        ? highRisk
-        : key === "machine"
-          ? failing
-          : undefined,
-    countTone:
-      key === "client-success"
-        ? "serious"
-        : key === "machine"
-          ? "critical"
-          : undefined,
-  }));
+  const out: Partial<
+    Record<CeoTabKey, { count: number; tone: "serious" | "critical" }>
+  > = {};
+  const risk = clients ? highRiskCount(clients) : 0;
+  if (risk) out["client-success"] = { count: risk, tone: "serious" };
+  const failing = machine ? machine.failingJobs + machine.failingSources : 0;
+  if (failing) out.machine = { count: failing, tone: "critical" };
+  return out;
 }
 
 /**
- * On phones the title block scrolls away and only the tabs stay pinned; from
- * the sm breakpoint up the whole header stays. Done with one sticky element
- * whose top is minus the title block's height on narrow screens.
+ * The founder's command centre at /ceo. The sections live in the left rail
+ * (AppSidebar renders them when the path is /ceo); this page is the header
+ * and the one section on screen.
  */
-function useStickyTop() {
-  const ref = useRef<HTMLDivElement>(null);
-  const [top, setTop] = useState(0);
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el || typeof window === "undefined") return;
-    const mq = window.matchMedia("(max-width: 639px)");
-    const update = () => setTop(mq.matches ? -el.offsetHeight : 0);
-    update();
-    const ro =
-      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
-    ro?.observe(el);
-    mq.addEventListener("change", update);
-    return () => {
-      ro?.disconnect();
-      mq.removeEventListener("change", update);
-    };
-  }, []);
-  return [ref, top] as const;
-}
-
-/** The founder's command center at /ceo: one header, eleven tabs, every number with its trust. */
 export function CeoPage() {
   const me = useQuery(api.roles.me, {});
   const isCeo = me?.isCeo === true;
   const { sections, day, loading } = useCeo(isCeo);
   const now = useNow();
   const [tab, setTab] = useTabParam(CEO_TAB_KEYS, "today");
-  const [headerRef, stickyTop] = useStickyTop();
 
   const trust = useMemo(() => trustSummary(sections, now), [sections, now]);
-  const tabs = useMemo(() => tabsFor(sections), [sections]);
   const sentence = useMemo(() => statusSentence(sections), [sections]);
 
   if (me && !me.isCeo)
@@ -159,43 +97,32 @@ export function CeoPage() {
 
   return (
     <div className="ceo-root mx-auto w-full min-w-0 max-w-[1440px]">
-      <div
-        className="sticky z-30 -mx-4 bg-background/90 px-4 backdrop-blur-md supports-[backdrop-filter]:bg-background/75 lg:-mx-6 lg:px-6"
-        style={{ top: stickyTop }}
-      >
-        <div
-          ref={headerRef}
-          className="flex flex-col gap-4 pb-4 pt-1 md:flex-row md:items-end md:justify-between"
-        >
-          <div className="min-w-0">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              CEO
-            </p>
-            <h1 className="mt-1 text-2xl font-semibold tracking-tight text-foreground">
-              {longDate(day ?? kuwaitDay(now))}
-            </h1>
-            <p className="mt-1 min-h-5 text-sm text-muted-foreground">
-              {ready ? sentence : "Loading the numbers."}
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 md:justify-end">
-            {ready ? (
-              <TrustPills
-                // contents: the pills and the Refresh button wrap as one row on a phone.
-                className="contents"
-                asOf={trust.asOf}
-                now={now}
-                stale={trust.stale}
-                missing={trust.missing.length}
-                hermes={trust.hermes}
-                onOpenMachine={() => setTab("machine")}
-              />
-            ) : null}
-            {isCeo ? <RefreshButton /> : null}
-          </div>
+      <div className="flex flex-col gap-3 pb-5 pt-1 md:flex-row md:items-end md:justify-between">
+        <div className="min-w-0">
+          <p className="text-sm text-muted-foreground">
+            {longDate(day ?? kuwaitDay(now))}
+          </p>
+          <h1 className="mt-0.5 text-2xl font-semibold tracking-tight text-foreground">
+            {CEO_LABELS[tab]}
+          </h1>
+          <p className="mt-1 min-h-5 text-sm text-muted-foreground">
+            {ready ? sentence : "Loading the numbers."}
+          </p>
         </div>
-        <div className="border-b">
-          <CeoTabs tabs={tabs} value={tab} onChange={setTab} />
+        <div className="flex flex-wrap items-center gap-2 md:justify-end">
+          {ready ? (
+            <TrustPills
+              // contents: the pills and the Refresh button wrap as one row on a phone.
+              className="contents"
+              asOf={trust.asOf}
+              now={now}
+              stale={trust.stale}
+              missing={trust.missing.length}
+              hermes={trust.hermes}
+              onOpenMachine={() => setTab("machine")}
+            />
+          ) : null}
+          {isCeo ? <RefreshButton /> : null}
         </div>
       </div>
 
@@ -203,7 +130,7 @@ export function CeoPage() {
         role="tabpanel"
         id={panelId(tab)}
         aria-labelledby={tabId(tab)}
-        className="min-w-0 pb-10 pt-6"
+        className="min-w-0 pb-10"
       >
         {ready ? (
           <View sections={sections} now={now} day={day} goTab={setTab} />

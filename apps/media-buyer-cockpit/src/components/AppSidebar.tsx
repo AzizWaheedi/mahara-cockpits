@@ -20,9 +20,14 @@ import {
   Sun,
   Trophy,
 } from "lucide-react";
-import { Link, useLocation } from "react-router";
+import { Link, useLocation, useSearchParams } from "react-router";
+import { STATUS_COLOR } from "@/components/ceo/StatusChip";
+import { useCeo } from "@/components/ceo/useCeo";
 import { Wordmark } from "@/components/Wordmark";
 import { useTheme } from "@/contexts/ThemeContext";
+import { ceoBadges } from "@/pages/CeoPage";
+import { CEO_NAV } from "@/pages/ceo/nav";
+import type { CeoTabKey } from "@/pages/ceo/types";
 import { api } from "../../convex/_generated/api";
 import { Avatar, AvatarFallback } from "./ui/avatar";
 import {
@@ -134,10 +139,143 @@ function NavLink({
   );
 }
 
+/**
+ * Inside the CEO cockpit the rail is the cockpit's own sections, grouped by
+ * the shape of the business, with the way out at the bottom. Nothing from
+ * the media buyer's working screens shows here; being the CEO is a
+ * different job from running ads.
+ */
+function CeoRail() {
+  const [params] = useSearchParams();
+  const active = (params.get("tab") ?? "today") as CeoTabKey;
+  const me = useQuery(api.roles.me, {});
+  const { sections } = useCeo(me?.isCeo === true);
+  const badges = ceoBadges(sections);
+  const { setOpenMobile } = useSidebar();
+  const cockpits: string[] = me?.cockpits ?? [];
+  const elsewhere = [
+    ...(me?.isAdmin
+      ? [{ key: "admin", label: "Admin", href: "/admin", icon: ShieldCheck }]
+      : []),
+    ...((me?.roles ?? []).includes("media_buyer")
+      ? [
+          {
+            key: "media_buyer",
+            label: "Media buyer cockpit",
+            href: "/dashboard",
+            icon: Megaphone,
+          },
+        ]
+      : []),
+    ...[
+      {
+        key: "csm",
+        label: "Client success",
+        href: "/go/csm",
+        icon: ArrowRightLeft,
+      },
+      {
+        key: "creative",
+        label: "Creative director",
+        href: "/go/creative",
+        icon: ArrowRightLeft,
+      },
+      {
+        key: "editor",
+        label: "Editor desk",
+        href: "/go/editor",
+        icon: ArrowRightLeft,
+      },
+    ].filter(c => cockpits.includes(c.key)),
+  ];
+  return (
+    <SidebarContent>
+      {CEO_NAV.map((group, gi) => (
+        <SidebarGroup key={group.title ?? `g${gi}`}>
+          {group.title ? (
+            <SidebarGroupLabel>{group.title}</SidebarGroupLabel>
+          ) : null}
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {group.items.map(item => {
+                const isActive = active === item.key;
+                const badge = badges[item.key];
+                return (
+                  <SidebarMenuItem key={item.key}>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={isActive}
+                      tooltip={item.label}
+                      className="cockpit-nav-link"
+                    >
+                      <Link
+                        to={
+                          item.key === "today" ? "/ceo" : `/ceo?tab=${item.key}`
+                        }
+                        aria-current={isActive ? "page" : undefined}
+                        onClick={() => setOpenMobile(false)}
+                      >
+                        {isActive && (
+                          <motion.span
+                            layoutId="cockpit-nav-lamp"
+                            className="cockpit-nav-lamp"
+                            transition={{
+                              type: "spring",
+                              stiffness: 320,
+                              damping: 30,
+                            }}
+                          />
+                        )}
+                        <item.icon />
+                        <span>{item.label}</span>
+                        {badge ? (
+                          <span className="ml-auto inline-flex h-[18px] min-w-[18px] items-center justify-center gap-1 rounded-full bg-muted px-1.5 text-[11px] font-medium leading-none tabular-nums">
+                            <span
+                              aria-hidden
+                              className="size-1.5 rounded-full"
+                              style={{
+                                backgroundColor: STATUS_COLOR[badge.tone],
+                              }}
+                            />
+                            {badge.count}
+                          </span>
+                        ) : null}
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      ))}
+      {elsewhere.length ? (
+        <SidebarGroup className="mt-auto">
+          <SidebarGroupLabel>Elsewhere</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {elsewhere.map(c => (
+                <NavLink
+                  key={c.key}
+                  href={c.href}
+                  label={c.label}
+                  icon={c.icon}
+                  isActive={false}
+                />
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      ) : null}
+    </SidebarContent>
+  );
+}
+
 function SidebarNav() {
   const location = useLocation();
   const me = useQuery(api.roles.me, {});
   const allowed = me?.roles ?? [];
+  if (location.pathname.startsWith("/ceo") && me?.isCeo) return <CeoRail />;
   // Admin no longer drags the media buyer's working screens in with it. Being
   // an administrator is a job about people and access, not about running ads,
   // and mixing the two put "Start of day" above "CEO" for the one person who
