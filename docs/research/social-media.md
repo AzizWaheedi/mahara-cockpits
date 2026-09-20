@@ -322,3 +322,35 @@ thing nobody notices until the client asks where the rest is.
 directly is left alone rather than adopted -- there is no plan, no pillar
 and no batch to file it under, and guessing would put a stranger's post in
 somebody's month.
+
+## What the tools that do this well actually do
+
+Researched 2026-09-20, before building the calendar, so the screen copies
+what works rather than what was easiest.
+
+| tool | the thing it is good at |
+| --- | --- |
+| **Later** | the visual grid. Seeing the feed as it will look beats a list of rows, and it is the only way to notice three brown close-ups in a row |
+| **Planable** | the agency standard for approvals: internal review and client feedback kept apart, every action timestamped against a name |
+| **Buffer** | a calendar with no learning curve. Worth more than features nobody finds |
+| **Metricool** | the recurring complaint, not the model: approvals behind a premium tier, notifications that do not reach people, cumbersome commenting |
+
+And from the agencies rather than the vendors: **batch by stage, not by
+client.** Draft a run of captions in one sitting, do internal QA in one
+pass, send one approval link. That is what the roster grouped by batch day
+was already for, and it is the thing the case studies credit for halving
+production time.
+
+What that turned into here:
+
+- a **month grid** where a post is a chip on its day, with its thumbnail;
+- a **feed preview** that shows the month as a three-wide Instagram grid,
+  newest first, which is Later's real trick;
+- **click a post, click a day** rather than drag and drop. Dragging is
+  nicer for two seconds and worse for everything else: it breaks on touch,
+  it cannot be done from a keyboard, and a misdrop silently moves a
+  client's post to the wrong day;
+- **carousel and single image are shown, not implied** -- two or more
+  images is a carousel, and the badge says how many slides;
+- a day set here is **pushed to GoHighLevel**, so the cockpit's calendar
+  and the thing that actually publishes never disagree.
