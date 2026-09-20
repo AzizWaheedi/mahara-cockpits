@@ -343,22 +343,28 @@ export function createTapMcpServer(config: TapClientConfig, log: (line: string) 
       title: "Create a Tap invoice",
       description: `Create and send an invoice via Tap. Running in ${mode.toUpperCase()} mode — ${
         mode === "test" ? "simulated." : "THIS IS REAL and may email the customer."
-      }`,
+      } orderAmount and orderCurrency are REQUIRED by Tap's API (an invoice with no order amount is rejected) — pass the amount in the CLIENT's own currency, already converted, not USD.`,
       inputSchema: {
-        currency: z.string().length(3).default("KWD"),
+        orderAmount: z.number().positive().describe("The invoice amount, in orderCurrency (already converted — Tap invoices in the client's own currency, not USD)"),
+        orderCurrency: z.string().length(3).default("KWD").describe("ISO currency code the client sees and pays in, e.g. KWD, SAR, AED, QAR, BHD, OMR"),
         customerFirstName: z.string().optional(),
         customerLastName: z.string().optional(),
         customerEmail: z.string().email().optional(),
         customerPhoneCountryCode: z.string().optional(),
         customerPhoneNumber: z.string().optional(),
+        description: z.string().optional().describe("Shown on the invoice, e.g. 'October retainer'"),
         draft: z.boolean().optional().describe("true = save as draft, do not send"),
-        dueTimestamp: z.number().optional().describe("Unix timestamp the invoice is due"),
+        dueTimestamp: z.number().describe("REQUIRED by Tap. Unix timestamp (milliseconds) the invoice is due"),
+        expiryTimestamp: z.number().optional().describe("REQUIRED by Tap. Unix timestamp (milliseconds) the invoice link expires. Defaults to 14 days after dueTimestamp if omitted"),
+        mode: z.enum(["INVOICE", "PAY", "INVOICEPAY"]).optional().describe("How the invoice page looks to the client. INVOICE = itemized invoice page, PAY = straight to payment, INVOICEPAY = both. Defaults to Tap's own default (INVOICE)"),
       },
     },
     async (args) => {
       try {
+        const dueMs = args.dueTimestamp;
+        const expiryMs = args.expiryTimestamp ?? dueMs + 14 * 24 * 60 * 60 * 1000;
         const result = await createInvoice(config, {
-          currency: args.currency,
+          currency: args.orderCurrency,
           customer: {
             first_name: args.customerFirstName,
             last_name: args.customerLastName,
@@ -368,8 +374,28 @@ export function createTapMcpServer(config: TapClientConfig, log: (line: string) 
                 ? { country_code: args.customerPhoneCountryCode, number: args.customerPhoneNumber }
                 : undefined,
           },
+          order: {
+            amount: args.orderAmount,
+            currency: args.orderCurrency,
+            // Confirmed live 2026-09-20: Tap's real API rejects an order
+            // with amount/currency but no items ("Order - Items is empty",
+            // code 3108), even though its own docs list order.amount as
+            // usable on its own. One line item carrying the same total is
+            // the minimum that actually works.
+            items: [
+              {
+                name: args.description || "Mahara Media invoice",
+                amount: args.orderAmount,
+                currency: args.orderCurrency,
+                quantity: 1,
+              },
+            ],
+          },
+          description: args.description,
           draft: args.draft,
-          due: args.dueTimestamp,
+          due: dueMs,
+          expiry: expiryMs,
+          mode: args.mode,
         });
         return jsonResult("tap_create_invoice", result);
       } catch (err) {

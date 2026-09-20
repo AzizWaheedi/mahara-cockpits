@@ -186,6 +186,9 @@ export function listCustomers(
 export interface CreateInvoiceInput {
   draft?: boolean;
   due?: number;
+  expiry?: number;
+  mode?: "INVOICE" | "PAY" | "INVOICEPAY";
+  description?: string;
   currency: string;
   customer: {
     first_name?: string;
