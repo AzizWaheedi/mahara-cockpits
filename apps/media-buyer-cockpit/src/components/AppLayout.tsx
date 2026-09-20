@@ -62,12 +62,14 @@ function LayoutContent() {
     <>
       <AppSidebar />
       <SidebarInset ref={inset}>
-        <header className="pt-safe flex min-h-12 items-center justify-between px-4">
-          <SidebarTrigger className="md:hidden" />
-          <div className="ml-auto">
-            <ThemeToggle />
-          </div>
-        </header>
+        <div className="sticky top-2.5 z-40 px-3 md:px-4 pt-safe">
+          <header className="flex h-11 items-center justify-between rounded-full border border-border/60 bg-card/80 px-3.5 shadow-xs backdrop-blur-md transition-all">
+            <SidebarTrigger className="md:hidden" />
+            <div className="ml-auto flex items-center gap-2">
+              <ThemeToggle />
+            </div>
+          </header>
+        </div>
         <OfflineBanner />
         {/* On a phone the tab bar takes the foot of the screen; the page keeps clear of it. */}
         <main className="flex-1 p-4 pb-24 md:pb-4 lg:p-6 lg:pb-6">

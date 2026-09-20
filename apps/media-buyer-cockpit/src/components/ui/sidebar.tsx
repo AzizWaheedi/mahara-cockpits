@@ -259,9 +259,13 @@ const Sidebar = React.forwardRef<
             width:
               state === "collapsed"
                 ? collapsible === "icon"
-                  ? "var(--sidebar-width-icon)"
+                  ? variant === "floating" || variant === "inset"
+                    ? "calc(var(--sidebar-width-icon) + 1rem)"
+                    : "var(--sidebar-width-icon)"
                   : 0
-                : "var(--sidebar-width)",
+                : variant === "floating" || variant === "inset"
+                  ? "calc(var(--sidebar-width) + 1rem)"
+                  : "var(--sidebar-width)",
           }}
         />
         <div
@@ -278,14 +282,18 @@ const Sidebar = React.forwardRef<
           style={{
             width:
               state === "collapsed" && collapsible === "icon"
-                ? "var(--sidebar-width-icon)"
-                : "var(--sidebar-width)",
+                ? variant === "floating" || variant === "inset"
+                  ? "calc(var(--sidebar-width-icon) + 1rem)"
+                  : "var(--sidebar-width-icon)"
+                : variant === "floating" || variant === "inset"
+                  ? "calc(var(--sidebar-width) + 1rem)"
+                  : "var(--sidebar-width)",
           }}
           {...props}
         >
           <div
             data-sidebar="sidebar"
-            className="flex h-full w-full flex-col bg-sidebar group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border group-data-[variant=floating]:shadow"
+            className="flex h-full w-full flex-col bg-sidebar/95 group-data-[variant=floating]:rounded-2xl group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border/70 group-data-[variant=floating]:shadow-lg group-data-[variant=floating]:shadow-black/5 group-data-[variant=floating]:backdrop-blur-md overflow-hidden"
           >
             {children}
           </div>

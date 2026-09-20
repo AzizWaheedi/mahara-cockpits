@@ -60,12 +60,14 @@ function LayoutContent() {
     <>
       <AppSidebar />
       <SidebarInset ref={inset}>
-        <header className="flex h-12 items-center justify-between px-4">
-          <SidebarTrigger className="md:hidden" />
-          <div className="ml-auto">
-            <ThemeToggle />
-          </div>
-        </header>
+        <div className="sticky top-2.5 z-40 px-3 md:px-4">
+          <header className="flex h-11 items-center justify-between rounded-full border border-border/60 bg-card/80 px-3.5 shadow-xs backdrop-blur-md transition-all">
+            <SidebarTrigger className="md:hidden" />
+            <div className="ml-auto flex items-center gap-2">
+              <ThemeToggle />
+            </div>
+          </header>
+        </div>
         <main className="flex-1 p-4 lg:p-6">
           <RouteErrorBoundary
             report={r => queue({ kind: "issue", payload: r })}

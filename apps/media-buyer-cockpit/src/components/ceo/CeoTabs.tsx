@@ -111,7 +111,7 @@ export function CeoTabs<K extends string>({
       aria-orientation="horizontal"
       onKeyDown={onKeyDown}
       className={cn(
-        "ceo-scroll-x -mb-px flex min-w-0 items-stretch gap-1 overflow-x-auto",
+        "ceo-scroll-x inline-flex max-w-full items-center gap-1 overflow-x-auto rounded-full border border-border/50 bg-muted/60 p-1 backdrop-blur-xs",
         className,
       )}
     >
@@ -133,9 +133,9 @@ export function CeoTabs<K extends string>({
             tabIndex={active ? 0 : -1}
             onClick={() => onChange(tab.key)}
             className={cn(
-              "relative inline-flex h-10 shrink-0 items-center gap-1.5 rounded-t-md px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+              "relative z-10 inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               active
-                ? "font-medium text-foreground"
+                ? "font-semibold text-foreground"
                 : "text-muted-foreground hover:text-foreground",
             )}
           >
@@ -161,10 +161,9 @@ export function CeoTabs<K extends string>({
             ) : null}
             {active ? (
               <motion.span
-                layoutId={reduce ? undefined : "ceo-tab-underline"}
-                transition={{ type: "spring", stiffness: 520, damping: 42 }}
-                className="absolute inset-x-3 bottom-0 h-0.5 rounded-full"
-                style={{ backgroundColor: "var(--ceo-emphasis)" }}
+                layoutId={reduce ? undefined : "ceo-tab-pill"}
+                transition={{ type: "spring", stiffness: 480, damping: 38 }}
+                className="absolute inset-0 -z-10 rounded-full border border-border/40 bg-background shadow-xs"
                 aria-hidden
               />
             ) : null}
