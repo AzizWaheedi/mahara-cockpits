@@ -344,6 +344,20 @@ export async function deletePost(
  * cockpit showing a status it does not recognise is better than the
  * cockpit saying "published" about something that is not.
  */
+/**
+ * The id of a post GHL just made.
+ *
+ * It is `results.post._id`, and nothing shallower: a create answers
+ * `{success, statusCode: 201, results: {post: {...}}}`. Reading it wrongly
+ * is silent -- the post is created and we simply never learn its id, so
+ * the calendar sync can never match it again and the client's approval
+ * never comes back. Found by creating a real one on 2026-09-20.
+ */
+export function postIdOf(made: Json): string {
+  const post = (made?.results?.post ?? made?.results ?? made) as Json;
+  return String(post?._id ?? post?.id ?? "");
+}
+
 export function ourStatus(theirs: string): string {
   switch ((theirs || "").toLowerCase()) {
     case "in_review":

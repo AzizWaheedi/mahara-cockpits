@@ -1,5 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import { GhlError, listBody, ourStatus, VERSION } from "../convex/ghlSocial";
+import {
+  GhlError,
+  listBody,
+  ourStatus,
+  postIdOf,
+  VERSION,
+} from "../convex/ghlSocial";
 import { spread } from "../convex/social";
 
 /**
@@ -154,5 +160,40 @@ describe("what the live API actually wants", () => {
     });
     expect(w.fromDate).toBe("2026-09-01T00:00:00Z");
     expect(w.toDate).toBe("2026-10-01T00:00:00Z");
+  });
+});
+
+/**
+ * Both found by creating a real post against Amheco on 2026-09-20 and
+ * watching the cleanup fail to find it.
+ */
+describe("reading GHL's answers", () => {
+  it("finds the post id where GHL actually puts it", () => {
+    // A create answers {success, statusCode: 201, results: {post: {_id}}}.
+    // Reading it wrongly is silent: the post exists and we never learn its
+    // id, so the calendar can never match it and the client's approval
+    // never comes back to us.
+    expect(
+      postIdOf({
+        success: true,
+        statusCode: 201,
+        results: { post: { _id: "abc123" } },
+      }),
+    ).toBe("abc123");
+  });
+
+  it("still copes if they flatten it or rename the field", () => {
+    expect(postIdOf({ results: { post: { id: "x1" } } })).toBe("x1");
+    expect(postIdOf({ results: { _id: "x2" } })).toBe("x2");
+    expect(postIdOf({ _id: "x3" })).toBe("x3");
+    expect(postIdOf({ id: "x4" })).toBe("x4");
+  });
+
+  it("returns empty rather than a string of undefined", () => {
+    // "undefined" written into ghl_post_id would match nothing forever and
+    // look like a real value in the table.
+    expect(postIdOf({})).toBe("");
+    expect(postIdOf({ results: {} })).toBe("");
+    expect(postIdOf(null as never)).toBe("");
   });
 });

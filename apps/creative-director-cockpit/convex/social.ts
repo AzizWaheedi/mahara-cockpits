@@ -10,6 +10,7 @@ import {
   users as ghlUsers,
   locationToken,
   ourStatus,
+  postIdOf,
   USER_ID,
 } from "./ghlSocial";
 import { hasAccess } from "./roles";
@@ -902,7 +903,7 @@ export const sendToClient = authenticatedAction({
           scheduleDate: slots[i],
           approverUserId: args.approverUserId,
         });
-        const ghlId = String(made.id ?? made._id ?? made.results?.id ?? "");
+        const ghlId = postIdOf(made);
         await rest(`social_posts?id=eq.${enc(String(post.id))}`, {
           method: "PATCH",
           prefer: "return=minimal",

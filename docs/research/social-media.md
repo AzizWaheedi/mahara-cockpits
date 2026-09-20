@@ -177,7 +177,8 @@ Then every one of them was asked what it could do:
 | tokens that reach the Social Planner | **42** |
 | tokens refused for a missing scope | **5** — AEA Designs, amheco, Grandiocity Projects, Inverse group, Pidco Group |
 | sub-accounts **proven** to have none connected | **44**, Mahara's own two included |
-| sub-accounts that cannot be checked | **21** — 5 whose token lacks the scope, 16 with no token at all |
+| **connected, once its token was regenerated** | **amheco** — `amheco_sa` on Instagram |
+| still unreadable | **20** — 4 whose token lacks the scope, 16 with no token at all |
 
 The five say *"The token is not authorized for this scope"*, which is a
 different thing from the "Invalid JWT" the panel token gave and needs a
@@ -185,6 +186,30 @@ different fix: the token is real, it was just generated without the
 `socialplanner/*` boxes ticked. Regenerate it in that sub-account's
 settings. The cockpit now tells those two apart, because they need
 different people.
+
+## The write path, proved 2026-09-20
+
+**Amheco does have an Instagram connected** -- `amheco_sa`. Aziz was right
+and my sweep was wrong about it: amheco was one of the five whose token
+lacked the Social Planner scope, so every answer I had for it was a 401,
+and I had folded that into "none of them" when it should have stayed an
+unknown. A regenerated token read it immediately.
+
+With that token the whole write path ran against a real sub-account: a
+draft created, read back, then deleted. A draft on purpose -- it notifies
+nobody, reaches no client and publishes nothing. Amheco's planner is empty
+again.
+
+Three things it taught, all of them silent failures:
+
+| | |
+| --- | --- |
+| `posts/list` answers **201**, not 200, to a read | a `code == 200` check skips its own results. My cleanup "found 0 posts" while the draft sat there |
+| the new post's id is at **`results.post._id`** | anything shallower reads empty, the post exists, and we never learn its id -- so the calendar can never match it and the client's approval never comes back |
+| `createPost` really does need `userId` | and the sub-account's own user is the right author. Amheco's is Abdullah Al hussaini |
+
+The cockpit's own client uses `res.ok`, so the 201 never affected it; the
+id was read wrongly and is fixed, with tests pinning both.
 
 ### Is "zero accounts" a real answer?
 
