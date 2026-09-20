@@ -65,8 +65,12 @@ ship() {
   # and the alias still served the previous bundle -- Vercel had restored
   # the old build output from cache, so the deployment was genuinely stale
   # rather than merely mis-aliased.
-  if (cd "$dir" && bunx vercel whoami >/dev/null 2>&1); then
-    out=$(cd "$dir" && bunx vercel deploy --prod --yes --force 2>&1) || { echo "$out" | tail -20; echo "vercel deploy failed for $app"; exit 1; }
+  # VERCEL_TOKEN=... in the environment uses the CLI without a login (the
+  # durable token lives on the hermes VPS; never paste it in chat or a file).
+  local -a tok=()
+  [ -n "${VERCEL_TOKEN:-}" ] && tok=(--token "$VERCEL_TOKEN")
+  if (cd "$dir" && bunx vercel whoami "${tok[@]}" >/dev/null 2>&1); then
+    out=$(cd "$dir" && bunx vercel deploy --prod --yes --force "${tok[@]}" 2>&1) || { echo "$out" | tail -20; echo "vercel deploy failed for $app"; exit 1; }
   else
     # No Vercel login on this Mac (2026-09-20): the same source goes up
     # through Composio's Vercel connection instead. `bunx vercel login`
