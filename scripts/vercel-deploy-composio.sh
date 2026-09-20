@@ -69,6 +69,8 @@ echo "  files: $(wc -l < "$work/files.txt" | tr -d ' ')"
 if [ "${DRY:-}" = 1 ]; then cat "$work/files.txt"; exit 0; fi
 
 # One file: by hash when Vercel already holds it, inline when the hash is new.
+# Every composio call reads stdin from /dev/null: with an open stdin (a job
+# in the background) the CLI waits for a request body that never comes.
 cat > "$work/one.sh" <<'ONE'
 #!/usr/bin/env bash
 f="$1"
@@ -77,7 +79,7 @@ size=$(stat -f%z "$f" 2>/dev/null || stat -c%s "$f")
 res=""
 for attempt in 1 2 3; do
   res=$(composio proxy "https://api.vercel.com/v2/files?teamId=$TEAM" --toolkit vercel --skip-connection-check \
-        -X POST -H "x-vercel-digest: $sha" -H "Content-Type: application/octet-stream" -d @"$f" 2>&1) || true
+        -X POST -H "x-vercel-digest: $sha" -H "Content-Type: application/octet-stream" -d @"$f" 2>&1 </dev/null) || true
   if echo "$res" | grep -q sha1sum_mismatch; then
     printf '{"file":"%s","data":"%s","encoding":"base64"}\n' "$f" "$(base64 < "$f" | tr -d '\n')"
     exit 0
@@ -100,7 +102,7 @@ if [ "$fails" != "0" ]; then
 fi
 echo "  by hash: $(grep -c '"sha"' "$work/parts.jsonl" || true), inline: $(grep -c '"encoding"' "$work/parts.jsonl" || true)"
 
-framework=$(composio proxy "https://api.vercel.com/v9/projects/$PROJECT?teamId=$TEAM" --toolkit vercel --skip-connection-check -X GET 2>/dev/null \
+framework=$(composio proxy "https://api.vercel.com/v9/projects/$PROJECT?teamId=$TEAM" --toolkit vercel --skip-connection-check -X GET 2>/dev/null </dev/null \
   | python3 -c "import json,sys; d=json.load(sys.stdin); b=d.get('data') if isinstance(d,dict) and 'data' in d else d; print(b.get('framework') or '')" 2>/dev/null || true)
 commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
 python3 - "$work" "$NAME" "$PROJECT" "$framework" "$commit" <<'PY'
@@ -117,7 +119,7 @@ PY
 # forceNew without withCache is what the CLI's --force sends: a fresh build,
 # no restored output (see ship.sh for the day the cache served last week's).
 res=$(composio proxy "https://api.vercel.com/v13/deployments?teamId=$TEAM&forceNew=1" --toolkit vercel --skip-connection-check \
-      -X POST -H "Content-Type: application/json" -d @"$work/body.json" 2>&1) || true
+      -X POST -H "Content-Type: application/json" -d @"$work/body.json" 2>&1 </dev/null) || true
 id=$(echo "$res" | python3 -c "
 import json,sys
 raw=sys.stdin.read()
@@ -132,7 +134,7 @@ except Exception:
 echo "  deployment: $id"
 
 for _ in $(seq 1 90); do
-  state=$(composio proxy "https://api.vercel.com/v13/deployments/$id?teamId=$TEAM" --toolkit vercel --skip-connection-check -X GET 2>&1 \
+  state=$(composio proxy "https://api.vercel.com/v13/deployments/$id?teamId=$TEAM" --toolkit vercel --skip-connection-check -X GET 2>&1 </dev/null \
     | python3 -c "
 import json,sys
 raw=sys.stdin.read()
