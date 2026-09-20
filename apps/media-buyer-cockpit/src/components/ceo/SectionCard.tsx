@@ -85,6 +85,11 @@ export function SectionCard<K extends SectionKey>({
         compact
       />
     );
+  } else if (typeof children === "function" && !tracked) {
+    // A card with no section behind it (the roster, the launch desk): the
+    // function is simply the body. Before 2026-09-20 this fell through to
+    // "No numbers yet", so the Team & payroll tab showed nothing at all.
+    body = children(undefined as never);
   } else if (typeof children === "function") {
     const payload = section?.payload ?? null;
     body =

@@ -56,6 +56,17 @@
         "5178"
       ],
       "port": 5178
+    },
+    {
+      "name": "ceo-harness",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": [
+        "run",
+        "--cwd",
+        "apps/media-buyer-cockpit",
+        "harness"
+      ],
+      "port": 5179
     }
   ]
 }

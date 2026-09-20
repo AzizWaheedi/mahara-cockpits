@@ -5,8 +5,9 @@
  * /harness.html?tab=ads (or any CEO tab key).
  *
  * Fixtures live in tmp/harness/ (ignored by git and Vercel):
- *   today.json  - the result of ceo/queries:today
- *   people.json - the result of ceo/people:list
+ *   today.json    - the result of ceo/queries:today
+ *   people.json   - the result of ceo/people:list
+ *   fixtures.json - any other function's result, keyed by its Convex name
  */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -26,11 +27,14 @@ async function load(path: string): Promise<unknown> {
 }
 
 async function main() {
-  const [today, people] = await Promise.all([
+  const [today, people, more] = await Promise.all([
     load("/tmp/harness/today.json"),
     load("/tmp/harness/people.json"),
+    // Any other function, keyed by its Convex name; optional.
+    load("/tmp/harness/fixtures.json").catch(() => ({})),
   ]);
   setFixtures({
+    ...(more as Record<string, unknown>),
     "roles:me": {
       isCeo: true,
       isAdmin: true,
