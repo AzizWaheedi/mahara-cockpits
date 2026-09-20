@@ -22,9 +22,43 @@ type Row = {
   changes: number;
 };
 
-type Draft = { title: string; video_url: string; poster_url: string };
+type Draft = {
+  title: string;
+  video_url: string;
+  poster_url: string;
+  uploading?: number | null;
+};
 
-const BLANK: Draft = { title: "", video_url: "", poster_url: "" };
+const BLANK: Draft = {
+  title: "",
+  video_url: "",
+  poster_url: "",
+  uploading: null,
+};
+
+/**
+ * Put the cut somewhere the client's browser can actually play it.
+ *
+ * A Drive or Dropbox link does not play in a video tag -- it serves a
+ * viewer page, not a file -- and a client who presses play and sees
+ * nothing does not write in to say so, they just go quiet. So the file
+ * goes into our own public bucket and the review points at that.
+ */
+async function upload(
+  file: File,
+  onProgress: (pct: number) => void,
+): Promise<string> {
+  const safe = file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-80);
+  const path = `${Date.now()}-${safe}`;
+  onProgress(1);
+  const { error } = await supabase.storage
+    .from("review-videos")
+    .upload(path, file, { cacheControl: "31536000", upsert: false });
+  if (error) throw error;
+  onProgress(100);
+  return supabase.storage.from("review-videos").getPublicUrl(path).data
+    .publicUrl;
+}
 
 function reviewUrl(token: string): string {
   return `${window.location.origin}/editor/review/${token}`;
@@ -188,18 +222,58 @@ export default function SendReviewPage() {
                   </button>
                 ) : null}
               </div>
-              <input
-                value={d.video_url}
-                onChange={e =>
-                  setDrafts(
-                    drafts.map((x, j) =>
-                      j === i ? { ...x, video_url: e.target.value } : x,
-                    ),
-                  )
-                }
-                placeholder="Link to the video file the client can play"
-                className="h-9 rounded-md border px-2.5 text-sm"
-              />
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  value={d.video_url}
+                  onChange={e =>
+                    setDrafts(
+                      drafts.map((x, j) =>
+                        j === i ? { ...x, video_url: e.target.value } : x,
+                      ),
+                    )
+                  }
+                  placeholder="Paste a direct video link, or upload the file"
+                  className="h-9 min-w-0 flex-1 rounded-md border px-2.5 text-sm"
+                />
+                <label className="cursor-pointer rounded-md border px-2.5 py-1.5 text-xs font-medium">
+                  {d.uploading ? `${d.uploading}%` : "Upload"}
+                  <input
+                    type="file"
+                    accept="video/*"
+                    className="hidden"
+                    onChange={async e => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const set = (patch: Partial<Draft>) =>
+                        setDrafts(cur =>
+                          cur.map((x, j) => (j === i ? { ...x, ...patch } : x)),
+                        );
+                      try {
+                        const url = await upload(file, pct =>
+                          set({ uploading: pct }),
+                        );
+                        set({
+                          video_url: url,
+                          uploading: null,
+                          title: d.title || file.name.replace(/\.[^.]+$/, ""),
+                        });
+                      } catch (err) {
+                        set({ uploading: null });
+                        window.alert(
+                          err instanceof Error
+                            ? `That did not upload: ${err.message}`
+                            : "That did not upload.",
+                        );
+                      }
+                    }}
+                  />
+                </label>
+              </div>
+              {d.uploading ? (
+                <p className="muted text-xs">
+                  Uploading. Leave this open until it finishes.
+                </p>
+              ) : null}
               <input
                 value={d.poster_url}
                 onChange={e =>

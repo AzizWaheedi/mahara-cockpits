@@ -34,6 +34,7 @@ type Bundle = {
   title: string;
   note: string | null;
   client: string | null;
+  reviewer: string | null;
   items: Item[];
 };
 
@@ -55,9 +56,33 @@ export default function ReviewPage() {
    * frame in the reel reopens that one to watch again.
    */
   const [reopened, setReopened] = useState(false);
+  const [name, setName] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const video = useRef<HTMLVideoElement>(null);
+
+  const draftKey = `review:${token}:note`;
+
+  useEffect(() => {
+    try {
+      const kept = window.localStorage.getItem(draftKey);
+      if (kept) {
+        setNote(kept);
+        setAsking(true);
+      }
+    } catch {
+      // Private browsing refuses storage. The page works without it.
+    }
+  }, [draftKey]);
+
+  useEffect(() => {
+    try {
+      if (note.trim()) window.localStorage.setItem(draftKey, note);
+      else window.localStorage.removeItem(draftKey);
+    } catch {
+      // As above: a lost draft is a nuisance, a crash is not acceptable.
+    }
+  }, [note, draftKey]);
 
   const load = useCallback(async () => {
     const { data, error } = await supabase.rpc("review_open", {
@@ -89,7 +114,7 @@ export default function ReviewPage() {
   const decided = items.filter(i => i.decision).length;
   const allDone = decided === items.length && items.length > 0;
 
-  async function decide(decision: "approved" | "changes") {
+  async function decide(decision: "approved" | "changes" | null) {
     if (!item) return;
     setBusy(true);
     try {
@@ -97,8 +122,9 @@ export default function ReviewPage() {
         p_token: token,
         p_item: item.id,
         p_decision: decision,
-        p_note: decision === "changes" ? note : "",
-        p_at: decision === "changes" ? Math.floor(at) : null,
+        p_note: decision === "approved" ? "" : note,
+        p_at: decision === "approved" ? null : Math.floor(at),
+        p_name: name.trim() || null,
       });
       if (!(data as { ok?: boolean } | null)?.ok) {
         window.alert("That did not save. Refresh the page and try once more.");
@@ -106,6 +132,11 @@ export default function ReviewPage() {
       }
       setNote("");
       setAsking(false);
+      try {
+        window.localStorage.removeItem(draftKey);
+      } catch {
+        // nothing to clear
+      }
       await load();
       // Move to the next undecided one; a client should never have to
       // hunt for what is left.
@@ -163,11 +194,13 @@ export default function ReviewPage() {
               <p className="lede">{bundle.note ?? bundle.title}</p>
             </div>
 
-            {item.decision ? (
-              <p className={`verdict ${item.decision}`}>
-                {item.decision === "approved"
-                  ? "You approved this one."
-                  : "You asked for a change."}
+            {item.decision && !asking ? (
+              <div className={`verdict ${item.decision}`}>
+                <p className="verdictLine">
+                  {item.decision === "approved"
+                    ? "You approved this one."
+                    : "You asked for a change."}
+                </p>
                 {item.notes.length ? (
                   <span className="notes">
                     {item.notes.map(n => (
@@ -189,7 +222,29 @@ export default function ReviewPage() {
                     ))}
                   </span>
                 ) : null}
-              </p>
+                <span className="row">
+                  <button
+                    type="button"
+                    className="btn link"
+                    onClick={() => {
+                      video.current?.pause();
+                      setAsking(true);
+                    }}
+                  >
+                    Add another note
+                  </button>
+                  {item.decision === "changes" ? (
+                    <button
+                      type="button"
+                      className="btn link"
+                      disabled={busy}
+                      onClick={() => void decide("approved")}
+                    >
+                      Actually, approve it
+                    </button>
+                  ) : null}
+                </span>
+              </div>
             ) : asking ? (
               <div className="ask">
                 <label htmlFor="note" className="askLabel">
@@ -203,14 +258,24 @@ export default function ReviewPage() {
                   onChange={e => setNote(e.target.value)}
                   placeholder="The logo at the end is the old one"
                 />
+                {bundle.reviewer ? null : (
+                  <input
+                    className="who"
+                    value={name}
+                    onChange={e => setName(e.target.value)}
+                    placeholder="Your name, so the editor knows who asked"
+                  />
+                )}
                 <div className="row">
                   <button
                     type="button"
                     className="btn solid"
                     disabled={busy || !note.trim()}
-                    onClick={() => void decide("changes")}
+                    onClick={() =>
+                      void decide(item.decision ? null : "changes")
+                    }
                   >
-                    Send this note
+                    {item.decision ? "Add this note" : "Send this note"}
                   </button>
                   <button
                     type="button"

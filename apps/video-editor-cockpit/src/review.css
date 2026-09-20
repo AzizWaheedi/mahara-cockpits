@@ -286,3 +286,36 @@
     transition: none !important;
   }
 }
+
+.verdictLine {
+  margin: 0;
+}
+/* A third weight of button, for the things a client may do after they
+   have already decided: present, but not competing with the decision. */
+.btn.link {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--ocean);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.btn.link:hover:not([disabled]) {
+  color: var(--pearl);
+}
+.who {
+  font: inherit;
+  padding: 0.625rem 0.875rem;
+  border-radius: 0.75rem;
+  background: var(--ink);
+  color: var(--pearl);
+  border: 1px solid color-mix(in srgb, var(--pearl) 20%, transparent);
+  max-width: 24rem;
+}
+.who:focus-visible {
+  outline: none;
+  border-color: var(--ocean);
+}
+.who::placeholder {
+  color: color-mix(in srgb, var(--fade) 70%, transparent);
+}
