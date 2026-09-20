@@ -31,8 +31,23 @@ live charge or refund always leaves a trail your MCP client can surface.
 
 Aziz's own call (2026-09-20): full access including refunds, no extra
 approval gate baked into the code. If that changes, the place to add a
-confirmation step is `src/index.ts`'s `tap_create_charge` and
-`tap_create_refund` handlers.
+confirmation step is `src/server.ts`'s `tap_create_charge` and
+`tap_create_refund` handlers (shared by both the stdio and HTTP
+entrypoints).
+
+## Deployment modes
+
+Two ways to run this, pick one per client (or mix):
+
+| | **stdio** (`src/index.ts`) | **HTTP** (`src/http.ts`) |
+|---|---|---|
+| Who spawns it | Each MCP client spawns its own local process | You run it once, everyone connects to the same URL |
+| Where it runs | Wherever the client is (your Mac, this box, etc.) | One shared place — Aziz's choice: this VPS |
+| Auth | None needed — the client that spawned it already has the Tap key in its own env | `MCP_BEARER_TOKEN` required — a separate secret from the Tap key, gating who can reach this server at all |
+| Setup per client | A local command + env block, per client | One URL + one bearer token, per client |
+
+Aziz's decision on 2026-09-20: **one shared HTTP server on the VPS**, every
+LLM tool points at the same URL instead of each spawning a local process.
 
 ## Setup
 
@@ -48,14 +63,84 @@ Copy `.env.example` to `.env` and fill in the real keys (never commit `.env`):
 cp .env.example .env
 ```
 
-## Wiring into an MCP client
+## Running the shared HTTP server
+
+```bash
+PORT=8420 \
+TAP_MODE=test \
+TAP_SECRET_KEY_TEST=sk_test_... \
+MCP_BEARER_TOKEN=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))") \
+node dist/http.js
+```
+
+- **`MCP_BEARER_TOKEN` is required.** The server refuses to start without
+  it — a payments server reachable over the network with no auth at all is
+  not an acceptable default. Generate a real random one, don't hand-type a
+  password.
+- **`GET /health`** is unauthenticated on purpose (just "is the process
+  up", no Tap data) — safe for an uptime monitor to poll.
+- **`POST /mcp`** is the actual MCP endpoint. Every request needs
+  `Authorization: Bearer <MCP_BEARER_TOKEN>` or gets a 401.
+- Stateless transport: a fresh MCP session per HTTP request, nothing held
+  in memory between calls. Simpler and safer for a single-tenant payments
+  tool than managing session lifecycles.
+
+**Verified live, 2026-09-20** — this isn't a "should work," it's a real
+sequence that was actually run: unauthenticated request to `/mcp` → real
+401. Wrong token → real 401. Correct token → real MCP `initialize`
+handshake → real `tap_retrieve_charge` call against the same live test
+charge from the stdio tests (`chg_TS05A5120260638r8JT2009852`), same data
+came back, over HTTP this time.
+
+**Running it persistently:** `deploy/tap-payments-mcp.service` is a
+systemd unit template. Fill in the real env values (ideally via
+`EnvironmentFile=` pointing at a 600-permission file outside the repo,
+never hardcoded in the unit itself), then:
+
+```bash
+sudo cp deploy/tap-payments-mcp.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now tap-payments-mcp
+```
+
+## Wiring an LLM tool into the shared server
+
+**Claude Code**, via a remote MCP config (check your Claude Code version's
+exact remote-server syntax — this is the general shape):
+```bash
+claude mcp add tap-payments --url https://your-vps-host:8420/mcp \
+  --header "Authorization: Bearer <MCP_BEARER_TOKEN>"
+```
+
+**Any MCP client that supports remote/HTTP servers (generic config):**
+```json
+{
+  "mcpServers": {
+    "tap-payments": {
+      "url": "https://your-vps-host:8420/mcp",
+      "headers": {
+        "Authorization": "Bearer <MCP_BEARER_TOKEN>"
+      }
+    }
+  }
+}
+```
+
+Put the real VPS host and the real bearer token in place of the
+placeholders. Anyone with the URL and the token can call these tools —
+treat `MCP_BEARER_TOKEN` with the same care as the Tap secret key itself.
+
+### Running a local stdio copy instead (per client, no shared server)
+
+Still supported, for a client that can't reach the VPS or where you want
+full isolation:
 
 **Claude Code:**
 ```bash
 claude mcp add tap-payments -- node /path/to/servers/tap-payments-mcp/dist/index.js
 ```
 
-**Any MCP client (generic stdio config):**
+**Generic stdio config:**
 ```json
 {
   "mcpServers": {
@@ -71,9 +156,10 @@ claude mcp add tap-payments -- node /path/to/servers/tap-payments-mcp/dist/index
 }
 ```
 
-Start in test mode everywhere it's wired. Only add `TAP_SECRET_KEY_LIVE` and
-flip `TAP_MODE=live` on the specific client(s) you actually want moving real
-money — not as a global default.
+Start in test mode everywhere it's wired, whichever deployment mode you
+use. Only add `TAP_SECRET_KEY_LIVE` and flip `TAP_MODE=live` on the
+specific deployment you actually want moving real money — not as a global
+default.
 
 ## Tools
 

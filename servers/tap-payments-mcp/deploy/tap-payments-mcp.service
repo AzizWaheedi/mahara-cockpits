@@ -1,0 +1,20 @@
+[Unit]
+Description=Tap Payments MCP server (HTTP, shared)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/data/work_memcore/servers/tap-payments-mcp
+ExecStart=/usr/bin/node dist/http.js
+Restart=on-failure
+RestartSec=5
+
+# Fill these in on the actual VPS, or better, point EnvironmentFile at a
+# 600-permission file outside the repo that holds the real values.
+Environment=TAP_MODE=test
+Environment=PORT=8420
+Environment=HOST=0.0.0.0
+# EnvironmentFile=/etc/tap-payments-mcp.env   # TAP_SECRET_KEY_TEST, TAP_SECRET_KEY_LIVE, MCP_BEARER_TOKEN
+
+[Install]
+WantedBy=multi-user.target
