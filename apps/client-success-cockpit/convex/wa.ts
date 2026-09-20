@@ -153,12 +153,24 @@ export const archive = authenticatedAction({
  * assumes: a thread it knows, a body somebody actually wrote, and a
  * language it can record. Nothing is sent that a person did not press.
  *
- * `type` is not settled. GoHighLevel accepts `WhatsApp`, `SMS` and
- * `Custom`, and every inbound message on this account arrives as
- * `TYPE_CUSTOM_SMS` through a conversation provider -- which points at
- * `Custom` with that provider's id, but only a real send proves which
- * one reaches the phone. It is an argument, defaulted, so the first send
- * settles it without a deploy.
+ * **`SMS` is the type that reaches WhatsApp**, settled by a real send on
+ * 2026-09-20 rather than by reading the enum. The bridge is registered
+ * as this account's SMS channel, which is why inbound WhatsApp arrives
+ * as `TYPE_CUSTOM_SMS` and why an `SMS` send goes back out the same way.
+ *
+ * The two that look more likely both fail:
+ *
+ * * `Custom` demands a `conversationProviderId`, and the bridge's own
+ *   provider is then refused with "the contact doesn't support the
+ *   specified conversation provider" -- even for a contact it has
+ *   carried messages for before.
+ * * `WhatsApp` is **accepted with a 201 and then fails**. Nothing about
+ *   the response says so; the message sits in the conversation with
+ *   `status: "failed"`. Trusting the 201 would have shipped a send
+ *   button that reports success and delivers nothing.
+ *
+ * So acceptance is not delivery here, and the status has to be read back
+ * before anyone is told a message went.
  */
 export const send = authenticatedAction({
   args: {
@@ -189,14 +201,14 @@ export const send = authenticatedAction({
         "That conversation has no contact behind it, so there is nowhere to send.",
       );
 
+    // No conversationProviderId: naming the bridge's provider explicitly
+    // is what GoHighLevel refuses. The account routes SMS through it
+    // anyway, which is the whole trick.
     const payload: Row = {
-      type: type ?? "Custom",
+      type: type ?? "SMS",
       contactId,
       message: text,
     };
-    // A reply has to leave through the provider the thread arrived on, or
-    // it goes out as a plain SMS to a number that never expected one.
-    if (t.provider_id) payload.conversationProviderId = String(t.provider_id);
 
     const res = await fetch(
       "https://services.leadconnectorhq.com/conversations/messages",
@@ -216,6 +228,41 @@ export const send = authenticatedAction({
     if (!res.ok)
       throw new Error(
         `GoHighLevel refused it (${res.status}): ${answer.slice(0, 200)}`,
+      );
+
+    // A 201 here is not delivery: a `WhatsApp` send returns 201 and then
+    // sits in the conversation with status "failed". Read the status back
+    // before telling anybody the message went.
+    const made = JSON.parse(answer || "{}") as { messageId?: string };
+    const messageId = String(made.messageId ?? "");
+    let status = "unknown";
+    if (messageId) {
+      for (let i = 0; i < 5; i++) {
+        await new Promise(r => setTimeout(r, 2000));
+        const check = await fetch(
+          `https://services.leadconnectorhq.com/conversations/messages/${enc(messageId)}`,
+          {
+            headers: {
+              Authorization: `Bearer ${GHL_TOKEN}`,
+              Version: "2021-04-15",
+              Accept: "application/json",
+              "User-Agent": UA,
+            },
+          },
+        );
+        if (!check.ok) break;
+        const seen = (await check.json()) as { message?: { status?: string } };
+        const s = String(seen.message?.status ?? "");
+        if (s && !["pending", "queued"].includes(s)) {
+          status = s;
+          break;
+        }
+      }
+    }
+    if (["failed", "undelivered", "rejected"].includes(status))
+      throw new Error(
+        `GoHighLevel took the message and then failed to deliver it (${status}). ` +
+          "Nothing reached them.",
       );
 
     const at = new Date().toISOString();
@@ -240,6 +287,6 @@ export const send = authenticatedAction({
         updated_at: at,
       } as unknown as BodyInit,
     });
-    return { sent: true, at, via: payload.type };
+    return { sent: true, at, via: payload.type, status };
   },
 });
