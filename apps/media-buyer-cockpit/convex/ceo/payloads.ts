@@ -1011,26 +1011,73 @@ export type AssetsPayload = {
 export type B2bAdWindow = {
   spend: number;
   impressions: number;
+  /** Every click Meta counts, and the link clicks alone. */
+  clicks: number;
   linkClicks: number;
   /** What Meta says the ad produced. */
   metaLeads: number;
   /** What actually arrived in the CRM attributed to the ad. */
   leads: number;
+  /** Leads whose stage reached Demo Booked, Confirmed, Closed or Hot Lead; and the ones marked disqualified. */
+  qualifiedLeads: number;
+  disqualifiedLeads: number;
   introsBooked: number;
+  /** Intros whose time has passed, the denominator of a show rate. */
+  introsDue: number;
   introsShown: number;
+  /** Shown and a fit (showed, or confirmed and past), the B2B cockpit's "qualified". */
+  introsQualified: number;
+  introsCancelled: number;
+  /** Intros shown that went on to a demo booked for the same contact. */
+  introsAdvanced: number;
   demosBooked: number;
+  demosDue: number;
   demosShown: number;
+  demosQualified: number;
+  demosCancelled: number;
   closes: number;
   contracted: number;
   cash: number;
   /** Highest of the children on a parent, never a sum. */
   frequency: number | null;
+  // Derived; null when the denominator is zero. Rates are fractions.
+  cpm: number | null;
+  ctr: number | null;
+  ctrLink: number | null;
+  cpc: number | null;
   /** spend / CRM leads. */
   cpl: number | null;
+  qualifiedPct: number | null;
+  costPerQualified: number | null;
+  /** intros booked / leads. */
+  bookRate: number | null;
+  costPerIntroBooked: number | null;
+  /** intros shown / intros due. */
+  introShowRate: number | null;
+  costPerIntroShown: number | null;
+  /** intros advanced / intros shown. */
+  introToDemo: number | null;
+  /** demos shown / demos due. */
+  demoShowRate: number | null;
+  costPerDemoBooked: number | null;
   /** spend / demos shown. Shown, never judged: no gate has been set. */
   costPerDemo: number | null;
-  /** contracted / spend. */
+  /** closes / demos shown, and closes / demos qualified. */
+  closeRate: number | null;
+  closeRateQualified: number | null;
+  /** spend / closes. */
+  cac: number | null;
+  /** contracted / spend, and cash / spend. */
   roas: number | null;
+  cashRoas: number | null;
+  /** demos booked / leads. */
+  leadToDemo: number | null;
+};
+
+/** Who worked the ad's leads in the last thirty days: the setter with the most intro calls and the closer with the most signed deals. */
+export type B2bPeople = {
+  setter: { name: string; shown: number; due: number } | null;
+  closer: { name: string; closes: number } | null;
 };
 
 export type B2bVerdict = {
@@ -1060,12 +1107,38 @@ export type B2bAdNode = {
   w7: B2bAdWindow;
   w30: B2bAdWindow;
   verdict: B2bVerdict;
+  people: B2bPeople;
 };
 
 export type B2bAdsPayload = {
   accountId: string;
   windows: { from7: string; from30: string; to: string };
+  /** Lead-gen campaigns only, the way the B2B dashboard reads the account; retargeting and hiring sit beside it. */
   account: { w7: B2bAdWindow; w30: B2bAdWindow };
+  retargetingSpend: { w7: number; w30: number };
+  /**
+   * How much of the CRM carries an ad id in the window: every lead and
+   * signed deal against the ones this screen can attribute. The rest are
+   * organic, WhatsApp or typed in by hand and are not on this screen.
+   */
+  coverage: {
+    w7: {
+      leads: number;
+      adLeads: number;
+      closes: number;
+      adCloses: number;
+      contracted: number;
+      adContracted: number;
+    };
+    w30: {
+      leads: number;
+      adLeads: number;
+      closes: number;
+      adCloses: number;
+      contracted: number;
+      adContracted: number;
+    };
+  };
   running: number;
   total: number;
   /** Running ads by verdict. */
@@ -1079,6 +1152,7 @@ export type B2bAdsPayload = {
     running: boolean;
     w7: B2bAdWindow;
     w30: B2bAdWindow;
+    people: B2bPeople;
     /**
      * The weakest stage of this campaign's funnel against the account, when
      * it is at least a fifth worse and there is enough volume to judge. Null
@@ -1096,6 +1170,7 @@ export type B2bAdsPayload = {
       running: boolean;
       w7: B2bAdWindow;
       w30: B2bAdWindow;
+      people: B2bPeople;
       ads: B2bAdNode[];
     }[];
   }[];
@@ -1135,6 +1210,8 @@ export type OrganicPayload = {
     engaged28: number | null;
     /** Posts in the last 28 days, from the live media list. */
     published28: number;
+    /** The median views of the posts read; what "normal" means for a multiple. */
+    normalViews: number | null;
     posts: {
       id: string;
       type: string;
@@ -1144,6 +1221,14 @@ export type OrganicPayload = {
       url: string;
       thumbnail: string | null;
       caption: string | null;
+      /** Per-post insights; null when Meta did not return them. */
+      views: number | null;
+      reach: number | null;
+      saved: number | null;
+      shares: number | null;
+      interactions: number | null;
+      /** views / normalViews. */
+      multiple: number | null;
     }[];
   } | null;
   youtube: {
@@ -1156,6 +1241,8 @@ export type OrganicPayload = {
     videos: number | null;
     /** Uploads in the last 28 days, from the live upload list (a floor once it hits the page size). */
     published28: number | null;
+    /** Median views per day since publish across the recent uploads. */
+    normalViewsPerDay: number | null;
     recent: {
       id: string;
       title: string;
@@ -1164,8 +1251,24 @@ export type OrganicPayload = {
       likes: number;
       comments: number;
       thumbnail: string | null;
+      viewsPerDay: number | null;
+      /** viewsPerDay / normalViewsPerDay. */
+      multiple: number | null;
     }[];
   };
+  /** What is performing best right now across the platforms, biggest multiple of the platform's normal first. */
+  best: {
+    platform: "instagram" | "youtube";
+    id: string;
+    url: string;
+    thumbnail: string | null;
+    title: string;
+    at: string;
+    /** The number the ranking is on, and what it is. */
+    value: number;
+    metric: string;
+    multiple: number;
+  }[];
   /** How often each platform is being published to, from the asset library. */
   cadence: {
     platform: string;

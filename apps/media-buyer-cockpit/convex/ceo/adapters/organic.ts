@@ -74,6 +74,62 @@ async function pageToken(): Promise<string | null> {
   }
 }
 
+function median(xs: number[]): number | null {
+  if (!xs.length) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
+type PostInsights = {
+  views: number | null;
+  reach: number | null;
+  saved: number | null;
+  shares: number | null;
+  interactions: number | null;
+};
+
+/** One post's insights. Reels take `views`; images and carousels do not, so the second try leaves it out. */
+async function mediaInsights(id: string, type: string): Promise<PostInsights> {
+  const out: PostInsights = {
+    views: null,
+    reach: null,
+    saved: null,
+    shares: null,
+    interactions: null,
+  };
+  const sets =
+    type === "VIDEO"
+      ? [
+          "views,reach,saved,shares,total_interactions",
+          "reach,saved,shares,total_interactions",
+        ]
+      : [
+          "reach,saved,shares,total_interactions",
+          "views,reach,saved,shares,total_interactions",
+        ];
+  for (const metric of sets) {
+    try {
+      const r = (await graph(`${id}/insights`, { metric })) as {
+        data?: { name?: string; values?: { value?: unknown }[] }[];
+      };
+      for (const m of r.data ?? []) {
+        const v = m.values?.[0]?.value;
+        if (typeof v !== "number") continue;
+        if (m.name === "views") out.views = v;
+        else if (m.name === "reach") out.reach = v;
+        else if (m.name === "saved") out.saved = v;
+        else if (m.name === "shares") out.shares = v;
+        else if (m.name === "total_interactions") out.interactions = v;
+      }
+      return out;
+    } catch {
+      // try the next set
+    }
+  }
+  return out;
+}
+
 export const organic: Adapter = {
   key: "organic",
   label: "Organic",
@@ -179,6 +235,26 @@ export const organic: Adapter = {
       const published28 = posts.filter(
         p => Date.parse(p.at) >= from28Ms,
       ).length;
+      // Per-post insights, one call each: views is what the platform ranks a
+      // reel on, reach is the people it found. A metric Meta will not return
+      // for a post stays null, never zero.
+      const withInsights = [];
+      for (const p of posts) {
+        const ins = await mediaInsights(p.id, p.type);
+        withInsights.push({ ...p, ...ins, multiple: null as number | null });
+      }
+      const normalViews = median(
+        withInsights
+          .map(p => p.views ?? p.reach)
+          .filter((v): v is number => v !== null && v > 0),
+      );
+      for (const p of withInsights) {
+        const v = p.views ?? p.reach;
+        p.multiple =
+          v !== null && normalViews
+            ? Math.round((v / normalViews) * 100) / 100
+            : null;
+      }
       instagram = {
         id: String(acct.id),
         username: String(acct.username ?? "mahara_media"),
@@ -188,7 +264,8 @@ export const organic: Adapter = {
         engaged28,
         /** Posts in the last 28 days, counted from the live media list (a floor once it hits the page size). */
         published28,
-        posts,
+        normalViews,
+        posts: withInsights,
       };
       sources.push({
         name: "Instagram business account (Graph API)",
@@ -212,6 +289,7 @@ export const organic: Adapter = {
       views: null,
       videos: null,
       published28: null,
+      normalViewsPerDay: null,
       recent: [],
     };
     try {
@@ -252,6 +330,10 @@ export const organic: Adapter = {
             for (const v of vids) {
               const sn = (v.snippet ?? {}) as Any;
               const st = (v.statistics ?? {}) as Any;
+              const ageDays = Math.max(
+                1,
+                (now - Date.parse(String(sn.publishedAt ?? ""))) / 86_400_000,
+              );
               recent.push({
                 id: String(v.id),
                 title: String(sn.title ?? ""),
@@ -262,11 +344,22 @@ export const organic: Adapter = {
                 thumbnail:
                   String(((sn.thumbnails as Any)?.medium as Any)?.url ?? "") ||
                   null,
+                viewsPerDay:
+                  Math.round((num(st.viewCount) / ageDays) * 10) / 10,
+                multiple: null,
               });
             }
           }
         }
         const from28Ms = new Date(`${from28}T00:00:00Z`).getTime();
+        const normalViewsPerDay = median(
+          recent.map(v => v.viewsPerDay ?? 0).filter(v => v > 0),
+        );
+        for (const v of recent)
+          v.multiple =
+            v.viewsPerDay !== null && normalViewsPerDay
+              ? Math.round((v.viewsPerDay / normalViewsPerDay) * 100) / 100
+              : null;
         youtube = {
           enabled: true,
           enableUrl: YT_ENABLE_URL,
@@ -275,6 +368,7 @@ export const organic: Adapter = {
           views: num(stats.viewCount),
           videos: num(stats.videoCount),
           published28: recent.filter(v => Date.parse(v.at) >= from28Ms).length,
+          normalViewsPerDay,
           recent,
         };
         sources.push({ name: "YouTube Data API", ok: true, freshestAt: now });
@@ -333,11 +427,43 @@ export const organic: Adapter = {
       text: `Facebook and Instagram read live from the Graph API on the same token the ads use; the page and the account sit in the same Business Manager. Reach and engaged accounts cover the last 28 days. Publishing cadence comes from the asset library, which mirrors every video and reel with its publish date. None of this is an ad number and none of it is added to one.`,
     });
 
+    // What is performing best, across platforms: the biggest multiples of
+    // each platform's own normal, so a reel and a long video compare fairly.
+    const best: OrganicPayload["best"] = [];
+    for (const p of instagram?.posts ?? [])
+      if (p.multiple !== null && (p.views ?? p.reach) !== null)
+        best.push({
+          platform: "instagram",
+          id: p.id,
+          url: p.url,
+          thumbnail: p.thumbnail,
+          title: p.caption ?? "",
+          at: p.at,
+          value: (p.views ?? p.reach) as number,
+          metric: p.views !== null ? "views" : "reach",
+          multiple: p.multiple,
+        });
+    for (const v of youtube.recent)
+      if (v.multiple !== null)
+        best.push({
+          platform: "youtube",
+          id: v.id,
+          url: `https://www.youtube.com/watch?v=${v.id}`,
+          thumbnail: v.thumbnail,
+          title: v.title,
+          at: v.at,
+          value: v.views,
+          metric: "views",
+          multiple: v.multiple,
+        });
+    best.sort((a, b) => b.multiple - a.multiple);
+
     const payload: OrganicPayload = {
       facebook,
       instagram,
       youtube,
       cadence,
+      best: best.slice(0, 10),
       notes,
     };
     const daily: DailyPoint[] = [];

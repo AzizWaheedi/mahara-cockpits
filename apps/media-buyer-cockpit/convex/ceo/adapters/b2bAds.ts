@@ -1,6 +1,12 @@
 import { CPL_GATE } from "../../constants";
 import { graph } from "../../tools";
-import type { B2bAdNode, B2bAdsPayload, B2bVerdict, Note } from "../payloads";
+import type {
+  B2bAdNode,
+  B2bAdsPayload,
+  B2bPeople,
+  B2bVerdict,
+  Note,
+} from "../payloads";
 import { B2B, num, sql } from "../sb";
 import { addDays, kuwaitDay } from "../time";
 import type { Adapter, DailyPoint, SourceStamp } from "../types";
@@ -71,9 +77,6 @@ const DISABLE_REASON: Record<number, string> = {
   16: "AB review",
 };
 
-/** How the funnel is read: shown means showed, or confirmed or invalid once past. */
-const SHOWN = `status in ('showed','confirmed','invalid') and start_at < now()`;
-
 function day(d: string): string {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) throw new Error(`b2bAds: bad day ${d}`);
   return `date '${d}'`;
@@ -92,25 +95,37 @@ function treeSql(from7: string, from30: string, to: string): string {
   ${alias}_ads as (
     select campaign_id, adset_id, ad_id,
            sum(spend) as spend, sum(impressions) as impressions,
+           sum(clicks) as clicks,
            sum(inline_link_clicks) as link_clicks, sum(leads) as meta_leads,
            max(frequency) as freq
     from public.meta_ad_snapshots
     where date between ${day(from)} and ${day(to)}
     group by 1,2,3),
   ${alias}_leads as (
-    select ad_id, count(*) as leads from public.leads
+    select ad_id, count(*) as leads,
+      count(*) filter (where stage_name ~* 'Demo Booked|CONFIRMED|Closed|Hot Lead') as qualified_leads,
+      count(*) filter (where stage_name ilike '%disqualif%') as disqualified_leads
+    from public.leads
     where is_lead and ad_id is not null
       and (lead_created_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)}
     group by 1),
   ${alias}_calls as (
-    select ad_id,
-      count(*) filter (where call_type='intro') as intros_booked,
-      count(*) filter (where call_type='intro' and ${SHOWN}) as intros_shown,
-      count(*) filter (where call_type='demo') as demos_booked,
-      count(*) filter (where call_type='demo' and ${SHOWN}) as demos_shown
-    from public.calls
-    where ad_id is not null
-      and (booked_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)}
+    select c.ad_id,
+      count(*) filter (where c.call_type='intro') as intros_booked,
+      count(*) filter (where c.call_type='intro' and c.start_at < now()) as intros_due,
+      count(*) filter (where c.call_type='intro' and c.status in ('showed','confirmed','invalid') and c.start_at < now()) as intros_shown,
+      count(*) filter (where c.call_type='intro' and (c.status='showed' or (c.status='confirmed' and c.start_at < now()))) as intros_qualified,
+      count(*) filter (where c.call_type='intro' and c.status='cancelled') as intros_cancelled,
+      count(*) filter (where c.call_type='intro' and c.status in ('showed','confirmed','invalid') and c.start_at < now()
+        and exists (select 1 from public.calls d where d.contact_id = c.contact_id and d.call_type='demo' and d.booked_at >= c.start_at)) as intros_advanced,
+      count(*) filter (where c.call_type='demo') as demos_booked,
+      count(*) filter (where c.call_type='demo' and c.start_at < now()) as demos_due,
+      count(*) filter (where c.call_type='demo' and c.status in ('showed','confirmed','invalid') and c.start_at < now()) as demos_shown,
+      count(*) filter (where c.call_type='demo' and (c.status='showed' or (c.status='confirmed' and c.start_at < now()))) as demos_qualified,
+      count(*) filter (where c.call_type='demo' and c.status='cancelled') as demos_cancelled
+    from public.calls c
+    where c.ad_id is not null
+      and (c.booked_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)}
     group by 1),
   ${alias}_deals as (
     select ad_id, count(*) as closes,
@@ -124,14 +139,24 @@ function treeSql(from7: string, from30: string, to: string): string {
   const cols = (a: string) => `
     coalesce(${a}_ads.spend,0) as ${a}_spend,
     coalesce(${a}_ads.impressions,0) as ${a}_impressions,
+    coalesce(${a}_ads.clicks,0) as ${a}_clicks,
     coalesce(${a}_ads.link_clicks,0) as ${a}_link_clicks,
     coalesce(${a}_ads.meta_leads,0) as ${a}_meta_leads,
     ${a}_ads.freq as ${a}_freq,
     coalesce(${a}_leads.leads,0) as ${a}_leads,
+    coalesce(${a}_leads.qualified_leads,0) as ${a}_qualified_leads,
+    coalesce(${a}_leads.disqualified_leads,0) as ${a}_disqualified_leads,
     coalesce(${a}_calls.intros_booked,0) as ${a}_intros_booked,
+    coalesce(${a}_calls.intros_due,0) as ${a}_intros_due,
     coalesce(${a}_calls.intros_shown,0) as ${a}_intros_shown,
+    coalesce(${a}_calls.intros_qualified,0) as ${a}_intros_qualified,
+    coalesce(${a}_calls.intros_cancelled,0) as ${a}_intros_cancelled,
+    coalesce(${a}_calls.intros_advanced,0) as ${a}_intros_advanced,
     coalesce(${a}_calls.demos_booked,0) as ${a}_demos_booked,
+    coalesce(${a}_calls.demos_due,0) as ${a}_demos_due,
     coalesce(${a}_calls.demos_shown,0) as ${a}_demos_shown,
+    coalesce(${a}_calls.demos_qualified,0) as ${a}_demos_qualified,
+    coalesce(${a}_calls.demos_cancelled,0) as ${a}_demos_cancelled,
     coalesce(${a}_deals.closes,0) as ${a}_closes,
     coalesce(${a}_deals.contracted,0) as ${a}_contracted,
     coalesce(${a}_deals.cash,0) as ${a}_cash`;
@@ -144,8 +169,28 @@ function treeSql(from7: string, from30: string, to: string): string {
     where date between ${day(from30)} and ${day(to)}
     order by ad_id, date desc),
   ${funnel(from7, "w7")},
-  ${funnel(from30, "w30")}
+  ${funnel(from30, "w30")},
+  setters as (
+    select distinct on (c.ad_id) c.ad_id,
+      coalesce(sr.display_name, 'Unknown setter') as setter_name,
+      count(*) filter (where c.status in ('showed','confirmed','invalid') and c.start_at < now()) as setter_shown,
+      count(*) filter (where c.start_at < now()) as setter_due
+    from public.calls c
+    left join public.sales_reps sr on sr.ghl_user_id = c.assigned_user_id
+    where c.ad_id is not null and c.call_type = 'intro' and c.assigned_user_id is not null
+      and (c.booked_at at time zone 'Asia/Riyadh')::date between ${day(from30)} and ${day(to)}
+    group by c.ad_id, c.assigned_user_id, sr.display_name
+    order by c.ad_id, count(*) desc),
+  closers as (
+    select distinct on (ad_id) ad_id, closer as closer_name, count(*) as closer_closes
+    from public.closed_deals
+    where ad_id is not null and closer is not null and btrim(closer) <> ''
+      and (submitted_at at time zone 'Asia/Riyadh')::date between ${day(from30)} and ${day(to)}
+    group by ad_id, closer
+    order by ad_id, count(*) desc)
 select ident.*, public.b2b_campaign_type(ident.campaign_name) as campaign_type,
+  setters.setter_name, setters.setter_shown, setters.setter_due,
+  closers.closer_name, closers.closer_closes,
   ${cols("w7")},
   ${cols("w30")}
 from ident
@@ -157,73 +202,89 @@ left join w30_ads on w30_ads.ad_id = ident.ad_id
 left join w30_leads on w30_leads.ad_id = ident.ad_id
 left join w30_calls on w30_calls.ad_id = ident.ad_id
 left join w30_deals on w30_deals.ad_id = ident.ad_id
+left join setters on setters.ad_id = ident.ad_id
+left join closers on closers.ad_id = ident.ad_id
 order by ident.campaign_name, ident.adset_name, w30_ads.spend desc nulls last`;
 }
 
 type Win = B2bAdNode["w7"];
 
-const emptyWin = (): Win => ({
-  spend: 0,
-  impressions: 0,
-  linkClicks: 0,
-  metaLeads: 0,
-  leads: 0,
-  introsBooked: 0,
-  introsShown: 0,
-  demosBooked: 0,
-  demosShown: 0,
-  closes: 0,
-  contracted: 0,
-  cash: 0,
-  frequency: null,
-  cpl: null,
-  costPerDemo: null,
-  roas: null,
-});
+/** Every count on a window, in one place, so the builders never drift apart. */
+const COUNTS = [
+  "impressions",
+  "clicks",
+  "linkClicks",
+  "metaLeads",
+  "leads",
+  "qualifiedLeads",
+  "disqualifiedLeads",
+  "introsBooked",
+  "introsDue",
+  "introsShown",
+  "introsQualified",
+  "introsCancelled",
+  "introsAdvanced",
+  "demosBooked",
+  "demosDue",
+  "demosShown",
+  "demosQualified",
+  "demosCancelled",
+  "closes",
+] as const;
+
+const COLUMN: Record<(typeof COUNTS)[number], string> = {
+  impressions: "impressions",
+  clicks: "clicks",
+  linkClicks: "link_clicks",
+  metaLeads: "meta_leads",
+  leads: "leads",
+  qualifiedLeads: "qualified_leads",
+  disqualifiedLeads: "disqualified_leads",
+  introsBooked: "intros_booked",
+  introsDue: "intros_due",
+  introsShown: "intros_shown",
+  introsQualified: "intros_qualified",
+  introsCancelled: "intros_cancelled",
+  introsAdvanced: "intros_advanced",
+  demosBooked: "demos_booked",
+  demosDue: "demos_due",
+  demosShown: "demos_shown",
+  demosQualified: "demos_qualified",
+  demosCancelled: "demos_cancelled",
+  closes: "closes",
+};
+
+const emptyWin = (): Win => {
+  const w = {
+    spend: 0,
+    contracted: 0,
+    cash: 0,
+    frequency: null,
+  } as Win;
+  for (const k of COUNTS) w[k] = 0;
+  return finish(w);
+};
 
 function winOf(r: Record<string, unknown>, a: string): Win {
   const g = (k: string) => num(r[`${a}_${k}`]);
-  const w: Win = {
+  const w = {
     spend: usd(g("spend")),
-    impressions: g("impressions"),
-    linkClicks: g("link_clicks"),
-    metaLeads: g("meta_leads"),
-    leads: g("leads"),
-    introsBooked: g("intros_booked"),
-    introsShown: g("intros_shown"),
-    demosBooked: g("demos_booked"),
-    demosShown: g("demos_shown"),
-    closes: g("closes"),
     contracted: usd(g("contracted")),
     cash: usd(g("cash")),
     frequency:
       r[`${a}_freq`] === null || r[`${a}_freq`] === undefined
         ? null
         : Math.round(num(r[`${a}_freq`]) * 100) / 100,
-    cpl: null,
-    costPerDemo: null,
-    roas: null,
-  };
-  w.cpl = w.leads > 0 ? usd(w.spend / w.leads) : null;
-  w.costPerDemo = w.demosShown > 0 ? usd(w.spend / w.demosShown) : null;
-  w.roas =
-    w.spend > 0 ? Math.round((w.contracted / w.spend) * 100) / 100 : null;
-  return w;
+  } as Win;
+  for (const k of COUNTS) w[k] = g(COLUMN[k]);
+  return finish(w);
 }
 
 function addWin(into: Win, w: Win): void {
   into.spend = usd(into.spend + w.spend);
-  into.impressions += w.impressions;
-  into.linkClicks += w.linkClicks;
-  into.metaLeads += w.metaLeads;
-  into.leads += w.leads;
-  into.introsBooked += w.introsBooked;
-  into.introsShown += w.introsShown;
-  into.demosBooked += w.demosBooked;
-  into.demosShown += w.demosShown;
-  into.closes += w.closes;
   into.contracted = usd(into.contracted + w.contracted);
   into.cash = usd(into.cash + w.cash);
+  for (const k of COUNTS) into[k] += w[k];
   // Frequency does not sum: a person reached by two ads is one person. The
   // parent shows the highest of its children, which is the ad most at risk.
   if (w.frequency !== null)
@@ -233,12 +294,64 @@ function addWin(into: Win, w: Win): void {
         : Math.max(into.frequency, w.frequency);
 }
 
+const per = (a: number, b: number) => (b > 0 ? usd(a / b) : null);
+const ratio = (a: number, b: number) =>
+  b > 0 ? Math.round((a / b) * 10000) / 10000 : null;
+
+/** The derived numbers, exactly as the B2B dashboard defines them. */
 function finish(w: Win): Win {
-  w.cpl = w.leads > 0 ? usd(w.spend / w.leads) : null;
-  w.costPerDemo = w.demosShown > 0 ? usd(w.spend / w.demosShown) : null;
+  w.cpm = w.impressions > 0 ? usd((w.spend / w.impressions) * 1000) : null;
+  w.ctr = ratio(w.clicks, w.impressions);
+  w.ctrLink = ratio(w.linkClicks, w.impressions);
+  w.cpc = per(w.spend, w.linkClicks);
+  w.cpl = per(w.spend, w.leads);
+  w.qualifiedPct = ratio(w.qualifiedLeads, w.leads);
+  w.costPerQualified = per(w.spend, w.qualifiedLeads);
+  w.bookRate = ratio(w.introsBooked, w.leads);
+  w.costPerIntroBooked = per(w.spend, w.introsBooked);
+  w.introShowRate = ratio(w.introsShown, w.introsDue);
+  w.costPerIntroShown = per(w.spend, w.introsShown);
+  w.introToDemo = ratio(w.introsAdvanced, w.introsShown);
+  w.demoShowRate = ratio(w.demosShown, w.demosDue);
+  w.costPerDemoBooked = per(w.spend, w.demosBooked);
+  w.costPerDemo = per(w.spend, w.demosShown);
+  w.closeRate = ratio(w.closes, w.demosShown);
+  w.closeRateQualified = ratio(w.closes, w.demosQualified);
+  w.cac = per(w.spend, w.closes);
   w.roas =
     w.spend > 0 ? Math.round((w.contracted / w.spend) * 100) / 100 : null;
+  w.cashRoas = w.spend > 0 ? Math.round((w.cash / w.spend) * 100) / 100 : null;
+  w.leadToDemo = ratio(w.demosBooked, w.leads);
   return w;
+}
+
+const noPeople = (): B2bPeople => ({ setter: null, closer: null });
+
+/** The setter with the most intros shown and the closer with the most closes across a group of ads. */
+function peopleOf(ads: B2bAdNode[]): B2bPeople {
+  const setters = new Map<string, { shown: number; due: number }>();
+  const closers = new Map<string, number>();
+  for (const a of ads) {
+    if (a.people.setter) {
+      const s = setters.get(a.people.setter.name) ?? { shown: 0, due: 0 };
+      s.shown += a.people.setter.shown;
+      s.due += a.people.setter.due;
+      setters.set(a.people.setter.name, s);
+    }
+    if (a.people.closer)
+      closers.set(
+        a.people.closer.name,
+        (closers.get(a.people.closer.name) ?? 0) + a.people.closer.closes,
+      );
+  }
+  const setter = [...setters.entries()].sort(
+    (x, y) => y[1].shown - x[1].shown || y[1].due - x[1].due,
+  )[0];
+  const closer = [...closers.entries()].sort((x, y) => y[1] - x[1])[0];
+  return {
+    setter: setter ? { name: setter[0], ...setter[1] } : null,
+    closer: closer ? { name: closer[0], closes: closer[1] } : null,
+  };
 }
 
 /**
@@ -478,9 +591,28 @@ export const b2bAds: Adapter = {
     }
 
     const rows = await sql(B2B, treeSql(from7, from30, today));
+    // The whole CRM in the same windows, so the screen can say how much of
+    // it carries an ad. Without this the ad-attributed totals would read as
+    // the business, and they are not: 310 leads and 8 signed deals in the
+    // thirty days to 2026-09-20 against 224 and 2 with an ad on them.
+    const totals = await sql(
+      B2B,
+      `select
+        (select count(*) from public.leads where is_lead and (lead_created_at at time zone 'Asia/Riyadh')::date between ${day(from7)} and ${day(today)}) as w7_leads,
+        (select count(*) from public.leads where is_lead and (lead_created_at at time zone 'Asia/Riyadh')::date between ${day(from30)} and ${day(today)}) as w30_leads,
+        (select count(*) from public.closed_deals where (submitted_at at time zone 'Asia/Riyadh')::date between ${day(from7)} and ${day(today)}) as w7_closes,
+        (select count(*) from public.closed_deals where (submitted_at at time zone 'Asia/Riyadh')::date between ${day(from30)} and ${day(today)}) as w30_closes,
+        (select coalesce(sum(contracted_revenue),0) from public.closed_deals where (submitted_at at time zone 'Asia/Riyadh')::date between ${day(from7)} and ${day(today)}) as w7_contracted,
+        (select coalesce(sum(contracted_revenue),0) from public.closed_deals where (submitted_at at time zone 'Asia/Riyadh')::date between ${day(from30)} and ${day(today)}) as w30_contracted`,
+    );
+    const t = totals[0] ?? {};
 
     const account7 = emptyWin();
     const account30 = emptyWin();
+    const all7 = emptyWin();
+    const all30 = emptyWin();
+    let retargeting7 = 0;
+    let retargeting30 = 0;
     const campaigns = new Map<string, B2bAdsPayload["campaigns"][number]>();
 
     for (const r of rows) {
@@ -497,9 +629,32 @@ export const b2bAds: Adapter = {
         w7,
         w30,
         verdict: judge(running, w7, w30, staleSince),
+        people: {
+          setter: r.setter_name
+            ? {
+                name: String(r.setter_name),
+                shown: num(r.setter_shown),
+                due: num(r.setter_due),
+              }
+            : null,
+          closer: r.closer_name
+            ? { name: String(r.closer_name), closes: num(r.closer_closes) }
+            : null,
+        },
       };
-      addWin(account7, w7);
-      addWin(account30, w30);
+      addWin(all7, w7);
+      addWin(all30, w30);
+      const kind = String(r.campaign_type ?? "unknown");
+      // The account row is lead gen only, as the B2B dashboard defines it:
+      // retargeting warms an audience it never gets credit for, and hiring
+      // is not sales at all.
+      if (kind === "lead_gen") {
+        addWin(account7, w7);
+        addWin(account30, w30);
+      } else if (kind === "retargeting") {
+        retargeting7 = usd(retargeting7 + w7.spend);
+        retargeting30 = usd(retargeting30 + w30.spend);
+      }
 
       const cid = String(r.campaign_id);
       const campaign = campaigns.get(cid) ?? {
@@ -510,6 +665,7 @@ export const b2bAds: Adapter = {
         running: false,
         w7: emptyWin(),
         w30: emptyWin(),
+        people: noPeople(),
         constraint: null,
         adsets: [],
       };
@@ -523,6 +679,7 @@ export const b2bAds: Adapter = {
           running: false,
           w7: emptyWin(),
           w30: emptyWin(),
+          people: noPeople(),
           ads: [],
         };
         campaign.adsets.push(adset);
@@ -540,6 +697,26 @@ export const b2bAds: Adapter = {
 
     finish(account7);
     finish(account30);
+    finish(all7);
+    finish(all30);
+    const coverage = {
+      w7: {
+        leads: num(t.w7_leads),
+        adLeads: all7.leads,
+        closes: num(t.w7_closes),
+        adCloses: all7.closes,
+        contracted: usd(num(t.w7_contracted)),
+        adContracted: all7.contracted,
+      },
+      w30: {
+        leads: num(t.w30_leads),
+        adLeads: all30.leads,
+        closes: num(t.w30_closes),
+        adCloses: all30.closes,
+        contracted: usd(num(t.w30_contracted)),
+        adContracted: all30.contracted,
+      },
+    };
     const list = [...campaigns.values()];
     for (const c of list) {
       finish(c.w7);
@@ -548,8 +725,10 @@ export const b2bAds: Adapter = {
         finish(a.w7);
         finish(a.w30);
         a.ads.sort((x, y) => y.w30.spend - x.w30.spend);
+        a.people = peopleOf(a.ads);
       }
       c.adsets.sort((x, y) => y.w30.spend - x.w30.spend);
+      c.people = peopleOf(c.adsets.flatMap(a => a.ads));
       // A constraint is a funnel diagnosis, and only lead-gen campaigns run the
       // funnel. Retargeting warms an audience and the hiring campaign is not
       // sales at all, so judging either on clicks-to-leads blames them for a
@@ -595,6 +774,11 @@ export const b2bAds: Adapter = {
         level: "warn",
         text: `On ${gapAds.length} ${gapAds.length === 1 ? "ad" : "ads"} the CRM received fewer than half the leads Meta counts. Meta counts a form fill; the CRM counts a contact that arrived with its attribution. The gap is either forms that never became contacts or contacts that lost the ad on the way in, and it is the first thing to check before believing any cost per lead here.`,
       });
+    const cov = coverage.w30;
+    notes.push({
+      level: "info",
+      text: `In the last thirty days the CRM holds ${cov.leads} leads and ${cov.closes} signed deals worth $${cov.contracted.toLocaleString("en-US")}; ${cov.adLeads} leads and ${cov.adCloses} deals ($${cov.adContracted.toLocaleString("en-US")}) carry an ad id and are what this screen attributes. The rest came in organically, on WhatsApp or by hand. The account row is lead-gen campaigns only, the way the B2B dashboard reads it; retargeting spend is shown beside it and never inside a cost per lead.`,
+    });
     notes.push({
       level: "info",
       text: `Every row follows an ad from the first impression to the signed contract, through leads, intro calls, demos and closes that carry the ad's id. Seven days judges cost and freshness; thirty days judges the funnel, because a demo takes a week to happen. Meta leads are what Meta claims; leads are what reached the CRM. Cost per lead is against Aziz's $${CPL_GATE} gate. Cost per demo has no gate set, so it is shown and never judged. Frequency on a parent is the highest of its ads, never a sum.`,
@@ -624,6 +808,8 @@ export const b2bAds: Adapter = {
       accountId: ACCOUNT,
       windows: { from7, from30, to: today },
       account: { w7: account7, w30: account30 },
+      retargetingSpend: { w7: retargeting7, w30: retargeting30 },
+      coverage,
       running,
       total: ads.length,
       verdicts,
