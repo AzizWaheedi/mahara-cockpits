@@ -85,9 +85,19 @@ ship() {
 
   # And then check the site, because every signal above can say yes while
   # the bundle people load is last week's.
-  local want live
+  # Read the live page a few times before believing it. Checked straight
+  # after a deploy it returns the previous bundle from the CDN, which
+  # once made a perfectly good deploy look stale (2026-09-20).
+  local want live prev
   want=$(basename "$(ls -t "$dir"/dist/assets/index-*.js 2>/dev/null | head -1)" 2>/dev/null)
-  live=$(curl -fsS -m 30 "$SITE/?cb=$RANDOM" 2>/dev/null | grep -oE 'index-[A-Za-z0-9_-]+\.js' | head -1)
+  prev=""
+  for _ in 1 2 3 4; do
+    live=$(curl -fsS -m 30 -H 'Cache-Control: no-cache' "$SITE/?cb=$RANDOM" 2>/dev/null \
+           | grep -oE 'index-[A-Za-z0-9_-]+\.js' | head -1)
+    [ -n "$live" ] && [ "$live" = "$prev" ] && break
+    prev="$live"
+    sleep 4
+  done
   if [ -n "$live" ]; then
     echo "  live bundle: $live (built locally: ${want:-unknown})"
   else
