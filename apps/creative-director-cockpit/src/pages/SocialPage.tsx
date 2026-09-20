@@ -4,6 +4,8 @@ import {
   Check,
   ChevronRight,
   Copy,
+  Image as ImageIcon,
+  Layers,
   LoaderCircle,
   PlugZap,
   Plus,
@@ -19,6 +21,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { api } from "../../convex/_generated/api";
+import { SocialCalendar } from "../components/SocialCalendar";
 
 /**
  * Social media management.
@@ -424,7 +427,27 @@ type Post = {
   status: string;
   prompts: string[] | null;
   images: string[] | null;
+  scheduled_at: string | null;
 };
+
+/** Two or more images is a carousel; one is an image. Shown, not implied. */
+function Format({ post }: { post: Post }) {
+  const n = post.images?.length ?? post.slides;
+  const carousel = n > 1;
+  return (
+    <span
+      title={carousel ? `Carousel, ${n} slides` : "Single image"}
+      className="inline-flex items-center gap-1 rounded-full border px-1.5 text-[10px] font-semibold text-muted-foreground"
+    >
+      {carousel ? (
+        <Layers className="h-2.5 w-2.5" />
+      ) : (
+        <ImageIcon className="h-2.5 w-2.5" />
+      )}
+      {carousel ? `${n} slides` : "single"}
+    </span>
+  );
+}
 
 /**
  * The prompts, and somewhere to put the pictures they produce.
@@ -597,6 +620,7 @@ function Month({ c, onChanged }: { c: Client; onChanged: () => void }) {
     }
   }
 
+  const schedule = useAction(api.social.schedulePost);
   const status = String(batch?.status ?? "");
   const total = PILLARS.reduce((n, p) => n + (mix[p] ?? 0), 0);
   const withCaption = posts.filter(p => p.caption).length;
@@ -680,6 +704,20 @@ function Month({ c, onChanged }: { c: Client; onChanged: () => void }) {
 
       {posts.length ? (
         <>
+          <div className="my-3 border-t pt-3">
+            <SocialCalendar
+              month={month}
+              posts={posts}
+              busy={busy}
+              onPlace={(postId, iso) =>
+                run(
+                  () => schedule({ postId, when: iso }),
+                  "Day set, and pushed to GoHighLevel.",
+                )
+              }
+            />
+          </div>
+
           <ol className="my-2 space-y-1.5 border-t pt-2">
             {posts.map(p => (
               <li key={p.id} className="text-[13px]">
@@ -687,9 +725,17 @@ function Month({ c, onChanged }: { c: Client; onChanged: () => void }) {
                   {p.pillar}
                 </span>
                 <span dir="auto">{p.topic}</span>
-                <span className="ml-1.5 text-[11px] text-muted-foreground tabular-nums">
-                  {p.slides} {p.slides === 1 ? "slide" : "slides"}
+                <span className="ml-1.5">
+                  <Format post={p} />
                 </span>
+                {p.scheduled_at ? (
+                  <span className="ml-1.5 text-[11px] text-muted-foreground tabular-nums">
+                    {new Date(p.scheduled_at).toLocaleDateString(undefined, {
+                      day: "numeric",
+                      month: "short",
+                    })}
+                  </span>
+                ) : null}
                 {p.caption_direction ? (
                   <p className="text-[12px] text-muted-foreground" dir="auto">
                     {p.caption_direction}

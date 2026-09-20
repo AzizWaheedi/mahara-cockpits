@@ -316,6 +316,8 @@ export async function createPost(
     scheduleDate: post.scheduleDate,
   };
   if (post.media?.length)
+    // Instagram calls two or more images a carousel and one an image; GHL
+    // takes both through the same field, so the count is the difference.
     body.media = post.media.map(m => ({
       url: m.url,
       type: m.type ?? "image",
@@ -329,6 +331,30 @@ export async function createPost(
     version: VERSION.write,
     body,
   });
+}
+
+/**
+ * Move a post that is already in GoHighLevel.
+ *
+ * The cockpit owns the calendar; GHL executes it. So changing a date here
+ * has to reach there, or the two disagree and the client is the one who
+ * finds out.
+ */
+export async function reschedulePost(
+  locationId: string,
+  token: string,
+  postId: string,
+  when: string,
+): Promise<Json> {
+  return ghl(
+    `/social-media-posting/${encodeURIComponent(locationId)}/posts/${encodeURIComponent(postId)}`,
+    {
+      token,
+      method: "PUT",
+      version: VERSION.write,
+      body: { scheduleDate: when },
+    },
+  );
 }
 
 export async function deletePost(

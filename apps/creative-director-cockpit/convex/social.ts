@@ -8,6 +8,7 @@ import {
   createPost as ghlCreatePost,
   deletePost as ghlDeletePost,
   posts as ghlPosts,
+  reschedulePost as ghlReschedule,
   users as ghlUsers,
   locationToken,
   ourStatus,
@@ -887,7 +888,12 @@ export const sendToClient = authenticatedAction({
       throw new Error("Nothing in that batch has passed internal review yet.");
 
     const author = await authorFor(location, token);
-    const slots = spread(String(b.month), ready.length);
+    // Days somebody chose are kept. `spread` only fills the ones nobody
+    // has placed, so opening the calendar does not undo a decision.
+    const auto = spread(String(b.month), ready.length);
+    const slots = ready.map((p, i) =>
+      p.scheduled_at ? new Date(String(p.scheduled_at)).toISOString() : auto[i],
+    );
     let sent = 0;
     const problems: string[] = [];
     for (const [i, post] of ready.entries()) {
@@ -1281,6 +1287,51 @@ export const testPost = authenticatedAction({
       removed,
       leftBehind,
     };
+  },
+});
+
+/**
+ * Put a post on a day.
+ *
+ * The cockpit owns the calendar. If the post has already gone to
+ * GoHighLevel the change is pushed there too -- otherwise the two
+ * disagree about when a client's post goes out, and the client is the one
+ * who finds out.
+ */
+export const schedulePost = authenticatedAction({
+  args: { postId: v.string(), when: v.string() },
+  returns: v.any(),
+  handler: async (ctx, { postId, when }) => {
+    await who(ctx);
+    const at = new Date(when);
+    if (Number.isNaN(at.getTime())) throw new Error("That is not a date.");
+    if (at.getTime() < Date.now() - 60_000)
+      throw new Error("That day has already been. Pick a day still to come.");
+
+    const p = rows(
+      await rest(`social_posts?select=*&id=eq.${enc(postId)}&limit=1`),
+    )[0];
+    if (!p) throw new Error("That post is gone.");
+
+    let pushed = false;
+    if (p.ghl_post_id) {
+      const c = await clientOrWhy(String(p.client_task_id));
+      const location = String(c.ghl_location_id);
+      const token = await tokenFor(location);
+      await ghlReschedule(
+        location,
+        token,
+        String(p.ghl_post_id),
+        at.toISOString(),
+      );
+      pushed = true;
+    }
+    await rest(`social_posts?id=eq.${enc(postId)}`, {
+      method: "PATCH",
+      prefer: "return=minimal",
+      body: { scheduled_at: at.toISOString(), updated_at: now() },
+    });
+    return { at: at.toISOString(), pushedToGhl: pushed };
   },
 });
 
