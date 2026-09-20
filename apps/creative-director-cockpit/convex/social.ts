@@ -48,8 +48,27 @@ declare const process: { env: Record<string, string | undefined> };
 const SUPABASE_URL = (process.env.SUPABASE_URL ?? "").replace(/\/+$/, "");
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 
-/** The three pillars, from the live analysis of five accounts in the vertical. */
-export const PILLARS = ["portfolio", "craft", "education"] as const;
+/**
+ * What a new client starts with, from the live analysis of five accounts
+ * in the vertical -- a starting point, not a fixed list. A client can
+ * rename these or keep its own; a jeweller's pillars are not a glazing
+ * contractor's, and forcing the same three on both is how the plans
+ * started reading the same.
+ */
+export const DEFAULT_PILLARS = ["portfolio", "craft", "education"] as const;
+
+/** Tidy a client's own pillar names: trimmed, unique, and few enough to plan against. */
+export function cleanPillars(raw: string[]): string[] {
+  const seen = new Set<string>();
+  const kept: string[] = [];
+  for (const p of raw) {
+    const name = String(p).trim().toLowerCase().slice(0, 24);
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    kept.push(name);
+  }
+  return kept.slice(0, 6);
+}
 
 /** What a batch can be, in the order it goes through them. */
 const BATCH_FLOW = [
@@ -378,9 +397,7 @@ export const configure = authenticatedAction({
     await who(ctx);
     const body: Row = { client_task_id: args.clientTaskId, updated_at: now() };
     if (args.pillars) {
-      const kept = args.pillars.filter(p =>
-        (PILLARS as readonly string[]).includes(p),
-      );
+      const kept = cleanPillars(args.pillars);
       if (!kept.length)
         throw new Error("A client needs at least one pillar to post anything.");
       body.pillars = kept;
@@ -516,9 +533,14 @@ export const setMix = authenticatedAction({
     await who(ctx);
     const month = args.month || thisMonth();
     const id = `${args.clientTaskId}:${month}`;
+    // The client's own pillars, not a fixed three.
+    const c = await clientOrWhy(args.clientTaskId);
+    const pillars = cleanPillars(
+      (Array.isArray(c.pillars) ? c.pillars : []) as string[],
+    );
     const mix: Row = {};
     let total = 0;
-    for (const p of PILLARS) {
+    for (const p of pillars.length ? pillars : [...DEFAULT_PILLARS]) {
       const n = Math.max(0, Math.floor(Number(args.mix?.[p] ?? 0)));
       mix[p] = n;
       total += n;
@@ -1376,5 +1398,133 @@ export const attachImages = authenticatedAction({
       },
     });
     return { images: clean.length, status: p.caption ? "generated" : p.status };
+  },
+});
+
+/**
+ * Put a post on the month by hand.
+ *
+ * The plan writes most of them, but a month is never only what a model
+ * proposed: a project finishes, a client asks for something, somebody
+ * has an idea on the day. Without this the only way to add one was to
+ * re-plan the month and lose everything already written.
+ */
+export const addPost = authenticatedAction({
+  args: {
+    batchId: v.string(),
+    pillar: v.string(),
+    topic: v.string(),
+    slides: v.optional(v.number()),
+    when: v.optional(v.string()),
+  },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    await who(ctx);
+    const topic = args.topic.trim();
+    if (!topic) throw new Error("Give the post a topic, even a rough one.");
+    const b = rows(
+      await rest(`social_batches?select=*&id=eq.${enc(args.batchId)}&limit=1`),
+    )[0];
+    if (!b) throw new Error("That month is gone.");
+
+    const existing = rows(
+      await rest(
+        `social_posts?select=n&batch_id=eq.${enc(args.batchId)}&order=n.desc&limit=1`,
+      ),
+    );
+    const n = Number(existing[0]?.n ?? 0) + 1;
+
+    let at: string | null = null;
+    if (args.when) {
+      const d = new Date(args.when);
+      if (Number.isNaN(d.getTime())) throw new Error("That is not a date.");
+      at = d.toISOString();
+    }
+
+    await rest("social_posts", {
+      method: "POST",
+      prefer: "return=minimal",
+      body: [
+        {
+          id: `${args.batchId}:${n}`,
+          batch_id: args.batchId,
+          client_task_id: b.client_task_id,
+          n,
+          pillar:
+            String(args.pillar).trim().toLowerCase().slice(0, 24) ||
+            "portfolio",
+          topic: clip(topic, 300),
+          slides: Math.max(1, Math.min(10, Math.floor(args.slides ?? 1))),
+          status: "approved",
+          scheduled_at: at,
+          updated_at: now(),
+        },
+      ],
+    });
+    return { id: `${args.batchId}:${n}`, n };
+  },
+});
+
+/**
+ * Make the pictures for one post, or make them again.
+ *
+ * Generation used to be all-or-nothing for a month. One weak image
+ * should not mean re-running the other eleven, and a post added by hand
+ * needs a way to get pictures at all.
+ */
+export const generatePost = authenticatedAction({
+  args: { postId: v.string() },
+  returns: v.any(),
+  handler: async (ctx, { postId }) => {
+    const { email } = await who(ctx);
+    const p = rows(
+      await rest(`social_posts?select=*&id=eq.${enc(postId)}&limit=1`),
+    )[0];
+    if (!p) throw new Error("That post is gone.");
+    await rest("social_jobs?on_conflict=id", {
+      method: "POST",
+      prefer: "resolution=merge-duplicates,return=minimal",
+      body: [
+        {
+          id: `gen:${postId}`,
+          kind: "generate",
+          client_task_id: p.client_task_id,
+          batch_id: p.batch_id,
+          post_id: postId,
+          status: "queued",
+          attempts: 0,
+          error: null,
+          result: null,
+          requested_by: email,
+          updated_at: now(),
+        },
+      ],
+    });
+    return { queued: true };
+  },
+});
+
+/** Take a post off the month. */
+export const removePost = authenticatedAction({
+  args: { postId: v.string() },
+  returns: v.any(),
+  handler: async (ctx, { postId }) => {
+    await who(ctx);
+    const p = rows(
+      await rest(
+        `social_posts?select=ghl_post_id,status&id=eq.${enc(postId)}&limit=1`,
+      ),
+    )[0];
+    if (!p) throw new Error("That post is gone.");
+    if (p.ghl_post_id)
+      throw new Error(
+        "This one is already with the client in GoHighLevel. Remove it there first, " +
+          "so the two do not disagree about what was sent.",
+      );
+    await rest(`social_posts?id=eq.${enc(postId)}`, {
+      method: "DELETE",
+      prefer: "return=minimal",
+    });
+    return { removed: true };
   },
 });

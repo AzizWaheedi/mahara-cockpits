@@ -2,14 +2,14 @@ import { useAction } from "convex/react";
 import {
   CalendarClock,
   Check,
+  ChevronDown,
   ChevronRight,
-  Copy,
-  Image as ImageIcon,
-  Layers,
   LoaderCircle,
   PlugZap,
   Plus,
   Share2,
+  SlidersHorizontal,
+  X,
 } from "lucide-react";
 import {
   type ReactNode,
@@ -21,7 +21,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { api } from "../../convex/_generated/api";
-import { SocialCalendar } from "../components/SocialCalendar";
+import { PostPanel, SocialMonth } from "../components/SocialMonth";
 
 /**
  * Social media management.
@@ -37,21 +37,7 @@ import { SocialCalendar } from "../components/SocialCalendar";
  * one sitting instead of taking each client end to end, which is what
  * makes twenty minutes a client a month possible at twelve clients.
  */
-const PILLARS = ["portfolio", "craft", "education"] as const;
-type Pillar = (typeof PILLARS)[number];
-
-const PILLAR_LABEL: Record<Pillar, string> = {
-  portfolio: "Portfolio",
-  craft: "Craft",
-  education: "Education",
-};
-
-const PILLAR_WHY: Record<Pillar, string> = {
-  portfolio: "Project and spec showcase. Needs live project photos this cycle.",
-  craft: "Tactile, detail-framed product and material work.",
-  education:
-    "Question-led hooks, from what this client's audience actually asks.",
-};
+const DEFAULT_PILLARS = ["portfolio", "craft", "education"];
 
 type Client = {
   taskId: string;
@@ -206,9 +192,9 @@ function ClientRow({
       {c.active ? (
         <>
           <span className="flex flex-wrap gap-1">
-            {PILLARS.map(p => (
+            {(c.pillars.length ? c.pillars : DEFAULT_PILLARS).map(p => (
               <Pill key={p} on={c.pillars.includes(p)}>
-                {PILLAR_LABEL[p]}
+                {p}
               </Pill>
             ))}
           </span>
@@ -337,7 +323,7 @@ function Bank({ clientTaskId }: { clientTaskId: string }) {
           {live.map(i => (
             <li key={i.id} className="flex items-start gap-2 py-1">
               <span
-                className="mt-0.5 shrink-0 rounded-full border px-1.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground"
+                className="mt-0.5 shrink-0 rounded-full border px-1.5 text-[11px] text-muted-foreground"
                 title={i.source ?? undefined}
               >
                 {i.kind}
@@ -430,124 +416,6 @@ type Post = {
   scheduled_at: string | null;
 };
 
-/** Two or more images is a carousel; one is an image. Shown, not implied. */
-function Format({ post }: { post: Post }) {
-  const n = post.images?.length ?? post.slides;
-  const carousel = n > 1;
-  return (
-    <span
-      title={carousel ? `Carousel, ${n} slides` : "Single image"}
-      className="inline-flex items-center gap-1 rounded-full border px-1.5 text-[10px] font-semibold text-muted-foreground"
-    >
-      {carousel ? (
-        <Layers className="h-2.5 w-2.5" />
-      ) : (
-        <ImageIcon className="h-2.5 w-2.5" />
-      )}
-      {carousel ? `${n} slides` : "single"}
-    </span>
-  );
-}
-
-/**
- * The prompts, and somewhere to put the pictures they produce.
- *
- * Salma writes one prompt per slide; the images are made in Higgsfield,
- * by hand for now. So the prompt has to be easy to take out and the
- * result easy to bring back, and until that loop is quick nobody will use
- * any of this.
- */
-function Images({ post, onChanged }: { post: Post; onChanged: () => void }) {
-  const attach = useAction(api.social.attachImages);
-  const [urls, setUrls] = useState("");
-  const [busy, setBusy] = useState(false);
-  const prompts = post.prompts ?? [];
-  const images = post.images ?? [];
-
-  if (!prompts.length && !images.length) return null;
-
-  return (
-    <div className="mt-1.5 rounded border bg-muted/20 p-2">
-      {images.length ? (
-        <div className="flex flex-wrap gap-1.5">
-          {images.map(u => (
-            <a key={u} href={u} target="_blank" rel="noreferrer noopener">
-              <img
-                src={u}
-                alt=""
-                loading="lazy"
-                className="h-16 w-16 rounded border object-cover"
-              />
-            </a>
-          ))}
-        </div>
-      ) : (
-        <>
-          <div className="mb-1.5 flex items-center gap-2">
-            <p className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
-              {prompts.length} {prompts.length === 1 ? "prompt" : "prompts"} for
-              Higgsfield
-            </p>
-            <button
-              type="button"
-              onClick={() => {
-                void navigator.clipboard?.writeText(prompts.join("\n\n"));
-                toast.success("Prompts copied.");
-              }}
-              className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
-            >
-              <Copy className="h-3 w-3" />
-              copy all
-            </button>
-          </div>
-          <ol className="mb-2 space-y-1">
-            {prompts.map((t, i) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: a slide is its position
-              <li key={i} className="text-[12px] text-muted-foreground">
-                <span className="mr-1 font-mono">{i + 1}.</span>
-                {t}
-              </li>
-            ))}
-          </ol>
-          <div className="flex flex-wrap items-center gap-1.5">
-            <input
-              id={`img-${post.id}`}
-              value={urls}
-              onChange={e => setUrls(e.target.value)}
-              placeholder="Paste the image URLs, one per line or comma separated"
-              className="h-8 min-w-0 flex-1 rounded-md border bg-background px-2 text-[12px]"
-            />
-            <button
-              type="button"
-              disabled={busy || !urls.trim()}
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  const list = urls
-                    .split(/[\s,]+/)
-                    .map(u => u.trim())
-                    .filter(Boolean);
-                  await attach({ postId: post.id, urls: list });
-                  setUrls("");
-                  toast.success(`${list.length} attached.`);
-                  onChanged();
-                } catch (e) {
-                  toast.error(serverMessage(e));
-                } finally {
-                  setBusy(false);
-                }
-              }}
-              className="h-8 rounded-md border px-2.5 text-[12px] font-semibold hover:bg-muted disabled:opacity-50"
-            >
-              Attach
-            </button>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
 /**
  * One client's month: the mix, the plan, and the two decisions.
  *
@@ -621,8 +489,13 @@ function Month({ c, onChanged }: { c: Client; onChanged: () => void }) {
   }
 
   const schedule = useAction(api.social.schedulePost);
+  const addPost = useAction(api.social.addPost);
+  const generatePost = useAction(api.social.generatePost);
+  const removePost = useAction(api.social.removePost);
+  const attachImages = useAction(api.social.attachImages);
   const status = String(batch?.status ?? "");
-  const total = PILLARS.reduce((n, p) => n + (mix[p] ?? 0), 0);
+  const pillars = c.pillars.length ? c.pillars : DEFAULT_PILLARS;
+  const total = pillars.reduce((n: number, p: string) => n + (mix[p] ?? 0), 0);
   const withCaption = posts.filter(p => p.caption).length;
   const withImages = posts.filter(p => (p.images?.length ?? 0) > 0).length;
 
@@ -638,48 +511,59 @@ function Month({ c, onChanged }: { c: Client; onChanged: () => void }) {
         ) : null}
       </div>
 
-      {/* Phase 1: how many of each, on what material exists this cycle. */}
-      <div className="mb-2 flex flex-wrap items-end gap-3">
-        {PILLARS.map(p => (
-          <label
-            key={p}
-            htmlFor={`mix-${c.taskId}-${p}`}
-            className="text-[12px] font-semibold"
-          >
-            {PILLAR_LABEL[p]}
-            <input
-              id={`mix-${c.taskId}-${p}`}
-              type="number"
-              min={0}
-              max={30}
-              value={mix[p] ?? 0}
-              disabled={busy || !["", "planning", "planned"].includes(status)}
-              onChange={e =>
-                setLocalMix({ ...mix, [p]: Number(e.target.value) })
+      {/* How many of each, decided before anything is written. Once the
+          month is past planning it is a fact rather than a control, so it
+          reads as one instead of a row of dead inputs. */}
+      {!["", "planning", "planned"].includes(status) ? (
+        <p className="mb-2 text-[12px] text-muted-foreground">
+          {pillars
+            .filter(p => (mix[p] ?? 0) > 0)
+            .map(p => `${mix[p]} ${p}`)
+            .join(", ")}
+        </p>
+      ) : (
+        <div className="mb-2 flex flex-wrap items-end gap-3">
+          {pillars.map(p => (
+            <label
+              key={p}
+              htmlFor={`mix-${c.taskId}-${p}`}
+              className="text-[12px] font-medium capitalize"
+            >
+              {p}
+              <input
+                id={`mix-${c.taskId}-${p}`}
+                type="number"
+                min={0}
+                max={30}
+                value={mix[p] ?? 0}
+                disabled={busy || !["", "planning", "planned"].includes(status)}
+                onChange={e =>
+                  setLocalMix({ ...mix, [p]: Number(e.target.value) })
+                }
+                className="mt-1 block h-8 w-16 rounded-md border bg-background px-2 text-[13px] font-normal tabular-nums disabled:opacity-50"
+              />
+            </label>
+          ))}
+          <span className="pb-1.5 text-[12px] text-muted-foreground tabular-nums">
+            {total} posts
+          </span>
+          {["", "planning", "planned"].includes(status) ? (
+            <button
+              type="button"
+              disabled={busy || !total}
+              onClick={() =>
+                run(
+                  () => setMix({ clientTaskId: c.taskId, mix }),
+                  "Mix saved for the month.",
+                )
               }
-              className="mt-1 block h-8 w-16 rounded-md border bg-background px-2 text-[13px] font-normal tabular-nums disabled:opacity-50"
-            />
-          </label>
-        ))}
-        <span className="pb-1.5 text-[12px] text-muted-foreground tabular-nums">
-          {total} posts
-        </span>
-        {["", "planning", "planned"].includes(status) ? (
-          <button
-            type="button"
-            disabled={busy || !total}
-            onClick={() =>
-              run(
-                () => setMix({ clientTaskId: c.taskId, mix }),
-                "Mix saved for the month.",
-              )
-            }
-            className="mb-0.5 h-8 rounded-md border px-2.5 text-[12px] font-semibold hover:bg-muted disabled:opacity-50"
-          >
-            Save the mix
-          </button>
-        ) : null}
-      </div>
+              className="mb-0.5 h-8 rounded-md border px-2.5 text-[12px] font-semibold hover:bg-muted disabled:opacity-50"
+            >
+              Save the mix
+            </button>
+          ) : null}
+        </div>
+      )}
 
       {!batch ? (
         <p className="text-[12px] text-muted-foreground">
@@ -705,10 +589,11 @@ function Month({ c, onChanged }: { c: Client; onChanged: () => void }) {
 
       {posts.length ? (
         <>
-          <div className="my-3 border-t pt-3">
-            <SocialCalendar
+          <div className="my-4 border-t pt-4">
+            <SocialMonth
               month={month}
               posts={posts}
+              pillars={pillars}
               busy={busy}
               onPlace={(postId, iso) =>
                 run(
@@ -716,44 +601,42 @@ function Month({ c, onChanged }: { c: Client; onChanged: () => void }) {
                   "Day set, and pushed to GoHighLevel.",
                 )
               }
-            />
+              onAdd={(pillar, topic, slides, iso) =>
+                run(
+                  () =>
+                    addPost({
+                      batchId: String(batch?.id),
+                      pillar,
+                      topic,
+                      slides,
+                      when: iso ?? undefined,
+                    }),
+                  "Added.",
+                )
+              }
+            >
+              {(post, close) => (
+                <PostPanel
+                  post={post}
+                  pillars={pillars}
+                  busy={busy}
+                  onClose={close}
+                  onGenerate={postId =>
+                    run(
+                      () => generatePost({ postId }),
+                      "Queued. The prompts come back first, then the pictures.",
+                    )
+                  }
+                  onRemove={postId =>
+                    run(() => removePost({ postId }), "Removed.")
+                  }
+                  onAttach={(postId, urls) =>
+                    run(() => attachImages({ postId, urls }), "Attached.")
+                  }
+                />
+              )}
+            </SocialMonth>
           </div>
-
-          <ol className="my-2 space-y-1.5 border-t pt-2">
-            {posts.map(p => (
-              <li key={p.id} className="text-[13px]">
-                <span className="mr-1.5 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
-                  {p.pillar}
-                </span>
-                <span dir="auto">{p.topic}</span>
-                <span className="ml-1.5">
-                  <Format post={p} />
-                </span>
-                {p.scheduled_at ? (
-                  <span className="ml-1.5 text-[11px] text-muted-foreground tabular-nums">
-                    {new Date(p.scheduled_at).toLocaleDateString(undefined, {
-                      day: "numeric",
-                      month: "short",
-                    })}
-                  </span>
-                ) : null}
-                {p.caption_direction ? (
-                  <p className="text-[12px] text-muted-foreground" dir="auto">
-                    {p.caption_direction}
-                  </p>
-                ) : null}
-                {p.caption ? (
-                  <p
-                    className="mt-0.5 rounded bg-muted/40 px-2 py-1 text-[12px]"
-                    dir="auto"
-                  >
-                    {p.caption}
-                  </p>
-                ) : null}
-                <Images post={p} onChanged={() => void load()} />
-              </li>
-            ))}
-          </ol>
 
           <div className="flex flex-wrap items-center gap-2">
             {status === "planned" ? (
@@ -835,6 +718,7 @@ function ClientPanel({
   const configure = useAction(api.social.configure);
   const step = useAction(api.social.onboardingStep);
   const [busy, setBusy] = useState(false);
+  const [newPillar, setNewPillar] = useState("");
 
   async function save(patch: Record<string, unknown>) {
     setBusy(true);
@@ -862,142 +746,166 @@ function ClientPanel({
       </div>
 
       <div className="space-y-4 p-3">
-        <div>
-          <p className="mb-1.5 text-[12px] font-semibold">Pillars</p>
-          <div className="flex flex-wrap gap-1.5">
-            {PILLARS.map(p => {
-              const on = c.pillars.includes(p);
-              return (
-                <button
-                  key={p}
-                  type="button"
-                  disabled={busy}
-                  title={PILLAR_WHY[p]}
-                  onClick={() =>
-                    save({
-                      pillars: on
-                        ? c.pillars.filter(x => x !== p)
-                        : [...c.pillars, p],
-                    })
-                  }
-                  className={`rounded-full border px-2.5 py-0.5 text-[12px] font-semibold disabled:opacity-50 ${
-                    on
-                      ? "border-transparent bg-foreground text-background"
-                      : "text-muted-foreground hover:bg-muted"
-                  }`}
-                >
-                  {PILLAR_LABEL[p]}
-                </button>
-              );
-            })}
-          </div>
-          <p className="mt-1 text-[11px] text-muted-foreground">
-            A client with no live project photos this cycle should drop
-            Portfolio rather than post something stale.
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-end gap-3">
-          <label
-            htmlFor={`ppm-${c.taskId}`}
-            className="text-[12px] font-semibold"
-          >
-            Posts a month
-            <input
-              id={`ppm-${c.taskId}`}
-              type="number"
-              min={1}
-              max={60}
-              defaultValue={c.postsPerMonth ?? 12}
-              onBlur={e => save({ postsPerMonth: Number(e.target.value) })}
-              className="mt-1 block h-8 w-20 rounded-md border bg-background px-2 text-[13px] font-normal tabular-nums"
-            />
-          </label>
-          <label
-            htmlFor={`day-${c.taskId}`}
-            className="text-[12px] font-semibold"
-          >
-            Batch day
-            <input
-              id={`day-${c.taskId}`}
-              type="number"
-              min={1}
-              max={28}
-              defaultValue={c.batchDay ?? 1}
-              onBlur={e => save({ batchDay: Number(e.target.value) })}
-              className="mt-1 block h-8 w-20 rounded-md border bg-background px-2 text-[13px] font-normal tabular-nums"
-            />
-          </label>
-          <label
-            htmlFor={`dia-${c.taskId}`}
-            className="text-[12px] font-semibold"
-          >
-            Dialect
-            <input
-              id={`dia-${c.taskId}`}
-              defaultValue={c.dialect ?? ""}
-              onBlur={e => save({ dialect: e.target.value })}
-              placeholder="e.g. Khaleeji, Egyptian"
-              className="mt-1 block h-8 w-40 rounded-md border bg-background px-2 text-[13px] font-normal"
-            />
-          </label>
-          <label
-            htmlFor={`ghl-${c.taskId}`}
-            className="text-[12px] font-semibold"
-          >
-            GHL sub-account
-            <input
-              id={`ghl-${c.taskId}`}
-              defaultValue={c.ghlLocationId ?? ""}
-              onBlur={e => save({ ghlLocationId: e.target.value })}
-              placeholder="location id"
-              className="mt-1 block h-8 w-56 rounded-md border bg-background px-2 font-mono text-[12px] font-normal"
-            />
-          </label>
-        </div>
-        <p className="text-[11px] text-muted-foreground">
-          The client's own voice, never Aziz's Kuwaiti one. Captions run through
-          the humanizer stack, no em-dashes.
-        </p>
-
-        <div>
-          <p className="mb-1.5 text-[12px] font-semibold">Onboarding</p>
-          <div className="flex flex-wrap gap-3">
-            {(
-              [
-                ["socials", "Socials connected in GHL"],
-                ["tested", "Test post as a private draft"],
-                ["slots", "Calendar slots pre-blocked"],
-                ["bank", "Content Bank has 10-15 items"],
-              ] as const
-            ).map(([k, label]) => (
-              <label key={k} className="flex items-center gap-1.5 text-[12px]">
+        <details className="group rounded-lg border bg-muted/20">
+          <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-[12px] font-medium">
+            <SlidersHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
+            Settings
+            <span className="text-[11px] font-normal text-muted-foreground">
+              pillars, cadence, dialect, connection
+            </span>
+            <ChevronDown className="ml-auto h-3.5 w-3.5 text-muted-foreground transition group-open:rotate-180" />
+          </summary>
+          <div className="space-y-4 border-t p-3">
+            <div>
+              <p className="mb-1.5 text-[12px] font-medium">Pillars</p>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {(c.pillars.length ? c.pillars : DEFAULT_PILLARS).map(p => (
+                  <span
+                    key={p}
+                    className="inline-flex items-center gap-1 rounded-full border bg-muted/40 py-0.5 pl-2.5 pr-1 text-[12px] capitalize"
+                  >
+                    {p}
+                    <button
+                      type="button"
+                      disabled={busy}
+                      aria-label={`Remove ${p}`}
+                      onClick={() =>
+                        save({ pillars: c.pillars.filter(x => x !== p) })
+                      }
+                      className="rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
                 <input
-                  type="checkbox"
-                  checked={c.onboarding[k]}
-                  onChange={async e => {
-                    await step({
-                      clientTaskId: c.taskId,
-                      step: k,
-                      done: e.target.checked,
-                    });
-                    onChanged();
+                  value={newPillar}
+                  onChange={e => setNewPillar(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key !== "Enter") return;
+                    const name = newPillar.trim().toLowerCase();
+                    if (!name) return;
+                    save({ pillars: [...c.pillars, name] });
+                    setNewPillar("");
                   }}
+                  placeholder="add a pillar"
+                  className="h-7 w-28 rounded-full border bg-background px-2.5 text-[12px]"
                 />
-                {label}
+              </div>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Portfolio, craft and education are where most clients start.
+                Rename them or keep your own: the plan and the image prompts
+                both read whatever is here, so a jeweller and a contractor do
+                not end up with the same month.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-end gap-3">
+              <label
+                htmlFor={`ppm-${c.taskId}`}
+                className="text-[12px] font-semibold"
+              >
+                Posts a month
+                <input
+                  id={`ppm-${c.taskId}`}
+                  type="number"
+                  min={1}
+                  max={60}
+                  defaultValue={c.postsPerMonth ?? 12}
+                  onBlur={e => save({ postsPerMonth: Number(e.target.value) })}
+                  className="mt-1 block h-8 w-20 rounded-md border bg-background px-2 text-[13px] font-normal tabular-nums"
+                />
               </label>
-            ))}
+              <label
+                htmlFor={`day-${c.taskId}`}
+                className="text-[12px] font-semibold"
+              >
+                Batch day
+                <input
+                  id={`day-${c.taskId}`}
+                  type="number"
+                  min={1}
+                  max={28}
+                  defaultValue={c.batchDay ?? 1}
+                  onBlur={e => save({ batchDay: Number(e.target.value) })}
+                  className="mt-1 block h-8 w-20 rounded-md border bg-background px-2 text-[13px] font-normal tabular-nums"
+                />
+              </label>
+              <label
+                htmlFor={`dia-${c.taskId}`}
+                className="text-[12px] font-semibold"
+              >
+                Dialect
+                <input
+                  id={`dia-${c.taskId}`}
+                  defaultValue={c.dialect ?? ""}
+                  onBlur={e => save({ dialect: e.target.value })}
+                  placeholder="e.g. Khaleeji, Egyptian"
+                  className="mt-1 block h-8 w-40 rounded-md border bg-background px-2 text-[13px] font-normal"
+                />
+              </label>
+              <label
+                htmlFor={`ghl-${c.taskId}`}
+                className="text-[12px] font-semibold"
+              >
+                GHL sub-account
+                <input
+                  id={`ghl-${c.taskId}`}
+                  defaultValue={c.ghlLocationId ?? ""}
+                  onBlur={e => save({ ghlLocationId: e.target.value })}
+                  placeholder="location id"
+                  className="mt-1 block h-8 w-56 rounded-md border bg-background px-2 font-mono text-[12px] font-normal"
+                />
+              </label>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              The client's own voice, never Aziz's Kuwaiti one. Captions run
+              through the humanizer stack, no em-dashes.
+            </p>
+
+            <div>
+              <p className="mb-1.5 text-[12px] font-semibold">Onboarding</p>
+              <div className="flex flex-wrap gap-3">
+                {(
+                  [
+                    ["socials", "Socials connected in GHL"],
+                    ["tested", "Test post as a private draft"],
+                    ["slots", "Calendar slots pre-blocked"],
+                    ["bank", "Content Bank has 10-15 items"],
+                  ] as const
+                ).map(([k, label]) => (
+                  <label
+                    key={k}
+                    className="flex items-center gap-1.5 text-[12px]"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={c.onboarding[k]}
+                      onChange={async e => {
+                        await step({
+                          clientTaskId: c.taskId,
+                          step: k,
+                          done: e.target.checked,
+                        });
+                        onChanged();
+                      }}
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Their Instagram has to be a Business or Creator account linked
+                to a Facebook Page or the connection blocks. Test-post as a
+                private draft the moment it is connected, so broken auth shows
+                up now and not three weeks later.
+              </p>
+              <div className="mt-2">
+                <Connection clientTaskId={c.taskId} />
+              </div>
+            </div>
           </div>
-          <p className="mt-1 text-[11px] text-muted-foreground">
-            Their Instagram has to be a Business or Creator account linked to a
-            Facebook Page or the connection blocks. Test-post as a private draft
-            the moment it is connected, so broken auth shows up now and not
-            three weeks later.
-          </p>
-          <div className="mt-2">
-            <Connection clientTaskId={c.taskId} />
-          </div>
-        </div>
+        </details>
 
         <div>
           <Month c={c} onChanged={onChanged} />

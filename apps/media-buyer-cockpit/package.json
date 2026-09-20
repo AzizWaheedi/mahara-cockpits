@@ -30,7 +30,8 @@
     "screenshot": "bun run --bun /work/.viktor-spaces-internal/cockpit-6d490e190930-1a4a58fd8bf5d8f1/screenshot.ts",
     "env:get": "bunx convex env get",
     "env:list": "bunx convex env list",
-    "test:frameio": "bun test scripts/frameio-webhook.test.ts"
+    "test:frameio": "bun test scripts/frameio-webhook.test.ts",
+    "harness": "vite --config vite.harness.config.ts"
   },
   "dependencies": {
     "@convex-dev/auth": "^0.0.94",

@@ -264,11 +264,21 @@ def brief(b: dict) -> str:
     return "\n\n".join(parts)
 
 
+# The three that came out of the live analysis, with what each is for. A
+# client may use its own names instead: then the name is the brief, and
+# the model is told to read it rather than be handed a definition.
 PILLAR_BRIEF = {
     "portfolio": "the project shown like a spec: what was built, in what, to what standard. Needs a real project.",
     "craft": "the material, close. A joint, a grain, a fold. About competence, not scale.",
     "education": "a question their audience actually asked, answered plainly. The question must come from the list above.",
 }
+
+
+def pillar_line(name: str, n: int) -> str:
+    known = PILLAR_BRIEF.get(name)
+    return f"- {n} x {name.upper()}: " + (
+        known or f"whatever '{name}' means for this client -- take the name literally."
+    )
 
 PLAN_SYSTEM = """You write monthly social plans for Gulf construction and design businesses.
 
@@ -285,7 +295,7 @@ Rules that are not negotiable:
 - Never repeat anything in the corrections list.
 
 Return JSON only:
-{"posts":[{"pillar":"portfolio|craft|education","topic":"...","slides":1-6,
+{"posts":[{"pillar":"<one of the pillars given below>","topic":"...","slides":1-6,
 "caption_direction":"one sentence on the angle the caption should take"}],
 "shortfall":"empty string, or what you could not fill and why"}"""
 
@@ -303,8 +313,10 @@ def do_plan(sb: Store, job: dict) -> dict:
     if batch.get("status") not in ("planning", "planned"):
         raise ValueError(f"that month is already {batch.get('status')}; a plan would not match it")
 
-    mix = batch.get("mix") or {}
-    total = sum(int(mix.get(p) or 0) for p in PILLAR_BRIEF)
+    # The mix carries the client's own pillar names; it is the source of
+    # truth for what this month wants, not our default three.
+    mix = {k: int(v or 0) for k, v in (batch.get("mix") or {}).items() if int(v or 0) > 0}
+    total = sum(mix.values())
     if not total:
         raise ValueError("that month has no pillar mix set")
 
@@ -312,11 +324,7 @@ def do_plan(sb: Store, job: dict) -> dict:
     if not b["client"]:
         raise ValueError("no client card for that id, so there is no brand to write to")
 
-    wanted = "\n".join(
-        f"- {n} x {p.upper()}: {PILLAR_BRIEF[p]}"
-        for p in PILLAR_BRIEF
-        if (n := int(mix.get(p) or 0))
-    )
+    wanted = "\n".join(pillar_line(p, n) for p, n in mix.items())
     answer = deepseek(
         PLAN_SYSTEM,
         f"{brief(b)}\n\nTHIS MONTH ({batch.get('month')}) NEEDS:\n{wanted}\n\n"
@@ -330,7 +338,7 @@ def do_plan(sb: Store, job: dict) -> dict:
     rows = []
     for i, p in enumerate(posts):
         pillar = str(p.get("pillar", "")).lower()
-        if pillar not in PILLAR_BRIEF:
+        if pillar not in mix:
             continue
         rows.append({
             "id": f"{batch_id}:{i + 1}",
@@ -415,7 +423,9 @@ House rules, not preferences:
 - A carousel is one shoot: the same place, the same light, the same
   materials across every slide.
 
-Framing by pillar:
+Framing follows the pillar. These three are common and have settled
+conventions; a client may use its own names instead, and then the pillar
+name itself is the instruction -- read it and frame accordingly.
 - portfolio: the project as an object. Wide or three-quarter, architectural,
   even light, room in frame for a caption block.
 - craft: close. One joint, one edge, one material. Shallow depth, raking
