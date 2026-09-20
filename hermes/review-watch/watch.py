@@ -1,14 +1,23 @@
 #!/usr/bin/env python3
-"""Tells the editors a client has been through a review.
+"""Carries a client's review out to where the editors already work.
 
-The note itself already reaches them: `review_decide` writes it into
-`editor_notes` in the same transaction as the decision, so it is in the
-editor's own list with its timecode whether or not this runs. This is
-the nudge, not the delivery -- which is the right way round, because a
-Slack message that fails must never be the reason a note is lost.
+Three places, in order of how much they matter:
 
-One message per review per run, not one per note: a client going through
-four cuts in two minutes should produce one line in Slack, not four.
+1. **The editor cockpit**, which does not need this script at all --
+   `review_decide` writes the note into `editor_notes` in the same
+   transaction as the decision. That is the delivery.
+2. **The ClickUp task**, as a comment on the video's own card, so the
+   note is on the job wherever it is being tracked.
+3. **#media-adjustments on Slack**, as the nudge that something changed.
+
+The order is deliberate. A Slack outage or a ClickUp hiccup must never
+be the reason a client's note is lost, so neither of them is the
+delivery. Both are retried on the next run and neither repeats itself:
+a note carries `posted_at` once it has gone to ClickUp, and a review
+carries `announced_at` once Slack has been told.
+
+One Slack message per review per run, not one per note -- a client going
+through four cuts in two minutes is one thing happening, not four.
 """
 
 from __future__ import annotations
@@ -53,8 +62,33 @@ class Store:
             return json.loads(raw) if raw.strip() else []
 
 
+def clickup(task_id: str, text: str) -> bool:
+    """Put the note on the video's own card.
+
+    ClickUp is where the job is tracked, so a change request that only
+    exists in our cockpit is one an editor working from the board will
+    not see.
+    """
+    key = os.environ.get("CLICKUP_API_KEY")
+    if not key:
+        note("no CLICKUP_API_KEY; the note is on the job in the cockpit regardless")
+        return False
+    req = urllib.request.Request(
+        f"https://api.clickup.com/api/v2/task/{urllib.parse.quote(task_id)}/comment",
+        data=json.dumps({"comment_text": text, "notify_all": False}).encode(),
+        headers={"Authorization": key, "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=40) as r:
+            return r.status < 300
+    except urllib.error.HTTPError as e:
+        note(f"clickup {e.code} on {task_id}: {e.read().decode()[:140]}")
+        return False
+
+
 def slack(text: str) -> bool:
     token = os.environ.get("SLACK_BOT_TOKEN")
+    # #media-adjustments: where the editors already read change requests.
     channel = os.environ.get("REVIEW_SLACK_CHANNEL") or os.environ.get(
         "SLACK_HEALTH_CHANNEL"
     )
@@ -109,7 +143,7 @@ def main() -> int:
         note("nothing new")
         return 0
 
-    told = 0
+    told = posted = 0
     for link in pending:
         token = link["token"]
         items = sb.call(
@@ -136,6 +170,35 @@ def main() -> int:
             lines.append(f"> {stamp + '  ' if stamp else ''}{str(n.get('body'))[:180]}")
         lines.append("The notes are already on the job in the editor cockpit.")
 
+        # Onto the cards first: the board is where the work is tracked,
+        # and Slack saying "there are notes" before the notes exist on
+        # the task sends people looking for something not there yet.
+        unposted = sb.call(
+            "GET",
+            "review_notes?select=id,body,at_seconds,task_id"
+            f"&item_id=like.{urllib.parse.quote(token)}%25"
+            "&posted_at=is.null&task_id=not.is.null&order=at",
+        )
+        by_task: dict[str, list[dict]] = {}
+        for n in unposted:
+            by_task.setdefault(str(n["task_id"]), []).append(n)
+        for task_id, group in by_task.items():
+            # Plain text: ClickUp comments are not mrkdwn, so asterisks
+            # meant as bold arrive as asterisks.
+            body = f"{who} reviewed “{link.get('title')}” and asked for:\n" + "\n".join(
+                f"- {clock(n.get('at_seconds')) or 'no timecode'}  {n['body']}"
+                for n in group
+            )
+            if clickup(task_id, body):
+                for n in group:
+                    sb.call(
+                        "PATCH",
+                        f"review_notes?id=eq.{n['id']}",
+                        {"posted_at": now()},
+                        "return=minimal",
+                    )
+                posted += len(group)
+
         if slack("\n".join(lines)):
             told += 1
             sb.call(
@@ -145,7 +208,7 @@ def main() -> int:
                 "return=minimal",
             )
 
-    note(f"{len(pending)} review(s) moved, {told} announced")
+    note(f"{len(pending)} review(s) moved, {posted} note(s) onto cards, {told} announced")
     return 0
 
 

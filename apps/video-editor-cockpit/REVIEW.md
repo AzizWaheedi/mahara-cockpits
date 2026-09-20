@@ -16,20 +16,29 @@ second of the video they were talking about.
 - **Watch it:** the same screen lists every link with whether it has been
   opened and how many cuts are decided.
 
-## How the notes reach the editor
+## Where a client's note ends up
 
-**In the same transaction as the decision.** `review_decide` writes the
-client's note into `editor_notes` -- the editor's own list, with the
-timecode, `source = 'review'` and `done = false` -- so it arrives where
-they already look rather than somewhere they have to remember to check.
-If that write fails the decision fails with it: a note the client
-believes they sent and the editor never sees is the worst outcome here.
+Three places, in order of how much they matter.
 
-**Slack is the nudge, not the delivery.** `hermes/review-watch` runs
-every ten minutes and posts one line per review, not one per note, so a
-client going through four cuts produces one message. If Slack is down or
-unconfigured the notes are already in the cockpit, which is the right way
-round.
+**The editor cockpit, in the same transaction as the decision.**
+`review_decide` writes the note into `editor_notes` -- their own list,
+with the timecode, `source = 'review'`, not done. If that write fails
+the decision fails with it: a note the client believes they sent and the
+editor never sees is the worst outcome available.
+
+**The video's ClickUp card**, as a comment, so the note is on the job
+wherever it is being tracked. Plain text, because ClickUp comments are
+not mrkdwn and asterisks meant as bold arrive as asterisks.
+
+**`#media-adjustments` on Slack**, as the nudge that something changed.
+One message per review, not one per note: a client going through four
+cuts in two minutes is one thing happening.
+
+The last two are carried by `hermes/review-watch` every ten minutes, and
+neither is the delivery -- a Slack outage or a ClickUp hiccup must never
+be why a note is lost. Both retry on the next run and neither repeats:
+a note carries `posted_at` once it reaches ClickUp, a review carries
+`announced_at` once Slack has been told.
 
 ## Why it is built this way
 
