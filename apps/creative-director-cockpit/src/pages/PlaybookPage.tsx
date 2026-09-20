@@ -55,7 +55,7 @@ export function PlaybookPage() {
     for (const good of rows) {
       if (good.cpl > 15) break;
       const bad = rows.find(
-        r =>
+        (r: any) =>
           r.serviceLine === good.serviceLine &&
           r.city !== good.city &&
           r.cpl > good.cpl * 1.8 &&
@@ -109,7 +109,7 @@ export function PlaybookPage() {
           className="h-8 rounded-md border bg-background px-2 text-[13px]"
         >
           <option value="">Every service line</option>
-          {dims?.serviceLines.map(s => (
+          {dims?.serviceLines.map((s: string) => (
             <option key={s} value={s}>
               {s}
             </option>
@@ -121,7 +121,7 @@ export function PlaybookPage() {
           className="h-8 rounded-md border bg-background px-2 text-[13px]"
         >
           <option value="">Everywhere</option>
-          {dims?.cities.map(c => (
+          {dims?.cities.map((c: string) => (
             <option key={c} value={c}>
               {c}
             </option>
@@ -143,7 +143,7 @@ export function PlaybookPage() {
             </tr>
           </thead>
           <tbody>
-            {rows?.map(r => (
+            {rows?.map((r: any) => (
               <tr
                 key={`${r.serviceLine}${r.city}${r.playType}${r.interests.join()}`}
                 className="border-t"
