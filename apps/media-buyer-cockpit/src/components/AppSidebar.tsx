@@ -98,16 +98,21 @@ const navItems = [
   { href: "/eod", label: "End of day", icon: MoonStar, role: "media_buyer" },
 ];
 
+/** Rows are 28px on a desktop in the CEO rail, so seventeen of them fit a laptop; a phone keeps the full height for thumbs. */
+const DENSE = "cockpit-nav-link md:h-7";
+
 function NavLink({
   href,
   label,
   icon: Icon,
   isActive,
+  dense = false,
 }: {
   href: string;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   isActive: boolean;
+  dense?: boolean;
 }) {
   const { setOpenMobile } = useSidebar();
 
@@ -117,7 +122,7 @@ function NavLink({
         asChild
         isActive={isActive}
         tooltip={label}
-        className="cockpit-nav-link"
+        className={dense ? DENSE : "cockpit-nav-link"}
       >
         <Link
           to={href}
@@ -152,7 +157,9 @@ function CeoRail() {
   const { sections } = useCeo(me?.isCeo === true);
   const badges = ceoBadges(sections);
   const { setOpenMobile } = useSidebar();
-  const cockpits: string[] = me?.cockpits ?? [];
+  // The way out: Admin and the media buyer's own cockpit. The other cockpits
+  // are one click away in the user menu, so the rail stays short enough for
+  // a laptop.
   const elsewhere = [
     ...(me?.isAdmin
       ? [{ key: "admin", label: "Admin", href: "/admin", icon: ShieldCheck }]
@@ -167,33 +174,13 @@ function CeoRail() {
           },
         ]
       : []),
-    ...[
-      {
-        key: "csm",
-        label: "Client success",
-        href: "/go/csm",
-        icon: ArrowRightLeft,
-      },
-      {
-        key: "creative",
-        label: "Creative director",
-        href: "/go/creative",
-        icon: ArrowRightLeft,
-      },
-      {
-        key: "editor",
-        label: "Editor desk",
-        href: "/go/editor",
-        icon: ArrowRightLeft,
-      },
-    ].filter(c => cockpits.includes(c.key)),
   ];
   return (
-    <SidebarContent>
+    <SidebarContent className="gap-0">
       {CEO_NAV.map((group, gi) => (
-        <SidebarGroup key={group.title ?? `g${gi}`}>
+        <SidebarGroup key={group.title ?? `g${gi}`} className="py-1 first:pt-2">
           {group.title ? (
-            <SidebarGroupLabel>{group.title}</SidebarGroupLabel>
+            <SidebarGroupLabel className="h-7">{group.title}</SidebarGroupLabel>
           ) : null}
           <SidebarGroupContent>
             <SidebarMenu>
@@ -206,7 +193,7 @@ function CeoRail() {
                       asChild
                       isActive={isActive}
                       tooltip={item.label}
-                      className="cockpit-nav-link"
+                      className={DENSE}
                     >
                       <Link
                         to={
@@ -250,8 +237,7 @@ function CeoRail() {
         </SidebarGroup>
       ))}
       {elsewhere.length ? (
-        <SidebarGroup className="mt-auto">
-          <SidebarGroupLabel>Elsewhere</SidebarGroupLabel>
+        <SidebarGroup className="mt-auto border-t border-sidebar-border py-1">
           <SidebarGroupContent>
             <SidebarMenu>
               {elsewhere.map(c => (
@@ -261,6 +247,7 @@ function CeoRail() {
                   label={c.label}
                   icon={c.icon}
                   isActive={false}
+                  dense
                 />
               ))}
             </SidebarMenu>
@@ -353,9 +340,21 @@ function SidebarNav() {
   );
 }
 
+const OTHER_COCKPITS = [
+  { key: "csm", label: "Client success", href: "/go/csm" },
+  { key: "creative", label: "Creative director", href: "/go/creative" },
+  { key: "editor", label: "Editor desk", href: "/go/editor" },
+];
+
 function SidebarUserMenu() {
   const user = useQuery(api.auth.currentUser);
   const me = useQuery(api.roles.me, {});
+  const location = useLocation();
+  const inCeo = location.pathname.startsWith("/ceo") && me?.isCeo === true;
+  const cockpits: string[] = me?.cockpits ?? [];
+  const switches = inCeo
+    ? OTHER_COCKPITS.filter(c => cockpits.includes(c.key))
+    : [];
   // The name the admin typed in the portal, else the email's first part.
   const shownName =
     user?.name || me?.name || user?.email?.split("@")[0] || "User";
@@ -390,6 +389,15 @@ function SidebarUserMenu() {
               align="start"
               className="w-[--radix-dropdown-menu-trigger-width]"
             >
+              {switches.map(c => (
+                <DropdownMenuItem key={c.key} asChild>
+                  <Link to={c.href} onClick={() => setOpenMobile(false)}>
+                    <ArrowRightLeft className="size-4" />
+                    {c.label}
+                  </Link>
+                </DropdownMenuItem>
+              ))}
+              {switches.length ? <DropdownMenuSeparator /> : null}
               <DropdownMenuItem asChild>
                 <Link to="/settings" onClick={() => setOpenMobile(false)}>
                   <Settings className="size-4" />

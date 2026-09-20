@@ -171,9 +171,12 @@ function stagesOf(w: B2bAdWindow): Stage[] {
 }
 
 /**
- * The funnel as one ribbon. Each cell is a stage: the count, then the unit
- * cost. The arrow into a cell carries the conversion from the stage before.
- * The stage a campaign is stuck on is outlined, so the eye lands on the fix.
+ * The funnel as a grid of stages that wraps to the width it has: the count,
+ * then the unit cost, with the conversion from the stage before at the top
+ * of each cell. The spend and nine stages make ten cells: two rows of five
+ * on a laptop, three across on a tablet, two across on a phone, and the
+ * reading order never changes. The stage a campaign is stuck on is
+ * outlined, so the eye lands on the fix.
  */
 function FunnelRibbon({
   w,
@@ -188,50 +191,43 @@ function FunnelRibbon({
 }) {
   const stages = stagesOf(w);
   const stuck = constraint ? CONSTRAINT_STAGE[constraint] : undefined;
+  const cell = "flex min-w-0 flex-col justify-start rounded-md px-2 py-1.5";
+  const valueCls = `truncate font-semibold ${compact ? "text-sm" : "text-base"}`;
+  const topCls =
+    "min-h-[14px] truncate text-[10px] leading-[14px] text-muted-foreground";
   return (
     <div
-      className="ceo-scroll-x -mx-1 flex items-stretch overflow-x-auto px-1 pb-1"
+      className="grid grid-cols-2 gap-2 @md:grid-cols-3 @2xl:grid-cols-5"
       style={{ fontVariantNumeric: "tabular-nums" }}
     >
-      <div
-        className={`flex shrink-0 flex-col justify-center pr-3 ${compact ? "w-20" : "w-24"}`}
-      >
-        <div className={`font-semibold ${compact ? "text-sm" : "text-base"}`}>
-          {money(spend)}
-        </div>
-        <div className="text-[11px] text-muted-foreground">spent</div>
+      <div className={cell}>
+        <div className={topCls} />
+        <div className={valueCls}>{money(spend)}</div>
+        <div className="truncate text-[11px] text-muted-foreground">Spent</div>
+        <div className="min-h-4 truncate text-[11px]" />
       </div>
       {stages.map((s, i) => (
-        <div key={s.key} className="flex shrink-0 items-stretch">
-          {i > 0 ? (
-            <div className="flex w-10 flex-col items-center justify-center text-muted-foreground">
-              <span
-                className="text-[10px] leading-none"
-                title="Conversion from the stage before"
-              >
-                {dash(s.from, pct)}
-              </span>
-              <ChevronRight className="size-3.5 opacity-60" aria-hidden />
-            </div>
-          ) : null}
+        <div
+          key={s.key}
+          className={`${cell} ${
+            stuck === s.key
+              ? "ring-1 ring-[var(--ceo-serious)] bg-[color-mix(in_srgb,var(--ceo-serious)_8%,transparent)]"
+              : ""
+          }`}
+        >
+          <div className={topCls} title="Conversion from the stage before">
+            {i > 0 ? `↳ ${dash(s.from, pct)}` : ""}
+          </div>
           <div
-            className={`flex ${compact ? "w-[7.5rem]" : "w-36"} flex-col justify-center rounded-md px-2 py-1 ${
-              stuck === s.key
-                ? "ring-1 ring-[var(--ceo-serious)] bg-[color-mix(in_srgb,var(--ceo-serious)_8%,transparent)]"
-                : ""
-            }`}
+            className={`${valueCls} ${s.dim ? "text-muted-foreground" : ""}`}
           >
-            <div
-              className={`truncate font-semibold ${compact ? "text-sm" : "text-base"} ${s.dim ? "text-muted-foreground" : ""}`}
-            >
-              {s.value}
-            </div>
-            <div className="truncate text-[11px] text-muted-foreground">
-              {s.label}
-            </div>
-            <div className="truncate text-[11px]" title={s.unit}>
-              {s.unit}
-            </div>
+            {s.value}
+          </div>
+          <div className="truncate text-[11px] text-muted-foreground">
+            {s.label}
+          </div>
+          <div className="truncate text-[11px]" title={s.unit}>
+            {s.unit}
           </div>
         </div>
       ))}
@@ -395,80 +391,83 @@ function CampaignCard({
   const w = c[win];
   return (
     <div className="rounded-md border">
-      <button
-        type="button"
-        onClick={() => setOpen(v => !v)}
-        className="flex w-full items-start gap-3 p-3 text-left hover:bg-muted/40"
-      >
-        {open ? (
-          <ChevronDown
-            className="mt-1 size-4 shrink-0 text-muted-foreground"
-            aria-hidden
-          />
-        ) : (
-          <ChevronRight
-            className="mt-1 size-4 shrink-0 text-muted-foreground"
-            aria-hidden
-          />
-        )}
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-semibold">{c.name}</span>
-            <StatusChip
-              tone={
-                c.type === "lead_gen"
-                  ? "good"
-                  : c.type === "retargeting"
-                    ? "neutral"
-                    : "warning"
-              }
-              label={c.type.replace(/_/g, " ")}
+      {/* The switch and the link sit beside the button, not inside it: a button cannot hold another control. */}
+      <div className="flex items-start gap-3 p-3 hover:bg-muted/40">
+        <button
+          type="button"
+          onClick={() => setOpen(v => !v)}
+          aria-expanded={open}
+          className="flex min-w-0 flex-1 items-start gap-3 text-left"
+        >
+          {open ? (
+            <ChevronDown
+              className="mt-1 size-4 shrink-0 text-muted-foreground"
+              aria-hidden
             />
-            <span className="text-xs text-muted-foreground">
-              {`${c.adsets.length} ad ${c.adsets.length === 1 ? "set" : "sets"} · ${c.adsets.reduce((n, a) => n + a.ads.length, 0)} ads`}
-            </span>
-            <a
-              href={adsManagerUrl(account, "campaign", c.id)}
-              target="_blank"
-              rel="noreferrer"
-              onClick={e => e.stopPropagation()}
-              className="text-muted-foreground hover:text-foreground"
-              title="Open in Ads Manager"
-            >
-              <ExternalLink className="size-3.5" aria-hidden />
-            </a>
-            <span className="ml-auto">
-              <Toggle
-                metaId={c.id}
-                level="campaign"
-                name={c.name}
-                running={c.running}
-                onDone={onDone}
+          ) : (
+            <ChevronRight
+              className="mt-1 size-4 shrink-0 text-muted-foreground"
+              aria-hidden
+            />
+          )}
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-semibold">{c.name}</span>
+              <StatusChip
+                tone={
+                  c.type === "lead_gen"
+                    ? "good"
+                    : c.type === "retargeting"
+                      ? "neutral"
+                      : "warning"
+                }
+                label={c.type.replace(/_/g, " ")}
               />
-            </span>
-          </div>
-          {c.constraint ? (
-            <p className="mt-1 text-xs">
-              <span className="font-medium text-[var(--ceo-serious)]">
-                {`Stuck at ${CONSTRAINT_OWNER[c.constraint.owner]}: `}
+              <span className="text-xs text-muted-foreground">
+                {`${c.adsets.length} ad ${c.adsets.length === 1 ? "set" : "sets"} · ${c.adsets.reduce((n, a) => n + a.ads.length, 0)} ads`}
               </span>
-              <span className="text-muted-foreground">
-                {`${c.constraint.stage} runs at ${pct(c.constraint.mine)} against ${pct(c.constraint.account)} across the account.`}
-              </span>
-            </p>
-          ) : null}
-          <div className="mt-2">
-            <FunnelRibbon
-              w={w}
-              spend={w.spend}
-              constraint={c.constraint?.stage ?? null}
-            />
+            </div>
+            {c.constraint ? (
+              <p className="mt-1 text-xs">
+                <span className="font-medium text-[var(--ceo-serious)]">
+                  {`Stuck at ${CONSTRAINT_OWNER[c.constraint.owner]}: `}
+                </span>
+                <span className="text-muted-foreground">
+                  {`${c.constraint.stage} runs at ${pct(c.constraint.mine)} against ${pct(c.constraint.account)} across the account.`}
+                </span>
+              </p>
+            ) : null}
+            <div className="mt-2">
+              <FunnelRibbon
+                w={w}
+                spend={w.spend}
+                constraint={c.constraint?.stage ?? null}
+              />
+            </div>
+            <div className="mt-1">
+              <People p={c.people} />
+            </div>
           </div>
-          <div className="mt-1">
-            <People p={c.people} />
-          </div>
+        </button>
+        <div className="flex shrink-0 items-center gap-2 pt-0.5">
+          <a
+            href={adsManagerUrl(account, "campaign", c.id)}
+            target="_blank"
+            rel="noreferrer"
+            className="text-muted-foreground hover:text-foreground"
+            title="Open in Ads Manager"
+          >
+            <ExternalLink className="size-3.5" aria-hidden />
+          </a>
+          <Toggle
+            metaId={c.id}
+            level="campaign"
+            name={c.name}
+            running={c.running}
+            onDone={onDone}
+          />
         </div>
-      </button>
+      </div>
       {open ? (
         <div className="border-t px-3 pb-2">
           {c.adsets.map(s => {
@@ -476,41 +475,44 @@ function CampaignCard({
             const sw = s[win];
             return (
               <div key={s.id} className="border-t first:border-t-0">
-                <button
-                  type="button"
-                  onClick={() => setOpenSets(m => ({ ...m, [s.id]: !so }))}
-                  className="flex w-full items-start gap-2 py-3 text-left hover:bg-muted/30"
-                >
-                  {so ? (
-                    <ChevronDown
-                      className="mt-1 size-3.5 shrink-0 text-muted-foreground"
-                      aria-hidden
-                    />
-                  ) : (
-                    <ChevronRight
-                      className="mt-1 size-3.5 shrink-0 text-muted-foreground"
-                      aria-hidden
-                    />
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-medium">{s.name}</span>
-                      <span className="text-xs text-muted-foreground">{`${s.ads.length} ads`}</span>
-                      <span className="ml-auto">
-                        <Toggle
-                          metaId={s.id}
-                          level="adset"
-                          name={s.name}
-                          running={s.running}
-                          onDone={onDone}
-                        />
-                      </span>
+                <div className="flex items-start gap-2 py-3 hover:bg-muted/30">
+                  <button
+                    type="button"
+                    onClick={() => setOpenSets(m => ({ ...m, [s.id]: !so }))}
+                    aria-expanded={so}
+                    className="flex min-w-0 flex-1 items-start gap-2 text-left"
+                  >
+                    {so ? (
+                      <ChevronDown
+                        className="mt-1 size-3.5 shrink-0 text-muted-foreground"
+                        aria-hidden
+                      />
+                    ) : (
+                      <ChevronRight
+                        className="mt-1 size-3.5 shrink-0 text-muted-foreground"
+                        aria-hidden
+                      />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-medium">{s.name}</span>
+                        <span className="text-xs text-muted-foreground">{`${s.ads.length} ads`}</span>
+                      </div>
+                      <div className="mt-2">
+                        <FunnelRibbon w={sw} spend={sw.spend} compact />
+                      </div>
                     </div>
-                    <div className="mt-2">
-                      <FunnelRibbon w={sw} spend={sw.spend} compact />
-                    </div>
+                  </button>
+                  <div className="shrink-0 pt-0.5">
+                    <Toggle
+                      metaId={s.id}
+                      level="adset"
+                      name={s.name}
+                      running={s.running}
+                      onDone={onDone}
+                    />
                   </div>
-                </button>
+                </div>
                 {so ? (
                   <div className="pb-2 pl-5">
                     {s.ads.map(a => (
@@ -721,7 +723,7 @@ function AdTable({
                 key={a.id}
                 className="border-b last:border-b-0 hover:bg-muted/30"
               >
-                <td className="sticky left-0 z-10 max-w-[240px] bg-card py-2 pr-3">
+                <td className="sticky left-0 z-10 max-w-[10rem] bg-card py-2 pr-3 @md:max-w-[15rem]">
                   <div className="flex items-center gap-2">
                     {a.thumbnail ? (
                       <img
@@ -818,7 +820,7 @@ export function AdsTab({ sections }: CeoTabProps) {
   const label = win === "w7" ? "Last 7 days" : "Last 30 days";
 
   return (
-    <div className="grid gap-4 lg:gap-6">
+    <div className="@container grid gap-4 lg:gap-6">
       <SectionCard
         kicker={`Mahara's own account · ${label}`}
         title="Our ads"
@@ -872,7 +874,7 @@ export function AdsTab({ sections }: CeoTabProps) {
       >
         {() => (
           <div className="grid gap-5">
-            <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4 xl:grid-cols-8">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-5 @md:grid-cols-3 @2xl:grid-cols-4">
               <StatTile
                 variant="plain"
                 label="Lead-gen spend"

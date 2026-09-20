@@ -91,7 +91,7 @@ function Posts({
 }) {
   if (!posts.length) return null;
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+    <div className="grid grid-cols-2 gap-3 @md:grid-cols-3 @2xl:grid-cols-4 @5xl:grid-cols-6">
       {posts.slice(0, 12).map(p => (
         <a
           key={p.id}
@@ -162,7 +162,7 @@ export function OrganicTab({ sections }: CeoTabProps) {
   const ytC = cadenceOf("YouTube videos");
 
   return (
-    <div className="grid gap-4 lg:gap-6">
+    <div className="@container grid gap-4 lg:gap-6">
       <SectionCard
         kicker="Across Instagram and YouTube, by how far above each platform's normal a post is running"
         title="Performing best"
@@ -202,7 +202,7 @@ export function OrganicTab({ sections }: CeoTabProps) {
         {() =>
           ig ? (
             <div className="grid gap-5">
-              <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-5">
+              <div className="grid grid-cols-2 gap-x-6 gap-y-5 @md:grid-cols-3 @2xl:grid-cols-5">
                 <StatTile
                   variant="plain"
                   label="Followers"
@@ -262,7 +262,7 @@ export function OrganicTab({ sections }: CeoTabProps) {
         {() =>
           yt.enabled ? (
             <div className="grid gap-5">
-              <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4">
+              <div className="grid grid-cols-2 gap-x-6 gap-y-5 @lg:grid-cols-4">
                 <StatTile
                   variant="plain"
                   label="Subscribers"
@@ -291,7 +291,7 @@ export function OrganicTab({ sections }: CeoTabProps) {
                 />
               </div>
               {yt.recent.length ? (
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+                <div className="grid grid-cols-2 gap-3 @md:grid-cols-3 @2xl:grid-cols-4 @5xl:grid-cols-6">
                   {yt.recent.map(v => (
                     <a
                       key={v.id}
@@ -371,7 +371,7 @@ export function OrganicTab({ sections }: CeoTabProps) {
       >
         {() =>
           fb ? (
-            <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-5 @lg:grid-cols-4">
               <StatTile
                 variant="plain"
                 label="Followers"

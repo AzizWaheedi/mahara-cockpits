@@ -601,17 +601,21 @@ function Month({ c, onChanged }: { c: Client; onChanged: () => void }) {
                   "Day set, and pushed to GoHighLevel.",
                 )
               }
-              onAdd={(pillar, topic, slides, iso) =>
+              onAdd={(pillar, topic, slides, iso, generate) =>
                 run(
                   () =>
                     addPost({
-                      batchId: String(batch?.id),
+                      clientTaskId: c.taskId,
+                      month,
                       pillar,
                       topic,
                       slides,
                       when: iso ?? undefined,
+                      generate,
                     }),
-                  "Added.",
+                  generate
+                    ? "Added. The prompts come back first, then the pictures."
+                    : "Added.",
                 )
               }
             >

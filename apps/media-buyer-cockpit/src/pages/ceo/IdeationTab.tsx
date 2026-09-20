@@ -273,7 +273,7 @@ export function IdeationTab(_props: CeoTabProps) {
   const field = "rounded-md border bg-background px-2 py-1.5 text-sm";
 
   return (
-    <div className="grid gap-4 lg:gap-6">
+    <div className="@container grid gap-4 lg:gap-6">
       <SectionCard
         kicker="Mahara B2B · who we compete with and learn from"
         title="Competitor desk"
@@ -293,7 +293,7 @@ export function IdeationTab(_props: CeoTabProps) {
       >
         {() => (
           <div className="grid gap-5">
-            <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-5 @lg:grid-cols-4">
               <StatTile
                 variant="plain"
                 label="Watching"

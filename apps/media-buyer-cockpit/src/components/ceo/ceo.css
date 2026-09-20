@@ -122,3 +122,15 @@
     animation-duration: 2.4s;
   }
 }
+
+/*
+ * A grid with no column template sizes its one track by the widest thing in
+ * it, so a scroller inside a card pushed the whole card past the screen
+ * (2026-09-20, the funnel ribbon). Every CEO grid fills its container and no
+ * more; an explicit grid-cols-* utility still wins, being in a later layer.
+ */
+@layer components {
+  .ceo-root .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

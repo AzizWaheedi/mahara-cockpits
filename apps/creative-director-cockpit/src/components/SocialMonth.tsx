@@ -159,13 +159,15 @@ export function SocialMonth({
     topic: string,
     slides: number,
     iso: string | null,
+    generate: boolean,
   ) => void;
   /** The detail panel for whichever post is open. */
   children: (post: MonthPost | null, close: () => void) => ReactNode;
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [moving, setMoving] = useState<string | null>(null);
-  const [adding, setAdding] = useState(false);
+  /** The day being composed on: a number, or 0 for "no day yet". */
+  const [adding, setAdding] = useState<number | null>(null);
 
   const total = daysIn(month);
   const pad = firstWeekday(month);
@@ -200,7 +202,7 @@ export function SocialMonth({
           </span>
           <button
             type="button"
-            onClick={() => setAdding(v => !v)}
+            onClick={() => setAdding(adding === null ? 0 : null)}
             className="ml-auto inline-flex h-7 items-center gap-1 rounded-md border px-2 text-[12px] font-medium hover:bg-muted"
           >
             <Plus className="h-3.5 w-3.5" />
@@ -208,15 +210,16 @@ export function SocialMonth({
           </button>
         </div>
 
-        {adding ? (
+        {adding !== null ? (
           <AddPost
             pillars={pillars}
             month={month}
+            day={adding}
             busy={busy}
-            onCancel={() => setAdding(false)}
-            onAdd={(pillar, topic, slides, iso) => {
-              onAdd(pillar, topic, slides, iso);
-              setAdding(false);
+            onCancel={() => setAdding(null)}
+            onAdd={(pillar, topic, slides, iso, generate) => {
+              onAdd(pillar, topic, slides, iso, generate);
+              setAdding(null);
             }}
           />
         ) : null}
@@ -289,6 +292,16 @@ export function SocialMonth({
                     </button>
                   ) : null}
                 </div>
+                {!here.length && !moving ? (
+                  <button
+                    type="button"
+                    onClick={() => setAdding(day)}
+                    aria-label={`Add a post on the ${day}`}
+                    className="absolute inset-0 flex items-center justify-center rounded-lg text-muted-foreground opacity-0 transition hover:bg-muted/60 hover:opacity-100 focus-visible:opacity-100"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </button>
+                ) : null}
                 {here.map(p => (
                   <div key={p.id} className="min-h-[4.5rem] flex-1">
                     <Cell
@@ -315,25 +328,31 @@ export function SocialMonth({
 function AddPost({
   pillars,
   month,
+  day: startDay,
   busy,
   onAdd,
   onCancel,
 }: {
   pillars: string[];
   month: string;
+  /** The day clicked, or 0 when opened from the toolbar. */
+  day: number;
   busy: boolean;
   onAdd: (
     pillar: string,
     topic: string,
     slides: number,
     iso: string | null,
+    generate: boolean,
   ) => void;
   onCancel: () => void;
 }) {
   const [pillar, setPillar] = useState(pillars[0] ?? "portfolio");
   const [topic, setTopic] = useState("");
   const [slides, setSlides] = useState(1);
-  const [day, setDay] = useState("");
+  const [day, setDay] = useState(startDay ? String(startDay) : "");
+  const iso = () =>
+    day ? dayIso(month, Math.min(31, Math.max(1, Number(day)))) : null;
   return (
     <div className="mb-2.5 rounded-lg border bg-muted/20 p-2.5">
       <div className="flex flex-wrap items-end gap-2">
@@ -388,19 +407,19 @@ function AddPost({
         <button
           type="button"
           disabled={busy || !topic.trim()}
-          onClick={() =>
-            onAdd(
-              pillar,
-              topic,
-              slides,
-              day
-                ? dayIso(month, Math.min(31, Math.max(1, Number(day))))
-                : null,
-            )
-          }
-          className="h-8 rounded-md bg-primary px-3 text-[12px] font-semibold text-primary-foreground disabled:opacity-50"
+          onClick={() => onAdd(pillar, topic, slides, iso(), true)}
+          className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-[12px] font-semibold text-primary-foreground disabled:opacity-50"
         >
-          Add
+          <Sparkles className="h-3.5 w-3.5" />
+          Add and generate
+        </button>
+        <button
+          type="button"
+          disabled={busy || !topic.trim()}
+          onClick={() => onAdd(pillar, topic, slides, iso(), false)}
+          className="h-8 rounded-md border px-2.5 text-[12px] font-medium hover:bg-muted disabled:opacity-50"
+        >
+          Add only
         </button>
         <button
           type="button"

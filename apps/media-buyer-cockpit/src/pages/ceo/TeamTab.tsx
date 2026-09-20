@@ -83,7 +83,7 @@ function Row({ p, onChanged }: { p: Person; onChanged: () => Promise<void> }) {
   const initial = (p.name || p.email || "?").trim().charAt(0).toUpperCase();
 
   return (
-    <div className="grid gap-2 py-3 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-center">
+    <div className="grid gap-2 py-3 @3xl:grid-cols-[minmax(0,1.4fr)_15rem_13rem_auto] @3xl:items-center">
       <div className="flex min-w-0 items-center gap-3">
         <span
           className={`flex size-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${p.active ? "bg-[var(--ceo-emphasis-wash)] text-[var(--ceo-emphasis)]" : "bg-muted text-muted-foreground"}`}
@@ -109,44 +109,46 @@ function Row({ p, onChanged }: { p: Person; onChanged: () => Promise<void> }) {
           </div>
         </div>
       </div>
-      <div className="flex items-center gap-1.5 text-sm">
-        <input
-          inputMode="decimal"
-          value={d.monthlyCost}
-          onChange={e => setD({ ...d, monthlyCost: e.target.value })}
-          placeholder="pay a month"
-          aria-label={`${p.name}'s monthly pay`}
-          className={`${field} w-24 text-right`}
-          style={{ fontVariantNumeric: "tabular-nums" }}
-        />
-        <select
-          value={d.currency}
-          onChange={e => setD({ ...d, currency: e.target.value })}
-          aria-label="Currency"
-          className={`${field} w-20`}
-        >
-          {CURRENCIES.map(c => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
-        {p.monthlyUsd !== null && d.currency !== "USD" ? (
-          <span className="text-xs text-muted-foreground">{`≈ ${money(p.monthlyUsd)}`}</span>
-        ) : null}
-      </div>
-      <div className="flex items-center gap-1.5 text-sm">
-        <input
-          inputMode="decimal"
-          value={d.commissionPct}
-          onChange={e => setD({ ...d, commissionPct: e.target.value })}
-          placeholder="–"
-          aria-label={`${p.name}'s commission percent`}
-          className={`${field} w-16 text-right`}
-          style={{ fontVariantNumeric: "tabular-nums" }}
-        />
-        <span className="text-xs text-muted-foreground">% commission</span>
-        {p.isSales ? <StatusChip tone="neutral" label="sales" /> : null}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 @3xl:contents">
+        <div className="flex flex-wrap items-center gap-1.5 text-sm">
+          <input
+            inputMode="decimal"
+            value={d.monthlyCost}
+            onChange={e => setD({ ...d, monthlyCost: e.target.value })}
+            placeholder="pay a month"
+            aria-label={`${p.name}'s monthly pay`}
+            className={`${field} w-24 text-right`}
+            style={{ fontVariantNumeric: "tabular-nums" }}
+          />
+          <select
+            value={d.currency}
+            onChange={e => setD({ ...d, currency: e.target.value })}
+            aria-label="Currency"
+            className={`${field} w-20`}
+          >
+            {CURRENCIES.map(c => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+          {p.monthlyUsd !== null && d.currency !== "USD" ? (
+            <span className="text-xs text-muted-foreground">{`≈ ${money(p.monthlyUsd)}`}</span>
+          ) : null}
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5 text-sm">
+          <input
+            inputMode="decimal"
+            value={d.commissionPct}
+            onChange={e => setD({ ...d, commissionPct: e.target.value })}
+            placeholder="–"
+            aria-label={`${p.name}'s commission percent`}
+            className={`${field} w-16 text-right`}
+            style={{ fontVariantNumeric: "tabular-nums" }}
+          />
+          <span className="text-xs text-muted-foreground">% commission</span>
+          {p.isSales ? <StatusChip tone="neutral" label="sales" /> : null}
+        </div>
       </div>
       <div className="flex items-center justify-end gap-2">
         {dirty ? (
@@ -211,7 +213,7 @@ function Row({ p, onChanged }: { p: Person; onChanged: () => Promise<void> }) {
         </label>
       </div>
       {msg ? (
-        <p className="text-xs text-[var(--ceo-critical)] sm:col-span-4">
+        <p className="text-xs text-[var(--ceo-critical)] @3xl:col-span-4">
           {msg}
         </p>
       ) : null}
@@ -279,7 +281,7 @@ function AddPerson({ onAdded }: { onAdded: () => Promise<void> }) {
         ) : null}
       </div>
       {open ? (
-        <div className="grid gap-2 rounded-md border p-3 sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_130px_110px_90px_auto]">
+        <div className="grid gap-2 rounded-md border p-3 @md:grid-cols-2 @3xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_8rem_7rem_5.5rem_auto]">
           <input
             value={name}
             onChange={e => setName(e.target.value)}
@@ -389,7 +391,7 @@ export function TeamTab(_props: CeoTabProps) {
   ).length;
 
   return (
-    <div className="grid gap-4 lg:gap-6">
+    <div className="@container grid gap-4 lg:gap-6">
       <SectionCard
         kicker="Who Mahara pays, and what it costs a month"
         title="Team & payroll"
@@ -397,7 +399,7 @@ export function TeamTab(_props: CeoTabProps) {
       >
         {() => (
           <div className="grid gap-5">
-            <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-5 @lg:grid-cols-4">
               <StatTile
                 variant="plain"
                 label="On the team"
@@ -445,7 +447,7 @@ export function TeamTab(_props: CeoTabProps) {
         {() =>
           data === null ? null : live.length ? (
             <div className="divide-y">
-              <div className="hidden pb-1 text-xs text-muted-foreground sm:grid sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
+              <div className="hidden pb-1 text-xs text-muted-foreground @3xl:grid @3xl:grid-cols-[minmax(0,1.4fr)_15rem_13rem_auto]">
                 <span>Person</span>
                 <span>Pay a month</span>
                 <span>Commission</span>

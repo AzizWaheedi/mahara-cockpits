@@ -62,7 +62,7 @@ export function StatTile({
       </div>
       {/* The chip rides the value row so narrow tiles never truncate the label. */}
       <div className="mt-1.5 flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1">
-        <div className="text-2xl font-semibold leading-8 tracking-tight text-foreground sm:text-[26px]">
+        <div className="text-2xl font-semibold leading-8 tracking-tight text-foreground [overflow-wrap:anywhere] sm:text-[26px]">
           <Value value={value} hint={naHint} />
         </div>
         {status ? <div className="shrink-0">{status}</div> : null}

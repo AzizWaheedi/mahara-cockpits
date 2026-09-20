@@ -1411,25 +1411,44 @@ export const attachImages = authenticatedAction({
  */
 export const addPost = authenticatedAction({
   args: {
-    batchId: v.string(),
+    clientTaskId: v.string(),
+    month: v.optional(v.string()),
     pillar: v.string(),
     topic: v.string(),
     slides: v.optional(v.number()),
     when: v.optional(v.string()),
+    /** Queue the pictures straight away, so one gesture is enough. */
+    generate: v.optional(v.boolean()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
-    await who(ctx);
+    const { email } = await who(ctx);
     const topic = args.topic.trim();
     if (!topic) throw new Error("Give the post a topic, even a rough one.");
-    const b = rows(
-      await rest(`social_batches?select=*&id=eq.${enc(args.batchId)}&limit=1`),
-    )[0];
-    if (!b) throw new Error("That month is gone.");
+
+    const month = args.month || thisMonth();
+    const batchId = `${args.clientTaskId}:${month}`;
+    // A month nobody has planned is the normal case for a post somebody
+    // just thought of, so make it rather than refuse. It opens in
+    // `planning`; the post itself skips plan approval, because a person
+    // typing the topic *is* the decision the approval gate exists to catch.
+    await rest("social_batches?on_conflict=id", {
+      method: "POST",
+      prefer: "resolution=merge-duplicates,return=minimal",
+      body: [
+        {
+          id: batchId,
+          client_task_id: args.clientTaskId,
+          month,
+          status: "planning",
+          updated_at: now(),
+        },
+      ],
+    });
 
     const existing = rows(
       await rest(
-        `social_posts?select=n&batch_id=eq.${enc(args.batchId)}&order=n.desc&limit=1`,
+        `social_posts?select=n&batch_id=eq.${enc(batchId)}&order=n.desc&limit=1`,
       ),
     );
     const n = Number(existing[0]?.n ?? 0) + 1;
@@ -1446,9 +1465,9 @@ export const addPost = authenticatedAction({
       prefer: "return=minimal",
       body: [
         {
-          id: `${args.batchId}:${n}`,
-          batch_id: args.batchId,
-          client_task_id: b.client_task_id,
+          id: `${batchId}:${n}`,
+          batch_id: batchId,
+          client_task_id: args.clientTaskId,
           n,
           pillar:
             String(args.pillar).trim().toLowerCase().slice(0, 24) ||
@@ -1461,7 +1480,29 @@ export const addPost = authenticatedAction({
         },
       ],
     });
-    return { id: `${args.batchId}:${n}`, n };
+    const id = `${batchId}:${n}`;
+    if (args.generate) {
+      await rest("social_jobs?on_conflict=id", {
+        method: "POST",
+        prefer: "resolution=merge-duplicates,return=minimal",
+        body: [
+          {
+            id: `gen:${id}`,
+            kind: "generate",
+            client_task_id: args.clientTaskId,
+            batch_id: batchId,
+            post_id: id,
+            status: "queued",
+            attempts: 0,
+            error: null,
+            result: null,
+            requested_by: email,
+            updated_at: now(),
+          },
+        ],
+      });
+    }
+    return { id, n, generating: Boolean(args.generate) };
   },
 });
 
