@@ -26,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ViktorStatus } from "@/components/ViktorStatus";
+import { WhatsAppDesk } from "@/components/WhatsAppDesk";
 import { useContentTransition } from "@/hooks/use-content-transition";
 import { CPB_GATE, CPL_GATE, LEARNING_DAYS } from "@/lib/kpi";
 import { defaultRange, type Range } from "@/lib/range";
@@ -1287,6 +1288,13 @@ function Cockpit({ view }: { view: View }) {
       </header>
 
       <ViktorStatus />
+
+      {/* Clients who wrote on WhatsApp, with the reply already drafted.
+          Above the numbers: an unanswered client costs more than a
+          metric that moved two points. */}
+      <div className="mb-4">
+        <WhatsAppDesk desk="ads" />
+      </div>
 
       {snap.lastSyncAt && Date.now() - snap.lastSyncAt > 20 * 3600 * 1000 && (
         <div className="rounded-lg border callout-warn p-3 text-[13px]">

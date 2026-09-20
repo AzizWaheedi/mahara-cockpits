@@ -22,6 +22,7 @@ import {
 import { TemplateCard } from "@/components/TemplateCard";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { WhatsAppDesk } from "@/components/WhatsAppDesk";
 import { CopyButton } from "@/components/WinningAds";
 import { fill, TEMPLATES } from "@/lib/creativeTemplates";
 import { api } from "../../convex/_generated/api";
@@ -181,6 +182,15 @@ function Creative({ view }: { view: View }) {
       </header>
 
       <SyncHealth />
+
+      {/* What clients said on WhatsApp, with the reply already drafted.
+          At the top of the day's screen because an unanswered client is
+          the most expensive thing on it. */}
+      {view === "sod" && (
+        <div className="mb-5">
+          <WhatsAppDesk desk="creative" />
+        </div>
+      )}
 
       {(view === "sod" || view === "work") && (
         <Checklist
