@@ -1,0 +1,16 @@
+{
+  "name": "higgsfield-example",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Smallest working call against the Higgsfield API: Seedance 2.5 text-to-video through the official SDK.",
+  "scripts": {
+    "start": "bun run index.ts"
+  },
+  "dependencies": {
+    "@higgsfield/client": "^0.2.6"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.2"
+  }
+}
