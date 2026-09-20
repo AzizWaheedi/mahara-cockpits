@@ -1,5 +1,6 @@
 import { useAuthActions } from "@convex-dev/auth/react";
 import { useQuery } from "convex/react";
+import { motion } from "framer-motion";
 import {
   ArrowRightLeft,
   Bookmark,
@@ -14,6 +15,8 @@ import {
   MessageSquare,
   Moon,
   MoonStar,
+  PanelLeft,
+  PanelLeftClose,
   Settings,
   Share2,
   ShieldCheck,
@@ -108,8 +111,24 @@ function NavLink({
 
   return (
     <SidebarMenuItem>
-      <SidebarMenuButton asChild isActive={isActive}>
-        <Link to={href} onClick={() => setOpenMobile(false)}>
+      <SidebarMenuButton
+        asChild
+        isActive={isActive}
+        tooltip={label}
+        className="cockpit-nav-link"
+      >
+        <Link
+          to={href}
+          aria-current={isActive ? "page" : undefined}
+          onClick={() => setOpenMobile(false)}
+        >
+          {isActive && (
+            <motion.span
+              layoutId="cockpit-nav-lamp"
+              className="cockpit-nav-lamp"
+              transition={{ type: "spring", stiffness: 320, damping: 30 }}
+            />
+          )}
           <Icon />
           <span>{label}</span>
         </Link>
@@ -159,7 +178,7 @@ function PortalGroup() {
         <SidebarMenu>
           {doors.map(d => (
             <SidebarMenuItem key={d.key}>
-              <SidebarMenuButton asChild>
+              <SidebarMenuButton asChild tooltip={d.label}>
                 <a href={d.href}>
                   {d.key === "admin" ? (
                     <ShieldCheck className="size-4" />
@@ -278,24 +297,35 @@ function SidebarUserMenu() {
 }
 
 function SidebarHeaderContent() {
-  const { setOpenMobile } = useSidebar();
+  const { setOpenMobile, open, isMobile, toggleSidebar } = useSidebar();
 
   return (
-    <SidebarHeader className="border-b border-sidebar-border">
-      <Link
-        to="/"
-        onClick={() => setOpenMobile(false)}
-        className="flex items-center px-2 py-2"
+    <SidebarHeader className="border-b border-sidebar-border flex-row items-center justify-between">
+      {(open || isMobile) && (
+        <Link
+          to="/"
+          onClick={() => setOpenMobile(false)}
+          className="flex items-center px-2 py-2"
+        >
+          <Wordmark size="sm" />
+        </Link>
+      )}
+      <button
+        type="button"
+        onClick={toggleSidebar}
+        className="rounded-lg border p-2 hover:bg-sidebar-accent"
+        aria-label={open ? "Collapse sidebar" : "Expand sidebar"}
+        aria-expanded={open}
       >
-        <Wordmark size="sm" />
-      </Link>
+        {open ? <PanelLeftClose size={16} /> : <PanelLeft size={16} />}
+      </button>
     </SidebarHeader>
   );
 }
 
 export function AppSidebar() {
   return (
-    <Sidebar>
+    <Sidebar collapsible="icon">
       <SidebarHeaderContent />
       <SidebarNav />
       <SidebarUserMenu />
