@@ -186,6 +186,58 @@
   input[type="radio"]:not(:disabled) {
     @apply cursor-pointer;
   }
+
+  /*
+   * The phone rules (Aziz, 2026-09-20: "formatted correctly on mobile and
+   * not scrolling left to right ... unbreakable").
+   *
+   * The page never scrolls sideways: anything wider than the screen scrolls
+   * inside its own card (tables, the funnel, strips of cards), never the
+   * whole page. Text does not rescale when the phone turns. Fields are 16px
+   * on touch screens so iOS does not zoom into them, and anything tappable
+   * is tall enough for a thumb. Standalone (installed) mode keeps clear of
+   * the notch and the home bar.
+   */
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+  body {
+    overflow-x: clip;
+    min-width: 0;
+  }
+  #root {
+    min-width: 0;
+  }
+  img, video, canvas, svg {
+    max-width: 100%;
+  }
+  .pt-safe {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+}
+
+/*
+ * Outside every layer on purpose: these must beat the text-sm and h-8
+ * utilities on the same elements. Only on touch screens.
+ */
+@media (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+  select,
+  textarea {
+    font-size: max(16px, 1em);
+    min-height: 2.5rem;
+  }
+  main :is(button, [role="button"]):not([role="switch"]):not(.no-touch),
+  main a.cockpit-nav-link {
+    min-height: 2.5rem;
+  }
+  main button:not([role="switch"]):not(.no-touch) {
+    touch-action: manipulation;
+  }
 }
 
 

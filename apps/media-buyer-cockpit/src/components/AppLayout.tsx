@@ -10,6 +10,8 @@ import { useLocation, useOutlet } from "react-router";
 import { api } from "../../convex/_generated/api";
 import { AppSidebar } from "./AppSidebar";
 import { HermesChat } from "./HermesChat";
+import { MobileTabBar } from "./MobileTabBar";
+import { OfflineBanner } from "./OfflineBanner";
 import { RouteErrorBoundary } from "./RouteErrorBoundary";
 import { ThemeToggle } from "./ThemeToggle";
 import {
@@ -60,13 +62,15 @@ function LayoutContent() {
     <>
       <AppSidebar />
       <SidebarInset ref={inset}>
-        <header className="flex h-12 items-center justify-between px-4">
+        <header className="pt-safe flex min-h-12 items-center justify-between px-4">
           <SidebarTrigger className="md:hidden" />
           <div className="ml-auto">
             <ThemeToggle />
           </div>
         </header>
-        <main className="flex-1 p-4 lg:p-6">
+        <OfflineBanner />
+        {/* On a phone the tab bar takes the foot of the screen; the page keeps clear of it. */}
+        <main className="flex-1 p-4 pb-24 md:pb-4 lg:p-6 lg:pb-6">
           <RouteErrorBoundary report={r => report(r)}>
             <AnimatePresence initial={false} mode="wait">
               <motion.div
@@ -89,6 +93,7 @@ function LayoutContent() {
           </RouteErrorBoundary>
         </main>
         <HermesChat />
+        <MobileTabBar />
       </SidebarInset>
     </>
   );

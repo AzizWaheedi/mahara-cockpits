@@ -111,7 +111,7 @@ export function PlaybookPage() {
         </select>
       </div>
 
-      <div className="overflow-hidden rounded-lg border">
+      <div className="overflow-x-auto rounded-lg border">
         <table className="w-full text-[13px]">
           <thead className="bg-muted/50 text-[12px] uppercase tracking-wide text-muted-foreground">
             <tr>
@@ -227,30 +227,32 @@ function CreativePatterns({ rows }: { rows: any[] | undefined }) {
               <div className="mb-1.5 text-[12px] text-muted-foreground">
                 {g.sub}
               </div>
-              <table className="w-full text-[12px]">
-                <tbody>
-                  {mine.map(r => (
-                    <tr key={r.key} className="border-t">
-                      <td className="py-1 pr-2">
-                        {r.key}
-                        {r.key === "unknown" && (
-                          <span className="text-muted-foreground">
-                            {" "}
-                            (dynamic creative, Meta won't say)
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-1 pr-2 text-right tabular-nums font-semibold">
-                        ${r.cpl.toFixed(2)}
-                      </td>
-                      <td className="py-1 text-right text-[11px] text-muted-foreground">
-                        {r.leads} leads · {r.clients}{" "}
-                        {r.clients === 1 ? "client" : "clients"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="overflow-x-auto">
+                <table className="w-full text-[12px]">
+                  <tbody>
+                    {mine.map(r => (
+                      <tr key={r.key} className="border-t">
+                        <td className="py-1 pr-2">
+                          {r.key}
+                          {r.key === "unknown" && (
+                            <span className="text-muted-foreground">
+                              {" "}
+                              (dynamic creative, Meta won't say)
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-1 pr-2 text-right tabular-nums font-semibold">
+                          ${r.cpl.toFixed(2)}
+                        </td>
+                        <td className="py-1 text-right text-[11px] text-muted-foreground">
+                          {r.leads} leads · {r.clients}{" "}
+                          {r.clients === 1 ? "client" : "clients"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           );
         })}

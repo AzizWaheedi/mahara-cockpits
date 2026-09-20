@@ -151,7 +151,7 @@ export function HermesChat() {
       <button
         type="button"
         onClick={() => setOpen(v => !v)}
-        className="fixed bottom-5 right-5 z-40 flex items-center gap-2 rounded-full border bg-background px-4 py-2 text-[13px] font-semibold shadow-lg hover:bg-muted"
+        className="fixed right-4 bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] z-40 flex items-center gap-2 rounded-full border bg-background px-4 py-2 text-[13px] font-semibold shadow-lg hover:bg-muted md:right-5 md:bottom-5"
         aria-label="Ask Hermes"
       >
         <span
@@ -166,7 +166,7 @@ export function HermesChat() {
       </button>
       {open ? (
         <section
-          className="fixed bottom-20 right-5 z-40 flex h-[min(70vh,640px)] w-[min(92vw,420px)] flex-col overflow-hidden rounded-xl border bg-background shadow-2xl"
+          className="fixed right-4 bottom-[calc(8rem+env(safe-area-inset-bottom,0px))] z-40 flex h-[min(70vh,640px)] w-[min(92vw,420px)] flex-col overflow-hidden rounded-xl border bg-background shadow-2xl md:right-5 md:bottom-20"
           aria-label="Hermes chat"
         >
           <header className="flex items-center justify-between border-b px-3 py-2">

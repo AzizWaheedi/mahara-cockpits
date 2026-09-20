@@ -182,3 +182,21 @@ h3 {
     transition-duration: 0.001ms !important;
   }
 }
+
+/* The phone rules shared with the media buyer cockpit (2026-09-20): the page
+   never scrolls sideways, fields are 16px on touch screens so iOS does not
+   zoom, and the installed app keeps clear of the notch and the home bar. */
+@layer base {
+  html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+  body { overflow-x: clip; min-width: 0; }
+  #root { min-width: 0; }
+  img, video, canvas, svg { max-width: 100%; }
+  .pt-safe { padding-top: env(safe-area-inset-top, 0px); }
+  .pb-safe { padding-bottom: env(safe-area-inset-bottom, 0px); }
+}
+/* Outside every layer so the text-sm and h-8 utilities do not win; touch screens only. */
+@media (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]), select, textarea { font-size: max(16px, 1em); min-height: 2.5rem; }
+  main :is(button, [role="button"]):not([role="switch"]):not(.no-touch) { min-height: 2.5rem; touch-action: manipulation; }
+}
+
