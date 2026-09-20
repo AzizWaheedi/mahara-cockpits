@@ -29,20 +29,35 @@ Salma drains it.
 | `caption` | **OpenAI (`gpt-4.1`)** today. Anthropic if that key is ever set. Never the cheap model: a client's dialect is judgment | here |
 | `generate` | Higgsfield MCP | **not here** — deferred back to the queue for the openclaw agent session |
 
-**`generate` does not generate.** It writes the prompts and stops.
-Higgsfield is reachable either through its MCP, which a cron-driven
-script cannot speak, or through its metered API, which is not wired. The
-prompt is the part worth getting right and the part worth reviewing:
-wrong is cheap to spot in text and expensive to spot in a picture. So
-whoever makes the pictures -- a person pasting into Higgsfield today, an
-API call later -- works from the same text, and nothing above this
-changes when that switches.
+**`generate` writes the prompts first, then makes the pictures.** The
+prompts are saved before a single image is requested, so a generation
+that fails half way leaves the reviewable half behind and re-running
+costs only the images.
 
-The finished images go back on the post as URLs. They have to be
-**publicly fetchable**: GoHighLevel pulls media by URL at publish time,
-which can be days after the push, so a short-lived signed link passes
-every test and 404s on the morning it matters. That is what the public
-`social-images` bucket is for, and nothing private goes in it.
+Higgsfield's REST API, not its MCP: `POST /v1/text2image/soul` at
+`platform.higgsfield.ai`, authenticated `Authorization: Key <id>:<secret>`
+from `HIGGSFIELD_ID` and `HIGGSFIELD_SECRET`. The schema was read off the
+API's own 422s on 2026-09-20 because the published docs do not carry it:
+`params.prompt` and `params.width_and_height` are required, the size is
+one of sixteen fixed strings, `quality` is `720p` or `1080p` and
+`batch_size` is 1 or 4. It answers with a job set to poll.
+
+Two things that will bite anyone reading this later. Higgsfield sits
+behind **the same Cloudflare bot rule GoHighLevel does** -- a default
+urllib agent is refused 403 at the edge before the API sees it, so the
+browser User-Agent is load-bearing. And an empty balance is a **403 with
+"Not enough credits"**, which is not a bug and not retryable; it raises
+`NoCredits` so the queue says "top up" rather than "investigate".
+
+Every finished image is **copied into our own `social-images` bucket**
+rather than linked where Higgsfield put it. Their URLs are theirs and
+need not outlive the job, and GoHighLevel fetches media when it
+publishes, which can be days later -- so a post pointing at somebody
+else's temporary URL is a picture that disappears between approval and
+posting. The bucket is public for that reason and holds nothing private.
+
+Slides are square. Every slide of a carousel has to share one aspect
+ratio, and a square is the one that never crops badly.
 
 ## Two memories, kept apart
 

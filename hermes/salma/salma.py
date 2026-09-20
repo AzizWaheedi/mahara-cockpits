@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -425,6 +426,112 @@ Framing by pillar:
 Return JSON only: {"prompts":["slide 1 prompt","slide 2 prompt", ...]}"""
 
 
+HF_BASE = "https://platform.higgsfield.ai"
+# Higgsfield sits behind the same Cloudflare bot rule GoHighLevel does: a
+# default urllib agent is answered 403 by the edge before the API sees it.
+HF_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+)
+# Verified against the live API 2026-09-20 by reading its own 422s rather
+# than the docs, which do not carry the schema.
+HF_SIZES = {"square": "1536x1536", "portrait": "1152x1536", "landscape": "2048x1152"}
+
+
+class NoCredits(RuntimeError):
+    """Higgsfield answers 403 'Not enough credits' with an empty balance.
+
+    Worth its own type: it is not a bug, nothing is retryable, and the
+    person reading the queue needs to top up rather than investigate.
+    """
+
+
+def hf_call(path: str, method: str = "GET", body: dict | None = None) -> dict:
+    ident = os.environ.get("HIGGSFIELD_ID")
+    secret = os.environ.get("HIGGSFIELD_SECRET")
+    if not ident or not secret:
+        raise RuntimeError("HIGGSFIELD_ID / HIGGSFIELD_SECRET are not set")
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(
+        HF_BASE + path, data=data, method=method,
+        headers={"Content-Type": "application/json", "Accept": "application/json",
+                 "User-Agent": HF_UA, "Authorization": f"Key {ident}:{secret}"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=90) as r:
+            return json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode()[:300]
+        if e.code == 403 and "credits" in detail.lower():
+            raise NoCredits(
+                "Higgsfield has no credits left. Top up at cloud.higgsfield.ai "
+                "and run this again; nothing else is wrong."
+            ) from e
+        raise RuntimeError(f"Higgsfield {e.code}: {detail}") from e
+
+
+def hf_image(prompt: str, size: str) -> str:
+    """One image, start to finished URL. Blocks; a slide takes under a minute."""
+    made = hf_call("/v1/text2image/soul", "POST", {"params": {
+        "prompt": prompt[:2000],
+        "width_and_height": size,
+        "quality": "1080p",
+        "batch_size": 1,
+        "enhance_prompt": False,
+    }})
+    job_set = made.get("id") or made.get("job_set_id")
+    if not job_set:
+        raise RuntimeError(f"Higgsfield gave no job id: {str(made)[:200]}")
+
+    for _ in range(60):
+        time.sleep(5)
+        state = hf_call(f"/v1/job-sets/{job_set}")
+        jobs = state.get("jobs") or []
+        job0 = jobs[0] if jobs else state
+        status = str(job0.get("status") or "")
+        if status == "completed":
+            results = job0.get("results") or {}
+            url = (
+                (results.get("raw") or {}).get("url")
+                or (results.get("min") or {}).get("url")
+                or job0.get("url")
+            )
+            if not url:
+                raise RuntimeError(f"completed with no url: {str(job0)[:200]}")
+            return str(url)
+        if status in ("failed", "canceled"):
+            raise RuntimeError(f"Higgsfield {status}: {str(job0.get('error'))[:160]}")
+        if status == "nsfw":
+            # Not retryable and not our bug: the prompt tripped their filter.
+            raise RuntimeError("Higgsfield refused the prompt as unsafe. Reword the slide.")
+    raise RuntimeError("Higgsfield did not finish within five minutes")
+
+
+def keep_image(sb: Store, url: str, post_id: str, n: int) -> str:
+    """Copy the image into our own bucket and hand back a public URL.
+
+    Higgsfield's URLs are theirs and need not outlive the job. GoHighLevel
+    fetches media when it publishes, which can be days later, so a post
+    pointing at somebody else's temporary URL is a picture that vanishes
+    between approval and posting.
+    """
+    req = urllib.request.Request(url, headers={"User-Agent": HF_UA})
+    with urllib.request.urlopen(req, timeout=120) as r:
+        blob = r.read()
+    safe = post_id.replace(":", "_").replace("/", "_")
+    path = f"{safe}/{n}.jpg"
+    base = os.environ["DESK_SUPABASE_URL"].rstrip("/")
+    key = os.environ["DESK_SUPABASE_KEY"]
+    put = urllib.request.Request(
+        f"{base}/storage/v1/object/social-images/{path}",
+        data=blob, method="POST",
+        headers={"Authorization": f"Bearer {key}", "apikey": key,
+                 "Content-Type": "image/jpeg", "x-upsert": "true"},
+    )
+    urllib.request.urlopen(put, timeout=120).read()
+    return f"{base}/storage/v1/object/public/social-images/{path}"
+
+
 def do_generate(sb: Store, job: dict) -> dict:
     """Turn an approved plan into image prompts.
 
@@ -475,8 +582,28 @@ def do_generate(sb: Store, job: dict) -> dict:
     )
     if len(prompts) < slides:
         note(f"  {post_id}: {len(prompts)} prompts for {slides} slides")
-    return {"post": post_id, "prompts": len(prompts), "slides": slides,
-            "images": "still to be made from these"}
+
+    # Then the pictures. Square, because every slide of a carousel has to
+    # share one aspect ratio and a square is the one that never crops badly.
+    size = HF_SIZES["square"]
+    images: list[str] = []
+    for i, prompt in enumerate(prompts, 1):
+        try:
+            images.append(keep_image(sb, hf_image(prompt, size), post_id, i))
+        except NoCredits:
+            # The prompts are already saved, so topping up and re-running
+            # costs nothing but the images. Say so plainly rather than
+            # burying it in a stack trace.
+            if images:
+                sb.patch(f"social_posts?id=eq.{urllib.parse.quote(post_id)}",
+                         {"images": images, "updated_at": now()})
+            raise
+    sb.patch(
+        f"social_posts?id=eq.{urllib.parse.quote(post_id)}",
+        {"images": images, "status": "generated" if images else "generating",
+         "updated_at": now()},
+    )
+    return {"post": post_id, "prompts": len(prompts), "images": len(images)}
 
 
 HANDLERS = {"plan": do_plan, "caption": do_caption, "generate": do_generate}

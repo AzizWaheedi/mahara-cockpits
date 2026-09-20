@@ -118,13 +118,21 @@ Three routes, and the choice is mostly about where the fragile part sits.
 
 | | |
 | --- | --- |
-| **By hand from the prompts** | what works today. Salma writes them, somebody pastes them into Higgsfield, the URLs come back on the post. No new bill, no new moving part, and it tells us whether the prompts are any good before anything is automated |
-| **Higgsfield's REST API** | `cloud.higgsfield.ai`, pay as you go, $5 minimum. At roughly 120 images a month this is a few dollars. Salma's existing script calls it directly -- no agent session, no MCP -- and only `do_generate` changes |
-| **Higgsfield's MCP** | uses the subscription already paid for, but only an agent session can speak MCP, so it needs openclaw in the loop. That is the least reliable piece in the chain and the hardest to debug when a batch quietly does not appear |
+**Chosen 2026-09-20: the REST API.** Aziz took it, and the credentials
+were already on the VPS as `HIGGSFIELD_ID` and `HIGGSFIELD_SECRET`.
 
-The API is the recommendation once the prompts are proven, because it
-removes the fragile part for about the price of a coffee. Nothing above
-`do_generate` changes whichever is chosen.
+| | |
+| --- | --- |
+| **Higgsfield's REST API** | what runs now. `POST /v1/text2image/soul`, polled as a job set, images copied into our own bucket. No agent session, no MCP |
+| by hand from the prompts | still possible: the prompts are saved before any image is requested, and the screen takes pasted URLs back |
+| Higgsfield's MCP | rejected. Only an agent session can speak MCP, so it needs openclaw in the loop -- the least reliable piece in the chain and the hardest to debug when a batch quietly does not appear |
+
+The schema was read off the API's own validation errors rather than the
+docs, which do not carry it. Two findings worth keeping: Higgsfield sits
+behind **the same Cloudflare bot rule GoHighLevel does**, so the browser
+User-Agent is load-bearing; and an empty balance is a **403 "Not enough
+credits"**, which is neither a bug nor retryable and is surfaced as
+exactly that.
 
 **One thing that bites at the end whichever route wins:** GoHighLevel
 fetches media by URL when it publishes, not when the post is created. An

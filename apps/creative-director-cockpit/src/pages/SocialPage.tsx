@@ -624,6 +624,7 @@ function Month({ c, onChanged }: { c: Client; onChanged: () => void }) {
   const status = String(batch?.status ?? "");
   const total = PILLARS.reduce((n, p) => n + (mix[p] ?? 0), 0);
   const withCaption = posts.filter(p => p.caption).length;
+  const withImages = posts.filter(p => (p.images?.length ?? 0) > 0).length;
 
   return (
     <div>
@@ -777,7 +778,7 @@ function Month({ c, onChanged }: { c: Client; onChanged: () => void }) {
                 onClick={() =>
                   run(
                     () => generate({ batchId: String(batch.id) }),
-                    "Queued. Captions come back first, then images.",
+                    "Queued. Captions come back first, then the images.",
                   )
                 }
                 className="h-8 rounded-md border border-transparent bg-foreground px-2.5 text-[12px] font-semibold text-background disabled:opacity-50"
@@ -789,6 +790,8 @@ function Month({ c, onChanged }: { c: Client; onChanged: () => void }) {
               <>
                 <span className="text-[12px] text-muted-foreground tabular-nums">
                   {withCaption} of {posts.length} written
+                  {" · "}
+                  {withImages} of {posts.length} illustrated
                 </span>
                 <button
                   type="button"
