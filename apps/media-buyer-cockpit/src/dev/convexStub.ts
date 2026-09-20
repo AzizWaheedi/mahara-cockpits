@@ -2,14 +2,21 @@
  * Fixture-backed stand-ins for `convex/react`, used only by the layout
  * harness (`bun run harness`). Every hook answers from the fixtures the
  * harness loaded, keyed by the Convex function name, so the real screens
- * render with real payloads and no deployment behind them.
+ * render with real payloads and no deployment behind them. A function the
+ * fixtures do not name answers with one shared empty list, so lists render
+ * their empty states and nothing loops on a fresh object each render.
  */
 import type { FunctionReference } from "convex/server";
 import { getFunctionName } from "convex/server";
-import { type ReactNode, useCallback } from "react";
+import type { ReactNode } from "react";
 
 type Fixtures = Record<string, unknown>;
 let fixtures: Fixtures = {};
+const EMPTY: readonly never[] = Object.freeze([]);
+type Stub = ((args?: unknown) => Promise<unknown>) & {
+  withOptimisticUpdate: (update: unknown) => Stub;
+};
+const fns = new Map<string, Stub>();
 
 /** The harness calls this once, before rendering. */
 export function setFixtures(next: Fixtures) {
@@ -18,8 +25,23 @@ export function setFixtures(next: Fixtures) {
 
 function answer(ref: FunctionReference<"query" | "mutation" | "action">) {
   const name = getFunctionName(ref);
+  if (!(name in fixtures)) return EMPTY;
   const hit = fixtures[name];
   return typeof hit === "function" ? (hit as () => unknown)() : hit;
+}
+
+/** One stable function per Convex function name, the way the real hooks behave. */
+function stable(ref: FunctionReference<"mutation" | "action">): Stub {
+  const name = getFunctionName(ref);
+  let fn = fns.get(name);
+  if (!fn) {
+    const made = (() => Promise.resolve(answer(ref))) as Stub;
+    // Real mutations carry this; the screens that call it get the same stub back.
+    made.withOptimisticUpdate = () => made;
+    fn = made;
+    fns.set(name, fn);
+  }
+  return fn as Stub;
 }
 
 export function useQuery(
@@ -39,17 +61,11 @@ export function useQueries(
 }
 
 export function useMutation(ref: FunctionReference<"mutation">) {
-  return useCallback(
-    (_args?: unknown) => Promise.resolve(answer(ref) ?? {}),
-    [ref],
-  );
+  return stable(ref);
 }
 
 export function useAction(ref: FunctionReference<"action">) {
-  return useCallback(
-    (_args?: unknown) => Promise.resolve(answer(ref) ?? {}),
-    [ref],
-  );
+  return stable(ref);
 }
 
 export function useConvexAuth() {

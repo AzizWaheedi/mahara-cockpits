@@ -140,7 +140,7 @@ export function SectionCard<K extends SectionKey>({
           </h2>
         </div>
         {(asOf !== null && Number.isFinite(asOf) && !hideAsOf) || actions ? (
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
             {asOf !== null && Number.isFinite(asOf) && !hideAsOf ? (
               <AsOf at={asOf} />
             ) : null}
