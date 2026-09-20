@@ -29,14 +29,15 @@ if [ -f apps/creative-director-cockpit/scripts/social.test.ts ]; then
 fi
 
 ship() {
-  local app="$1" dir url
+  local app="$1"
+  local SITE dir url
   case "$app" in
-    media-buyer)     dir=apps/media-buyer-cockpit;       url=https://adorable-seahorse-418.convex.cloud ;;
-    client-success)  dir=apps/client-success-cockpit;    url=https://impressive-dinosaur-375.convex.cloud ;;
-    creative)        dir=apps/creative-director-cockpit; url=https://colorful-wombat-644.convex.cloud ;;
+    media-buyer)     dir=apps/media-buyer-cockpit;       url=https://adorable-seahorse-418.convex.cloud; SITE=https://cockpit.maharamedia.com ;;
+    client-success)  dir=apps/client-success-cockpit;    url=https://impressive-dinosaur-375.convex.cloud; SITE=https://cockpit.maharamedia.com/client-success ;;
+    creative)        dir=apps/creative-director-cockpit; url=https://colorful-wombat-644.convex.cloud; SITE=https://cockpit.maharamedia.com/creative ;;
     # The fourth cockpit has no Convex: it reads Supabase straight from the
     # browser, so there is no backend to deploy, only a site.
-    video-editor)    dir=apps/video-editor-cockpit;      url= ;;
+    video-editor)    dir=apps/video-editor-cockpit;      url=; SITE=https://cockpit.maharamedia.com/editor ;;
     *) echo "unknown app: $app"; exit 2 ;;
   esac
   echo "== $app: lint"
@@ -59,9 +60,25 @@ ship() {
   # bundle while the log showed one "}"), so the confirmation is checked, not
   # assumed.
   local out
-  out=$(cd "$dir" && bunx vercel deploy --prod --yes 2>&1) || { echo "$out" | tail -20; echo "vercel deploy failed for $app"; exit 1; }
+  # --force skips Vercel's build cache. Without it (2026-09-20) a deploy
+  # reported "Production ... Ready", promote said 409 already-production,
+  # and the alias still served the previous bundle -- Vercel had restored
+  # the old build output from cache, so the deployment was genuinely stale
+  # rather than merely mis-aliased.
+  out=$(cd "$dir" && bunx vercel deploy --prod --yes --force 2>&1) || { echo "$out" | tail -20; echo "vercel deploy failed for $app"; exit 1; }
   echo "$out" | grep -E '"url"|readyState|target|Production|Aliased|rror' | head -8
-  echo "$out" | grep -Eq '"readyState": *"READY"|Aliased +https|Production +https' || { echo "vercel did not confirm a production deployment for $app:"; echo "$out" | tail -20; exit 1; }
+  echo "$out" | grep -Eq '"readyState": *"READY"|Aliased +https|Production +https|"status": *"ok"' || { echo "vercel did not confirm a production deployment for $app:"; echo "$out" | tail -20; exit 1; }
+
+  # And then check the site, because every signal above can say yes while
+  # the bundle people load is last week's.
+  local want live
+  want=$(basename "$(ls -t "$dir"/dist/assets/index-*.js 2>/dev/null | head -1)" 2>/dev/null)
+  live=$(curl -fsS -m 30 "$SITE/?cb=$RANDOM" 2>/dev/null | grep -oE 'index-[A-Za-z0-9_-]+\.js' | head -1)
+  if [ -n "$live" ]; then
+    echo "  live bundle: $live (built locally: ${want:-unknown})"
+  else
+    echo "  could not read $SITE to confirm the bundle"
+  fi
 }
 
 case "${1:-all}" in
