@@ -4,6 +4,7 @@ import { Link } from "react-router";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { WhatsAppDesk } from "@/components/WhatsAppDesk";
 import { opportunitiesFor, rankOpportunities } from "@/lib/csmHotList";
 import { LINK_GROUPS } from "@/lib/csmLinks";
 import {
@@ -1758,6 +1759,15 @@ export function CsmPage({ section }: { section: Section }) {
           </p>
         )}
       </header>
+
+      {/* The replies waiting on her, above the counts. A number saying
+          somebody needs a message is worth less than the message, already
+          written, with a send button on it. */}
+      {section === "start" && (
+        <div className="mb-4">
+          <WhatsAppDesk desk="csm" />
+        </div>
+      )}
 
       {section === "start" && (
         <div className="space-y-2">
