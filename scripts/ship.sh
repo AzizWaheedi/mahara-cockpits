@@ -65,7 +65,15 @@ ship() {
   # and the alias still served the previous bundle -- Vercel had restored
   # the old build output from cache, so the deployment was genuinely stale
   # rather than merely mis-aliased.
-  out=$(cd "$dir" && bunx vercel deploy --prod --yes --force 2>&1) || { echo "$out" | tail -20; echo "vercel deploy failed for $app"; exit 1; }
+  if (cd "$dir" && bunx vercel whoami >/dev/null 2>&1); then
+    out=$(cd "$dir" && bunx vercel deploy --prod --yes --force 2>&1) || { echo "$out" | tail -20; echo "vercel deploy failed for $app"; exit 1; }
+  else
+    # No Vercel login on this Mac (2026-09-20): the same source goes up
+    # through Composio's Vercel connection instead. `bunx vercel login`
+    # in the app folder brings the CLI path back.
+    echo "  no Vercel CLI login; deploying through Composio"
+    out=$(scripts/vercel-deploy-composio.sh "$dir" 2>&1) || { echo "$out" | tail -20; echo "vercel deploy through composio failed for $app"; exit 1; }
+  fi
   echo "$out" | grep -E '"url"|readyState|target|Production|Aliased|rror' | head -8
   echo "$out" | grep -Eq '"readyState": *"READY"|Aliased +https|Production +https|"status": *"ok"' || { echo "vercel did not confirm a production deployment for $app:"; echo "$out" | tail -20; exit 1; }
 
