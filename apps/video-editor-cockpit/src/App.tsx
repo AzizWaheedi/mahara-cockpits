@@ -19,6 +19,8 @@ import JobPage from "./pages/JobPage";
 import JobsPage from "./pages/JobsPage";
 import MeetingsPage from "./pages/MeetingsPage";
 import PipelinePage from "./pages/PipelinePage";
+import ReviewPage from "./pages/ReviewPage";
+import SendReviewPage from "./pages/SendReviewPage";
 import SignInPage from "./pages/SignInPage";
 import SwipePage from "./pages/SwipePage";
 import VideosPage from "./pages/VideosPage";
@@ -76,6 +78,17 @@ function Shell() {
   );
 
   if (!ready) return null;
+  // A client holding a review link has no account and never will, so
+  // this route is answered before the sign-in gate. Matched loosely
+  // because the app is served under /editor/ in production and at the
+  // root in development, and a check for one breaks the other.
+  if (/(^|\/)review\/[^/]+$/.test(window.location.pathname))
+    return (
+      <Routes>
+        <Route path="/review/:token" element={<ReviewPage />} />
+      </Routes>
+    );
+
   if (!session)
     return (
       <>
@@ -204,6 +217,7 @@ function Shell() {
           <Route path="/swipe" element={<SwipePage />} />
           <Route path="/eod" element={<EodPage />} />
           <Route path="/job/:taskId" element={<JobPage />} />
+          <Route path="/send-review" element={<SendReviewPage />} />
           <Route
             path="*"
             element={

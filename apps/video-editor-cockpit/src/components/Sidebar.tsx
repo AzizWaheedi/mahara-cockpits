@@ -8,6 +8,7 @@ import {
   ListChecks,
   type LucideIcon,
   MoonStar,
+  Send,
   ShieldCheck,
   Trophy,
 } from "lucide-react";
@@ -45,6 +46,7 @@ const GROUPS: { label: string; items: Item[] }[] = [
     items: [
       { to: "/", label: "Jobs", icon: ListChecks, badge: "ready" },
       { to: "/pipeline", label: "Pipeline", icon: Clapperboard },
+      { to: "/send-review", label: "Send for review", icon: Send },
       {
         to: "/meetings",
         label: "Meetings",

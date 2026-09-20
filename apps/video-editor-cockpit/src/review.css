@@ -1,0 +1,288 @@
+/*
+ * The client review page.
+ *
+ * Scoped to `.screen` and loaded only by that route, so nothing here
+ * touches the cockpit's own styling. The palette is Mahara's public one
+ * -- Midnight, Pearl, Ocean -- because this is the only page in the
+ * repository a client ever sees, and the cockpit's internal teal is not
+ * the face the agency puts on a delivery.
+ */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=IBM+Plex+Sans+Arabic:wght@400;500;600&display=swap");
+
+.screen {
+  --midnight: #122c4f;
+  --ink: #0b1a30;      /* one step under Midnight, for the stage */
+  --pearl: #fbf9e4;
+  --ocean: #5b88b2;
+  --fade: #9cb1c7;
+
+  min-height: 100dvh;
+  background: var(--midnight);
+  color: var(--pearl);
+  font-family: Inter, "IBM Plex Sans Arabic", system-ui, sans-serif;
+  /* Arabic notes come back in the client's own script; Plex Arabic is
+     here for them rather than for decoration. */
+  font-feature-settings: "ss01";
+  display: flex;
+  flex-direction: column;
+}
+.screen:lang(ar),
+.screen [dir="rtl"] {
+  font-family: "IBM Plex Sans Arabic", Inter, sans-serif;
+}
+.screen.center {
+  align-items: center;
+  justify-content: center;
+}
+
+.bar {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 1.25rem 1.5rem;
+}
+.mark {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.count {
+  margin-left: auto;
+  color: var(--fade);
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The video is the page. It sits on a darker ground so the picture is
+   the brightest thing in the room, which is the whole idea. */
+.stage {
+  background: var(--ink);
+  display: flex;
+  justify-content: center;
+}
+.film {
+  width: 100%;
+  max-height: 72dvh;
+  max-width: 1200px;
+  display: block;
+  background: #000;
+}
+
+.below {
+  max-width: 1200px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 1.5rem;
+  display: grid;
+  gap: 1rem;
+}
+.titling {
+  display: grid;
+  gap: 0.25rem;
+}
+.title {
+  font-size: clamp(1.25rem, 1rem + 1.2vw, 1.75rem);
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  margin: 0;
+}
+.lede {
+  color: var(--fade);
+  margin: 0;
+  max-width: 62ch;
+  line-height: 1.55;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.625rem;
+}
+.btn {
+  font: inherit;
+  font-weight: 500;
+  border-radius: 999px;
+  padding: 0.75rem 1.5rem;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+.btn:focus-visible {
+  outline: 2px solid var(--pearl);
+  outline-offset: 3px;
+}
+.btn[disabled] {
+  opacity: 0.45;
+  cursor: default;
+}
+/* One filled button on the page. Approving is what usually happens and
+   the only thing that should look like the obvious move. */
+.solid {
+  background: var(--pearl);
+  color: var(--midnight);
+}
+.solid:hover:not([disabled]) {
+  background: #fff;
+}
+.quiet {
+  background: transparent;
+  color: var(--pearl);
+  border-color: color-mix(in srgb, var(--pearl) 35%, transparent);
+}
+.quiet:hover:not([disabled]) {
+  border-color: var(--pearl);
+}
+
+.ask {
+  display: grid;
+  gap: 0.625rem;
+  max-width: 44rem;
+}
+.askLabel {
+  color: var(--fade);
+  font-size: 0.875rem;
+}
+.ask textarea {
+  font: inherit;
+  width: 100%;
+  padding: 0.875rem 1rem;
+  border-radius: 0.875rem;
+  background: var(--ink);
+  color: var(--pearl);
+  border: 1px solid color-mix(in srgb, var(--pearl) 20%, transparent);
+  resize: vertical;
+  line-height: 1.55;
+}
+.ask textarea:focus-visible {
+  outline: none;
+  border-color: var(--ocean);
+}
+.ask textarea::placeholder {
+  color: color-mix(in srgb, var(--fade) 70%, transparent);
+}
+
+.verdict {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding-left: 0.875rem;
+  border-left: 2px solid var(--ocean);
+  color: var(--pearl);
+  max-width: 62ch;
+}
+.verdict.approved {
+  border-left-color: var(--ocean);
+}
+.verdict.changes {
+  border-left-color: var(--pearl);
+}
+.notes {
+  display: grid;
+  gap: 0.375rem;
+}
+.note {
+  color: var(--fade);
+  line-height: 1.55;
+}
+/* A timecode you can press: it is the fastest way back to the frame the
+   note is about, and the reason the note carries one. */
+.stamp {
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  color: var(--ocean);
+  background: none;
+  border: 0;
+  padding: 0 0.375rem 0 0;
+  cursor: pointer;
+}
+.stamp:hover {
+  color: var(--pearl);
+}
+
+/* The reel. Each frame carries its own decision, so the whole delivery
+   and how far through it they are is one glance, with no progress bar. */
+.reel {
+  display: flex;
+  gap: 0.75rem;
+  overflow-x: auto;
+  padding: 0.5rem 1.5rem 2rem;
+  max-width: 1200px;
+  width: 100%;
+  margin: 0 auto;
+  scrollbar-width: thin;
+  /* Centred when the reel fits, still scrollable from the start when it
+     does not -- which is what `safe` buys over plain `center`. */
+  justify-content: safe center;
+}
+.frame {
+  flex: 0 0 9.5rem;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  display: grid;
+  gap: 0.4rem;
+  opacity: 0.55;
+  transition: opacity 120ms ease;
+}
+.frame:hover,
+.frame.on {
+  opacity: 1;
+}
+.frame img,
+.frame .blank {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 0.5rem;
+  background: var(--ink);
+  display: block;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pearl) 12%, transparent);
+}
+.frame.on img,
+.frame.on .blank {
+  box-shadow: inset 0 0 0 2px var(--pearl);
+}
+.frame.approved img,
+.frame.approved .blank {
+  box-shadow: inset 0 0 0 2px var(--ocean);
+}
+.frame.changes img,
+.frame.changes .blank {
+  box-shadow: inset 0 0 0 2px var(--pearl);
+}
+.frameTitle {
+  font-size: 0.75rem;
+  color: var(--fade);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.frame.on .frameTitle {
+  color: var(--pearl);
+}
+
+.sheet {
+  max-width: 34rem;
+  padding: 3rem 1.5rem;
+  margin: 0 auto;
+  display: grid;
+  gap: 0.625rem;
+}
+.sheet.done {
+  text-align: center;
+}
+.display {
+  font-size: clamp(1.75rem, 1.2rem + 2.2vw, 2.5rem);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  margin: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .screen * {
+    transition: none !important;
+  }
+}
