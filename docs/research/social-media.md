@@ -176,7 +176,8 @@ Then every one of them was asked what it could do:
 | --- | --- |
 | tokens that reach the Social Planner | **42** |
 | tokens refused for a missing scope | **5** — AEA Designs, amheco, Grandiocity Projects, Inverse group, Pidco Group |
-| sub-accounts with a social account connected | **0 of 49**, Mahara's own two included |
+| sub-accounts **proven** to have none connected | **44**, Mahara's own two included |
+| sub-accounts that cannot be checked | **21** — 5 whose token lacks the scope, 16 with no token at all |
 
 The five say *"The token is not authorized for this scope"*, which is a
 different thing from the "Invalid JWT" the panel token gave and needs a
@@ -184,6 +185,29 @@ different fix: the token is real, it was just generated without the
 `socialplanner/*` boxes ticked. Regenerate it in that sub-account's
 settings. The cockpit now tells those two apart, because they need
 different people.
+
+### Is "zero accounts" a real answer?
+
+Worth testing rather than assuming, because a 200 with an empty list is
+exactly what a quietly-refused request would also look like. Controls run
+on 2026-09-20 with a token that answers:
+
+| | |
+| --- | --- |
+| its own location | **200**, `accounts: [], total: 0` |
+| a location that does not exist | **401** "This location is not accessible from this token!" |
+| another real client's location | **401**, the same |
+| `/tags` and `/categories` on its own location | **200 with data** |
+
+So an empty list is not a default and not a silent refusal: a token that
+cannot see a location is told so, and this one reads other Social Planner
+resources on the location it can see. `total: 0` means what it says.
+
+**But that only settles the 44 that answer.** The 5 whose token lacks the
+Social Planner scope and the 16 with no token are genuinely unknown -- one
+of them could have an Instagram connected and there is no way to find out
+without a working token for it. Regenerating those 5 in the GHL UI is the
+cheapest way to shrink the unknown.
 
 **Cloudflare's error 1010 is a bot rule, not a permission.** `/users` and
 `/locations` refuse a client with no browser signature and say "access
