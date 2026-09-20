@@ -1,0 +1,28 @@
+{
+  "name": "tap-payments-mcp",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP server for Tap Payments (Kuwait/GCC) — charges, refunds, customers, invoices. Built in-house after the mcpmarket.com/server/tap-payments listing failed vetting (0 GitHub stars, no visible source, unverified maintainer holding a live secret key).",
+  "main": "dist/index.js",
+  "bin": {
+    "tap-payments-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.5.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
