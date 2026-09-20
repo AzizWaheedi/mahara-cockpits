@@ -49,15 +49,13 @@ Two ways to run this, pick one per client (or mix):
 Aziz's decision on 2026-09-20: **one shared HTTP server on the VPS**, every
 LLM tool points at the same URL instead of each spawning a local process.
 
-**Known gap, found during deployment**: the VPS's inbound firewall only let
-1 of 59 external test checkpoints reach a known-open port (`:8080`, the
-existing dashboard) — same result for the newly bound `:8420`. This is a
-VPS/network-level restriction, not an app bug: binding `0.0.0.0` inside the
-container is not enough by itself. **A firewall rule opening the chosen
-port needs to be added on the VPS/hosting panel before any external
-client (off-box) can actually reach this server.** Anything running
-inside the same box (this Hermes instance, another local tool) can already
-reach it over `localhost` today, no waiting required.
+**Firewall route abandoned**: opening a Hostinger firewall port didn't work
+reliably (the firewall group attached per Hostinger's own API, but the
+port stayed unreachable from outside — never fully diagnosed, abandoned
+rather than debugged further) and Aziz decided he didn't want to keep
+fighting it. **The actual working solution is a Cloudflare Tunnel** — see
+"Public access without opening a firewall port" below. No inbound firewall
+rule needed anywhere.
 
 ## Setup
 
@@ -108,23 +106,72 @@ reference template for a real VPS/host that has both — it is **not** what
 actually keeps this instance up.
 
 What actually runs it here: a plain background process plus a cron-driven
-watchdog (`scripts/tap-payments-mcp-watchdog.sh` in Hermes's own
-`~/.hermes/scripts/`), firing every 2 minutes. It hits `/health`; if the
-server is down it starts it via `nohup` and confirms the restart actually
-worked before exiting quiet. Logs to `/opt/data/secrets/tap-payments-mcp.log`.
-Credentials (`TAP_SECRET_KEY_TEST`, `MCP_BEARER_TOKEN`, etc.) live in
+watchdog (`tap-payments-mcp-watchdog.sh`, a copy also lives in
+`deploy/` for reference — the live copy cron actually runs from is
+`/opt/data/scripts/tap-payments-mcp-watchdog.sh`, NOT
+`~/.hermes/scripts/`, which is where you'd naturally expect it but isn't
+where this Hermes's cron scheduler looks), firing every 2 minutes. It hits
+`/health`; if the server is down it starts it via `nohup` and confirms the
+restart actually worked before exiting quiet. The same watchdog also keeps
+a **Cloudflare quick tunnel** alive for public HTTPS access — see "Public
+access without opening a firewall port" below. Logs to
+`/opt/data/secrets/tap-payments-mcp.log`. Credentials
+(`TAP_SECRET_KEY_TEST`, `MCP_BEARER_TOKEN`, etc.) live in
 `/opt/data/secrets/tap-payments-mcp.env`, mode 600, outside the repo.
 
 If this ever moves to a real VPS with systemd, swap the watchdog for the
 `.service` file and drop the cron entry.
 
+## Public access without opening a firewall port
+
+A Hostinger firewall rule was tried first and abandoned — the firewall
+group attached per Hostinger's own API (`firewall_group_id` went from
+`null` to a real id), but the port stayed unreachable from outside
+(checked via multiple independent external TCP probes, several minutes
+apart, after the change). Never fully diagnosed; Aziz chose not to keep
+debugging it rather than spend more time there.
+
+**What actually works: a Cloudflare Tunnel.** It makes an *outbound*
+connection from this VPS to Cloudflare, so no inbound firewall rule is
+needed anywhere — Cloudflare relays the public traffic back down that
+outbound connection.
+
+```bash
+/opt/data/bin/cloudflared tunnel --url http://localhost:8420
+```
+
+This is an account-less "quick tunnel": Cloudflare hands back a random
+`https://<random-words>.trycloudflare.com` URL with zero setup. Verified
+live, end to end, over the real public internet — health check, 401 on
+missing/wrong auth, and a real `tap_retrieve_charge` call against a real
+Tap charge all confirmed working through it.
+
+**The real catch**: the quick-tunnel URL is not stable. Every time the
+tunnel process restarts (crash, VPS reboot), Cloudflare assigns a
+*different* random URL. The watchdog restarts the tunnel automatically and
+writes whatever the current URL is to
+`/opt/data/secrets/tap-mcp-public-url.txt` — but nothing pushes that new
+URL out to clients automatically. After any restart, re-read that file and
+update whichever LLM tool's MCP config points at the old URL.
+
+**For a URL that never changes**: switch to a *named* Cloudflare Tunnel —
+needs a one-time `cloudflared tunnel login` against a free Cloudflare
+account, then the tunnel gets a fixed hostname. Not set up; flagged here
+for whoever picks this up next if the random-URL churn becomes a real
+problem.
+
 ## Wiring an LLM tool into the shared server
+
+Use the **current Cloudflare tunnel URL**, not a raw VPS IP/port —
+`/opt/data/secrets/tap-mcp-public-url.txt` always has it, and it changes on
+tunnel restart (see "Public access without opening a firewall port"
+above).
 
 **Claude Code**, via a remote MCP config (check your Claude Code version's
 exact remote-server syntax — this is the general shape):
 ```bash
-claude mcp add tap-payments --url https://your-vps-host:8420/mcp \
-  --header "Authorization: Bearer <MCP_BEARER_TOKEN>"
+claude mcp add tap-payments --url https://<current-tunnel-url>/mcp \
+  --header "Authorization: Bearer <MCP_B...KEN>"
 ```
 
 **Any MCP client that supports remote/HTTP servers (generic config):**
@@ -132,7 +179,7 @@ claude mcp add tap-payments --url https://your-vps-host:8420/mcp \
 {
   "mcpServers": {
     "tap-payments": {
-      "url": "https://your-vps-host:8420/mcp",
+      "url": "https://<current-tunnel-url>/mcp",
       "headers": {
         "Authorization": "Bearer <MCP_BEARER_TOKEN>"
       }
@@ -141,9 +188,11 @@ claude mcp add tap-payments --url https://your-vps-host:8420/mcp \
 }
 ```
 
-Put the real VPS host and the real bearer token in place of the
+Put the real tunnel URL and the real bearer token in place of the
 placeholders. Anyone with the URL and the token can call these tools —
 treat `MCP_BEARER_TOKEN` with the same care as the Tap secret key itself.
+If the tunnel restarts and the URL changes, every client configured this
+way needs its config updated to the new URL.
 
 ### Running a local stdio copy instead (per client, no shared server)
 
