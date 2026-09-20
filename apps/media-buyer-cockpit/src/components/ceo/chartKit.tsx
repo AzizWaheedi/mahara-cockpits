@@ -1,5 +1,5 @@
 import { ChartColumn, ChartLine, Table2 } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { isNum } from "./format";
 
@@ -41,6 +41,151 @@ export function isEmptyChart(data: ChartRow[], series: ChartSeries[]): boolean {
 
 export const AXIS_TICK = { fill: "var(--muted-foreground)", fontSize: 11 };
 
+// --- Timeframe -------------------------------------------------------------
+//
+// Every chart carries its own timeframe, chosen from the same short list, so
+// a graph can be read over a week or a year without the page changing. The
+// rows arrive oldest first; the control keeps the ones inside the range.
+
+export type RangeKey = "7d" | "30d" | "90d" | "6m" | "12m" | "all" | "custom";
+export type CustomRange = { from: string; to: string };
+export const RANGE_OPTIONS: { key: RangeKey; label: string }[] = [
+  { key: "7d", label: "7 days" },
+  { key: "30d", label: "30 days" },
+  { key: "90d", label: "90 days" },
+  { key: "6m", label: "6 months" },
+  { key: "12m", label: "12 months" },
+  { key: "all", label: "Everything" },
+  { key: "custom", label: "Pick dates" },
+];
+
+const isMonth = (x: string) => /^\d{4}-\d{2}$/.test(x);
+
+function shiftDays(day: string, n: number): string {
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
+function shiftMonths(month: string, n: number): string {
+  const [y, m] = month.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1 + n, 1)).toISOString().slice(0, 7);
+}
+
+/** The first x kept for a preset, given the newest x in the data. */
+function rangeStart(key: RangeKey, last: string): string | null {
+  if (key === "all" || key === "custom") return null;
+  if (isMonth(last)) {
+    const months = { "7d": 1, "30d": 1, "90d": 3, "6m": 6, "12m": 12 }[key];
+    return shiftMonths(last, -(months - 1));
+  }
+  if (key === "6m" || key === "12m") {
+    const back = shiftMonths(last.slice(0, 7), key === "6m" ? -6 : -12);
+    return shiftDays(`${back}-${last.slice(8, 10)}`, 1);
+  }
+  const days = { "7d": 7, "30d": 30, "90d": 90 }[key];
+  return shiftDays(last, -(days - 1));
+}
+
+/** The rows inside the range, oldest first. */
+export function filterRange(
+  data: ChartRow[],
+  x: string,
+  range: RangeKey,
+  custom: CustomRange,
+): ChartRow[] {
+  if (!data.length) return data;
+  const last = String(data[data.length - 1][x] ?? "");
+  if (range === "custom") {
+    const grain = isMonth(last) ? 7 : 10;
+    const from = custom.from.slice(0, grain);
+    const to = custom.to.slice(0, grain);
+    return data.filter(r => {
+      const v = String(r[x] ?? "");
+      return (!from || v >= from) && (!to || v <= to);
+    });
+  }
+  const start = rangeStart(range, last);
+  return start ? data.filter(r => String(r[x] ?? "") >= start) : data;
+}
+
+/** Range state for one chart: the choice, the custom dates, and the rows that survive. */
+export function useChartRange(
+  data: ChartRow[],
+  x: string,
+  initial: RangeKey = "all",
+) {
+  const [range, setRange] = useState<RangeKey>(initial);
+  const [custom, setCustom] = useState<CustomRange>({ from: "", to: "" });
+  const rows = useMemo(
+    () => filterRange(data, x, range, custom),
+    [data, x, range, custom],
+  );
+  const first = data.length ? String(data[0][x] ?? "") : null;
+  const last = data.length ? String(data[data.length - 1][x] ?? "") : null;
+  return { range, setRange, custom, setCustom, rows, first, last };
+}
+
+const control =
+  "h-7 rounded-md border bg-card px-1.5 text-xs text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+
+/** The timeframe select, and the two dates when "Pick dates" is chosen. */
+export function RangeControl({
+  range,
+  onRange,
+  custom,
+  onCustom,
+  first,
+  last,
+}: {
+  range: RangeKey;
+  onRange: (r: RangeKey) => void;
+  custom: CustomRange;
+  onCustom: (c: CustomRange) => void;
+  first: string | null;
+  last: string | null;
+}) {
+  const monthly = last !== null && isMonth(last);
+  const min = first ? (monthly ? `${first}-01` : first) : undefined;
+  const max = last ? (monthly ? `${last}-28` : last) : undefined;
+  return (
+    <span className="flex flex-wrap items-center gap-1.5">
+      <select
+        value={range}
+        onChange={e => onRange(e.target.value as RangeKey)}
+        aria-label="Timeframe"
+        className={control}
+      >
+        {RANGE_OPTIONS.map(o => (
+          <option key={o.key} value={o.key}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+      {range === "custom" ? (
+        <>
+          <input
+            type="date"
+            value={custom.from}
+            min={min}
+            max={max}
+            onChange={e => onCustom({ ...custom, from: e.target.value })}
+            aria-label="From"
+            className={control}
+          />
+          <input
+            type="date"
+            value={custom.to}
+            min={min}
+            max={max}
+            onChange={e => onCustom({ ...custom, to: e.target.value })}
+            aria-label="To"
+            className={control}
+          />
+        </>
+      ) : null}
+    </span>
+  );
+}
+
 /** Title or legend on the left, the chart and table switch on the right. */
 export function ChartHeader({
   title,
@@ -50,6 +195,7 @@ export function ChartHeader({
   mark,
   view,
   onView,
+  range,
 }: {
   title?: string;
   summary?: ReactNode;
@@ -58,6 +204,8 @@ export function ChartHeader({
   mark: "line" | "rect";
   view: "chart" | "table";
   onView: (v: "chart" | "table") => void;
+  /** The timeframe control, drawn beside the chart and table switch. */
+  range?: ReactNode;
 }) {
   const showLegend = series.length > 1;
   return (
@@ -92,7 +240,10 @@ export function ChartHeader({
           </ul>
         ) : null}
       </div>
-      <ViewToggle view={view} onView={onView} mark={mark} />
+      <span className="flex flex-wrap items-center gap-2">
+        {range}
+        <ViewToggle view={view} onView={onView} mark={mark} />
+      </span>
     </div>
   );
 }

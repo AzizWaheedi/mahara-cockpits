@@ -61,7 +61,15 @@ def publish_youtube(cfg: Config, log: Callable[[str], None], store: PostStore, p
     store.patch_post(pid, {"status": "publishing"})
     privacy = str(params.get("privacy") or "public")
     title = str(post.get("yt_title") or post.get("title_working") or "").strip() or "Untitled"
-    vid = youtube.upload(video, title=title, description=str(post.get("yt_description") or ""), tags=list(post.get("yt_tags") or []), privacy=privacy, language=str(post.get("language") or "ar")[:2] or "ar")
+    description = str(post.get("yt_description") or "")
+    if str(post.get("kind") or "reel") == "reel":
+        # YouTube files a vertical clip under three minutes as a Short on its
+        # own; the tag makes the intent plain and keeps it out of the long-form feed.
+        if "#shorts" not in title.lower() and len(title) <= 92:
+            title = f"{title} #Shorts"
+        if "#shorts" not in description.lower():
+            description = f"{description}\n\n#Shorts".strip()
+    vid = youtube.upload(video, title=title, description=description, tags=list(post.get("yt_tags") or []), privacy=privacy, language=str(post.get("language") or "ar")[:2] or "ar")
     log(f"post {pid}: uploaded to YouTube as {vid} ({privacy})")
     thumb_ok = False
     if post.get("thumb_path"):

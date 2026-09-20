@@ -3,6 +3,11 @@ import { internal } from "../_generated/api";
 import { internalAction, internalQuery } from "../_generated/server";
 import { authenticatedAction } from "../functions";
 import { googleDirectoryToken } from "../tools";
+import {
+  COMMISSION_BASES,
+  type CommissionBasis,
+  SHARE_BASES,
+} from "./commission";
 import { USD_PER } from "./data/tap";
 import { isCeoEmail } from "./gate";
 
@@ -80,6 +85,9 @@ export type Person = {
   currency: string;
   /** monthlyCost in USD at the fixed table, or null when no cost is set. */
   monthlyUsd: number | null;
+  /** What the commission is paid on, and the rate: a fraction for the share bases, an amount in `currency` per unit otherwise. */
+  commission: { basis: CommissionBasis; rate: number | null };
+  /** The share for the share bases, kept for older readers; null for the rest. */
   commissionPct: number | null;
   commissionNote: string | null;
   isSales: boolean;
@@ -119,6 +127,17 @@ function shape(r: Row): Person {
     currency,
     monthlyUsd:
       cost === null || rate === undefined ? null : round2(cost * rate),
+    commission: {
+      basis: (COMMISSION_BASES as readonly string[]).includes(
+        String(r.commission_basis ?? ""),
+      )
+        ? (String(r.commission_basis) as CommissionBasis)
+        : "none",
+      rate:
+        r.commission_rate === null || r.commission_rate === undefined
+          ? null
+          : Number(r.commission_rate),
+    },
     commissionPct:
       r.commission_pct === null || r.commission_pct === undefined
         ? null
@@ -199,7 +218,13 @@ export const save = authenticatedAction({
     ),
     monthlyCost: v.optional(v.number()),
     currency: v.optional(v.string()),
+    /** The old form: a share of what they close. Ignored when commissionBasis is given. */
     commissionPct: v.optional(v.number()),
+    commissionBasis: v.optional(
+      v.union(...COMMISSION_BASES.map(b => v.literal(b))),
+    ),
+    /** A fraction for the share bases, an amount in the person's currency otherwise. */
+    commissionRate: v.optional(v.number()),
     commissionNote: v.optional(v.string()),
     isSales: v.optional(v.boolean()),
     startedOn: v.optional(v.string()),
@@ -219,6 +244,21 @@ export const save = authenticatedAction({
       (a.commissionPct < 0 || a.commissionPct > 1)
     )
       throw new Error("Commission is a share between 0 and 1, so 0.1 is 10%.");
+    // The rule: what it is paid on, then the rate in the unit that basis takes.
+    const basis: CommissionBasis =
+      a.commissionBasis ??
+      (a.commissionPct !== undefined && a.commissionPct !== null
+        ? "closed_cash"
+        : "none");
+    const rate =
+      basis === "none"
+        ? null
+        : (a.commissionRate ??
+          (a.commissionBasis === undefined ? (a.commissionPct ?? null) : null));
+    if (rate !== null && rate < 0)
+      throw new Error("A commission rate cannot be below zero.");
+    if (SHARE_BASES.has(basis) && rate !== null && rate > 1)
+      throw new Error("A share is between 0 and 1, so 0.1 is 10%.");
     if (a.startedOn && !/^\d{4}-\d{2}-\d{2}$/.test(a.startedOn))
       throw new Error("A start date looks like 2026-09-19.");
 
@@ -229,7 +269,10 @@ export const save = authenticatedAction({
       engagement: a.engagement,
       monthly_cost: a.monthlyCost ?? null,
       currency: (a.currency ?? "USD").toUpperCase(),
-      commission_pct: a.commissionPct ?? null,
+      commission_basis: basis,
+      commission_rate: rate,
+      // Mirrored for anything that still reads the percent.
+      commission_pct: SHARE_BASES.has(basis) ? rate : null,
       commission_note: a.commissionNote?.trim().slice(0, 500) || null,
       is_sales: a.isSales ?? false,
       started_on: a.startedOn || null,

@@ -605,6 +605,7 @@ function DailyBody({
     <div className="grid gap-x-8 gap-y-8 sm:grid-cols-2 xl:grid-cols-3">
       {DAILY_SERIES.map(s => (
         <TimeSeriesChart
+          initialRange="90d"
           key={s.key}
           data={days}
           series={[{ key: s.key, label: s.title }]}

@@ -33,10 +33,32 @@ SCHEMA: dict[str, Any] = {
         "ig_caption": {"type": "string"},
         "ig_hashtags": {"type": "array", "items": {"type": "string"}},
         "thumb_text_options": {"type": "array", "items": {"type": "string"}},
+        "cover_lines": {"type": "array", "items": {"type": "string"}},
         "notes": {"type": "string"},
     },
     "required": ["language", "yt_title_options", "yt_description", "chapters", "yt_tags", "ig_caption", "ig_hashtags", "thumb_text_options"],
 }
+
+# An image post has no transcript: the caption is written from Aziz's brief.
+POST_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "language": {"type": "string"},
+        "ig_caption": {"type": "string"},
+        "ig_hashtags": {"type": "array", "items": {"type": "string"}},
+        "notes": {"type": "string"},
+    },
+    "required": ["language", "ig_caption", "ig_hashtags"],
+}
+
+
+def kind_of(post: dict[str, Any], duration: float = 0.0) -> str:
+    """reel, video or post. A video kind is what the row says; an unmarked
+    long clip counts as a video."""
+    k = str(post.get("kind") or "").strip()
+    if k in ("reel", "video", "post"):
+        return k
+    return "video" if duration >= 180 else "reel"
 
 
 def voice_rules() -> str:
@@ -87,30 +109,55 @@ def outlier_lines(outliers: list[dict[str, Any]]) -> str:
     return "\n".join(out)
 
 
+INTRO = "You write the packaging for Aziz Waheedi's own channels: YouTube @maharamedia (Arabic, Kuwaiti, business and marketing for founders in the Gulf) and Instagram @mahara_media. Aziz founded Mahara Media, the Kuwait agency that gets construction, design and fit-out companies their big projects."
+
+
 def prompt_for(post: dict[str, Any], transcript: dict[str, Any], info: dict[str, Any], outliers: list[dict[str, Any]]) -> str:
     duration = float(info.get("duration_sec") or 0)
-    kind = "a long-form YouTube video" if duration >= 180 or post.get("kind") == "video" else "a short vertical reel"
+    kind = kind_of(post, duration)
     working = str(post.get("title_working") or "").strip()
     lang = str(transcript.get("language") or "").lower()
     arabic = lang.startswith("ar") or not lang
-    parts = [
-        "You write the packaging for Aziz Waheedi's own channels: YouTube @maharamedia (Arabic, Kuwaiti, business and marketing for founders in the Gulf) and Instagram @mahara_media. Aziz founded Mahara Media, the Kuwait agency that gets construction, design and fit-out companies their big projects.",
-        f"The video is {kind}, {mmss(duration)} long." + (f' Aziz\'s working title for it: "{working}".' if working else ""),
-        f"Write everything in {'spoken Kuwaiti Arabic, exactly per the voice rules below' if arabic else 'plain English, in the same tone the voice rules describe'}. The transcript below is the only source of what the video says; never add claims it does not make.",
-        "",
-        "What to return (JSON per the schema):",
-        "- yt_title_options: three YouTube titles with different angles (the outcome, the question, the contrarian take). Under 60 characters each, specific, no lies. Arabic-Indic numerals inside Arabic.",
-        "- thumb_text_options: three thumbnail lines of two to five words, the emotional core of the video, not the title repeated. They are set in bold black on a cream block over a frame of Aziz's face.",
-        "- yt_description: the first two lines are the hook and stand alone (they show before 'more'); then three to five short lines on what the video covers, with the words people would search for used naturally; then one call to action" + (f" (for Mahara and client-facing content: {FUNNEL}; for personal-brand content: subscribe and the next video)" ) + "; then, only if the video is two minutes or longer, a 'Chapters' block as lines of `MM:SS title`, first one at 00:00; then five to eight hashtags on the last line.",
-        "- chapters: the same chapters as objects {at_sec, title}, taken from where the transcript actually changes subject; empty for a video under two minutes.",
-        "- yt_tags: ten to fifteen search tags, a mix of Arabic and English, no hashes.",
-        "- ig_caption: the first line is the hook and fits before the fold (under 125 characters); then three to six short lines; then one call to action. No hashtags in the caption itself.",
-        "- ig_hashtags: eight to twelve hashtags with the # sign, mixing Arabic and English, specific to the topic and the audience.",
-        "- language: the language you wrote in (ar or en).",
-        "- notes: one line for Aziz on the angle you chose and why.",
-        "",
-        "Proof and numbers: only the approved figures in the voice rules; anything else gets a bracketed placeholder rather than a guess.",
-    ]
+    voice = f"Write everything in {'spoken Kuwaiti Arabic, exactly per the voice rules below' if arabic else 'plain English, in the same tone the voice rules describe'}. The transcript below is the only source of what the video says; never add claims it does not make."
+    if kind == "reel":
+        parts = [
+            INTRO,
+            f"The video is a short vertical reel, {mmss(duration)} long, for Instagram Reels and YouTube Shorts." + (f' Aziz\'s working title for it: "{working}".' if working else ""),
+            voice,
+            "",
+            "What to return (JSON per the schema):",
+            "- cover_lines: the two lines of the cover, at the top of the frame over Aziz's face: the first is the setup in two to four words (it is set bold white), the second is the punch in two to four words (it is set in glowing teal). Together they make someone stop scrolling; they are not the title repeated.",
+            "- thumb_text_options: three alternative covers, each written as one string `setup | punch`.",
+            "- ig_caption: the first line is the hook and fits before the fold (under 125 characters); then two to five short lines; then one call to action. No hashtags in the caption itself.",
+            "- ig_hashtags: eight to twelve hashtags with the # sign, mixing Arabic and English, specific to the topic and the audience.",
+            "- yt_title_options: three titles for the Short, under 60 characters each, specific, no lies. Arabic-Indic numerals inside Arabic.",
+            "- yt_description: two to four short lines that say what the Short is about, then a call to action, then three to five hashtags on the last line including #Shorts.",
+            "- yt_tags: eight to twelve search tags, a mix of Arabic and English, no hashes.",
+            "- chapters: an empty list. A Short has no chapters.",
+            "- language: the language you wrote in (ar or en).",
+            "- notes: one line for Aziz on the angle you chose and why.",
+            "",
+            "Proof and numbers: only the approved figures in the voice rules; anything else gets a bracketed placeholder rather than a guess.",
+        ]
+    else:
+        parts = [
+            INTRO,
+            f"The video is a long-form YouTube video, {mmss(duration)} long." + (f' Aziz\'s working title for it: "{working}".' if working else ""),
+            voice,
+            "",
+            "What to return (JSON per the schema):",
+            "- yt_title_options: three YouTube titles with different angles (the outcome, the question, the contrarian take). Under 60 characters each, specific, no lies. Arabic-Indic numerals inside Arabic.",
+            "- thumb_text_options: three thumbnail lines of two to five words, the emotional core of the video, not the title repeated. They are set in bold black on a cream block over a frame of Aziz's face.",
+            "- yt_description: the first two lines are the hook and stand alone (they show before 'more'); then three to five short lines on what the video covers, with the words people would search for used naturally; then one call to action" + (f" (for Mahara and client-facing content: {FUNNEL}; for personal-brand content: subscribe and the next video)") + "; then, only if the video is two minutes or longer, a 'Chapters' block as lines of `MM:SS title`, first one at 00:00; then five to eight hashtags on the last line.",
+            "- chapters: the same chapters as objects {at_sec, title}, taken from where the transcript actually changes subject; empty for a video under two minutes.",
+            "- yt_tags: ten to fifteen search tags, a mix of Arabic and English, no hashes.",
+            "- ig_caption: in case the video is also shared on Instagram: the first line is the hook and fits before the fold (under 125 characters); then three to six short lines; then one call to action. No hashtags in the caption itself.",
+            "- ig_hashtags: eight to twelve hashtags with the # sign, mixing Arabic and English, specific to the topic and the audience.",
+            "- language: the language you wrote in (ar or en).",
+            "- notes: one line for Aziz on the angle you chose and why.",
+            "",
+            "Proof and numbers: only the approved figures in the voice rules; anything else gets a bracketed placeholder rather than a guess.",
+        ]
     if outliers:
         parts += ["", "What is winning on YouTube right now for the accounts Mahara learns from, as inspiration for the angle (never copy a title):", outlier_lines(outliers)]
     rules = voice_rules()
@@ -164,13 +211,37 @@ def _strs(v: Any, *, limit: int, each: int) -> list[str]:
     return out[:limit]
 
 
-def normalise(result: dict[str, Any], duration: float) -> dict[str, Any]:
+def _cover_pair(text: str) -> Optional[str]:
+    """`setup | punch`, each side one to five words, or None."""
+    parts = [re.sub(r"\s+", " ", p).strip() for p in str(text or "").split("|")]
+    parts = [p for p in parts if p]
+    if not parts:
+        return None
+    if len(parts) == 1:
+        parts = [" ".join(parts[0].split()[: max(1, (len(parts[0].split()) + 1) // 2)]), " ".join(parts[0].split()[max(1, (len(parts[0].split()) + 1) // 2):])]
+        parts = [p for p in parts if p]
+    parts = parts[:2]
+    if any(len(p.split()) > 5 or len(p) > 34 for p in parts):
+        return None
+    return " | ".join(parts)
+
+
+def normalise(result: dict[str, Any], duration: float, kind: str = "video") -> dict[str, Any]:
     """Only well-formed fields reach the row; the model's slips do not become the post."""
     r = result if isinstance(result, dict) else {}
     titles = _strs(r.get("yt_title_options"), limit=3, each=100)
-    thumbs = [t for t in _strs(r.get("thumb_text_options"), limit=3, each=48) if 1 <= len(t.split()) <= 6]
+    if kind == "reel":
+        # A reel's line is a pair, setup | punch; the model's cover_lines lead.
+        pairs: list[str] = []
+        lead = _cover_pair(" | ".join(_strs(r.get("cover_lines"), limit=2, each=40)))
+        for cand in [lead] + [_cover_pair(t) for t in _strs(r.get("thumb_text_options"), limit=4, each=80)]:
+            if cand and cand not in pairs:
+                pairs.append(cand)
+        thumbs = pairs[:3]
+    else:
+        thumbs = [t for t in _strs(r.get("thumb_text_options"), limit=3, each=48) if 1 <= len(t.split()) <= 6]
     chapters: list[dict[str, Any]] = []
-    if duration >= 120:
+    if duration >= 120 and kind == "video":
         seen: set[int] = set()
         for c in r.get("chapters") if isinstance(r.get("chapters"), list) else []:
             if not isinstance(c, dict):
@@ -215,6 +286,62 @@ def normalise(result: dict[str, Any], duration: float) -> dict[str, Any]:
 
 
 def compose(cfg: Config, log: Callable[[str], None], post: dict[str, Any], transcript: dict[str, Any], info: dict[str, Any], outliers: list[dict[str, Any]]) -> tuple[dict[str, Any], str]:
+    duration = float(info.get("duration_sec") or 0)
     prompt = prompt_for(post, transcript, info, outliers)
     raw, method = model_json(cfg, prompt, SCHEMA, log)
-    return normalise(raw, float(info.get("duration_sec") or 0)), method
+    return normalise(raw, duration, kind_of(post, duration)), method
+
+
+def post_prompt(post: dict[str, Any]) -> str:
+    """The caption for an image post, from Aziz's brief."""
+    brief = str(post.get("brief") or "").strip()
+    working = str(post.get("title_working") or "").strip()
+    images = post.get("images") if isinstance(post.get("images"), list) else []
+    arabic = is_arabic_text(brief or working)
+    parts = [
+        INTRO,
+        f"This is an Instagram post of {len(images) or 1} image{'s' if (len(images) or 1) != 1 else ''}" + (f' titled "{working}"' if working else "") + ". Aziz's brief, in his words, is the only source of what it says:",
+        brief or "(no brief; write from the title alone and say so in notes)",
+        "",
+        f"Write in {'spoken Kuwaiti Arabic, exactly per the voice rules below' if arabic else 'plain English, in the same tone the voice rules describe'}. Never add claims the brief does not make.",
+        "",
+        "What to return (JSON per the schema):",
+        "- ig_caption: the first line is the hook and fits before the fold (under 125 characters); then two to six short lines; then one call to action. No hashtags in the caption itself.",
+        "- ig_hashtags: eight to twelve hashtags with the # sign, mixing Arabic and English, specific to the topic and the audience.",
+        "- language: the language you wrote in (ar or en).",
+        "- notes: one line for Aziz on the angle you chose and why.",
+        "",
+        "Proof and numbers: only the approved figures in the voice rules; anything else gets a bracketed placeholder rather than a guess.",
+    ]
+    rules = voice_rules()
+    if rules:
+        parts += ["", "=== Aziz's voice rules (follow every one that applies) ===", rules]
+    return "\n".join(parts)
+
+
+_ARABIC_RE = re.compile(r"[\u0600-\u06FF]")
+
+
+def is_arabic_text(text: str) -> bool:
+    return bool(_ARABIC_RE.search(text or ""))
+
+
+def normalise_post(result: dict[str, Any]) -> dict[str, Any]:
+    r = result if isinstance(result, dict) else {}
+    hashtags: list[str] = []
+    for h in _strs(r.get("ig_hashtags"), limit=12, each=40):
+        h = "#" + re.sub(r"[^\w؀-ۿ]", "", h.lstrip("#"))
+        if len(h) > 1 and h not in hashtags:
+            hashtags.append(h)
+    lang = str(r.get("language") or "").strip().lower()[:5] or None
+    return {
+        "language": lang,
+        "ig_caption": str(r.get("ig_caption") or "").strip()[:2200] or None,
+        "ig_hashtags": hashtags,
+        "notes": str(r.get("notes") or "").strip()[:400] or None,
+    }
+
+
+def compose_post(cfg: Config, log: Callable[[str], None], post: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    raw, method = model_json(cfg, post_prompt(post), POST_SCHEMA, log)
+    return normalise_post(raw), method

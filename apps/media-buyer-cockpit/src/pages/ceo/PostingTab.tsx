@@ -114,6 +114,85 @@ const label =
   "text-[11px] font-bold uppercase tracking-wide text-muted-foreground";
 
 /** The thumbnail as the worker will draw it, near enough to decide on. */
+/**
+ * A CSS sketch of the cover the worker renders: navy with a faint grid and a
+ * teal glow, the frame fading in below, the two lines at the top, white then
+ * teal. The rendered file beside it is the truth; this only shows the words
+ * in place while they are being changed.
+ */
+function CoverPreview({
+  frameUrl,
+  text,
+}: {
+  frameUrl: string | null | undefined;
+  text: string;
+}) {
+  const parts = text.includes("|")
+    ? text
+        .split("|")
+        .map(t => t.trim())
+        .filter(Boolean)
+        .slice(0, 2)
+    : (() => {
+        const words = text.trim().split(/\s+/).filter(Boolean);
+        if (words.length < 2) return words.length ? [words.join(" ")] : [];
+        const k = Math.ceil(words.length / 2);
+        return [words.slice(0, k).join(" "), words.slice(k).join(" ")];
+      })();
+  const size = text.length > 26 ? "text-[13px]" : "text-base";
+  return (
+    <div
+      className="relative mx-auto aspect-[9/16] h-96 overflow-hidden rounded-md"
+      style={{
+        background:
+          "radial-gradient(ellipse 60% 30% at 50% 62%, rgba(46,211,208,0.32), transparent 70%), linear-gradient(#0a1730, #10264a 60%)",
+      }}
+      dir={isArabic(text) ? "rtl" : "ltr"}
+    >
+      <div
+        aria-hidden
+        className="absolute inset-0 opacity-25"
+        style={{
+          backgroundImage:
+            "linear-gradient(rgba(42,79,130,0.9) 1px, transparent 1px), linear-gradient(90deg, rgba(42,79,130,0.9) 1px, transparent 1px)",
+          backgroundSize: "10% 10%",
+        }}
+      />
+      {frameUrl ? (
+        <img
+          src={frameUrl}
+          alt=""
+          className="absolute inset-x-0 bottom-0 h-[75%] w-full object-cover object-[50%_18%]"
+          style={{
+            maskImage:
+              "linear-gradient(to bottom, transparent, black 22%), linear-gradient(to right, transparent, black 12%, black 88%, transparent)",
+            maskComposite: "intersect",
+            WebkitMaskImage:
+              "linear-gradient(to bottom, transparent, black 22%), linear-gradient(to right, transparent, black 12%, black 88%, transparent)",
+            WebkitMaskComposite: "source-in",
+          }}
+        />
+      ) : null}
+      <div
+        className={`absolute inset-x-2 top-[6%] grid gap-0.5 text-center font-bold leading-tight ${size}`}
+      >
+        {parts.map((line, i) => (
+          <span
+            key={`${i}-${line}`}
+            className={
+              i === 0
+                ? "text-white [text-shadow:0_2px_6px_rgba(0,0,0,0.6)]"
+                : "text-[#2ED3D0] [text-shadow:0_0_14px_rgba(46,211,208,0.85)]"
+            }
+          >
+            {line}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ThumbPreview({ frameUrl, text }: { frameUrl?: string; text: string }) {
   const rtl = isArabic(text);
   return (
@@ -224,21 +303,82 @@ function Doors({
   );
 }
 
+type Kind = Post["kind"];
+
+/** Three jobs, three flows. The order is the order Aziz posts in. */
+const KINDS: { key: Kind; label: string; what: string }[] = [
+  {
+    key: "reel",
+    label: "Reel",
+    what: "A vertical clip. Cover, caption, Instagram and YouTube Shorts.",
+  },
+  {
+    key: "video",
+    label: "Long video",
+    what: "YouTube. Title, description with chapters, tags, thumbnail.",
+  },
+  {
+    key: "post",
+    label: "Post",
+    what: "One to ten images with a caption, on Instagram.",
+  },
+];
+const KIND_LABEL: Record<Kind, string> = {
+  reel: "reel",
+  video: "long video",
+  post: "post",
+};
+const DEFAULT_TARGETS: Record<Kind, string[]> = {
+  reel: ["instagram", "youtube"],
+  video: ["youtube"],
+  post: ["instagram"],
+};
+/** Where each kind can go from here. */
+const TARGET_CHOICES: Record<Kind, string[]> = {
+  reel: ["instagram", "youtube"],
+  video: ["youtube", "instagram"],
+  post: ["instagram"],
+};
+const targetLabel = (kind: Kind, t: string) =>
+  kind === "reel" && t === "youtube"
+    ? "YouTube Shorts"
+    : (PLATFORM_LABEL[t] ?? t);
+
+/** What "publish" means for this kind and these targets, as one sentence. */
+function publishSentence(kind: Kind, targets: string[]): string {
+  const parts: string[] = [];
+  if (targets.includes("instagram"))
+    parts.push(
+      kind === "post"
+        ? "the post on Instagram now"
+        : "the reel on Instagram now",
+    );
+  if (targets.includes("youtube"))
+    parts.push(
+      kind === "reel"
+        ? "the Short on YouTube as public"
+        : "the video on YouTube as public",
+    );
+  return `This publishes ${parts.join(" and ")}. Sure?`;
+}
+
 function NewPost({ onCreated }: { onCreated: (p: Post) => void }) {
   const uploadUrl = useAction(api.ceo.posting.uploadUrl);
   const create = useAction(api.ceo.posting.create);
-  const [kind, setKind] = useState<"reel" | "video">("reel");
+  const [kind, setKind] = useState<Kind>("reel");
   const [source, setSource] = useState<"upload" | "drive" | "url">("upload");
   const [file, setFile] = useState<File | null>(null);
+  const [images, setImages] = useState<File[]>([]);
+  const [brief, setBrief] = useState("");
   const [ref, setRef] = useState("");
   const [title, setTitle] = useState("");
-  const [targets, setTargets] = useState<string[]>(["instagram", "youtube"]);
+  const [targets, setTargets] = useState<string[]>(DEFAULT_TARGETS.reel);
   const [progress, setProgress] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
   useEffect(() => {
-    setTargets(kind === "video" ? ["youtube"] : ["instagram", "youtube"]);
+    setTargets(DEFAULT_TARGETS[kind]);
   }, [kind]);
 
   const toggle = (t: string) =>
@@ -248,29 +388,59 @@ function NewPost({ onCreated }: { onCreated: (p: Post) => void }) {
     setBusy(true);
     setMsg(null);
     try {
-      let sourceKind = source;
-      let sourceRef = ref.trim();
-      if (source === "upload") {
-        if (!file) throw new Error("Choose a video file first.");
-        const { path, url } = await uploadUrl({ filename: file.name });
+      let p: Post;
+      if (kind === "post") {
+        if (!images.length) throw new Error("Choose one to ten images first.");
+        if (images.length > 10) throw new Error("Ten images at most.");
+        if (brief.trim().length < 4)
+          throw new Error("Say what the post is about, in a line or two.");
+        const paths: string[] = [];
         setProgress(0);
-        await putWithProgress(url, file, setProgress);
-        sourceKind = "upload";
-        sourceRef = path;
+        for (const [i, img] of images.entries()) {
+          const { path, url } = await uploadUrl({ filename: img.name });
+          await putWithProgress(url, img, done =>
+            setProgress((i + done) / images.length),
+          );
+          paths.push(path);
+        }
+        p = await create({
+          kind,
+          sourceKind: "image",
+          sourceRef: paths[0],
+          images: paths,
+          brief: brief.trim(),
+          titleWorking: title.trim() || undefined,
+          targets: ["instagram"],
+        });
+      } else {
+        let sourceKind = source;
+        let sourceRef = ref.trim();
+        if (source === "upload") {
+          if (!file) throw new Error("Choose a video file first.");
+          const { path, url } = await uploadUrl({ filename: file.name });
+          setProgress(0);
+          await putWithProgress(url, file, setProgress);
+          sourceKind = "upload";
+          sourceRef = path;
+        }
+        p = await create({
+          kind,
+          sourceKind,
+          sourceRef,
+          titleWorking: title.trim() || undefined,
+          targets,
+        });
       }
-      const p = await create({
-        kind,
-        sourceKind,
-        sourceRef,
-        titleWorking: title.trim() || undefined,
-        targets,
-      });
       setFile(null);
+      setImages([]);
+      setBrief("");
       setRef("");
       setTitle("");
       setProgress(null);
       setMsg(
-        "Queued. The desk fetches it, listens, writes and renders within a few minutes.",
+        kind === "post"
+          ? "Queued. The desk writes the caption within a minute or two."
+          : "Queued. The desk fetches it, listens, writes and renders within a few minutes.",
       );
       onCreated(p);
     } catch (e) {
@@ -284,27 +454,59 @@ function NewPost({ onCreated }: { onCreated: (p: Post) => void }) {
   const canSubmit =
     !busy &&
     targets.length > 0 &&
-    (source === "upload" ? Boolean(file) : ref.trim().length > 8);
+    (kind === "post"
+      ? images.length > 0 && images.length <= 10 && brief.trim().length >= 4
+      : source === "upload"
+        ? Boolean(file)
+        : ref.trim().length > 8);
+  const chosen = KINDS.find(k => k.key === kind) ?? KINDS[0];
 
   return (
     <div className="grid gap-3 rounded-md border p-4">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm font-medium">New post</span>
-        <div className="ml-auto flex gap-1">
-          {(["reel", "video"] as const).map(k => (
+        <span className="text-sm font-medium">New</span>
+        <div className="flex gap-1">
+          {KINDS.map(k => (
             <button
-              key={k}
+              key={k.key}
               type="button"
-              aria-pressed={kind === k}
-              onClick={() => setKind(k)}
-              className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${kind === k ? "bg-foreground text-background" : "text-muted-foreground"}`}
+              aria-pressed={kind === k.key}
+              onClick={() => setKind(k.key)}
+              className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${kind === k.key ? "bg-foreground text-background" : "text-muted-foreground"}`}
             >
-              {k === "reel" ? "Reel" : "Long video"}
+              {k.label}
             </button>
           ))}
         </div>
+        <span className="text-xs text-muted-foreground">{chosen.what}</span>
       </div>
-      <div className="flex gap-1">
+      {kind === "post" ? (
+        <>
+          <input
+            type="file"
+            accept="image/*"
+            multiple
+            aria-label="Images"
+            onChange={e => setImages(Array.from(e.target.files ?? []))}
+            className="text-sm"
+          />
+          {images.length ? (
+            <span className="text-xs text-muted-foreground">
+              {`${images.length} image${images.length === 1 ? "" : "s"}, in this order`}
+            </span>
+          ) : null}
+          <textarea
+            value={brief}
+            onChange={e => setBrief(e.target.value)}
+            rows={3}
+            dir="auto"
+            placeholder="What this post is about, in your words. The caption is written from this."
+            aria-label="Brief"
+            className={field}
+          />
+        </>
+      ) : null}
+      <div className={kind === "post" ? "hidden" : "flex gap-1"}>
         {(
           [
             ["upload", "Upload a file"],
@@ -323,7 +525,7 @@ function NewPost({ onCreated }: { onCreated: (p: Post) => void }) {
           </button>
         ))}
       </div>
-      {source === "upload" ? (
+      {kind === "post" ? null : source === "upload" ? (
         <input
           type="file"
           accept="video/*"
@@ -348,13 +550,17 @@ function NewPost({ onCreated }: { onCreated: (p: Post) => void }) {
       <input
         value={title}
         onChange={e => setTitle(e.target.value)}
-        placeholder="Working title, what the video is about (optional but helps the copy)"
+        placeholder={
+          kind === "post"
+            ? "Working title (optional)"
+            : "Working title, what the video is about (optional but helps the copy)"
+        }
         dir="auto"
         aria-label="Working title"
         className={field}
       />
       <div className="flex flex-wrap items-center gap-3 text-sm">
-        {["instagram", "youtube"].map(t => (
+        {TARGET_CHOICES[kind].map(t => (
           <label
             key={t}
             htmlFor={`target-${t}`}
@@ -364,9 +570,10 @@ function NewPost({ onCreated }: { onCreated: (p: Post) => void }) {
               id={`target-${t}`}
               type="checkbox"
               checked={targets.includes(t)}
+              disabled={kind === "post"}
               onChange={() => toggle(t)}
             />
-            {PLATFORM_LABEL[t]}
+            {targetLabel(kind, t)}
           </label>
         ))}
         <span className="text-xs text-muted-foreground">
@@ -504,7 +711,10 @@ function Editor({
         />
         <span className="text-xs text-muted-foreground">
           {[
-            post.kind === "video" ? "long video" : "reel",
+            KIND_LABEL[post.kind],
+            post.kind === "post"
+              ? `${post.images.length} image${post.images.length === 1 ? "" : "s"}`
+              : null,
             post.durationSec ? mmss(post.durationSec) : null,
             post.width && post.height ? `${post.width}×${post.height}` : null,
             `added ${shortDate(post.createdAt)}`,
@@ -636,7 +846,20 @@ function Editor({
         </div>
       )}
 
-      {post.urls.video ? (
+      {post.kind === "post" && post.urls.images?.length ? (
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          {post.urls.images.map((u, i) => (
+            <img
+              key={u}
+              src={u}
+              alt={`${i + 1} of ${post.urls.images?.length ?? 0}`}
+              className="h-40 w-auto shrink-0 rounded-md object-cover"
+            />
+          ))}
+        </div>
+      ) : null}
+
+      {post.kind !== "post" && post.urls.video ? (
         <video
           src={post.urls.video}
           controls
@@ -647,12 +870,18 @@ function Editor({
         </video>
       ) : null}
 
-      {post.frames.length ? (
+      {post.kind !== "post" && post.frames.length ? (
         <div className="grid gap-3">
-          <div className={label}>Thumbnail</div>
+          <div className={label}>
+            {post.kind === "reel" ? "Cover" : "Thumbnail"}
+          </div>
           <div className="grid gap-3 md:grid-cols-2">
             <div className="grid gap-2">
-              <ThumbPreview frameUrl={frameUrl} text={thumbText} />
+              {post.kind === "reel" ? (
+                <CoverPreview frameUrl={frameUrl} text={thumbText} />
+              ) : (
+                <ThumbPreview frameUrl={frameUrl} text={thumbText} />
+              )}
               <div className="flex gap-1.5 overflow-x-auto pb-1">
                 {post.frames.map(f => (
                   <button
@@ -679,8 +908,14 @@ function Editor({
                 value={thumbText}
                 onChange={e => setThumbText(e.target.value)}
                 dir="auto"
-                placeholder="The line on the thumbnail, two to five words"
-                aria-label="Thumbnail line"
+                placeholder={
+                  post.kind === "reel"
+                    ? "The two lines of the cover: setup | punch"
+                    : "The line on the thumbnail, two to five words"
+                }
+                aria-label={
+                  post.kind === "reel" ? "Cover lines" : "Thumbnail line"
+                }
                 disabled={!editable}
                 className={field}
               />
@@ -723,7 +958,17 @@ function Editor({
             </div>
             <div className="grid content-start gap-2">
               <span className="text-xs text-muted-foreground">Rendered</span>
-              {post.urls.thumb ? (
+              {post.kind === "reel" ? (
+                post.urls.cover ? (
+                  <img
+                    src={post.urls.cover}
+                    alt=""
+                    className="mx-auto aspect-[9/16] max-h-96 w-auto rounded-md object-cover"
+                  />
+                ) : (
+                  <div className="mx-auto aspect-[9/16] h-96 rounded-md bg-muted" />
+                )
+              ) : post.urls.thumb ? (
                 <img
                   src={post.urls.thumb}
                   alt=""
@@ -732,100 +977,102 @@ function Editor({
               ) : (
                 <div className="aspect-video w-full rounded-md bg-muted" />
               )}
-              {post.urls.cover ? (
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <img
-                    src={post.urls.cover}
-                    alt=""
-                    className="h-20 w-auto rounded"
-                  />
-                  reel cover
-                </div>
-              ) : null}
             </div>
           </div>
         </div>
       ) : null}
 
       {post.status !== "new" && post.status !== "preparing" ? (
-        <div className="grid gap-5 md:grid-cols-2">
-          <div className="grid gap-2">
-            <div className={label}>YouTube</div>
-            {post.ytTitleOptions.length ? (
-              <div className="flex flex-wrap gap-1.5">
-                {post.ytTitleOptions.map(o => (
-                  <button
-                    key={o}
-                    type="button"
-                    onClick={() => setYtTitle(o)}
-                    disabled={!editable}
-                    className={`rounded-full border px-2.5 py-0.5 text-xs ${ytTitle === o ? "bg-foreground text-background" : "text-muted-foreground hover:bg-muted"}`}
-                    dir="auto"
-                  >
-                    {o}
-                  </button>
-                ))}
+        <div
+          className={`grid gap-5 ${targets.includes("youtube") && targets.includes("instagram") ? "md:grid-cols-2" : ""}`}
+        >
+          {targets.includes("youtube") ? (
+            <div className="grid gap-2">
+              <div className={label}>
+                {post.kind === "reel" ? "YouTube Shorts" : "YouTube"}
               </div>
-            ) : null}
-            <input
-              value={ytTitle}
-              onChange={e => setYtTitle(e.target.value)}
-              dir="auto"
-              placeholder="Title"
-              aria-label="YouTube title"
-              disabled={!editable}
-              className={`${field} font-medium`}
-            />
-            <div
-              className="text-[11px] text-muted-foreground"
-              style={{ fontVariantNumeric: "tabular-nums" }}
-            >{`${ytTitle.length} characters`}</div>
-            <textarea
-              value={ytDescription}
-              onChange={e => setYtDescription(e.target.value)}
-              dir="auto"
-              rows={10}
-              placeholder="Description, with the chapters"
-              aria-label="YouTube description"
-              disabled={!editable}
-              className={field}
-            />
-            <input
-              value={ytTags}
-              onChange={e => setYtTags(e.target.value)}
-              dir="auto"
-              placeholder="Tags, separated by commas"
-              aria-label="YouTube tags"
-              disabled={!editable}
-              className={field}
-            />
-          </div>
-          <div className="grid gap-2">
-            <div className={label}>Instagram</div>
-            <textarea
-              value={igCaption}
-              onChange={e => setIgCaption(e.target.value)}
-              dir="auto"
-              rows={10}
-              placeholder="Caption"
-              aria-label="Instagram caption"
-              disabled={!editable}
-              className={field}
-            />
-            <div
-              className="text-[11px] text-muted-foreground"
-              style={{ fontVariantNumeric: "tabular-nums" }}
-            >{`${igCaption.length} of 2,200 characters`}</div>
-            <input
-              value={igHashtags}
-              onChange={e => setIgHashtags(e.target.value)}
-              dir="auto"
-              placeholder="#hashtags separated by spaces"
-              aria-label="Instagram hashtags"
-              disabled={!editable}
-              className={field}
-            />
-          </div>
+              {post.ytTitleOptions.length ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {post.ytTitleOptions.map(o => (
+                    <button
+                      key={o}
+                      type="button"
+                      onClick={() => setYtTitle(o)}
+                      disabled={!editable}
+                      className={`rounded-full border px-2.5 py-0.5 text-xs ${ytTitle === o ? "bg-foreground text-background" : "text-muted-foreground hover:bg-muted"}`}
+                      dir="auto"
+                    >
+                      {o}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              <input
+                value={ytTitle}
+                onChange={e => setYtTitle(e.target.value)}
+                dir="auto"
+                placeholder="Title"
+                aria-label="YouTube title"
+                disabled={!editable}
+                className={`${field} font-medium`}
+              />
+              <div
+                className="text-[11px] text-muted-foreground"
+                style={{ fontVariantNumeric: "tabular-nums" }}
+              >{`${ytTitle.length} characters`}</div>
+              <textarea
+                value={ytDescription}
+                onChange={e => setYtDescription(e.target.value)}
+                dir="auto"
+                rows={post.kind === "reel" ? 5 : 10}
+                placeholder={
+                  post.kind === "reel"
+                    ? "A few lines and #Shorts"
+                    : "Description, with the chapters"
+                }
+                aria-label="YouTube description"
+                disabled={!editable}
+                className={field}
+              />
+              <input
+                value={ytTags}
+                onChange={e => setYtTags(e.target.value)}
+                dir="auto"
+                placeholder="Tags, separated by commas"
+                aria-label="YouTube tags"
+                disabled={!editable}
+                className={field}
+              />
+            </div>
+          ) : null}
+          {targets.includes("instagram") ? (
+            <div className="grid gap-2">
+              <div className={label}>Instagram</div>
+              <textarea
+                value={igCaption}
+                onChange={e => setIgCaption(e.target.value)}
+                dir="auto"
+                rows={10}
+                placeholder="Caption"
+                aria-label="Instagram caption"
+                disabled={!editable}
+                className={field}
+              />
+              <div
+                className="text-[11px] text-muted-foreground"
+                style={{ fontVariantNumeric: "tabular-nums" }}
+              >{`${igCaption.length} of 2,200 characters`}</div>
+              <input
+                value={igHashtags}
+                onChange={e => setIgHashtags(e.target.value)}
+                dir="auto"
+                placeholder="#hashtags separated by spaces"
+                aria-label="Instagram hashtags"
+                disabled={!editable}
+                className={field}
+              />
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -852,7 +1099,7 @@ function Editor({
         <div className="grid gap-3 border-t pt-4">
           <div className="flex flex-wrap items-center gap-3 text-sm">
             <span className={label}>Publish to</span>
-            {["instagram", "youtube"].map(t => (
+            {TARGET_CHOICES[post.kind].map(t => (
               <label
                 key={t}
                 htmlFor={`edit-target-${t}`}
@@ -862,13 +1109,14 @@ function Editor({
                   id={`edit-target-${t}`}
                   type="checkbox"
                   checked={targets.includes(t)}
+                  disabled={post.kind === "post"}
                   onChange={() =>
                     setTargets(ts =>
                       ts.includes(t) ? ts.filter(x => x !== t) : [...ts, t],
                     )
                   }
                 />
-                {PLATFORM_LABEL[t]}
+                {targetLabel(post.kind, t)}
               </label>
             ))}
           </div>
@@ -884,7 +1132,7 @@ function Editor({
             {confirming ? (
               <>
                 <span className="text-sm">
-                  {`This publishes ${targets.includes("instagram") ? "the reel on Instagram now" : ""}${targets.length === 2 ? " and " : ""}${targets.includes("youtube") ? "the video on YouTube as public" : ""}. Sure?`}
+                  {publishSentence(post.kind, targets)}
                 </span>
                 <button
                   type="button"

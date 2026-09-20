@@ -284,7 +284,7 @@ function CashHeroBody({ m, today }: { m: MoneyPayload; today: string }) {
         : "serious";
 
   // Today is still running; its partial day would end the line on a false drop (as on the Money tab).
-  const daily = cash.daily.filter(p => p.date < today);
+  const daily = cash.daily.filter(p => p.date < today).slice(-90);
   const best = daily.reduce<Point | null>(
     (top, p) => (p.value > (top?.value ?? 0) ? p : top),
     null,

@@ -145,3 +145,55 @@ class HelpersTests(unittest.TestCase):
         self.assertLess(len(yt), 1_900_001)
         self.assertEqual(Image.open(__import__("io").BytesIO(yt)).size, (1280, 720))
         self.assertEqual(Image.open(__import__("io").BytesIO(cv)).size, (1080, 1920))
+
+
+class KindsTest(unittest.TestCase):
+    def test_kind_of(self):
+        from radar.posting import write
+
+        self.assertEqual(write.kind_of({"kind": "post"}), "post")
+        self.assertEqual(write.kind_of({"kind": "reel"}, 400), "reel")
+        self.assertEqual(write.kind_of({}, 400), "video")
+        self.assertEqual(write.kind_of({}, 40), "reel")
+
+    def test_reel_prompt_asks_for_the_cover_pair_and_no_chapters(self):
+        from radar.posting import write
+
+        p = write.prompt_for({"id": 1, "kind": "reel"}, {"language": "ar", "segments": []}, {"duration_sec": 40}, [])
+        self.assertIn("cover_lines", p)
+        self.assertIn("#Shorts", p)
+        self.assertIn("A Short has no chapters", p)
+
+    def test_reel_normalise_keeps_pairs_and_drops_chapters(self):
+        from radar.posting import write
+
+        raw = {
+            "language": "ar",
+            "cover_lines": ["الجمهور الغلط؟", "اقرأ إعلانك"],
+            "thumb_text_options": ["الجمهور الغلط؟ | اقرأ إعلانك", "كم أرخص سعر | جوابك هنا", "خمسة أرقام تقولك وين مشكلتك بالضبط اليوم"],
+            "chapters": [{"at_sec": 0, "title": "a"}, {"at_sec": 20, "title": "b"}, {"at_sec": 40, "title": "c"}],
+            "yt_title_options": ["t"],
+            "yt_description": "d",
+        }
+        out = write.normalise(raw, duration=150, kind="reel")
+        self.assertEqual(out["chapters"], [])
+        self.assertEqual(out["thumb_text"], "الجمهور الغلط؟ | اقرأ إعلانك")
+        self.assertIn("كم أرخص سعر | جوابك هنا", out["thumb_text_options"])
+        self.assertTrue(all("|" in t for t in out["thumb_text_options"]))
+
+    def test_post_prompt_and_normalise(self):
+        from radar.posting import write
+
+        p = write.post_prompt({"id": 2, "kind": "post", "brief": "ثلاث أسئلة قبل ما تقول الإعلانات ما تشتغل", "images": ["a", "b"]})
+        self.assertIn("2 images", p)
+        self.assertIn("ثلاث أسئلة", p)
+        out = write.normalise_post({"language": "ar", "ig_caption": " hook ", "ig_hashtags": ["#a", "a", "#b b"]})
+        self.assertEqual(out["ig_caption"], "hook")
+        self.assertEqual(out["ig_hashtags"], ["#a", "#bb"])
+
+    def test_split_cover(self):
+        from radar.posting import thumbs
+
+        self.assertEqual(thumbs.split_cover("a b | c d"), ["a b", "c d"])
+        self.assertEqual(thumbs.split_cover("one two three four"), ["one two", "three four"])
+        self.assertEqual(thumbs.split_cover("one"), ["one"])

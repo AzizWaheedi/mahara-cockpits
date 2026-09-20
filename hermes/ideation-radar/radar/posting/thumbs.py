@@ -25,6 +25,17 @@ PEARL = (0xFB, 0xF9, 0xE4)
 NOIR = (0x00, 0x00, 0x00)
 FADE = (0x9C, 0xB1, 0xC7)
 
+# The Instagram house style, read off @mahara_media on 2026-09-20: deep navy
+# with a faint grid and a soft teal glow behind Aziz, who fills the lower two
+# thirds; the headline at the top in two lines, the first bold white, the
+# second in glowing teal. Aziz: "the style I like, like the rest of our
+# Instagram."
+NAVY_TOP = (0x0A, 0x17, 0x30)
+NAVY = (0x10, 0x26, 0x4A)
+GRID = (0x2A, 0x4F, 0x82)
+TEAL = (0x2E, 0xD3, 0xD0)
+WHITE = (0xFF, 0xFF, 0xFF)
+
 FONT_FILES = {
     "arabic": ("IBMPlexSansArabic-Bold.ttf", "https://raw.githubusercontent.com/google/fonts/main/ofl/ibmplexsansarabic/IBMPlexSansArabic-Bold.ttf"),
     "latin": ("Inter[opsz,wght].ttf", "https://raw.githubusercontent.com/google/fonts/main/ofl/inter/Inter%5Bopsz%2Cwght%5D.ttf"),
@@ -225,33 +236,109 @@ def render_youtube(frame_path: Path, text: str, *, fonts: Optional[dict[str, Pat
     return _to_jpeg(img)
 
 
-def render_cover(frame_path: Path, text: str, *, fonts: Optional[dict[str, Path]] = None, log: Callable[[str], None] = lambda m: None) -> bytes:
-    """1080x1920 reel cover: the frame, a Midnight fall-off at the foot and
-    the line on a Pearl block in the lower third, where the grid crops least."""
-    from PIL import Image, ImageDraw
+def split_cover(text: str) -> list[str]:
+    """The two lines of a cover from one thumbnail line: `setup | punch` as
+    written, else the words split in half. One word stays one line."""
+    if "|" in text:
+        parts = [p.strip() for p in text.split("|") if p.strip()]
+        return parts[:2] or [text.strip()]
+    words = [w for w in re.split(r"\s+", text.strip()) if w]
+    if len(words) < 2:
+        return [text.strip()] if text.strip() else []
+    k = (len(words) + 1) // 2
+    return [" ".join(words[:k]), " ".join(words[k:])]
+
+
+def _backdrop(W: int, H: int):
+    """Navy falling to a lighter navy, a faint grid, a teal glow behind where Aziz stands."""
+    from PIL import Image, ImageDraw, ImageFilter
+
+    bg = Image.new("RGB", (W, H), NAVY_TOP)
+    d = ImageDraw.Draw(bg)
+    for yy in range(H):
+        t = min(1.0, yy / (H * 0.6))
+        d.line([(0, yy), (W, yy)], fill=tuple(int(NAVY_TOP[i] + (NAVY[i] - NAVY_TOP[i]) * t) for i in range(3)))
+    grid = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(grid)
+    step = W // 10
+    for x in range(0, W + 1, step):
+        gd.line([(x, 0), (x, H)], fill=GRID + (64,), width=2)
+    for y in range(0, H + 1, step):
+        gd.line([(0, y), (W, y)], fill=GRID + (64,), width=2)
+    out = Image.alpha_composite(bg.convert("RGBA"), grid)
+    glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(glow).ellipse([W * 0.12, H * 0.36, W * 0.88, H * 0.9], fill=TEAL + (118,))
+    return Image.alpha_composite(out, glow.filter(ImageFilter.GaussianBlur(170)))
+
+
+def _headline_font(draw, lines: list[str], kind: str, fonts: dict[str, Path], max_w: float, *, start: int, floor: int):
+    """The largest size at which every line fits on one row."""
+    size = start
+    rtl = kind == "arabic"
+    while size > floor:
+        font = _load_font(kind, size, fonts)
+        if all(_width(draw, ln, font, rtl) <= max_w for ln in lines):
+            return font, size
+        size -= 6
+    return _load_font(kind, floor, fonts), floor
+
+
+def _text_layer(size: tuple[int, int], line: str, font, xy: tuple[float, float], fill, rtl: bool, *, blur: float = 0.0):
+    from PIL import Image, ImageDraw, ImageFilter
+
+    layer = Image.new("RGBA", size, (0, 0, 0, 0))
+    shaped, kw = _shape(line, rtl)
+    ImageDraw.Draw(layer).text(xy, shaped, font=font, fill=fill, anchor="ma", **kw)
+    return layer.filter(ImageFilter.GaussianBlur(blur)) if blur else layer
+
+
+def render_cover(frame_path: Path, text: str, *, lines: Optional[list[str]] = None, fonts: Optional[dict[str, Path]] = None, log: Callable[[str], None] = lambda m: None) -> bytes:
+    """1080x1920 reel cover in the Instagram house style: the navy backdrop
+    with its grid and glow, the frame filling the lower part and fading into
+    it, the headline at the top in two lines, white then glowing teal."""
+    from PIL import Image, ImageChops, ImageDraw, ImageOps
 
     fonts = fonts or ensure_fonts(log)
     W, H = 1080, 1920
-    rtl = is_arabic(text)
-    img = _fill(frame_path, (W, H), centering=(0.5, 0.3)).convert("RGBA")
-    overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    od = ImageDraw.Draw(overlay)
-    top = int(H * 0.52)
-    for yy in range(top, H):
-        a = int(210 * ((yy - top) / (H - top)) ** 1.4)
-        od.line([(0, yy), (W, yy)], fill=MIDNIGHT + (a,))
-    img = Image.alpha_composite(img, overlay).convert("RGB")
+    lines = [ln for ln in (lines or split_cover(text)) if ln.strip()][:2] or [text.strip()]
+    rtl = is_arabic(" ".join(lines))
+    img = _backdrop(W, H)
+
+    # The frame stands in the lower three quarters and melts into the backdrop
+    # at its top edge and sides, so it reads as a cut-out, not a rectangle.
+    top = int(H * 0.25)
+    fh = H - top
+    frame = ImageOps.fit(Image.open(frame_path).convert("RGB"), (W, fh), method=Image.LANCZOS, centering=(0.5, 0.18))
+    top_mask = Image.new("L", (W, fh), 255)
+    md = ImageDraw.Draw(top_mask)
+    fade = 300
+    for i in range(fade):
+        md.line([(0, i), (W, i)], fill=int(255 * (i / fade) ** 1.6))
+    side_mask = Image.new("L", (W, fh), 255)
+    sd = ImageDraw.Draw(side_mask)
+    side = 120
+    for i in range(side):
+        a = int(255 * i / side)
+        sd.line([(i, 0), (i, fh)], fill=a)
+        sd.line([(W - 1 - i, 0), (W - 1 - i, fh)], fill=a)
+    mask = ImageChops.multiply(top_mask, side_mask)
+    img.paste(frame, (0, top), mask)
+
+    # The headline: line one white with a soft shadow, line two teal with a glow.
     draw = ImageDraw.Draw(img)
-    pad = 72
-    box_w = W - 2 * pad
     kind = "arabic" if rtl else "latin"
-    font, lines, line_h = fit(draw, text, kind, fonts, box_w - 2 * 36, H * 0.22, start=132, floor=64, max_lines=3)
-    block_h = int(len(lines) * line_h + 2 * 36)
-    block_y = int(H * 0.72 - block_h / 2)
-    draw.rectangle([pad, block_y, pad + box_w, block_y + block_h], fill=PEARL)
-    draw.rectangle([pad, block_y + block_h - 10, pad + box_w, block_y + block_h], fill=OCEAN)
-    draw_lines(draw, lines, font, x=pad + 36, y=block_y + 36 - line_h * 0.08, w=box_w - 2 * 36, line_h=line_h, rtl=rtl)
-    return _to_jpeg(img, max_bytes=7_500_000)
+    font, size = _headline_font(draw, lines, kind, fonts, W - 2 * 60, start=152, floor=84)
+    line_h = size * 1.22
+    y = H * 0.062
+    for i, ln in enumerate(lines):
+        yy = y + i * line_h
+        if i == 0:
+            img = Image.alpha_composite(img, _text_layer((W, H), ln, font, (W / 2, yy + 8), (0, 0, 0, 170), rtl, blur=10))
+            img = Image.alpha_composite(img, _text_layer((W, H), ln, font, (W / 2, yy), WHITE + (255,), rtl))
+        else:
+            img = Image.alpha_composite(img, _text_layer((W, H), ln, font, (W / 2, yy), TEAL + (235,), rtl, blur=26))
+            img = Image.alpha_composite(img, _text_layer((W, H), ln, font, (W / 2, yy), TEAL + (255,), rtl))
+    return _to_jpeg(img.convert("RGB"), max_bytes=7_500_000)
 
 
 def sharpness(path: Path) -> float:

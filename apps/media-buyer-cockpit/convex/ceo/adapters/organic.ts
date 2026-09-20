@@ -427,8 +427,9 @@ export const organic: Adapter = {
       text: `Facebook and Instagram read live from the Graph API on the same token the ads use; the page and the account sit in the same Business Manager. Reach and engaged accounts cover the last 28 days. Publishing cadence comes from the asset library, which mirrors every video and reel with its publish date. None of this is an ad number and none of it is added to one.`,
     });
 
-    // What is performing best, across platforms: the biggest multiples of
-    // each platform's own normal, so a reel and a long video compare fairly.
+    // What is performing best on each platform: the biggest multiples of
+    // that platform's own normal. Six from Instagram, six from YouTube, kept
+    // apart because a reel and a long video are different work.
     const best: OrganicPayload["best"] = [];
     for (const p of instagram?.posts ?? [])
       if (p.multiple !== null && (p.views ?? p.reach) !== null)
@@ -457,13 +458,15 @@ export const organic: Adapter = {
           multiple: v.multiple,
         });
     best.sort((a, b) => b.multiple - a.multiple);
+    const bestOf = (platform: "instagram" | "youtube") =>
+      best.filter(b => b.platform === platform).slice(0, 6);
 
     const payload: OrganicPayload = {
       facebook,
       instagram,
       youtube,
       cadence,
-      best: best.slice(0, 10),
+      best: [...bestOf("instagram"), ...bestOf("youtube")],
       notes,
     };
     const daily: DailyPoint[] = [];

@@ -18,9 +18,12 @@ import {
   type ChartRow,
   type ChartSeries,
   isEmptyChart,
+  RangeControl,
+  type RangeKey,
   SeriesTable,
   seriesColors,
   TooltipCard,
+  useChartRange,
 } from "./chartKit";
 import { EmptyState } from "./EmptyState";
 import { date, formatters, isNum, shortDate, type Unit } from "./format";
@@ -56,6 +59,8 @@ type Props = {
   emptyText?: string;
   /** Charts sharing an id move their crosshairs together (small multiples). */
   syncId?: string;
+  /** The timeframe the chart opens on; the reader can change it. */
+  initialRange?: RangeKey;
   className?: string;
 };
 
@@ -76,13 +81,16 @@ export function TimeSeriesChart({
   ariaLabel,
   emptyText = "No data for this range yet.",
   syncId,
+  initialRange = "all",
   className,
 }: Props) {
   const [view, setView] = useState<"chart" | "table">("chart");
   const shown = series.slice(0, 4);
   const colors = seriesColors(shown);
   const { full, compact } = formatters(unit);
-  const empty = isEmptyChart(data, shown);
+  const tf = useChartRange(data, x, initialRange);
+  const rows = tf.rows;
+  const empty = isEmptyChart(rows, shown);
 
   return (
     <div className={cn("ceo-chart min-w-0", className)}>
@@ -94,6 +102,16 @@ export function TimeSeriesChart({
         mark="line"
         view={view}
         onView={setView}
+        range={
+          <RangeControl
+            range={tf.range}
+            onRange={tf.setRange}
+            custom={tf.custom}
+            onCustom={tf.setCustom}
+            first={tf.first}
+            last={tf.last}
+          />
+        }
       />
       {empty ? (
         <div
@@ -104,7 +122,7 @@ export function TimeSeriesChart({
         </div>
       ) : view === "table" ? (
         <SeriesTable
-          data={data}
+          data={rows}
           x={x}
           xHeader={xHeader}
           series={shown}
@@ -117,7 +135,7 @@ export function TimeSeriesChart({
         <div role="figure" aria-label={ariaLabel} style={{ height }}>
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart
-              data={data}
+              data={rows}
               syncId={syncId}
               margin={{
                 top: 8,

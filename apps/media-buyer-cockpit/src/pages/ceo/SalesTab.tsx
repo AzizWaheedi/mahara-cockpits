@@ -620,6 +620,7 @@ function DailyBody({
   return (
     <div className="grid gap-x-8 gap-y-8 sm:grid-cols-2">
       <TimeSeriesChart
+        initialRange="90d"
         data={days}
         series={[{ key: "booked", label: "Calls booked" }]}
         title="Calls booked"
@@ -629,6 +630,7 @@ function DailyBody({
         emptyText="No days to plot yet."
       />
       <TimeSeriesChart
+        initialRange="90d"
         data={days}
         series={[{ key: "closes", label: "Closes" }]}
         title="Closes"

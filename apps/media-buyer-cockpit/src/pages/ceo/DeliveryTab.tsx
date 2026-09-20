@@ -28,6 +28,7 @@ import {
   type StatusTone,
 } from "@/components/ceo/StatusChip";
 import { TimeSeriesChart } from "@/components/ceo/TimeSeriesChart";
+import { BOOKING_RATE_GATE, CLOSE_RATE_GATE, SHOW_RATE_GATE } from "@/lib/kpi";
 import { cn } from "@/lib/utils";
 import type { DeliveryPayload, Note } from "../../../convex/ceo/payloads";
 import type { CeoTabProps } from "./types";
@@ -432,6 +433,7 @@ function DailyCharts({ d }: { d: DeliveryPayload }) {
   return (
     <div className="grid min-w-0 gap-x-6 gap-y-8 @4xl:grid-cols-3">
       <TimeSeriesChart
+        initialRange="30d"
         data={rows}
         series={[{ key: "spend", label: "Client ad spend" }]}
         kind="area"
@@ -443,6 +445,7 @@ function DailyCharts({ d }: { d: DeliveryPayload }) {
         ariaLabel={`Client ad spend per day, ${span}. ${money(spend)} in total, ${money(last?.spend)} on the last day.`}
       />
       <TimeSeriesChart
+        initialRange="30d"
         data={rows}
         series={[{ key: "leads", label: "Leads" }]}
         kind="area"
@@ -454,6 +457,7 @@ function DailyCharts({ d }: { d: DeliveryPayload }) {
         ariaLabel={`Client leads per day, ${span}. ${count(leads)} in total, ${count(last?.leads)} on the last day.`}
       />
       <TimeSeriesChart
+        initialRange="30d"
         data={rows}
         series={[{ key: "bookings", label: "Bookings" }]}
         kind="area"
@@ -645,6 +649,35 @@ function GateCell({
 
 type Filter = "all" | ClientStatus;
 
+/** A funnel rate against its gate: green at the gate, amber within seven tenths of it, red below. */
+function RateCell({
+  value,
+  gate,
+  hint,
+}: {
+  value: number | null;
+  gate: number;
+  hint: string;
+}) {
+  if (!isNum(value)) return <Na hint={hint} />;
+  const p = value * 100;
+  const tone =
+    p >= gate ? "good" : p >= gate * 0.7 ? "warning" : ("serious" as const);
+  return (
+    <span className="relative inline-flex items-center gap-1.5 tabular-nums">
+      <span
+        aria-hidden
+        className="size-1.5 shrink-0 rounded-full"
+        style={{ backgroundColor: STATUS_COLOR[tone] }}
+      />
+      {pct(value)}
+      <span className="sr-only">
+        {tone === "good" ? ", at the gate" : ", below the gate"}
+      </span>
+    </span>
+  );
+}
+
 function ClientsTable({ d }: { d: DeliveryPayload }) {
   const [filter, setFilter] = useState<Filter>("all");
   const counts = useMemo(() => {
@@ -705,7 +738,7 @@ function ClientsTable({ d }: { d: DeliveryPayload }) {
     },
     {
       key: "campaigns",
-      header: "Campaigns",
+      header: "Running",
       numeric: true,
       cell: r => count(r.campaigns),
       sortValue: r => r.campaigns,
@@ -746,6 +779,45 @@ function ClientsTable({ d }: { d: DeliveryPayload }) {
       cell: r => <GateCell value={r.cpb7d} gate={d.gates.cpb} noun="booking" />,
       sortValue: r => r.cpb7d,
     },
+    {
+      key: "bookRate",
+      header: "Lead to booking",
+      numeric: true,
+      cell: r => (
+        <RateCell
+          value={r.rates30?.bookRate ?? null}
+          gate={BOOKING_RATE_GATE}
+          hint="No platform leads in the last 30 days"
+        />
+      ),
+      sortValue: r => r.rates30?.bookRate ?? null,
+    },
+    {
+      key: "showRate",
+      header: "Show rate",
+      numeric: true,
+      cell: r => (
+        <RateCell
+          value={r.rates30?.showRate ?? null}
+          gate={SHOW_RATE_GATE}
+          hint="No past meeting with an outcome recorded in the last 30 days"
+        />
+      ),
+      sortValue: r => r.rates30?.showRate ?? null,
+    },
+    {
+      key: "closeRate",
+      header: "Close rate",
+      numeric: true,
+      cell: r => (
+        <RateCell
+          value={r.rates30?.closeRate ?? null}
+          gate={CLOSE_RATE_GATE}
+          hint="No meeting showed in the last 30 days"
+        />
+      ),
+      sortValue: r => r.rates30?.closeRate ?? null,
+    },
   ];
 
   const chip = (key: ClientStatus): FilterOption<Filter> => ({
@@ -768,7 +840,7 @@ function ClientsTable({ d }: { d: DeliveryPayload }) {
       rows={rows}
       columns={columns}
       rowKey={r => r.clickupTaskId ?? r.client}
-      caption="Clients with ad spend in the last 7 days"
+      caption="Clients with ad spend in the last 7 days; the three rates cover the last 30 days"
       search={{ placeholder: "Search clients", text: r => r.client }}
       filters={
         <FilterChips

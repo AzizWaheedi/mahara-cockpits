@@ -103,7 +103,7 @@ export const delivery: Adapter = {
     let triage: TriageDelivery | null = null;
     let triageError: string | null = null;
     try {
-      triage = await clientDelivery(addDays(today, -30), today);
+      triage = await clientDelivery(addDays(today, -180), today);
     } catch (e) {
       triageError = String(e instanceof Error ? e.message : e).slice(0, 200);
     }
@@ -245,7 +245,7 @@ export const delivery: Adapter = {
     const last7From = addDays(today, -7);
     const prevFrom = addDays(today, -14);
     const prevTo = addDays(today, -8);
-    const seriesFrom = addDays(today, -30);
+    const seriesFrom = addDays(today, -180);
 
     const dailySeries: DeliveryPayload["daily"] = [];
     {
@@ -487,6 +487,48 @@ export const delivery: Adapter = {
                 b.clientId,
                 (bookBy.get(b.clientId) ?? 0) + b.count - b.future,
               );
+          // The rates the master dashboard reads, over thirty days so a week
+          // with three meetings does not swing them.
+          const from30 = addDays(today, -30);
+          type R = NonNullable<DeliveryPayload["clients"][number]["rates30"]>;
+          const rateBy = new Map<string, R>();
+          const rateOf = (id: string): R => {
+            let r = rateBy.get(id);
+            if (!r) {
+              r = {
+                leads: 0,
+                bookings: 0,
+                showed: 0,
+                noshow: 0,
+                closes: 0,
+                bookRate: null,
+                showRate: null,
+                closeRate: null,
+              };
+              rateBy.set(id, r);
+            }
+            return r;
+          };
+          for (const d of triage.days)
+            if (d.date >= from30 && d.date <= yesterday)
+              rateOf(d.clientId).leads += d.leads;
+          for (const b of triage.bookings)
+            if (b.date >= from30 && b.date <= yesterday) {
+              const r = rateOf(b.clientId);
+              r.bookings += b.count - b.future;
+              r.showed += b.showed;
+              r.noshow += b.noshow;
+            }
+          for (const w of triage.wins)
+            if (w.date >= from30 && w.date <= yesterday)
+              rateOf(w.clientId).closes += w.count;
+          const share = (a: number, b: number) =>
+            b > 0 ? Math.round((a / b) * 1000) / 1000 : null;
+          for (const r of rateBy.values()) {
+            r.bookRate = share(r.bookings, r.leads);
+            r.showRate = share(r.showed, r.showed + r.noshow);
+            r.closeRate = share(r.closes, r.showed);
+          }
           return triage.clients
             .map(c => {
               const r = spendBy.get(c.clientId);
@@ -510,6 +552,7 @@ export const delivery: Adapter = {
                 cpb7d: cpb,
                 campaigns: c.campaigns,
                 status: statusOf(r.spend, r.leads, cpl, cpb, weBook),
+                rates30: rateOf(c.clientId),
               };
             })
             .filter((x): x is NonNullable<typeof x> => x !== null)
@@ -538,6 +581,7 @@ export const delivery: Adapter = {
           cpb7d: cpb,
           campaigns: g.campaigns,
           status: statusOf(g.spend, g.leads, cpl, cpb, g.tracked),
+          rates30: null,
         };
       })
       .sort(
@@ -547,6 +591,17 @@ export const delivery: Adapter = {
       );
 
     const clients: DeliveryPayload["clients"] = triageClients ?? boardClients;
+    if (triage) {
+      const wins30 = triage.wins.reduce((n, w) => n + w.count, 0);
+      const decided = triage.bookings.reduce(
+        (n, b) => n + b.showed + b.noshow,
+        0,
+      );
+      const past = triage.bookings.reduce((n, b) => n + b.count - b.future, 0);
+      info(
+        `The three rates read the way the master dashboard does, over the last 30 days: lead to booking is bookings over platform leads; show rate is showed over showed plus no-show, on meetings whose day has passed (${decided} of ${past} past meetings have an outcome recorded, the rest count as neither); close rate is closes over showed, a close being an opportunity the client's own CRM marked won (${wins30} across every client in the window, so it reads low wherever a client never marks a win). "Running" is campaigns that spent in the last three days.`,
+      );
+    }
 
     // --- Blocked ad accounts, one row per account --------------------------
     const accountIssues: DeliveryPayload["accountIssues"] = [];

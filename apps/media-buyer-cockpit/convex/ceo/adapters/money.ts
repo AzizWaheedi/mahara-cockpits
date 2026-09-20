@@ -147,7 +147,7 @@ export const money: Adapter = {
       Math.min(dayOfMonth, daysInMonth(lastMonthStart)),
     ).padStart(2, "0")}`;
     const lastMonthEnd = addDays(monthStart(today), -1);
-    const from90 = addDays(today, -89);
+    const from90 = addDays(today, -179);
     const from30 = addDays(today, -29);
     const firstMonthStart = `${shiftMonth(month, -11)}-01`;
     const notes: Note[] = [];

@@ -2,11 +2,17 @@ import { useAction } from "convex/react";
 import { Check, UserPlus, Users } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
-import { count, money, pct, plural } from "@/components/ceo/format";
+import { count, money, plural } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import { api } from "../../../convex/_generated/api";
+import {
+  COMMISSION_BASES,
+  COMMISSION_SHORT,
+  type CommissionBasis,
+  SHARE_BASES,
+} from "../../../convex/ceo/commission";
 import type { Person, Roster } from "../../../convex/ceo/people";
 import type { CeoTabProps } from "./types";
 
@@ -43,16 +49,30 @@ const field = "rounded-md border bg-background px-2 py-1 text-sm";
 type Draft = {
   monthlyCost: string;
   currency: string;
-  commissionPct: string;
+  basis: CommissionBasis;
+  /** Percent for the share bases (10 = 10%), an amount otherwise. */
+  rate: string;
+  note: string;
   role: string;
 };
 
 const draftOf = (p: Person): Draft => ({
   monthlyCost: p.monthlyCost === null ? "" : String(p.monthlyCost),
   currency: p.currency || "USD",
-  commissionPct: p.commissionPct === null ? "" : String(p.commissionPct * 100),
+  basis: p.commission.basis,
+  rate:
+    p.commission.rate === null
+      ? ""
+      : String(
+          SHARE_BASES.has(p.commission.basis)
+            ? Math.round(p.commission.rate * 1000) / 10
+            : p.commission.rate,
+        ),
+  note: p.commissionNote ?? "",
   role: p.role ?? "",
 });
+
+const takesRate = (b: CommissionBasis) => b !== "none" && b !== "other";
 
 function Row({ p, onChanged }: { p: Person; onChanged: () => Promise<void> }) {
   const save = useAction(api.ceo.people.save);
@@ -64,7 +84,9 @@ function Row({ p, onChanged }: { p: Person; onChanged: () => Promise<void> }) {
   const dirty =
     d.monthlyCost !== base.monthlyCost ||
     d.currency !== base.currency ||
-    d.commissionPct !== base.commissionPct ||
+    d.basis !== base.basis ||
+    d.rate !== base.rate ||
+    d.note !== base.note ||
     d.role !== base.role;
 
   const act = async (fn: () => Promise<unknown>) => {
@@ -137,16 +159,45 @@ function Row({ p, onChanged }: { p: Person; onChanged: () => Promise<void> }) {
           ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-1.5 text-sm">
-          <input
-            inputMode="decimal"
-            value={d.commissionPct}
-            onChange={e => setD({ ...d, commissionPct: e.target.value })}
-            placeholder="–"
-            aria-label={`${p.name}'s commission percent`}
-            className={`${field} w-16 text-right`}
-            style={{ fontVariantNumeric: "tabular-nums" }}
-          />
-          <span className="text-xs text-muted-foreground">% commission</span>
+          <select
+            value={d.basis}
+            onChange={e =>
+              setD({ ...d, basis: e.target.value as CommissionBasis })
+            }
+            aria-label={`What ${p.name}'s commission is paid on`}
+            className={`${field} max-w-[12rem]`}
+          >
+            {COMMISSION_BASES.map(b => (
+              <option key={b} value={b}>
+                {COMMISSION_SHORT[b]}
+              </option>
+            ))}
+          </select>
+          {takesRate(d.basis) ? (
+            <span className="flex items-center gap-1">
+              <input
+                inputMode="decimal"
+                value={d.rate}
+                onChange={e => setD({ ...d, rate: e.target.value })}
+                placeholder={SHARE_BASES.has(d.basis) ? "10" : "50"}
+                aria-label={`${p.name}'s commission rate`}
+                className={`${field} w-16 text-right`}
+                style={{ fontVariantNumeric: "tabular-nums" }}
+              />
+              <span className="text-xs text-muted-foreground">
+                {SHARE_BASES.has(d.basis) ? "%" : d.currency}
+              </span>
+            </span>
+          ) : null}
+          {d.basis === "other" || d.note ? (
+            <input
+              value={d.note}
+              onChange={e => setD({ ...d, note: e.target.value })}
+              placeholder="how it works"
+              aria-label={`${p.name}'s commission note`}
+              className={`${field} w-36`}
+            />
+          ) : null}
           {p.isSales ? <StatusChip tone="neutral" label="sales" /> : null}
         </div>
       </div>
@@ -168,11 +219,14 @@ function Row({ p, onChanged }: { p: Person; onChanged: () => Promise<void> }) {
                       ? undefined
                       : Number(d.monthlyCost),
                   currency: d.currency,
-                  commissionPct:
-                    d.commissionPct.trim() === ""
+                  commissionBasis: d.basis,
+                  commissionRate:
+                    !takesRate(d.basis) || d.rate.trim() === ""
                       ? undefined
-                      : Number(d.commissionPct) / 100,
-                  commissionNote: p.commissionNote ?? undefined,
+                      : SHARE_BASES.has(d.basis)
+                        ? Number(d.rate) / 100
+                        : Number(d.rate),
+                  commissionNote: d.note.trim() || undefined,
                   isSales: p.isSales,
                   startedOn: p.startedOn ?? undefined,
                 }),
@@ -386,9 +440,7 @@ export function TeamTab(_props: CeoTabProps) {
   );
   const uncosted = live.filter(p => p.monthlyCost === null).length;
   const external = live.filter(p => p.engagement !== "staff").length;
-  const onCommission = live.filter(
-    p => p.commissionPct !== null || p.commissionNote,
-  ).length;
+  const onCommission = live.filter(p => p.commission.basis !== "none").length;
 
   return (
     <div className="@container grid gap-4 lg:gap-6">
@@ -494,9 +546,11 @@ export function TeamTab(_props: CeoTabProps) {
           }
         </SectionCard>
       ) : null}
-      {data && data.people.some(p => p.commissionPct !== null) ? (
+      {data && data.people.some(p => p.commission.basis !== "none") ? (
         <p className="text-xs text-muted-foreground">
-          {`Commission is a share of what the person closes or sets; the rate is kept here, the payout is worked out on the Sales tab against the deals of the month. ${pct(0.1)} means ten percent.`}
+          Commission is a rule per person: what it is paid on, then the rate in
+          that unit. A share is typed as a percent; a per-unit amount is in the
+          person's currency. The payout itself is not worked out here yet.
         </p>
       ) : null}
     </div>

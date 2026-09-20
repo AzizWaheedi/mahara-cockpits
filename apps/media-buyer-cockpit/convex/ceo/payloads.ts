@@ -669,8 +669,27 @@ export type DeliveryPayload = {
     cpl7d: number | null;
     bookings7d: number;
     cpb7d: number | null;
+    /** Campaigns running now: with spend in the last three days. */
     campaigns: number;
     status: "good" | "watch" | "bad" | "no-data";
+    /**
+     * The funnel rates the master dashboard reads, over the last 30 days:
+     * lead to booking = bookings / platform leads; show rate = showed /
+     * (showed + no-show) on meetings whose day has passed; close rate =
+     * closes / showed, a close being an opportunity marked won in the
+     * client's CRM. Fractions; null when the denominator is zero. Null as a
+     * whole when Creative Triage could not be read.
+     */
+    rates30: {
+      leads: number;
+      bookings: number;
+      showed: number;
+      noshow: number;
+      closes: number;
+      bookRate: number | null;
+      showRate: number | null;
+      closeRate: number | null;
+    } | null;
   }[];
   launches: {
     inFlight: number;
@@ -1256,7 +1275,7 @@ export type OrganicPayload = {
       multiple: number | null;
     }[];
   };
-  /** What is performing best right now across the platforms, biggest multiple of the platform's normal first. */
+  /** What is performing best right now: up to six Instagram posts then up to six YouTube videos, each platform's biggest multiple of its own normal first. */
   best: {
     platform: "instagram" | "youtube";
     id: string;

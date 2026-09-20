@@ -1,4 +1,4 @@
-import { ExternalLink, Film, Youtube } from "lucide-react";
+import { ExternalLink, Youtube } from "lucide-react";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { count, countCompact, shortDate } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
@@ -20,21 +20,49 @@ import type { CeoTabProps } from "./types";
 const na = (v: number | null) => (v === null ? "—" : countCompact(v));
 const times = (m: number) => `${m >= 10 ? Math.round(m) : m.toFixed(1)}×`;
 
-function Best({ rows }: { rows: OrganicPayload["best"] }) {
-  if (!rows.length)
-    return (
-      <EmptyState
-        title="Nothing ranked yet"
-        text="Once Instagram and YouTube have returned per-post numbers, the posts running above their platform's normal appear here."
-        icon={Film}
-        compact
-      />
-    );
+function Best({
+  rows,
+  platform,
+  normal,
+}: {
+  rows: OrganicPayload["best"];
+  platform: "instagram" | "youtube";
+  /** The platform's normal in words, e.g. "584 views a reel". */
+  normal: string | null;
+}) {
+  const mine = rows.filter(r => r.platform === platform);
+  const name = platform === "youtube" ? "YouTube" : "Instagram";
   return (
-    <div className="-mx-1 flex gap-3 overflow-x-auto px-1 pb-1">
-      {rows.map(r => (
+    <div className="grid gap-2">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h3 className="text-sm font-semibold">{name}</h3>
+        <span className="text-xs text-muted-foreground">
+          {normal ? `Normal is ${normal}` : `${name} not read yet`}
+        </span>
+      </div>
+      {mine.length ? (
+        <div className="-mx-1 flex gap-3 overflow-x-auto px-1 pb-1">
+          {mine.map(r => (
+            <BestCard key={`${r.platform}-${r.id}`} r={r} />
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          {platform === "youtube"
+            ? "No video is running above the channel's normal yet."
+            : "No post is running above the account's normal yet."}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function BestCard({ r }: { r: OrganicPayload["best"][number] }) {
+  return (
+    <>
+      {[r].map(r => (
         <a
-          key={`${r.platform}-${r.id}`}
+          key={r.id}
           href={r.url}
           target="_blank"
           rel="noreferrer"
@@ -80,7 +108,7 @@ function Best({ rows }: { rows: OrganicPayload["best"] }) {
           </div>
         </a>
       ))}
-    </div>
+    </>
   );
 }
 
@@ -164,18 +192,32 @@ export function OrganicTab({ sections }: CeoTabProps) {
   return (
     <div className="@container grid gap-4 lg:gap-6">
       <SectionCard
-        kicker="Across Instagram and YouTube, by how far above each platform's normal a post is running"
+        kicker="By how far above its platform's normal a post is running"
         title="Performing best"
         section={section}
         notes={p.notes}
         order={0}
       >
         {() => (
-          <div className="grid gap-4">
-            <Best rows={p.best ?? []} />
-            <p className="text-xs text-muted-foreground">
-              {`Normal is the median of what was read: ${ig?.normalViews ? `${countCompact(ig.normalViews)} views a reel` : "Instagram not read"}${yt.enabled && yt.normalViewsPerDay ? ` · ${yt.normalViewsPerDay.toFixed(1)} views a day on YouTube` : ""}.`}
-            </p>
+          <div className="grid gap-5">
+            <Best
+              rows={p.best ?? []}
+              platform="instagram"
+              normal={
+                ig?.normalViews
+                  ? `${countCompact(ig.normalViews)} views a reel, the median of what was read`
+                  : null
+              }
+            />
+            <Best
+              rows={p.best ?? []}
+              platform="youtube"
+              normal={
+                yt.enabled && yt.normalViewsPerDay
+                  ? `${yt.normalViewsPerDay.toFixed(1)} views a day per video, the median of what was read`
+                  : null
+              }
+            />
           </div>
         )}
       </SectionCard>

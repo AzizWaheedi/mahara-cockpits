@@ -140,6 +140,12 @@ export function BackendTab({ sections, now, day, goTab }: CeoTabProps) {
 
   return (
     <div className="@container grid min-w-0 gap-4 lg:gap-6">
+      <BookCard
+        money={sections.money}
+        clients={sections.clients}
+        goTab={goTab}
+      />
+
       <MediaBuyingCard
         section={sections.delivery}
         notes={deliveryNotes.media}
@@ -164,6 +170,85 @@ export function BackendTab({ sections, now, day, goTab }: CeoTabProps) {
 
       <NotMeasuredCard />
     </div>
+  );
+}
+
+// --- 0. The book: what the existing clients bring in -----------------------
+
+function BookCard({
+  money: moneySection,
+  clients,
+  goTab,
+}: {
+  money: CeoSections["money"];
+  clients: CeoSections["clients"];
+  goTab: GoTab;
+}) {
+  const m = moneySection?.payload?.mrr ?? null;
+  const churn = clients?.payload?.churn ?? null;
+  const active = m?.groups.find(g => g.group === "active") ?? null;
+  const paused = m?.groups.find(g => g.group === "paused") ?? null;
+  const avgLtv = m && m.ltv.filled > 0 ? m.ltv.totalUsd / m.ltv.filled : null;
+  return (
+    <SectionCard
+      kicker="What the clients already here bring in"
+      title="Backend revenue"
+      section={moneySection}
+      alsoReads={[clients]}
+      actions={<TabLink tab="money" label="Money" goTab={goTab} />}
+      order={0}
+    >
+      <div className="grid grid-cols-2 gap-x-6 gap-y-5 @lg:grid-cols-4">
+        <StatTile
+          variant="plain"
+          label="Recurring a month"
+          value={active ? money(active.recurringUsd) : "—"}
+          sub={
+            active
+              ? `${plural(active.cards, "active client")}${active.oneOffUsd > 0 ? ` · ${money(active.oneOffUsd)} on one-off plans` : ""}`
+              : "client cards not read yet"
+          }
+          hint="The MRR typed on the active client cards that sit on a recurring plan, in USD. A card with no figure is missing from it, not zero."
+        />
+        <StatTile
+          variant="plain"
+          label="Churn this month"
+          value={churn && churn.rate !== null ? pct(churn.rate) : "—"}
+          sub={
+            churn
+              ? churn.rate === null
+                ? (churn.rateWhy ?? "not known yet")
+                : `${count(churn.churnedThisMonth.length)} of ${count(churn.launchedAtMonthStart ?? 0)} launched clients${churn.complete ? "" : ", partial month"}`
+              : "clients not read yet"
+          }
+          hint="Launched clients lost this month over launched clients at the start of the month. A pause is not churn, and a client that stops before its launch date is lost before launch, not churn."
+        />
+        <StatTile
+          variant="plain"
+          label="Average LTV"
+          value={avgLtv !== null ? money(avgLtv) : "—"}
+          sub={
+            m
+              ? `${count(m.ltv.filled)} of ${count(m.cards)} cards carry a figure`
+              : undefined
+          }
+          hint="The LTV field on the client cards, averaged over the cards that have one. It is typed by hand on the card, not a total of cash received."
+        />
+        <StatTile
+          variant="plain"
+          label="Paused"
+          value={paused ? count(paused.cards) : "—"}
+          sub={
+            paused && paused.recurringUsd > 0
+              ? `${money(paused.recurringUsd)} a month on hold`
+              : paused
+                ? "nothing on hold"
+                : undefined
+          }
+          hint="Clients on pause. A pause holds the money; it is not counted as churn."
+        />
+      </div>
+    </SectionCard>
   );
 }
 

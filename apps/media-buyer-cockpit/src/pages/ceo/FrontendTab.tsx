@@ -369,7 +369,7 @@ function CashWon({
   const lastMonthName = previousMonthName(p.month);
   const thisMonthName = month(p.month, { long: true });
   // Today is still running; a partial last day would read as a fall.
-  const daily = total.daily.filter(d => d.date < today);
+  const daily = total.daily.filter(d => d.date < today).slice(-90);
   const best = daily.reduce<(typeof daily)[number] | null>(
     (top, d) => (top === null || d.value > top.value ? d : top),
     null,
@@ -860,6 +860,7 @@ function TrendBody({
       <div className="grid gap-x-8 gap-y-8 sm:grid-cols-2">
         {DAILY_SERIES.map(s => (
           <TimeSeriesChart
+            initialRange="90d"
             key={s.key}
             data={days}
             series={[{ key: s.key, label: s.title }]}
@@ -874,12 +875,13 @@ function TrendBody({
       </div>
       <div className="border-t pt-6">
         <TimeSeriesChart
+          initialRange="90d"
           data={cashDaily}
           series={[{ key: "value", label: "Cash" }]}
           kind="area"
           unit="money"
           title={cashLabel}
-          summary="last 90 days, through yesterday"
+          summary="through yesterday"
           height={220}
           ariaLabel={`Cash collected per day over the last ${count(cashDaily.length)} complete days.`}
           emptyText={

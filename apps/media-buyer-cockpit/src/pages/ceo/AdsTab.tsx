@@ -6,6 +6,7 @@ import {
   Megaphone,
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { CreativePreview } from "@/components/CreativePreview";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { count, countCompact, money, pct } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
@@ -322,17 +323,13 @@ function AdRow({
   return (
     <div className="grid gap-2 border-t py-3 pl-3">
       <div className="flex items-start gap-3">
-        {ad.thumbnail ? (
-          <img
-            src={ad.thumbnail}
-            alt=""
-            loading="lazy"
-            className="size-12 shrink-0 rounded object-cover"
-            onError={e => {
-              e.currentTarget.style.display = "none";
-            }}
-          />
-        ) : null}
+        <CreativePreview
+          name={ad.name}
+          metaAdId={ad.id}
+          accountId={account}
+          thumbUrl={ad.thumbnail ?? undefined}
+          size="md"
+        />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="truncate text-sm font-medium">{ad.name}</span>
@@ -725,17 +722,13 @@ function AdTable({
               >
                 <td className="sticky left-0 z-10 max-w-[10rem] bg-card py-2 pr-3 @md:max-w-[15rem]">
                   <div className="flex items-center gap-2">
-                    {a.thumbnail ? (
-                      <img
-                        src={a.thumbnail}
-                        alt=""
-                        loading="lazy"
-                        className="size-7 shrink-0 rounded object-cover"
-                        onError={e => {
-                          e.currentTarget.style.display = "none";
-                        }}
-                      />
-                    ) : null}
+                    <CreativePreview
+                      name={a.name}
+                      metaAdId={a.id}
+                      accountId={p.accountId}
+                      thumbUrl={a.thumbnail ?? undefined}
+                      size="sm"
+                    />
                     <div className="min-w-0">
                       <div className="truncate font-medium text-foreground">
                         {a.name}

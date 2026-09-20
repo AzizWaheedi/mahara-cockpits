@@ -2,11 +2,12 @@ import { useAction } from "convex/react";
 import { UserPlus } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
-import { money, pct, plural } from "@/components/ceo/format";
+import { money, plural } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import { api } from "../../../convex/_generated/api";
+import { commissionText } from "../../../convex/ceo/commission";
 import type { Person, Roster } from "../../../convex/ceo/people";
 
 /**
@@ -231,14 +232,21 @@ export function PeopleCard({ order }: { order?: number }) {
                         )}
                       </td>
                       <td className="p-2">
-                        {p.commissionPct === null && !p.commissionNote ? (
+                        {commissionText(
+                          p.commission,
+                          p.currency,
+                          p.commissionNote,
+                        ) === null ? (
                           <span className="text-muted-foreground">—</span>
                         ) : (
                           <>
-                            {p.commissionPct === null
-                              ? null
-                              : pct(p.commissionPct)}
-                            {p.commissionNote ? (
+                            {commissionText(
+                              p.commission,
+                              p.currency,
+                              p.commissionNote,
+                            )}
+                            {p.commission.basis !== "other" &&
+                            p.commissionNote ? (
                               <span className="block text-xs text-muted-foreground">
                                 {p.commissionNote}
                               </span>

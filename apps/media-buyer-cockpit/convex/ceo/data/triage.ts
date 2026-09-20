@@ -112,12 +112,30 @@ export type TriageBooking = {
   future: number;
   /** Of `count`, how many the appointment record marks as attended. */
   attended: number;
+  /**
+   * Meetings whose day has passed and whose outcome is known: showed
+   * (status showed, or attended true) and no-show (status noshow, or attended
+   * false). Cancelled and invalid never count; an unknown outcome is neither,
+   * the same rule the client reports use.
+   */
+  showed: number;
+  noshow: number;
+};
+
+/** Opportunities the client's own CRM marked won, dated by the day the stage changed. */
+export type TriageWin = {
+  clientId: string;
+  date: string;
+  count: number;
+  /** Sum of the monetary value GHL holds, in the client's currency, often 0. */
+  value: number;
 };
 
 export type TriageDelivery = {
   clients: TriageClient[];
   days: TriageDay[];
   bookings: TriageBooking[];
+  wins: TriageWin[];
   /** Newest ad row sync time, epoch ms. */
   adsFreshAt: number | undefined;
   /** Newest appointment update time, epoch ms. */
@@ -150,7 +168,7 @@ export async function clientDelivery(
   from: string,
   to: string,
 ): Promise<TriageDelivery> {
-  const [clientRows, dayRows, bookingRows] = await Promise.all([
+  const [clientRows, dayRows, bookingRows, winRows] = await Promise.all([
     sql(
       TRIAGE,
       `select c.id::text as client_id,
@@ -162,7 +180,8 @@ export async function clientDelivery(
               g.status,
               m.matched_by,
               (select count(distinct a.campaign_id) from public.ads_daily_snapshots a
-                where a.client_id = c.id and a.date between ${day(from)} and ${day(to)}) as campaigns
+                where a.client_id = c.id and a.spend > 0
+                  and a.date between (${day(to)}::date - 2) and ${day(to)}) as campaigns
        from public.clients c
        left join public.ghl_client_ad_accounts m on m.client_id = c.id
        left join public.ghl_clients g on g.location_id = m.location_id
@@ -194,12 +213,33 @@ export async function clientDelivery(
               count(*) as count,
               count(*) filter (where ap.start_at > now()) as future,
               count(*) filter (where ap.attended is true) as attended,
+              count(*) filter (where ap.start_at <= now()
+                and ap.status is distinct from 'cancelled' and ap.status is distinct from 'invalid'
+                and (ap.status = 'showed' or (ap.status is distinct from 'noshow' and ap.attended is true))) as showed,
+              count(*) filter (where ap.start_at <= now()
+                and ap.status is distinct from 'cancelled' and ap.status is distinct from 'invalid'
+                and (ap.status = 'noshow' or (ap.status is distinct from 'showed' and ap.attended is false))) as noshow,
               max(extract(epoch from ap.updated_at) * 1000) as fresh_ms
        from public.appointments ap
        left join public.ghl_calendars cal on cal.calendar_id = ap.calendar_id
        where (ap.start_at at time zone 'Asia/Kuwait')::date between ${day(from)} and ${day(to)}
          and ap.client_id is not null
        group by ap.client_id, 2, 3`,
+    ),
+    // A close is an opportunity the client's own CRM moved to won, dated by
+    // the day the stage changed. Few clients mark wins, so this reads low by
+    // construction; the note on the tab says so.
+    sql(
+      TRIAGE,
+      `select m.client_id::text as client_id,
+              to_char(coalesce(o.last_stage_change_at, o.updated_at) at time zone 'Asia/Kuwait', 'YYYY-MM-DD') as date,
+              count(*) as count,
+              sum(coalesce(o.monetary_value, 0)) as value
+       from public.client_opportunities o
+       join public.ghl_client_ad_accounts m on m.location_id = o.location_id
+       where o.status = 'won'
+         and (coalesce(o.last_stage_change_at, o.updated_at) at time zone 'Asia/Kuwait')::date between ${day(from)} and ${day(to)}
+       group by 1, 2`,
     ),
   ]);
 
@@ -268,6 +308,20 @@ export async function clientDelivery(
       count: num(r.count),
       future: num(r.future),
       attended: num(r.attended),
+      showed: num(r.showed),
+      noshow: num(r.noshow),
+    });
+  }
+
+  const wins: TriageWin[] = [];
+  for (const r of winRows) {
+    const clientId = String(r.client_id);
+    if (own.has(clientId) || !rate.has(clientId)) continue;
+    wins.push({
+      clientId,
+      date: String(r.date),
+      count: num(r.count),
+      value: num(r.value),
     });
   }
 
@@ -281,6 +335,7 @@ export async function clientDelivery(
     clients,
     days,
     bookings,
+    wins,
     adsFreshAt: adsFresh > 0 ? adsFresh : undefined,
     bookingsFreshAt: bookingsFresh > 0 ? bookingsFresh : undefined,
     unmapped,

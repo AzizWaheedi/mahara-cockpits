@@ -7,6 +7,14 @@ export const APP_NAME = "Mahara Cockpit";
  */
 export const CPL_GATE = 15;
 export const CPB_GATE = 60;
+/**
+ * The rate gates the client reports use (reportDocs.ts), in percent: at least
+ * a quarter of leads booked, three quarters of booked meetings showing up,
+ * one close in five shows. Keep in step with src/lib/kpi.ts.
+ */
+export const BOOKING_RATE_GATE = 25;
+export const SHOW_RATE_GATE = 75;
+export const CLOSE_RATE_GATE = 20;
 
 /** ClickUp form that creates the campaign card on the ads management board. Aziz, 2026-09-10. */
 export const NEW_CAMPAIGN_FORM_URL =

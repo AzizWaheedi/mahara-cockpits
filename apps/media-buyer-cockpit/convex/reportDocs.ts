@@ -3,6 +3,11 @@ import { internal } from "./_generated/api";
 import { internalAction, internalQuery } from "./_generated/server";
 import { clientDataFor, normTight, readClientData } from "./clientData";
 import { bridge } from "./comms";
+import {
+  BOOKING_RATE_GATE,
+  CLOSE_RATE_GATE,
+  SHOW_RATE_GATE,
+} from "./constants";
 import { googleAccessToken } from "./tools";
 
 /**
@@ -34,7 +39,11 @@ const RULE = { red: 0xdd / 255, green: 0xe2 / 255, blue: 0xe8 / 255 };
 
 const SHARE_WITH = ["aziz@maharamedia.com", "abdulelah@maharamedia.com"];
 /** Client KPI gates Aziz locked. Kept in step with the CS app's csmDiagnosis.ts. */
-const GATES = { bookingRate: 25, showRate: 75, closeRate: 20 };
+const GATES = {
+  bookingRate: BOOKING_RATE_GATE,
+  showRate: SHOW_RATE_GATE,
+  closeRate: CLOSE_RATE_GATE,
+};
 const EXTRAS = ["lost", "byAd", "appointments", "ads"];
 
 /** No em or en dash anywhere a client reads. */

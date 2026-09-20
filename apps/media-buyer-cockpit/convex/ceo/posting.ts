@@ -32,10 +32,27 @@ const LIVE_TARGETS = ["instagram", "youtube"];
 // biome-ignore lint/suspicious/noExplicitAny: Supabase rows and Graph payloads are untyped here
 type Any = Record<string, any>;
 
+/**
+ * Three kinds, three jobs. A reel is a vertical video with a 9:16 cover and
+ * a caption, for Instagram and YouTube Shorts. A video is long-form with a
+ * 16:9 thumbnail, a title, a description with chapters and tags, for
+ * YouTube. A post is one to ten images with a caption, for Instagram.
+ */
+export type PostKind = "reel" | "video" | "post";
+export const DEFAULT_TARGETS: Record<PostKind, string[]> = {
+  reel: ["instagram", "youtube"],
+  video: ["youtube"],
+  post: ["instagram"],
+};
+
 export type Post = {
   id: number;
-  kind: "reel" | "video";
+  kind: PostKind;
   titleWorking: string | null;
+  /** Bucket paths of a post's images, in order. */
+  images: string[];
+  /** What the post is about, in Aziz's words; the caption's source when there is no transcript. */
+  brief: string | null;
   sourceKind: string;
   sourceRef: string;
   videoPath: string | null;
@@ -74,6 +91,8 @@ export type Post = {
     thumb?: string;
     cover?: string;
     frames?: Record<string, string>;
+    /** Signed links to a post's images, in order. */
+    images?: string[];
   };
 };
 
@@ -138,8 +157,10 @@ function toPost(r: Any): Omit<Post, "urls"> {
     Array.isArray(x) ? x.map(String) : [];
   return {
     id: Number(r.id),
-    kind: r.kind === "video" ? "video" : "reel",
+    kind: r.kind === "video" ? "video" : r.kind === "post" ? "post" : "reel",
     titleWorking: r.title_working ?? null,
+    images: strs(r.images),
+    brief: r.brief ?? null,
     sourceKind: String(r.source_kind ?? ""),
     sourceRef: String(r.source_ref ?? ""),
     videoPath: r.video_path ?? null,
@@ -186,6 +207,12 @@ async function withUrls(r: Any, full: boolean): Promise<Post> {
   if (full) {
     urls.video = await signOrNull(p.videoPath, 2 * 3600);
     urls.cover = await signOrNull(p.coverPath, 3600);
+    const images: string[] = [];
+    for (const path of p.images) {
+      const u = await signOrNull(path, 3600);
+      if (u) images.push(u);
+    }
+    urls.images = images;
     const frames: Record<string, string> = {};
     for (const f of p.frames) {
       const u = await signOrNull(f.path, 3600);
@@ -313,7 +340,7 @@ export const uploadUrl = authenticatedAction({
     { filename },
   ): Promise<{ path: string; url: string }> => {
     await gate(ctx);
-    const safe = filename.replace(/[^\w.-]+/g, "_").slice(-80) || "video.mp4";
+    const safe = filename.replace(/[^\w.-]+/g, "_").slice(-80) || "file";
     const path = `uploads/${Date.now().toString(36)}-${safe}`;
     const out = await sb(
       `/storage/v1/object/upload/sign/${BUCKET}/${enc(path)}`,
@@ -327,30 +354,55 @@ export const uploadUrl = authenticatedAction({
 
 export const create = authenticatedAction({
   args: {
-    kind: v.union(v.literal("reel"), v.literal("video")),
+    kind: v.union(v.literal("reel"), v.literal("video"), v.literal("post")),
     sourceKind: v.union(
       v.literal("upload"),
       v.literal("drive"),
       v.literal("url"),
+      v.literal("image"),
     ),
+    /** The video's bucket path or link; for a post, the first image's path. */
     sourceRef: v.string(),
+    /** A post's images, bucket paths in order, one to ten. */
+    images: v.optional(v.array(v.string())),
+    /** What a post is about, in Aziz's words. */
+    brief: v.optional(v.string()),
     titleWorking: v.optional(v.string()),
     targets: v.optional(v.array(v.string())),
   },
   returns: v.any(),
   handler: async (ctx, a): Promise<Post> => {
     const by = await gate(ctx);
-    const ref = a.sourceRef.trim();
-    if (!ref) throw new Error("Point at a file, a Drive link or a link first.");
-    if (
-      a.sourceKind !== "upload" &&
-      !/^(https?:\/\/|[A-Za-z0-9_-]{20,}$)/.test(ref)
-    )
-      throw new Error("That does not look like a link.");
-    const targets = (a.targets ?? ["instagram", "youtube"]).filter(t =>
+    const images = (a.images ?? []).map(x => x.trim()).filter(Boolean);
+    const brief = a.brief?.trim().slice(0, 2000) || null;
+    let ref = a.sourceRef.trim();
+    if (a.kind === "post") {
+      if (a.sourceKind !== "image")
+        throw new Error("A post is made of images; upload one to ten.");
+      if (images.length < 1 || images.length > 10)
+        throw new Error("A post needs between one and ten images.");
+      if (!brief)
+        throw new Error(
+          "Say what the post is about, so the caption has a source.",
+        );
+      ref = images[0];
+    } else {
+      if (a.sourceKind === "image")
+        throw new Error("A reel or a video needs a video, not images.");
+      if (!ref)
+        throw new Error("Point at a file, a Drive link or a link first.");
+      if (
+        a.sourceKind !== "upload" &&
+        !/^(https?:\/\/|[A-Za-z0-9_-]{20,}$)/.test(ref)
+      )
+        throw new Error("That does not look like a link.");
+    }
+    const targets = (a.targets ?? DEFAULT_TARGETS[a.kind]).filter(t =>
       TARGETS.includes(t),
     );
     if (!targets.length) throw new Error("Pick at least one place to post.");
+    if (a.kind === "post" && targets.some(t => t !== "instagram"))
+      throw new Error("An image post goes to Instagram from here.");
     const rows = await rest("cockpit_posts", {
       method: "POST",
       body: {
@@ -358,6 +410,8 @@ export const create = authenticatedAction({
         title_working: a.titleWorking?.trim().slice(0, 200) || null,
         source_kind: a.sourceKind,
         source_ref: ref,
+        images,
+        brief,
         targets,
         status: "new",
         created_by: by,
@@ -369,8 +423,8 @@ export const create = authenticatedAction({
     await ctx.runMutation(internal.ceo.posting.record, {
       action: "posting.create",
       rowId: String(row.id),
-      what: `Queued ${a.kind} "${a.titleWorking?.trim() || ref.slice(0, 60)}" for ${targets.join(" and ")}`,
-      after: { sourceKind: a.sourceKind, targets },
+      what: `Queued ${a.kind} "${a.titleWorking?.trim() || brief?.slice(0, 60) || ref.slice(0, 60)}" for ${targets.join(" and ")}`,
+      after: { sourceKind: a.sourceKind, targets, images: images.length },
       by,
     });
     return withUrls(row, false);
@@ -484,10 +538,10 @@ export const discard = authenticatedAction({
 });
 
 /**
- * Publish the reel on Instagram: a container from a signed link to the
- * video, wait for Meta to process it, publish, keep the permalink. If Meta
- * is still processing when this gives up, the container is kept and
- * `checkInstagram` finishes the job later.
+ * Publish on Instagram: a container from signed links (a reel from its
+ * video and cover, a post from its images), wait for Meta to process it,
+ * publish, keep the permalink. If Meta is still processing when this gives
+ * up, the container is kept and `checkInstagram` finishes the job later.
  */
 async function publishInstagram(
   row: Any,
@@ -501,10 +555,8 @@ async function publishInstagram(
   const published: Any = { ...(row.published ?? {}) };
   if (published.instagram?.id) return row;
   let container: string = String(published.instagram?.container ?? "");
+  const isPost = String(row.kind) === "post";
   if (!container) {
-    if (!row.video_path) throw new Error("The video is not in the bucket yet.");
-    const videoUrl = await sign(String(row.video_path), 48 * 3600);
-    const coverUrl = await signOrNull(row.cover_path, 48 * 3600);
     const hashtags: string[] = Array.isArray(row.ig_hashtags)
       ? row.ig_hashtags
       : [];
@@ -512,15 +564,54 @@ async function publishInstagram(
       .filter(Boolean)
       .join("\n\n")
       .slice(0, 2200);
-    const made: Any = await graphPost(`${IG}/media`, {
-      media_type: "REELS",
-      video_url: videoUrl,
-      caption,
-      share_to_feed: "true",
-      ...(coverUrl ? { cover_url: coverUrl } : {}),
-    });
-    container = String(made?.id ?? "");
-    if (!container) throw new Error("Meta gave no container for the reel.");
+    if (isPost) {
+      // One image is an IMAGE container; two to ten are children of a CAROUSEL.
+      const paths: string[] = Array.isArray(row.images)
+        ? row.images.map(String)
+        : [];
+      if (!paths.length) throw new Error("The post has no images.");
+      const urls: string[] = [];
+      for (const path of paths) urls.push(await sign(path, 48 * 3600));
+      if (urls.length === 1) {
+        const made: Any = await graphPost(`${IG}/media`, {
+          image_url: urls[0],
+          caption,
+        });
+        container = String(made?.id ?? "");
+      } else {
+        const children: string[] = [];
+        for (const url of urls) {
+          const child: Any = await graphPost(`${IG}/media`, {
+            image_url: url,
+            is_carousel_item: "true",
+          });
+          const cid = String(child?.id ?? "");
+          if (!cid) throw new Error("Meta gave no container for an image.");
+          children.push(cid);
+        }
+        const made: Any = await graphPost(`${IG}/media`, {
+          media_type: "CAROUSEL",
+          children: children.join(","),
+          caption,
+        });
+        container = String(made?.id ?? "");
+      }
+      if (!container) throw new Error("Meta gave no container for the post.");
+    } else {
+      if (!row.video_path)
+        throw new Error("The video is not in the bucket yet.");
+      const videoUrl = await sign(String(row.video_path), 48 * 3600);
+      const coverUrl = await signOrNull(row.cover_path, 48 * 3600);
+      const made: Any = await graphPost(`${IG}/media`, {
+        media_type: "REELS",
+        video_url: videoUrl,
+        caption,
+        share_to_feed: "true",
+        ...(coverUrl ? { cover_url: coverUrl } : {}),
+      });
+      container = String(made?.id ?? "");
+      if (!container) throw new Error("Meta gave no container for the reel.");
+    }
     published.instagram = { container, at: new Date().toISOString() };
     row = await patch(id, { published, status: "publishing" });
     log(`container ${container}`);
@@ -533,7 +624,7 @@ async function publishInstagram(
     if (status === "FINISHED") break;
     if (status === "ERROR" || status === "EXPIRED")
       throw new Error(
-        `Meta could not take the reel: ${String(s?.status ?? status).slice(0, 200)}`,
+        `Meta could not take the ${isPost ? "post" : "reel"}: ${String(s?.status ?? status).slice(0, 200)}`,
       );
     await sleep(5000);
   }

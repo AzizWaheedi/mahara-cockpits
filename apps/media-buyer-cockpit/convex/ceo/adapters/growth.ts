@@ -376,7 +376,7 @@ export const growth: Adapter = {
       notes,
       [] as GrowthPayload["daily"],
       async () =>
-        (await sql(B2B, dailySql(addDays(today, -59), today))).map(r => ({
+        (await sql(B2B, dailySql(addDays(today, -364), today))).map(r => ({
           date: String(r.date),
           spend: num(r.spend),
           leads: num(r.leads),

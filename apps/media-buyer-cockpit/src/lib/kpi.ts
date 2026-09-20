@@ -5,6 +5,10 @@
  */
 export const CPL_GATE = 15;
 export const CPB_GATE = 60;
+/** The rate gates the client reports use, in percent. Keep in step with convex/constants.ts. */
+export const BOOKING_RATE_GATE = 25;
+export const SHOW_RATE_GATE = 75;
+export const CLOSE_RATE_GATE = 20;
 /** Days a change needs before its numbers mean anything. */
 export const LEARNING_DAYS = 3;
 /** A new campaign is watched twice a day for this long. */

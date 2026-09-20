@@ -1,6 +1,9 @@
-"""One post, prepared: the video on disk, eight candidate frames, the
-transcript with timestamps, the copy, and a first thumbnail and cover. The
-row ends `ready` with everything Aziz needs to read, change and approve."""
+"""One post, prepared. A reel: the video on disk, eight candidate frames,
+the transcript with timestamps, the caption and Shorts copy, and a cover in
+the Instagram house style. A video: the same, with the YouTube title,
+description with chapters, tags, and a 16:9 thumbnail. A post: the caption
+from Aziz's brief, no video and no artwork. The row ends `ready` with
+everything Aziz needs to read, change and approve."""
 from __future__ import annotations
 
 import subprocess
@@ -50,8 +53,29 @@ def pick_frame(frames: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
     return max(settled, key=lambda f: float(f.get("sharpness") or 0))
 
 
+def run_post(cfg: Config, log: Callable[[str], None], store: PostStore, post: dict[str, Any]) -> dict[str, Any]:
+    """An image post: the caption from the brief; the images are already in the bucket."""
+    pid = int(post["id"])
+    images = post.get("images") if isinstance(post.get("images"), list) else []
+    if not images:
+        raise ValueError("this post has no images")
+    copy, copy_method = write.compose_post(cfg, log, post)
+    store.patch_post(pid, {
+        "status": "ready",
+        "error": None,
+        "language": copy.get("language"),
+        "ig_caption": copy["ig_caption"],
+        "ig_hashtags": copy["ig_hashtags"],
+        "method": {"copy": copy_method, "notes": copy.get("notes"), "at": now_iso()},
+    })
+    log(f"post {pid}: caption written for {len(images)} image(s)")
+    return {"images": len(images), "copy": copy_method}
+
+
 def run(cfg: Config, log: Callable[[str], None], store: PostStore, post: dict[str, Any], workdir: Path) -> dict[str, Any]:
     pid = int(post["id"])
+    if write.kind_of(post) == "post":
+        return run_post(cfg, log, store, post)
     video, patch = fetch_video(cfg, log, store, post, workdir)
     info = media.probe(video)
     patch.update({k: info.get(k) for k in ("duration_sec", "width", "height")})
@@ -72,11 +96,15 @@ def run(cfg: Config, log: Callable[[str], None], store: PostStore, post: dict[st
     copy, copy_method = write.compose(cfg, log, post, transcript, info, outliers)
 
     best = pick_frame(frames)
+    kind = write.kind_of(post, duration)
     text = copy.get("thumb_text") or str(post.get("title_working") or "").strip()
     thumb_path = cover_path = None
     if best and text:
-        thumb_path = store.upload(f"posts/{pid}/thumb.jpg", thumbs.render_youtube(best["_local"], text, fonts=fonts, log=log), "image/jpeg")
-        cover_path = store.upload(f"posts/{pid}/cover.jpg", thumbs.render_cover(best["_local"], text, fonts=fonts, log=log), "image/jpeg")
+        # A video gets the 16:9 thumbnail; a reel gets the 9:16 cover. Never both.
+        if kind == "video":
+            thumb_path = store.upload(f"posts/{pid}/thumb.jpg", thumbs.render_youtube(best["_local"], text, fonts=fonts, log=log), "image/jpeg")
+        else:
+            cover_path = store.upload(f"posts/{pid}/cover.jpg", thumbs.render_cover(best["_local"], text, fonts=fonts, log=log), "image/jpeg")
 
     patch.update({
         "status": "ready",
@@ -100,12 +128,15 @@ def run(cfg: Config, log: Callable[[str], None], store: PostStore, post: dict[st
         "outlier_refs": [o.get("key") for o in outliers if o.get("key")],
     })
     store.patch_post(pid, patch)
-    return {"frames": len(frames), "transcript_chars": len(str(transcript.get("text") or "")), "speech": transcript.get("method"), "copy": copy_method, "thumb": bool(thumb_path)}
+    return {"frames": len(frames), "transcript_chars": len(str(transcript.get("text") or "")), "speech": transcript.get("method"), "copy": copy_method, "thumb": bool(thumb_path), "cover": bool(cover_path)}
 
 
 def render(cfg: Config, log: Callable[[str], None], store: PostStore, post: dict[str, Any], params: dict[str, Any], workdir: Path) -> dict[str, Any]:
-    """A new thumbnail and cover: Aziz changed the line or picked another frame."""
+    """A new thumbnail (video) or cover (reel): Aziz changed the line or picked another frame."""
     pid = int(post["id"])
+    kind = write.kind_of(post, float(post.get("duration_sec") or 0))
+    if kind == "post":
+        raise ValueError("an image post has no artwork to render")
     text = str(params.get("thumb_text") or post.get("thumb_text") or "").strip()
     if not text:
         raise ValueError("no thumbnail line to render")
@@ -117,7 +148,10 @@ def render(cfg: Config, log: Callable[[str], None], store: PostStore, post: dict
     local = workdir / "frame.jpg"
     local.write_bytes(store.download(str(frame["path"])))
     fonts = thumbs.ensure_fonts(log)
-    thumb_path = store.upload(f"posts/{pid}/thumb.jpg", thumbs.render_youtube(local, text, fonts=fonts, log=log), "image/jpeg")
-    cover_path = store.upload(f"posts/{pid}/cover.jpg", thumbs.render_cover(local, text, fonts=fonts, log=log), "image/jpeg")
+    thumb_path = cover_path = None
+    if kind == "video":
+        thumb_path = store.upload(f"posts/{pid}/thumb.jpg", thumbs.render_youtube(local, text, fonts=fonts, log=log), "image/jpeg")
+    else:
+        cover_path = store.upload(f"posts/{pid}/cover.jpg", thumbs.render_cover(local, text, fonts=fonts, log=log), "image/jpeg")
     store.patch_post(pid, {"thumb_text": text, "thumb_frame_ms": int(frame.get("ms") or 0), "thumb_path": thumb_path, "cover_path": cover_path, "error": None})
     return {"thumb": thumb_path, "cover": cover_path, "frame_ms": frame.get("ms")}

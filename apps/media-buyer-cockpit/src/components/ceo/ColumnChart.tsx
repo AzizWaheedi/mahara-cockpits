@@ -18,9 +18,12 @@ import {
   type ChartRow,
   type ChartSeries,
   isEmptyChart,
+  RangeControl,
+  type RangeKey,
   SeriesTable,
   seriesColors,
   TooltipCard,
+  useChartRange,
 } from "./chartKit";
 import { EmptyState } from "./EmptyState";
 import { formatters, isNum, type Unit } from "./format";
@@ -56,6 +59,8 @@ type Props = {
   ariaLabel: string;
   /** Empty state text when there is no number to plot. */
   emptyText?: string;
+  /** The timeframe the chart opens on; the reader can change it. */
+  initialRange?: RangeKey;
   className?: string;
 };
 
@@ -76,22 +81,28 @@ export function ColumnChart({
   partialNote = "So far, still in progress",
   ariaLabel,
   emptyText = "No data for this range yet.",
+  initialRange = "all",
   className,
 }: Props) {
   const [view, setView] = useState<"chart" | "table">("chart");
   const shown = series.slice(0, 2);
   const colors = seriesColors(shown);
   const { full, compact } = formatters(unit);
-  const empty = isEmptyChart(data, shown);
+  const tf = useChartRange(data, x, initialRange);
+  const rows = tf.rows;
+  const empty = isEmptyChart(rows, shown);
   const longX = formatXLong ?? formatX;
-  const lastIndex = data.length - 1;
+  const lastIndex = rows.length - 1;
+  // The newest column is only "still in progress" when it is on screen.
+  const partialShown =
+    partialLast && rows.length > 0 && rows[lastIndex] === data[data.length - 1];
 
   const first = shown[0];
   let capIndex = -1;
   if (first && capLabel === "last") capIndex = lastIndex;
   if (first && capLabel === "max") {
     let best = Number.NEGATIVE_INFINITY;
-    data.forEach((r, i) => {
+    rows.forEach((r, i) => {
       const v = r[first.key];
       if (isNum(v) && v > best) {
         best = v;
@@ -110,6 +121,16 @@ export function ColumnChart({
         mark="rect"
         view={view}
         onView={setView}
+        range={
+          <RangeControl
+            range={tf.range}
+            onRange={tf.setRange}
+            custom={tf.custom}
+            onCustom={tf.setCustom}
+            first={tf.first}
+            last={tf.last}
+          />
+        }
       />
       {empty ? (
         <div
@@ -120,7 +141,7 @@ export function ColumnChart({
         </div>
       ) : view === "table" ? (
         <SeriesTable
-          data={data}
+          data={rows}
           x={x}
           xHeader={xHeader}
           series={shown}
@@ -133,7 +154,7 @@ export function ColumnChart({
         <div role="figure" aria-label={ariaLabel} style={{ height }}>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart
-              data={data}
+              data={rows}
               margin={{
                 top: capIndex >= 0 ? 22 : 8,
                 right: 8,
@@ -172,7 +193,7 @@ export function ColumnChart({
                   const row = payload?.[0]?.payload as ChartRow | undefined;
                   if (!active || !row) return null;
                   const isPartial =
-                    partialLast && data.indexOf(row) === lastIndex;
+                    partialShown && rows.indexOf(row) === lastIndex;
                   return (
                     <TooltipCard
                       label={longX(String(label ?? row[x] ?? ""))}
@@ -196,8 +217,8 @@ export function ColumnChart({
                   isAnimationActive={false}
                   activeBar={{ fillOpacity: 0.78 }}
                 >
-                  {partialLast
-                    ? data.map((_, k) => (
+                  {partialShown
+                    ? rows.map((_, k) => (
                         <Cell
                           key={`c-${k}`}
                           fill={colors[i]}

@@ -388,6 +388,7 @@ function CashBody({ p, today }: { p: MoneyPayload; today: string }) {
         </dl>
       </div>
       <TimeSeriesChart
+        initialRange="90d"
         data={daily}
         series={[{ key: "value", label: "Cash" }]}
         kind="area"
@@ -683,6 +684,7 @@ function RailsBody({
 
       {lines.data.length ? (
         <TimeSeriesChart
+          initialRange="90d"
           data={lines.data}
           series={lines.series}
           unit="money"
