@@ -1,3 +1,4 @@
+import json
 import os
 import unittest
 from pathlib import Path
@@ -348,3 +349,24 @@ class HandoverRules(unittest.TestCase):
         assert _result_urls('{"results":[{"url":"https://d1.cloudfront.net/a/b.png"}]}') == ["https://d1.cloudfront.net/a/b.png"]
         assert _result_urls("done: https://x.higgsfield.ai/out/1.jpg") == ["https://x.higgsfield.ai/out/1.jpg"]
         assert tidy_caption("جرّب — «الطريقة» بـ $500") == "جرّب .. الطريقة بـ دولار 500"
+
+
+class ResultLinks(unittest.TestCase):
+    def test_result_url_wins_over_the_uploaded_reference(self):
+        from radar.posting import higgsfield
+        raw = json.dumps([{
+            "id": "job",
+            "params": {"input_images": [{"url": "https://in.cloudfront.net/frame.jpg"}], "prompt": "x"},
+            "min_result_url": "https://out.cloudfront.net/min.png",
+            "result_url": "https://out.cloudfront.net/full.png",
+            "status": "completed",
+        }])
+        urls = higgsfield._result_urls(raw)
+        self.assertEqual(urls[0], "https://out.cloudfront.net/full.png")
+        self.assertNotIn("https://in.cloudfront.net/frame.jpg", urls)
+
+    def test_plain_text_output_still_yields_a_link(self):
+        from radar.posting import higgsfield
+        urls = higgsfield._result_urls("done: https://out.cloudfront.net/x.png")
+        self.assertEqual(urls, ["https://out.cloudfront.net/x.png"])
+
