@@ -5,7 +5,7 @@ import { addDays, daysInMonth, kuwaitDay, monthStart } from "../time";
 import type { Adapter, DailyPoint, SourceStamp } from "../types";
 import {
   describeWorkingHours,
-  type WorkingHoursLike,
+  type WorkingHours,
   workingMinutesSql,
 } from "../workingHours";
 
@@ -131,7 +131,7 @@ const DEPOSIT_CONFIRMED = `(exists (
  */
 function windowsSql(
   ranges: Record<WindowKey, Range>,
-  hours: WorkingHoursLike,
+  hours: WorkingHours,
 ): string {
   const workingMin = workingMinutesSql(
     "l.lead_created_at",
