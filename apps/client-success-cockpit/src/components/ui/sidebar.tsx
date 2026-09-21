@@ -431,7 +431,12 @@ const SidebarGroup = React.forwardRef<
     <div
       ref={ref}
       data-sidebar="group"
-      className={cn("relative flex w-full min-w-0 flex-col p-2", className)}
+      // shrink-0: a group keeps its height; without it the groups squeeze into the
+      // column and their items draw over the next group (creative, 2026-09-21).
+      className={cn(
+        "relative flex w-full min-w-0 shrink-0 flex-col p-2",
+        className,
+      )}
       {...props}
     />
   );
