@@ -16,6 +16,7 @@ import {
   money,
   month,
   NA,
+  pct,
   plural,
   shiftMonth,
   type Unit,
