@@ -21,10 +21,14 @@ import {
   shiftMonth,
 } from "@/components/ceo/format";
 import {
+  CANCEL_RATE,
   CLOSE_RATE,
   contractedHeadline,
   INTRO_SHOW_RATE,
   INTRO_TO_DEMO,
+  QUALIFIED_CLOSE_RATE,
+  ROAS_CASH,
+  ROAS_CONTRACTED,
   SHOW_RATE,
 } from "@/components/ceo/metrics";
 import { Na, Value } from "@/components/ceo/Na";
@@ -61,6 +65,11 @@ function per(
 ): number | null {
   if (!isNum(a) || !isNum(b) || b <= 0) return null;
   return a / b;
+}
+
+/** "5.8x" for a return, n/a when there is none. */
+function ratio(v: number | null | undefined): string {
+  return isNum(v) ? `${decimal(v)}x` : NA;
 }
 
 // --- Notes: each caveat beside the number it qualifies ---
@@ -446,6 +455,21 @@ function CallsBody({
       hint: "Demos whose call time has passed in this window, cancelled and no-show included. This is what the show rate divides by. A past demo still marked confirmed or invalid counts as shown, so the gap is no-shows, cancellations and calls still marked new.",
       naHint: "The window function did not return a demos due count.",
     },
+    {
+      label: "Intro calls shown",
+      value: count(w.introsShown),
+      delta: deltaFor(vs, change(w.introsShown, prev?.introsShown), "up"),
+      sub: `of ${plural(w.introsDue, "intro call")} due`,
+      hint: "Intro calls in this window marked showed, or confirmed or invalid once their time has passed, over the intro calls whose time has passed. Cancelled and future calls are never in it.",
+    },
+    {
+      label: CANCEL_RATE.label,
+      value: CANCEL_RATE.format(w.cancel.total),
+      delta: deltaFor(vs, diff(w.cancel.total, prev?.cancel.total), "down", "points"),
+      sub: `intros ${CANCEL_RATE.format(w.cancel.intro)} · demos ${CANCEL_RATE.format(w.cancel.demo)}`,
+      hint: CANCEL_RATE.hint,
+      naHint: CANCEL_RATE.naHint,
+    },
   ];
   return (
     <div className="min-w-0">
@@ -469,7 +493,7 @@ function ClosingBody({
   label: string;
 }) {
   const avgContract = per(w.contracted, w.closes);
-  const upfrontShare = per(w.cash, w.contracted);
+  const fe = w.frontEndCash;
   const tiles: Tile[] = [
     {
       label: "Closes",
@@ -478,11 +502,25 @@ function ClosingBody({
       hint: "Deals signed on the closed-deal form, dated by the day the form was submitted.",
     },
     {
-      label: "Close rate",
+      label: CLOSE_RATE.label,
       value: CLOSE_RATE.format(w.closeRate),
       delta: deltaFor(vs, diff(w.closeRate, prev?.closeRate), "up", "points"),
+      sub: `${count(w.closes)} signed, ${plural(w.demosShown, "demo")} shown`,
       hint: CLOSE_RATE.hint,
       naHint: CLOSE_RATE.naHint,
+    },
+    {
+      label: QUALIFIED_CLOSE_RATE.label,
+      value: QUALIFIED_CLOSE_RATE.format(w.qualifiedCloseRate),
+      delta: deltaFor(
+        vs,
+        diff(w.qualifiedCloseRate, prev?.qualifiedCloseRate),
+        "up",
+        "points",
+      ),
+      sub: `${count(w.closes)} signed, ${plural(isNum(w.raw.demos_qualified) ? w.raw.demos_qualified : 0, "qualified demo")}`,
+      hint: QUALIFIED_CLOSE_RATE.hint,
+      naHint: QUALIFIED_CLOSE_RATE.naHint,
     },
     {
       label: "Contracted on the closer form",
@@ -491,22 +529,34 @@ function ClosingBody({
       hint: "The contract value the closer typed on the form, in this window. Deal values logged by hand on the Money tab are not in it; the contracted this month figure on the deals card adds them.",
     },
     {
-      label: "Cash typed on the form",
-      value: money(w.cash),
-      delta: deltaFor(vs, change(w.cash, prev?.cash), "up"),
-      hint: "The upfront amount the closer typed on the form. It is not Whop cash and is never added to it.",
+      label: "Front-end cash",
+      value: money(fe.total),
+      delta: deltaFor(vs, change(fe.total, prev?.frontEndCash.total), "up"),
+      sub:
+        fe.deposit > 0
+          ? `${pct(fe.confirmedShare)} confirmed on Whop or by transfer · kickoff cash not read yet`
+          : "kickoff cash not read yet",
+      hint: "The deposit the closer typed at signing, for deals signed in this window, plus the kickoff cash the CSM collects on the onboarding call. The kickoff form is not read yet, so this is the deposit alone. Confirmed means a Whop payment or a bank transfer on record backs the deposit; Tap is not checked here.",
+    },
+    {
+      label: ROAS_CASH.label,
+      value: ratio(w.roasCash),
+      delta: deltaFor(vs, change(w.roasCash, prev?.roasCash), "up"),
+      hint: ROAS_CASH.hint,
+      naHint: ROAS_CASH.naHint,
+    },
+    {
+      label: ROAS_CONTRACTED.label,
+      value: ratio(w.roasContracted),
+      delta: deltaFor(vs, change(w.roasContracted, prev?.roasContracted), "up"),
+      hint: ROAS_CONTRACTED.hint,
+      naHint: ROAS_CONTRACTED.naHint,
     },
     {
       label: "Average contract in this window",
       value: money(avgContract),
       hint: "Contracted value in this window over closes in this window.",
       naHint: "No closes in this window, so there is no average contract.",
-    },
-    {
-      label: "Upfront share of contract",
-      value: pct(upfrontShare),
-      hint: "Upfront cash over contracted value, both typed by the closer on the same form. It is not a collection rate: no payment is linked back to a deal.",
-      naHint: "No contracted value in this window.",
     },
   ];
 

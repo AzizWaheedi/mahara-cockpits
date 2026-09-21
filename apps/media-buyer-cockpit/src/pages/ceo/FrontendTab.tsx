@@ -25,6 +25,8 @@ import {
   CAC_AD_SPEND_ONLY,
   CLOSE_RATE,
   COST_TO_WIN,
+  ROAS_CASH,
+  ROAS_CONTRACTED,
   cashHeadline,
   contractedHeadline,
   INTRO_TO_DEMO,
@@ -610,7 +612,7 @@ function FunnelBody({
       delta: delta(change(w.closes, prev?.closes), "up"),
     },
     {
-      label: "Close rate",
+      label: CLOSE_RATE.label,
       value: CLOSE_RATE.format(w.closeRate),
       delta: delta(diff(w.closeRate, prev?.closeRate), "up", "points"),
       hint: CLOSE_RATE.hint,
@@ -623,10 +625,14 @@ function FunnelBody({
       hint: "The contract value the closer typed on the form, in this window. Deal values logged by hand on the Money tab are not in it; the contracted this month figure further down adds them.",
     },
     {
-      label: "Cash typed on the form",
-      value: money(w.cash),
-      delta: delta(change(w.cash, prev?.cash), "up"),
-      hint: "The upfront amount the closer typed at signing, never a Whop payment. Do not add it to the cash won above.",
+      label: "Front-end cash",
+      value: money(w.frontEndCash.total),
+      delta: delta(change(w.frontEndCash.total, prev?.frontEndCash.total), "up"),
+      sub:
+        w.frontEndCash.deposit > 0
+          ? `${pct(w.frontEndCash.confirmedShare)} confirmed on a rail · kickoff cash not read yet`
+          : "kickoff cash not read yet",
+      hint: "The deposit the closer typed at signing plus the kickoff cash collected on the onboarding call. The kickoff form is not read yet, so this is the deposit alone. Confirmed means a Whop payment or a bank transfer on record backs it. Do not add it to the cash won above: that is the same money arriving on the rails.",
     },
   ];
 
@@ -638,7 +644,7 @@ function FunnelBody({
           { label: "Leads", value: w.leads },
           { label: "Intros booked", value: w.introsBooked },
           // The dashboard's own rates: intro to demo on intros shown, show rate
-          // on calls due, close rate on qualified demos.
+          // on calls due, close rate on every demo shown.
           {
             label: "Demos booked",
             value: w.demosBooked,
@@ -734,17 +740,56 @@ function CostsBody({
       naHint: costToWin.naHint,
     },
     {
-      label: "Return on ad spend",
-      value: ratio(w.roas),
-      delta: delta(change(w.roas, prev?.roas), "up"),
-      hint: "As the B2B dashboard computes it, against the money the closer typed rather than cash collected.",
-      naHint: "No ad spend in this window.",
+      label: ROAS_CASH.label,
+      value: ratio(w.roasCash),
+      delta: delta(change(w.roasCash, prev?.roasCash), "up"),
+      sub: `${money(w.frontEndCash.total)} front-end cash`,
+      hint: ROAS_CASH.hint,
+      naHint: ROAS_CASH.naHint,
+    },
+    {
+      label: ROAS_CONTRACTED.label,
+      value: ratio(w.roasContracted),
+      delta: delta(change(w.roasContracted, prev?.roasContracted), "up"),
+      hint: ROAS_CONTRACTED.hint,
+      naHint: ROAS_CONTRACTED.naHint,
     },
     {
       label: "Cost per lead",
       value: money(w.cpl),
       delta: delta(change(w.cpl, prev?.cpl), "down"),
       naHint: "No leads in this window, so there is no cost per lead.",
+    },
+  ];
+
+  // What each call is worth: front-end cash over the calls that led to it.
+  const fe = w.frontEndCash.total;
+  const worth = (n: number) => (n > 0 ? fe / n : null);
+  const worthTiles: Tile[] = [
+    {
+      label: "Front-end cash per intro booked",
+      value: money(worth(w.introsBooked)),
+      delta: delta(change(worth(w.introsBooked), prev ? (prev.introsBooked > 0 ? prev.frontEndCash.total / prev.introsBooked : null) : null), "up"),
+      sub: `${money(fe)} over ${plural(w.introsBooked, "intro")} booked`,
+      naHint: "No intro calls were booked in this window.",
+    },
+    {
+      label: "Front-end cash per intro shown",
+      value: money(worth(w.introsShown)),
+      sub: `over ${plural(w.introsShown, "intro")} shown`,
+      naHint: "No intro calls were shown in this window.",
+    },
+    {
+      label: "Front-end cash per demo booked",
+      value: money(worth(w.demosBooked)),
+      sub: `over ${plural(w.demosBooked, "demo")} booked`,
+      naHint: "No demos were booked in this window.",
+    },
+    {
+      label: "Front-end cash per demo shown",
+      value: money(worth(w.demosShown)),
+      sub: `over ${plural(w.demosShown, "demo")} shown`,
+      naHint: "No demos were shown in this window.",
     },
   ];
 
@@ -781,6 +826,10 @@ function CostsBody({
 
   const groups: { title: string; tiles: Tile[] }[] = [
     { title: "In the chosen window", tiles: windowTiles },
+    {
+      title: "What front-end cash buys, in the chosen window",
+      tiles: worthTiles,
+    },
     { title: "This month against last month", tiles: monthTiles },
   ];
 

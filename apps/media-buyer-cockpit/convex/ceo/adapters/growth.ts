@@ -58,15 +58,70 @@ const ROAS_NONE = `not ('roas-qualified' = any(coalesce(l.tags, '{}'::text[])) o
 export const IS_LEAD = `('roas-qualified' = any(coalesce(l.tags, '{}'::text[])) or 'roas-unqualified' = any(coalesce(l.tags, '{}'::text[])))`;
 
 /**
+ * Where a lead came from (Aziz, 2026-09-21): an ad id on the contact, or an
+ * ad id inside GoHighLevel's attribution (a click-to-message ad carries it as
+ * mediumId), means ads. No ad id and a source, tag or attribution medium
+ * that says inbound WhatsApp, Instagram DM, YouTube, referral or organic
+ * means organic. Neither means ads, and the screen labels it "assumed".
+ */
+const HAS_AD = `(l.ad_id is not null or coalesce(l.raw_contact->'attributionSource'->>'mediumId', l.raw_contact->'lastAttributionSource'->>'mediumId', '') <> '')`;
+const SAYS_ORGANIC = `(concat_ws(' ', l.source, array_to_string(coalesce(l.tags, '{}'::text[]), ' '), l.raw_contact->'attributionSource'->>'medium', l.raw_contact->'lastAttributionSource'->>'medium') ~* '(whatsapp|instagram dm|insta dm|ig dm|\\mdm\\M|youtube|organic|inbound|referr)')`;
+export const LEAD_SOURCE = {
+  ads: HAS_AD,
+  organic: `(not ${HAS_AD} and ${SAYS_ORGANIC})`,
+  assumed: `(not ${HAS_AD} and not ${SAYS_ORGANIC})`,
+};
+
+/**
+ * A Maqsam call made by somebody on the sales roster: a setter, a closer or
+ * both (Aziz, 2026-09-21: "never a call-centre agent"). The sync stamps
+ * `sales_rep_id` on every call it can tie to the roster.
+ */
+const BY_SALES_REP = `exists (select 1 from public.sales_reps sr where sr.id = m.sales_rep_id and sr.role in ('setter', 'closer', 'both', 'rep'))`;
+
+/** The phone digits of a lead, and whether a Maqsam call is with that lead. */
+const LEAD_DIGITS = `regexp_replace(coalesce(l.phone, ''), '[^0-9]', '', 'g')`;
+const CALL_IS_WITH_LEAD = `(m.contact_id = l.contact_id
+        or (length(${LEAD_DIGITS}) >= 8 and (regexp_replace(coalesce(m.lead_phone, ''), '[^0-9]', '', 'g') like '%' || right(${LEAD_DIGITS}, 8) or regexp_replace(coalesce(m.callee_number, ''), '[^0-9]', '', 'g') like '%' || right(${LEAD_DIGITS}, 8) or regexp_replace(coalesce(m.caller_number, ''), '[^0-9]', '', 'g') like '%' || right(${LEAD_DIGITS}, 8))))`;
+
+/**
+ * A closer-form deposit confirmed on a rail the database holds: a paid Whop
+ * payment tied to the deal by response id or by the payer's email within
+ * 60 days of signing, or a bank transfer tied to the deal or to the business
+ * name. Tap is read from its API by the money section, not here, so a
+ * deposit paid on Tap reads as unconfirmed on this tab.
+ */
+const DEPOSIT_CONFIRMED = `(exists (
+          select 1 from public.whop_payments wp
+          where wp.status = 'paid'
+            and (wp.deal_response_id = d.response_id
+              or (nullif(lower(btrim(wp.user_email)), '') is not null and lower(btrim(wp.user_email)) = lower(btrim(d.email))))
+            and wp.paid_on between (d.submitted_at at time zone 'Asia/Riyadh')::date - 7 and (d.submitted_at at time zone 'Asia/Riyadh')::date + 60)
+        or exists (
+          select 1 from public.transfers t
+          where t.deal_response_id = d.response_id
+             or (nullif(lower(btrim(t.client_name)), '') is not null and lower(btrim(t.client_name)) = lower(btrim(d.business_name)))))`;
+
+/**
  * One statement for all six windows: b2b_window_metrics per window (the
  * Overview tiles), plus the ROAS lead classes, speed to lead on Maqsam,
  * and a count of past demos still marked confirmed. The show rate itself
  * is the dashboard's and is never worked out here.
  *
  * Speed to lead (Aziz, 2026-09-21): from the lead's creation to the first
- * call with that lead on Maqsam, whatever its direction, matched by the
- * CRM contact id or the last eight digits of the phone. Median over the
- * leads that were called; the uncalled are counted beside it.
+ * Maqsam call with that lead made by a sales rep (the roster: setter, closer
+ * or both, never a call-centre agent), matched by the CRM contact id or the
+ * last eight digits of the phone. Median over the leads that were called;
+ * the never-called are counted beside it.
+ *
+ * Lead to booked call: leads created in the window with at least one intro
+ * or demo booked against their contact, ever, over leads. Per lead, never
+ * per booking, so it cannot pass 100%.
+ *
+ * Front-end cash: the deposit the closer typed on the form for deals signed
+ * in the window, plus the kickoff cash the CSM collects on the onboarding
+ * call once that form is read (it is not yet), with the share a Whop payment
+ * or a bank transfer confirms.
  */
 function windowsSql(ranges: Record<WindowKey, Range>): string {
   const values = Object.entries(ranges)
@@ -99,26 +154,47 @@ speed as (
     count(*) as sp_leads,
     count(fc.first_call) as sp_called,
     percentile_cont(0.5) within group (order by extract(epoch from (fc.first_call - l.lead_created_at)) / 60.0) filter (where fc.first_call is not null) as sp_median_min,
-    count(*) filter (where fc.first_call is not null and fc.first_call - l.lead_created_at <= interval '5 minutes') as sp_within_5
+    count(*) filter (where fc.first_call is not null and fc.first_call - l.lead_created_at <= interval '5 minutes') as sp_within_5,
+    count(*) filter (where exists (
+      select 1 from public.calls c
+      where c.contact_id is not null and c.contact_id = l.contact_id and c.call_type in ('intro', 'demo'))) as booked_leads,
+    count(*) filter (where ${LEAD_SOURCE.ads}) as src_ads,
+    count(*) filter (where ${LEAD_SOURCE.organic}) as src_organic,
+    count(*) filter (where ${LEAD_SOURCE.assumed}) as src_assumed
   from w
   join public.leads l on ${IS_LEAD} and (l.lead_created_at at time zone 'Asia/Riyadh')::date between w.f and w.t
   cross join lateral (
     select min(m.occurred_at) as first_call from public.maqsam_calls m
     where m.occurred_at >= l.lead_created_at
-      and (m.contact_id = l.contact_id
-        or (length(regexp_replace(coalesce(l.phone,''), '[^0-9]', '', 'g')) >= 8 and (regexp_replace(coalesce(m.lead_phone,''), '[^0-9]', '', 'g') like '%' || right(regexp_replace(coalesce(l.phone,''), '[^0-9]', '', 'g'), 8) or regexp_replace(coalesce(m.callee_number,''), '[^0-9]', '', 'g') like '%' || right(regexp_replace(coalesce(l.phone,''), '[^0-9]', '', 'g'), 8) or regexp_replace(coalesce(m.caller_number,''), '[^0-9]', '', 'g') like '%' || right(regexp_replace(coalesce(l.phone,''), '[^0-9]', '', 'g'), 8))))
+      and ${BY_SALES_REP}
+      and ${CALL_IS_WITH_LEAD}
   ) fc
+  group by w.k
+),
+fe as (
+  select w.k,
+    count(*) as fe_deals,
+    coalesce(sum(d.cash_collected), 0) as fe_deposit,
+    count(*) filter (where coalesce(d.cash_collected, 0) > 0 and ${DEPOSIT_CONFIRMED}) as fe_deals_confirmed,
+    coalesce(sum(d.cash_collected) filter (where ${DEPOSIT_CONFIRMED}), 0) as fe_confirmed
+  from w
+  join public.closed_deals d on (d.submitted_at at time zone 'Asia/Riyadh')::date between w.f and w.t
   group by w.k
 )
 select w.k, w.f::text as d_from, w.t::text as d_to,
   public.b2b_window_metrics(w.f, w.t, null::text[]) as m,
   coalesce(sc.demos_still_confirmed, 0) as demos_still_confirmed,
   coalesce(r.q, 0) as roas_q, coalesce(r.u, 0) as roas_u, coalesce(r.nr, 0) as roas_nr, coalesce(r.untagged, 0) as roas_untagged,
-  coalesce(sp.sp_leads, 0) as sp_leads, coalesce(sp.sp_called, 0) as sp_called, sp.sp_median_min, coalesce(sp.sp_within_5, 0) as sp_within_5
+  coalesce(sp.sp_leads, 0) as sp_leads, coalesce(sp.sp_called, 0) as sp_called, sp.sp_median_min, coalesce(sp.sp_within_5, 0) as sp_within_5,
+  coalesce(sp.booked_leads, 0) as booked_leads,
+  coalesce(sp.src_ads, 0) as src_ads, coalesce(sp.src_organic, 0) as src_organic, coalesce(sp.src_assumed, 0) as src_assumed,
+  coalesce(fe.fe_deals, 0) as fe_deals, coalesce(fe.fe_deposit, 0) as fe_deposit,
+  coalesce(fe.fe_deals_confirmed, 0) as fe_deals_confirmed, coalesce(fe.fe_confirmed, 0) as fe_confirmed
 from w
 left join still_confirmed sc on sc.k = w.k
 left join roas r on r.k = w.k
-left join speed sp on sp.k = w.k`;
+left join speed sp on sp.k = w.k
+left join fe fe on fe.k = w.k`;
 }
 
 /**
@@ -307,6 +383,8 @@ const orNull = (x: unknown): number | null =>
 const pct = (x: unknown): number | null =>
   x === null || x === undefined ? null : Math.round(num(x) * 10) / 1000;
 
+const round2 = (x: number) => Math.round(x * 100) / 100;
+
 function usd(x: number): string {
   return `$${x.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}`;
 }
@@ -358,42 +436,82 @@ function toWindow(r: Row): FunnelWindow {
   const leads = qualified + unqualified;
   const called = num(r.sp_called);
   const medianMin = orNull(r.sp_median_min);
+  const spLeads = num(r.sp_leads);
+  const bookedLeads = num(r.booked_leads);
+  const deposit = round2(num(r.fe_deposit));
+  const confirmed = round2(num(r.fe_confirmed));
+  // Kickoff cash joins the deposit once the CSM's kickoff form is read.
+  const frontEndCash = deposit;
+  const contracted = num(m.revenue);
+  const ratio = (a: number, b: number, places = 2) =>
+    b > 0 ? Math.round((a / b) * 10 ** places) / 10 ** places : null;
   return {
     from: String(r.d_from),
     to: String(r.d_to),
     spend,
     leads,
-    cpl: leads > 0 ? Math.round((spend / leads) * 100) / 100 : null,
+    cpl: ratio(spend, leads),
     leadClasses: {
       qualified,
       unqualified,
       notReady: num(r.roas_nr),
       untagged: num(r.roas_untagged),
     },
+    sources: {
+      ads: num(r.src_ads),
+      organic: num(r.src_organic),
+      assumedAds: num(r.src_assumed),
+    },
     speedToLead: {
-      leads: num(r.sp_leads),
+      leads: spLeads,
       called,
+      neverCalled: Math.max(0, spLeads - called),
       medianMin: medianMin === null ? null : Math.round(medianMin * 10) / 10,
-      within5Share:
-        called > 0
-          ? Math.round((num(r.sp_within_5) / called) * 1000) / 1000
-          : null,
+      within5Share: ratio(num(r.sp_within_5), called, 3),
+    },
+    leadToBooked: {
+      bookedLeads,
+      rate: ratio(bookedLeads, leads, 3),
     },
     introsBooked: num(m.intros_booked),
+    introsShown: num(m.intros_shown),
+    introsDue: num(m.intros_due),
     demosBooked: num(m.demos_booked),
     demosShown: num(m.demos_shown),
+    demosDue: num(m.demos_due),
     demoShowRate: pct(m.demo_show_rate),
     introShowRate: pct(m.intro_show_rate),
     introToDemo: pct(m.intro_to_demo),
     demosStillConfirmed: num(r.demos_still_confirmed),
+    cancel: {
+      intro: pct(m.intro_cancel_rate),
+      demo: pct(m.demo_cancel_rate),
+      total: pct(m.cancel_rate),
+      introsCancelled: num(m.intros_cancelled),
+      introsScheduled: num(m.intros_scheduled),
+      demosCancelled: num(m.demos_cancelled),
+      demosScheduled: num(m.demos_scheduled),
+    },
     costPerDemo: orNull(m.cost_per_demo),
     costPerDemoBooked: orNull(m.cost_per_demo_booked),
     closes: num(m.signed),
-    closeRate: pct(m.close_rate),
-    contracted: num(m.revenue),
+    closeRate: pct(m.close_rate_all),
+    qualifiedCloseRate: pct(m.close_rate),
+    contracted,
     cash: num(m.cash_collected),
+    frontEndCash: {
+      deposit,
+      kickoff: null,
+      total: frontEndCash,
+      deals: num(r.fe_deals),
+      dealsConfirmed: num(r.fe_deals_confirmed),
+      confirmed,
+      confirmedShare: ratio(confirmed, deposit, 3),
+    },
     cac: orNull(m.cac),
     roas: orNull(m.roas),
+    roasCash: ratio(frontEndCash, spend),
+    roasContracted: ratio(contracted, spend),
     raw: rawNumbers(m),
   };
 }
@@ -442,6 +560,27 @@ export const growth: Adapter = {
       lastMonth: toWindow(rowOf("lastMonth")),
     };
     const mtd = windows.mtd;
+
+    // How much of this month's leads carry any first-touch attribution at all
+    // (GoHighLevel's attributionSource is `{}` on most contacts), so the
+    // organic split can say how much of it is a guess.
+    const organicEmptyShare = await attempt(
+      "The attribution coverage",
+      notes,
+      "an unknown share",
+      async () => {
+        const [row] = await sql(
+          B2B,
+          `select count(*) as n,
+                  count(*) filter (where coalesce(l.raw_contact->'attributionSource'->>'medium', '') = '') as empty
+           from public.leads l
+           where ${IS_LEAD}
+             and (l.lead_created_at at time zone 'Asia/Riyadh')::date between ${day(ranges.mtd[0])} and ${day(ranges.mtd[1])}`,
+        );
+        const n = num(row?.n);
+        return n > 0 ? `${Math.round((num(row?.empty) / n) * 100)}%` : "all";
+      },
+    );
 
     const daily = await attempt(
       "The 365-day daily series",
@@ -524,11 +663,19 @@ export const growth: Adapter = {
       },
       {
         level: "info",
-        text: "Leads are every opted-in GHL contact with a phone or email, including WhatsApp, organic and manual contacts.",
+        text: "Leads are the contacts the setters tagged roas-qualified or roas-unqualified in GoHighLevel, dated by creation. Not ready (roas-unprepared) and contacts with no ROAS tag are shown beside the count and never in it.",
       },
       {
         level: "info",
-        text: "Contracted and cash come from the closed-deal form. Cash is the upfront amount the closer typed, not Whop payments.",
+        text: `Where leads come from is judged by the ad id on the contact: with one, ads; without one, organic when the source, a tag or the attribution medium says inbound WhatsApp, Instagram DM, YouTube, referral or organic; otherwise ads, assumed. GoHighLevel's first-touch attribution is empty on ${organicEmptyShare} of this month's leads, so a true first click needs UTMs on the forms and the WhatsApp link, or a "how did you find us" answer.`,
+      },
+      {
+        level: "info",
+        text: "Speed to lead runs from the lead's creation to the first Maqsam call with it by a sales rep on the roster (setter, closer or both), never a call-centre agent. The median is over the leads that were called; the never-called are counted beside it.",
+      },
+      {
+        level: "info",
+        text: "Contracted comes from the closed-deal form. Front-end cash is the deposit the closer typed on that form, plus the kickoff cash the CSM collects on the onboarding call once the kickoff form is read: it is not read yet, so front-end cash is the deposit alone and reads low. The share confirmed is what a Whop payment or a bank transfer on record backs; Tap is not checked here.",
       },
       {
         level: "info",

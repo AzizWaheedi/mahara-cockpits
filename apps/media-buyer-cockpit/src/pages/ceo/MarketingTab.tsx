@@ -44,9 +44,9 @@ function bookedCalls(w: FunnelWindow): number {
   return w.introsBooked + w.demosBooked;
 }
 
-/** Booked calls over leads. Can pass 100%: a lead and its booking are dated on different days. */
+/** Leads that booked at least one call, over leads. Per lead, so it never passes 100%. */
 function bookedRate(w: FunnelWindow): number | null {
-  return w.leads > 0 ? bookedCalls(w) / w.leads : null;
+  return w.leadToBooked.rate;
 }
 
 /**
@@ -107,7 +107,7 @@ const OWN_NOTES: Record<CardKey, Note[]> = {
   booked: [
     {
       level: "info",
-      text: "A lead is dated on the day it was created and a booking on the day it was booked, so a lead created on Monday and booked on Thursday lands in two different windows. The lead to booked call rate can pass 100% in a short window for that reason, and it is not a cohort conversion.",
+      text: "Lead to booked call is per lead: the leads created in this window that have at least one intro or demo booked against their contact, whenever it was booked, over the leads created in this window. A lead booked twice counts once, so the rate never passes 100%. The booked-call counts beside it are dated by booking day, which is a different clock.",
     },
     {
       level: "info",
@@ -127,7 +127,7 @@ const OWN_NOTES: Record<CardKey, Note[]> = {
   sources: [
     {
       level: "info",
-      text: "The top 10 sources by leads this month. A lead that arrived without a source reads as no source recorded.",
+      text: "The three tiles split this month's leads by the ad id rule; the bars below are the raw source field, top 10, and a lead that arrived without one reads as no source recorded. GoHighLevel's first-touch attribution is empty on most contacts, so a true first click needs UTMs on the forms and the WhatsApp link, or a \"how did you find us\" answer at the form.",
     },
   ],
   daily: [
@@ -157,20 +157,15 @@ const NOT_MEASURED: { label: string; why: string }[] = [
   { label: "Clicks", why: META_ONLY },
   { label: "Click through rate", why: META_ONLY },
   { label: "Cost per click", why: META_ONLY },
-  { label: "Frequency", why: META_ONLY },
   { label: "Landing page views", why: NO_ANALYTICS },
   { label: "Landing page conversion rate", why: NO_ANALYTICS },
   {
-    label: "Organic, content, email and social",
-    why: "Nothing in either Supabase project holds them, so no organic or owned channel can be reported.",
+    label: "Email and owned social as lead sources",
+    why: "Organic is split by the ad id rule on the sources card. Email and owned social carry no marker of their own on a contact, so they cannot be told apart from it.",
   },
   {
     label: "Hook rate, thumbstop and video views",
     why: "Creative level performance is not in the Meta snapshots and not in the Creative Triage project.",
-  },
-  {
-    label: "Leads by the ad that made them",
-    why: "Nothing exposes the ad on a lead, so a funnel by ad cannot be drawn. The ads card credits leads to an ad inside the B2B dashboard only.",
   },
 ];
 
@@ -316,7 +311,7 @@ export function MarketingTab({ sections, now, day }: CeoTabProps) {
           order={3}
           className="xl:col-span-5"
         >
-          {p => <LeadSources sources={p.leadSources} />}
+          {p => <LeadSources sources={p.leadSources} w={p.windows.mtd} />}
         </SectionCard>
       </div>
 
@@ -393,9 +388,9 @@ function SpendAndLeads({
               ? `${(w.speedToLead.medianMin / 60).toFixed(1)} h`
               : `${Math.round(w.speedToLead.medianMin)} min`
         }
-        sub={`${count(w.speedToLead.called)} of ${count(w.speedToLead.leads)} leads called on Maqsam${w.speedToLead.within5Share !== null ? ` · ${pct(w.speedToLead.within5Share)} within 5 min` : ""}`}
-        hint="From the lead's creation to the first Maqsam call with it, matched by the CRM contact or the phone's last eight digits. The median over the leads that were called; the ones never called are counted beside it, not inside it."
-        naHint="No lead in this window has a Maqsam call against it."
+        sub={`${count(w.speedToLead.called)} of ${count(w.speedToLead.leads)} leads called by a sales rep · ${count(w.speedToLead.neverCalled)} never called${w.speedToLead.within5Share !== null ? ` · ${pct(w.speedToLead.within5Share)} within 5 min` : ""}`}
+        hint="From the lead's creation to the first Maqsam call with it made by a sales rep on the roster (setter, closer or both), never a call-centre agent, matched by the CRM contact or the phone's last eight digits. The median over the leads that were called; the never-called are counted beside it, not inside it."
+        naHint="No lead in this window has a sales rep's Maqsam call against it."
       />
       <StatTile
         variant="plain"
@@ -464,10 +459,11 @@ function CallsBooked({
         delta={delta(diff(rate, prevRate), "up", "points")}
         sub={
           <span>
-            {plural(booked, "call")} booked, {plural(w.leads, "lead")}
+            {count(w.leadToBooked.bookedLeads)} of {plural(w.leads, "lead")}{" "}
+            booked a call · {plural(booked, "call")} booked in the window
           </span>
         }
-        hint="Intro plus demo calls booked in this window, divided by the leads created in it."
+        hint="Leads created in this window with at least one intro or demo booked against their contact, ever, over the leads created in this window. Per lead, never per booking."
         naHint="No leads in this window, so there is no rate."
       />
       <StatTile
@@ -563,20 +559,54 @@ function TopAds({ ads }: { ads: Ad[] }) {
 
 // --- Card 4: lead sources ---
 
-function LeadSources({ sources }: { sources: GrowthPayload["leadSources"] }) {
+function LeadSources({
+  sources,
+  w,
+}: {
+  sources: GrowthPayload["leadSources"];
+  w: FunnelWindow;
+}) {
   const items: BarListItem[] = sources.map((s, i) => ({
     key: `${s.source}-${i}`,
     label: s.source === "(none)" ? "No source recorded" : s.source,
     value: s.leads,
   }));
+  const split = w.sources;
+  const total = split.ads + split.organic + split.assumedAds;
+  const share = (n: number) => (total > 0 ? pct(n / total) : NA);
   return (
-    <BarList
-      items={items}
-      format={count}
-      limit={10}
-      ariaLabel="Leads by source this month"
-      emptyText="No leads this month yet."
-    />
+    <div className="grid gap-5">
+      <div className="grid grid-cols-3 gap-x-4 gap-y-3">
+        <StatTile
+          variant="plain"
+          label="Ads"
+          value={count(split.ads)}
+          sub={share(split.ads)}
+          hint="Leads whose contact carries an ad id, or whose GoHighLevel attribution carries one (a click-to-message ad puts it in mediumId)."
+        />
+        <StatTile
+          variant="plain"
+          label="Organic"
+          value={count(split.organic)}
+          sub={share(split.organic)}
+          hint="Leads with no ad id whose source, tags or attribution medium say inbound WhatsApp, Instagram DM, YouTube, referral or organic."
+        />
+        <StatTile
+          variant="plain"
+          label="Ads, assumed"
+          value={count(split.assumedAds)}
+          sub={share(split.assumedAds)}
+          hint="Leads with no ad id and nothing that says organic. They are counted as ads because that is where nearly every lead comes from, and labelled assumed because nothing proves it."
+        />
+      </div>
+      <BarList
+        items={items}
+        format={count}
+        limit={10}
+        ariaLabel="Leads by source this month"
+        emptyText="No leads this month yet."
+      />
+    </div>
   );
 }
 

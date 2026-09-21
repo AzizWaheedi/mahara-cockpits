@@ -465,16 +465,38 @@ export type FunnelWindow = {
     /** No ROAS tag yet: shown, never counted. */
     untagged: number;
   };
-  /** From a lead's creation to the first Maqsam call with it, over the leads that were called. */
+  /**
+   * Where the leads came from (Aziz, 2026-09-21). `ads` carry an ad id;
+   * `organic` carry none and a source, tag or attribution medium that says
+   * inbound WhatsApp, Instagram DM, YouTube, referral or organic;
+   * `assumedAds` carry neither and are counted as ads, labelled assumed.
+   */
+  sources: { ads: number; organic: number; assumedAds: number };
+  /**
+   * From a lead's creation to the first Maqsam call with it by a sales rep
+   * on the roster (never a call-centre agent), over the leads that were
+   * called. `neverCalled` is shown beside the median, never inside it.
+   */
   speedToLead: {
     leads: number;
     called: number;
+    neverCalled: number;
     medianMin: number | null;
     within5Share: number | null;
   };
+  /**
+   * Leads created in the window with at least one intro or demo booked
+   * against their contact, ever, over leads. Per lead, never per booking.
+   */
+  leadToBooked: { bookedLeads: number; rate: number | null };
   introsBooked: number;
+  /** The dashboard's `intros_shown`: showed, or confirmed or invalid once the time has passed. */
+  introsShown: number;
+  /** The dashboard's `intros_due`: intro calls whose time has passed, cancelled and no-show included. */
+  introsDue: number;
   demosBooked: number;
   demosShown: number;
+  demosDue: number;
   /** The dashboard's `demo_show_rate`: demos shown over demos due, 0..1 to three places. */
   demoShowRate: number | null;
   /** The dashboard's `intro_show_rate`, the same rule for intro calls. */
@@ -483,16 +505,54 @@ export type FunnelWindow = {
   introToDemo: number | null;
   /** Past demos in the window still marked confirmed. They count as shown under the dashboard's rule. */
   demosStillConfirmed: number;
+  /**
+   * Cancellations, from the dashboard's raw counts: calls with status
+   * cancelled over calls scheduled in the window (by call day), for intros,
+   * demos and both together. Fractions 0..1.
+   */
+  cancel: {
+    intro: number | null;
+    demo: number | null;
+    total: number | null;
+    introsCancelled: number;
+    introsScheduled: number;
+    demosCancelled: number;
+    demosScheduled: number;
+  };
   /** The dashboard's `cost_per_demo`: lead-gen spend over demos shown. */
   costPerDemo: number | null;
   /** The dashboard's `cost_per_demo_booked`: lead-gen spend over demos booked. */
   costPerDemoBooked: number | null;
   closes: number;
+  /** Signed over every demo shown (the dashboard's `close_rate_all`). */
   closeRate: number | null;
+  /** Signed over demos qualified, shown minus invalid (the dashboard's `close_rate`). */
+  qualifiedCloseRate: number | null;
   contracted: number;
+  /** The deposit the closer typed on the form (the dashboard's `cash_collected`). */
   cash: number;
+  /**
+   * Front-end cash: the deposit at signing plus the kickoff cash collected
+   * on the onboarding call. `kickoff` is null until the kickoff form is
+   * read, so `total` is the deposit alone. `confirmed` is the deposit money
+   * a Whop payment or a bank transfer on record backs; Tap is not checked.
+   */
+  frontEndCash: {
+    deposit: number;
+    kickoff: number | null;
+    total: number;
+    deals: number;
+    dealsConfirmed: number;
+    confirmed: number;
+    confirmedShare: number | null;
+  };
   cac: number | null;
+  /** The dashboard's `roas`: contracted over lead-gen spend. Same as `roasContracted`. */
   roas: number | null;
+  /** Front-end ROAS, the main one: front-end cash over lead-gen spend. */
+  roasCash: number | null;
+  /** Contracted ROAS: contracted over lead-gen spend. */
+  roasContracted: number | null;
   /** Every numeric key the B2B window function returned, as is. */
   raw: Record<string, number | null>;
 };
