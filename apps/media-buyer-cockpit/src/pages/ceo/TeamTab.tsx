@@ -1,5 +1,5 @@
 import { useAction } from "convex/react";
-import { Check, UserPlus, Users } from "lucide-react";
+import { Check, Clock, Plus, UserPlus, Users, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { count, money, plural } from "@/components/ceo/format";
@@ -14,6 +14,20 @@ import {
   SHARE_BASES,
 } from "../../../convex/ceo/commission";
 import type { Person, Roster } from "../../../convex/ceo/people";
+import {
+  DAY_LABEL,
+  DAY_SHORT,
+  type DayHours,
+  type DayKey,
+  DEFAULT_TIMEZONE,
+  defaultSchedule,
+  minutesOf,
+  normaliseSchedule,
+  normaliseTime,
+  type Schedule,
+  scheduleSummary,
+  WEEK_ORDER,
+} from "../../../convex/ceo/schedule";
 import type { CeoTabProps } from "./types";
 
 /**
@@ -74,12 +88,347 @@ const draftOf = (p: Person): Draft => ({
 
 const takesRate = (b: CommissionBasis) => b !== "none" && b !== "other";
 
+const tabular = { fontVariantNumeric: "tabular-nums" } as const;
+
+function Toggle({
+  on,
+  label,
+  disabled,
+  onChange,
+}: {
+  on: boolean;
+  label: string;
+  disabled?: boolean;
+  onChange: (on: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+      disabled={disabled}
+      onClick={() => onChange(!on)}
+      className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${on ? "bg-[var(--ceo-emphasis)]" : "bg-muted-foreground/40"} disabled:opacity-50`}
+    >
+      <span
+        className={`absolute top-0.5 size-4 rounded-full bg-background transition-[left] ${on ? "left-[18px]" : "left-0.5"}`}
+      />
+    </button>
+  );
+}
+
+/** A 24 hour track with the working window drawn on it: the shape of a day at a glance. */
+function DayBar({ start, end }: { start: string; end: string }) {
+  const s = normaliseTime(start);
+  const e = normaliseTime(end);
+  const ok = s !== null && e !== null && minutesOf(e) > minutesOf(s);
+  return (
+    <span
+      className="relative hidden h-1 min-w-12 flex-1 rounded-full bg-[var(--ceo-emphasis-track)] @md:block"
+      aria-hidden
+    >
+      {ok ? (
+        <span
+          className="absolute inset-y-0 rounded-full bg-[var(--ceo-emphasis)]"
+          style={{
+            left: `${(minutesOf(s) / 1440) * 100}%`,
+            width: `${((minutesOf(e) - minutesOf(s)) / 1440) * 100}%`,
+          }}
+        />
+      ) : null}
+    </span>
+  );
+}
+
+type ExceptionDraft = {
+  key: number;
+  date: string;
+  off: boolean;
+  start: string;
+  end: string;
+};
+type HoursDraft = {
+  week: Record<DayKey, DayHours>;
+  exceptions: ExceptionDraft[];
+};
+
+let exceptionKey = 0;
+
+const hoursDraftOf = (s: Schedule | null): HoursDraft => {
+  const base = s ?? defaultSchedule();
+  return {
+    week: { ...base.week },
+    exceptions: base.exceptions.map(x => ({
+      key: ++exceptionKey,
+      date: x.date,
+      off: "off" in x,
+      start: "off" in x ? "10:00" : x.start,
+      end: "off" in x ? "14:00" : x.end,
+    })),
+  };
+};
+
+/** The draft in the stored shape, for normaliseSchedule to check. */
+const scheduleOf = (h: HoursDraft, timezone: string): unknown => ({
+  timezone,
+  week: h.week,
+  exceptions: h.exceptions.map(x =>
+    x.off
+      ? { date: x.date, off: true }
+      : { date: x.date, start: x.start, end: x.end },
+  ),
+});
+
+/**
+ * The hours editor under a row: the week, Saturday first, then the dates that
+ * break it. Every keystroke is checked by the same rule the server applies,
+ * so the sentence at the bottom is either the summary that will be stored or
+ * what still needs fixing.
+ */
+function HoursEditor({
+  person,
+  busy,
+  onSave,
+  onClose,
+}: {
+  person: Person;
+  busy: boolean;
+  /** Saves the row with these hours; null clears them. Throws the server's sentence. */
+  onSave: (schedule: Schedule | null) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [h, setH] = useState<HoursDraft>(() => hoursDraftOf(person.schedule));
+  const [msg, setMsg] = useState<string | null>(null);
+  const timezone = person.schedule?.timezone ?? DEFAULT_TIMEZONE;
+  const checked = useMemo<{
+    schedule: Schedule | null;
+    problem: string | null;
+  }>(() => {
+    try {
+      return {
+        schedule: normaliseSchedule(scheduleOf(h, timezone)),
+        problem: null,
+      };
+    } catch (e) {
+      return {
+        schedule: null,
+        problem: e instanceof Error ? e.message : String(e),
+      };
+    }
+  }, [h, timezone]);
+
+  const setDay = (k: DayKey, patch: Partial<DayHours>) =>
+    setH(v => ({ ...v, week: { ...v.week, [k]: { ...v.week[k], ...patch } } }));
+  const setException = (key: number, patch: Partial<ExceptionDraft>) =>
+    setH(v => ({
+      ...v,
+      exceptions: v.exceptions.map(x =>
+        x.key === key ? { ...x, ...patch } : x,
+      ),
+    }));
+  const addException = () =>
+    setH(v => ({
+      ...v,
+      exceptions: [
+        ...v.exceptions,
+        {
+          key: ++exceptionKey,
+          date: "",
+          off: true,
+          start: "10:00",
+          end: "14:00",
+        },
+      ],
+    }));
+  const removeException = (key: number) =>
+    setH(v => ({ ...v, exceptions: v.exceptions.filter(x => x.key !== key) }));
+
+  const submit = async (schedule: Schedule | null) => {
+    setMsg(null);
+    try {
+      await onSave(schedule);
+    } catch (e) {
+      setMsg(serverMessage(e));
+    }
+  };
+
+  return (
+    <div className="grid gap-3 rounded-md border p-3 @3xl:col-span-4 @3xl:grid-cols-2 @3xl:gap-x-6">
+      <div className="grid gap-1.5">
+        <span className="text-xs text-muted-foreground">{`A normal week, ${timezone} time`}</span>
+        {WEEK_ORDER.map(k => {
+          const d = h.week[k];
+          return (
+            <div
+              key={k}
+              className="grid grid-cols-[2.5rem_2.25rem_minmax(0,1fr)] items-center gap-2 text-sm"
+            >
+              <span className={d.on ? "" : "text-muted-foreground"}>
+                {DAY_SHORT[k]}
+              </span>
+              <Toggle
+                on={d.on}
+                label={`${DAY_LABEL[k]}, ${d.on ? "working" : "off"}`}
+                disabled={busy}
+                onChange={on => setDay(k, { on })}
+              />
+              {d.on ? (
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <input
+                    type="time"
+                    value={d.start}
+                    onChange={e => setDay(k, { start: e.target.value })}
+                    aria-label={`${DAY_LABEL[k]} start`}
+                    className={`${field} w-[6.25rem]`}
+                    style={tabular}
+                  />
+                  <span className="text-xs text-muted-foreground">to</span>
+                  <input
+                    type="time"
+                    value={d.end}
+                    onChange={e => setDay(k, { end: e.target.value })}
+                    aria-label={`${DAY_LABEL[k]} end`}
+                    className={`${field} w-[6.25rem]`}
+                    style={tabular}
+                  />
+                  <DayBar start={d.start} end={d.end} />
+                </span>
+              ) : (
+                <span className="text-xs text-muted-foreground">off</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <div className="grid content-start gap-1.5">
+        <span className="text-xs text-muted-foreground">
+          Exceptions: a date off, or different hours that day
+        </span>
+        {h.exceptions.length ? (
+          h.exceptions.map(x => (
+            <div
+              key={x.key}
+              className="flex flex-wrap items-center gap-1.5 text-sm"
+            >
+              <input
+                type="date"
+                value={x.date}
+                onChange={e => setException(x.key, { date: e.target.value })}
+                aria-label="Exception date"
+                className={`${field} w-[9.5rem]`}
+                style={tabular}
+              />
+              <select
+                value={x.off ? "off" : "hours"}
+                onChange={e =>
+                  setException(x.key, { off: e.target.value === "off" })
+                }
+                aria-label="Off that day, or different hours"
+                className={field}
+              >
+                <option value="off">Off</option>
+                <option value="hours">Different hours</option>
+              </select>
+              {x.off ? null : (
+                <>
+                  <input
+                    type="time"
+                    value={x.start}
+                    onChange={e =>
+                      setException(x.key, { start: e.target.value })
+                    }
+                    aria-label="Exception start"
+                    className={`${field} w-[6.25rem]`}
+                    style={tabular}
+                  />
+                  <span className="text-xs text-muted-foreground">to</span>
+                  <input
+                    type="time"
+                    value={x.end}
+                    onChange={e => setException(x.key, { end: e.target.value })}
+                    aria-label="Exception end"
+                    className={`${field} w-[6.25rem]`}
+                    style={tabular}
+                  />
+                </>
+              )}
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => removeException(x.key)}
+                aria-label="Remove this exception"
+                className="rounded p-1 text-muted-foreground hover:bg-muted disabled:opacity-50"
+              >
+                <X className="size-3.5" aria-hidden />
+              </button>
+            </div>
+          ))
+        ) : (
+          <span className="text-xs text-muted-foreground">
+            None yet. Add one for a day off or shorter hours.
+          </span>
+        )}
+        <button
+          type="button"
+          disabled={busy}
+          onClick={addException}
+          className="inline-flex w-fit items-center gap-1 rounded-md border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
+        >
+          <Plus className="size-3" aria-hidden /> Add an exception
+        </button>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 @3xl:col-span-2">
+        <p
+          className={`min-w-0 flex-1 text-xs ${checked.problem ? "text-[var(--ceo-critical)]" : "text-muted-foreground"}`}
+        >
+          {checked.schedule
+            ? scheduleSummary(checked.schedule)
+            : checked.problem}
+        </p>
+        <button
+          type="button"
+          disabled={busy || !checked.schedule}
+          onClick={() => checked.schedule && submit(checked.schedule)}
+          className="inline-flex items-center gap-1 rounded-md bg-foreground px-2.5 py-1 text-xs font-medium text-background disabled:opacity-50"
+        >
+          <Check className="size-3.5" aria-hidden /> Save hours
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onClose}
+          className="rounded-md border px-2.5 py-1 text-xs hover:bg-muted disabled:opacity-50"
+        >
+          Cancel
+        </button>
+        {person.schedule ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => submit(null)}
+            className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted disabled:opacity-50"
+          >
+            Clear hours
+          </button>
+        ) : null}
+      </div>
+      {msg ? (
+        <p className="text-xs text-[var(--ceo-critical)] @3xl:col-span-2">
+          {msg}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function Row({ p, onChanged }: { p: Person; onChanged: () => Promise<void> }) {
   const save = useAction(api.ceo.people.save);
   const setActive = useAction(api.ceo.people.setActive);
   const [d, setD] = useState<Draft>(() => draftOf(p));
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [hoursOpen, setHoursOpen] = useState(false);
   const base = draftOf(p);
   const dirty =
     d.monthlyCost !== base.monthlyCost ||
@@ -97,6 +446,40 @@ function Row({ p, onChanged }: { p: Person; onChanged: () => Promise<void> }) {
       await onChanged();
     } catch (e) {
       setMsg(serverMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Everything save() overwrites, from the draft, so hours never wipe the pay typed beside them. */
+  const argsOf = (draft: Draft) => ({
+    id: p.id,
+    name: p.name,
+    email: p.email ?? undefined,
+    role: draft.role.trim() || undefined,
+    engagement: p.engagement,
+    monthlyCost:
+      draft.monthlyCost.trim() === "" ? undefined : Number(draft.monthlyCost),
+    currency: draft.currency,
+    commissionBasis: draft.basis,
+    commissionRate:
+      !takesRate(draft.basis) || draft.rate.trim() === ""
+        ? undefined
+        : SHARE_BASES.has(draft.basis)
+          ? Number(draft.rate) / 100
+          : Number(draft.rate),
+    commissionNote: draft.note.trim() || undefined,
+    isSales: p.isSales,
+    startedOn: p.startedOn ?? undefined,
+  });
+
+  /** The hours editor's save: the row as drafted plus the hours. Throws so the editor can show why. */
+  const saveHours = async (schedule: Schedule | null) => {
+    setBusy(true);
+    try {
+      await save({ ...argsOf(d), schedule });
+      await onChanged();
+      setHoursOpen(false);
     } finally {
       setBusy(false);
     }
@@ -128,6 +511,20 @@ function Row({ p, onChanged }: { p: Person; onChanged: () => Promise<void> }) {
                 p.engagement}
             </span>
             {p.email ? <span className="truncate">{p.email}</span> : null}
+          </div>
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+            <Clock className="size-3 shrink-0" aria-hidden />
+            <span className="min-w-0 truncate">
+              {p.schedule ? scheduleSummary(p.schedule) : "no hours set"}
+            </span>
+            <button
+              type="button"
+              onClick={() => setHoursOpen(v => !v)}
+              aria-expanded={hoursOpen}
+              className="font-medium text-foreground/80 underline-offset-2 hover:underline"
+            >
+              {hoursOpen ? "Close" : "Edit hours"}
+            </button>
           </div>
         </div>
       </div>
@@ -206,32 +603,7 @@ function Row({ p, onChanged }: { p: Person; onChanged: () => Promise<void> }) {
           <button
             type="button"
             disabled={busy}
-            onClick={() =>
-              act(() =>
-                save({
-                  id: p.id,
-                  name: p.name,
-                  email: p.email ?? undefined,
-                  role: d.role.trim() || undefined,
-                  engagement: p.engagement,
-                  monthlyCost:
-                    d.monthlyCost.trim() === ""
-                      ? undefined
-                      : Number(d.monthlyCost),
-                  currency: d.currency,
-                  commissionBasis: d.basis,
-                  commissionRate:
-                    !takesRate(d.basis) || d.rate.trim() === ""
-                      ? undefined
-                      : SHARE_BASES.has(d.basis)
-                        ? Number(d.rate) / 100
-                        : Number(d.rate),
-                  commissionNote: d.note.trim() || undefined,
-                  isSales: p.isSales,
-                  startedOn: p.startedOn ?? undefined,
-                }),
-              )
-            }
+            onClick={() => act(() => save(argsOf(d)))}
             className="inline-flex items-center gap-1 rounded-md bg-foreground px-2.5 py-1 text-xs font-medium text-background disabled:opacity-50"
           >
             <Check className="size-3.5" aria-hidden /> Save
@@ -270,6 +642,14 @@ function Row({ p, onChanged }: { p: Person; onChanged: () => Promise<void> }) {
         <p className="text-xs text-[var(--ceo-critical)] @3xl:col-span-4">
           {msg}
         </p>
+      ) : null}
+      {hoursOpen ? (
+        <HoursEditor
+          person={p}
+          busy={busy}
+          onSave={saveHours}
+          onClose={() => setHoursOpen(false)}
+        />
       ) : null}
     </div>
   );
@@ -493,7 +873,7 @@ export function TeamTab(_props: CeoTabProps) {
 
       <SectionCard
         title="On the team"
-        kicker="pay and commission edit in place; the switch takes somebody off"
+        kicker="pay, commission and hours edit in place; the switch takes somebody off"
         order={1}
       >
         {() =>

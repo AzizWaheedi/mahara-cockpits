@@ -1,7 +1,9 @@
-import type { CallsPayload, CallWindow, Note } from "../payloads";
+import type { CallsPayload, CallWindow, Note, WorkingHours } from "../payloads";
 import { num, type Row, sql, TRIAGE } from "../sb";
+import { workingHoursForAdapters } from "../settings";
 import { addDays, KUWAIT_OFFSET_MS, kuwaitDay } from "../time";
 import type { Adapter, DailyPoint, SourceStamp } from "../types";
+import { describeWorkingHours, workingMinutesSql } from "../workingHours";
 
 /**
  * Call centre numbers from the dialer's reporting store in Creative Triage
@@ -129,13 +131,17 @@ left join agg a on true`;
  * - Speed to lead: for leads of DFY clients created in the window, the first
  *   outbound call to the same phone at or after creation (1 minute of clock
  *   skew allowed). The dialer console's own speed metric is empty (2
- *   attempts), so this replaces it.
+ *   attempts), so this replaces it. Two clocks over the same leads: the
+ *   plain clock, and the working clock (Aziz, 2026-09-21, item 10), whose
+ *   minutes are counted by workingMinutesSql in the `clocked` CTE: the
+ *   clock starts at the later of the lead's creation and the next working
+ *   window in `hours`, and only working minutes count.
  * Both sides are materialized so each join is one hash join: row-by-row
  * lookups and parallel scans hang on this instance. The per-client rows hang
  * off the single speed row, so the speed numbers survive a window with no
  * dials.
  */
-function leadQuery(from: string): string {
+function leadQuery(from: string, hours: WorkingHours): string {
   return `with c as materialized (
   select f.external_id as id,
     (f.data->>'timestamp')::timestamptz as ts,
@@ -176,6 +182,10 @@ function leadQuery(from: string): string {
   left join c on c.pkey = l.pkey and c.ts >= l.created_at - interval '1 minute'
   where l.in_scope and l.created_at >= ${midnight(from)}
   group by 1, 2
+), clocked as (
+  select f.*,
+    ${workingMinutesSql("f.created_at", "f.first_call", hours)} as working_min
+  from first_calls f
 ), speed as (
   select count(*) as leads,
     count(first_call) as called,
@@ -183,6 +193,9 @@ function leadQuery(from: string): string {
       order by greatest(0, extract(epoch from first_call - created_at)) / 60
     ) filter (where first_call is not null) as median_min,
     count(*) filter (where first_call - created_at <= interval '5 minutes') as within5,
+    percentile_cont(0.5) within group (order by working_min)
+      filter (where first_call is not null) as working_median_min,
+    count(*) filter (where first_call is not null and working_min <= 5) as working_within5,
     count(*) filter (where first_call is null and created_at < now() - interval '1 day') as uncalled_1d,
     (select (extract(epoch from max(last_synced_at)) * 1000)::bigint
       from public.lead_sync_state where last_status = 'success') as leads_synced_ms,
@@ -190,7 +203,7 @@ function leadQuery(from: string): string {
       where l.blank_mode and l.created_at >= ${midnight(from)}) as blank_leads,
     (select string_agg(distinct l.client_name, ', ' order by l.client_name) from l
       where l.blank_mode and l.created_at >= ${midnight(from)}) as blank_clients
-  from first_calls
+  from clocked
 )
 select s.*, pc.*
 from speed s
@@ -419,11 +432,17 @@ export const calls: Adapter = {
       within5minShare7d: null,
       sample: 0,
       since: PHONE_SINCE,
+      workingMedianMinutes7d: null,
+      workingWithin5minShare7d: null,
     };
     let uncalled: number | null = null;
     let leadsError: string | undefined;
+    // The working clock's hours: saved in cockpit_settings, or the default.
+    // Never a throw; a problem becomes a note beside the number.
+    const settings = await workingHoursForAdapters();
+    const clockHours = settings.hours;
     try {
-      const lead = await triage(leadQuery(leadFrom));
+      const lead = await triage(leadQuery(leadFrom, clockHours));
       const s = lead[0];
       if (!s) throw new Error("no summary row");
       leadsOk = true;
@@ -466,6 +485,15 @@ export const calls: Adapter = {
         within5minShare7d: called ? round(num(s.within5) / called, 4) : null,
         sample: called,
         since: PHONE_SINCE,
+        workingMedianMinutes7d:
+          called &&
+          s.working_median_min !== null &&
+          s.working_median_min !== undefined
+            ? round(num(s.working_median_min), 1)
+            : null,
+        workingWithin5minShare7d: called
+          ? round(num(s.working_within5) / called, 4)
+          : null,
       };
       if (uncalled > 0)
         notes.push({
@@ -508,6 +536,15 @@ export const calls: Adapter = {
     });
     notes.push({
       level: "info",
+      text: `Speed to lead on the working clock: the clock starts at the later of the lead's creation and the next working window, and only working minutes count, so a call before the clock starts is 0 minutes. Hours in force: ${describeWorkingHours(clockHours)} (${clockHours.source === "settings" ? "saved in the Working hours card" : "the default, nothing saved yet"}).`,
+    });
+    if (settings.problem)
+      notes.push({
+        level: "warn",
+        text: `Speed to lead ran on the default working hours because the saved ones could not be read: ${settings.problem}`,
+      });
+    notes.push({
+      level: "info",
       text: "B2B maqsam_client_calls is an old one-off import (history to 2026-07-18) and is not used for these live numbers.",
     });
 
@@ -521,6 +558,7 @@ export const calls: Adapter = {
       byHourToday: hours,
       perClient7d,
       speedToLead,
+      workingHours: clockHours,
       lastCallAt,
       notes,
     } satisfies CallsPayload;
@@ -538,6 +576,14 @@ export const calls: Adapter = {
     };
     keep("speedToLeadMedianMin7d", speedToLead.medianMinutes7d);
     keep("speedToLeadWithin5minShare7d", speedToLead.within5minShare7d);
+    keep(
+      "speedToLeadWorkingMedianMin7d",
+      speedToLead.workingMedianMinutes7d ?? null,
+    );
+    keep(
+      "speedToLeadWorkingWithin5minShare7d",
+      speedToLead.workingWithin5minShare7d ?? null,
+    );
     keep("leadsUncalled1d", uncalled);
 
     const sources: SourceStamp[] = [

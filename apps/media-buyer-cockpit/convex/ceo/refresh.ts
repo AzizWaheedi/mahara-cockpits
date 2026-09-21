@@ -1,7 +1,10 @@
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import { internalAction } from "../_generated/server";
+import { DEFINITIONS, extract } from "./metricRegistry";
 import { ADAPTERS } from "./registry";
+import { sbWritable, upsertMerge } from "./sbWrite";
+import { kuwaitDay } from "./time";
 import type { Adapter, DailyPoint } from "./types";
 
 /**
@@ -37,6 +40,80 @@ function withBudget<T>(p: Promise<T>, key: string): Promise<T> {
 }
 
 /**
+ * Every section and every number, into Supabase (Aziz, 2026-09-21: "all
+ * these sources of truth should pull into Supabase as the number one thing
+ * ... formatted really cleanly in a table that any LLM would be able to
+ * understand"). Three cockpit_ tables in Creative Triage: the whole payload
+ * per section, the metric definitions, and one row per metric, scope,
+ * window and day. A failure here is reported and never blocks the refresh.
+ */
+async function mirrorSection(
+  key: string,
+  label: string,
+  ok: boolean,
+  payload: unknown,
+  sources: unknown,
+  error?: string,
+): Promise<string> {
+  if (!sbWritable()) return "no Supabase key";
+  const now = new Date().toISOString();
+  const day = kuwaitDay();
+  await upsertMerge(
+    "cockpit_sections",
+    [
+      {
+        key,
+        label,
+        ok,
+        error: ok ? null : (error ?? null),
+        computed_at: now,
+        payload: ok ? payload : undefined,
+        sources,
+        updated_at: now,
+      },
+    ],
+    "key",
+  );
+  if (!ok || !payload) return "section stored";
+  const values = extract(key, payload).filter(
+    v => v.value !== null && Number.isFinite(v.value),
+  );
+  const rows = values.map(v => ({
+    day,
+    metric: v.metric,
+    scope: v.scope.slice(0, 120),
+    window: v.window,
+    value: Math.round(v.value! * 10000) / 10000,
+    window_from: v.windowFrom ?? null,
+    window_to: v.windowTo ?? null,
+    captured_at: now,
+  }));
+  for (let i = 0; i < rows.length; i += 300)
+    await upsertMerge("cockpit_metric_values", rows.slice(i, i + 300), "day,metric,scope,window");
+  return `section stored, ${rows.length} values`;
+}
+
+/** The definitions, once per refresh, so a new metric is explained the day it appears. */
+async function mirrorDefinitions(): Promise<void> {
+  if (!sbWritable()) return;
+  const now = new Date().toISOString();
+  await upsertMerge(
+    "cockpit_metric_definitions",
+    DEFINITIONS.map(x => ({
+      metric: x.metric,
+      section: x.section,
+      label: x.label,
+      definition: x.definition,
+      source: x.source,
+      leaves_out: x.leavesOut ?? null,
+      unit: x.unit,
+      updated_at: now,
+    })),
+    "metric",
+  );
+}
+
+/**
  * Recompute CEO sections (all, or the ones named). Sections run at the same
  * time, each within its budget, so the refresh takes as long as the slowest
  * section instead of the sum. One failing section never stops the rest.
@@ -46,6 +123,11 @@ export const refreshAll = internalAction({
   returns: v.any(),
   handler: async (ctx, { only }): Promise<Record<string, string>> => {
     const report: Record<string, string> = {};
+    try {
+      await mirrorDefinitions();
+    } catch (e) {
+      report._definitions = `mirror FAILED ${String(e instanceof Error ? e.message : e).slice(0, 200)}`;
+    }
     const run = async (a: Adapter) => {
       const started = Date.now();
       try {
@@ -63,8 +145,14 @@ export const refreshAll = internalAction({
           await ctx.runMutation(internal.ceo.store.saveDaily, {
             points: daily.slice(i, i + 400),
           });
+        let mirrored = "";
+        try {
+          mirrored = await mirrorSection(a.key, a.label, true, res.payload, res.sources);
+        } catch (e) {
+          mirrored = `mirror FAILED ${String(e instanceof Error ? e.message : e).slice(0, 160)}`;
+        }
         report[a.key] =
-          `ok ${Date.now() - started}ms, ${daily.length} daily points`;
+          `ok ${Date.now() - started}ms, ${daily.length} daily points, ${mirrored}`;
       } catch (e) {
         const error = String(e instanceof Error ? e.message : e).slice(0, 400);
         await ctx.runMutation(internal.ceo.store.saveSection, {
@@ -75,6 +163,11 @@ export const refreshAll = internalAction({
           sources: [],
           ms: Date.now() - started,
         });
+        try {
+          await mirrorSection(a.key, a.label, false, null, [], error);
+        } catch {
+          // The mirror never blocks the refresh.
+        }
         report[a.key] = `FAILED ${error}`;
       }
     };

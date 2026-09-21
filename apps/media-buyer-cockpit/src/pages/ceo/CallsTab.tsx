@@ -30,6 +30,8 @@ import type {
   CallWindow,
   Note,
 } from "../../../convex/ceo/payloads";
+import { daysLabel } from "../../../convex/ceo/workingHours";
+import { CallsSettingsCard } from "./callsSettings";
 import type { CeoTabProps } from "./types";
 
 type AgentRow = CallsPayload["byAgent"][number];
@@ -192,16 +194,18 @@ export function CallsTab({ sections, now, day }: CeoTabProps) {
         >
           {d => <ClientsTable d={d} />}
         </SectionCard>
-        <SectionCard
-          kicker="Last 7 days"
-          title="Speed to lead"
-          section={section}
-          notes={notes.leads}
-          order={5}
-          className="@5xl:col-span-4"
-        >
-          {d => <SpeedToLead d={d} />}
-        </SectionCard>
+        <div className="grid min-w-0 gap-4 lg:gap-6 @5xl:col-span-4">
+          <SectionCard
+            kicker="Last 7 days"
+            title="Speed to lead"
+            section={section}
+            notes={notes.leads}
+            order={5}
+          >
+            {d => <SpeedToLead d={d} />}
+          </SectionCard>
+          <CallsSettingsCard inForce={payload.workingHours} order={6} />
+        </div>
       </div>
     </div>
   );
@@ -635,23 +639,46 @@ function ClientsTable({ d }: { d: CallsPayload }) {
 
 function SpeedToLead({ d }: { d: CallsPayload }) {
   const s = d.speedToLead;
-  const median = s.medianMinutes7d;
-  const share = s.within5minShare7d;
-  const tone = gateTone(median, SPEED_TARGET_MIN);
+  // Older payloads carry no working clock; then the plain clock is the figure.
+  const hasWorking = s.workingMedianMinutes7d !== undefined;
+  const working = s.workingMedianMinutes7d ?? null;
+  const plain = s.medianMinutes7d;
+  const main = hasWorking ? working : plain;
+  const share = hasWorking
+    ? (s.workingWithin5minShare7d ?? null)
+    : s.within5minShare7d;
+  const tone = gateTone(main, SPEED_TARGET_MIN);
   const noSample =
     s.sample === 0
       ? "No new lead has been called in this window yet."
       : undefined;
+  const hours = d.workingHours;
+  const hoursText = hours
+    ? `${hours.start} to ${hours.end}, ${daysLabel(hours.days)}`
+    : null;
 
   return (
     <div className="min-w-0 space-y-5">
       <StatTile
         variant="plain"
         label="Median time to first call"
-        value={minutes(median)}
+        value={
+          isNum(main) ? (
+            <span className="inline-flex min-w-0 flex-wrap items-baseline gap-x-2">
+              <span>{minutes(main)}</span>
+              {hasWorking ? (
+                <span className="text-sm font-normal tracking-normal text-muted-foreground">
+                  {minutes(plain)} on the plain clock
+                </span>
+              ) : null}
+            </span>
+          ) : (
+            minutes(main)
+          )
+        }
         naHint={noSample}
         status={
-          isNum(median) ? (
+          isNum(main) ? (
             <StatusChip
               tone={tone}
               label={
@@ -663,17 +690,33 @@ function SpeedToLead({ d }: { d: CallsPayload }) {
           ) : null
         }
         sub={
-          s.sample > 0
-            ? `Across ${plural(s.sample, "called lead")}${s.since ? ` since ${date(s.since)}` : ""}`
-            : undefined
+          <>
+            {hasWorking ? (
+              <span className="block">
+                Working minutes only
+                {hoursText ? `, ${hoursText}` : ""}
+              </span>
+            ) : null}
+            {s.sample > 0 ? (
+              <span className="block">
+                Across {plural(s.sample, "called lead")}
+                {s.since ? ` since ${date(s.since)}` : ""}
+              </span>
+            ) : null}
+          </>
         }
-        hint="From the moment a Done For You lead lands to the first outbound call to that phone. Leads not called yet are left out."
+        hint={
+          hasWorking
+            ? "From the moment a Done For You lead lands to the first outbound call to that phone, on the working clock: it starts at the later of the lead's creation and the next working window, and only working minutes count. The plain clock counts every minute. Leads not called yet are left out of both."
+            : "From the moment a Done For You lead lands to the first outbound call to that phone. Leads not called yet are left out. The working clock fills in after the next refresh."
+        }
       />
 
       <div className="min-w-0 border-t border-[color:var(--ceo-grid)] pt-4">
         <div className="flex items-baseline justify-between gap-3">
           <p className="text-[13px] text-muted-foreground">
-            Called within {SPEED_TARGET_MIN} minutes
+            Called within {SPEED_TARGET_MIN}
+            {hasWorking ? " working" : ""} minutes
           </p>
           <p className="text-lg font-semibold tracking-tight text-foreground">
             <Value value={pct(share)} hint={noSample} />
@@ -694,6 +737,15 @@ function SpeedToLead({ d }: { d: CallsPayload }) {
             />
           ) : null}
         </div>
+        {hasWorking ? (
+          <p className="mt-2 text-xs text-muted-foreground">
+            On the plain clock:{" "}
+            <span className="font-medium text-foreground tabular-nums">
+              <Value value={pct(s.within5minShare7d)} hint={noSample} />
+            </span>
+            . A call before the clock starts counts as 0 minutes.
+          </p>
+        ) : null}
         <p className="mt-2 text-xs text-muted-foreground">
           {s.since
             ? `Counting starts ${date(s.since)}, the first day calls carry the lead phone.`

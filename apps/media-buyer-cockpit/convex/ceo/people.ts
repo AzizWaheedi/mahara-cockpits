@@ -1,6 +1,10 @@
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
-import { internalAction, internalQuery } from "../_generated/server";
+import {
+  internalAction,
+  internalMutation,
+  internalQuery,
+} from "../_generated/server";
 import { authenticatedAction } from "../functions";
 import { googleDirectoryToken } from "../tools";
 import {
@@ -10,6 +14,12 @@ import {
 } from "./commission";
 import { USD_PER } from "./data/tap";
 import { isCeoEmail } from "./gate";
+import {
+  normaliseSchedule,
+  parseSchedule,
+  type Schedule,
+  scheduleSummary,
+} from "./schedule";
 
 declare const process: { env: Record<string, string | undefined> };
 
@@ -94,6 +104,8 @@ export type Person = {
   startedOn: string | null;
   endedOn: string | null;
   note: string | null;
+  /** Working hours, or null when none are set (convex/ceo/schedule.ts). */
+  schedule: Schedule | null;
   source: string;
 };
 
@@ -147,6 +159,7 @@ function shape(r: Row): Person {
     startedOn: r.started_on ? String(r.started_on) : null,
     endedOn: r.ended_on ? String(r.ended_on) : null,
     note: r.note ? String(r.note) : null,
+    schedule: parseSchedule(r.schedule),
     source: String(r.source ?? "manual"),
   };
 }
@@ -198,11 +211,95 @@ export const list = authenticatedAction({
   },
 });
 
+const NO_TABLE =
+  "The people table does not exist yet. Run supabase/migrations/20260919b_people.sql first.";
+
+/** The word an audit sentence uses for each column save() writes. */
+const FIELD_WORD: Record<string, string> = {
+  name: "name",
+  email: "email",
+  role: "role",
+  engagement: "engagement",
+  monthly_cost: "pay",
+  currency: "pay",
+  commission_basis: "commission",
+  commission_rate: "commission",
+  commission_pct: "commission",
+  commission_note: "commission note",
+  is_sales: "sales flag",
+  started_on: "start date",
+  note: "note",
+  schedule: "hours",
+};
+
+/** JSON with keys sorted at every level, so jsonb's key order does not read as a change. */
+function stable(x: unknown): string {
+  if (Array.isArray(x)) return `[${x.map(stable).join(",")}]`;
+  if (x && typeof x === "object")
+    return `{${Object.keys(x as Row)
+      .sort()
+      .map(k => `${JSON.stringify(k)}:${stable((x as Row)[k])}`)
+      .join(",")}}`;
+  return JSON.stringify(x);
+}
+
+/** Two cells as the trail compares them: "500.00" from Postgres is 500, and null, "" and absent are one thing. */
+function sameCell(a: unknown, b: unknown): boolean {
+  const norm = (x: unknown): string => {
+    if (x === undefined || x === null || x === "") return "";
+    if (typeof x === "object") return stable(x);
+    if (typeof x === "boolean") return String(x);
+    const n = Number(x);
+    return String(x).trim() !== "" && Number.isFinite(n)
+      ? String(n)
+      : String(x);
+  };
+  return norm(a) === norm(b);
+}
+
+/** The columns save() controls, plus the id, from a row. */
+function pick(row: Row, keys: string[]): Row {
+  const out: Row = { id: row.id };
+  for (const k of keys) if (k in row) out[k] = row[k];
+  return out;
+}
+
+/**
+ * The sentence in the trail: "Added Nada to the roster as staff", "Changed
+ * Nada's pay and hours (hours now Sat to Thu 10:00 to 18:00, 48 h a week)".
+ */
+function saveSentence(
+  name: string,
+  before: Row | null,
+  body: Row,
+  hours: Schedule | null | undefined,
+): string {
+  if (!before)
+    return `Added ${name} to the roster as ${body.engagement}${hours ? ` with hours ${scheduleSummary(hours)}` : ""}`;
+  const words: string[] = [];
+  for (const k of Object.keys(body)) {
+    const w = FIELD_WORD[k];
+    if (w && !sameCell(before[k], body[k]) && !words.includes(w)) words.push(w);
+  }
+  if (!words.length) return `Saved ${name} with nothing changed`;
+  const list =
+    words.length === 1
+      ? words[0]
+      : `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`;
+  const hoursNow = !words.includes("hours")
+    ? ""
+    : hours
+      ? ` (hours now ${scheduleSummary(hours)})`
+      : " (hours cleared)";
+  return `Changed ${name}'s ${list}${hoursNow}`;
+}
+
 /**
  * Add somebody, or change what is recorded about them.
  *
  * Passing an id edits that row. Leaving it out adds a person. Nothing is ever
- * deleted here: see `setActive`.
+ * deleted here: see `setActive`. Every save leaves a row in ceoAudit through
+ * `record`, with the columns before and after, beside every other CEO write.
  */
 export const save = authenticatedAction({
   args: {
@@ -229,6 +326,11 @@ export const save = authenticatedAction({
     isSales: v.optional(v.boolean()),
     startedOn: v.optional(v.string()),
     note: v.optional(v.string()),
+    /**
+     * Working hours (convex/ceo/schedule.ts). Left out, the column stays as it
+     * is; null clears it; anything else is checked by normaliseSchedule first.
+     */
+    schedule: v.optional(v.any()),
   },
   returns: v.any(),
   handler: async (ctx, a): Promise<{ ok: true; id: number }> => {
@@ -252,8 +354,14 @@ export const save = authenticatedAction({
     });
     if (a.startedOn && !/^\d{4}-\d{2}-\d{2}$/.test(a.startedOn))
       throw new Error("A start date looks like 2026-09-19.");
+    const hours: Schedule | null | undefined =
+      a.schedule === undefined
+        ? undefined
+        : a.schedule === null
+          ? null
+          : normaliseSchedule(a.schedule);
 
-    const body = {
+    const body: Row = {
       name,
       email: a.email?.trim() || null,
       role: a.role?.trim() || null,
@@ -270,7 +378,18 @@ export const save = authenticatedAction({
       note: a.note?.trim().slice(0, 500) || null,
       source: "manual",
       added_by: email,
+      ...(hours === undefined ? {} : { schedule: hours }),
     };
+
+    // The row as it was, for the trail. An id nobody has is refused here
+    // rather than patched into nothing.
+    let before: Row | null = null;
+    if (a.id !== undefined) {
+      const found = await rest(`${TABLE}?id=eq.${a.id}&select=*`);
+      if (found === null) throw new Error(NO_TABLE);
+      if (!found.length) throw new Error("Nobody on the roster has that id.");
+      before = found[0];
+    }
 
     const done =
       a.id === undefined
@@ -284,11 +403,51 @@ export const save = authenticatedAction({
             prefer: "return=representation",
             body,
           });
-    if (done === null)
-      throw new Error(
-        "The people table does not exist yet. Run supabase/migrations/20260919b_people.sql first.",
-      );
-    return { ok: true, id: Number(done[0]?.id ?? a.id ?? 0) };
+    if (done === null) throw new Error(NO_TABLE);
+    const id = Number(done[0]?.id ?? a.id ?? 0);
+    const after = done[0] ?? null;
+    const keys = Object.keys(body).filter(
+      k => k !== "added_by" && k !== "source",
+    );
+    await ctx.runMutation(internal.ceo.people.record, {
+      action: before ? "people.edit" : "people.add",
+      rowId: String(id),
+      what: saveSentence(name, before, body, hours),
+      ...(before ? { before: pick(before, keys) } : {}),
+      ...(after ? { after: pick(after, keys) } : {}),
+      by: email,
+    });
+    return { ok: true, id };
+  },
+});
+
+/**
+ * One trail row per save, in ceoAudit beside every other CEO write, so a
+ * change to somebody's pay, commission or hours can be traced to a person and
+ * a moment. The Supabase row itself only says who saved it last.
+ */
+export const record = internalMutation({
+  args: {
+    action: v.string(),
+    rowId: v.string(),
+    what: v.string(),
+    before: v.optional(v.any()),
+    after: v.optional(v.any()),
+    by: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, a) => {
+    await ctx.db.insert("ceoAudit", {
+      action: a.action,
+      table: TABLE,
+      rowId: a.rowId,
+      what: a.what.slice(0, 400),
+      before: a.before,
+      after: a.after,
+      by: a.by,
+      at: Date.now(),
+    });
+    return null;
   },
 });
 

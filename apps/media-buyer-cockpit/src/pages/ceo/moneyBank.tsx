@@ -94,7 +94,10 @@ export function BankStatementsCard({
 
   const load = async () => {
     try {
-      setOv((await overviewAction({})) as Overview);
+      const r = (await overviewAction({})) as Overview | null | undefined;
+      if (!r || !Array.isArray(r.statements))
+        throw new Error("the statement list did not come back");
+      setOv({ ...r, exclusions: Array.isArray(r.exclusions) ? r.exclusions : [] });
       setOvError(null);
     } catch (e) {
       setOvError(serverMessage(e));
@@ -290,8 +293,8 @@ export function BankStatementsCard({
               <StatTile
                 variant="plain"
                 label="Lines, 12 months"
-                value={count(bank.kinds.reduce((t, k) => t + k.count, 0))}
-                sub={`${plural(bank.accounts.length, "account")}`}
+                value={count((bank.kinds ?? []).reduce((t, k) => t + k.count, 0))}
+                sub={`${plural((bank.accounts ?? []).length, "account")}`}
               />
               <StatTile
                 variant="plain"

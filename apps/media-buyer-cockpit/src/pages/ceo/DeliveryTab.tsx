@@ -1,4 +1,11 @@
-import { CircleCheck, OctagonAlert, Rocket, ShieldCheck } from "lucide-react";
+import {
+  ChevronRight,
+  CircleCheck,
+  ClipboardCheck,
+  OctagonAlert,
+  Rocket,
+  ShieldCheck,
+} from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 import { type Column, DataTable } from "@/components/ceo/DataTable";
 import { Delta } from "@/components/ceo/Delta";
@@ -28,9 +35,20 @@ import {
   type StatusTone,
 } from "@/components/ceo/StatusChip";
 import { TimeSeriesChart } from "@/components/ceo/TimeSeriesChart";
-import { BOOKING_RATE_GATE, CLOSE_RATE_GATE, SHOW_RATE_GATE } from "@/lib/kpi";
+import {
+  BOOKING_RATE_GATE,
+  CLOSE_RATE_GATE,
+  CPB_BAD,
+  CPL_GATE,
+  SHOW_RATE_BAD,
+  SHOW_RATE_GOOD,
+} from "@/lib/kpi";
 import { cn } from "@/lib/utils";
-import type { DeliveryPayload, Note } from "../../../convex/ceo/payloads";
+import type {
+  DeliveryPayload,
+  DeliveryWindow,
+  Note,
+} from "../../../convex/ceo/payloads";
 import type { CeoTabProps } from "./types";
 
 type ClientRow = DeliveryPayload["clients"][number];
@@ -47,16 +65,17 @@ const STATUS: Record<
   "no-data": { tone: "neutral", label: "No data", order: 3 },
 };
 
+/** Aziz's status rule (2026-09-21), the same words the adapter judges by. */
 function statusHint(status: ClientStatus, gates: DeliveryPayload["gates"]) {
   const cpl = money(gates.cpl);
   const cpb = money(gates.cpb);
   switch (status) {
     case "bad":
-      return `No leads, or cost per lead more than 50% over the ${cpl} gate.`;
+      return `Cost per confirmed booking over ${money(CPB_BAD)}, cost per lead over ${money(CPL_GATE * 1.5)} (spend with no leads counts as that), or show rate under ${SHOW_RATE_BAD}%, a line Aziz still has to confirm.`;
     case "watch":
-      return `Leads are coming, but cost per lead is a little over ${cpl}, cost per booking is over ${cpb}, or no bookings are read yet.`;
+      return `Between the two: not within every on-track gate and not past an off-track one, or a show rate nobody has recorded yet.`;
     case "good":
-      return `Cost per lead within ${cpl} and, where bookings are read, cost per booking within ${cpb}.`;
+      return `Cost per lead within ${cpl}, cost per confirmed booking within ${cpb} and show rate at least ${SHOW_RATE_GOOD}% over the last 30 days.`;
     default:
       return "No spend in the last 7 days.";
   }
@@ -118,6 +137,12 @@ function shiftDay(day: string, days: number): string {
   const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3] + days));
   return d.toISOString().slice(0, 10);
 }
+
+/** Confirmed bookings, falling back to the whole for a payload stored before the split. */
+const confirmedOf = (w: DeliveryWindow) => w.confirmed ?? w.bookings;
+/** Cost per confirmed booking, the main cost per booking; older payloads carry only the whole. */
+const cpbConfirmedOf = (w: DeliveryWindow) =>
+  w.cpbConfirmed === undefined ? w.cpb : w.cpbConfirmed;
 
 /** Clients' ads: spend, leads, bookings, campaign health, launches and account issues. */
 export function DeliveryTab({ sections, now, day }: CeoTabProps) {
@@ -201,7 +226,12 @@ export function DeliveryTab({ sections, now, day }: CeoTabProps) {
         notes={notes.clients}
         order={3}
       >
-        {d => <ClientsTable d={d} />}
+        {d => (
+          <>
+            <ClientsTable d={d} />
+            <NoOutcomeLedger d={d} />
+          </>
+        )}
       </SectionCard>
 
       <div className="grid min-w-0 items-start gap-4 lg:gap-6 @4xl:grid-cols-2">
@@ -316,19 +346,27 @@ function Headline({
 }) {
   const { last7: w, prevLast7: p, yesterday: y, mtd: m, gates } = d;
   const vs = "vs prior 7 days";
-  const lines = (fmt: (v: number | null) => string, k: keyof typeof w) => (
+  const lines = (
+    fmt: (v: number | null) => string,
+    get: (w: DeliveryWindow) => number | null,
+  ) => (
     <WindowLines
       rows={[
-        { label: yesterdayLabel, value: fmt(y[k]) },
-        { label: "This month", value: fmt(m[k]) },
+        { label: yesterdayLabel, value: fmt(get(y)) },
+        { label: "This month", value: fmt(get(m)) },
       ]}
     />
   );
+  const split = w.confirmed !== undefined;
+  const provisionalNote =
+    d.provisionalSynced === false
+      ? " The provisional calendar (Not Confirmed Appointments) has produced no appointment row yet, so provisional reads 0 until the sync covers it."
+      : "";
 
   const tiles = [
     {
       key: "spend",
-      lines: lines(money, "spend"),
+      lines: lines(money, x => x.spend),
       tile: (
         <StatTile
           variant="plain"
@@ -341,13 +379,13 @@ function Headline({
               vs={vs}
             />
           }
-          hint="Meta spend on client campaigns on the Ads Management board, in USD. Mahara's own lead-gen spend is a different pool and sits on the Marketing tab. The two are never added."
+          hint="Meta spend on client campaigns, in USD. Mahara's own lead-gen spend is a different pool and sits on the Marketing tab. The two are never added."
         />
       ),
     },
     {
       key: "leads",
-      lines: lines(count, "leads"),
+      lines: lines(count, x => x.leads),
       tile: (
         <StatTile
           variant="plain"
@@ -359,7 +397,7 @@ function Headline({
     },
     {
       key: "cpl",
-      lines: lines(money, "cpl"),
+      lines: lines(money, x => x.cpl),
       tile: (
         <StatTile
           variant="plain"
@@ -374,29 +412,43 @@ function Headline({
     },
     {
       key: "bookings",
-      lines: lines(count, "bookings"),
+      lines: lines(count, x => x.bookings),
       tile: (
         <StatTile
           variant="plain"
           label="Bookings"
           value={count(w.bookings)}
           delta={<Delta value={change(w.bookings, p.bookings)} vs={vs} />}
-          hint="GHL appointments for Done For You clients whose GHL is connected. The latest days read low."
+          sub={
+            split ? (
+              <span className="tabular-nums">
+                {count(w.confirmed)} confirmed · {count(w.provisional ?? 0)}{" "}
+                provisional
+              </span>
+            ) : undefined
+          }
+          hint={`Appointments on the client's three booking calendar groups, on the day the meeting is for, future ones left out. Confirmed is the main calendars (Main Appointment Calendar, In Office, In Home) plus the online one; provisional is the Not Confirmed Appointments calendar; the headline is both.${provisionalNote}`}
         />
       ),
     },
     {
       key: "cpb",
-      lines: lines(money, "cpb"),
+      lines: lines(money, cpbConfirmedOf),
       tile: (
         <StatTile
           variant="plain"
-          label="Cost per booking"
-          value={money(w.cpb)}
-          naHint="No bookings read in the last 7 days, so there is no cost per booking."
-          status={gateChip(w.cpb, gates.cpb, "booking")}
-          delta={<Delta value={change(w.cpb, p.cpb)} goodWhen="down" vs={vs} />}
-          hint={`Spend on campaigns whose bookings are read, divided by their bookings. The gate is ${money(gates.cpb)}.`}
+          label="Cost per confirmed booking"
+          value={money(cpbConfirmedOf(w))}
+          naHint="No confirmed bookings came due in the last 7 days, so there is no cost per booking."
+          status={gateChip(cpbConfirmedOf(w), gates.cpb, "booking")}
+          delta={
+            <Delta
+              value={change(cpbConfirmedOf(w), cpbConfirmedOf(p))}
+              goodWhen="down"
+              vs={vs}
+            />
+          }
+          hint={`Spend divided by confirmed bookings (${count(confirmedOf(w))} in the last 7 days). The gate is ${money(gates.cpb)}; over ${money(CPB_BAD)} is off track.${split && isNum(w.cpb) && w.cpb !== cpbConfirmedOf(w) ? ` Over every booking, provisional included, it is ${money(w.cpb)}.` : ""}`}
         />
       ),
     },
@@ -621,7 +673,7 @@ function GateCell({
         hint={
           noun === "lead"
             ? "No leads in these 7 days"
-            : "No bookings read for this client in these 7 days"
+            : "No confirmed bookings came due for this client in these 7 days"
         }
       />
     );
@@ -649,22 +701,35 @@ function GateCell({
 
 type Filter = "all" | ClientStatus;
 
-/** A funnel rate against its gate: green at the gate, amber within seven tenths of it, red below. */
+/**
+ * A funnel rate against its gate: green at the gate, amber down to the floor
+ * (seven tenths of the gate unless `bad` says otherwise), red below. `detail`
+ * opens a tooltip with the figures behind the rate.
+ */
 function RateCell({
   value,
   gate,
+  bad,
   hint,
+  detail,
 }: {
   value: number | null;
+  /** Percent at which the rate is good. */
   gate: number;
+  /** Percent below which the rate is serious; default is 70% of the gate. */
+  bad?: number;
+  /** Why there is no rate. */
   hint: string;
+  /** The counts behind the rate, shown on hover. */
+  detail?: string;
 }) {
   if (!isNum(value)) return <Na hint={hint} />;
   const p = value * 100;
+  const floor = bad ?? gate * 0.7;
   const tone =
-    p >= gate ? "good" : p >= gate * 0.7 ? "warning" : ("serious" as const);
-  return (
-    <span className="relative inline-flex items-center gap-1.5 tabular-nums">
+    p >= gate ? "good" : p >= floor ? "warning" : ("serious" as const);
+  const inner = (
+    <>
       <span
         aria-hidden
         className="size-1.5 shrink-0 rounded-full"
@@ -674,6 +739,36 @@ function RateCell({
       <span className="sr-only">
         {tone === "good" ? ", at the gate" : ", below the gate"}
       </span>
+    </>
+  );
+  if (!detail)
+    return (
+      <span className="relative inline-flex items-center gap-1.5 tabular-nums">
+        {inner}
+      </span>
+    );
+  return (
+    <Hint content={detail}>
+      <button
+        type="button"
+        className="relative inline-flex cursor-help items-center gap-1.5 rounded-sm tabular-nums underline decoration-muted-foreground/35 decoration-dotted underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {inner}
+      </button>
+    </Hint>
+  );
+}
+
+/** A number with a quieter line under it, right-aligned inside a numeric cell. */
+function Stacked({ value, sub }: { value: ReactNode; sub?: ReactNode }) {
+  return (
+    <span className="inline-flex flex-col items-end leading-tight">
+      <span>{value}</span>
+      {sub ? (
+        <span className="text-[11px] font-normal leading-4 text-muted-foreground">
+          {sub}
+        </span>
+      ) : null}
     </span>
   );
 }
@@ -695,6 +790,7 @@ function ClientsTable({ d }: { d: DeliveryPayload }) {
       filter === "all" ? d.clients : d.clients.filter(r => r.status === filter),
     [d.clients, filter],
   );
+  const provisionalSynced = d.provisionalSynced === true;
 
   const columns: Column<ClientRow>[] = [
     {
@@ -732,6 +828,11 @@ function ClientsTable({ d }: { d: DeliveryPayload }) {
         <StatusChip
           tone={STATUS[r.status].tone}
           label={STATUS[r.status].label}
+          hint={`${statusHint(r.status, d.gates)}${
+            isNum(r.costPerShownAt60)
+              ? ` At a ${SHOW_RATE_GOOD}% show rate, a shown booking would cost ${money(r.costPerShownAt60)}.`
+              : ""
+          }`}
         />
       ),
       sortValue: r => STATUS[r.status].order,
@@ -769,28 +870,57 @@ function ClientsTable({ d }: { d: DeliveryPayload }) {
       key: "bookings",
       header: "Bookings",
       numeric: true,
-      cell: r => count(r.bookings7d),
+      // The total; the split appears only once the provisional calendar syncs,
+      // because until then confirmed and total are the same number.
+      cell: r => (
+        <Stacked
+          value={count(r.bookings7d)}
+          sub={
+            provisionalSynced && isNum(r.confirmed7d)
+              ? `${count(r.confirmed7d)} confirmed · ${count(r.provisional7d ?? 0)} provisional`
+              : undefined
+          }
+        />
+      ),
       sortValue: r => r.bookings7d,
     },
     {
       key: "cpb",
-      header: "Cost per booking",
+      header: "Cost per confirmed booking",
       numeric: true,
-      cell: r => <GateCell value={r.cpb7d} gate={d.gates.cpb} noun="booking" />,
-      sortValue: r => r.cpb7d,
+      cell: r => (
+        <GateCell
+          value={r.cpbConfirmed7d === undefined ? r.cpb7d : r.cpbConfirmed7d}
+          gate={d.gates.cpb}
+          noun="booking"
+        />
+      ),
+      sortValue: r =>
+        r.cpbConfirmed7d === undefined ? r.cpb7d : r.cpbConfirmed7d,
     },
     {
       key: "bookRate",
       header: "Lead to booking",
       numeric: true,
-      cell: r => (
-        <RateCell
-          value={r.rates30?.bookRate ?? null}
-          gate={BOOKING_RATE_GATE}
-          hint="No platform leads in the last 30 days"
-        />
-      ),
-      sortValue: r => r.rates30?.bookRate ?? null,
+      cell: r => {
+        const x = r.rates30;
+        // The confirmed rate is the main one; a payload from before the split carries only the whole.
+        const main = x ? (x.bookRateConfirmed ?? x.bookRate) : null;
+        return (
+          <RateCell
+            value={main}
+            gate={BOOKING_RATE_GATE}
+            hint="No platform leads in the last 30 days"
+            detail={
+              x && isNum(x.bookRateConfirmed)
+                ? `Last 30 days, over ${plural(x.leads, "lead")}: ${pct(x.bookRateConfirmed)} booked a confirmed appointment (${count(x.confirmed)}), ${pct(x.bookRateProvisional)} a provisional one (${count(x.provisional)}), ${pct(x.bookRate)} either (${count(x.bookings)}).`
+                : undefined
+            }
+          />
+        );
+      },
+      sortValue: r =>
+        r.rates30 ? (r.rates30.bookRateConfirmed ?? r.rates30.bookRate) : null,
     },
     {
       key: "showRate",
@@ -799,8 +929,14 @@ function ClientsTable({ d }: { d: DeliveryPayload }) {
       cell: r => (
         <RateCell
           value={r.rates30?.showRate ?? null}
-          gate={SHOW_RATE_GATE}
-          hint="No past meeting with an outcome recorded in the last 30 days"
+          gate={SHOW_RATE_GOOD}
+          bad={SHOW_RATE_BAD}
+          hint="No past meeting with an attendance recorded in the last 30 days"
+          detail={
+            r.rates30
+              ? `Last 30 days: ${count(r.rates30.showed)} showed, ${count(r.rates30.noshow)} did not; the rest have no attendance recorded and count as neither. On track at ${SHOW_RATE_GOOD}%, off track under ${SHOW_RATE_BAD}%.`
+              : undefined
+          }
         />
       ),
       sortValue: r => r.rates30?.showRate ?? null,
@@ -810,10 +946,24 @@ function ClientsTable({ d }: { d: DeliveryPayload }) {
       header: "Close rate",
       numeric: true,
       cell: r => (
-        <RateCell
-          value={r.rates30?.closeRate ?? null}
-          gate={CLOSE_RATE_GATE}
-          hint="No meeting showed in the last 30 days"
+        <Stacked
+          value={
+            <RateCell
+              value={r.rates30?.closeRate ?? null}
+              gate={CLOSE_RATE_GATE}
+              hint="No meeting shown in the last 30 days"
+              detail={
+                r.rates30
+                  ? `Last 30 days: ${count(r.rates30.closes)} marked won by the client in Mahara OS, over ${count(r.rates30.showed)} shown.`
+                  : undefined
+              }
+            />
+          }
+          sub={
+            r.rates30 && (r.rates30.noOutcome ?? 0) > 0
+              ? `${count(r.rates30.noOutcome)} no outcome`
+              : undefined
+          }
         />
       ),
       sortValue: r => r.rates30?.closeRate ?? null,
@@ -840,7 +990,7 @@ function ClientsTable({ d }: { d: DeliveryPayload }) {
       rows={rows}
       columns={columns}
       rowKey={r => r.clickupTaskId ?? r.client}
-      caption="Clients with ad spend in the last 7 days; the three rates cover the last 30 days"
+      caption="Clients with ad spend in the last 7 days; the rates and the no-outcome counts cover the last 30 full days"
       search={{ placeholder: "Search clients", text: r => r.client }}
       filters={
         <FilterChips
@@ -857,6 +1007,139 @@ function ClientsTable({ d }: { d: DeliveryPayload }) {
       }
       stickyFirst
     />
+  );
+}
+
+// --- Past appointments with no outcome ---------------------------------------------
+
+/** The CRM's status word as a person would say it. */
+function crmStatus(s: string | null): string {
+  if (!s) return "No status";
+  const words: Record<string, string> = {
+    confirmed: "Confirmed",
+    showed: "Showed",
+    noshow: "No-show",
+    new: "New",
+  };
+  return words[s] ?? capitalize(s);
+}
+
+/**
+ * One client's past appointments that nobody has reported on, behind a
+ * disclosure: day and time, calendar, CRM status. Never the contact.
+ */
+function ClientNoOutcome({ c }: { c: ClientRow }) {
+  const total = c.rates30?.noOutcome ?? 0;
+  const list = c.noOutcome ?? [];
+  const newest = list[0]?.at;
+  return (
+    <li className="min-w-0">
+      <details className="group min-w-0">
+        <summary className="flex min-w-0 cursor-pointer select-none list-none items-center gap-2.5 rounded-sm py-2.5 text-[13px] hover:bg-[var(--ceo-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+          <ChevronRight
+            className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90"
+            aria-hidden
+          />
+          <span className="min-w-0 flex-1 truncate font-medium text-foreground">
+            {c.client}
+          </span>
+          <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+            {plural(total, "appointment")}
+            {newest ? ` · newest ${date(newest)}` : ""}
+          </span>
+        </summary>
+        {list.length ? (
+          <ol className="mb-3 ml-6 min-w-0 divide-y divide-[color:var(--ceo-grid)] rounded-md border">
+            {list.map((a, i) => (
+              <li
+                key={`${a.at}-${i}`}
+                className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-baseline gap-x-3 px-3 py-1.5 text-xs"
+              >
+                <span className="whitespace-nowrap tabular-nums text-foreground">
+                  {date(a.at)}, {a.at.slice(11, 16)}
+                </span>
+                <span className="truncate text-muted-foreground">
+                  {a.calendar || "No calendar"}
+                </span>
+                <span className="whitespace-nowrap text-muted-foreground">
+                  {crmStatus(a.status)}
+                </span>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p className="mb-3 ml-6 text-xs text-muted-foreground">
+            The list was not stored with this payload; it fills in at the next
+            refresh.
+          </p>
+        )}
+        {total > list.length && list.length > 0 ? (
+          <p className="mb-3 ml-6 text-xs text-muted-foreground tabular-nums">
+            The newest {count(list.length)} of {count(total)}.
+          </p>
+        ) : null}
+      </details>
+    </li>
+  );
+}
+
+/**
+ * The appointments to chase: past, on a booking calendar, with no outcome in
+ * Mahara OS and no mark on the attendance sheet, per client, most first.
+ * The line above it says how much of the book has an outcome at all, so the
+ * close rates in the table are read with their coverage.
+ */
+function NoOutcomeLedger({ d }: { d: DeliveryPayload }) {
+  const rows = useMemo(
+    () =>
+      d.clients
+        .filter(c => (c.rates30?.noOutcome ?? 0) > 0)
+        .sort(
+          (a, b) => (b.rates30?.noOutcome ?? 0) - (a.rates30?.noOutcome ?? 0),
+        ),
+    [d.clients],
+  );
+  const o = d.outcomes;
+  const total = rows.reduce((s, c) => s + (c.rates30?.noOutcome ?? 0), 0);
+  // A payload from before the outcomes read has nothing to show here.
+  if (!o && rows.length === 0) return null;
+
+  return (
+    <div className="mt-6 min-w-0 border-t border-[color:var(--ceo-grid)] pt-5">
+      <div className="mb-3 flex flex-wrap items-end justify-between gap-x-4 gap-y-1">
+        <div className="min-w-0">
+          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            Last 30 full days
+          </p>
+          <h3 className="text-sm font-semibold leading-5 text-foreground">
+            Past appointments with no outcome in Mahara OS
+          </h3>
+        </div>
+        {o ? (
+          <p className="text-xs text-muted-foreground tabular-nums">
+            {count(o.withOutcome)} of {count(o.pastAppointments)} past
+            appointments across every client have an outcome in Mahara OS
+            {o.since ? `, reported since ${date(o.since)}` : ""} ·{" "}
+            {count(o.won)} won · {count(total)} to chase across the clients in
+            the table
+          </p>
+        ) : null}
+      </div>
+      {rows.length === 0 ? (
+        <EmptyState
+          icon={ClipboardCheck}
+          title="Every past appointment has an outcome"
+          text="Nothing to chase in the last 30 days."
+          compact
+        />
+      ) : (
+        <ul className="min-w-0 divide-y divide-[color:var(--ceo-grid)]">
+          {rows.map(c => (
+            <ClientNoOutcome key={c.clickupTaskId ?? c.client} c={c} />
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
