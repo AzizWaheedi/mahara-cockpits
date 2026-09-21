@@ -54,7 +54,8 @@ const ROAS_Q = `'roas-qualified' = any(coalesce(l.tags, '{}'::text[]))`;
 const ROAS_U = `'roas-qualified' <> all(coalesce(l.tags, '{}'::text[])) and 'roas-unqualified' = any(coalesce(l.tags, '{}'::text[]))`;
 const ROAS_NR = `'roas-qualified' <> all(coalesce(l.tags, '{}'::text[])) and 'roas-unqualified' <> all(coalesce(l.tags, '{}'::text[])) and 'roas-unprepared' = any(coalesce(l.tags, '{}'::text[]))`;
 const ROAS_NONE = `not ('roas-qualified' = any(coalesce(l.tags, '{}'::text[])) or 'roas-unqualified' = any(coalesce(l.tags, '{}'::text[])) or 'roas-unprepared' = any(coalesce(l.tags, '{}'::text[])))`;
-const IS_LEAD = `('roas-qualified' = any(coalesce(l.tags, '{}'::text[])) or 'roas-unqualified' = any(coalesce(l.tags, '{}'::text[])))`;
+/** A lead on this cockpit: a contact tagged roas-qualified or roas-unqualified (Aziz, 2026-09-21). */
+export const IS_LEAD = `('roas-qualified' = any(coalesce(l.tags, '{}'::text[])) or 'roas-unqualified' = any(coalesce(l.tags, '{}'::text[])))`;
 
 /**
  * One statement for all six windows: b2b_window_metrics per window (the

@@ -29,6 +29,7 @@ import type {
   PossibleDuplicate,
 } from "../payloads";
 import { B2B, num, sql } from "../sb";
+import { IS_LEAD } from "./growth";
 import {
   addDays,
   daysInMonth,
@@ -445,12 +446,25 @@ export const money: Adapter = {
             B2B,
             `select m.key as metric, (m.value #>> '{}')::numeric as actual
              from jsonb_each(public.b2b_window_metrics(${day(monthStart(today))}, ${day(today)}, null::text[])::jsonb) m
-             where jsonb_typeof(m.value) = 'number'
-               and m.key in (select metric from public.monthly_targets where period_month = ${day(monthStart(today))})`,
+             where jsonb_typeof(m.value) = 'number'`,
           );
           for (const r of got)
             if (!(String(r.metric) in actuals))
               actuals[String(r.metric)] = num(r.actual);
+          // Leads on this cockpit are the ROAS-tagged contacts (growth.ts),
+          // not the dashboard's is_lead flag, so the three lead actuals are
+          // recomputed on that rule from the dashboard's own spend and demos.
+          const [roas] = await sql(
+            B2B,
+            `select count(*) as leads from public.leads l
+             where ${IS_LEAD}
+               and (l.lead_created_at at time zone 'Asia/Riyadh')::date
+                   between ${day(monthStart(today))} and ${day(today)}`,
+          );
+          const leads = num(roas?.leads);
+          actuals.leads = leads;
+          actuals.cost_per_lead = leads > 0 ? (actuals.spend ?? 0) / leads : 0;
+          actuals.lead_to_demo = leads > 0 ? (100 * (actuals.demos_scheduled ?? 0)) / leads : 0;
         } catch (e) {
           notes.push({
             level: "warn",
