@@ -139,6 +139,41 @@ fetches media by URL when it publishes, not when the post is created. An
 image behind a short-lived signed link works in every test and 404s on
 the morning it goes out. Hence the public `social-images` bucket.
 
+## What is left, as of 2026-09-21
+
+Swept all 49 sub-accounts again with the regenerated tokens. The picture
+has not moved:
+
+| | |
+| --- | --- |
+| sub-accounts with a social account connected | **1** — amheco, `amheco_sa` on Instagram |
+| connected to nothing | 44 |
+| still unreadable (401) | 4 |
+
+So the machine is built for twelve clients and can currently post for
+one. **Connecting the accounts is the work**, not more software, and it
+is the one part nobody can do from here: it needs each client's own
+Instagram, linked to a Facebook Page, authorised in their sub-account.
+
+The other four blockers, in the order they bite:
+
+1. **Higgsfield has no credits.** Every generate run ends at a 403 with
+   the prompts written and no pictures. A top-up unblocks it; nothing
+   else is wrong.
+2. **Amheco has no brand and no content bank.** It is the only client
+   that can post and the worst one to judge a plan by: no brand DNA, no
+   do's and don'ts, no offer, nothing in the bank against a spec that
+   asks for ten to fifteen items.
+3. **The client-approval half has never run.** The write path is proved
+   -- a draft was created, read back and deleted on a real sub-account --
+   but `in_review` to the client, their approval, and `syncCalendar`
+   reading it back have never happened once. That is the only stretch of
+   the chain with no evidence behind it.
+4. **Nothing routes a WhatsApp thread to the ads or creative desk.**
+   Every thread lands on the CSM's. The assignment action exists; the
+   rule that would use it needs a few days of real traffic to write
+   honestly rather than guessed at now.
+
 ## What is left
 
 | | needs |
