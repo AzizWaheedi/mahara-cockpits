@@ -484,7 +484,7 @@ export type GrowthPayload = {
     lastMonthToDate: FunnelWindow;
     lastMonth: FunnelWindow;
   };
-  /** Last 60 days, oldest first. */
+  /** Last 365 days, oldest first. */
   daily: {
     date: string;
     spend: number;

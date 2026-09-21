@@ -147,7 +147,10 @@ export const money: Adapter = {
       Math.min(dayOfMonth, daysInMonth(lastMonthStart)),
     ).padStart(2, "0")}`;
     const lastMonthEnd = addDays(monthStart(today), -1);
-    const from90 = addDays(today, -179);
+    // The daily series and the Tap read cover 180 days so a chart can show
+    // six months; the "90 days" figures (refunds, average contract) keep to 90.
+    const from180 = addDays(today, -179);
+    const from90 = addDays(today, -89);
     const from30 = addDays(today, -29);
     const firstMonthStart = `${shiftMonth(month, -11)}-01`;
     const notes: Note[] = [];
@@ -160,12 +163,12 @@ export const money: Adapter = {
       `select to_char(paid_on, 'YYYY-MM-DD') as day, sum(net_amount) as cash
        from public.whop_payments
        where status = 'paid' and currency = 'usd'
-         and paid_on between ${day(from90)} and ${day(today)}
+         and paid_on between ${day(from180)} and ${day(today)}
        group by paid_on`,
     );
     const byDay = new Map(cashRows.map(r => [String(r.day), num(r.cash)]));
     const cashDaily: Point[] = [];
-    for (let d = from90; d <= today; d = addDays(d, 1))
+    for (let d = from180; d <= today; d = addDays(d, 1))
       cashDaily.push({ date: d, value: usd(byDay.get(d) ?? 0) });
     const cashBetween = (from: string, to: string) =>
       usd(
@@ -627,14 +630,14 @@ export const money: Adapter = {
       });
     } else {
       try {
-        const read = await capturedCharges(from90, today);
+        const read = await capturedCharges(from180, today);
         tapCharges = read.charges;
         const byTapDay = new Map<string, number>();
         for (const c of read.charges)
           if (c.usd !== null)
             byTapDay.set(c.day, (byTapDay.get(c.day) ?? 0) + c.usd);
         const tapDaily: Point[] = [];
-        for (let d = from90; d <= today; d = addDays(d, 1))
+        for (let d = from180; d <= today; d = addDays(d, 1))
           tapDaily.push({ date: d, value: usd(byTapDay.get(d) ?? 0) });
         const tapBetween = (from: string, to: string) =>
           usd(
@@ -753,14 +756,14 @@ export const money: Adapter = {
 
       // A payment logged as Tap before Tap was connected drops out once a
       // Tap charge shows the same money, so it counts once, on the Tap rail.
-      const tapFrom = addDays(from90, -MATCH_DAYS);
+      const tapFrom = addDays(from180, -MATCH_DAYS);
       const covered = tapCharges
         ? coverWithTap(entries, tapCharges, tapFrom)
         : new Map<string, TapCover>();
       const counted = entries.filter(e => !covered.has(e.id));
 
       // Cash that Whop may already have: live entries of the last 90 days.
-      const recent = counted.filter(e => e.day >= from90);
+      const recent = counted.filter(e => e.day >= from180);
       let whopRows: WhopLike[] = [];
       if (recent.length)
         try {
@@ -862,7 +865,7 @@ export const money: Adapter = {
         for (const e of recent)
           byManualDay.set(e.day, (byManualDay.get(e.day) ?? 0) + e.amountUsd);
         const manualDaily: Point[] = [];
-        for (let d = from90; d <= today; d = addDays(d, 1))
+        for (let d = from180; d <= today; d = addDays(d, 1))
           manualDaily.push({ date: d, value: usd(byManualDay.get(d) ?? 0) });
         const manualMtd = between(monthStart(today), today);
         const newestDay = counted.reduce<string | null>(
@@ -1010,7 +1013,7 @@ export const money: Adapter = {
       r => new Map(r.daily.map(p => [p.date, p.value])),
     );
     const totalDaily: Point[] = [];
-    for (let d = from90; d <= today; d = addDays(d, 1)) {
+    for (let d = from180; d <= today; d = addDays(d, 1)) {
       let t = 0;
       for (const m of railMaps) t += m.get(d) ?? 0;
       totalDaily.push({ date: d, value: usd(t) });

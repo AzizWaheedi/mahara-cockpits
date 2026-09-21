@@ -372,7 +372,7 @@ export const growth: Adapter = {
     const mtd = windows.mtd;
 
     const daily = await attempt(
-      "The 60-day daily series",
+      "The 365-day daily series",
       notes,
       [] as GrowthPayload["daily"],
       async () =>

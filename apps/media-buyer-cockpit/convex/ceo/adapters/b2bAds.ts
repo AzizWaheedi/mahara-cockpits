@@ -110,22 +110,26 @@ function treeSql(from7: string, from30: string, to: string): string {
       and (lead_created_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)}
     group by 1),
   ${alias}_calls as (
+    -- The dashboard's dating (b2b_window_metrics): a booking counts on the
+    -- day it was booked; due, shown, qualified and cancelled count on the
+    -- day the call was for, and only once that day has passed.
     select c.ad_id,
-      count(*) filter (where c.call_type='intro') as intros_booked,
-      count(*) filter (where c.call_type='intro' and c.start_at < now()) as intros_due,
-      count(*) filter (where c.call_type='intro' and c.status in ('showed','confirmed','invalid') and c.start_at < now()) as intros_shown,
-      count(*) filter (where c.call_type='intro' and (c.status='showed' or (c.status='confirmed' and c.start_at < now()))) as intros_qualified,
-      count(*) filter (where c.call_type='intro' and c.status='cancelled') as intros_cancelled,
-      count(*) filter (where c.call_type='intro' and c.status in ('showed','confirmed','invalid') and c.start_at < now()
+      count(*) filter (where c.call_type='intro' and (c.booked_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)}) as intros_booked,
+      count(*) filter (where c.call_type='intro' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and c.start_at <= now()) as intros_due,
+      count(*) filter (where c.call_type='intro' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and (c.status='showed' or (c.status in ('confirmed','invalid') and c.start_at <= now()))) as intros_shown,
+      count(*) filter (where c.call_type='intro' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and (c.status='showed' or (c.status='confirmed' and c.start_at <= now()))) as intros_qualified,
+      count(*) filter (where c.call_type='intro' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and c.status='cancelled') as intros_cancelled,
+      count(*) filter (where c.call_type='intro' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and (c.status='showed' or (c.status in ('confirmed','invalid') and c.start_at <= now()))
         and exists (select 1 from public.calls d where d.contact_id = c.contact_id and d.call_type='demo' and d.booked_at >= c.start_at)) as intros_advanced,
-      count(*) filter (where c.call_type='demo') as demos_booked,
-      count(*) filter (where c.call_type='demo' and c.start_at < now()) as demos_due,
-      count(*) filter (where c.call_type='demo' and c.status in ('showed','confirmed','invalid') and c.start_at < now()) as demos_shown,
-      count(*) filter (where c.call_type='demo' and (c.status='showed' or (c.status='confirmed' and c.start_at < now()))) as demos_qualified,
-      count(*) filter (where c.call_type='demo' and c.status='cancelled') as demos_cancelled
+      count(*) filter (where c.call_type='demo' and (c.booked_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)}) as demos_booked,
+      count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and c.start_at <= now()) as demos_due,
+      count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and (c.status='showed' or (c.status in ('confirmed','invalid') and c.start_at <= now()))) as demos_shown,
+      count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and (c.status='showed' or (c.status='confirmed' and c.start_at <= now()))) as demos_qualified,
+      count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and c.status='cancelled') as demos_cancelled
     from public.calls c
     where c.ad_id is not null
-      and (c.booked_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)}
+      and ((c.booked_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)}
+        or (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)})
     group by 1),
   ${alias}_deals as (
     select ad_id, count(*) as closes,
