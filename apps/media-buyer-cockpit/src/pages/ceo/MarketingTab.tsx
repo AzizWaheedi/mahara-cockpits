@@ -364,7 +364,6 @@ function SpendAndLeads({
     ) : undefined;
 
   const retarget = retargeting(w);
-  const prevRetarget = prev ? retargeting(prev) : null;
 
   return (
     <div>
