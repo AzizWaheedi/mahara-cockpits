@@ -176,7 +176,12 @@ export default function ReviewPage() {
             <video
               key={item.id}
               ref={video}
-              src={item.video_url}
+              /* Without a poster a browser shows a black rectangle until
+                 somebody presses play. Asking for a fraction of a second
+                 in makes it decode and show the first frame instead,
+                 which is the difference between a delivery and a broken
+                 embed. */
+              src={item.poster_url ? item.video_url : `${item.video_url}#t=0.1`}
               poster={item.poster_url ?? undefined}
               controls
               playsInline
