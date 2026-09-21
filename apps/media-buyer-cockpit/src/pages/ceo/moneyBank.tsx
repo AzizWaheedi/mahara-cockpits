@@ -87,6 +87,7 @@ export function BankStatementsCard({
 }) {
   const overviewAction = useAction(api.ceo.bankImport.overview);
   const importAction = useAction(api.ceo.bankImport.importStatement);
+  const importPdfAction = useAction(api.ceo.bankPdf.importPdf);
   const addExclusion = useAction(api.ceo.bankImport.addExclusion);
   const removeExclusion = useAction(api.ceo.bankImport.removeExclusion);
   const refreshNow = useMutation(api.ceo.queries.refreshNow);
@@ -124,11 +125,16 @@ export function BankStatementsCard({
     setProblem(null);
     setResult(null);
     try {
-      const text = await file.text();
-      const r = (await importAction({
-        fileName: file.name,
-        text,
-      })) as ImportResult;
+      const isPdf =
+        /\.pdf$/i.test(file.name) || file.type === "application/pdf";
+      const r = (
+        isPdf
+          ? await importPdfAction({
+              fileName: file.name,
+              base64: await fileBase64(file),
+            })
+          : await importAction({ fileName: file.name, text: await file.text() })
+      ) as ImportResult;
       setResult(r);
       await load();
       await refreshNow({ only: ["money", "expenses"] });
@@ -217,7 +223,7 @@ export function BankStatementsCard({
               <input
                 ref={fileRef}
                 type="file"
-                accept=".csv,text/csv,text/plain"
+                accept=".csv,.pdf,text/csv,text/plain,application/pdf"
                 className="sr-only"
                 disabled={busy}
                 onChange={e => {
@@ -227,8 +233,8 @@ export function BankStatementsCard({
               />
             </label>
             <span className="text-xs text-muted-foreground">
-              CBK Online, Accounts, Statement, Export CSV. Thirty seconds, once
-              a week.
+              The CSV export from CBK Online, or the PDF statement the bank
+              gives. Thirty seconds, once a week.
               {stale && daysSince !== null
                 ? ` The newest statement is ${daysSince} days old, so cash and expenses since then are missing, not zero.`
                 : ""}
@@ -462,4 +468,13 @@ export function BankExpensesBody({ p }: { p: MoneyPayload }): ReactNode {
       ))}
     </div>
   );
+}
+
+/** A file as base64, in chunks so a large statement does not blow the call stack. */
+async function fileBase64(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000)
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
 }

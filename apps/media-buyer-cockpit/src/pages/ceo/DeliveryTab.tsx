@@ -40,7 +40,6 @@ import {
   CLOSE_RATE_GATE,
   CPB_BAD,
   CPL_GATE,
-  SHOW_RATE_BAD,
   SHOW_RATE_GOOD,
 } from "@/lib/kpi";
 import { cn } from "@/lib/utils";
@@ -72,9 +71,9 @@ function statusHint(status: ClientStatus, gates: DeliveryPayload["gates"]) {
   const cpb = money(gates.cpb);
   switch (status) {
     case "bad":
-      return `Cost per confirmed booking over ${money(CPB_BAD)}, cost per lead over ${money(CPL_GATE * 1.5)} (spend with no leads counts as that), or show rate under ${SHOW_RATE_BAD}%, a line Aziz still has to confirm.`;
+      return `Cost per confirmed booking over ${money(CPB_BAD)}, or cost per lead over ${money(CPL_GATE * 1.5)} (spend with no leads counts as that).`;
     case "watch":
-      return `Between the two: not within every on-track gate and not past an off-track one, or a show rate nobody has recorded yet.`;
+      return `Between the two: not within every on-track gate and not past an off-track one, a show rate under ${SHOW_RATE_GOOD}%, or one nobody has recorded yet.`;
     case "good":
       return `Cost per lead within ${cpl}, cost per confirmed booking within ${cpb} and show rate at least ${SHOW_RATE_GOOD}% over the last 30 days.`;
     default:
@@ -939,11 +938,10 @@ function ClientsTable({ d }: { d: DeliveryPayload }) {
         <RateCell
           value={r.rates30?.showRate ?? null}
           gate={SHOW_RATE_GOOD}
-          bad={SHOW_RATE_BAD}
           hint="No past meeting with an attendance recorded in the last 30 days"
           detail={
             r.rates30
-              ? `Last 30 days: ${count(r.rates30.showed)} showed, ${count(r.rates30.noshow)} did not; the rest have no attendance recorded and count as neither. On track at ${SHOW_RATE_GOOD}%, off track under ${SHOW_RATE_BAD}%.`
+              ? `Last 30 days: ${count(r.rates30.showed)} showed, ${count(r.rates30.noshow)} did not; the rest have no attendance recorded and count as neither. On track at ${SHOW_RATE_GOOD}%; there is no lower line.`
               : undefined
           }
         />

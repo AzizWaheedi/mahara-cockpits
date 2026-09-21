@@ -12,12 +12,11 @@ export const CLOSE_RATE_GATE = 20;
 /**
  * The client status rule on the CEO Delivery tab (Aziz, 2026-09-21): good
  * needs a show rate of at least SHOW_RATE_GOOD and a cost per confirmed
- * booking within CPB_GATE; bad is a show rate under SHOW_RATE_BAD (Aziz wrote
- * "confirm the 40") or a cost per booking over CPB_BAD. The bad cost per lead
- * stays CPL_GATE * 1.5. Keep in step with convex/constants.ts.
+ * booking within CPB_GATE; bad is a cost per booking over CPB_BAD or a bad
+ * cost per lead (CPL_GATE * 1.5). There is one show rate line for clients,
+ * 60, and no lower one (Aziz, 2026-09-21). Keep in step with convex/constants.ts.
  */
 export const SHOW_RATE_GOOD = 60;
-export const SHOW_RATE_BAD = 40;
 export const CPB_BAD = 80;
 /** Days a change needs before its numbers mean anything. */
 export const LEARNING_DAYS = 3;

@@ -20,7 +20,6 @@ import {
   CPB_BAD,
   CPB_GATE,
   CPL_GATE,
-  SHOW_RATE_BAD,
   SHOW_RATE_GOOD,
 } from "../convex/constants";
 import * as kpi from "../src/lib/kpi";
@@ -188,12 +187,11 @@ describe("clientStatus", () => {
       "good",
     );
   });
-  test("bad on any one of the three lines, or spend with no leads", () => {
+  test("bad on cost per booking, cost per lead, or spend with no leads; a low show rate alone is watch", () => {
     expect(clientStatus({ ...base, cpbConfirmed: CPB_BAD + 0.01 })).toBe("bad");
     expect(clientStatus({ ...base, cpl: CPL_GATE * 1.5 + 0.01 })).toBe("bad");
-    expect(
-      clientStatus({ ...base, showRate: SHOW_RATE_BAD / 100 - 0.001 }),
-    ).toBe("bad");
+    // Aziz (2026-09-21): 60% is the one show rate line for clients, there is no 40.
+    expect(clientStatus({ ...base, showRate: 0.2 })).toBe("watch");
     expect(clientStatus({ ...base, leads: 0, cpl: null })).toBe("bad");
   });
   test("watch in between, and when the show rate is unknown", () => {
@@ -226,14 +224,12 @@ describe("costPerShownAt60", () => {
 describe("the gates", () => {
   test("are the same on both sides", () => {
     expect(kpi.SHOW_RATE_GOOD).toBe(SHOW_RATE_GOOD);
-    expect(kpi.SHOW_RATE_BAD).toBe(SHOW_RATE_BAD);
     expect(kpi.CPB_BAD).toBe(CPB_BAD);
     expect(kpi.CPB_GATE).toBe(CPB_GATE);
     expect(kpi.CPL_GATE).toBe(CPL_GATE);
   });
   test("are Aziz's numbers", () => {
     expect(SHOW_RATE_GOOD).toBe(60);
-    expect(SHOW_RATE_BAD).toBe(40);
     expect(CPB_BAD).toBe(80);
     expect(CPL_GATE * 1.5).toBe(22.5);
   });

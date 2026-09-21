@@ -5,6 +5,7 @@ import {
   internalAction,
   internalMutation,
 } from "../_generated/server";
+import { clickupCall } from "../dosDonts";
 import { authenticatedAction } from "../functions";
 import { callTool, unwrap } from "../tools";
 import {
@@ -14,6 +15,7 @@ import {
   isOneOffPlan,
 } from "./billing";
 import type { ClientsPayload } from "./payloads";
+import { readSetting, writeSetting } from "./settings";
 import { addDays, kuwaitDay, monthStart } from "./time";
 
 declare const process: { env: Record<string, string | undefined> };
@@ -71,13 +73,48 @@ export const CLIENTS_LIST = "901816559981";
 export const EXTENSION_FIELD_NAME = "Current extension (weeks)";
 export const EXTENSION_FIELD_ENV = "CLICKUP_EXTENSION_FIELD";
 /** What the screen says until the field exists. ClickUp's API cannot create one. */
-export const FIELD_ASK = `Create a Number field '${EXTENSION_FIELD_NAME}' on the Clients - Mahara list (${CLIENTS_LIST}) and set ${EXTENSION_FIELD_ENV} on the deployment`;
+export const FIELD_ASK = `Create a Number field '${EXTENSION_FIELD_NAME}' on the Clients - Mahara list (${CLIENTS_LIST}); the cockpit finds it by name at the next sync`;
 
-/** The field id, when Aziz has created the field and set it on the deployment. */
-export function extensionFieldId(): string | null {
+/**
+ * The field id: the deployment override when set, else the field of that
+ * name on the Clients list (Aziz, 2026-09-21: "you can make the ClickUp field
+ * if you want"; ClickUp's API cannot create one, so whoever makes it, the
+ * cockpit finds it by name). Null until it exists, never a throw.
+ */
+export async function findExtensionField(): Promise<string | null> {
   const id = process.env[EXTENSION_FIELD_ENV]?.trim();
-  return id ? id : null;
+  if (id) return id;
+  try {
+    const r = await clickupCall("GET", `list/${CLIENTS_LIST}/field`);
+    const want = EXTENSION_FIELD_NAME.toLowerCase();
+    const f = (r?.fields ?? []).find(
+      (f: Any) =>
+        String(f?.name ?? "")
+          .trim()
+          .toLowerCase() === want,
+    );
+    return f?.id ? String(f.id) : null;
+  } catch {
+    return null;
+  }
 }
+
+/**
+ * The custom fields on the Clients list, for a hand check from the CLI
+ * (`npx convex run --prod ceo/extensions:listFields`): names, types and ids only.
+ */
+export const listFields = internalAction({
+  args: {},
+  returns: v.any(),
+  handler: async () => {
+    const r = await clickupCall("GET", `list/${CLIENTS_LIST}/field`);
+    return (r?.fields ?? []).map((f: Any) => ({
+      id: String(f?.id ?? ""),
+      name: String(f?.name ?? ""),
+      type: String(f?.type ?? ""),
+    }));
+  },
+});
 
 /** Lower case letters and digits only, in any script: csmSync's liveExtension rule. */
 export const fold = (s: unknown): string =>
@@ -607,7 +644,7 @@ export const doctor = internalAction({
   args: {},
   returns: v.any(),
   handler: async (ctx): Promise<Record<string, unknown>> => {
-    const fieldConfigured = extensionFieldId() !== null;
+    const fieldConfigured = (await findExtensionField()) !== null;
     const read = await readExtensionForm(ctx);
     if (!read.ok) return { ok: false, error: read.error, fieldConfigured };
     const cards: BillingRow[] = await ctx.runQuery(
@@ -680,11 +717,93 @@ const shortDay = (day: string) => {
   return `${Number(day.slice(8, 10))} ${names[m - 1] ?? ""}`.trim();
 };
 
+/** What the field said after the last write, per card, so an unchanged value is not sent again. */
+const WRITTEN_KEY = "extension_field_written";
+
+/**
+ * Write the field on every card the form has named. `force` sends every
+ * value (the button); otherwise only the values that differ from the last
+ * write go out, which is what the automatic pass after each form sync does.
+ */
+async function writeExtensionField(
+  ctx: ActionCtx,
+  by: string,
+  force: boolean,
+): Promise<ApplyResult> {
+  const none = { written: 0, cleared: 0, skipped: 0, errors: [] as string[] };
+  const fieldId = await findExtensionField();
+  if (!fieldId) return { ...none, note: FIELD_ASK };
+
+  const read = await readExtensionForm(ctx);
+  if (!read.ok)
+    return {
+      ...none,
+      note: `The Client Extension Form could not be read (${read.error}), so nothing was written.`,
+    };
+  const cards: BillingRow[] = await ctx.runQuery(
+    internal.ceo.billing.allBilling,
+    {},
+  );
+  if (cards.length === 0)
+    return {
+      ...none,
+      note: "The client cards have not been read by the CSM sync yet, so there is nothing to match the form against.",
+    };
+  const today = kuwaitDay();
+  const { writes, skipped } = planWrites(
+    read.grants,
+    cards.map(c => ({ taskId: c.taskId, name: c.name, stage: c.stage })),
+    today,
+  );
+  const last = ((await readSetting(WRITTEN_KEY)) ?? {}) as Record<
+    string,
+    number
+  >;
+  const due = force ? writes : writes.filter(w => last[w.taskId] !== w.weeks);
+  const errors: string[] = [];
+  const done: FieldWrite[] = [];
+  for (const w of due) {
+    try {
+      unwrap(
+        await callTool("pd_clickup_proxy_post", {
+          url: `https://api.clickup.com/api/v2/task/${w.taskId}/field/${fieldId}`,
+          json_body: { value: w.weeks },
+        }),
+      );
+      done.push(w);
+    } catch (e) {
+      errors.push(`${w.client}: ${errText(e)}`);
+    }
+  }
+  if (done.length) {
+    await ctx.runMutation(internal.ceo.extensions.recordWrite, {
+      rows: done,
+      by,
+    });
+    const next = { ...last };
+    for (const w of done) next[w.taskId] = w.weeks;
+    try {
+      await writeSetting(WRITTEN_KEY, next, by);
+    } catch {
+      // The memory is a courtesy; the audit rows are the record.
+    }
+  }
+  const written = done.filter(w => w.weeks > 0).length;
+  const cleared = done.length - written;
+  const note = done.length
+    ? `Written to the '${EXTENSION_FIELD_NAME}' field on each card the form has named: the live extension's weeks, or 0 once it has ended.`
+    : writes.length
+      ? due.length
+        ? "Nothing was written."
+        : "Every card already says what the form says; nothing to write."
+      : "No response on the Client Extension Form matches a client card, so there was nothing to write.";
+  return { written, cleared, skipped, errors, note };
+}
+
 /**
  * Write the current extension onto the client cards, from the button on the
- * Client success tab. Never automatic. The field cannot be created through
- * ClickUp's API, so until Aziz makes it and sets its id on the deployment
- * the action writes nothing and says what to do.
+ * Client success tab. Sends every value. The field cannot be created through
+ * ClickUp's API; until it exists the action writes nothing and says what to do.
  */
 export const applyToClickUp = authenticatedAction({
   args: {},
@@ -694,60 +813,25 @@ export const applyToClickUp = authenticatedAction({
     const by: string = await ctx.runQuery(internal.ceo.ltv.whoami, {
       userId: ctx.userId,
     });
-    const none = { written: 0, cleared: 0, skipped: 0, errors: [] as string[] };
-    const fieldId = extensionFieldId();
-    if (!fieldId) return { ...none, note: FIELD_ASK };
-
-    const read = await readExtensionForm(ctx);
-    if (!read.ok)
-      return {
-        ...none,
-        note: `The Client Extension Form could not be read (${read.error}), so nothing was written.`,
-      };
-    const cards: BillingRow[] = await ctx.runQuery(
-      internal.ceo.billing.allBilling,
-      {},
-    );
-    if (cards.length === 0)
-      return {
-        ...none,
-        note: "The client cards have not been read by the CSM sync yet, so there is nothing to match the form against.",
-      };
-    const today = kuwaitDay();
-    const { writes, skipped } = planWrites(
-      read.grants,
-      cards.map(c => ({ taskId: c.taskId, name: c.name, stage: c.stage })),
-      today,
-    );
-    const errors: string[] = [];
-    const done: FieldWrite[] = [];
-    for (const w of writes) {
-      try {
-        unwrap(
-          await callTool("pd_clickup_proxy_post", {
-            url: `https://api.clickup.com/api/v2/task/${w.taskId}/field/${fieldId}`,
-            json_body: { value: w.weeks },
-          }),
-        );
-        done.push(w);
-      } catch (e) {
-        errors.push(`${w.client}: ${errText(e)}`);
-      }
-    }
-    if (done.length)
-      await ctx.runMutation(internal.ceo.extensions.recordWrite, {
-        rows: done,
-        by,
-      });
-    const written = done.filter(w => w.weeks > 0).length;
-    const cleared = done.length - written;
-    const note = done.length
-      ? `Written to the '${EXTENSION_FIELD_NAME}' field on each card the form has named: the live extension's weeks, or 0 once it has ended.`
-      : writes.length
-        ? "Nothing was written."
-        : "No response on the Client Extension Form matches a client card, so there was nothing to write.";
-    return { written, cleared, skipped, errors, note };
+    return await writeExtensionField(ctx, by, true);
   },
+});
+
+/**
+ * The automatic pass, scheduled by the clients section after each read of
+ * the form (Aziz, 2026-09-21: "tie it to the extension scenario"): only the
+ * values that changed since the last write go to ClickUp, each with an audit
+ * row. Nothing happens until the field exists.
+ */
+export const applyAuto = internalAction({
+  args: {},
+  returns: v.any(),
+  handler: async (ctx): Promise<ApplyResult> =>
+    await writeExtensionField(
+      ctx,
+      "the cockpit, after the extension form sync",
+      false,
+    ),
 });
 
 /** One audit line per card written, so a figure on ClickUp can always be traced. */

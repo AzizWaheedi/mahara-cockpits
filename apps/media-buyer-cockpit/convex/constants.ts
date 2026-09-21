@@ -18,14 +18,14 @@ export const CLOSE_RATE_GATE = 20;
 /**
  * The client status rule on the CEO Delivery tab (Aziz, 2026-09-21), in
  * percent and dollars. Good needs a show rate of at least SHOW_RATE_GOOD and
- * a cost per confirmed booking within CPB_GATE; bad is a show rate under
- * SHOW_RATE_BAD or a cost per booking over CPB_BAD. Aziz wrote "(confirm the
- * 40)" beside the bad show rate, so the screen labels it as his to confirm.
- * The bad cost per lead stays CPL_GATE * 1.5 ($22.50) where the sync and the
- * adapters already compute it. Keep in step with src/lib/kpi.ts.
+ * a cost per confirmed booking within CPB_GATE; bad is a cost per booking
+ * over CPB_BAD or a bad cost per lead. There is one show rate line for
+ * clients, 60, and no lower one: Aziz (2026-09-21) "60% show rate is our
+ * thing for clients, not 40%". The bad cost per lead stays CPL_GATE * 1.5
+ * ($22.50) where the sync and the adapters already compute it. Keep in step
+ * with src/lib/kpi.ts.
  */
 export const SHOW_RATE_GOOD = 60;
-export const SHOW_RATE_BAD = 40;
 export const CPB_BAD = 80;
 
 /** ClickUp form that creates the campaign card on the ads management board. Aziz, 2026-09-10. */

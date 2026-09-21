@@ -71,6 +71,33 @@ const brief = (e: unknown) =>
     .replace(/\s+/g, " ")
     .slice(0, 160);
 
+/** A stored value by key, or null when the row or the table is missing. Never throws. */
+export async function readSetting(key: string): Promise<unknown | null> {
+  try {
+    const rows = await rest(
+      `${TABLE}?key=eq.${encodeURIComponent(key)}&select=value&limit=1`,
+    );
+    return rows?.[0]?.value ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Store a value by key (an upsert), naming who or what wrote it. */
+export async function writeSetting(
+  key: string,
+  value: unknown,
+  by: string,
+): Promise<void> {
+  await rest(`${TABLE}?on_conflict=key`, {
+    method: "POST",
+    body: [
+      { key, value, updated_by: by, updated_at: new Date().toISOString() },
+    ],
+    prefer: "resolution=merge-duplicates,return=minimal",
+  });
+}
+
 export type WorkingHoursRead = {
   hours: WorkingHours;
   /** False until the migration has been run. */

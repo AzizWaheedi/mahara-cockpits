@@ -27,7 +27,7 @@ PROMPT = """This is a PHOTO COMPOSITING task, not an image generation task. Trea
 
 Remove everything in front of him and around him: no desk, no table, no microphone, no microphone stand, no cables, no book, no sculpture, no lamp, no plants, no shelves. He floats cleanly on the background, cut off at the chest with a soft fade at the bottom edge.
 
-LAYOUT: vertical frame, the man on the {side} side occupying the lower {side} portion, scaled large.
+LAYOUT: vertical frame, {layout}.
 
 BACKGROUND: deep navy blue #050b1f to #0d1f42 gradient with a faint dark blue grid texture and a soft teal glow low behind him. Nothing else.
 
@@ -37,6 +37,11 @@ GRAPHIC ELEMENT: {graphic}. Keep this graphic small, subtle and low contrast so 
 
 No logos, no borders, no watermarks, no captions, no additional text."""
 
+LAYOUTS = {
+    "center": "the man centred, occupying the lower middle of the frame, scaled large, the headline above him",
+    "right": "the man on the right side occupying the lower right portion, scaled large",
+    "left": "the man on the left side occupying the lower left portion, scaled large",
+}
 DEFAULT_GRAPHIC = "one small minimal neon teal line-art visual that argues the video's point, such as one upward arrow rising cleanly from a baseline next to three faint dim grey arrows trailing downward and fading out"
 
 _URL = re.compile(r"https?://[^\s\"'<>]+")
@@ -66,14 +71,17 @@ def available() -> tuple[bool, str]:
     return True, ""
 
 
-def compose_prompt(lines: list[str], *, graphic: Optional[str] = None, side: str = "right") -> str:
+def compose_prompt(lines: list[str], *, graphic: Optional[str] = None, side: str = "center") -> str:
     l1 = clean_line(lines[0] if lines else "")
     l2 = clean_line(lines[1] if len(lines) > 1 else "")
     g = clean_line(graphic or "") or DEFAULT_GRAPHIC
     # One line on the cover is allowed: the teal sentence is left out rather
     # than sent empty, which the model would paint as a stray mark.
     line2_clause = f" Line two directly beneath in bright teal #00CFC8 with a soft neon glow: {l2}." if l2 else ""
-    return PROMPT.format(side="left" if side == "left" else "right", line1=l1, line2_clause=line2_clause, graphic=g)
+    # Aziz (2026-09-21): most of the time he stands in the middle; a side is
+    # the exception, asked for on the post.
+    layout = LAYOUTS.get(side, LAYOUTS["center"])
+    return PROMPT.format(layout=layout, line1=l1, line2_clause=line2_clause, graphic=g)
 
 
 _RESULT_KEYS = ("output_url", "image_url", "download_url", "min_result_url")
@@ -128,7 +136,7 @@ def _result_urls(stdout: str) -> list[str]:
     return out
 
 
-def generate_cover(frame_path: Path, lines: list[str], *, graphic: Optional[str] = None, side: str = "right", log: Callable[[str], None] = lambda m: None, timeout: float = 600) -> bytes:
+def generate_cover(frame_path: Path, lines: list[str], *, graphic: Optional[str] = None, side: str = "center", log: Callable[[str], None] = lambda m: None, timeout: float = 600) -> bytes:
     """The cover as JPEG bytes, or an exception that says why Higgsfield could not."""
     ok, why = available()
     if not ok:

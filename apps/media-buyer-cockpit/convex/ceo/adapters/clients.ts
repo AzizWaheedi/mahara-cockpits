@@ -11,8 +11,8 @@ import {
   EXT_PAGE,
   EXTENSION_FIELD_NAME,
   type ExtensionsWithLastMonth,
-  extensionFieldId,
   FIELD_ASK,
+  findExtensionField,
   readExtensionForm,
   summariseExtensions,
   summariseLaunch,
@@ -1517,7 +1517,10 @@ export const clients: Adapter = {
     let extensions: ExtensionsWithLastMonth | undefined;
     if (ext.ok) {
       const s = summariseExtensions(ext.grants, cards, today);
-      const fieldId = extensionFieldId();
+      const fieldId = await findExtensionField();
+      // The field is kept current by the cockpit itself once it exists (Aziz, 2026-09-21).
+      if (fieldId)
+        await ctx.scheduler.runAfter(0, internal.ceo.extensions.applyAuto, {});
       extensions = {
         from: s.from,
         to: s.to,

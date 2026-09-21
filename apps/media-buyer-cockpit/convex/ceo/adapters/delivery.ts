@@ -1,12 +1,6 @@
 import { internal } from "../../_generated/api";
 import { OFF_STATUSES } from "../../board";
-import {
-  CPB_BAD,
-  CPB_GATE,
-  CPL_GATE,
-  SHOW_RATE_BAD,
-  SHOW_RATE_GOOD,
-} from "../../constants";
+import { CPB_BAD, CPB_GATE, CPL_GATE, SHOW_RATE_GOOD } from "../../constants";
 import {
   attendanceOf,
   clientDelivery,
@@ -87,8 +81,9 @@ const CPL_BAD = CPL_GATE * 1.5;
  *
  * - good: cost per lead within CPL_GATE, cost per confirmed booking within
  *   CPB_GATE and show rate at least SHOW_RATE_GOOD.
- * - bad: cost per confirmed booking over CPB_BAD, cost per lead over CPL_BAD
- *   (spend with no leads is that), or show rate under SHOW_RATE_BAD.
+ * - bad: cost per confirmed booking over CPB_BAD, or cost per lead over
+ *   CPL_BAD (spend with no leads is that). A low show rate alone is watch,
+ *   not bad: the one show rate line for clients is 60 (Aziz, 2026-09-21).
  * - watch: everything between, including a show rate nobody has recorded,
  *   which cannot be shown to be good.
  * - no-data: nothing spent.
@@ -109,11 +104,7 @@ export function clientStatus(x: {
   const cplBad = x.leads === 0 || x.cpl === null || x.cpl > CPL_BAD;
   const cplGood = x.cpl !== null && x.cpl <= CPL_GATE;
   if (!x.weBook) return cplBad ? "bad" : cplGood ? "good" : "watch";
-  if (
-    cplBad ||
-    (x.cpbConfirmed !== null && x.cpbConfirmed > CPB_BAD) ||
-    (x.showRate !== null && x.showRate < SHOW_RATE_BAD / 100)
-  )
+  if (cplBad || (x.cpbConfirmed !== null && x.cpbConfirmed > CPB_BAD))
     return "bad";
   if (
     cplGood &&
@@ -202,7 +193,7 @@ export const delivery: Adapter = {
         : `Spend and leads are Meta only, for campaigns on the Ads Management board, in USD after a fixed exchange table. A day is the ad account's reporting day. Gates are Aziz's (2026-09-16): cost per lead $${CPL_GATE}, cost per booking $${CPB_GATE}.`,
     );
     info(
-      `Client status is Aziz's rule (2026-09-21): good with cost per lead within $${CPL_GATE}, cost per confirmed booking within $${CPB_GATE} and a show rate of at least ${SHOW_RATE_GOOD}%; bad with cost per booking over $${CPB_BAD}, cost per lead over $${CPL_BAD.toFixed(2)} (spend with no leads counts as that), or a show rate under ${SHOW_RATE_BAD}%, a line Aziz still has to confirm; watch otherwise, which includes a show rate nobody has recorded. Costs are the last 7 days, the show rate the last 30. Beside each status is what a booking that shows would cost at a ${SHOW_RATE_GOOD}% show rate: cost per confirmed booking over 0.${SHOW_RATE_GOOD}. A Done With You client with no bookings is judged on cost per lead alone.`,
+      `Client status is Aziz's rule (2026-09-21): good with cost per lead within $${CPL_GATE}, cost per confirmed booking within $${CPB_GATE} and a show rate of at least ${SHOW_RATE_GOOD}%; bad with cost per booking over $${CPB_BAD}, cost per lead over $${CPL_BAD.toFixed(2)} (spend with no leads counts as that); watch otherwise, which includes a show rate under ${SHOW_RATE_GOOD}% or one nobody has recorded. There is one show rate line for clients, ${SHOW_RATE_GOOD}%. Costs are the last 7 days, the show rate the last 30. Beside each status is what a booking that shows would cost at a ${SHOW_RATE_GOOD}% show rate: cost per confirmed booking over 0.${SHOW_RATE_GOOD}. A Done With You client with no bookings is judged on cost per lead alone.`,
     );
     if (triageError)
       warn(

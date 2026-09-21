@@ -8,7 +8,10 @@ import {
   matchPayouts,
   parseAmount,
   parseDay,
+  isStatementPdfText,
+  parseAnyStatement,
   parseStatement,
+  parseStatementPdfText,
   statementId,
 } from "../convex/ceo/bank";
 
@@ -63,7 +66,7 @@ describe("parseStatement", () => {
     expect(p.closingBalance).toBe(175.735);
     expect(p.problems).toEqual([]);
     expect(statementId(p)).toBe("537015XXXXXX4348:2026-05-01:2026-05-31");
-    expect(lineHash(p.account, p.lines[0])).toBe("537015XXXXXX4348:900001");
+    expect(lineHash(p.account, p.lines[0])).toBe("4348:2026-05-01:-0.150:673.191");
   });
   test("reads an account export with quoted thousands", () => {
     const p = parseStatement(ACCOUNT);
@@ -177,3 +180,116 @@ describe("matchPayouts", () => {
     expect(m.size).toBe(0);
   });
 });
+
+// The bank's PDF statement, as a layout extractor prints it (columns kept)
+// and as pdf.js prints it (one word group per line, amounts after the
+// description). Both carry the same four transactions.
+const PDF_LAYOUT = `                                   Account Statement
+ Date             : 21/09/2026 14:41:07
+ Card No          : 5370xxxxxxxx4348
+ Branch:         Card Centre
+ Type:           CONTROL account                            KWD                    Pages:                    1/1
+ Statement Period:       01/07/2026       to:   21/09/2026                       Balance B/Fwd:             431.948 CR
+     Date          Auth Date                     Desc.                          Amount                       Balance
+ 01/07/2026        28/06/2026      P-721269-PLUS.EXCALIDRAW.COM /160773512       -                     2.220            429.728 CR
+                                                                              (USD                         7)
+ 01/07/2026                        Card Payment - Tijari Mobile                  +                  200.000            629.728 CR
+                                   Control Card - Control Card - 5370xxxxxxxx4348
+                                    53701XXXXX4348 /CC
+ 02/07/2026                        Non Sufficient Bal. Decline Fee               -                     0.150            629.578 CR
+ 02/07/2026                        KTP30AG0E26|Personal transfer/Personal Transfer To My   -                  155.000            474.578 CR
+                                   Account/Transfer to own account Self Payment|
+                                   ABDULAZIZ B M WAHEEDI P-952353-Weyay Top Up
+                                      KW
+Al-Najma Account offers the Biggest Cash prize KD 1,500,000                      Balance C/F           474.578 CR
+This Statement of Account will be considered correct and accepted
+`;
+
+const PDF_PDFJS = `Account Statement
+Date : 21/09/2026 14:41:07
+Card No : 5370xxxxxxxx4348
+Type: CONTROL account
+KWD Pages: 1/1
+Statement Period:
+01/07/2026
+to:
+21/09/2026
+Balance B/Fwd: 431.948 CR
+Date Auth Date Desc. Amount Balance
+01/07/2026 28/06/2026 P-721269-PLUS.EXCALIDRAW.COM /160773512 -
+(USD
+2.220
+7)
+429.728 CR
+01/07/2026 Card Payment - Tijari Mobile
+Control Card - Control Card - 5370xxxxxxxx4348
+53701XXXXX4348 /CC
++ 200.000 629.728 CR
+02/07/2026 Non Sufficient Bal. Decline Fee - 0.150 629.578 CR
+02/07/2026 KTP30AG0E26|Personal transfer/Personal Transfer To My
+Account/Transfer to own account Self Payment|
+ABDULAZIZ B M WAHEEDI P-952353-Weyay Top Up
+KW
+- 155.000 474.578 CR
+Semi Annually, KD 20,000 Monthly Balance C/F 474.578 CR
+`;
+
+describe("the statement PDF", () => {
+  test("is told apart from the CSV export", () => {
+    expect(isStatementPdfText(PDF_LAYOUT)).toBe(true);
+    expect(isStatementPdfText(PDF_PDFJS)).toBe(true);
+    expect(isStatementPdfText(CARD)).toBe(false);
+    expect(parseAnyStatement(CARD).lines.length).toBe(4);
+  });
+
+  for (const [name, text] of [
+    ["layout", PDF_LAYOUT],
+    ["pdf.js", PDF_PDFJS],
+  ] as const) {
+    test(`reads the ${name} text: header, four rows, balance chain`, () => {
+      const p = parseStatementPdfText(text);
+      expect(p.account).toBe("5370xxxxxxxx4348");
+      expect(p.accountKind).toBe("card");
+      expect(p.currency).toBe("KWD");
+      expect(p.fromDay).toBe("2026-07-01");
+      expect(p.toDay).toBe("2026-09-21");
+      expect(p.closingBalance).toBe(474.578);
+      expect(p.problems).toEqual([]);
+      expect(p.lines.map(l => [l.day, l.amount, l.balance])).toEqual([
+        ["2026-07-01", -2.22, 429.728],
+        ["2026-07-01", 200, 629.728],
+        ["2026-07-02", -0.15, 629.578],
+        ["2026-07-02", -155, 474.578],
+      ]);
+      expect(p.lines[0].reference).toBe(
+        "P-721269-PLUS.EXCALIDRAW.COM /160773512 (USD 7)",
+      );
+      expect(p.lines[1].reference).toContain("Card Payment - Tijari Mobile");
+      expect(p.lines[3].reference).toContain("Weyay Top Up");
+      expect(p.totalDebit).toBe(-157.37);
+      expect(p.totalCredit).toBe(200);
+      const kinds = p.lines.map(l => classifyLine(l, p.accountKind, p.account));
+      expect(kinds).toEqual(["expense", "own_transfer", "fee", "own_transfer"]);
+    });
+  }
+
+  test("both texts key the same transaction the same way, and the CSV of the same card too", () => {
+    const a = parseStatementPdfText(PDF_LAYOUT);
+    const b = parseStatementPdfText(PDF_PDFJS);
+    expect(a.lines.map(l => lineHash(a.account, l))).toEqual(
+      b.lines.map(l => lineHash(b.account, l)),
+    );
+    expect(lineHash("537015XXXXXX4348", a.lines[0])).toBe(
+      lineHash("5370xxxxxxxx4348", a.lines[0]),
+    );
+  });
+
+  test("a row that breaks the running balance is reported, not trusted", () => {
+    const broken = PDF_PDFJS.replace("- 0.150 629.578 CR", "- 0.150 600.000 CR");
+    const p = parseStatementPdfText(broken);
+    expect(p.lines.length).toBe(4);
+    expect(p.problems.length).toBe(2);
+    expect(p.problems[0]).toContain("does not give the printed balance");
+  });
+});
+

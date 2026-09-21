@@ -1,6 +1,10 @@
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
-import { internalMutation } from "../_generated/server";
+import {
+  type ActionCtx,
+  internalAction,
+  internalMutation,
+} from "../_generated/server";
 import { authenticatedAction } from "../functions";
 import {
   categorise,
@@ -10,7 +14,8 @@ import {
   KIND_LABEL,
   type LineKind,
   lineHash,
-  parseStatement,
+  type ParsedStatement,
+  parseAnyStatement,
   statementId,
   toUsd,
 } from "./bank";
@@ -18,9 +23,10 @@ import { rest, type SbRow, upsertIgnore, upsertMerge } from "./sbWrite";
 import { kuwaitDay } from "./time";
 
 /**
- * The Money tab's bank statement door (Aziz, 2026-09-21). A CBK Online CSV is
+ * The Money tab's bank statement door (Aziz, 2026-09-21). A CBK Online CSV export
+ * or the bank's PDF statement (its text comes from bankPdf.ts) is
  * parsed on the server, every line gets a kind, lines the cockpit already
- * holds are skipped by their bank transaction number, and the statement is
+ * holds are skipped by day, amount and running balance, and the statement is
  * kept so the screen can say how old the newest one is. Exclusions (personal
  * spend by card or vendor) are edited here too and re-applied to the lines.
  *
@@ -90,118 +96,149 @@ export const importStatement = authenticatedAction({
     const by: string = await ctx.runQuery(internal.ceo.ltv.whoami, {
       userId: ctx.userId,
     });
-    if (text.length > 4_000_000)
-      throw new Error(
-        "That file is over 4 MB; a statement export is far smaller.",
-      );
-    const parsed = parseStatement(text);
-    if (!parsed.lines.length)
-      throw new Error("The statement has no transaction lines.");
-    if (!parsed.account) throw new Error("The statement names no account.");
-    const rate = toUsd(1, parsed.currency);
-    if (rate === null)
-      throw new Error(
-        `The statement is in ${parsed.currency}, which the cockpit has no fixed rate for.`,
-      );
-    const ex = await exclusions();
-    const sid = statementId(parsed);
-    const lines: SbRow[] = parsed.lines.map(l => {
-      const kind = classifyLine(l, parsed.accountKind, parsed.account, ex);
-      return {
-        statement_id: sid,
-        account: parsed.account,
-        account_kind: parsed.accountKind,
-        trsh: l.trsh,
-        hash: lineHash(parsed.account, l),
-        day: l.day,
-        amount: l.amount,
-        balance: l.balance,
-        reference: l.reference || null,
-        currency: parsed.currency,
-        usd: toUsd(l.amount, parsed.currency),
-        kind,
-        category:
-          kind === "expense" || kind === "fee" || kind === "excluded"
-            ? categorise(l.reference)
-            : null,
-      };
-    });
-    const totalDebit = parsed.lines
-      .filter(l => l.amount < 0)
-      .reduce((t, l) => t + l.amount, 0);
-    const totalCredit = parsed.lines
-      .filter(l => l.amount > 0)
-      .reduce((t, l) => t + l.amount, 0);
-    await upsertMerge(
-      "cockpit_statements",
-      [
-        {
-          id: sid,
-          account: parsed.account,
-          account_kind: parsed.accountKind,
-          currency: parsed.currency,
-          from_day: parsed.fromDay,
-          to_day:
-            parsed.toDay ?? parsed.lines[parsed.lines.length - 1]?.day ?? null,
-          lines: parsed.lines.length,
-          total_debit: Math.round(totalDebit * 1000) / 1000,
-          total_credit: Math.round(totalCredit * 1000) / 1000,
-          closing_balance: parsed.closingBalance,
-          file_name: fileName.slice(0, 120),
-          imported_by: by,
-          imported_at: new Date().toISOString(),
-        },
-      ],
-      "id",
-    );
-    // Skip lines already held (same bank transaction number): a re-upload of
-    // an overlapping period adds only what is new.
-    const kept =
-      (await upsertIgnore("cockpit_bank_lines", lines, "hash")) ?? [];
-    const byKind = new Map<string, { count: number; usd: number }>();
-    for (const l of kept) {
-      const k = String(l.kind);
-      const r = byKind.get(k) ?? { count: 0, usd: 0 };
-      r.count += 1;
-      r.usd += Number(l.usd ?? 0);
-      byKind.set(k, r);
-    }
-    const clientCash = byKind.get("client_payment")?.usd ?? 0;
-    const spend =
-      (byKind.get("expense")?.usd ?? 0) + (byKind.get("fee")?.usd ?? 0);
-    await ctx.runMutation(internal.ceo.bankImport.recordAudit, {
-      action: "bank.import",
-      table: "cockpit_statements",
-      rowId: sid,
-      what: `Imported the ${parsed.account} statement ${parsed.fromDay ?? "?"} to ${parsed.toDay ?? "?"} from ${fileName}: ${parsed.lines.length} lines read, ${kept.length} new, ${usdWords(clientCash)} of client payments and ${usdWords(-spend)} of expenses among the new ones.`,
-      after: { lines: parsed.lines.length, kept: kept.length },
-      by,
-    });
-    return {
-      statementId: sid,
-      account: parsed.account,
-      accountKind: parsed.accountKind,
-      currency: parsed.currency,
-      fromDay: parsed.fromDay,
-      toDay: parsed.toDay,
-      read: parsed.lines.length,
-      kept: kept.length,
-      skipped: parsed.lines.length - kept.length,
-      problems: parsed.problems.slice(0, 10),
-      byKind: [...byKind.entries()].map(([kind, r]) => ({
-        kind,
-        label: KIND_LABEL[kind as LineKind] ?? kind,
-        count: r.count,
-        usd: Math.round(r.usd * 100) / 100,
-      })),
-      totals: {
-        debit: parsed.totalDebit,
-        credit: parsed.totalCredit,
-        closingBalance: parsed.closingBalance,
-      },
-    };
+    return await importStatementText(ctx, fileName, text, by);
   },
 });
+
+/**
+ * The same door without a session: the PDF action (bankPdf.ts) hands over
+ * the text it read, and a statement handed to the CLI lands through here
+ * with the name of whoever handed it over.
+ */
+export const importText = internalAction({
+  args: { fileName: v.string(), text: v.string(), by: v.string() },
+  returns: v.any(),
+  handler: async (ctx, { fileName, text, by }) =>
+    await importStatementText(ctx, fileName, text, by),
+});
+
+async function importStatementText(
+  ctx: ActionCtx,
+  fileName: string,
+  text: string,
+  by: string,
+) {
+  if (text.length > 4_000_000)
+    throw new Error("That file is over 4 MB; a statement is far smaller.");
+  const parsed = parseAnyStatement(text);
+  if (!parsed.lines.length)
+    throw new Error("The statement has no transaction lines.");
+  if (!parsed.account) throw new Error("The statement names no account.");
+  return await importParsed(ctx, parsed, fileName, by);
+}
+
+async function importParsed(
+  ctx: ActionCtx,
+  parsed: ParsedStatement,
+  fileName: string,
+  by: string,
+) {
+  const rate = toUsd(1, parsed.currency);
+  if (rate === null)
+    throw new Error(
+      `The statement is in ${parsed.currency}, which the cockpit has no fixed rate for.`,
+    );
+  const ex = await exclusions();
+  const sid = statementId(parsed);
+  const lines: SbRow[] = parsed.lines.map(l => {
+    const kind = classifyLine(l, parsed.accountKind, parsed.account, ex);
+    return {
+      statement_id: sid,
+      account: parsed.account,
+      account_kind: parsed.accountKind,
+      trsh: l.trsh,
+      hash: lineHash(parsed.account, l),
+      day: l.day,
+      amount: l.amount,
+      balance: l.balance,
+      reference: l.reference || null,
+      currency: parsed.currency,
+      usd: toUsd(l.amount, parsed.currency),
+      kind,
+      category:
+        kind === "expense" || kind === "fee" || kind === "excluded"
+          ? categorise(l.reference)
+          : null,
+    };
+  });
+  const totalDebit = parsed.lines
+    .filter(l => l.amount < 0)
+    .reduce((t, l) => t + l.amount, 0);
+  const totalCredit = parsed.lines
+    .filter(l => l.amount > 0)
+    .reduce((t, l) => t + l.amount, 0);
+  await upsertMerge(
+    "cockpit_statements",
+    [
+      {
+        id: sid,
+        account: parsed.account,
+        account_kind: parsed.accountKind,
+        currency: parsed.currency,
+        from_day: parsed.fromDay,
+        to_day:
+          parsed.toDay ?? parsed.lines[parsed.lines.length - 1]?.day ?? null,
+        lines: parsed.lines.length,
+        total_debit: Math.round(totalDebit * 1000) / 1000,
+        total_credit: Math.round(totalCredit * 1000) / 1000,
+        closing_balance: parsed.closingBalance,
+        file_name: fileName.slice(0, 120),
+        imported_by: by,
+        imported_at: new Date().toISOString(),
+      },
+    ],
+    "id",
+  );
+  // Skip lines already held (same day, amount and running balance): a
+  // re-upload of an overlapping period, in either format, adds only what is new.
+  const kept = (await upsertIgnore("cockpit_bank_lines", lines, "hash")) ?? [];
+  const byKind = new Map<string, { count: number; usd: number }>();
+  for (const l of kept) {
+    const k = String(l.kind);
+    const r = byKind.get(k) ?? { count: 0, usd: 0 };
+    r.count += 1;
+    r.usd += Number(l.usd ?? 0);
+    byKind.set(k, r);
+  }
+  const clientCash = byKind.get("client_payment")?.usd ?? 0;
+  const spend =
+    (byKind.get("expense")?.usd ?? 0) + (byKind.get("fee")?.usd ?? 0);
+  await ctx.runMutation(internal.ceo.bankImport.recordAudit, {
+    action: "bank.import",
+    table: "cockpit_statements",
+    rowId: sid,
+    what: `Imported the ${parsed.account} statement ${parsed.fromDay ?? "?"} to ${parsed.toDay ?? "?"} from ${fileName}: ${parsed.lines.length} lines read, ${kept.length} new, ${usdWords(clientCash)} of client payments and ${usdWords(-spend)} of expenses among the new ones${parsed.problems.length ? `; ${parsed.problems.length} line${parsed.problems.length === 1 ? "" : "s"} did not reconcile` : ""}.`,
+    after: {
+      lines: parsed.lines.length,
+      kept: kept.length,
+      problems: parsed.problems.length,
+    },
+    by,
+  });
+  return {
+    statementId: sid,
+    account: parsed.account,
+    accountKind: parsed.accountKind,
+    currency: parsed.currency,
+    fromDay: parsed.fromDay,
+    toDay: parsed.toDay,
+    read: parsed.lines.length,
+    kept: kept.length,
+    skipped: parsed.lines.length - kept.length,
+    problems: parsed.problems.slice(0, 10),
+    byKind: [...byKind.entries()].map(([kind, r]) => ({
+      kind,
+      label: KIND_LABEL[kind as LineKind] ?? kind,
+      count: r.count,
+      usd: Math.round(r.usd * 100) / 100,
+    })),
+    totals: {
+      debit: parsed.totalDebit,
+      credit: parsed.totalCredit,
+      closingBalance: parsed.closingBalance,
+    },
+  };
+}
 
 /** The statements held, the exclusions, and how old the newest statement is. */
 export const overview = authenticatedAction({

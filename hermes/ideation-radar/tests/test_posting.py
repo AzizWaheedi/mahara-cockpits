@@ -370,3 +370,11 @@ class ResultLinks(unittest.TestCase):
         urls = higgsfield._result_urls("done: https://out.cloudfront.net/x.png")
         self.assertEqual(urls, ["https://out.cloudfront.net/x.png"])
 
+
+class CoverLayout(unittest.TestCase):
+    def test_cover_layout_defaults_to_the_middle(self):
+        from radar.posting.higgsfield import compose_prompt
+        self.assertIn("the man centred, occupying the lower middle", compose_prompt(["عشرين ضعف العائد"]))
+        self.assertIn("lower right portion", compose_prompt(["عشرين ضعف العائد"], side="right"))
+        self.assertIn("lower left portion", compose_prompt(["عشرين ضعف العائد"], side="left"))
+

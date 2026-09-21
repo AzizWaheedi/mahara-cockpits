@@ -274,11 +274,231 @@ export function parseStatement(text: string): ParsedStatement {
   };
 }
 
+// --- The statement PDF ------------------------------------------------------------
+
+/**
+ * A CBK account or card statement PDF, as the text pdf.js (unpdf, on the
+ * server) or a layout extractor gives it. Every page repeats the header (card
+ * number, period, page count) and a footer (complaints, a promotion), and one
+ * transaction can span several lines: the merchant on the first, the original
+ * currency amount in brackets, transfer details, the amount and the running
+ * balance in whatever order the extractor met them. So the text is cut into
+ * blocks at each line that starts with a day, and each block is read as
+ * tokens: a three-decimal number is KWD (the one followed by CR or DR is the
+ * balance, the other one the amount), a number inside "(USD ...)" is the
+ * original amount, the "+" or "-" just before the amount is the direction, and
+ * everything else is the description. The running balance then proves every
+ * row: the opening balance plus each signed amount has to land on the printed
+ * balance, and a row that does not is reported as a problem, not trusted.
+ */
+const PDF_NOISE =
+  /^\d{2}\/\d{2}\/\d{4}\s+to:?\s+\d{2}\/\d{2}\/\d{4}$|^\d{1,3}\/\d{1,3}$|Account Statement|^Date\s*:|Card No|Account No|IBAN|Branch\s*:|Type\s*:|Statement Period|Pages\s*:|Balance B\/Fwd|Balance C\/F|Auth Date|This Statement of Account|within 2 weeks|For Complaints|Safat|Al-Najma|Semi Annually|Call at|^to:?$/i;
+const DAY_TOKEN = /^\d{2}\/\d{2}\/\d{4}$/;
+const NUMBER_TOKEN = /^[\d,]*\d(\.\d+)?$/;
+const BRACKET_OPEN = /^\(([A-Z]{3})\)?$/;
+
+/** True when the text reads like the statement PDF rather than a CSV export. */
+export function isStatementPdfText(text: string): boolean {
+  return /Statement Period/i.test(text) && !/^Date,Amount/m.test(text);
+}
+
+/** Either statement format, told apart by its text. */
+export function parseAnyStatement(text: string): ParsedStatement {
+  return isStatementPdfText(text)
+    ? parseStatementPdfText(text)
+    : parseStatement(text);
+}
+
+const decimalsOf = (num: string) => (num.split(".")[1] ?? "").length;
+
+export function parseStatementPdfText(text: string): ParsedStatement {
+  const flat = text.replace(/\s+/g, " ");
+  // pdf.js prints the header's labels first and its values after, so the
+  // account is the first masked number in the text (the header comes before
+  // any transaction) and the period is the first "day to: day" pair.
+  const account =
+    /(?:Card|Account) No\s*:?\s*([0-9xX*]{8,24})/.exec(flat)?.[1] ??
+    /\b(\d{4,6}[xX*]{4,12}\d{4})\b/.exec(flat)?.[1] ??
+    "";
+  const period = /(\d{2}\/\d{2}\/\d{4})\s*to:?\s*(\d{2}\/\d{2}\/\d{4})/i.exec(
+    flat,
+  );
+  const fromDay = period ? parseDay(period[1]) : null;
+  const toDay = period ? parseDay(period[2]) : null;
+  const currency =
+    /\b(KWD|USD|EUR|GBP|AED|SAR|QAR)\s+Pages\s*:/i
+      .exec(flat)?.[1]
+      ?.toUpperCase() ?? "KWD";
+  const accountKind: AccountKind = /Card No|CONTROL account|Card Centre/i.test(
+    flat,
+  )
+    ? "card"
+    : "account";
+  const signed = (m: RegExpExecArray | null): number | null =>
+    m
+      ? (parseAmount(m[1]) ?? 0) * (m[2].toUpperCase() === "DR" ? -1 : 1)
+      : null;
+  const opening = signed(
+    /Balance B\/Fwd:?\s*([\d,]+\.\d{3})\s*(CR|DR)/i.exec(flat),
+  );
+  const closingBalance = signed(
+    /Balance C\/F:?\s*([\d,]+\.\d{3})\s*(CR|DR)/i.exec(flat),
+  );
+
+  // One block per transaction, cut at each line that starts with a day. A
+  // line that is only a day comes from the period header on every page.
+  const blocks: { line: number; text: string[] }[] = [];
+  const rows = text.split(/\r?\n|\f/);
+  for (let i = 0; i < rows.length; i++) {
+    const line = rows[i].trim();
+    if (!line || PDF_NOISE.test(line) || DAY_TOKEN.test(line)) continue;
+    if (/^\d{2}\/\d{2}\/\d{4}\s/.test(line))
+      blocks.push({ line: i + 1, text: [line] });
+    else if (blocks.length) blocks[blocks.length - 1].text.push(line);
+  }
+
+  const lines: StatementLine[] = [];
+  const problems: string[] = [];
+  let prev = opening;
+  for (const b of blocks) {
+    // Arabic comes out of the extractor as unreadable glyphs; only ASCII is read.
+    const toks = b.text
+      .join(" ")
+      .replace(/[^\x20-\x7e]+/g, " ")
+      .split(/\s+/)
+      .filter(Boolean);
+    const day = parseDay(toks[0] ?? "");
+    if (!day) continue;
+    const used = new Set<number>([0]);
+    if (toks[1] && DAY_TOKEN.test(toks[1])) used.add(1);
+
+    let amountIdx = -1;
+    let balanceIdx = -1;
+    let amount: number | null = null;
+    let balance: number | null = null;
+    for (let i = 1; i < toks.length; i++) {
+      if (used.has(i)) continue;
+      const num = toks[i].replace(/\)$/, "");
+      if (!NUMBER_TOKEN.test(num) || decimalsOf(num) !== 3) continue;
+      const n = parseAmount(num);
+      if (n === null) continue;
+      const next = toks[i + 1];
+      if ((next === "CR" || next === "DR") && balanceIdx < 0) {
+        balance = next === "DR" ? -n : n;
+        balanceIdx = i;
+        used.add(i);
+        used.add(i + 1);
+      } else if (amountIdx < 0) {
+        amount = n;
+        amountIdx = i;
+        used.add(i);
+      }
+    }
+    if (amount === null || amountIdx < 0) {
+      const head = toks.slice(1, 6).join(" ");
+      // A header time stamp ("21/09/2026 14:41:07") is not a transaction.
+      if (head && !/^\d{2}:\d{2}/.test(head))
+        problems.push(`Line ${b.line} has no amount: ${head.slice(0, 60)}`);
+      continue;
+    }
+
+    // The direction is the sign just before the amount, past an open bracket.
+    let sign = 0;
+    let j = amountIdx - 1;
+    while (j > 0 && BRACKET_OPEN.test(toks[j])) j--;
+    if (toks[j] === "-" || toks[j] === "+") {
+      sign = toks[j] === "-" ? -1 : 1;
+      used.add(j);
+    }
+
+    // The original currency amount: "(USD 532)" in any token order.
+    let orig: { currency: string; amount: number } | null = null;
+    const open = toks.findIndex((t, i) => i > 0 && BRACKET_OPEN.test(t));
+    if (open > 0) {
+      used.add(open);
+      for (let i = open + 1; i < toks.length && !orig; i++) {
+        if (used.has(i)) continue;
+        const num = toks[i].replace(/\)$/, "");
+        if (NUMBER_TOKEN.test(num)) {
+          const n = parseAmount(num);
+          if (n !== null) {
+            orig = {
+              currency: BRACKET_OPEN.exec(toks[open])?.[1] ?? "",
+              amount: n,
+            };
+            used.add(i);
+          }
+        } else if (toks[i] === ")") used.add(i);
+      }
+    }
+
+    if (sign === 0 && prev !== null && balance !== null)
+      sign = balance >= prev ? 1 : -1;
+    if (sign === 0) sign = -1;
+    const signedAmount = Math.round(sign * amount * 1000) / 1000;
+    if (
+      prev !== null &&
+      balance !== null &&
+      Math.abs(prev + signedAmount - balance) > 0.0005
+    )
+      problems.push(
+        `Line ${b.line}: ${prev.toFixed(3)} ${sign < 0 ? "-" : "+"} ${amount.toFixed(3)} does not give the printed balance ${balance.toFixed(3)}`,
+      );
+    if (balance !== null) prev = balance;
+
+    const desc = toks
+      .filter(
+        (t, i) =>
+          !used.has(i) &&
+          t !== "CR" &&
+          t !== "DR" &&
+          t !== ")" &&
+          !/^\d[\d,]*$/.test(t),
+      )
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+    lines.push({
+      day,
+      amount: signedAmount,
+      balance,
+      reference: orig ? `${desc} (${orig.currency} ${orig.amount})` : desc,
+      trsh: null,
+      line: b.line,
+    });
+  }
+  const debit = lines
+    .filter(l => l.amount < 0)
+    .reduce((t, l) => t + l.amount, 0);
+  const credit = lines
+    .filter(l => l.amount > 0)
+    .reduce((t, l) => t + l.amount, 0);
+  return {
+    account,
+    accountKind,
+    currency,
+    fromDay,
+    toDay,
+    lines,
+    totalDebit: lines.length ? Math.round(debit * 1000) / 1000 : null,
+    totalCredit: lines.length ? Math.round(credit * 1000) / 1000 : null,
+    closingBalance,
+    problems,
+  };
+}
+
 /** The key a line is stored under: the bank's own transaction number when it has one. */
 export function lineHash(account: string, l: StatementLine): string {
+  // The CSV export prints the account as 537015XXXXXX4348 and the PDF as
+  // 5370xxxxxxxx4348: the last four digits are the account in the key, so a
+  // month uploaded both ways lands once. Day, amount and running balance name
+  // a transaction in either format; the transaction number only the CSV has.
+  const acct = account.replace(/\D/g, "").slice(-4) || account.toLowerCase();
+  if (l.balance !== null)
+    return `${acct}:${l.day}:${l.amount.toFixed(3)}:${l.balance.toFixed(3)}`;
   return l.trsh
-    ? `${account}:${l.trsh}`
-    : `${account}:${l.day}:${l.amount}:${l.reference.toLowerCase().replace(/\s+/g, " ")}`;
+    ? `${acct}:${l.trsh}`
+    : `${acct}:${l.day}:${l.amount}:${l.reference.toLowerCase().replace(/\s+/g, " ")}`;
 }
 
 /** A statement's own id: the account and the period. */
@@ -294,8 +514,10 @@ const TAP = /\btap\b|tap payments|tap company|tap\.company/i;
 const FEE =
   /non sufficient|decline fee|ann\.?\s*sub\.?\s*fee|service charge|\bcommission\b|\bfee\b|charges?\b/i;
 const REFUND = /refund|reversal|chargeback|revers/i;
+/** Money moved onto the card from Aziz's own account (the statement's own words). */
+const CARD_TOPUP = /card payment|tijari (mobile|online)|control card/i;
 const OWN_MASK =
-  /\d{3,6}X{4,}\d{3,4}|\/CC\b|\/IB\b|transfer to card|card top ?up|own account|\bunload\b|weyay top up|top up kw/i;
+  /\d{3,6}X{4,}\d{3,4}|\/CC\b|\/IB\b|transfer to card|card top ?up|own account|\bunload\b|weyay top up|top up kw|waheedi/i;
 
 /** A vendor exclusion matches a case-insensitive fragment of the reference; a card exclusion matches the account. */
 export function isExcluded(
@@ -314,14 +536,15 @@ export function isExcluded(
 }
 
 /**
- * What a line is. Credits on a card are money moved onto it; credits on an
- * account are client money unless they say Whop, Tap or an own account.
+ * What a line is. A credit is client money unless it says Whop, Tap, a
+ * refund, an own account or a card top-up (money moved onto the card).
  * Debits are expenses unless they say Whop (money into Whop, or a purchase
  * on Whop) or read as a bank fee.
  */
 export function classifyLine(
   l: { amount: number; reference: string },
-  accountKind: AccountKind,
+  // Kept so every caller reads the same way; a credit is judged by its words now.
+  _accountKind: AccountKind,
   account: string,
   exclusions: Exclusion[] = [],
 ): LineKind {
@@ -330,8 +553,7 @@ export function classifyLine(
     if (WHOP.test(ref) && !WHOP_PURCHASE.test(ref)) return "whop_payout";
     if (TAP.test(ref)) return "tap_settlement";
     if (REFUND.test(ref)) return "refund_in";
-    if (accountKind === "card") return "own_transfer";
-    if (OWN_MASK.test(ref)) return "own_transfer";
+    if (OWN_MASK.test(ref) || CARD_TOPUP.test(ref)) return "own_transfer";
     return "client_payment";
   }
   if (l.amount < 0) {
@@ -366,12 +588,13 @@ const CATEGORY_RULES: { category: ExpenseCategory; test: RegExp }[] = [
   },
   {
     category: "labour",
-    test: /salary|salaries|payroll|wages|freelanc|upwork|fiverr|khamsat|mostaql|payoneer|hired!|deel\b|remote\.com/i,
+    // A transfer to a named person from the card account ("QPA…|Bill Payment |NAME", Ziina) is a person paid, not a vendor.
+    test: /salary|salaries|payroll|wages|freelanc|upwork|fiverr|khamsat|mostaql|payoneer|hired!|deel\b|remote\.com|\|\s*(bill payment|services payment|business income|other)\s*\||\bziina\b/i,
   },
   { category: "bank", test: FEE },
   {
     category: "software",
-    test: /openai|anthropic|claude|chatgpt|notion|slack|zoom|canva|adobe|vercel|supabase|github|make\.com|integromat|typeform|clickup|apple\.com\/bill|google\s*\*|gsuite|google workspace|google cloud|microsoft|dropbox|figma|loom|calendly|zapier|twilio|maqsam|whapi|resend|convex|namecheap|godaddy|hostinger|elevenlabs|heygen|runway|frame\.io|foreplay|apify|composio|gohighlevel|highlevel|goghl|\bghl\b|cursor|linear\.app|1password|cloudflare|aws\b|amazon web|digitalocean|hetzner|render\.com|railway|descript|capcut|midjourney|perplexity|grammarly|manychat|klaviyo|mailchimp|webflow|framer|squarespace|wix\b|shopify|proton|windsor|wistia|fathom|higgsfield|pitch\.com|gamma\.app|hubstaff|fireflies|otter\.ai|tldv|riverside|veed|submagic|opus|synthesia|pictory|airtable|smartsheet|monday\.com|asana|trello|miro|lucid|semrush|ahrefs|similarweb|hotjar|mixpanel|posthog|segment|hubspot|pipedrive|zoho|intercom|crisp|tidio|drift|aircall|ringcentral|dialpad|justcall|openphone|skype|viber|telegram|whatsapp business|wati|interakt|respond\.io|chatwoot|bunny\.net|mux\b|vimeo|youtube premium|spotify for|linkedin|sales navigator|apollo\.io|lusha|hunter\.io|snov|instantly|smartlead|lemlist|beehiiv|substack|convertkit|kit\.com|carrd|tally\.so|jotform|paperform|docusign|pandadoc|dropbox sign|hellosign|calendly|cal\.com|savvycal|zcal/i,
+    test: /openai|anthropic|claude|chatgpt|notion|slack|zoom|canva|adobe|vercel|supabase|github|make\.com|integromat|typeform|clickup|apple\.com\/bill|google\s*\*|gsuite|google workspace|google cloud|microsoft|dropbox|figma|loom|calendly|zapier|twilio|maqsam|whapi|resend|convex|namecheap|godaddy|hostinger|elevenlabs|heygen|runway|frame\.io|foreplay|apify|composio|gohighlevel|highlevel|goghl|\bghl\b|cursor|linear\.app|1password|cloudflare|aws\b|amazon web|digitalocean|hetzner|render\.com|railway|descript|capcut|midjourney|perplexity|grammarly|manychat|klaviyo|mailchimp|webflow|framer|squarespace|wix\b|shopify|proton|windsor|wistia|fathom|higgsfield|pitch\.com|gamma\.app|hubstaff|viktor|roasform|vidalytics|leadsie|manus|atlassian|elfsigh|wispr|brain\.fm|waghl|excalidraw|fireflies|otter\.ai|tldv|riverside|veed|submagic|opus|synthesia|pictory|airtable|smartsheet|monday\.com|asana|trello|miro|lucid|semrush|ahrefs|similarweb|hotjar|mixpanel|posthog|segment|hubspot|pipedrive|zoho|intercom|crisp|tidio|drift|aircall|ringcentral|dialpad|justcall|openphone|skype|viber|telegram|whatsapp business|wati|interakt|respond\.io|chatwoot|bunny\.net|mux\b|vimeo|youtube premium|spotify for|linkedin|sales navigator|apollo\.io|lusha|hunter\.io|snov|instantly|smartlead|lemlist|beehiiv|substack|convertkit|kit\.com|carrd|tally\.so|jotform|paperform|docusign|pandadoc|dropbox sign|hellosign|calendly|cal\.com|savvycal|zcal/i,
   },
 ];
 
