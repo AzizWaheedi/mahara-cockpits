@@ -13,6 +13,36 @@ import { portalDoor, portalUrl, signInWithPortalToken } from "../lib/portal";
 
 const NEXT_KEY = "portal_next";
 const BOUNCE_KEY = "portal_bounced_at";
+/** Set while a pass is being fetched from the portal or swapped for a session. */
+const PENDING_KEY = "portal_pending_at";
+/** A swap or a bounce that takes longer than this has failed; the sign-in form may show. */
+const PENDING_MS = 45_000;
+
+function setPending(on: boolean) {
+  try {
+    if (on) sessionStorage.setItem(PENDING_KEY, String(Date.now()));
+    else sessionStorage.removeItem(PENDING_KEY);
+  } catch {
+    // Storage can be off; the shell then falls back to the sign-in form.
+  }
+}
+
+/**
+ * True while the portal is signing this person in: a pass is in the address
+ * or one was asked for moments ago. The shell waits on it instead of showing
+ * the sign-in form for the seconds the swap takes (Aziz, 2026-09-21:
+ * switching cockpits must not pass through a login screen).
+ */
+export function portalSignInPending(): boolean {
+  try {
+    if (new URLSearchParams(window.location.search).has("portal_token"))
+      return true;
+    const at = Number(sessionStorage.getItem(PENDING_KEY) ?? 0);
+    return at > 0 && Date.now() - at < PENDING_MS;
+  } catch {
+    return false;
+  }
+}
 
 export function PortalAutoSignIn({
   hasSession,
@@ -42,18 +72,24 @@ export function PortalAutoSignIn({
       params.delete("next");
       const clean = `${window.location.pathname}${params.toString() ? `?${params}` : ""}`;
       window.history.replaceState(null, "", clean);
+      setPending(true);
       signInWithPortalToken(token)
         .then(() => {
+          setPending(false);
           const to = sessionStorage.getItem(NEXT_KEY) || "/";
           sessionStorage.removeItem(NEXT_KEY);
           onSignedIn();
           navigate(to.startsWith("/") ? to : "/", { replace: true });
         })
-        .catch(e => setFailed(String((e as Error).message ?? e)));
+        .catch(e => {
+          setPending(false);
+          setFailed(String((e as Error).message ?? e));
+        });
       return;
     }
 
     if (hasSession) {
+      setPending(false);
       const to = sessionStorage.getItem(NEXT_KEY);
       if (to) {
         sessionStorage.removeItem(NEXT_KEY);
@@ -66,9 +102,14 @@ export function PortalAutoSignIn({
     // the portal will not admit lands on the sign-in form instead of
     // bouncing between the two forever.
     const last = Number(sessionStorage.getItem(BOUNCE_KEY) ?? 0);
-    if (Date.now() - last < 60_000) return;
+    if (Date.now() - last < 60_000) {
+      // Not bouncing again: the sign-in form is the honest state now.
+      setPending(false);
+      return;
+    }
     sessionStorage.setItem(BOUNCE_KEY, String(Date.now()));
     acted.current = true;
+    setPending(true);
     const wanted = location.pathname + location.search;
     window.location.replace(portalDoor(wanted === "/" ? "/" : wanted));
   }, [

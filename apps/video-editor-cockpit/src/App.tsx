@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router";
-import { PortalAutoSignIn } from "./components/PortalAutoSignIn";
+import {
+  PortalAutoSignIn,
+  portalSignInPending,
+} from "./components/PortalAutoSignIn";
 import Sidebar from "./components/Sidebar";
 import { Wordmark } from "./components/Wordmark";
 import { SessionProvider, useWho } from "./lib/auth";
@@ -65,6 +68,16 @@ function Shell() {
     }
   }, [bumped]);
 
+  // While the portal is signing this person in, the sign-in form stays out
+  // of sight; a swap that never finishes falls through after its window.
+  const portalWaiting = !session && portalSignInPending();
+  const [, wake] = useState(0);
+  useEffect(() => {
+    if (!portalWaiting) return;
+    const t = setTimeout(() => wake(n => n + 1), 46_000);
+    return () => clearTimeout(t);
+  }, [portalWaiting]);
+
   // A tap on the phone menu should not leave the drawer over the new page.
   // biome-ignore lint/correctness/useExhaustiveDependencies: closing follows the route
   useEffect(() => setDrawer(false), [location.pathname]);
@@ -93,7 +106,7 @@ function Shell() {
     return (
       <>
         {portalBanner}
-        <SignInPage />
+        {portalWaiting ? <PortalWaiting /> : <SignInPage />}
       </>
     );
 
@@ -238,5 +251,16 @@ export default function App() {
       <Shell />
       <Toaster />
     </SessionProvider>
+  );
+}
+
+/** What shows for the seconds the portal takes to open the desk. */
+function PortalWaiting() {
+  return (
+    <div className="flex min-h-[60vh] items-center justify-center p-6 text-center">
+      <p className="text-sm" style={{ color: "var(--muted-foreground)" }}>
+        Opening the editor desk from the portal…
+      </p>
+    </div>
   );
 }

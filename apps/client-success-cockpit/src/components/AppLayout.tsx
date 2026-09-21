@@ -14,12 +14,15 @@ export function AppLayout() {
     <SidebarProvider>
       <AppSidebar />
       <SidebarInset>
-        <header className="flex h-12 items-center justify-between px-4">
-          <SidebarTrigger className="md:hidden" />
-          <div className="ml-auto">
-            <ThemeToggle />
-          </div>
-        </header>
+        {/* pt-safe keeps the menu button below the phone's status bar in the installed app (Aziz, 2026-09-21). */}
+        <div className="pt-safe">
+          <header className="flex h-12 items-center justify-between px-4">
+            <SidebarTrigger className="md:hidden" />
+            <div className="ml-auto">
+              <ThemeToggle />
+            </div>
+          </header>
+        </div>
         <main className="flex-1 p-4 lg:p-6">
           <SyncStrip />
           <RouteErrorBoundary

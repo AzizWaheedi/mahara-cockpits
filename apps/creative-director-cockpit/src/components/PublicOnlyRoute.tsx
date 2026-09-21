@@ -1,5 +1,7 @@
 import { useConvexAuth } from "convex/react";
+import { useEffect, useState } from "react";
 import { Navigate, Outlet } from "react-router";
+import { portalSignInPending } from "@/components/PortalAutoSignIn";
 import {
   Card,
   CardContent,
@@ -43,8 +45,17 @@ function AuthFormSkeleton() {
 
 export function PublicOnlyRoute() {
   const { isAuthenticated, isLoading } = useConvexAuth();
+  // While the portal is signing this person in, wait instead of flashing the
+  // login page; a swap that never finishes falls through after its window.
+  const pending = !isAuthenticated && portalSignInPending();
+  const [, wake] = useState(0);
+  useEffect(() => {
+    if (!pending) return;
+    const t = setTimeout(() => wake(n => n + 1), 46_000);
+    return () => clearTimeout(t);
+  }, [pending]);
 
-  if (isLoading) {
+  if (isLoading || pending) {
     return <AuthFormSkeleton />;
   }
 
