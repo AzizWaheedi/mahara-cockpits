@@ -1,13 +1,14 @@
-import type { FunnelWindow, GrowthPayload, Note } from "../payloads";
+import type {
+  FunnelWindow,
+  GrowthPayload,
+  Note,
+  WorkingHours,
+} from "../payloads";
 import { B2B, num, type Row, sql } from "../sb";
 import { workingHoursForAdapters } from "../settings";
 import { addDays, daysInMonth, kuwaitDay, monthStart } from "../time";
 import type { Adapter, DailyPoint, SourceStamp } from "../types";
-import {
-  describeWorkingHours,
-  type WorkingHours,
-  workingMinutesSql,
-} from "../workingHours";
+import { describeWorkingHours, workingMinutesSql } from "../workingHours";
 
 // biome-ignore lint/suspicious/noExplicitAny: the B2B functions return jsonb
 type Any = any;
