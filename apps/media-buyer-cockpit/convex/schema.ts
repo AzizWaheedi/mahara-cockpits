@@ -1269,6 +1269,38 @@ const schema = defineSchema({
     .index("by_metric_scope_date", ["metric", "scope", "date"])
     .index("by_date", ["date"]),
   /**
+   * CEO cockpit: Meta reach and frequency for Mahara's own ad account over a
+   * chosen window, one figure for lead-gen campaigns and one for retargeting
+   * (convex/ceo/frequency.ts). One row per window, refreshed after three
+   * hours. Read by the Marketing tab as the chart timeframe changes.
+   */
+  ceoFrequency: defineTable({
+    from: v.string(),
+    to: v.string(),
+    computedAt: v.number(),
+    leadGen: v.union(
+      v.object({
+        campaigns: v.number(),
+        impressions: v.number(),
+        reach: v.number(),
+        frequency: v.union(v.number(), v.null()),
+        spend: v.number(),
+      }),
+      v.null(),
+    ),
+    retargeting: v.union(
+      v.object({
+        campaigns: v.number(),
+        impressions: v.number(),
+        reach: v.number(),
+        frequency: v.union(v.number(), v.null()),
+        spend: v.number(),
+      }),
+      v.null(),
+    ),
+    note: v.union(v.string(), v.null()),
+  }).index("by_range", ["from", "to"]),
+  /**
    * CEO cockpit writes (2026-09-16). Only Aziz writes these, only through a
    * mutation that goes through convex/ceo/writeGuard.ts (the CEO gate plus an
    * audit row in the same transaction). Nothing here is ever sent to

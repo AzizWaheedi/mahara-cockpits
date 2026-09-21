@@ -1,5 +1,5 @@
 import { Image as ImageIcon } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { BarList, type BarListItem } from "@/components/ceo/BarList";
 import { useTabParam } from "@/components/ceo/CeoTabs";
 import { type Column, DataTable } from "@/components/ceo/DataTable";
@@ -23,6 +23,14 @@ import { Na, Value } from "@/components/ceo/Na";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { TimeSeriesChart } from "@/components/ceo/TimeSeriesChart";
+import {
+  type CustomRange,
+  RangeControl,
+  type RangeKey,
+  rangeStart,
+} from "@/components/ceo/chartKit";
+import { useFrequency } from "@/components/ceo/useFrequency";
+import type { FrequencyFigure } from "../../../convex/ceo/frequency";
 import {
   COMPARE_WITH,
   range,
@@ -326,15 +334,25 @@ export function MarketingTab({ sections, now, day }: CeoTabProps) {
       </SectionCard>
 
       <SectionCard
+        kicker="Meta, over the timeframe chosen here"
+        title="Reach and frequency"
+        section={section}
+        notes={FREQUENCY_NOTES}
+        order={5}
+      >
+        {p => <FrequencyBody rows={p.daily} today={today} />}
+      </SectionCard>
+
+      <SectionCard
         kicker={`Last ${payload?.winningAds?.windowDays ?? 90} days, best first`}
         title="Winning ads"
         section={section}
-        order={5}
+        order={6}
       >
         {p => <WinningAdsBody p={p} />}
       </SectionCard>
 
-      <NotMeasured order={6} />
+      <NotMeasured order={7} />
     </div>
   );
 }
@@ -663,6 +681,138 @@ function DailyBody({
         />
       ))}
     </div>
+  );
+}
+
+// --- Card 6: reach and frequency, straight from Meta for the chosen window ---
+
+const FREQUENCY_NOTES: Note[] = [
+  {
+    level: "info",
+    text: "Frequency is impressions over the distinct people reached in the whole timeframe, read from Meta for that timeframe. It cannot be added up from daily rows, because the same person on two days is one person. Lead-gen and retargeting campaigns are sorted by name the way the B2B dashboard sorts them; hiring campaigns are left out.",
+  },
+  {
+    level: "info",
+    text: "The timeframe choices are the same as the charts above; days run to yesterday. A new timeframe is read from Meta once and kept for three hours.",
+  },
+];
+
+function FrequencyBody({
+  rows,
+  today,
+}: {
+  rows: GrowthPayload["daily"];
+  today: string;
+}) {
+  const [rangeKey, setRangeKey] = useState<RangeKey>("90d");
+  const [custom, setCustom] = useState<CustomRange>({ from: "", to: "" });
+  const days = rows.filter(r => r.date < today);
+  const first = days[0]?.date ?? null;
+  const last = days[days.length - 1]?.date ?? null;
+  let from: string | null = null;
+  let to: string | null = null;
+  if (rangeKey === "custom") {
+    from = custom.from || null;
+    to = custom.to || null;
+  } else if (last) {
+    from = rangeStart(rangeKey, last) ?? first;
+    to = last;
+  }
+  const { read, loading, error } = useFrequency(from, to);
+
+  return (
+    <div className="grid gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-muted-foreground tabular-nums">
+          {from && to ? (
+            <span className="font-medium text-foreground">
+              {range(from, to)}
+            </span>
+          ) : (
+            "Pick both dates"
+          )}
+          {loading ? ", reading Meta" : ""}
+        </p>
+        <RangeControl
+          range={rangeKey}
+          onRange={setRangeKey}
+          custom={custom}
+          onCustom={setCustom}
+          first={first}
+          last={last}
+        />
+      </div>
+      {error ? (
+        <p className="text-xs text-destructive">
+          Meta could not be read for this timeframe: {error}
+        </p>
+      ) : null}
+      <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
+        <FrequencyFigureTiles
+          title="Lead-gen campaigns"
+          figure={read?.leadGen ?? null}
+          stale={read !== null && (read.from !== from || read.to !== to)}
+        />
+        <FrequencyFigureTiles
+          title="Retargeting campaigns"
+          figure={read?.retargeting ?? null}
+          stale={read !== null && (read.from !== from || read.to !== to)}
+        />
+      </div>
+    </div>
+  );
+}
+
+function FrequencyFigureTiles({
+  title,
+  figure,
+  stale,
+}: {
+  title: string;
+  figure: FrequencyFigure | null;
+  stale: boolean;
+}) {
+  const na = figure
+    ? undefined
+    : "No campaign of this kind on the account, or Meta has not answered yet.";
+  return (
+    <section aria-label={title} className={stale ? "opacity-60" : undefined}>
+      <p className="mb-3 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        {title}
+      </p>
+      <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4">
+        <StatTile
+          variant="plain"
+          label="Frequency"
+          value={
+            figure?.frequency !== null && figure?.frequency !== undefined
+              ? `${figure.frequency.toFixed(1)}x`
+              : NA
+          }
+          hint="Impressions over the distinct people reached in this timeframe, as Meta computes it."
+          naHint={na ?? "Nobody was reached in this timeframe."}
+        />
+        <StatTile
+          variant="plain"
+          label="People reached"
+          value={figure ? count(figure.reach) : NA}
+          naHint={na}
+        />
+        <StatTile
+          variant="plain"
+          label="Impressions"
+          value={figure ? count(figure.impressions) : NA}
+          naHint={na}
+        />
+        <StatTile
+          variant="plain"
+          label="Spend"
+          value={figure ? money(figure.spend) : NA}
+          sub={figure ? plural(figure.campaigns, "campaign") : undefined}
+          naHint={na}
+        />
+      </div>
+    </section>
   );
 }
 

@@ -29,6 +29,7 @@ import { SalesTab } from "./ceo/SalesTab";
 import { statusSentence } from "./ceo/statusSentence";
 import { TeamTab } from "./ceo/TeamTab";
 import { TodayTab } from "./ceo/TodayTab";
+import { TransactionsTab } from "./ceo/TransactionsTab";
 import { CEO_TAB_KEYS, type CeoTabKey, type CeoTabProps } from "./ceo/types";
 
 const TAB_VIEWS: Record<CeoTabKey, (props: CeoTabProps) => ReactNode> = {
@@ -47,6 +48,7 @@ const TAB_VIEWS: Record<CeoTabKey, (props: CeoTabProps) => ReactNode> = {
   management: ManagementTab,
   team: TeamTab,
   money: MoneyTab,
+  transactions: TransactionsTab,
   machine: MachineTab,
 };
 

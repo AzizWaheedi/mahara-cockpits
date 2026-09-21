@@ -8,6 +8,7 @@ import {
   Lightbulb,
   Megaphone,
   Phone,
+  ReceiptText,
   Server,
   Sun,
   TrendingUp,
@@ -32,6 +33,7 @@ export const CEO_NAV: { title: string | null; items: CeoNavItem[] }[] = [
     items: [
       { key: "today", label: "Today", icon: Sun },
       { key: "money", label: "Money", icon: Wallet },
+      { key: "transactions", label: "Transactions", icon: ReceiptText },
     ],
   },
   {

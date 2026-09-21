@@ -561,6 +561,22 @@ so the badge, the sentence and this card never disagree.
 
 ---
 
+# Tab 5b: Transactions (added 2026-09-21)
+
+Key `transactions`, in the Money group of the rail. Reads `money.attribution`
+(convex/ceo/attribution.ts decides, the money adapter loads). One card of
+totals over the last twelve months (in, front end with deposits and the rest
+of the cash, back end, not attributed, out) plus this month, then one table
+of every payment in and out: day, amount, rail, payer name and email, the
+side and kind, the person credited (closer for a deposit, CSM for the rest
+and for back-end money), the deal or client, how it was tied, and a detail.
+Filter chips: everything, not attributed, front end, back end, out.
+
+Rules the tab must keep visible: kickoff cash is judged from the rails until
+the kickoff form is read; Tap is in it only when the deployment has a live
+key; a payment that matches nothing is listed, never dropped, and the Money
+tab's payer mapping card is where it gets mapped.
+
 # Tab 6: Delivery
 
 **File:** `DeliveryTab.tsx`. **Status:** built, unchanged. **Reads:** `sections.delivery`.

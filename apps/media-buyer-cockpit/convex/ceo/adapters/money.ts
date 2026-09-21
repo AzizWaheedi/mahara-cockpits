@@ -1,5 +1,16 @@
 import { internal } from "../../_generated/api";
 import { type BillingRow, LIVE_GROUPS, summariseBilling } from "../billing";
+import {
+  attribute,
+  type Attributed,
+  byPerson,
+  type CardRef,
+  type DealRef,
+  FRONT_END_DAYS,
+  FRONT_END_DAYS_MONTHLY,
+  type PaymentIn,
+  totals as attributionTotals,
+} from "../attribution";
 import { byNewest, type ManualLoad, type ManualRow } from "../data/money";
 import {
   capturedCharges,
@@ -27,8 +38,9 @@ import type {
   Note,
   Point,
   PossibleDuplicate,
+  Transaction,
 } from "../payloads";
-import { B2B, num, sql } from "../sb";
+import { B2B, num, type Row, sql, TRIAGE } from "../sb";
 import { IS_LEAD } from "./growth";
 import {
   addDays,
@@ -747,6 +759,8 @@ export const money: Adapter = {
     let dealsChecked = false;
 
     let manual: ManualLoad | null = null;
+    /** The hand-logged entries that count (not covered by a Tap charge), for the attribution below. */
+    let manualCounted: ManualRow[] = [];
     try {
       manual = await ctx.runQuery(internal.ceo.data.money.load, {
         from: firstMonthStart,
@@ -775,6 +789,7 @@ export const money: Adapter = {
         ? coverWithTap(entries, tapCharges, tapFrom)
         : new Map<string, TapCover>();
       const counted = entries.filter(e => !covered.has(e.id));
+      manualCounted = counted;
 
       // Cash that Whop may already have: live entries of the last 90 days.
       const recent = counted.filter(e => e.day >= from180);
@@ -1326,6 +1341,325 @@ export const money: Adapter = {
       });
     }
 
+    // --- Every payment in, given a side, a person and a deal or a client --
+    // (Aziz, 2026-09-21). The rules live in ../attribution; this loads the
+    // rows: Whop and bank transfers from the B2B database, Tap from the read
+    // above, hand-logged entries from the Convex table, the closer-form deals,
+    // the client cards with their portal logins and hand-kept payer mapping,
+    // and the money out the database holds (Whop refunds, the bank expenses).
+    let attribution: MoneyPayload["attribution"];
+    const attributionDaily: DailyPoint[] = [];
+    try {
+      const from12 = firstMonthStart;
+      const [whopRows, transferRows, dealRows, loginRows, expenseRows] =
+        await Promise.all([
+          sql(
+            B2B,
+            `select payment_id, to_char(paid_on, 'YYYY-MM-DD') as day,
+                    net_amount, final_amount, refunded_amount,
+                    to_char((refunded_at at time zone 'Asia/Kuwait')::date, 'YYYY-MM-DD') as refund_day,
+                    nullif(lower(btrim(user_email)), '') as email,
+                    nullif(btrim(billing_name), '') as billing,
+                    nullif(btrim(user_username), '') as username,
+                    deal_response_id, billing_reason
+             from public.whop_payments
+             where status = 'paid' and currency = 'usd' and paid_on >= ${day(from12)}
+             order by paid_on`,
+          ),
+          sql(
+            B2B,
+            `select id, to_char(received_at, 'YYYY-MM-DD') as day, amount_usd, method,
+                    nullif(btrim(client_name), '') as client, reference, deal_response_id
+             from public.transfers
+             where received_at >= ${day(from12)}`,
+          ),
+          sql(
+            B2B,
+            `select response_id,
+                    to_char((submitted_at at time zone 'Asia/Kuwait')::date, 'YYYY-MM-DD') as day,
+                    nullif(lower(btrim(email)), '') as email,
+                    nullif(btrim(business_name), '') as business,
+                    nullif(btrim(concat_ws(' ', client_first_name, client_last_name)), '') as contact,
+                    closer, csm, cash_collected, payment_structure
+             from public.closed_deals
+             where submitted_at >= ${day(addDays(from12, -90))}`,
+          ),
+          sql(
+            B2B,
+            `with docs as (
+               select key, body from public.mahara_portal_documents
+               where key in ('directory.json', 'client-access.json')
+             ),
+             dir as (
+               select e->>'id' as client_id, e->>'clickupId' as clickup_id
+               from docs, jsonb_array_elements(case when jsonb_typeof(docs.body) = 'array' then docs.body else '[]'::jsonb end) e
+               where docs.key = 'directory.json' and coalesce(e->>'id', '') <> '' and coalesce(e->>'clickupId', '') <> ''
+             ),
+             logins as (
+               select lower(btrim(pr->>'email')) as email, dir.clickup_id
+               from docs
+               cross join lateral jsonb_each(case when jsonb_typeof(docs.body->'profiles') = 'object' then docs.body->'profiles' else '{}'::jsonb end) p
+               cross join lateral jsonb_array_elements(case when jsonb_typeof(p.value->'principals') = 'array' then p.value->'principals' else '[]'::jsonb end) pr
+               join dir on dir.client_id = p.key
+               where docs.key = 'client-access.json' and jsonb_typeof(pr) = 'object' and coalesce(btrim(pr->>'email'), '') <> ''
+             )
+             select email, min(clickup_id) as clickup_id
+             from logins group by email having count(distinct clickup_id) = 1`,
+          ),
+          sql(
+            B2B,
+            `select id, to_char(incurred_at, 'YYYY-MM-DD') as day, amount_usd, category, vendor
+             from public.expenses
+             where incurred_at >= ${day(from12)}
+             order by incurred_at desc
+             limit 600`,
+          ),
+        ]);
+      let payerRows: Row[] = [];
+      try {
+        payerRows = await sql(
+          TRIAGE,
+          `select payer, payer_key, clickup_task_id
+           from public.cockpit_payer_clients
+           where coalesce(clickup_task_id, '') <> ''`,
+        );
+      } catch (e) {
+        notes.push({
+          level: "info",
+          text: `The hand-kept payer mapping could not be read this run (${errText(e)}), so a payer mapped by hand matches by name alone.`,
+        });
+      }
+
+      const detailOf = new Map<string, string | null>();
+      const paymentsIn: PaymentIn[] = [];
+      for (const r of whopRows) {
+        // A payment refunded in full is not money in; its refund is listed below.
+        if (num(r.net_amount) <= 0) continue;
+        const id = `whop:${r.payment_id}`;
+        detailOf.set(id, r.billing_reason ? String(r.billing_reason) : null);
+        paymentsIn.push({
+          id,
+          rail: "whop",
+          day: String(r.day),
+          usd: usd(num(r.net_amount)),
+          currency: "USD",
+          amount: usd(num(r.final_amount)),
+          payerEmail: r.email ? String(r.email) : null,
+          payerName: r.billing
+            ? String(r.billing)
+            : r.username
+              ? String(r.username)
+              : null,
+          dealResponseId: r.deal_response_id ? String(r.deal_response_id) : null,
+          clickupTaskId: null,
+          billingReason: r.billing_reason ? String(r.billing_reason) : null,
+        });
+      }
+      for (const c of tapCharges ?? []) {
+        if (c.usd === null) continue;
+        const id = `tap:${c.id}`;
+        detailOf.set(id, null);
+        paymentsIn.push({
+          id,
+          rail: "tap",
+          day: c.day,
+          usd: c.usd,
+          currency: c.currency,
+          amount: c.amount,
+          payerEmail: c.email,
+          payerName: c.name,
+          dealResponseId: null,
+          clickupTaskId: null,
+          billingReason: null,
+        });
+      }
+      for (const r of transferRows) {
+        const id = `transfer:${r.id}`;
+        detailOf.set(id, r.method ? String(r.method) : null);
+        paymentsIn.push({
+          id,
+          rail: "transfer",
+          day: String(r.day),
+          usd: usd(num(r.amount_usd)),
+          currency: "USD",
+          amount: usd(num(r.amount_usd)),
+          payerEmail: null,
+          payerName: r.client ? String(r.client) : null,
+          dealResponseId: r.deal_response_id ? String(r.deal_response_id) : null,
+          clickupTaskId: null,
+          billingReason: null,
+        });
+      }
+      for (const e of manualCounted) {
+        const id = `manual:${e.id}`;
+        detailOf.set(id, e.rail);
+        paymentsIn.push({
+          id,
+          rail: "manual",
+          day: e.day,
+          usd: e.amountUsd,
+          currency: e.currency,
+          amount: e.amount,
+          payerEmail: null,
+          payerName: e.client || null,
+          dealResponseId: null,
+          clickupTaskId: e.clickupTaskId,
+          billingReason: null,
+        });
+      }
+
+      const dealRefs: DealRef[] = dealRows
+        .filter(r => r.response_id && r.business)
+        .map(r => ({
+          responseId: String(r.response_id),
+          day: String(r.day),
+          email: r.email ? String(r.email) : null,
+          business: String(r.business),
+          contactName: r.contact ? String(r.contact) : null,
+          closer: r.closer ? String(r.closer) : null,
+          csm: r.csm ? String(r.csm) : null,
+          deposit: usd(num(r.cash_collected)),
+          paymentStructure: r.payment_structure
+            ? String(r.payment_structure)
+            : null,
+        }));
+      const emailsByCard = new Map<string, string[]>();
+      for (const r of loginRows)
+        if (r.email && r.clickup_id)
+          emailsByCard.set(String(r.clickup_id), [
+            ...(emailsByCard.get(String(r.clickup_id)) ?? []),
+            String(r.email),
+          ]);
+      const payersByCard = new Map<string, string[]>();
+      for (const r of payerRows)
+        payersByCard.set(String(r.clickup_task_id), [
+          ...(payersByCard.get(String(r.clickup_task_id)) ?? []),
+          ...[r.payer_key, r.payer].filter(Boolean).map(String),
+        ]);
+      const cardRefs: CardRef[] = (manual?.cards ?? []).map(c => ({
+        taskId: c.taskId,
+        names: c.names,
+        csm: c.csm,
+        emails: emailsByCard.get(c.taskId) ?? [],
+        payerKeys: payersByCard.get(c.taskId) ?? [],
+      }));
+
+      const rows = attribute(paymentsIn, dealRefs, cardRefs);
+      const toTx = (r: Attributed): Transaction => ({
+        id: r.id,
+        day: r.day,
+        rail: r.rail,
+        direction: "in",
+        usd: r.usd,
+        currency: r.currency,
+        amount: r.amount,
+        payerEmail: r.payerEmail,
+        payerName: r.payerName,
+        side: r.side,
+        kind: r.kind,
+        person: r.person,
+        personRole: r.personRole,
+        dealBusiness: r.dealBusiness,
+        clientName: r.clientName,
+        clientTaskId: r.clientTaskId,
+        matchedBy: r.matchedBy,
+        detail: detailOf.get(r.id) ?? null,
+      });
+      const outRows: Transaction[] = [];
+      for (const r of whopRows) {
+        if (num(r.refunded_amount) <= 0 || !r.refund_day) continue;
+        outRows.push({
+          id: `whop-refund:${r.payment_id}`,
+          day: String(r.refund_day),
+          rail: "whop",
+          direction: "out",
+          usd: usd(num(r.refunded_amount)),
+          currency: "USD",
+          amount: usd(num(r.refunded_amount)),
+          payerEmail: r.email ? String(r.email) : null,
+          payerName: r.billing ? String(r.billing) : null,
+          side: "out",
+          kind: "refund",
+          person: null,
+          personRole: null,
+          dealBusiness: null,
+          clientName: null,
+          clientTaskId: null,
+          matchedBy: "none",
+          detail: "Whop refund, already netted off the charge it refunds",
+        });
+      }
+      for (const r of expenseRows)
+        outRows.push({
+          id: `bank:${r.id}`,
+          day: String(r.day),
+          rail: "bank",
+          direction: "out",
+          usd: usd(num(r.amount_usd)),
+          currency: "USD",
+          amount: usd(num(r.amount_usd)),
+          payerEmail: null,
+          payerName: r.vendor ? String(r.vendor) : null,
+          side: "out",
+          kind: "expense",
+          person: null,
+          personRole: null,
+          dealBusiness: null,
+          clientName: null,
+          clientTaskId: null,
+          matchedBy: "none",
+          detail: r.category ? String(r.category) : null,
+        });
+      const transactions = [...rows.map(toTx), ...outRows]
+        .sort((a, b) => (a.day === b.day ? a.id.localeCompare(b.id) : a.day < b.day ? 1 : -1))
+        .slice(0, 1500);
+      const inMonth = (m: string) => rows.filter(r => r.day.slice(0, 7) === m);
+      const all = attributionTotals(rows);
+      const out = usd(outRows.reduce((t, r) => t + r.usd, 0));
+      attribution = {
+        from: from12,
+        to: today,
+        kickoffRead: false,
+        tapRead: tapCharges !== null,
+        totals: { ...all, out, outCount: outRows.length },
+        mtd: attributionTotals(inMonth(month)),
+        lastMonth: attributionTotals(inMonth(lastMonth)),
+        byPerson: byPerson(rows),
+        transactions,
+      };
+
+      notes.push({
+        level: "info",
+        text: `Every payment in over the last 12 months is given a side. Front end is the deposit at signing (the closer's) and the rest of the cash inside ${FRONT_END_DAYS} days of the deal (${FRONT_END_DAYS_MONTHLY} on a monthly plan, the CSM's); back end is a payment matched to an existing client (that client's CSM's). A payment is tied to a deal by Whop's own link, the payer's email or the business name, and to a client by a portal login, the hand-kept payer mapping, the card's names or the card typed on a hand-logged entry. ${payments(all.unattributedCount)} (${usdWords(all.unattributed)}) match no deal and no client; the Transactions tab lists every payment in and out.`,
+      });
+      notes.push({
+        level: "warn",
+        text: "Kickoff cash is not read: the CSM's kickoff form (Typeform BbJy6xg4) has no field for the remaining cash and is not loaded into the database. Until it has two fields (remaining cash collected, and the amount) and Muhammed's Typeform sync loads it, the rest of the cash is judged from the rails alone.",
+      });
+      if (tapCharges === null)
+        notes.push({
+          level: "info",
+          text: "Tap charges are not in the attribution this run, because Tap was not read.",
+        });
+
+      const point = (metric: string, value: number): DailyPoint => ({
+        date: today,
+        metric,
+        scope: "company",
+        value,
+      });
+      attributionDaily.push(
+        point("money.attribution.frontEndMtd", attribution.mtd.frontEnd),
+        point("money.attribution.backEndMtd", attribution.mtd.backEnd),
+        point("money.attribution.unattributedMtd", attribution.mtd.unattributed),
+      );
+    } catch (e) {
+      notes.push({
+        level: "warn",
+        text: `Payments could not be attributed this run (${errText(e)}), so the front end and back end split and the Transactions tab keep their last figures.`,
+      });
+    }
+
     const byMonth = manualByMonth;
     const payload = {
       month,
@@ -1363,6 +1697,7 @@ export const money: Adapter = {
       // read" rather than showing a book of zero.
       ...(mrr ? { mrr } : {}),
       ...(collection ? { collection } : {}),
+      ...(attribution ? { attribution } : {}),
       notes,
     } satisfies MoneyPayload;
 
@@ -1383,6 +1718,7 @@ export const money: Adapter = {
       },
       ...mrrDaily,
       ...collectionDaily,
+      ...attributionDaily,
     ];
 
     return { payload, daily, sources };

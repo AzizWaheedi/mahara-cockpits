@@ -368,7 +368,75 @@ export type MoneyPayload = {
       plan: string | null;
     }[];
   };
+  /**
+   * Every payment in over the last twelve months given a side of the
+   * business, a person and a deal or a client (convex/ceo/attribution.ts,
+   * 2026-09-21), with the money out the database holds beside it. Optional
+   * for payloads stored before it shipped.
+   */
+  attribution?: MoneyAttribution;
   notes: Note[];
+};
+
+export type AttributionSide = "front_end" | "back_end" | "unattributed";
+export type AttributionKind = "deposit" | "kickoff" | "client" | "none";
+
+/** One line on the Transactions tab: a payment in, or money out. */
+export type Transaction = {
+  id: string;
+  /** Kuwait day. */
+  day: string;
+  rail: "whop" | "tap" | "transfer" | "manual" | "bank";
+  direction: "in" | "out";
+  usd: number;
+  currency: string;
+  amount: number;
+  payerEmail: string | null;
+  payerName: string | null;
+  side: AttributionSide | "out";
+  kind: AttributionKind | "refund" | "expense";
+  /** A first name: the closer for a deposit, the CSM for the rest. */
+  person: string | null;
+  personRole: "closer" | "csm" | null;
+  dealBusiness: string | null;
+  clientName: string | null;
+  clientTaskId: string | null;
+  /** How the payment was tied: deal_id, deal_email, deal_name, card_email, card_payer, card_name, card_typed or none. */
+  matchedBy: string;
+  /** Whop's billing reason, a manual rail, an expense category, or a refund note. */
+  detail: string | null;
+};
+
+export type AttributionTotals = {
+  in: number;
+  count: number;
+  frontEnd: number;
+  deposit: number;
+  kickoff: number;
+  backEnd: number;
+  unattributed: number;
+  unattributedCount: number;
+};
+
+export type MoneyAttribution = {
+  from: string;
+  to: string;
+  /** False until the CSM's kickoff form is loaded; kickoff cash is then judged from the rails. */
+  kickoffRead: boolean;
+  /** False when Tap could not be read this run, so Tap money is not in it. */
+  tapRead: boolean;
+  totals: AttributionTotals & { out: number; outCount: number };
+  mtd: AttributionTotals;
+  lastMonth: AttributionTotals;
+  byPerson: {
+    name: string;
+    role: "closer" | "csm";
+    frontEnd: number;
+    backEnd: number;
+    payments: number;
+  }[];
+  /** Newest first, capped. */
+  transactions: Transaction[];
 };
 
 // --- Expenses and P&L (B2B Supabase: public.expenses, a bank statement import) ---

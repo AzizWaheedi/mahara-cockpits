@@ -96,6 +96,8 @@ export const vManualLoad = v.object({
     v.object({
       taskId: v.string(),
       names: v.array(v.string()),
+      /** The CSM on the card, a first name, or null. Who back-end money is credited to. */
+      csm: v.union(v.string(), v.null()),
     }),
   ),
 });
@@ -150,6 +152,7 @@ export const load = internalQuery({
     // "mergestudio.kw" on a deal can meet on the same card when the card
     // lists both. Only names leave this query.
     const names = new Map<string, Set<string>>();
+    const csms = new Map<string, string>();
     const add = (taskId: string | null, name: unknown) => {
       const text = String(name ?? "").trim();
       if (!taskId || !text) return;
@@ -157,8 +160,11 @@ export const load = internalQuery({
       set.add(text);
       names.set(taskId, set);
     };
-    for (const c of await ctx.db.query("clients").take(1000))
+    for (const c of await ctx.db.query("clients").take(1000)) {
       add(c.taskId, c.name);
+      const csm = String(c.csmAssigned ?? "").trim();
+      if (csm) csms.set(c.taskId, csm.split(/\s+/)[0]);
+    }
     for (const l of await ctx.db.query("clientLinks").take(1000)) {
       const taskId = taskIdFromUrl(l.url);
       add(taskId, l.name);
@@ -174,6 +180,7 @@ export const load = internalQuery({
       cards: [...names].map(([taskId, set]) => ({
         taskId,
         names: [...set],
+        csm: csms.get(taskId) ?? null,
       })),
     };
   },

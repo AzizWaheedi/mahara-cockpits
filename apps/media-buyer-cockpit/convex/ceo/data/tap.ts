@@ -59,6 +59,10 @@ export type TapCharge = {
   amount: number;
   /** `amount` in USD, or null when this file has no rate for the currency. */
   usd: number | null;
+  /** The customer's email on the charge, lower case, so Tap can be matched like Whop (2026-09-21). */
+  email: string | null;
+  /** The customer's name on the charge, first and last, as Tap holds it. */
+  name: string | null;
 };
 
 export type TapRead = {
@@ -311,6 +315,16 @@ export async function capturedCharges(
         const rate = USD_PER[currency];
         if (rate === undefined)
           unknown.set(currency, (unknown.get(currency) ?? 0) + 1);
+        const customer: Any = c?.customer ?? {};
+        const email =
+          String(customer?.email ?? "")
+            .trim()
+            .toLowerCase() || null;
+        const name =
+          [customer?.first_name, customer?.middle_name, customer?.last_name]
+            .map(x => String(x ?? "").trim())
+            .filter(Boolean)
+            .join(" ") || null;
         charges.push({
           id,
           day: kuwaitDay(at),
@@ -318,6 +332,8 @@ export async function capturedCharges(
           currency,
           amount,
           usd: rate === undefined ? null : round2(amount * rate),
+          email,
+          name,
         });
       }
 

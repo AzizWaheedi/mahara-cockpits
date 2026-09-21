@@ -24,6 +24,7 @@ export const CEO_TAB_KEYS = [
   "management",
   "team",
   "money",
+  "transactions",
   "machine",
 ] as const;
 
