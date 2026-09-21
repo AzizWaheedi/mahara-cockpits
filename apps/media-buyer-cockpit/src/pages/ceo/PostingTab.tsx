@@ -539,7 +539,7 @@ function NewPost({ onCreated }: { onCreated: (p: Post) => void }) {
           onChange={e => setRef(e.target.value)}
           placeholder={
             source === "drive"
-              ? "https://drive.google.com/file/d/…"
+              ? "https://drive.google.com/file/d/… or a folder link"
               : "https://…/video.mp4"
           }
           dir="ltr"

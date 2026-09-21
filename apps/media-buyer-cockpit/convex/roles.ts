@@ -186,6 +186,8 @@ export const me = authenticatedQuery({
       cockpits: a.cockpits,
       clients: a.clients,
       isAdmin: a.isAdmin,
+      /** One of the founder addresses, whatever the roles say: the changes-and-bugs queue shows only for them. */
+      isFounder: isCeoEmail(String(user?.email ?? "")),
       isCeo: a.isCeo,
       home: a.home,
     };

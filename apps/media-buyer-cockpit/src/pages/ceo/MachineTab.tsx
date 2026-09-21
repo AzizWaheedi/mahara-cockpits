@@ -30,6 +30,7 @@ import {
   STALE_AFTER_MS,
 } from "@/components/ceo/useCeo";
 import type { MachinePayload } from "../../../convex/ceo/payloads";
+import { FeedbackQueueCard } from "./feedbackQueue";
 import {
   feedState,
   jobState,
@@ -130,6 +131,8 @@ export function MachineTab({ sections, now }: CeoTabProps) {
 
   return (
     <div className="grid gap-5 lg:gap-7">
+      <FeedbackQueueCard order={0} now={now} />
+
       <SectionCard
         kicker="Right now"
         title="Machine status"
