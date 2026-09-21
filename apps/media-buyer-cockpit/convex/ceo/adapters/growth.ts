@@ -206,45 +206,104 @@ left join fe fe on fe.k = w.k`;
 function dailySql(from: string, to: string): string {
   const f = day(from);
   const t = day(to);
+  // Every tile on the growth tabs can be rebuilt for any timeframe from these
+  // days (Aziz, 2026-09-21: "any number with a time dimension gets the same
+  // timeframe control as the charts"): each stage carries its own counts by
+  // its own day, so a window is a sum and a rate is a quotient of sums.
   return `with days as (
   select generate_series(${f}, ${t}, interval '1 day')::date as d
 ),
 meta as (
-  select date as d, sum(spend) as spend
+  select date as d,
+    sum(spend) filter (where public.b2b_campaign_type(campaign_name) = 'lead_gen') as spend,
+    sum(spend) filter (where public.b2b_campaign_type(campaign_name) = 'retargeting') as spend_rt
   from public.meta_ad_snapshots
   where date between ${f} and ${t}
-    and public.b2b_campaign_type(campaign_name) = 'lead_gen'
   group by 1
 ),
 ld as (
-  select (l.lead_created_at at time zone 'Asia/Riyadh')::date as d, count(*) as n
+  select (l.lead_created_at at time zone 'Asia/Riyadh')::date as d,
+    count(*) filter (where ${IS_LEAD}) as n,
+    count(*) filter (where ${ROAS_Q}) as q,
+    count(*) filter (where ${ROAS_U}) as u,
+    count(*) filter (where ${ROAS_NR}) as nr,
+    count(*) filter (where ${ROAS_NONE}) as untagged,
+    count(*) filter (where ${IS_LEAD} and exists (
+      select 1 from public.calls c where c.contact_id is not null and c.contact_id = l.contact_id and c.call_type in ('intro', 'demo'))) as booked_leads,
+    count(*) filter (where ${IS_LEAD} and ${LEAD_SOURCE.ads}) as src_ads,
+    count(*) filter (where ${IS_LEAD} and ${LEAD_SOURCE.organic}) as src_organic,
+    count(*) filter (where ${IS_LEAD} and ${LEAD_SOURCE.assumed}) as src_assumed,
+    count(fc.first_call) filter (where ${IS_LEAD}) as sp_called,
+    coalesce(sum(extract(epoch from (fc.first_call - l.lead_created_at)) / 60.0) filter (where ${IS_LEAD} and fc.first_call is not null), 0) as sp_minutes,
+    count(*) filter (where ${IS_LEAD} and fc.first_call is not null and fc.first_call - l.lead_created_at <= interval '5 minutes') as sp_within_5
   from public.leads l
-  where ${IS_LEAD}
-    and (l.lead_created_at at time zone 'Asia/Riyadh')::date between ${f} and ${t}
+  cross join lateral (
+    select min(m.occurred_at) as first_call from public.maqsam_calls m
+    where m.occurred_at >= l.lead_created_at
+      and ${BY_SALES_REP}
+      and ${CALL_IS_WITH_LEAD}
+  ) fc
+  where (l.lead_created_at at time zone 'Asia/Riyadh')::date between ${f} and ${t}
   group by 1
 ),
 bk as (
-  select (booked_at at time zone 'Asia/Riyadh')::date as d, count(*) as n
+  select (booked_at at time zone 'Asia/Riyadh')::date as d,
+    count(*) as n,
+    count(*) filter (where call_type = 'intro') as intros_booked,
+    count(*) filter (where call_type = 'demo') as demos_booked
   from public.calls
   where call_type in ('intro', 'demo')
     and (booked_at at time zone 'Asia/Riyadh')::date between ${f} and ${t}
   group by 1
 ),
+held as (
+  select (start_at at time zone 'Asia/Riyadh')::date as d,
+    count(*) filter (where call_type = 'intro') as intros_scheduled,
+    count(*) filter (where call_type = 'demo') as demos_scheduled,
+    count(*) filter (where call_type = 'intro' and start_at <= now()) as intros_due,
+    count(*) filter (where call_type = 'demo' and start_at <= now()) as demos_due,
+    count(*) filter (where call_type = 'intro' and (status = 'showed' or (status in ('confirmed', 'invalid') and start_at <= now()))) as intros_shown,
+    count(*) filter (where call_type = 'demo' and (status = 'showed' or (status in ('confirmed', 'invalid') and start_at <= now()))) as demos_shown,
+    count(*) filter (where call_type = 'demo' and (status = 'showed' or (status = 'confirmed' and start_at <= now()))) as demos_qualified,
+    count(*) filter (where call_type = 'intro' and status = 'cancelled') as intros_cancelled,
+    count(*) filter (where call_type = 'demo' and status = 'cancelled') as demos_cancelled
+  from public.calls
+  where call_type in ('intro', 'demo')
+    and (start_at at time zone 'Asia/Riyadh')::date between ${f} and ${t}
+  group by 1
+),
 cl as (
-  select (submitted_at at time zone 'Asia/Riyadh')::date as d, count(*) as n
+  select (submitted_at at time zone 'Asia/Riyadh')::date as d,
+    count(*) as n,
+    coalesce(sum(contracted_revenue), 0) as contracted,
+    coalesce(sum(cash_collected), 0) as deposit
   from public.closed_deals
   where (submitted_at at time zone 'Asia/Riyadh')::date between ${f} and ${t}
   group by 1
 )
 select days.d::text as date,
   round(coalesce(meta.spend, 0)::numeric, 2) as spend,
+  round(coalesce(meta.spend_rt, 0)::numeric, 2) as spend_rt,
   coalesce(ld.n, 0) as leads,
+  coalesce(ld.q, 0) as qualified, coalesce(ld.u, 0) as unqualified, coalesce(ld.nr, 0) as not_ready, coalesce(ld.untagged, 0) as untagged,
+  coalesce(ld.booked_leads, 0) as booked_leads,
+  coalesce(ld.src_ads, 0) as src_ads, coalesce(ld.src_organic, 0) as src_organic, coalesce(ld.src_assumed, 0) as src_assumed,
+  coalesce(ld.sp_called, 0) as sp_called, round(coalesce(ld.sp_minutes, 0)::numeric, 1) as sp_minutes, coalesce(ld.sp_within_5, 0) as sp_within_5,
   coalesce(bk.n, 0) as booked,
-  coalesce(cl.n, 0) as closes
+  coalesce(bk.intros_booked, 0) as intros_booked, coalesce(bk.demos_booked, 0) as demos_booked,
+  coalesce(held.intros_scheduled, 0) as intros_scheduled, coalesce(held.demos_scheduled, 0) as demos_scheduled,
+  coalesce(held.intros_due, 0) as intros_due, coalesce(held.demos_due, 0) as demos_due,
+  coalesce(held.intros_shown, 0) as intros_shown, coalesce(held.demos_shown, 0) as demos_shown,
+  coalesce(held.demos_qualified, 0) as demos_qualified,
+  coalesce(held.intros_cancelled, 0) as intros_cancelled, coalesce(held.demos_cancelled, 0) as demos_cancelled,
+  coalesce(cl.n, 0) as closes,
+  round(coalesce(cl.contracted, 0)::numeric, 2) as contracted,
+  round(coalesce(cl.deposit, 0)::numeric, 2) as deposit
 from days
 left join meta on meta.d = days.d
 left join ld on ld.d = days.d
 left join bk on bk.d = days.d
+left join held on held.d = days.d
 left join cl on cl.d = days.d
 order by days.d`;
 }
@@ -590,9 +649,34 @@ export const growth: Adapter = {
         (await sql(B2B, dailySql(addDays(today, -364), today))).map(r => ({
           date: String(r.date),
           spend: num(r.spend),
+          spendRetargeting: num(r.spend_rt),
           leads: num(r.leads),
+          qualified: num(r.qualified),
+          unqualified: num(r.unqualified),
+          notReady: num(r.not_ready),
+          untagged: num(r.untagged),
+          bookedLeads: num(r.booked_leads),
+          srcAds: num(r.src_ads),
+          srcOrganic: num(r.src_organic),
+          srcAssumed: num(r.src_assumed),
+          spCalled: num(r.sp_called),
+          spMinutes: num(r.sp_minutes),
+          spWithin5: num(r.sp_within_5),
           booked: num(r.booked),
+          introsBooked: num(r.intros_booked),
+          demosBooked: num(r.demos_booked),
+          introsScheduled: num(r.intros_scheduled),
+          demosScheduled: num(r.demos_scheduled),
+          introsDue: num(r.intros_due),
+          demosDue: num(r.demos_due),
+          introsShown: num(r.intros_shown),
+          demosShown: num(r.demos_shown),
+          demosQualified: num(r.demos_qualified),
+          introsCancelled: num(r.intros_cancelled),
+          demosCancelled: num(r.demos_cancelled),
           closes: num(r.closes),
+          contracted: num(r.contracted),
+          deposit: num(r.deposit),
         })),
     );
 

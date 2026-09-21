@@ -42,6 +42,7 @@ import type {
   MoneyPayload,
   Note,
 } from "../../../convex/ceo/payloads";
+import { BankExpensesBody, BankStatementsCard } from "./moneyBank";
 import { ImportPaymentsCard, LtvWriteCard } from "./moneyImport";
 import {
   DuplicatesCard,
@@ -54,6 +55,7 @@ import type { CeoTabProps } from "./types";
 type Deal = MoneyPayload["deals"]["recent"][number];
 type CardKey =
   | "attribution"
+  | "bank"
   | "cash"
   | "rails"
   | "manual"
@@ -76,6 +78,7 @@ type PnlKey = "month" | "software" | "overhead" | "labour" | "ads" | "totals";
 // and "Expenses and bank transfers" the expenses card before it. Anything
 // unmatched lands on the cash card, so no note is ever dropped.
 const NOTE_ROUTES: readonly (readonly [RegExp, CardKey])[] = [
+  [/bank statement|statements? (is|are|ends|held)|statement line|whop payout|tap settlement|exclusion|uploaded/i, "bank"],
   [
     /attribut|transactions tab|kickoff cash|payer mapping could not/i,
     "attribution",
@@ -256,6 +259,7 @@ export function MoneyTab({ sections, now, day, goTab }: CeoTabProps) {
         recentDeals={payload?.deals.recent ?? null}
         order={2}
       />
+      <BankStatementsCard section={section} payload={payload} order={3} />
       <ImportPaymentsCard order={3} />
       <ManualEntriesCard
         section={section}
@@ -339,11 +343,21 @@ export function MoneyTab({ sections, now, day, goTab }: CeoTabProps) {
           </div>
 
           <SectionCard
+            kicker="From the uploaded statements, personal exclusions apart"
+            title="Expenses on the statements"
+            section={section}
+            notes={notes.bank ?? []}
+            order={14}
+          >
+            {p => <BankExpensesBody p={p} />}
+          </SectionCard>
+
+          <SectionCard
             kicker="Newest 10"
             title="Recent deals"
             section={section}
             notes={notes.deals}
-            order={14}
+            order={15}
           >
             {p => <DealsTable deals={p.deals.recent} />}
           </SectionCard>
@@ -648,6 +662,7 @@ function RailsBody({
     const extra = [
       { key: "tap", rail: rails.tap, label: "Tap" },
       { key: "manual", rail: rails.manual, label: "Logged by hand" },
+      { key: "bank", rail: rails.bank, label: "Bank statements" },
     ].filter(x => x.rail?.connected);
     if (!extra.length) return { data: [], series: [] as ChartSeries[] };
     const maps = extra.map(
@@ -690,9 +705,10 @@ function RailsBody({
     { key: "whop", rail: rails.whop },
     { key: "tap", rail: rails.tap },
     ...(manual ? [{ key: "manual", rail: manual }] : []),
+    ...(rails.bank ? [{ key: "bank", rail: rails.bank }] : []),
     { key: "total", rail: rails.total },
   ];
-  const liveRails = [rails.whop, rails.tap, manual].filter(
+  const liveRails = [rails.whop, rails.tap, manual, rails.bank ?? null].filter(
     r => r?.connected,
   ).length;
 
@@ -1166,7 +1182,7 @@ function MoneyTiles({ p }: { p: MoneyPayload }) {
         variant="plain"
         label="Refunds this month"
         value={money(p.refunds.mtd)}
-        sub={`${money(p.refunds.last90)} in the last 90 days`}
+        sub={`${money(p.refunds.last90)} in the last 90 days${p.refunds.manualLast90 ? `, ${money(p.refunds.manualLast90)} of it logged by hand` : ""}`}
       />
       <StatTile
         variant="plain"

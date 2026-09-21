@@ -1,6 +1,8 @@
+import { useAction, useMutation } from "convex/react";
 import { ReceiptText } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useTabParam } from "@/components/ceo/CeoTabs";
+import { api } from "../../../convex/_generated/api";
 import { type Column, DataTable } from "@/components/ceo/DataTable";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { FilterChips, type FilterOption } from "@/components/ceo/FilterChips";
@@ -29,6 +31,7 @@ const VIEW_KEYS = [
   "front_end",
   "back_end",
   "out",
+  "bank",
 ] as const;
 type ViewKey = (typeof VIEW_KEYS)[number];
 
@@ -54,6 +57,24 @@ const VIEWS: FilterOption<ViewKey>[] = [
     label: "Out",
     hint: "Whop refunds and the bank expenses loaded.",
   },
+  {
+    key: "bank",
+    label: "Statement lines",
+    hint: "Every line of every uploaded bank statement, with the kind the cockpit gave it. Payouts, settlements and own transfers sit here to show why a credit did not become cash.",
+  },
+];
+
+const BANK_KINDS: { value: string; label: string }[] = [
+  { value: "client_payment", label: "Client payment" },
+  { value: "whop_payout", label: "Whop payout" },
+  { value: "whop_topup", label: "Transfer into Whop" },
+  { value: "tap_settlement", label: "Tap settlement" },
+  { value: "own_transfer", label: "Own transfer" },
+  { value: "refund_in", label: "Refund received" },
+  { value: "expense", label: "Expense" },
+  { value: "fee", label: "Bank fee" },
+  { value: "excluded", label: "Excluded" },
+  { value: "unknown", label: "Unknown" },
 ];
 
 const RAIL_LABEL: Record<Transaction["rail"], string> = {
@@ -207,6 +228,47 @@ const COLUMNS: Column<Transaction>[] = [
   },
 ];
 
+/** A statement line can be given another kind by hand, for the cases the rules get wrong. */
+function Reclassify({ t }: { t: Transaction }) {
+  const reclassify = useAction(api.ceo.bankImport.reclassify);
+  const refreshNow = useMutation(api.ceo.queries.refreshNow);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<string | null>(null);
+  if (t.bankLineId === undefined) return null;
+  return (
+    <select
+      aria-label="Kind of this statement line"
+      value={done ?? t.bankKind ?? "unknown"}
+      disabled={busy}
+      onChange={async e => {
+        const kind = e.target.value;
+        setBusy(true);
+        try {
+          await reclassify({ id: t.bankLineId as number, kind: kind as never });
+          setDone(kind);
+          await refreshNow({ only: ["money", "expenses"] });
+        } finally {
+          setBusy(false);
+        }
+      }}
+      className="h-7 max-w-[11rem] rounded-md border bg-card px-1 text-xs"
+    >
+      {BANK_KINDS.map(k => (
+        <option key={k.value} value={k.value}>
+          {k.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+const RECLASSIFY_COLUMN: Column<Transaction> = {
+  key: "reclassify",
+  header: "Kind",
+  cell: t => <Reclassify t={t} />,
+  hideBelow: "md",
+};
+
 export function TransactionsTab({ sections, goTab }: CeoTabProps) {
   const section = sections.money;
   const a = section?.payload?.attribution ?? null;
@@ -220,8 +282,13 @@ export function TransactionsTab({ sections, goTab }: CeoTabProps) {
     if (view === "all") return a.transactions;
     if (view === "out")
       return a.transactions.filter(t => t.direction === "out");
+    if (view === "bank")
+      return a.transactions.filter(
+        t => t.bankLineId !== undefined || t.id.startsWith("bank:"),
+      );
     return a.transactions.filter(t => t.side === view);
   }, [a, view]);
+  const columns = useMemo(() => [...COLUMNS, RECLASSIFY_COLUMN], []);
 
   if (!a)
     return (
@@ -269,7 +336,7 @@ export function TransactionsTab({ sections, goTab }: CeoTabProps) {
         {() => (
           <DataTable
             rows={rows}
-            columns={COLUMNS}
+            columns={columns}
             rowKey={t => t.id}
             initialSort={{ key: "day", dir: "desc" }}
             caption="Payments in and out over the last twelve months, newest first, with the side, the person and the deal or client each was tied to"

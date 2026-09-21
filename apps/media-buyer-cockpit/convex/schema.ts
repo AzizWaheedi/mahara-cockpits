@@ -1357,6 +1357,12 @@ const schema = defineSchema({
       v.literal("tap"),
       v.literal("other"),
     ),
+    /**
+     * "refund" when the entry is money given back rather than received
+     * (Aziz, 2026-09-21: refunds = Whop refunds + refunds logged by hand).
+     * Absent means a payment.
+     */
+    kind: v.optional(v.union(v.literal("payment"), v.literal("refund"))),
     /** Contract value of a new deal signed with this payment, as typed, in `currency`. */
     dealContracted: v.optional(v.number()),
     /** `dealContracted` in USD at the same rate as `amountUsd`. Adds to contracted, never to cash. */

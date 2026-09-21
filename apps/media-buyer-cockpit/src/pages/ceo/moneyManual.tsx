@@ -212,6 +212,8 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
 
 type Draft = {
   day: string;
+  /** "payment" for money received, "refund" for money given back. */
+  kind: "payment" | "refund";
   amount: string;
   currency: Currency;
   client: string;
@@ -222,6 +224,7 @@ type Draft = {
 
 type Ready = {
   day: string;
+  kind: "payment" | "refund";
   amount: number;
   currency: Currency;
   clientName: string;
@@ -287,6 +290,7 @@ function validate(
     errors,
     ready: {
       day: d.day,
+      kind: d.kind,
       amount,
       currency: d.currency,
       clientName,
@@ -304,6 +308,7 @@ function validate(
 
 const blank = (day: string, currency: Currency): Draft => ({
   day,
+  kind: "payment",
   amount: "",
   currency,
   client: "",
@@ -454,6 +459,7 @@ export function LogPaymentCard({
         currency: confirm.currency,
         clientName: confirm.clientName,
         rail: confirm.rail,
+        ...(confirm.kind === "refund" ? { kind: "refund" as const } : {}),
         ...(confirm.card ? { clickupTaskId: confirm.card.clickupTaskId } : {}),
         ...(confirm.deal !== null ? { dealContracted: confirm.deal } : {}),
         ...(confirm.note ? { note: confirm.note } : {}),
@@ -539,6 +545,33 @@ export function LogPaymentCard({
               </Select>
             </div>
           </FormField>
+
+          <fieldset className="grid gap-1.5">
+            <legend className="text-sm font-medium">What this is</legend>
+            <div className="flex flex-wrap gap-4 text-sm">
+              <label className="inline-flex items-center gap-2">
+                <input
+                  type="radio"
+                  name={id("kind")}
+                  checked={draft.kind === "payment"}
+                  onChange={() => set("kind")("payment")}
+                />
+                Payment received
+              </label>
+              <label className="inline-flex items-center gap-2">
+                <input
+                  type="radio"
+                  name={id("kind")}
+                  checked={draft.kind === "refund"}
+                  onChange={() => set("kind")("refund")}
+                />
+                Refund given back
+              </label>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              A refund comes off cash on its day and counts among refunds, with the Whop refunds.
+            </p>
+          </fieldset>
 
           <FormField
             id={id("rail")}
@@ -673,7 +706,9 @@ export function LogPaymentCard({
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Log this payment?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {confirm?.kind === "refund" ? "Log this refund?" : "Log this payment?"}
+            </AlertDialogTitle>
             <AlertDialogDescription>
               It adds to cash collected on the Manual rail
               {confirm?.deal !== null && confirm?.deal !== undefined

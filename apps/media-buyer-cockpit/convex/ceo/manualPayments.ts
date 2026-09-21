@@ -192,6 +192,8 @@ export const add = authenticatedMutation({
     /** The ClickUp client card, when picked from the roster. */
     clickupTaskId: v.optional(v.string()),
     rail: vManualRail,
+    /** "refund" for money given back; absent or "payment" for money received. */
+    kind: v.optional(v.union(v.literal("payment"), v.literal("refund"))),
     /** Contract value of a new deal signed with this payment, in `currency`. */
     dealContracted: v.optional(v.number()),
     note: v.optional(v.string()),
@@ -254,6 +256,9 @@ export const add = authenticatedMutation({
             );
         }
 
+        const refund = a.kind === "refund";
+        if (refund && deal)
+          throw new Error("A refund cannot carry a new deal value.");
         const row = {
           day,
           amount: paid.amount,
@@ -262,6 +267,7 @@ export const add = authenticatedMutation({
           usdPerUnit: paid.usdPerUnit,
           clientName,
           rail: a.rail,
+          ...(refund ? { kind: "refund" as const } : {}),
           addedBy: w.by,
           addedAt: w.at,
           ...(clickupTaskId ? { clickupTaskId } : {}),
@@ -273,7 +279,9 @@ export const add = authenticatedMutation({
         const id = await ctx.db.insert("ceoManualPayments", row);
 
         const parts = [
-          `Logged ${paidText(row)} ${ARRIVED[a.rail]} from ${clientName}, received ${day}.`,
+          refund
+            ? `Logged a refund of ${paidText(row)} ${ARRIVED[a.rail]} to ${clientName}, given back ${day}. It comes off cash and counts among refunds.`
+            : `Logged ${paidText(row)} ${ARRIVED[a.rail]} from ${clientName}, received ${day}.`,
         ];
         if (deal)
           parts.push(

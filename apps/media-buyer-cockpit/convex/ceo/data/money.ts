@@ -24,6 +24,8 @@ export const vManualRow = v.object({
   client: v.string(),
   clickupTaskId: v.union(v.string(), v.null()),
   rail: vManualRail,
+  /** "payment" or "refund". */
+  kind: v.union(v.literal("payment"), v.literal("refund")),
   dealContracted: v.union(v.number(), v.null()),
   dealContractedUsd: v.union(v.number(), v.null()),
   note: v.union(v.string(), v.null()),
@@ -59,6 +61,7 @@ export function shapeManualRow(r: Doc<"ceoManualPayments">): ManualRow {
     client: maskContact(r.clientName),
     clickupTaskId: r.clickupTaskId ?? null,
     rail: r.rail,
+    kind: r.kind ?? "payment",
     dealContracted: r.dealContracted ?? null,
     dealContractedUsd: r.dealContractedUsd ?? null,
     note: r.note ? maskContact(r.note) : null,

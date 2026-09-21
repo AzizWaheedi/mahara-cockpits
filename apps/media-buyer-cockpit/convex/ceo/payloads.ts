@@ -50,6 +50,8 @@ export type ManualRail = "bank_transfer" | "cheque" | "cash" | "tap" | "other";
 export type ManualPaymentRow = {
   /** The Convex row id, what the remove and restore mutations take. */
   id: string;
+  /** "payment" or "refund" (money given back). Absent on rows stored before 2026-09-21 means payment. */
+  kind?: "payment" | "refund";
   /** Kuwait day the money was received. */
   day: string;
   /** The amount as typed, in `currency`. */
@@ -187,8 +189,16 @@ export type MoneyPayload = {
      */
     manual?: CashRail;
     /**
-     * Whop plus Tap plus manual, over the connected rails only. Possible
-     * duplicates (below) are still inside it until Aziz deletes the entry.
+     * Client payments on the uploaded bank statements (2026-09-21). Connected
+     * once a statement is held. Whop payouts, Tap settlements and Mahara's
+     * own transfers are never in it. Absent on older payloads.
+     */
+    bank?: CashRail;
+    /**
+     * Whop plus Tap plus manual plus bank, over the connected rails only.
+     * Possible duplicates (below) are still inside it until Aziz deletes the
+     * entry. A Tap charge a settlement line covers, and a hand-logged
+     * transfer a statement line covers, count once, on the bank rail.
      */
     total: CashRail;
   };
@@ -225,7 +235,17 @@ export type MoneyPayload = {
      */
     manualContracted?: number;
   }[];
-  refunds: { mtd: number; last90: number };
+  /**
+   * Whop refunds by refund day, plus refunds logged by hand (a manual entry
+   * with kind refund, 2026-09-21). `manualMtd` / `manualLast90` are the
+   * hand-logged part, already inside `mtd` / `last90`; absent on older payloads.
+   */
+  refunds: {
+    mtd: number;
+    last90: number;
+    manualMtd?: number;
+    manualLast90?: number;
+  };
   deals: {
     /** Closer form deals only. */
     mtd: number;
@@ -375,6 +395,70 @@ export type MoneyPayload = {
    * for payloads stored before it shipped.
    */
   attribution?: MoneyAttribution;
+  /**
+   * Projected MRR and the collection rate (Aziz, 2026-09-21): MRR due this
+   * month over active cards on a recurring plan, against the cash attributed
+   * to those clients this month. Kept per month in ceoDaily
+   * (money.book.projected / money.book.collected, scope company, on the
+   * month's first day) so the history grows from now on. Absent on older
+   * payloads.
+   */
+  /**
+   * The bank statements uploaded on the Money tab (CBK Online CSV, parsed by
+   * convex/ceo/bank.ts, stored in cockpit_bank_lines). Client payments on
+   * them are the Bank rail; Whop payouts, Tap settlements and Mahara's own
+   * transfers are dropped so nothing counts twice; debits are the expenses
+   * with the personal exclusions taken out. Absent on older payloads.
+   */
+  bank?: {
+    /** Newest statement's last day, and how many days ago that was. */
+    lastStatementTo: string | null;
+    daysSince: number | null;
+    /** True past 7 days, or with no statement at all. */
+    stale: boolean;
+    statements: {
+      id: string;
+      account: string;
+      accountKind: string;
+      fromDay: string | null;
+      toDay: string | null;
+      lines: number;
+      importedAt: number | null;
+    }[];
+    accounts: string[];
+    /** Lines over the last 12 months by kind, count and USD (signed). */
+    kinds: { kind: string; label: string; count: number; usd: number }[];
+    /** Whop payouts on the statements: how many were matched to a run of Whop payments. */
+    payouts: { count: number; matched: number; usd: number; matchedUsd: number };
+    /** Tap settlements on the statements, and how many Tap charges they were matched to. */
+    tapSettlements: { count: number; usd: number; chargesCovered: number };
+    /** Hand-logged bank transfers, cheques and cash that a statement line now accounts for. */
+    manualCovered: number;
+    /** Expenses from the statements by month, newest first, personal exclusions apart. */
+    expenses: {
+      month: string;
+      total: number;
+      byCategory: { category: string; usd: number; lines: number }[];
+      excluded: { usd: number; lines: number };
+      fees: number;
+    }[];
+    exclusions: { id: number; kind: "card" | "vendor"; pattern: string; note: string | null }[];
+    /** Lines with no kind the rules could give. */
+    unknown: number;
+  };
+  book?: {
+    month: string;
+    /** Sum of the MRR field over active cards on a recurring plan. */
+    projectedMrr: number;
+    projectedCards: number;
+    /** Cash attributed to those clients this month, every rail. */
+    collected: number;
+    collectionRate: number | null;
+    /** Mean MRR over the same cards. */
+    averageRetainer: number | null;
+    /** Earlier months as far as the history goes, oldest first. */
+    history: { month: string; projected: number; collected: number; rate: number | null }[];
+  };
   notes: Note[];
 };
 
@@ -405,6 +489,10 @@ export type Transaction = {
   matchedBy: string;
   /** Whop's billing reason, a manual rail, an expense category, or a refund note. */
   detail: string | null;
+  /** For a statement line: the kind the cockpit gave it (client_payment, whop_payout, excluded, ...). */
+  bankKind?: string;
+  /** The statement line's own id, so it can be reclassified from the Transactions tab. */
+  bankLineId?: number;
 };
 
 export type AttributionTotals = {
@@ -625,6 +713,46 @@ export type FunnelWindow = {
   raw: Record<string, number | null>;
 };
 
+export type GrowthDay = {
+  date: string;
+  /** Lead-gen spend. */
+  spend: number;
+  spendRetargeting?: number;
+  /** ROAS-tagged leads created that day. */
+  leads: number;
+  qualified?: number;
+  unqualified?: number;
+  notReady?: number;
+  untagged?: number;
+  /** Of that day's leads, how many ever booked an intro or demo. */
+  bookedLeads?: number;
+  srcAds?: number;
+  srcOrganic?: number;
+  srcAssumed?: number;
+  /** Of that day's leads: called by a sales rep, their minutes to the first call added up, and how many within 5 minutes. */
+  spCalled?: number;
+  spMinutes?: number;
+  spWithin5?: number;
+  /** Intro plus demo calls booked that day. */
+  booked: number;
+  introsBooked?: number;
+  demosBooked?: number;
+  /** Calls held that day, by the dashboard's rules. */
+  introsScheduled?: number;
+  demosScheduled?: number;
+  introsDue?: number;
+  demosDue?: number;
+  introsShown?: number;
+  demosShown?: number;
+  demosQualified?: number;
+  introsCancelled?: number;
+  demosCancelled?: number;
+  closes: number;
+  contracted?: number;
+  /** Deposits typed on the closer form that day. */
+  deposit?: number;
+};
+
 export type GrowthPayload = {
   windows: {
     yesterday: FunnelWindow;
@@ -634,14 +762,14 @@ export type GrowthPayload = {
     lastMonthToDate: FunnelWindow;
     lastMonth: FunnelWindow;
   };
-  /** Last 365 days, oldest first. */
-  daily: {
-    date: string;
-    spend: number;
-    leads: number;
-    booked: number;
-    closes: number;
-  }[];
+  /**
+   * Last 365 days, oldest first. Every stage by its own day, so any timeframe
+   * is a sum of days and any rate a quotient of sums (2026-09-21): spend by
+   * Meta day, leads by creation day, bookings by booking day, calls held by
+   * call day, closes by form day. The fields after `closes` are absent on
+   * payloads stored before this shipped.
+   */
+  daily: GrowthDay[];
   /** Month to date. */
   reps: {
     name: string;
@@ -780,9 +908,38 @@ export type CallsPayload = {
     sample: number;
     /** First day with lead-linked calls. */
     since: string | null;
+    /**
+     * The same median and share on the working clock (Aziz, 2026-09-21):
+     * the clock starts at the later of the lead's creation and the next
+     * working window, and only working minutes count. Absent on older
+     * payloads.
+     */
+    workingMedianMinutes7d?: number | null;
+    workingWithin5minShare7d?: number | null;
   };
+  /**
+   * The working hours the clock uses, from cockpit_settings in Creative
+   * Triage (key working_hours), or the default when none is stored:
+   * 10:00 to 18:00 Asia/Kuwait, Saturday to Thursday. Absent on older payloads.
+   */
+  workingHours?: WorkingHours;
   lastCallAt: number | null;
   notes: Note[];
+};
+
+/**
+ * Working hours as stored in cockpit_settings (key working_hours). `days`
+ * are ISO weekday numbers 1 (Monday) to 7 (Sunday); times are "HH:MM" in
+ * `timezone`.
+ */
+export type WorkingHours = {
+  start: string;
+  end: string;
+  days: number[];
+  timezone: string;
+  /** "settings" when a stored row was read, "default" otherwise. */
+  source: "settings" | "default";
+  updatedAt?: number | null;
 };
 
 // --- Client delivery (Convex media buyer tables) ---
@@ -791,8 +948,53 @@ export type DeliveryWindow = {
   spend: number;
   leads: number;
   cpl: number | null;
+  /** Total bookings: provisional + online + main calendars, by the day the meeting is for, future ones excluded. */
   bookings: number;
+  /** Spend over total bookings. */
   cpb: number | null;
+  /**
+   * The three booking counts (Aziz, 2026-09-21): provisional = the
+   * provisional calendar only (it has produced no rows in Creative Triage
+   * yet); confirmed = the online and main calendars. `bookings` above is
+   * their sum. Absent on payloads stored before this shipped.
+   */
+  provisional?: number;
+  confirmed?: number;
+  /** Spend over confirmed bookings, the main cost per booking. */
+  cpbConfirmed?: number | null;
+};
+
+/** A client's funnel rates over a window, the three booking metrics and the Mahara OS outcomes. */
+export type DeliveryRates = {
+  leads: number;
+  /** Total bookings due (provisional + confirmed). */
+  bookings: number;
+  provisional: number;
+  confirmed: number;
+  showed: number;
+  noshow: number;
+  /** Deals marked won by the client in Mahara OS outcomes. */
+  closes: number;
+  /** Past appointments with no outcome recorded in Mahara OS. */
+  noOutcome: number;
+  /** Lead to any booking: bookings / platform leads. */
+  bookRate: number | null;
+  /** Lead to confirmed booking, the main one. */
+  bookRateConfirmed: number | null;
+  bookRateProvisional: number | null;
+  /** showed / (showed + noshow) on meetings whose day has passed. */
+  showRate: number | null;
+  /** Mahara OS won / shown. */
+  closeRate: number | null;
+};
+
+/** One appointment whose time has passed with no outcome in Mahara OS. No contact identity, by design. */
+export type NoOutcomeAppointment = {
+  /** Kuwait day and time, "YYYY-MM-DD HH:MM". */
+  at: string;
+  calendar: string;
+  /** How the CRM has it: confirmed, showed, noshow, new, ... */
+  status: string | null;
 };
 
 export type DeliveryPayload = {
@@ -821,26 +1023,47 @@ export type DeliveryPayload = {
     cpb7d: number | null;
     /** Campaigns running now: with spend in the last three days. */
     campaigns: number;
-    status: "good" | "watch" | "bad" | "no-data";
     /**
-     * The funnel rates the master dashboard reads, over the last 30 days:
-     * lead to booking = bookings / platform leads; show rate = showed /
-     * (showed + no-show) on meetings whose day has passed; close rate =
-     * closes / showed, a close being an opportunity marked won in the
-     * client's CRM. Fractions; null when the denominator is zero. Null as a
-     * whole when Creative Triage could not be read.
+     * Aziz's rule (2026-09-21): good = cost per lead at most $15, cost per
+     * confirmed booking at most $60 and show rate at least 60%; bad = cost
+     * per booking over $80, or cost per lead over $22.50, or show rate under
+     * 40%; watch otherwise. no-data when nothing was spent.
      */
-    rates30: {
-      leads: number;
-      bookings: number;
-      showed: number;
-      noshow: number;
-      closes: number;
-      bookRate: number | null;
-      showRate: number | null;
-      closeRate: number | null;
-    } | null;
+    status: "good" | "watch" | "bad" | "no-data";
+    /** Provisional and confirmed bookings in the last 7 days; `bookings7d` is their sum. Absent on older payloads. */
+    provisional7d?: number;
+    confirmed7d?: number;
+    /** Spend over confirmed bookings, the main cost per booking. */
+    cpbConfirmed7d?: number | null;
+    /**
+     * What a booking that shows would cost at a 60% show rate: cost per
+     * confirmed booking over 0.6. Null without confirmed bookings.
+     */
+    costPerShownAt60?: number | null;
+    /**
+     * The funnel rates over the last 30 days: the three booking rates, the
+     * show rate and the Mahara OS close rate (won outcomes over shown).
+     * Fractions; null when the denominator is zero. Null as a whole when
+     * Creative Triage could not be read.
+     */
+    rates30: DeliveryRates | null;
+    /** Past appointments with no outcome in Mahara OS, newest first, at most 20. Absent on older payloads. */
+    noOutcome?: NoOutcomeAppointment[];
   }[];
+  /**
+   * Company-wide, last 30 days: how much of the past appointment book has an
+   * outcome in Mahara OS, so the close rate can be read with its coverage.
+   * Absent on older payloads.
+   */
+  outcomes?: {
+    pastAppointments: number;
+    withOutcome: number;
+    won: number;
+    /** Mahara OS outcome rows only start on 2026-09-18. */
+    since: string | null;
+  };
+  /** Whether the provisional calendar has produced any appointment row in Creative Triage yet. */
+  provisionalSynced?: boolean;
   launches: {
     inFlight: number;
     stuck: { client: string; days: number; blocker: string | null }[];
@@ -886,6 +1109,20 @@ export type ClientRow = {
    * "not-launched". Absent on older payloads.
    */
   termState?: "in-term" | "renewed" | "no-renewal" | "not-launched";
+  /** The card's LTV field in USD, or null when blank. Absent on older payloads. */
+  ltvUsd?: number | null;
+  /** The card's MRR field in USD, or null when blank. */
+  mrrUsd?: number | null;
+  /** The card's Payment Plan, or null. */
+  paymentPlan?: string | null;
+  /** Kuwait day the ClickUp card was created, or null. */
+  createdDay?: string | null;
+  /** Days from the card's creation to its Launch Date; null without a launch date. First launch only. */
+  daysToLaunch?: number | null;
+  /** Extension weeks granted to this client in the window (Client Extension Form). */
+  extensionWeeks?: number;
+  /** The latest extension's end day, when one is still running. */
+  extendedUntil?: string | null;
 };
 
 /** The payment that counts as a renewal under the 2026-09-16 rule. */
@@ -1006,6 +1243,48 @@ export type ClientsPayload = {
    * payloads stored before the clients adapter filled it have none.
    */
   churn?: ChurnPayload;
+  /**
+   * Extensions granted through the Client Extension Form (Typeform
+   * gqBcyK6g), read straight from Typeform (Aziz, 2026-09-21). The clock
+   * starts at submission. Absent on older payloads.
+   */
+  extensions?: {
+    /** The window the per-client weeks cover, Kuwait days. */
+    from: string;
+    to: string;
+    /** Weeks granted in the window, all clients. */
+    totalWeeks: number;
+    /** Responses in the window. */
+    grants: number;
+    perClient: {
+      client: string;
+      clickupTaskId: string | null;
+      weeks: number;
+      /** The latest grant's end day. */
+      until: string;
+      /** True when that grant is still running today. */
+      live: boolean;
+    }[];
+    /** True when the form was read this run. */
+    read: boolean;
+    /** Whether the current extension was written to the ClickUp card, and why not when not. */
+    clickupField: { written: number; note: string };
+  };
+  /**
+   * Time to first launch: from the ClickUp card's creation to its Launch
+   * Date, over launched clients. First launch only. Absent on older payloads.
+   */
+  launch?: {
+    averageDays: number | null;
+    medianDays: number | null;
+    clients: number;
+    /** Launched clients, slowest first. */
+    rows: { client: string; clickupTaskId: string; days: number; launchDate: string }[];
+    /** Live clients with no launch date, so no time to launch yet. */
+    notLaunched: number;
+  };
+  /** Mean MRR over active cards on a recurring plan, and how many cards that is. Absent on older payloads. */
+  retainer?: { averageUsd: number | null; cards: number };
   notes: Note[];
 };
 

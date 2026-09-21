@@ -71,3 +71,18 @@ export const sectionRows = internalQuery({
   returns: v.array(v.any()),
   handler: async ctx => await ctx.db.query("ceoSections").collect(),
 });
+
+/** One metric's daily points in a scope since a day, oldest first, for an adapter that needs its own history. */
+export const series = internalQuery({
+  args: { metric: v.string(), scope: v.string(), since: v.string() },
+  returns: v.array(v.object({ date: v.string(), value: v.number() })),
+  handler: async (ctx, { metric, scope, since }) => {
+    const rows = await ctx.db
+      .query("ceoDaily")
+      .withIndex("by_metric_scope_date", q =>
+        q.eq("metric", metric).eq("scope", scope).gte("date", since),
+      )
+      .collect();
+    return rows.map(r => ({ date: r.date, value: r.value }));
+  },
+});
