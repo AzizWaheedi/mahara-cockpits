@@ -89,7 +89,11 @@ async function mirrorSection(
     captured_at: now,
   }));
   for (let i = 0; i < rows.length; i += 300)
-    await upsertMerge("cockpit_metric_values", rows.slice(i, i + 300), "day,metric,scope,window");
+    await upsertMerge(
+      "cockpit_metric_values",
+      rows.slice(i, i + 300),
+      "day,metric,scope,window",
+    );
   return `section stored, ${rows.length} values`;
 }
 
@@ -147,7 +151,13 @@ export const refreshAll = internalAction({
           });
         let mirrored = "";
         try {
-          mirrored = await mirrorSection(a.key, a.label, true, res.payload, res.sources);
+          mirrored = await mirrorSection(
+            a.key,
+            a.label,
+            true,
+            res.payload,
+            res.sources,
+          );
         } catch (e) {
           mirrored = `mirror FAILED ${String(e instanceof Error ? e.message : e).slice(0, 160)}`;
         }

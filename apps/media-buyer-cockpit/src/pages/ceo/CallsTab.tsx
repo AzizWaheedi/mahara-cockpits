@@ -32,6 +32,7 @@ import type {
 } from "../../../convex/ceo/payloads";
 import { daysLabel } from "../../../convex/ceo/workingHours";
 import { CallsSettingsCard } from "./callsSettings";
+import { CallsTimeframeCard } from "./timeframeCards";
 import type { CeoTabProps } from "./types";
 
 type AgentRow = CallsPayload["byAgent"][number];
@@ -144,6 +145,14 @@ export function CallsTab({ sections, now, day }: CeoTabProps) {
       </SectionCard>
 
       <div className="grid min-w-0 gap-4 lg:gap-6 @4xl:grid-cols-12">
+        <CallsTimeframeCard
+          section={section}
+          rows={payload?.daily ?? []}
+          now={now}
+          day={day}
+          order={1}
+        />
+
         <SectionCard
           kicker="Last 30 days"
           title="Dials and connected per day"

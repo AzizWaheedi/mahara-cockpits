@@ -172,9 +172,13 @@ async function extensions(ctx: ActionCtx): Promise<Extension[]> {
       const answers: any[] = item.answers ?? [];
       const client =
         answers.find(a => a.field?.ref === EXT_CLIENT_REF)?.text ?? "";
-      const label =
-        answers.find(a => a.field?.ref === EXT_DURATION_REF)?.choice?.label ??
-        "";
+      // A dropdown answer comes back as type "text" with the label in `text`,
+      // a choice answer in `choice.label` (found 2026-09-21: this read had
+      // parsed no response since the form existed).
+      const durationAnswer = answers.find(
+        a => a.field?.ref === EXT_DURATION_REF,
+      );
+      const label = durationAnswer?.choice?.label ?? durationAnswer?.text ?? "";
       const weeks = { "1 WEEK": 1, "2 WEEKS": 2, "4 WEEKS": 4 }[
         String(label).trim().toUpperCase()
       ];

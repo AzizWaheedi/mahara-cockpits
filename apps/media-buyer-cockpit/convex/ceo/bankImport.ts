@@ -61,8 +61,13 @@ export const recordAudit = internalMutation({
   },
 });
 
-async function exclusions(): Promise<(Exclusion & { id: number; note: string | null })[]> {
-  const rows = (await rest("cockpit_expense_exclusions?select=id,kind,pattern,note&order=id")) ?? [];
+async function exclusions(): Promise<
+  (Exclusion & { id: number; note: string | null })[]
+> {
+  const rows =
+    (await rest(
+      "cockpit_expense_exclusions?select=id,kind,pattern,note&order=id",
+    )) ?? [];
   return rows.map(r => ({
     id: Number(r.id),
     kind: r.kind === "card" ? "card" : "vendor",
@@ -71,8 +76,7 @@ async function exclusions(): Promise<(Exclusion & { id: number; note: string | n
   }));
 }
 
-const usdWords = (x: number) =>
-  `$${Math.round(x).toLocaleString("en-US")}`;
+const usdWords = (x: number) => `$${Math.round(x).toLocaleString("en-US")}`;
 
 /**
  * Upload one statement. Returns what was read and what was kept, so the
@@ -87,7 +91,9 @@ export const importStatement = authenticatedAction({
       userId: ctx.userId,
     });
     if (text.length > 4_000_000)
-      throw new Error("That file is over 4 MB; a statement export is far smaller.");
+      throw new Error(
+        "That file is over 4 MB; a statement export is far smaller.",
+      );
     const parsed = parseStatement(text);
     if (!parsed.lines.length)
       throw new Error("The statement has no transaction lines.");
@@ -120,8 +126,12 @@ export const importStatement = authenticatedAction({
             : null,
       };
     });
-    const totalDebit = parsed.lines.filter(l => l.amount < 0).reduce((t, l) => t + l.amount, 0);
-    const totalCredit = parsed.lines.filter(l => l.amount > 0).reduce((t, l) => t + l.amount, 0);
+    const totalDebit = parsed.lines
+      .filter(l => l.amount < 0)
+      .reduce((t, l) => t + l.amount, 0);
+    const totalCredit = parsed.lines
+      .filter(l => l.amount > 0)
+      .reduce((t, l) => t + l.amount, 0);
     await upsertMerge(
       "cockpit_statements",
       [
@@ -131,7 +141,8 @@ export const importStatement = authenticatedAction({
           account_kind: parsed.accountKind,
           currency: parsed.currency,
           from_day: parsed.fromDay,
-          to_day: parsed.toDay ?? parsed.lines[parsed.lines.length - 1]?.day ?? null,
+          to_day:
+            parsed.toDay ?? parsed.lines[parsed.lines.length - 1]?.day ?? null,
           lines: parsed.lines.length,
           total_debit: Math.round(totalDebit * 1000) / 1000,
           total_credit: Math.round(totalCredit * 1000) / 1000,
@@ -145,7 +156,8 @@ export const importStatement = authenticatedAction({
     );
     // Skip lines already held (same bank transaction number): a re-upload of
     // an overlapping period adds only what is new.
-    const kept = (await upsertIgnore("cockpit_bank_lines", lines, "hash")) ?? [];
+    const kept =
+      (await upsertIgnore("cockpit_bank_lines", lines, "hash")) ?? [];
     const byKind = new Map<string, { count: number; usd: number }>();
     for (const l of kept) {
       const k = String(l.kind);
@@ -155,7 +167,8 @@ export const importStatement = authenticatedAction({
       byKind.set(k, r);
     }
     const clientCash = byKind.get("client_payment")?.usd ?? 0;
-    const spend = (byKind.get("expense")?.usd ?? 0) + (byKind.get("fee")?.usd ?? 0);
+    const spend =
+      (byKind.get("expense")?.usd ?? 0) + (byKind.get("fee")?.usd ?? 0);
     await ctx.runMutation(internal.ceo.bankImport.recordAudit, {
       action: "bank.import",
       table: "cockpit_statements",
@@ -203,7 +216,8 @@ export const overview = authenticatedAction({
     const ex = await exclusions();
     const today = kuwaitDay();
     const last = statements.reduce<string | null>(
-      (m, s) => (s.to_day && (!m || String(s.to_day) > m) ? String(s.to_day) : m),
+      (m, s) =>
+        s.to_day && (!m || String(s.to_day) > m) ? String(s.to_day) : m,
       null,
     );
     const daysSince = last
@@ -220,7 +234,8 @@ export const overview = authenticatedAction({
         lines: Number(s.lines ?? 0),
         totalDebit: s.total_debit === null ? null : Number(s.total_debit),
         totalCredit: s.total_credit === null ? null : Number(s.total_credit),
-        closingBalance: s.closing_balance === null ? null : Number(s.closing_balance),
+        closingBalance:
+          s.closing_balance === null ? null : Number(s.closing_balance),
         fileName: s.file_name ? String(s.file_name) : null,
         importedAt: s.imported_at ? Date.parse(String(s.imported_at)) : null,
       })),
@@ -279,7 +294,9 @@ export const addExclusion = authenticatedAction({
       throw new Error("An exclusion needs at least three characters.");
     const rows = await rest("cockpit_expense_exclusions", {
       method: "POST",
-      body: [{ kind: a.kind, pattern, note: a.note?.trim() || null, added_by: by }],
+      body: [
+        { kind: a.kind, pattern, note: a.note?.trim() || null, added_by: by },
+      ],
       prefer: "return=representation",
     });
     const id = rows?.[0]?.id;
@@ -303,7 +320,11 @@ export const removeExclusion = authenticatedAction({
     const by: string = await ctx.runQuery(internal.ceo.ltv.whoami, {
       userId: ctx.userId,
     });
-    const before = (await rest(`cockpit_expense_exclusions?id=eq.${id}&select=id,kind,pattern`))?.[0];
+    const before = (
+      await rest(
+        `cockpit_expense_exclusions?id=eq.${id}&select=id,kind,pattern`,
+      )
+    )?.[0];
     if (!before) throw new Error("That exclusion is not on the list.");
     await rest(`cockpit_expense_exclusions?id=eq.${id}`, {
       method: "DELETE",
@@ -331,7 +352,9 @@ export const reclassify = authenticatedAction({
       userId: ctx.userId,
     });
     const before = (
-      await rest(`cockpit_bank_lines?id=eq.${a.id}&select=id,kind,reference,usd,day`)
+      await rest(
+        `cockpit_bank_lines?id=eq.${a.id}&select=id,kind,reference,usd,day`,
+      )
     )?.[0];
     if (!before) throw new Error("That line is not held.");
     await rest(`cockpit_bank_lines?id=eq.${a.id}`, {

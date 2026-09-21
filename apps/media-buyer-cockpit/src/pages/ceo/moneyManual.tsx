@@ -569,7 +569,8 @@ export function LogPaymentCard({
               </label>
             </div>
             <p className="text-xs text-muted-foreground">
-              A refund comes off cash on its day and counts among refunds, with the Whop refunds.
+              A refund comes off cash on its day and counts among refunds, with
+              the Whop refunds.
             </p>
           </fieldset>
 
@@ -707,7 +708,9 @@ export function LogPaymentCard({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {confirm?.kind === "refund" ? "Log this refund?" : "Log this payment?"}
+              {confirm?.kind === "refund"
+                ? "Log this refund?"
+                : "Log this payment?"}
             </AlertDialogTitle>
             <AlertDialogDescription>
               It adds to cash collected on the Manual rail

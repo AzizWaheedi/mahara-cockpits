@@ -53,7 +53,12 @@ describe("parseStatement", () => {
     expect(p.fromDay).toBe("2026-05-01");
     expect(p.toDay).toBe("2026-05-31");
     expect(p.lines.length).toBe(4);
-    expect(p.lines[1]).toMatchObject({ day: "2026-05-01", amount: 500, balance: 1172.891, trsh: "900002" });
+    expect(p.lines[1]).toMatchObject({
+      day: "2026-05-01",
+      amount: 500,
+      balance: 1172.891,
+      trsh: "900002",
+    });
     expect(p.totalDebit).toBe(-4772.31);
     expect(p.closingBalance).toBe(175.735);
     expect(p.problems).toEqual([]);
@@ -67,7 +72,9 @@ describe("parseStatement", () => {
     expect(p.lines.length).toBe(5);
   });
   test("refuses text with no statement table", () => {
-    expect(() => parseStatement("hello,world\n1,2")).toThrow(/not a CBK statement/);
+    expect(() => parseStatement("hello,world\n1,2")).toThrow(
+      /not a CBK statement/,
+    );
   });
   test("day and amount helpers", () => {
     expect(parseDay("01-May-2026")).toBe("2026-05-01");
@@ -106,9 +113,26 @@ describe("classifyLine", () => {
     expect(card(-150, "UnloadXXXXX4348 /IB")).toBe("own_transfer");
   });
   test("exclusions by vendor and by card", () => {
-    const ex = [{ kind: "vendor" as const, pattern: "netflix" }, { kind: "card" as const, pattern: "537015XXXXXX4348" }];
-    expect(classifyLine({ amount: -9, reference: "NETFLIX.COM" }, "account", "0011223344", ex)).toBe("excluded");
-    expect(classifyLine({ amount: -9, reference: "OPENAI" }, "card", "537015XXXXXX4348", ex)).toBe("excluded");
+    const ex = [
+      { kind: "vendor" as const, pattern: "netflix" },
+      { kind: "card" as const, pattern: "537015XXXXXX4348" },
+    ];
+    expect(
+      classifyLine(
+        { amount: -9, reference: "NETFLIX.COM" },
+        "account",
+        "0011223344",
+        ex,
+      ),
+    ).toBe("excluded");
+    expect(
+      classifyLine(
+        { amount: -9, reference: "OPENAI" },
+        "card",
+        "537015XXXXXX4348",
+        ex,
+      ),
+    ).toBe("excluded");
     expect(isExcluded("OPENAI", "0011223344", ex)).toBeNull();
   });
 });
@@ -134,11 +158,22 @@ describe("matchPayouts", () => {
       { id: "c", day: "2026-06-03", usd: 300 },
       { id: "d", day: "2026-06-20", usd: 1000 },
     ];
-    const m = matchPayouts([{ id: "p1", day: "2026-06-05", usd: 1470 }], payments);
-    expect(m.get("p1")).toEqual({ from: "2026-06-01", to: "2026-06-03", count: 3, usd: 1500 });
+    const m = matchPayouts(
+      [{ id: "p1", day: "2026-06-05", usd: 1470 }],
+      payments,
+    );
+    expect(m.get("p1")).toEqual({
+      from: "2026-06-01",
+      to: "2026-06-03",
+      count: 3,
+      usd: 1500,
+    });
   });
   test("leaves a payout unmatched when no run fits", () => {
-    const m = matchPayouts([{ id: "p1", day: "2026-06-05", usd: 999 }], [{ id: "a", day: "2026-06-01", usd: 500 }]);
+    const m = matchPayouts(
+      [{ id: "p1", day: "2026-06-05", usd: 999 }],
+      [{ id: "a", day: "2026-06-01", usd: 500 }],
+    );
     expect(m.size).toBe(0);
   });
 });

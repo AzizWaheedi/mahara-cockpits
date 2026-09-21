@@ -102,6 +102,9 @@ export const load = internalQuery({
       stage: c.stage,
       bucket: c.bucket ?? null,
       launchDate: c.launchDate ?? null,
+      // Days since the ClickUp card's date_created as of this sync: the
+      // clock for time to first launch.
+      signupDays: c.signupDays ?? null,
       csm: c.csmAssigned ?? null,
       service: c.service ?? null,
       happiness: c.happiness ?? null,

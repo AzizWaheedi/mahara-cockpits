@@ -1,7 +1,13 @@
 import type { FunnelWindow, GrowthPayload, Note } from "../payloads";
 import { B2B, num, type Row, sql } from "../sb";
+import { workingHoursForAdapters } from "../settings";
 import { addDays, daysInMonth, kuwaitDay, monthStart } from "../time";
 import type { Adapter, DailyPoint, SourceStamp } from "../types";
+import {
+  describeWorkingHours,
+  type WorkingHoursLike,
+  workingMinutesSql,
+} from "../workingHours";
 
 // biome-ignore lint/suspicious/noExplicitAny: the B2B functions return jsonb
 type Any = any;
@@ -123,7 +129,15 @@ const DEPOSIT_CONFIRMED = `(exists (
  * call once that form is read (it is not yet), with the share a Whop payment
  * or a bank transfer confirms.
  */
-function windowsSql(ranges: Record<WindowKey, Range>): string {
+function windowsSql(
+  ranges: Record<WindowKey, Range>,
+  hours: WorkingHoursLike,
+): string {
+  const workingMin = workingMinutesSql(
+    "l.lead_created_at",
+    "fc.first_call",
+    hours,
+  );
   const values = Object.entries(ranges)
     .map(([k, [f, t]]) => `('${k}', ${day(f)}, ${day(t)})`)
     .join(",\n    ");
@@ -155,6 +169,8 @@ speed as (
     count(fc.first_call) as sp_called,
     percentile_cont(0.5) within group (order by extract(epoch from (fc.first_call - l.lead_created_at)) / 60.0) filter (where fc.first_call is not null) as sp_median_min,
     count(*) filter (where fc.first_call is not null and fc.first_call - l.lead_created_at <= interval '5 minutes') as sp_within_5,
+    percentile_cont(0.5) within group (order by (${workingMin})) filter (where fc.first_call is not null) as sp_working_median_min,
+    count(*) filter (where fc.first_call is not null and (${workingMin}) <= 5) as sp_working_within_5,
     count(*) filter (where exists (
       select 1 from public.calls c
       where c.contact_id is not null and c.contact_id = l.contact_id and c.call_type in ('intro', 'demo'))) as booked_leads,
@@ -186,6 +202,7 @@ select w.k, w.f::text as d_from, w.t::text as d_to,
   coalesce(sc.demos_still_confirmed, 0) as demos_still_confirmed,
   coalesce(r.q, 0) as roas_q, coalesce(r.u, 0) as roas_u, coalesce(r.nr, 0) as roas_nr, coalesce(r.untagged, 0) as roas_untagged,
   coalesce(sp.sp_leads, 0) as sp_leads, coalesce(sp.sp_called, 0) as sp_called, sp.sp_median_min, coalesce(sp.sp_within_5, 0) as sp_within_5,
+  sp.sp_working_median_min, coalesce(sp.sp_working_within_5, 0) as sp_working_within_5,
   coalesce(sp.booked_leads, 0) as booked_leads,
   coalesce(sp.src_ads, 0) as src_ads, coalesce(sp.src_organic, 0) as src_organic, coalesce(sp.src_assumed, 0) as src_assumed,
   coalesce(fe.fe_deals, 0) as fe_deals, coalesce(fe.fe_deposit, 0) as fe_deposit,
@@ -527,6 +544,11 @@ function toWindow(r: Row): FunnelWindow {
       neverCalled: Math.max(0, spLeads - called),
       medianMin: medianMin === null ? null : Math.round(medianMin * 10) / 10,
       within5Share: ratio(num(r.sp_within_5), called, 3),
+      workingMedianMin:
+        orNull(r.sp_working_median_min) === null
+          ? null
+          : Math.round(num(r.sp_working_median_min) * 10) / 10,
+      workingWithin5Share: ratio(num(r.sp_working_within_5), called, 3),
     },
     leadToBooked: {
       bookedLeads,
@@ -602,8 +624,10 @@ export const growth: Adapter = {
     const ranges = windowRanges(today);
     const notes: Note[] = [];
 
+    // The working hours the speed-to-lead clock uses (cockpit_settings, or the default).
+    const wh = await workingHoursForAdapters();
     // Core read. No fallback: a failure keeps the last good payload.
-    const windowRows = await sql(B2B, windowsSql(ranges));
+    const windowRows = await sql(B2B, windowsSql(ranges, wh.hours));
     const byKey = new Map(windowRows.map(r => [String(r.k), r]));
     const rowOf = (k: WindowKey): Row => {
       const r = byKey.get(k);
@@ -755,7 +779,7 @@ export const growth: Adapter = {
       },
       {
         level: "info",
-        text: "Speed to lead runs from the lead's creation to the first Maqsam call with it by a sales rep on the roster (setter, closer or both), never a call-centre agent. The median is over the leads that were called; the never-called are counted beside it.",
+        text: `Speed to lead runs from the lead's creation to the first Maqsam call with it by a sales rep on the roster (setter, closer or both), never a call-centre agent. The median is over the leads that were called; the never-called are counted beside it. The working-hours figure starts the clock at the later of the lead's creation and the next working window and counts working minutes only (${describeWorkingHours(wh.hours)}${wh.ready ? "" : ", the default"}).`,
       },
       {
         level: "info",

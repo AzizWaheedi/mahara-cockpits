@@ -29,7 +29,8 @@ const RANGE_KEYS: RangeKey[] = [
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 function readParams(): { range: RangeKey; custom: CustomRange } {
-  if (typeof window === "undefined") return { range: "30d", custom: { from: "", to: "" } };
+  if (typeof window === "undefined")
+    return { range: "30d", custom: { from: "", to: "" } };
   const p = new URLSearchParams(window.location.search);
   const r = p.get("range") as RangeKey | null;
   const range = r && RANGE_KEYS.includes(r) ? r : "30d";
@@ -63,14 +64,23 @@ export type Timeframe = {
   custom: CustomRange;
   setCustom: (c: CustomRange) => void;
   /** The inclusive days the timeframe covers, given the newest complete day; null while a custom date is missing. */
-  bounds: (last: string, first?: string | null) => { from: string; to: string } | null;
+  bounds: (
+    last: string,
+    first?: string | null,
+  ) => { from: string; to: string } | null;
 };
 
 /** The tab's timeframe, read from and written to the URL. */
 export function useTimeframe(initial: RangeKey = "30d"): Timeframe {
   const [state, setState] = useState(() => {
     const p = readParams();
-    return { range: p.range === "30d" && !window.location.search.includes("range=") ? initial : p.range, custom: p.custom };
+    return {
+      range:
+        p.range === "30d" && !window.location.search.includes("range=")
+          ? initial
+          : p.range,
+      custom: p.custom,
+    };
   });
   const setRange = useCallback((range: RangeKey) => {
     setState(s => {
@@ -87,7 +97,8 @@ export function useTimeframe(initial: RangeKey = "30d"): Timeframe {
   const bounds = useCallback(
     (last: string, first?: string | null) => {
       if (state.range === "custom") {
-        if (!DAY.test(state.custom.from) || !DAY.test(state.custom.to)) return null;
+        if (!DAY.test(state.custom.from) || !DAY.test(state.custom.to))
+          return null;
         return state.custom.from <= state.custom.to
           ? { from: state.custom.from, to: state.custom.to }
           : null;
@@ -99,7 +110,13 @@ export function useTimeframe(initial: RangeKey = "30d"): Timeframe {
     [state.range, state.custom],
   );
   return useMemo(
-    () => ({ range: state.range, setRange, custom: state.custom, setCustom, bounds }),
+    () => ({
+      range: state.range,
+      setRange,
+      custom: state.custom,
+      setCustom,
+      bounds,
+    }),
     [state, setRange, setCustom, bounds],
   );
 }
@@ -185,7 +202,10 @@ export function windowFromDaily(
     cancel: {
       intro: share(introsCancelled, introsScheduled),
       demo: share(demosCancelled, demosScheduled),
-      total: share(introsCancelled + demosCancelled, introsScheduled + demosScheduled),
+      total: share(
+        introsCancelled + demosCancelled,
+        introsScheduled + demosScheduled,
+      ),
       introsCancelled,
       introsScheduled,
       demosCancelled,

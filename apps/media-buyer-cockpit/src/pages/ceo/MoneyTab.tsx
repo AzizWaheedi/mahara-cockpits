@@ -50,6 +50,7 @@ import {
   ManualEntriesCard,
 } from "./moneyManual";
 import { PayerMappingCard } from "./moneyPayers";
+import { MoneyTimeframeCard } from "./timeframeCards";
 import type { CeoTabProps } from "./types";
 
 type Deal = MoneyPayload["deals"]["recent"][number];
@@ -78,7 +79,10 @@ type PnlKey = "month" | "software" | "overhead" | "labour" | "ads" | "totals";
 // and "Expenses and bank transfers" the expenses card before it. Anything
 // unmatched lands on the cash card, so no note is ever dropped.
 const NOTE_ROUTES: readonly (readonly [RegExp, CardKey])[] = [
-  [/bank statement|statements? (is|are|ends|held)|statement line|whop payout|tap settlement|exclusion|uploaded/i, "bank"],
+  [
+    /bank statement|statements? (is|are|ends|held)|statement line|whop payout|tap settlement|exclusion|uploaded/i,
+    "bank",
+  ],
   [
     /attribut|transactions tab|kickoff cash|payer mapping could not/i,
     "attribution",
@@ -204,7 +208,7 @@ export function MoneyTab({ sections, now, day, goTab }: CeoTabProps) {
   const showLegacy = expenses === null;
 
   return (
-    <div className="grid gap-4 lg:gap-6">
+    <div className="grid gap-5 lg:gap-7">
       <HalfHeading
         first
         title="Cash in"
@@ -237,6 +241,20 @@ export function MoneyTab({ sections, now, day, goTab }: CeoTabProps) {
           >
             {p => <RailsBody p={p} today={today} now={now} />}
           </SectionCard>
+
+          <MoneyTimeframeCard
+            section={section}
+            rails={[
+              payload.rails?.total,
+              payload.rails?.whop,
+              payload.rails?.tap,
+              payload.rails?.manual,
+              payload.rails?.bank,
+            ].filter((r): r is NonNullable<typeof r> => Boolean(r))}
+            now={now}
+            day={day}
+            order={2}
+          />
 
           <SectionCard
             kicker={`${month(monthKey, { long: true, year: true })}, with last month and the last 12 months beside it`}
@@ -317,7 +335,7 @@ export function MoneyTab({ sections, now, day, goTab }: CeoTabProps) {
           <PayerMappingCard order={10} />
           <LtvWriteCard order={11} />
 
-          <div className="grid gap-4 lg:gap-6 xl:grid-cols-12">
+          <div className="grid gap-5 lg:gap-7 xl:grid-cols-12">
             <SectionCard
               kicker="Last 12 months"
               title="Cash and contracted by month"
@@ -1563,7 +1581,7 @@ function PnlHalf({
     : "no month loaded";
 
   return (
-    <div className="grid gap-4 lg:gap-6">
+    <div className="grid gap-5 lg:gap-7">
       <SectionCard
         title={`Expenses, ${monthLabel}`}
         section={section}

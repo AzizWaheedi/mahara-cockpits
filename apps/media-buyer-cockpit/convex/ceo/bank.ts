@@ -89,8 +89,18 @@ export type Exclusion = { kind: "card" | "vendor"; pattern: string };
 const DAY_DMY = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
 const DAY_DMON = /^(\d{1,2})-([A-Za-z]{3})-(\d{4})$/;
 const MONTHS: Record<string, string> = {
-  jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
-  jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12",
+  jan: "01",
+  feb: "02",
+  mar: "03",
+  apr: "04",
+  may: "05",
+  jun: "06",
+  jul: "07",
+  aug: "08",
+  sep: "09",
+  oct: "10",
+  nov: "11",
+  dec: "12",
 };
 
 /** "01/05/2026" or "01-May-2026" as YYYY-MM-DD; null when it is neither. */
@@ -108,7 +118,10 @@ export function parseDay(s: string): string | null {
 
 /** "-4,772.310" as a number; null when it is not one. */
 export function parseAmount(s: string): number | null {
-  const t = s.trim().replace(/,/g, "").replace(/^\((.*)\)$/, "-$1");
+  const t = s
+    .trim()
+    .replace(/,/g, "")
+    .replace(/^\((.*)\)$/, "-$1");
   if (!t || !/^-?\d+(\.\d+)?$/.test(t)) return null;
   return Number(t);
 }
@@ -136,9 +149,17 @@ export function splitCsv(line: string): string[] {
 
 /** "Account  537015XXXXXX4348" → ["Account", "537015XXXXXX4348"]. */
 function preambleKv(cell: string): [string, string] | null {
-  const m = /^([A-Za-z][A-Za-z .]*?(?:\[[^\]]*\])?)\s{2,}(.+)$/.exec(cell.trim());
+  const m = /^([A-Za-z][A-Za-z .]*?(?:\[[^\]]*\])?)\s{2,}(.+)$/.exec(
+    cell.trim(),
+  );
   if (!m) return null;
-  return [m[1].replace(/\s*\[[^\]]*\]\s*$/, "").trim().toLowerCase(), m[2].trim()];
+  return [
+    m[1]
+      .replace(/\s*\[[^\]]*\]\s*$/, "")
+      .trim()
+      .toLowerCase(),
+    m[2].trim(),
+  ];
 }
 
 /** Parse a CBK Online CSV export. Throws only when no statement table is found. */
@@ -149,11 +170,14 @@ export function parseStatement(text: string): ParsedStatement {
   let fromDay: string | null = null;
   let toDay: string | null = null;
   let header = -1;
-  let cols: Record<string, number> = {};
+  const cols: Record<string, number> = {};
   for (let i = 0; i < rows.length; i++) {
     const cells = splitCsv(rows[i]);
     const first = cells[0] ?? "";
-    if (/^date$/i.test(first) && cells.some(c => /^amount$|^debit$|^credit$/i.test(c))) {
+    if (
+      /^date$/i.test(first) &&
+      cells.some(c => /^amount$|^debit$|^credit$/i.test(c))
+    ) {
       header = i;
       cells.forEach((c, j) => {
         cols[c.toLowerCase().replace(/[^a-z_]/g, "")] = j;
@@ -164,7 +188,8 @@ export function parseStatement(text: string): ParsedStatement {
     if (!kv) continue;
     const [k, v] = kv;
     if (k === "account") account = v;
-    else if (k === "currency" || k === "type") currencyLine = `${currencyLine} ${v}`.trim();
+    else if (k === "currency" || k === "type")
+      currencyLine = `${currencyLine} ${v}`.trim();
     else if (k.startsWith("from date")) fromDay = parseDay(v);
     else if (k.startsWith("to date")) toDay = parseDay(v);
   }
@@ -172,8 +197,13 @@ export function parseStatement(text: string): ParsedStatement {
     throw new Error(
       "This is not a CBK statement export: no Date, Amount, Balance table was found.",
     );
-  const accountKind: AccountKind = /\bcard\b/i.test(currencyLine) ? "card" : "account";
-  const currency = /\b(KWD|USD|EUR|GBP|AED|SAR|QAR)\b/i.exec(currencyLine)?.[1]?.toUpperCase() ?? "KWD";
+  const accountKind: AccountKind = /\bcard\b/i.test(currencyLine)
+    ? "card"
+    : "account";
+  const currency =
+    /\b(KWD|USD|EUR|GBP|AED|SAR|QAR)\b/i
+      .exec(currencyLine)?.[1]
+      ?.toUpperCase() ?? "KWD";
 
   const lines: StatementLine[] = [];
   const problems: string[] = [];
@@ -196,12 +226,19 @@ export function parseStatement(text: string): ParsedStatement {
       };
       totalDebit = num(/Total Debit[^0-9-]*(-?[\d,]+\.?\d*)/i) ?? totalDebit;
       totalCredit = num(/Total Credit[^0-9-]*(-?[\d,]+\.?\d*)/i) ?? totalCredit;
-      closingBalance = num(/Curr\.? Bal\.?[^0-9-]*(-?[\d,]+\.?\d*)/i) ?? closingBalance;
-      if (!/total|bal\./i.test(joined)) problems.push(`Line ${i + 1} has no date and is not a total: ${raw.slice(0, 60)}`);
+      closingBalance =
+        num(/Curr\.? Bal\.?[^0-9-]*(-?[\d,]+\.?\d*)/i) ?? closingBalance;
+      if (!/total|bal\./i.test(joined))
+        problems.push(
+          `Line ${i + 1} has no date and is not a total: ${raw.slice(0, 60)}`,
+        );
       continue;
     }
     let amount = parseAmount(at(cells, "amount"));
-    if (amount === null && (cols.debit !== undefined || cols.credit !== undefined)) {
+    if (
+      amount === null &&
+      (cols.debit !== undefined || cols.credit !== undefined)
+    ) {
       const d = parseAmount(at(cells, "debit")) ?? 0;
       const c = parseAmount(at(cells, "credit")) ?? 0;
       amount = c - Math.abs(d);
@@ -214,7 +251,11 @@ export function parseStatement(text: string): ParsedStatement {
       day,
       amount,
       balance: parseAmount(at(cells, "balance")),
-      reference: at(cells, "reference") || at(cells, "description") || at(cells, "narration") || "",
+      reference:
+        at(cells, "reference") ||
+        at(cells, "description") ||
+        at(cells, "narration") ||
+        "",
       trsh: at(cells, "trsh_number") || at(cells, "trshnumber") || null,
       line: i + 1,
     });
@@ -250,9 +291,11 @@ export function statementId(p: ParsedStatement): string {
 const WHOP = /\bwhop\b/i;
 const WHOP_PURCHASE = /whop\s*\*/i;
 const TAP = /\btap\b|tap payments|tap company|tap\.company/i;
-const FEE = /non sufficient|decline fee|ann\.?\s*sub\.?\s*fee|service charge|\bcommission\b|\bfee\b|charges?\b/i;
+const FEE =
+  /non sufficient|decline fee|ann\.?\s*sub\.?\s*fee|service charge|\bcommission\b|\bfee\b|charges?\b/i;
 const REFUND = /refund|reversal|chargeback|revers/i;
-const OWN_MASK = /\d{3,6}X{4,}\d{3,4}|\/CC\b|\/IB\b|transfer to card|card top ?up|own account|\bunload\b|weyay top up|top up kw/i;
+const OWN_MASK =
+  /\d{3,6}X{4,}\d{3,4}|\/CC\b|\/IB\b|transfer to card|card top ?up|own account|\bunload\b|weyay top up|top up kw/i;
 
 /** A vendor exclusion matches a case-insensitive fragment of the reference; a card exclusion matches the account. */
 export function isExcluded(
@@ -313,9 +356,18 @@ export type ExpenseCategory =
   | "other";
 
 const CATEGORY_RULES: { category: ExpenseCategory; test: RegExp }[] = [
-  { category: "ads", test: /facebk|facebook|meta platforms|\bmeta\b|google ads|googleads|tiktok|snap\b|snapchat/i },
-  { category: "courses", test: /whop\s*\*|teachable|kajabi|skool|circle\.so|udemy|maven/i },
-  { category: "labour", test: /salary|salaries|payroll|wages|freelanc|upwork|fiverr|khamsat|mostaql|payoneer|hired!|deel\b|remote\.com/i },
+  {
+    category: "ads",
+    test: /facebk|facebook|meta platforms|\bmeta\b|google ads|googleads|tiktok|snap\b|snapchat/i,
+  },
+  {
+    category: "courses",
+    test: /whop\s*\*|teachable|kajabi|skool|circle\.so|udemy|maven/i,
+  },
+  {
+    category: "labour",
+    test: /salary|salaries|payroll|wages|freelanc|upwork|fiverr|khamsat|mostaql|payoneer|hired!|deel\b|remote\.com/i,
+  },
   { category: "bank", test: FEE },
   {
     category: "software",
@@ -338,7 +390,12 @@ export function toUsd(amount: number, currency: string): number | null {
 
 export type Payout = { id: string; day: string; usd: number };
 export type PaymentLike = { id: string; day: string; usd: number };
-export type PayoutMatch = { from: string; to: string; count: number; usd: number };
+export type PayoutMatch = {
+  from: string;
+  to: string;
+  count: number;
+  usd: number;
+};
 
 function dayDiff(a: string, b: string): number {
   return Math.round((Date.parse(b) - Date.parse(a)) / 86_400_000);
@@ -354,14 +411,22 @@ function dayDiff(a: string, b: string): number {
 export function matchPayouts(
   payouts: Payout[],
   payments: PaymentLike[],
-  opts: { lookback: number; tolerance: number } = { lookback: 14, tolerance: 0.03 },
+  opts: { lookback: number; tolerance: number } = {
+    lookback: 14,
+    tolerance: 0.03,
+  },
 ): Map<string, PayoutMatch> {
   const out = new Map<string, PayoutMatch>();
   const used = new Set<string>();
-  const sorted = [...payments].sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
+  const sorted = [...payments].sort((a, b) =>
+    a.day < b.day ? -1 : a.day > b.day ? 1 : 0,
+  );
   for (const p of [...payouts].sort((a, b) => (a.day < b.day ? -1 : 1))) {
     const pool = sorted.filter(
-      x => !used.has(x.id) && dayDiff(x.day, p.day) >= 0 && dayDiff(x.day, p.day) <= opts.lookback,
+      x =>
+        !used.has(x.id) &&
+        dayDiff(x.day, p.day) >= 0 &&
+        dayDiff(x.day, p.day) <= opts.lookback,
     );
     let hit: PaymentLike[] | null = null;
     for (let start = 0; start < pool.length && !hit; start++) {

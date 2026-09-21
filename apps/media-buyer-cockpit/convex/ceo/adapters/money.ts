@@ -10,8 +10,15 @@ import {
   FRONT_END_DAYS_MONTHLY,
   type PaymentIn,
 } from "../attribution";
-import { type BillingRow, LIVE_GROUPS, summariseBilling } from "../billing";
 import { KIND_LABEL, type LineKind, matchPayouts } from "../bank";
+import {
+  type BillingRow,
+  type BillingRow as BillingRowType,
+  groupOf,
+  isOneOffPlan,
+  LIVE_GROUPS,
+  summariseBilling,
+} from "../billing";
 import { byNewest, type ManualLoad, type ManualRow } from "../data/money";
 import {
   capturedCharges,
@@ -21,13 +28,12 @@ import {
   tapKeyState,
   USD_PER,
 } from "../data/tap";
-import { type BillingRow as BillingRowType, groupOf, isOneOffPlan } from "../billing";
 import {
   amountGap,
   cashDuplicates,
   coverWithTap,
-  dayGap,
   type DealLike,
+  dayGap,
   dealDuplicates,
   MATCH_DAYS,
   MATCH_GAP,
@@ -36,7 +42,6 @@ import {
   usdWords,
   type WhopLike,
 } from "../manualMatch";
-import { sbWritable, upsertMerge } from "../sbWrite";
 import type {
   CashRail,
   ManualPaymentRow,
@@ -47,6 +52,7 @@ import type {
   Transaction,
 } from "../payloads";
 import { B2B, num, type Row, sql, TRIAGE } from "../sb";
+import { sbWritable, upsertMerge } from "../sbWrite";
 import {
   addDays,
   daysInMonth,
@@ -891,7 +897,12 @@ export const money: Adapter = {
         if (!line) continue;
         let left = m.count;
         for (const c of sorted)
-          if (left > 0 && c.day >= m.from && c.day <= m.to && !tapCoveredIds.has(c.id)) {
+          if (
+            left > 0 &&
+            c.day >= m.from &&
+            c.day <= m.to &&
+            !tapCoveredIds.has(c.id)
+          ) {
             tapCoveredIds.add(c.id);
             left -= 1;
           }
@@ -912,7 +923,11 @@ export const money: Adapter = {
             value: usd(p.value - (byDay.get(p.date) ?? 0)),
           }));
           const between = (f: string, t: string) =>
-            usd(rail.daily.filter(p => p.date >= f && p.date <= t).reduce((x, p) => x + p.value, 0));
+            usd(
+              rail.daily
+                .filter(p => p.date >= f && p.date <= t)
+                .reduce((x, p) => x + p.value, 0),
+            );
           rail.today = between(today, today);
           rail.yesterday = between(addDays(today, -1), addDays(today, -1));
           rail.mtd = between(monthStart(today), today);
@@ -975,7 +990,9 @@ export const money: Adapter = {
     if (manual) {
       // Refunds logged by hand are money given back: they come off the
       // manual rail on their day and are counted among refunds, never as cash.
-      const refundEntries: ManualRow[] = manual.live.filter(e => e.kind === "refund");
+      const refundEntries: ManualRow[] = manual.live.filter(
+        e => e.kind === "refund",
+      );
       manualRefunds = refundEntries;
       const entries: ManualRow[] = manual.live.filter(e => e.kind !== "refund");
       const book = nameBook(manual.cards);
@@ -992,7 +1009,9 @@ export const money: Adapter = {
         : new Map<string, TapCover>();
       // A bank transfer, cheque or cash payment logged by hand drops out once
       // a statement line shows the same money: it counts once, on the Bank rail.
-      const bankClientLines = bankLines.filter(l => l.kind === "client_payment");
+      const bankClientLines = bankLines.filter(
+        l => l.kind === "client_payment",
+      );
       const usedBankLine = new Set<number>();
       for (const e of entries) {
         if (covered.has(e.id) || e.rail === "tap") continue;
@@ -1003,12 +1022,16 @@ export const money: Adapter = {
           if (d > MATCH_DAYS) continue;
           const g = amountGap(e.amountUsd, l.usd);
           if (g > MATCH_GAP) continue;
-          if (!best || d < best.d || (d === best.d && g < best.g)) best = { id: l.id, d, g };
+          if (!best || d < best.d || (d === best.d && g < best.g))
+            best = { id: l.id, d, g };
         }
         if (best) {
           usedBankLine.add(best.id);
           const line = bankClientLines.find(l => l.id === best?.id);
-          covered.set(e.id, { chargeDay: line?.day ?? e.day, chargeUsd: line?.usd ?? e.amountUsd });
+          covered.set(e.id, {
+            chargeDay: line?.day ?? e.day,
+            chargeUsd: line?.usd ?? e.amountUsd,
+          });
           manualCoveredByBank += 1;
         }
       }
@@ -1269,28 +1292,42 @@ export const money: Adapter = {
       for (let d = from180; d <= today; d = addDays(d, 1))
         bankDaily.push({ date: d, value: usd(byBankDay.get(d) ?? 0) });
       const bankBetween = (f: string, t: string) =>
-        usd(bankDaily.filter(p => p.date >= f && p.date <= t).reduce((x, p) => x + p.value, 0));
+        usd(
+          bankDaily
+            .filter(p => p.date >= f && p.date <= t)
+            .reduce((x, p) => x + p.value, 0),
+        );
       const bankMtd = bankBetween(monthStart(today), today);
       const newestClient = bankLines
         .filter(l => l.kind === "client_payment")
-        .reduce<string | null>((m, l) => (m === null || l.day > m ? l.day : m), null);
+        .reduce<string | null>(
+          (m, l) => (m === null || l.day > m ? l.day : m),
+          null,
+        );
       bankRail.connected = true;
       bankRail.today = bankBetween(today, today);
       bankRail.yesterday = bankBetween(addDays(today, -1), addDays(today, -1));
       bankRail.mtd = bankMtd;
-      bankRail.lastMonthToDate = bankBetween(lastMonthStart, lastMonthToDateEnd);
+      bankRail.lastMonthToDate = bankBetween(
+        lastMonthStart,
+        lastMonthToDateEnd,
+      );
       bankRail.lastMonth = bankBetween(lastMonthStart, lastMonthEnd);
       bankRail.projectedMonth = usd((bankMtd / dayOfMonth) * dim);
       // A refund given back never shows on our statement as a debit we can
       // tell from an expense, so the Bank rail carries no refund figure.
       bankRail.refundsMtd = null;
       bankRail.daily = bankDaily;
-      bankRail.lastPaymentAt = newestClient ? kuwaitMidnight(newestClient) : null;
+      bankRail.lastPaymentAt = newestClient
+        ? kuwaitMidnight(newestClient)
+        : null;
     }
 
     // --- The total covers the connected rails only, and a total over a
     // number no rail can give stays null rather than quietly dropping to 0.
-    const connected = [whopRail, tapRail, manualRail, bankRail].filter(r => r.connected);
+    const connected = [whopRail, tapRail, manualRail, bankRail].filter(
+      r => r.connected,
+    );
     const railSum = (
       rails: CashRail[],
       pick: (r: CashRail) => number | null,
@@ -1888,7 +1925,8 @@ export const money: Adapter = {
       for (const l of bankLines) {
         if (l.kind === "client_payment") continue;
         const out = l.usd < 0;
-        const isExpense = l.kind === "expense" || l.kind === "fee" || l.kind === "excluded";
+        const isExpense =
+          l.kind === "expense" || l.kind === "fee" || l.kind === "excluded";
         outRows.push({
           id: `bankline:${l.id}`,
           day: l.day,
@@ -1900,7 +1938,8 @@ export const money: Adapter = {
           payerEmail: null,
           payerName: l.reference || null,
           side: isExpense || out ? "out" : "unattributed",
-          kind: l.kind === "excluded" ? "expense" : isExpense ? "expense" : "none",
+          kind:
+            l.kind === "excluded" ? "expense" : isExpense ? "expense" : "none",
           person: null,
           personRole: null,
           dealBusiness: null,
@@ -1908,9 +1947,9 @@ export const money: Adapter = {
           clientTaskId: null,
           matchedBy:
             l.kind === "whop_payout"
-              ? (payoutMatches.get(String(l.id))
-                  ? `Whop payments ${payoutMatches.get(String(l.id))?.from} to ${payoutMatches.get(String(l.id))?.to}`
-                  : "none")
+              ? payoutMatches.get(String(l.id))
+                ? `Whop payments ${payoutMatches.get(String(l.id))?.from} to ${payoutMatches.get(String(l.id))?.to}`
+                : "none"
               : "none",
           detail: `${KIND_LABEL[l.kind] ?? l.kind}${l.category ? ` · ${l.category}` : ""}${l.note ? ` · ${l.note}` : ""}`,
           bankKind: l.kind,
@@ -2039,7 +2078,9 @@ export const money: Adapter = {
       null,
     );
     const daysSince = lastStatementTo
-      ? Math.round((Date.parse(today) - Date.parse(lastStatementTo)) / 86_400_000)
+      ? Math.round(
+          (Date.parse(today) - Date.parse(lastStatementTo)) / 86_400_000,
+        )
       : null;
     const bankKinds = new Map<string, { count: number; usd: number }>();
     for (const l of bankLines) {
@@ -2050,7 +2091,12 @@ export const money: Adapter = {
     }
     const expByMonth = new Map<
       string,
-      { total: number; byCategory: Map<string, { usd: number; lines: number }>; excluded: { usd: number; lines: number }; fees: number }
+      {
+        total: number;
+        byCategory: Map<string, { usd: number; lines: number }>;
+        excluded: { usd: number; lines: number };
+        fees: number;
+      }
     >();
     for (const l of bankLines) {
       if (!["expense", "fee", "excluded"].includes(l.kind)) continue;
@@ -2094,7 +2140,9 @@ export const money: Adapter = {
         count: payoutLines.length,
         matched: payoutMatches.size,
         usd: usd(payoutLines.reduce((t, l) => t + l.usd, 0)),
-        matchedUsd: usd([...payoutMatches.values()].reduce((t, m) => t + m.usd, 0)),
+        matchedUsd: usd(
+          [...payoutMatches.values()].reduce((t, m) => t + m.usd, 0),
+        ),
       },
       tapSettlements: {
         count: settlementLines.length,
@@ -2108,7 +2156,11 @@ export const money: Adapter = {
           month: m,
           total: usd(row.total),
           byCategory: [...row.byCategory.entries()]
-            .map(([category, c]) => ({ category, usd: usd(c.usd), lines: c.lines }))
+            .map(([category, c]) => ({
+              category,
+              usd: usd(c.usd),
+              lines: c.lines,
+            }))
             .sort((a, b) => b.usd - a.usd),
           excluded: { usd: usd(row.excluded.usd), lines: row.excluded.lines },
           fees: usd(row.fees),
@@ -2175,27 +2227,49 @@ export const money: Adapter = {
           since: firstMonthStart,
         }),
       ]);
-      const collByMonth = new Map(collSeries.map(p => [p.date.slice(0, 7), p.value]));
+      const collByMonth = new Map(
+        collSeries.map(p => [p.date.slice(0, 7), p.value]),
+      );
       const history = projSeries
         .filter(p => p.date.slice(0, 7) !== month)
         .map(p => {
           const m = p.date.slice(0, 7);
           const c = collByMonth.get(m) ?? 0;
-          return { month: m, projected: p.value, collected: c, rate: p.value > 0 ? Math.round((c / p.value) * 1000) / 1000 : null };
+          return {
+            month: m,
+            projected: p.value,
+            collected: c,
+            rate: p.value > 0 ? Math.round((c / p.value) * 1000) / 1000 : null,
+          };
         });
       book = {
         month,
         projectedMrr: projected,
         projectedCards: recurring.length,
         collected,
-        collectionRate: projected > 0 ? Math.round((collected / projected) * 1000) / 1000 : null,
-        averageRetainer: recurring.length ? usd(projected / recurring.length) : null,
+        collectionRate:
+          projected > 0
+            ? Math.round((collected / projected) * 1000) / 1000
+            : null,
+        averageRetainer: recurring.length
+          ? usd(projected / recurring.length)
+          : null,
         history,
       };
       const monthDay = `${month}-01`;
       bookDaily.push(
-        { date: monthDay, metric: "money.book.projected", scope: "company", value: projected },
-        { date: monthDay, metric: "money.book.collected", scope: "company", value: collected },
+        {
+          date: monthDay,
+          metric: "money.book.projected",
+          scope: "company",
+          value: projected,
+        },
+        {
+          date: monthDay,
+          metric: "money.book.collected",
+          scope: "company",
+          value: collected,
+        },
       );
       notes.push({
         level: "info",
@@ -2227,14 +2301,22 @@ export const money: Adapter = {
             recorded_at: new Date().toISOString(),
           }));
         for (let i = 0; i < rows.length; i += 200)
-          await upsertMerge("cockpit_client_payments", rows.slice(i, i + 200), "payment_id");
+          await upsertMerge(
+            "cockpit_client_payments",
+            rows.slice(i, i + 200),
+            "payment_id",
+          );
         sources.push({
           name: "Client payments mirror",
           ok: true,
           note: `${rows.length} attributed payments written to cockpit_client_payments`,
         });
       } catch (e) {
-        sources.push({ name: "Client payments mirror", ok: false, note: errText(e) });
+        sources.push({
+          name: "Client payments mirror",
+          ok: false,
+          note: errText(e),
+        });
       }
 
     const byMonth = manualByMonth;

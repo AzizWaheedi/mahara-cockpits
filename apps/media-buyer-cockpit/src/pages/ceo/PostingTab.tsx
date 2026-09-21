@@ -1243,7 +1243,7 @@ export function PostingTab(_props: CeoTabProps) {
   }, [posts]);
 
   return (
-    <div className="grid gap-4 lg:gap-6">
+    <div className="grid gap-5 lg:gap-7">
       <SectionCard
         kicker="Mahara's own channels · nothing goes out before you approve it"
         title="Posting desk"

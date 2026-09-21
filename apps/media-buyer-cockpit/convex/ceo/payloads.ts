@@ -429,7 +429,12 @@ export type MoneyPayload = {
     /** Lines over the last 12 months by kind, count and USD (signed). */
     kinds: { kind: string; label: string; count: number; usd: number }[];
     /** Whop payouts on the statements: how many were matched to a run of Whop payments. */
-    payouts: { count: number; matched: number; usd: number; matchedUsd: number };
+    payouts: {
+      count: number;
+      matched: number;
+      usd: number;
+      matchedUsd: number;
+    };
     /** Tap settlements on the statements, and how many Tap charges they were matched to. */
     tapSettlements: { count: number; usd: number; chargesCovered: number };
     /** Hand-logged bank transfers, cheques and cash that a statement line now accounts for. */
@@ -442,7 +447,12 @@ export type MoneyPayload = {
       excluded: { usd: number; lines: number };
       fees: number;
     }[];
-    exclusions: { id: number; kind: "card" | "vendor"; pattern: string; note: string | null }[];
+    exclusions: {
+      id: number;
+      kind: "card" | "vendor";
+      pattern: string;
+      note: string | null;
+    }[];
     /** Lines with no kind the rules could give. */
     unknown: number;
   };
@@ -457,7 +467,12 @@ export type MoneyPayload = {
     /** Mean MRR over the same cards. */
     averageRetainer: number | null;
     /** Earlier months as far as the history goes, oldest first. */
-    history: { month: string; projected: number; collected: number; rate: number | null }[];
+    history: {
+      month: string;
+      projected: number;
+      collected: number;
+      rate: number | null;
+    }[];
   };
   notes: Note[];
 };
@@ -639,6 +654,15 @@ export type FunnelWindow = {
     neverCalled: number;
     medianMin: number | null;
     within5Share: number | null;
+    /**
+     * The same on the working clock (Aziz, 2026-09-21): the clock starts at
+     * the later of the lead's creation and the next working window, and
+     * only working minutes count (cockpit_settings working hours, default
+     * 10:00 to 18:00 Kuwait, Saturday to Thursday). Absent on older payloads
+     * and on windows rebuilt from days.
+     */
+    workingMedianMin?: number | null;
+    workingWithin5Share?: number | null;
   };
   /**
    * Leads created in the window with at least one intro or demo booked
@@ -1269,6 +1293,13 @@ export type ClientsPayload = {
     read: boolean;
     /** Whether the current extension was written to the ClickUp card, and why not when not. */
     clickupField: { written: number; note: string };
+    /** The month before, for the tile's sub-line. */
+    lastMonth?: {
+      from: string;
+      to: string;
+      totalWeeks: number;
+      grants: number;
+    };
   };
   /**
    * Time to first launch: from the ClickUp card's creation to its Launch
@@ -1279,7 +1310,12 @@ export type ClientsPayload = {
     medianDays: number | null;
     clients: number;
     /** Launched clients, slowest first. */
-    rows: { client: string; clickupTaskId: string; days: number; launchDate: string }[];
+    rows: {
+      client: string;
+      clickupTaskId: string;
+      days: number;
+      launchDate: string;
+    }[];
     /** Live clients with no launch date, so no time to launch yet. */
     notLaunched: number;
   };

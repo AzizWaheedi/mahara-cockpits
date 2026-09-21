@@ -129,7 +129,7 @@ export function MachineTab({ sections, now }: CeoTabProps) {
   const info = payload?.notes.filter(n => n.level !== "warn") ?? [];
 
   return (
-    <div className="grid gap-4 lg:gap-6">
+    <div className="grid gap-5 lg:gap-7">
       <SectionCard
         kicker="Right now"
         title="Machine status"

@@ -33,7 +33,12 @@ type Overview = {
     fileName: string | null;
     importedAt: number | null;
   }[];
-  exclusions: { id: number; kind: "card" | "vendor"; pattern: string; note: string | null }[];
+  exclusions: {
+    id: number;
+    kind: "card" | "vendor";
+    pattern: string;
+    note: string | null;
+  }[];
   lastStatementTo: string | null;
   daysSince: number | null;
   stale: boolean;
@@ -65,7 +70,10 @@ const NOTES: Note[] = [
 
 function serverMessage(e: unknown): string {
   const m = e instanceof Error ? e.message : String(e);
-  return m.replace(/^.*Uncaught Error:\s*/s, "").split("\n")[0].slice(0, 240);
+  return m
+    .replace(/^.*Uncaught Error:\s*/s, "")
+    .split("\n")[0]
+    .slice(0, 240);
 }
 
 export function BankStatementsCard({
@@ -97,7 +105,10 @@ export function BankStatementsCard({
       const r = (await overviewAction({})) as Overview | null | undefined;
       if (!r || !Array.isArray(r.statements))
         throw new Error("the statement list did not come back");
-      setOv({ ...r, exclusions: Array.isArray(r.exclusions) ? r.exclusions : [] });
+      setOv({
+        ...r,
+        exclusions: Array.isArray(r.exclusions) ? r.exclusions : [],
+      });
       setOvError(null);
     } catch (e) {
       setOvError(serverMessage(e));
@@ -114,7 +125,10 @@ export function BankStatementsCard({
     setResult(null);
     try {
       const text = await file.text();
-      const r = (await importAction({ fileName: file.name, text })) as ImportResult;
+      const r = (await importAction({
+        fileName: file.name,
+        text,
+      })) as ImportResult;
       setResult(r);
       await load();
       await refreshNow({ only: ["money", "expenses"] });
@@ -134,7 +148,11 @@ export function BankStatementsCard({
     setBusy(true);
     setProblem(null);
     try {
-      await addExclusion({ kind: exKind, pattern: exPattern.trim(), note: exNote.trim() || undefined });
+      await addExclusion({
+        kind: exKind,
+        pattern: exPattern.trim(),
+        note: exNote.trim() || undefined,
+      });
       setExPattern("");
       setExNote("");
       await load();
@@ -209,7 +227,8 @@ export function BankStatementsCard({
               />
             </label>
             <span className="text-xs text-muted-foreground">
-              CBK Online, Accounts, Statement, Export CSV. Thirty seconds, once a week.
+              CBK Online, Accounts, Statement, Export CSV. Thirty seconds, once
+              a week.
               {stale && daysSince !== null
                 ? ` The newest statement is ${daysSince} days old, so cash and expenses since then are missing, not zero.`
                 : ""}
@@ -225,8 +244,9 @@ export function BankStatementsCard({
               <p className="font-medium">
                 {result.account} ({result.accountKind}),{" "}
                 {result.fromDay ? shortDate(result.fromDay) : "?"} to{" "}
-                {result.toDay ? shortDate(result.toDay) : "?"}: {count(result.read)} lines read,{" "}
-                {count(result.kept)} new, {count(result.skipped)} already held.
+                {result.toDay ? shortDate(result.toDay) : "?"}:{" "}
+                {count(result.read)} lines read, {count(result.kept)} new,{" "}
+                {count(result.skipped)} already held.
               </p>
               {result.byKind.length ? (
                 <ul className="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
@@ -245,7 +265,8 @@ export function BankStatementsCard({
                 </ul>
               ) : null}
               <p className="mt-2 text-xs text-muted-foreground">
-                Cash and expenses pick the new lines up on the refresh that was just started.
+                Cash and expenses pick the new lines up on the refresh that was
+                just started.
               </p>
             </div>
           ) : null}
@@ -273,7 +294,8 @@ export function BankStatementsCard({
                     </span>
                     <span className="text-muted-foreground">
                       {s.fromDay ? shortDate(s.fromDay) : "?"} to{" "}
-                      {s.toDay ? shortDate(s.toDay) : "?"} · {plural(s.lines, "line")}
+                      {s.toDay ? shortDate(s.toDay) : "?"} ·{" "}
+                      {plural(s.lines, "line")}
                     </span>
                   </li>
                 ))}
@@ -293,7 +315,9 @@ export function BankStatementsCard({
               <StatTile
                 variant="plain"
                 label="Lines, 12 months"
-                value={count((bank.kinds ?? []).reduce((t, k) => t + k.count, 0))}
+                value={count(
+                  (bank.kinds ?? []).reduce((t, k) => t + k.count, 0),
+                )}
                 sub={`${plural((bank.accounts ?? []).length, "account")}`}
               />
               <StatTile
@@ -327,14 +351,20 @@ export function BankStatementsCard({
             {ov?.exclusions.length ? (
               <ul className="grid gap-1 text-sm">
                 {ov.exclusions.map(x => (
-                  <li key={x.id} className="flex flex-wrap items-center justify-between gap-2">
+                  <li
+                    key={x.id}
+                    className="flex flex-wrap items-center justify-between gap-2"
+                  >
                     <span>
                       <span className="text-muted-foreground">
                         {x.kind === "card" ? "Card" : "Vendor"}
                       </span>{" "}
                       {x.pattern}
                       {x.note ? (
-                        <span className="text-muted-foreground"> · {x.note}</span>
+                        <span className="text-muted-foreground">
+                          {" "}
+                          · {x.note}
+                        </span>
                       ) : null}
                     </span>
                     <button
@@ -350,7 +380,8 @@ export function BankStatementsCard({
               </ul>
             ) : (
               <p className="text-xs text-muted-foreground">
-                Nothing is excluded. Personal spend on a business card belongs here.
+                Nothing is excluded. Personal spend on a business card belongs
+                here.
               </p>
             )}
             <div className="flex flex-wrap items-center gap-2">

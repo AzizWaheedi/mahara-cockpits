@@ -37,7 +37,9 @@ export async function rest(
       apikey: SUPABASE_KEY,
       Authorization: `Bearer ${SUPABASE_KEY}`,
       Accept: "application/json",
-      ...(init.body !== undefined ? { "Content-Type": "application/json" } : {}),
+      ...(init.body !== undefined
+        ? { "Content-Type": "application/json" }
+        : {}),
       ...(init.prefer ? { Prefer: init.prefer } : {}),
     },
     body: init.body !== undefined ? JSON.stringify(init.body) : undefined,

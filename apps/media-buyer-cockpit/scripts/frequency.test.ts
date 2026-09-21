@@ -1,6 +1,10 @@
 /** Campaign sorting and window checks for the Meta reach and frequency read. */
 import { describe, expect, test } from "bun:test";
-import { campaignType, checkRange, MAX_SPAN_DAYS } from "../convex/ceo/frequency";
+import {
+  campaignType,
+  checkRange,
+  MAX_SPAN_DAYS,
+} from "../convex/ceo/frequency";
 
 describe("campaignType", () => {
   test("follows the B2B dashboard's rule", () => {
@@ -18,7 +22,9 @@ describe("checkRange", () => {
     expect(() => checkRange("2026-8-1", "2026-08-31")).toThrow();
     expect(() => checkRange("2026-08-31", "2026-08-01")).toThrow();
     expect(() => checkRange("2099-01-01", "2099-01-02")).toThrow();
-    expect(() => checkRange("2024-01-01", "2026-01-01")).toThrow(`${MAX_SPAN_DAYS}`);
+    expect(() => checkRange("2024-01-01", "2026-01-01")).toThrow(
+      `${MAX_SPAN_DAYS}`,
+    );
     expect(() => checkRange("2026-08-01", "2026-08-31")).not.toThrow();
   });
 });

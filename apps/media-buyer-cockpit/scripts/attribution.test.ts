@@ -35,7 +35,9 @@ const card: CardRef = {
   emails: ["login@decorplus.com"],
   payerKeys: ["DP Trading"],
 };
-const pay = (p: Partial<PaymentIn> & { id: string; day: string; usd: number }): PaymentIn => ({
+const pay = (
+  p: Partial<PaymentIn> & { id: string; day: string; usd: number },
+): PaymentIn => ({
   rail: "whop",
   currency: "USD",
   amount: p.usd,
@@ -64,8 +66,18 @@ describe("attribute", () => {
   test("what follows the deposit inside the window is the rest of the cash, the CSM's", () => {
     const rows = attribute(
       [
-        pay({ id: "p1", day: "2026-08-11", usd: 500, payerEmail: "Owner@DecorPlus.com" }),
-        pay({ id: "p2", day: "2026-08-20", usd: 1500, payerEmail: "owner@decorplus.com" }),
+        pay({
+          id: "p1",
+          day: "2026-08-11",
+          usd: 500,
+          payerEmail: "Owner@DecorPlus.com",
+        }),
+        pay({
+          id: "p2",
+          day: "2026-08-20",
+          usd: 1500,
+          payerEmail: "owner@decorplus.com",
+        }),
       ],
       [deal],
       [card],
@@ -76,7 +88,14 @@ describe("attribute", () => {
   });
   test("a payment after the front-end window is back end, the card's CSM's", () => {
     const [r] = attribute(
-      [pay({ id: "p3", day: "2026-10-30", usd: 2000, payerName: "Decor Plus" })],
+      [
+        pay({
+          id: "p3",
+          day: "2026-10-30",
+          usd: 2000,
+          payerName: "Decor Plus",
+        }),
+      ],
       [deal],
       [card],
     );
@@ -87,8 +106,18 @@ describe("attribute", () => {
   test("a monthly deal's second month is back end", () => {
     const rows = attribute(
       [
-        pay({ id: "p1", day: "2026-07-01", usd: 1000, payerEmail: "m@monthly.co" }),
-        pay({ id: "p2", day: "2026-07-31", usd: 2000, payerEmail: "m@monthly.co" }),
+        pay({
+          id: "p1",
+          day: "2026-07-01",
+          usd: 1000,
+          payerEmail: "m@monthly.co",
+        }),
+        pay({
+          id: "p2",
+          day: "2026-07-31",
+          usd: 2000,
+          payerEmail: "m@monthly.co",
+        }),
       ],
       [monthlyDeal],
       [],
@@ -97,7 +126,15 @@ describe("attribute", () => {
   });
   test("a subscription cycle is never a deposit", () => {
     const [r] = attribute(
-      [pay({ id: "p1", day: "2026-08-12", usd: 500, dealResponseId: "d1", billingReason: "subscription_cycle" })],
+      [
+        pay({
+          id: "p1",
+          day: "2026-08-12",
+          usd: 500,
+          dealResponseId: "d1",
+          billingReason: "subscription_cycle",
+        }),
+      ],
       [deal],
       [card],
     );
@@ -105,7 +142,14 @@ describe("attribute", () => {
   });
   test("a payment well before the form is not that deal's", () => {
     const [r] = attribute(
-      [pay({ id: "p0", day: "2026-06-01", usd: 500, payerEmail: "owner@decorplus.com" })],
+      [
+        pay({
+          id: "p0",
+          day: "2026-06-01",
+          usd: 500,
+          payerEmail: "owner@decorplus.com",
+        }),
+      ],
       [deal],
       [],
     );
@@ -114,24 +158,50 @@ describe("attribute", () => {
   test("a client is matched by portal login, hand mapping, name or the typed card", () => {
     const rows = attribute(
       [
-        pay({ id: "a", day: "2026-09-01", usd: 10, payerEmail: "login@decorplus.com" }),
+        pay({
+          id: "a",
+          day: "2026-09-01",
+          usd: 10,
+          payerEmail: "login@decorplus.com",
+        }),
         pay({ id: "b", day: "2026-09-01", usd: 10, payerName: "dp trading" }),
         pay({ id: "c", day: "2026-09-01", usd: 10, payerName: "DecorPlus KW" }),
-        pay({ id: "d", day: "2026-09-01", usd: 10, clickupTaskId: "t1", rail: "manual" }),
+        pay({
+          id: "d",
+          day: "2026-09-01",
+          usd: 10,
+          clickupTaskId: "t1",
+          rail: "manual",
+        }),
         pay({ id: "e", day: "2026-09-01", usd: 10, payerName: "Nobody Known" }),
       ],
       [],
       [card],
     );
-    expect(rows.map(r => r.matchedBy)).toEqual(["card_email", "card_payer", "card_name", "card_typed", "none"]);
-    expect(rows.slice(0, 4).every(r => r.side === "back_end" && r.person === "Mariam")).toBe(true);
+    expect(rows.map(r => r.matchedBy)).toEqual([
+      "card_email",
+      "card_payer",
+      "card_name",
+      "card_typed",
+      "none",
+    ]);
+    expect(
+      rows
+        .slice(0, 4)
+        .every(r => r.side === "back_end" && r.person === "Mariam"),
+    ).toBe(true);
     expect(rows[4].side).toBe("unattributed");
   });
   test("a payer under their own name, or a longer business name, still meets the deal", () => {
     const rows = attribute(
       [
         pay({ id: "n1", day: "2026-08-12", usd: 500, payerName: "Fadi Rafie" }),
-        pay({ id: "n2", day: "2026-08-13", usd: 700, payerName: "DECOR PLUS CO." }),
+        pay({
+          id: "n2",
+          day: "2026-08-13",
+          usd: 700,
+          payerName: "DECOR PLUS CO.",
+        }),
       ],
       [deal],
       [],
@@ -142,7 +212,11 @@ describe("attribute", () => {
     ]);
   });
   test("short names never match by accident", () => {
-    const [r] = attribute([pay({ id: "x", day: "2026-09-01", usd: 10, payerName: "Ali" })], [deal], [{ ...card, names: ["Ali"] }]);
+    const [r] = attribute(
+      [pay({ id: "x", day: "2026-09-01", usd: 10, payerName: "Ali" })],
+      [deal],
+      [{ ...card, names: ["Ali"] }],
+    );
     expect(r.side).toBe("unattributed");
   });
 });
@@ -153,7 +227,12 @@ describe("totals and byPerson", () => {
       [
         pay({ id: "p1", day: "2026-08-11", usd: 500, dealResponseId: "d1" }),
         pay({ id: "p2", day: "2026-08-20", usd: 1500, dealResponseId: "d1" }),
-        pay({ id: "p3", day: "2026-11-01", usd: 700, payerEmail: "login@decorplus.com" }),
+        pay({
+          id: "p3",
+          day: "2026-11-01",
+          usd: 700,
+          payerEmail: "login@decorplus.com",
+        }),
         pay({ id: "p4", day: "2026-11-02", usd: 40, payerName: "Unknown Ltd" }),
       ],
       [deal],

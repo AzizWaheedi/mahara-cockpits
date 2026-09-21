@@ -49,6 +49,7 @@ import type {
   DeliveryWindow,
   Note,
 } from "../../../convex/ceo/payloads";
+import { DeliveryTimeframeCard } from "./timeframeCards";
 import type { CeoTabProps } from "./types";
 
 type ClientRow = DeliveryPayload["clients"][number];
@@ -200,6 +201,14 @@ export function DeliveryTab({ sections, now, day }: CeoTabProps) {
       >
         {d => <Headline d={d} yesterdayLabel={yesterdayLabel} />}
       </SectionCard>
+
+      <DeliveryTimeframeCard
+        section={section}
+        rows={payload?.daily ?? []}
+        now={now}
+        day={day}
+        order={1}
+      />
 
       <SectionCard
         kicker="Last 30 days"

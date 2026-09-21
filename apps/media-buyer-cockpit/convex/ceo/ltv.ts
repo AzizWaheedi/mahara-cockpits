@@ -111,8 +111,18 @@ export const plan = internalQuery({
       .first();
     // biome-ignore lint/suspicious/noExplicitAny: the stored payload is untyped
     const tx: any[] = moneyRow?.payload?.attribution?.transactions ?? [];
-    const payments: { clickupTaskId: string; day: string; amountUsd: number }[] = tx
-      .filter(t => t && t.direction === "in" && t.clientTaskId && typeof t.usd === "number")
+    const payments: {
+      clickupTaskId: string;
+      day: string;
+      amountUsd: number;
+    }[] = tx
+      .filter(
+        t =>
+          t &&
+          t.direction === "in" &&
+          t.clientTaskId &&
+          typeof t.usd === "number",
+      )
       .map(t => ({
         clickupTaskId: String(t.clientTaskId),
         day: String(t.day),

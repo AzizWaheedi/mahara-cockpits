@@ -2,14 +2,15 @@ import { useAction, useMutation } from "convex/react";
 import { ReceiptText } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useTabParam } from "@/components/ceo/CeoTabs";
-import { api } from "../../../convex/_generated/api";
 import { type Column, DataTable } from "@/components/ceo/DataTable";
 import { EmptyState } from "@/components/ceo/EmptyState";
+import { Facts } from "@/components/ceo/Facts";
 import { FilterChips, type FilterOption } from "@/components/ceo/FilterChips";
 import { count, money, plural, shortDate } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { TabLink } from "@/components/ceo/TabLink";
+import { api } from "../../../convex/_generated/api";
 import type {
   MoneyAttribution,
   Note,
@@ -292,7 +293,7 @@ export function TransactionsTab({ sections, goTab }: CeoTabProps) {
 
   if (!a)
     return (
-      <div className="grid gap-4 lg:gap-6">
+      <div className="grid gap-5 lg:gap-7">
         <SectionCard title="Transactions" section={section}>
           {() => (
             <EmptyState
@@ -307,7 +308,7 @@ export function TransactionsTab({ sections, goTab }: CeoTabProps) {
     );
 
   return (
-    <div className="grid gap-4 lg:gap-6">
+    <div className="grid gap-5 lg:gap-7">
       <SectionCard
         kicker={`Last 12 months, ${shortDate(a.from)} to ${shortDate(a.to)}`}
         title="Where the money sits"
@@ -353,7 +354,7 @@ function Totals({ a }: { a: MoneyAttribution }) {
   const t = a.totals;
   return (
     <div className="grid gap-5">
-      <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-x-8 gap-y-6 sm:grid-cols-3 lg:grid-cols-5">
         <StatTile
           variant="plain"
           label="Money in"
@@ -389,25 +390,19 @@ function Totals({ a }: { a: MoneyAttribution }) {
           hint="Whop refunds, which are already netted off the charge they refund, and the bank expenses loaded for the months the import covers."
         />
       </div>
-      <div className="grid grid-cols-2 gap-x-6 gap-y-5 border-t pt-5 sm:grid-cols-3">
-        <StatTile
-          variant="plain"
-          label="This month, front end"
-          value={money(a.mtd.frontEnd)}
-          sub={`${money(a.mtd.deposit)} deposits · ${money(a.mtd.kickoff)} rest`}
-        />
-        <StatTile
-          variant="plain"
-          label="This month, back end"
-          value={money(a.mtd.backEnd)}
-        />
-        <StatTile
-          variant="plain"
-          label="This month, not attributed"
-          value={money(a.mtd.unattributed)}
-          sub={plural(a.mtd.unattributedCount, "payment")}
-        />
-      </div>
+      <Facts
+        items={[
+          {
+            label: "This month, front end",
+            value: `${money(a.mtd.frontEnd)} (${money(a.mtd.deposit)} deposits, ${money(a.mtd.kickoff)} rest)`,
+          },
+          { label: "This month, back end", value: money(a.mtd.backEnd) },
+          {
+            label: "This month, not attributed",
+            value: `${money(a.mtd.unattributed)} (${plural(a.mtd.unattributedCount, "payment")})`,
+          },
+        ]}
+      />
     </div>
   );
 }

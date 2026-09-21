@@ -86,7 +86,9 @@ export function rangeStart(key: RangeKey, last: string): string | null {
   if (key === "all" || key === "custom") return null;
   if (key === "mtd") return isMonth(last) ? last : `${last.slice(0, 7)}-01`;
   if (key === "lastMonth")
-    return isMonth(last) ? shiftMonths(last, -1) : `${shiftMonths(last.slice(0, 7), -1)}-01`;
+    return isMonth(last)
+      ? shiftMonths(last, -1)
+      : `${shiftMonths(last.slice(0, 7), -1)}-01`;
   if (isMonth(last)) {
     const months = { "7d": 1, "30d": 1, "90d": 3, "6m": 6, "12m": 12 }[key];
     return shiftMonths(last, -(months - 1));

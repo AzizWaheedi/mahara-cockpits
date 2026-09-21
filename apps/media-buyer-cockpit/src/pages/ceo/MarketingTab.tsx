@@ -1,7 +1,6 @@
 import { Image as ImageIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { BarList, type BarListItem } from "@/components/ceo/BarList";
-import { useTabParam } from "@/components/ceo/CeoTabs";
 import {
   type CustomRange,
   RangeControl,
@@ -11,7 +10,7 @@ import {
 import { type Column, DataTable } from "@/components/ceo/DataTable";
 import { Delta, type DeltaKind, type GoodWhen } from "@/components/ceo/Delta";
 import { EmptyState } from "@/components/ceo/EmptyState";
-import { FilterChips } from "@/components/ceo/FilterChips";
+import { Facts } from "@/components/ceo/Facts";
 import {
   change,
   count,
@@ -25,18 +24,15 @@ import {
   plural,
   type Unit,
 } from "@/components/ceo/format";
+import { DERIVED_NOTE, useGrowthWindow } from "@/components/ceo/growthWindow";
 import { Na, Value } from "@/components/ceo/Na";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
+import { TimeframeBar } from "@/components/ceo/TimeframeBar";
 import { TimeSeriesChart } from "@/components/ceo/TimeSeriesChart";
+import { useTimeframe } from "@/components/ceo/timeframe";
 import { useFrequency } from "@/components/ceo/useFrequency";
-import {
-  COMPARE_WITH,
-  range,
-  WINDOW_CHIPS,
-  WINDOW_KEYS,
-  WINDOW_LABEL,
-} from "@/components/ceo/windows";
+import { range } from "@/components/ceo/windows";
 import type { FrequencyFigure } from "../../../convex/ceo/frequency";
 import type {
   FunnelWindow,
@@ -46,6 +42,12 @@ import type {
 import type { CeoTabProps } from "./types";
 
 // --- Derived numbers, each null when its denominator is 0 ---
+
+/** "20.5 h" or "35 min", a dash when there is none. */
+function minutesText(m: number | null | undefined): string {
+  if (m === null || m === undefined) return "—";
+  return m >= 120 ? `${(m / 60).toFixed(1)} h` : `${Math.round(m)} min`;
+}
 
 /** Intro plus demo calls booked in the window. */
 function bookedCalls(w: FunnelWindow): number {
@@ -219,17 +221,18 @@ export function MarketingTab({ sections, now, day }: CeoTabProps) {
   const section = sections.growth;
   const payload = section?.payload ?? null;
   const today = day ?? kuwaitDay(now);
-  const [win, setWin] = useTabParam(WINDOW_KEYS, "mtd", "window");
+  const tf = useTimeframe("mtd");
+  const gw = useGrowthWindow(payload, tf, today);
+  const { current, previous } = gw;
   const notes = useMemo(() => routeNotes(payload?.notes), [payload]);
-
-  const compareKey = COMPARE_WITH[win];
-  const current = payload?.windows?.[win] ?? null;
-  const previous = compareKey ? (payload?.windows?.[compareKey] ?? null) : null;
+  const windowLabel = gw.bounds
+    ? range(gw.bounds.from, gw.bounds.to)
+    : "Timeframe";
 
   // With nothing to show, one card says so instead of five identical empty states.
   if (!payload)
     return (
-      <div className="grid gap-4 lg:gap-6">
+      <div className="grid gap-5 lg:gap-7">
         <SectionCard title="Marketing" section={section}>
           {() => null}
         </SectionCard>
@@ -238,56 +241,37 @@ export function MarketingTab({ sections, now, day }: CeoTabProps) {
     );
 
   return (
-    <div className="grid gap-4 lg:gap-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <FilterChips
-          options={WINDOW_CHIPS}
-          value={win}
-          onChange={setWin}
-          ariaLabel="Window for spend, leads and calls booked"
-        />
-        {current ? (
-          <p className="text-sm text-muted-foreground tabular-nums">
-            <span className="font-medium text-foreground">
-              {range(current.from, current.to)}
-            </span>
-            {previous
-              ? `, compared with ${range(previous.from, previous.to)}`
-              : ", shown without a comparison"}
-          </p>
-        ) : null}
-      </div>
+    <div className="grid gap-5 lg:gap-7">
+      <TimeframeBar
+        tf={tf}
+        bounds={gw.bounds}
+        compare={gw.compare}
+        ariaLabel="Timeframe for spend, leads and calls booked"
+        first={gw.first}
+        last={gw.last}
+        note={gw.derived ? DERIVED_NOTE : undefined}
+      />
 
-      <div className="grid gap-4 lg:gap-6 xl:grid-cols-12">
+      <div className="grid gap-5 lg:gap-7 xl:grid-cols-12">
         <SectionCard
-          kicker={WINDOW_LABEL[win]}
+          kicker={windowLabel}
           title="Spend and leads"
           section={section}
           notes={cardNotes(notes, "spend")}
           order={0}
           className="xl:col-span-7"
         >
-          {p => (
-            <SpendAndLeads
-              w={p.windows[win]}
-              prev={compareKey ? p.windows[compareKey] : null}
-            />
-          )}
+          {p => <SpendAndLeads w={current ?? p.windows.mtd} prev={previous} />}
         </SectionCard>
         <SectionCard
-          kicker={WINDOW_LABEL[win]}
+          kicker={windowLabel}
           title="Calls booked and cost per call"
           section={section}
           notes={cardNotes(notes, "booked")}
           order={1}
           className="xl:col-span-5"
         >
-          {p => (
-            <CallsBooked
-              w={p.windows[win]}
-              prev={compareKey ? p.windows[compareKey] : null}
-            />
-          )}
+          {p => <CallsBooked w={current ?? p.windows.mtd} prev={previous} />}
         </SectionCard>
       </div>
 
@@ -296,11 +280,12 @@ export function MarketingTab({ sections, now, day }: CeoTabProps) {
           Ads, sources and the trend
         </h2>
         <p className="text-xs text-muted-foreground">
-          These keep their own ranges and do not follow the window above.
+          The ads table is always the last 7 days and the source bars this
+          month; the charts and the reach card carry their own timeframe.
         </p>
       </div>
 
-      <div className="grid gap-4 lg:gap-6 xl:grid-cols-12">
+      <div className="grid gap-5 lg:gap-7 xl:grid-cols-12">
         <SectionCard
           kicker="Last 7 days"
           title="Ads by spend"
@@ -319,7 +304,9 @@ export function MarketingTab({ sections, now, day }: CeoTabProps) {
           order={3}
           className="xl:col-span-5"
         >
-          {p => <LeadSources sources={p.leadSources} w={p.windows.mtd} />}
+          {p => (
+            <LeadSources sources={p.leadSources} w={current ?? p.windows.mtd} />
+          )}
         </SectionCard>
       </div>
 
@@ -380,50 +367,51 @@ function SpendAndLeads({
   const prevRetarget = prev ? retargeting(prev) : null;
 
   return (
-    <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3 lg:grid-cols-5">
-      <StatTile
-        variant="plain"
-        label="Lead-gen ad spend"
-        value={money(w.spend)}
-        delta={delta(change(w.spend, prev?.spend), "neither")}
-        hint="What Mahara spends on its own lead-gen campaigns, as on the B2B dashboard overview. Days are the Meta ad account's reporting day. Money spent on client ads is a different pool and sits on the Delivery tab."
-      />
-      <StatTile
-        variant="plain"
-        label="Leads"
-        value={count(w.leads)}
-        delta={delta(change(w.leads, prev?.leads), "up")}
-        sub={`${count(w.leadClasses.qualified)} qualified · ${count(w.leadClasses.unqualified)} unqualified · ${count(w.leadClasses.notReady)} not ready · ${count(w.leadClasses.untagged)} not yet tagged`}
-        hint="What the setters tagged in GoHighLevel, dated by the day the contact was created: ROAS qualified and ROAS unqualified are leads; ROAS unprepared is not ready and is shown but not counted; a contact with no ROAS tag yet is shown but not counted."
-      />
-      <StatTile
-        variant="plain"
-        label="Speed to lead"
-        value={
-          w.speedToLead.medianMin === null
-            ? "—"
-            : w.speedToLead.medianMin >= 120
-              ? `${(w.speedToLead.medianMin / 60).toFixed(1)} h`
-              : `${Math.round(w.speedToLead.medianMin)} min`
-        }
-        sub={`${count(w.speedToLead.called)} of ${count(w.speedToLead.leads)} leads called by a sales rep · ${count(w.speedToLead.neverCalled)} never called${w.speedToLead.within5Share !== null ? ` · ${pct(w.speedToLead.within5Share)} within 5 min` : ""}`}
-        hint="From the lead's creation to the first Maqsam call with it made by a sales rep on the roster (setter, closer or both), never a call-centre agent, matched by the CRM contact or the phone's last eight digits. The median over the leads that were called; the never-called are counted beside it, not inside it."
-        naHint="No lead in this window has a sales rep's Maqsam call against it."
-      />
-      <StatTile
-        variant="plain"
-        label="Cost per lead"
-        value={money(w.cpl)}
-        delta={delta(change(w.cpl, prev?.cpl), "down")}
-        naHint="No leads in this window, so there is no cost per lead."
-      />
-      <StatTile
-        variant="plain"
-        label="Retargeting spend"
-        value={money(retarget)}
-        delta={delta(change(retarget, prevRetarget), "neither")}
-        hint="Retargeting money in this window, on top of the lead-gen spend. It is different money and is never part of cost per lead."
-        naHint="The B2B window function gave no retargeting figure for this window."
+    <div>
+      <div className="grid grid-cols-2 gap-x-8 gap-y-6 sm:grid-cols-4">
+        <StatTile
+          variant="plain"
+          label="Lead-gen ad spend"
+          value={money(w.spend)}
+          delta={delta(change(w.spend, prev?.spend), "neither")}
+          hint="What Mahara spends on its own lead-gen campaigns, as on the B2B dashboard overview. Days are the Meta ad account's reporting day. Money spent on client ads is a different pool and sits on the Delivery tab."
+        />
+        <StatTile
+          variant="plain"
+          label="Leads"
+          value={count(w.leads)}
+          delta={delta(change(w.leads, prev?.leads), "up")}
+          sub={`${count(w.leadClasses.qualified)} qualified · ${count(w.leadClasses.unqualified)} unqualified`}
+          hint="What the setters tagged in GoHighLevel, dated by the day the contact was created: ROAS qualified and ROAS unqualified are leads; ROAS unprepared is not ready and is shown but not counted; a contact with no ROAS tag yet is shown but not counted."
+        />
+        <StatTile
+          variant="plain"
+          label="Speed to lead"
+          value={minutesText(
+            w.speedToLead.workingMedianMin ?? w.speedToLead.medianMin,
+          )}
+          sub={`${typeof w.speedToLead.workingMedianMin === "number" ? `working hours · ${minutesText(w.speedToLead.medianMin)} on the plain clock · ` : ""}${count(w.speedToLead.called)} of ${count(w.speedToLead.leads)} leads called by a sales rep · ${count(w.speedToLead.neverCalled)} never called${w.speedToLead.within5Share !== null ? ` · ${pct(w.speedToLead.workingWithin5Share ?? w.speedToLead.within5Share)} within 5 min` : ""}`}
+          hint="From the lead's creation to the first Maqsam call with it made by a sales rep on the roster (setter, closer or both), never a call-centre agent, matched by the CRM contact or the phone's last eight digits. On the working clock the time starts at the later of the lead's creation and the next working window and only working minutes count; the plain clock figure is beside it. The median over the leads that were called; the never-called are counted beside it, not inside it."
+          naHint="No lead in this window has a sales rep's Maqsam call against it."
+        />
+        <StatTile
+          variant="plain"
+          label="Cost per lead"
+          value={money(w.cpl)}
+          delta={delta(change(w.cpl, prev?.cpl), "down")}
+          naHint="No leads in this window, so there is no cost per lead."
+        />
+      </div>
+      <Facts
+        items={[
+          {
+            label: "Retargeting spend",
+            value: money(retarget),
+            hint: "Different money, never in cost per lead.",
+          },
+          { label: "Not ready", value: count(w.leadClasses.notReady) },
+          { label: "Not yet tagged", value: count(w.leadClasses.untagged) },
+        ]}
       />
     </div>
   );
@@ -452,64 +440,61 @@ function CallsBooked({
   const rate = bookedRate(w);
   const prevRate = prev ? bookedRate(prev) : null;
   const perIntro = costPerIntroShown(w);
-  const prevPerIntro = prev ? costPerIntroShown(prev) : null;
 
   return (
-    <div className="grid grid-cols-2 gap-x-6 gap-y-5">
-      <StatTile
-        variant="plain"
-        label="Intro calls booked"
-        value={count(w.introsBooked)}
-        delta={delta(change(w.introsBooked, prev?.introsBooked), "up")}
-        hint="Intro calls on a rep's calendar, dated by the day they were booked."
-      />
-      <StatTile
-        variant="plain"
-        label="Demos booked"
-        value={count(w.demosBooked)}
-        delta={delta(change(w.demosBooked, prev?.demosBooked), "up")}
-        hint="Demos on a rep's calendar, dated by the day they were booked. What happens on the call is on the Sales tab."
-      />
-      <StatTile
-        variant="plain"
-        label="Lead to booked call"
-        value={pct(rate)}
-        delta={delta(diff(rate, prevRate), "up", "points")}
-        sub={
-          <span>
-            {count(w.leadToBooked.bookedLeads)} of {plural(w.leads, "lead")}{" "}
-            booked a call · {plural(booked, "call")} booked in the window
-          </span>
-        }
-        hint="Leads created in this window with at least one intro or demo booked against their contact, ever, over the leads created in this window. Per lead, never per booking."
-        naHint="No leads in this window, so there is no rate."
-      />
-      <StatTile
-        variant="plain"
-        label="Cost per intro shown"
-        value={money(perIntro)}
-        delta={delta(change(perIntro, prevPerIntro), "down")}
-        hint="Lead-gen ad spend in this window divided by the intro calls shown in it. The cockpit works this out from two of the B2B dashboard's figures; the dashboard's database functions give no cost per intro of their own."
-        naHint="No intro calls were shown in this window."
-      />
-      <StatTile
-        variant="plain"
-        label="Cost per demo shown"
-        value={money(w.costPerDemo)}
-        delta={delta(change(w.costPerDemo, prev?.costPerDemo), "down")}
-        hint="The B2B dashboard's cost per demo: lead-gen ad spend in this window divided by the demos shown in it."
-        naHint="No demos were shown in this window."
-      />
-      <StatTile
-        variant="plain"
-        label="Cost per demo booked"
-        value={money(w.costPerDemoBooked)}
-        delta={delta(
-          change(w.costPerDemoBooked, prev?.costPerDemoBooked),
-          "down",
-        )}
-        hint="The B2B dashboard's cost per demo booked: lead-gen ad spend in this window divided by the demos booked in it."
-        naHint="No demos were booked in this window."
+    <div>
+      <div className="grid grid-cols-2 gap-x-8 gap-y-6">
+        <StatTile
+          variant="plain"
+          label="Intro calls booked"
+          value={count(w.introsBooked)}
+          delta={delta(change(w.introsBooked, prev?.introsBooked), "up")}
+          hint="Intro calls on a rep's calendar, dated by the day they were booked."
+        />
+        <StatTile
+          variant="plain"
+          label="Demos booked"
+          value={count(w.demosBooked)}
+          delta={delta(change(w.demosBooked, prev?.demosBooked), "up")}
+          hint="Demos on a rep's calendar, dated by the day they were booked. What happens on the call is on the Sales tab."
+        />
+        <StatTile
+          variant="plain"
+          label="Lead to booked call"
+          value={pct(rate)}
+          delta={delta(diff(rate, prevRate), "up", "points")}
+          sub={
+            <span>
+              {count(w.leadToBooked.bookedLeads)} of {plural(w.leads, "lead")}{" "}
+              booked a call · {plural(booked, "call")} booked in the window
+            </span>
+          }
+          hint="Leads created in this window with at least one intro or demo booked against their contact, ever, over the leads created in this window. Per lead, never per booking."
+          naHint="No leads in this window, so there is no rate."
+        />
+        <StatTile
+          variant="plain"
+          label="Cost per demo shown"
+          value={money(w.costPerDemo)}
+          delta={delta(change(w.costPerDemo, prev?.costPerDemo), "down")}
+          hint="The B2B dashboard's cost per demo: lead-gen ad spend in this window divided by the demos shown in it."
+          naHint="No demos were shown in this window."
+        />
+      </div>
+      <Facts
+        items={[
+          {
+            label: "Cost per intro shown",
+            value: money(perIntro),
+            hint: "Lead-gen spend over intro calls shown; worked out here from two of the dashboard's figures.",
+          },
+          {
+            label: "Cost per demo booked",
+            value: money(w.costPerDemoBooked),
+            hint: "The dashboard's own: lead-gen spend over demos booked.",
+          },
+          { label: "Calls booked", value: count(booked) },
+        ]}
       />
     </div>
   );

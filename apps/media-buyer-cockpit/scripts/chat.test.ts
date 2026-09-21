@@ -1,6 +1,6 @@
 import { runTest } from "./auth";
 
-runTest("Chat box delivers to Viktor", async (h) => {
+runTest("Chat box delivers to Viktor", async h => {
   await h.goto("/dashboard");
   await h.page.waitForTimeout(3000);
   await h.page.locator('button:has-text("Ask Viktor")').first().click();

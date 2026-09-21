@@ -361,7 +361,7 @@ export function ManagementTab({ sections, now, day }: CeoTabProps) {
 
   if (!payload)
     return (
-      <div className="grid gap-4 lg:gap-6">
+      <div className="grid gap-5 lg:gap-7">
         <PeopleCard order={0} />
         <SectionCard title="Management" section={team}>
           {() => null}
@@ -375,7 +375,7 @@ export function ManagementTab({ sections, now, day }: CeoTabProps) {
 
   return (
     <StatusUiContext.Provider value={ui}>
-      <div className="grid gap-4 lg:gap-6">
+      <div className="grid gap-5 lg:gap-7">
         <PeopleCard order={0} />
 
         <SectionCard
