@@ -69,7 +69,7 @@ const REFRESH_KEY = "portal_refreshed_at";
 const MEMBER_TTL_MS = 60 * 60_000;
 
 export function PortalAutoSignIn() {
-  const { signIn } = useAuthActions();
+  const { signIn, signOut } = useAuthActions();
   const { isAuthenticated, isLoading } = useConvexAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -109,7 +109,20 @@ export function PortalAutoSignIn() {
       const clean = `${window.location.pathname}${params.toString() ? `?${params}` : ""}`;
       window.history.replaceState(null, "", clean);
       setPending(true);
-      signIn("portal", { token })
+      // A pass that arrives while a session is already open (the hourly
+      // refresh, or a second switch) must not be swapped on top of it: the
+      // old session's token refresh then fails and wipes the new tokens,
+      // which left the login page behind every other switch (2026-09-21).
+      // Close the old session first, then open the new one; one retry for
+      // a passing server error.
+      const swap = () => signIn("portal", { token });
+      const opened = isAuthenticated
+        ? signOut()
+            .catch(() => undefined)
+            .then(swap)
+        : swap();
+      opened
+        .catch(() => new Promise(r => setTimeout(r, 1500)).then(swap))
         .then(() => {
           setPending(false);
           const to = sessionStorage.getItem(NEXT_KEY) || "/dashboard";
