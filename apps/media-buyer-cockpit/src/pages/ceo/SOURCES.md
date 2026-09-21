@@ -13,7 +13,7 @@ The cockpit recomputes every section every 15 minutes on the production Convex d
 1. **B2B GoHighLevel, through the B2B Supabase database** (project `flwboeijllbtrufxkhts`). Mahara's own funnel: contacts and their tags become `leads`, calendar appointments become `calls`, the closer's Typeform becomes `closed_deals`. Synced every 15 minutes.
 2. **Meta Ads, through the same B2B database** (`meta_ad_snapshots`): spend, impressions, clicks per ad per day for Mahara's own account.
 3. **Maqsam, through the same B2B database** (`maqsam_calls`): the setters' phone calls.
-4. **Whop and Tap**: card payments. Whop lands in the B2B database (`whop_payments`); Tap is read from Tap's API directly.
+4. **Whop and Tap**: card payments. Whop lands in the B2B database (`whop_payments`); Tap lands in Creative Triage (`cockpit_tap_charges`) through the Supabase Edge Function `tap-charges-sync`, which runs every 15 minutes with the Tap key held as a Supabase secret. Nothing on Convex holds a Tap key.
 5. **Creative Triage Supabase** (project `bldgtotkfmhoxmlzowdx`): the clients' side. Each client's Meta account per day, each client's GoHighLevel appointments and opportunities, the clients' Maqsam dialer, and the hand-kept roster (`cockpit_people`).
 6. **ClickUp, the Clients – Mahara list**: the client cards, with the hand-typed billing fields (MRR, LTV, payment plan, paused on, churn date).
 7. **Google**: Instagram and Facebook through the Meta Graph API, YouTube through its Data API, and (once shared) the EOD Reports sheet.
@@ -65,7 +65,7 @@ The cockpit recomputes every section every 15 minutes on the production Convex d
 
 | Number | Where it comes from | What it leaves out |
 |---|---|---|
-| **Cash collected this month** | Whop payments (net of refunds, by charge day) + client payments on the uploaded bank statements + Tap charges no settlement line covers + hand-logged payments no statement line covers, each a separate rail, summed. | Tap refunds are not read. Processor fees are in none. A Tap charge and its bank settlement are one payment: the bank line counts, Tap confirms. A hand-logged transfer a statement line shows counts once, on the bank. |
+| **Cash collected this month** | Whop payments (net of refunds, by charge day) + client payments on the uploaded bank statements + Tap charges (from `cockpit_tap_charges`, filled by the Supabase job) no settlement line covers + hand-logged payments no statement line covers, each a separate rail, summed. | Tap refunds are not read. Processor fees are in none. A Tap charge and its bank settlement are one payment: the bank line counts, Tap confirms. A hand-logged transfer a statement line shows counts once, on the bank. Tap reads as not connected until the job has succeeded in the last three hours. |
 | **Bank statements** | The CBK Online CSV export (preamble, a Date, Amount, Balance, Reference, TRSH_NUMBER table, footer totals) uploaded on the Money tab. Every line gets a kind: client payment, Whop payout, transfer into Whop, Tap settlement, own transfer (card top-ups, unloads, Weyay), refund received, expense, bank fee, excluded, unknown. Lines already held (same bank transaction number) are skipped. | Whop payouts are never cash (the payments behind them already count on Whop); the cockpit matches each payout to the run of Whop payments within 3% and 14 days and says how many matched. The tab shows days since the newest statement and warns past 7. |
 | **Refunds** | Whop refunds by refund day + refunds logged by hand (a manual entry of kind refund, which comes off the manual rail on its day). | Tap refunds. |
 | **Expenses on the statements** | Statement debits by month and category (ads, software, courses, labour, bank fees, other, by the reference), with the exclusion list taken out: a card (the masked account) or a vendor (a fragment of the reference) marked personal. | Excluded lines still show on the Transactions tab. The P&L half still reads Muhammed's `expenses` import until the two are reconciled. Whether a Whop card carries spend of its own is a question for Aziz. |
@@ -141,7 +141,7 @@ The cockpit recomputes every section every 15 minutes on the production Convex d
 3. **Statements by email.** CBK cannot be called; if CBK can email a statement on a schedule, a mailbox parser can land it without anyone uploading. Say which: the upload (30 seconds, once a week) or the mailbox.
 4. **The Whop card.** Expenses are the statement debits; if a Whop-issued card carries spend of its own, say so and it joins.
 5. **The 40% show-rate line** in the client status rule, and whether a client with no attendance recorded can ever read as good.
-6. **The extension field on ClickUp** (see the Client success row) and the live Tap key on the deployment.
+6. **The extension field on ClickUp** (see the Client success row), and the Tap key: add `TAP_SECRET_KEY` under Edge Functions, Secrets, in the Supabase dashboard for Creative Triage; the `tap-charges-sync` job then fills the table within 15 minutes.
 
 ## Two things only Aziz can settle (from the first pass)
 

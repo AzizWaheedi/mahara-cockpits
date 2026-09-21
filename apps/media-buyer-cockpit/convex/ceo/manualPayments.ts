@@ -1,5 +1,6 @@
 import { ConvexError, v } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
+import type { QueryCtx } from "../_generated/server";
 import { authenticatedMutation, authenticatedQuery } from "../functions";
 import {
   byNewest,
@@ -7,7 +8,7 @@ import {
   shapeManualRow,
   vManualRow,
 } from "./data/money";
-import { tapKeyState, USD_PER } from "./data/tap";
+import { USD_PER } from "./data/tap";
 import { requireCeo } from "./gate";
 import { nameKey } from "./manualMatch";
 import { kuwaitDay } from "./time";
@@ -78,6 +79,19 @@ async function plainRefusals<T>(run: () => Promise<T>): Promise<T> {
 }
 
 /** "$1,500.00" without Intl. */
+/**
+ * Whether Tap is connected: the money section's last good payload says so
+ * (its charges come from the tap-charges-sync job in Supabase since
+ * 2026-09-21; nothing on Convex holds a Tap key).
+ */
+async function tapConnected(ctx: { db: QueryCtx["db"] }): Promise<boolean> {
+  const row = await ctx.db
+    .query("ceoSections")
+    .withIndex("by_key", q => q.eq("key", "money"))
+    .first();
+  return row?.payload?.rails?.tap?.connected === true;
+}
+
 function usdText(x: number): string {
   const [whole, cents] = x.toFixed(2).split(".");
   return `$${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${cents}`;
@@ -221,7 +235,7 @@ export const add = authenticatedMutation({
         const note = cleanText(a.note, 500);
 
         // Tap payments arrive on their own once Tap is connected.
-        if (a.rail === "tap" && tapKeyState() === "live")
+        if (a.rail === "tap" && (await tapConnected(ctx)))
           throw new Error(
             "Tap is connected, so Tap payments reach the Tap rail by themselves. Logging one here would count it twice. If this money came another way, pick that rail.",
           );
@@ -353,7 +367,7 @@ export const restore = authenticatedMutation({
           throw new Error("That payment is not removed.");
         // The same rule as add: once Tap is connected, Tap money is read from
         // Tap, and putting a hand-logged Tap payment back could count it twice.
-        if (row.rail === "tap" && tapKeyState() === "live")
+        if (row.rail === "tap" && (await tapConnected(ctx)))
           throw new Error(
             "Tap is connected now, so Tap payments reach the Tap rail by themselves. Restoring this hand entry could count the money twice. If it came another way, log it again on that rail.",
           );
@@ -463,7 +477,7 @@ export const formInfo = authenticatedQuery({
     await requireCeo(ctx);
     return {
       usdPerKwd: USD_PER.KWD,
-      tapLive: tapKeyState() === "live",
+      tapLive: await tapConnected(ctx),
       today: kuwaitDay(),
     };
   },

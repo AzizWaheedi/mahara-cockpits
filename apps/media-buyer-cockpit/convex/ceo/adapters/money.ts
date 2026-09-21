@@ -20,14 +20,7 @@ import {
   summariseBilling,
 } from "../billing";
 import { byNewest, type ManualLoad, type ManualRow } from "../data/money";
-import {
-  capturedCharges,
-  TAP_CONNECT_COMMAND,
-  TAP_KEY_NAME,
-  type TapCharge,
-  tapKeyState,
-  USD_PER,
-} from "../data/tap";
+import { type TapCharge, USD_PER } from "../data/tap";
 import {
   amountGap,
   cashDuplicates,
@@ -355,7 +348,6 @@ export const money: Adapter = {
     // something is logged. The note keeps its place here and its level and
     // text are filled in after the rails are built. It is the one note about
     // scope: the Tap note below only says why Tap is or is not read.
-    const tapState = tapKeyState();
     const cashScopeNote: Note = { level: "warn", text: "" };
     notes.push(cashScopeNote);
     // The one note that says how the rails add up. Every tab that shows the
@@ -661,36 +653,67 @@ export const money: Adapter = {
       lastPaymentAt: null,
     };
 
-    // The charges themselves, for matching hand-logged Tap payments. Null
-    // while Tap is not read.
+    // The charges themselves, for matching hand-logged Tap payments and
+    // settlement lines. Null while Tap is not read. Since 2026-09-21 the
+    // charges come from cockpit_tap_charges in Creative Triage, filled every
+    // 15 minutes by the tap-charges-sync Edge Function, which holds the Tap
+    // key as a Supabase secret; nothing on Convex touches Tap any more.
     let tapCharges: TapCharge[] | null = null;
-
-    if (tapState === "missing") {
-      notes.push({
-        level: "warn",
-        text: `Tap is not connected yet, so every Tap number is n/a. To connect it, set the key on this Convex deployment: ${TAP_CONNECT_COMMAND}`,
-      });
-      sources.push({
-        name: "Tap payments (not connected)",
-        ok: true,
-        note: `${TAP_KEY_NAME} is not set on this deployment. Run: ${TAP_CONNECT_COMMAND}`,
-      });
-    } else if (tapState === "test") {
-      notes.push({
-        level: "warn",
-        text: `Tap is not connected: the key on this deployment is a test key, so Tap charges are test money and every Tap number is n/a. Set the live key to turn the rail on: ${TAP_CONNECT_COMMAND}`,
-      });
-      sources.push({
-        name: "Tap payments (test key)",
-        ok: true,
-        note: "A Tap test key is set, so Tap is not read as cash.",
-      });
-    } else {
-      try {
-        const read = await capturedCharges(from180, today);
-        tapCharges = read.charges;
+    try {
+      const [stateRows, chargeRows] = await Promise.all([
+        sql(
+          TRIAGE,
+          `select ok, note, rows_seen,
+                  floor(extract(epoch from last_run_at) * 1000) as run_ms,
+                  floor(extract(epoch from last_ok_at) * 1000) as ok_ms
+           from public.cockpit_sync_state where key = 'tap-charges-sync'`,
+        ),
+        sql(
+          TRIAGE,
+          `select id, to_char(day, 'YYYY-MM-DD') as day,
+                  floor(extract(epoch from at) * 1000) as at_ms,
+                  currency, amount, usd, email, name
+           from public.cockpit_tap_charges
+           where live and status = 'CAPTURED' and day between ${day(from180)} and ${day(today)}
+           order by at`,
+        ),
+      ]);
+      const st = stateRows[0];
+      const lastOk = epoch(st?.ok_ms);
+      const synced = lastOk !== undefined && now - lastOk < 3 * 60 * 60_000;
+      if (!st) {
+        notes.push({
+          level: "warn",
+          text: "Tap is not connected yet: the tap-charges-sync job in Supabase has never run. Once TAP_SECRET_KEY is set under Edge Functions, Secrets, in the Supabase dashboard, it fills cockpit_tap_charges every 15 minutes and every Tap number fills in.",
+        });
+        sources.push({
+          name: "Tap payments (not connected)",
+          ok: true,
+          note: "tap-charges-sync has never run",
+        });
+      } else if (!synced) {
+        notes.push({
+          level: "warn",
+          text: `Tap is not in the total this run: the tap-charges-sync job in Supabase ${lastOk ? `last succeeded ${Math.round((now - lastOk) / 60_000)} minutes ago` : "has not succeeded yet"}${st.note ? ` (${String(st.note).slice(0, 160)})` : ""}.`,
+        });
+        sources.push({
+          name: "Tap payments",
+          ok: false,
+          note: String(st.note ?? "no successful run").slice(0, 160),
+        });
+      } else {
+        tapCharges = chargeRows.map(r => ({
+          id: String(r.id),
+          day: String(r.day),
+          at: num(r.at_ms),
+          currency: String(r.currency ?? "USD"),
+          amount: num(r.amount),
+          usd: r.usd === null || r.usd === undefined ? null : usd(num(r.usd)),
+          email: r.email ? String(r.email) : null,
+          name: r.name ? String(r.name) : null,
+        }));
         const byTapDay = new Map<string, number>();
-        for (const c of read.charges)
+        for (const c of tapCharges)
           if (c.usd !== null)
             byTapDay.set(c.day, (byTapDay.get(c.day) ?? 0) + c.usd);
         const tapDaily: Point[] = [];
@@ -703,7 +726,6 @@ export const money: Adapter = {
               .reduce((t, p) => t + p.value, 0),
           );
         const tapMtd = tapBetween(monthStart(today), today);
-
         tapRail.connected = true;
         tapRail.today = tapBetween(today, today);
         tapRail.yesterday = tapBetween(addDays(today, -1), addDays(today, -1));
@@ -715,53 +737,32 @@ export const money: Adapter = {
         tapRail.lastMonth = tapBetween(lastMonthStart, lastMonthEnd);
         tapRail.projectedMonth = usd((tapMtd / dayOfMonth) * dim);
         tapRail.daily = tapDaily;
-        tapRail.lastPaymentAt = read.newestAt;
-
+        tapRail.lastPaymentAt = tapCharges.length
+          ? tapCharges[tapCharges.length - 1].at
+          : null;
         sources.push({
           name: "Tap payments",
-          freshestAt: read.newestAt ?? undefined,
+          freshestAt: lastOk,
           ok: true,
-          note: `${read.charges.length} captured charges over 90 days in ${read.requests} calls`,
+          note: `${tapCharges.length} captured charges in the table, sync ${String(st.note ?? "").slice(0, 100)}`,
         });
         notes.push({
-          level: "warn",
-          text: `Tap cash is captured Tap charges from the last 90 days, counted on the Kuwait day the charge was made and converted at the cockpit's fixed rates (1 KWD reads as $${USD_PER.KWD}), the same rates ad spend uses. Tap refunds are not read yet, so Tap refunds show n/a and Tap cash, like the rails total, is gross of anything refunded on Tap, while Whop is net.`,
+          level: "info",
+          text: `Tap cash is captured Tap charges from the last 45 days as the Supabase job tap-charges-sync holds them, counted on the Kuwait day the charge was made and converted at the cockpit's fixed rates (1 KWD reads as $${USD_PER.KWD}). Tap refunds are not read yet, so Tap is gross of anything refunded on Tap while Whop is net. A charge a bank settlement line covers counts once, on the Bank rail.`,
         });
-        if (read.unconverted.length)
+        const unconverted = tapCharges.filter(c => c.usd === null).length;
+        if (unconverted)
           notes.push({
             level: "warn",
-            text: `Tap charges in ${read.unconverted
-              .map(u => `${u.currency} (${u.count})`)
-              .join(
-                ", ",
-              )} are left out of Tap cash: the cockpit has no fixed rate for ${read.unconverted.length === 1 ? "that currency" : "those currencies"} and a guessed rate would be a made up number.`,
+            text: `${unconverted} Tap charges are in a currency the cockpit has no fixed rate for and are left out of Tap cash.`,
           });
-        if (read.testRows > 0)
-          notes.push({
-            level: "warn",
-            text: `${read.testRows} Tap charges are marked as test mode and are left out, because test charges are not cash.`,
-          });
-        if (read.undated > 0)
-          notes.push({
-            level: "warn",
-            text: `${read.undated} Tap charges carry no time and could not be placed on a day, so they are left out of Tap cash.`,
-          });
-        if (read.truncated)
-          notes.push({
-            level: "warn",
-            text: "The Tap read stopped early on its page or time limit, so Tap cash is a floor and reads low.",
-          });
-      } catch (e) {
-        sources.push({
-          name: "Tap payments",
-          ok: false,
-          note: errText(e),
-        });
-        notes.push({
-          level: "warn",
-          text: "Tap could not be read this run, so every Tap number is n/a and Tap money is not in the total. The Machine tab carries the error.",
-        });
       }
+    } catch (e) {
+      sources.push({ name: "Tap payments", ok: false, note: errText(e) });
+      notes.push({
+        level: "warn",
+        text: "Tap could not be read this run, so every Tap number is n/a and Tap money is not in the total.",
+      });
     }
 
     // --- The Bank rail: the statements Aziz uploads (cockpit_bank_lines,
@@ -1357,10 +1358,9 @@ export const money: Adapter = {
     // is not an empty log, and with a live Tap key a hand-logged Tap payment
     // is refused, so the scope note never asks for one. A Tap read that failed
     // this run has its own note above.
-    const handWords =
-      tapState === "live"
-        ? "Bank transfers, cheques and cash count only once they are logged by hand on the Money tab"
-        : "Bank transfers, cheques, cash and, until Tap is connected, Tap payments count only once they are logged by hand on the Money tab";
+    const handWords = tapRail.connected
+      ? "Bank transfers, cheques and cash count only once they are logged by hand on the Money tab"
+      : "Bank transfers, cheques, cash and, until Tap is connected, Tap payments count only once they are logged by hand on the Money tab";
     if (bankRail.connected) {
       cashScopeNote.level = "info";
       cashScopeNote.text = `Cash on the rails covers Whop, the uploaded bank statements (client payments on them), ${tapRail.connected ? "Tap charges no settlement line covers, " : ""}and payments logged by hand that no statement line covers. Whop payouts, Tap settlements and Mahara's own transfers on the statements are never counted, so nothing is counted twice. Processor fees are not taken off.`;
