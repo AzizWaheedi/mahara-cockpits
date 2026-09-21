@@ -340,22 +340,6 @@ export const batch = authenticatedAction({
   },
 });
 
-/** The Content Bank: what this client's audience actually asks, and every
- *  correction anybody has made. */
-export const bank = authenticatedAction({
-  args: { clientTaskId: v.string() },
-  returns: v.any(),
-  handler: async (ctx, { clientTaskId }) => {
-    await who(ctx);
-    return rows(
-      await rest(
-        `social_bank?select=*&client_task_id=eq.${enc(clientTaskId)}` +
-          "&order=active.desc,at.desc&limit=500",
-      ),
-    );
-  },
-});
-
 // ---------------------------------------------------------------------------
 // Writing
 
@@ -452,66 +436,6 @@ export const onboardingStep = authenticatedAction({
       ],
     });
     return { ok: true };
-  },
-});
-
-/** Add something the audience actually asked, or a correction somebody made. */
-export const bankAdd = authenticatedAction({
-  args: {
-    clientTaskId: v.string(),
-    text: v.string(),
-    kind: v.optional(v.string()),
-    pillar: v.optional(v.string()),
-    source: v.optional(v.string()),
-  },
-  returns: v.any(),
-  handler: async (ctx, args) => {
-    const { email } = await who(ctx);
-    const text = clip(args.text);
-    if (!text) throw new Error("Type the question, objection or correction.");
-    const kind = ["question", "objection", "correction"].includes(
-      args.kind ?? "",
-    )
-      ? args.kind
-      : "question";
-    const id = rid("bank");
-    await rest("social_bank", {
-      method: "POST",
-      prefer: "return=minimal",
-      body: [
-        {
-          id,
-          client_task_id: args.clientTaskId,
-          kind,
-          text,
-          pillar: args.pillar ?? null,
-          source: args.source ?? "cockpit",
-          added_by: email,
-          at: now(),
-        },
-      ],
-    });
-    return { id };
-  },
-});
-
-/**
- * Retire an item rather than delete it.
- *
- * A correction that stops applying is still a record of what somebody
- * asked for once, and the bank is meant to be the memory of this client.
- */
-export const bankRetire = authenticatedAction({
-  args: { id: v.string(), active: v.optional(v.boolean()) },
-  returns: v.null(),
-  handler: async (ctx, { id, active }) => {
-    await who(ctx);
-    await rest(`social_bank?id=eq.${enc(id)}`, {
-      method: "PATCH",
-      prefer: "return=minimal",
-      body: { active: active ?? false },
-    });
-    return null;
   },
 });
 

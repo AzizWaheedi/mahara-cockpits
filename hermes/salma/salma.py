@@ -229,18 +229,14 @@ def brand_of(sb: Store, client_task_id: str) -> dict:
     q = urllib.parse.quote(client_task_id)
     client = sb.get(f"editor_clients?select=*&task_id=eq.{q}&limit=1")
     social = sb.get(f"social_clients?select=*&client_task_id=eq.{q}&limit=1")
-    bank = sb.get(
-        f"social_bank?select=kind,text,pillar&client_task_id=eq.{q}&active=is.true&limit=60"
-    )
     return {
         "client": client[0] if client else {},
         "social": social[0] if social else {},
-        "bank": bank,
     }
 
 
 def brief(b: dict) -> str:
-    c, s, bank = b["client"], b["social"], b["bank"]
+    c, s = b["client"], b["social"]
     parts = [f"CLIENT: {c.get('name') or 'unknown'}"]
     if c.get("website"):
         parts.append(f"WEBSITE: {c['website']}")
@@ -249,18 +245,6 @@ def brief(b: dict) -> str:
     for label, key in (("BRAND DNA", "brand_dna"), ("OFFER", "offer"), ("DO'S AND DON'TS", "dos_donts")):
         if c.get(key):
             parts.append(f"{label}:\n{str(c[key])[:3000]}")
-    asked = [x["text"] for x in bank if x.get("kind") == "question"][:20]
-    objections = [x["text"] for x in bank if x.get("kind") == "objection"][:15]
-    corrections = [x["text"] for x in bank if x.get("kind") == "correction"][:20]
-    if asked:
-        parts.append("WHAT THEIR AUDIENCE ACTUALLY ASKS:\n- " + "\n- ".join(asked))
-    if objections:
-        parts.append("OBJECTIONS:\n- " + "\n- ".join(objections))
-    if corrections:
-        parts.append(
-            "CORRECTIONS ALREADY MADE ON THIS CLIENT -- do not repeat these:\n- "
-            + "\n- ".join(corrections)
-        )
     return "\n\n".join(parts)
 
 
@@ -270,7 +254,7 @@ def brief(b: dict) -> str:
 PILLAR_BRIEF = {
     "portfolio": "the project shown like a spec: what was built, in what, to what standard. Needs a real project.",
     "craft": "the material, close. A joint, a grain, a fold. About competence, not scale.",
-    "education": "a question their audience actually asked, answered plainly. The question must come from the list above.",
+    "education": "a question this client's own customers ask before they buy, answered plainly. Take it from the offer and the brand, not from general industry advice.",
 }
 
 
@@ -287,9 +271,10 @@ You return a written plan only. No captions, no image prompts, no hashtags.
 Rules that are not negotiable:
 - A topic must be specific enough to disagree with. "Kitchen post" is not a
   topic. "Why the toe-kick gap is where cheap joinery shows" is.
-- An Education topic must come from the client's own list of what their
-  audience asks. If the list does not cover the number asked for, return
-  fewer and say so in `shortfall`. Never invent a question.
+- An Education topic must answer a question this client's own customers
+  ask before they buy. Work it out from their offer and their do's and
+  don'ts; it is in there. Never reach for general industry advice, and
+  never invent a question they have not been asked.
 - Never invent a client fact: no prices, no lead times, no materials they
   have not mentioned, no awards.
 - Never repeat anything in the corrections list.
