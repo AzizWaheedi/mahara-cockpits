@@ -26,11 +26,11 @@ import {
   CAC_AD_SPEND_ONLY,
   CLOSE_RATE,
   COST_TO_WIN,
-  ROAS_CASH,
-  ROAS_CONTRACTED,
   cashHeadline,
   contractedHeadline,
   INTRO_TO_DEMO,
+  ROAS_CASH,
+  ROAS_CONTRACTED,
   SHOW_RATE,
 } from "@/components/ceo/metrics";
 import { SectionCard } from "@/components/ceo/SectionCard";
@@ -628,7 +628,10 @@ function FunnelBody({
     {
       label: "Front-end cash",
       value: money(w.frontEndCash.total),
-      delta: delta(change(w.frontEndCash.total, prev?.frontEndCash.total), "up"),
+      delta: delta(
+        change(w.frontEndCash.total, prev?.frontEndCash.total),
+        "up",
+      ),
       sub:
         w.frontEndCash.deposit > 0
           ? `${pct(w.frontEndCash.confirmedShare)} confirmed on a rail · kickoff cash not read yet`
@@ -770,7 +773,17 @@ function CostsBody({
     {
       label: "Front-end cash per intro booked",
       value: money(worth(w.introsBooked)),
-      delta: delta(change(worth(w.introsBooked), prev ? (prev.introsBooked > 0 ? prev.frontEndCash.total / prev.introsBooked : null) : null), "up"),
+      delta: delta(
+        change(
+          worth(w.introsBooked),
+          prev
+            ? prev.introsBooked > 0
+              ? prev.frontEndCash.total / prev.introsBooked
+              : null
+            : null,
+        ),
+        "up",
+      ),
       sub: `${money(fe)} over ${plural(w.introsBooked, "intro")} booked`,
       naHint: "No intro calls were booked in this window.",
     },

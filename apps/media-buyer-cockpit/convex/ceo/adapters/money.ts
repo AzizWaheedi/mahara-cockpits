@@ -1,16 +1,16 @@
 import { internal } from "../../_generated/api";
-import { type BillingRow, LIVE_GROUPS, summariseBilling } from "../billing";
 import {
-  attribute,
   type Attributed,
+  attribute,
+  totals as attributionTotals,
   byPerson,
   type CardRef,
   type DealRef,
   FRONT_END_DAYS,
   FRONT_END_DAYS_MONTHLY,
   type PaymentIn,
-  totals as attributionTotals,
 } from "../attribution";
+import { type BillingRow, LIVE_GROUPS, summariseBilling } from "../billing";
 import { byNewest, type ManualLoad, type ManualRow } from "../data/money";
 import {
   capturedCharges,
@@ -41,7 +41,6 @@ import type {
   Transaction,
 } from "../payloads";
 import { B2B, num, type Row, sql, TRIAGE } from "../sb";
-import { IS_LEAD } from "./growth";
 import {
   addDays,
   daysInMonth,
@@ -50,6 +49,7 @@ import {
   monthStart,
 } from "../time";
 import type { Adapter, DailyPoint, SourceStamp } from "../types";
+import { IS_LEAD } from "./growth";
 
 /** Whop and the closer form sync every 15 minutes; an hour behind is stale. */
 const STALE_MS = 60 * 60_000;
@@ -476,7 +476,8 @@ export const money: Adapter = {
           const leads = num(roas?.leads);
           actuals.leads = leads;
           actuals.cost_per_lead = leads > 0 ? (actuals.spend ?? 0) / leads : 0;
-          actuals.lead_to_demo = leads > 0 ? (100 * (actuals.demos_scheduled ?? 0)) / leads : 0;
+          actuals.lead_to_demo =
+            leads > 0 ? (100 * (actuals.demos_scheduled ?? 0)) / leads : 0;
         } catch (e) {
           notes.push({
             level: "warn",
@@ -1450,7 +1451,9 @@ export const money: Adapter = {
             : r.username
               ? String(r.username)
               : null,
-          dealResponseId: r.deal_response_id ? String(r.deal_response_id) : null,
+          dealResponseId: r.deal_response_id
+            ? String(r.deal_response_id)
+            : null,
           clickupTaskId: null,
           billingReason: r.billing_reason ? String(r.billing_reason) : null,
         });
@@ -1485,7 +1488,9 @@ export const money: Adapter = {
           amount: usd(num(r.amount_usd)),
           payerEmail: null,
           payerName: r.client ? String(r.client) : null,
-          dealResponseId: r.deal_response_id ? String(r.deal_response_id) : null,
+          dealResponseId: r.deal_response_id
+            ? String(r.deal_response_id)
+            : null,
           clickupTaskId: null,
           billingReason: null,
         });
@@ -1611,7 +1616,9 @@ export const money: Adapter = {
           detail: r.category ? String(r.category) : null,
         });
       const transactions = [...rows.map(toTx), ...outRows]
-        .sort((a, b) => (a.day === b.day ? a.id.localeCompare(b.id) : a.day < b.day ? 1 : -1))
+        .sort((a, b) =>
+          a.day === b.day ? a.id.localeCompare(b.id) : a.day < b.day ? 1 : -1,
+        )
         .slice(0, 1500);
       const inMonth = (m: string) => rows.filter(r => r.day.slice(0, 7) === m);
       const all = attributionTotals(rows);
@@ -1651,7 +1658,10 @@ export const money: Adapter = {
       attributionDaily.push(
         point("money.attribution.frontEndMtd", attribution.mtd.frontEnd),
         point("money.attribution.backEndMtd", attribution.mtd.backEnd),
-        point("money.attribution.unattributedMtd", attribution.mtd.unattributed),
+        point(
+          "money.attribution.unattributedMtd",
+          attribution.mtd.unattributed,
+        ),
       );
     } catch (e) {
       notes.push({

@@ -1,5 +1,6 @@
 import { ReceiptText } from "lucide-react";
 import { useMemo } from "react";
+import { useTabParam } from "@/components/ceo/CeoTabs";
 import { type Column, DataTable } from "@/components/ceo/DataTable";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { FilterChips, type FilterOption } from "@/components/ceo/FilterChips";
@@ -7,7 +8,6 @@ import { count, money, plural, shortDate } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { TabLink } from "@/components/ceo/TabLink";
-import { useTabParam } from "@/components/ceo/CeoTabs";
 import type {
   MoneyAttribution,
   Note,
@@ -49,7 +49,11 @@ const VIEWS: FilterOption<ViewKey>[] = [
     label: "Back end",
     hint: "Payments matched to an existing client.",
   },
-  { key: "out", label: "Out", hint: "Whop refunds and the bank expenses loaded." },
+  {
+    key: "out",
+    label: "Out",
+    hint: "Whop refunds and the bank expenses loaded.",
+  },
 ];
 
 const RAIL_LABEL: Record<Transaction["rail"], string> = {
@@ -130,7 +134,9 @@ const COLUMNS: Column<Transaction>[] = [
     cell: t => (
       <span className="block min-w-0 max-w-[16rem]">
         <span className="block truncate" title={t.payerName ?? undefined}>
-          {t.payerName ?? <span className="text-muted-foreground">no name</span>}
+          {t.payerName ?? (
+            <span className="text-muted-foreground">no name</span>
+          )}
         </span>
         {t.payerEmail ? (
           <span
@@ -212,7 +218,8 @@ export function TransactionsTab({ sections, goTab }: CeoTabProps) {
   const rows = useMemo(() => {
     if (!a) return [];
     if (view === "all") return a.transactions;
-    if (view === "out") return a.transactions.filter(t => t.direction === "out");
+    if (view === "out")
+      return a.transactions.filter(t => t.direction === "out");
     return a.transactions.filter(t => t.side === view);
   }, [a, view]);
 

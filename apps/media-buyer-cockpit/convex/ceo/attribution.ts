@@ -216,7 +216,9 @@ export function attribute(
   }
   const cardForDeal = (d: DealRef): CardRef | null =>
     lookup(cardByName, nameKey(d.business)) ??
-    (lower(d.email) ? (cardByEmail.get(lower(d.email) as string) ?? null) : null);
+    (lower(d.email)
+      ? (cardByEmail.get(lower(d.email) as string) ?? null)
+      : null);
 
   const paidAgainst = new Map<string, number>();
   const out: Attributed[] = [];
@@ -382,7 +384,13 @@ export function totals(rows: Attributed[]) {
 export function byPerson(rows: Attributed[]) {
   const m = new Map<
     string,
-    { name: string; role: "closer" | "csm"; frontEnd: number; backEnd: number; payments: number }
+    {
+      name: string;
+      role: "closer" | "csm";
+      frontEnd: number;
+      backEnd: number;
+      payments: number;
+    }
   >();
   for (const r of rows) {
     if (!r.person || !r.personRole) continue;

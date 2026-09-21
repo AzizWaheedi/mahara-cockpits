@@ -2,6 +2,12 @@ import { Image as ImageIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { BarList, type BarListItem } from "@/components/ceo/BarList";
 import { useTabParam } from "@/components/ceo/CeoTabs";
+import {
+  type CustomRange,
+  RangeControl,
+  type RangeKey,
+  rangeStart,
+} from "@/components/ceo/chartKit";
 import { type Column, DataTable } from "@/components/ceo/DataTable";
 import { Delta, type DeltaKind, type GoodWhen } from "@/components/ceo/Delta";
 import { EmptyState } from "@/components/ceo/EmptyState";
@@ -23,14 +29,7 @@ import { Na, Value } from "@/components/ceo/Na";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { TimeSeriesChart } from "@/components/ceo/TimeSeriesChart";
-import {
-  type CustomRange,
-  RangeControl,
-  type RangeKey,
-  rangeStart,
-} from "@/components/ceo/chartKit";
 import { useFrequency } from "@/components/ceo/useFrequency";
-import type { FrequencyFigure } from "../../../convex/ceo/frequency";
 import {
   COMPARE_WITH,
   range,
@@ -38,6 +37,7 @@ import {
   WINDOW_KEYS,
   WINDOW_LABEL,
 } from "@/components/ceo/windows";
+import type { FrequencyFigure } from "../../../convex/ceo/frequency";
 import type {
   FunnelWindow,
   GrowthPayload,

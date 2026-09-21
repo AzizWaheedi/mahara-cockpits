@@ -467,7 +467,12 @@ function CallsBody({
     {
       label: CANCEL_RATE.label,
       value: CANCEL_RATE.format(w.cancel.total),
-      delta: deltaFor(vs, diff(w.cancel.total, prev?.cancel.total), "down", "points"),
+      delta: deltaFor(
+        vs,
+        diff(w.cancel.total, prev?.cancel.total),
+        "down",
+        "points",
+      ),
       sub: `intros ${CANCEL_RATE.format(w.cancel.intro)} · demos ${CANCEL_RATE.format(w.cancel.demo)}`,
       hint: CANCEL_RATE.hint,
       naHint: CANCEL_RATE.naHint,

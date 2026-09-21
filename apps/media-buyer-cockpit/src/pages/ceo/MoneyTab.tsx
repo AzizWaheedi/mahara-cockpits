@@ -29,8 +29,8 @@ import { Value } from "@/components/ceo/Na";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { ShowMore } from "@/components/ceo/ShowMore";
 import { StatTile } from "@/components/ceo/StatTile";
-import { TabLink } from "@/components/ceo/TabLink";
 import { StatusChip, type StatusTone } from "@/components/ceo/StatusChip";
+import { TabLink } from "@/components/ceo/TabLink";
 import { TargetMeter } from "@/components/ceo/TargetMeter";
 import { TimeSeriesChart } from "@/components/ceo/TimeSeriesChart";
 import type { CeoSection } from "@/components/ceo/useCeo";
@@ -76,7 +76,10 @@ type PnlKey = "month" | "software" | "overhead" | "labour" | "ads" | "totals";
 // and "Expenses and bank transfers" the expenses card before it. Anything
 // unmatched lands on the cash card, so no note is ever dropped.
 const NOTE_ROUTES: readonly (readonly [RegExp, CardKey])[] = [
-  [/attribut|transactions tab|kickoff cash|payer mapping could not/i, "attribution"],
+  [
+    /attribut|transactions tab|kickoff cash|payer mapping could not/i,
+    "attribution",
+  ],
   // The MRR card's own notes first: several of them name Whop, a target or a
   // client, which the generic routes further down would otherwise claim.
   [
