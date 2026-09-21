@@ -66,6 +66,12 @@
   display: block;
   background: #000;
 }
+/* A still is not a film: letterbox it rather than crop, because a board
+   the client approves has to be the board they were shown. */
+img.film {
+  object-fit: contain;
+  height: auto;
+}
 
 .below {
   max-width: 1200px;

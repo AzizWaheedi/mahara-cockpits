@@ -22,6 +22,7 @@ type Note = { at_seconds: number | null; body: string; at: string };
 type Item = {
   id: string;
   n: number;
+  kind: "video" | "image";
   title: string;
   video_url: string;
   poster_url: string | null;
@@ -123,7 +124,12 @@ export default function ReviewPage() {
         p_item: item.id,
         p_decision: decision,
         p_note: decision === "approved" ? "" : note,
-        p_at: decision === "approved" ? null : Math.floor(at),
+        // A still has no timecode, and 0:00 on an image is a lie the
+        // editor would have to decode.
+        p_at:
+          decision === "approved" || item.kind === "image"
+            ? null
+            : Math.floor(at),
         p_name: name.trim() || null,
       });
       if (!(data as { ok?: boolean } | null)?.ok) {
@@ -172,25 +178,31 @@ export default function ReviewPage() {
       {item && (!allDone || reopened) ? (
         <>
           <section className="stage">
-            {/* biome-ignore lint/a11y/useMediaCaption: the client's own footage, no track exists */}
-            <video
-              key={item.id}
-              ref={video}
-              /* Without a poster a browser shows a black rectangle until
+            {item.kind === "image" ? (
+              <img src={item.video_url} alt={item.title} className="film" />
+            ) : (
+              /* biome-ignore lint/a11y/useMediaCaption: the client's own footage, no track exists */
+              <video
+                key={item.id}
+                ref={video}
+                /* Without a poster a browser shows a black rectangle until
                  somebody presses play. Asking for a fraction of a second
                  in makes it decode and show the first frame instead,
                  which is the difference between a delivery and a broken
                  embed. */
-              src={item.poster_url ? item.video_url : `${item.video_url}#t=0.1`}
-              poster={item.poster_url ?? undefined}
-              controls
-              playsInline
-              preload="metadata"
-              onTimeUpdate={e =>
-                setAt((e.target as HTMLVideoElement).currentTime)
-              }
-              className="film"
-            />
+                src={
+                  item.poster_url ? item.video_url : `${item.video_url}#t=0.1`
+                }
+                poster={item.poster_url ?? undefined}
+                controls
+                playsInline
+                preload="metadata"
+                onTimeUpdate={e =>
+                  setAt((e.target as HTMLVideoElement).currentTime)
+                }
+                className="film"
+              />
+            )}
           </section>
 
           <section className="below">
@@ -253,7 +265,9 @@ export default function ReviewPage() {
             ) : asking ? (
               <div className="ask">
                 <label htmlFor="note" className="askLabel">
-                  What should change? We are at {clock(at)}.
+                  {item.kind === "image"
+                    ? "What should change?"
+                    : `What should change? We are at ${clock(at)}.`}
                 </label>
                 <textarea
                   id="note"
@@ -299,7 +313,7 @@ export default function ReviewPage() {
                   disabled={busy}
                   onClick={() => void decide("approved")}
                 >
-                  Approve this video
+                  Approve this {item.kind === "image" ? "image" : "video"}
                 </button>
                 <button
                   type="button"

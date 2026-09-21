@@ -2,6 +2,7 @@ import { useMutation, useQuery } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
+import { SendForReview } from "@/components/SendForReview";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { WhatsAppDesk } from "@/components/WhatsAppDesk";
@@ -1766,6 +1767,14 @@ export function CsmPage({ section }: { section: Section }) {
       {section === "start" && (
         <div className="mb-4">
           <WhatsAppDesk desk="csm" />
+        </div>
+      )}
+
+      {/* Sending a cut for review sits with answering clients, because
+          the reply they are waiting for is usually "here it is". */}
+      {section === "start" && (
+        <div className="mb-4">
+          <SendForReview />
         </div>
       )}
 
