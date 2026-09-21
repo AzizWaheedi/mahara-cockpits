@@ -54,7 +54,7 @@ The cockpit recomputes every section every 15 minutes on the production Convex d
 | **Contracted this month** | The closer's form, plus hand-logged deals that do not match a closer-form deal. | Typed, not paid. |
 | **Refunds** | Whop refunds by refund day (month to date, 90 days). | Whop only. |
 | **Projected month** | Cash so far ÷ days so far × days in the month. | Reads low early in a day. |
-| **Targets** | `monthly_targets` in the B2B database, latest month on record, against the dashboard's window function. | No targets if the latest month is old. |
+| **Targets** | `monthly_targets` in the B2B database, latest month on record, against the dashboard's window function; the leads, cost per lead and lead-to-demo actuals are recomputed on the ROAS rule. | The latest targets are for August, so September shows none. |
 | **MRR on the books** | ClickUp card fields, grouped by stage: active, paused, gone, sales list, pipeline. Recurring = cards whose payment plan is not paid-in-full / split pay / one-off / upfront. | Typed by hand. Blank means missing, not zero. Groups are never summed. |
 | **Average LTV** | The LTV field on the cards, averaged over cards that have one. | Typed, not computed from payments. |
 | **Expenses** | The bank CSV loaded into `expenses`, by category, latest loaded month; unloads excluded from "money out". | KWD converted at an inferred 3.248/3.25, not the cockpit's 3.26. Profit and margin stay empty until revenue is declared complete. Payroll is not in it. |
