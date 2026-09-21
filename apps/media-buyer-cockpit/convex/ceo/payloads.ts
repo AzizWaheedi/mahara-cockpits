@@ -448,8 +448,30 @@ export type FunnelWindow = {
   from: string;
   to: string;
   spend: number;
+  /**
+   * Leads by the setters' ROAS tags in GoHighLevel: `roas-qualified` plus
+   * `roas-unqualified`, dated by creation (Aziz, 2026-09-21). Not the
+   * dashboard's `is_lead` count, which is kept in `raw.leads`.
+   */
   leads: number;
+  /** Lead-gen spend over `leads`; the dashboard's own is `raw.cost_per_lead`. */
   cpl: number | null;
+  /** The four ROAS classes; only the first two are leads. */
+  leadClasses: {
+    qualified: number;
+    unqualified: number;
+    /** `roas-unprepared`: shown, never counted. */
+    notReady: number;
+    /** No ROAS tag yet: shown, never counted. */
+    untagged: number;
+  };
+  /** From a lead's creation to the first Maqsam call with it, over the leads that were called. */
+  speedToLead: {
+    leads: number;
+    called: number;
+    medianMin: number | null;
+    within5Share: number | null;
+  };
   introsBooked: number;
   demosBooked: number;
   demosShown: number;
@@ -1034,12 +1056,15 @@ export type B2bAdWindow = {
   clicks: number;
   linkClicks: number;
   /** What Meta says the ad produced. */
+  /** What Meta counts for the ad; `leads` is what the CRM holds with a ROAS tag. */
   metaLeads: number;
   /** What actually arrived in the CRM attributed to the ad. */
   leads: number;
   /** Leads whose stage reached Demo Booked, Confirmed, Closed or Hot Lead; and the ones marked disqualified. */
+  /** `roas-qualified` leads. */
   qualifiedLeads: number;
-  disqualifiedLeads: number;
+  /** `roas-unprepared` contacts, shown but not in `leads`. */
+  notReadyLeads: number;
   introsBooked: number;
   /** Intros whose time has passed, the denominator of a show rate. */
   introsDue: number;

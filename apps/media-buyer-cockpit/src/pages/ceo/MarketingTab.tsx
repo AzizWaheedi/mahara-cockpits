@@ -367,7 +367,7 @@ function SpendAndLeads({
   const prevRetarget = prev ? retargeting(prev) : null;
 
   return (
-    <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4">
+    <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3 lg:grid-cols-5">
       <StatTile
         variant="plain"
         label="Lead-gen ad spend"
@@ -380,7 +380,22 @@ function SpendAndLeads({
         label="Leads"
         value={count(w.leads)}
         delta={delta(change(w.leads, prev?.leads), "up")}
-        hint="Every opted-in GHL contact with a phone or email, dated by the day it was created."
+        sub={`${count(w.leadClasses.qualified)} qualified · ${count(w.leadClasses.unqualified)} unqualified · ${count(w.leadClasses.notReady)} not ready · ${count(w.leadClasses.untagged)} not yet tagged`}
+        hint="What the setters tagged in GoHighLevel, dated by the day the contact was created: ROAS qualified and ROAS unqualified are leads; ROAS unprepared is not ready and is shown but not counted; a contact with no ROAS tag yet is shown but not counted."
+      />
+      <StatTile
+        variant="plain"
+        label="Speed to lead"
+        value={
+          w.speedToLead.medianMin === null
+            ? "—"
+            : w.speedToLead.medianMin >= 120
+              ? `${(w.speedToLead.medianMin / 60).toFixed(1)} h`
+              : `${Math.round(w.speedToLead.medianMin)} min`
+        }
+        sub={`${count(w.speedToLead.called)} of ${count(w.speedToLead.leads)} leads called on Maqsam${w.speedToLead.within5Share !== null ? ` · ${pct(w.speedToLead.within5Share)} within 5 min` : ""}`}
+        hint="From the lead's creation to the first Maqsam call with it, matched by the CRM contact or the phone's last eight digits. The median over the leads that were called; the ones never called are counted beside it, not inside it."
+        naHint="No lead in this window has a Maqsam call against it."
       />
       <StatTile
         variant="plain"

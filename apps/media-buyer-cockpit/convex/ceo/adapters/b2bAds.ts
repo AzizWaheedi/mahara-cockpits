@@ -27,7 +27,8 @@ type Any = Record<string, any>;
  * typed in by hand, and are simply not on this screen.
  *
  * Two lead counts, on purpose. `metaLeads` is what Meta says the ad produced.
- * `leads` is what actually arrived in the CRM attributed to it. They disagree
+ * `leads` is what actually arrived in the CRM attributed to it and carries a
+ * ROAS tag of qualified or unqualified (Aziz, 2026-09-21). They disagree
  * per ad, sometimes by a lot, and the gap is a diagnosis in itself: Meta
  * counted a form fill that never became a contact, or the contact arrived
  * without its attribution.
@@ -102,12 +103,15 @@ function treeSql(from7: string, from30: string, to: string): string {
     where date between ${day(from)} and ${day(to)}
     group by 1,2,3),
   ${alias}_leads as (
-    select ad_id, count(*) as leads,
-      count(*) filter (where stage_name ~* 'Demo Booked|CONFIRMED|Closed|Hot Lead') as qualified_leads,
-      count(*) filter (where stage_name ilike '%disqualif%') as disqualified_leads
-    from public.leads
-    where is_lead and ad_id is not null
-      and (lead_created_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)}
+    -- Leads by the setters' ROAS tags (Aziz, 2026-09-21): qualified plus
+    -- unqualified count; unprepared is "not ready" and is shown apart.
+    select l.ad_id,
+      count(*) filter (where ('roas-qualified' = any(coalesce(l.tags, '{}'::text[])) or 'roas-unqualified' = any(coalesce(l.tags, '{}'::text[])))) as leads,
+      count(*) filter (where 'roas-qualified' = any(coalesce(l.tags, '{}'::text[]))) as qualified_leads,
+      count(*) filter (where 'roas-qualified' <> all(coalesce(l.tags, '{}'::text[])) and 'roas-unqualified' <> all(coalesce(l.tags, '{}'::text[])) and 'roas-unprepared' = any(coalesce(l.tags, '{}'::text[]))) as not_ready_leads
+    from public.leads l
+    where l.ad_id is not null
+      and (l.lead_created_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)}
     group by 1),
   ${alias}_calls as (
     -- The dashboard's dating (b2b_window_metrics): a booking counts on the
@@ -149,7 +153,7 @@ function treeSql(from7: string, from30: string, to: string): string {
     ${a}_ads.freq as ${a}_freq,
     coalesce(${a}_leads.leads,0) as ${a}_leads,
     coalesce(${a}_leads.qualified_leads,0) as ${a}_qualified_leads,
-    coalesce(${a}_leads.disqualified_leads,0) as ${a}_disqualified_leads,
+    coalesce(${a}_leads.not_ready_leads,0) as ${a}_not_ready_leads,
     coalesce(${a}_calls.intros_booked,0) as ${a}_intros_booked,
     coalesce(${a}_calls.intros_due,0) as ${a}_intros_due,
     coalesce(${a}_calls.intros_shown,0) as ${a}_intros_shown,
@@ -221,7 +225,7 @@ const COUNTS = [
   "metaLeads",
   "leads",
   "qualifiedLeads",
-  "disqualifiedLeads",
+  "notReadyLeads",
   "introsBooked",
   "introsDue",
   "introsShown",
@@ -243,7 +247,7 @@ const COLUMN: Record<(typeof COUNTS)[number], string> = {
   metaLeads: "meta_leads",
   leads: "leads",
   qualifiedLeads: "qualified_leads",
-  disqualifiedLeads: "disqualified_leads",
+  notReadyLeads: "not_ready_leads",
   introsBooked: "intros_booked",
   introsDue: "intros_due",
   introsShown: "intros_shown",
@@ -602,8 +606,8 @@ export const b2bAds: Adapter = {
     const totals = await sql(
       B2B,
       `select
-        (select count(*) from public.leads where is_lead and (lead_created_at at time zone 'Asia/Riyadh')::date between ${day(from7)} and ${day(today)}) as w7_leads,
-        (select count(*) from public.leads where is_lead and (lead_created_at at time zone 'Asia/Riyadh')::date between ${day(from30)} and ${day(today)}) as w30_leads,
+        (select count(*) from public.leads l where ('roas-qualified' = any(coalesce(l.tags, '{}'::text[])) or 'roas-unqualified' = any(coalesce(l.tags, '{}'::text[]))) and (l.lead_created_at at time zone 'Asia/Riyadh')::date between ${day(from7)} and ${day(today)}) as w7_leads,
+        (select count(*) from public.leads l where ('roas-qualified' = any(coalesce(l.tags, '{}'::text[])) or 'roas-unqualified' = any(coalesce(l.tags, '{}'::text[]))) and (l.lead_created_at at time zone 'Asia/Riyadh')::date between ${day(from30)} and ${day(today)}) as w30_leads,
         (select count(*) from public.closed_deals where (submitted_at at time zone 'Asia/Riyadh')::date between ${day(from7)} and ${day(today)}) as w7_closes,
         (select count(*) from public.closed_deals where (submitted_at at time zone 'Asia/Riyadh')::date between ${day(from30)} and ${day(today)}) as w30_closes,
         (select coalesce(sum(contracted_revenue),0) from public.closed_deals where (submitted_at at time zone 'Asia/Riyadh')::date between ${day(from7)} and ${day(today)}) as w7_contracted,

@@ -578,6 +578,8 @@ function FunnelBody({
       label: "Leads",
       value: count(w.leads),
       delta: delta(change(w.leads, prev?.leads), "up"),
+      sub: `${count(w.leadClasses.qualified)} qualified · ${count(w.leadClasses.unqualified)} unqualified`,
+      hint: "The setters' ROAS tags in GoHighLevel: qualified plus unqualified, dated by creation. Not ready and untagged contacts are on the Marketing tab.",
     },
     {
       label: "Cost per lead",

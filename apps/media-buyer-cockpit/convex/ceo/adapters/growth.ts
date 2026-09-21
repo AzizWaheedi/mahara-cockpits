@@ -43,10 +43,29 @@ function windowRanges(today: string): Record<WindowKey, Range> {
 }
 
 /**
+ * A lead, since 2026-09-21, is what the setters tagged it in GoHighLevel
+ * (Aziz: "the tags should be the ROAS tags"): `roas-qualified` or
+ * `roas-unqualified` counts as a lead, dated by the day it was created;
+ * `roas-unprepared` is "not ready" and is shown but never counted; a
+ * contact with none of the three is "not yet tagged" and is shown, not
+ * counted. When a contact carries more than one, qualified wins.
+ */
+const ROAS_Q = `'roas-qualified' = any(coalesce(l.tags, '{}'::text[]))`;
+const ROAS_U = `'roas-qualified' <> all(coalesce(l.tags, '{}'::text[])) and 'roas-unqualified' = any(coalesce(l.tags, '{}'::text[]))`;
+const ROAS_NR = `'roas-qualified' <> all(coalesce(l.tags, '{}'::text[])) and 'roas-unqualified' <> all(coalesce(l.tags, '{}'::text[])) and 'roas-unprepared' = any(coalesce(l.tags, '{}'::text[]))`;
+const ROAS_NONE = `not ('roas-qualified' = any(coalesce(l.tags, '{}'::text[])) or 'roas-unqualified' = any(coalesce(l.tags, '{}'::text[])) or 'roas-unprepared' = any(coalesce(l.tags, '{}'::text[])))`;
+const IS_LEAD = `('roas-qualified' = any(coalesce(l.tags, '{}'::text[])) or 'roas-unqualified' = any(coalesce(l.tags, '{}'::text[])))`;
+
+/**
  * One statement for all six windows: b2b_window_metrics per window (the
- * Overview tiles), plus a count of past demos still marked confirmed, a
- * record-keeping fact for the Sales tab. The show rate itself is the
- * dashboard's and is never worked out here.
+ * Overview tiles), plus the ROAS lead classes, speed to lead on Maqsam,
+ * and a count of past demos still marked confirmed. The show rate itself
+ * is the dashboard's and is never worked out here.
+ *
+ * Speed to lead (Aziz, 2026-09-21): from the lead's creation to the first
+ * call with that lead on Maqsam, whatever its direction, matched by the
+ * CRM contact id or the last eight digits of the phone. Median over the
+ * leads that were called; the uncalled are counted beside it.
  */
 function windowsSql(ranges: Record<WindowKey, Range>): string {
   const values = Object.entries(ranges)
@@ -63,11 +82,42 @@ still_confirmed as (
   join public.calls c on c.call_type = 'demo'
     and (c.start_at at time zone 'Asia/Riyadh')::date between w.f and w.t
   group by w.k
+),
+roas as (
+  select w.k,
+    count(*) filter (where ${ROAS_Q}) as q,
+    count(*) filter (where ${ROAS_U}) as u,
+    count(*) filter (where ${ROAS_NR}) as nr,
+    count(*) filter (where ${ROAS_NONE}) as untagged
+  from w
+  join public.leads l on (l.lead_created_at at time zone 'Asia/Riyadh')::date between w.f and w.t
+  group by w.k
+),
+speed as (
+  select w.k,
+    count(*) as sp_leads,
+    count(fc.first_call) as sp_called,
+    percentile_cont(0.5) within group (order by extract(epoch from (fc.first_call - l.lead_created_at)) / 60.0) filter (where fc.first_call is not null) as sp_median_min,
+    count(*) filter (where fc.first_call is not null and fc.first_call - l.lead_created_at <= interval '5 minutes') as sp_within_5
+  from w
+  join public.leads l on ${IS_LEAD} and (l.lead_created_at at time zone 'Asia/Riyadh')::date between w.f and w.t
+  cross join lateral (
+    select min(m.occurred_at) as first_call from public.maqsam_calls m
+    where m.occurred_at >= l.lead_created_at
+      and (m.contact_id = l.contact_id
+        or (length(regexp_replace(coalesce(l.phone,''), '[^0-9]', '', 'g')) >= 8 and (regexp_replace(coalesce(m.lead_phone,''), '[^0-9]', '', 'g') like '%' || right(regexp_replace(coalesce(l.phone,''), '[^0-9]', '', 'g'), 8) or regexp_replace(coalesce(m.callee_number,''), '[^0-9]', '', 'g') like '%' || right(regexp_replace(coalesce(l.phone,''), '[^0-9]', '', 'g'), 8) or regexp_replace(coalesce(m.caller_number,''), '[^0-9]', '', 'g') like '%' || right(regexp_replace(coalesce(l.phone,''), '[^0-9]', '', 'g'), 8))))
+  ) fc
+  group by w.k
 )
 select w.k, w.f::text as d_from, w.t::text as d_to,
   public.b2b_window_metrics(w.f, w.t, null::text[]) as m,
-  coalesce(sc.demos_still_confirmed, 0) as demos_still_confirmed
-from w left join still_confirmed sc on sc.k = w.k`;
+  coalesce(sc.demos_still_confirmed, 0) as demos_still_confirmed,
+  coalesce(r.q, 0) as roas_q, coalesce(r.u, 0) as roas_u, coalesce(r.nr, 0) as roas_nr, coalesce(r.untagged, 0) as roas_untagged,
+  coalesce(sp.sp_leads, 0) as sp_leads, coalesce(sp.sp_called, 0) as sp_called, sp.sp_median_min, coalesce(sp.sp_within_5, 0) as sp_within_5
+from w
+left join still_confirmed sc on sc.k = w.k
+left join roas r on r.k = w.k
+left join speed sp on sp.k = w.k`;
 }
 
 /**
@@ -90,10 +140,10 @@ meta as (
   group by 1
 ),
 ld as (
-  select (lead_created_at at time zone 'Asia/Riyadh')::date as d, count(*) as n
-  from public.leads
-  where is_lead
-    and (lead_created_at at time zone 'Asia/Riyadh')::date between ${f} and ${t}
+  select (l.lead_created_at at time zone 'Asia/Riyadh')::date as d, count(*) as n
+  from public.leads l
+  where ${IS_LEAD}
+    and (l.lead_created_at at time zone 'Asia/Riyadh')::date between ${f} and ${t}
   group by 1
 ),
 bk as (
@@ -301,12 +351,33 @@ function metricsOf(r: Row): Row {
 
 function toWindow(r: Row): FunnelWindow {
   const m = metricsOf(r);
+  const spend = num(m.spend);
+  const qualified = num(r.roas_q);
+  const unqualified = num(r.roas_u);
+  const leads = qualified + unqualified;
+  const called = num(r.sp_called);
+  const medianMin = orNull(r.sp_median_min);
   return {
     from: String(r.d_from),
     to: String(r.d_to),
-    spend: num(m.spend),
-    leads: num(m.leads),
-    cpl: orNull(m.cost_per_lead),
+    spend,
+    leads,
+    cpl: leads > 0 ? Math.round((spend / leads) * 100) / 100 : null,
+    leadClasses: {
+      qualified,
+      unqualified,
+      notReady: num(r.roas_nr),
+      untagged: num(r.roas_untagged),
+    },
+    speedToLead: {
+      leads: num(r.sp_leads),
+      called,
+      medianMin: medianMin === null ? null : Math.round(medianMin * 10) / 10,
+      within5Share:
+        called > 0
+          ? Math.round((num(r.sp_within_5) / called) * 1000) / 1000
+          : null,
+    },
     introsBooked: num(m.intros_booked),
     demosBooked: num(m.demos_booked),
     demosShown: num(m.demos_shown),
