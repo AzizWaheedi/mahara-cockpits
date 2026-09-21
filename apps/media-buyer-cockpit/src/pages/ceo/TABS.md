@@ -577,6 +577,17 @@ the kickoff form is read; Tap is in it only when the deployment has a live
 key; a payment that matches nothing is listed, never dropped, and the Money
 tab's payer mapping card is where it gets mapped.
 
+# Timeframes and the Supabase mirror (2026-09-21)
+
+Every tab with a time dimension carries the chart timeframe control
+(`src/components/ceo/timeframe.ts`, `TimeframeBar`): Frontend, Marketing and
+Sales rebuild every tile from `growth.daily` (`windowFromDaily`), Delivery,
+Calls and Money add a timeframe card from their daily series. Every refresh
+writes each section's payload and every headline metric to Creative Triage
+(`convex/ceo/metricRegistry.ts` → `cockpit_sections`,
+`cockpit_metric_definitions`, `cockpit_metric_values`). Notes fold under one
+line; cards keep four to six tiles and put the rest on a `Facts` line.
+
 # Tab 6: Delivery
 
 **File:** `DeliveryTab.tsx`. **Status:** built, unchanged. **Reads:** `sections.delivery`.

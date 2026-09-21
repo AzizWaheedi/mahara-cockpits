@@ -1,8 +1,12 @@
 # Where every number on the CEO cockpit comes from
 
-One line per number: what it is, where it is read from, what it leaves out. Updated 2026-09-21, twice: after Aziz's review (leads by the ROAS tags, speed to lead on Maqsam, the cash chain, the EOD sheet) and after his twelve-point spec for the marketing and sales numbers (below).
+One line per number: what it is, where it is read from, what it leaves out. Updated 2026-09-21 three times: after Aziz's review (leads by the ROAS tags, speed to lead on Maqsam, the cash chain, the EOD sheet), after his twelve-point spec for the marketing and sales numbers, and after his twenty-point second batch (money, delivery, calls, team, client success, timeframes, design).
 
 The cockpit recomputes every section every 15 minutes on the production Convex deployment. Days are Kuwait days. When a section fails, the screen keeps the last good numbers and says so.
+
+**Every number also lands in Supabase.** Each refresh writes to Creative Triage: `cockpit_sections` (the whole payload of every section, as jsonb), `cockpit_metric_definitions` (one row per metric: label, plain definition, source, what it leaves out, unit) and `cockpit_metric_values` (one row per metric, scope, window and day: `company`, `client:<clickup id>` or `person:<name>`; windows today, yesterday, last7, mtd, lastMonth, last30, last90, 12m, all, snapshot). Join values to definitions on `metric`; a null value means not measurable that day, never zero. The registry is `convex/ceo/metricRegistry.ts`.
+
+**Timeframes.** Frontend, Marketing and Sales carry one timeframe control (7 days, 30 days, this month, last month, 90 days, 6 months, 12 months, everything, or two dates) and rebuild every tile from the daily series for those days: each count is a sum of days and each rate a quotient of sums. This month, last month and 7 days use the server's own windows, which carry the exact median and the confirmed share. Delivery, Calls and Money carry a timeframe card built the same way from their daily series.
 
 ## The seven places numbers come from
 
@@ -13,6 +17,9 @@ The cockpit recomputes every section every 15 minutes on the production Convex d
 5. **Creative Triage Supabase** (project `bldgtotkfmhoxmlzowdx`): the clients' side. Each client's Meta account per day, each client's GoHighLevel appointments and opportunities, the clients' Maqsam dialer, and the hand-kept roster (`cockpit_people`).
 6. **ClickUp, the Clients – Mahara list**: the client cards, with the hand-typed billing fields (MRR, LTV, payment plan, paused on, churn date).
 7. **Google**: Instagram and Facebook through the Meta Graph API, YouTube through its Data API, and (once shared) the EOD Reports sheet.
+8. **The bank**: CBK has no API, so the CBK Online CSV export of each account and card is uploaded on the Money tab and parsed by the cockpit (`cockpit_bank_lines`, `cockpit_statements` in Creative Triage).
+9. **Mahara OS**: the client portal's outcomes (`portal_data.appointment_outcomes` in Creative Triage): attendance, deal won or lost, quotation, project value, as the client recorded them.
+10. **Typeform**: the closer's New Client Form (into the B2B database) and the Client Extension Form `gqBcyK6g` (read directly).
 
 ## Growth (Frontend, Marketing, Sales tabs)
 
@@ -58,10 +65,15 @@ The cockpit recomputes every section every 15 minutes on the production Convex d
 
 | Number | Where it comes from | What it leaves out |
 |---|---|---|
-| **Cash collected this month** | Whop payments (net of refunds, by charge day) + Tap captured charges + hand-logged payments, each a separate rail, summed. | Tap refunds are not read (Tap is gross). Processor fees are in neither. Bank transfers are never counted as cash in. |
+| **Cash collected this month** | Whop payments (net of refunds, by charge day) + client payments on the uploaded bank statements + Tap charges no settlement line covers + hand-logged payments no statement line covers, each a separate rail, summed. | Tap refunds are not read. Processor fees are in none. A Tap charge and its bank settlement are one payment: the bank line counts, Tap confirms. A hand-logged transfer a statement line shows counts once, on the bank. |
+| **Bank statements** | The CBK Online CSV export (preamble, a Date, Amount, Balance, Reference, TRSH_NUMBER table, footer totals) uploaded on the Money tab. Every line gets a kind: client payment, Whop payout, transfer into Whop, Tap settlement, own transfer (card top-ups, unloads, Weyay), refund received, expense, bank fee, excluded, unknown. Lines already held (same bank transaction number) are skipped. | Whop payouts are never cash (the payments behind them already count on Whop); the cockpit matches each payout to the run of Whop payments within 3% and 14 days and says how many matched. The tab shows days since the newest statement and warns past 7. |
+| **Refunds** | Whop refunds by refund day + refunds logged by hand (a manual entry of kind refund, which comes off the manual rail on its day). | Tap refunds. |
+| **Expenses on the statements** | Statement debits by month and category (ads, software, courses, labour, bank fees, other, by the reference), with the exclusion list taken out: a card (the masked account) or a vendor (a fragment of the reference) marked personal. | Excluded lines still show on the Transactions tab. The P&L half still reads Muhammed's `expenses` import until the two are reconciled. Whether a Whop card carries spend of its own is a question for Aziz. |
 | **The cash chain of one deal** | Deposit at signing: the closer's form (`cash_collected`). Rest of the cash: meant to be collected on the onboarding call and recorded on the CSM's kickoff form. Confirmation: Whop, Tap or the bank transfer. | **The kickoff form has no field for the amount collected yet** (flagged 2026-04-30, still open), and its answers only land as a ClickUp comment. Until it exists, the rest of the cash is judged from the rails (next row). |
 | **Front end, back end, the person** (every payment in) | Each Whop payment (net), Tap charge, bank transfer and hand-logged payment of the last 12 months is tied to a deal (Whop's own link, the payer's email on the closer form, or the business or client name on it) or to a client card (a portal login, the hand-kept payer mapping, the card's names, or the card chosen when it was logged). Tied to a deal and inside its front-end window (45 days, 20 on a monthly plan): the first money up to the typed deposit is front end, the closer's; what follows is the rest of the cash, front end, the CSM named on the deal. After the window, or tied to a card only: back end, that client's CSM. | A payment that matches nothing is "not attributed" and listed on the Transactions tab with its payer. A Whop subscription cycle is never a deposit. Tap is in it only when the deployment has a live Tap key (it does not today). Bank transfers carry no email, so they tie by name only. |
-| **Transactions tab** | Every payment in with the row above's verdict, plus money out: Whop refunds (already netted off the charge they refund) and the bank expenses for the months loaded. | Capped at 1,500 lines. |
+| **Transactions tab** | Every payment in with the row above's verdict, every statement line with its kind (and a control to change it by hand), refunds logged by hand, Whop refunds and the bank expenses. | Capped at 1,500 lines. |
+| **Projected MRR, collection rate, average retainer** | Projected MRR = the MRR field added up over active cards on a recurring plan; collection rate = cash attributed to those clients this month, every rail, over it; average retainer = the mean over the same cards. Kept per month in `ceoDaily` (`money.book.projected`, `money.book.collected`) from September 2026 on. | Typed MRR; a month with no attributed payment reads 0%. |
+| **The client's LTV table** | Every payment attributed to a client card is mirrored to `cockpit_client_payments` (one row per payment) and feeds the LTV plan: the card's earliest LTV figure plus attributed payments since, written to the ClickUp LTV field from the Money tab. | The write is manual, one button. |
 | **Contracted this month** | The closer's form, plus hand-logged deals that do not match a closer-form deal. | Typed, not paid. |
 | **Refunds** | Whop refunds by refund day (month to date, 90 days). | Whop only. |
 | **Projected month** | Cash so far ÷ days so far × days in the month. | Reads low early in a day. |
@@ -75,19 +87,19 @@ The cockpit recomputes every section every 15 minutes on the production Convex d
 | Number | Where it comes from | What it leaves out |
 |---|---|---|
 | **Spend, leads per client** | Each client's Meta account per day in Creative Triage (`ads_daily_snapshots`), converted to USD with the fixed table (KWD 3.26, AED 0.2723, SAR 0.2666, QAR 0.2747). | A currency not in the table is left out entirely. Mahara's own accounts are dropped. |
-| **Bookings** | The client's GoHighLevel appointments on their main appointment calendar, by the day the meeting is for, future ones excluded. | Only clients whose booking calendar Mahara can read. |
-| **Show rate** | Meetings whose day has passed with status showed ÷ (showed + no-show). | A meeting nobody updated is neither. Most clients do not update. |
-| **Close rate** | Opportunities the client's own CRM marked won ÷ showed. | 20 wins marked across every client since January: reads low by construction. |
-| **Lead to booking** | Bookings ÷ platform leads. | — |
+| **Bookings, three ways** | Total = the provisional calendar + the online calendar + the main calendars (Main Appointment Calendar, In Office, In Home); confirmed = online + main; provisional = the provisional calendar alone. By the day the meeting is for, future ones excluded. An appointment with no client id is tied through its GoHighLevel location when that location maps to one client. | The provisional calendar exists on 46 locations and has produced no row in Creative Triage yet, so provisional reads 0 until the sync covers it. Reschedule, follow-up and callback calendars are held out and named. Four Arabic-named calendars belong to a location with no client card and are excluded. |
+| **Lead to booking, three ways** | Confirmed bookings ÷ platform leads (the main one), provisional ÷ leads, any ÷ leads, over the last 30 days. | — |
+| **Show rate** | Showed ÷ (showed + no-show) on meetings whose day has passed: status showed or no-show, else the client sheet's attendance, else the Mahara OS attendance. | A meeting nobody recorded is neither. |
+| **Close rate** | Deals marked won by the client in Mahara OS outcomes ÷ shown appointments, last 30 days. The tab says how many past appointments have no outcome, per client, and lists them (day, calendar, CRM status). | Mahara OS outcomes start on 2026-09-18; 4 wins so far, on May to July appointments, so every close rate reads 0% today. |
 | **Running** | Campaigns with spend in the last three days. | The company-level "running" above the table is Meta's ACTIVE status instead. |
-| **Client status** | Good within $15 per lead and $60 per booking; bad with no leads or over $22.50 per lead; watch otherwise. | — |
+| **Client status** | Good = cost per lead at most $15, cost per confirmed booking at most $60 and show rate at least 60%; bad = cost per booking over $80, cost per lead over $22.50, or show rate under 40%; watch otherwise, an unknown show rate included. The hint shows what a shown booking would cost at a 60% show rate (cost per confirmed booking ÷ 0.6). | The 40% line is Aziz's to confirm. |
 
 ## Calls tab (the clients' dialer)
 
 | Number | Where it comes from | What it leaves out |
 |---|---|---|
 | **Dials, connected, talk time** | The Maqsam dialer import in Creative Triage (`mahara_reporting.facts`): outbound calls with one agent; connected = completed with duration. | Connected can include voicemail. Only the accounts the dialer imports. |
-| **Speed to lead (clients)** | For DFY clients' leads, the first outbound dial to the lead's phone. | Only since 2026-09-12. |
+| **Speed to lead (clients)** | For DFY clients' leads, the first outbound dial to the lead's phone. Two clocks: the plain clock, and the working clock, where the time starts at the later of the lead's creation and the next working window and only working minutes count. Working hours live in `cockpit_settings` (key `working_hours`), editable on the tab; the default is 10:00 to 18:00 Asia/Kuwait, Saturday to Thursday. | Only since 2026-09-12. A call before the clock starts counts as 0 minutes. |
 
 ## Client success tab
 
@@ -96,6 +108,10 @@ The cockpit recomputes every section every 15 minutes on the production Convex d
 | **Buckets** | ClickUp card status: onboarding, active, paused (stage says pause/freeze/hold), churned. | — |
 | **Risk score** | Points for unhappy words on the card, silence over 14 days, an overdue payment, no campaign or no leads, cost per lead over $22.50, a bad Pulse, no portal visit, DEFCON 1 or 2. High is 5 or more. | — |
 | **Churn this month** | A launched client that stopped (term = launch + 90 days; past the term it counts churned unless a payment on any rail landed after it) ÷ launched clients at the start of the month. | ClickUp keeps no stage history, so stops before mid-September are undated and left out; the rate is withheld when the month is incomplete. |
+| **Extensions** | The Client Extension Form (Typeform `gqBcyK6g`): weeks granted per client in the month and in total, the clock starting at submission; matched to the card by name. A button writes the live extension to a ClickUp field. | The form has two responses ever, both internal tests. The ClickUp field does not exist yet: create a Number field "Current extension (weeks)" on the Clients list and set `CLICKUP_EXTENSION_FIELD` on the deployment. |
+| **LTV and MRR per client** | The card's LTV and MRR fields, in USD, on the roster. | Typed. |
+| **Time to first launch** | Days from the ClickUp card's creation to its Launch Date, per client, mean and median over launched clients; first launch only. | Cards created after their Launch Date are named and left out. |
+| **Average retainer** | Mean MRR over active cards on a recurring plan. | Paid-in-full and split-pay cards are excluded. |
 
 ## Team & payroll, Management
 
@@ -104,6 +120,7 @@ The cockpit recomputes every section every 15 minutes on the production Convex d
 | **End of days** | Today: the B2B database's `eod_reports` and `team_eod_reports` (the Typeforms) plus this app's own EOD form. **Aziz's rule: the EOD Reports sheet on Google Sheets is the source of truth.** | The sheet (`1K10In9fyYa_hN7X4z_HGcCuoxGBRZoF4q7Z0r2SalZE`) is not yet shared with the cockpit's service account; the read is built and waiting. |
 | **Payroll a month** | `cockpit_people`: monthly cost × the fixed currency table, over active people. | A floor while anyone is uncosted; those are named. |
 | **Commission** | A rule per person: what it is paid on, then the rate. | No payout is computed yet: nothing links the roster to the CRM's sales reps. |
+| **Working hours per person** | `cockpit_people.schedule`: days and times per weekday plus per-day exceptions, edited on the row. | Shown and stored only; nothing is computed from it yet. |
 
 ## Content tab
 
@@ -119,10 +136,26 @@ The cockpit recomputes every section every 15 minutes on the production Convex d
 |---|---|
 | **Failing checks** | This app's health ledger: every outside call notes ok or fail per source; three fails in a row is an alert. Feeds are judged on the B2B `sync_state` and the Triage cron runs. |
 
-## Two things only Aziz can settle
+## Things only Aziz can settle
+
+3. **Statements by email.** CBK cannot be called; if CBK can email a statement on a schedule, a mailbox parser can land it without anyone uploading. Say which: the upload (30 seconds, once a week) or the mailbox.
+4. **The Whop card.** Expenses are the statement debits; if a Whop-issued card carries spend of its own, say so and it joins.
+5. **The 40% show-rate line** in the client status rule, and whether a client with no attendance recorded can ever read as good.
+6. **The extension field on ClickUp** (see the Client success row) and the live Tap key on the deployment.
+
+## Two things only Aziz can settle (from the first pass)
 
 1. **The rest of the cash.** Add two fields to the kickoff form (collected at kickoff: yes/no, and the amount) and have Make write them somewhere structured. The cleanest landing is a row in the B2B `transfers` table linked to the deal, because the cockpit already counts that ledger as confirmed cash.
 2. **The EOD sheet.** Share `1K10In9fyYa_hN7X4z_HGcCuoxGBRZoF4q7Z0r2SalZE` with `claude@studied-handler-508106-m5.iam.gserviceaccount.com` (viewer), and confirm it is the sheet that pulls in everyone's end of day. The read is built; the Team tab switches to it once it can see the tabs.
+
+## Changed on 2026-09-21, third pass (the twenty-point batch)
+
+- Cash collected now includes the bank: the CBK Online CSV upload on the Money tab, parsed and verified on a real statement (120 lines, totals reconcile to the footer). Whop payouts, Tap settlements and Mahara's own transfers are never cash. Refunds can be logged by hand. Expenses come off the statements by category with an editable exclusion list. Days since the last statement is on the tab and warns past 7.
+- Delivery counts bookings three ways and lead to booking three ways, judges close rate on Mahara OS outcomes, lists past appointments with no outcome, and uses Aziz's status rule. Last 7 full days: 42 bookings, all confirmed; cost per confirmed booking $61.77.
+- Speed to lead on working hours, on the Calls tab (5 h 37 min working against 16 h 38 min on the plain clock, last 7 days) and on the Marketing tab (4.2 h working against 20.5 h, month to date), with the hours editable on the Calls tab.
+- Working hours per person on the Team tab; extensions, LTV, time to first launch (43 days on average, median 26, over 34 clients) and average retainer ($1,541.50 over 8 cards) on Client success; projected MRR ($12,332) and collection rate on the Backend tab.
+- Every payment attributed to a client feeds `cockpit_client_payments` and the LTV write; every section and every metric land in Supabase each refresh.
+- One timeframe control per tab; notes folded under one line; four to six tiles per card with a facts line for the rest.
 
 ## Changed on 2026-09-21, second pass (the twelve-point spec)
 
