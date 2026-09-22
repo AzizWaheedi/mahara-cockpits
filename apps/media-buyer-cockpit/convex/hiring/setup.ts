@@ -80,6 +80,26 @@ export async function readValues(location: string): Promise<Value[]> {
   }));
 }
 
+export type Workflow = { id: string; name: string; status: string };
+
+/**
+ * The workflows on the hiring sub-account and whether they are live.
+ *
+ * The public API cannot create a workflow but it can read one, which is the
+ * only way the cockpit can tell that GoHighLevel has been made the sender
+ * while every workflow is still a draft. That combination sends nobody
+ * anything and looks exactly like working, so it is checked rather than
+ * assumed.
+ */
+export async function readWorkflows(location: string): Promise<Workflow[]> {
+  const body = await ghlOk("GET", `/workflows/?locationId=${location}`);
+  return (body?.workflows ?? []).map((w: Any) => ({
+    id: String(w.id),
+    name: String(w.name ?? ""),
+    status: String(w.status ?? ""),
+  }));
+}
+
 const same = (a: string, b: string) =>
   a.trim().toLowerCase() === b.trim().toLowerCase();
 

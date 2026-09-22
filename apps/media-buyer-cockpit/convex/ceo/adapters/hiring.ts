@@ -1,6 +1,7 @@
 import { FORMS } from "../../hiring/forms";
-import { hiringConfigured } from "../../hiring/ghl";
+import { hiringConfigured, hiringLocation } from "../../hiring/ghl";
 import { railSummary, settings } from "../../hiring/settings";
+import { readWorkflows } from "../../hiring/setup";
 import {
   ADVANCING_STAGES,
   EXIT_STAGES,
@@ -275,9 +276,29 @@ export const hiring: Adapter = {
     const byGhl = engineSettings?.sender === "gohighlevel";
     const blockers: string[] = [];
     if (!connected) blockers.push("The hiring sub-account is not connected.");
-    if (byGhl)
+
+    // When GoHighLevel is the sender, whether its workflows are actually live
+    // is the only thing standing between a candidate and silence.
+    let published: number | null = null;
+    let workflows: number | null = null;
+    if (byGhl && connected)
+      try {
+        const rows = await readWorkflows(hiringLocation());
+        workflows = rows.length;
+        published = rows.filter(w => w.status === "published").length;
+      } catch {
+        // A read that fails says nothing either way, so it says nothing.
+      }
+
+    if (byGhl && published === 0 && workflows)
       blockers.push(
-        "GoHighLevel sends the candidate messages, from the 36 workflows on the hiring sub-account. The cockpit stays quiet so nobody is messaged twice. To take sending back, switch the sender to the cockpit.",
+        `GoHighLevel is the sender but all ${workflows} of its workflows are still drafts, so no candidate is being messaged at all. Publish them in GoHighLevel, or switch the sender back to the cockpit.`,
+      );
+    else if (byGhl)
+      blockers.push(
+        published === null
+          ? "GoHighLevel sends the candidate messages. The cockpit stays quiet so nobody is messaged twice. Its workflows could not be read just now, so whether they are live is unconfirmed."
+          : `GoHighLevel sends the candidate messages, from ${published} published workflows on the hiring sub-account. The cockpit stays quiet so nobody is messaged twice. To take sending back, switch the sender to the cockpit.`,
       );
     else if (engineSettings && !engineSettings.armed)
       blockers.push(
@@ -348,10 +369,15 @@ export const hiring: Adapter = {
         level: "info",
         text: `The recruiting agent has read ${screened} of ${all.length} applications and proposed a score for each. It runs on the VPS every half hour, it proposes only, and it learns from the gap between its score and yours.`,
       });
-    if (byGhl)
+    if (byGhl && published === 0 && workflows)
+      notes.push({
+        level: "warn",
+        text: `Nobody is being messaged. GoHighLevel is set as the sender and the cockpit has stood down, but all ${workflows} workflows on the hiring sub-account are still drafts. Publish them, or switch the sender back to the cockpit on this tab.`,
+      });
+    else if (byGhl)
       notes.push({
         level: "info",
-        text: "Candidate messages are sent by GoHighLevel, one published workflow per role per stage. The words still come from the custom values, so edit them there.",
+        text: `Candidate messages are sent by GoHighLevel, one workflow per role per stage${published === null ? "" : `, ${published} of them published`}. The words still come from the custom values, so edit them there.`,
       });
     if (payload.totals.ungraded > 0)
       notes.push({
