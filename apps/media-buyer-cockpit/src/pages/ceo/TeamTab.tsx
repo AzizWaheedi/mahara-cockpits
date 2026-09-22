@@ -45,8 +45,8 @@ import {
   scheduleSummary,
   WEEK_ORDER,
 } from "../../../convex/ceo/schedule";
-import { PersonFile } from "./personFile";
-import { ScorecardTemplates } from "./scorecardTemplates";
+
+import { usePersonParam } from "./personPage";
 import type { CeoTabProps } from "./types";
 
 /**
@@ -1049,14 +1049,16 @@ function AddPerson({
   );
 }
 
-export function TeamTab(_props: CeoTabProps) {
+export function TeamTab({ goTab }: CeoTabProps) {
   const load = useAction(api.ceo.people.list);
   const loadRoles = useAction(api.ceo.people.roles);
   const [data, setData] = useState<Roster | null>(null);
   const [roles, setRoles] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showGone, setShowGone] = useState(false);
-  const [openPerson, setOpenPerson] = useState<Person | null>(null);
+  // Opening somebody goes to their page under Management, which is where
+  // their file lives; this list is about what they cost.
+  const [, setPerson] = usePersonParam();
 
   const refresh = useCallback(async () => {
     try {
@@ -1101,11 +1103,6 @@ export function TeamTab(_props: CeoTabProps) {
 
   return (
     <div className="@container grid gap-4 lg:gap-6">
-      <PersonFile
-        personId={openPerson?.id ?? null}
-        name={openPerson?.name ?? ""}
-        onClose={() => setOpenPerson(null)}
-      />
       <SectionCard
         kicker="Who Mahara pays, and what it costs a month"
         title="Team & payroll"
@@ -1196,7 +1193,10 @@ export function TeamTab(_props: CeoTabProps) {
                   p={p}
                   roles={roles}
                   onChanged={refresh}
-                  onOpen={setOpenPerson}
+                  onOpen={p => {
+                    setPerson(p.id);
+                    goTab("management");
+                  }}
                 />
               ))}
             </div>
@@ -1235,7 +1235,10 @@ export function TeamTab(_props: CeoTabProps) {
                     p={p}
                     roles={roles}
                     onChanged={refresh}
-                    onOpen={setOpenPerson}
+                    onOpen={p => {
+                      setPerson(p.id);
+                      goTab("management");
+                    }}
                   />
                 ))}
               </div>
@@ -1250,7 +1253,6 @@ export function TeamTab(_props: CeoTabProps) {
           person's currency. The payout itself is not worked out here yet.
         </p>
       ) : null}
-      <ScorecardTemplates order={4} />
     </div>
   );
 }

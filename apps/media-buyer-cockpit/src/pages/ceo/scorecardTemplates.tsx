@@ -100,12 +100,22 @@ function Editor({
     <Sheet open onOpenChange={v => !v && onClose()}>
       <SheetContent
         side="right"
-        // The sheet renders in a portal at the end of the body, outside the
-        // .ceo-root that defines every --ceo-* token, so a grade button styled
-        // with one came out transparent. The class comes with it.
-        className="ceo-root w-full gap-0 overflow-y-auto p-0 sm:max-w-2xl"
+        /*
+         * Two things this className is doing.
+         *
+         * `ceo-root`: the sheet renders in a portal at the end of the body,
+         * outside the .ceo-root that defines every --ceo-* token, so a button
+         * styled with one came out transparent.
+         *
+         * `overflow-hidden` with a scrolling box inside: the close button the
+         * sheet draws is positioned against this element, so when this element
+         * was the thing that scrolled the X rode away with the content and a
+         * long form had nothing left to press (Aziz, 2026-09-22: "when I try
+         * to press X after entering, it doesn't let me").
+         */
+        className="ceo-root flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl"
       >
-        <SheetHeader className="border-b p-5 pt-safe">
+        <SheetHeader className="shrink-0 border-b p-5 pr-14 pt-safe">
           <SheetTitle>
             {template ? template.title : "A new role scorecard"}
           </SheetTitle>
@@ -114,198 +124,204 @@ function Editor({
             mean for each of them.
           </SheetDescription>
         </SheetHeader>
-        <div className="grid gap-5 p-5 pb-16">
-          <div className="grid gap-3 sm:grid-cols-2">
+        <div className="flex-1 overflow-y-auto p-5 pb-16">
+          <div className="grid gap-5">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="grid gap-1">
+                <span className={label}>Role</span>
+                <input
+                  className={field}
+                  value={title}
+                  onChange={e => {
+                    setTitle(e.target.value);
+                    if (!template) setRoleKey(e.target.value);
+                  }}
+                  placeholder="Closer"
+                />
+              </label>
+              <label className="grid gap-1">
+                <span className={label}>Key</span>
+                <input
+                  className={field}
+                  value={roleKey}
+                  disabled={Boolean(template)}
+                  onChange={e => setRoleKey(e.target.value)}
+                  placeholder="closer"
+                />
+              </label>
+            </div>
             <label className="grid gap-1">
-              <span className={label}>Role</span>
-              <input
-                className={field}
-                value={title}
-                onChange={e => {
-                  setTitle(e.target.value);
-                  if (!template) setRoleKey(e.target.value);
-                }}
-                placeholder="Closer"
+              <span className={label}>Mission</span>
+              <textarea
+                className={`${field} min-h-[72px]`}
+                value={mission}
+                onChange={e => setMission(e.target.value)}
+                placeholder="The one paragraph that says what this role is for."
               />
             </label>
-            <label className="grid gap-1">
-              <span className={label}>Key</span>
-              <input
-                className={field}
-                value={roleKey}
-                disabled={Boolean(template)}
-                onChange={e => setRoleKey(e.target.value)}
-                placeholder="closer"
-              />
-            </label>
-          </div>
-          <label className="grid gap-1">
-            <span className={label}>Mission</span>
-            <textarea
-              className={`${field} min-h-[72px]`}
-              value={mission}
-              onChange={e => setMission(e.target.value)}
-              placeholder="The one paragraph that says what this role is for."
-            />
-          </label>
 
-          <div className="grid gap-3">
-            <p className={label}>{`${items.length} accountabilities`}</p>
-            {items.map((it, i) => (
-              <div key={it.key} className="grid gap-2 rounded-md border p-3">
-                <div className="flex items-start gap-2">
-                  <input
-                    className={field}
-                    aria-label={`Accountability ${i + 1}`}
-                    value={it.accountability}
-                    onChange={e => patch(i, { accountability: e.target.value })}
-                    placeholder="Under 7% client churn in the month"
-                  />
-                  <div className="flex shrink-0 gap-1">
-                    <button
-                      type="button"
-                      className={quiet}
-                      aria-label="Move up"
-                      onClick={() => move(i, -1)}
-                    >
-                      <ChevronUp className="size-3.5" aria-hidden />
-                    </button>
-                    <button
-                      type="button"
-                      className={quiet}
-                      aria-label="Move down"
-                      onClick={() => move(i, 1)}
-                    >
-                      <ChevronDown className="size-3.5" aria-hidden />
-                    </button>
-                    <button
-                      type="button"
-                      className={quiet}
-                      aria-label="Remove"
-                      onClick={() => setItems(x => x.filter((_, n) => n !== i))}
-                    >
-                      <Trash2 className="size-3.5" aria-hidden />
-                    </button>
-                  </div>
-                </div>
-                <label className="grid gap-1">
-                  <span className={label}>What we look at, one per line</span>
-                  <textarea
-                    className={`${field} min-h-[56px]`}
-                    value={it.lookingAt.join("\n")}
-                    onChange={e =>
-                      patch(i, {
-                        lookingAt: e.target.value
-                          .split("\n")
-                          .map(x => x.trim())
-                          .filter(Boolean),
-                      })
-                    }
-                  />
-                </label>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {(["a", "b", "c", "d"] as const).map(g => (
-                    <label key={g} className="grid gap-1">
-                      <span className={label}>{g.toUpperCase()}</span>
-                      <input
-                        className={field}
-                        value={it.scale[g]}
-                        onChange={e =>
-                          patch(i, {
-                            scale: { ...it.scale, [g]: e.target.value },
-                          })
+            <div className="grid gap-3">
+              <p className={label}>{`${items.length} accountabilities`}</p>
+              {items.map((it, i) => (
+                <div key={it.key} className="grid gap-2 rounded-md border p-3">
+                  <div className="flex items-start gap-2">
+                    <input
+                      className={field}
+                      aria-label={`Accountability ${i + 1}`}
+                      value={it.accountability}
+                      onChange={e =>
+                        patch(i, { accountability: e.target.value })
+                      }
+                      placeholder="Under 7% client churn in the month"
+                    />
+                    <div className="flex shrink-0 gap-1">
+                      <button
+                        type="button"
+                        className={quiet}
+                        aria-label="Move up"
+                        onClick={() => move(i, -1)}
+                      >
+                        <ChevronUp className="size-3.5" aria-hidden />
+                      </button>
+                      <button
+                        type="button"
+                        className={quiet}
+                        aria-label="Move down"
+                        onClick={() => move(i, 1)}
+                      >
+                        <ChevronDown className="size-3.5" aria-hidden />
+                      </button>
+                      <button
+                        type="button"
+                        className={quiet}
+                        aria-label="Remove"
+                        onClick={() =>
+                          setItems(x => x.filter((_, n) => n !== i))
                         }
-                      />
-                    </label>
-                  ))}
+                      >
+                        <Trash2 className="size-3.5" aria-hidden />
+                      </button>
+                    </div>
+                  </div>
+                  <label className="grid gap-1">
+                    <span className={label}>What we look at, one per line</span>
+                    <textarea
+                      className={`${field} min-h-[56px]`}
+                      value={it.lookingAt.join("\n")}
+                      onChange={e =>
+                        patch(i, {
+                          lookingAt: e.target.value
+                            .split("\n")
+                            .map(x => x.trim())
+                            .filter(Boolean),
+                        })
+                      }
+                    />
+                  </label>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {(["a", "b", "c", "d"] as const).map(g => (
+                      <label key={g} className="grid gap-1">
+                        <span className={label}>{g.toUpperCase()}</span>
+                        <input
+                          className={field}
+                          value={it.scale[g]}
+                          onChange={e =>
+                            patch(i, {
+                              scale: { ...it.scale, [g]: e.target.value },
+                            })
+                          }
+                        />
+                      </label>
+                    ))}
+                  </div>
+                  <label className="grid gap-1">
+                    <span className={label}>
+                      What to collect before the call, one per line
+                    </span>
+                    <textarea
+                      className={`${field} min-h-[56px]`}
+                      value={it.prompts.join("\n")}
+                      onChange={e =>
+                        patch(i, {
+                          prompts: e.target.value
+                            .split("\n")
+                            .map(x => x.trim())
+                            .filter(Boolean),
+                        })
+                      }
+                    />
+                  </label>
                 </div>
-                <label className="grid gap-1">
-                  <span className={label}>
-                    What to collect before the call, one per line
+              ))}
+              <div>
+                <button
+                  type="button"
+                  className={quiet}
+                  onClick={() => setItems(x => [...x, blank(x.length + 1)])}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <Plus className="size-3.5" aria-hidden />
+                    Add an accountability
                   </span>
-                  <textarea
-                    className={`${field} min-h-[56px]`}
-                    value={it.prompts.join("\n")}
-                    onChange={e =>
-                      patch(i, {
-                        prompts: e.target.value
-                          .split("\n")
-                          .map(x => x.trim())
-                          .filter(Boolean),
-                      })
-                    }
-                  />
-                </label>
+                </button>
               </div>
-            ))}
-            <div>
+            </div>
+
+            <label className="grid gap-1">
+              <span className={label}>What qualifies for a bonus</span>
+              <input
+                className={field}
+                value={bonus}
+                onChange={e => setBonus(e.target.value)}
+                placeholder="To qualify, be managing at least 20 clients."
+              />
+            </label>
+
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                className={quiet}
-                onClick={() => setItems(x => [...x, blank(x.length + 1)])}
+                className={primary}
+                disabled={busy || !title.trim() || !roleKey.trim()}
+                onClick={async () => {
+                  setBusy(true);
+                  setError(null);
+                  try {
+                    await save({
+                      roleKey,
+                      title,
+                      mission,
+                      items: items.filter(i => i.accountability.trim()),
+                      competencies: template?.competencies ?? [],
+                      bonus,
+                    });
+                    onSaved();
+                    onClose();
+                  } catch (e) {
+                    setError(
+                      String(e instanceof Error ? e.message : e).slice(0, 300),
+                    );
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
               >
-                <span className="flex items-center gap-1.5">
-                  <Plus className="size-3.5" aria-hidden />
-                  Add an accountability
-                </span>
+                {busy ? (
+                  <span className="flex items-center gap-1.5">
+                    <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                    Saving
+                  </span>
+                ) : (
+                  "Save the scorecard"
+                )}
+              </button>
+              <button type="button" className={quiet} onClick={onClose}>
+                Close
               </button>
             </div>
+            {error ? (
+              <p className="text-sm text-[var(--ceo-critical)]">{error}</p>
+            ) : null}
           </div>
-
-          <label className="grid gap-1">
-            <span className={label}>What qualifies for a bonus</span>
-            <input
-              className={field}
-              value={bonus}
-              onChange={e => setBonus(e.target.value)}
-              placeholder="To qualify, be managing at least 20 clients."
-            />
-          </label>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              className={primary}
-              disabled={busy || !title.trim() || !roleKey.trim()}
-              onClick={async () => {
-                setBusy(true);
-                setError(null);
-                try {
-                  await save({
-                    roleKey,
-                    title,
-                    mission,
-                    items: items.filter(i => i.accountability.trim()),
-                    competencies: template?.competencies ?? [],
-                    bonus,
-                  });
-                  onSaved();
-                  onClose();
-                } catch (e) {
-                  setError(
-                    String(e instanceof Error ? e.message : e).slice(0, 300),
-                  );
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              {busy ? (
-                <span className="flex items-center gap-1.5">
-                  <Loader2 className="size-3.5 animate-spin" aria-hidden />
-                  Saving
-                </span>
-              ) : (
-                "Save the scorecard"
-              )}
-            </button>
-            <button type="button" className={quiet} onClick={onClose}>
-              Close
-            </button>
-          </div>
-          {error ? (
-            <p className="text-sm text-[var(--ceo-critical)]">{error}</p>
-          ) : null}
         </div>
       </SheetContent>
     </Sheet>
@@ -321,7 +337,14 @@ export function ScorecardTemplates({ order }: { order?: number }) {
 
   const load = useCallback(async () => {
     try {
-      setRows((await read({})) as Template[]);
+      const got = (await read({})) as Template[];
+      setRows(
+        (Array.isArray(got) ? got : []).map(t => ({
+          ...t,
+          items: Array.isArray(t.items) ? t.items : [],
+          competencies: Array.isArray(t.competencies) ? t.competencies : [],
+        })),
+      );
       setError(null);
     } catch (e) {
       setError(String(e instanceof Error ? e.message : e).slice(0, 240));

@@ -89,9 +89,9 @@ function Item({
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium">{item.accountability}</p>
-          {item.lookingAt.length ? (
+          {item.lookingAt?.length ? (
             <ul className="mt-0.5 grid gap-0.5 text-xs text-muted-foreground">
-              {item.lookingAt.map(x => (
+              {(item.lookingAt ?? []).map(x => (
                 <li key={x}>{x}</li>
               ))}
             </ul>
@@ -129,8 +129,8 @@ function Item({
         className={`${field} min-h-[64px]`}
         aria-label={`Comments on ${item.accountability}`}
         placeholder={
-          item.prompts.length
-            ? item.prompts.map(p => `${p} `).join("\n")
+          item.prompts?.length
+            ? (item.prompts ?? []).map(p => `${p} `).join("\n")
             : "What happened, with the numbers."
         }
         value={item.comment}
@@ -167,14 +167,14 @@ export function ScorecardPanel({
 
   // A different month is a different card; the form starts again from it.
   useEffect(() => {
-    setItems(card?.items ?? []);
+    setItems(Array.isArray(card?.items) ? card.items : []);
     setOverall((card?.overall as Grade | null) ?? null);
     setSummary(card?.summary ?? "");
     setMsg(null);
     setError(null);
   }, [card]);
 
-  const graded = useMemo(() => items.filter(i => i.grade).length, [items]);
+  const graded = useMemo(() => items.filter(i => i?.grade).length, [items]);
 
   if (!card)
     return (
@@ -317,13 +317,13 @@ export function ScorecardPanel({
         ) : null}
       </div>
 
-      {card.competencies.length ? (
+      {card.competencies?.length ? (
         <details className="border-t pt-3">
           <summary className="cursor-pointer text-sm font-medium">
             What an A-player looks like in any role
           </summary>
           <ul className="mt-2 grid gap-1 text-xs text-muted-foreground">
-            {card.competencies.map(c => (
+            {(card.competencies ?? []).map(c => (
               <li key={c}>{c}</li>
             ))}
           </ul>

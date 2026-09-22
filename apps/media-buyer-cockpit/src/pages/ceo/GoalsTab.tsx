@@ -1,5 +1,5 @@
 import { useAction } from "convex/react";
-import { Loader2, Pencil, Target } from "lucide-react";
+import { CalendarPlus, Loader2, Pencil, Target } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { count, shortDate } from "@/components/ceo/format";
@@ -9,6 +9,7 @@ import { api } from "../../../convex/_generated/api";
 import type { Board, TargetRow } from "../../../convex/ceo/goals";
 import { PlanEditor } from "./goalsEdit";
 import { behindBy, fmt, PaceBar } from "./goalsKit";
+import { NextMonth } from "./goalsNext";
 import type { CeoTabProps } from "./types";
 
 /**
@@ -166,6 +167,7 @@ export function GoalsTab({ sections }: CeoTabProps) {
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
+  const [planning, setPlanning] = useState(false);
 
   const load = useCallback(
     async (id?: number) => {
@@ -190,7 +192,7 @@ export function GoalsTab({ sections }: CeoTabProps) {
 
   const verdict = useMemo(() => {
     if (!board?.plan) return null;
-    if (!board.behind.length)
+    if (!board.behind?.length)
       return "Everything with a number on it is on pace.";
     const names = board.behind.map(b => b.label.toLowerCase());
     return `Behind on ${names.slice(0, 3).join(", ")}${names.length > 3 ? ` and ${names.length - 3} more` : ""}.`;
@@ -249,14 +251,14 @@ export function GoalsTab({ sections }: CeoTabProps) {
                 aria-hidden
               />
             ) : null}
-            {board.plans.length > 1 ? (
+            {(board.plans?.length ?? 0) > 1 ? (
               <select
                 aria-label="Which plan"
                 className="rounded-md border bg-background px-2 py-1 text-xs"
                 value={String(p.id)}
                 onChange={e => setPlanId(Number(e.target.value))}
               >
-                {board.plans.map(x => (
+                {(board.plans ?? []).map(x => (
                   <option key={x.id} value={x.id}>
                     {`${x.title}${x.status === "draft" ? " (draft)" : ""}`}
                   </option>
@@ -270,10 +272,24 @@ export function GoalsTab({ sections }: CeoTabProps) {
             <button
               type="button"
               className="flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs text-muted-foreground hover:text-foreground"
-              onClick={() => setEditing(v => !v)}
+              onClick={() => {
+                setPlanning(v => !v);
+                setEditing(false);
+              }}
+            >
+              <CalendarPlus className="size-3.5" aria-hidden />
+              {planning ? "Close" : "Plan next month"}
+            </button>
+            <button
+              type="button"
+              className="flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs text-muted-foreground hover:text-foreground"
+              onClick={() => {
+                setEditing(v => !v);
+                setPlanning(false);
+              }}
             >
               <Pencil className="size-3.5" aria-hidden />
-              {editing ? "Close the editor" : "Edit the plan"}
+              {editing ? "Close the editor" : "Edit this plan"}
             </button>
           </div>
         }
@@ -298,6 +314,17 @@ export function GoalsTab({ sections }: CeoTabProps) {
         </div>
       </SectionCard>
 
+      {planning ? (
+        <NextMonth
+          board={board}
+          onClose={() => setPlanning(false)}
+          onSaved={id => {
+            setPlanning(false);
+            setPlanId(id);
+          }}
+        />
+      ) : null}
+
       {editing ? (
         <PlanEditor
           board={board}
@@ -311,7 +338,7 @@ export function GoalsTab({ sections }: CeoTabProps) {
         />
       ) : null}
 
-      {board.groups.map((g, i) => (
+      {(board.groups ?? []).map((g, i) => (
         <Group
           key={g.key}
           label={g.label}

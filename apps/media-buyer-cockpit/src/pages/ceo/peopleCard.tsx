@@ -9,6 +9,7 @@ import { StatusChip } from "@/components/ceo/StatusChip";
 import { api } from "../../../convex/_generated/api";
 import { commissionText } from "../../../convex/ceo/commission";
 import type { Person, Roster } from "../../../convex/ceo/people";
+import { usePersonParam } from "./personPage";
 
 /**
  * Who Mahara pays.
@@ -48,6 +49,8 @@ const blank = {
 };
 
 export function PeopleCard({ order }: { order?: number }) {
+  // Pressing a name opens their file: goals, flags, CV and the scorecard.
+  const [, setPerson] = usePersonParam();
   const load = useAction(api.ceo.people.list);
   const save = useAction(api.ceo.people.save);
   const setActive = useAction(api.ceo.people.setActive);
@@ -215,7 +218,14 @@ export function PeopleCard({ order }: { order?: number }) {
                   {live.map(p => (
                     <tr key={p.id} className="border-t align-top">
                       <td className="p-2">
-                        {p.name}
+                        <button
+                          type="button"
+                          onClick={() => setPerson(p.id)}
+                          title={`Open ${p.name}'s file`}
+                          className="font-medium underline decoration-transparent underline-offset-4 transition-colors hover:decoration-current"
+                        >
+                          {p.name}
+                        </button>
                         <span className="block text-xs text-muted-foreground">
                           {[p.role, p.isSales ? "sells" : null]
                             .filter(Boolean)
@@ -484,7 +494,14 @@ export function PeopleCard({ order }: { order?: number }) {
                 <ul className="mt-3 grid gap-1 sm:grid-cols-2">
                   {gone.map(p => (
                     <li key={p.id} className="text-sm">
-                      {p.name}
+                      <button
+                        type="button"
+                        onClick={() => setPerson(p.id)}
+                        title={`Open ${p.name}'s file`}
+                        className="underline decoration-transparent underline-offset-4 transition-colors hover:decoration-current"
+                      >
+                        {p.name}
+                      </button>
                       <span className="text-muted-foreground">
                         {p.endedOn ? ` · left ${p.endedOn}` : ""}
                       </span>
