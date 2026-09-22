@@ -100,6 +100,13 @@ export const overview = authenticatedQuery({
   },
 });
 
+/**
+ * Whether this cockpit shows WhatsApp at all. It does not: see the note
+ * where `threads` is built. A constant rather than a deletion, so the
+ * day the creative director has his own inbox this is one line.
+ */
+const SHOW_WHATSAPP = false;
+
 /** The Meetings and messages screen. `smoke` runs it with no person signed in. */
 // biome-ignore lint/suspicious/noExplicitAny: the screen's own shape
 export async function buildOverview(
@@ -124,10 +131,27 @@ export async function buildOverview(
       (!e.owner || e.owner === who) &&
       (!e.clientName || inScope(scope, e.clientName)),
   );
-  // A restricted seat sees only the threads matched to their clients.
-  const threads = (await ctx.db.query("waThreads").collect()).filter(
-    t => !scope || inScope(scope, t.clientName),
-  );
+  /**
+   * No WhatsApp on this screen.
+   *
+   * The connected WhatsApp is the CSM's own -- Aziz's, while he holds
+   * that seat -- and it carries his private conversations. This screen
+   * showed every thread to any unrestricted seat, so the creative
+   * director was reading the CSM's messages. The client filter above
+   * does nothing here: `!scope ||` means an unrestricted seat matches
+   * everything, and the creative director is unrestricted.
+   *
+   * The threads stay in the table because the client-success cockpit
+   * reads the same data legitimately; they simply do not leave the
+   * backend on this one. When the creative director has a WhatsApp of
+   * his own, this becomes a filter on whose inbox a thread came from
+   * rather than an empty list.
+   */
+  const threads = SHOW_WHATSAPP
+    ? (await ctx.db.query("waThreads").collect()).filter(
+        t => !scope || inScope(scope, t.clientName),
+      )
+    : [];
   const now = Date.now();
   const todayKey = kuwaitDay(now);
   const startMs = (e: { start: string }) => new Date(e.start).getTime();
@@ -219,6 +243,13 @@ export const sendReply = authenticatedMutation({
   returns: v.null(),
   handler: async (ctx, { chatId, text }) => {
     await assertRole(ctx, "creative");
+    // Reading was closed above; writing has to close with it, or a held
+    // chat id is still a way to reply from somebody else's WhatsApp.
+    if (!SHOW_WHATSAPP)
+      throw new Error(
+        "WhatsApp replies do not go out from this cockpit. The connected " +
+          "number belongs to the CSM.",
+      );
     const t = (await ctx.db.query("waThreads").collect()).find(
       x => x.chatId === chatId,
     );
