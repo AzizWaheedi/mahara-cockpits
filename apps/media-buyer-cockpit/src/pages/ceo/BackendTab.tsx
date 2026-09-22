@@ -44,6 +44,7 @@ import type {
   DeliveryPayload,
   Note,
 } from "../../../convex/ceo/payloads";
+import { DeliveryTimeframeCard } from "./timeframeCards";
 import type { CeoTabProps } from "./types";
 
 type GoTab = CeoTabProps["goTab"];
@@ -151,6 +152,17 @@ export function BackendTab({ sections, now, day, goTab }: CeoTabProps) {
         section={sections.delivery}
         notes={deliveryNotes.media}
         goTab={goTab}
+      />
+
+      {/* The same card, series and rules as the Delivery tab, so a client-ad
+          number on this tab can be read for any run of days rather than only
+          month to date and the fixed seven (Aziz, 2026-09-22). */}
+      <DeliveryTimeframeCard
+        section={sections.delivery}
+        rows={deliveryPayload?.daily ?? []}
+        now={now}
+        day={day}
+        order={1}
       />
 
       <div className="grid min-w-0 items-start gap-4 lg:gap-6 @4xl:grid-cols-2">
