@@ -1,5 +1,4 @@
 import { v } from "convex/values";
-import { internal } from "../_generated/api";
 import { internalAction } from "../_generated/server";
 import { rest } from "../ceo/sbWrite";
 import { ghlOk, hiringConfigured } from "./ghl";
@@ -315,6 +314,20 @@ export async function runOnce(): Promise<RunResult> {
       error: "The hiring sub-account is not connected.",
     };
   const s = await settings();
+  // GoHighLevel owns sending, so the cockpit does not compose, draft or send.
+  // One sender, or every candidate hears everything twice.
+  if (s.sender === "gohighlevel")
+    return {
+      ok: true,
+      armed: false,
+      considered: 0,
+      sent: 0,
+      drafted: 0,
+      failed: 0,
+      lines: [
+        "GoHighLevel sends the candidate messages, so the cockpit stood down.",
+      ],
+    };
   const m = await meta();
   const todo = await pending();
   const result: RunResult = {
@@ -422,15 +435,9 @@ export async function runOnce(): Promise<RunResult> {
 export const run = internalAction({
   args: {},
   returns: v.any(),
-  handler: async (ctx): Promise<RunResult & { learned: unknown }> => {
-    const out = await runOnce();
-    // Pairing the agent's proposals with Aziz's own scores is two reads and a
-    // write, so it rides along here rather than earning a cron of its own.
-    const learned = await ctx
-      .runAction(internal.hiring.agent.calibrate, {})
-      .catch(() => null);
-    return { ...out, learned };
-  },
+  // The recruiting agent and its calibration live on the VPS now
+  // (`radar.py hiring`), so this job only sends.
+  handler: async (): Promise<RunResult> => runOnce(),
 });
 
 /** What the engine would do right now, without doing it. */

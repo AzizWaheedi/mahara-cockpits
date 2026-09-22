@@ -89,6 +89,32 @@ export async function refreshMeta(): Promise<Meta> {
     [{ key: META_KEY, value: meta, updated_at: new Date().toISOString() }],
     "key",
   );
+  // The roles as the spec describes them, published so the recruiting agent on
+  // the VPS scores against the same scorecard the cockpit shows, without a
+  // second copy of it to drift (Aziz, 2026-09-22: the VPS makes the agent).
+  await upsertMerge(
+    "cockpit_hiring_meta",
+    [
+      {
+        key: "roles",
+        value: {
+          at: Date.now(),
+          roles: ROLES.map(r => ({
+            key: r.key,
+            label: r.label,
+            compensation: r.compensation,
+            scorecard: r.scorecard,
+            dailyResponsibilities: r.dailyResponsibilities,
+            postOn: r.postOn,
+            rampTime: r.rampTime,
+            testProject: r.testProject,
+          })),
+        },
+        updated_at: new Date().toISOString(),
+      },
+    ],
+    "key",
+  ).catch(() => null);
   return meta;
 }
 

@@ -291,10 +291,26 @@ async function intakeRole(role: Role): Promise<RoleResult> {
       );
       if (!contactId) throw new Error("GoHighLevel returned no contact id");
 
-      // The whole questionnaire, so the application can be read in one place.
+      // The whole questionnaire, twice over. On the contact as a note, so it
+      // reads in one place in GoHighLevel, and in Supabase, so the recruiting
+      // agent on the VPS can read it without a GoHighLevel token.
+      const whole = transcript(answers, form.title).slice(0, 20_000);
       await ghlOk("POST", `/contacts/${contactId}/notes`, {
-        body: { body: transcript(answers, form.title).slice(0, 20_000) },
+        body: { body: whole },
       }).catch(() => undefined);
+      await upsertMerge(
+        "cockpit_hiring_applications",
+        [
+          {
+            contact_id: contactId,
+            role: role.key,
+            form: form.title,
+            text: whole,
+            at: new Date().toISOString(),
+          },
+        ],
+        "contact_id",
+      ).catch(() => null);
 
       // A contact who already has a card on this board keeps it, so a cursor
       // reset re-reads the form without doubling anyone.
@@ -470,5 +486,75 @@ export const status = internalAction({
       });
     }
     return out;
+  },
+});
+
+/**
+ * Copy the applications already on the board out of their GoHighLevel notes
+ * and into Supabase, so the recruiting agent on the VPS can read every
+ * candidate and not only the ones that arrived after 2026-09-22.
+ *
+ * Safe to run again: it only looks at candidates with no application row yet.
+ */
+export const backfillApplications = internalAction({
+  args: { limit: v.optional(v.number()) },
+  returns: v.any(),
+  handler: async (_ctx, { limit }) => {
+    const cap = Math.max(1, Math.min(300, limit ?? 100));
+    const have = new Set(
+      (
+        (await rest(
+          "cockpit_hiring_applications?select=contact_id&limit=5000",
+        )) ?? []
+      ).map(r => String(r.contact_id)),
+    );
+    const rows =
+      (await rest(
+        "cockpit_hiring_candidates?select=contact_id,role&order=applied_at.desc&limit=2000",
+      )) ?? [];
+    const todo = rows
+      .filter(r => !have.has(String(r.contact_id)))
+      .slice(0, cap);
+    const out: Any[] = [];
+    let written = 0;
+    for (const r of todo) {
+      const contactId = String(r.contact_id);
+      try {
+        const body = await ghlOk("GET", `/contacts/${contactId}/notes`);
+        const notes: Any[] = body?.notes ?? [];
+        const app = notes.find(n =>
+          /^Application,/i.test(String(n.body ?? "")),
+        );
+        const text = String(app?.body ?? notes[0]?.body ?? "").trim();
+        if (!text) continue;
+        await upsertMerge(
+          "cockpit_hiring_applications",
+          [
+            {
+              contact_id: contactId,
+              role: String(r.role),
+              form: text.split("\n")[0].replace(/^Application,\s*/i, ""),
+              text: text.slice(0, 20_000),
+              at: new Date().toISOString(),
+            },
+          ],
+          "contact_id",
+        );
+        written += 1;
+      } catch (e) {
+        out.push({
+          contactId: contactId.slice(0, 6),
+          error: (e as Error).message.slice(0, 90),
+        });
+      }
+    }
+    return {
+      candidates: rows.length,
+      alreadyHeld: have.size,
+      looked: todo.length,
+      written,
+      left: rows.length - have.size - todo.length,
+      problems: out.slice(0, 5),
+    };
   },
 });

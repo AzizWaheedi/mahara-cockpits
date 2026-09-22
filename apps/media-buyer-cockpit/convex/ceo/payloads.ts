@@ -1801,6 +1801,16 @@ export type HiringCandidate = {
   /** Which score this stage is waiting for, or null when nothing is due. */
   scoreDue: string | null;
   benchReason: string | null;
+  /**
+   * What the recruiting agent on the VPS proposed, out of ten, with its
+   * reasons and the questions that would settle the person. A proposal only:
+   * Aziz's own score is the one that counts, and the gap between them is what
+   * calibrates the agent.
+   */
+  agentScore: number | null;
+  agentVerdict: string | null;
+  agentNote: string | null;
+  agentAsks: string[];
   /** The card in GoHighLevel, so the phone number is one click away and not here. */
   ghlUrl: string;
   /** No move for longer than the engine's stale line. */

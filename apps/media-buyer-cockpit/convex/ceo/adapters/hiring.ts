@@ -1,4 +1,3 @@
-import { agentReady } from "../../hiring/agent";
 import { FORMS } from "../../hiring/forms";
 import { hiringConfigured } from "../../hiring/ghl";
 import { railSummary, settings } from "../../hiring/settings";
@@ -94,6 +93,7 @@ export const hiring: Adapter = {
                 name, country, years_experience, arabic, portfolio_url, loom_url,
                 test_project_url, score_application, score_loom, score_group,
                 score_one_to_one, score_test_project, score_total, bench_reason,
+                agent_score, agent_verdict, agent_note, agent_asks,
                 to_char(applied_at, 'YYYY-MM-DD') as applied_day,
                 extract(epoch from applied_at) * 1000 as applied_ms,
                 extract(epoch from stage_since) * 1000 as stage_ms,
@@ -177,6 +177,14 @@ export const hiring: Adapter = {
         scores,
         scoreDue: due,
         benchReason: text(r.bench_reason),
+        agentScore: score(r.agent_score),
+        agentVerdict: text(r.agent_verdict),
+        agentNote: text(r.agent_note),
+        agentAsks: String(r.agent_asks ?? "")
+          .split("\n")
+          .map(x => x.trim())
+          .filter(Boolean)
+          .slice(0, 4),
         ghlUrl:
           boardBase && r.contact_id
             ? `${boardBase}/contacts/detail/${String(r.contact_id)}`
@@ -264,9 +272,14 @@ export const hiring: Adapter = {
     const drafted = events.filter(
       e => String(e.kind) === "action" && e.ok === false,
     ).length;
+    const byGhl = engineSettings?.sender === "gohighlevel";
     const blockers: string[] = [];
     if (!connected) blockers.push("The hiring sub-account is not connected.");
-    if (engineSettings && !engineSettings.armed)
+    if (byGhl)
+      blockers.push(
+        "GoHighLevel sends the candidate messages, from the 36 workflows on the hiring sub-account. The cockpit stays quiet so nobody is messaged twice. To take sending back, switch the sender to the cockpit.",
+      );
+    else if (engineSettings && !engineSettings.armed)
       blockers.push(
         "The engine is disarmed on purpose: every message is written down and nothing is sent until you arm it.",
       );
@@ -329,10 +342,16 @@ export const hiring: Adapter = {
         level: "info",
         text: "The board is empty. Applications arrive on their own from the careers page forms; run the hiring intake to pull in what the forms already hold.",
       });
-    if (!agentReady())
+    const screened = all.filter(c => c.agentScore !== null).length;
+    if (screened)
       notes.push({
         level: "info",
-        text: "The recruiting agent is off: it needs ANTHROPIC_API_KEY on the deployment. Everything else here runs without it.",
+        text: `The recruiting agent has read ${screened} of ${all.length} applications and proposed a score for each. It runs on the VPS every half hour, it proposes only, and it learns from the gap between its score and yours.`,
+      });
+    if (byGhl)
+      notes.push({
+        level: "info",
+        text: "Candidate messages are sent by GoHighLevel, one published workflow per role per stage. The words still come from the custom values, so edit them there.",
       });
     if (payload.totals.ungraded > 0)
       notes.push({

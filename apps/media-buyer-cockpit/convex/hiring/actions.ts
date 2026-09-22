@@ -362,6 +362,7 @@ export const history = authenticatedAction({
 /** Arm or disarm the engine, change the channel, switch one action off. */
 export const setEngine = authenticatedAction({
   args: {
+    sender: v.optional(v.union(v.literal("gohighlevel"), v.literal("cockpit"))),
     armed: v.optional(v.boolean()),
     email: v.optional(v.boolean()),
     sms: v.optional(v.boolean()),
@@ -377,6 +378,7 @@ export const setEngine = authenticatedAction({
     });
     const current = await settings();
     const patch: Partial<EngineSettings> = {};
+    if (args.sender) patch.sender = args.sender;
     if (args.armed !== undefined) patch.armed = args.armed;
     if (args.email !== undefined) patch.email = args.email;
     if (args.sms !== undefined) patch.sms = args.sms;

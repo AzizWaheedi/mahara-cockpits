@@ -19,7 +19,14 @@ export type Action =
   | "bench_note";
 
 export type EngineSettings = {
-  /** False until Aziz turns it on. Disarmed, messages are drafted, never sent. */
+  /**
+   * Who sends candidate messages. Aziz, 2026-09-22: "I'm going to publish the
+   * GoHighLevel workflows, and then we can use that as the backend." So
+   * GoHighLevel owns sending, and the cockpit engine does nothing at all,
+   * because two senders would message every candidate twice.
+   */
+  sender: "gohighlevel" | "cockpit";
+  /** Only read when the cockpit is the sender. */
   armed: boolean;
   /** Which actions may fire at all. */
   actions: Record<Action, boolean>;
@@ -38,6 +45,8 @@ export type EngineSettings = {
 
 /** What the screen calls the rails, in one line. */
 export function railSummary(s: EngineSettings): string {
+  if (s.sender === "gohighlevel")
+    return "GoHighLevel sends these, on email and SMS";
   const on = [s.email && "email", s.sms && "SMS"].filter(Boolean) as string[];
   if (!on.length) return "No rail is on";
   const base = on.join(" and ");
@@ -47,6 +56,7 @@ export function railSummary(s: EngineSettings): string {
 export const SETTINGS_KEY = "engine";
 
 export const DEFAULT_SETTINGS: EngineSettings = {
+  sender: "gohighlevel",
   armed: false,
   actions: {
     loom_request: true,
