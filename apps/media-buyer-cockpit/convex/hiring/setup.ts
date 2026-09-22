@@ -3,11 +3,15 @@ import { internalAction } from "../_generated/server";
 import { type Any, ghl, ghlOk, hiringLocation } from "./ghl";
 import {
   allValues,
+  CALENDARS,
   FIELDS,
   RENAMES,
   ROLES,
   STAGES,
   type ValueSpec,
+  WORKING_DAYS,
+  WORKING_FROM,
+  WORKING_TO,
 } from "./spec";
 
 /**
@@ -406,6 +410,107 @@ export const pruneStages = internalAction({
       });
     }
     return { location, pipelines: pipelines.length, out };
+  },
+});
+
+/**
+ * Build the two booking calendars and point the custom values at them.
+ *
+ * A GoHighLevel calendar must be hosted by a user of that sub-account, and
+ * the hiring sub-account starts with none. The API cannot add one either: it
+ * refuses to modify the agency owner ("Agency owner details cannot be
+ * modified!", 2026-09-22). So Aziz assigns himself once in the GoHighLevel
+ * interface and this builds the rest.
+ */
+export const calendars = internalAction({
+  args: { location: v.optional(v.string()) },
+  returns: v.any(),
+  handler: async (_ctx, args) => {
+    const location = args.location ?? hiringLocation();
+    const users = await ghlOk("GET", `/users/?locationId=${location}`);
+    const host = (users?.users ?? [])[0];
+    if (!host?.id)
+      return {
+        ok: false,
+        needs:
+          "Nobody is a user of the hiring sub-account, so no calendar can have a host. In GoHighLevel open the agency view, Settings, My Staff, your own user, and tick the MaharaMedia Hiring sub-account. Then run this again.",
+      };
+
+    const openHours = WORKING_DAYS.map(d => ({
+      daysOfTheWeek: [d],
+      hours: [
+        {
+          openHour: WORKING_FROM,
+          openMinute: 0,
+          closeHour: WORKING_TO,
+          closeMinute: 0,
+        },
+      ],
+    }));
+    const existing = await ghlOk("GET", `/calendars/?locationId=${location}`, {
+      version: "2021-04-15",
+    });
+    const have: Any[] = existing?.calendars ?? [];
+    const values = await readValues(location);
+    const done: Any[] = [];
+    const failed: string[] = [];
+
+    for (const c of CALENDARS) {
+      try {
+        let found = have.find(x => same(String(x.name ?? ""), c.name));
+        if (!found) {
+          const made = await ghlOk("POST", "/calendars/", {
+            version: "2021-04-15",
+            body: {
+              locationId: location,
+              name: c.name,
+              description: c.description,
+              calendarType: c.type,
+              ...(c.type === "round_robin"
+                ? { eventType: "RoundRobin_OptimizeForAvailability" }
+                : {}),
+              slotDuration: c.minutes,
+              slotDurationUnit: "mins",
+              slotInterval: c.minutes,
+              slotIntervalUnit: "mins",
+              appointmentPerSlot: c.perSlot,
+              autoConfirm: true,
+              isActive: true,
+              allowReschedule: true,
+              allowCancellation: true,
+              eventTitle: `{{contact.name}}, ${c.name}`,
+              openHours,
+              teamMembers: [{ userId: String(host.id), isPrimary: true }],
+            },
+          });
+          found = made?.calendar ?? made;
+        }
+        const id = String(found?.id ?? "");
+        if (!id) throw new Error("GoHighLevel returned no calendar id");
+        const link = `https://api.leadconnectorhq.com/widget/booking/${id}`;
+        const val = values.find(x => same(x.name, c.fills));
+        if (val && val.value.trim() !== link)
+          await ghlOk("PUT", `/locations/${location}/customValues/${val.id}`, {
+            body: { name: val.name, value: link },
+          });
+        done.push({
+          calendar: c.name,
+          id,
+          host: String(host.email ?? host.id),
+          link,
+          filled: c.fills,
+        });
+      } catch (e) {
+        failed.push(`${c.name}: ${(e as Error).message}`);
+      }
+    }
+    return {
+      ok: failed.length === 0,
+      location,
+      host: String(host.email ?? ""),
+      done,
+      failed,
+    };
   },
 });
 

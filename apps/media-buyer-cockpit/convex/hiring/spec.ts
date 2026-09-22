@@ -605,6 +605,57 @@ export const roleValues = (role: Role): ValueSpec[] => [
   },
 ];
 
+/**
+ * The two calendars a candidate books on, and the custom value each one
+ * fills in once it exists.
+ *
+ * Hours are Mahara's working clock, Saturday to Thursday, 10:00 to 18:00
+ * Kuwait. GoHighLevel wants one openHours entry per day, not one entry
+ * listing several days, and it refuses `locationId` on an update.
+ */
+export type CalendarSpec = {
+  key: string;
+  name: string;
+  /** Fills this custom value with the booking link once built. */
+  fills: string;
+  /** round_robin for one person at a time, class_booking for a group session. */
+  type: "round_robin" | "class_booking";
+  minutes: number;
+  /** How many people may take the same slot. */
+  perSlot: number;
+  description: string;
+};
+
+/** Sunday is 0. Saturday to Thursday is Mahara's week. */
+export const WORKING_DAYS = [6, 0, 1, 2, 3, 4];
+export const WORKING_FROM = 10;
+export const WORKING_TO = 18;
+
+export const CALENDARS: CalendarSpec[] = [
+  {
+    key: "group",
+    name: "Group interview",
+    fills: "Hiring - Group interview booking link",
+    type: "class_booking",
+    minutes: 60,
+    // A group interview is one session with many candidates on it. The
+    // framework books an hour and runs 45 minutes.
+    perSlot: 20,
+    description:
+      "Book your group interview. It is held on Zoom with the other people still in for this role. Be on a computer somewhere quiet, join on time, and keep your answers to sixty seconds each.",
+  },
+  {
+    key: "one-to-one",
+    name: "One to one interview",
+    fills: "Hiring - One-to-one booking link",
+    type: "round_robin",
+    minutes: 30,
+    perSlot: 1,
+    description:
+      "Book your one to one. It is held on Zoom. Be on a computer somewhere quiet and join five minutes early. If you were sent a test project, send it back before the call if you can.",
+  },
+];
+
 export const GLOBAL_VALUES: ValueSpec[] = [
   {
     name: "Hiring - Agency name",

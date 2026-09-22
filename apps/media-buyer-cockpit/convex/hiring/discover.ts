@@ -189,3 +189,38 @@ export const call = internalAction({
     }
   },
 });
+
+/**
+ * The same arbitrary call, but on the agency token from the deployment, for
+ * the few things a location-scoped token cannot reach: listing sub-accounts,
+ * and reading or changing which sub-accounts a user belongs to. CLI only.
+ */
+export const agencyCall = internalAction({
+  args: {
+    method: v.optional(v.string()),
+    path: v.string(),
+    body: v.optional(v.any()),
+    version: v.optional(v.string()),
+  },
+  returns: v.any(),
+  handler: async (_ctx, { method, path, body, version }) => {
+    const token = process.env.GHL_AGENCY_TOKEN ?? "";
+    if (!token) return { error: "GHL_AGENCY_TOKEN is not set" };
+    const res = await fetch(`${BASE}${path}`, {
+      method: method ?? "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Version: version ?? "2021-07-28",
+        Accept: "application/json",
+        ...(body ? { "Content-Type": "application/json" } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const text = await res.text();
+    try {
+      return { status: res.status, body: JSON.parse(text) };
+    } catch {
+      return { status: res.status, body: text.slice(0, 600) };
+    }
+  },
+});
