@@ -5,6 +5,14 @@ import { AZIZ_SLACK_ID } from "./constants";
 import { isDriveLink, reusable } from "./driveCreative";
 import { authenticatedAction } from "./functions";
 import { refusal } from "./gate";
+import {
+  CREATIVE_FIELDS,
+  copyableSpec,
+  destinationLink,
+  explainMeta,
+  flattenNote,
+  setCopy,
+} from "./metaCreative";
 import { callTool, graph, graphPost, unwrap } from "./tools";
 
 declare const process: { env: Record<string, string | undefined> };
@@ -144,7 +152,10 @@ export const duplicateAdSet = authenticatedAction({
       });
       return { ok: true, adsetId: made.id };
     } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      return {
+        ok: false,
+        error: explainMeta(e instanceof Error ? e.message : String(e)),
+      };
     }
   },
 });
@@ -200,7 +211,10 @@ export const setAdSetBudget = authenticatedAction({
       });
       return { ok: true };
     } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      return {
+        ok: false,
+        error: explainMeta(e instanceof Error ? e.message : String(e)),
+      };
     }
   },
 });
@@ -223,6 +237,8 @@ export const newAdsFromExisting = authenticatedAction({
   returns: v.object({
     ok: v.boolean(),
     made: v.optional(v.array(v.string())),
+    /** Said out loud when an Advantage+ creative was flattened onto one video. */
+    note: v.optional(v.string()),
     error: v.optional(v.string()),
   }),
   handler: async (ctx, args) => {
@@ -230,31 +246,26 @@ export const newAdsFromExisting = authenticatedAction({
     if (no) return { ok: false, error: no };
     try {
       const src = await graph<any>(args.sourceAdId, {
-        fields: "name,adset_id,account_id,creative{id,object_story_spec}",
+        fields: `name,adset_id,account_id,${CREATIVE_FIELDS}`,
       });
-      const spec = src.creative?.object_story_spec;
-      if (!spec) {
-        return {
-          ok: false,
-          error:
-            "That ad's creative can't be copied automatically — it uses a dynamic format. Duplicate it in Ads Manager instead.",
-        };
-      }
+      // An Advantage+ ad answers "yes" to "is there an object_story_spec?"
+      // and holds nothing in it, so asking that question shipped a creative
+      // with no media and no link and Meta refused it with a code
+      // (100/2061015). Ask what the creative is instead.
+      const copyable = copyableSpec(src.creative);
+      if (!copyable.ok) return { ok: false, error: copyable.why };
+      const note = flattenNote(copyable.flattened);
       const adsetId = args.adsetId ?? src.adset_id;
       const made: string[] = [];
 
       for (const [i, variant] of args.variants.entries()) {
         // Only touch the text. Everything else — video, image, CTA, lead form —
         // is carried over untouched so this stays a true copy test.
-        const next = JSON.parse(JSON.stringify(spec));
-        for (const key of ["video_data", "link_data"]) {
-          if (next[key]) {
-            next[key].message = variant.message;
-            if (next[key].title !== undefined)
-              next[key].title = variant.headline;
-            if (next[key].name !== undefined) next[key].name = variant.headline;
-          }
-        }
+        const next = JSON.parse(JSON.stringify(copyable.spec));
+        setCopy(next, {
+          message: variant.message,
+          headline: variant.headline,
+        });
         const creative = await graphPost<any>(
           `act_${src.account_id}/adcreatives`,
           {
@@ -274,11 +285,14 @@ export const newAdsFromExisting = authenticatedAction({
       await logIt(ctx, {
         campaignName: args.campaignName,
         adName: src.name,
-        what: `Created ${made.length} new ad${made.length === 1 ? "" : "s"} (paused) from "${src.name}" with new copy`,
+        what: `Created ${made.length} new ad${made.length === 1 ? "" : "s"} (paused) from "${src.name}" with new copy${note ? `. ${note}` : ""}`,
       });
-      return { ok: true, made };
+      return { ok: true, made, note: note ?? undefined };
     } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      return {
+        ok: false,
+        error: explainMeta(e instanceof Error ? e.message : String(e)),
+      };
     }
   },
 });
@@ -357,7 +371,10 @@ export const suggestCopy = authenticatedAction({
         })),
       };
     } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      return {
+        ok: false,
+        error: explainMeta(e instanceof Error ? e.message : String(e)),
+      };
     }
   },
 });
@@ -453,19 +470,17 @@ export const addCreativeToCampaign = authenticatedAction({
 
     try {
       const src = await graph<any>(args.sourceAdId, {
-        fields: "name,adset_id,account_id,creative{id,object_story_spec}",
+        fields: `name,adset_id,account_id,${CREATIVE_FIELDS}`,
       });
-      const spec = src.creative?.object_story_spec;
-      if (!spec) {
-        return {
-          ok: false,
-          error:
-            "That ad's creative is a dynamic format, so there's no spec to copy. Pick a different ad in the campaign as the template.",
-        };
-      }
+      const copyable = copyableSpec(src.creative);
+      if (!copyable.ok) return { ok: false, error: copyable.why };
+      const note = flattenNote(copyable.flattened);
+      // Whatever shape the template was, this is where it sends people; a
+      // creative that loses it is refused by Meta with a code nobody can read.
+      const link = destinationLink(src.creative);
 
       const act = `act_${src.account_id}`;
-      const next = JSON.parse(JSON.stringify(spec));
+      const next = JSON.parse(JSON.stringify(copyable.spec));
 
       if (args.videoUrl || args.videoId) {
         // `videoId` means Viktor already uploaded the file from Drive.
@@ -476,14 +491,26 @@ export const addCreativeToCampaign = authenticatedAction({
               name: args.adName ?? `${src.name} — new cut`,
             });
         // Swapping media means the old link_data (a static image post) no
-        // longer applies; a video creative must carry video_data.
+        // longer applies; a video creative must carry video_data. The call to
+        // action comes across with it, because that is where a video ad keeps
+        // its destination and its lead form — and when the template had none,
+        // one is built from the link rather than left out, which is how a new
+        // creative used to go up with nowhere to send people.
         const base = next.video_data ?? {};
-        const link =
-          next.link_data?.call_to_action ?? base.call_to_action ?? undefined;
+        const cta =
+          base.call_to_action ?? next.link_data?.call_to_action ?? undefined;
+        const withLink = cta
+          ? {
+              ...cta,
+              value: { ...(cta.value ?? {}), link: cta.value?.link ?? link },
+            }
+          : link
+            ? { type: "LEARN_MORE", value: { link } }
+            : undefined;
         next.video_data = {
           ...base,
           video_id: video.id,
-          ...(link ? { call_to_action: link } : {}),
+          ...(withLink ? { call_to_action: withLink } : {}),
         };
         delete next.link_data;
       } else if (args.imageUrl || args.imageHash) {
@@ -500,18 +527,35 @@ export const addCreativeToCampaign = authenticatedAction({
             error: "Meta accepted the image but returned no hash.",
           };
         }
-        next.link_data = { ...(next.link_data ?? {}), image_hash: first.hash };
+        // A link creative keeps the destination on `link`, not on the call to
+        // action, so it is carried over explicitly when the template was a
+        // video whose link lived inside its call to action.
+        const previous = next.link_data ?? {};
+        next.link_data = {
+          ...previous,
+          image_hash: first.hash,
+          ...(previous.link || !link ? {} : { link }),
+          ...((previous.call_to_action ?? next.video_data?.call_to_action)
+            ? {
+                call_to_action:
+                  previous.call_to_action ?? next.video_data?.call_to_action,
+              }
+            : {}),
+        };
         delete next.video_data;
       }
 
-      const target = next.video_data ?? next.link_data;
-      if (target) {
-        if (args.message) target.message = args.message;
-        if (args.headline) {
-          if (target.title !== undefined) target.title = args.headline;
-          if (target.name !== undefined) target.name = args.headline;
-        }
-      }
+      setCopy(next, { message: args.message, headline: args.headline });
+
+      // The last thing checked before anything is made: Meta refuses a
+      // creative with no destination (100/2061015) and the message it sends
+      // back names a field the person never saw.
+      if (!destinationLink({ object_story_spec: next }))
+        return {
+          ok: false,
+          error:
+            "The new creative would have no link on it, so Meta would refuse it. The ad you copied from has no destination the cockpit could find; pick a different template ad.",
+        };
 
       const creative = await graphPost<any>(`${act}/adcreatives`, {
         name: `${args.adName ?? src.name} — cockpit`,
@@ -527,11 +571,14 @@ export const addCreativeToCampaign = authenticatedAction({
       await logIt(ctx, {
         campaignName: args.campaignName,
         adName: ad.id,
-        what: `Added a new ${args.videoUrl || args.videoId ? "video" : "image"} creative (paused) to "${src.name}"'s ad set`,
+        what: `Added a new ${args.videoUrl || args.videoId ? "video" : "image"} creative (paused) to "${src.name}"'s ad set${note ? `. ${note}` : ""}`,
       });
       return { ok: true, adId: ad.id };
     } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      return {
+        ok: false,
+        error: explainMeta(e instanceof Error ? e.message : String(e)),
+      };
     }
   },
 });

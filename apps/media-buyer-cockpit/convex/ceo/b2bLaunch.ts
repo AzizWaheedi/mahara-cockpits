@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import { internalMutation } from "../_generated/server";
 import { authenticatedAction } from "../functions";
+import { copyableSpec, flattenNote, setCopy } from "../metaCreative";
 import { callTool, graph, graphPost, unwrap } from "../tools";
 import {
   ACCOUNT,
@@ -481,24 +482,29 @@ export const launch = authenticatedAction({
         }
       }
 
-      // New copy rides the first winner that has a rebuildable creative.
-      const media = clones.find(
-        c =>
-          c?.creative?.object_story_spec?.video_data ||
-          c?.creative?.object_story_spec?.link_data,
-      );
+      // New copy rides the first winner the cockpit can actually rebuild.
+      // "Has video_data" is the wrong question: an Advantage+ creative keeps
+      // its media and its link in the asset feed and its story spec holds a
+      // page id and nothing else, and a copy of that is refused by Meta for
+      // a missing link (100/2061015).
+      let rebuilt: Any | null = null;
+      let flattened: string | null = null;
+      const media = clones.find(c => {
+        const copyable = copyableSpec(c?.creative);
+        if (!copyable.ok) return false;
+        rebuilt = copyable.spec;
+        flattened = flattenNote(copyable.flattened);
+        return true;
+      });
       if (draft.variants.length && media) {
-        const base: Any = media.creative.object_story_spec;
+        if (flattened) problems.push(flattened);
+        const base: Any = rebuilt ?? media.creative.object_story_spec;
         for (const [i, variant] of draft.variants.entries()) {
           const spec: Any = JSON.parse(JSON.stringify(base));
-          if (spec.video_data) {
-            spec.video_data.message = variant.primaryText;
-            spec.video_data.title = variant.headline;
-            if (spec.video_data.image_hash) delete spec.video_data.image_url;
-          } else if (spec.link_data) {
-            spec.link_data.message = variant.primaryText;
-            spec.link_data.name = variant.headline;
-          }
+          setCopy(spec, {
+            message: variant.primaryText,
+            headline: variant.headline,
+          });
           const label = `Angle ${i + 1} | ${variant.headline.slice(0, 40)}`;
           try {
             // No degrees_of_freedom_spec: Meta refuses the old standard

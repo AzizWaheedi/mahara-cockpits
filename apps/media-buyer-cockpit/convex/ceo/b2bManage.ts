@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import { internalMutation } from "../_generated/server";
 import { authenticatedAction } from "../functions";
+import { copyableSpec, flattenNote, setCopy } from "../metaCreative";
 import { graph, graphPost } from "../tools";
 import {
   ACT,
@@ -718,12 +719,19 @@ export const createAds = authenticatedAction({
           ...((list?.data ?? []) as Any[]).map(x => String(x.id)),
         );
       }
+      let rebuilt: Any | null = null;
+      let flattened: string | null = null;
       for (const id of candidates) {
         try {
           const ad = await ownAd(id);
-          const oss = ad?.creative?.object_story_spec;
-          if (oss?.video_data || oss?.link_data) {
+          // Asking "does it have video_data?" misses an Advantage+ creative,
+          // whose media and link live in the asset feed and whose story spec
+          // is a page id and nothing else. Ask what it is.
+          const copyable = copyableSpec(ad?.creative);
+          if (copyable.ok) {
             media = ad;
+            rebuilt = copyable.spec;
+            flattened = flattenNote(copyable.flattened);
             break;
           }
         } catch {
@@ -735,17 +743,14 @@ export const createAds = authenticatedAction({
           `The ${variants.length} approved ${variants.length === 1 ? "angle" : "angles"} were not attached: no ad here has a video or image creative for them to ride. Clone a winner into this ad set first, or pick the ad to take the media from.`,
         );
       } else {
-        const base: Any = media.creative.object_story_spec;
+        if (flattened) problems.push(flattened);
+        const base: Any = rebuilt ?? media.creative.object_story_spec;
         for (const [i, variant] of variants.entries()) {
           const spec: Any = JSON.parse(JSON.stringify(base));
-          if (spec.video_data) {
-            spec.video_data.message = variant.primaryText;
-            spec.video_data.title = variant.headline;
-            if (spec.video_data.image_hash) delete spec.video_data.image_url;
-          } else if (spec.link_data) {
-            spec.link_data.message = variant.primaryText;
-            spec.link_data.name = variant.headline;
-          }
+          setCopy(spec, {
+            message: variant.primaryText,
+            headline: variant.headline,
+          });
           const label = `${variant.angle || `Angle ${i + 1}`} | ${variant.headline.slice(0, 40)}`;
           try {
             // No degrees_of_freedom_spec: Meta refuses the old standard
