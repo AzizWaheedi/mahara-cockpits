@@ -15,12 +15,11 @@ they are hosted now and what was changed to get there. Started 2026-09-09.
 Convex team `aziz-00129`, projects `mahara-media-buyer`, `mahara-client-success`,
 `mahara-creative-director`. Vercel team `aziz-6097s-projects`, same three project names.
 
-Redeploy after a change, from the app folder:
-
-```bash
-bunx convex deploy --yes        # backend to prod
-bunx vercel deploy --prod --yes # frontend
-```
+Redeploy with `scripts/ship.sh <app>` from a commit that is already on GitHub
+`main`. The script refuses otherwise. `bunx vercel deploy --prod` from the
+app folder uploads the working tree and stamps the local SHA even when GitHub
+has never seen it; that is how cockpit.maharamedia.com came to serve
+`7efca15f` on 2026-09-22. See "Shipping a fix" in `RUNBOOK.md`.
 
 `bunx convex dev` pushes to the dev deployment and is what local `bun run dev` talks to.
 

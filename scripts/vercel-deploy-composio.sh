@@ -16,6 +16,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 dir="${1:?usage: scripts/vercel-deploy-composio.sh <app dir>}"
+# ship.sh has already run this. On its own, this script would otherwise
+# upload whatever is on disk and call it production.
+if [ "${GITHUB_MAIN_OK:-}" != 1 ]; then
+  scripts/require-github-main.sh "$dir"
+fi
 [ -f "$dir/.vercel/project.json" ] || { echo "$dir is not linked to a Vercel project (.vercel/project.json missing)"; exit 2; }
 command -v composio >/dev/null || { echo "the composio CLI is not installed (npm i -g composio)"; exit 2; }
 command -v python3 >/dev/null || { echo "python3 is needed"; exit 2; }
