@@ -172,6 +172,17 @@ type RoleResult = {
 
 async function intakeRole(role: Role): Promise<RoleResult> {
   const form = FORMS[role.key];
+  // The setter track has no form of its own: everyone answers the closer's
+  // form and Aziz decides which track they start on (2026-09-22).
+  if (!form)
+    return {
+      role: role.key,
+      form: "",
+      read: 0,
+      added: 0,
+      skipped: 0,
+      errors: [],
+    };
   const out: RoleResult = {
     role: role.key,
     form: form.id,
@@ -431,6 +442,16 @@ export const status = internalAction({
     const out: Any[] = [];
     for (const role of ROLES) {
       const form = FORMS[role.key];
+      if (!form) {
+        out.push({
+          role: role.key,
+          form: "",
+          title: "No form; fed by moving a candidate across from another track",
+          responses: 0,
+          imported: 0,
+        });
+        continue;
+      }
       let total: number | string = "?";
       try {
         const body = await tf(`/forms/${form.id}/responses?page_size=1`);

@@ -11,7 +11,13 @@ export const FORMS: Record<string, { id: string; title: string }> = {
   // The careers card says "Setter / Closer" but this form asks a closer's
   // questions only, so a setter and a closer cannot be told apart from the
   // answers. The form has to be split before the funnel can split them.
-  "sales-rep": { id: "rqv3Fkts", title: "High-Ticket Closer Job Application" },
+  // Everyone who applies answers the closer's form, so they land on the
+  // closer's board. Aziz moves the ones who are not ready yet across to the
+  // setter track, and moves a setter up when they are.
+  "sales-closer": {
+    id: "rqv3Fkts",
+    title: "High-Ticket Closer Job Application",
+  },
   "call-centre": { id: "jYTRw2Sx", title: "Call Centre Agent Application" },
   "video-editor": { id: "tigKbFlO", title: "Video Editor Application" },
 };

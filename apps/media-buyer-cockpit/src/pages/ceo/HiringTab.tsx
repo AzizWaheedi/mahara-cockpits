@@ -88,6 +88,16 @@ const ACTION_HINT: Record<string, string> = {
   bench_note: "Tells a benched candidate they are on the bench.",
 };
 
+/**
+ * The two sales tracks. Everyone applies through the closer's form, so the one
+ * open question on a sales candidate is which board they belong on. Every
+ * other role has a single track and shows nothing here.
+ */
+const TRACK: Record<string, { role: string; copy: string } | undefined> = {
+  "sales-closer": { role: "sales-setter", copy: "Start them as a setter" },
+  "sales-setter": { role: "sales-closer", copy: "Move them up to closer" },
+};
+
 const SCALE = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 const tabular = { fontVariantNumeric: "tabular-nums" } as const;
 const field = "rounded-md border bg-background px-2 py-1 text-sm";
@@ -206,6 +216,104 @@ function ScoreScale({
           </label>
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * The other track, for a sales candidate. This is a judgement about where
+ * someone starts, not a verdict on them, so it sits beside the grade as a
+ * quiet line and never as a red button. The reason is worth writing down and
+ * is never demanded: the board takes the move either way.
+ */
+function TrackSwitch({
+  c,
+  onMoved,
+}: {
+  c: HiringCandidate;
+  /** The same refresh the grade uses, so the queue redraws around the move. */
+  onMoved: () => Promise<void>;
+}) {
+  const reassign = useAction(api.hiring.actions.reassign);
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const track = TRACK[c.role];
+  if (!track) return null;
+
+  const move = async () => {
+    setBusy(true);
+    setError(null);
+    setMsg(null);
+    try {
+      const r = (await reassign({
+        candidateId: c.id,
+        role: track.role,
+        reason: reason.trim() || undefined,
+      })) as { role?: string; stage?: string };
+      setMsg(
+        `Moved to ${r?.role ?? "the other board"}${
+          r?.stage ? `, still in ${r.stage}` : ""
+        }.`,
+      );
+      setReason("");
+      setOpen(false);
+      await onMoved();
+    } catch (e) {
+      setError(serverMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="grid min-w-0 gap-2">
+      {open ? (
+        <div className="grid gap-2 @lg:grid-cols-[minmax(0,1fr)_auto] @lg:items-center">
+          <input
+            value={reason}
+            onChange={e => setReason(e.target.value)}
+            disabled={busy}
+            placeholder="Why this track, in one line (optional)"
+            aria-label={`Why ${c.name} moves track`}
+            className={`${field} min-w-0`}
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void move()}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border bg-card px-3 text-xs font-medium text-foreground hover:bg-[var(--ceo-emphasis-wash)] disabled:opacity-50"
+            >
+              <MoveRight className="size-3.5 shrink-0" aria-hidden />
+              {busy ? "Moving" : track.copy}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setOpen(false)}
+              className="inline-flex h-8 items-center rounded-sm px-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="inline-flex h-8 min-w-0 items-center gap-1.5 justify-self-start rounded-sm text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+        >
+          <MoveRight className="size-3.5 shrink-0 opacity-70" aria-hidden />
+          <span className="min-w-0 truncate">{track.copy}</span>
+        </button>
+      )}
+      {msg ? <p className="text-xs text-muted-foreground">{msg}</p> : null}
+      {error ? (
+        <p className="text-xs text-[var(--ceo-critical)]">{error}</p>
+      ) : null}
     </div>
   );
 }
@@ -351,6 +459,7 @@ function GradeRow({
       {error ? (
         <p className="text-xs text-[var(--ceo-critical)]">{error}</p>
       ) : null}
+      <TrackSwitch c={c} onMoved={onGraded} />
     </div>
   );
 }

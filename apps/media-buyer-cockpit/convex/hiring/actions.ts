@@ -12,6 +12,7 @@ import {
   STAGE_SCORES,
   type StageKey,
   stageName,
+  TRACKS,
 } from "./spec";
 import {
   meta,
@@ -231,6 +232,74 @@ export const move = authenticatedAction({
   },
 });
 
+/**
+ * Move a candidate to another role's board, keeping everything about them.
+ *
+ * Aziz, 2026-09-22, on the sales funnel: "I make them a setter, and then they
+ * turn into a closer" or "I just bring them straight to becoming a closer. It
+ * just depends on how skilled they are." Everyone answers the closer's form,
+ * so this is the switch: the card moves to the other pipeline at the same
+ * stage, the scores and the notes travel with it, and the move is on the
+ * record with the reason.
+ */
+export const reassign = authenticatedAction({
+  args: {
+    candidateId: v.string(),
+    role: v.string(),
+    reason: v.optional(v.string()),
+  },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const by: string = await ctx.runQuery(internal.ceo.ltv.whoami, {
+      userId: ctx.userId,
+    });
+    const row = await candidate(args.candidateId);
+    const from = roleByKey(String(row.role));
+    const to = roleByKey(args.role);
+    if (!to) throw new Error(`No role called ${args.role}`);
+    if (to.key === String(row.role))
+      throw new Error(`They are already on the ${to.label} board.`);
+    const m = await meta();
+    const pipelineId = m.pipelines[to.key];
+    const stage = String(row.stage) as StageKey;
+    const stageId = m.stageIdByKey[to.key]?.[stage];
+    if (!pipelineId || !stageId)
+      throw new Error(
+        `The ${to.label} pipeline is not built yet. Run the hiring setup, then try again.`,
+      );
+    await ghlOk("PUT", `/opportunities/${args.candidateId}`, {
+      body: { pipelineId, pipelineStageId: stageId },
+    });
+    await writeContactFields(String(row.contact_id), {
+      role: to.label,
+    }).catch(() => undefined);
+    const detail = args.reason?.trim()
+      ? `Moved from ${from?.label ?? String(row.role)} to ${to.label}: ${args.reason.trim()}`
+      : `Moved from ${from?.label ?? String(row.role)} to ${to.label}.`;
+    await event({
+      candidate_id: args.candidateId,
+      role: to.key,
+      kind: "note",
+      to_stage: stage,
+      detail,
+      by_whom: by,
+    });
+    await rest(
+      `cockpit_hiring_candidates?id=eq.${encodeURIComponent(args.candidateId)}`,
+      {
+        method: "PATCH",
+        body: {
+          role: to.key,
+          role_label: to.label,
+          pipeline_id: pipelineId,
+        },
+        prefer: "return=minimal",
+      },
+    );
+    return { ok: true, role: to.label, stage: stageName(stage) };
+  },
+});
+
 /** Write a note on a candidate without scoring them. */
 export const note = authenticatedAction({
   args: { candidateId: v.string(), text: v.string() },
@@ -294,7 +363,9 @@ export const history = authenticatedAction({
 export const setEngine = authenticatedAction({
   args: {
     armed: v.optional(v.boolean()),
-    channel: v.optional(v.string()),
+    email: v.optional(v.boolean()),
+    sms: v.optional(v.boolean()),
+    whatsappFallback: v.optional(v.boolean()),
     staleDays: v.optional(v.number()),
     action: v.optional(v.string()),
     on: v.optional(v.boolean()),
@@ -307,7 +378,10 @@ export const setEngine = authenticatedAction({
     const current = await settings();
     const patch: Partial<EngineSettings> = {};
     if (args.armed !== undefined) patch.armed = args.armed;
-    if (args.channel) patch.channel = args.channel as EngineSettings["channel"];
+    if (args.email !== undefined) patch.email = args.email;
+    if (args.sms !== undefined) patch.sms = args.sms;
+    if (args.whatsappFallback !== undefined)
+      patch.whatsappFallback = args.whatsappFallback;
     if (args.staleDays !== undefined)
       patch.staleDays = Math.max(1, Math.min(60, Math.round(args.staleDays)));
     if (args.action && args.on !== undefined)
@@ -387,33 +461,59 @@ export const sendDraft = authenticatedAction({
     if (draft.ok === true) throw new Error("That message was already sent.");
     const row = await candidate(String(draft.candidate_id));
     const s = await settings();
-    // The draft body is stored after the "Drafted, not sent" line.
-    const body = String(draft.detail ?? "")
-      .split("\n")
-      .slice(1)
+    // The draft body is stored after the "Drafted, not sent" line, with the
+    // short form on its own line at the end.
+    const lines = String(draft.detail ?? "").split("\n");
+    const shortAt = lines.findIndex(l => l.startsWith("Short form"));
+    const body = lines
+      .slice(1, shortAt === -1 ? undefined : shortAt)
       .join("\n")
       .trim();
+    const short =
+      shortAt === -1
+        ? body
+        : lines[shortAt].replace(/^Short form[^:]*:\s*/, "").trim();
     const [subject, ...rest_] = body.split("\n");
     const message = rest_.join("\n").trim();
-    await ghlOk("POST", "/conversations/messages", {
-      body: {
-        type: s.channel,
-        contactId: String(row.contact_id),
-        ...(s.channel === "Email"
-          ? {
-              subject,
-              html: message.replace(/\n/g, "<br>"),
-              message,
-            }
-          : { message }),
-      },
-    });
+    const sentOn: string[] = [];
+    const refused: string[] = [];
+    const send = async (type: string, payload: Record<string, unknown>) => {
+      await ghlOk("POST", "/conversations/messages", {
+        body: { type, contactId: String(row.contact_id), ...payload },
+      });
+    };
+    if (s.email)
+      await send("Email", {
+        subject,
+        html: message.replace(/\n/g, "<br>"),
+        message,
+      })
+        .then(() => sentOn.push("email"))
+        .catch(e => refused.push(`email: ${(e as Error).message}`));
+    if (s.sms)
+      await send("SMS", { message: short })
+        .then(() => sentOn.push("SMS"))
+        .catch(async e => {
+          refused.push(`SMS: ${(e as Error).message}`);
+          if (s.whatsappFallback)
+            await send("WhatsApp", { message: short })
+              .then(() => sentOn.push("WhatsApp"))
+              .catch(e2 => refused.push(`WhatsApp: ${(e2 as Error).message}`));
+        });
+    if (!sentOn.length)
+      throw new Error(
+        refused.join("; ") || "No rail is switched on, so nothing was sent.",
+      );
     await rest(`cockpit_hiring_events?id=eq.${eventId}`, {
       method: "PATCH",
-      body: { ok: true, detail: `Sent by ${by}.\n${body}`, by_whom: by },
+      body: {
+        ok: true,
+        detail: `Sent by ${by} on ${sentOn.join(" and ")}.\n${body}`,
+        by_whom: by,
+      },
       prefer: "return=minimal",
     });
-    return { ok: true, to: String(row.name ?? "") };
+    return { ok: true, to: String(row.name ?? ""), sentOn, refused };
   },
 });
 
@@ -435,6 +535,11 @@ export const roles = authenticatedAction({
       testProject: r.testProject,
       loomPrompt: r.loomPrompt,
       pipelineReady: Boolean(m?.pipelines?.[r.key]),
+      // The other boards a candidate on this one can be moved to.
+      tracks: (TRACKS[r.key] ?? []).map(k => ({
+        key: k,
+        label: roleByKey(k)?.label ?? k,
+      })),
     }));
   },
 });

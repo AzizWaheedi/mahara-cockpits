@@ -23,10 +23,26 @@ export type EngineSettings = {
   armed: boolean;
   /** Which actions may fire at all. */
   actions: Record<Action, boolean>;
-  channel: "Email" | "SMS" | "WhatsApp";
+  /**
+   * Which rails a message goes out on. Aziz, 2026-09-22: "make sure to use
+   * email and SMS. SMS is WhatsApp, remember, but you can also use WhatsApp as
+   * a backup, just in case." So both rails carry every message, and WhatsApp
+   * is tried only when the SMS rail refuses.
+   */
+  email: boolean;
+  sms: boolean;
+  whatsappFallback: boolean;
   /** Days without a move before a candidate is called stale. */
   staleDays: number;
 };
+
+/** What the screen calls the rails, in one line. */
+export function railSummary(s: EngineSettings): string {
+  const on = [s.email && "email", s.sms && "SMS"].filter(Boolean) as string[];
+  if (!on.length) return "No rail is on";
+  const base = on.join(" and ");
+  return s.whatsappFallback ? `${base}, WhatsApp as backup` : base;
+}
 
 export const SETTINGS_KEY = "engine";
 
@@ -42,7 +58,9 @@ export const DEFAULT_SETTINGS: EngineSettings = {
     rejection: true,
     bench_note: true,
   },
-  channel: "Email",
+  email: true,
+  sms: true,
+  whatsappFallback: true,
   staleDays: 7,
 };
 

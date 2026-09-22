@@ -872,9 +872,13 @@ these roles that are repetitive and we can repeat them", a pipeline whose
 stages are his interview process, a test project per role held in custom
 values, applications pulled straight in, and a score on every candidate.
 
-**The five roles.** Media buyer, client success manager, sales rep (B2B setter
-and closer), call centre agent, video editor. One GoHighLevel pipeline each,
-so the board reads as one role at a time, which is how hiring actually runs.
+**The six boards.** Media buyer, client success manager, sales closer (B2B),
+sales setter (B2B), call centre agent, video editor. One GoHighLevel pipeline
+each, named after the role alone because the sub-account holds nothing but
+hiring. Sales splits in two (Aziz, 2026-09-22): everyone answers the one
+closer's form and lands on the closer board, and he either starts them as a
+setter and moves them up later, or takes them straight to closer. The track
+switch is on the grading row and calls `hiring.actions.reassign`.
 
 **The ten stages**, in his words: Application, Disqualified, Loom request,
 Group interview, One-to-one interview, Job offer, Bench, Hired, Fired, Churn.
@@ -896,8 +900,12 @@ Six advance, three are exits, Bench is a hold.
 card and the cockpit never disagree. The total is the mean of the scores
 given. Disqualified and Bench refuse to save without a reason.
 
-**The engine.** Code, not a GoHighLevel workflow, because his first attempt at
-workflows "hasn't really worked the best". It reacts to a move: Loom request
+**The engine.** Two of them, and only one may be armed. The cockpit's own is
+code rather than a workflow, because his first attempt at workflows "hasn't
+really worked the best"; the GoHighLevel one is 36 workflows (six roles by six
+stages) built by a console script, because he asked for it native. Either way
+every message goes out on email and on SMS, with WhatsApp tried only when SMS
+refuses, and every changeable word comes from a custom value. It reacts to a move: Loom request
 sends the role's prompt, Group interview the booking link, One-to-one the test
 project, Job offer the offer, Disqualified the rejection, Bench the holding
 note. Disarmed by default: it writes every message down and sends nothing

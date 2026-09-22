@@ -1,7 +1,14 @@
 import { v } from "convex/values";
 import { internalAction } from "../_generated/server";
-import { type Any, ghlOk, hiringLocation } from "./ghl";
-import { allValues, FIELDS, ROLES, STAGES, type ValueSpec } from "./spec";
+import { type Any, ghl, ghlOk, hiringLocation } from "./ghl";
+import {
+  allValues,
+  FIELDS,
+  RENAMES,
+  ROLES,
+  STAGES,
+  type ValueSpec,
+} from "./spec";
 
 /**
  * Build the hiring sub-account in GoHighLevel from `spec.ts`, and keep it
@@ -157,41 +164,72 @@ export const plan = internalAction({
 
 // --- Writes ------------------------------------------------------------------
 
+/**
+ * A stage as GoHighLevel wants it, with the settings that make the board read
+ * as a funnel. Stage colours are not in the public API; win probability and
+ * the funnel flags are the styling it does expose, so they are set rather
+ * than left at the defaults GoHighLevel guesses.
+ */
+function stageBody(pipe: Pipeline): {
+  id?: string;
+  name: string;
+  position: number;
+  showInFunnel: boolean;
+  showInPieChart: boolean;
+  stageWinProbability: number;
+}[] {
+  const out = STAGES.map((s, i) => {
+    const found = pipe.stages.find(h => same(h.name, s.name));
+    return {
+      ...(found ? { id: found.id } : {}),
+      name: s.name,
+      position: i,
+      showInFunnel: s.advancing,
+      showInPieChart: s.advancing,
+      stageWinProbability: s.odds,
+    };
+  });
+  // Anything the account has that the spec does not is kept, at the end.
+  const extras = pipe.stages
+    .filter(h => !STAGES.some(s => same(s.name, h.name)))
+    .map((h, i) => ({
+      id: h.id,
+      name: h.name,
+      position: STAGES.length + i,
+      showInFunnel: false,
+      showInPieChart: false,
+      stageWinProbability: 0,
+    }));
+  return [...out, ...extras];
+}
+
 async function createPipeline(location: string, name: string): Promise<string> {
   const body = await ghlOk("POST", "/opportunities/pipelines", {
     body: {
       locationId: location,
       name,
-      stages: STAGES.map((s, i) => ({ name: s.name, position: i })),
+      stages: STAGES.map((s, i) => ({
+        name: s.name,
+        position: i,
+        showInFunnel: s.advancing,
+        showInPieChart: s.advancing,
+        stageWinProbability: s.odds,
+      })),
     },
   });
   return String(body?.pipeline?.id ?? body?.id ?? "");
 }
 
-/** Add the stages a pipeline is missing, keeping the ones already there. */
-async function repairStages(
-  location: string,
-  pipe: Pipeline,
-): Promise<string[]> {
-  const have = pipe.stages;
-  const stages = STAGES.map((s, i) => {
-    const found = have.find(h => same(h.name, s.name));
-    return found
-      ? { id: found.id, name: s.name, position: i }
-      : { name: s.name, position: i };
-  });
-  // Anything the account has that the spec does not is kept, at the end.
-  const extras = have
-    .filter(h => !STAGES.some(s => same(s.name, h.name)))
-    .map((h, i) => ({ id: h.id, name: h.name, position: STAGES.length + i }));
+/**
+ * Bring a pipeline's stages up to the spec: add any that are missing, and set
+ * the funnel settings on all of them. Never removes a stage.
+ */
+async function repairStages(pipe: Pipeline): Promise<string[]> {
+  const body = stageBody(pipe);
   await ghlOk("PUT", `/opportunities/pipelines/${pipe.id}`, {
-    body: {
-      locationId: location,
-      name: pipe.name,
-      stages: [...stages, ...extras],
-    },
+    body: { name: pipe.name, stages: body },
   });
-  return stages.filter(s => !("id" in s)).map(s => s.name);
+  return body.filter(s => !s.id).map(s => s.name);
 }
 
 async function createField(
@@ -237,30 +275,64 @@ export const apply = internalAction({
       }
     };
 
-    const pipelines = await readPipelines(location);
+    // Renames first, so a pipeline that changed name keeps its cards instead
+    // of being rebuilt empty beside the old one.
+    let pipelines = await readPipelines(location);
+    let values = await readValues(location);
+    const renamedTo = new Set<string>();
+    let fields = await readFields(location);
+    for (const r of RENAMES) {
+      if (r.kind === "pipeline") {
+        const pipe = pipelines.find(p => same(p.name, r.from));
+        if (!pipe || pipelines.some(p => same(p.name, r.to))) continue;
+        renamedTo.add(r.to.trim().toLowerCase());
+        await attempt(`rename pipeline ${r.from}`, () =>
+          // GoHighLevel refuses locationId on a pipeline PUT (422,
+          // "property locationId should not exist"), unlike the POST.
+          ghlOk("PUT", `/opportunities/pipelines/${pipe.id}`, {
+            body: { name: r.to, stages: stageBody(pipe) },
+          }),
+        );
+      } else if (r.kind === "value") {
+        const val = values.find(x => same(x.name, r.from));
+        if (!val || values.some(x => same(x.name, r.to))) continue;
+        await attempt(`rename value ${r.from}`, () =>
+          ghlOk("PUT", `/locations/${location}/customValues/${val.id}`, {
+            body: { name: r.to, value: val.value },
+          }),
+        );
+      } else {
+        const f = fields.find(x => same(x.name, r.from));
+        if (!f || fields.some(x => same(x.name, r.to))) continue;
+        await attempt(`rename field ${r.from}`, () =>
+          ghlOk("PUT", `/locations/${location}/customFields/${f.id}`, {
+            body: { name: r.to },
+          }),
+        );
+      }
+    }
+    if (done.length) {
+      pipelines = await readPipelines(location);
+      values = await readValues(location);
+      fields = await readFields(location);
+    }
     for (const role of ROLES) {
       const found = pipelines.find(p => same(p.name, role.pipeline));
+      // A pipeline renamed a moment ago can still read under its old name for
+      // a beat, so do not try to build a second one on top of it.
+      if (!found && renamedTo.has(role.pipeline.trim().toLowerCase())) continue;
       if (!found)
         await attempt(`pipeline ${role.pipeline}`, () =>
           createPipeline(location, role.pipeline),
         );
-      else {
-        const missing = STAGES.filter(
-          s => !found.stages.some(h => same(h.name, s.name)),
-        );
-        if (missing.length)
-          await attempt(`stages on ${role.pipeline}`, () =>
-            repairStages(location, found),
-          );
-      }
+      else
+        await attempt(`stages on ${role.pipeline}`, () => repairStages(found));
     }
 
-    const fields = await readFields(location);
     for (const f of FIELDS)
       if (!fields.some(x => same(x.name, f.name)))
         await attempt(`field ${f.name}`, () => createField(location, f));
 
-    const values = await readValues(location);
     for (const val of allValues())
       if (!values.some(x => same(x.name, val.name)))
         await attempt(`value ${val.name}`, () => createValue(location, val));
@@ -272,6 +344,68 @@ export const apply = internalAction({
       failed,
       plan: await buildPlan(location),
     };
+  },
+});
+
+/**
+ * Remove stages the spec does not name, so a renamed stage does not leave its
+ * old self behind on every board (which is what "One-to-one interview" did
+ * when it became "One to one interview", 2026-09-22).
+ *
+ * It refuses to drop a stage anybody is standing in: those cards are moved to
+ * the stage the spec says they belong in first, by hand or by `move`.
+ */
+export const pruneStages = internalAction({
+  args: { location: v.optional(v.string()), dryRun: v.optional(v.boolean()) },
+  returns: v.any(),
+  handler: async (_ctx, args) => {
+    const location = args.location ?? hiringLocation();
+    const pipelines = await readPipelines(location);
+    const out: Any[] = [];
+    for (const pipe of pipelines) {
+      const strays = pipe.stages.filter(
+        h => !STAGES.some(s => same(s.name, h.name)),
+      );
+      if (!strays.length) continue;
+      const occupied: { name: string; cards: number }[] = [];
+      for (const st of strays) {
+        const r = await ghl(
+          "GET",
+          `/opportunities/search?location_id=${location}&pipeline_id=${pipe.id}&pipeline_stage_id=${st.id}&limit=1`,
+        );
+        const n = Number(
+          r.body?.meta?.total ?? (r.body?.opportunities ?? []).length,
+        );
+        if (n > 0) occupied.push({ name: st.name, cards: n });
+      }
+      if (occupied.length) {
+        out.push({ pipeline: pipe.name, refused: occupied });
+        continue;
+      }
+      if (!args.dryRun)
+        await ghlOk("PUT", `/opportunities/pipelines/${pipe.id}`, {
+          body: {
+            name: pipe.name,
+            stages: STAGES.map((s, i) => {
+              const found = pipe.stages.find(h => same(h.name, s.name));
+              return {
+                ...(found ? { id: found.id } : {}),
+                name: s.name,
+                position: i,
+                showInFunnel: s.advancing,
+                showInPieChart: s.advancing,
+                stageWinProbability: s.odds,
+              };
+            }),
+          },
+        });
+      out.push({
+        pipeline: pipe.name,
+        removed: strays.map(st => st.name),
+        dryRun: Boolean(args.dryRun),
+      });
+    }
+    return { location, pipelines: pipelines.length, out };
   },
 });
 

@@ -54,7 +54,12 @@ export const ACTION_FOR: Partial<Record<StageKey, Action>> = {
   bench: "bench_note",
 };
 
-type Template = { subject: string; body: string };
+/**
+ * Every message goes out on both rails, so each one has a long form for email
+ * and a short form for the phone. The short form says the same thing in one
+ * or two lines and never repeats the whole email.
+ */
+type Template = { subject: string; body: string; sms: string };
 
 /**
  * Plain, short, and in Aziz's register: say the thing, say what happens next,
@@ -76,6 +81,7 @@ Record it on Loom or your phone, whichever is faster, and reply to this message 
 {{positionVideo}}
 
 {{owner}}`,
+    sms: "Hi {{firstName}}, {{agency}} here about the {{role}} role. We liked your application. Next step is a short video: {{loomPrompt}} Reply here with the link. {{owner}}",
   },
   group_invite: {
     subject: "{{role}} at {{agency}}, group interview",
@@ -88,6 +94,7 @@ Book the slot that suits you: {{groupLink}}
 Two things worth knowing. It starts on time, and answers are kept to sixty seconds each, so come with the short version of your story.
 
 {{owner}}`,
+    sms: "Hi {{firstName}}, your video was good. Next is a group interview for the {{role}} role. Book your slot: {{groupLink}} It starts on time. {{owner}}",
   },
   test_project: {
     subject: "{{role}} at {{agency}}, the last two steps",
@@ -104,6 +111,7 @@ Second, a one to one with me. Book it here: {{oneToOneLink}}
 Send the work back before the call if you can, and we will go through it together.
 
 {{owner}}`,
+    sms: "Hi {{firstName}}, you are in the final round for {{role}}. I have emailed you a short piece of real work. Book our one to one here: {{oneToOneLink}} {{owner}}",
   },
   offer: {
     subject: "An offer from {{agency}}",
@@ -118,6 +126,7 @@ What it pays: {{compensation}}
 Reply and tell me yes or no, and the earliest date you could start. If it is a yes I will send the contract and the onboarding call straight after.
 
 {{owner}}`,
+    sms: "Hi {{firstName}}, we would like you to join {{agency}} as our {{role}}. The full offer is in your email. Reply yes or no and the earliest you could start. {{owner}}",
   },
   rejection: {
     subject: "{{role}} at {{agency}}",
@@ -128,6 +137,7 @@ Thanks for the time you put into applying for the {{role}} role at {{agency}}. W
 That is not a judgement on your work, it is who else applied for this one role. We hire for these roles often, so apply again when you see one open: {{careers}}
 
 {{owner}}`,
+    sms: "Hi {{firstName}}, thanks for applying for the {{role}} role at {{agency}}. We are not taking it further this time. We hire these roles often: {{careers}} {{owner}}",
   },
   bench_note: {
     subject: "{{role}} at {{agency}}, holding your application",
@@ -138,6 +148,7 @@ You did well and I want to be straight with you: we do not have the seat open ri
 I am keeping your application on hand rather than closing it. When the next {{role}} seat opens you are one of the first people I will message, and you will not start from the beginning.
 
 {{owner}}`,
+    sms: "Hi {{firstName}}, you did well but the {{role}} seat is not open right now. I am keeping your application on hand and you will hear from me first when it opens. {{owner}}",
   },
 };
 
@@ -148,8 +159,9 @@ export function compose(t: Template, vars: Record<string, string>): Template {
       .replace(/\{\{(\w+)\}\}/g, (_, k: string) => vars[k] ?? "")
       // A value Aziz has not filled in yet leaves a blank line, not a gap.
       .replace(/\n{3,}/g, "\n\n")
+      .replace(/[ \t]{2,}/g, " ")
       .trim();
-  return { subject: fill(t.subject), body: fill(t.body) };
+  return { subject: fill(t.subject), body: fill(t.body), sms: fill(t.sms) };
 }
 
 /** Every custom value in the hiring account, by name. */
@@ -343,29 +355,54 @@ export async function runOnce(): Promise<RunResult> {
       await record(
         p,
         false,
-        `Drafted, not sent (the engine is disarmed).\n\n${msg.subject}\n\n${msg.body}`,
+        `Drafted, not sent (the engine is disarmed).\n${msg.subject}\n\n${msg.body}\n\nShort form, for SMS and WhatsApp: ${msg.sms}`,
         "the cockpit",
       );
       result.lines.push(`${p.name}: ${p.action} drafted.`);
       continue;
     }
-    try {
+    const sentOn: string[] = [];
+    const refused: string[] = [];
+    const send = async (type: string, body: Record<string, unknown>) => {
       await ghlOk("POST", "/conversations/messages", {
-        body: {
-          type: s.channel,
-          contactId: p.contactId,
-          ...(s.channel === "Email"
-            ? {
-                subject: msg.subject,
-                html: msg.body.replace(/\n/g, "<br>"),
-                message: msg.body,
-              }
-            : { message: msg.body }),
-        },
+        body: { type, contactId: p.contactId, ...body },
       });
+    };
+    try {
+      if (s.email)
+        await send("Email", {
+          subject: msg.subject,
+          html: msg.body.replace(/\n/g, "<br>"),
+          message: msg.body,
+        })
+          .then(() => sentOn.push("email"))
+          .catch(e => refused.push(`email: ${(e as Error).message}`));
+      if (s.sms)
+        await send("SMS", { message: msg.sms })
+          .then(() => sentOn.push("SMS"))
+          .catch(async e => {
+            refused.push(`SMS: ${(e as Error).message}`);
+            // The phone rail is the one that gets read, so try the other way
+            // to a phone before giving up on it.
+            if (s.whatsappFallback)
+              await send("WhatsApp", { message: msg.sms })
+                .then(() => sentOn.push("WhatsApp"))
+                .catch(e2 =>
+                  refused.push(`WhatsApp: ${(e2 as Error).message}`),
+                );
+          });
+      if (!sentOn.length)
+        throw new Error(refused.join("; ") || "no rail is switched on");
       result.sent += 1;
-      await record(p, true, `${msg.subject}\n\n${msg.body}`, "the cockpit");
-      result.lines.push(`${p.name}: ${p.action} sent.`);
+      await record(
+        p,
+        true,
+        `Sent on ${sentOn.join(" and ")}${refused.length ? ` (refused: ${refused.join("; ")})` : ""}.\n${msg.subject}\n\n${msg.body}\n\nShort form: ${msg.sms}`,
+        "the cockpit",
+      );
+      result.lines.push(
+        `${p.name}: ${p.action} sent on ${sentOn.join(" and ")}.`,
+      );
     } catch (e) {
       result.failed += 1;
       await record(

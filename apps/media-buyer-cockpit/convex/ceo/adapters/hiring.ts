@@ -1,7 +1,7 @@
 import { agentReady } from "../../hiring/agent";
 import { FORMS } from "../../hiring/forms";
 import { hiringConfigured } from "../../hiring/ghl";
-import { settings } from "../../hiring/settings";
+import { railSummary, settings } from "../../hiring/settings";
 import {
   ADVANCING_STAGES,
   EXIT_STAGES,
@@ -281,7 +281,7 @@ export const hiring: Adapter = {
       bench: bench.slice(0, 50),
       engine: {
         armed: engineSettings?.armed ?? false,
-        channel: engineSettings?.channel ?? "Email",
+        channel: engineSettings ? railSummary(engineSettings) : "Email and SMS",
         staleDays,
         actions: Object.entries(engineSettings?.actions ?? {}).map(
           ([action, on]) => ({ action, on: Boolean(on) }),

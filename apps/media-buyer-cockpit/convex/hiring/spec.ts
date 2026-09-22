@@ -15,7 +15,8 @@
 export const ROLE_KEYS = [
   "media-buyer",
   "csm",
-  "sales-rep",
+  "sales-closer",
+  "sales-setter",
   "call-centre",
   "video-editor",
 ] as const;
@@ -23,24 +24,32 @@ export type RoleKey = (typeof ROLE_KEYS)[number];
 
 /**
  * The stages, in Aziz's order. `key` is what the cockpit stores, `name` is
- * what the GoHighLevel board shows.
+ * what the GoHighLevel board shows, and `odds` is the win probability
+ * GoHighLevel uses to draw the funnel and shade the board, which is the only
+ * styling its API exposes: stage colours are not settable there.
  *
  * Disqualified, Bench, Fired and Churn are resting places rather than steps,
  * so the funnel maths in the cockpit counts only the advancing stages and
  * reads the rest as exits.
  */
 export const STAGES = [
-  { key: "application", name: "Application", advancing: true },
-  { key: "disqualified", name: "Disqualified", advancing: false },
-  { key: "loom", name: "Loom request", advancing: true },
-  { key: "group", name: "Group interview", advancing: true },
-  { key: "one-to-one", name: "One-to-one interview", advancing: true },
-  { key: "offer", name: "Job offer", advancing: true },
-  { key: "bench", name: "Bench", advancing: false },
-  { key: "hired", name: "Hired", advancing: true },
-  { key: "fired", name: "Fired", advancing: false },
-  { key: "churn", name: "Churn", advancing: false },
+  { key: "application", name: "Application", advancing: true, odds: 5 },
+  { key: "disqualified", name: "Disqualified", advancing: false, odds: 0 },
+  { key: "loom", name: "Loom request", advancing: true, odds: 15 },
+  { key: "group", name: "Group interview", advancing: true, odds: 30 },
+  {
+    key: "one-to-one",
+    name: "One to one interview",
+    advancing: true,
+    odds: 55,
+  },
+  { key: "offer", name: "Job offer", advancing: true, odds: 85 },
+  { key: "bench", name: "Bench", advancing: false, odds: 10 },
+  { key: "hired", name: "Hired", advancing: true, odds: 100 },
+  { key: "fired", name: "Fired", advancing: false, odds: 0 },
+  { key: "churn", name: "Churn", advancing: false, odds: 0 },
 ] as const;
+
 export type StageKey = (typeof STAGES)[number]["key"];
 
 export const STAGE_KEYS = STAGES.map(s => s.key) as StageKey[];
@@ -74,8 +83,14 @@ export type Role = {
   label: string;
   /** The pipeline this role's candidates sit in. */
   pipeline: string;
-  /** The page a candidate applies from. */
+  /** The page the job ad points at, for this role only. */
   careersUrl: string;
+  /**
+   * The form that page opens, for this role only. Aziz, 2026-09-22: "make
+   * sure you go to the specific funnel for that hire when you're putting the
+   * job posting." A message or an ad never links to the careers index.
+   */
+  applyUrl: string;
   /** What the role is paid, as the careers page states it. */
   compensation: string;
   /** Where the mentor's directory says to post this role. */
@@ -100,8 +115,9 @@ export const ROLES: Role[] = [
   {
     key: "media-buyer",
     label: "Media buyer",
-    pipeline: "Hiring, media buyer",
+    pipeline: "Media buyer",
     careersUrl: "https://maharamedia.com/careers/media-buyer/",
+    applyUrl: "https://maharamedia.typeform.com/to/zo1Zm6u6",
     compensation:
       "Up to $3,000+ a month. Base plus a cost per lead bonus once a full roster is managed.",
     postOn: "OnlineJobs and Facebook ads. The Philippines or Egypt.",
@@ -122,8 +138,9 @@ export const ROLES: Role[] = [
   {
     key: "csm",
     label: "Client success manager",
-    pipeline: "Hiring, client success manager",
+    pipeline: "Client success manager",
     careersUrl: "https://maharamedia.com/careers/client-success-manager/",
+    applyUrl: "https://maharamedia.typeform.com/to/oW8CWRhi",
     compensation:
       "Up to $6,000 a month. Base plus commission on retention, upsells and referrals.",
     postOn:
@@ -144,33 +161,59 @@ export const ROLES: Role[] = [
       "Own a roster of GCC clients end to end, run the check in calls, keep every account on track against its gates, and turn a good result into an extension.",
   },
   {
-    key: "sales-rep",
-    label: "Sales rep, B2B setter and closer",
-    pipeline: "Hiring, sales rep B2B",
+    key: "sales-closer",
+    label: "Sales closer (B2B)",
+    pipeline: "Sales closer (B2B)",
     careersUrl: "https://maharamedia.com/careers/sales-rep/",
+    applyUrl: "https://maharamedia.typeform.com/to/rqv3Fkts",
     compensation:
-      "Base plus uncapped commission. Bilingual Arabic and English, based in the GCC.",
+      "Base plus uncapped commission on cash collected. Bilingual Arabic and English, based in the GCC.",
     postOn:
       "Skool and Facebook communities, recruiters, your own network. Onshore where the clients are.",
     rampTime: "On calls within 1 to 2 weeks.",
     scorecard: [
-      "Speed to lead inside working hours",
-      "Intro and demo show rate",
       "Close rate on demos shown",
       "Cash collected",
+      "Demo show rate",
+      "Average deal size",
     ],
     loomPrompt:
       "Three minutes on camera: the last deal you closed over $5,000, what the objection was, and the words you used to get past it.",
     testProject:
+      "A recorded or written discovery call with a GCC construction client. Send back a written review naming the three moments the deal was won or lost and what you would have said instead. Then a live roleplay of the close on the call, with me as that owner.",
+    dailyResponsibilities:
+      "Run the demo, handle the objection, and close construction and design firms across the GCC.",
+  },
+  {
+    key: "sales-setter",
+    label: "Sales setter (B2B)",
+    pipeline: "Sales setter (B2B)",
+    careersUrl: "https://maharamedia.com/careers/sales-rep/",
+    applyUrl: "https://maharamedia.typeform.com/to/rqv3Fkts",
+    compensation:
+      "Base or draw, whichever is higher, plus commission on cash collected from your sets. Bilingual Arabic and English.",
+    postOn:
+      "Skool and Facebook communities, recruiters, your own network. Onshore where the clients are, or offshore at a much lower band.",
+    rampTime: "On calls within 3 to 4 days. The easiest seat to ramp.",
+    scorecard: [
+      "Speed to lead inside working hours",
+      "Sets booked per day",
+      "Set to show rate",
+      "Cash collected from their sets",
+    ],
+    loomPrompt:
+      "Two minutes on camera: call me as if I filled a form two days ago and do not remember doing it. Get me to agree to a meeting.",
+    testProject:
       "Five inbound B2B leads from GCC construction and design firms with their form answers and timestamps, names removed. Send back your opening sixty seconds, your qualifying questions in writing, and which two you would call first and why.",
     dailyResponsibilities:
-      "Call every lead inside the working clock, qualify on budget and decision maker, run the demo, and close construction and design firms across the GCC.",
+      "Call every lead inside the working clock, qualify on budget and decision maker, and book the demo so it shows.",
   },
   {
     key: "call-centre",
     label: "Call centre agent",
-    pipeline: "Hiring, call centre agent",
+    pipeline: "Call centre agent",
     careersUrl: "https://maharamedia.com/careers/call-center-agent/",
+    applyUrl: "https://maharamedia.typeform.com/to/jYTRw2Sx",
     compensation:
       "Base plus commission per appointment booked. Khaliji Arabic fluency required.",
     postOn:
@@ -192,8 +235,11 @@ export const ROLES: Role[] = [
   {
     key: "video-editor",
     label: "Video editor",
-    pipeline: "Hiring, video editor",
-    careersUrl: "https://maharamedia.com/careers",
+    pipeline: "Video editor",
+    // There is no /careers/video-editor/ page, so the ad points at the form
+    // itself rather than at the index, which lists every other role too.
+    careersUrl: "https://maharamedia.typeform.com/to/tigKbFlO",
+    applyUrl: "https://maharamedia.typeform.com/to/tigKbFlO",
     compensation: "Competitive, on a portfolio.",
     postOn:
       "OnlineJobs, Facebook editor communities and the swipe file's own creators.",
@@ -212,6 +258,152 @@ export const ROLES: Role[] = [
       "Cut ads and reels for GCC construction and design firms, hold the house style, and turn a shoot into enough variants for a real test.",
   },
 ];
+
+/**
+ * Names that have changed, so `setup.ts` renames what is there instead of
+ * building a second one beside it and stranding the cards in the first.
+ *
+ * Aziz, 2026-09-22: the sales funnel splits in two, "I make them a setter,
+ * and then they turn into a closer" or "I just bring them straight to
+ * becoming a closer". The old single pipeline becomes the closer's, because
+ * the form behind it asks a closer's questions, and the setter's pipeline is
+ * new. A candidate moves between the two with `reassign`.
+ */
+export const RENAMES: {
+  kind: "pipeline" | "value" | "field";
+  from: string;
+  to: string;
+}[] = [
+  // The sales funnel split in two (Aziz, 2026-09-22): "I make them a setter,
+  // and then they turn into a closer" or "I just bring them straight to
+  // becoming a closer. It just depends on how skilled they are." The old
+  // single pipeline becomes the closer's, because the form behind it asks a
+  // closer's questions, and the setter's is new. `reassign` moves a candidate
+  // between the two.
+  { kind: "pipeline", from: "Hiring, sales rep B2B", to: "Sales closer (B2B)" },
+  { kind: "pipeline", from: "Hiring, B2B closer", to: "Sales closer (B2B)" },
+  { kind: "pipeline", from: "Hiring, B2B setter", to: "Sales setter (B2B)" },
+  // The sub-account holds nothing but hiring, so a pipeline is just the role.
+  { kind: "pipeline", from: "Hiring, media buyer", to: "Media buyer" },
+  {
+    kind: "pipeline",
+    from: "Hiring, client success manager",
+    to: "Client success manager",
+  },
+  {
+    kind: "pipeline",
+    from: "Hiring, call centre agent",
+    to: "Call centre agent",
+  },
+  { kind: "pipeline", from: "Hiring, video editor", to: "Video editor" },
+  {
+    kind: "value",
+    from: "Sales rep, B2B setter and closer - Test project",
+    to: "Sales closer (B2B) - Test project",
+  },
+  {
+    kind: "value",
+    from: "Sales rep, B2B setter and closer - Loom request",
+    to: "Sales closer (B2B) - Loom request",
+  },
+  {
+    kind: "value",
+    from: "Sales rep, B2B setter and closer - Compensation",
+    to: "Sales closer (B2B) - Compensation",
+  },
+  {
+    kind: "value",
+    from: "Sales rep, B2B setter and closer - Daily responsibilities",
+    to: "Sales closer (B2B) - Daily responsibilities",
+  },
+  {
+    kind: "value",
+    from: "Sales rep, B2B setter and closer - Position breakdown video",
+    to: "Sales closer (B2B) - Position breakdown video",
+  },
+  {
+    kind: "value",
+    from: "Sales rep, B2B setter and closer - Job post",
+    to: "Sales closer (B2B) - Job post",
+  },
+  {
+    kind: "value",
+    from: "Sales closer, B2B - Test project",
+    to: "Sales closer (B2B) - Test project",
+  },
+  {
+    kind: "value",
+    from: "Sales closer, B2B - Loom request",
+    to: "Sales closer (B2B) - Loom request",
+  },
+  {
+    kind: "value",
+    from: "Sales closer, B2B - Compensation",
+    to: "Sales closer (B2B) - Compensation",
+  },
+  {
+    kind: "value",
+    from: "Sales closer, B2B - Daily responsibilities",
+    to: "Sales closer (B2B) - Daily responsibilities",
+  },
+  {
+    kind: "value",
+    from: "Sales closer, B2B - Position breakdown video",
+    to: "Sales closer (B2B) - Position breakdown video",
+  },
+  {
+    kind: "value",
+    from: "Sales closer, B2B - Job post",
+    to: "Sales closer (B2B) - Job post",
+  },
+  {
+    kind: "value",
+    from: "Sales setter, B2B - Test project",
+    to: "Sales setter (B2B) - Test project",
+  },
+  {
+    kind: "value",
+    from: "Sales setter, B2B - Loom request",
+    to: "Sales setter (B2B) - Loom request",
+  },
+  {
+    kind: "value",
+    from: "Sales setter, B2B - Compensation",
+    to: "Sales setter (B2B) - Compensation",
+  },
+  {
+    kind: "value",
+    from: "Sales setter, B2B - Daily responsibilities",
+    to: "Sales setter (B2B) - Daily responsibilities",
+  },
+  {
+    kind: "value",
+    from: "Sales setter, B2B - Position breakdown video",
+    to: "Sales setter (B2B) - Position breakdown video",
+  },
+  {
+    kind: "value",
+    from: "Sales setter, B2B - Job post",
+    to: "Sales setter (B2B) - Job post",
+  },
+  // Scores numbered so the field list reads in interview order.
+  { kind: "field", from: "Score, application", to: "Score 1, application" },
+  { kind: "field", from: "Score, Loom", to: "Score 2, Loom" },
+  {
+    kind: "field",
+    from: "Score, group interview",
+    to: "Score 3, group interview",
+  },
+  { kind: "field", from: "Score, one-to-one", to: "Score 4, one to one" },
+  { kind: "field", from: "Score, test project", to: "Score 5, test project" },
+  { kind: "field", from: "Score, total", to: "Score 6, total" },
+];
+
+/** Roles a candidate can be moved between, because they answered one form. */
+export const TRACKS: Record<string, RoleKey[]> = {
+  "sales-closer": ["sales-setter"],
+  "sales-setter": ["sales-closer"],
+};
 
 export const roleByKey = (key: string): Role | null =>
   ROLES.find(r => r.key === key) ?? null;
@@ -292,37 +484,37 @@ export const FIELDS: FieldSpec[] = [
   },
   {
     key: "scoreApplication",
-    name: "Score, application",
+    name: "Score 1, application",
     type: "NUMERICAL",
     note: "Out of 10, graded against the role's scorecard.",
   },
   {
     key: "scoreLoom",
-    name: "Score, Loom",
+    name: "Score 2, Loom",
     type: "NUMERICAL",
     note: "Out of 10.",
   },
   {
     key: "scoreGroup",
-    name: "Score, group interview",
+    name: "Score 3, group interview",
     type: "NUMERICAL",
     note: "Out of 10, against the group interview framework.",
   },
   {
     key: "scoreOneToOne",
-    name: "Score, one-to-one",
+    name: "Score 4, one to one",
     type: "NUMERICAL",
     note: "Out of 10.",
   },
   {
     key: "scoreTestProject",
-    name: "Score, test project",
+    name: "Score 5, test project",
     type: "NUMERICAL",
     note: "Out of 10.",
   },
   {
     key: "scoreTotal",
-    name: "Score, total",
+    name: "Score 6, total",
     type: "NUMERICAL",
     note: "The mean of the scores given so far, computed by the cockpit, never typed.",
   },
@@ -404,7 +596,12 @@ export const roleValues = (role: Role): ValueSpec[] => [
   {
     name: `${role.label} - Job post`,
     seed: role.careersUrl,
-    note: "Where the role is advertised.",
+    note: "The page this role's job ad points at. This role only, never the careers index.",
+  },
+  {
+    name: `${role.label} - Apply link`,
+    seed: role.applyUrl,
+    note: "The application form for this role, for a message or an ad that skips the page.",
   },
 ];
 
