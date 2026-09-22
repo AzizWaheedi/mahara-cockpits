@@ -1,5 +1,5 @@
--- Migration: 20260922a_cockpit_identity_audit_feedback.sql
--- Slice 1: Cockpit Identity, Audit Log, and Feedback Mirror
+-- Migration: 20260922a_cockpit_identity_audit_issue_reports.sql
+-- Slice 1: Cockpit Identity, Audit Log, and Issue Report Mirror
 -- Idempotent, transaction-wrapped, non-destructive
 
 BEGIN;
@@ -56,30 +56,6 @@ CREATE TRIGGER trg_cockpit_members_touch
 BEFORE UPDATE ON public.cockpit_members
 FOR EACH ROW EXECUTE FUNCTION public.cockpit_touch_updated_at();
 
--- Seed the six static seats from apps/media-buyer-cockpit/convex/roles.ts.
--- Add-only: union roles, link an existing Auth user, and never overwrite a
--- human name, client restriction, active flag, or existing Auth link.
-WITH seats(email, roles) AS (
-  VALUES
-    ('aziz@maharamedia.com', ARRAY['ceo', 'admin', 'media_buyer', 'csm', 'creative', 'editor']::text[]),
-    ('awaheedi2008@gmail.com', ARRAY['ceo', 'admin', 'media_buyer', 'csm', 'creative', 'editor']::text[]),
-    ('nada@maharamedia.com', ARRAY['media_buyer']::text[]),
-    ('abdulelah@maharamedia.com', ARRAY['csm']::text[]),
-    ('abdu@maharamedia.com', ARRAY['csm']::text[]),
-    ('karim@maharamedia.com', ARRAY['editor']::text[])
-)
-INSERT INTO public.cockpit_members (email, auth_user_id, roles)
-SELECT seats.email, users.id, seats.roles
-FROM seats
-LEFT JOIN auth.users AS users ON lower(users.email) = seats.email
-ON CONFLICT (email) DO UPDATE
-SET
-  auth_user_id = coalesce(public.cockpit_members.auth_user_id, excluded.auth_user_id),
-  roles = (
-    SELECT array_agg(DISTINCT r ORDER BY r)
-    FROM unnest(coalesce(public.cockpit_members.roles, '{}'::text[]) || coalesce(excluded.roles, '{}'::text[])) AS r
-  );
-
 -- 2. Audit Log: public.cockpit_audit_log
 CREATE TABLE IF NOT EXISTS public.cockpit_audit_log (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -115,8 +91,65 @@ CREATE TRIGGER trg_cockpit_audit_log_immutable
 BEFORE UPDATE OR DELETE ON public.cockpit_audit_log
 FOR EACH ROW EXECUTE FUNCTION public.cockpit_audit_log_immutable();
 
--- 3. Feedback Table: public.cockpit_feedback (additive extension)
-CREATE TABLE IF NOT EXISTS public.cockpit_feedback (
+CREATE OR REPLACE FUNCTION public.trg_cockpit_members_audit()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  INSERT INTO public.cockpit_audit_log (
+    action, entity_type, entity_id, actor_email,
+    source_app, source_system, before, after
+  ) VALUES (
+    TG_OP, 'cockpit_members', NEW.id::text,
+    nullif(auth.jwt() ->> 'email', ''),
+    'cockpit-access', 'supabase',
+    CASE WHEN TG_OP = 'UPDATE' THEN to_jsonb(OLD) ELSE NULL END,
+    to_jsonb(NEW)
+  );
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_cockpit_members_audit ON public.cockpit_members;
+CREATE TRIGGER trg_cockpit_members_audit
+AFTER INSERT OR UPDATE ON public.cockpit_members
+FOR EACH ROW EXECUTE FUNCTION public.trg_cockpit_members_audit();
+
+-- Seed the six static seats from apps/media-buyer-cockpit/convex/roles.ts.
+-- Add-only: union roles, link an existing Auth user, and never overwrite a
+-- human name, client restriction, active flag, or existing Auth link.
+WITH seats(email, roles) AS (
+  VALUES
+    ('aziz@maharamedia.com', ARRAY['ceo', 'admin', 'media_buyer', 'csm', 'creative', 'editor']::text[]),
+    ('awaheedi2008@gmail.com', ARRAY['ceo', 'admin', 'media_buyer', 'csm', 'creative', 'editor']::text[]),
+    ('nada@maharamedia.com', ARRAY['media_buyer']::text[]),
+    ('abdulelah@maharamedia.com', ARRAY['csm']::text[]),
+    ('abdu@maharamedia.com', ARRAY['csm']::text[]),
+    ('karim@maharamedia.com', ARRAY['editor']::text[])
+)
+INSERT INTO public.cockpit_members (email, auth_user_id, roles)
+SELECT seats.email, users.id, seats.roles
+FROM seats
+LEFT JOIN auth.users AS users ON lower(users.email) = seats.email
+ON CONFLICT (email) DO UPDATE
+SET
+  auth_user_id = coalesce(public.cockpit_members.auth_user_id, excluded.auth_user_id),
+  roles = (
+    SELECT array_agg(DISTINCT r ORDER BY r)
+    FROM unnest(coalesce(public.cockpit_members.roles, '{}'::text[]) || coalesce(excluded.roles, '{}'::text[])) AS r
+  )
+WHERE public.cockpit_members.auth_user_id IS DISTINCT FROM
+      coalesce(public.cockpit_members.auth_user_id, excluded.auth_user_id)
+   OR public.cockpit_members.roles IS DISTINCT FROM (
+     SELECT array_agg(DISTINCT r ORDER BY r)
+     FROM unnest(coalesce(public.cockpit_members.roles, '{}'::text[]) || coalesce(excluded.roles, '{}'::text[])) AS r
+   );
+
+-- 3. Issue reports are separate from cockpit_feedback, which is Aziz's
+-- changes-and-bugs dispatch queue and has its own autonomous worker.
+CREATE TABLE IF NOT EXISTS public.cockpit_issue_reports (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   kind text NOT NULL,
   text text NOT NULL,
@@ -127,35 +160,22 @@ CREATE TABLE IF NOT EXISTS public.cockpit_feedback (
   created_at timestamptz NOT NULL DEFAULT now(),
   dispatched_at timestamptz,
   done_at timestamptz,
-  updated_at timestamptz NOT NULL DEFAULT now()
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  source_system text,
+  source_id text,
+  app text NOT NULL,
+  page text NOT NULL,
+  role text NOT NULL,
+  actor_email text,
+  metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+  CONSTRAINT cockpit_issue_reports_source_unique UNIQUE (source_system, source_id)
 );
 
-ALTER TABLE public.cockpit_feedback ADD COLUMN IF NOT EXISTS source_system text;
-ALTER TABLE public.cockpit_feedback ADD COLUMN IF NOT EXISTS source_id text;
-ALTER TABLE public.cockpit_feedback ADD COLUMN IF NOT EXISTS app text;
-ALTER TABLE public.cockpit_feedback ADD COLUMN IF NOT EXISTS page text;
-ALTER TABLE public.cockpit_feedback ADD COLUMN IF NOT EXISTS role text;
-ALTER TABLE public.cockpit_feedback ADD COLUMN IF NOT EXISTS actor_email text;
-ALTER TABLE public.cockpit_feedback ADD COLUMN IF NOT EXISTS metadata jsonb NOT NULL DEFAULT '{}'::jsonb;
+CREATE INDEX IF NOT EXISTS idx_cockpit_issue_reports_created_at
+ON public.cockpit_issue_reports(created_at DESC);
 
--- A normal UNIQUE constraint still permits multiple NULL pairs and is visible
--- to PostgREST's `on_conflict` handling for idempotent mirror writes.
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint WHERE conname = 'cockpit_feedback_source_unique'
-  ) THEN
-    ALTER TABLE public.cockpit_feedback
-      ADD CONSTRAINT cockpit_feedback_source_unique UNIQUE (source_system, source_id);
-  END IF;
-END;
-$$;
-
-CREATE INDEX IF NOT EXISTS idx_cockpit_feedback_created_at
-ON public.cockpit_feedback(created_at DESC);
-
--- 4. Audit trigger on cockpit_feedback insert/update
-CREATE OR REPLACE FUNCTION public.trg_cockpit_feedback_audit()
+-- 4. Audit trigger on issue report insert/update
+CREATE OR REPLACE FUNCTION public.trg_cockpit_issue_reports_audit()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -201,7 +221,7 @@ BEGIN
     created_at
   ) VALUES (
     v_action,
-    'cockpit_feedback',
+    'cockpit_issue_reports',
     NEW.id::text,
     v_actor,
     NEW.app,
@@ -216,10 +236,10 @@ BEGIN
 END;
 $$;
 
-DROP TRIGGER IF EXISTS trg_cockpit_feedback_audit ON public.cockpit_feedback;
-CREATE TRIGGER trg_cockpit_feedback_audit
-AFTER INSERT OR UPDATE ON public.cockpit_feedback
-FOR EACH ROW EXECUTE FUNCTION public.trg_cockpit_feedback_audit();
+DROP TRIGGER IF EXISTS trg_cockpit_issue_reports_audit ON public.cockpit_issue_reports;
+CREATE TRIGGER trg_cockpit_issue_reports_audit
+AFTER INSERT OR UPDATE ON public.cockpit_issue_reports
+FOR EACH ROW EXECUTE FUNCTION public.trg_cockpit_issue_reports_audit();
 
 -- 5. Security-definer role helpers
 CREATE OR REPLACE FUNCTION public.cockpit_is_ceo()
@@ -310,8 +330,8 @@ BEGIN
 END;
 $$;
 
--- 6. Authenticated RPC: cockpit_submit_feedback(app, page, text, role)
-CREATE OR REPLACE FUNCTION public.cockpit_submit_feedback(
+-- 6. Authenticated RPC: cockpit_submit_issue_report(app, page, text, role)
+CREATE OR REPLACE FUNCTION public.cockpit_submit_issue_report(
   p_app text,
   p_page text,
   p_text text,
@@ -329,7 +349,7 @@ DECLARE
   v_role text;
   v_email text;
   v_uid uuid;
-  v_feedback_id bigint;
+  v_report_id bigint;
 BEGIN
   v_uid := auth.uid();
   v_email := lower(trim(coalesce(
@@ -343,6 +363,10 @@ BEGIN
   v_page := trim(coalesce(p_page, ''));
   v_text := trim(coalesce(p_text, ''));
   v_role := trim(coalesce(p_role, ''));
+
+  IF v_uid IS NULL OR v_email = '' THEN
+    RAISE EXCEPTION 'Sign in before reporting an issue';
+  END IF;
 
   IF v_app = '' OR length(v_app) > 64 THEN
     RAISE EXCEPTION 'app must be nonblank and at most 64 characters';
@@ -360,13 +384,23 @@ BEGIN
     RAISE EXCEPTION 'role must be nonblank and at most 64 characters';
   END IF;
 
+  IF v_role IS DISTINCT FROM (CASE v_app
+    WHEN 'media-buyer' THEN 'media_buyer'
+    WHEN 'client-success' THEN 'csm'
+    WHEN 'creative' THEN 'creative'
+    WHEN 'editor' THEN 'editor'
+    ELSE NULL
+  END) THEN
+    RAISE EXCEPTION 'App and role do not match';
+  END IF;
+
   -- Require role or admin/CEO
   IF NOT (public.cockpit_has_role(v_role) OR public.cockpit_has_role('admin') OR public.cockpit_is_ceo()) THEN
     RAISE EXCEPTION 'Permission denied: caller lacks required role or admin/CEO access';
   END IF;
 
-  -- Insert feedback row (trigger automatically appends audit log entry)
-  INSERT INTO public.cockpit_feedback (
+  -- Insert issue report (trigger automatically appends audit log entry)
+  INSERT INTO public.cockpit_issue_reports (
     kind,
     app,
     page,
@@ -390,16 +424,16 @@ BEGIN
       'auth_user_id', v_uid
     )
   )
-  RETURNING id INTO v_feedback_id;
+  RETURNING id INTO v_report_id;
 
-  RETURN v_feedback_id;
+  RETURN v_report_id;
 END;
 $$;
 
 -- 7. Row Level Security & Grants
 ALTER TABLE public.cockpit_members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cockpit_audit_log ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.cockpit_feedback ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.cockpit_issue_reports ENABLE ROW LEVEL SECURITY;
 
 -- Policies: public.cockpit_members
 -- Browser users read only their active member row; admin/CEO can read all active rows
@@ -425,11 +459,11 @@ USING (
   public.cockpit_has_role('admin') OR public.cockpit_is_ceo()
 );
 
--- Policies: public.cockpit_feedback
--- Admin/CEO can read feedback; no direct browser writes
-DROP POLICY IF EXISTS cockpit_feedback_select_admin ON public.cockpit_feedback;
-CREATE POLICY cockpit_feedback_select_admin
-ON public.cockpit_feedback
+-- Policies: public.cockpit_issue_reports
+-- Admin/CEO can read issue reports; no direct browser writes
+DROP POLICY IF EXISTS cockpit_issue_reports_select_admin ON public.cockpit_issue_reports;
+CREATE POLICY cockpit_issue_reports_select_admin
+ON public.cockpit_issue_reports
 FOR SELECT
 TO authenticated
 USING (
@@ -449,33 +483,33 @@ USING (
 
 -- Permissions and grants
 REVOKE ALL ON public.cockpit_members FROM public, anon, authenticated;
-REVOKE ALL ON public.cockpit_feedback FROM public, anon, authenticated;
+REVOKE ALL ON public.cockpit_issue_reports FROM public, anon, authenticated;
 REVOKE ALL ON public.cockpit_audit_log FROM public, anon, authenticated;
 
-REVOKE ALL ON FUNCTION public.cockpit_is_ceo() FROM public;
-REVOKE ALL ON FUNCTION public.cockpit_has_role(text) FROM public;
-REVOKE ALL ON FUNCTION public.cockpit_submit_feedback(text, text, text, text) FROM public;
+REVOKE ALL ON FUNCTION public.cockpit_is_ceo() FROM public, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public.cockpit_has_role(text) FROM public, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public.cockpit_submit_issue_report(text, text, text, text) FROM public, anon, authenticated, service_role;
 
 -- Least execute grants
 GRANT EXECUTE ON FUNCTION public.cockpit_is_ceo() TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.cockpit_has_role(text) TO authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.cockpit_submit_feedback(text, text, text, text) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.cockpit_submit_issue_report(text, text, text, text) TO authenticated, service_role;
 
 -- Authenticated table grants (reads constrained by RLS, no direct browser writes)
 GRANT SELECT ON public.cockpit_members TO authenticated;
-GRANT SELECT ON public.cockpit_feedback TO authenticated;
+GRANT SELECT ON public.cockpit_issue_reports TO authenticated;
 GRANT SELECT ON public.cockpit_audit_log TO authenticated;
 
 -- Service role is backend door
 GRANT ALL ON public.cockpit_members TO service_role;
-GRANT ALL ON public.cockpit_feedback TO service_role;
+GRANT ALL ON public.cockpit_issue_reports TO service_role;
 GRANT ALL ON public.cockpit_audit_log TO service_role;
 
 DO $$
 DECLARE
   seq_name text;
 BEGIN
-  seq_name := pg_get_serial_sequence('public.cockpit_feedback', 'id');
+  seq_name := pg_get_serial_sequence('public.cockpit_issue_reports', 'id');
   IF seq_name IS NOT NULL THEN
     EXECUTE format('GRANT USAGE, SELECT ON SEQUENCE %s TO service_role', seq_name);
   END IF;

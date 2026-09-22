@@ -79,7 +79,7 @@ describe("Supabase feedback shadow migration", () => {
       await mirrorCockpitFeedback(input, { dryRun: false, fetchImpl }),
     ).toEqual({ mode: "written" });
     expect(request?.url).toBe(
-      "https://example.supabase.co/rest/v1/cockpit_feedback?on_conflict=source_system,source_id",
+      "https://example.supabase.co/rest/v1/cockpit_issue_reports?on_conflict=source_system,source_id",
     );
     expect(request?.init?.method).toBe("POST");
     expect(request?.init?.headers).toEqual({

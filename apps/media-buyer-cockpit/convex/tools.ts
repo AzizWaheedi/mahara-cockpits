@@ -216,7 +216,7 @@ export async function mirrorCockpitFeedback(
     );
   }
 
-  const url = `${base}/rest/v1/cockpit_feedback?on_conflict=source_system,source_id`;
+  const url = `${base}/rest/v1/cockpit_issue_reports?on_conflict=source_system,source_id`;
   let res: Response;
   try {
     res = await (options.fetchImpl ?? fetch)(url, {
@@ -234,8 +234,7 @@ export async function mirrorCockpitFeedback(
     throw error;
   }
   if (!res.ok) {
-    const detail = (await res.text()).slice(0, 200);
-    note("supabase", transient(res.status), `HTTP ${res.status}: ${detail}`);
+    note("supabase", false, `feedback mirror HTTP ${res.status}`);
     throw new Error(`Supabase feedback mirror failed (${res.status}).`);
   }
   note(sourceFor(url), true);
