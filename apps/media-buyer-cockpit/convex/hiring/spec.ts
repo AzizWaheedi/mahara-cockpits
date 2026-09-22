@@ -69,6 +69,55 @@ export const stageKeyByName = (name: string): StageKey | null => {
   );
 };
 
+/**
+ * A role may call a stage something else on its own board.
+ *
+ * Aziz, 2026-09-22: "for non-client-facing roles, for example video editor
+ * and, I guess, media buyer, a Loom request makes sense, but I think we should
+ * have case studies." A media buyer's third stage is their campaigns, not a
+ * talking head, so that is what the board calls it. The key never changes, so
+ * the funnel, the scores and the engine are untouched by the label.
+ */
+export const STAGE_LABELS: Partial<
+  Record<RoleKey, Partial<Record<StageKey, string>>>
+> = {
+  "media-buyer": { loom: "Case studies" },
+  "video-editor": { loom: "Case studies" },
+};
+
+/** Names a stage used to have, so a rename finds the old one instead of building a second. */
+export const STAGE_AKA: Partial<Record<StageKey, string[]>> = {
+  "one-to-one": ["One-to-one interview"],
+  loom: ["Loom request", "Case studies"],
+};
+
+export const stageNameFor = (role: string, key: StageKey): string =>
+  STAGE_LABELS[role as RoleKey]?.[key] ?? stageName(key);
+
+/** Every name this stage may already be under on this role's board. */
+export const stageAliases = (role: string, key: StageKey): string[] => {
+  const seen = new Set<string>();
+  for (const n of [
+    stageNameFor(role, key),
+    stageName(key),
+    ...(STAGE_AKA[key] ?? []),
+  ])
+    seen.add(n.trim().toLowerCase());
+  return [...seen];
+};
+
+/** Which stage this board's column is, whatever this role calls it. */
+export const stageKeyOnBoard = (
+  role: string,
+  name: string,
+): StageKey | null => {
+  const want = name.trim().toLowerCase();
+  for (const s of STAGES)
+    if (stageAliases(role, s.key as StageKey).includes(want))
+      return s.key as StageKey;
+  return null;
+};
+
 /** Which scores a stage asks for, so the cockpit shows the right boxes. */
 export const STAGE_SCORES: Partial<Record<StageKey, string[]>> = {
   application: ["application"],
@@ -129,9 +178,9 @@ export const ROLES: Role[] = [
       "Share of clients on track",
     ],
     loomPrompt:
-      "Three minutes on camera: the account you are proudest of, what the cost per lead was when you took it and what it was when you left it, and the one change that moved it.",
+      "Send two case studies from campaigns you actually ran, not a showreel. For each: the client and the market, what the cost per lead was when you took it and what it was when you left it, the one change that moved it, and a screenshot of the account to back it up. Then answer this in writing: a lead-gen campaign has been running eight days, cost per lead is $9 against a $15 gate, but the client says the leads are junk and will not answer the phone. What do you look at first, what do you change, and what do you refuse to change yet?",
     testProject:
-      "A 30 day export from one GCC construction client, Meta plus one of Snap or TikTok, names removed. One page back: what to kill, what to scale, what to restructure, the cost per lead you expect it to land at, and why. Two days to answer.",
+      "A 30 day export from one GCC construction client, Meta plus one of Snap or TikTok, names removed. One page back: what to kill, what to scale, what to restructure, the cost per lead you expect it to land at, and why. Two days to answer. This is unpaid and it is one page, not a deck.",
     dailyResponsibilities:
       "Run paid campaigns on Meta, Snapchat and TikTok for GCC construction and design firms, hold cost per lead and cost per booking inside the gates, and brief creative on what to make next.",
   },
@@ -251,9 +300,9 @@ export const ROLES: Role[] = [
       "Cuts that became a winner",
     ],
     loomPrompt:
-      "Two minutes over your own work: play the best three seconds you have ever cut, then say why it holds and what you would try next.",
+      "Send three case studies, not a showreel. For each: a link to the finished cut, who it was for, what it was meant to do, and one line on the choice you made that the client would not have thought of. If any of them ran as a paid ad, say what the hook rate or the cost per result was.",
     testProject:
-      "Raw footage from one shoot with the client's name removed. Cut one 30 second vertical ad and one 15 second hook variant, to the brief attached. Two days. Send the project file as well as the export.",
+      "Raw footage from one shoot with the client's name removed. Cut one 30 second vertical ad and one 15 second hook variant, to the brief attached. Two days. Send the project file as well as the export. This is unpaid, it is short on purpose, and the footage is never used by Mahara.",
     dailyResponsibilities:
       "Cut ads and reels for GCC construction and design firms, hold the house style, and turn a shoot into enough variants for a real test.",
   },
@@ -655,6 +704,30 @@ export const CALENDARS: CalendarSpec[] = [
       "Book your one to one. It is held on Zoom. Be on a computer somewhere quiet and join five minutes early. If you were sent a test project, send it back before the call if you can.",
   },
 ];
+
+/**
+ * Seeds this file used to carry.
+ *
+ * A custom value is seeded once and never overwritten, because Aziz edits
+ * these in GoHighLevel and a deploy must not undo his wording. But when the
+ * spec's own wording changes and the value in the account is still the old
+ * seed word for word, nobody has edited it, so it is safe to move it on.
+ * Anything else is left alone and reported.
+ */
+export const PREVIOUS_SEEDS: Record<string, string[]> = {
+  "Media buyer - Loom request": [
+    "Three minutes on camera: the account you are proudest of, what the cost per lead was when you took it and what it was when you left it, and the one change that moved it.",
+  ],
+  "Media buyer - Test project": [
+    "A 30 day export from one GCC construction client, Meta plus one of Snap or TikTok, names removed. One page back: what to kill, what to scale, what to restructure, the cost per lead you expect it to land at, and why. Two days to answer.",
+  ],
+  "Video editor - Loom request": [
+    "Two minutes over your own work: play the best three seconds you have ever cut, then say why it holds and what you would try next.",
+  ],
+  "Video editor - Test project": [
+    "Raw footage from one shoot with the client's name removed. Cut one 30 second vertical ad and one 15 second hook variant, to the brief attached. Two days. Send the project file as well as the export.",
+  ],
+};
 
 export const GLOBAL_VALUES: ValueSpec[] = [
   {

@@ -9,7 +9,7 @@ import {
   ROLES,
   type RoleKey,
   type StageKey,
-  stageKeyByName,
+  stageKeyOnBoard,
   stageName,
 } from "./spec";
 
@@ -72,7 +72,7 @@ export async function refreshMeta(): Promise<Meta> {
     meta.pipelines[role.key] = p.id;
     meta.stageIdByKey[role.key] = {};
     for (const s of p.stages) {
-      const key = stageKeyByName(s.name);
+      const key = stageKeyOnBoard(role.key, s.name);
       if (!key) continue;
       meta.stageKeyById[s.id] = key;
       meta.stageIdByKey[role.key][key] = s.id;

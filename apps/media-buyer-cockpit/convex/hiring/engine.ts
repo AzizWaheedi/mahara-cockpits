@@ -66,42 +66,42 @@ type Template = { subject: string; body: string; sms: string };
  */
 export const TEMPLATES: Record<Action, Template> = {
   loom_request: {
-    subject: "{{role}} at {{agency}}, next step",
+    subject: "{{role}} at {{agency}}, one thing before we talk",
     body: `Hi {{firstName}},
 
 Thanks for applying for the {{role}} role at {{agency}}. We liked your application.
 
-Next step is a short video, so we can hear you rather than read you.
+There is one thing we need before we talk.
 
 {{loomPrompt}}
 
-Record it on Loom or your phone, whichever is faster, and reply to this message with the link. Two or three minutes is plenty.
+Reply to this message with it. Take the time it needs, but do not polish it for a week.
 
 {{positionVideo}}
 
 {{owner}}`,
-    sms: "Hi {{firstName}}, {{agency}} here about the {{role}} role. We liked your application. Next step is a short video: {{loomPrompt}} Reply here with the link. {{owner}}",
+    sms: "Hi {{firstName}}, {{agency}} here about the {{role}} role. We liked your application. One thing before we talk, check your email for what to send. {{owner}}",
   },
   group_invite: {
     subject: "{{role}} at {{agency}}, group interview",
     body: `Hi {{firstName}},
 
-Your video was good. The next step is a group interview on Zoom with the other people still in for the {{role}} role.
+You are through to a group interview for the {{role}} role at {{agency}}. It is on Zoom with the other people still in for this one role.
 
 Book the slot that suits you: {{groupLink}}
 
 Two things worth knowing. It starts on time, and answers are kept to sixty seconds each, so come with the short version of your story.
 
 {{owner}}`,
-    sms: "Hi {{firstName}}, your video was good. Next is a group interview for the {{role}} role. Book your slot: {{groupLink}} It starts on time. {{owner}}",
+    sms: "Hi {{firstName}}, you are through to a group interview for the {{role}} role. Book your slot: {{groupLink}} It starts on time. {{owner}}",
   },
   test_project: {
     subject: "{{role}} at {{agency}}, the last two steps",
     body: `Hi {{firstName}},
 
-You are through to the final round for the {{role}} role. There are two things left.
+You are through to the last round for the {{role}} role. There are two things left.
 
-First, a short piece of real work:
+First, a short piece of real work. It is unpaid, it is deliberately small, and we never use it ourselves.
 
 {{testProject}}
 
@@ -110,7 +110,7 @@ Second, a one to one with me. Book it here: {{oneToOneLink}}
 Send the work back before the call if you can, and we will go through it together.
 
 {{owner}}`,
-    sms: "Hi {{firstName}}, you are in the final round for {{role}}. I have emailed you a short piece of real work. Book our one to one here: {{oneToOneLink}} {{owner}}",
+    sms: "Hi {{firstName}}, you are in the last round for {{role}}. I have emailed you a short unpaid piece of work. Book our one to one here: {{oneToOneLink}} {{owner}}",
   },
   offer: {
     subject: "An offer from {{agency}}",

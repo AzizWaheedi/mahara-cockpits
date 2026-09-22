@@ -5,9 +5,13 @@ import {
   allValues,
   CALENDARS,
   FIELDS,
+  PREVIOUS_SEEDS,
   RENAMES,
   ROLES,
   STAGES,
+  type StageKey,
+  stageAliases,
+  stageNameFor,
   type ValueSpec,
   WORKING_DAYS,
   WORKING_FROM,
@@ -101,7 +105,6 @@ export async function buildPlan(location: string): Promise<Plan> {
     readFields(location),
     readValues(location),
   ]);
-  const wantStages = STAGES.map(s => s.name);
 
   const plan: Plan = {
     location,
@@ -111,6 +114,9 @@ export async function buildPlan(location: string): Promise<Plan> {
   };
 
   for (const role of ROLES) {
+    const wantStages = STAGES.map(s =>
+      stageNameFor(role.key, s.key as StageKey),
+    );
     const found = pipelines.find(p => same(p.name, role.pipeline));
     if (!found) {
       plan.pipelines.create.push({
@@ -174,7 +180,10 @@ export const plan = internalAction({
  * the funnel flags are the styling it does expose, so they are set rather
  * than left at the defaults GoHighLevel guesses.
  */
-function stageBody(pipe: Pipeline): {
+function stageBody(
+  pipe: Pipeline,
+  role: string,
+): {
   id?: string;
   name: string;
   position: number;
@@ -182,11 +191,19 @@ function stageBody(pipe: Pipeline): {
   showInPieChart: boolean;
   stageWinProbability: number;
 }[] {
+  const taken = new Set<string>();
   const out = STAGES.map((s, i) => {
-    const found = pipe.stages.find(h => same(h.name, s.name));
+    // Match on every name this stage has ever had on this board, so renaming
+    // "Loom request" to "Case studies" moves the column rather than leaving
+    // the old one behind and building a second (2026-09-22).
+    const names = stageAliases(role, s.key as StageKey);
+    const found = pipe.stages.find(
+      h => !taken.has(h.id) && names.includes(h.name.trim().toLowerCase()),
+    );
+    if (found) taken.add(found.id);
     return {
       ...(found ? { id: found.id } : {}),
-      name: s.name,
+      name: stageNameFor(role, s.key as StageKey),
       position: i,
       showInFunnel: s.advancing,
       showInPieChart: s.advancing,
@@ -195,7 +212,7 @@ function stageBody(pipe: Pipeline): {
   });
   // Anything the account has that the spec does not is kept, at the end.
   const extras = pipe.stages
-    .filter(h => !STAGES.some(s => same(s.name, h.name)))
+    .filter(h => !taken.has(h.id))
     .map((h, i) => ({
       id: h.id,
       name: h.name,
@@ -207,13 +224,17 @@ function stageBody(pipe: Pipeline): {
   return [...out, ...extras];
 }
 
-async function createPipeline(location: string, name: string): Promise<string> {
+async function createPipeline(
+  location: string,
+  name: string,
+  role: string,
+): Promise<string> {
   const body = await ghlOk("POST", "/opportunities/pipelines", {
     body: {
       locationId: location,
       name,
       stages: STAGES.map((s, i) => ({
-        name: s.name,
+        name: stageNameFor(role, s.key as StageKey),
         position: i,
         showInFunnel: s.advancing,
         showInPieChart: s.advancing,
@@ -228,8 +249,8 @@ async function createPipeline(location: string, name: string): Promise<string> {
  * Bring a pipeline's stages up to the spec: add any that are missing, and set
  * the funnel settings on all of them. Never removes a stage.
  */
-async function repairStages(pipe: Pipeline): Promise<string[]> {
-  const body = stageBody(pipe);
+async function repairStages(pipe: Pipeline, role: string): Promise<string[]> {
+  const body = stageBody(pipe, role);
   await ghlOk("PUT", `/opportunities/pipelines/${pipe.id}`, {
     body: { name: pipe.name, stages: body },
   });
@@ -294,7 +315,13 @@ export const apply = internalAction({
           // GoHighLevel refuses locationId on a pipeline PUT (422,
           // "property locationId should not exist"), unlike the POST.
           ghlOk("PUT", `/opportunities/pipelines/${pipe.id}`, {
-            body: { name: r.to, stages: stageBody(pipe) },
+            body: {
+              name: r.to,
+              stages: stageBody(
+                pipe,
+                ROLES.find(x => same(x.pipeline, r.to))?.key ?? "",
+              ),
+            },
           }),
         );
       } else if (r.kind === "value") {
@@ -327,25 +354,51 @@ export const apply = internalAction({
       if (!found && renamedTo.has(role.pipeline.trim().toLowerCase())) continue;
       if (!found)
         await attempt(`pipeline ${role.pipeline}`, () =>
-          createPipeline(location, role.pipeline),
+          createPipeline(location, role.pipeline, role.key),
         );
       else
-        await attempt(`stages on ${role.pipeline}`, () => repairStages(found));
+        await attempt(`stages on ${role.pipeline}`, () =>
+          repairStages(found, role.key),
+        );
     }
 
     for (const f of FIELDS)
       if (!fields.some(x => same(x.name, f.name)))
         await attempt(`field ${f.name}`, () => createField(location, f));
 
-    for (const val of allValues())
-      if (!values.some(x => same(x.name, val.name)))
+    const kept: string[] = [];
+    for (const val of allValues()) {
+      const found = values.find(x => same(x.name, val.name));
+      if (!found) {
         await attempt(`value ${val.name}`, () => createValue(location, val));
+        continue;
+      }
+      // The wording in the spec has moved on. If the account still holds the
+      // old seed word for word, nobody edited it, so move it on too.
+      const old = PREVIOUS_SEEDS[val.name] ?? [];
+      const untouched = old.some(o => o.trim() === found.value.trim());
+      if (val.seed && untouched && found.value.trim() !== val.seed.trim())
+        await attempt(`reword value ${val.name}`, () =>
+          ghlOk("PUT", `/locations/${location}/customValues/${found.id}`, {
+            body: { name: val.name, value: val.seed },
+          }),
+        );
+      else if (
+        old.length &&
+        !untouched &&
+        found.value.trim() !== val.seed.trim()
+      )
+        kept.push(val.name);
+    }
 
     return {
       location,
       built: done.length,
       done,
       failed,
+      // Values whose wording the spec changed but Aziz had already edited, so
+      // his words stand and the change is reported instead.
+      yourWordingKept: kept,
       plan: await buildPlan(location),
     };
   },
@@ -367,8 +420,12 @@ export const pruneStages = internalAction({
     const pipelines = await readPipelines(location);
     const out: Any[] = [];
     for (const pipe of pipelines) {
+      const role = ROLES.find(r => same(r.pipeline, pipe.name))?.key ?? "";
+      const known = new Set(
+        STAGES.flatMap(s => stageAliases(role, s.key as StageKey)),
+      );
       const strays = pipe.stages.filter(
-        h => !STAGES.some(s => same(s.name, h.name)),
+        h => !known.has(h.name.trim().toLowerCase()),
       );
       if (!strays.length) continue;
       const occupied: { name: string; cards: number }[] = [];
@@ -390,17 +447,9 @@ export const pruneStages = internalAction({
         await ghlOk("PUT", `/opportunities/pipelines/${pipe.id}`, {
           body: {
             name: pipe.name,
-            stages: STAGES.map((s, i) => {
-              const found = pipe.stages.find(h => same(h.name, s.name));
-              return {
-                ...(found ? { id: found.id } : {}),
-                name: s.name,
-                position: i,
-                showInFunnel: s.advancing,
-                showInPieChart: s.advancing,
-                stageWinProbability: s.odds,
-              };
-            }),
+            stages: stageBody(pipe, role).filter(
+              st => st.position < STAGES.length,
+            ),
           },
         });
       out.push({
