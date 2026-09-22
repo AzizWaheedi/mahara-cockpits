@@ -112,6 +112,11 @@ the same queue shape the ideation radar already runs on.
 
 ## Deploying
 
+Pushes to `main` build this app from the repository root. The Vercel project
+`mahara-video-editor` has its Root Directory at the repository root, install
+`bun install`, and build `bun run build`. That script installs this package
+and publishes `dist/`. From a machine, the same site still ships from this folder:
+
 ```bash
 scripts/ship.sh video-editor
 ```

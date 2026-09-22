@@ -139,8 +139,23 @@ the install and the cron lines.
 
 ## Vercel (frontend)
 
-One project per app, root directory `apps/<app>`, framework Vite, build `bun run build`,
-output `dist`. Build-time env:
+One project per app, framework Vite, build `bun run build`, output `dist`.
+
+Media buyer, client success, and creative director ship with the CLI from
+`apps/<app>` (`scripts/ship.sh`). Set each project's Root Directory to that
+folder when it is linked to Git.
+
+`mahara-video-editor` is the project linked to this GitHub repository. Git
+builds run at the repository root, where the command is `bun run build`
+(`scripts/build-video-editor.sh`): install and build `apps/video-editor-cockpit`
+with its lockfile, then copy that `dist/` to the repository `dist/`. Install
+at the root is `bun install` (no dependencies, so there is no root lockfile).
+The root `vercel.json` is the Git deployment's routes; `scripts/ship.sh
+video-editor` still uploads `apps/video-editor-cockpit`, whose own
+`vercel.json` has the same routes. A second project linked to this
+repository needs its own Root Directory. The root config is the video editor.
+
+Build-time env:
 
 | Variable | Value |
 |---|---|
