@@ -3,15 +3,20 @@ import {
   ChevronDown,
   ChevronRight,
   ExternalLink,
+  Loader2,
   Megaphone,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { CreativePreview } from "@/components/CreativePreview";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { count, countCompact, money, pct } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip, type StatusTone } from "@/components/ceo/StatusChip";
+import { useServerWindow } from "@/components/ceo/serverWindow";
+import { TimeframeBar } from "@/components/ceo/TimeframeBar";
+import { useTimeframe } from "@/components/ceo/timeframe";
+import { range as rangeText } from "@/components/ceo/windows";
 import { api } from "../../../convex/_generated/api";
 import type {
   B2bAdNode,
@@ -20,6 +25,7 @@ import type {
   B2bPeople,
   B2bVerdict,
 } from "../../../convex/ceo/payloads";
+import { ManageBar, ManagePanel, type Target } from "./adsManage";
 import { LaunchCard } from "./LaunchCard";
 import type { CeoTabProps } from "./types";
 
@@ -313,11 +319,17 @@ function AdRow({
   win,
   account,
   onDone,
+  target,
+  onOpen,
+  frozen,
 }: {
   ad: B2bAdNode;
   win: Win;
   account: string;
   onDone: (m: string) => void;
+  target: Target | null;
+  onOpen: (t: Target | null) => void;
+  frozen: string | null;
 }) {
   const w = ad[win];
   return (
@@ -365,6 +377,16 @@ function AdRow({
             {ad.verdict.reason}
           </p>
           <People p={ad.people} />
+          <div className="mt-1">
+            <ManageBar
+              level="ad"
+              id={ad.id}
+              name={ad.name}
+              open={target}
+              onOpen={onOpen}
+              frozen={frozen}
+            />
+          </div>
         </div>
       </div>
       <FunnelRibbon w={w} spend={w.spend} compact />
@@ -377,11 +399,19 @@ function CampaignCard({
   win,
   account,
   onDone,
+  payload,
+  target,
+  onOpen,
+  frozen,
 }: {
   c: B2bAdsPayload["campaigns"][number];
   win: Win;
   account: string;
   onDone: (m: string) => void;
+  payload: B2bAdsPayload;
+  target: Target | null;
+  onOpen: (t: Target | null) => void;
+  frozen: string | null;
 }) {
   const [open, setOpen] = useState(c.running);
   const [openSets, setOpenSets] = useState<Record<string, boolean>>({});
@@ -465,6 +495,26 @@ function CampaignCard({
           />
         </div>
       </div>
+      <div className="flex flex-wrap items-center gap-2 border-t px-3 py-2">
+        <ManageBar
+          level="campaign"
+          id={c.id}
+          name={c.name}
+          open={target}
+          onOpen={onOpen}
+          frozen={frozen}
+        />
+      </div>
+      {target?.id === c.id ? (
+        <div className="px-3 pb-3">
+          <ManagePanel
+            target={target}
+            payload={payload}
+            onClose={() => onOpen(null)}
+            onDone={onDone}
+          />
+        </div>
+      ) : null}
       {open ? (
         <div className="border-t px-3 pb-2">
           {c.adsets.map(s => {
@@ -510,6 +560,26 @@ function CampaignCard({
                     />
                   </div>
                 </div>
+                <div className="pb-2 pl-5">
+                  <ManageBar
+                    level="adset"
+                    id={s.id}
+                    name={s.name}
+                    open={target}
+                    onOpen={onOpen}
+                    frozen={frozen}
+                  />
+                </div>
+                {target?.id === s.id ? (
+                  <div className="pb-3 pl-5">
+                    <ManagePanel
+                      target={target}
+                      payload={payload}
+                      onClose={() => onOpen(null)}
+                      onDone={onDone}
+                    />
+                  </div>
+                ) : null}
                 {so ? (
                   <div className="pb-2 pl-5">
                     {s.ads.map(a => (
@@ -519,8 +589,19 @@ function CampaignCard({
                         win={win}
                         account={account}
                         onDone={onDone}
+                        target={target}
+                        onOpen={onOpen}
+                        frozen={frozen}
                       />
                     ))}
+                    {target && s.ads.some(a => a.id === target.id) ? (
+                      <ManagePanel
+                        target={target}
+                        payload={payload}
+                        onClose={() => onOpen(null)}
+                        onDone={onDone}
+                      />
+                    ) : null}
                   </div>
                 ) : null}
               </div>
@@ -790,11 +871,44 @@ function AdTable({
 
 export function AdsTab({ sections }: CeoTabProps) {
   const section = sections.b2bAds;
-  const p = section?.payload ?? null;
-  const [win, setWin] = useState<Win>("w7");
+  const stored = section?.payload ?? null;
+  const tf = useTimeframe("7d");
   const [view, setView] = useState<View>("funnel");
   const [msg, setMsg] = useState<string | null>(null);
+  const [target, setTarget] = useState<Target | null>(null);
+  const readWindow = useAction(api.ceo.windows.ads);
 
+  // The stored payload already holds seven days and thirty. Any other run of
+  // days is read live, with the same query and the same rules.
+  const pick = useCallback(
+    (b: {
+      from: string;
+      to: string;
+    }): { p: B2bAdsPayload; win: Win } | null => {
+      if (!stored || b.to !== stored.windows.to) return null;
+      if (b.from === stored.windows.from7) return { p: stored, win: "w7" };
+      if (b.from === stored.windows.from30) return { p: stored, win: "w30" };
+      return null;
+    },
+    [stored],
+  );
+  const fetchWindow = useCallback(
+    async (b: { from: string; to: string }) => {
+      const p = (await readWindow(b)) as B2bAdsPayload;
+      return { p, win: "w7" as Win };
+    },
+    [readWindow],
+  );
+  const shown = useServerWindow({
+    tf,
+    first: stored?.firstSnapshotDay ?? null,
+    last: stored?.windows.to ?? null,
+    stored: pick,
+    read: fetchWindow,
+  });
+
+  const p = shown.data?.p ?? null;
+  const win: Win = shown.data?.win ?? "w7";
   const verdictChips = useMemo(() => {
     if (!p) return [];
     return Object.entries(p.verdicts)
@@ -802,18 +916,68 @@ export function AdsTab({ sections }: CeoTabProps) {
       .map(([k, n]) => ({ key: k as B2bVerdict["verdict"], n }));
   }, [p]);
 
-  if (!p)
+  if (!stored)
     return (
       <SectionCard title="Our ads" section={section}>
         {() => null}
       </SectionCard>
     );
 
+  const label = shown.bounds
+    ? rangeText(shown.bounds.from, shown.bounds.to)
+    : "Pick both dates";
+  const bar = (
+    <TimeframeBar
+      tf={tf}
+      bounds={shown.bounds}
+      ariaLabel="Timeframe for the ad account"
+      first={stored.firstSnapshotDay}
+      last={stored.windows.to}
+      note={
+        shown.live
+          ? "Read from Meta's snapshots for exactly these days, so every verdict judges this window against itself."
+          : undefined
+      }
+    />
+  );
+
+  if (!p)
+    return (
+      <div className="grid gap-4 lg:gap-6">
+        {bar}
+        <SectionCard title="Our ads" section={section} order={0}>
+          {() =>
+            shown.error ? (
+              <p className="text-sm text-[var(--ceo-bad)]">{shown.error}</p>
+            ) : shown.loading ? (
+              <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" aria-hidden />
+                {`Reading ${label} from the snapshots`}
+              </p>
+            ) : (
+              <EmptyState
+                title="Pick both dates"
+                text="A custom timeframe needs a first and a last day."
+                icon={Megaphone}
+              />
+            )
+          }
+        </SectionCard>
+      </div>
+    );
+
   const a = p.account[win];
-  const label = win === "w7" ? "Last 7 days" : "Last 30 days";
+  // Meta refuses every write on an account that is not in good standing
+  // (#2490592, verified against the live account on 2026-09-22), so the rows
+  // say so rather than letting a brief be written into a wall.
+  const frozen =
+    p.accountStatus && p.accountStatus.code !== 1
+      ? p.accountStatus.label
+      : null;
 
   return (
     <div className="@container grid gap-4 lg:gap-6">
+      {bar}
       <SectionCard
         kicker={`Mahara's own account · ${label}`}
         title="Our ads"
@@ -821,29 +985,18 @@ export function AdsTab({ sections }: CeoTabProps) {
         notes={p.notes}
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            {shown.loading ? (
+              <Loader2
+                className="size-4 animate-spin text-muted-foreground"
+                aria-hidden
+              />
+            ) : null}
             {p.accountStatus && p.accountStatus.code !== 1 ? (
               <StatusChip
                 tone="critical"
                 label={`Account ${p.accountStatus.label}`}
               />
             ) : null}
-            <div className="flex gap-1">
-              {(["w7", "w30"] as Win[]).map(k => (
-                <button
-                  key={k}
-                  type="button"
-                  onClick={() => setWin(k)}
-                  aria-pressed={win === k}
-                  className={`rounded-full border px-2.5 py-0.5 text-xs ${
-                    win === k
-                      ? "bg-foreground text-background"
-                      : "text-muted-foreground"
-                  }`}
-                >
-                  {k === "w7" ? "7 days" : "30 days"}
-                </button>
-              ))}
-            </div>
             <div className="flex gap-1">
               {(["funnel", "table"] as View[]).map(k => (
                 <button
@@ -963,6 +1116,10 @@ export function AdsTab({ sections }: CeoTabProps) {
                 win={win}
                 account={p.accountId}
                 onDone={setMsg}
+                payload={p}
+                target={target}
+                onOpen={setTarget}
+                frozen={frozen}
               />
             ))}
           </div>
@@ -971,7 +1128,7 @@ export function AdsTab({ sections }: CeoTabProps) {
         <SectionCard title="Campaigns" section={section} order={1}>
           {() => (
             <EmptyState
-              title="No campaigns in the last thirty days"
+              title={`No campaigns in ${label.toLowerCase()}`}
               text="Meta has no snapshot rows for the account in this window."
               icon={Megaphone}
             />
@@ -979,7 +1136,7 @@ export function AdsTab({ sections }: CeoTabProps) {
         </SectionCard>
       )}
 
-      <LaunchCard ads={p} order={2} />
+      <LaunchCard ads={stored} order={2} />
     </div>
   );
 }

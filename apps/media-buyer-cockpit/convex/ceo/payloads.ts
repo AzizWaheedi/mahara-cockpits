@@ -11,6 +11,8 @@
  *   names, team first names and Maqsam agent names are fine.
  */
 
+import type { ContentWindow } from "./content";
+
 export type Note = { level: "info" | "warn"; text: string };
 export type Point = { date: string; value: number };
 
@@ -1692,6 +1694,8 @@ export type B2bAdsPayload = {
   }[];
   /** The newest day Meta has a snapshot for. */
   lastSnapshotDay: string | null;
+  /** The oldest day Meta has a snapshot for: how far back a timeframe can ask. */
+  firstSnapshotDay: string | null;
   /** Meta's own word on the account: null when Meta could not be read. */
   accountStatus: {
     code: number;
@@ -1705,6 +1709,8 @@ export type B2bAdsPayload = {
 };
 
 // --- Organic (Graph API for the Facebook Page and Instagram; YouTube Data API; B2B asset library for cadence) ---
+
+export type { ContentWindow };
 
 export type OrganicPayload = {
   facebook: {
@@ -1792,6 +1798,13 @@ export type OrganicPayload = {
     last90: number;
     newest: string | null;
   }[];
+  /**
+   * What the content brings in, the way the paid tabs read the ads: contacts,
+   * booked calls and demos per platform, and signed deals and revenue beside
+   * them (Aziz, 2026-09-22). Computed for the last thirty days; the tab's
+   * timeframe control asks `ceo.windows.content` for any other run of days.
+   */
+  business: ContentWindow | null;
   notes: Note[];
 };
 

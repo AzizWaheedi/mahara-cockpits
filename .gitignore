@@ -11,3 +11,6 @@ convex/_generated/
 test-results/
 playwright-report/
 .vercel/
+
+# Read-only query helpers and one-off SQL, never part of a build.
+scratchpad/

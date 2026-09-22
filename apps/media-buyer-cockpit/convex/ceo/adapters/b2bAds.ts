@@ -545,27 +545,37 @@ function constraintOf(
   };
 }
 
-export const b2bAds: Adapter = {
-  key: "b2bAds",
-  label: "Our ads",
-  compute: async ctx => {
-    void ctx;
-    const now = Date.now();
-    const today = kuwaitDay(now);
-    const from7 = addDays(today, -6);
-    const from30 = addDays(today, -29);
+/**
+ * The whole account read for a pair of windows.
+ *
+ * The scheduled adapter asks for seven days and thirty. A custom timeframe
+ * (Aziz, 2026-09-22: "I should be able to see the metrics on a custom
+ * timeframe, not just 7 days or 30 days") asks for the same run of days
+ * twice, so the screen reads one window and every verdict judges it against
+ * itself. One query, one set of rules, no second definition of a number.
+ */
+export async function adsPayload(
+  from7: string,
+  from30: string,
+  today: string,
+): Promise<{ payload: B2bAdsPayload; sources: SourceStamp[] }> {
+  {
     const notes: Note[] = [];
 
     // Freshness first, because every verdict below needs to know it.
     const freshRows = await sql(
       B2B,
       `select max(extract(epoch from last_synced_at) * 1000) as ms,
-              to_char(max(date), 'YYYY-MM-DD') as last_day
+              to_char(max(date), 'YYYY-MM-DD') as last_day,
+              to_char(min(date), 'YYYY-MM-DD') as first_day
        from public.meta_ad_snapshots`,
     );
     const freshestAt = num(freshRows[0]?.ms) || undefined;
     const lastDay = freshRows[0]?.last_day
       ? String(freshRows[0].last_day)
+      : null;
+    const firstDay = freshRows[0]?.first_day
+      ? String(freshRows[0].first_day)
       : null;
     // Yesterday is the newest day Meta can reasonably have closed out.
     const staleSince = lastDay && lastDay < addDays(today, -1) ? lastDay : null;
@@ -823,6 +833,7 @@ export const b2bAds: Adapter = {
       verdicts,
       campaigns: list,
       lastSnapshotDay: lastDay,
+      firstSnapshotDay: firstDay,
       accountStatus,
       notes,
     };
@@ -839,40 +850,55 @@ export const b2bAds: Adapter = {
         : { name: "Meta ad account (Graph API)", ok: false, note: accountNote },
     ];
 
+    return { payload, sources };
+  }
+}
+
+export const b2bAds: Adapter = {
+  key: "b2bAds",
+  label: "Our ads",
+  compute: async ctx => {
+    void ctx;
+    const today = kuwaitDay(Date.now());
+    const { payload, sources } = await adsPayload(
+      addDays(today, -6),
+      addDays(today, -29),
+      today,
+    );
+    const a7 = payload.account.w7;
     const daily: DailyPoint[] = [
       {
         date: today,
         metric: "b2bAds.running",
         scope: "company",
-        value: running,
+        value: payload.running,
       },
       {
         date: today,
         metric: "b2bAds.spend7",
         scope: "company",
-        value: account7.spend,
+        value: a7.spend,
       },
       {
         date: today,
         metric: "b2bAds.leads7",
         scope: "company",
-        value: account7.leads,
+        value: a7.leads,
       },
       {
         date: today,
         metric: "b2bAds.metaLeads7",
         scope: "company",
-        value: account7.metaLeads,
+        value: a7.metaLeads,
       },
     ];
-    for (const c of list)
+    for (const c of payload.campaigns)
       daily.push({
         date: today,
         metric: "b2bAds.campaign.spend7",
         scope: `campaign:${c.id}`,
         value: c.w7.spend,
       });
-
     return { payload, daily, sources };
   },
 };

@@ -5,6 +5,7 @@ import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import type { OrganicPayload } from "../../../convex/ceo/payloads";
+import { ContentBusiness } from "./contentBusiness";
 import type { CeoTabProps } from "./types";
 
 /**
@@ -191,12 +192,14 @@ export function OrganicTab({ sections }: CeoTabProps) {
 
   return (
     <div className="@container grid gap-4 lg:gap-6">
+      <ContentBusiness payload={p} section={section} order={0} />
+
       <SectionCard
         kicker="By how far above its platform's normal a post is running"
         title="Performing best"
         section={section}
         notes={p.notes}
-        order={0}
+        order={1}
       >
         {() => (
           <div className="grid gap-5">
@@ -226,7 +229,7 @@ export function OrganicTab({ sections }: CeoTabProps) {
         kicker="@mahara_media · last 28 days"
         title="Instagram"
         section={section}
-        order={1}
+        order={2}
         actions={
           ig ? (
             <a
@@ -294,7 +297,7 @@ export function OrganicTab({ sections }: CeoTabProps) {
         kicker="maharamedia"
         title="YouTube"
         section={section}
-        order={2}
+        order={3}
         actions={
           yt.enabled ? undefined : (
             <StatusChip tone="warning" label="Not measured yet" />
@@ -396,7 +399,7 @@ export function OrganicTab({ sections }: CeoTabProps) {
         kicker="MaharaMedia page · last 28 days"
         title="Facebook"
         section={section}
-        order={3}
+        order={4}
         actions={
           fb?.url ? (
             <a

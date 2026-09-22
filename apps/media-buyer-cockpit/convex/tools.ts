@@ -275,6 +275,102 @@ async function anthropic(body: Record<string, unknown>): Promise<any> {
   return json;
 }
 
+/**
+ * One JSON answer, from whichever model this deployment has a key for.
+ *
+ * `ai_structured_output` was Anthropic only, so every feature that asked a
+ * model for structured JSON died the day there was no ANTHROPIC_API_KEY, and
+ * ad copy generation was one of them. The order is cheapest useful first and
+ * it stops at the first key that answers, the same way the posting desk's own
+ * model call already works on the VPS.
+ *
+ * Every provider is asked for strict JSON and the answer is parsed here, so a
+ * caller gets an object or an error and never a sentence about JSON.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: API payloads are untyped
+async function structuredJson(prompt: string, schema: any): Promise<any> {
+  const order = (
+    process.env.AI_JSON_PROVIDERS || "anthropic,openai,gemini,deepseek"
+  )
+    .split(",")
+    .map(x => x.trim())
+    .filter(Boolean);
+  const tried: string[] = [];
+  for (const provider of order) {
+    try {
+      if (provider === "anthropic" && process.env.ANTHROPIC_API_KEY) {
+        const message = await anthropic({
+          messages: [{ role: "user", content: prompt }],
+          output_config: {
+            format: { type: "json_schema", schema: strictSchema(schema) },
+          },
+        });
+        return JSON.parse(textOf(message));
+      }
+      if (provider === "openai" && process.env.OPENAI_API_KEY) {
+        const json = await httpPost(
+          "https://api.openai.com/v1/chat/completions",
+          { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+          {
+            model: process.env.OPENAI_MODEL || "gpt-4o",
+            messages: [
+              {
+                role: "system",
+                content:
+                  "Answer with one JSON object matching the fields the user asks for. No prose outside the JSON.",
+              },
+              { role: "user", content: prompt },
+            ],
+            response_format: { type: "json_object" },
+            temperature: 0.6,
+          },
+        );
+        return JSON.parse(String(json?.choices?.[0]?.message?.content ?? ""));
+      }
+      if (provider === "gemini" && process.env.GOOGLE_AI_API_KEY) {
+        const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+        const json = await httpPost(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GOOGLE_AI_API_KEY}`,
+          {},
+          {
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: { responseMimeType: "application/json" },
+          },
+        );
+        return JSON.parse(
+          String(json?.candidates?.[0]?.content?.parts?.[0]?.text ?? ""),
+        );
+      }
+      if (provider === "deepseek" && process.env.DEEPSEEK_API_KEY) {
+        const json = await httpPost(
+          "https://api.deepseek.com/chat/completions",
+          { Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}` },
+          {
+            model: process.env.DEEPSEEK_MODEL || "deepseek-chat",
+            messages: [
+              {
+                role: "user",
+                content: `${prompt}\n\nAnswer with one JSON object only.`,
+              },
+            ],
+            response_format: { type: "json_object" },
+            temperature: 0.6,
+          },
+        );
+        const m = json?.choices?.[0]?.message;
+        return JSON.parse(String(m?.content ?? m?.reasoning_content ?? ""));
+      }
+    } catch (e) {
+      tried.push(`${provider}: ${brief(e instanceof Error ? e.message : e)}`);
+    }
+  }
+  throw new Error(
+    tried.length
+      ? `No model could answer: ${tried.join("; ")}`
+      : "No model key is set on this deployment. Set one of ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_AI_API_KEY or DEEPSEEK_API_KEY.",
+  );
+}
+
 // biome-ignore lint/suspicious/noExplicitAny: message content is untyped
 function textOf(message: any): string {
   return ((message?.content ?? []) as any[])
@@ -431,18 +527,8 @@ async function dispatch(
     }
 
     // --- AI
-    case "ai_structured_output": {
-      const message = await anthropic({
-        messages: [{ role: "user", content: String(args.prompt) }],
-        output_config: {
-          format: {
-            type: "json_schema",
-            schema: strictSchema(args.output_schema),
-          },
-        },
-      });
-      return JSON.parse(textOf(message));
-    }
+    case "ai_structured_output":
+      return structuredJson(String(args.prompt), args.output_schema);
     case "quick_ai_search": {
       const question = String(args.search_question ?? args.query ?? "");
       // biome-ignore lint/suspicious/noExplicitAny: message params

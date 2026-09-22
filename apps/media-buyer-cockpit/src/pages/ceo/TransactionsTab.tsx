@@ -10,8 +10,12 @@ import { count, money, plural, shortDate } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { TabLink } from "@/components/ceo/TabLink";
+import { TimeframeBar } from "@/components/ceo/TimeframeBar";
+import { useTimeframe } from "@/components/ceo/timeframe";
+import { range as rangeText } from "@/components/ceo/windows";
 import { api } from "../../../convex/_generated/api";
 import type {
+  AttributionTotals,
   MoneyAttribution,
   Note,
   Transaction,
@@ -270,25 +274,62 @@ const RECLASSIFY_COLUMN: Column<Transaction> = {
   hideBelow: "md",
 };
 
+/** The five headline numbers, added up from whichever payments are in view. */
+function totalsOf(rows: Transaction[]): AttributionTotals & {
+  out: number;
+  outCount: number;
+} {
+  const r2 = (x: number) => Math.round(x * 100) / 100;
+  const ins = rows.filter(t => t.direction === "in");
+  const sum = (f: (t: Transaction) => boolean) =>
+    r2(ins.filter(f).reduce((n, t) => n + t.usd, 0));
+  const outs = rows.filter(t => t.direction === "out");
+  return {
+    in: sum(() => true),
+    count: ins.length,
+    frontEnd: sum(t => t.side === "front_end"),
+    deposit: sum(t => t.kind === "deposit"),
+    kickoff: sum(t => t.kind === "kickoff"),
+    backEnd: sum(t => t.side === "back_end"),
+    unattributed: sum(t => t.side === "unattributed"),
+    unattributedCount: ins.filter(t => t.side === "unattributed").length,
+    out: r2(outs.reduce((n, t) => n + t.usd, 0)),
+    outCount: outs.length,
+  };
+}
+
 export function TransactionsTab({ sections, goTab }: CeoTabProps) {
   const section = sections.money;
   const a = section?.payload?.attribution ?? null;
   const [view, setView] = useTabParam(VIEW_KEYS, "all", "view");
+  const tf = useTimeframe("12m");
   const notes = useMemo<Note[]>(
     () => (section?.payload?.notes ?? []).filter(n => NOTE_MATCH.test(n.text)),
     [section],
   );
-  const rows = useMemo(() => {
+  // The stored list is newest first and capped, so the oldest line present is
+  // the floor of what any timeframe here can honestly answer.
+  const oldest = a?.transactions.length
+    ? a.transactions[a.transactions.length - 1].day
+    : null;
+  const bounds = a ? tf.bounds(a.to, oldest ?? a.from) : null;
+  const inWindow = useMemo(() => {
     if (!a) return [];
-    if (view === "all") return a.transactions;
-    if (view === "out")
-      return a.transactions.filter(t => t.direction === "out");
+    if (!bounds) return [];
+    return a.transactions.filter(
+      t => t.day >= bounds.from && t.day <= bounds.to,
+    );
+  }, [a, bounds]);
+  const rows = useMemo(() => {
+    if (view === "all") return inWindow;
+    if (view === "out") return inWindow.filter(t => t.direction === "out");
     if (view === "bank")
-      return a.transactions.filter(
+      return inWindow.filter(
         t => t.bankLineId !== undefined || t.id.startsWith("bank:"),
       );
-    return a.transactions.filter(t => t.side === view);
-  }, [a, view]);
+    return inWindow.filter(t => t.side === view);
+  }, [inWindow, view]);
+  const windowTotals = useMemo(() => totalsOf(inWindow), [inWindow]);
   const columns = useMemo(() => [...COLUMNS, RECLASSIFY_COLUMN], []);
 
   if (!a)
@@ -307,17 +348,37 @@ export function TransactionsTab({ sections, goTab }: CeoTabProps) {
       </div>
     );
 
+  const truncated = Boolean(
+    oldest && bounds && bounds.from < oldest && a.from < oldest,
+  );
+
   return (
     <div className="grid gap-5 lg:gap-7">
+      <TimeframeBar
+        tf={tf}
+        bounds={bounds}
+        ariaLabel="Timeframe for the payments listed"
+        first={oldest ?? a.from}
+        last={a.to}
+        note={
+          truncated
+            ? `The stored list starts at ${shortDate(oldest as string)} ${(oldest as string).slice(0, 4)}; anything before that is not on this tab.`
+            : undefined
+        }
+      />
       <SectionCard
-        kicker={`Last 12 months, ${shortDate(a.from)} to ${shortDate(a.to)}`}
+        kicker={
+          bounds
+            ? `${rangeText(bounds.from, bounds.to)} · added up from the payments listed`
+            : "Pick both dates"
+        }
         title="Where the money sits"
         section={section}
         notes={notes}
         actions={<TabLink tab="money" label="Money" goTab={goTab} />}
         order={0}
       >
-        {() => <Totals a={a} />}
+        {() => <Totals a={{ ...a, totals: windowTotals }} />}
       </SectionCard>
 
       <SectionCard
@@ -340,7 +401,7 @@ export function TransactionsTab({ sections, goTab }: CeoTabProps) {
             columns={columns}
             rowKey={t => t.id}
             initialSort={{ key: "day", dir: "desc" }}
-            caption="Payments in and out over the last twelve months, newest first, with the side, the person and the deal or client each was tied to"
+            caption="Payments in and out for the timeframe chosen, newest first, with the side, the person and the deal or client each was tied to"
             emptyText="Nothing in this view."
             stickyFirst
           />

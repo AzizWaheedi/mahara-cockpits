@@ -1,4 +1,5 @@
 import { googleYoutubeToken, graph } from "../../tools";
+import { type ContentWindow, contentWindow } from "../content";
 import type { Note, OrganicPayload } from "../payloads";
 import { B2B, num, sql } from "../sb";
 import { addDays, kuwaitDay } from "../time";
@@ -461,11 +462,36 @@ export const organic: Adapter = {
     const bestOf = (platform: "instagram" | "youtube") =>
       best.filter(b => b.platform === platform).slice(0, 6);
 
+    // What the content brings in, beside what it reaches. Thirty days, the
+    // cockpit's default timeframe; the tab asks for any other run of days.
+    let business: ContentWindow | null = null;
+    try {
+      business = await contentWindow(addDays(kuwaitDay(), -29), kuwaitDay());
+      sources.push({ name: "B2B contacts, calls and closed deals", ok: true });
+      if (business.totals.organicLeads === 0 && business.totals.leads > 0)
+        notes.push({
+          level: "warn",
+          text: `Not one lead in the last thirty days is tagged as coming from content. That is the tagging, not the content: the ROAS tag a setter puts on a lead is a step in the paid funnel, so a contact who arrives from a reel or a DM never gets one and never reaches a lead count anywhere in this cockpit. The contacts and booked calls per platform below are counted from the contact itself and do not need the tag.`,
+        });
+      if (business.dealsOrganic.deals > 0)
+        notes.push({
+          level: "info",
+          text: `${business.dealsOrganic.deals} of the ${business.dealsAll.deals} deals signed in this window were put down to something other than ads by the closer who signed them, worth $${business.dealsOrganic.contracted.toLocaleString("en-US")}. That answer on the closing form is the only place a non-paid origin is ever named: no signed deal in the database traces back to an organic contact by its contact id.`,
+        });
+    } catch (e) {
+      sources.push({
+        name: "B2B contacts, calls and closed deals",
+        ok: false,
+        note: String(e instanceof Error ? e.message : e).slice(0, 160),
+      });
+    }
+
     const payload: OrganicPayload = {
       facebook,
       instagram,
       youtube,
       cadence,
+      business,
       best: [...bestOf("instagram"), ...bestOf("youtube")],
       notes,
     };

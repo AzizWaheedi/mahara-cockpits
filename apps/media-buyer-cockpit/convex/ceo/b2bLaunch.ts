@@ -3,6 +3,21 @@ import { internal } from "../_generated/api";
 import { internalMutation } from "../_generated/server";
 import { authenticatedAction } from "../functions";
 import { callTool, graph, graphPost, unwrap } from "../tools";
+import {
+  ACCOUNT,
+  ACT,
+  type Any,
+  bodyOf,
+  checkName,
+  cleanPromoted,
+  cleanTargeting,
+  KIND_LABEL,
+  type Kind,
+  ownAd,
+  stamp,
+  type Variant,
+  writeCopy,
+} from "./adMeta";
 import { B2B, num, sql } from "./sb";
 import { kuwaitDay } from "./time";
 
@@ -35,16 +50,10 @@ declare const process: { env: Record<string, string | undefined> };
  * object a draft reuses is checked to belong to it before anything is made.
  */
 
-const ACCOUNT = "746108264865897";
-const ACT = `act_${ACCOUNT}`;
 const SUPABASE_URL = (process.env.SUPABASE_URL ?? "").replace(/\/+$/, "");
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const TABLE = "cockpit_ad_drafts";
 
-type Any = Record<string, any>;
-
-export type Kind = "lead_gen" | "retargeting";
-export type Variant = { headline: string; primaryText: string };
 export type Draft = {
   id: number;
   kind: Kind;
@@ -67,11 +76,6 @@ export type Draft = {
   metaAdsetId: string | null;
   metaAdIds: string[];
   createdAt: string;
-};
-
-const KIND_LABEL: Record<Kind, string> = {
-  lead_gen: "Lead Gen",
-  retargeting: "Retargeting",
 };
 
 async function rest(
@@ -133,12 +137,6 @@ async function patch(id: number, body: Any): Promise<Draft> {
   return toDraft(rows[0]);
 }
 
-/** "2026-09-19" → "19-9-26", the account's own date style. */
-function stamp(day: string): string {
-  const [y, m, d] = day.split("-");
-  return `${Number(d)}-${Number(m)}-${y.slice(2)}`;
-}
-
 /**
  * The best ad set of this kind in the last 90 days: most demos shown, then
  * CRM leads, then spend. Retargeting rarely earns last-touch attribution, so
@@ -195,130 +193,6 @@ async function topAds(kind: Kind, limit: number): Promise<string[]> {
      limit ${Math.max(1, Math.min(limit, 8))}`,
   );
   return rows.map(r => String(r.ad_id));
-}
-
-/** Only the fields Meta accepts back on a create; the read echoes extra ones. */
-function cleanTargeting(t: Any | undefined): Any {
-  if (!t || typeof t !== "object")
-    return { geo_locations: { countries: ["KW"] } };
-  const { age_range: _ageRange, ...rest } = t;
-  return rest;
-}
-
-function cleanPromoted(p: Any | undefined): Any | undefined {
-  if (!p || typeof p !== "object") return undefined;
-  const keep = [
-    "pixel_id",
-    "custom_event_type",
-    "custom_event_str",
-    "page_id",
-    "application_id",
-    "object_store_url",
-    "product_set_id",
-    "product_catalog_id",
-    "event_id",
-    "offer_id",
-  ];
-  const out: Any = {};
-  for (const k of keep) if (p[k] !== undefined && p[k] !== null) out[k] = p[k];
-  return Object.keys(out).length ? out : undefined;
-}
-
-function copyPrompt(
-  kind: Kind,
-  brief: string,
-  language: "ar" | "en",
-  winners: { name: string; body: string }[],
-): string {
-  const arabic = language === "ar";
-  return [
-    "Write Meta ad copy for Mahara Media, a Kuwait agency that runs done-for-you client acquisition for construction, design, fit-out and interior businesses across the Gulf: Meta ads, automated lead filtration and a trained sales team that books the meetings. The offer is the Premium Projects Program: six to thirteen high-value projects in ninety days or the work continues free.",
-    kind === "lead_gen"
-      ? "This is a LEAD GENERATION campaign to a cold audience of business owners who have not heard of Mahara. The ad sends them to the funnel page to watch a short video and book a call. Earn attention in the first line, name who it is for, make the promise concrete, and end with the one next step."
-      : "This is a RETARGETING campaign to a warm audience: people who watched our videos, visited the funnel or engaged in the last ninety days. Do not introduce Mahara from scratch; they know the name. Move them to book the call now: answer the objection they are sitting on, show proof, make the next step feel small.",
-    `Language: ${arabic ? "Arabic (Gulf, natural spoken register — not formal MSA, not translated-sounding)" : "English"}.`,
-    `What the CEO asked for: ${brief}.`,
-    winners.length
-      ? `The current ${kind === "lead_gen" ? "lead-gen" : "retargeting"} winners on the account, with their primary text — stay in this territory and vary the hook, do not invent a new offer:\n${winners.map(w => `— ${w.name}:\n${w.body.slice(0, 500)}`).join("\n\n")}`
-      : "",
-    "",
-    "Hard rules:",
-    "- Never call the audience 'contractors' and never imply one-man teams. They are construction and design businesses, firms or companies.",
-    "- Any money figure is in USD. Never dinar, riyal or dirham.",
-    "- No emoji walls, no 'unlock', no 'revolutionise', no exclamation stacking.",
-    "- Write like one person talking to another. Short sentences. Concrete, not aspirational.",
-    "- Headline: under 40 characters. Primary text: 2 to 4 short lines.",
-    "",
-    "Give 5 distinct angles — not 5 rewrites of the same sentence. Vary the hook: outcome, objection, proof, question, direct offer.",
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
-async function writeCopy(
-  kind: Kind,
-  brief: string,
-  language: "ar" | "en",
-  winners: { name: string; body: string }[],
-): Promise<Variant[]> {
-  const raw: Any = await callTool("ai_structured_output", {
-    prompt: copyPrompt(kind, brief, language, winners),
-    intelligence_level: "smart",
-    output_schema: {
-      type: "object",
-      properties: {
-        variants: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              headline: { type: "string" },
-              primaryText: { type: "string" },
-            },
-            required: ["headline", "primaryText"],
-          },
-        },
-      },
-      required: ["variants"],
-    },
-  });
-  const list = Array.isArray(raw?.variants) ? raw.variants : [];
-  return list
-    .map((x: Any) => ({
-      headline: String(x?.headline ?? "").trim(),
-      primaryText: String(x?.primaryText ?? "").trim(),
-    }))
-    .filter((x: Variant) => x.headline && x.primaryText)
-    .slice(0, 5);
-}
-
-/** Read one of our ads with its creative, refusing anything not on our account. */
-async function ownAd(adId: string): Promise<Any> {
-  if (!/^\d{5,}$/.test(adId)) throw new Error(`${adId} is not a Meta ad id`);
-  const ad: Any = await graph(adId, {
-    fields:
-      "id,name,account_id,creative{id,name,body,object_story_spec,asset_feed_spec}",
-  });
-  if (String(ad?.account_id ?? "") !== ACCOUNT)
-    throw new Error(
-      `Ad ${adId} is not on Mahara's own account, so it will not be reused.`,
-    );
-  return ad;
-}
-
-function bodyOf(ad: Any): string {
-  const c = ad?.creative ?? {};
-  const fromFeed = (c.asset_feed_spec?.bodies ?? [])
-    .map((b: Any) => String(b?.text ?? ""))
-    .filter(Boolean);
-  const oss = c.object_story_spec ?? {};
-  return String(
-    c.body ??
-      fromFeed[0] ??
-      oss.video_data?.message ??
-      oss.link_data?.message ??
-      "",
-  );
 }
 
 export const recordLaunch = internalMutation({
@@ -497,23 +371,7 @@ export const save = authenticatedAction({
     if (row.status !== "ready" && row.status !== "failed")
       throw new Error(`A ${row.status} draft cannot be edited.`);
     const name = a.name.trim();
-    if (!name) throw new Error("The campaign needs a name.");
-    // The name is how the account files campaigns apart; a retargeting draft
-    // must keep the word, or it will be counted as lead gen from day one.
-    if (
-      row.kind === "retargeting" &&
-      !/retarget|remarket|hammer them/i.test(name)
-    )
-      throw new Error(
-        'A retargeting campaign must keep "Retargeting" in its name, or it will be counted as lead gen.',
-      );
-    if (
-      row.kind === "lead_gen" &&
-      /retarget|remarket|hammer them|hiring|recruit/i.test(name)
-    )
-      throw new Error(
-        "That name would file a lead-gen campaign as retargeting or hiring.",
-      );
+    checkName(row.kind, name);
     if (!(a.dailyBudgetUsd >= 5))
       throw new Error("The daily budget must be at least $5.");
     const variants = a.variants
@@ -559,13 +417,7 @@ export const launch = authenticatedAction({
     if (row.status !== "ready" && row.status !== "failed")
       throw new Error(`A ${row.status} draft cannot be launched.`);
     const draft = toDraft(row);
-    if (
-      draft.kind === "retargeting" &&
-      !/retarget|remarket|hammer them/i.test(draft.name)
-    )
-      throw new Error(
-        'A retargeting campaign must keep "Retargeting" in its name.',
-      );
+    checkName(draft.kind, draft.name);
     await patch(id, { status: "launching", error: null });
 
     const problems: string[] = [];
