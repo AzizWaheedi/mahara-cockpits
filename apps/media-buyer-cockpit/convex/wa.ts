@@ -61,21 +61,45 @@ function rows(x: unknown): Row[] {
   return Array.isArray(x) ? (x as Row[]) : [];
 }
 
-/** What is waiting on this desk, newest first. */
+/**
+ * The desks. One inbox, but a thread belongs to exactly one of them.
+ *
+ * Only the CSM has a WhatsApp connected today, so every thread is
+ * theirs. That is a private inbox -- a real person's own messages -- and
+ * it must never appear on another desk's screen because the filter was
+ * left off.
+ */
+const DESKS = ["csm", "ads", "creative"] as const;
+
+function deskOrThrow(desk: string): string {
+  if (!(DESKS as readonly string[]).includes(desk))
+    throw new Error(`"${desk}" is not a desk.`);
+  return desk;
+}
+
+/**
+ * What is waiting on this desk, newest first.
+ *
+ * `desk` is required on purpose. It used to be optional, and an optional
+ * filter means a caller that forgets it gets everybody's messages --
+ * which, with one private WhatsApp connected, is one person's inbox on
+ * everybody's screen. There is no "all desks" here by design.
+ */
 export const inbox = authenticatedAction({
   args: {
-    desk: v.optional(v.string()),
+    desk: v.string(),
     includeAnswered: v.optional(v.boolean()),
   },
   returns: v.any(),
   handler: async (_ctx, { desk, includeAnswered }) => {
+    const mine = deskOrThrow(desk);
     const filters = [
       "select=*",
       "archived=is.false",
       "order=last_inbound_at.desc.nullslast",
       "limit=60",
+      `desk=eq.${enc(mine)}`,
     ];
-    if (desk) filters.push(`desk=eq.${enc(desk)}`);
     if (!includeAnswered) filters.push("awaiting_us=is.true");
     const threads = rows(await rest(`wa_threads?${filters.join("&")}`));
     if (!threads.length) return { threads: [] };
@@ -129,11 +153,28 @@ export const assign = authenticatedAction({
   },
 });
 
+/**
+ * A thread this desk is allowed to touch, or an error.
+ *
+ * Reading was filtered but acting was not: anyone holding a thread id
+ * could have sent or archived on another desk's conversation.
+ */
+async function threadOnDesk(threadId: string, desk: string): Promise<Row> {
+  const t = rows(
+    await rest(`wa_threads?select=*&id=eq.${enc(threadId)}&limit=1`),
+  )[0];
+  if (!t) throw new Error("That conversation is gone.");
+  if (String(t.desk) !== deskOrThrow(desk))
+    throw new Error("That conversation belongs to another desk.");
+  return t;
+}
+
 /** Stop showing a thread without answering it. */
 export const archive = authenticatedAction({
-  args: { threadId: v.string() },
+  args: { threadId: v.string(), desk: v.string() },
   returns: v.any(),
-  handler: async (_ctx, { threadId }) => {
+  handler: async (_ctx, { threadId, desk }) => {
+    await threadOnDesk(threadId, desk);
     await rest(`wa_threads?id=eq.${enc(threadId)}`, {
       method: "PATCH",
       prefer: "return=minimal",
@@ -175,12 +216,13 @@ export const archive = authenticatedAction({
 export const send = authenticatedAction({
   args: {
     threadId: v.string(),
+    desk: v.string(),
     body: v.string(),
     lang: v.string(),
     type: v.optional(v.string()),
   },
   returns: v.any(),
-  handler: async (ctx, { threadId, body, lang, type }) => {
+  handler: async (ctx, { threadId, desk, body, lang, type }) => {
     const identity = await ctx.auth.getUserIdentity();
     const who = String(identity?.email ?? identity?.name ?? "unknown");
 
@@ -191,10 +233,7 @@ export const send = authenticatedAction({
     if (!GHL_TOKEN || !GHL_LOCATION)
       throw new Error("GoHighLevel is not configured for this cockpit.");
 
-    const t = rows(
-      await rest(`wa_threads?select=*&id=eq.${enc(threadId)}&limit=1`),
-    )[0];
-    if (!t) throw new Error("That conversation is gone.");
+    const t = await threadOnDesk(threadId, desk);
     const contactId = String(t.contact_id ?? "");
     if (!contactId)
       throw new Error(

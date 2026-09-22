@@ -23,6 +23,7 @@ import {
   LoginPage,
   MeetingsPage,
   PlaybookPage,
+  ReviewPage,
   ScriptDatabasePage,
   ScriptsPage,
   SettingsPage,
@@ -63,6 +64,7 @@ export function AuthenticatedRoutes() {
             <Route path="/messages" element={<TouchpointsPage />} />
             <Route path="/links" element={<KeyLinksPage />} />
             <Route path="/what-works" element={<PlaybookPage />} />
+            <Route path="/review" element={<ReviewPage />} />
             <Route path="/funnels" element={<FunnelsPage />} />
             <Route path="/calendar" element={<CalendarPage />} />
             <Route path="/scripting" element={<ScriptDatabasePage />} />

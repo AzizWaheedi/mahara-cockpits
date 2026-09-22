@@ -46,6 +46,19 @@ async function rpc(fn: string, args: Record<string, unknown>) {
 }
 
 /**
+ * Video or still, from the link alone.
+ *
+ * A pasted image would otherwise arrive as a video and the client gets a
+ * player that will not play. Extension first, then the query string, so
+ * a signed URL with `?token=` still reads correctly.
+ */
+function kindOf(url: string): "video" | "image" {
+  const path = url.split("?")[0].toLowerCase();
+  if (/\.(jpe?g|png|webp|gif|heic|avif)$/.test(path)) return "image";
+  return "video";
+}
+
+/**
  * Make the link.
  *
  * A video URL is all that is strictly needed: the title falls back to
@@ -86,11 +99,17 @@ export const create = authenticatedAction({
       p_client: (args.client ?? "").trim() || null,
       p_client_task_id: null,
       p_by: by,
-      p_items: videos.map((x, i) => ({
-        title: (x.title ?? "").trim() || `Video ${i + 1}`,
-        video_url: x.url,
-        task_id: x.taskId ?? null,
-      })),
+      p_items: videos.map((x, i) => {
+        const kind = kindOf(x.url);
+        return {
+          title:
+            (x.title ?? "").trim() ||
+            `${kind === "image" ? "Image" : "Video"} ${i + 1}`,
+          video_url: x.url,
+          task_id: x.taskId ?? null,
+          kind,
+        };
+      }),
       p_days: 30,
     })) as { token: string; items: number };
 

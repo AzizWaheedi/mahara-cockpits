@@ -15,6 +15,7 @@ export { LandingPage } from "./LandingPage";
 export { LoginPage } from "./LoginPage";
 export { MeetingsPage } from "./MeetingsPage";
 export { PlaybookPage } from "./PlaybookPage";
+export { ReviewPage } from "./ReviewPage";
 export { ScriptsPage } from "./ScriptsPage";
 export { SettingsPage } from "./SettingsPage";
 export { SignupPage } from "./SignupPage";

@@ -160,7 +160,7 @@ export function SendForReview() {
           Send for review
         </h2>
         <span className="text-[12px] text-muted-foreground">
-          Paste the video, send the client one link
+          Videos or images, one link for the client
         </span>
       </div>
 
@@ -208,7 +208,9 @@ export function SendForReview() {
               onChange={e =>
                 setLinks(links.map((x, j) => (j === i ? e.target.value : x)))
               }
-              placeholder={i === 0 ? "Link to the video" : "Another video"}
+              placeholder={
+                i === 0 ? "Link to a video or an image" : "Another one"
+              }
               className="h-9 min-w-0 flex-1 rounded-md border bg-background px-2.5 text-[13px]"
             />
             {links.length > 1 ? (
