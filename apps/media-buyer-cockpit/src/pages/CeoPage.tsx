@@ -17,6 +17,7 @@ import { CallsTab } from "./ceo/CallsTab";
 import { ClientSuccessTab } from "./ceo/ClientSuccessTab";
 import { DeliveryTab } from "./ceo/DeliveryTab";
 import { FrontendTab } from "./ceo/FrontendTab";
+import { GoalsTab } from "./ceo/GoalsTab";
 import { HiringTab } from "./ceo/HiringTab";
 import { IdeationTab } from "./ceo/IdeationTab";
 import { MachineTab } from "./ceo/MachineTab";
@@ -35,6 +36,7 @@ import { CEO_TAB_KEYS, type CeoTabKey, type CeoTabProps } from "./ceo/types";
 
 const TAB_VIEWS: Record<CeoTabKey, (props: CeoTabProps) => ReactNode> = {
   today: TodayTab,
+  goals: GoalsTab,
   frontend: FrontendTab,
   marketing: MarketingTab,
   ads: AdsTab,

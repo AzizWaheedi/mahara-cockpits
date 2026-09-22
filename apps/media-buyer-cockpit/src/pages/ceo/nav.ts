@@ -11,6 +11,7 @@ import {
   ReceiptText,
   Server,
   Sun,
+  Target,
   TrendingUp,
   Truck,
   UserPlus,
@@ -33,6 +34,7 @@ export const CEO_NAV: { title: string | null; items: CeoNavItem[] }[] = [
     title: null,
     items: [
       { key: "today", label: "Today", icon: Sun },
+      { key: "goals", label: "Goals", icon: Target },
       { key: "money", label: "Money", icon: Wallet },
       { key: "transactions", label: "Transactions", icon: ReceiptText },
     ],

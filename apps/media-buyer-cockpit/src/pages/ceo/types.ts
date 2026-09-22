@@ -10,6 +10,7 @@ import type { CeoSections } from "@/components/ceo/useCeo";
  */
 export const CEO_TAB_KEYS = [
   "today",
+  "goals",
   "frontend",
   "marketing",
   "ads",

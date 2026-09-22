@@ -45,6 +45,8 @@ import {
   scheduleSummary,
   WEEK_ORDER,
 } from "../../../convex/ceo/schedule";
+import { PersonFile } from "./personFile";
+import { ScorecardTemplates } from "./scorecardTemplates";
 import type { CeoTabProps } from "./types";
 
 /**
@@ -537,10 +539,13 @@ function Row({
   p,
   roles,
   onChanged,
+  onOpen,
 }: {
   p: Person;
   roles: string[];
   onChanged: () => Promise<void>;
+  /** Open this person's file: goals, flags, CV and the monthly scorecard. */
+  onOpen: (p: Person) => void;
 }) {
   const save = useAction(api.ceo.people.save);
   const setActive = useAction(api.ceo.people.setActive);
@@ -647,7 +652,18 @@ function Row({
         )}
         <div className="min-w-0">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <span className="truncate font-medium">{p.name}</span>
+            {account ? (
+              <span className="truncate font-medium">{p.name}</span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onOpen(p)}
+                className="truncate font-medium underline decoration-transparent underline-offset-4 transition-colors hover:decoration-current"
+                title={`Open ${p.name}'s file`}
+              >
+                {p.name}
+              </button>
+            )}
             {paused ? <StatusChip tone="neutral" label="Paused" /> : null}
           </div>
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
@@ -1040,6 +1056,7 @@ export function TeamTab(_props: CeoTabProps) {
   const [roles, setRoles] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showGone, setShowGone] = useState(false);
+  const [openPerson, setOpenPerson] = useState<Person | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -1084,6 +1101,11 @@ export function TeamTab(_props: CeoTabProps) {
 
   return (
     <div className="@container grid gap-4 lg:gap-6">
+      <PersonFile
+        personId={openPerson?.id ?? null}
+        name={openPerson?.name ?? ""}
+        onClose={() => setOpenPerson(null)}
+      />
       <SectionCard
         kicker="Who Mahara pays, and what it costs a month"
         title="Team & payroll"
@@ -1169,7 +1191,13 @@ export function TeamTab(_props: CeoTabProps) {
                 <span />
               </div>
               {live.map(p => (
-                <Row key={p.id} p={p} roles={roles} onChanged={refresh} />
+                <Row
+                  key={p.id}
+                  p={p}
+                  roles={roles}
+                  onChanged={refresh}
+                  onOpen={setOpenPerson}
+                />
               ))}
             </div>
           ) : (
@@ -1202,7 +1230,13 @@ export function TeamTab(_props: CeoTabProps) {
             showGone ? (
               <div className="divide-y">
                 {gone.map(p => (
-                  <Row key={p.id} p={p} roles={roles} onChanged={refresh} />
+                  <Row
+                    key={p.id}
+                    p={p}
+                    roles={roles}
+                    onChanged={refresh}
+                    onOpen={setOpenPerson}
+                  />
                 ))}
               </div>
             ) : null
@@ -1216,6 +1250,7 @@ export function TeamTab(_props: CeoTabProps) {
           person's currency. The payout itself is not worked out here yet.
         </p>
       ) : null}
+      <ScorecardTemplates order={4} />
     </div>
   );
 }

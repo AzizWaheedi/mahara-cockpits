@@ -309,6 +309,7 @@ export async function clientDelivery(
         TRIAGE,
         `select c.id::text as client_id,
               c.name as account,
+              coalesce(c.hidden_from_dashboard, false) as hidden,
               coalesce(c.currency, 'USD') as currency,
               g.client_name as name,
               g.clickup_id,
@@ -423,7 +424,17 @@ export async function clientDelivery(
   const unknown = new Set<string>();
   const clients: TriageClient[] = [];
   const own = new Set<string>();
+  // A client taken off the dashboards is off them everywhere: out of the
+  // list, out of the company totals, out of every average (Aziz, 2026-09-22
+  // about ريبالو, "I don't think that's a client... you can remove them for
+  // now"). Dropped here rather than in six queries, so nothing can be
+  // filtered in one place and counted in another. Put it back with
+  // ceo/clientVisibility:show.
+  const hiddenClients = new Set(
+    clientRows.filter(r => r.hidden === true).map(r => String(r.client_id)),
+  );
   for (const r of clientRows) {
+    if (hiddenClients.has(String(r.client_id))) continue;
     const account = String(r.account ?? "");
     const clientId = String(r.client_id);
     if (OWN_ACCOUNTS.has(fold(account))) {
@@ -451,7 +462,7 @@ export async function clientDelivery(
   for (const r of dayRows) {
     const clientId = String(r.client_id);
     adsFresh = Math.max(adsFresh, num(r.fresh_ms));
-    if (own.has(clientId)) continue;
+    if (own.has(clientId) || hiddenClients.has(clientId)) continue;
     const per = rate.get(clientId);
     if (per === undefined) continue; // unknown currency, or not a client row
     days.push({
@@ -483,7 +494,8 @@ export async function clientDelivery(
       continue;
     }
     const clientId = r.client_id ? String(r.client_id) : null;
-    if (clientId && own.has(clientId)) continue;
+    if (clientId && (own.has(clientId) || hiddenClients.has(clientId)))
+      continue;
     if (!clientId || !rate.has(clientId)) {
       // A client's booking that reaches no client row: untied, or a client
       // with no ad spend in the window (the table is clients with spend).
@@ -515,7 +527,8 @@ export async function clientDelivery(
   const wins: TriageWin[] = [];
   for (const r of winRows) {
     const clientId = String(r.client_id);
-    if (own.has(clientId) || !rate.has(clientId)) continue;
+    if (own.has(clientId) || hiddenClients.has(clientId) || !rate.has(clientId))
+      continue;
     wins.push({
       clientId,
       date: String(r.date),
@@ -527,7 +540,8 @@ export async function clientDelivery(
   const appointments: TriageAppointment[] = [];
   for (const r of appointmentRows) {
     const clientId = String(r.client_id);
-    if (own.has(clientId) || !rate.has(clientId)) continue;
+    if (own.has(clientId) || hiddenClients.has(clientId) || !rate.has(clientId))
+      continue;
     const calendar = String(r.calendar ?? "");
     const kind = calendarKind(calendar);
     if (!isBookingKind(kind)) continue;

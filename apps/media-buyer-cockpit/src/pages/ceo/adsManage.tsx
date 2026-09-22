@@ -216,7 +216,9 @@ function CopyStudio({
           )}
         </button>
       </div>
-      {error ? <p className="text-sm text-[var(--ceo-bad)]">{error}</p> : null}
+      {error ? (
+        <p className="text-sm text-[var(--ceo-critical)]">{error}</p>
+      ) : null}
       {ideas.length ? (
         <div className="grid gap-2">
           <p className="text-xs text-muted-foreground">
@@ -870,7 +872,9 @@ export function ManagePanel({
         </div>
       ) : null}
 
-      {error ? <p className="text-sm text-[var(--ceo-bad)]">{error}</p> : null}
+      {error ? (
+        <p className="text-sm text-[var(--ceo-critical)]">{error}</p>
+      ) : null}
     </div>
   );
 }

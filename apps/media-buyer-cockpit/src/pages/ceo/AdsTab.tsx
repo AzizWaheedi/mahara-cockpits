@@ -948,7 +948,9 @@ export function AdsTab({ sections }: CeoTabProps) {
         <SectionCard title="Our ads" section={section} order={0}>
           {() =>
             shown.error ? (
-              <p className="text-sm text-[var(--ceo-bad)]">{shown.error}</p>
+              <p className="text-sm text-[var(--ceo-critical)]">
+                {shown.error}
+              </p>
             ) : shown.loading ? (
               <p className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" aria-hidden />

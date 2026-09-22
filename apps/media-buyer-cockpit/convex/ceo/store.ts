@@ -72,6 +72,23 @@ export const sectionRows = internalQuery({
   handler: async ctx => await ctx.db.query("ceoSections").collect(),
 });
 
+/**
+ * Just the payloads asked for, by key. The goals board needs four of the
+ * thirteen sections and reading all of them to get four is a megabyte of
+ * read bandwidth for nothing.
+ */
+export const payloadsFor = internalQuery({
+  args: { keys: v.array(v.string()) },
+  returns: v.any(),
+  handler: async (ctx, { keys }) => {
+    const want = new Set(keys);
+    const rows = await ctx.db.query("ceoSections").collect();
+    const out: Record<string, unknown> = {};
+    for (const r of rows) if (want.has(r.key)) out[r.key] = r.payload ?? null;
+    return out;
+  },
+});
+
 /** One metric's daily points in a scope since a day, oldest first, for an adapter that needs its own history. */
 export const series = internalQuery({
   args: { metric: v.string(), scope: v.string(), since: v.string() },
