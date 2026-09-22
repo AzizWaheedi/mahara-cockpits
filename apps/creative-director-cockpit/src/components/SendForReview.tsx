@@ -54,6 +54,17 @@ export function SendForReview() {
   const [clients, setClients] = useState<Client[]>([]);
   const [importing, setImporting] = useState<string | null>(null);
 
+  /**
+   * An import in flight, remembered outside React.
+   *
+   * The copy happens on the VPS and finishes whether or not this screen
+   * is open, but the watching was a timer in a component: switch tabs
+   * and the browser throttles it to a crawl, change page and it is gone
+   * with the component. The link was made and nobody was told. The id
+   * is kept here so the watch resumes wherever you come back.
+   */
+  const WATCH_KEY = "review:importing";
+
   const load = useCallback(async () => {
     try {
       setRows((await listSent({})) as Sent[]);
@@ -79,9 +90,77 @@ export function SendForReview() {
    * rather than a subscription because it finishes in tens of seconds
    * and a socket for that is more machinery than the job deserves.
    */
+  const watch = useCallback(
+    async (id: number) => {
+      setBusy(true);
+      setImporting("Reading the folder");
+      try {
+        window.localStorage.setItem(WATCH_KEY, String(id));
+      } catch {
+        // Private browsing. The worst case is the watch not resuming.
+      }
+      try {
+        // A wall-clock deadline, not a tick count: a throttled tab fires
+        // the timer far less often, so counting ticks would give up
+        // after minutes on one screen and hours on another.
+        const until = Date.now() + 20 * 60_000;
+        while (Date.now() < until) {
+          await new Promise(r => setTimeout(r, 4000));
+          const st = (await importStatus({ id })) as {
+            status: string;
+            url?: string;
+            found?: number;
+            copied?: number;
+            error?: string;
+          } | null;
+          if (!st) continue;
+          if (st.status === "working")
+            setImporting(
+              st.found ? `Copying ${st.found} file(s)` : "Reading the folder",
+            );
+          if (st.status === "failed")
+            throw new Error(st.error ?? "That folder did not work.");
+          if (st.status === "done" && st.url) {
+            setMade(st.url);
+            setCopied(false);
+            setFolder("");
+            setTitle("");
+            setNote("");
+            toast.success(`${st.copied} file(s) ready for the client.`);
+            await load();
+            return;
+          }
+        }
+        throw new Error(
+          "That folder is still copying. It will appear under Sent when it finishes.",
+        );
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "That did not work.");
+      } finally {
+        try {
+          window.localStorage.removeItem(WATCH_KEY);
+        } catch {
+          // nothing to clear
+        }
+        setBusy(false);
+        setImporting(null);
+      }
+    },
+    [importStatus, load],
+  );
+
+  // Pick an import back up after a tab switch, a route change or a reload.
+  useEffect(() => {
+    let kept: string | null = null;
+    try {
+      kept = window.localStorage.getItem(WATCH_KEY);
+    } catch {
+      kept = null;
+    }
+    if (kept) void watch(Number(kept));
+  }, [watch]);
+
   async function pullFolder() {
-    setBusy(true);
-    setImporting("Reading the folder");
     try {
       const chosen = clients.find(c => c.task_id === client);
       const { id } = (await importFolder({
@@ -91,42 +170,9 @@ export function SendForReview() {
         client: chosen?.name,
         clientTaskId: chosen?.task_id,
       })) as { id: number };
-
-      for (let i = 0; i < 90; i++) {
-        await new Promise(r => setTimeout(r, 4000));
-        const st = (await importStatus({ id })) as {
-          status: string;
-          url?: string;
-          found?: number;
-          copied?: number;
-          error?: string;
-        } | null;
-        if (!st) continue;
-        if (st.status === "working")
-          setImporting(
-            st.found ? `Copying ${st.found} file(s)` : "Reading the folder",
-          );
-        if (st.status === "failed")
-          throw new Error(st.error ?? "That folder did not work.");
-        if (st.status === "done" && st.url) {
-          setMade(st.url);
-          setCopied(false);
-          setFolder("");
-          setTitle("");
-          setNote("");
-          toast.success(`${st.copied} file(s) ready for the client.`);
-          await load();
-          return;
-        }
-      }
-      throw new Error(
-        "That folder is taking longer than expected. It may still finish.",
-      );
+      await watch(id);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "That did not work.");
-    } finally {
-      setBusy(false);
-      setImporting(null);
     }
   }
 
@@ -292,11 +338,19 @@ export function SendForReview() {
         ) : null}
       </div>
 
-      {rows?.length ? (
+      <h3 className="mt-5 text-[12px] font-medium text-muted-foreground">
+        Sent
+      </h3>
+      {rows === null ? (
+        <p className="mt-1.5 text-[12px] text-muted-foreground">Loading</p>
+      ) : rows.length === 0 ? (
+        <p className="mt-1.5 text-[12px] text-muted-foreground">
+          Nothing sent yet. Every link you make stays here with whether the
+          client has opened it and what they decided.
+        </p>
+      ) : (
         <>
-          <h3 className="mt-5 text-[12px] font-medium text-muted-foreground">
-            Sent
-          </h3>
+          <h3 className="sr-only">Sent</h3>
           <ul className="mt-1.5 grid gap-1">
             {rows.slice(0, 8).map(r => (
               <li
@@ -330,7 +384,7 @@ export function SendForReview() {
             ))}
           </ul>
         </>
-      ) : null}
+      )}
     </section>
   );
 }

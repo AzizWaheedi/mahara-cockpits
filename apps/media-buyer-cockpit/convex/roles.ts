@@ -114,11 +114,13 @@ export async function accessFor(
       ? await spaceSessionRoles(ctx, userId)
       : staticRoles(key);
   const isAdmin = roles.includes("admin");
-  // The CEO section is its own role now, so it can be given to somebody who
-  // should see the business and nothing else. The two founder addresses keep
-  // working through the old email list whatever the members table says, so
-  // nobody can lock Aziz out of his own numbers by editing a row.
-  const isCeo = roles.includes("ceo") || isCeoEmail(key);
+  // The CEO cockpit is Aziz's own and is not a role anybody can be given
+  // (Aziz, 2026-09-22: "even admins can't assign themselves the CEO
+  // position"). The address decides, and nothing in the members table can
+  // change that, so an admin editing rows cannot reach the money, the
+  // payroll or the client book. The server checks the same rule on every
+  // read through requireCeo; this only decides what the menu shows.
+  const isCeo = isCeoEmail(key);
   const cockpits = isAdmin
     ? [...COCKPITS]
     : COCKPITS.filter(c => roles.includes(c));

@@ -3,7 +3,7 @@ import { internal } from "../_generated/api";
 import { internalMutation, internalQuery } from "../_generated/server";
 import { authenticatedAction } from "../functions";
 import { graphPost } from "../tools";
-import { isCeoEmail } from "./gate";
+import { requireCeo } from "./gate";
 
 /**
  * Switch a campaign, ad set or ad on Mahara's own account on or off.
@@ -12,7 +12,8 @@ import { isCeoEmail } from "./gate";
  * version in convex/control.ts: it only ever sets ACTIVE or PAUSED. It differs
  * in who may press it. The client screen asks whether the person is a media
  * buyer on that client's list; this account has no client, it is Mahara's own
- * money, so the gate is the CEO role and nothing else.
+ * money, so the gate is the one in gate.ts: Aziz's own address, which no row
+ * in any table can grant to anybody else.
  *
  * Every flip writes an audit row naming the object, the direction and who did
  * it, and the next refresh re-reads Meta rather than trusting the write.
@@ -24,20 +25,7 @@ const ACCOUNT = "746108264865897";
 export const gate = internalQuery({
   args: { userId: v.id("users") },
   returns: v.string(),
-  handler: async (ctx, { userId }) => {
-    const user = await ctx.db.get(userId);
-    const email = String(user?.email ?? "").toLowerCase();
-    if (isCeoEmail(email)) return email;
-    const row = email
-      ? await ctx.db
-          .query("members")
-          // biome-ignore lint/suspicious/noExplicitAny: index builder
-          .withIndex("by_email", (q: any) => q.eq("email", email))
-          .unique()
-      : null;
-    if ((row?.roles ?? []).includes("ceo")) return email;
-    throw new Error("Only the CEO role may change Mahara's own ads.");
-  },
+  handler: async (ctx, { userId }) => requireCeo({ ...ctx, userId }),
 });
 
 export const record = internalMutation({
