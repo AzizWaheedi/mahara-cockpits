@@ -1,0 +1,7 @@
+{
+  "name": "mahara-cockpits",
+  "private": true,
+  "scripts": {
+    "build": "bash scripts/build-video-editor.sh"
+  }
+}
