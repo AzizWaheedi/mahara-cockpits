@@ -17,6 +17,7 @@ import { CallsTab } from "./ceo/CallsTab";
 import { ClientSuccessTab } from "./ceo/ClientSuccessTab";
 import { DeliveryTab } from "./ceo/DeliveryTab";
 import { FrontendTab } from "./ceo/FrontendTab";
+import { HiringTab } from "./ceo/HiringTab";
 import { IdeationTab } from "./ceo/IdeationTab";
 import { MachineTab } from "./ceo/MachineTab";
 import { ManagementTab } from "./ceo/ManagementTab";
@@ -47,6 +48,7 @@ const TAB_VIEWS: Record<CeoTabKey, (props: CeoTabProps) => ReactNode> = {
   "client-success": ClientSuccessTab,
   management: ManagementTab,
   team: TeamTab,
+  hiring: HiringTab,
   money: MoneyTab,
   transactions: TransactionsTab,
   machine: MachineTab,

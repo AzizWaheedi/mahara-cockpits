@@ -13,6 +13,7 @@ import {
   Sun,
   TrendingUp,
   Truck,
+  UserPlus,
   Users,
   Wallet,
   Wrench,
@@ -66,6 +67,7 @@ export const CEO_NAV: { title: string | null; items: CeoNavItem[] }[] = [
     title: "People",
     items: [
       { key: "team", label: "Team & payroll", icon: Users },
+      { key: "hiring", label: "Recruiting", icon: UserPlus },
       { key: "management", label: "Management", icon: Wrench },
     ],
   },

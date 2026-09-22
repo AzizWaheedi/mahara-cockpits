@@ -65,6 +65,7 @@ const SOURCE_LABELS: Record<string, string> = {
 // The name each section is known by on screen, matching the tab it feeds. Used
 // only when a section has never computed and so carries no label of its own.
 const SECTION_NAMES: Record<SectionKey, string> = {
+  hiring: "Recruiting",
   money: "Money",
   expenses: "Expenses and P&L",
   growth: "Marketing and sales",

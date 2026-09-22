@@ -23,6 +23,7 @@ export const CEO_TAB_KEYS = [
   "client-success",
   "management",
   "team",
+  "hiring",
   "money",
   "transactions",
   "machine",

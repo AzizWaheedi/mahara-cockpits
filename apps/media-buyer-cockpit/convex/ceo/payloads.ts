@@ -1765,3 +1765,126 @@ export type OrganicPayload = {
   }[];
   notes: Note[];
 };
+
+// --- Hiring (GoHighLevel hiring sub-account, mirrored into cockpit_hiring_*) ---
+
+/** One score a candidate has been given, out of ten. Null until someone grades it. */
+export type HiringScores = {
+  application: number | null;
+  loom: number | null;
+  group: number | null;
+  oneToOne: number | null;
+  testProject: number | null;
+  /** The mean of the ones given, computed, never typed. */
+  total: number | null;
+};
+
+export type HiringCandidate = {
+  /** The GoHighLevel opportunity id. */
+  id: string;
+  contactId: string;
+  role: string;
+  roleLabel: string;
+  name: string;
+  stage: string;
+  stageName: string;
+  /** Days since the card last moved. */
+  daysInStage: number | null;
+  appliedDay: string | null;
+  country: string | null;
+  years: number | null;
+  arabic: string | null;
+  portfolioUrl: string | null;
+  loomUrl: string | null;
+  testProjectUrl: string | null;
+  scores: HiringScores;
+  /** Which score this stage is waiting for, or null when nothing is due. */
+  scoreDue: string | null;
+  benchReason: string | null;
+  /** The card in GoHighLevel, so the phone number is one click away and not here. */
+  ghlUrl: string;
+  /** No move for longer than the engine's stale line. */
+  stale: boolean;
+};
+
+/** One stage of one role's funnel, as it stands now. */
+export type HiringStageCount = {
+  key: string;
+  name: string;
+  count: number;
+  /** Median days the people sitting here have been here. */
+  medianDays: number | null;
+};
+
+export type HiringRoleFunnel = {
+  role: string;
+  label: string;
+  stages: HiringStageCount[];
+  /** Live candidates, so not disqualified, fired or churned. */
+  open: number;
+  hired: number;
+  /** Applications in the window. */
+  applied: number;
+  /** Hired over applied in the window, or null when nobody has been hired yet. */
+  conversion: number | null;
+  /** Application to offer, in days, median. */
+  timeToOfferDays: number | null;
+  /** What this person will be judged on once hired. */
+  scorecard: string[];
+  compensation: string;
+  /** The task the engine will send at the one-to-one stage, as it reads today. */
+  testProject: string;
+  careersUrl: string;
+  /** Responses the role's form holds, when the cockpit could read it. */
+  formResponses: number | null;
+  /** A role with nobody in the advancing stages is not being hired for. */
+  running: boolean;
+};
+
+export type HiringEvent = {
+  at: number;
+  name: string;
+  role: string;
+  kind: string;
+  text: string;
+  ok: boolean;
+};
+
+export type HiringEngine = {
+  /** False means every message is written down and nothing is sent. */
+  armed: boolean;
+  channel: string;
+  staleDays: number;
+  actions: { action: string; on: boolean }[];
+  /** Moves waiting on an action. */
+  pending: number;
+  /** Messages composed but not sent, because the engine is disarmed. */
+  drafted: number;
+  /** What is missing before it could be armed. */
+  blockers: string[];
+};
+
+export type HiringPayload = {
+  /** False when GHL_HIRING_PIT or GHL_HIRING_LOCATION is not set. */
+  connected: boolean;
+  boardUrl: string | null;
+  roles: HiringRoleFunnel[];
+  /** Everyone still in an advancing stage, newest move first. Capped. */
+  candidates: HiringCandidate[];
+  /** In a stage whose score has not been given. This is Aziz's queue. */
+  needsGrading: HiringCandidate[];
+  /** Sitting too long with nobody touching them. */
+  stale: HiringCandidate[];
+  /** Good, but not now. The list to raid when a seat opens. */
+  bench: HiringCandidate[];
+  engine: HiringEngine;
+  recent: HiringEvent[];
+  totals: {
+    inFunnel: number;
+    applied30: number;
+    hired90: number;
+    rolesRunning: number;
+    ungraded: number;
+  };
+  notes: Note[];
+};

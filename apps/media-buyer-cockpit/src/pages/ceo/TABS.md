@@ -864,6 +864,62 @@ are the existing one month summary the Money tab already renders. Once
 
 ---
 
+# Tab 10b: Recruiting (added 2026-09-22)
+
+Aziz, 2026-09-22: "make me an amazing recruiting and hiring part of the CEO
+cockpit", with a GoHighLevel back end "for specifically hiring, especially
+these roles that are repetitive and we can repeat them", a pipeline whose
+stages are his interview process, a test project per role held in custom
+values, applications pulled straight in, and a score on every candidate.
+
+**The five roles.** Media buyer, client success manager, sales rep (B2B setter
+and closer), call centre agent, video editor. One GoHighLevel pipeline each,
+so the board reads as one role at a time, which is how hiring actually runs.
+
+**The ten stages**, in his words: Application, Disqualified, Loom request,
+Group interview, One-to-one interview, Job offer, Bench, Hired, Fired, Churn.
+Six advance, three are exits, Bench is a hold.
+
+**What the tab shows, in priority order.**
+1. The grading queue. Anyone at a stage whose score is missing. This is the
+   signature element: the tab's job is to put the next decision in front of
+   him, not to report.
+2. The funnel per role, with the count and the median days in each stage, so a
+   stage everyone dies in is visible rather than felt.
+3. Going stale: no move in more than the engine's stale line.
+4. The bench, best total score first, each with the reason it was benched.
+5. The engine: armed or not, the per-action switches, the drafts it is
+   holding, and what is missing before it could be armed.
+6. Recent activity.
+
+**Grading.** Out of ten per stage, written to the GoHighLevel contact so the
+card and the cockpit never disagree. The total is the mean of the scores
+given. Disqualified and Bench refuse to save without a reason.
+
+**The engine.** Code, not a GoHighLevel workflow, because his first attempt at
+workflows "hasn't really worked the best". It reacts to a move: Loom request
+sends the role's prompt, Group interview the booking link, One-to-one the test
+project, Job offer the offer, Disqualified the rejection, Bench the holding
+note. Disarmed by default: it writes every message down and sends nothing
+until he arms it. It never acts on a first sighting, so importing form history
+messages nobody, and it never sends the same message twice.
+
+**What he edits, and where.** Every word a candidate reads comes from a
+GoHighLevel custom value, per role: test project, Loom request, compensation,
+daily responsibilities, position breakdown video, job post. Plus the global
+booking links and sender details. Code seeds them once and never overwrites.
+
+**The recruiting agent.** `convex/hiring/agent.ts` scores an application
+against the role's scorecard, gives the reasons for and against and the
+questions that would settle it, and learns from the gap between its score and
+his. It proposes only. It needs ANTHROPIC_API_KEY; everything else does not.
+
+**Build contract.** `convex/hiring/spec.ts` is the one description of roles,
+stages and fields. Change it there, run `hiring/setup:apply` then
+`hiring/sync:refreshIds`, never click it into GoHighLevel by hand. Three jobs
+run it: `hiring intake` every 30 minutes, `hiring board` every 10, `hiring
+engine` every 10, all in the health ledger.
+
 # Tab 11: Machine
 
 **File:** `MachineTab.tsx`. **Status:** built, unchanged. **Reads:** `sections.machine`.

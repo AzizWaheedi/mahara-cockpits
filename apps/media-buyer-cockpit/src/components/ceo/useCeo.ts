@@ -10,6 +10,7 @@ import type {
   DeliveryPayload,
   ExpensesPayload,
   GrowthPayload,
+  HiringPayload,
   MachinePayload,
   MoneyPayload,
   OrganicPayload,
@@ -27,6 +28,7 @@ export const SECTION_KEYS = [
   "calls",
   "clients",
   "team",
+  "hiring",
   "portal",
   "assets",
   "organic",
@@ -44,6 +46,7 @@ export type PayloadMap = {
   calls: CallsPayload;
   clients: ClientsPayload;
   team: TeamPayload;
+  hiring: HiringPayload;
   portal: PortalPayload;
   assets: AssetsPayload;
   organic: OrganicPayload;
