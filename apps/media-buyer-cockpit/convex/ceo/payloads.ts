@@ -897,6 +897,22 @@ export type CallWindow = {
   conversations90s: number;
 };
 
+/**
+ * Time an agent spent off the phone between two of their own calls, counted
+ * in working minutes only, so an overnight or a weekend is never idle time.
+ */
+export type CallGap = {
+  /** The middle gap. The mean is dragged by one long break, so the median leads. */
+  medianMin: number | null;
+  meanMin: number | null;
+  /** The longest single gap inside working hours. */
+  longestMin: number | null;
+  /** How many gaps were measured, which is calls minus one per agent per day. */
+  gaps: number;
+  /** Gaps over half an hour, which is the number worth acting on. */
+  over30: number;
+};
+
 export type CallsPayload = {
   today: CallWindow;
   yesterday: CallWindow;
@@ -914,7 +930,20 @@ export type CallsPayload = {
     today: CallWindow;
     last7: CallWindow;
     lastCallAt: number | null;
+    /** Working minutes between one call ending and the next starting, last 7 days. */
+    gap7d: CallGap | null;
   }[];
+  /**
+   * The gap between calls on the working clock: how long agents are not on
+   * the phone during the hours they are meant to be (Aziz, 2026-09-22). Null
+   * on payloads stored before it existed.
+   */
+  gap?: {
+    today: CallGap | null;
+    last7: CallGap | null;
+    /** Last 30 days, oldest first, for the trend. */
+    daily: { date: string; medianMin: number | null; gaps: number }[];
+  };
   /** Kuwait hours 0..23 today. */
   byHourToday: { hour: number; dials: number; connected: number }[];
   /** Last 7 days, only for calls that carry a lead phone. */

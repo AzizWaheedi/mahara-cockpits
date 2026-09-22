@@ -1,4 +1,10 @@
-import type { CallsPayload, CallWindow, Note, WorkingHours } from "../payloads";
+import type {
+  CallGap,
+  CallsPayload,
+  CallWindow,
+  Note,
+  WorkingHours,
+} from "../payloads";
 import { num, type Row, sql, TRIAGE } from "../sb";
 import { workingHoursForAdapters } from "../settings";
 import { addDays, KUWAIT_OFFSET_MS, kuwaitDay } from "../time";
@@ -141,6 +147,55 @@ left join agg a on true`;
  * off the single speed row, so the speed numbers survive a window with no
  * dials.
  */
+/**
+ * The gap between calls, on the working clock.
+ *
+ * Aziz, 2026-09-22: "during working hours, I want to know the call gap time as
+ * well between each call." Talk time says how long an agent was on the phone.
+ * The gap says how long they were not, which is the number that tells you
+ * whether a shift is being worked.
+ *
+ * A gap is measured from the end of one outbound call to the start of the
+ * next by the same agent, and it is counted in working minutes only, using the
+ * same clock as speed to lead. So the overnight gap is zero, and so is the gap
+ * across a weekend: an agent is not idle when nobody is meant to be dialling.
+ *
+ * Only gaps inside one Kuwait day are counted, and a gap longer than a full
+ * working day is dropped rather than averaged in: that is a day off or a break
+ * in the import, not an agent sitting still.
+ */
+function gapQuery(from: string, hours: WorkingHours): string {
+  const workingMin = workingMinutesSql("g.prev_end", "g.ts", hours);
+  return `with c as (
+  select (f.data->>'timestamp')::timestamptz as ts,
+    (f.data->>'duration')::numeric as dur,
+    f.data->'agents'->0->>'name' as agent
+  from mahara_reporting.facts f
+  where f.namespace = 'production' and f.source = 'maqsam' and f.kind = 'call'
+    and not f.conflict
+    and jsonb_array_length(f.data->'agents') = 1
+    and f.data->>'type' = 'outbound'
+    and (f.data->>'timestamp')::timestamptz >= ${midnight(from)}
+), g as materialized (
+  select agent, ts,
+    (ts at time zone 'Asia/Kuwait')::date::text as day,
+    lag(ts + make_interval(secs => coalesce(dur, 0)))
+      over (partition by agent, (ts at time zone 'Asia/Kuwait')::date order by ts) as prev_end
+  from c
+), m as (
+  select agent, day, ${workingMin} as gap_min
+  from g where prev_end is not null and ts > prev_end
+)
+select agent, day, count(*) as gaps,
+  percentile_cont(0.5) within group (order by gap_min) as median_min,
+  avg(gap_min) as mean_min,
+  max(gap_min) as longest_min,
+  count(*) filter (where gap_min > 30) as over_30
+from m
+where gap_min is not null and gap_min <= 600
+group by 1, 2`;
+}
+
 function leadQuery(from: string, hours: WorkingHours): string {
   return `with c as materialized (
   select f.external_id as id,
@@ -373,7 +428,7 @@ export const calls: Adapter = {
     });
 
     // Agents who dialed in the last 30 days, so one who stopped still shows.
-    const byAgent = [...agents.entries()]
+    let byAgent = [...agents.entries()]
       .filter(([, a]) => a.dials30 > 0)
       .sort(
         ([n1, a1], [n2, a2]) =>
@@ -384,6 +439,7 @@ export const calls: Adapter = {
         today: toWindow(a.today),
         last7: toWindow(a.last7),
         lastCallAt: a.lastCallAt,
+        gap7d: null as CallGap | null,
       }));
 
     // Freshness of the dialer store: today reads 0 when imports stall. A gap
@@ -543,6 +599,59 @@ export const calls: Adapter = {
         level: "warn",
         text: `Speed to lead ran on the default working hours because the saved ones could not be read: ${settings.problem}`,
       });
+    // How long agents are off the phone during the hours they are meant to be
+    // dialling. A failure here costs the gap numbers and nothing else.
+    const gapRows = await triage(gapQuery(from30, clockHours)).catch(() => []);
+    const roll = (rows: Row[]): CallGap | null => {
+      const gaps = rows.reduce((t, r) => t + num(r.gaps), 0);
+      if (!gaps) return null;
+      // A median of medians is not a median, so the day medians are weighted
+      // by how many gaps each day held, which is the honest middle to hand.
+      const weighted =
+        rows.reduce((t, r) => t + num(r.median_min) * num(r.gaps), 0) / gaps;
+      return {
+        medianMin: round(weighted, 1),
+        meanMin: round(
+          rows.reduce((t, r) => t + num(r.mean_min) * num(r.gaps), 0) / gaps,
+          1,
+        ),
+        longestMin: round(
+          rows.reduce((t, r) => Math.max(t, num(r.longest_min)), 0),
+          1,
+        ),
+        gaps,
+        over30: rows.reduce((t, r) => t + num(r.over_30), 0),
+      };
+    };
+    const gapByDay = new Map<string, Row[]>();
+    for (const r of gapRows) {
+      const day = String(r.day ?? "");
+      gapByDay.set(day, [...(gapByDay.get(day) ?? []), r]);
+    }
+    const gap = {
+      today: roll(gapByDay.get(today) ?? []),
+      last7: roll(gapRows.filter(r => String(r.day) >= from7)),
+      daily: daily.map(d => {
+        const rolled = roll(gapByDay.get(d.date) ?? []);
+        return {
+          date: d.date,
+          medianMin: rolled?.medianMin ?? null,
+          gaps: rolled?.gaps ?? 0,
+        };
+      }),
+    };
+    const gapByAgent = new Map<string, Row[]>();
+    for (const r of gapRows)
+      if (String(r.day) >= from7) {
+        const a = String(r.agent ?? "");
+        gapByAgent.set(a, [...(gapByAgent.get(a) ?? []), r]);
+      }
+
+    byAgent = byAgent.map(a => ({
+      ...a,
+      gap7d: roll(gapByAgent.get(a.agent) ?? []),
+    }));
+
     notes.push({
       level: "info",
       text: "B2B maqsam_client_calls is an old one-off import (history to 2026-07-18) and is not used for these live numbers.",
@@ -558,6 +667,7 @@ export const calls: Adapter = {
       byHourToday: hours,
       perClient7d,
       speedToLead,
+      gap,
       workingHours: clockHours,
       lastCallAt,
       notes,

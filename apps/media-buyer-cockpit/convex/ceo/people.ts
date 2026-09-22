@@ -89,8 +89,14 @@ export type Person = {
   name: string;
   email: string | null;
   role: string | null;
-  engagement: "staff" | "freelancer" | "agency" | "intern";
+  engagement: "staff" | "freelancer" | "agency" | "intern" | "bot";
+  /** False once they have gone. A leaver's paid months still happened. */
   active: boolean;
+  /** Set while they are paused: on the team, not being paid this month. */
+  pausedOn: string | null;
+  pausedWhy: string | null;
+  /** On the team and being paid: active, not paused, and a person. */
+  working: boolean;
   monthlyCost: number | null;
   currency: string;
   /** monthlyCost in USD at the fixed table, or null when no cost is set. */
@@ -113,14 +119,40 @@ export type Roster = {
   people: Person[];
   /** False until the migration has been run. */
   ready: boolean;
-  /** Monthly cost of everyone still active, in USD. */
+  /** Monthly cost of everyone working, in USD. Paused people and bots are out. */
   activeMonthlyUsd: number;
   activeCount: number;
+  /** On the team but not being paid this month, so the total is not hiding them. */
+  pausedCount: number;
+  pausedMonthlyUsd: number;
+  /** Shared mailboxes and automations. Never a headcount and never a cost. */
+  botCount: number;
   /** Of that, the part belonging to people whose job is selling. */
   salesMonthlyUsd: number;
   /** Active people nobody has costed yet: the total is a floor until they are. */
   missingCost: string[];
 };
+
+/**
+ * What somebody does. Aziz, 2026-09-22: "what they do should be based on the
+ * open roles we even have in the company", and then the list, "and then we can
+ * add as well". So this is the offered list, not a closed one: the screen
+ * suggests these and still takes anything typed, because a role nobody has
+ * named yet is a real role the day it is filled.
+ */
+export const TEAM_ROLES = [
+  "CEO",
+  "Systems manager",
+  "General VA",
+  "Creative strategist",
+  "Media buyer",
+  "Call centre agent",
+  "B2B setter",
+  "Closer",
+  "Client success manager",
+  "Video editor",
+  "Bot",
+] as const;
 
 const round2 = (x: number) => Math.round(x * 100) / 100;
 
@@ -135,6 +167,12 @@ function shape(r: Row): Person {
     role: r.role ? String(r.role) : null,
     engagement: String(r.engagement ?? "staff") as Person["engagement"],
     active: Boolean(r.active),
+    pausedOn: r.paused_on ? String(r.paused_on) : null,
+    pausedWhy: r.paused_why ? String(r.paused_why) : null,
+    working:
+      Boolean(r.active) &&
+      !r.paused_on &&
+      String(r.engagement ?? "staff") !== "bot",
     monthlyCost: cost,
     currency,
     monthlyUsd:
@@ -189,24 +227,31 @@ export const list = authenticatedAction({
         ready: false,
         activeMonthlyUsd: 0,
         activeCount: 0,
+        pausedCount: 0,
+        pausedMonthlyUsd: 0,
+        botCount: 0,
         salesMonthlyUsd: 0,
         missingCost: [],
       };
     const people = rows.map(shape);
-    const live = people.filter(p => p.active);
+    // Three different things, kept apart on purpose: people being paid,
+    // people on the team who are paused, and accounts that are not people.
+    const working = people.filter(p => p.working);
+    const paused = people.filter(
+      p => p.active && p.pausedOn && p.engagement !== "bot",
+    );
+    const cost = (list: Person[]) =>
+      round2(list.reduce((n, p) => n + (p.monthlyUsd ?? 0), 0));
     return {
       people,
       ready: true,
-      activeCount: live.length,
-      activeMonthlyUsd: round2(
-        live.reduce((n, p) => n + (p.monthlyUsd ?? 0), 0),
-      ),
-      salesMonthlyUsd: round2(
-        live
-          .filter(p => p.isSales)
-          .reduce((n, p) => n + (p.monthlyUsd ?? 0), 0),
-      ),
-      missingCost: live.filter(p => p.monthlyUsd === null).map(p => p.name),
+      activeCount: working.length,
+      activeMonthlyUsd: cost(working),
+      pausedCount: paused.length,
+      pausedMonthlyUsd: cost(paused),
+      botCount: people.filter(p => p.engagement === "bot").length,
+      salesMonthlyUsd: cost(working.filter(p => p.isSales)),
+      missingCost: working.filter(p => p.monthlyUsd === null).map(p => p.name),
     };
   },
 });
@@ -220,6 +265,8 @@ const FIELD_WORD: Record<string, string> = {
   email: "email",
   role: "role",
   engagement: "engagement",
+  paused_on: "pause",
+  paused_why: "the reason for the pause",
   monthly_cost: "pay",
   currency: "pay",
   commission_basis: "commission",
@@ -312,7 +359,12 @@ export const save = authenticatedAction({
       v.literal("freelancer"),
       v.literal("agency"),
       v.literal("intern"),
+      // A shared mailbox or an automation. Never a headcount, never a cost.
+      v.literal("bot"),
     ),
+    /** A day to pause from, or null to put them back on. */
+    pausedOn: v.optional(v.union(v.string(), v.null())),
+    pausedWhy: v.optional(v.union(v.string(), v.null())),
     monthlyCost: v.optional(v.number()),
     currency: v.optional(v.string()),
     /** The old form: a share of what they close. Ignored when commissionBasis is given. */
@@ -376,6 +428,15 @@ export const save = authenticatedAction({
       is_sales: a.isSales ?? false,
       started_on: a.startedOn || null,
       note: a.note?.trim().slice(0, 500) || null,
+      // Left out, a pause stays as it is; null puts them back on.
+      ...(a.pausedOn === undefined ? {} : { paused_on: a.pausedOn || null }),
+      ...(a.pausedWhy === undefined
+        ? {}
+        : { paused_why: a.pausedWhy?.trim().slice(0, 300) || null }),
+      // A bot is never paid, whatever was typed in the cost box.
+      ...(a.engagement === "bot"
+        ? { monthly_cost: null, is_sales: false, paused_on: null }
+        : {}),
       source: "manual",
       added_by: email,
       ...(hours === undefined ? {} : { schedule: hours }),
@@ -671,5 +732,26 @@ export const workspace = authenticatedAction({
   handler: async (ctx): Promise<Directory> => {
     await ctx.runQuery(internal.ceo.people.gate, { userId: ctx.userId });
     return await ctx.runAction(internal.ceo.people.directory, {});
+  },
+});
+
+/** The roles the screen offers, in hiring order. Anything typed is still kept. */
+export const roles = authenticatedAction({
+  args: {},
+  returns: v.any(),
+  handler: async ctx => {
+    await ctx.runQuery(internal.ceo.people.gate, { userId: ctx.userId });
+    const rows = await rest(`${TABLE}?select=role`);
+    const used = new Set(
+      (rows ?? [])
+        .map(r => String(r.role ?? "").trim())
+        .filter(Boolean)
+        .filter(
+          r => !TEAM_ROLES.some(t => t.toLowerCase() === r.toLowerCase()),
+        ),
+    );
+    // Whatever Aziz has already typed sits after the offered list, so the
+    // roster never loses a role by not having been asked for.
+    return [...TEAM_ROLES, ...[...used].sort()];
   },
 });

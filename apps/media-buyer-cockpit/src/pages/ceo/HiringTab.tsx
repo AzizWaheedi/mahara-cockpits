@@ -1,6 +1,7 @@
 import { useAction } from "convex/react";
 import {
   ArrowRight,
+  Bot,
   CircleDashed,
   ExternalLink,
   Inbox,
@@ -318,6 +319,93 @@ function TrackSwitch({
   );
 }
 
+/** The agent's one-word read, in the cockpit's words and never in a tone. */
+const VERDICT: Record<string, string> = {
+  advance: "Advance",
+  "look closer": "Look closer",
+  drop: "Drop",
+};
+
+/**
+ * What the recruiting agent proposed, beside the control Aziz grades with and
+ * plainly under it: smaller, quieter, attributed, and with no way to take its
+ * number. He types his own, and the gap between the two is what calibrates the
+ * agent. The reasons are long, so they stay clamped to two lines until he asks
+ * for them; the questions come with them, because they are what he reads out
+ * on the call. Nothing at all renders for someone the agent has not read yet.
+ */
+function AgentProposal({ c }: { c: HiringCandidate }) {
+  const [open, setOpen] = useState(false);
+  if (!isNum(c.agentScore)) return null;
+
+  const note = c.agentNote?.trim() ?? "";
+  const asks = [
+    ...new Set(c.agentAsks.map(a => a.trim()).filter(Boolean)),
+  ].slice(0, 4);
+  const raw = c.agentVerdict?.trim() ?? "";
+  const verdict = raw ? (VERDICT[raw.toLowerCase()] ?? humanize(raw)) : "";
+  let label = open ? "Hide the reasons" : "Read the reasons";
+  if (!note) label = open ? "Hide the questions" : "Questions to ask";
+
+  return (
+    <div className="grid min-w-0 gap-1.5 self-start rounded-md border border-dashed px-2.5 py-2">
+      <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
+        <span className="inline-flex items-center gap-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          <Bot className="size-3 shrink-0" aria-hidden />
+          Recruiting agent
+        </span>
+        <span className="text-xs text-muted-foreground" style={tabular}>
+          <strong className="font-medium text-foreground">
+            {decimal(c.agentScore, 1)}
+          </strong>
+          {` / 10${verdict ? ` \u00b7 ${verdict}` : ""}`}
+        </span>
+      </div>
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        A proposal from the application. Your score is the one that counts.
+      </p>
+      {note ? (
+        <p
+          className={`break-words text-xs leading-relaxed text-muted-foreground ${open ? "" : "line-clamp-2"}`}
+        >
+          {note}
+        </p>
+      ) : null}
+      {note || asks.length ? (
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen(o => !o)}
+          className="justify-self-start rounded-sm text-[11px] font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {label}
+        </button>
+      ) : null}
+      {open && asks.length ? (
+        <div className="grid min-w-0 gap-1">
+          <p className="text-[11px] font-medium text-foreground/80">
+            Questions to ask on the call
+          </p>
+          <ul className="grid min-w-0 gap-1">
+            {asks.map(a => (
+              <li
+                key={a}
+                className="flex min-w-0 items-start gap-1.5 text-xs leading-relaxed text-muted-foreground"
+              >
+                <CircleDashed
+                  className="mt-[3px] size-3 shrink-0"
+                  aria-hidden
+                />
+                <span className="min-w-0 break-words">{a}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /**
  * One person waiting on a score: who they are, where they are, what they were
  * given already, and the one score the stage is holding out for. The note and
@@ -393,32 +481,37 @@ function GradeRow({
       ) : (
         <>
           {/* The scale stays a hand's width on any screen: eleven notches
-              across a whole desk read as blocks, not as a score. */}
-          <div className="grid max-w-sm gap-1.5">
-            <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-              <span className="text-[13px] text-foreground">
-                {SCORE_LABEL[due]} score
-              </span>
-              <span className="text-sm text-muted-foreground" style={tabular}>
-                {score === null ? (
-                  "not picked"
-                ) : (
-                  <>
-                    <strong className="text-base font-semibold text-foreground">
-                      {score}
-                    </strong>
-                    <span className="text-xs"> / 10</span>
-                  </>
-                )}
-              </span>
+              across a whole desk read as blocks, not as a score. The agent's
+              proposal sits beside it where there is room and under it on a
+              phone, so his own control is never pushed off the screen. */}
+          <div className="grid min-w-0 items-start gap-x-6 gap-y-3 @2xl:grid-cols-[minmax(0,24rem)_minmax(0,1fr)]">
+            <div className="grid min-w-0 max-w-sm gap-1.5">
+              <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                <span className="text-[13px] text-foreground">
+                  {SCORE_LABEL[due]} score
+                </span>
+                <span className="text-sm text-muted-foreground" style={tabular}>
+                  {score === null ? (
+                    "not picked"
+                  ) : (
+                    <>
+                      <strong className="text-base font-semibold text-foreground">
+                        {score}
+                      </strong>
+                      <span className="text-xs"> / 10</span>
+                    </>
+                  )}
+                </span>
+              </div>
+              <ScoreScale
+                name={`score-${c.id}`}
+                label={`${SCORE_LABEL[due]} score for ${c.name}, out of ten`}
+                value={score}
+                disabled={busy}
+                onChange={setScore}
+              />
             </div>
-            <ScoreScale
-              name={`score-${c.id}`}
-              label={`${SCORE_LABEL[due]} score for ${c.name}, out of ten`}
-              value={score}
-              disabled={busy}
-              onChange={setScore}
-            />
+            <AgentProposal c={c} />
           </div>
           <div className="grid gap-2 @lg:grid-cols-[minmax(0,1fr)_11rem_auto] @lg:items-center">
             <input
@@ -642,6 +735,9 @@ function EngineCard({
   engine: HiringPayload["engine"];
   onChanged: () => Promise<void>;
 }) {
+  // GoHighLevel owns sending, so arming the cockpit is not the live question
+  // and there are no drafts to read: it writes none while it is standing down.
+  const byGoHighLevel = engine.channel.startsWith("GoHighLevel");
   const setEngine = useAction(api.hiring.actions.setEngine);
   const loadDrafts = useAction(api.hiring.actions.drafts);
   const sendDraft = useAction(api.hiring.actions.sendDraft);
@@ -678,17 +774,27 @@ function EngineCard({
                 aria-hidden
               />
             )}
-            {engine.armed ? "Armed and sending" : "Disarmed on purpose"}
+            {engine.armed
+              ? "Armed and sending"
+              : byGoHighLevel
+                ? "GoHighLevel is the sender"
+                : "Disarmed on purpose"}
           </p>
           <p className="mt-1 max-w-prose text-xs leading-relaxed text-muted-foreground">
             {engine.armed
               ? `Every switch below that is on will send over ${engine.channel} without asking you.`
-              : "Every message is written down and nothing is sent. Read the drafts below, send the ones you like, and arm it when the words are right."}
+              : byGoHighLevel
+                ? "The published workflows on the hiring sub-account send every candidate message, on email and on SMS. The cockpit stays quiet so nobody hears anything twice. The words still come from the custom values, so edit them there."
+                : "Every message is written down and nothing is sent. Read the drafts below, send the ones you like, and arm it when the words are right."}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2 text-xs">
           <span className="text-muted-foreground">
-            {engine.armed ? "sending" : "writing only"}
+            {engine.armed
+              ? "sending"
+              : byGoHighLevel
+                ? "GoHighLevel"
+                : "writing only"}
           </span>
           <Toggle
             on={engine.armed}

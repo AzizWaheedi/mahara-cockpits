@@ -99,6 +99,7 @@ The cockpit recomputes every section every 15 minutes on the production Convex d
 | Number | Where it comes from | What it leaves out |
 |---|---|---|
 | **Dials, connected, talk time** | The Maqsam dialer import in Creative Triage (`mahara_reporting.facts`): outbound calls with one agent; connected = completed with duration. | Connected can include voicemail. Only the accounts the dialer imports. |
+| **Gap between calls** | For each agent, the time from one outbound call ending to their next one starting, on the same Kuwait day, counted in working minutes only (`mahara_reporting.facts`, source maqsam). The median leads because one long break drags a mean; the count of gaps over 30 minutes is the part to act on. | An overnight or a weekend is never idle time. A gap longer than a full working day is left out: that is a day off or a break in the import. It needs two calls by the same agent on the same day, so a one call day has no gap. |
 | **Speed to lead (clients)** | For DFY clients' leads, the first outbound dial to the lead's phone. Two clocks: the plain clock, and the working clock, where the time starts at the later of the lead's creation and the next working window and only working minutes count. Working hours live in `cockpit_settings` (key `working_hours`), editable on the tab; the default is 10:00 to 18:00 Asia/Kuwait, Saturday to Thursday. | Only since 2026-09-12. A call before the clock starts counts as 0 minutes. |
 
 ## Client success tab
@@ -142,7 +143,7 @@ The one funnel Mahara runs on repeat, for five roles. Built 2026-09-22.
 | **Days in stage, stale** | `stage_since`, reset whenever the card moves. Stale is more than the engine's stale line, seven days by default. | A card imported from form history starts its clock at import, not at application. |
 | **Conversion and time to offer** | Hired over applied per role, and the median days from application to the offer date on the card. | Both read low until a full cohort has been through; the imported history has no stage moves behind it. |
 | **The messages** | The engine composes from the role's GoHighLevel custom values (test project, Loom request, compensation, daily responsibilities, position video, job post, apply link) so Aziz edits them there, not in code. Every message goes out on email and on SMS, with WhatsApp tried only when the SMS rail refuses. Every send is a row in `cockpit_hiring_events`. | It is disarmed until Aziz arms it: disarmed, every message is written down and nothing is sent. The offer message is switched off by default even when armed. The same six messages also exist as GoHighLevel workflows; arm one or the other, never both. |
-| **The recruiting agent** | `hiring/agent.ts` scores an application against the role's scorecard with the reasons for and against, and the questions that would settle it. It learns from the gap between its score and Aziz's, keeping disagreements of two points or more as examples for later screenings. | It proposes only. It never moves a card and never sends a message. |
+| **The recruiting agent** | Runs on the VPS (`hermes/ideation-radar`, `radar.py hiring`, every 30 minutes) on the language model keys that box already holds, cheapest first. It reads the application out of `cockpit_hiring_applications`, scores it against the role's scorecard published in `cockpit_hiring_meta`, and writes `agent_score`, `agent_verdict`, `agent_note` and `agent_asks` onto the candidate row. It learns from the gap between its score and Aziz's, keeping disagreements of two points or more. | It proposes only. It never moves a card and never sends a message. It needs no key on the cockpit's deployment. |
 
 ## Machine tab
 
@@ -159,7 +160,7 @@ The one funnel Mahara runs on repeat, for five roles. Built 2026-09-22.
 7. **The sales rep form.** Settled 2026-09-22: two boards, closer and setter. Everyone answers the one closer's form and lands on the closer board; Aziz starts the ones who are not ready yet on the setter track and moves them up when they are, from the Recruiting tab. The form itself still cannot tell the two apart, so the decision is his on every candidate.
 8. **The video editor.** Five questions, no careers page of its own, last touched 2026-06-27 while the other four were rebuilt on 2026-09-07. It asks for no CV, no location and no start date.
 9. **Where applicants come from.** No form carries a hidden source field, so a channel cannot be judged on hires. Adding one is a form change.
-10. **Arming the hiring engine.** It is disarmed, so candidate messages are written and held. Read them on the Recruiting tab, fix the wording in the GoHighLevel custom values, fill in the two booking links, then arm it.
+10. **Who sends candidate messages.** Settled 2026-09-22: GoHighLevel does, from the 36 published workflows. The cockpit's own engine stands down entirely so nobody is messaged twice. To take sending back, switch the sender to the cockpit on the Recruiting tab.
 
 ## Two things only Aziz can settle (from the first pass)
 

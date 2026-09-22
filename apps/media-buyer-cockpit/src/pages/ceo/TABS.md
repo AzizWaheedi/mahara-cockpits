@@ -917,10 +917,14 @@ GoHighLevel custom value, per role: test project, Loom request, compensation,
 daily responsibilities, position breakdown video, job post. Plus the global
 booking links and sender details. Code seeds them once and never overwrites.
 
-**The recruiting agent.** `convex/hiring/agent.ts` scores an application
-against the role's scorecard, gives the reasons for and against and the
-questions that would settle it, and learns from the gap between its score and
-his. It proposes only. It needs ANTHROPIC_API_KEY; everything else does not.
+**The recruiting agent.** It runs on the VPS, not here (Aziz, 2026-09-22:
+"You don't need the API key. Just tell me what you want the VPS to do. It can
+make the agent."). `radar.py hiring` every half hour, cheapest model first,
+reading the application out of `cockpit_hiring_applications` and the scorecard
+out of `cockpit_hiring_meta` so there is no second copy of the spec to drift.
+It writes its score, verdict, reasoning and the questions to ask onto the
+candidate row, and the grading queue shows them beside the box Aziz types his
+own score into. It proposes only, and it learns from the gap.
 
 **Build contract.** `convex/hiring/spec.ts` is the one description of roles,
 stages and fields. Change it there, run `hiring/setup:apply` then

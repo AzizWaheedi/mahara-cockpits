@@ -151,7 +151,18 @@ export function CallsTab({ sections, now, day }: CeoTabProps) {
           now={now}
           day={day}
           order={1}
+          className="@4xl:col-span-12"
         />
+
+        <SectionCard
+          kicker="Last 7 days"
+          title="Gap between calls"
+          section={section}
+          order={2}
+          className="@4xl:col-span-12"
+        >
+          {d => <GapBody d={d} />}
+        </SectionCard>
 
         <SectionCard
           kicker="Last 30 days"
@@ -374,6 +385,75 @@ function Headline({
   );
 }
 
+/**
+ * How long agents are off the phone between their own calls, counted in
+ * working minutes only (Aziz, 2026-09-22). Talk time says how long they were
+ * on; this says how long they were not, during hours somebody is meant to be
+ * dialling. An overnight or a weekend is never idle time, so the number is
+ * about the shift and not about the calendar.
+ *
+ * The median leads because one long break drags a mean. The count over half an
+ * hour is the part worth acting on: a median of three minutes with nineteen
+ * half-hour holes is a different week from a steady eight.
+ */
+function GapBody({ d }: { d: CallsPayload }) {
+  const h = d.workingHours;
+  const hoursLine = h
+    ? `${h.start} to ${h.end}, ${daysLabel(h.days)}`
+    : "the hours set on this tab";
+  const g = d.gap;
+  if (!g || (!g.last7 && !g.today))
+    return (
+      <p className="text-sm text-muted-foreground">
+        No gap to measure yet. It needs two calls by the same agent on the same
+        working day.
+      </p>
+    );
+  const w = g.last7;
+  const t = g.today;
+  return (
+    <div className="grid min-w-0 gap-5">
+      <div className="grid min-w-0 grid-cols-2 gap-x-6 gap-y-5 @xl:grid-cols-4">
+        <StatTile
+          variant="plain"
+          label="Median gap, 7 days"
+          value={<Value value={minutes(w?.medianMin)} />}
+          hint="The middle gap between one call ending and the next starting, working minutes only."
+        />
+        <StatTile
+          variant="plain"
+          label="Gaps over 30 minutes"
+          value={<Value value={count(w?.over30)} />}
+          hint="Over the last 7 days. This is the number worth asking about."
+        />
+        <StatTile
+          variant="plain"
+          label="Longest gap"
+          value={<Value value={minutes(w?.longestMin)} />}
+          hint="The single longest stretch inside working hours in the last 7 days."
+        />
+        <StatTile
+          variant="plain"
+          label="Median gap today"
+          value={<Value value={minutes(t?.medianMin)} />}
+          hint={
+            t
+              ? `Across ${t.gaps} gap${t.gaps === 1 ? "" : "s"} so far today.`
+              : "Nothing to measure yet today."
+          }
+        />
+      </div>
+      <p className="ceo-facts">
+        {w
+          ? `${count(w.gaps)} gaps measured over 7 days, mean ${minutes(w.meanMin)}. `
+          : ""}
+        Counted on the working clock, {hoursLine}. A gap longer than a full
+        working day is left out: that is a day off, not somebody sitting still.
+      </p>
+    </div>
+  );
+}
+
 // --- Charts ---------------------------------------------------------------------
 
 function DailyChart({
@@ -521,6 +601,25 @@ function AgentsTable({
       numeric: true,
       cell: r => talk(r.today.talkMinutes),
       sortValue: r => r.today.talkMinutes,
+    },
+    {
+      key: "gap",
+      header: "Gap, 7 days",
+      numeric: true,
+      // The median, because one long break drags a mean. Beside it, how many
+      // of this agent's gaps ran past half an hour, which is the part to ask
+      // about.
+      cell: r => (
+        <span className="inline-flex min-w-0 items-baseline gap-1.5">
+          <Value value={minutes(r.gap7d?.medianMin)} />
+          {r.gap7d?.over30 ? (
+            <span className="text-xs text-muted-foreground">
+              {count(r.gap7d.over30)} over 30
+            </span>
+          ) : null}
+        </span>
+      ),
+      sortValue: r => r.gap7d?.medianMin ?? null,
     },
     {
       key: "weekDials",

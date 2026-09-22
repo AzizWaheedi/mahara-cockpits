@@ -45,12 +45,15 @@ export function DeliveryTimeframeCard({
   now,
   day,
   order,
+  className,
 }: {
   section: CeoSection<"delivery"> | null;
   rows: { date: string; spend: number; leads: number; bookings: number }[];
   now: number;
   day: string | null;
   order: number;
+  /** How many columns this card takes in the tab's grid. */
+  className?: string;
 }) {
   const today = day ?? kuwaitDay(now);
   const { tf, first, last, bounds, inRange, days } = useBounds(
@@ -68,6 +71,7 @@ export function DeliveryTimeframeCard({
       section={section}
       notes={[NOTE]}
       order={order}
+      className={className}
     >
       {() => (
         <div className="grid gap-4">
@@ -116,6 +120,7 @@ export function CallsTimeframeCard({
   now,
   day,
   order,
+  className,
 }: {
   section: CeoSection<"calls"> | null;
   rows: {
@@ -127,6 +132,8 @@ export function CallsTimeframeCard({
   now: number;
   day: string | null;
   order: number;
+  /** How many columns this card takes in the tab's grid. */
+  className?: string;
 }) {
   const today = day ?? kuwaitDay(now);
   const { tf, first, last, bounds, inRange, days } = useBounds(
@@ -144,6 +151,7 @@ export function CallsTimeframeCard({
       section={section}
       notes={[NOTE]}
       order={order}
+      className={className}
     >
       {() => (
         <div className="grid gap-4">
@@ -185,6 +193,7 @@ export function MoneyTimeframeCard({
   now,
   day,
   order,
+  className,
 }: {
   section: CeoSection<"money"> | null;
   rails: {
@@ -195,6 +204,8 @@ export function MoneyTimeframeCard({
   now: number;
   day: string | null;
   order: number;
+  /** How many columns this card takes in the tab's grid. */
+  className?: string;
 }) {
   const today = day ?? kuwaitDay(now);
   const total = rails.find(r => r.label.startsWith("All rails")) ?? rails[0];
@@ -218,6 +229,7 @@ export function MoneyTimeframeCard({
       section={section}
       notes={[NOTE]}
       order={order}
+      className={className}
     >
       {() => (
         <div className="grid gap-4">
