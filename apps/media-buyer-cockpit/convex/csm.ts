@@ -221,6 +221,15 @@ export const submitEod = authenticatedMutation({
     };
     if (existing) await ctx.db.patch(existing._id, row);
     else await ctx.db.insert("eodReports", row);
+
+    // And out, same as the media buyer's own. Saved here it reaches
+    // nobody: the tracking sheet is built from the Slack channels.
+    await ctx.scheduler.runAfter(0, internal.eodOut.send, {
+      day,
+      answers: args.answers,
+      computed: args.computed,
+      email: row.email,
+    });
     return null;
   },
 });
