@@ -1,8 +1,25 @@
 import { useAction } from "convex/react";
-import { Check, Clock, Plus, UserPlus, Users, X } from "lucide-react";
+import {
+  Bot,
+  Check,
+  Clock,
+  Pause,
+  Play,
+  Plus,
+  UserPlus,
+  Users,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
-import { count, money, plural } from "@/components/ceo/format";
+import { Facts } from "@/components/ceo/Facts";
+import {
+  count,
+  kuwaitDay,
+  money,
+  plural,
+  shortDate,
+} from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
@@ -37,7 +54,11 @@ import type { CeoTabProps } from "./types";
  * they do, what they are paid a month and whether they earn commission, with
  * the pay editable in place and one switch to take somebody off the team
  * (they are never deleted: the months they were paid for still happened).
- * Payroll at the top is the sum of the people on the team, in dollars.
+ * Payroll at the top is the sum of the people being paid, in dollars.
+ *
+ * Three states, kept apart so the total never hides one: being paid, paused
+ * (on the team, off this month's payroll, and back with one press), and the
+ * shared accounts, which are not colleagues and are never a cost.
  */
 
 const ENGAGEMENTS: { value: Person["engagement"]; label: string }[] = [
@@ -45,6 +66,8 @@ const ENGAGEMENTS: { value: Person["engagement"]; label: string }[] = [
   { value: "freelancer", label: "Freelancer" },
   { value: "agency", label: "Agency" },
   { value: "intern", label: "Intern" },
+  // A shared mailbox or an automation: never headcount, never a cost.
+  { value: "bot", label: "Shared account" },
 ];
 const CURRENCIES = ["USD", "KWD", "EGP", "SAR", "AED"];
 
@@ -59,6 +82,8 @@ function serverMessage(e: unknown): string {
 }
 
 const field = "rounded-md border bg-background px-2 py-1 text-sm";
+/** The same control, quiet enough to sit in the line under a person's name. */
+const fieldXs = "rounded border bg-background px-1.5 py-0.5 text-xs";
 
 type Draft = {
   monthlyCost: string;
@@ -89,6 +114,92 @@ const draftOf = (p: Person): Draft => ({
 const takesRate = (b: CommissionBasis) => b !== "none" && b !== "other";
 
 const tabular = { fontVariantNumeric: "tabular-nums" } as const;
+
+/** What the role select carries for a role that is not on the offered list. */
+const OTHER = "__other";
+
+/**
+ * What somebody does: the roles Mahara has, and still anything typed.
+ *
+ * The server offers the roles the company names plus every role already on
+ * the roster, and says so is open ended, so "Something else" hands back a
+ * plain box. Both controls are native, so a keyboard and a 375px screen get
+ * the same thing, and if the list cannot be read the box is all that is left.
+ */
+function RoleField({
+  value,
+  roles,
+  label,
+  disabled,
+  className = field,
+  onChange,
+}: {
+  value: string;
+  /** The offered roles. Empty falls back to a plain box that takes anything. */
+  roles: string[];
+  /** What this field is, for a screen reader. */
+  label: string;
+  disabled?: boolean;
+  className?: string;
+  onChange: (role: string) => void;
+}) {
+  // null follows the value: a role on the list selects itself, and the box
+  // opens on its own for a role that is not on it.
+  const [typed, setTyped] = useState<boolean | null>(null);
+  const known = value.trim() !== "" && roles.includes(value);
+  const other = typed ?? (value.trim() !== "" && !known);
+  const box = `${className} min-w-0 max-w-full`;
+
+  if (!roles.length)
+    return (
+      <input
+        value={value}
+        disabled={disabled}
+        onChange={e => onChange(e.target.value)}
+        placeholder="what they do"
+        aria-label={label}
+        className={box}
+      />
+    );
+
+  return (
+    <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+      <select
+        value={other ? OTHER : known ? value : ""}
+        disabled={disabled}
+        onChange={e => {
+          if (e.target.value === OTHER) {
+            setTyped(true);
+            onChange("");
+            return;
+          }
+          setTyped(false);
+          onChange(e.target.value);
+        }}
+        aria-label={label}
+        className={box}
+      >
+        <option value="">What they do</option>
+        {roles.map(r => (
+          <option key={r} value={r}>
+            {r}
+          </option>
+        ))}
+        <option value={OTHER}>Something else</option>
+      </select>
+      {other ? (
+        <input
+          value={value}
+          disabled={disabled}
+          onChange={e => onChange(e.target.value)}
+          placeholder="type the role"
+          aria-label={`${label}, typed`}
+          className={box}
+        />
+      ) : null}
+    </span>
+  );
+}
 
 function Toggle({
   on,
@@ -422,13 +533,23 @@ function HoursEditor({
   );
 }
 
-function Row({ p, onChanged }: { p: Person; onChanged: () => Promise<void> }) {
+function Row({
+  p,
+  roles,
+  onChanged,
+}: {
+  p: Person;
+  roles: string[];
+  onChanged: () => Promise<void>;
+}) {
   const save = useAction(api.ceo.people.save);
   const setActive = useAction(api.ceo.people.setActive);
   const [d, setD] = useState<Draft>(() => draftOf(p));
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [hoursOpen, setHoursOpen] = useState(false);
+  const [pausing, setPausing] = useState(false);
+  const [why, setWhy] = useState("");
   const base = draftOf(p);
   const dirty =
     d.monthlyCost !== base.monthlyCost ||
@@ -485,26 +606,58 @@ function Row({ p, onChanged }: { p: Person; onChanged: () => Promise<void> }) {
     }
   };
 
+  /** Pausing and unpausing are the same save the row already does. */
+  const pause = () =>
+    act(async () => {
+      await save({
+        ...argsOf(d),
+        pausedOn: kuwaitDay(),
+        pausedWhy: why.trim(),
+      });
+      setPausing(false);
+      setWhy("");
+    });
+  const unpause = () =>
+    act(() => save({ ...argsOf(d), pausedOn: null, pausedWhy: null }));
+
   const initial = (p.name || p.email || "?").trim().charAt(0).toUpperCase();
+  // A shared account is not a colleague: no pay, no commission, no hours.
+  const account = p.engagement === "bot";
+  const paused = !account && Boolean(p.pausedOn);
+  const onWord = account ? "in use" : "on the team";
+  const offWord = account ? "retired" : "off the team";
 
   return (
     <div className="grid gap-2 py-3 @3xl:grid-cols-[minmax(0,1.4fr)_15rem_13rem_auto] @3xl:items-center">
       <div className="flex min-w-0 items-center gap-3">
-        <span
-          className={`flex size-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${p.active ? "bg-[var(--ceo-emphasis-wash)] text-[var(--ceo-emphasis)]" : "bg-muted text-muted-foreground"}`}
-          aria-hidden
-        >
-          {initial}
-        </span>
+        {account ? (
+          <span
+            className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground"
+            aria-hidden
+          >
+            <Bot className="size-4" aria-hidden />
+          </span>
+        ) : (
+          <span
+            className={`flex size-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${p.active ? "bg-[var(--ceo-emphasis-wash)] text-[var(--ceo-emphasis)]" : "bg-muted text-muted-foreground"}`}
+            aria-hidden
+          >
+            {initial}
+          </span>
+        )}
         <div className="min-w-0">
-          <div className="truncate font-medium">{p.name}</div>
-          <div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
-            <input
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className="truncate font-medium">{p.name}</span>
+            {paused ? <StatusChip tone="neutral" label="Paused" /> : null}
+          </div>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+            <RoleField
               value={d.role}
-              onChange={e => setD({ ...d, role: e.target.value })}
-              placeholder="what they do"
-              aria-label={`${p.name}'s role`}
-              className="w-40 rounded border-0 border-b border-transparent bg-transparent px-0 py-0 text-xs focus:border-b-foreground focus:outline-none"
+              roles={roles}
+              label={`${p.name}'s role`}
+              disabled={busy}
+              className={`${fieldXs} w-40`}
+              onChange={role => setD({ ...d, role })}
             />
             <span>
               {ENGAGEMENTS.find(e => e.value === p.engagement)?.label ??
@@ -512,93 +665,110 @@ function Row({ p, onChanged }: { p: Person; onChanged: () => Promise<void> }) {
             </span>
             {p.email ? <span className="truncate">{p.email}</span> : null}
           </div>
-          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
-            <Clock className="size-3 shrink-0" aria-hidden />
-            <span className="min-w-0 truncate">
-              {p.schedule ? scheduleSummary(p.schedule) : "no hours set"}
-            </span>
-            <button
-              type="button"
-              onClick={() => setHoursOpen(v => !v)}
-              aria-expanded={hoursOpen}
-              className="font-medium text-foreground/80 underline-offset-2 hover:underline"
+          {paused ? (
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {`Still on the team, paused since ${shortDate(p.pausedOn)}${p.pausedWhy ? `: ${p.pausedWhy}` : ", no reason recorded"}`}
+            </p>
+          ) : null}
+          {account ? (
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              An account Mahara runs, not a colleague.
+            </p>
+          ) : (
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+              <Clock className="size-3 shrink-0" aria-hidden />
+              <span className="min-w-0 truncate">
+                {p.schedule ? scheduleSummary(p.schedule) : "no hours set"}
+              </span>
+              <button
+                type="button"
+                onClick={() => setHoursOpen(v => !v)}
+                aria-expanded={hoursOpen}
+                className="font-medium text-foreground/80 underline-offset-2 hover:underline"
+              >
+                {hoursOpen ? "Close" : "Edit hours"}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+      {account ? (
+        <p className="text-xs text-muted-foreground @3xl:col-span-2">
+          No pay and no commission
+        </p>
+      ) : (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 @3xl:contents">
+          <div className="flex flex-wrap items-center gap-1.5 text-sm">
+            <input
+              inputMode="decimal"
+              value={d.monthlyCost}
+              onChange={e => setD({ ...d, monthlyCost: e.target.value })}
+              placeholder="pay a month"
+              aria-label={`${p.name}'s monthly pay`}
+              className={`${field} w-24 text-right`}
+              style={{ fontVariantNumeric: "tabular-nums" }}
+            />
+            <select
+              value={d.currency}
+              onChange={e => setD({ ...d, currency: e.target.value })}
+              aria-label="Currency"
+              className={`${field} w-20`}
             >
-              {hoursOpen ? "Close" : "Edit hours"}
-            </button>
+              {CURRENCIES.map(c => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+            {p.monthlyUsd !== null && d.currency !== "USD" ? (
+              <span className="text-xs text-muted-foreground">{`≈ ${money(p.monthlyUsd)}`}</span>
+            ) : null}
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5 text-sm">
+            <select
+              value={d.basis}
+              onChange={e =>
+                setD({ ...d, basis: e.target.value as CommissionBasis })
+              }
+              aria-label={`What ${p.name}'s commission is paid on`}
+              className={`${field} max-w-[12rem]`}
+            >
+              {COMMISSION_BASES.map(b => (
+                <option key={b} value={b}>
+                  {COMMISSION_SHORT[b]}
+                </option>
+              ))}
+            </select>
+            {takesRate(d.basis) ? (
+              <span className="flex items-center gap-1">
+                <input
+                  inputMode="decimal"
+                  value={d.rate}
+                  onChange={e => setD({ ...d, rate: e.target.value })}
+                  placeholder={SHARE_BASES.has(d.basis) ? "10" : "50"}
+                  aria-label={`${p.name}'s commission rate`}
+                  className={`${field} w-16 text-right`}
+                  style={{ fontVariantNumeric: "tabular-nums" }}
+                />
+                <span className="text-xs text-muted-foreground">
+                  {SHARE_BASES.has(d.basis) ? "%" : d.currency}
+                </span>
+              </span>
+            ) : null}
+            {d.basis === "other" || d.note ? (
+              <input
+                value={d.note}
+                onChange={e => setD({ ...d, note: e.target.value })}
+                placeholder="how it works"
+                aria-label={`${p.name}'s commission note`}
+                className={`${field} w-36`}
+              />
+            ) : null}
+            {p.isSales ? <StatusChip tone="neutral" label="sales" /> : null}
           </div>
         </div>
-      </div>
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 @3xl:contents">
-        <div className="flex flex-wrap items-center gap-1.5 text-sm">
-          <input
-            inputMode="decimal"
-            value={d.monthlyCost}
-            onChange={e => setD({ ...d, monthlyCost: e.target.value })}
-            placeholder="pay a month"
-            aria-label={`${p.name}'s monthly pay`}
-            className={`${field} w-24 text-right`}
-            style={{ fontVariantNumeric: "tabular-nums" }}
-          />
-          <select
-            value={d.currency}
-            onChange={e => setD({ ...d, currency: e.target.value })}
-            aria-label="Currency"
-            className={`${field} w-20`}
-          >
-            {CURRENCIES.map(c => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
-          {p.monthlyUsd !== null && d.currency !== "USD" ? (
-            <span className="text-xs text-muted-foreground">{`≈ ${money(p.monthlyUsd)}`}</span>
-          ) : null}
-        </div>
-        <div className="flex flex-wrap items-center gap-1.5 text-sm">
-          <select
-            value={d.basis}
-            onChange={e =>
-              setD({ ...d, basis: e.target.value as CommissionBasis })
-            }
-            aria-label={`What ${p.name}'s commission is paid on`}
-            className={`${field} max-w-[12rem]`}
-          >
-            {COMMISSION_BASES.map(b => (
-              <option key={b} value={b}>
-                {COMMISSION_SHORT[b]}
-              </option>
-            ))}
-          </select>
-          {takesRate(d.basis) ? (
-            <span className="flex items-center gap-1">
-              <input
-                inputMode="decimal"
-                value={d.rate}
-                onChange={e => setD({ ...d, rate: e.target.value })}
-                placeholder={SHARE_BASES.has(d.basis) ? "10" : "50"}
-                aria-label={`${p.name}'s commission rate`}
-                className={`${field} w-16 text-right`}
-                style={{ fontVariantNumeric: "tabular-nums" }}
-              />
-              <span className="text-xs text-muted-foreground">
-                {SHARE_BASES.has(d.basis) ? "%" : d.currency}
-              </span>
-            </span>
-          ) : null}
-          {d.basis === "other" || d.note ? (
-            <input
-              value={d.note}
-              onChange={e => setD({ ...d, note: e.target.value })}
-              placeholder="how it works"
-              aria-label={`${p.name}'s commission note`}
-              className={`${field} w-36`}
-            />
-          ) : null}
-          {p.isSales ? <StatusChip tone="neutral" label="sales" /> : null}
-        </div>
-      </div>
-      <div className="flex items-center justify-end gap-2">
+      )}
+      <div className="flex flex-wrap items-center justify-end gap-2">
         {dirty ? (
           <button
             type="button"
@@ -609,15 +779,38 @@ function Row({ p, onChanged }: { p: Person; onChanged: () => Promise<void> }) {
             <Check className="size-3.5" aria-hidden /> Save
           </button>
         ) : null}
+        {account || !p.active ? null : paused ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={unpause}
+            className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs hover:bg-muted disabled:opacity-50"
+          >
+            <Play className="size-3.5" aria-hidden /> Unpause
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled={busy}
+            aria-expanded={pausing}
+            onClick={() => {
+              setWhy("");
+              setPausing(v => !v);
+            }}
+            className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs text-muted-foreground hover:bg-muted disabled:opacity-50"
+          >
+            <Pause className="size-3.5" aria-hidden /> Pause
+          </button>
+        )}
         <label className="flex cursor-pointer items-center gap-2 text-xs">
           <span className="text-muted-foreground">
-            {p.active ? "on the team" : "off the team"}
+            {p.active ? onWord : offWord}
           </span>
           <button
             type="button"
             role="switch"
             aria-checked={p.active}
-            aria-label={`${p.name} ${p.active ? "is on the team" : "is off the team"}`}
+            aria-label={`${p.name} is ${p.active ? onWord : offWord}`}
             disabled={busy}
             onClick={() =>
               act(() =>
@@ -638,6 +831,37 @@ function Row({ p, onChanged }: { p: Person; onChanged: () => Promise<void> }) {
           </button>
         </label>
       </div>
+      {pausing ? (
+        <div className="flex flex-wrap items-center gap-1.5 text-xs @3xl:col-span-4">
+          <span className="text-muted-foreground">Paused because</span>
+          <input
+            value={why}
+            onChange={e => setWhy(e.target.value)}
+            placeholder="between projects"
+            aria-label={`Why ${p.name} is paused`}
+            className={`${field} w-56 max-w-full`}
+          />
+          <button
+            type="button"
+            disabled={busy || !why.trim()}
+            onClick={pause}
+            className="inline-flex items-center gap-1 rounded-md bg-foreground px-2.5 py-1 text-xs font-medium text-background disabled:opacity-50"
+          >
+            <Pause className="size-3.5" aria-hidden /> Pause
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => setPausing(false)}
+            className="rounded-md border px-2.5 py-1 text-xs hover:bg-muted disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <span className="text-muted-foreground">
+            They stay on the team, off this month's payroll.
+          </span>
+        </div>
+      ) : null}
       {msg ? (
         <p className="text-xs text-[var(--ceo-critical)] @3xl:col-span-4">
           {msg}
@@ -655,7 +879,13 @@ function Row({ p, onChanged }: { p: Person; onChanged: () => Promise<void> }) {
   );
 }
 
-function AddPerson({ onAdded }: { onAdded: () => Promise<void> }) {
+function AddPerson({
+  roles,
+  onAdded,
+}: {
+  roles: string[];
+  onAdded: () => Promise<void>;
+}) {
   const save = useAction(api.ceo.people.save);
   const importWorkspace = useAction(api.ceo.people.importWorkspace);
   const [open, setOpen] = useState(false);
@@ -723,12 +953,12 @@ function AddPerson({ onAdded }: { onAdded: () => Promise<void> }) {
             aria-label="Name"
             className={field}
           />
-          <input
+          <RoleField
             value={role}
-            onChange={e => setRole(e.target.value)}
-            placeholder="What they do"
-            aria-label="Role"
-            className={field}
+            roles={roles}
+            label="Role"
+            disabled={busy}
+            onChange={setRole}
           />
           <select
             value={engagement}
@@ -744,26 +974,34 @@ function AddPerson({ onAdded }: { onAdded: () => Promise<void> }) {
               </option>
             ))}
           </select>
-          <input
-            inputMode="decimal"
-            value={pay}
-            onChange={e => setPay(e.target.value)}
-            placeholder="Pay a month"
-            aria-label="Monthly pay"
-            className={field}
-          />
-          <select
-            value={currency}
-            onChange={e => setCurrency(e.target.value)}
-            aria-label="Currency"
-            className={field}
-          >
-            {CURRENCIES.map(c => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
+          {engagement === "bot" ? (
+            <p className="self-center text-xs text-muted-foreground @3xl:col-span-2">
+              An account, never paid
+            </p>
+          ) : (
+            <>
+              <input
+                inputMode="decimal"
+                value={pay}
+                onChange={e => setPay(e.target.value)}
+                placeholder="Pay a month"
+                aria-label="Monthly pay"
+                className={field}
+              />
+              <select
+                value={currency}
+                onChange={e => setCurrency(e.target.value)}
+                aria-label="Currency"
+                className={field}
+              >
+                {CURRENCIES.map(c => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
           <button
             type="button"
             disabled={busy || !name.trim()}
@@ -773,7 +1011,10 @@ function AddPerson({ onAdded }: { onAdded: () => Promise<void> }) {
                   name: name.trim(),
                   role: role.trim() || undefined,
                   engagement,
-                  monthlyCost: pay.trim() === "" ? undefined : Number(pay),
+                  monthlyCost:
+                    engagement === "bot" || pay.trim() === ""
+                      ? undefined
+                      : Number(pay),
                   currency,
                 });
                 setName("");
@@ -794,7 +1035,9 @@ function AddPerson({ onAdded }: { onAdded: () => Promise<void> }) {
 
 export function TeamTab(_props: CeoTabProps) {
   const load = useAction(api.ceo.people.list);
+  const loadRoles = useAction(api.ceo.people.roles);
   const [data, setData] = useState<Roster | null>(null);
+  const [roles, setRoles] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showGone, setShowGone] = useState(false);
 
@@ -805,22 +1048,39 @@ export function TeamTab(_props: CeoTabProps) {
     } catch (e) {
       setError(serverMessage(e));
     }
-  }, [load]);
+    try {
+      setRoles((await loadRoles({})) as string[]);
+    } catch {
+      // The roles are only a suggestion: without them the box still takes
+      // anything typed, so a roster edit never waits on this call.
+      setRoles([]);
+    }
+  }, [load, loadRoles]);
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
+  // The accounts sit at the foot of the list, so "on the team" reads as people.
   const live = useMemo(
-    () => (data?.people ?? []).filter(p => p.active),
+    () =>
+      (data?.people ?? [])
+        .filter(p => p.active)
+        .sort(
+          (a, b) =>
+            Number(a.engagement === "bot") - Number(b.engagement === "bot"),
+        ),
     [data],
   );
   const gone = useMemo(
     () => (data?.people ?? []).filter(p => !p.active),
     [data],
   );
-  const uncosted = live.filter(p => p.monthlyCost === null).length;
-  const external = live.filter(p => p.engagement !== "staff").length;
-  const onCommission = live.filter(p => p.commission.basis !== "none").length;
+  const working = live.filter(p => p.working);
+  const uncosted = data?.missingCost.length ?? 0;
+  const external = working.filter(p => p.engagement !== "staff").length;
+  const onCommission = working.filter(
+    p => p.commission.basis !== "none",
+  ).length;
 
   return (
     <div className="@container grid gap-4 lg:gap-6">
@@ -831,39 +1091,62 @@ export function TeamTab(_props: CeoTabProps) {
       >
         {() => (
           <div className="grid gap-5">
-            <div className="grid grid-cols-2 gap-x-6 gap-y-5 @lg:grid-cols-4">
-              <StatTile
-                variant="plain"
-                label="On the team"
-                value={data ? count(live.length) : "—"}
-                sub={
-                  data ? `${count(external)} freelance or agency` : undefined
-                }
-              />
-              <StatTile
-                variant="plain"
-                label="Payroll a month"
-                value={data ? money(data.activeMonthlyUsd) : "—"}
-                sub={
-                  uncosted
-                    ? `${plural(uncosted, "person", "people")} not costed yet`
-                    : "everyone costed"
-                }
-                hint="The sum of monthly pay for everyone on the team, converted to dollars at the cockpit's fixed rates. People without a pay figure are missing from it, not zero."
-              />
-              <StatTile
-                variant="plain"
-                label="On commission"
-                value={data ? count(onCommission) : "—"}
-              />
-              <StatTile
-                variant="plain"
-                label="Off the team"
-                value={data ? count(gone.length) : "—"}
-                sub="kept for the months they were paid"
+            <div>
+              <div className="grid grid-cols-2 gap-x-6 gap-y-5 @xl:grid-cols-3 @4xl:grid-cols-5">
+                <StatTile
+                  variant="plain"
+                  label="On payroll"
+                  value={data ? count(data.activeCount) : "—"}
+                  sub={
+                    data ? `${count(external)} freelance or agency` : undefined
+                  }
+                  hint="Everyone on the team being paid this month. Paused people and shared accounts are counted beside it, not inside it."
+                />
+                <StatTile
+                  variant="plain"
+                  label="Payroll a month"
+                  value={data ? money(data.activeMonthlyUsd) : "—"}
+                  sub={
+                    uncosted
+                      ? `${plural(uncosted, "person", "people")} not costed yet`
+                      : "everyone costed"
+                  }
+                  hint="The sum of monthly pay for everyone being paid, converted to dollars at the cockpit's fixed rates. Paused people and shared accounts are out of it, and people without a pay figure are missing from it, not zero."
+                />
+                <StatTile
+                  variant="plain"
+                  label="Paused"
+                  value={data ? count(data.pausedCount) : "—"}
+                  sub={
+                    data?.pausedCount
+                      ? `${money(data.pausedMonthlyUsd)} held back this month`
+                      : "everyone on the team is being paid"
+                  }
+                  hint="On the team and off this month's payroll. Their pay is kept out of the payroll figure, and comes back the day they do."
+                />
+                <StatTile
+                  variant="plain"
+                  label="On commission"
+                  value={data ? count(onCommission) : "—"}
+                />
+                <StatTile
+                  variant="plain"
+                  label="Off the team"
+                  value={data ? count(gone.length) : "—"}
+                  sub="kept for the months they were paid"
+                />
+              </div>
+              <Facts
+                items={[
+                  {
+                    label: "Shared accounts",
+                    value: data ? count(data.botCount) : null,
+                    hint: "Mailboxes and automations on the roster. Never headcount, never a cost.",
+                  },
+                ]}
               />
             </div>
-            <AddPerson onAdded={refresh} />
+            <AddPerson roles={roles} onAdded={refresh} />
             {error ? (
               <p className="text-sm text-[var(--ceo-critical)]">{error}</p>
             ) : null}
@@ -873,7 +1156,7 @@ export function TeamTab(_props: CeoTabProps) {
 
       <SectionCard
         title="On the team"
-        kicker="pay, commission and hours edit in place; the switch takes somebody off"
+        kicker="pay, commission and hours edit in place; pause somebody without taking them off"
         order={1}
       >
         {() =>
@@ -886,7 +1169,7 @@ export function TeamTab(_props: CeoTabProps) {
                 <span />
               </div>
               {live.map(p => (
-                <Row key={p.id} p={p} onChanged={refresh} />
+                <Row key={p.id} p={p} roles={roles} onChanged={refresh} />
               ))}
             </div>
           ) : (
@@ -919,7 +1202,7 @@ export function TeamTab(_props: CeoTabProps) {
             showGone ? (
               <div className="divide-y">
                 {gone.map(p => (
-                  <Row key={p.id} p={p} onChanged={refresh} />
+                  <Row key={p.id} p={p} roles={roles} onChanged={refresh} />
                 ))}
               </div>
             ) : null

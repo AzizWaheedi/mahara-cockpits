@@ -21,10 +21,16 @@ import type { Person, Roster } from "../../../convex/ceo/people";
 
 type Engagement = Person["engagement"];
 
+/**
+ * The same roster the Team and payroll tab edits, shown here too. Pausing
+ * somebody is done on that tab, where the reason can be typed; this one only
+ * has to tell the truth about the state so the two never disagree.
+ */
 const ENGAGEMENTS: { value: Engagement; label: string }[] = [
   { value: "staff", label: "Staff" },
   { value: "freelancer", label: "Freelancer" },
   { value: "agency", label: "Agency" },
+  { value: "bot", label: "Shared account" },
   { value: "intern", label: "Intern" },
 ];
 
@@ -216,7 +222,20 @@ export function PeopleCard({ order }: { order?: number }) {
                             .join(" · ") || "no role set"}
                         </span>
                       </td>
-                      <td className="p-2 capitalize">{p.engagement}</td>
+                      <td className="p-2">
+                        <span className="capitalize">
+                          {p.engagement === "bot"
+                            ? "Shared account"
+                            : p.engagement}
+                        </span>
+                        {p.pausedOn ? (
+                          <span className="block text-xs text-muted-foreground">
+                            Paused since {p.pausedOn}
+                            {p.pausedWhy ? `: ${p.pausedWhy}` : ""}. Change it
+                            on Team and payroll.
+                          </span>
+                        ) : null}
+                      </td>
                       <td className="p-2 text-right">
                         {p.monthlyUsd === null ? (
                           <span className="text-muted-foreground">not set</span>
