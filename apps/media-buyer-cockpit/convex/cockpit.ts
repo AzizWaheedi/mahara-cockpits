@@ -358,11 +358,13 @@ export const sendFeedback = authenticatedMutation({
   returns: v.null(),
   handler: async (ctx, { message, page }) => {
     await assertRole(ctx, "media_buyer");
+    const user = await ctx.db.get(ctx.userId);
     const now = new Date();
     const id = await ctx.db.insert("feedback", {
       role: "media_buyer",
       page,
       text: message,
+      email: user?.email ?? undefined,
       day: new Date(now.getTime() + 3 * 3600000).toISOString().slice(0, 10),
       at: now.getTime(),
       delivered: false,

@@ -92,6 +92,11 @@ export const RUNBOOK: Record<
     fix: "Set RESEND_API_KEY and AUTH_EMAIL_FROM on all three deployments; the sender domain must be verified in Resend.",
     owner: "Aziz",
   },
+  supabase: {
+    label: "Supabase (cockpit database)",
+    fix: "Check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY on the deployment. Keep SUPABASE_MIGRATION_DRY_RUN=true until the schema migration and one-row comparison have passed.",
+    owner: "Muhammed",
+  },
   jobs: {
     label: "Scheduled jobs",
     fix: "A job stopped running or keeps throwing. Hermes already has a fix job with the error. If nothing changes within an hour: scripts/ship.sh media-buyer, then read the Convex logs for the job name.",
@@ -121,6 +126,7 @@ export function sourceFor(url: string): string | undefined {
   if (/slack\.com/.test(url)) return "slack";
   if (/whapi\.cloud/.test(url)) return "whapi";
   if (/api\.resend\.com/.test(url)) return "resend";
+  if (/\.supabase\.(co|com)/.test(url)) return "supabase";
   return undefined;
 }
 

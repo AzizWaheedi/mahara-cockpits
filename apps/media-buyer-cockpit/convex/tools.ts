@@ -129,6 +129,119 @@ async function httpPost(
   return body;
 }
 
+export type CockpitFeedbackMirrorInput = {
+  sourceId: string;
+  app: string;
+  page: string;
+  role: string;
+  text: string;
+  actorEmail?: string;
+  at?: number;
+  metadata?: Record<string, unknown>;
+};
+
+export type CockpitFeedbackRow = {
+  kind: "issue";
+  text: string;
+  status: "queued";
+  created_by: string;
+  created_at: string;
+  source_system: "convex";
+  source_id: string;
+  app: string;
+  page: string;
+  role: string;
+  actor_email: string | null;
+  metadata: Record<string, unknown>;
+};
+
+const clipped = (value: unknown, max: number) =>
+  String(value ?? "")
+    .trim()
+    .slice(0, max);
+
+/** The exact additive row written during the Convex-to-Supabase shadow phase. */
+export function buildCockpitFeedbackRow(
+  input: CockpitFeedbackMirrorInput,
+): CockpitFeedbackRow {
+  const sourceId = clipped(input.sourceId, 200);
+  const app = clipped(input.app, 64);
+  const page = clipped(input.page, 255);
+  const role = clipped(input.role, 64);
+  const feedback = clipped(input.text, 10_000);
+  const actorEmail = clipped(input.actorEmail, 320).toLowerCase();
+  if (!sourceId || !app || !page || !role || !feedback) {
+    throw new Error("Supabase feedback mirror is missing a required field.");
+  }
+  return {
+    kind: "issue",
+    text: feedback,
+    status: "queued",
+    created_by: actorEmail || role,
+    created_at: new Date(input.at ?? Date.now()).toISOString(),
+    source_system: "convex",
+    source_id: sourceId,
+    app,
+    page,
+    role,
+    actor_email: actorEmail || null,
+    metadata: input.metadata ?? {},
+  };
+}
+
+type FeedbackMirrorOptions = {
+  dryRun?: boolean;
+  fetchImpl?: typeof fetch;
+};
+
+/**
+ * Shadow-write one feedback row. The default is intentionally no-write; the
+ * deployment must opt in only after the migration and comparison query pass.
+ */
+export async function mirrorCockpitFeedback(
+  input: CockpitFeedbackMirrorInput,
+  options: FeedbackMirrorOptions = {},
+): Promise<{ mode: "dry-run" | "written" }> {
+  const row = buildCockpitFeedbackRow(input);
+  const dryRun =
+    options.dryRun ?? process.env.SUPABASE_MIGRATION_DRY_RUN !== "false";
+  if (dryRun) return { mode: "dry-run" };
+
+  const base = (process.env.SUPABASE_URL ?? "").replace(/\/+$/, "");
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+  if (!base || !key) {
+    note("supabase", false, "migration mirror is not configured");
+    throw new Error(
+      "Supabase feedback mirror is not configured on this deployment.",
+    );
+  }
+
+  const url = `${base}/rest/v1/cockpit_feedback?on_conflict=source_system,source_id`;
+  let res: Response;
+  try {
+    res = await (options.fetchImpl ?? fetch)(url, {
+      method: "POST",
+      headers: {
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+        Prefer: "resolution=merge-duplicates,return=minimal",
+      },
+      body: JSON.stringify(row),
+    });
+  } catch (error) {
+    note("supabase", false, "feedback mirror network error");
+    throw error;
+  }
+  if (!res.ok) {
+    const detail = (await res.text()).slice(0, 200);
+    note("supabase", transient(res.status), `HTTP ${res.status}: ${detail}`);
+    throw new Error(`Supabase feedback mirror failed (${res.status}).`);
+  }
+  note(sourceFor(url), true);
+  return { mode: "written" };
+}
+
 // biome-ignore lint/suspicious/noExplicitAny: Graph payloads
 type Any = any;
 

@@ -7,7 +7,8 @@ import {
   internalQuery,
 } from "./_generated/server";
 import { AZIZ_SLACK_ID, CPB_GATE, CPL_GATE } from "./constants";
-import { callTool, unwrap } from "./tools";
+import { flush } from "./health";
+import { callTool, mirrorCockpitFeedback, unwrap } from "./tools";
 
 declare const process: { env: Record<string, string | undefined> };
 
@@ -557,6 +558,21 @@ export const forwardFeedback = internalAction({
   handler: async (ctx, { id }) => {
     const row = await ctx.runQuery(internal.writeback.getFeedback, { id });
     if (!row) return null;
+    try {
+      await mirrorCockpitFeedback({
+        sourceId: String(id),
+        app: "media-buyer",
+        page: String(row.page ?? "unknown"),
+        role: "media_buyer",
+        text: String(row.text ?? ""),
+        actorEmail: row.email ? String(row.email) : undefined,
+        at: Number(row.at ?? Date.now()),
+        metadata: { delivered: Boolean(row.delivered) },
+      });
+    } catch {
+      // Shadow migration failures are visible in the health ledger. They must
+      // not block the existing Slack and fix-request delivery path.
+    }
     await callOrQueue(ctx, "coworker_send_slack_message", {
       // Aziz's user id opens his DM; the old D... channel id no longer exists.
       channel_id: process.env.ALERT_SLACK_TO || AZIZ_SLACK_ID,
@@ -580,6 +596,7 @@ export const forwardFeedback = internalAction({
       console.error(`fix request failed: ${String(e).slice(0, 120)}`);
     }
     await ctx.runMutation(internal.writeback.markFeedbackDelivered, { id });
+    await flush(ctx);
     return null;
   },
 });
