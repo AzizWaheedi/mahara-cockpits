@@ -173,6 +173,46 @@ so a broken change never replaces a working deployment. Ship the receiving
 cockpits before the media buyer when a bridge payload gains a field
 (`scripts/ship.sh all` does this in the right order).
 
+Production is a CLI upload (`vercel deploy --prod`, or the Composio path when
+the CLI is logged out). The CLI stamps the local commit and does not ask
+GitHub whether that commit exists. `scripts/require-github-main.sh` runs
+first and refuses the ship unless all three are true:
+
+1. `HEAD` is already on `origin/main` (fetched during the check).
+2. The app directory matches that commit. A dirty tree is uploaded under the
+   last commit's name.
+3. The commit named in the live page's bundle is in this clone and is an
+   ancestor of `HEAD`. If production is a commit this clone does not have,
+   shipping main would replace it with an older tree.
+
+`ALLOW_UNPUSHED_SHIP=yes` skips the refusal and says so. That is the hole.
+
+On 2026-09-22 the media buyer project (`mahara-media-buyer`, source `cli`,
+user `aziz-6097`) promoted two commits that GitHub has never had. There was
+no force-push on `main`. The live site is the second of them.
+
+| Production deployment | When (UTC) | SHA | Message |
+|---|---|---|---|
+| `dpl_6v95UXNQdCgs2UBXCFT6f2isRqvE` | 2026-09-22 12:37 | `db78d278dfafaccc3cadbad4c7bdea62ccd988bf` | Goals for a period, and a real file on every person |
+| `dpl_2udZfKFVrJcYHd8cCY4LMqS6adnK` (aliased to cockpit.maharamedia.com) | 2026-09-22 13:27 | `7efca15fb6631c767489ffb343d858fa703186b8` | A person is a page, not a panel, and next month is one screen |
+
+The deploy before those, `dpl_GWpJVt8aNBez3qyNETNptUQTFSzW`, is
+`43ec8eeb1c0f1e897f1652a56a66099c67d73935`, which is on GitHub main. The
+missing commits were made after it, on a checkout of this repo, and shipped
+without a push. The tables for the same work are already on main, inside
+that commit, as `supabase/migrations/20260922e_goals_and_people.sql`. The
+screens and the Convex modules (`convex/ceo/goals.ts`, `goalsSeed.ts`,
+`profiles.ts`, `scoreboard.ts`, `scorecardSeed.ts`, and the page that calls
+`ceo.goals.savePlan`) are only in the uploaded source.
+
+Do not run `scripts/ship.sh media-buyer` from current main to "get back in
+sync". The check above will refuse it, because this clone does not contain
+`7efca15f`. Push that commit from the machine that shipped it (the reflog
+there, author Aziz Waheedi, 22 September) and then ship the descendant.
+`ship.sh` also deploys Convex before the site, from the same tree, so treat
+the production Convex deployment as possibly ahead of GitHub until that
+push is on main.
+
 ## Watchdog (the outside check)
 
 Everything above runs inside Convex, on the media buyer deployment. If Convex
