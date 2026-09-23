@@ -129,10 +129,10 @@ day/key pairs appeared in both deployments. One human completion differed:
 `2026-09-14 / sprint_1` is checked in client success but not in the media-buyer
 copy. Two labels/details also differed. The tool reports these differences and
 refuses a backfill-ready result if a media-buyer CSM key is missing from the
-client-success snapshot. The service-only Supabase checks table is now live;
-the one checked CSM canary was inserted and its audit read back. Rerunning the
-canary found an exact match and made no write. The other historical checks and
-the live writer remain in Convex.
+client-success snapshot. The service-only Supabase checks table is live. The
+checked CSM canary and all authoritative rows through 22 September were
+imported from the three private snapshots. Convex remains the live writer and
+read source.
 
 ### Checks schema and one-row canary
 
@@ -161,3 +161,19 @@ with `--apply-batch`; each run preflights all eligible historical rows, writes
 at most 25, and checks every row and INSERT audit. The cutoff must precede the
 current Kuwait day. A live daily-checks mirror is not provided yet, so
 reconcile later edits before any read cutover.
+
+On 23 September, the batch plan identified 268 historical rows through the
+22nd. The remaining 19 rows are dated the 23rd and were excluded because
+that Kuwait day was still open. The canary plus guarded batches imported all
+268. The final read-only plan verified all 268 source/logical identities and
+full row contents, with zero missing or conflicting rows. `-VerifyOnly`
+reported `check_count=268`, `insert_audit_count=268`, RLS and the service-only
+grants enabled, and the audit trigger present. Two intermittent remote
+connection resets interrupted batches; after each, the read-only plan
+reconciled any rows already written before the next capped batch. No duplicate
+or overwrite was observed.
+
+Next: add a live shadow writer for each owning cockpit's checkmark changes,
+including creation of new-day rows; use a versioned update so delayed writes
+cannot reverse a later human checkmark. Then compare a fresh Convex snapshot
+with Supabase, including the open-day rows, before any Supabase read cutover.
