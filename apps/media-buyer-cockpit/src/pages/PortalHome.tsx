@@ -1,6 +1,7 @@
 import { useConvexAuth, useQuery } from "convex/react";
 import { ArrowRight } from "lucide-react";
 import { Link, Navigate } from "react-router";
+import { BackendWait } from "@/components/BackendWait";
 import { Button } from "@/components/ui/button";
 import { Wordmark } from "@/components/Wordmark";
 import { api } from "../../convex/_generated/api";
@@ -46,7 +47,9 @@ export function PortalHome() {
   const { isAuthenticated, isLoading } = useConvexAuth();
   if (isLoading)
     return (
-      <div className="p-10 text-sm text-muted-foreground">One moment…</div>
+      <BackendWait>
+        <div className="p-10 text-sm text-muted-foreground">One moment…</div>
+      </BackendWait>
     );
   if (!isAuthenticated) return <LoginPage />;
   return <Chooser />;

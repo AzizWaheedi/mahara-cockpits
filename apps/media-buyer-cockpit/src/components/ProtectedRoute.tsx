@@ -1,5 +1,6 @@
 import { useConvexAuth } from "convex/react";
 import { Navigate, Outlet, useLocation } from "react-router";
+import { BackendWait } from "./BackendWait";
 import {
   Sidebar,
   SidebarContent,
@@ -68,7 +69,11 @@ export function ProtectedRoute() {
   const location = useLocation();
 
   if (isLoading) {
-    return <AppSkeleton />;
+    return (
+      <BackendWait>
+        <AppSkeleton />
+      </BackendWait>
+    );
   }
 
   if (!isAuthenticated) {
