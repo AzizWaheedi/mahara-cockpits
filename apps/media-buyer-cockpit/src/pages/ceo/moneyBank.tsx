@@ -7,6 +7,7 @@ import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import type { CeoSection } from "@/components/ceo/useCeo";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 import { api } from "../../../convex/_generated/api";
 import type { MoneyPayload, Note } from "../../../convex/ceo/payloads";
 
@@ -391,7 +392,7 @@ export function BankStatementsCard({
               </p>
             )}
             <div className="flex flex-wrap items-center gap-2">
-              <select
+              <AnimatedSelect
                 value={exKind}
                 onChange={e => setExKind(e.target.value as "vendor" | "card")}
                 aria-label="Exclusion kind"
@@ -399,7 +400,7 @@ export function BankStatementsCard({
               >
                 <option value="vendor">Vendor</option>
                 <option value="card">Card</option>
-              </select>
+              </AnimatedSelect>
               <input
                 value={exPattern}
                 onChange={e => setExPattern(e.target.value)}

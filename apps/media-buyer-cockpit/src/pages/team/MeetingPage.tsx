@@ -10,7 +10,9 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
+import { DateInput } from "@/components/ui/date-input";
 import { Input } from "@/components/ui/input";
 import { usePageVisible } from "@/lib/usePageVisible";
 import { api } from "../../../convex/_generated/api";
@@ -252,7 +254,7 @@ export function MeetingPage() {
                   : "Notes"}
               </h2>
               {page.sittings.length > 1 ? (
-                <select
+                <AnimatedSelect
                   className={`${selectClass} h-8 w-auto`}
                   aria-label="Which meeting's notes"
                   value={notesSitting?.id ?? ""}
@@ -266,7 +268,7 @@ export function MeetingPage() {
                         {s.onDate === derived.today ? " (today)" : ""}
                       </option>
                     ))}
-                </select>
+                </AnimatedSelect>
               ) : null}
             </div>
             {notesSitting ? (
@@ -441,9 +443,10 @@ function Header({
           )}
         </Field>
         <div className="grid grid-cols-2 gap-3 sm:max-w-md">
+          {/* biome-ignore lint/a11y/noLabelWithoutControl: The custom control renders a button inside this label. */}
           <label className="grid gap-1 text-xs font-medium text-muted-foreground">
             How often
-            <select
+            <AnimatedSelect
               className={selectClass}
               value={cadence}
               onChange={e => setCadence(e.target.value)}
@@ -453,11 +456,12 @@ function Header({
                   {c[0].toUpperCase() + c.slice(1)}
                 </option>
               ))}
-            </select>
+            </AnimatedSelect>
           </label>
+          {/* biome-ignore lint/a11y/noLabelWithoutControl: The custom control renders a button inside this label. */}
           <label className="grid gap-1 text-xs font-medium text-muted-foreground">
             Department
-            <select
+            <AnimatedSelect
               className={selectClass}
               value={department}
               onChange={e => setDepartment(e.target.value)}
@@ -468,7 +472,7 @@ function Header({
                   {d}
                 </option>
               ))}
-            </select>
+            </AnimatedSelect>
           </label>
         </div>
         {m.fromCalendar ? (
@@ -658,7 +662,7 @@ function AgendaRow({
           </button>
         )}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
-          <select
+          <AnimatedSelect
             className="h-7 max-w-[11rem] rounded-md border border-input bg-transparent px-2 text-xs"
             aria-label="Who owns it"
             value={item.ownerId ?? ""}
@@ -667,7 +671,7 @@ function AgendaRow({
           >
             <option value="">No owner</option>
             <PeopleOptions people={people} />
-          </select>
+          </AnimatedSelect>
           <Carried n={item.carried} />
           {item.carried ? (
             <span>since {dayName(item.addedAt.slice(0, 10))}</span>
@@ -778,7 +782,7 @@ function AddItem({
         dir="auto"
       />
       <div className="flex gap-2">
-        <select
+        <AnimatedSelect
           className={`${selectClass} sm:w-40`}
           aria-label="Who owns it"
           value={owner}
@@ -786,7 +790,7 @@ function AddItem({
         >
           <option value="">No owner</option>
           <PeopleOptions people={people} />
-        </select>
+        </AnimatedSelect>
         <Button
           type="submit"
           size="sm"
@@ -845,8 +849,7 @@ function When({
             }
           }}
         >
-          <Input
-            type="date"
+          <DateInput
             value={date}
             min={page.today}
             onChange={e => setDate(e.target.value)}
@@ -932,7 +935,7 @@ function People({
                       </span>
                     </span>
                     {page.canManage ? (
-                      <select
+                      <AnimatedSelect
                         className="h-7 rounded-md border border-input bg-transparent px-1.5 text-xs"
                         aria-label={`${p?.name ?? "Their"} part`}
                         value={x.part}
@@ -954,7 +957,7 @@ function People({
                         <option value="required">In it</option>
                         <option value="optional">Optional</option>
                         <option value="off">Take off</option>
-                      </select>
+                      </AnimatedSelect>
                     ) : null}
                   </li>
                 );
@@ -974,7 +977,7 @@ function People({
           }}
         >
           <p className="text-xs text-muted-foreground">Add someone</p>
-          <select
+          <AnimatedSelect
             className={selectClass}
             value={adding}
             onChange={e => setAdding(e.target.value)}
@@ -982,9 +985,9 @@ function People({
           >
             <option value="">Pick a person</option>
             <PeopleOptions people={page.people} exclude={members} />
-          </select>
+          </AnimatedSelect>
           <div className="flex gap-2">
-            <select
+            <AnimatedSelect
               className={selectClass}
               value={addPart}
               onChange={e =>
@@ -995,7 +998,7 @@ function People({
               <option value="required">In the meeting</option>
               <option value="optional">Optional</option>
               <option value="host">Host</option>
-            </select>
+            </AnimatedSelect>
             <Button
               type="submit"
               size="sm"

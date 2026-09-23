@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -641,7 +642,7 @@ export function IdeationPage({
           ))}
         </div>
         {board ? null : (
-          <select
+          <AnimatedSelect
             value={industry}
             onChange={e => setIndustry(e.target.value as Industry)}
             aria-label="Industry"
@@ -651,9 +652,9 @@ export function IdeationPage({
             <option value="ours">Our industry</option>
             <option value="other">Other industries</option>
             <option value="mahara">Mahara B2B</option>
-          </select>
+          </AnimatedSelect>
         )}
-        <select
+        <AnimatedSelect
           value={sort}
           onChange={e => setSort(e.target.value as "newest" | "multiplier")}
           aria-label="Sort"
@@ -661,7 +662,7 @@ export function IdeationPage({
         >
           <option value="newest">Newest first</option>
           <option value="multiplier">Biggest outliers first</option>
-        </select>
+        </AnimatedSelect>
         <div className="ml-auto flex items-center gap-1.5 rounded-md border px-2 py-1">
           <Search className="h-3.5 w-3.5 text-muted-foreground" />
           <input
@@ -802,13 +803,13 @@ function PasteBox({
           className="rounded border bg-transparent px-2 py-1 text-[13px]"
         />
         {board ? null : (
-          <select
+          <AnimatedSelect
             value={industry}
             onChange={e => setIndustry(e.target.value as Board)}
             className="rounded border bg-transparent px-2 py-1 text-[13px]"
           >
             <BoardOptions />
-          </select>
+          </AnimatedSelect>
         )}
         <Button
           size="sm"
@@ -991,7 +992,7 @@ function ScrapeBox({
               className="rounded border bg-transparent px-2 py-1 text-[13px]"
             />
             {kind === "profile" ? (
-              <select
+              <AnimatedSelect
                 value={platform}
                 onChange={e => setPlatform(e.target.value)}
                 aria-label="Platform for a bare handle"
@@ -1003,7 +1004,7 @@ function ScrapeBox({
                 <option value="youtube">YouTube</option>
                 <option value="facebook">Facebook</option>
                 <option value="snapchat">Snapchat</option>
-              </select>
+              </AnimatedSelect>
             ) : (
               <input
                 value={country}
@@ -1016,13 +1017,13 @@ function ScrapeBox({
               />
             )}
             {board ? null : (
-              <select
+              <AnimatedSelect
                 value={industry}
                 onChange={e => setIndustry(e.target.value as Board)}
                 className="rounded border bg-transparent px-2 py-1 text-[13px]"
               >
                 <BoardOptions />
-              </select>
+              </AnimatedSelect>
             )}
             <Button
               size="sm"
@@ -1228,7 +1229,7 @@ function WatchlistPanel() {
       {open ? (
         <div className="mt-2 space-y-2">
           <div className="grid gap-2 md:grid-cols-[130px_150px_minmax(0,1fr)_130px_auto]">
-            <select
+            <AnimatedSelect
               value={platform}
               onChange={e => setPlatform(e.target.value)}
               className="rounded border bg-transparent px-2 py-1 text-[13px]"
@@ -1238,8 +1239,8 @@ function WatchlistPanel() {
               <option value="tiktok">TikTok</option>
               <option value="snapchat">Snapchat</option>
               <option value="youtube">YouTube channel</option>
-            </select>
-            <select
+            </AnimatedSelect>
+            <AnimatedSelect
               value={kind}
               onChange={e => setKind(e.target.value)}
               className="rounded border bg-transparent px-2 py-1 text-[13px]"
@@ -1248,7 +1249,7 @@ function WatchlistPanel() {
               <option value="account">Account</option>
               <option value="hashtag">Hashtag</option>
               <option value="search">Keyword search</option>
-            </select>
+            </AnimatedSelect>
             <input
               value={value}
               onChange={e => setValue(e.target.value)}
@@ -1267,14 +1268,14 @@ function WatchlistPanel() {
               dir="auto"
               className="rounded border bg-transparent px-2 py-1 text-[13px]"
             />
-            <select
+            <AnimatedSelect
               value={industry}
               onChange={e => setIndustry(e.target.value as Board)}
               className="rounded border bg-transparent px-2 py-1 text-[13px]"
               aria-label="Industry"
             >
               <BoardOptions />
-            </select>
+            </AnimatedSelect>
             <Button
               size="sm"
               onClick={() => void submit()}

@@ -2,6 +2,7 @@ import { useAction } from "convex/react";
 import { CalendarDays, Loader2, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { usePageVisible } from "@/lib/usePageVisible";
@@ -341,9 +342,10 @@ function NewMeeting({
           )}
         </Field>
         <div className="grid grid-cols-2 gap-3">
+          {/* biome-ignore lint/a11y/noLabelWithoutControl: The custom control renders a button inside this label. */}
           <label className="grid gap-1 text-xs font-medium text-muted-foreground">
             How often
-            <select
+            <AnimatedSelect
               className={selectClass}
               value={cadence}
               onChange={e => setCadence(e.target.value)}
@@ -353,11 +355,12 @@ function NewMeeting({
                   {c[0].toUpperCase() + c.slice(1)}
                 </option>
               ))}
-            </select>
+            </AnimatedSelect>
           </label>
+          {/* biome-ignore lint/a11y/noLabelWithoutControl: The custom control renders a button inside this label. */}
           <label className="grid gap-1 text-xs font-medium text-muted-foreground">
             Department
-            <select
+            <AnimatedSelect
               className={selectClass}
               value={department}
               onChange={e => setDepartment(e.target.value)}
@@ -368,7 +371,7 @@ function NewMeeting({
                   {d}
                 </option>
               ))}
-            </select>
+            </AnimatedSelect>
           </label>
         </div>
       </div>

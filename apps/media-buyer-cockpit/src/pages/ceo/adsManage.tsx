@@ -2,6 +2,8 @@ import { useAction } from "convex/react";
 import { Check, Loader2, Sparkles, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { money } from "@/components/ceo/format";
+import { AnimatedSelect } from "@/components/ui/animated-select";
+import { DateInput } from "@/components/ui/date-input";
 import { api } from "../../../convex/_generated/api";
 import type { B2bAdsPayload } from "../../../convex/ceo/payloads";
 
@@ -173,7 +175,7 @@ function CopyStudio({
       </Row>
       <div className="flex flex-wrap items-end gap-3">
         <Row title="Language">
-          <select
+          <AnimatedSelect
             aria-label="Language"
             className={field}
             value={language}
@@ -181,10 +183,10 @@ function CopyStudio({
           >
             <option value="ar">Arabic</option>
             <option value="en">English</option>
-          </select>
+          </AnimatedSelect>
         </Row>
         <Row title="Angles">
-          <select
+          <AnimatedSelect
             aria-label="How many angles"
             className={field}
             value={count}
@@ -195,7 +197,7 @@ function CopyStudio({
                 {n}
               </option>
             ))}
-          </select>
+          </AnimatedSelect>
         </Row>
         <button
           type="button"
@@ -516,10 +518,9 @@ export function ManagePanel({
             title="Stop delivering on"
             hint="Leave it empty to run until it is switched off."
           >
-            <input
+            <DateInput
               aria-label="Stop delivering on"
               className={field}
-              type="date"
               min={today()}
               value={endTime}
               onChange={e => setEndTime(e.target.value)}
@@ -678,7 +679,7 @@ export function ManagePanel({
             title="Copy the audience from"
             hint="Targeting, optimisation goal, billing event and pixel event are copied whole. Typing an audience by hand is how a campaign quietly starts buying the wrong people."
           >
-            <select
+            <AnimatedSelect
               aria-label="Copy the audience from"
               className={field}
               value={copyFrom}
@@ -692,7 +693,7 @@ export function ManagePanel({
                   </option>
                 )),
               )}
-            </select>
+            </AnimatedSelect>
           </Row>
           <div className="grid gap-3 sm:grid-cols-3">
             <Row
@@ -821,7 +822,7 @@ export function ManagePanel({
               title="The new copy rides this ad's video"
               hint="Meta needs a video or image for a new ad. Leave it on the first ticked ad unless you want another one's footage."
             >
-              <select
+              <AnimatedSelect
                 aria-label="Which ad's video the new copy rides"
                 className={field}
                 value={mediaFrom}
@@ -837,7 +838,7 @@ export function ManagePanel({
                     {a.name}
                   </option>
                 ))}
-              </select>
+              </AnimatedSelect>
             </Row>
           ) : null}
 

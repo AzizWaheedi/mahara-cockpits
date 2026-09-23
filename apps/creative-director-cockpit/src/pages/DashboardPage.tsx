@@ -21,6 +21,7 @@ import {
 } from "@/components/CreativePreview";
 import { SendForReview } from "@/components/SendForReview";
 import { TemplateCard } from "@/components/TemplateCard";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { WhatsAppDesk } from "@/components/WhatsAppDesk";
@@ -723,7 +724,7 @@ function AllTemplates({
         <div className="mt-2 space-y-2">
           <div className="flex flex-wrap items-center gap-2 text-[13px]">
             <span className="text-muted-foreground">Writing to</span>
-            <select
+            <AnimatedSelect
               value={client}
               onChange={e => setClient(e.target.value)}
               className="rounded border bg-transparent px-2 py-1 text-[13px]"
@@ -734,7 +735,7 @@ function AllTemplates({
                   {n}
                 </option>
               ))}
-            </select>
+            </AnimatedSelect>
           </div>
           {TEMPLATES.map((t: Any) => (
             <TemplateCard key={t.id} t={t} client={client || undefined} />
@@ -817,7 +818,7 @@ function TouchpointRow({
       {open && (
         <div className="space-y-2 border-t p-3">
           <div className="flex flex-wrap items-center gap-2 text-[12px]">
-            <select
+            <AnimatedSelect
               value={pick}
               onChange={e => swap(e.target.value, lang)}
               className="rounded border bg-transparent px-2 py-1 text-[12px]"
@@ -827,7 +828,7 @@ function TouchpointRow({
                   {x.label}
                 </option>
               ))}
-            </select>
+            </AnimatedSelect>
             <button
               type="button"
               onClick={() => swap(pick, lang === "ar" ? "en" : "ar")}

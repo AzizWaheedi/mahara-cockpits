@@ -1,6 +1,7 @@
 import { useAction } from "convex/react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 import { api } from "../../convex/_generated/api";
 import { Button } from "./ui/button";
 import {
@@ -130,24 +131,27 @@ export function RequestCreativeButton({
                 Its current results will be included.
               </p>
             ) : (
-              <label className="block text-[12px] font-semibold">
-                Affected ad{" "}
-                <span className="font-normal text-muted-foreground">
-                  (optional)
-                </span>
-                <select
-                  value={pickedAd}
-                  onChange={event => setPickedAd(event.target.value)}
-                  className="mt-1 block min-h-10 w-full rounded-md border bg-background px-2 text-[13px] font-normal"
-                >
-                  <option value="">Campaign-wide request</option>
-                  {ads?.map(ad => (
-                    <option key={ad.metaId} value={ad.metaId}>
-                      {ad.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <>
+                {/* biome-ignore lint/a11y/noLabelWithoutControl: The custom control renders a button inside this label. */}
+                <label className="block text-[12px] font-semibold">
+                  Affected ad{" "}
+                  <span className="font-normal text-muted-foreground">
+                    (optional)
+                  </span>
+                  <AnimatedSelect
+                    value={pickedAd}
+                    onChange={event => setPickedAd(event.target.value)}
+                    className="mt-1 block min-h-10 w-full rounded-md border bg-background px-2 text-[13px] font-normal"
+                  >
+                    <option value="">Campaign-wide request</option>
+                    {ads?.map(ad => (
+                      <option key={ad.metaId} value={ad.metaId}>
+                        {ad.name}
+                      </option>
+                    ))}
+                  </AnimatedSelect>
+                </label>
+              </>
             )}
             <label className="block text-[12px] font-semibold">
               Note for the director{" "}

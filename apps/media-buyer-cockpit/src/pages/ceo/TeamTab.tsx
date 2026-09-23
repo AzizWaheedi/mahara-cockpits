@@ -23,6 +23,8 @@ import {
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
+import { AnimatedSelect } from "@/components/ui/animated-select";
+import { DateInput } from "@/components/ui/date-input";
 import { api } from "../../../convex/_generated/api";
 import {
   COMMISSION_BASES,
@@ -166,7 +168,7 @@ function RoleField({
 
   return (
     <span className="flex min-w-0 flex-wrap items-center gap-1.5">
-      <select
+      <AnimatedSelect
         value={other ? OTHER : known ? value : ""}
         disabled={disabled}
         onChange={e => {
@@ -188,7 +190,7 @@ function RoleField({
           </option>
         ))}
         <option value={OTHER}>Something else</option>
-      </select>
+      </AnimatedSelect>
       {other ? (
         <input
           value={value}
@@ -424,15 +426,14 @@ function HoursEditor({
               key={x.key}
               className="flex flex-wrap items-center gap-1.5 text-sm"
             >
-              <input
-                type="date"
+              <DateInput
                 value={x.date}
                 onChange={e => setException(x.key, { date: e.target.value })}
                 aria-label="Exception date"
                 className={`${field} w-[9.5rem]`}
                 style={tabular}
               />
-              <select
+              <AnimatedSelect
                 value={x.off ? "off" : "hours"}
                 onChange={e =>
                   setException(x.key, { off: e.target.value === "off" })
@@ -442,7 +443,7 @@ function HoursEditor({
               >
                 <option value="off">Off</option>
                 <option value="hours">Different hours</option>
-              </select>
+              </AnimatedSelect>
               {x.off ? null : (
                 <>
                   <input
@@ -724,7 +725,7 @@ function Row({
               className={`${field} w-24 text-right`}
               style={{ fontVariantNumeric: "tabular-nums" }}
             />
-            <select
+            <AnimatedSelect
               value={d.currency}
               onChange={e => setD({ ...d, currency: e.target.value })}
               aria-label="Currency"
@@ -735,13 +736,13 @@ function Row({
                   {c}
                 </option>
               ))}
-            </select>
+            </AnimatedSelect>
             {p.monthlyUsd !== null && d.currency !== "USD" ? (
               <span className="text-xs text-muted-foreground">{`≈ ${money(p.monthlyUsd)}`}</span>
             ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-1.5 text-sm">
-            <select
+            <AnimatedSelect
               value={d.basis}
               onChange={e =>
                 setD({ ...d, basis: e.target.value as CommissionBasis })
@@ -754,7 +755,7 @@ function Row({
                   {COMMISSION_SHORT[b]}
                 </option>
               ))}
-            </select>
+            </AnimatedSelect>
             {takesRate(d.basis) ? (
               <span className="flex items-center gap-1">
                 <input
@@ -976,7 +977,7 @@ function AddPerson({
             disabled={busy}
             onChange={setRole}
           />
-          <select
+          <AnimatedSelect
             value={engagement}
             onChange={e =>
               setEngagement(e.target.value as Person["engagement"])
@@ -989,7 +990,7 @@ function AddPerson({
                 {e.label}
               </option>
             ))}
-          </select>
+          </AnimatedSelect>
           {engagement === "bot" ? (
             <p className="self-center text-xs text-muted-foreground @3xl:col-span-2">
               An account, never paid
@@ -1004,7 +1005,7 @@ function AddPerson({
                 aria-label="Monthly pay"
                 className={field}
               />
-              <select
+              <AnimatedSelect
                 value={currency}
                 onChange={e => setCurrency(e.target.value)}
                 aria-label="Currency"
@@ -1015,7 +1016,7 @@ function AddPerson({
                     {c}
                   </option>
                 ))}
-              </select>
+              </AnimatedSelect>
             </>
           )}
           <button

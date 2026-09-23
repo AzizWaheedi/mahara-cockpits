@@ -5,6 +5,7 @@ import { EmptyState } from "@/components/ceo/EmptyState";
 import { count, shortDate } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatusChip } from "@/components/ceo/StatusChip";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 import { api } from "../../../convex/_generated/api";
 import type { Board, TargetRow } from "../../../convex/ceo/goals";
 import { PlanEditor } from "./goalsEdit";
@@ -252,7 +253,7 @@ export function GoalsTab({ sections }: CeoTabProps) {
               />
             ) : null}
             {(board.plans?.length ?? 0) > 1 ? (
-              <select
+              <AnimatedSelect
                 aria-label="Which plan"
                 className="rounded-md border bg-background px-2 py-1 text-xs"
                 value={String(p.id)}
@@ -263,7 +264,7 @@ export function GoalsTab({ sections }: CeoTabProps) {
                     {`${x.title}${x.status === "draft" ? " (draft)" : ""}`}
                   </option>
                 ))}
-              </select>
+              </AnimatedSelect>
             ) : null}
             <StatusChip
               tone={p.status === "live" ? "good" : "neutral"}

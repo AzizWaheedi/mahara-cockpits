@@ -1,6 +1,7 @@
 /* Geist for everything, Geist Mono for numbers and labels (brand guidelines §3). */
 @import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap");
 @import "tailwindcss";
+@import "./components/ui/animated-select.css";
 
 @custom-variant dark (&:is(.dark *));
 

@@ -43,6 +43,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { DateInput } from "@/components/ui/date-input";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -495,9 +496,8 @@ export function LogPaymentCard({
       <form onSubmit={onSubmit} noValidate className="grid gap-5">
         <div className="grid gap-x-4 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
           <FormField id={id("day")} label="Day received" error={shown.day}>
-            <Input
+            <DateInput
               id={id("day")}
-              type="date"
               min={FIRST_DAY}
               max={day}
               value={draft.day}

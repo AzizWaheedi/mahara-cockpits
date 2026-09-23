@@ -13,6 +13,7 @@ import { TabLink } from "@/components/ceo/TabLink";
 import { TimeframeBar } from "@/components/ceo/TimeframeBar";
 import { useTimeframe } from "@/components/ceo/timeframe";
 import { range as rangeText } from "@/components/ceo/windows";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 import { api } from "../../../convex/_generated/api";
 import type {
   AttributionTotals,
@@ -241,7 +242,7 @@ function Reclassify({ t }: { t: Transaction }) {
   const [done, setDone] = useState<string | null>(null);
   if (t.bankLineId === undefined) return null;
   return (
-    <select
+    <AnimatedSelect
       aria-label="Kind of this statement line"
       value={done ?? t.bankKind ?? "unknown"}
       disabled={busy}
@@ -263,7 +264,7 @@ function Reclassify({ t }: { t: Transaction }) {
           {k.label}
         </option>
       ))}
-    </select>
+    </AnimatedSelect>
   );
 }
 

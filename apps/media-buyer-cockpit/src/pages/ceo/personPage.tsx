@@ -6,6 +6,7 @@ import { CeoTabs } from "@/components/ceo/CeoTabs";
 import { money, shortDate } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatusChip } from "@/components/ceo/StatusChip";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 import { api } from "../../../convex/_generated/api";
 import type {
   PersonFile as FileRow,
@@ -172,7 +173,7 @@ function Files({
   return (
     <div className="grid gap-3">
       <div className="flex flex-wrap items-center gap-2">
-        <select
+        <AnimatedSelect
           aria-label="What kind of file"
           className="rounded-md border bg-background px-2.5 py-1.5 text-sm"
           value={kind}
@@ -181,7 +182,7 @@ function Files({
           <option value="cv">CV</option>
           <option value="contract">Contract</option>
           <option value="other">Something else</option>
-        </select>
+        </AnimatedSelect>
         <label className={`${quiet} cursor-pointer`}>
           <span className="flex items-center gap-1.5">
             {busy ? (

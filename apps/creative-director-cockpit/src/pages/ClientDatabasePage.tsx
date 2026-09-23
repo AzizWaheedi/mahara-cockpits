@@ -2,6 +2,7 @@ import { useQuery } from "convex/react";
 import { Search, Sparkles, Users } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 import {
   WinnerFilter,
   type WinnerOrigin,
@@ -163,7 +164,7 @@ export function ScriptDatabasePage() {
       </p>
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <select
+        <AnimatedSelect
           value={service}
           onChange={e => setService(e.target.value)}
           className="rounded border bg-transparent px-2 py-1 text-[13px]"
@@ -175,7 +176,7 @@ export function ScriptDatabasePage() {
               {sv}
             </option>
           ))}
-        </select>
+        </AnimatedSelect>
         <label className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
           <input
             type="checkbox"

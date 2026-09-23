@@ -13,7 +13,9 @@ import {
   useMemo,
   useState,
 } from "react";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
+import { DateInput } from "@/components/ui/date-input";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import type {
@@ -490,9 +492,8 @@ function Panel({
               <Field label="Received on">
                 {id => (
                   <>
-                    <Input
+                    <DateInput
                       id={id}
-                      type="date"
                       max={today}
                       value={day}
                       onChange={e => setDay(e.target.value)}
@@ -515,7 +516,7 @@ function Panel({
               <Field label="Currency">
                 {id => (
                   <>
-                    <select
+                    <AnimatedSelect
                       id={id}
                       className={select}
                       value={currency}
@@ -525,14 +526,14 @@ function Panel({
                     >
                       <option value="USD">USD</option>
                       <option value="KWD">KWD</option>
-                    </select>
+                    </AnimatedSelect>
                   </>
                 )}
               </Field>
               <Field label="How it came">
                 {id => (
                   <>
-                    <select
+                    <AnimatedSelect
                       id={id}
                       className={select}
                       value={rail}
@@ -543,7 +544,7 @@ function Panel({
                       <option value="cash">Cash</option>
                       <option value="tap">Tap</option>
                       <option value="other">Another way</option>
-                    </select>
+                    </AnimatedSelect>
                   </>
                 )}
               </Field>
@@ -578,9 +579,8 @@ function Panel({
               <Field label="Their next payment">
                 {id => (
                   <>
-                    <Input
+                    <DateInput
                       id={id}
-                      type="date"
                       value={rollTo}
                       onChange={e => setRollTo(e.target.value)}
                     />
@@ -646,9 +646,8 @@ function Panel({
             <Field label="Next payment date">
               {id => (
                 <>
-                  <Input
+                  <DateInput
                     id={id}
-                    type="date"
                     value={date}
                     onChange={e => setDate(e.target.value)}
                   />
@@ -762,9 +761,8 @@ function Panel({
               <Field label="Their next payment">
                 {id => (
                   <>
-                    <Input
+                    <DateInput
                       id={id}
-                      type="date"
                       value={date}
                       onChange={e => setDate(e.target.value)}
                     />
@@ -835,7 +833,7 @@ function Panel({
               <Field label="Payment method">
                 {id => (
                   <>
-                    <select
+                    <AnimatedSelect
                       id={id}
                       className={select}
                       value={method}
@@ -847,14 +845,14 @@ function Panel({
                           {m}
                         </option>
                       ))}
-                    </select>
+                    </AnimatedSelect>
                   </>
                 )}
               </Field>
               <Field label="Plan">
                 {id => (
                   <>
-                    <select
+                    <AnimatedSelect
                       id={id}
                       className={select}
                       value={plan}
@@ -866,7 +864,7 @@ function Panel({
                           {p}
                         </option>
                       ))}
-                    </select>
+                    </AnimatedSelect>
                   </>
                 )}
               </Field>
@@ -1592,7 +1590,7 @@ function Unassigned({
             <span className="text-sm font-medium tabular-nums sm:text-right">
               {usd(u.usd)}
             </span>
-            <select
+            <AnimatedSelect
               className={select}
               aria-label={`Which client ${u.payer} is`}
               value={pick[u.payer] ?? ""}
@@ -1606,7 +1604,7 @@ function Unassigned({
                   {c.group === "gone" ? `${c.name} (left)` : c.name}
                 </option>
               ))}
-            </select>
+            </AnimatedSelect>
             <Button
               size="sm"
               variant="outline"

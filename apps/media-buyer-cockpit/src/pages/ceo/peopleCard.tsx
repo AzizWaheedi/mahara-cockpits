@@ -6,6 +6,7 @@ import { money, plural } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 import { api } from "../../../convex/_generated/api";
 import { commissionText } from "../../../convex/ceo/commission";
 import type { Person, Roster } from "../../../convex/ceo/people";
@@ -341,7 +342,7 @@ export function PeopleCard({ order }: { order?: number }) {
                 value={form.role}
                 onChange={e => setForm(f => ({ ...f, role: e.target.value }))}
               />
-              <select
+              <AnimatedSelect
                 id="person-engagement"
                 className={field}
                 value={form.engagement}
@@ -357,7 +358,7 @@ export function PeopleCard({ order }: { order?: number }) {
                     {x.label}
                   </option>
                 ))}
-              </select>
+              </AnimatedSelect>
               <input
                 id="person-email"
                 className={field}
@@ -375,7 +376,7 @@ export function PeopleCard({ order }: { order?: number }) {
                   setForm(f => ({ ...f, monthlyCost: e.target.value }))
                 }
               />
-              <select
+              <AnimatedSelect
                 id="person-currency"
                 className={field}
                 value={form.currency}
@@ -388,7 +389,7 @@ export function PeopleCard({ order }: { order?: number }) {
                     {c}
                   </option>
                 ))}
-              </select>
+              </AnimatedSelect>
               <input
                 id="person-commission"
                 className={field}

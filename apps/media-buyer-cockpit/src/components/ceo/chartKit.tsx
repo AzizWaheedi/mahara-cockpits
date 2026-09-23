@@ -1,5 +1,7 @@
 import { ChartColumn, ChartLine, Table2 } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
+import { AnimatedSelect } from "@/components/ui/animated-select";
+import { DateInput } from "@/components/ui/date-input";
 import { cn } from "@/lib/utils";
 import { isNum } from "./format";
 
@@ -186,7 +188,7 @@ export function RangeControl({
   const max = last ? (monthly ? `${last}-28` : last) : undefined;
   return (
     <span className="flex flex-wrap items-center gap-1.5">
-      <select
+      <AnimatedSelect
         value={range}
         onChange={e => onRange(e.target.value as RangeKey)}
         aria-label="Timeframe"
@@ -197,11 +199,10 @@ export function RangeControl({
             {o.label}
           </option>
         ))}
-      </select>
+      </AnimatedSelect>
       {range === "custom" ? (
         <>
-          <input
-            type="date"
+          <DateInput
             value={custom.from}
             min={min}
             max={max}
@@ -209,8 +210,7 @@ export function RangeControl({
             aria-label="From"
             className={control}
           />
-          <input
-            type="date"
+          <DateInput
             value={custom.to}
             min={min}
             max={max}

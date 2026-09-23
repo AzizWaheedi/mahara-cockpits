@@ -19,6 +19,8 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { AnimatedSelect } from "@/components/ui/animated-select";
+import { DateInput } from "@/components/ui/date-input";
 import { api } from "../../convex/_generated/api";
 import { pillarColor } from "../components/SocialMonth";
 import { AccountsPicker } from "../components/social/Accounts";
@@ -384,9 +386,10 @@ export function SocialCalendarPage() {
       <div className="mx-auto max-w-[1180px]">
         <header className="mb-5 flex flex-wrap items-end gap-x-4 gap-y-3">
           <div className="min-w-0">
+            {/* biome-ignore lint/a11y/noLabelWithoutControl: The custom control renders a button inside this label. */}
             <label className="relative inline-flex items-center">
               <span className="sr-only">Client</span>
-              <select
+              <AnimatedSelect
                 value={clientId}
                 onChange={async e => {
                   const id = e.target.value;
@@ -424,7 +427,7 @@ export function SocialCalendarPage() {
                     ))}
                   </optgroup>
                 ) : null}
-              </select>
+              </AnimatedSelect>
               <ChevronDown className="pointer-events-none absolute right-0 h-4 w-4 text-muted-foreground" />
             </label>
             <div className="mt-1 flex items-center gap-2">
@@ -1327,12 +1330,12 @@ function PostSheet({
             />
           ) : null}
 
+          {/* biome-ignore lint/a11y/noLabelWithoutControl: The custom control renders a button inside this label. */}
           <label className="block">
             <span className="mb-1.5 block text-[13px] font-medium">
               Goes out on
             </span>
-            <input
-              type="date"
+            <DateInput
               value={day}
               min={today()}
               onChange={e => {

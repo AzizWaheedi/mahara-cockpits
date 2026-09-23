@@ -1,5 +1,6 @@
 import { useQuery } from "convex/react";
 import { useState } from "react";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 import {
   WinnerFilter,
   type WinnerOrigin,
@@ -103,7 +104,7 @@ export function PlaybookPage() {
       )}
 
       <div className="mb-3 flex flex-wrap gap-2">
-        <select
+        <AnimatedSelect
           value={service}
           onChange={e => setService(e.target.value)}
           className="h-8 rounded-md border bg-background px-2 text-[13px]"
@@ -114,8 +115,8 @@ export function PlaybookPage() {
               {s}
             </option>
           ))}
-        </select>
-        <select
+        </AnimatedSelect>
+        <AnimatedSelect
           value={city}
           onChange={e => setCity(e.target.value)}
           className="h-8 rounded-md border bg-background px-2 text-[13px]"
@@ -126,7 +127,7 @@ export function PlaybookPage() {
               {c}
             </option>
           ))}
-        </select>
+        </AnimatedSelect>
       </div>
 
       <div className="overflow-x-auto rounded-lg border">

@@ -3,6 +3,7 @@ import { Loader2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { shortDate } from "@/components/ceo/format";
 import { StatusChip } from "@/components/ceo/StatusChip";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 import { api } from "../../../convex/_generated/api";
 import type { Scorecard, ScorecardItem } from "../../../convex/ceo/profiles";
 
@@ -212,7 +213,7 @@ export function ScorecardPanel({
     <div className="grid gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
-          <select
+          <AnimatedSelect
             aria-label="Which month"
             className="rounded-md border bg-background px-2 py-1 text-sm"
             value={card.month}
@@ -226,7 +227,7 @@ export function ScorecardPanel({
                   {m}
                 </option>
               ))}
-          </select>
+          </AnimatedSelect>
           <StatusChip
             tone={card.status === "final" ? "good" : "neutral"}
             label={card.status === "final" ? "Signed off" : "Draft"}

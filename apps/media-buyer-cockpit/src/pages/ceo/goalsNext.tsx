@@ -3,6 +3,7 @@ import { Loader2, Wand2 } from "lucide-react";
 import { Fragment, useMemo, useState } from "react";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatusChip } from "@/components/ceo/StatusChip";
+import { DateInput } from "@/components/ui/date-input";
 import { api } from "../../../convex/_generated/api";
 import type { Board, TargetRow } from "../../../convex/ceo/goals";
 import { fmt } from "./goalsKit";
@@ -146,11 +147,11 @@ export function NextMonth({
               onChange={e => setTitle(e.target.value)}
             />
           </label>
+          {/* biome-ignore lint/a11y/noLabelWithoutControl: The custom control renders a button inside this label. */}
           <label className="grid gap-1">
             <span className={label}>From</span>
-            <input
+            <DateInput
               className={field}
-              type="date"
               value={from}
               onChange={e => {
                 setFrom(e.target.value);
@@ -161,11 +162,11 @@ export function NextMonth({
               }}
             />
           </label>
+          {/* biome-ignore lint/a11y/noLabelWithoutControl: The custom control renders a button inside this label. */}
           <label className="grid gap-1">
             <span className={label}>To</span>
-            <input
+            <DateInput
               className={field}
-              type="date"
               value={to}
               onChange={e => setTo(e.target.value)}
             />

@@ -1,92 +1,115 @@
-import { useState } from "react";
+import { CalendarDays, ChevronDown } from "lucide-react";
+import { useEffect, useState } from "react";
+import type { DateRange } from "react-day-picker";
+import { Calendar } from "@/components/ui/calendar";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { customRange, kuwaitDay, PRESETS, type Range } from "@/lib/range";
 
-/**
- * Pick a window: a preset, or two dates.
- *
- * Deliberately a row of small buttons rather than a dropdown — the whole point
- * is that switching from "7 days" to "today" is one click, not three.
- */
+function day(value: string): Date {
+  const [year, month, date] = value.split("-").map(Number);
+  return new Date(year, month - 1, date);
+}
+
+function isoDay(value: Date): string {
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+}
+
+/** Preset range choices and a calendar, using Kuwait days throughout. */
 export function RangePicker({
   value,
   onChange,
   compact,
 }: {
   value: Range;
-  onChange: (r: Range) => void;
+  onChange: (range: Range) => void;
   compact?: boolean;
 }) {
-  const [showCustom, setShowCustom] = useState(value.key === "custom");
-  const [start, setStart] = useState(value.start);
-  const [end, setEnd] = useState(value.end);
+  const [open, setOpen] = useState(false);
+  const [month, setMonth] = useState(() => day(value.end));
+  const [draft, setDraft] = useState<DateRange>({
+    from: day(value.start),
+    to: day(value.end),
+  });
+  const today = day(kuwaitDay());
+
+  useEffect(() => {
+    setDraft({ from: day(value.start), to: day(value.end) });
+    setMonth(day(value.end));
+  }, [value.start, value.end]);
 
   return (
-    <div className="flex flex-wrap items-center gap-1">
-      {!compact && (
-        <span className="mr-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
-          Range
-        </span>
-      )}
-      {PRESETS.map(p => {
-        const active = value.key === p.key;
-        return (
-          <button
-            key={p.key}
-            type="button"
-            onClick={() => {
-              setShowCustom(false);
-              onChange(p.make());
-            }}
-            className={`rounded border px-2 py-0.5 text-[12px] font-semibold ${
-              active
-                ? "border-primary bg-primary text-primary-foreground"
-                : "text-muted-foreground hover:bg-muted"
-            }`}
-          >
-            {p.label}
-          </button>
-        );
-      })}
-      <button
-        type="button"
-        onClick={() => setShowCustom(s => !s)}
-        className={`rounded border px-2 py-0.5 text-[12px] font-semibold ${
-          value.key === "custom"
-            ? "border-primary bg-primary text-primary-foreground"
-            : "text-muted-foreground hover:bg-muted"
-        }`}
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={`Date range: ${value.label}`}
+          className={`cockpit-range-trigger ${compact ? "cockpit-range-trigger-compact" : ""}`}
+        >
+          <CalendarDays aria-hidden="true" size={15} />
+          <span>
+            {value.key === "custom" && compact ? "Custom" : value.label}
+          </span>
+          <ChevronDown
+            aria-hidden="true"
+            size={15}
+            className="cockpit-range-chevron"
+          />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        sideOffset={7}
+        className="cockpit-range-popover w-auto p-0"
       >
-        Custom
-      </button>
-      {showCustom && (
-        <span className="flex items-center gap-1">
-          <input
-            type="date"
-            value={start}
-            max={kuwaitDay(0)}
-            onChange={e => {
-              setStart(e.target.value);
-              if (e.target.value && end) {
-                onChange(customRange(e.target.value, end));
-              }
-            }}
-            className="rounded border bg-background px-1 py-0.5 text-[12px]"
-          />
-          <span className="text-[12px] text-muted-foreground">→</span>
-          <input
-            type="date"
-            value={end}
-            max={kuwaitDay(0)}
-            onChange={e => {
-              setEnd(e.target.value);
-              if (start && e.target.value) {
-                onChange(customRange(start, e.target.value));
-              }
-            }}
-            className="rounded border bg-background px-1 py-0.5 text-[12px]"
-          />
-        </span>
-      )}
-    </div>
+        <div className="cockpit-range-layout">
+          <div
+            className="cockpit-range-presets"
+            role="group"
+            aria-label="Date range presets"
+          >
+            {PRESETS.map(preset => (
+              <button
+                type="button"
+                key={preset.key}
+                data-active={value.key === preset.key}
+                onClick={() => {
+                  const next = preset.make();
+                  setDraft({ from: day(next.start), to: day(next.end) });
+                  setMonth(day(next.end));
+                  onChange(next);
+                }}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+          <div className="cockpit-range-calendar">
+            <Calendar
+              mode="range"
+              selected={draft}
+              month={month}
+              onMonthChange={setMonth}
+              onSelect={next => {
+                if (!next) return;
+                setDraft(next);
+                if (next.from && next.to)
+                  onChange(customRange(isoDay(next.from), isoDay(next.to)));
+              }}
+              disabled={{ after: today }}
+              className="p-3"
+            />
+            <div className="cockpit-range-summary">
+              <span>{draft.from ? isoDay(draft.from) : "Start date"}</span>
+              <span aria-hidden="true">→</span>
+              <span>{draft.to ? isoDay(draft.to) : "End date"}</span>
+            </div>
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }

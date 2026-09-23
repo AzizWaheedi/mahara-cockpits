@@ -9,7 +9,9 @@ import {
 import { useMemo, useState } from "react";
 import { Link } from "react-router";
 import { api } from "@/../convex/_generated/api";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
+import { DateInput } from "@/components/ui/date-input";
 import { Textarea } from "@/components/ui/textarea";
 
 /**
@@ -299,7 +301,7 @@ export function ScriptingCalendar({ compact = false }: { compact?: boolean }) {
           </span>
         </div>
         <div className="mt-2 grid gap-2 md:grid-cols-[minmax(0,1fr)_150px_minmax(0,1fr)]">
-          <select
+          <AnimatedSelect
             value={planClient}
             onChange={e => setPlanClient(e.target.value)}
             className="rounded border bg-transparent px-2 py-1 text-[13px]"
@@ -310,9 +312,8 @@ export function ScriptingCalendar({ compact = false }: { compact?: boolean }) {
                 {n}
               </option>
             ))}
-          </select>
-          <input
-            type="date"
+          </AnimatedSelect>
+          <DateInput
             value={planDay}
             onChange={e => setPlanDay(e.target.value)}
             className="rounded border bg-transparent px-2 py-1 text-[13px]"
@@ -346,7 +347,7 @@ export function ScriptingCalendar({ compact = false }: { compact?: boolean }) {
       {/* Filter -------------------------------------------------------------- */}
       <div className="flex flex-wrap items-center gap-2 text-[13px]">
         <span className="text-muted-foreground">Show</span>
-        <select
+        <AnimatedSelect
           value={onlyMine}
           onChange={e => setOnlyMine(e.target.value)}
           className="rounded border bg-transparent px-2 py-1 text-[13px]"
@@ -357,15 +358,14 @@ export function ScriptingCalendar({ compact = false }: { compact?: boolean }) {
               {n}
             </option>
           ))}
-        </select>
+        </AnimatedSelect>
       </div>
 
       {/* Move dialog --------------------------------------------------------- */}
       {moving && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border p-2 text-[13px]">
           <span>Move to</span>
-          <input
-            type="date"
+          <DateInput
             value={moveTo}
             onChange={e => setMoveTo(e.target.value)}
             className="rounded border bg-transparent px-2 py-1"

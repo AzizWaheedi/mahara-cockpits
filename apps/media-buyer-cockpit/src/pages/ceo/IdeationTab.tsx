@@ -6,6 +6,7 @@ import { count, countCompact, shortDate } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 import { api } from "../../../convex/_generated/api";
 import { IdeationPage } from "../IdeationPage";
 import type { CeoTabProps } from "./types";
@@ -334,7 +335,7 @@ export function IdeationTab(_props: CeoTabProps) {
                 </span>
               </div>
               <div className="grid gap-2 sm:grid-cols-[150px_minmax(0,1fr)_auto]">
-                <select
+                <AnimatedSelect
                   value={platform}
                   onChange={e => setPlatform(e.target.value)}
                   aria-label="Platform"
@@ -345,7 +346,7 @@ export function IdeationTab(_props: CeoTabProps) {
                       {label}
                     </option>
                   ))}
-                </select>
+                </AnimatedSelect>
                 <input
                   value={value}
                   onChange={e => setValue(e.target.value)}

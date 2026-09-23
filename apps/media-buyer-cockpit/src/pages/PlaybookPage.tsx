@@ -1,6 +1,7 @@
 import { useQuery } from "convex/react";
 import { useRef, useState } from "react";
 import { CreativePreview } from "@/components/CreativePreview";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 import { api } from "../../convex/_generated/api";
 
 /**
@@ -85,7 +86,7 @@ export function PlaybookPage() {
       )}
 
       <div className="mb-3 flex flex-wrap gap-2">
-        <select
+        <AnimatedSelect
           value={service}
           onChange={e => setService(e.target.value)}
           className="h-8 rounded-md border bg-background px-2 text-[13px]"
@@ -96,8 +97,8 @@ export function PlaybookPage() {
               {s}
             </option>
           ))}
-        </select>
-        <select
+        </AnimatedSelect>
+        <AnimatedSelect
           value={city}
           onChange={e => setCity(e.target.value)}
           className="h-8 rounded-md border bg-background px-2 text-[13px]"
@@ -108,7 +109,7 @@ export function PlaybookPage() {
               {c}
             </option>
           ))}
-        </select>
+        </AnimatedSelect>
       </div>
 
       <div className="overflow-x-auto rounded-lg border">
@@ -364,7 +365,7 @@ function WinningAds({ serviceLine }: { serviceLine?: string }) {
           </button>
         ))}
         {savers.size > 0 && (
-          <select
+          <AnimatedSelect
             value={savedBy}
             onChange={e => setSavedBy(e.target.value)}
             aria-label="Saved by"
@@ -378,7 +379,7 @@ function WinningAds({ serviceLine }: { serviceLine?: string }) {
                   Saved by {name}
                 </option>
               ))}
-          </select>
+          </AnimatedSelect>
         )}
       </div>
       {shown.length === 0 ? (

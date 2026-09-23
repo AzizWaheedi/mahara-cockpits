@@ -5,6 +5,7 @@ import { EmptyState } from "@/components/ceo/EmptyState";
 import { money, plural } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatusChip } from "@/components/ceo/StatusChip";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 import { api } from "../../../convex/_generated/api";
 
 /**
@@ -304,7 +305,7 @@ export function ImportPaymentsCard({ order }: { order?: number }) {
             >
               Amounts are in
             </label>
-            <select
+            <AnimatedSelect
               id="money-import-currency"
               value={currency}
               onChange={e => {
@@ -316,7 +317,7 @@ export function ImportPaymentsCard({ order }: { order?: number }) {
             >
               <option value="USD">US dollars</option>
               <option value="KWD">Kuwaiti dinar</option>
-            </select>
+            </AnimatedSelect>
           </div>
 
           <textarea

@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from "convex/react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 import {
   ALWAYS,
   ageLine,
@@ -134,7 +135,7 @@ export function BuildPanel({
             <div className="mb-1 text-[12px] text-muted-foreground">
               What does this client sell? I build the audiences from it.
             </div>
-            <select
+            <AnimatedSelect
               value={line}
               onChange={e => setLine(e.target.value as ServiceLine)}
               className="h-8 w-full rounded-md border bg-background px-2 text-[13px]"
@@ -146,7 +147,7 @@ export function BuildPanel({
                 </option>
               ))}
               <option value="other">Something else — I'll type it</option>
-            </select>
+            </AnimatedSelect>
             {line === ("other" as ServiceLine) && (
               <Input
                 value={otherService}

@@ -3,7 +3,9 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
 import { SendForReview } from "@/components/SendForReview";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
+import { DateInput } from "@/components/ui/date-input";
 import { Textarea } from "@/components/ui/textarea";
 import { WhatsAppDesk } from "@/components/WhatsAppDesk";
 import { opportunitiesFor, rankOpportunities } from "@/lib/csmHotList";
@@ -349,8 +351,7 @@ function NextPocControl({
         >
           Copy the invite with the link
         </Button>
-        <input
-          type="date"
+        <DateInput
           value={date}
           onChange={e => setDate(e.target.value)}
           className="rounded border bg-background px-1.5 py-0.5 text-foreground"
@@ -396,8 +397,7 @@ function BookDate({
   );
   return (
     <span className="inline-flex flex-wrap items-center gap-1">
-      <input
-        type="date"
+      <DateInput
         value={date}
         onChange={e => setDate(e.target.value)}
         aria-label="Date of the next call"
@@ -895,7 +895,7 @@ function HotSheet({
                   {COLS.map(([field, , width]) => (
                     <td key={field} className={`px-1 py-1 ${width}`}>
                       {OPTIONS[field] ? (
-                        <select
+                        <AnimatedSelect
                           value={r[field] ?? ""}
                           onChange={e => void patch(r, field, e.target.value)}
                           className={`w-full rounded px-1.5 py-0.5 text-xs font-medium ${PILL[r[field] ?? ""] ?? "bg-muted text-foreground"}`}
@@ -906,7 +906,7 @@ function HotSheet({
                               {o}
                             </option>
                           ))}
-                        </select>
+                        </AnimatedSelect>
                       ) : (
                         <input
                           type={DATE_FIELDS.has(field) ? "date" : "text"}
@@ -1637,7 +1637,7 @@ export function CsmPage({ section }: { section: Section }) {
 
             {panel === "ticket" && (
               <div className="space-y-2">
-                <select
+                <AnimatedSelect
                   className="w-full rounded border bg-background px-2 py-1 text-sm"
                   value={ticket}
                   onChange={e => setTicket(e.target.value)}
@@ -1647,7 +1647,7 @@ export function CsmPage({ section }: { section: Section }) {
                       {r.label} → {r.deptLabel}
                     </option>
                   ))}
-                </select>
+                </AnimatedSelect>
                 <Textarea
                   placeholder="What exactly is needed?"
                   value={ticketNote}
@@ -1672,7 +1672,7 @@ export function CsmPage({ section }: { section: Section }) {
 
             {panel === "leave" && (
               <div className="space-y-2">
-                <select
+                <AnimatedSelect
                   className="w-full rounded border bg-background px-2 py-1 text-sm"
                   value={reason}
                   onChange={e => setReason(e.target.value)}
@@ -1680,7 +1680,7 @@ export function CsmPage({ section }: { section: Section }) {
                   {REASONS.map(r => (
                     <option key={r}>{r}</option>
                   ))}
-                </select>
+                </AnimatedSelect>
                 <div className="flex gap-1">
                   {CLOCKS.map(k => (
                     <button
@@ -2444,9 +2444,10 @@ export function CsmPage({ section }: { section: Section }) {
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
+                {/* biome-ignore lint/a11y/noLabelWithoutControl: The custom control renders a button inside this label. */}
                 <label className="flex items-center gap-2 text-xs">
                   Energy
-                  <select
+                  <AnimatedSelect
                     className="rounded border bg-background px-2 py-1 text-xs"
                     value={energy}
                     onChange={e => setEnergy(e.target.value)}
@@ -2454,11 +2455,12 @@ export function CsmPage({ section }: { section: Section }) {
                     {SCORES.map(x => (
                       <option key={x}>{x}</option>
                     ))}
-                  </select>
+                  </AnimatedSelect>
                 </label>
+                {/* biome-ignore lint/a11y/noLabelWithoutControl: The custom control renders a button inside this label. */}
                 <label className="flex items-center gap-2 text-xs">
                   Stress
-                  <select
+                  <AnimatedSelect
                     className="rounded border bg-background px-2 py-1 text-xs"
                     value={stress}
                     onChange={e => setStress(e.target.value)}
@@ -2466,7 +2468,7 @@ export function CsmPage({ section }: { section: Section }) {
                     {SCORES.map(x => (
                       <option key={x}>{x}</option>
                     ))}
-                  </select>
+                  </AnimatedSelect>
                 </label>
               </div>
               <div>
@@ -2975,18 +2977,21 @@ function YesNo({
   onChange: (v: string) => void;
 }) {
   return (
-    <label className="flex items-center justify-between gap-2 rounded border px-2 py-1 text-xs">
-      <span>{label}</span>
-      <select
-        className="rounded border bg-background px-2 py-1 text-xs"
-        value={value}
-        onChange={e => onChange(e.target.value)}
-      >
-        {["Y", "N", "NA"].map(x => (
-          <option key={x}>{x}</option>
-        ))}
-      </select>
-    </label>
+    <>
+      {/* biome-ignore lint/a11y/noLabelWithoutControl: The custom control renders a button inside this label. */}
+      <label className="flex items-center justify-between gap-2 rounded border px-2 py-1 text-xs">
+        <span>{label}</span>
+        <AnimatedSelect
+          className="rounded border bg-background px-2 py-1 text-xs"
+          value={value}
+          onChange={e => onChange(e.target.value)}
+        >
+          {["Y", "N", "NA"].map(x => (
+            <option key={x}>{x}</option>
+          ))}
+        </AnimatedSelect>
+      </label>
+    </>
   );
 }
 

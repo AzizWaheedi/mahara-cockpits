@@ -6,6 +6,7 @@ import { money, pct, plural } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 import { api } from "../../../convex/_generated/api";
 import type { PayerList, UnmappedPayer } from "../../../convex/ceo/payers";
 
@@ -155,7 +156,7 @@ export function PayerMappingCard({ order }: { order?: number }) {
                       </td>
                       <td className="p-2 text-right">{money(p.usd)}</td>
                       <td className="p-2">
-                        <select
+                        <AnimatedSelect
                           id={`payer-${p.payer}`}
                           value={picked}
                           disabled={!data.canAssign || busy === p.payer}
@@ -173,7 +174,7 @@ export function PayerMappingCard({ order }: { order?: number }) {
                               {c.name}
                             </option>
                           ))}
-                        </select>
+                        </AnimatedSelect>
                         {p.mapped ? (
                           <span className="mt-1 block text-xs text-muted-foreground">
                             saved

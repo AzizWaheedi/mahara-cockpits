@@ -2,7 +2,9 @@ import { useMutation, useQuery } from "convex/react";
 import { ExternalLink, FileText, Film, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
+import { DateInput } from "@/components/ui/date-input";
 import { api } from "../../convex/_generated/api";
 
 /**
@@ -85,7 +87,7 @@ export function ScriptsPage() {
       </p>
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <select
+        <AnimatedSelect
           value={client}
           onChange={e => setClient(e.target.value)}
           aria-label="Client"
@@ -97,7 +99,7 @@ export function ScriptsPage() {
               {c}
             </option>
           ))}
-        </select>
+        </AnimatedSelect>
         <div className="ml-auto flex items-center gap-1.5 rounded-md border px-2 py-1">
           <Search className="h-3.5 w-3.5 text-muted-foreground" />
           <input
@@ -303,16 +305,15 @@ function ScriptRow({ r }: { r: Row }) {
               Send to the editors{r.client ? ` for ${r.client}` : ""}
             </h4>
             <div className="grid gap-2 sm:grid-cols-2">
-              <select
+              <AnimatedSelect
                 value={type}
                 onChange={e => setType(e.target.value)}
                 className="rounded border bg-transparent px-2 py-1.5 text-[13px]"
               >
                 <option>New Video Request 🎥</option>
                 <option>Edit Video Request 🎥</option>
-              </select>
-              <input
-                type="date"
+              </AnimatedSelect>
+              <DateInput
                 value={due}
                 onChange={e => setDue(e.target.value)}
                 className="rounded border bg-transparent px-2 py-1.5 text-[13px]"

@@ -34,6 +34,7 @@ import { ShowMore } from "@/components/ceo/ShowMore";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import { useRefresh } from "@/components/ceo/useCeo";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 import { api } from "../../../convex/_generated/api";
 import type {
   HiringCandidate,
@@ -522,7 +523,7 @@ function GradeRow({
               aria-label={`Note on ${c.name}`}
               className={`${field} min-w-0`}
             />
-            <select
+            <AnimatedSelect
               value={moveTo}
               onChange={e => setMoveTo(e.target.value as "" | StageKey)}
               disabled={busy}
@@ -535,7 +536,7 @@ function GradeRow({
                   {`and move to ${s.name}`}
                 </option>
               ))}
-            </select>
+            </AnimatedSelect>
             <button
               type="button"
               disabled={busy || score === null}

@@ -21,7 +21,9 @@ import {
 import { DosDontsCard } from "@/components/DosDonts";
 import { TemplateCard } from "@/components/TemplateCard";
 import { bucketDays, TrendChart } from "@/components/TrendChart";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
+import { DateInput } from "@/components/ui/date-input";
 import { CopyButton, WinningAds } from "@/components/WinningAds";
 import { TEMPLATES } from "@/lib/creativeTemplates";
 import { FunnelRow } from "@/pages/FunnelsPage";
@@ -574,7 +576,7 @@ function ScriptFromHere({ d }: { d: any }) {
           <h3 className="text-[14px] font-bold">
             Proven ads to build this script on
           </h3>
-          <select
+          <AnimatedSelect
             value={scope}
             onChange={e => setScope(e.target.value as "service" | "all")}
             className="ml-auto rounded border bg-transparent px-2 py-0.5 text-[12px]"
@@ -583,7 +585,7 @@ function ScriptFromHere({ d }: { d: any }) {
               {serviceLineOf(service) || "Their service line"}
             </option>
             <option value="all">Every service line</option>
-          </select>
+          </AnimatedSelect>
         </div>
         <WinningAds
           rows={winners?.rows}
@@ -1074,16 +1076,15 @@ function NewVideoRequest({
     <div className="space-y-2 rounded-lg border p-2.5">
       <h4 className="font-semibold">New video request</h4>
       <div className="grid gap-2 sm:grid-cols-2">
-        <select
+        <AnimatedSelect
           value={type}
           onChange={e => setType(e.target.value)}
           className="rounded border bg-transparent px-2 py-1.5 text-[13px]"
         >
           <option>New Video Request 🎥</option>
           <option>Edit Video Request 🎥</option>
-        </select>
-        <input
-          type="date"
+        </AnimatedSelect>
+        <DateInput
           value={due}
           onChange={e => setDue(e.target.value)}
           className="rounded border bg-transparent px-2 py-1.5 text-[13px]"

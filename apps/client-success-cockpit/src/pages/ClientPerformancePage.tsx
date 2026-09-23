@@ -9,7 +9,9 @@ import {
 } from "@/components/CreativePreview";
 import { DosDontsCard } from "@/components/DosDonts";
 import { bucketDays, TrendChart } from "@/components/TrendChart";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
+import { DateInput } from "@/components/ui/date-input";
 import { Textarea } from "@/components/ui/textarea";
 import { type Constraint, diagnose } from "@/lib/csmDiagnosis";
 import { serviceModel } from "@/lib/csmTemplates";
@@ -873,7 +875,7 @@ function AddTask({
             onChange={e => setNote(e.target.value)}
           />
           <div className="flex flex-wrap items-center gap-2">
-            <select
+            <AnimatedSelect
               className="rounded-md border bg-background px-2 py-1.5"
               value={team}
               onChange={e => setTeam(e.target.value)}
@@ -883,9 +885,8 @@ function AddTask({
                   {label}
                 </option>
               ))}
-            </select>
-            <input
-              type="date"
+            </AnimatedSelect>
+            <DateInput
               className="rounded-md border bg-background px-2 py-1.5"
               value={due}
               onChange={e => setDue(e.target.value)}
@@ -1456,7 +1457,7 @@ function RangePicker({
           {label}
         </button>
       ))}
-      <select
+      <AnimatedSelect
         className="rounded-md border bg-background px-2 py-1"
         value={isMonth ? value : ""}
         onChange={e => e.target.value && onChange(e.target.value)}
@@ -1467,7 +1468,7 @@ function RangePicker({
             {rangeBounds(m)[2]}
           </option>
         ))}
-      </select>
+      </AnimatedSelect>
       <button
         type="button"
         onClick={() => setCustomOpen(o => !o)}
@@ -1485,8 +1486,7 @@ function RangePicker({
             setCustomOpen(false);
           }}
         >
-          <input
-            type="date"
+          <DateInput
             value={from}
             min={earliest}
             max={to}
@@ -1495,8 +1495,7 @@ function RangePicker({
             aria-label="From"
           />
           <span className="text-muted-foreground">to</span>
-          <input
-            type="date"
+          <DateInput
             value={to}
             min={from}
             max={kuwaitToday()}

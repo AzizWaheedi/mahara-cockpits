@@ -1,6 +1,8 @@
 import { useAction, useMutation, useQuery } from "convex/react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { AnimatedSelect } from "@/components/ui/animated-select";
+import { DateInput } from "@/components/ui/date-input";
 import { api } from "../../convex/_generated/api";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -485,7 +487,7 @@ function CreativeRequests({
                 <p className="w-full text-[11px] text-muted-foreground">
                   Confirm this ad uses the finished cut before linking it.
                 </p>
-                <select
+                <AnimatedSelect
                   aria-label={`Launched ad for ${row.source_ad_name ?? "campaign"}`}
                   value={picked[row.id] ?? ""}
                   onChange={event =>
@@ -502,11 +504,11 @@ function CreativeRequests({
                       {ad.name} · {ad.status}
                     </option>
                   ))}
-                </select>
+                </AnimatedSelect>
+                {/* biome-ignore lint/a11y/noLabelWithoutControl: The custom control renders a button inside this label. */}
                 <label className="flex items-center gap-1.5 text-[12px]">
                   Day ad went live
-                  <input
-                    type="date"
+                  <DateInput
                     aria-label={`Launch day for ${row.source_ad_name ?? "campaign"}`}
                     max={new Date(Date.now() + 3 * 3_600_000)
                       .toISOString()

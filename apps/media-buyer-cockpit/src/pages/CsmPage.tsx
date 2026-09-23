@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from "convex/react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "../../convex/_generated/api";
@@ -844,7 +845,7 @@ export function CsmPage() {
 
             {panel === "ticket" && (
               <div className="space-y-2">
-                <select
+                <AnimatedSelect
                   className="w-full rounded border bg-background px-2 py-1 text-sm"
                   value={ticket}
                   onChange={e => setTicket(e.target.value)}
@@ -854,7 +855,7 @@ export function CsmPage() {
                       {r.label} → {r.deptLabel}
                     </option>
                   ))}
-                </select>
+                </AnimatedSelect>
                 <Textarea
                   placeholder="What exactly is needed?"
                   value={ticketNote}
@@ -879,7 +880,7 @@ export function CsmPage() {
 
             {panel === "leave" && (
               <div className="space-y-2">
-                <select
+                <AnimatedSelect
                   className="w-full rounded border bg-background px-2 py-1 text-sm"
                   value={reason}
                   onChange={e => setReason(e.target.value)}
@@ -887,7 +888,7 @@ export function CsmPage() {
                   {REASONS.map(r => (
                     <option key={r}>{r}</option>
                   ))}
-                </select>
+                </AnimatedSelect>
                 <div className="flex gap-1">
                   {CLOCKS.map(k => (
                     <button
@@ -1379,7 +1380,7 @@ export function CsmPage() {
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
-              <select
+              <AnimatedSelect
                 className="rounded border bg-background px-2 py-1 text-xs"
                 value={energy}
                 onChange={e => setEnergy(e.target.value)}
@@ -1393,8 +1394,8 @@ export function CsmPage() {
                 ].map(x => (
                   <option key={x}>{x}</option>
                 ))}
-              </select>
-              <select
+              </AnimatedSelect>
+              <AnimatedSelect
                 className="rounded border bg-background px-2 py-1 text-xs"
                 value={stress}
                 onChange={e => setStress(e.target.value)}
@@ -1408,7 +1409,7 @@ export function CsmPage() {
                 ].map(x => (
                   <option key={x}>{x}</option>
                 ))}
-              </select>
+              </AnimatedSelect>
             </div>
             <Textarea
               rows={2}

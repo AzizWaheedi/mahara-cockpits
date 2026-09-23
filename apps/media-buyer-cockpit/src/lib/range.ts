@@ -60,6 +60,55 @@ export const PRESETS: { key: string; label: string; make: () => Range }[] = [
     label: "30 days",
     make: () => ({ ...lastNDays(30), label: "Last 30 days", key: "30d" }),
   },
+  {
+    key: "mtd",
+    label: "Month to date",
+    make: () => ({
+      start: `${kuwaitDay().slice(0, 7)}-01`,
+      end: kuwaitDay(),
+      label: "Month to date",
+      key: "mtd",
+    }),
+  },
+  {
+    key: "last-month",
+    label: "Last month",
+    make: () => {
+      const [year, month] = kuwaitDay().split("-").map(Number);
+      const end = new Date(Date.UTC(year, month - 1, 0))
+        .toISOString()
+        .slice(0, 10);
+      return {
+        start: `${end.slice(0, 7)}-01`,
+        end,
+        label: "Last month",
+        key: "last-month",
+      };
+    },
+  },
+  {
+    key: "ytd",
+    label: "Year to date",
+    make: () => ({
+      start: `${kuwaitDay().slice(0, 4)}-01-01`,
+      end: kuwaitDay(),
+      label: "Year to date",
+      key: "ytd",
+    }),
+  },
+  {
+    key: "last-year",
+    label: "Last year",
+    make: () => {
+      const year = Number(kuwaitDay().slice(0, 4)) - 1;
+      return {
+        start: `${year}-01-01`,
+        end: `${year}-12-31`,
+        label: "Last year",
+        key: "last-year",
+      };
+    },
+  },
 ];
 
 export function defaultRange(): Range {

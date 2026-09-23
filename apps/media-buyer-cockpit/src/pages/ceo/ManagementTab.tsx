@@ -41,6 +41,7 @@ import {
 } from "@/components/ceo/StatusChip";
 import { useRefresh } from "@/components/ceo/useCeo";
 import { Button } from "@/components/ui/button";
+import { DateInput } from "@/components/ui/date-input";
 import {
   Dialog,
   DialogContent,
@@ -49,7 +50,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -1086,9 +1086,8 @@ function StatusDialogBody({
       >
         <div className="grid gap-1.5">
           <Label htmlFor="ceo-status-since">{dateLabel}</Label>
-          <Input
+          <DateInput
             id="ceo-status-since"
-            type="date"
             required
             value={since}
             min={FIRST_DAY}

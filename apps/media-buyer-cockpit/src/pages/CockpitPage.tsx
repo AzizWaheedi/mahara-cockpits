@@ -22,6 +22,7 @@ import { StatusToggle } from "@/components/StatusToggle";
 import { TodayMeetings } from "@/components/TodayMeetings";
 import { TrackingIssues } from "@/components/TrackingIssues";
 import { PortfolioTrends } from "@/components/Trends";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -2564,7 +2565,7 @@ function Cockpit({ view }: { view: View }) {
                   </div>
                   {ask === i._id ? (
                     <div className="mt-2 space-y-2 rounded-md border bg-background p-2">
-                      <select
+                      <AnimatedSelect
                         className="h-8 w-full rounded-md border bg-background px-2 text-[13px]"
                         value={askWho}
                         onChange={e => setAskWho(e.target.value)}
@@ -2576,7 +2577,7 @@ function Cockpit({ view }: { view: View }) {
                             {m.username}
                           </option>
                         ))}
-                      </select>
+                      </AnimatedSelect>
                       <Input
                         value={askText}
                         placeholder="What is missing? e.g. which landing page should this point to?"

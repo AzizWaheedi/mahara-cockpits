@@ -8,6 +8,7 @@ import {
   X,
 } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 
 /**
  * A month of a client's posts, as days with the pictures in them.
@@ -356,9 +357,10 @@ function AddPost({
   return (
     <div className="mb-2.5 rounded-lg border bg-muted/20 p-2.5">
       <div className="flex flex-wrap items-end gap-2">
+        {/* biome-ignore lint/a11y/noLabelWithoutControl: The custom control renders a button inside this label. */}
         <label className="flex flex-col gap-1">
           <span className="text-[11px] text-muted-foreground">Pillar</span>
-          <select
+          <AnimatedSelect
             value={pillar}
             onChange={e => setPillar(e.target.value)}
             className="h-8 rounded-md border bg-background px-2 text-[12px]"
@@ -368,7 +370,7 @@ function AddPost({
                 {p}
               </option>
             ))}
-          </select>
+          </AnimatedSelect>
         </label>
         <label className="flex min-w-48 flex-1 flex-col gap-1">
           <span className="text-[11px] text-muted-foreground">

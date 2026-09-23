@@ -2,6 +2,7 @@ import { useAction } from "convex/react";
 import { Check, Copy, ExternalLink, LoaderCircle, Plus, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 import { api } from "../../convex/_generated/api";
 
 /**
@@ -301,7 +302,7 @@ export function SendForReview() {
           />
           {/* The clients are the ClickUp cards. Typing a name invents a
               client that matches nothing when somebody looks later. */}
-          <select
+          <AnimatedSelect
             value={client}
             onChange={e => setClient(e.target.value)}
             className="h-9 rounded-md border bg-background px-2.5 text-[13px]"
@@ -312,7 +313,7 @@ export function SendForReview() {
                 {c.name}
               </option>
             ))}
-          </select>
+          </AnimatedSelect>
         </div>
         <input
           value={note}

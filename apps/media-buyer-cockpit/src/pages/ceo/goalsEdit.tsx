@@ -2,6 +2,8 @@ import { useAction } from "convex/react";
 import { Loader2, Plus, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { SectionCard } from "@/components/ceo/SectionCard";
+import { AnimatedSelect } from "@/components/ui/animated-select";
+import { DateInput } from "@/components/ui/date-input";
 import { api } from "../../../convex/_generated/api";
 import type { Board, TargetRow } from "../../../convex/ceo/goals";
 import type { MetricDef } from "../../../convex/ceo/scoreboard";
@@ -159,11 +161,11 @@ export function PlanEditor({
             />
           </label>
           <div className="grid grid-cols-2 gap-3">
+            {/* biome-ignore lint/a11y/noLabelWithoutControl: The custom control renders a button inside this label. */}
             <label className="grid gap-1">
               <span className={label}>From</span>
-              <input
+              <DateInput
                 className={field}
-                type="date"
                 value={from}
                 onChange={e => {
                   setFrom(e.target.value);
@@ -171,11 +173,11 @@ export function PlanEditor({
                 }}
               />
             </label>
+            {/* biome-ignore lint/a11y/noLabelWithoutControl: The custom control renders a button inside this label. */}
             <label className="grid gap-1">
               <span className={label}>To</span>
-              <input
+              <DateInput
                 className={field}
-                type="date"
                 value={to}
                 onChange={e => setTo(e.target.value)}
               />
@@ -199,9 +201,10 @@ export function PlanEditor({
               placeholder="Collect $80,400, spend $41,960, keep $38,440 at a 48% margin."
             />
           </label>
+          {/* biome-ignore lint/a11y/noLabelWithoutControl: The custom control renders a button inside this label. */}
           <label className="grid gap-1">
             <span className={label}>Status</span>
-            <select
+            <AnimatedSelect
               className={field}
               value={status}
               onChange={e =>
@@ -211,7 +214,7 @@ export function PlanEditor({
               <option value="live">Live: this is the plan being scored</option>
               <option value="draft">Draft: still being written</option>
               <option value="closed">Closed: history</option>
-            </select>
+            </AnimatedSelect>
           </label>
         </div>
 
@@ -266,9 +269,10 @@ export function PlanEditor({
         {plan ? (
           <div className="grid gap-3 border-t pt-4">
             <div className="flex flex-wrap items-end gap-2">
+              {/* biome-ignore lint/a11y/noLabelWithoutControl: The custom control renders a button inside this label. */}
               <label className="grid min-w-[16rem] flex-1 gap-1">
                 <span className={label}>Add a target</span>
-                <select
+                <AnimatedSelect
                   className={field}
                   value={pick}
                   onChange={e => add(e.target.value)}
@@ -281,7 +285,7 @@ export function PlanEditor({
                         {`${c.label}${c.manual ? " (typed in)" : ""}`}
                       </option>
                     ))}
-                </select>
+                </AnimatedSelect>
               </label>
             </div>
 

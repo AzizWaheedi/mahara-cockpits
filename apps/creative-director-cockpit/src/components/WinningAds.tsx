@@ -8,6 +8,7 @@ import {
   stillPropsFor,
   useLocalStills,
 } from "@/components/CreativePreview";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 import { api } from "../../convex/_generated/api";
 
 /**
@@ -127,7 +128,7 @@ export function WinnerFilter({
         </button>
       ))}
       {names.length > 0 && origin !== "auto" && (
-        <select
+        <AnimatedSelect
           value={savedBy}
           onChange={e => onSavedBy(e.target.value)}
           aria-label="Saved by"
@@ -139,7 +140,7 @@ export function WinnerFilter({
               Saved by {name}
             </option>
           ))}
-        </select>
+        </AnimatedSelect>
       )}
     </div>
   );

@@ -1,6 +1,7 @@
 import { useAction } from "convex/react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import {
   assistLabel,
@@ -126,9 +127,10 @@ function CopyTest({
       </p>
 
       <div className="grid gap-2 sm:grid-cols-2">
+        {/* biome-ignore lint/a11y/noLabelWithoutControl: AnimatedSelect renders a button inside this label. */}
         <label className="text-[12px] font-semibold">
           Copy this ad
-          <select
+          <AnimatedSelect
             className="mt-1 w-full rounded-md border bg-background p-1.5 text-[13px] font-normal"
             value={source}
             onChange={e => setSource(e.target.value)}
@@ -138,11 +140,12 @@ function CopyTest({
                 {a.name}
               </option>
             ))}
-          </select>
+          </AnimatedSelect>
         </label>
+        {/* biome-ignore lint/a11y/noLabelWithoutControl: The custom control renders a button inside this label. */}
         <label className="text-[12px] font-semibold">
           Put them in
-          <select
+          <AnimatedSelect
             className="mt-1 w-full rounded-md border bg-background p-1.5 text-[13px] font-normal"
             value={adset}
             onChange={e => setAdset(e.target.value)}
@@ -153,7 +156,7 @@ function CopyTest({
                 {s.name}
               </option>
             ))}
-          </select>
+          </AnimatedSelect>
         </label>
       </div>
 
@@ -305,9 +308,10 @@ function NewAdSet({ campaign, adSets }: { campaign: Row; adSets: Row[] }) {
         ads with "Test new copy".
       </p>
       <div className="grid gap-2 sm:grid-cols-3">
+        {/* biome-ignore lint/a11y/noLabelWithoutControl: The custom control renders a button inside this label. */}
         <label className="text-[12px] font-semibold">
           Copy targeting from
-          <select
+          <AnimatedSelect
             className="mt-1 w-full rounded-md border bg-background p-1.5 text-[13px] font-normal"
             value={from}
             onChange={e => setFrom(e.target.value)}
@@ -317,7 +321,7 @@ function NewAdSet({ campaign, adSets }: { campaign: Row; adSets: Row[] }) {
                 {s.name}
               </option>
             ))}
-          </select>
+          </AnimatedSelect>
         </label>
         <label className="text-[12px] font-semibold">
           Call it
@@ -568,9 +572,10 @@ function AddCreative({
         lead form, page and CTA come across untouched. It lands paused.
       </p>
       <div className="grid gap-2 sm:grid-cols-2">
+        {/* biome-ignore lint/a11y/noLabelWithoutControl: The custom control renders a button inside this label. */}
         <label className="space-y-1">
           <span className="text-muted-foreground">Copy the setup from</span>
-          <select
+          <AnimatedSelect
             className="w-full rounded border bg-background p-1.5"
             value={source}
             onChange={e => setSource(e.target.value)}
@@ -580,11 +585,12 @@ function AddCreative({
                 {a.name}
               </option>
             ))}
-          </select>
+          </AnimatedSelect>
         </label>
+        {/* biome-ignore lint/a11y/noLabelWithoutControl: The custom control renders a button inside this label. */}
         <label className="space-y-1">
           <span className="text-muted-foreground">Put it in</span>
-          <select
+          <AnimatedSelect
             className="w-full rounded border bg-background p-1.5"
             value={adset}
             onChange={e => setAdset(e.target.value)}
@@ -595,7 +601,7 @@ function AddCreative({
                 {s.name}
               </option>
             ))}
-          </select>
+          </AnimatedSelect>
         </label>
       </div>
       <div className="rounded-md border bg-background p-2">
