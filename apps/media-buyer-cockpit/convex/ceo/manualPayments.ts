@@ -1,6 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
 import { internalMutation, type QueryCtx } from "../_generated/server";
+import { amountProblem } from "../billingCore";
 import { authenticatedMutation, authenticatedQuery } from "../functions";
 import {
   byNewest,
@@ -568,8 +569,8 @@ export const ingestFromInbox = internalMutation({
       a.day < "2025-01-01"
     )
       return reject(`The day ${a.day} is not a day money could have arrived.`);
-    if (!(a.amount > 0) || Math.round(a.amount * 1000) !== a.amount * 1000)
-      return reject("The amount is not a real payment.");
+    const wrong = amountProblem(a.amount, a.currency);
+    if (wrong) return reject(wrong);
     if (a.rail === "tap" && (await tapConnected(ctx)))
       return reject(
         "Tap is connected, so a Tap payment arrives on the Tap rail by itself; logging it would count it twice.",
@@ -577,7 +578,12 @@ export const ingestFromInbox = internalMutation({
     if (!(await onClientCard(ctx, a.clickupTaskId)))
       return reject("That client card is not on the roster any more.");
     const clientName = cleanText(a.clientName, 120) || a.clickupTaskId;
-    const paid = usdAtWrite(a.amount, a.currency);
+    let paid: ReturnType<typeof usdAtWrite>;
+    try {
+      paid = usdAtWrite(a.amount, a.currency);
+    } catch (e) {
+      return reject(e instanceof Error ? e.message : String(e));
+    }
     const twin = await liveTwin(ctx, {
       day: a.day,
       currency: a.currency,

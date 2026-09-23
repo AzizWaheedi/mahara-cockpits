@@ -4,6 +4,7 @@ import { internalQuery } from "./_generated/server";
 import {
   type Account,
   accountRow,
+  amountProblem,
   applyEdit,
   type Edit,
   kuwaitToday,
@@ -230,8 +231,8 @@ export const logPayment = authenticatedAction({
     const today = kuwaitToday();
     if (!DAY.test(a.day) || a.day > today || a.day < "2025-01-01")
       throw new Error("Pick the day the money arrived, today or before.");
-    if (!(a.amount > 0) || a.amount > 100_000)
-      throw new Error("Type the amount that arrived.");
+    const wrong = amountProblem(a.amount, a.currency);
+    if (wrong) throw new Error(wrong);
     if (!(RAILS as readonly string[]).includes(a.rail))
       throw new Error("Pick how the money came.");
     const evidence = (a.evidenceUrl ?? "").trim();

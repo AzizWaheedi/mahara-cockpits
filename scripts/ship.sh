@@ -28,6 +28,12 @@ if [ -f apps/creative-director-cockpit/scripts/social.test.ts ]; then
     || { echo "the social planner tests fail"; exit 1; }
 fi
 
+# Billing: who is late, what a step on the ladder is, what an amount may be.
+# Wrong either way is a client chased who paid, or a real payment refused.
+if [ -f apps/media-buyer-cockpit/scripts/billing.test.ts ]; then
+  (cd apps/media-buyer-cockpit && bun test scripts/billing.test.ts >/dev/null 2>&1) \
+    || { echo "the billing rules tests fail"; exit 1; }
+fi
 ship() {
   local app="$1"
   local SITE dir url

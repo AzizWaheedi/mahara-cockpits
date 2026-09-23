@@ -479,6 +479,31 @@ export async function comment(
   });
 }
 
+// --- amounts ---------------------------------------------------------------
+
+/**
+ * Why an amount cannot be one client payment, or null when it can. Dollars
+ * have cents and dinars have fils. The decimals are compared with a
+ * tolerance, as the ledger's own form does: 2.01 * 1000 is
+ * 2009.9999999999998 in floating point, and the exact comparison first
+ * written for the inbox refused about one amount in fifty (2026-09-23).
+ */
+export function amountProblem(
+  amount: number,
+  currency: "USD" | "KWD",
+): string | null {
+  if (!Number.isFinite(amount) || !(amount > 0))
+    return "The amount has to be above zero.";
+  if (amount > 100_000)
+    return "That is too large for one client payment; check the amount.";
+  const places = currency === "USD" ? 100 : 1000;
+  if (Math.abs(Math.round(amount * places) - amount * places) > 1e-6)
+    return currency === "USD"
+      ? "A dollar amount has at most two decimals."
+      : "A dinar amount has at most three decimals.";
+  return null;
+}
+
 // --- edits -----------------------------------------------------------------
 
 export type Edit =

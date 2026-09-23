@@ -367,29 +367,55 @@ export const ingestInbox = internalAction({
         "cockpit_billing_inbox?select=*&status=eq.pending&order=logged_at.asc&limit=50",
       );
       const counts = { ingested: 0, duplicate: 0, rejected: 0 };
+      let stuck = 0;
       for (const r of rows) {
-        const res = await ctx.runMutation(
-          internal.ceo.manualPayments.ingestFromInbox,
-          {
-            inboxId: Number(r.id),
-            day: String(r.paid_on),
-            amount: Number(r.amount),
-            currency: r.currency,
-            rail: r.method,
-            clientName: String(r.client_name ?? r.clickup_task_id),
-            clickupTaskId: String(r.clickup_task_id),
-            note:
-              [
-                r.reference ? `ref ${r.reference}` : null,
-                r.note,
-                r.evidence_url ? `receipt ${r.evidence_url}` : null,
-              ]
-                .filter(Boolean)
-                .join(" · ") || undefined,
-            loggedBy: String(r.logged_by),
-            source: String(r.source),
-          },
-        );
+        let res: {
+          status: "ingested" | "duplicate" | "rejected";
+          id?: string;
+          note: string;
+        };
+        try {
+          res = await ctx.runMutation(
+            internal.ceo.manualPayments.ingestFromInbox,
+            {
+              inboxId: Number(r.id),
+              day: String(r.paid_on),
+              amount: Number(r.amount),
+              currency: r.currency,
+              rail: r.method,
+              clientName: String(r.client_name ?? r.clickup_task_id),
+              clickupTaskId: String(r.clickup_task_id),
+              note:
+                [
+                  r.reference ? `ref ${r.reference}` : null,
+                  r.note,
+                  r.evidence_url ? `receipt ${r.evidence_url}` : null,
+                ]
+                  .filter(Boolean)
+                  .join("; ") || undefined,
+              loggedBy: String(r.logged_by),
+              source: String(r.source),
+            },
+          );
+        } catch (err) {
+          // A failure that is not a verdict (a conflict, a timeout) leaves the
+          // payment waiting for the next refresh, with the reason beside it,
+          // and never stops the rows after it.
+          stuck += 1;
+          await sb(
+            e.url,
+            e.key,
+            `cockpit_billing_inbox?id=eq.${Number(r.id)}`,
+            {
+              method: "PATCH",
+              body: {
+                status_note: `Not taken in yet: ${String(err instanceof Error ? err.message : err).slice(0, 200)}. It is tried again at the next refresh.`,
+              },
+              prefer: "return=minimal",
+            },
+          ).catch(() => null);
+          continue;
+        }
         counts[res.status] += 1;
         await sb(e.url, e.key, `cockpit_billing_inbox?id=eq.${Number(r.id)}`, {
           method: "PATCH",
@@ -421,6 +447,6 @@ export const ingestInbox = internalAction({
             by_whom: String(r.logged_by),
           });
       }
-      return `${rows.length} waiting: ${counts.ingested} in, ${counts.duplicate} already there, ${counts.rejected} refused`;
+      return `${rows.length} waiting: ${counts.ingested} in, ${counts.duplicate} already there, ${counts.rejected} refused${stuck ? `, ${stuck} left for the next refresh` : ""}`;
     }),
 });
