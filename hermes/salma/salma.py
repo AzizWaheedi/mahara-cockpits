@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -24,7 +25,7 @@ import urllib.request
 from datetime import datetime, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-KINDS = ("plan", "caption", "generate")
+KINDS = ("fill", "plan", "caption", "generate")
 MAX_ATTEMPTS = 3
 
 
@@ -193,6 +194,33 @@ def frontier(system: str, user: str, *, max_tokens: int = 2000) -> tuple[str, st
     return out["choices"][0]["message"]["content"], "gpt-4.1"
 
 
+def wants_arabic(dialect: str) -> bool:
+    d = dialect.lower()
+    return any(w in d for w in (
+        "arab", "gulf", "khaleeji", "saudi", "najdi", "hijazi", "kuwait",
+        "qatar", "emirat", "bahrain", "oman", "levant", "egypt",
+    ))
+
+
+def arabic_share(text: str) -> float:
+    """How much of the writing is Arabic script, ignoring digits and marks."""
+    letters = [c for c in text if c.isalpha()]
+    if not letters:
+        return 0.0
+    return sum(1 for c in letters if "\u0600" <= c <= "\u06ff") / len(letters)
+
+
+HEX_CODE = re.compile(r"\s*#(?=[0-9A-Fa-f]*\d)[0-9A-Fa-f]{6}\b")
+
+
+def strip_codes(text: str) -> str:
+    """Remove colour codes that leaked from the brand sheet into the copy,
+    and the empty brackets they leave behind when they were in brackets."""
+    out = HEX_CODE.sub("", text)
+    out = re.sub(r"\s*[(\[]\s*[)\]]", "", out)
+    return re.sub(r"[ \t]{2,}", " ", out)
+
+
 def strip_dashes(text: str) -> str:
     """No em-dashes. House rule, and the models put them in anyway.
 
@@ -359,9 +387,21 @@ CAPTION_SYSTEM = """You write social captions for Gulf construction and design b
 - Write in the client's dialect. Never Kuwaiti unless that is their dialect.
 - No em-dashes. Ever.
 - No invented specifics: no price, no lead time, no material or award the
-  brief does not give you.
+  brief does not give you. That includes technical detail that merely
+  sounds right: an alloy grade, a coating system, a country of origin, a
+  test, a standard, "checked on site". If the brand sheet does not state
+  it, it is not true for this client, however plausible. Describe what the
+  reader can see instead.
 - The call to action must match what is actually in the image.
 - Sound like the business, not like a brand consultant.
+- Never say the picture is a photo of a real project, a real site or a
+  real client's home ("this is a photo from our project in ..."). The
+  picture may be generated, and a caption that claims otherwise is a
+  false statement on the client's own account. Talk about the work, the
+  detail, the idea -- not about where the picture was taken.
+- Never name a place, a project or a client that the brief does not.
+- Nothing internal in the copy: no hex colour codes, no pillar names, no
+  reference numbers. The brand sheet is for you, not for the reader.
 
 Return JSON only: {"caption":"...","cta":"..."}"""
 
@@ -373,16 +413,34 @@ def do_caption(sb: Store, job: dict) -> dict:
         raise ValueError("that post is gone")
     post = found[0]
     b = brand_of(sb, str(post.get("client_task_id")))
-    answer, model = frontier(
-        CAPTION_SYSTEM,
+    dialect = str(b["social"].get("dialect") or "")
+    ask = (
         f"{brief(b)}\n\nPILLAR: {post.get('pillar')}\nTOPIC: {post.get('topic')}\n"
-        f"DIRECTION: {post.get('caption_direction')}",
+        f"DIRECTION: {post.get('caption_direction')}"
     )
-    parsed = only_json(answer)
-    caption = str(parsed.get("caption") or "").strip()
+    answer, model = frontier(CAPTION_SYSTEM, ask)
+    caption = str(only_json(answer).get("caption") or "").strip()
     if not caption:
         raise ValueError("the model returned no caption")
-    cleaned = strip_dashes(caption)
+
+    # The language, checked rather than trusted. When the brand sheet and
+    # the topic are both in English the model follows them and forgets the
+    # dialect -- it did, for a Qatari client, on the first live run. One
+    # retry with the instruction made impossible to miss; a second English
+    # caption is an error on the post, never an English caption published
+    # to an Arabic audience.
+    if wants_arabic(dialect) and arabic_share(caption) < 0.5:
+        note(f"  {post_id}: came back in the wrong language, asking again")
+        answer, model = frontier(
+            CAPTION_SYSTEM,
+            ask + f"\n\nWrite the caption in Arabic, in {dialect}. Not English.",
+        )
+        caption = str(only_json(answer).get("caption") or "").strip()
+        if arabic_share(caption) < 0.5:
+            raise ValueError(
+                f"the caption came back in English twice; this client writes in {dialect}"
+            )
+    cleaned = strip_codes(strip_dashes(caption))
     if cleaned != caption:
         note(f"  {post_id}: stripped an em-dash the model put in anyway")
         caption = cleaned
@@ -421,88 +479,77 @@ name itself is the instruction -- read it and frame accordingly.
 Return JSON only: {"prompts":["slide 1 prompt","slide 2 prompt", ...]}"""
 
 
-HF_BASE = "https://platform.higgsfield.ai"
-# Higgsfield sits behind the same Cloudflare bot rule GoHighLevel does: a
-# default urllib agent is answered 403 by the edge before the API sees it.
-HF_UA = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
-)
-# Verified against the live API 2026-09-20 by reading its own 422s rather
-# than the docs, which do not carry the schema.
-HF_SIZES = {"square": "1536x1536", "portrait": "1152x1536", "landscape": "2048x1152"}
+# Images come from Higgsfield through its CLI on this machine, signed in
+# with Aziz's own account -- his subscription credits, not the metered
+# API wallet, which was empty. The posting desk already drives the CLI
+# for covers, so its caller is borrowed rather than rewritten: that is
+# where the result_url lesson lives (the CLI's JSON lists the uploaded
+# reference before the result, and reading the first URL once handed
+# back the input as the output), and where the conversion to what
+# Instagram accepts lives. One Higgsfield caller, fixed in one place.
+_RADAR = [
+    "/home/hermes/mahara-cockpits/hermes/ideation-radar",
+    os.path.join(HERE, "..", "ideation-radar"),
+]
+for _p in _RADAR:
+    if os.path.isdir(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)
+
+# 4:5, Instagram's tallest feed shape and the one that holds the screen
+# longest. Every slide of a carousel shares it.
+ASPECT = "4:5"
 
 
 class NoCredits(RuntimeError):
-    """Higgsfield answers 403 'Not enough credits' with an empty balance.
+    """The Higgsfield account is out of credits.
 
-    Worth its own type: it is not a bug, nothing is retryable, and the
-    person reading the queue needs to top up rather than investigate.
+    Its own type because it is not a fault and retrying will not fix it:
+    whoever reads the queue needs to top up, not investigate.
     """
 
 
-def hf_call(path: str, method: str = "GET", body: dict | None = None) -> dict:
-    ident = os.environ.get("HIGGSFIELD_ID")
-    secret = os.environ.get("HIGGSFIELD_SECRET")
-    if not ident or not secret:
-        raise RuntimeError("HIGGSFIELD_ID / HIGGSFIELD_SECRET are not set")
-    data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(
-        HF_BASE + path, data=data, method=method,
-        headers={"Content-Type": "application/json", "Accept": "application/json",
-                 "User-Agent": HF_UA, "Authorization": f"Key {ident}:{secret}"},
+def hf_image(prompt: str) -> bytes:
+    """One finished image as Instagram-ready JPEG bytes."""
+    import subprocess
+
+    from radar.posting import higgsfield as hf
+    from radar.posting import thumbs
+
+    ok, why = hf.available()
+    if not ok:
+        raise RuntimeError(f"Higgsfield is not usable here: {why}")
+    cmd = [
+        hf.cli_path() or "higgsfield", "generate", "create", hf.MODEL,
+        "--aspect-ratio", ASPECT,
+        "--resolution", "2k",
+        "--prompt", prompt[:3000],
+        "--wait", "--wait-timeout", hf.WAIT_TIMEOUT,
+        "--json",
+    ]
+    res = subprocess.run(
+        cmd, capture_output=True, text=True, timeout=660, check=False,
+        stdin=subprocess.DEVNULL,
     )
-    try:
-        with urllib.request.urlopen(req, timeout=90) as r:
-            return json.loads(r.read().decode())
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode()[:300]
-        if e.code == 403 and "credits" in detail.lower():
+    out = (res.stdout or "") + "\n" + (res.stderr or "")
+    if res.returncode != 0:
+        tail = re.sub(r"\s+", " ", out).strip()[-300:]
+        if "credit" in tail.lower():
             raise NoCredits(
-                "Higgsfield has no credits left. Top up at cloud.higgsfield.ai "
-                "and run this again; nothing else is wrong."
-            ) from e
-        raise RuntimeError(f"Higgsfield {e.code}: {detail}") from e
-
-
-def hf_image(prompt: str, size: str) -> str:
-    """One image, start to finished URL. Blocks; a slide takes under a minute."""
-    made = hf_call("/v1/text2image/soul", "POST", {"params": {
-        "prompt": prompt[:2000],
-        "width_and_height": size,
-        "quality": "1080p",
-        "batch_size": 1,
-        "enhance_prompt": False,
-    }})
-    job_set = made.get("id") or made.get("job_set_id")
-    if not job_set:
-        raise RuntimeError(f"Higgsfield gave no job id: {str(made)[:200]}")
-
-    for _ in range(60):
-        time.sleep(5)
-        state = hf_call(f"/v1/job-sets/{job_set}")
-        jobs = state.get("jobs") or []
-        job0 = jobs[0] if jobs else state
-        status = str(job0.get("status") or "")
-        if status == "completed":
-            results = job0.get("results") or {}
-            url = (
-                (results.get("raw") or {}).get("url")
-                or (results.get("min") or {}).get("url")
-                or job0.get("url")
+                "Higgsfield is out of credits. Top up, then make the picture again."
             )
-            if not url:
-                raise RuntimeError(f"completed with no url: {str(job0)[:200]}")
-            return str(url)
-        if status in ("failed", "canceled"):
-            raise RuntimeError(f"Higgsfield {status}: {str(job0.get('error'))[:160]}")
-        if status == "nsfw":
-            # Not retryable and not our bug: the prompt tripped their filter.
-            raise RuntimeError("Higgsfield refused the prompt as unsafe. Reword the slide.")
-    raise RuntimeError("Higgsfield did not finish within five minutes")
+        raise RuntimeError(f"Higgsfield failed: {tail}")
+    urls = hf._result_urls(out)
+    if not urls:
+        raise RuntimeError("Higgsfield finished but printed no result link")
+    req = urllib.request.Request(urls[0], headers={"User-Agent": "Mahara social desk"})
+    with urllib.request.urlopen(req, timeout=120) as r:
+        data = r.read()
+    if len(data) < 10_000:
+        raise RuntimeError("Higgsfield returned an empty file")
+    return thumbs.instagram_image(data)
 
 
-def keep_image(sb: Store, url: str, post_id: str, n: int) -> str:
+def keep_image(sb: Store, blob: bytes, post_id: str, n: int) -> str:
     """Copy the image into our own bucket and hand back a public URL.
 
     Higgsfield's URLs are theirs and need not outlive the job. GoHighLevel
@@ -510,9 +557,6 @@ def keep_image(sb: Store, url: str, post_id: str, n: int) -> str:
     pointing at somebody else's temporary URL is a picture that vanishes
     between approval and posting.
     """
-    req = urllib.request.Request(url, headers={"User-Agent": HF_UA})
-    with urllib.request.urlopen(req, timeout=120) as r:
-        blob = r.read()
     safe = post_id.replace(":", "_").replace("/", "_")
     path = f"{safe}/{n}.jpg"
     base = os.environ["DESK_SUPABASE_URL"].rstrip("/")
@@ -578,13 +622,11 @@ def do_generate(sb: Store, job: dict) -> dict:
     if len(prompts) < slides:
         note(f"  {post_id}: {len(prompts)} prompts for {slides} slides")
 
-    # Then the pictures. Square, because every slide of a carousel has to
-    # share one aspect ratio and a square is the one that never crops badly.
-    size = HF_SIZES["square"]
+    # Then the pictures, 4:5, the same for every slide of a carousel.
     images: list[str] = []
     for i, prompt in enumerate(prompts, 1):
         try:
-            images.append(keep_image(sb, hf_image(prompt, size), post_id, i))
+            images.append(keep_image(sb, hf_image(prompt), post_id, i))
         except NoCredits:
             # The prompts are already saved, so topping up and re-running
             # costs nothing but the images. Say so plainly rather than
@@ -601,16 +643,152 @@ def do_generate(sb: Store, job: dict) -> dict:
     return {"post": post_id, "prompts": len(prompts), "images": len(images)}
 
 
-HANDLERS = {"plan": do_plan, "caption": do_caption, "generate": do_generate}
+
+FILL_SYSTEM = """You fill empty days on a Gulf construction and design
+business's Instagram calendar. Each slot has a date and a pillar.
+
+Return JSON only: {"posts":[{"topic":"...","slides":1-6,"caption_direction":"..."}]}
+One entry per slot, in the order given.
+
+Not negotiable:
+- A topic must be specific enough to disagree with. "Kitchen post" is not a
+  topic. "Why the toe-kick gap is where cheap joinery shows" is.
+- Everything comes from this client's brand and offer. Never general
+  industry advice, never a claim, price, date or material they have not
+  given you.
+- slides is 1 for a single strong image; more only when the idea is a
+  sequence (a process, a before and after, a set of details).
+- caption_direction is one or two sentences on what the caption should do,
+  for the copywriter who writes it next.
+- Vary the angle across the slots. Two posts in a month on the same idea is
+  a wasted post.
+- Nothing internal in a topic: no hex colour codes, no reference numbers.
+  Say "the bronze finish", not the code for it. The topic becomes the
+  caption, and a customer does not read in hex."""
+
+
+def do_fill(sb: Store, job: dict) -> dict:
+    """Put a finished draft on each empty day it was given.
+
+    This is the whole month in one step: no mix to set, no plan to approve
+    before anything happens. The cockpit picks the empty days and a pillar
+    for each; this writes the idea, then queues the caption and the
+    pictures for every post at once, so the calendar fills in front of
+    whoever pressed the button rather than waiting on three more.
+    """
+    batch_id = str(job.get("batch_id") or "")
+    client_task_id = str(job.get("client_task_id") or "")
+    slots = list((job.get("params") or {}).get("slots") or [])
+    if not batch_id or not client_task_id:
+        raise ValueError("a fill job needs a month and a client")
+    if not slots:
+        raise ValueError("there were no empty days to fill")
+
+    b = brand_of(sb, client_task_id)
+    if not b["client"]:
+        raise ValueError("no client card for that id, so there is no brand to write to")
+
+    wanted = "\n".join(
+        f"{i + 1}. {s_['day']} -- pillar: {s_['pillar']}"
+        + (f" ({PILLAR_BRIEF[s_['pillar']]})" if s_["pillar"] in PILLAR_BRIEF else "")
+        for i, s_ in enumerate(slots)
+    )
+    parsed = only_json(deepseek(
+        FILL_SYSTEM,
+        f"{brief(b)}\n\nTHE SLOTS TO FILL:\n{wanted}",
+    ))
+    ideas = parsed.get("posts") if isinstance(parsed, dict) else parsed
+    if not isinstance(ideas, list) or not ideas:
+        raise ValueError("the model returned no posts")
+
+    taken = sb.get(
+        f"social_posts?select=n&batch_id=eq.{urllib.parse.quote(batch_id)}&order=n.desc&limit=1"
+    )
+    n = int(taken[0]["n"]) if taken else 0
+
+    rows, ids = [], []
+    for slot, idea in zip(slots, ideas):
+        topic = str((idea or {}).get("topic") or "").strip()
+        if not topic:
+            continue
+        n += 1
+        pid = f"{batch_id}:{n}"
+        ids.append(pid)
+        rows.append({
+            "id": pid,
+            "batch_id": batch_id,
+            "client_task_id": client_task_id,
+            "n": n,
+            "pillar": slot["pillar"],
+            "topic": topic[:300],
+            "slides": max(1, min(10, int((idea or {}).get("slides") or 1))),
+            "caption_direction": str((idea or {}).get("caption_direction") or "")[:2000],
+            # Straight to approved: a person pressing "Fill the month" is
+            # the decision the plan-approval step used to ask for.
+            "status": "approved",
+            "scheduled_at": f"{slot['day']}T07:00:00Z",
+            "at": now(),
+            "updated_at": now(),
+        })
+    if not rows:
+        raise ValueError("nothing the model returned was a usable post")
+    sb.post("social_posts?on_conflict=id", rows, "resolution=merge-duplicates,return=minimal")
+
+    # Caption and pictures for every new post, queued together so they run
+    # as soon as the drainer is free rather than one button at a time.
+    jobs = []
+    for pid in ids:
+        for kind in ("caption", "generate"):
+            jobs.append({
+                "id": f"{kind}:{pid}",
+                "kind": kind,
+                "client_task_id": client_task_id,
+                "batch_id": batch_id,
+                "post_id": pid,
+                "status": "queued",
+                "attempts": 0,
+                "requested_by": job.get("requested_by") or "fill",
+            })
+    sb.post("social_jobs?on_conflict=id", jobs, "resolution=merge-duplicates,return=minimal")
+    return {"posts": len(rows), "queued": len(jobs)}
+
+
+def on_post(sb: Store, post_id: str, error: str | None) -> None:
+    """Record a job's outcome where the calendar can see it."""
+    try:
+        sb.patch(
+            f"social_posts?id=eq.{urllib.parse.quote(post_id)}",
+            {"error": error, "updated_at": now()},
+        )
+    except Exception:  # noqa: BLE001 - the job result is already recorded
+        pass
+
+
+HANDLERS = {"fill": do_fill, "plan": do_plan, "caption": do_caption, "generate": do_generate}
 
 
 def main() -> int:
     limit = int(sys.argv[1]) if len(sys.argv) > 1 else 5
     sb = Store()
-    jobs = sb.get(
+    queued = sb.get(
         f"social_jobs?select=*&status=eq.queued&attempts=lt.{MAX_ATTEMPTS}"
-        f"&order=created_at.asc&limit={limit}"
+        "&order=created_at.asc&limit=200"
     )
+    # Fast work first. A month fill queues a caption and a picture for
+    # every post at once; in arrival order each two-minute render would
+    # hold up the next post's ten-second caption, and the calendar would
+    # sit empty of words while the first image drew.
+    speed = {"fill": 0, "plan": 1, "caption": 2, "generate": 3}
+    queued.sort(key=lambda j: speed.get(str(j.get("kind")), 9))
+    # Images take minutes each, so fewer of them per run; everything else
+    # is quick enough to clear in one pass.
+    jobs, renders = [], 0
+    for j in queued:
+        if str(j.get("kind")) == "generate":
+            if renders >= limit:
+                continue
+            renders += 1
+        jobs.append(j)
     if not jobs:
         return 0
     note(f"woke to {len(jobs)} job(s)")
@@ -629,11 +807,18 @@ def main() -> int:
             sb.done(jid, result)
             done += 1
             note(f"  {kind} {jid}: {json.dumps(result)[:160]}")
+            if job.get("post_id"):
+                on_post(sb, str(job["post_id"]), None)
         except Exception as e:  # noqa: BLE001 - one bad job must not stop the rest
             why = f"{type(e).__name__}: {e}"
             sb.failed(jid, why)
             failed += 1
             note(f"  {kind} {jid} FAILED: {why[:200]}")
+            # On the post as well as the job. The calendar reads posts,
+            # and a render that failed on credits otherwise sits on its
+            # day as "drafting" forever with nobody told why.
+            if job.get("post_id"):
+                on_post(sb, str(job["post_id"]), str(e)[:300] or why[:300])
     note(f"done {done}, failed {failed}")
     return 0
 

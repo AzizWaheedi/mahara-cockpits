@@ -1565,7 +1565,7 @@ export const fillMonth = authenticatedAction({
     );
 
     // Carry on the rotation from wherever the month's existing posts left it.
-    const lastPillar = String(existing.at(-1)?.pillar ?? "");
+    const lastPillar = String(existing[existing.length - 1]?.pillar ?? "");
     let start = Math.max(0, rotation.indexOf(lastPillar) + 1);
     const slots = days.map(day => ({
       day,

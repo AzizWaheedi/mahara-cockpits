@@ -19,5 +19,6 @@ export { ReviewPage } from "./ReviewPage";
 export { ScriptsPage } from "./ScriptsPage";
 export { SettingsPage } from "./SettingsPage";
 export { SignupPage } from "./SignupPage";
+export { SocialCalendarPage } from "./SocialCalendarPage";
 export { SocialPage } from "./SocialPage";
 export { SwipePage } from "./SwipePage";
