@@ -398,16 +398,15 @@ export async function mirrorCockpitDailyCheck(
 ): Promise<{ mode: "dry-run" | "written"; result?: unknown }> {
   const row = buildCockpitDailyCheckRow(doc);
   const dryRun =
-    options.dryRun ??
-    process.env.SUPABASE_CHECKS_SHADOW_DRY_RUN !== "false";
+    options.dryRun ?? process.env.SUPABASE_CHECKS_SHADOW_DRY_RUN !== "false";
   if (dryRun) return { mode: "dry-run" };
 
   const base = (process.env.SUPABASE_URL ?? "").replace(/\/+$/, "");
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-  if (!base || !key) {
+  if (base !== "https://bldgtotkfmhoxmlzowdx.supabase.co" || !key) {
     note("supabase", false, "daily check shadow mirror is not configured");
     throw new Error(
-      "Supabase daily check mirror is not configured on this deployment.",
+      "Supabase daily check mirror is not configured for Creative Triage on this deployment.",
     );
   }
 
@@ -433,8 +432,16 @@ export async function mirrorCockpitDailyCheck(
     throw new Error(`Supabase daily check mirror failed (${res.status}).`);
   }
 
-  note(sourceFor(url), true);
   const result = await bodyOf(res);
+  if (
+    !result ||
+    typeof result !== "object" ||
+    !["inserted", "updated", "stale", "duplicate"].includes(result.status)
+  ) {
+    note("supabase", false, "daily check mirror returned an invalid result");
+    throw new Error("Supabase daily check mirror returned an invalid result.");
+  }
+  note(sourceFor(url), true);
   return { mode: "written", result };
 }
 

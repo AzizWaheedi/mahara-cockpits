@@ -48,9 +48,9 @@ BEGIN
   END IF;
 
   -- Validate role / owner_app / source_deployment mapping for all 3 cockpit owners
-  v_role := pg_catalog.trim(pg_catalog.coalesce(p_row ->> 'role', ''));
-  v_owner_app := pg_catalog.trim(pg_catalog.coalesce(p_row ->> 'owner_app', ''));
-  v_source_deployment := pg_catalog.trim(pg_catalog.coalesce(p_row ->> 'source_deployment', ''));
+  v_role := pg_catalog.btrim(coalesce(p_row ->> 'role', ''));
+  v_owner_app := pg_catalog.btrim(coalesce(p_row ->> 'owner_app', ''));
+  v_source_deployment := pg_catalog.btrim(coalesce(p_row ->> 'source_deployment', ''));
 
   IF NOT (
     (v_role = 'media_buyer' AND v_owner_app = 'media-buyer' AND v_source_deployment = 'adorable-seahorse-418') OR
@@ -62,23 +62,23 @@ BEGIN
   END IF;
 
   -- Validate source_system is convex
-  v_source_system := pg_catalog.trim(pg_catalog.coalesce(p_row ->> 'source_system', ''));
+  v_source_system := pg_catalog.btrim(coalesce(p_row ->> 'source_system', ''));
   IF v_source_system <> 'convex' THEN
     RAISE EXCEPTION 'source_system must be convex, got: %', v_source_system;
   END IF;
 
   -- Validate nonblank source_id, day, check_key, label
-  v_source_id := pg_catalog.trim(pg_catalog.coalesce(p_row ->> 'source_id', ''));
+  v_source_id := pg_catalog.btrim(coalesce(p_row ->> 'source_id', ''));
   IF v_source_id = '' THEN
     RAISE EXCEPTION 'source_id must not be blank';
   END IF;
 
-  v_check_key := pg_catalog.trim(pg_catalog.coalesce(p_row ->> 'check_key', ''));
+  v_check_key := pg_catalog.btrim(coalesce(p_row ->> 'check_key', ''));
   IF v_check_key = '' THEN
     RAISE EXCEPTION 'check_key must not be blank';
   END IF;
 
-  v_label := pg_catalog.trim(pg_catalog.coalesce(p_row ->> 'label', ''));
+  v_label := pg_catalog.btrim(coalesce(p_row ->> 'label', ''));
   IF v_label = '' THEN
     RAISE EXCEPTION 'label must not be blank';
   END IF;
@@ -118,12 +118,12 @@ BEGIN
   END IF;
 
   -- Validate required provenance
-  v_changed_by := pg_catalog.trim(pg_catalog.coalesce(p_row ->> 'changed_by', ''));
+  v_changed_by := pg_catalog.btrim(coalesce(p_row ->> 'changed_by', ''));
   IF v_changed_by = '' THEN
     RAISE EXCEPTION 'changed_by must not be blank';
   END IF;
 
-  v_source_snapshot_ts := pg_catalog.trim(pg_catalog.coalesce(p_row ->> 'source_snapshot_ts', ''));
+  v_source_snapshot_ts := pg_catalog.btrim(coalesce(p_row ->> 'source_snapshot_ts', ''));
   IF v_source_snapshot_ts = '' THEN
     RAISE EXCEPTION 'source_snapshot_ts must not be blank';
   END IF;
@@ -244,6 +244,9 @@ BEGIN
        v_by_source.href IS DISTINCT FROM v_href OR
        v_by_source.done IS DISTINCT FROM v_done OR
        v_by_source.done_at IS DISTINCT FROM v_done_at OR
+       v_by_source.source_snapshot_ts IS DISTINCT FROM v_source_snapshot_ts OR
+       v_by_source.source_row IS DISTINCT FROM v_source_row OR
+       v_by_source.changed_by IS DISTINCT FROM v_changed_by OR
        v_by_source.source_deleted IS DISTINCT FROM v_source_deleted THEN
       RAISE EXCEPTION 'Same-revision divergent content for source_id % at revision %',
         v_source_id, v_source_revision;
@@ -268,7 +271,7 @@ BEGIN
     href = v_href,
     done = v_done,
     done_at = v_done_at,
-    source_created_at = pg_catalog.coalesce(v_source_created_at, public.cockpit_daily_checks.source_created_at),
+    source_created_at = coalesce(v_source_created_at, public.cockpit_daily_checks.source_created_at),
     source_snapshot_ts = v_source_snapshot_ts,
     source_row = v_source_row,
     changed_by = v_changed_by,

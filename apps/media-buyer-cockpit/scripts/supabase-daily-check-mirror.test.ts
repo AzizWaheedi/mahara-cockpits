@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import {
   buildCockpitDailyCheckRow,
+  type CockpitDailyCheckInput,
   calculateNextRevision,
   mirrorCockpitDailyCheck,
-  type CockpitDailyCheckInput,
 } from "../convex/tools";
 
 const originalEnv = {
@@ -217,7 +217,11 @@ describe("Supabase daily check shadow contract", () => {
       capturedUrl = String(url);
       capturedInit = init;
       return new Response(
-        JSON.stringify({ status: "inserted", id: 42, source_revision: 1790163600500 }),
+        JSON.stringify({
+          status: "inserted",
+          id: 42,
+          source_revision: 1790163600500,
+        }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
     }) as typeof fetch;
@@ -249,7 +253,9 @@ describe("Supabase daily check shadow contract", () => {
     expect(parsedBody.p_row.source_revision).toBe(1790163600500);
 
     // Ensure the payload body itself never leaked the service role key
-    expect(String(capturedInit?.body)).not.toContain("service-role-secret-key-999");
+    expect(String(capturedInit?.body)).not.toContain(
+      "service-role-secret-key-999",
+    );
   });
 
   it("network/HTTP health reporting: records error on missing configuration", async () => {
@@ -265,6 +271,20 @@ describe("Supabase daily check shadow contract", () => {
       expect(String(e)).toContain("not configured");
     }
     expect(threw).toBe(true);
+  });
+
+  it("refuses a Supabase URL for another project", async () => {
+    process.env.SUPABASE_URL = "https://wrong-project.supabase.co";
+    process.env.SUPABASE_SERVICE_ROLE_KEY = "test-key";
+    let called = false;
+    const fetchImpl = (async () => {
+      called = true;
+      throw new Error("must not call the wrong project");
+    }) as typeof fetch;
+    await expect(
+      mirrorCockpitDailyCheck(sampleCheck, { dryRun: false, fetchImpl }),
+    ).rejects.toThrow(/Creative Triage/);
+    expect(called).toBe(false);
   });
 
   it("network/HTTP health reporting: throws on network failure", async () => {
@@ -300,9 +320,21 @@ describe("Supabase daily check shadow contract", () => {
       await mirrorCockpitDailyCheck(sampleCheck, { dryRun: false, fetchImpl });
     } catch (e) {
       threw = true;
-      expect(String(e)).toContain("HTTP 500");
+      expect(String(e)).toContain("failed (500)");
     }
     expect(threw).toBe(true);
+  });
+
+  it("rejects a successful HTTP response without a valid RPC result", async () => {
+    process.env.SUPABASE_URL = "https://bldgtotkfmhoxmlzowdx.supabase.co";
+    process.env.SUPABASE_SERVICE_ROLE_KEY = "test-key";
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify({ status: "unknown" }), {
+        status: 200,
+      })) as typeof fetch;
+    await expect(
+      mirrorCockpitDailyCheck(sampleCheck, { dryRun: false, fetchImpl }),
+    ).rejects.toThrow(/invalid result/);
   });
 
   it("rapid toggle ordering and revision monotonicity", () => {

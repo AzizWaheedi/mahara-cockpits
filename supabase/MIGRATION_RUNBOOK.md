@@ -246,11 +246,18 @@ and current row/audit counts with zero writes.
 4. **Database verification**: Run `powershell -File scripts/apply-cockpit-check-shadow-migration.ps1 -VerifyOnly`.
 5. **Ship media-buyer cockpit**: Deploy media-buyer backend while keeping default dry-run
    (`SUPABASE_CHECKS_SHADOW_DRY_RUN` unset or `true`).
-6. **Enable shadow writer**: Set `SUPABASE_CHECKS_SHADOW_DRY_RUN=false` on `adorable-seahorse-418` Convex deployment.
-7. **Verify first live shadow check**: Toggle a test checkmark, confirm Supabase read-back
-   contains matching `source_revision`, and exactly one `UPDATE` audit log is recorded.
+6. **Close the catch-up gap before enabling**: The current writer schedules on new-day rows,
+   user toggles, and changed sync metadata. It has no durable retry/acknowledgement or
+   replay of unchanged checks seeded while the flag is dry-run. Add and verify that
+   reconciliation path before setting `SUPABASE_CHECKS_SHADOW_DRY_RUN=false`.
+7. **Verify a real canary**: Use a read-only comparison of one naturally changed check
+   against Supabase and its audit row. Do not flip a teammate's checkmark merely to test
+   the mirror.
 
 > [!NOTE]
-> **Status: UNSHIPPED and UNENABLED**
-> All code in this phase is currently local, unshipped, and unenabled. `SUPABASE_CHECKS_SHADOW_DRY_RUN`
-> defaults to `true` (no-write). No live system has been mutated, no migrations applied, and no credentials modified.
+> **Status on 23 September: SCHEMA APPLIED; WRITER UNSHIPPED AND UNENABLED**
+> The additive schema and RPC were applied to Creative Triage after a rollback-only
+> synthetic smoke test. Read-only verification returned 268 checks and 268 audit rows,
+> both new columns and the RPC present, RLS and service-only access intact, and browser
+> roles denied. The code is not deployed; `SUPABASE_CHECKS_SHADOW_DRY_RUN` defaults to
+> `true` (no-write). No checklist values or credentials were changed.

@@ -319,16 +319,27 @@ $smoke$;
 $drySql = [regex]::Replace($sql, '(?i)\bCOMMIT;\s*$', "$smoke`nROLLBACK;")
 if ($drySql -eq $sql) { throw 'Could not build rolled-back dry run.' }
 
-$before = @(Invoke-Sql "SELECT (to_regclass('public.cockpit_daily_checks') IS NOT NULL) AS table_exists" $true)[0]
+$preflightQuery = @'
+SELECT
+  (to_regclass('public.cockpit_daily_checks') IS NOT NULL) AS table_exists,
+  (to_regprocedure('public.cockpit_apply_daily_check_shadow(jsonb)') IS NOT NULL) AS rpc_exists,
+  EXISTS (SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'cockpit_daily_checks'
+      AND column_name = 'source_revision') AS revision_column_exists,
+  EXISTS (SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'cockpit_daily_checks'
+      AND column_name = 'source_deleted') AS deleted_column_exists;
+'@
+$before = @(Invoke-Sql $preflightQuery $true)[0]
 Write-Output ('Creative Triage shadow checks preflight: table_exists=' + $before.table_exists)
 Write-Output 'Planned: source_revision/source_deleted columns, service-only cockpit_apply_daily_check_shadow RPC, serialization, versioned updates.'
 Write-Output 'DRY_RUN = True: additive migration and synthetic smoke tests execute inside ROLLBACK.'
 [void](Invoke-Sql $drySql $false)
-$afterDryRun = @(Invoke-Sql "SELECT (to_regclass('public.cockpit_daily_checks') IS NOT NULL) AS table_exists" $true)[0]
-if ($afterDryRun.table_exists -ne $before.table_exists) {
-  throw 'The dry run changed visible table state. Inspect before applying.'
+$afterDryRun = @(Invoke-Sql $preflightQuery $true)[0]
+if (($afterDryRun | ConvertTo-Json -Compress) -ne ($before | ConvertTo-Json -Compress)) {
+  throw 'The dry run changed visible schema state. Inspect before applying.'
 }
-Write-Output 'Dry run passed; table state unchanged.'
+Write-Output 'Dry run passed; schema state unchanged.'
 if (-not $Apply) { return }
 
 Write-Output 'DRY_RUN = False: applying the shadow schema only. Live application shadow writer remains unenabled in dry-run mode.'
