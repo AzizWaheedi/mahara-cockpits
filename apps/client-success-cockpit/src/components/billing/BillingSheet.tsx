@@ -382,8 +382,14 @@ function Panel({
   const recurring = /monthly|split|months after|performance/i.test(
     row.plan ?? "",
   );
+  // Offer next month only when this payment is for the date on the card
+  // (due within a week, or late). A date already moved on, as Liwan's was on
+  // 23 Sep, would otherwise be pushed a month further.
+  const forThisDate = Boolean(
+    row.nextDate && row.nextDate <= addDays(today, 7),
+  );
   const [rollTo, setRollTo] = useState(
-    row.nextDate && recurring ? addMonth(row.nextDate) : "",
+    row.nextDate && recurring && forThisDate ? addMonth(row.nextDate) : "",
   );
   // The date, an extension, a pause
   const [date, setDate] = useState(row.nextDate ?? today);
@@ -1563,9 +1569,10 @@ function Unassigned({
       <h3 className="font-semibold">Money not tied to a client</h3>
       <p className="max-w-2xl text-sm text-muted-foreground">
         {usd(Math.round(total))} from {plural(list.length, "payer")} in the last
-        twelve months. Tie a payer to their client once and every payment from
-        them, past and future, counts toward that client's LTV from the next
-        refresh.
+        twelve months. Tie a payer to their client once and their payments count
+        as that client's money from the next refresh. LTV adds only payments
+        from 19 September on: anything earlier is taken to be in the LTV already
+        typed on the card, so a backlogged payment is never counted twice.
       </p>
       <ul className="mt-4 grid gap-3">
         {shown.map(u => (

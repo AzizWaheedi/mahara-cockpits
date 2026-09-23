@@ -328,7 +328,7 @@ export const afterAssign = authenticatedAction({
         kind: "assign",
         from_value: null,
         to_value: a.payer,
-        reason: `${a.count} ${a.count === 1 ? "payment" : "payments"} from ${a.payer}, $${a.usd.toLocaleString("en-US")}, tied to ${a.clientName}. Every payment from them counts from the next refresh.`,
+        reason: `${a.count} ${a.count === 1 ? "payment" : "payments"} from ${a.payer}, $${a.usd.toLocaleString("en-US")}, tied to ${a.clientName}. They count as ${a.clientName}'s money from the next refresh; LTV adds only those from 19 Sep on.`,
         detail: { payer: a.payer, usd: a.usd, count: a.count },
         source: "ceo",
         by_whom: by,

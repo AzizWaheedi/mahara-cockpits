@@ -77,7 +77,7 @@ export function BillingTab(_: CeoTabProps) {
           usd: p.usd,
           count: p.count,
         }).catch(() => null);
-        return `Tied ${p.payer} to ${p.clientName}. Their payments count toward ${p.clientName}'s LTV from the next refresh.`;
+        return `Tied ${p.payer} to ${p.clientName}. Their payments count as ${p.clientName}'s money from the next refresh; LTV adds only the ones from 19 September on, so nothing already on the card is counted twice.`;
       },
       ledgerLine:
         "It goes straight into the ledger the Money tab reads, and counts toward cash and LTV at the next refresh.",
