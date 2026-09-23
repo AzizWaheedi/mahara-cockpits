@@ -1,4 +1,18 @@
-import { useMemo, useState } from "react";
+import { useAction } from "convex/react";
+import { type ReactNode, useId, useMemo, useState } from "react";
+import {
+  Area,
+  CartesianGrid,
+  ComposedChart,
+  ReferenceDot,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import { BarList } from "@/components/ceo/BarList";
+import { AXIS_TICK } from "@/components/ceo/chartKit";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { FilterChips } from "@/components/ceo/FilterChips";
 import {
@@ -15,10 +29,12 @@ import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import type { CeoSection } from "@/components/ceo/useCeo";
+import { api } from "../../../convex/_generated/api";
 import type {
   WebinarPayload,
   WebinarRound,
 } from "../../../convex/ceo/payloads";
+import type { Room } from "../../../convex/ceo/webinarRoom";
 
 /**
  * The webinar funnel, beside the call funnel on the Frontend tab (Aziz,
@@ -29,7 +45,10 @@ import type {
  *
  * The one visual idea: the stage list is a funnel rail. Each stage carries a
  * bar as long as its people are a share of the registrants, so the drop from
- * registered to closed reads down the page at a glance.
+ * registered to closed reads down the page at a glance. Inside the room
+ * (stage 3) the rail opens into the retention curve: people in the room
+ * minute by minute, with the two pitches marked (Zoom, via hermes/webinar-
+ * pull, 2026-09-23).
  */
 
 type Status = WebinarPayload["tracking"][number]["status"];
@@ -101,6 +120,7 @@ function Stage({
   people,
   of,
   rows,
+  extra,
 }: {
   n: number;
   title: string;
@@ -109,6 +129,8 @@ function Stage({
   people: number | null;
   of: number;
   rows: Row[];
+  /** What the stage shows beyond its numbers (the curve, the profit bands). */
+  extra?: ReactNode;
 }) {
   const share = people !== null && of > 0 ? Math.min(1, people / of) : null;
   return (
@@ -137,6 +159,7 @@ function Stage({
         ) : null}
       </div>
       <MetricRows rows={rows} />
+      {extra}
     </li>
   );
 }
@@ -151,7 +174,15 @@ function statusOf(p: WebinarPayload, match: string): Status {
 const range = (low: number, high: number, f: (x: number) => string) =>
   `${f(low)}–${f(high)}`;
 
-function stages(p: WebinarPayload, r: WebinarRound) {
+type StageDef = {
+  title: string;
+  question: string;
+  people: number | null;
+  rows: Row[];
+  extra?: ReactNode;
+};
+
+function stages(p: WebinarPayload, r: WebinarRound): StageDef[] {
   const t = p.targets;
   const reg = r.registration.registrations;
   const pctf = (x: number) => pct(x);
@@ -167,9 +198,10 @@ function stages(p: WebinarPayload, r: WebinarRound) {
     remind: statusOf(p, "Reminders"),
     cal: statusOf(p, "Calendar-add"),
     attend: statusOf(p, "Attendees, show rate"),
+    tied: statusOf(p, "tied to a registrant"),
     zoom: statusOf(p, "Watch time"),
     chat: statusOf(p, "Chat, polls"),
-    pitch: statusOf(p, "Pitch link"),
+    pitch: statusOf(p, "pitch link"),
     booked: statusOf(p, "Calls booked"),
     survey: statusOf(p, "survey completions"),
     sales: statusOf(p, "Call held"),
@@ -178,6 +210,20 @@ function stages(p: WebinarPayload, r: WebinarRound) {
   };
   const shownNA = (ok: boolean, v: string) => (ok ? v : NA);
   const att = r.showUp.attendanceRecorded;
+  const q = r.qualification;
+  const room = r.room;
+  const pitch = (n: 1 | 2) => room?.pitches.find(x => x.n === n) ?? null;
+  const p1 = pitch(1);
+  const p2 = pitch(2);
+  const pitchSource = (x: ReturnType<typeof pitch>, n: 1 | 2) =>
+    !room
+      ? "Zoom"
+      : x
+        ? `Minute ${x.minute}, ${count(x.present)} people; ${x.source === "chat" ? "found from the chat's 1s" : "time set here"}`
+        : n === 1
+          ? "No burst of 1s in the chat; set the time below"
+          : "Set the time below";
+  const perPerson = r.showUp.personLevel;
   return [
     {
       title: "Traffic and registration",
@@ -244,8 +290,26 @@ function stages(p: WebinarPayload, r: WebinarRound) {
         },
         {
           label: "Qualified registrations",
-          value: NA,
-          source: "Form fields the opt-in does not ask yet",
+          value:
+            q.qualified + q.notQualified > 0
+              ? `${count(q.qualified)} of ${count(reg)}`
+              : NA,
+          source: `$${count(q.threshold / 1000)}K+ yearly profit in the survey, or roas-qualified from the booking form; ${count(q.unknown)} answered neither`,
+          status: s.qual,
+        },
+        {
+          label: "Cost per qualified registration",
+          value: money(q.costPerQualified),
+          source: "Spend over qualified registrations",
+          status: s.qual,
+        },
+        {
+          label: "Booking form",
+          value:
+            q.booking.qualified + q.booking.unqualified + q.booking.notReady
+              ? `${count(q.booking.qualified)} / ${count(q.booking.unqualified)} / ${count(q.booking.notReady)}`
+              : NA,
+          source: "Qualified, unqualified, not ready (roas tags)",
           status: s.qual,
         },
         {
@@ -257,6 +321,7 @@ function stages(p: WebinarPayload, r: WebinarRound) {
           status: s.lead,
         },
       ] as Row[],
+      extra: q.bands.length ? <ProfitBands q={q} /> : null,
     },
     {
       title: "Show-up",
@@ -278,7 +343,10 @@ function stages(p: WebinarPayload, r: WebinarRound) {
         {
           label: "Attended",
           value: shownNA(att, count(r.showUp.attended)),
-          source: `No-show ${shownNA(att, count(r.showUp.noShow))}`,
+          source:
+            r.showUp.source === "zoom"
+              ? "People in the Zoom room, our team left out"
+              : `webby-attended tag; no-show ${shownNA(att, count(r.showUp.noShow))}`,
           status: s.attend,
         },
         {
@@ -289,6 +357,20 @@ function stages(p: WebinarPayload, r: WebinarRound) {
           status: s.attend,
         },
         {
+          label: "On time",
+          value: pct(room?.onTime),
+          source: "Joined within 3 minutes of the start",
+          status: s.attend,
+        },
+        {
+          label: "Attendees tied to a registrant",
+          value: room
+            ? `${count(r.showUp.matched)} of ${count(room.attendees)}`
+            : NA,
+          source: "By Zoom registration or a signed-in email, never by name",
+          status: s.tied,
+        },
+        {
           label: "Show rate by lead time",
           value: r.showUp.showRateByLead
             ? r.showUp.showRateByLead
@@ -297,8 +379,10 @@ function stages(p: WebinarPayload, r: WebinarRound) {
                 )
                 .join(" / ")
             : NA,
-          source: "0–1, 2–3, 4–7, 8+ days out",
-          status: s.attend,
+          source: perPerson
+            ? "0–1, 2–3, 4–7, 8+ days out"
+            : "Needs attendees tied to registrants",
+          status: perPerson ? s.attend : s.tied,
         },
       ] as Row[],
     },
@@ -309,24 +393,57 @@ function stages(p: WebinarPayload, r: WebinarRound) {
       rows: [
         {
           label: "Average watch time",
-          value: NA,
-          source: "Zoom join and leave times",
+          value: minutes(room?.watchAvgMin),
+          source: room
+            ? `Median ${minutes(room.watchMedianMin)}; rejoins counted once`
+            : "Zoom join and leave times",
+          status: s.zoom,
+        },
+        {
+          label: "Peak in the room",
+          value: room ? count(room.peak) : NA,
+          source: room ? `At minute ${room.peakMinute}` : "Zoom",
           status: s.zoom,
         },
         {
           label: "Retention at pitch 1",
-          value: NA,
+          value: pct(p1?.retention),
           target: `${pct(t.retentionAtPitch1)} of peak`,
-          source: "Zoom",
+          source: pitchSource(p1, 1),
           status: s.zoom,
         },
         {
-          label: "Chat, polls, Q&A",
-          value: NA,
-          source: "Zoom",
+          label: "Retention at pitch 2",
+          value: pct(p2?.retention),
+          source: pitchSource(p2, 2),
+          status: s.zoom,
+        },
+        {
+          label: "Stayed to the end",
+          value: pct(room?.stayToEnd),
+          source: "In the room two minutes before it ended",
+          status: s.zoom,
+        },
+        {
+          label: "Chat lines",
+          value: room ? count(room.chat.messages) : NA,
+          source: room
+            ? `From ${count(room.chat.people)} people; “drop a 1” at pitch 1: ${count(room.chat.onesAtPitch1)}`
+            : "Zoom recording chat",
+          status: s.chat,
+        },
+        {
+          label: "Poll answers",
+          value: room?.polls ? count(room.polls.answers) : NA,
+          source: room?.polls
+            ? `From ${count(room.polls.people)} people; Q&A questions ${count(room.qa)}`
+            : "Polls and Q&A need the Zoom app keys",
           status: s.chat,
         },
       ] as Row[],
+      extra: room ? (
+        <RoomCurve room={room} target={t.retentionAtPitch1} />
+      ) : null,
     },
     {
       title: "Conversion on the session",
@@ -334,9 +451,12 @@ function stages(p: WebinarPayload, r: WebinarRound) {
       people: r.conversion.booked,
       rows: [
         {
-          label: "Pitch link clicks",
-          value: NA,
-          source: "One booking link per pitch",
+          label: "Bookings by pitch link",
+          value:
+            r.pitchBookings.pitch1 + r.pitchBookings.pitch2
+              ? `${count(r.pitchBookings.pitch1)} and ${count(r.pitchBookings.pitch2)}`
+              : NA,
+          source: "Pitch 1 and pitch 2, from utm_content on the booking link",
           status: s.pitch,
         },
         {
@@ -349,8 +469,11 @@ function stages(p: WebinarPayload, r: WebinarRound) {
           label: "Attendee to booked",
           value: pct(r.conversion.attendeeToBooked),
           target: range(t.attendeeToBooked.low, t.attendeeToBooked.high, pctf),
-          source: "Attendees who booked",
-          status: att ? s.booked : s.attend,
+          source:
+            att && !perPerson
+              ? "Needs attendees tied to registrants"
+              : "Attendees who booked",
+          status: att ? (perPerson ? s.booked : s.tied) : s.attend,
         },
         {
           label: "Registrant to booked",
@@ -369,8 +492,8 @@ function stages(p: WebinarPayload, r: WebinarRound) {
           value: count(r.conversion.surveys),
           source:
             p.surveyResponses === null
-              ? "webby-survey-done tag"
-              : `webby-survey-done tag; Typeform has ${count(p.surveyResponses)} responses in 120 days`,
+              ? "Registrants who answered the gift survey"
+              : `Registrants who answered; ${count(p.surveyResponses)} responses in all, ${count(p.survey.unmatched)} match nobody`,
           status: s.survey,
         },
       ] as Row[],
@@ -502,6 +625,7 @@ export function WebinarFunnel({
                     people={s.people}
                     of={round.registration.registrations}
                     rows={s.rows}
+                    extra={s.extra}
                   />
                 ))}
                 <li className="relative grid gap-3 pl-10 sm:pl-12">
@@ -584,7 +708,7 @@ function Headline({ p, r }: { p: WebinarPayload; r: WebinarRound }) {
         value={pct(r.showUp.showRate)}
         sub={
           r.showUp.attendanceRecorded
-            ? `${count(r.showUp.attended)} came, target ${pct(t.showRate.low)}–${pct(t.showRate.high)}`
+            ? `${count(r.showUp.attended)} ${r.showUp.source === "zoom" ? "in the room" : "came"}, target ${pct(t.showRate.low)}–${pct(t.showRate.high)}`
             : "Attendance not recorded yet"
         }
       />
@@ -779,6 +903,7 @@ function Tracking({
               ? `${p.tracking.length - open.length} of ${p.tracking.length} metrics flow today. The rest need the setup below; until then they show n/a, never zero.`
               : "Every metric in the brief flows."}
           </p>
+          <Collector p={p} />
           <ul className="grid gap-2.5">
             {shown.map(t => (
               <li
@@ -811,5 +936,319 @@ function Tracking({
         </div>
       )}
     </SectionCard>
+  );
+}
+
+const DOOR: Record<string, string> = {
+  composio: "Composio",
+  "zoom-app": "the Zoom app",
+};
+const doors = (via: string) =>
+  via
+    .split("+")
+    .map(d => DOOR[d] ?? d)
+    .join(" and ");
+
+/** When hermes/webinar-pull last read Zoom and the survey, or why it could not. */
+function Collector({ p }: { p: WebinarPayload }) {
+  const line = (
+    name: string,
+    run: WebinarPayload["collector"]["zoom"],
+  ): string =>
+    !run
+      ? `${name}: not read yet`
+      : run.ok === false
+        ? `${name}: the last read failed (${run.detail ?? "no reason given"})${run.lastOkAt ? `; last good read ${dateTime(run.lastOkAt)}` : ""}`
+        : `${name}: read ${run.lastOkAt ? dateTime(run.lastOkAt) : "never"}${run.via ? ` through ${doors(run.via)}` : ""}`;
+  return (
+    <p className="text-xs text-muted-foreground">
+      {line("Zoom", p.collector.zoom)}. {line("Survey", p.collector.typeform)}.
+      The worker reads both every hour.
+    </p>
+  );
+}
+
+/**
+ * The survey writes its lowest band in Arabic ("أقل من $100,000"); the
+ * cockpit reads in English, and a mixed-direction label flips its dollar
+ * sign, so that band is named here.
+ */
+function bandLabel(label: string, min: number): string {
+  return min === 0 && /[\u0600-\u06FF]/.test(label) ? "Under $100K" : label;
+}
+
+/** The survey's yearly profit bands among the round's registrants. */
+function ProfitBands({ q }: { q: WebinarRound["qualification"] }) {
+  return (
+    <div className="grid max-w-xl gap-2">
+      <p className="text-xs text-muted-foreground">
+        Yearly net profit, as {count(q.surveyAnswered)} registrants answered the
+        survey
+      </p>
+      <BarList
+        ariaLabel="Registrants by yearly net profit band"
+        items={q.bands.map(b => ({
+          key: b.label,
+          label: bandLabel(b.label, b.min),
+          value: b.n,
+          sub: b.min >= q.threshold ? "Qualified" : undefined,
+        }))}
+      />
+    </div>
+  );
+}
+
+/**
+ * People in the room minute by minute, the two pitches marked and the three
+ * biggest drops dotted. Counted at the middle of each minute from Zoom's
+ * join and leave rows, our own team left out.
+ */
+function RoomCurve({ room, target }: { room: Room; target: number }) {
+  const data = room.curve.map((people, minute) => ({ minute, people }));
+  const summary = `People in the room by minute: ${count(room.peak)} at the peak, minute ${room.peakMinute}${room.pitches
+    .map(
+      x =>
+        `; ${count(x.present)} at pitch ${x.n}, ${pct(x.retention)} of the peak`,
+    )
+    .join("")}.`;
+  return (
+    <div className="grid gap-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h4 className="text-sm font-medium">People in the room, by minute</h4>
+        <span className="text-xs text-muted-foreground">
+          Target at pitch 1: {pct(target)} of the peak
+        </span>
+      </div>
+      <div role="figure" aria-label={summary} className="h-44 sm:h-52">
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart
+            data={data}
+            margin={{ top: 18, right: 12, bottom: 0, left: 0 }}
+          >
+            <CartesianGrid vertical={false} stroke="var(--ceo-grid)" />
+            <XAxis
+              dataKey="minute"
+              type="number"
+              domain={[0, Math.max(1, data.length - 1)]}
+              tickLine={false}
+              axisLine={false}
+              tick={AXIS_TICK}
+              tickMargin={8}
+              tickFormatter={v => `${v} min`}
+              minTickGap={36}
+            />
+            <YAxis
+              width={36}
+              tickLine={false}
+              axisLine={false}
+              tick={AXIS_TICK}
+              allowDecimals={false}
+              tickCount={4}
+            />
+            <Tooltip
+              isAnimationActive={false}
+              cursor={{ stroke: "var(--ceo-crosshair)", strokeWidth: 1 }}
+              wrapperStyle={{ outline: "none" }}
+              content={({ active, payload }) => {
+                const row = payload?.[0]?.payload as
+                  | { minute: number; people: number }
+                  | undefined;
+                if (!active || !row) return null;
+                const at = room.pitches.find(x => x.minute === row.minute);
+                return (
+                  <div className="rounded-lg border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md">
+                    <p className="text-muted-foreground">
+                      Minute {row.minute}
+                      {at ? `, pitch ${at.n}` : ""}
+                    </p>
+                    <p className="font-semibold tabular-nums">
+                      {count(row.people)} in the room
+                    </p>
+                  </div>
+                );
+              }}
+            />
+            <Area
+              type="monotoneX"
+              dataKey="people"
+              stroke="var(--ceo-emphasis)"
+              strokeWidth={2}
+              fill="var(--ceo-emphasis)"
+              fillOpacity={0.1}
+              dot={false}
+              activeDot={{
+                r: 4,
+                fill: "var(--ceo-emphasis)",
+                stroke: "var(--ceo-surface)",
+                strokeWidth: 2,
+              }}
+              isAnimationActive={false}
+            />
+            {room.pitches.map(x => (
+              <ReferenceLine
+                key={x.n}
+                x={x.minute}
+                stroke="var(--muted-foreground)"
+                strokeDasharray="4 4"
+                label={{
+                  value: `Pitch ${x.n}`,
+                  position: "top",
+                  fill: "var(--muted-foreground)",
+                  fontSize: 11,
+                }}
+              />
+            ))}
+            {room.drops.map(d => (
+              <ReferenceDot
+                key={d.minute}
+                x={d.minute}
+                y={room.curve[d.minute]}
+                r={3.5}
+                fill="var(--ceo-warning)"
+                stroke="var(--ceo-surface)"
+                strokeWidth={1.5}
+              />
+            ))}
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+      {room.drops.length ? (
+        <p className="text-xs text-muted-foreground">
+          Biggest drops:{" "}
+          {room.drops
+            .map(d => `${count(d.lost)} left at minute ${d.minute}`)
+            .join(", ")}
+          .
+        </p>
+      ) : null}
+      {room.complete ? null : (
+        <p className="text-xs text-muted-foreground">
+          Zoom is still processing this session's recording; the chat and the
+          last joins are read again within the hour.
+        </p>
+      )}
+      <PitchTimes room={room} />
+    </div>
+  );
+}
+
+/** Reads the plain sentence a ConvexError carries, else the error text. */
+function errorText(e: unknown): string {
+  const data = (e as { data?: unknown })?.data;
+  if (data && typeof data === "object" && "message" in data)
+    return String((data as { message: unknown }).message);
+  if (typeof data === "string") return data;
+  return e instanceof Error ? e.message : String(e);
+}
+
+/** Pitch times typed by hand, for when the chat does not show them. */
+function PitchTimes({ room }: { room: Room }) {
+  const setPitches = useAction(api.ceo.webinarPitch.set);
+  const id = useId();
+  const set = (n: 1 | 2) => {
+    const x = room.pitches.find(y => y.n === n);
+    return x?.source === "set" ? String(x.minute) : "";
+  };
+  const [open, setOpen] = useState(false);
+  const [one, setOne] = useState(set(1));
+  const [two, setTwo] = useState(set(2));
+  const [busy, setBusy] = useState(false);
+  const [said, setSaid] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const field =
+    "w-24 rounded-md border bg-background px-2.5 py-1.5 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-[var(--ceo-emphasis)]";
+  const minute = (v: string) => (v.trim() === "" ? null : Number(v));
+
+  if (!open)
+    return (
+      <button
+        type="button"
+        className="w-fit text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+        onClick={() => setOpen(true)}
+      >
+        Set the pitch times
+      </button>
+    );
+  return (
+    <form
+      className="grid gap-3 rounded-lg border p-3"
+      onSubmit={async e => {
+        e.preventDefault();
+        setBusy(true);
+        setError(null);
+        setSaid(null);
+        try {
+          await setPitches({
+            sessionUuid: room.primaryUuid,
+            pitch1Min: minute(one),
+            pitch2Min: minute(two),
+          });
+          setSaid("Pitch times saved. The numbers update within a minute.");
+        } catch (err) {
+          setError(errorText(err));
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <p className="text-xs text-muted-foreground">
+        Minutes from the start of the session. Leave pitch 1 empty to find it
+        from the chat's 1s.
+      </p>
+      <div className="flex flex-wrap items-end gap-4">
+        <div className="grid gap-1">
+          <label htmlFor={`${id}-1`} className="text-xs font-medium">
+            Pitch 1 starts at minute
+          </label>
+          <input
+            id={`${id}-1`}
+            className={field}
+            type="number"
+            inputMode="numeric"
+            min={0}
+            max={300}
+            step={1}
+            value={one}
+            onChange={e => setOne(e.target.value)}
+          />
+        </div>
+        <div className="grid gap-1">
+          <label htmlFor={`${id}-2`} className="text-xs font-medium">
+            Pitch 2 starts at minute
+          </label>
+          <input
+            id={`${id}-2`}
+            className={field}
+            type="number"
+            inputMode="numeric"
+            min={0}
+            max={300}
+            step={1}
+            value={two}
+            onChange={e => setTwo(e.target.value)}
+          />
+        </div>
+        <button
+          type="submit"
+          disabled={busy}
+          className="rounded-md bg-[var(--ceo-emphasis)] px-3 py-1.5 text-sm font-medium text-background disabled:opacity-50"
+        >
+          {busy ? "Saving" : "Save pitch times"}
+        </button>
+        <button
+          type="button"
+          className="text-xs text-muted-foreground hover:text-foreground"
+          onClick={() => setOpen(false)}
+        >
+          Close
+        </button>
+      </div>
+      {said ? <p className="text-xs text-[var(--ceo-good)]">{said}</p> : null}
+      {error ? (
+        <p role="alert" className="text-xs text-[var(--ceo-critical)]">
+          {error}
+        </p>
+      ) : null}
+    </form>
   );
 }

@@ -151,6 +151,25 @@ hour, notes hourly, each under its own lock; log `~/.editor-desk/out/cron.log`.
 | The editor cockpit says "The desk could not be opened" and names a role | That account's Supabase `role` is not `authenticated`, so PostgREST refuses everything it asks. Four accounts made by another project carried `mahara_dialer_identity`, which is not a Postgres role here (2026-09-19). Signing in through the portal repairs it; otherwise set `role` to `authenticated` on the user in the Supabase dashboard. Sign out and in afterwards: the old role is baked into the session until then | Aziz |
 | `doctor`: "Bucket not found" on stills | The private `editor-stills` bucket is missing; the one-line curl to create it is in the README | Aziz |
 
+## Webinar pull
+
+The worker on the VPS (`hermes/webinar-pull`) that reads the live training's
+Zoom sessions (who was in the room and when, the chat, polls) and the gift
+survey into Creative Triage every hour. The CEO cockpit's webinar funnel says
+when each was last read. Log `~/.webinar-pull.log`; `python3 pull.py doctor`
+names what is wrong.
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| "Zoom was last read N hours ago" | The cron stopped or the clone moved. `crontab -l` as `hermes` must show the minute-23 line (README); run `python3 pull.py` by hand and read the error | Aziz |
+| Zoom "could not be read": `Composio refused` or `4711` | Composio's Zoom connection lapsed or lost a scope. Reconnect Zoom in Composio; the Zoom app keys carry the run meanwhile | Aziz |
+| Zoom "could not be read": "the Zoom app's credentials were refused" | The server-to-server app's secret changed. Set `ZOOM_CLIENT_SECRET` in `/opt/data/bibi/api-keys.env` | Aziz |
+| No chat or "drop a 1" count after a session | Chat comes from the cloud recording. Recording was off, or Zoom is still processing it (read again every hour for 48 hours) | Whoever hosts |
+| Polls and Q&A show n/a | The Zoom app keys are missing on the VPS; Composio cannot read polls | Aziz |
+| Attendees are counted but not tied to registrants | Zoom registration is off, so guests join with a name only. Turn registration on and send each registrant their own join link | Aziz |
+| The note says `webinar.maharamedia.com/live` does not lead to Zoom | The reminders' join link is broken. Point `/live` at the meeting's join link in the webinar site (Vercel project `mahara-webinar`) | Aziz |
+| A survey response "matches no registrant" | The person typed a different email and phone than they registered with. Nothing to fix per response | nobody |
+
 ## What never needs a person
 
 - Rate limits: every Google, ClickUp and Meta call waits and retries.

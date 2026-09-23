@@ -1,9 +1,21 @@
-import { callTool } from "../../tools";
 import { readInsights } from "../frequency";
-import type { Note, WebinarPayload, WebinarRound } from "../payloads";
-import { B2B, ms, num, type Row, sql } from "../sb";
+import type {
+  Note,
+  WebinarCollectorRun,
+  WebinarPayload,
+  WebinarRound,
+} from "../payloads";
+import { B2B, ms, num, type Row, sql, TRIAGE } from "../sb";
 import { kuwaitDay } from "../time";
 import type { Adapter, SourceStamp } from "../types";
+import {
+  phoneKey,
+  QUALIFIED_PROFIT,
+  roomOf,
+  type ZoomAttendance,
+  type ZoomEngagement,
+  type ZoomSession,
+} from "../webinarRoom";
 import {
   fieldValue,
   ROUND_FIELD,
@@ -29,8 +41,14 @@ import { BY_SALES_REP, CALL_IS_WITH_LEAD, DEPOSIT_CONFIRMED } from "./growth";
  *   attended / webby-noshow), the survey (webby-survey-done), appointments
  *   and their status, and signed deals (the closer form, confirmed by Whop).
  * - Maqsam: speed to first contact after registering, by a sales rep.
- * - Zoom, the landing page's events and the reminder stats are not connected
- *   yet; `tracking` says so per metric instead of showing zeros.
+ * - Zoom and the gift survey, read hourly by hermes/webinar-pull into
+ *   Creative Triage (Aziz, 2026-09-23: "use composio we have zoom api"):
+ *   who was in the room and when, the chat, polls, and the survey's answers.
+ *   Qualification is the survey's yearly profit (on the thank-you page and
+ *   after the session) or the booking form's roas tag ("qualification in the
+ *   form after also before they book a call").
+ * - The landing page's events and the reminder stats are not connected yet;
+ *   `tracking` says so per metric instead of showing zeros.
  *
  * Every figure comes from the same predicates the call funnel subtracts
  * (webinarSql.ts), so nothing is counted in both.
@@ -84,6 +102,12 @@ const JOURNEY_SQL = `select
   'webby-attended' = any(l.tags) as attended,
   'webby-noshow' = any(l.tags) as noshow,
   'webby-survey-done' = any(l.tags) as survey,
+  nullif(regexp_replace(coalesce(l.phone, ''), '[^0-9]', '', 'g'), '') as phone,
+  'roas-qualified' = any(l.tags) as roas_qualified,
+  'roas-unqualified' = any(l.tags) as roas_unqualified,
+  'roas-unprepared' = any(l.tags) as roas_unprepared,
+  substring(coalesce(l.raw_contact->'lastAttributionSource'->>'url', '') || ' '
+    || coalesce(l.raw_contact->'attributionSource'->>'url', '') from 'utm_content=pitch([12])(?:[^0-9]|$)') as pitch_utm,
   (select json_agg(json_build_object(
       'type', c.call_type, 'booked_at', c.booked_at, 'start_at', c.start_at, 'status', c.status)
       order by c.booked_at)
@@ -123,7 +147,61 @@ const LT_SQL = `select
   (select count(*) from public.lt_attendance) as attendance,
   (select count(*) from public.lt_engagement) as engagement`;
 
-const TYPEFORM_SURVEY = "P1xP4r24";
+/**
+ * What hermes/webinar-pull keeps in Creative Triage (supabase/migrations/
+ * 20260923g_webinar_collection.sql), in one read: the Zoom sessions, every
+ * join and leave in the room, the chat and polls (a chat line that is only
+ * "1" or ١ answers the pitch-1 ask), the gift survey, and the worker's last
+ * run per source.
+ */
+const COLLECTED_SQL = `select
+  (select coalesce(json_agg(x order by x.started_at), '[]'::json) from (
+    select uuid, started_at, ended_at, pitch1_at, pitch2_at, complete
+    from public.cockpit_webinar_sessions) x) as sessions,
+  (select coalesce(json_agg(x), '[]'::json) from (
+    select session_uuid, person_key, email, contact_id, internal, join_at, leave_at
+    from public.cockpit_webinar_attendance where status = 'in_meeting') x) as attendance,
+  (select coalesce(json_agg(x), '[]'::json) from (
+    select session_uuid, kind, at, person_key,
+      (kind = 'chat' and coalesce(body, '') ~ '^\\s*[1١]\\s*[!.]*\\s*$') as one,
+      coalesce(payload ? 'to', false) as private
+    from public.cockpit_webinar_engagement where session_uuid is not null) x) as engagement,
+  (select coalesce(json_agg(x order by x.submitted_at), '[]'::json) from (
+    select response_id, submitted_at, email, phone, contact_id, profit_band, profit_min
+    from public.cockpit_webinar_forms) x) as survey,
+  (select coalesce(json_agg(x), '[]'::json) from (
+    select distinct on (p.source) p.source, p.started_at, p.finished_at, p.ok, p.via, p.detail, p.counts,
+      (select max(q.finished_at) from public.cockpit_webinar_pulls q
+        where q.source = p.source and q.ok) as last_ok
+    from public.cockpit_webinar_pulls p order by p.source, p.started_at desc) x) as pulls`;
+
+/** The booking links to share at each pitch; HighLevel keeps utm_content on the contact who books. */
+const PITCH_LINK =
+  "funnel.maharamedia.com/intro-booking?utm_source=webinar&utm_content=pitch";
+
+type SurveyRow = {
+  submittedAt: number;
+  email: string | null;
+  phone: string | null;
+  contactId: string | null;
+  band: string | null;
+  profitMin: number | null;
+};
+
+function runOf(r: Any): WebinarCollectorRun {
+  const c = r?.counts && typeof r.counts === "object" ? r.counts : {};
+  const flag = (x: unknown) => (x === true ? true : x === false ? false : null);
+  return {
+    at: ms(r?.finished_at) ?? ms(r?.started_at) ?? null,
+    ok: flag(r?.ok),
+    lastOkAt: ms(r?.last_ok) ?? null,
+    via: r?.via ? String(r.via) : null,
+    detail: r?.detail ? String(r.detail) : null,
+    registration: flag(c.registration),
+    joinLinkOk: flag(c.join_link_ok),
+    pollsReadable: flag(c.polls_readable),
+  };
+}
 
 type Journey = {
   contactId: string;
@@ -137,6 +215,11 @@ type Journey = {
   attended: boolean;
   noshow: boolean;
   survey: boolean;
+  phone: string | null;
+  /** The booking form's verdict (roas tags); qualified wins when both are set. */
+  roas: "qualified" | "unqualified" | "not_ready" | null;
+  /** The pitch whose booking link the contact came through, from utm_content. */
+  pitchUtm: 1 | 2 | null;
   calls: {
     type: string;
     bookedAt: number;
@@ -195,6 +278,16 @@ function journeyOf(r: Row): Journey {
     attended: r.attended === true || r.attended === "true",
     noshow: r.noshow === true || r.noshow === "true",
     survey: r.survey === true || r.survey === "true",
+    phone: r.phone ? String(r.phone) : null,
+    roas:
+      r.roas_qualified === true
+        ? "qualified"
+        : r.roas_unqualified === true
+          ? "unqualified"
+          : r.roas_unprepared === true
+            ? "not_ready"
+            : null,
+    pitchUtm: r.pitch_utm === "1" ? 1 : r.pitch_utm === "2" ? 2 : null,
     calls: jsonArray(r.calls).map(c => ({
       type: String(c.type),
       bookedAt: ms(c.booked_at) ?? 0,
@@ -267,10 +360,19 @@ export const webinar: Adapter = {
     const notes: Note[] = [];
     const sources: SourceStamp[] = [];
 
-    const [journeyRows, spendRows, ltRows] = await Promise.all([
+    const [journeyRows, spendRows, ltRows, collectedRows] = await Promise.all([
       sql(B2B, JOURNEY_SQL),
       sql(B2B, SPEND_SQL),
       sql(B2B, LT_SQL).catch(() => [] as Row[]),
+      // Read apart: when Creative Triage cannot be read, the funnel still
+      // shows and says what is missing.
+      sql(TRIAGE, COLLECTED_SQL).catch((e: unknown) => {
+        notes.push({
+          level: "warn",
+          text: `Zoom and the survey could not be read from Creative Triage this run (${String(e instanceof Error ? e.message : e).slice(0, 120)}).`,
+        });
+        return null;
+      }),
     ]);
     sources.push({
       name: "B2B GHL contacts, calls and closer form (webby-* tags)",
@@ -290,6 +392,86 @@ export const webinar: Adapter = {
       linkClicks: num(r.link_clicks),
     }));
     const lt = ltRows[0] ?? {};
+
+    // What hermes/webinar-pull has collected.
+    const collected: Row | null = collectedRows?.[0] ?? null;
+    const zSessions: ZoomSession[] = jsonArray(collected?.sessions)
+      .map(r => ({
+        uuid: String(r.uuid),
+        startedAt: ms(r.started_at) ?? 0,
+        endedAt: ms(r.ended_at) ?? null,
+        pitch1At: ms(r.pitch1_at) ?? null,
+        pitch2At: ms(r.pitch2_at) ?? null,
+        complete: r.complete === true,
+      }))
+      .filter(x => x.startedAt > 0);
+    const zAttendance: ZoomAttendance[] = jsonArray(collected?.attendance)
+      .map(r => ({
+        sessionUuid: String(r.session_uuid),
+        personKey: String(r.person_key),
+        email: r.email ? String(r.email).trim().toLowerCase() : null,
+        contactId: r.contact_id ? String(r.contact_id) : null,
+        internal: r.internal === true,
+        joinAt: ms(r.join_at) ?? 0,
+        leaveAt: ms(r.leave_at) ?? null,
+      }))
+      .filter(x => x.joinAt > 0);
+    const zEngagement: ZoomEngagement[] = jsonArray(collected?.engagement).map(
+      r => ({
+        sessionUuid: String(r.session_uuid),
+        kind: r.kind,
+        at: ms(r.at) ?? null,
+        personKey: r.person_key ? String(r.person_key) : null,
+        one: r.one === true,
+        private: r.private === true,
+      }),
+    );
+    const surveyRows: SurveyRow[] = jsonArray(collected?.survey).map(r => ({
+      submittedAt: ms(r.submitted_at) ?? 0,
+      email: r.email ? String(r.email).trim().toLowerCase() : null,
+      phone: r.phone ? String(r.phone) : null,
+      contactId: r.contact_id ? String(r.contact_id) : null,
+      band: r.profit_band ? String(r.profit_band) : null,
+      profitMin:
+        r.profit_min === null || r.profit_min === undefined
+          ? null
+          : num(r.profit_min),
+    }));
+    const runs = new Map(
+      jsonArray(collected?.pulls).map(r => [String(r.source), runOf(r)]),
+    );
+    const zoomRun = runs.get("zoom") ?? null;
+    const formRun = runs.get("typeform") ?? null;
+    const pollsReadable = zoomRun?.pollsReadable === true;
+
+    // Survey responses to registrants: HighLevel contact id first, then the
+    // email, then the phone. Never the name (the brief's rule). The latest
+    // response of a person wins.
+    const byContact = new Map(journeys.map(j => [j.contactId, j]));
+    const byEmail = new Map<string, Journey>();
+    const byPhone = new Map<string, Journey>();
+    for (const j of journeys) {
+      if (j.email) byEmail.set(j.email, j);
+      const pk = phoneKey(j.phone);
+      if (pk) byPhone.set(pk, j);
+    }
+    const journeyFor = (r: SurveyRow): Journey | null => {
+      if (r.contactId && byContact.has(r.contactId))
+        return byContact.get(r.contactId) ?? null;
+      if (r.email && byEmail.has(r.email)) return byEmail.get(r.email) ?? null;
+      const pk = phoneKey(r.phone);
+      if (pk && byPhone.has(pk)) return byPhone.get(pk) ?? null;
+      return null;
+    };
+    const surveyOf = new Map<string, SurveyRow>();
+    let surveyUnmatched = 0;
+    for (const r of [...surveyRows].sort(
+      (a, b) => a.submittedAt - b.submittedAt,
+    )) {
+      const j = journeyFor(r);
+      if (j) surveyOf.set(j.contactId, r);
+      else surveyUnmatched++;
+    }
 
     // Rounds: one per round tag (or field), dated by its registrants'
     // Webinar Datetime. Spend belongs to the next session on or after its
@@ -323,7 +505,70 @@ export const webinar: Adapter = {
         list: [],
       });
 
+    // Zoom sessions to rounds: a session that started within hours of the
+    // round's Webinar Datetime, or, for a round without one, in its tag's
+    // month after its first registration.
+    const HOUR = 3_600_000;
+    const claimed = new Set<string>();
+    const sessionsOf = new Map<string, ZoomSession[]>();
+    for (const r of rounds) {
+      const firstReg = r.list.length
+        ? Math.min(...r.list.map(j => j.registeredAt))
+        : 0;
+      const tag = r.key.match(/^webby-([a-z]{3})-(\d{4})$/);
+      const month = tag
+        ? `${tag[2]}-${String(Object.keys(MONTHS).indexOf(tag[1]) + 1).padStart(2, "0")}`
+        : null;
+      const mine = zSessions.filter(z => {
+        if (claimed.has(z.uuid)) return false;
+        if (r.sessionAt !== null)
+          return (
+            z.startedAt >= r.sessionAt - 2 * HOUR &&
+            z.startedAt <= r.sessionAt + 4 * HOUR
+          );
+        return (
+          month !== null &&
+          kuwaitDay(z.startedAt).slice(0, 7) === month &&
+          z.startedAt >= firstReg
+        );
+      });
+      for (const z of mine) claimed.add(z.uuid);
+      sessionsOf.set(r.key, mine);
+    }
+    // A session nobody's Webinar Datetime points at still happened: with
+    // three people or more from outside, it shows as a round of its own.
+    const orphanDays = new Map<string, ZoomSession[]>();
+    for (const z of zSessions.filter(x => !claimed.has(x.uuid))) {
+      const d = kuwaitDay(z.startedAt);
+      orphanDays.set(d, [...(orphanDays.get(d) ?? []), z]);
+    }
+    for (const [day, list] of orphanDays) {
+      const ids = new Set(list.map(z => z.uuid));
+      const people = new Set(
+        zAttendance
+          .filter(a => ids.has(a.sessionUuid) && !a.internal)
+          .map(a => a.personKey),
+      );
+      if (people.size < 3) continue;
+      const key = `zoom:${day}`;
+      rounds.push({
+        key,
+        label: "Zoom session",
+        sessionAt: Math.min(...list.map(z => z.startedAt)),
+        list: [],
+      });
+      sessionsOf.set(key, list);
+      notes.push({
+        level: "warn",
+        text: `A Zoom session on ${day} had ${people.size} people, but no registrant's Webinar Datetime points at it, so its registrations and spend sit elsewhere. Check the Webinar Datetime field on the registrants.`,
+      });
+    }
+
     const built: WebinarRound[] = [];
+    const cameBy = new Map<
+      string,
+      { personLevel: boolean; came: (j: Journey) => boolean }
+    >();
     for (const r of rounds) {
       const list = r.list;
       const sp = spendByRound.get(r.key) ?? [];
@@ -353,10 +598,42 @@ export const webinar: Adapter = {
         }
       }
 
+      // Who came. Zoom is the source of truth for the room; a registrant is
+      // tied to a Zoom row only by contact id or email. The webby-attended
+      // tag still counts a person when somebody tagged them.
+      const room = roomOf(
+        sessionsOf.get(r.key) ?? [],
+        zAttendance,
+        zEngagement,
+        {
+          scheduledAt: r.sessionAt,
+          pollsReadable,
+        },
+      );
+      const roomEmails = new Set(room?.emails ?? []);
+      const roomContacts = new Set(room?.contactIds ?? []);
+      const inZoom = (j: Journey) =>
+        roomContacts.has(j.contactId) ||
+        (j.email !== null && roomEmails.has(j.email));
+      const cameJ = (j: Journey) => j.attended || inZoom(j);
+      const matched = room ? list.filter(inZoom).length : 0;
+      const tagged = list.some(j => j.attended || j.noshow);
       const registrations = list.length;
-      const attended = list.filter(j => j.attended).length;
+      const tagAttended = list.filter(j => j.attended).length;
       const noShow = list.filter(j => j.noshow).length;
-      const attendanceRecorded = attended + noShow > 0;
+      const attendSource: WebinarRound["showUp"]["source"] = room
+        ? "zoom"
+        : tagged
+          ? "tags"
+          : null;
+      const attended = room ? room.attendees : tagAttended;
+      const attendanceRecorded = attendSource !== null;
+      const personLevel =
+        tagged ||
+        (room !== null && room.attendees > 0 && matched >= room.attendees / 2);
+      const came = list.filter(cameJ);
+      cameBy.set(r.key, { personLevel, came: cameJ });
+
       const booked = list.filter(j => j.calls.length > 0);
       const held = list.filter(j => j.calls.some(c => shown(c, now)));
       const due = list.filter(j =>
@@ -405,6 +682,41 @@ export const webinar: Adapter = {
       const status: WebinarRound["status"] =
         session === null ? "unknown" : session > now ? "upcoming" : "held";
 
+      // Qualification: the booking form's verdict when there is one, else
+      // the survey's yearly profit against the call funnel's line.
+      const profitOf = (j: Journey) =>
+        surveyOf.get(j.contactId)?.profitMin ?? null;
+      const verdictOf = (j: Journey) => {
+        if (j.roas) return j.roas;
+        const p = profitOf(j);
+        return p === null
+          ? null
+          : p >= QUALIFIED_PROFIT
+            ? "qualified"
+            : "unqualified";
+      };
+      const verdicts = list.map(verdictOf);
+      const qualifiedN = verdicts.filter(v => v === "qualified").length;
+      const notQualifiedN = verdicts.filter(
+        v => v === "unqualified" || v === "not_ready",
+      ).length;
+      const answered = list.filter(j => surveyOf.has(j.contactId));
+      const bands = new Map<
+        string,
+        { label: string; min: number; n: number }
+      >();
+      for (const j of answered) {
+        const sv = surveyOf.get(j.contactId);
+        if (!sv?.band) continue;
+        const b = bands.get(sv.band) ?? {
+          label: sv.band,
+          min: sv.profitMin ?? 0,
+          n: 0,
+        };
+        b.n++;
+        bands.set(sv.band, b);
+      }
+
       built.push({
         key: r.key,
         label: r.label,
@@ -440,8 +752,11 @@ export const webinar: Adapter = {
           attended,
           noShow,
           showRate: attendanceRecorded ? ratio(attended, registrations) : null,
+          source: attendSource,
+          matched,
+          personLevel,
           showRateByLead:
-            session && attendanceRecorded
+            session && attendanceRecorded && personLevel
               ? (["d0_1", "d2_3", "d4_7", "d8plus"] as const).map(k => {
                   const inBucket = list.filter(j => {
                     const d = Math.floor(
@@ -458,22 +773,48 @@ export const webinar: Adapter = {
                   return {
                     bucket: k,
                     registrants: inBucket.length,
-                    attended: inBucket.filter(j => j.attended).length,
+                    attended: inBucket.filter(cameJ).length,
                   };
                 })
               : null,
         },
+        room,
+        qualification: {
+          surveyAnswered: answered.length,
+          surveyQualified: answered.filter(
+            j => (profitOf(j) ?? -1) >= QUALIFIED_PROFIT,
+          ).length,
+          booking: {
+            qualified: list.filter(j => j.roas === "qualified").length,
+            unqualified: list.filter(j => j.roas === "unqualified").length,
+            notReady: list.filter(j => j.roas === "not_ready").length,
+          },
+          qualified: qualifiedN,
+          notQualified: notQualifiedN,
+          unknown: registrations - qualifiedN - notQualifiedN,
+          costPerQualified: per(totalSpend, qualifiedN),
+          bands: [...bands.values()].sort((a, b) => a.min - b.min),
+          threshold: QUALIFIED_PROFIT,
+        },
+        pitchBookings: {
+          pitch1: list.filter(j => j.pitchUtm === 1 && j.calls.length > 0)
+            .length,
+          pitch2: list.filter(j => j.pitchUtm === 2 && j.calls.length > 0)
+            .length,
+        },
         conversion: {
-          surveys: list.filter(j => j.survey).length,
+          surveys: list.filter(j => j.survey || surveyOf.has(j.contactId))
+            .length,
           booked: booked.length,
           bookedIntro: booked.filter(j => j.calls.some(c => c.type === "intro"))
             .length,
           bookedDemo: booked.filter(j => j.calls.some(c => c.type === "demo"))
             .length,
           bookedWhileLive,
-          attendeeToBooked: attendanceRecorded
-            ? ratio(booked.filter(j => j.attended).length, attended)
-            : null,
+          attendeeToBooked:
+            attendanceRecorded && personLevel
+              ? ratio(booked.filter(cameJ).length, came.length)
+              : null,
           registrantToBooked: ratio(booked.length, registrations),
           costPerBooked: per(totalSpend, booked.length),
         },
@@ -483,9 +824,10 @@ export const webinar: Adapter = {
           bookedToHeld: ratio(held.length, due.length),
           closes: closed.length,
           closeRate: ratio(closed.length, held.length),
-          attendeeToClose: attendanceRecorded
-            ? ratio(closed.filter(j => j.attended).length, attended)
-            : null,
+          attendeeToClose:
+            attendanceRecorded && personLevel
+              ? ratio(closed.filter(cameJ).length, came.length)
+              : null,
           contracted,
           cash,
           cashConfirmed,
@@ -512,6 +854,7 @@ export const webinar: Adapter = {
     const ads: WebinarPayload["ads"] = [];
     for (const r of rounds) {
       const sp = spendByRound.get(r.key) ?? [];
+      const who = cameBy.get(r.key);
       const ids = new Set([
         ...sp.map(s => s.adId),
         ...r.list.map(j => j.adId).filter((x): x is string => Boolean(x)),
@@ -532,7 +875,7 @@ export const webinar: Adapter = {
           clicks,
           ctr: ratio(clicks, impressions),
           registrations: regs.length,
-          attended: regs.filter(j => j.attended).length,
+          attended: who?.personLevel ? regs.filter(who.came).length : null,
           booked: regs.filter(j => j.calls.length > 0).length,
           closes: regs.filter(j => j.deals.length > 0).length,
           cash: money2(
@@ -547,37 +890,74 @@ export const webinar: Adapter = {
     }
     ads.sort((a, b) => b.spend - a.spend || b.registrations - a.registrations);
 
-    // The post-event survey (Typeform), counted from its responses API.
-    let surveyResponses: number | null = null;
-    try {
-      const since = new Date(now - 120 * 86_400_000).toISOString().slice(0, 19);
-      const res: Any = await callTool("pd_typeform_proxy_get", {
-        url: `https://api.typeform.com/forms/${TYPEFORM_SURVEY}/responses?page_size=1&since=${since}`,
-      });
-      surveyResponses = num(res?.total_items);
-      sources.push({
-        name: "Typeform survey (P1xP4r24)",
-        ok: true,
-        freshestAt: now,
-      });
-    } catch (e) {
-      sources.push({
-        name: "Typeform survey (P1xP4r24)",
-        ok: false,
-        note: String(e instanceof Error ? e.message : e).slice(0, 140),
-      });
+    // The worker's health, as the cockpit sees it.
+    const surveyResponses = collected ? surveyRows.length : null;
+    const zoomReads = zoomRun?.lastOkAt != null;
+    const formReads = formRun?.lastOkAt != null;
+    const stale = (run: WebinarCollectorRun | null) =>
+      run?.lastOkAt != null && now - run.lastOkAt > 3 * HOUR;
+    sources.push({
+      name: "Zoom and the gift survey (hermes/webinar-pull)",
+      ok:
+        collected !== null &&
+        zoomRun?.ok === true &&
+        formRun?.ok === true &&
+        !stale(zoomRun) &&
+        !stale(formRun),
+      freshestAt:
+        Math.min(zoomRun?.lastOkAt ?? now, formRun?.lastOkAt ?? now) ||
+        undefined,
+      note: !zoomRun
+        ? "The worker has not run yet."
+        : zoomRun.ok === false
+          ? `Zoom: ${zoomRun.detail ?? "the last read failed"}`
+          : formRun?.ok === false
+            ? `Survey: ${formRun.detail ?? "the last read failed"}`
+            : undefined,
+    });
+    for (const [name, run] of [
+      ["Zoom", zoomRun],
+      ["The survey", formRun],
+    ] as const) {
+      if (run?.ok === false)
+        notes.push({
+          level: "warn",
+          text: `${name} could not be read on the last run: ${String(run.detail ?? "no reason given").slice(0, 160)}. The worker tries again within the hour.`,
+        });
+      else if (stale(run))
+        notes.push({
+          level: "warn",
+          text: `${name} was last read ${Math.round((now - (run?.lastOkAt ?? now)) / HOUR)} hours ago: the webinar-pull cron on the VPS has stopped (RUNBOOK.md, "Webinar pull").`,
+        });
     }
+    if (zoomRun?.joinLinkOk === false)
+      notes.push({
+        level: "warn",
+        text: "webinar.maharamedia.com/live, the join link in the WhatsApp reminders (1 hour, 15 and 5 minutes before, started, last call), does not lead to Zoom: it answers 404. Point it at the Zoom meeting before the next session.",
+      });
 
     const anyRegistrant = journeys.length > 0;
     const anySpend = spend.length > 0;
     const anyAdId = journeys.some(j => j.adId);
-    const anyAttendance = journeys.some(j => j.attended || j.noshow);
+    const anyTags = journeys.some(j => j.attended || j.noshow);
+    const anyRoom = built.some(r => (r.room?.attendees ?? 0) > 0);
+    const anyChat = built.some(r => (r.room?.chat.messages ?? 0) > 0);
+    const anyQual = built.some(
+      r =>
+        r.qualification.surveyAnswered +
+          r.qualification.booking.qualified +
+          r.qualification.booking.unqualified +
+          r.qualification.booking.notReady >
+        0,
+    );
+    const anyPitch = journeys.some(j => j.pitchUtm !== null);
     const anySession = journeys.some(j => j.sessionAt !== null);
     const ltPage = num(lt.page_events) > 0;
-    const ltZoom = num(lt.attendance) > 0;
-    const ltEngagement = num(lt.engagement) > 0;
+    const matchedAll = built.reduce((t, r) => t + r.showUp.matched, 0);
     const waitRegistrants =
       "Waiting for the first registrant: the Webinar Opt In form creates the contact and the WEBBY workflow tags it webby-registered.";
+    const workerMissing =
+      "Not connected yet: hermes/webinar-pull has not read Zoom (VPS cron, hourly).";
 
     const tracking: WebinarPayload["tracking"] = [
       {
@@ -625,10 +1005,16 @@ export const webinar: Adapter = {
       },
       {
         stage: 1,
-        metric: "Qualification: firm type, service line, revenue, role, city",
-        source: "Landing page form fields into HighLevel",
-        status: "missing",
-        note: "The Webinar Opt In form does not ask these, so qualified registrations and cost per qualified registration cannot be counted.",
+        metric:
+          "Qualification: yearly profit, years in the market, type of work",
+        source:
+          "Gift survey (Typeform P1xP4r24) and the booking form's roas tags",
+        status: anyQual ? "live" : formReads ? "waiting" : "missing",
+        note: anyQual
+          ? `Qualified is a yearly net profit of $100K or more in the survey, or roas-qualified from the booking form, which wins when both exist. The survey does not ask role or city.${surveyUnmatched ? ` ${surveyUnmatched} survey responses match no registrant by contact id, email or phone.` : ""}`
+          : formReads
+            ? "Connected. Waiting for the first registrant to answer the survey (thank-you page, and after the session) or the booking form."
+            : "Not connected yet: hermes/webinar-pull has not read the survey.",
       },
       {
         stage: 1,
@@ -653,37 +1039,61 @@ export const webinar: Adapter = {
       },
       {
         stage: 2,
-        metric: "Attendees, show rate, show rate by lead time and by ad",
-        source: "Zoom participants, or the webby-attended / webby-noshow tags",
-        status: anyAttendance || ltZoom ? "live" : "waiting",
+        metric: "Attendees, show rate, on-time rate",
+        source:
+          "Zoom participants (hermes/webinar-pull), or the webby-attended / webby-noshow tags",
+        status: anyRoom || anyTags ? "live" : zoomReads ? "waiting" : "missing",
         note:
-          anyAttendance || ltZoom
-            ? "Attendance is recorded."
-            : "Nothing marks attendance yet: after the session, the Zoom attendee list has to reach HighLevel as webby-attended and webby-noshow tags.",
+          anyRoom || anyTags
+            ? "People in the room come from Zoom, our own team left out."
+            : zoomReads
+              ? "Connected. The session is read within the hour after it ends."
+              : workerMissing,
+      },
+      {
+        stage: 2,
+        metric:
+          "Attendees tied to a registrant (show rate by lead time and by ad)",
+        source:
+          "Zoom registration, or an attendee signed in to Zoom with the registered email",
+        status:
+          zoomRun?.registration === true || anyTags
+            ? "live"
+            : matchedAll > 0
+              ? "live"
+              : "missing",
+        note:
+          zoomRun?.registration === true
+            ? "Zoom registration is on, so every attendee carries their registration."
+            : "Zoom registration is off, so a guest joins with a name only and cannot be tied to a registrant; the brief never matches by name. Show rate and the retention curve do not need it. Attendee to booked, show rate by lead time and by ad do: turn on registration in Zoom and send each registrant their own join link.",
       },
       {
         stage: 3,
         metric:
           "Watch time, retention curve, presence at each pitch, drop-offs",
-        source: "Zoom join and leave times (B2B lt_attendance)",
-        status: ltZoom ? "live" : "missing",
-        note: ltZoom
-          ? "From Zoom's join and leave rows."
-          : "Not connected: nothing pulls Zoom's participant report yet.",
+        source: "Zoom join and leave times (hermes/webinar-pull)",
+        status: anyRoom ? "live" : zoomReads ? "waiting" : "missing",
+        note: anyRoom
+          ? "One row per join and leave; concurrent attendance is counted at the middle of each minute."
+          : zoomReads
+            ? "Connected. Waiting for the first session."
+            : workerMissing,
       },
       {
         stage: 3,
         metric: "Chat, polls, Q&A, the pitch-1 “drop a 1” count",
-        source: "Zoom chat, polls and Q&A (B2B lt_engagement)",
-        status: ltEngagement ? "live" : "missing",
-        note: "Not connected yet.",
+        source:
+          "Zoom recording chat; polls and Q&A from the Zoom app (hermes/webinar-pull)",
+        status: anyChat ? "live" : zoomReads ? "waiting" : "missing",
+        note: `Chat comes from the session's cloud recording, so recording must stay on. ${pollsReadable ? "Polls and Q&A come from the Zoom app." : "Polls and Q&A need the Zoom app keys on the VPS; Composio's Zoom connection cannot read them."} Pitch 1 is found from the burst of 1s in the chat unless a time is set here.`,
       },
       {
         stage: 4,
-        metric: "Pitch link clicks, per pitch",
-        source: "One booking link per pitch",
-        status: ltEngagement ? "live" : "missing",
-        note: "There are no separate pitch-1 and pitch-2 links yet. Two HighLevel trigger links, each tagging who clicked, would do it at no cost.",
+        metric: "Bookings by pitch link",
+        source:
+          "utm_content=pitch1 / pitch2 on the booking link, kept by HighLevel",
+        status: anyPitch ? "live" : "waiting",
+        note: `Share ${PITCH_LINK}1 at pitch 1 and ${PITCH_LINK}2 at pitch 2. HighLevel keeps the link on the contact who books, so each booking says which pitch it came from. Clicks that do not book are not counted.`,
       },
       {
         stage: 4,
@@ -695,12 +1105,12 @@ export const webinar: Adapter = {
       {
         stage: 4,
         metric: "Post-event survey completions",
-        source: "Typeform P1xP4r24, and the webby-survey-done tag",
-        status: surveyResponses !== null ? "live" : "missing",
-        note:
-          surveyResponses !== null
-            ? `${surveyResponses} responses in the last 120 days.`
-            : "Typeform could not be read this run.",
+        source:
+          "Typeform P1xP4r24 (hermes/webinar-pull), and the webby-survey-done tag",
+        status: formReads ? "live" : "missing",
+        note: formReads
+          ? `${surveyResponses ?? 0} responses stored; ${surveyOf.size} tied to a registrant.`
+          : "Not connected yet: hermes/webinar-pull has not read the survey.",
       },
       {
         stage: 5,
@@ -725,7 +1135,7 @@ export const webinar: Adapter = {
       },
     ];
 
-    if (!anyRegistrant && !anySpend)
+    if (!anyRegistrant && !anySpend && !built.length)
       notes.push({
         level: "info",
         text: "The webinar has not started: no registrant carries a webby tag and no webinar campaign has spent. Every number here fills in on its own once it does.",
@@ -738,6 +1148,8 @@ export const webinar: Adapter = {
       tracking,
       targets: WEBINAR_TARGETS,
       surveyResponses,
+      survey: { matched: surveyOf.size, unmatched: surveyUnmatched },
+      collector: { zoom: zoomRun, typeform: formRun },
       lt: {
         events: num(lt.events),
         pageEvents: num(lt.page_events),

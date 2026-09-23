@@ -34,6 +34,13 @@ if [ -f apps/media-buyer-cockpit/scripts/billing.test.ts ]; then
   (cd apps/media-buyer-cockpit && bun test scripts/billing.test.ts >/dev/null 2>&1) \
     || { echo "the billing rules tests fail"; exit 1; }
 fi
+
+# The webinar room: attendance, the retention curve, the pitches. Wrong is a
+# pitch that looks like it lost the room, or a show rate that counts the team.
+if [ -f apps/media-buyer-cockpit/scripts/webinar.test.ts ]; then
+  (cd apps/media-buyer-cockpit && bun test scripts/webinar.test.ts >/dev/null 2>&1) \
+    || { echo "the webinar room tests fail"; exit 1; }
+fi
 ship() {
   local app="$1"
   local SITE dir url

@@ -12,6 +12,7 @@
  */
 
 import type { ContentWindow } from "./content";
+import type { Room } from "./webinarRoom";
 
 export type Note = { level: "info" | "warn"; text: string };
 export type Point = { date: string; value: number };
@@ -1957,6 +1958,20 @@ export type HiringPayload = {
 
 // --- Webinar funnel (B2B: leads tagged webby-*, calls, closed_deals, meta_ad_snapshots, lt_*) ---
 
+/** One run of the webinar worker (hermes/webinar-pull) for one source. */
+export type WebinarCollectorRun = {
+  at: number | null;
+  ok: boolean | null;
+  /** The last run that worked. */
+  lastOkAt: number | null;
+  via: string | null;
+  detail: string | null;
+  /** Zoom only: is registration on, does the reminders' join link reach Zoom. */
+  registration: boolean | null;
+  joinLinkOk: boolean | null;
+  pollsReadable: boolean | null;
+};
+
 /** One webinar round (a session and the registrants and spend that led to it). */
 export type WebinarRound = {
   /** The round tag (webby-oct-2026), `round:<field>`, `untagged`, or `next`. */
@@ -1996,9 +2011,19 @@ export type WebinarRound = {
   /** Stage 2. Show rate is null until attendance is recorded. */
   showUp: {
     attendanceRecorded: boolean;
+    /** Zoom's people in the room when a session was read, else the webby-attended tags. */
     attended: number;
     noShow: number;
     showRate: number | null;
+    /** Where attended comes from. */
+    source: "zoom" | "tags" | null;
+    /** Registrants Zoom tied to a person by email or contact id (never by name). */
+    matched: number;
+    /**
+     * True when most attendees are tied to a registrant (or tagged), so
+     * per-person rates (attendee to booked, by lead time, by ad) are honest.
+     */
+    personLevel: boolean;
     showRateByLead:
       | {
           bucket: "d0_1" | "d2_3" | "d4_7" | "d8plus";
@@ -2007,6 +2032,30 @@ export type WebinarRound = {
         }[]
       | null;
   };
+  /** Stage 3, Zoom (hermes/webinar-pull). Null until a session of this round was read. */
+  room: Room | null;
+  /**
+   * Stage 1, qualification: the gift survey (Typeform, on the thank-you page
+   * and after the session) and the booking form's roas tags.
+   */
+  qualification: {
+    /** Registrants with a survey response tied to them. */
+    surveyAnswered: number;
+    /** Of those, a yearly net profit of `threshold` or more. */
+    surveyQualified: number;
+    /** The booking form's verdict, from the roas tags. */
+    booking: { qualified: number; unqualified: number; notReady: number };
+    /** The booking form's verdict when there is one, else the survey's. */
+    qualified: number;
+    notQualified: number;
+    unknown: number;
+    costPerQualified: number | null;
+    /** The survey's profit bands among this round's registrants, lowest first. */
+    bands: { label: string; min: number; n: number }[];
+    threshold: number;
+  };
+  /** Stage 4: registrants whose booking came through a pitch link (utm_content=pitch1 or pitch2). */
+  pitchBookings: { pitch1: number; pitch2: number };
   /** Stage 4. */
   conversion: {
     surveys: number;
@@ -2052,7 +2101,8 @@ export type WebinarPayload = {
     clicks: number;
     ctr: number | null;
     registrations: number;
-    attended: number;
+    /** Null when Zoom cannot tie attendees to registrants. */
+    attended: number | null;
     booked: number;
     closes: number;
     cash: number;
@@ -2080,7 +2130,15 @@ export type WebinarPayload = {
     closeRate: number;
     killRule: { spendAfter: number; costPerRegistrationAbove: number };
   };
+  /** Gift survey responses stored so far; null when they cannot be read. */
   surveyResponses: number | null;
+  /** Survey responses tied to a registrant, and the ones that match nobody. */
+  survey: { matched: number; unmatched: number };
+  /** The last runs of hermes/webinar-pull, per source. */
+  collector: {
+    zoom: WebinarCollectorRun | null;
+    typeform: WebinarCollectorRun | null;
+  };
   /** Rows in the B2B live training tables, which Zoom and the page would fill. */
   lt: {
     events: number;
