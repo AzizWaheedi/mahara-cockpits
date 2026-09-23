@@ -83,11 +83,24 @@ if [ -n "$live_sha" ]; then
     exit 1
   fi
   if ! git merge-base --is-ancestor "$live_sha" "$head_sha"; then
-    echo "refusing to ship $dir: production is $(git rev-parse --short "$live_sha"), which is not an ancestor of $(git rev-parse --short "$head_sha")."
-    echo "This deploy would move production sideways or backwards."
-    exit 1
+    # A rebase gives the same commits new names: production built from the
+    # old name is still contained in HEAD when every commit it has beyond
+    # the fork point is in HEAD as the same patch (git cherry marks those
+    # "-", and a commit HEAD really lacks "+"). 2026-09-23: production was
+    # 7efca15, rebased onto main as 7a7668e with an identical patch.
+    base=$(git merge-base "$live_sha" "$head_sha")
+    lacking=$(git cherry "$head_sha" "$live_sha" "$base" | grep -c '^+' || true)
+    if [ "$lacking" -ne 0 ]; then
+      echo "refusing to ship $dir: production is $(git rev-parse --short "$live_sha"), which is not an ancestor of $(git rev-parse --short "$head_sha")."
+      echo "It has $lacking commit(s) this tree does not have, by name or by patch:"
+      git cherry -v "$head_sha" "$live_sha" "$base" | grep '^+' | sed 's/^/  /'
+      echo "This deploy would move production sideways or backwards."
+      exit 1
+    fi
+    echo "ship source: $(git rev-parse --short "$head_sha") is on origin/main; production $(git rev-parse --short "$live_sha") is in it under rebased names (every patch the same); $dir is clean"
+  else
+    echo "ship source: $(git rev-parse --short "$head_sha") is on origin/main; production $(git rev-parse --short "$live_sha") is contained in it; $dir is clean"
   fi
-  echo "ship source: $(git rev-parse --short "$head_sha") is on origin/main; production $(git rev-parse --short "$live_sha") is contained in it; $dir is clean"
 else
   echo "ship source: $(git rev-parse --short "$head_sha") is on origin/main and $dir is clean"
   echo "  (the live page did not name a commit, so this did not compare against production)"
