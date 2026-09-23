@@ -29,6 +29,29 @@ creation job, and perform a fresh one-time source reconciliation. Then replace
 each remaining Convex-owned feature and job, verify production parity, and
 remove Convex only when no runtime dependency remains.
 
+### Identity gate corrected, 23 September 2026
+
+Production now has `20260923m_cockpit_ceo_gate.sql`. The previous helper
+treated every admin as CEO, unlike the production Convex gate. The replacement
+requires a confirmed, active Supabase Auth identity linked to one of Aziz's
+two founder email addresses. A synthetic founder and a synthetic admin-role
+non-founder were tested inside a rolled-back transaction; the latter was
+denied CEO access. The persistent member and audit counts did not change.
+Run `scripts/apply-cockpit-ceo-gate-migration.ps1` for the rolled-back dry run,
+`-Apply` to install, or `-VerifyOnly` to check the live function and grants.
+
+`apps/media-buyer-cockpit/src/auth/supabaseAccess.ts` is an **unwired** future
+browser access contract: it verifies the Auth user server-side with `getUser`,
+reads only an active matching `cockpit_members` link, and has no static email
+fallback. Its public URL is pinned to Creative Triage. The live login remains
+Convex until all routes and actions have a direct Supabase path. Do not set the
+new browser `VITE_SUPABASE_*` variables yet. Local checks:
+`bun run test:supabase-access` and `bun run typecheck` from the media-buyer app.
+Existing Convex Scrypt password hashes cannot be silently copied into Supabase
+Auth; users without an existing Supabase Auth account need an explicitly
+arranged first sign-in or reset, not a fabricated password migration. No
+sign-in emails or account changes were sent as part of this slice.
+
 ## Phase 1: identity, audit, and media-buyer feedback
 
 This phase creates the shared cockpit member directory and immutable audit log,
