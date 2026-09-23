@@ -91,16 +91,6 @@ function Shell() {
   );
 
   if (!ready) return null;
-  // A client holding a review link has no account and never will, so
-  // this route is answered before the sign-in gate. Matched loosely
-  // because the app is served under /editor/ in production and at the
-  // root in development, and a check for one breaks the other.
-  if (/(^|\/)review\/[^/]+$/.test(window.location.pathname))
-    return (
-      <Routes>
-        <Route path="/review/:token" element={<ReviewPage />} />
-      </Routes>
-    );
 
   if (!session)
     return (
@@ -245,7 +235,26 @@ function Shell() {
   );
 }
 
+/**
+ * A client's review link. Matched loosely because the app is served under
+ * /editor/ in production and at the root in development, and a check for
+ * one breaks the other.
+ */
+const REVIEW_PATH = /(^|\/)review\/[^/]+$/;
+
 export default function App() {
+  // A client holding a review link has no account and never will, so
+  // their page is answered here, before the desk's session and its data
+  // hooks exist. Answered inside the desk, it waited for the session check
+  // and asked Supabase for jobs, meetings and the day's end of day as a
+  // signed-out visitor -- three failed requests on every open of the most
+  // visible page the agency hands over.
+  if (REVIEW_PATH.test(window.location.pathname))
+    return (
+      <Routes>
+        <Route path="/review/:token" element={<ReviewPage />} />
+      </Routes>
+    );
   return (
     <SessionProvider>
       <Shell />
