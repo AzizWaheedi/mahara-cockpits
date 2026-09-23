@@ -59,7 +59,7 @@ class BackfillChecksTests(unittest.TestCase):
         report = json.loads(output.getvalue())
         self.assertTrue(report["DRY_RUN"])
         self.assertEqual(report["ownership"]["authoritative_rows"]["total"], 2)
-        self.assertFalse(report["bulk_write_supported"])
+        self.assertEqual(report["max_batch_rows"], 25)
 
     def test_build_row_keeps_human_completion_and_source_identity(self):
         row = MODULE.build_row(self.child_row, "csm", "222")
@@ -105,6 +105,87 @@ class BackfillChecksTests(unittest.TestCase):
         self.assertEqual(len(posts), 1)
         self.assertTrue(posts[0][2]["done"])
         self.assertEqual(posts[0][2]["owner_app"], "client-success")
+
+    def test_batch_requires_bounded_limit_and_past_cutoff(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(ValueError, "requires --limit"):
+                MODULE.main(self.args + ["--apply-batch", "--through-day", "2026-09-14", "--limit", "26"])
+            with self.assertRaisesRegex(ValueError, "strictly before"):
+                MODULE.main(self.args + ["--apply-batch", "--through-day", "9999-01-01", "--limit", "1"])
+
+    def test_batch_preflights_canary_and_writes_only_missing_owner_row(self):
+        canary = {**MODULE.build_row(self.child_row, "csm", "222"), "id": 42}
+        expected_media = MODULE.build_row(check("media_buyer", "review", False), "media_buyer", "111")
+        actual_media = {**expected_media, "id": 43}
+        calls = []
+
+        def fake_request(url, key, *, method="GET", body=None):
+            calls.append((url, method, body))
+            if "cockpit_audit_log" in url:
+                return [{"id": "audit"}]
+            if method == "GET":
+                return [canary]
+            return [actual_media]
+
+        with patch.object(MODULE, "read_env_value", side_effect=lambda path, name: {
+            "SUPABASE_URL": MODULE.PROJECT_URL,
+            "SUPABASE_SERVICE_ROLE_KEY": "fake-key",
+        }[name]):
+            with patch.object(MODULE, "request_json", side_effect=fake_request):
+                with patch.object(MODULE, "remote_rows", return_value=[actual_media]):
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        self.assertEqual(MODULE.main(self.args + [
+                            "--apply-batch", "--through-day", "2026-09-14", "--limit", "1",
+                        ]), 0)
+        posts = [call for call in calls if call[1] == "POST"]
+        self.assertEqual(len(posts), 1)
+        self.assertEqual(posts[0][2]["role"], "media_buyer")
+        self.assertEqual(posts[0][2]["check_key"], "review")
+
+    def test_batch_without_checked_child_canary_makes_no_post(self):
+        calls = []
+
+        def fake_request(url, key, *, method="GET", body=None):
+            calls.append(method)
+            return []
+
+        with patch.object(MODULE, "read_env_value", side_effect=lambda path, name: {
+            "SUPABASE_URL": MODULE.PROJECT_URL,
+            "SUPABASE_SERVICE_ROLE_KEY": "fake-key",
+        }[name]):
+            with patch.object(MODULE, "request_json", side_effect=fake_request):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    with self.assertRaisesRegex(RuntimeError, "canary is not present"):
+                        MODULE.main(self.args + [
+                            "--apply-batch", "--through-day", "2026-09-14", "--limit", "1",
+                        ])
+        self.assertEqual(calls, ["GET"])
+
+    def test_plan_batch_reports_exact_first_write_without_post(self):
+        canary = {**MODULE.build_row(self.child_row, "csm", "222"), "id": 42}
+        calls = []
+
+        def fake_request(url, key, *, method="GET", body=None):
+            calls.append(method)
+            return [canary]
+
+        output = io.StringIO()
+        with patch.object(MODULE, "read_env_value", side_effect=lambda path, name: {
+            "SUPABASE_URL": MODULE.PROJECT_URL,
+            "SUPABASE_SERVICE_ROLE_KEY": "fake-key",
+        }[name]):
+            with patch.object(MODULE, "request_json", side_effect=fake_request):
+                with contextlib.redirect_stdout(output):
+                    self.assertEqual(MODULE.main(self.args + [
+                        "--plan-batch", "--through-day", "2026-09-14", "--limit", "1",
+                    ]), 0)
+        plan = json.loads(output.getvalue().splitlines()[-1])
+        self.assertTrue(plan["DRY_RUN"])
+        self.assertEqual(plan["this_run"], 1)
+        self.assertEqual(plan["first_planned"], [
+            {"role": "media_buyer", "day": "2026-09-14", "key": "review"},
+        ])
+        self.assertEqual(calls, ["GET"])
 
 
 if __name__ == "__main__":
