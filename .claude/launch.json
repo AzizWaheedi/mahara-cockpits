@@ -67,6 +67,18 @@
         "harness"
       ],
       "port": 5179
+    },
+    {
+      "name": "social-harness",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": [
+        "run",
+        "--cwd",
+        "apps/creative-director-cockpit",
+        "harness"
+      ],
+      "port": 5181,
+      "url": "http://localhost:5181"
     }
   ]
 }

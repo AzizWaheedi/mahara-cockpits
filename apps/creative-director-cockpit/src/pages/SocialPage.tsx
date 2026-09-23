@@ -310,7 +310,7 @@ function Month({ c, onChanged }: { c: Client; onChanged: () => void }) {
 
   const load = useCallback(async () => {
     try {
-      const out = (await read({ clientTaskId: c.taskId })) as {
+      const out = (await read({ clientTaskId: c.taskId })) as unknown as {
         month: string;
         // biome-ignore lint/suspicious/noExplicitAny: same
         batch: any;
