@@ -110,6 +110,7 @@ and read back. The Supabase issue count remained two. No new organic feedback
 arrived during this verification window, so a first new shadow-written row and
 its audit entry are still an open acceptance check, not a completed claim.
 
-After that: implement and run a guarded full backfill; reconcile source IDs,
-row counts, newest timestamps, and exceptions; then switch this read path only
-after shadow-write parity. Repeat the same sequence for daily checks and EOD.
+After the first new shadow-written row and audit entry pass read-back, compare
+a later Convex snapshot with Supabase by source ID, row count, newest timestamp,
+and exceptions. Switch this read path only after sustained parity. Daily checks
+and EOD each need their own mapping, guarded backfill, and parity gate.
