@@ -43,3 +43,15 @@ team by definition and is added.
 email another -- `sabry@` is the Sabri on the roster, `lamah@` is Lama.
 A near-match created a second row for the same person; the map was
 checked by hand once and stops the sync undoing the merge.
+
+## What the screen owns (2026-09-23)
+
+The team edits meetings on the portal's Team meetings page (`/team`,
+`apps/media-buyer-cockpit/convex/team.ts`). The sync respects that:
+
+- A meeting changed there (name, cadence, department, hosts) is
+  `managed = 'cockpit'`; the sync then only refreshes its `calendar_id`.
+- People are added with `ignore-duplicates`: a part chosen on the screen,
+  or a person taken off there (kept as `removed`), is never overwritten
+  from the invite. New attendees still arrive from the calendar.
+- Purposes, docs, notes and agendas are never touched by the sync.

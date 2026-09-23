@@ -28,6 +28,8 @@ import {
   TaskListPage,
   TouchpointsPage,
 } from "@/pages";
+import { MeetingPage } from "@/pages/team/MeetingPage";
+import { TeamPage } from "@/pages/team/TeamPage";
 import { ViktorOAuthCallbackPage } from "@/pages/ViktorOAuthCallbackPage";
 
 export function AuthenticatedRoutes() {
@@ -72,6 +74,9 @@ export function AuthenticatedRoutes() {
           <Route element={<RoleRoute role="csm" />}>
             <Route path="/csm" element={<CsmPage />} />
           </Route>
+          {/* Team meetings: everybody with a seat in the portal. */}
+          <Route path="/team" element={<TeamPage />} />
+          <Route path="/team/:id" element={<MeetingPage />} />
           <Route path="/template" element={<DashboardPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Route>

@@ -19,6 +19,7 @@ import {
   ShieldCheck,
   Sun,
   Trophy,
+  UsersRound,
 } from "lucide-react";
 import { Link, useLocation, useSearchParams } from "react-router";
 import { STATUS_COLOR } from "@/components/ceo/StatusChip";
@@ -295,6 +296,15 @@ function SidebarNav() {
                 label="Admin"
                 icon={ShieldCheck}
                 isActive={location.pathname === "/admin"}
+              />
+            ) : null}
+            {/* Everybody's: the team's meetings and their agendas. */}
+            {me ? (
+              <NavLink
+                href="/team"
+                label="Team meetings"
+                icon={UsersRound}
+                isActive={location.pathname.startsWith("/team")}
               />
             ) : null}
           </SidebarMenu>

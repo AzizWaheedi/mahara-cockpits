@@ -2,7 +2,8 @@
  * The layout harness: the real shell, rail and CEO page, fed by fixtures
  * instead of Convex, so the screens can be checked at phone, tablet and
  * laptop widths without signing in. Started with `bun run harness`; open
- * /harness.html?tab=ads (or any CEO tab key).
+ * /harness.html?tab=ads (or any CEO tab key), or /harness.html?path=/team
+ * for any other page the routes below carry.
  *
  * Fixtures live in tmp/harness/ (ignored by git and Vercel):
  *   today.json    - the result of ceo/queries:today
@@ -17,6 +18,8 @@ import { Toaster } from "@/components/ui/sonner";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { ThemeProvider as LibThemeProvider } from "@/lib/theme";
 import { CeoPage } from "@/pages/CeoPage";
+import { MeetingPage } from "@/pages/team/MeetingPage";
+import { TeamPage } from "@/pages/team/TeamPage";
 import "@/index.css";
 import { setFixtures } from "./convexStub";
 
@@ -49,15 +52,20 @@ async function main() {
     "hermes:thread": undefined,
   });
   const search = window.location.search;
+  // ?path=/team opens that page; anything else is a CEO tab.
+  const path = new URLSearchParams(search).get("path");
+  const start = path?.startsWith("/") ? path : `/ceo${search}`;
   createRoot(document.getElementById("root") as HTMLElement).render(
     <StrictMode>
       <LibThemeProvider>
         <ThemeProvider defaultTheme="light" switchable>
           <Toaster />
-          <MemoryRouter initialEntries={[`/ceo${search}`]}>
+          <MemoryRouter initialEntries={[start]}>
             <Routes>
               <Route element={<AppLayout />}>
                 <Route path="/ceo" element={<CeoPage />} />
+                <Route path="/team" element={<TeamPage />} />
+                <Route path="/team/:id" element={<MeetingPage />} />
                 <Route path="*" element={<Navigate to="/ceo" replace />} />
               </Route>
             </Routes>

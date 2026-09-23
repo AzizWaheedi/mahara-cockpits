@@ -221,6 +221,14 @@ def main() -> int:
                 s["cid"] = str(e.get("recurringEventId") or e.get("id") or "")[:120]
                 s["organizer"] = str((e.get("organizer") or {}).get("email") or "").lower()
 
+    # What the team decided on the screen (portal /team) is theirs: a meeting
+    # edited there is `managed = 'cockpit'`, and the calendar no longer sets
+    # its title, cadence, department or host. [2026-09-23]
+    managed = {
+        r["id"]: r.get("managed") or "calendar"
+        for r in sb("GET", "team_meetings?select=id,managed")
+    }
+
     made = attached = sittings = 0
     for title, s in series.items():
         mid = slug(title)
@@ -239,26 +247,35 @@ def main() -> int:
                          + ",".join(f'"{i}"' for i in ids) + ")") if ids else [])
             if r.get("department")
         )
-        sb("POST", "team_meetings?on_conflict=id", [{
-            "id": mid,
-            "title": title,
-            "cadence": "weekly" if s["rec"] and s["n"] >= 6 else ("monthly" if s["rec"] else "as needed"),
-            # Only when everyone on it is from one department; a meeting
-            # spanning two is not "a Media meeting" and saying so is worse
-            # than saying nothing.
-            "department": depts.most_common(1)[0][0] if len(depts) == 1 else None,
-            "host_id": host,
-            "calendar_id": s["cid"],
-            "created_by": "calendar",
-            "updated_at": now.isoformat(),
-        }], "resolution=merge-duplicates,return=minimal")
+        if managed.get(mid) == "cockpit":
+            sb("PATCH", f"team_meetings?id=eq.{urllib.parse.quote(mid)}", {
+                "calendar_id": s["cid"],
+                "updated_at": now.isoformat(),
+            }, "return=minimal")
+        else:
+            sb("POST", "team_meetings?on_conflict=id", [{
+                "id": mid,
+                "title": title,
+                "cadence": "weekly" if s["rec"] and s["n"] >= 6 else ("monthly" if s["rec"] else "as needed"),
+                # Only when everyone on it is from one department; a meeting
+                # spanning two is not "a Media meeting" and saying so is worse
+                # than saying nothing.
+                "department": depts.most_common(1)[0][0] if len(depts) == 1 else None,
+                "host_id": host,
+                "calendar_id": s["cid"],
+                "created_by": "calendar",
+                "updated_at": now.isoformat(),
+            }], "resolution=merge-duplicates,return=minimal")
         made += 1
 
         if ids:
+            # Only people the meeting has never had are added. A part chosen
+            # on the screen (host, required, optional), or a person taken off
+            # there (kept as `removed`), is never overwritten from the invite.
             sb("POST", "team_meeting_people?on_conflict=meeting_id,person_id",
                [{"meeting_id": mid, "person_id": p,
                  "part": "host" if p == host else "required"} for p in ids],
-               "resolution=merge-duplicates,return=minimal")
+               "resolution=ignore-duplicates,return=minimal")
             attached += len(ids)
 
         # A sitting per date it actually ran, so an agenda has somewhere
