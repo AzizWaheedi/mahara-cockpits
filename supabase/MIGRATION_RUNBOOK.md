@@ -131,3 +131,25 @@ copy. Two labels/details also differed. The tool reports these differences and
 refuses a backfill-ready result if a media-buyer CSM key is missing from the
 client-success snapshot. No checks table, backfill, or live mirror has yet been
 created in Supabase.
+
+### Checks schema and one-row canary
+
+`scripts/apply-cockpit-checks-migration.ps1` defaults to a rollback-only
+`DRY_RUN = True`. The smoke inserts one checked CSM row, verifies its audit
+entry and the service-only grants, then rolls the whole transaction back.
+`-Apply` repeats that dry run before installing the schema; it imports no
+checklist data. `-VerifyOnly` reads row count, RLS, grants and audit trigger.
+
+```powershell
+powershell -File scripts/apply-cockpit-checks-migration.ps1
+powershell -File scripts/apply-cockpit-checks-migration.ps1 -Apply
+powershell -File scripts/apply-cockpit-checks-migration.ps1 -VerifyOnly
+```
+
+`scripts/backfill-cockpit-checks.py` also defaults to offline `DRY_RUN = True`.
+Give it the three private ZIP paths and their Convex `start_ts` values using
+`--media-buyer`, `--media-buyer-ts`, `--client-success`,
+`--client-success-ts`, `--creative`, and `--creative-ts`. After comparing the
+report, `--apply-one --canary-role csm --canary-day 2026-09-14 --canary-key
+sprint_1` inserts only the child cockpit's checked row and verifies Supabase
+read-back plus one INSERT audit. No bulk flag or live mirror is provided yet.
