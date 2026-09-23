@@ -156,7 +156,7 @@ def main() -> int:
         "source_documents": len(documents),
         "media_buyer_reports": len(rows),
         "skipped_other_roles": len(documents) - len(rows),
-        "planned_first_source_id": rows[0]["source_id"] if rows else None,
+        "first_source_id": rows[0]["source_id"] if rows else None,
         "bulk_write_supported": False,
     }))
     if not args.apply_one or not rows:
@@ -170,30 +170,33 @@ def main() -> int:
     if not key:
         raise ValueError("SUPABASE_SERVICE_ROLE_KEY is missing")
 
-    expected = rows[0]
-    existing = remote_row(key, expected["source_id"])
-    if existing:
-        verify_row(expected, existing)
-        print("First report already exists and matches; no write performed.")
+    for expected in rows:
+        existing = remote_row(key, expected["source_id"])
+        if existing:
+            verify_row(expected, existing)
+            continue
+
+        print(f"Planned database change: insert one historical report {expected['source_id']}.")
+        url = f"{PROJECT_URL}/rest/v1/cockpit_issue_reports?on_conflict=source_system,source_id"
+        request_json(url, key, method="POST", body=expected)
+        written = remote_row(key, expected["source_id"])
+        if not written:
+            raise RuntimeError("Single-row write was not visible on read-back")
+        verify_row(expected, written)
+        audit_query = urllib.parse.urlencode({
+            "entity_type": "eq.cockpit_issue_reports",
+            "entity_id": f"eq.{written['id']}",
+            "action": "eq.INSERT",
+            "select": "id",
+            "limit": 1,
+        })
+        audit = request_json(f"{PROJECT_URL}/rest/v1/cockpit_audit_log?{audit_query}", key)
+        if not audit:
+            raise RuntimeError("Single-row write succeeded but its audit row was not found")
+        print("One historical issue report and its audit row verified. Bulk import remains disabled.")
         return 0
 
-    url = f"{PROJECT_URL}/rest/v1/cockpit_issue_reports?on_conflict=source_system,source_id"
-    request_json(url, key, method="POST", body=expected)
-    written = remote_row(key, expected["source_id"])
-    if not written:
-        raise RuntimeError("Single-row write was not visible on read-back")
-    verify_row(expected, written)
-    audit_query = urllib.parse.urlencode({
-        "entity_type": "eq.cockpit_issue_reports",
-        "entity_id": f"eq.{written['id']}",
-        "action": "eq.INSERT",
-        "select": "id",
-        "limit": 1,
-    })
-    audit = request_json(f"{PROJECT_URL}/rest/v1/cockpit_audit_log?{audit_query}", key)
-    if not audit:
-        raise RuntimeError("Single-row write succeeded but its audit row was not found")
-    print("One historical issue report and its audit row verified. Bulk import remains disabled.")
+    print("All historical reports already exist and match; no write performed.")
     return 0
 
 

@@ -104,6 +104,40 @@ class BackfillIssueReportsTest(unittest.TestCase):
             self.assertEqual(calls[1][2], expected)
             self.assertIn("audit row verified", output.getvalue())
 
+    def test_apply_one_skips_verified_existing_row_then_inserts_next(self):
+        with tempfile.TemporaryDirectory() as directory:
+            second = {**self.document, "_id": "second-id", "at": self.document["at"] + 1000}
+            source = Path(directory) / "feedback.jsonl"
+            source.write_text(
+                json.dumps(self.document) + "\n" + json.dumps(second) + "\n",
+                encoding="utf-8",
+            )
+            env = Path(directory) / ".env.local"
+            env.write_text(
+                f"SUPABASE_URL={backfill.PROJECT_URL}\nSUPABASE_SERVICE_ROLE_KEY=test-only\n",
+                encoding="utf-8",
+            )
+            first_row = backfill.build_row(self.document)
+            second_row = backfill.build_row(second)
+            calls = []
+
+            def fake_request(url, key, *, method="GET", body=None):
+                calls.append((url, method, body))
+                return [
+                    [{**first_row, "id": 7}],
+                    [],
+                    [{**second_row, "id": 8}],
+                    [{**second_row, "id": 8}],
+                    [{"id": "audit-id"}],
+                ][len(calls) - 1]
+
+            with patch.object(sys, "argv", [str(SCRIPT), "--source", str(source), "--apply-one", "--env-path", str(env)]), \
+                 patch.object(backfill, "request_json", side_effect=fake_request), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(backfill.main(), 0)
+            posts = [body for _, method, body in calls if method == "POST"]
+            self.assertEqual(posts, [second_row])
+
 
 if __name__ == "__main__":
     unittest.main()

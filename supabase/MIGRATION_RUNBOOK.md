@@ -80,11 +80,20 @@ python scripts/backfill-cockpit-issue-reports.py --source D:\secure\snapshot.zip
 The first command is the default `DRY_RUN = True`: it reports source counts,
 the skipped non-media-buyer rows, and the first legacy ID without network
 access or writes. `--apply-one` checks Creative Triage and inserts at most one
-missing historical row. It reads the row and audit entry back. Existing rows
-are compared rather than overwritten. Historical rows carry their old delivery
+missing historical row per run. Run it again to verify existing rows and
+advance to the next missing row. It reads each new row and audit entry back;
+existing rows are compared rather than overwritten. Historical rows carry their
+old delivery
 and reply fields as metadata and are marked `historical`; the tool never
 triggers a new Slack/ClickUp delivery. Bulk import is intentionally disabled
-until a production snapshot and one-row result are reviewed.
+until the next domain has its own reviewed mapping and canary.
+
+On 23 September 2026, production snapshot `1790160145656784473` from
+`adorable-seahorse-418` contained two media-buyer feedback rows. Both were
+inserted separately and read back against the snapshot; each insert had an
+audit row. SHA-256 of the downloaded ZIP:
+`937EF5C1FC6FBC36AFB81480276D8C03608A62F101B64DAC8C934F05CC6FBB37`.
+The live Convex-to-Supabase shadow writer is still not deployed.
 
 After that: implement and run a guarded full backfill; reconcile source IDs,
 row counts, newest timestamps, and exceptions; then switch this read path only
