@@ -23,6 +23,7 @@ import {
   money,
   NA,
   pct,
+  seconds,
   shortDate,
 } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
@@ -197,6 +198,7 @@ function stages(p: WebinarPayload, r: WebinarRound): StageDef[] {
     lead: statusOf(p, "Days between"),
     remind: statusOf(p, "Reminders"),
     cal: statusOf(p, "Calendar-add"),
+    join: statusOf(p, "Join-link"),
     attend: statusOf(p, "Attendees, show rate"),
     tied: statusOf(p, "tied to a registrant"),
     zoom: statusOf(p, "Watch time"),
@@ -212,6 +214,10 @@ function stages(p: WebinarPayload, r: WebinarRound): StageDef[] {
   const att = r.showUp.attendanceRecorded;
   const q = r.qualification;
   const room = r.room;
+  const pg = r.page;
+  const rm = r.reminders;
+  const ob = r.objections;
+  const share = (a: number, b: number) => (b > 0 ? a / b : null);
   const pitch = (n: 1 | 2) => room?.pitches.find(x => x.n === n) ?? null;
   const p1 = pitch(1);
   const p2 = pitch(2);
@@ -261,9 +267,43 @@ function stages(p: WebinarPayload, r: WebinarRound): StageDef[] {
         },
         {
           label: "Landing page visitors",
-          value: NA,
-          target: `page conversion ${range(t.pageConversion.low, t.pageConversion.high, pctf)}`,
-          source: "Landing page events",
+          value: pg ? count(pg.visitors) : NA,
+          source: pg
+            ? `${count(pg.sessions)} sessions; ${pct(share(pg.mobile, pg.visitors))} on phones; ${count(pg.withAd)} from an ad`
+            : "The page's own events",
+          status: s.page,
+        },
+        {
+          label: "Page conversion",
+          value: pg ? pct(share(reg, pg.visitors)) : NA,
+          target: `${range(t.pageConversion.low, t.pageConversion.high, pctf)}; under ${pct(t.pageConversion.floor)} the page is the problem`,
+          source: "HighLevel registrations over page visitors",
+          status: s.page,
+        },
+        {
+          label: "Form seen, started, sent",
+          value: pg
+            ? `${count(pg.formView)} / ${count(pg.formStart)} / ${count(pg.formSubmit)}`
+            : NA,
+          source: pg
+            ? `${pct(share(pg.formStart, pg.visitors))} of visitors started it; ${count(pg.ctaClick)} pressed a register button`
+            : "Visitors who saw the form, clicked into it, sent it",
+          status: s.page,
+        },
+        {
+          label: "Registered on the page",
+          value: pg ? count(pg.thankYou) : NA,
+          source: pg
+            ? `Thank-you page views, the page's own count; HighLevel counts ${count(reg)}`
+            : "Thank-you page views",
+          status: s.page,
+        },
+        {
+          label: "Read to the end",
+          value: pg ? pct(share(pg.scroll100, pg.visitors)) : NA,
+          source: pg
+            ? `Half the page: ${pct(share(pg.scroll50, pg.visitors))}; median time on it ${seconds(pg.secondsMedian)}; ${count(pg.videoPlays)} played a testimonial`
+            : "Scroll depth and time on the page",
           status: s.page,
         },
         {
@@ -329,16 +369,51 @@ function stages(p: WebinarPayload, r: WebinarRound): StageDef[] {
       people: att ? r.showUp.attended : null,
       rows: [
         {
-          label: "Reminders sent, opened, clicked",
-          value: NA,
-          source: "HighLevel and Kit stats",
+          label: "WhatsApp reminders",
+          value: rm
+            ? `${count(rm.whatsapp.sent)} / ${count(rm.whatsapp.delivered)} / ${count(rm.whatsapp.read)}`
+            : NA,
+          source: rm
+            ? `Sent, delivered, read; ${count(rm.whatsapp.failed)} failed; ${count(rm.readAny)} of ${count(reg)} registrants read one`
+            : "HighLevel: sent, delivered, read",
+          status: s.remind,
+        },
+        {
+          label: "SMS and email",
+          value: rm ? `${count(rm.sms.sent)} and ${count(rm.email.sent)}` : NA,
+          source: rm
+            ? `SMS delivered ${count(rm.sms.delivered)}; email opens and clicks are in Kit`
+            : "HighLevel; email opens and clicks are in Kit",
           status: s.remind,
         },
         {
           label: "Calendar-add clicks",
-          value: NA,
-          source: "Thank-you page event",
+          value: pg ? `${count(pg.calendarAdd)} of ${count(pg.thankYou)}` : NA,
+          source: "People on the thank-you page who pressed Add to calendar",
           status: s.cal,
+        },
+        {
+          label: "WhatsApp group button",
+          value: pg ? count(pg.whatsapp) : NA,
+          source: pg?.whatsappPlaceholder
+            ? "The button still has no link on the thank-you page"
+            : "Pressed on the thank-you page",
+          status: s.cal,
+        },
+        {
+          label: "Welcome video",
+          value: pg
+            ? `${count(pg.thankYouVideoWatched)} of ${count(pg.thankYouVideo)}`
+            : NA,
+          source: "Watched three quarters of it, of those it played for",
+          status: s.cal,
+        },
+        {
+          label: "Join-link clicks",
+          value: pg ? `${count(pg.joinBefore)} and ${count(pg.joinAfter)}` : NA,
+          source:
+            "Before and after the start: webinar.maharamedia.com/live, the reminders' link",
+          status: s.join,
         },
         {
           label: "Attended",
@@ -385,6 +460,7 @@ function stages(p: WebinarPayload, r: WebinarRound): StageDef[] {
           status: perPerson ? s.attend : s.tied,
         },
       ] as Row[],
+      extra: rm?.steps.length ? <ReminderSteps steps={rm.steps} /> : null,
     },
     {
       title: "In the room",
@@ -488,6 +564,14 @@ function stages(p: WebinarPayload, r: WebinarRound): StageDef[] {
           status: s.booked,
         },
         {
+          label: "Survey on the thank-you page",
+          value: pg
+            ? `${count(pg.surveyStart)} started, ${count(pg.surveySubmit)} sent`
+            : NA,
+          source: "The gift survey's embed, the page's own count",
+          status: s.survey,
+        },
+        {
           label: "Survey completions",
           value: count(r.conversion.surveys),
           source:
@@ -537,11 +621,14 @@ function stages(p: WebinarPayload, r: WebinarRound): StageDef[] {
         },
         {
           label: "Objection categories",
-          value: NA,
-          source: "Fathom transcripts",
+          value: ob ? (ob.categories[0]?.label ?? "None raised") : NA,
+          source: ob
+            ? `${count(ob.calls)} sales calls tagged; ${count(ob.none)} raised none`
+            : "Fathom transcripts, tagged by deepseek-flash",
           status: s.objection,
         },
       ] as Row[],
+      extra: ob?.categories.length ? <Objections ob={ob} /> : null,
     },
   ];
 }
@@ -812,14 +899,18 @@ function Ads({
       {() =>
         ads.length ? (
           <div className="ceo-scroll-x overflow-x-auto">
-            <table className="w-full min-w-[720px] text-sm">
+            <table className="w-full min-w-[860px] text-sm">
               <thead>
                 <tr className="border-b text-left text-xs text-muted-foreground">
                   <th className="py-2 pr-3 font-normal">Ad</th>
                   <th className="py-2 pr-3 text-right font-normal">Spend</th>
                   <th className="py-2 pr-3 text-right font-normal">CTR</th>
+                  <th className="py-2 pr-3 text-right font-normal">Visitors</th>
                   <th className="py-2 pr-3 text-right font-normal">
                     Registered
+                  </th>
+                  <th className="py-2 pr-3 text-right font-normal">
+                    Page conv.
                   </th>
                   <th className="py-2 pr-3 text-right font-normal">Per reg.</th>
                   <th className="py-2 pr-3 text-right font-normal">Came</th>
@@ -844,7 +935,13 @@ function Ads({
                       {pct(a.ctr)}
                     </td>
                     <td className="py-2 pr-3 text-right tabular-nums">
+                      {count(a.visitors)}
+                    </td>
+                    <td className="py-2 pr-3 text-right tabular-nums">
                       {count(a.registrations)}
+                    </td>
+                    <td className="py-2 pr-3 text-right tabular-nums">
+                      {pct(a.pageConversion)}
                     </td>
                     <td className="py-2 pr-3 text-right tabular-nums">
                       {money(a.costPerRegistration)}
@@ -962,8 +1059,10 @@ function Collector({ p }: { p: WebinarPayload }) {
         : `${name}: read ${run.lastOkAt ? dateTime(run.lastOkAt) : "never"}${run.via ? ` through ${doors(run.via)}` : ""}`;
   return (
     <p className="text-xs text-muted-foreground">
-      {line("Zoom", p.collector.zoom)}. {line("Survey", p.collector.typeform)}.
-      The worker reads both every hour.
+      {line("Zoom", p.collector.zoom)}. {line("Survey", p.collector.typeform)}.{" "}
+      {line("HighLevel messages", p.collector.reminders)}.{" "}
+      {line("Fathom calls", p.collector.objections)}. Zoom, the survey and
+      Fathom are read every hour, HighLevel's messages every six hours.
     </p>
   );
 }
@@ -1250,5 +1349,67 @@ function PitchTimes({ room }: { room: Room }) {
         </p>
       ) : null}
     </form>
+  );
+}
+
+/** Each WEBBY reminder that went out: sent, delivered, read, failed. */
+function ReminderSteps({
+  steps,
+}: {
+  steps: NonNullable<WebinarRound["reminders"]>["steps"];
+}) {
+  return (
+    <div className="ceo-scroll-x overflow-x-auto">
+      <table className="w-full min-w-[480px] text-sm">
+        <thead>
+          <tr className="border-b text-left text-xs text-muted-foreground">
+            <th className="py-2 pr-3 font-normal">Reminder</th>
+            <th className="py-2 pr-3 text-right font-normal">Sent</th>
+            <th className="py-2 pr-3 text-right font-normal">Delivered</th>
+            <th className="py-2 pr-3 text-right font-normal">Read</th>
+            <th className="py-2 text-right font-normal">Failed</th>
+          </tr>
+        </thead>
+        <tbody>
+          {steps.map(x => (
+            <tr key={x.key} className="border-b last:border-b-0">
+              <td className="py-2 pr-3">{x.label}</td>
+              <td className="py-2 pr-3 text-right tabular-nums">
+                {count(x.sent)}
+              </td>
+              <td className="py-2 pr-3 text-right tabular-nums">
+                {count(x.delivered)}
+              </td>
+              <td className="py-2 pr-3 text-right tabular-nums">
+                {count(x.read)}
+              </td>
+              <td className="py-2 text-right tabular-nums">
+                {count(x.failed)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** Objections by the number of sales calls that raised them. */
+function Objections({ ob }: { ob: NonNullable<WebinarRound["objections"]> }) {
+  return (
+    <div className="grid max-w-xl gap-2">
+      <p className="text-xs text-muted-foreground">
+        Sales calls that raised each objection, of {count(ob.calls)} tagged
+      </p>
+      <BarList
+        ariaLabel="Objections by the number of sales calls that raised them"
+        items={ob.categories.map(c => ({
+          key: c.key,
+          label: c.label,
+          value: c.calls,
+          sub: `answered ${count(c.handled)} of ${count(c.raised)} times`,
+        }))}
+      />
+    </div>
   );
 }

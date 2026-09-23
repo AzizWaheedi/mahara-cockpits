@@ -12,6 +12,8 @@
  */
 
 import type { ContentWindow } from "./content";
+import type { ObjectionStats, ReminderStats } from "./webinarFollowUp";
+import type { PageStats } from "./webinarPage";
 import type { Room } from "./webinarRoom";
 
 export type Note = { level: "info" | "warn"; text: string };
@@ -2035,6 +2037,16 @@ export type WebinarRound = {
   /** Stage 3, Zoom (hermes/webinar-pull). Null until a session of this round was read. */
   room: Room | null;
   /**
+   * Stages 1 and 2, the site's own events (sites/webinar/mm-track.js):
+   * visitors, the form's steps, the thank-you page, join-link clicks. Null
+   * until anybody visits for this round.
+   */
+  page: PageStats | null;
+  /** Stage 2: HighLevel's messages to the round's registrants. Null until any. */
+  reminders: ReminderStats | null;
+  /** Stage 5: objections tagged from the registrants' sales calls. Null until any. */
+  objections: ObjectionStats | null;
+  /**
    * Stage 1, qualification: the gift survey (Typeform, on the thank-you page
    * and after the session) and the booking form's roas tags.
    */
@@ -2101,6 +2113,10 @@ export type WebinarPayload = {
     clicks: number;
     ctr: number | null;
     registrations: number;
+    /** Landing page visitors whose utm_content is this ad; null before the page sent anything. */
+    visitors: number | null;
+    /** Registrations over those visitors. */
+    pageConversion: number | null;
     /** Null when Zoom cannot tie attendees to registrants. */
     attended: number | null;
     booked: number;
@@ -2138,6 +2154,8 @@ export type WebinarPayload = {
   collector: {
     zoom: WebinarCollectorRun | null;
     typeform: WebinarCollectorRun | null;
+    reminders: WebinarCollectorRun | null;
+    objections: WebinarCollectorRun | null;
   };
   /** Rows in the B2B live training tables, which Zoom and the page would fill. */
   lt: {

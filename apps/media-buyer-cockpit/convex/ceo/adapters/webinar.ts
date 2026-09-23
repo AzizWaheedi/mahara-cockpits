@@ -9,6 +9,18 @@ import { B2B, ms, num, type Row, sql, TRIAGE } from "../sb";
 import { kuwaitDay } from "../time";
 import type { Adapter, SourceStamp } from "../types";
 import {
+  type MessageCount,
+  type ObjectionCall,
+  objectionStats,
+  reminderStats,
+} from "../webinarFollowUp";
+import {
+  AD_ID,
+  type JoinClick,
+  type PageVisitor,
+  pageStats,
+} from "../webinarPage";
+import {
   phoneKey,
   QUALIFIED_PROFIT,
   roomOf,
@@ -173,7 +185,48 @@ const COLLECTED_SQL = `select
     select distinct on (p.source) p.source, p.started_at, p.finished_at, p.ok, p.via, p.detail, p.counts,
       (select max(q.finished_at) from public.cockpit_webinar_pulls q
         where q.source = p.source and q.ok) as last_ok
-    from public.cockpit_webinar_pulls p order by p.source, p.started_at desc) x) as pulls`;
+    from public.cockpit_webinar_pulls p order by p.source, p.started_at desc) x) as pulls,
+  (select coalesce(json_agg(x), '[]'::json) from (
+    select e.visitor_id,
+      min(e.at) as first_at,
+      min(e.at) filter (where e.page = 'landing') as first_landing,
+      count(*) filter (where e.page = 'landing' and e.event = 'page_view') as landing_views,
+      count(distinct e.session_id) filter (where e.page = 'landing' and e.event = 'page_view') as landing_sessions,
+      bool_or(e.event = 'form_view') as form_view,
+      bool_or(e.event = 'form_focus') as form_focus,
+      bool_or(e.event = 'form_submit') as form_submit,
+      bool_or(e.event = 'cta_click') as cta,
+      max(e.value) filter (where e.event = 'scroll') as max_scroll,
+      max(e.value) filter (where e.event = 'page_leave' and e.page = 'landing') as landing_seconds,
+      min(e.at) filter (where e.page = 'thank_you' and e.event = 'page_view') as thank_you_at,
+      bool_or(e.event = 'calendar_add') as calendar_add,
+      bool_or(e.event = 'whatsapp_click') as whatsapp,
+      bool_or(e.event = 'whatsapp_click' and e.label = 'placeholder') as whatsapp_placeholder,
+      bool_or(e.event = 'survey_start') as survey_start,
+      bool_or(e.event = 'survey_submit') as survey_submit,
+      bool_or(e.event = 'video_play' and e.page = 'landing') as landing_video,
+      bool_or(e.event = 'video_play' and e.page = 'thank_you') as thank_you_video,
+      bool_or(e.event = 'video_progress' and e.page = 'thank_you' and e.value >= 75) as thank_you_video_75,
+      (array_agg(e.utm_content order by e.at) filter (where e.utm_content is not null))[1] as utm_content,
+      (array_agg(e.utm_source order by e.at) filter (where e.utm_source is not null))[1] as utm_source,
+      bool_or(e.has_fbclid) as fbclid,
+      (array_agg(e.device order by e.at))[1] as device
+    from public.cockpit_webinar_page_events e
+    where e.origin_host = 'webinar.maharamedia.com' and e.page <> 'live'
+      and e.at > now() - interval '180 days'
+    group by e.visitor_id) x) as visitors,
+  (select coalesce(json_agg(x), '[]'::json) from (
+    select e.visitor_id, e.at
+    from public.cockpit_webinar_page_events e
+    where e.origin_host = 'webinar.maharamedia.com' and e.event = 'join_click'
+      and e.at > now() - interval '180 days') x) as joins,
+  (select coalesce(json_agg(x), '[]'::json) from (
+    select m.contact_id, m.channel, m.step, m.status, count(*) as n
+    from public.cockpit_webinar_messages m
+    group by 1, 2, 3, 4) x) as messages,
+  (select coalesce(json_agg(x), '[]'::json) from (
+    select o.call_id, o.contact_id, o.categories, o.objections
+    from public.cockpit_webinar_objections o) x) as objections`;
 
 /** The booking links to share at each pitch; HighLevel keeps utm_content on the contact who books. */
 const PITCH_LINK =
@@ -440,7 +493,67 @@ export const webinar: Adapter = {
     const runs = new Map(
       jsonArray(collected?.pulls).map(r => [String(r.source), runOf(r)]),
     );
+    const flag = (x: unknown) => x === true;
+    const pageVisitors: PageVisitor[] = jsonArray(collected?.visitors)
+      .map(r => ({
+        visitorId: String(r.visitor_id),
+        firstAt: ms(r.first_at) ?? 0,
+        firstLanding: ms(r.first_landing) ?? null,
+        landingViews: num(r.landing_views),
+        landingSessions: num(r.landing_sessions),
+        formView: flag(r.form_view),
+        formFocus: flag(r.form_focus),
+        formSubmit: flag(r.form_submit),
+        cta: flag(r.cta),
+        maxScroll:
+          r.max_scroll === null || r.max_scroll === undefined
+            ? null
+            : num(r.max_scroll),
+        landingSeconds:
+          r.landing_seconds === null || r.landing_seconds === undefined
+            ? null
+            : num(r.landing_seconds),
+        thankYouAt: ms(r.thank_you_at) ?? null,
+        calendarAdd: flag(r.calendar_add),
+        whatsapp: flag(r.whatsapp),
+        whatsappPlaceholder: flag(r.whatsapp_placeholder),
+        surveyStart: flag(r.survey_start),
+        surveySubmit: flag(r.survey_submit),
+        landingVideo: flag(r.landing_video),
+        thankYouVideo: flag(r.thank_you_video),
+        thankYouVideo75: flag(r.thank_you_video_75),
+        utmContent: r.utm_content ? String(r.utm_content) : null,
+        utmSource: r.utm_source ? String(r.utm_source) : null,
+        fbclid: flag(r.fbclid),
+        device: r.device ? String(r.device) : null,
+      }))
+      .filter(v => v.firstAt > 0);
+    const joinClicks: JoinClick[] = jsonArray(collected?.joins)
+      .map(r => ({ visitorId: String(r.visitor_id), at: ms(r.at) ?? 0 }))
+      .filter(j => j.at > 0);
+    const messageCounts: MessageCount[] = jsonArray(collected?.messages).map(
+      r => ({
+        contactId: String(r.contact_id),
+        channel: r.channel,
+        step: r.step ? String(r.step) : null,
+        status: r.status ? String(r.status) : null,
+        n: num(r.n),
+      }),
+    );
+    const objectionCalls: ObjectionCall[] = jsonArray(
+      collected?.objections,
+    ).map(r => ({
+      callId: String(r.call_id),
+      contactId: r.contact_id ? String(r.contact_id) : null,
+      categories: Array.isArray(r.categories) ? r.categories.map(String) : [],
+      objections: jsonArray(r.objections).map(o => ({
+        category: String(o?.category ?? "other"),
+        handled: o?.handled ? String(o.handled) : null,
+      })),
+    }));
     const zoomRun = runs.get("zoom") ?? null;
+    const remindersRun = runs.get("reminders") ?? null;
+    const objectionsRun = runs.get("objections") ?? null;
     const formRun = runs.get("typeform") ?? null;
     const pollsReadable = zoomRun?.pollsReadable === true;
 
@@ -497,7 +610,20 @@ export const webinar: Adapter = {
         (dated.length ? NEXT : (rounds[0]?.key ?? NEXT));
       spendByRound.set(target, [...(spendByRound.get(target) ?? []), s]);
     }
-    if (spendByRound.has(NEXT) && !byRound.has(NEXT))
+    // Page visitors belong to the next session on or after their first
+    // visit, like spend.
+    const visitorsByRound = new Map<string, PageVisitor[]>();
+    for (const v of pageVisitors) {
+      const t = v.firstLanding ?? v.firstAt;
+      const target =
+        dated.find(r => (r.sessionAt ?? 0) >= t)?.key ??
+        (dated.length ? NEXT : (rounds[0]?.key ?? NEXT));
+      visitorsByRound.set(target, [...(visitorsByRound.get(target) ?? []), v]);
+    }
+    if (
+      (spendByRound.has(NEXT) || visitorsByRound.has(NEXT)) &&
+      !byRound.has(NEXT)
+    )
       rounds.push({
         key: NEXT,
         label: "Next session",
@@ -779,6 +905,24 @@ export const webinar: Adapter = {
               : null,
         },
         room,
+        reminders: reminderStats(
+          messageCounts,
+          new Set(list.map(j => j.contactId)),
+        ),
+        objections: objectionStats(
+          objectionCalls,
+          new Set(list.map(j => j.contactId)),
+        ),
+        page:
+          (visitorsByRound.get(r.key) ?? []).length ||
+          (session !== null &&
+            joinClicks.some(
+              j =>
+                j.at >= session - 24 * 3_600_000 &&
+                j.at <= session + 3 * 3_600_000,
+            ))
+            ? pageStats(visitorsByRound.get(r.key) ?? [], joinClicks, session)
+            : null,
         qualification: {
           surveyAnswered: answered.length,
           surveyQualified: answered.filter(
@@ -855,9 +999,14 @@ export const webinar: Adapter = {
     for (const r of rounds) {
       const sp = spendByRound.get(r.key) ?? [];
       const who = cameBy.get(r.key);
+      const pageByAd = new Map<string, number>();
+      for (const v of visitorsByRound.get(r.key) ?? [])
+        if (v.firstLanding !== null && v.utmContent && AD_ID.test(v.utmContent))
+          pageByAd.set(v.utmContent, (pageByAd.get(v.utmContent) ?? 0) + 1);
       const ids = new Set([
         ...sp.map(s => s.adId),
         ...r.list.map(j => j.adId).filter((x): x is string => Boolean(x)),
+        ...pageByAd.keys(),
       ]);
       for (const adId of ids) {
         const rows = sp.filter(s => s.adId === adId);
@@ -875,6 +1024,10 @@ export const webinar: Adapter = {
           clicks,
           ctr: ratio(clicks, impressions),
           registrations: regs.length,
+          visitors: pageVisitors.length ? (pageByAd.get(adId) ?? 0) : null,
+          pageConversion: pageByAd.get(adId)
+            ? ratio(regs.length, pageByAd.get(adId))
+            : null,
           attended: who?.personLevel ? regs.filter(who.came).length : null,
           booked: regs.filter(j => j.calls.length > 0).length,
           closes: regs.filter(j => j.deals.length > 0).length,
@@ -894,8 +1047,10 @@ export const webinar: Adapter = {
     const surveyResponses = collected ? surveyRows.length : null;
     const zoomReads = zoomRun?.lastOkAt != null;
     const formReads = formRun?.lastOkAt != null;
-    const stale = (run: WebinarCollectorRun | null) =>
-      run?.lastOkAt != null && now - run.lastOkAt > 3 * HOUR;
+    // Zoom, the survey and Fathom are read hourly, HighLevel's messages every
+    // six hours: late is three missed runs of the source's own rhythm.
+    const stale = (run: WebinarCollectorRun | null, every = 1) =>
+      run?.lastOkAt != null && now - run.lastOkAt > 3 * every * HOUR;
     sources.push({
       name: "Zoom and the gift survey (hermes/webinar-pull)",
       ok:
@@ -915,16 +1070,18 @@ export const webinar: Adapter = {
             ? `Survey: ${formRun.detail ?? "the last read failed"}`
             : undefined,
     });
-    for (const [name, run] of [
-      ["Zoom", zoomRun],
-      ["The survey", formRun],
+    for (const [name, run, every] of [
+      ["Zoom", zoomRun, 1],
+      ["The survey", formRun, 1],
+      ["HighLevel's messages", remindersRun, 6],
+      ["Fathom's calls", objectionsRun, 1],
     ] as const) {
       if (run?.ok === false)
         notes.push({
           level: "warn",
           text: `${name} could not be read on the last run: ${String(run.detail ?? "no reason given").slice(0, 160)}. The worker tries again within the hour.`,
         });
-      else if (stale(run))
+      else if (stale(run, every))
         notes.push({
           level: "warn",
           text: `${name} was last read ${Math.round((now - (run?.lastOkAt ?? now)) / HOUR)} hours ago: the webinar-pull cron on the VPS has stopped (RUNBOOK.md, "Webinar pull").`,
@@ -952,7 +1109,19 @@ export const webinar: Adapter = {
     );
     const anyPitch = journeys.some(j => j.pitchUtm !== null);
     const anySession = journeys.some(j => j.sessionAt !== null);
-    const ltPage = num(lt.page_events) > 0;
+    const anyReminder = built.some(r => r.reminders !== null);
+    const anyObjection = built.some(r => r.objections !== null);
+    const anyPage = pageVisitors.length > 0;
+    const anyThankYou = pageVisitors.some(v => v.thankYouAt !== null);
+    const anyJoin = joinClicks.length > 0;
+    const placeholderClicks = pageVisitors.filter(
+      v => v.whatsappPlaceholder,
+    ).length;
+    if (placeholderClicks)
+      notes.push({
+        level: "warn",
+        text: `${placeholderClicks} people pressed the WhatsApp group button on the thank-you page, which still has no link ([WHATSAPP_LINK] in sites/webinar/thank-you.html).`,
+      });
     const matchedAll = built.reduce((t, r) => t + r.showUp.matched, 0);
     const waitRegistrants =
       "Waiting for the first registrant: the Webinar Opt In form creates the contact and the WEBBY workflow tags it webby-registered.";
@@ -978,12 +1147,12 @@ export const webinar: Adapter = {
       },
       {
         stage: 1,
-        metric: "Landing page sessions, visitors, form starts",
-        source: "Landing page events (B2B lt_page_events)",
-        status: ltPage ? "live" : "missing",
-        note: ltPage
-          ? "From the page's own events."
-          : "Not connected: webinar.maharamedia.com sends no events, and the B2B lt-events-ingest function only accepts training.maharamedia.com. Registration rate and page conversion stay empty until both are fixed.",
+        metric: "Landing page visitors, page conversion, form started and sent",
+        source: "webinar.maharamedia.com page events (mm-track.js)",
+        status: anyPage ? "live" : "waiting",
+        note: anyPage
+          ? "The page's own events: visitors, time on page, scroll, the register buttons, the form seen, started and sent. Page conversion is HighLevel's registrations over the page's visitors."
+          : "Connected on 2026-09-23. Waiting for the first visit to webinar.maharamedia.com.",
       },
       {
         stage: 1,
@@ -1026,16 +1195,37 @@ export const webinar: Adapter = {
       {
         stage: 2,
         metric: "Reminders sent, delivered, opened, clicked",
-        source: "HighLevel workflow stats, Kit email stats",
-        status: "missing",
-        note: "HighLevel's API does not give workflow message stats, and the Kit API key in HighLevel is still a placeholder.",
+        source:
+          "HighLevel conversations (hermes/webinar-pull); clicks from the /live join link",
+        status: anyReminder
+          ? "live"
+          : remindersRun?.lastOkAt != null
+            ? "waiting"
+            : "missing",
+        note: anyReminder
+          ? "Every WhatsApp, SMS and email HighLevel sent a registrant after they registered, with its status; WhatsApp's read receipt is the open. Clicks are the join-link clicks. Email opens and clicks sit in Kit, whose API key in HighLevel is still a placeholder."
+          : remindersRun?.lastOkAt != null
+            ? "Connected. Waiting for the first registrant's messages."
+            : "Not connected yet: hermes/webinar-pull has not read HighLevel's messages.",
       },
       {
         stage: 2,
         metric: "Calendar-add clicks",
-        source: "Thank-you page event",
-        status: "missing",
-        note: "The thank-you page sends no events.",
+        source: "Thank-you page events (mm-track.js)",
+        status: anyThankYou ? "live" : "waiting",
+        note: anyThankYou
+          ? "People who pressed Add to calendar, over the people who reached the thank-you page."
+          : "Connected on 2026-09-23. Waiting for the first registrant to reach the thank-you page.",
+      },
+      {
+        stage: 2,
+        metric: "Join-link clicks from the reminders",
+        source:
+          "webinar.maharamedia.com/live, the link in the WhatsApp reminders",
+        status: anyJoin ? "live" : "waiting",
+        note: anyJoin
+          ? "People who opened the join link, from a day before the session to three hours after its start, split at the start."
+          : "Connected on 2026-09-23: /live records the click and opens Zoom. Waiting for the first reminder.",
       },
       {
         stage: 2,
@@ -1129,9 +1319,18 @@ export const webinar: Adapter = {
       {
         stage: 5,
         metric: "Objection category",
-        source: "Fathom transcripts",
-        status: "missing",
-        note: "Nothing tags objections from the transcripts yet.",
+        source:
+          "Fathom transcripts, tagged by deepseek-flash (hermes/webinar-pull)",
+        status: anyObjection
+          ? "live"
+          : objectionsRun?.lastOkAt != null
+            ? "waiting"
+            : "missing",
+        note: anyObjection
+          ? "Each registrant's sales calls, tagged once from the transcript into fixed categories with the prospect's own words, never from the closer's notes. Client-service calls (launch, check-in, onboarding) are left out."
+          : objectionsRun?.lastOkAt != null
+            ? "Connected. Waiting for the first sales call with a registrant."
+            : "Not connected yet: hermes/webinar-pull has not read Fathom.",
       },
     ];
 
@@ -1149,7 +1348,12 @@ export const webinar: Adapter = {
       targets: WEBINAR_TARGETS,
       surveyResponses,
       survey: { matched: surveyOf.size, unmatched: surveyUnmatched },
-      collector: { zoom: zoomRun, typeform: formRun },
+      collector: {
+        zoom: zoomRun,
+        typeform: formRun,
+        reminders: remindersRun,
+        objections: objectionsRun,
+      },
       lt: {
         events: num(lt.events),
         pageEvents: num(lt.page_events),

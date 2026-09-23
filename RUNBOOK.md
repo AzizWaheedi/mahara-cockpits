@@ -169,6 +169,11 @@ names what is wrong.
 | Attendees are counted but not tied to registrants | Zoom registration is off, so guests join with a name only. Turn registration on and send each registrant their own join link | Aziz |
 | The note says `webinar.maharamedia.com/live` does not lead to Zoom | The reminders' join link is broken. Point `/live` at the meeting's join link in the webinar site (Vercel project `mahara-webinar`) | Aziz |
 | A survey response "matches no registrant" | The person typed a different email and phone than they registered with. Nothing to fix per response | nobody |
+| "HighLevel's messages could not be read": `HighLevel 401` | The webinar sub-account's key changed. Set `GHL_B2B_API_KEY` in `/opt/data/bibi/api-keys.env` | Aziz |
+| "HighLevel's messages could not be read": `HighLevel 403` with "1010" | Cloudflare refused the caller; the worker must send a browser user agent (`BROWSER_UA` in pull.py) | Hermes or Aziz |
+| "Fathom's calls could not be read": `Fathom 401` or `DeepSeek 402` | New `FATHOM_API_KEY`, or top up the DeepSeek balance (`GET https://api.deepseek.com/user/balance`) | Aziz |
+| No objection categories though registrants had sales calls | The call's invitee email is not the registrant's, or the title reads like a client call (launch, check-in, onboarding). `python3 pull.py objections` prints what it matched | Aziz |
+| Landing page numbers stop moving | `webinar.maharamedia.com` must still load `/mm-track.js` (sites/webinar); the Edge Function `webinar-events` must be ACTIVE in Creative Triage | Aziz |
 
 ## What never needs a person
 

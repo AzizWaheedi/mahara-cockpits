@@ -28,10 +28,24 @@ attendance can be counted and the retention curve drawn, but a guest cannot
 be tied to a HighLevel contact. Only a registrant id or an email ever joins a
 row to a person; a name never does (the brief's rule).
 
-    python3 pull.py doctor     every key by name, each door, the join link
-    python3 pull.py            Zoom and the survey (what cron runs)
-    python3 pull.py zoom       Zoom only; --again reads finished sessions again
-    python3 pull.py survey     the survey only
+Since the same day ("the scripts that you can do now, do it"), two more:
+
+* Reminders: every message HighLevel sent a registrant after they
+  registered (WhatsApp, SMS, email) with its status, matched to the WEBBY
+  template it came from, through HighLevel's conversations API with the
+  webinar sub-account's key (GHL_B2B_API_KEY). Every six hours, hourly
+  from a day and a half before a session. No message text is stored.
+* Objections: a registrant's sales calls in Fathom (FATHOM_API_KEY), each
+  tagged once by deepseek-flash into a fixed set of categories with the
+  prospect's own words, as the brief asks ("tagged from the Fathom
+  transcript, not from the closer's notes"). At most 8 new calls a run.
+
+    python3 pull.py doctor      every key by name, each door, the join link
+    python3 pull.py             everything (what cron runs)
+    python3 pull.py zoom        Zoom only; --again reads finished sessions again
+    python3 pull.py survey      the survey only
+    python3 pull.py reminders   the reminder messages, due or not
+    python3 pull.py objections  tag the registrants' new sales calls
 """
 
 from __future__ import annotations
@@ -83,6 +97,74 @@ REFS = {
     "phone": "288d7a23-720d-4444-bfc4-cb69d0829ed8",
     "email": "7f0722a2-f1e8-42c9-9546-dfedf0e50b55",
 }
+
+# HighLevel, the webinar's sub-account. It sits behind Cloudflare, which
+# refuses Python's default user agent (error 1010), so every call sends a
+# browser's.
+GHL_API = "https://services.leadconnectorhq.com"
+GHL_LOCATION = os.environ.get("GHL_B2B_SUB_ACCOUNT_ID", "7NI8yyJtwsh2OOWA5Icr")
+BROWSER_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
+REGISTERED_TAG = "webby-registered"
+# The contact field "Webinar Datetime" (webinarSql.ts SESSION_FIELD).
+SESSION_FIELD = "x7aG8iLqmTzQEr6SGCaH"
+CHANNEL = {"TYPE_WHATSAPP": "whatsapp", "TYPE_SMS": "sms", "TYPE_EMAIL": "email"}
+# The WEBBY WhatsApp templates (ghl-workflow-builder phase E), each known by
+# words that follow the greeting. SMS fallbacks carry the same text.
+STEPS = (
+    ("webby_01_registered_question", "وصلني تسجيلك بالتدريب"),
+    ("webby_02_survey_gift", "طلعت لك صفحة فيها كم سؤال"),
+    ("webby_03_calendar_nudge", "حط التدريب بتقويم"),
+    ("webby_04_tomorrow", "باجر موعدنا"),
+    ("webby_05_one_hour", "بعد ساعة نبدأ"),
+    ("webby_06_fifteen_min", "أنا داش القاعة"),
+    ("webby_07_five_min", "بنبدي بعد ٥ دقايق"),
+    ("webby_08_started", "بدينا قبل شوي"),
+    ("webby_09_last_call", "توني بديت بالخطوة الأولى"),
+    ("webby_10_attended_book", "توني خلصت وقاعد أرسل للي حضروا"),
+    ("webby_11_attended_question", "عقب تدريب أمس"),
+    ("webby_12_noshow_vsl", "ما شفتك اليوم بالتدريب"),
+    ("webby_13_noshow_last", "آخر رسالة مني عن هالموضوع"),
+    ("webby_14_gift_delivery", "وصلتني إجاباتك"),
+)
+REMINDER_HOURS = 6
+
+FATHOM_API = "https://api.fathom.ai/external/v1"
+DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
+OBJECTIONS_MODEL = os.environ.get("WEBINAR_OBJECTIONS_MODEL", "deepseek-flash")
+OBJECTIONS_PER_RUN = int(os.environ.get("WEBINAR_OBJECTIONS_PER_RUN", "8"))
+# The categories, fixed so rounds can be compared. The cockpit shows the
+# same words (convex/ceo/adapters/webinar.ts OBJECTION_NAMES).
+CATEGORIES = {
+    "price": "the fee or their budget",
+    "timing": "not now: busy, after a season, later",
+    "proof": "doubts it works for them; wants results, guarantees or examples",
+    "capacity": "cannot take more projects, or lacks the team",
+    "decision_maker": "a partner, owner or family member has to decide",
+    "past_agency": "burned by an agency or by marketing before",
+    "has_leads": "enough work already from referrals or their own marketing",
+    "market": "the market or the economy is slow",
+    "terms": "contract length, commitment or payment terms",
+    "fit": "the offer does not fit their kind or size of work",
+    "other": "anything else",
+}
+HANDLED = {"handled", "partly", "not"}
+OBJECTION_PROMPT = (
+    "You read the transcript of a sales call between Mahara Media, a marketing "
+    "agency that brings construction, interior design and contracting firms in "
+    "the Gulf booked calls with project owners, and a prospect who owns or runs "
+    "such a firm. The transcript is mostly Gulf Arabic, with some English.\n\n"
+    "List every objection the PROSPECT raised (not the Mahara rep). Put each "
+    "in exactly one of these categories:\n"
+    + "\n".join(f"- {k}: {v}" for k, v in CATEGORIES.items())
+    + "\n\nFor each objection give the prospect's own words, at most 20 words, "
+    "copied from the transcript in its language; and whether the rep answered "
+    "it: handled (the prospect accepted the answer), partly, or not.\n\n"
+    'Answer with one JSON object: {"objections": [{"category": "...", "quote": '
+    '"...", "handled": "handled|partly|not"}], "summary": "one plain English '
+    'sentence on where the call ended"}. If the prospect raised no objection, '
+    "objections is an empty list. Do not invent objections."
+)
 
 QUIET = False
 
@@ -670,6 +752,283 @@ def survey_row(item: dict, pulled: str) -> Optional[dict]:
     }
 
 
+# --- HighLevel, Fathom, DeepSeek -----------------------------------------------
+
+class GHL:
+    """HighLevel's API for the webinar's sub-account."""
+
+    def __init__(self, key: str, location: str = GHL_LOCATION):
+        self.key, self.location = key, location
+        self.calls = 0
+
+    @classmethod
+    def from_env(cls) -> Optional["GHL"]:
+        key = os.environ.get("GHL_B2B_API_KEY", "").strip()
+        return cls(key) if key else None
+
+    def req(self, method: str, path: str, body: Any = None, version: str = "2021-07-28",
+            params: Optional[dict] = None) -> dict:
+        q = urllib.parse.urlencode({k: v for k, v in (params or {}).items() if v not in (None, "")})
+        url = f"{GHL_API}{path}{'?' + q if q else ''}"
+        headers = {"Authorization": f"Bearer {self.key}", "Version": version,
+                   "Accept": "application/json", "User-Agent": BROWSER_UA}
+        if body is not None:
+            headers["Content-Type"] = "application/json"
+        for attempt in range(3):
+            # HighLevel allows 100 calls in 10 seconds per sub-account.
+            time.sleep(0.15)
+            self.calls += 1
+            status, _h, content = call(method, url, headers, body, timeout=60)
+            if status == 429 and attempt < 2:
+                time.sleep(10)
+                continue
+            if status >= 300:
+                raise Failure(f"HighLevel {status} on {path}: {content[:160].decode('utf-8', 'replace')}")
+            return json.loads(content) if content.strip() else {}
+        raise Failure(f"HighLevel kept answering 429 on {path}")
+
+    def registrants(self) -> list[dict]:
+        """Every contact the WEBBY W1 workflow tagged as registered."""
+        out: list[dict] = []
+        for page in range(1, 101):
+            d = self.req("POST", "/contacts/search", {
+                "locationId": self.location, "page": page, "pageLimit": 100,
+                "filters": [{"field": "tags", "operator": "contains", "value": REGISTERED_TAG}],
+            })
+            batch = [c for c in d.get("contacts") or [] if isinstance(c, dict)]
+            out.extend(batch)
+            if len(batch) < 100:
+                break
+        return out
+
+    def messages(self, contact_id: str) -> list[dict]:
+        """Every message in a contact's conversations, newest first."""
+        convs = self.req("GET", "/conversations/search", version="2021-04-15",
+                         params={"locationId": self.location, "contactId": contact_id, "limit": 20})
+        out: list[dict] = []
+        for c in convs.get("conversations") or []:
+            last = ""
+            for _ in range(20):
+                d = self.req("GET", f"/conversations/{c['id']}/messages", version="2021-04-15",
+                             params={"limit": 100, "lastMessageId": last})
+                box = d.get("messages") or {}
+                page = [m for m in box.get("messages") or [] if isinstance(m, dict)]
+                out.extend(page)
+                last = str(box.get("lastMessageId") or (page[-1].get("id") if page else ""))
+                if not box.get("nextPage") or not page or not last:
+                    break
+        return out
+
+
+class Fathom:
+    def __init__(self, key: str):
+        self.key = key
+
+    @classmethod
+    def from_env(cls) -> Optional["Fathom"]:
+        key = os.environ.get("FATHOM_API_KEY", "").strip()
+        return cls(key) if key else None
+
+    def get(self, path: str, **params: Any) -> dict:
+        q = urllib.parse.urlencode({k: v for k, v in params.items() if v not in (None, "")})
+        status, _h, content = call("GET", f"{FATHOM_API}{path}{'?' + q if q else ''}",
+                                   {"X-Api-Key": self.key, "Accept": "application/json",
+                                    "User-Agent": BROWSER_UA}, timeout=90)
+        if status >= 300:
+            raise Failure(f"Fathom {status} on {path}: {content[:160].decode('utf-8', 'replace')}")
+        return json.loads(content)
+
+    def meetings(self, since: dt.datetime) -> list[dict]:
+        """Recorded calls created since a time, without transcripts (light)."""
+        out: list[dict] = []
+        cursor = ""
+        for _ in range(60):
+            d = self.get("/meetings", created_after=iso(since).replace("+00:00", "Z"), cursor=cursor)
+            out.extend(m for m in d.get("items") or [] if isinstance(m, dict))
+            cursor = str(d.get("next_cursor") or "")
+            if not cursor:
+                break
+        return out
+
+    def transcript(self, recording_id: Any) -> list[dict]:
+        return [t for t in self.get(f"/recordings/{recording_id}/transcript").get("transcript") or []
+                if isinstance(t, dict)]
+
+
+class DeepSeek:
+    def __init__(self, key: str):
+        self.key = key
+
+    @classmethod
+    def from_env(cls) -> Optional["DeepSeek"]:
+        key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+        return cls(key) if key else None
+
+    def json(self, system: str, user: str) -> dict:
+        # deepseek-flash is a reasoning model: reasoning tokens are spent
+        # first and count against max_tokens, and the answer is in content.
+        # A long transcript can use the whole budget thinking, so a run that
+        # ends without an answer goes again once with twice the budget.
+        last = ""
+        for budget in (12000, 24000):
+            status, _h, content = call("POST", DEEPSEEK_URL, {
+                "Authorization": f"Bearer {self.key}", "Content-Type": "application/json"}, {
+                "model": OBJECTIONS_MODEL,
+                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                "response_format": {"type": "json_object"},
+                "max_tokens": budget,
+                "temperature": 0,
+            }, timeout=420)
+            if status >= 300:
+                raise Failure(f"DeepSeek {status}: {content[:160].decode('utf-8', 'replace')}")
+            d = json.loads(content)
+            choice = (d.get("choices") or [{}])[0]
+            msg = choice.get("message") or {}
+            for text in (str(msg.get("content") or ""), str(msg.get("reasoning_content") or "")):
+                found = _last_json(text)
+                if found is not None:
+                    return found
+            last = f"finish_reason {choice.get('finish_reason')}, {len(str(msg.get('content') or ''))} characters"
+        raise Failure(f"DeepSeek gave no JSON ({last})")
+
+
+def _last_json(text: str) -> Optional[dict]:
+    """The JSON object in a model's text: the whole of it, else the last
+    balanced {...} that parses."""
+    text = text.strip()
+    if not text:
+        return None
+    try:
+        out = json.loads(text)
+        return out if isinstance(out, dict) else None
+    except ValueError:
+        pass
+    ends = [i for i, ch in enumerate(text) if ch == "}"]
+    for end in reversed(ends):
+        depth = 0
+        for start in range(end, -1, -1):
+            if text[start] == "}":
+                depth += 1
+            elif text[start] == "{":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        out = json.loads(text[start:end + 1])
+                        if isinstance(out, dict) and "objections" in out:
+                            return out
+                    except ValueError:
+                        pass
+                    break
+    return None
+
+
+# Client-service calls in Fathom (launch, check-in, onboarding, renewals) and
+# team meetings are not sales calls; their "objections" are not the funnel's.
+NOT_SALES = re.compile(r"launch|check.?in|onboarding|kick.?off|renewal|review|wrap|pulse|1:1|"
+                       r"whole team|fulfil|call cent", re.I)
+
+
+def session_of(contact: dict) -> Optional[dt.datetime]:
+    """The contact's Webinar Datetime: epoch ms, epoch s or YYYY-MM-DD."""
+    for cf in contact.get("customFields") or []:
+        if not isinstance(cf, dict) or cf.get("id") != SESSION_FIELD:
+            continue
+        v = str(cf.get("value") if cf.get("value") is not None else cf.get("fieldValue") or "").strip()
+        if re.fullmatch(r"\d{13}", v):
+            return dt.datetime.fromtimestamp(int(v) / 1000, dt.timezone.utc)
+        if re.fullmatch(r"\d{10}", v):
+            return dt.datetime.fromtimestamp(int(v), dt.timezone.utc)
+        if re.match(r"^\d{4}-\d{2}-\d{2}", v):
+            return parse_ts(v if "T" in v else v[:10] + "T00:00:00+00:00")
+    return None
+
+
+def registered_from(contact: dict) -> Optional[dt.datetime]:
+    """When a contact's webinar story starts, as in webinarSql.ts webbyFrom:
+    their creation, or three weeks before their session when older."""
+    added = parse_ts(contact.get("dateAdded"))
+    session = session_of(contact)
+    if added and session:
+        return max(added, session - dt.timedelta(days=21))
+    return added or (session - dt.timedelta(days=21) if session else None)
+
+
+def step_of(body: Any) -> Optional[str]:
+    text = re.sub(r"\s+", " ", str(body or ""))
+    for key, words in STEPS:
+        if words in text:
+            return key
+    return None
+
+
+def message_rows(contact_id: str, msgs: list[dict], since: Optional[dt.datetime],
+                 pulled: str) -> list[dict]:
+    """Outbound messages since registering; calls and notes are not messages."""
+    rows = []
+    for m in msgs:
+        if m.get("direction") != "outbound" or not m.get("id"):
+            continue
+        channel = CHANNEL.get(str(m.get("messageType") or ""))
+        at = parse_ts(m.get("dateAdded"))
+        if not channel or not at or (since and at < since - dt.timedelta(hours=1)):
+            continue
+        rows.append({
+            "message_id": str(m["id"]),
+            "contact_id": contact_id,
+            "channel": channel,
+            "direction": "outbound",
+            "status": str(m["status"]).lower() if m.get("status") not in (None, "") else None,
+            "source": str(m["source"]) if m.get("source") else None,
+            "step": step_of(m.get("body")),
+            "sent_at": iso(at),
+            "updated_at": iso(parse_ts(m.get("dateUpdated"))),
+            "pulled_at": pulled,
+        })
+    return rows
+
+
+def transcript_text(items: list[dict], limit: int = 60000) -> str:
+    lines = []
+    for t in items:
+        who = ((t.get("speaker") or {}).get("display_name") or "Speaker") if isinstance(t.get("speaker"), dict) else "Speaker"
+        text = str(t.get("text") or "").strip()
+        if text:
+            lines.append(f"[{t.get('timestamp') or ''}] {who}: {text}")
+    out = "\n".join(lines)
+    return out[:limit]
+
+
+def objection_row(meeting: dict, contact: dict, email: str, answer: dict, pulled: str) -> dict:
+    """The model's answer, checked: known categories only, short quotes."""
+    found = []
+    for o in answer.get("objections") or []:
+        if not isinstance(o, dict):
+            continue
+        cat = str(o.get("category") or "").strip().lower()
+        cat = cat if cat in CATEGORIES else "other"
+        handled = str(o.get("handled") or "").strip().lower()
+        found.append({
+            "category": cat,
+            "quote": str(o.get("quote") or "").strip()[:240] or None,
+            "handled": handled if handled in HANDLED else None,
+        })
+    start = parse_ts(meeting.get("recording_start_time"))
+    end = parse_ts(meeting.get("recording_end_time"))
+    return {
+        "call_id": str(meeting.get("recording_id")),
+        "contact_id": str(contact.get("id") or "") or None,
+        "email": email,
+        "call_at": iso(start),
+        "title": str(meeting.get("title") or meeting.get("meeting_title") or "")[:200] or None,
+        "duration_s": int((end - start).total_seconds()) if start and end else None,
+        "categories": sorted({o["category"] for o in found}),
+        "objections": found,
+        "summary": str(answer.get("summary") or "").strip()[:400] or None,
+        "model": OBJECTIONS_MODEL,
+        "tagged_at": pulled,
+    }
+
+
 # --- Supabase ------------------------------------------------------------------
 
 class Supabase:
@@ -884,6 +1243,81 @@ def pull_survey(sb: Supabase, composio: Composio) -> dict:
     return {"responses": len(rows), "since": since}
 
 
+def reminders_due(sb: Supabase, registrants: list[dict]) -> bool:
+    """Every six hours; hourly from a day and a half before a session to
+    six hours after it, when the reminders go out."""
+    now = utcnow()
+    for c in registrants:
+        s = session_of(c)
+        if s and s - dt.timedelta(hours=36) <= now <= s + dt.timedelta(hours=6):
+            return True
+    last = sb.req("GET", "cockpit_webinar_pulls?source=eq.reminders&ok=eq.true"
+                         "&select=finished_at&order=finished_at.desc&limit=1")
+    t = parse_ts(last[0]["finished_at"]) if last else None
+    return not t or now - t > dt.timedelta(hours=REMINDER_HOURS)
+
+
+def pull_reminders(sb: Supabase, ghl: GHL, registrants: list[dict]) -> dict:
+    pulled = iso(utcnow())
+    rows: list[dict] = []
+    for c in registrants:
+        cid = str(c.get("id") or "")
+        if not cid:
+            continue
+        rows.extend(message_rows(cid, ghl.messages(cid), registered_from(c), pulled))
+    sb.upsert("cockpit_webinar_messages", rows, "message_id")
+    steps = collections.Counter(r["step"] for r in rows if r["step"])
+    note(f"reminders: {len(rows)} messages to {len(registrants)} registrants, {len(steps)} WEBBY steps seen, "
+         f"{ghl.calls} HighLevel calls")
+    return {"registrants": len(registrants), "messages": len(rows), "steps": dict(steps),
+            "calls": ghl.calls}
+
+
+def pull_objections(sb: Supabase, fathom: Fathom, model: DeepSeek, registrants: list[dict]) -> dict:
+    """Tag each registrant's new sales calls once. A call is theirs when an
+    invitee's email is the registrant's and it was recorded after they
+    registered."""
+    pulled = iso(utcnow())
+    by_email: dict[str, tuple[dict, Optional[dt.datetime]]] = {}
+    for c in registrants:
+        start = registered_from(c)
+        for e in [c.get("email"), *(c.get("additionalEmails") or [])]:
+            e = str(e.get("email") if isinstance(e, dict) else e or "").strip().lower()
+            if e:
+                by_email[e] = (c, start)
+    if not by_email:
+        note("objections: no registrant has an email yet")
+        return {"registrants": len(registrants), "matched": 0, "tagged": 0}
+    since = min((s for _c, s in by_email.values() if s), default=utcnow() - dt.timedelta(days=60))
+    done = {r["call_id"] for r in sb.req(
+        "GET", f"cockpit_webinar_objections?select=call_id&call_at=gte.{iso(since - dt.timedelta(days=1))}")}
+    matched: list[tuple[dict, dict, str]] = []
+    for m in fathom.meetings(since - dt.timedelta(days=1)):
+        if NOT_SALES.search(str(m.get("title") or m.get("meeting_title") or "")):
+            continue
+        start = parse_ts(m.get("recording_start_time"))
+        for inv in m.get("calendar_invitees") or []:
+            email = str((inv or {}).get("email") or "").strip().lower()
+            hit = by_email.get(email)
+            if hit and (not hit[1] or not start or start >= hit[1] - dt.timedelta(hours=1)):
+                matched.append((m, hit[0], email))
+                break
+    todo = [x for x in matched if str(x[0].get("recording_id")) not in done]
+    tagged = 0
+    for m, contact, email in todo[:OBJECTIONS_PER_RUN]:
+        text = transcript_text(fathom.transcript(m.get("recording_id")))
+        if len(text) < 200:
+            continue  # nothing said on the recording; try again when Fathom has it
+        rep = ((m.get("recorded_by") or {}).get("name") or "the Mahara rep")
+        answer = model.json(OBJECTION_PROMPT, f"The Mahara rep on this call is {rep}.\n\n{text}")
+        sb.upsert("cockpit_webinar_objections", [objection_row(m, contact, email, answer, pulled)], "call_id")
+        tagged += 1
+    note(f"objections: {len(matched)} registrant calls in Fathom, {tagged} tagged now, "
+         f"{max(0, len(todo) - tagged)} left for the next runs")
+    return {"registrants": len(registrants), "matched": len(matched), "tagged": tagged,
+            "left": max(0, len(todo) - tagged)}
+
+
 # --- Doctor ------------------------------------------------------------------------
 
 def doctor() -> int:
@@ -956,6 +1390,33 @@ def doctor() -> int:
     else:
         blockers.append("COMPOSIO_API_KEY is not set, so the survey cannot be read")
 
+    print("HighLevel, Fathom, DeepSeek")
+    ghl = GHL.from_env()
+    if ghl:
+        try:
+            d = ghl.req("POST", "/contacts/search", {"locationId": ghl.location, "pageLimit": 1,
+                        "filters": [{"field": "tags", "operator": "contains", "value": REGISTERED_TAG}]})
+            line(True, f"HighLevel {ghl.location}", f"{d.get('total', 0)} contacts tagged {REGISTERED_TAG}")
+        except Failure as e:
+            warnings.append(str(e))
+            line(None, "HighLevel", str(e))
+    else:
+        warnings.append("GHL_B2B_API_KEY is not set: no reminder stats")
+        line(None, "GHL_B2B_API_KEY not set", "no reminder stats")
+    fathom = Fathom.from_env()
+    if fathom:
+        try:
+            d = fathom.get("/meetings", created_after=iso(utcnow() - dt.timedelta(days=7)).replace("+00:00", "Z"))
+            line(True, "Fathom", f"{len(d.get('items') or [])} calls recorded in the last week (first page)")
+        except Failure as e:
+            warnings.append(str(e))
+            line(None, "Fathom", str(e))
+    else:
+        warnings.append("FATHOM_API_KEY is not set: no objection tags")
+        line(None, "FATHOM_API_KEY not set", "no objection tags")
+    line(True if DeepSeek.from_env() else None, f"DeepSeek key for {OBJECTIONS_MODEL}",
+         "set" if DeepSeek.from_env() else "DEEPSEEK_API_KEY not set: no objection tags")
+
     print("join link")
     ok = join_link_ok()
     if ok is False:
@@ -974,7 +1435,8 @@ def doctor() -> int:
 def main(argv: Optional[list[str]] = None) -> int:
     global QUIET
     ap = argparse.ArgumentParser(description="The live training's Zoom sessions and survey, into Creative Triage.")
-    ap.add_argument("command", nargs="?", default="pull", choices=("pull", "zoom", "survey", "doctor"))
+    ap.add_argument("command", nargs="?", default="pull",
+                    choices=("pull", "zoom", "survey", "reminders", "objections", "doctor"))
     ap.add_argument("--again", action="store_true", help="read finished sessions again")
     ap.add_argument("--dry-run", action="store_true", help="read everything, write nothing")
     ap.add_argument("--quiet", action="store_true")
@@ -1012,6 +1474,38 @@ def main(argv: Optional[list[str]] = None) -> int:
             failed = True
             note(f"survey: {e}")
             sb.finish(run, False, "composio", str(e), {})
+    if a.command in ("pull", "reminders", "objections"):
+        ghl = GHL.from_env()
+        registrants: list[dict] = []
+        try:
+            registrants = ghl.registrants() if ghl else []
+        except Failure as e:
+            failed = True
+            note(f"registrants: {e}")
+        if a.command in ("pull", "reminders") and ghl:
+            try:
+                due = a.command == "reminders" or reminders_due(sb, registrants)
+            except Failure as e:
+                due, failed = False, True
+                note(f"reminders: {e}")
+            if due:
+                run = sb.begin("reminders")
+                try:
+                    sb.finish(run, True, "highlevel", "", pull_reminders(sb, ghl, registrants))
+                except Failure as e:
+                    failed = True
+                    note(f"reminders: {e}")
+                    sb.finish(run, False, "highlevel", str(e), {})
+        fathom, model = Fathom.from_env(), DeepSeek.from_env()
+        if a.command in ("pull", "objections") and fathom and model:
+            run = sb.begin("objections")
+            try:
+                sb.finish(run, True, f"fathom+{OBJECTIONS_MODEL}", "",
+                          pull_objections(sb, fathom, model, registrants))
+            except Failure as e:
+                failed = True
+                note(f"objections: {e}")
+                sb.finish(run, False, f"fathom+{OBJECTIONS_MODEL}", str(e), {})
     return 1 if failed else 0
 
 

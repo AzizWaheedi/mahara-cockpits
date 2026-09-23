@@ -19,10 +19,42 @@ python3 pull.py --dry-run     # read everything, write nothing
 python3 -m unittest -v test_pull
 ```
 
+## Reminders and objections (added the same day)
+
+Aziz: "the scripts that you can do now, do it".
+
+- **Reminders.** Every message HighLevel sent a registrant after they
+  registered (WhatsApp, SMS, email), with the status HighLevel holds
+  (sent, delivered, read, failed), through the conversations API with the
+  webinar sub-account's key (`GHL_B2B_API_KEY`, location
+  `7NI8yyJtwsh2OOWA5Icr`). The text is matched to the 14 WEBBY templates by
+  the words after the greeting (`STEPS`) and never stored. HighLevel sits
+  behind Cloudflare, which refuses Python's default user agent (error
+  1010), so every call sends a browser's. Every six hours; hourly from a day
+  and a half before a session to six hours after it. WhatsApp's read
+  receipt is the open; clicks are the `/live` join-link clicks
+  (sites/webinar). Email opens and clicks live in Kit, not here.
+- **Objections.** A registrant's sales calls in Fathom (`FATHOM_API_KEY`):
+  a call is theirs when an invitee's email is the registrant's and it was
+  recorded after they registered. Client-service calls and team meetings
+  (launch, check-in, onboarding, review, pulse) are left out by title. Each
+  call is tagged once by `deepseek-flash` (the routing rule: classification
+  goes to DeepSeek) into fixed categories (`CATEGORIES`), with the
+  prospect's own words and whether the rep answered. At most 8 new calls a
+  run (`WEBINAR_OBJECTIONS_PER_RUN`). The B2B `fathom_calls` copy stopped
+  syncing on 10 September 2026, so this reads Fathom directly.
+
+Checked on 2026-09-23 without writing: two call-funnel contacts' messages
+read (WhatsApp read, delivered, failed; email), and two real sales calls
+tagged (a 65-minute demo call: proof three times, contract terms, "the
+management has to approve", each quoted in Arabic from the transcript).
+
 ## What it writes
 
-Five tables, `supabase/migrations/20260923g_webinar_collection.sql`, service
-key only:
+Seven tables, `supabase/migrations/20260923g_webinar_collection.sql` and
+`20260923i_webinar_reminders_objections.sql`, service key only (the page's
+own events are in `20260923h`, written by the Edge Function, see
+sites/webinar):
 
 | Table | One row per |
 | --- | --- |
@@ -30,7 +62,9 @@ key only:
 | `cockpit_webinar_attendance` | join and leave pair, as Zoom gives them (people rejoin; one row per person would break the retention curve) |
 | `cockpit_webinar_engagement` | chat line (from the recording's chat file), poll answer, Q&A question |
 | `cockpit_webinar_forms` | gift survey response (Typeform `P1xP4r24`) |
-| `cockpit_webinar_pulls` | run of this worker, per source, with what it read or why it failed |
+| `cockpit_webinar_messages` | message HighLevel sent a registrant: channel, status, WEBBY step (no text) |
+| `cockpit_webinar_objections` | registrant's sales call in Fathom: categories, quotes, answered or not |
+| `cockpit_webinar_pulls` | run of this worker, per source (zoom, typeform, reminders, objections), with what it read or why it failed |
 
 Rows are kept as they came; nothing here is a rate. A finished session is
 `complete` once it ended more than 30 minutes ago and its recording's chat

@@ -165,6 +165,80 @@ class Survey(unittest.TestCase):
         self.assertIsNone(pull.survey_row({"response_id": "x", "answers": []}, PULLED))
 
 
+class Reminders(unittest.TestCase):
+    def test_each_template_is_known_after_the_greeting(self):
+        self.assertEqual(pull.step_of("هلا محمد.. بعد ساعة نبدأ وأنا قاعد أجهّز. هذا رابط التدريب"), "webby_05_one_hour")
+        self.assertEqual(pull.step_of("هلا سارة..  بنبدي بعد ٥ دقايق. دش الحين"), "webby_07_five_min")
+        self.assertEqual(pull.step_of("السلام عليكم خالد معاك عزيز من ماهرة ميديا.. وصلني تسجيلك بالتدريب."),
+                         "webby_01_registered_question")
+        self.assertIsNone(pull.step_of("مرحبا، موعد مكالمتك غداً"))
+        self.assertIsNone(pull.step_of(None))
+
+    def test_message_rows(self):
+        since = dt.datetime(2026, 9, 25, tzinfo=dt.timezone.utc)
+        msgs = [
+            {"id": "m1", "direction": "outbound", "messageType": "TYPE_WHATSAPP", "status": "read",
+             "source": "workflow", "dateAdded": "2026-09-30T16:00:00Z", "body": "هلا علي.. بعد ساعة نبدأ"},
+            {"id": "m2", "direction": "inbound", "messageType": "TYPE_WHATSAPP", "status": "delivered",
+             "dateAdded": "2026-09-30T16:05:00Z", "body": "تمام"},
+            {"id": "m3", "direction": "outbound", "messageType": "TYPE_CALL", "dateAdded": "2026-09-30T16:06:00Z"},
+            {"id": "m4", "direction": "outbound", "messageType": "TYPE_SMS", "status": "failed",
+             "dateAdded": "2026-09-01T10:00:00Z", "body": "old"},
+            {"id": "m5", "direction": "outbound", "messageType": "TYPE_EMAIL", "status": None,
+             "dateAdded": "2026-09-29T10:00:00Z", "body": "<p>hi</p>"},
+        ]
+        rows = pull.message_rows("c1", msgs, since, PULLED)
+        self.assertEqual([(r["message_id"], r["channel"], r["status"], r["step"]) for r in rows],
+                         [("m1", "whatsapp", "read", "webby_05_one_hour"), ("m5", "email", None, None)])
+        self.assertNotIn("body", rows[0])
+
+    def test_registration_start_follows_the_webinar_rule(self):
+        old = {"dateAdded": "2026-06-01T00:00:00Z",
+               "customFields": [{"id": pull.SESSION_FIELD, "value": "1790791200000"}]}
+        start = pull.registered_from(old)
+        self.assertEqual(start, pull.session_of(old) - dt.timedelta(days=21))
+        new = {"dateAdded": "2026-09-28T00:00:00Z",
+               "customFields": [{"id": pull.SESSION_FIELD, "value": "2026-09-30"}]}
+        self.assertEqual(pull.registered_from(new), dt.datetime(2026, 9, 28, tzinfo=dt.timezone.utc))
+        self.assertEqual(pull.registered_from({"dateAdded": "2026-09-28T00:00:00Z"}),
+                         dt.datetime(2026, 9, 28, tzinfo=dt.timezone.utc))
+
+
+class Objections(unittest.TestCase):
+    def test_answer_is_checked(self):
+        meeting = {"recording_id": 123, "title": "Intro call", "recording_start_time": "2026-10-01T10:00:00Z",
+                   "recording_end_time": "2026-10-01T10:31:30Z"}
+        answer = {"objections": [
+            {"category": "Price", "quote": "الميزانية ما تسمح الحين", "handled": "partly"},
+            {"category": "weather", "quote": "x" * 400, "handled": "maybe"},
+            "not an object",
+        ], "summary": "They asked for a proposal."}
+        row = pull.objection_row(meeting, {"id": "c9"}, "k@firm.com", answer, PULLED)
+        self.assertEqual(row["call_id"], "123")
+        self.assertEqual(row["duration_s"], 1890)
+        self.assertEqual(row["categories"], ["other", "price"])
+        self.assertEqual(row["objections"][0], {"category": "price", "quote": "الميزانية ما تسمح الحين", "handled": "partly"})
+        self.assertEqual(len(row["objections"][1]["quote"]), 240)
+        self.assertIsNone(row["objections"][1]["handled"])
+        self.assertEqual(row["model"], pull.OBJECTIONS_MODEL)
+
+    def test_no_objection_is_an_empty_list(self):
+        row = pull.objection_row({"recording_id": 1}, {"id": "c"}, "e@x.com", {"objections": []}, PULLED)
+        self.assertEqual((row["categories"], row["objections"]), ([], []))
+
+    def test_transcript_lines(self):
+        text = pull.transcript_text([
+            {"speaker": {"display_name": "Nada"}, "text": " أهلا ", "timestamp": "00:00:05"},
+            {"speaker": {"display_name": "Khalid"}, "text": "", "timestamp": "00:00:07"},
+            {"speaker": None, "text": "ok", "timestamp": "00:00:09"},
+        ])
+        self.assertEqual(text, "[00:00:05] Nada: أهلا\n[00:00:09] Speaker: ok")
+
+    def test_every_category_has_words_for_the_screen(self):
+        self.assertIn("other", pull.CATEGORIES)
+        self.assertTrue(all(pull.CATEGORIES.values()))
+
+
 class Zoom(unittest.TestCase):
     def test_uuid_path(self):
         self.assertEqual(pull.uuid_path("ZX4as2A+Qq+ejA6SnGIcnA=="), "ZX4as2A%2BQq%2BejA6SnGIcnA%3D%3D")

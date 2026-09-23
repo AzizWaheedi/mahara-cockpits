@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { objectionStats, reminderStats } from "../convex/ceo/webinarFollowUp";
+import { type PageVisitor, pageStats } from "../convex/ceo/webinarPage";
 import {
   merge,
   onesBurst,
@@ -269,5 +271,210 @@ describe("phones", () => {
     expect(phoneKey("99991234")).toBe("99991234");
     expect(phoneKey("1234")).toBeNull();
     expect(phoneKey(null)).toBeNull();
+  });
+});
+
+// The landing page (convex/ceo/webinarPage.ts): page events per visitor.
+describe("the landing page", () => {
+  const visitor = (over: Partial<PageVisitor> = {}): PageVisitor => ({
+    visitorId: "v",
+    firstAt: T0 - 86_400_000,
+    firstLanding: T0 - 86_400_000,
+    landingViews: 1,
+    landingSessions: 1,
+    formView: false,
+    formFocus: false,
+    formSubmit: false,
+    cta: false,
+    maxScroll: 25,
+    landingSeconds: 30,
+    thankYouAt: null,
+    calendarAdd: false,
+    whatsapp: false,
+    whatsappPlaceholder: false,
+    surveyStart: false,
+    surveySubmit: false,
+    landingVideo: false,
+    thankYouVideo: false,
+    thankYouVideo75: false,
+    utmContent: null,
+    utmSource: null,
+    fbclid: false,
+    device: "mobile",
+    ...over,
+  });
+
+  test("visitors, the form's steps and the thank-you page", () => {
+    const s = pageStats(
+      [
+        visitor({
+          visitorId: "a",
+          formView: true,
+          formFocus: true,
+          formSubmit: true,
+          thankYouAt: T0,
+          maxScroll: 100,
+          landingSeconds: 120,
+          utmContent: "120200000000001",
+        }),
+        visitor({
+          visitorId: "b",
+          formView: true,
+          formFocus: true,
+          maxScroll: 75,
+          landingSeconds: 60,
+          utmContent: "120200000000001",
+        }),
+        visitor({
+          visitorId: "c",
+          maxScroll: 50,
+          landingSeconds: 10,
+          device: "desktop",
+          utmContent: "not-an-ad",
+        }),
+        visitor({
+          visitorId: "d",
+          firstLanding: null,
+          thankYouAt: T0,
+          landingSeconds: null,
+        }),
+      ],
+      [],
+      T0,
+    );
+    expect([
+      s.visitors,
+      s.formView,
+      s.formStart,
+      s.formSubmit,
+      s.thankYou,
+    ]).toEqual([3, 2, 2, 1, 2]);
+    expect([s.scroll50, s.scroll75, s.scroll100]).toEqual([3, 2, 1]);
+    expect(s.secondsMedian).toBe(60);
+    expect(s.mobile).toBe(2);
+    expect(s.withAd).toBe(2);
+    expect(s.byAd).toEqual([
+      { adId: "120200000000001", visitors: 2, thankYou: 1 },
+    ]);
+  });
+
+  test("join-link clicks: each person once before and once after the start", () => {
+    const s = pageStats(
+      [],
+      [
+        { visitorId: "x", at: at(-10) },
+        { visitorId: "x", at: at(-5) },
+        { visitorId: "x", at: at(20) },
+        { visitorId: "y", at: at(2) },
+        { visitorId: "z", at: at(-60 * 30) },
+      ],
+      T0,
+    );
+    expect([s.joinBefore, s.joinAfter]).toEqual([1, 2]);
+  });
+
+  test("no session time, no join-link split", () => {
+    const s = pageStats([], [{ visitorId: "x", at: at(1) }], null);
+    expect([s.joinBefore, s.joinAfter]).toEqual([0, 0]);
+  });
+});
+
+// Reminders and objections (convex/ceo/webinarFollowUp.ts).
+describe("reminders", () => {
+  test("read counts as delivered, failures apart, steps in send order", () => {
+    const s = reminderStats(
+      [
+        {
+          contactId: "a",
+          channel: "whatsapp",
+          step: "webby_05_one_hour",
+          status: "read",
+          n: 1,
+        },
+        {
+          contactId: "a",
+          channel: "whatsapp",
+          step: "webby_03_calendar_nudge",
+          status: "delivered",
+          n: 1,
+        },
+        {
+          contactId: "b",
+          channel: "whatsapp",
+          step: "webby_05_one_hour",
+          status: "failed",
+          n: 1,
+        },
+        {
+          contactId: "b",
+          channel: "sms",
+          step: "webby_05_one_hour",
+          status: "delivered",
+          n: 1,
+        },
+        { contactId: "b", channel: "email", step: null, status: null, n: 2 },
+        {
+          contactId: "z",
+          channel: "whatsapp",
+          step: null,
+          status: "read",
+          n: 5,
+        },
+      ],
+      new Set(["a", "b"]),
+    );
+    expect(s?.whatsapp).toEqual({ sent: 3, delivered: 2, read: 1, failed: 1 });
+    expect(s?.sms).toEqual({ sent: 1, delivered: 1, read: 0, failed: 0 });
+    expect(s?.email.sent).toBe(2);
+    expect([s?.reached, s?.readAny]).toEqual([2, 1]);
+    expect(s?.steps.map(x => [x.key, x.sent, x.read])).toEqual([
+      ["webby_03_calendar_nudge", 1, 0],
+      ["webby_05_one_hour", 3, 1],
+    ]);
+  });
+
+  test("nobody messaged, nothing to show", () => {
+    expect(reminderStats([], new Set(["a"]))).toBeNull();
+  });
+});
+
+describe("objections", () => {
+  test("calls per category, raised and answered", () => {
+    const s = objectionStats(
+      [
+        {
+          callId: "1",
+          contactId: "a",
+          categories: ["price", "proof"],
+          objections: [
+            { category: "price", handled: "handled" },
+            { category: "price", handled: "not" },
+            { category: "proof", handled: "partly" },
+          ],
+        },
+        {
+          callId: "2",
+          contactId: "b",
+          categories: ["price"],
+          objections: [{ category: "price", handled: "handled" }],
+        },
+        { callId: "3", contactId: "c", categories: [], objections: [] },
+        {
+          callId: "4",
+          contactId: "x",
+          categories: ["fit"],
+          objections: [{ category: "fit", handled: null }],
+        },
+      ],
+      new Set(["a", "b", "c"]),
+    );
+    expect([s?.calls, s?.none]).toEqual([3, 1]);
+    expect(
+      s?.categories.map(c => [c.key, c.calls, c.raised, c.handled]),
+    ).toEqual([
+      ["price", 2, 3, 2],
+      ["proof", 1, 1, 0],
+    ]);
+    expect(s?.categories[0].label).toBe("Price or budget");
   });
 });
