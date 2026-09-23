@@ -13,6 +13,7 @@ export { IdeationPage } from "./IdeationPage";
 export { KeyLinksPage } from "./KeyLinksPage";
 export { LandingPage } from "./LandingPage";
 export { LoginPage } from "./LoginPage";
+export { FirstSignInPage } from "./FirstSignInPage";
 export { MeetingsPage } from "./MeetingsPage";
 export { PlaybookPage } from "./PlaybookPage";
 export { ReviewPage } from "./ReviewPage";

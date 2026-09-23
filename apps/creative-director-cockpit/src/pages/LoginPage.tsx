@@ -1,40 +1,9 @@
-import { portalUrl } from "@/components/PortalAutoSignIn";
-import { SignIn } from "@/components/SignIn";
-import { ViktorSignInSection } from "@/components/ViktorSignInSection";
+import { Link } from "react-router";
+import { SupabaseSignIn } from "@/components/SupabaseSignIn";
+import { Button } from "@/components/ui/button";
 import { Wordmark } from "@/components/Wordmark";
-import {
-  getEmailPasswordSignInAvailable,
-  getViktorSignInAvailable,
-} from "@/lib/viktor-spaces-access/config";
-
-function getLoginProviderState(): {
-  emailPasswordAvailable: boolean;
-  viktorSignInAvailable: boolean;
-  invalidProviderConfiguration: boolean;
-} {
-  try {
-    return {
-      emailPasswordAvailable: getEmailPasswordSignInAvailable(),
-      viktorSignInAvailable: getViktorSignInAvailable(),
-      invalidProviderConfiguration: false,
-    };
-  } catch {
-    return {
-      emailPasswordAvailable: false,
-      viktorSignInAvailable: false,
-      invalidProviderConfiguration: true,
-    };
-  }
-}
 
 export function LoginPage() {
-  const {
-    emailPasswordAvailable,
-    viktorSignInAvailable,
-    invalidProviderConfiguration,
-  } = getLoginProviderState();
-  const signInUnavailable = !emailPasswordAvailable && !viktorSignInAvailable;
-
   return (
     <div className="flex-1 flex items-center justify-center p-4 relative">
       <div className="absolute inset-0 -z-10 overflow-hidden">
@@ -48,29 +17,21 @@ export function LoginPage() {
             <Wordmark size="lg" />
           </div>
           <h1 className="text-2xl font-semibold tracking-tight">
-            Sign in to the cockpit
+            Sign in to Creative Director
           </h1>
           <p className="text-muted-foreground text-sm">
-            One link per role. Use the email Aziz set you up with.
+            One sign-in for every cockpit. Use the email Aziz set you up with;
+            your cockpit opens on its own.
           </p>
         </div>
 
-        {!invalidProviderConfiguration && <ViktorSignInSection />}
-        {emailPasswordAvailable && <SignIn />}
-        {signInUnavailable && (
-          <p className="text-sm text-destructive bg-destructive/10 rounded-lg px-3 py-2 text-center">
-            {invalidProviderConfiguration
-              ? "Sign-in is unavailable: this app has no valid sign-in provider configuration. Contact the app owner."
-              : 'Sign-in is unavailable: this app only offers "Sign in with Viktor", but its Viktor sign-in configuration is missing from this build. Contact the app owner.'}
-          </p>
-        )}
+        <SupabaseSignIn />
 
         <p className="text-center text-sm text-muted-foreground">
-          Team members sign in once at{" "}
-          <a className="font-medium underline" href={portalUrl()}>
-            the Mahara portal
-          </a>
-          , which opens the right cockpit.
+          First time here?{" "}
+          <Button variant="link" className="p-0 h-auto font-medium" asChild>
+            <Link to="/first-sign-in">Set up your password</Link>
+          </Button>
         </p>
       </div>
     </div>

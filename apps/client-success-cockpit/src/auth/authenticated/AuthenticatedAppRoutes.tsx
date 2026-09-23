@@ -15,6 +15,7 @@ import {
   ClientPerformancePage,
   ClientsPage,
   EndOfDayPage,
+  FirstSignInPage,
   HotListPage,
   KeyLinksPage,
   LandingPage,
@@ -36,6 +37,7 @@ export function AuthenticatedRoutes() {
         <Route element={<PublicOnlyRoute />}>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/signup" element={<SignupPage />} />
+          <Route path="/first-sign-in" element={<FirstSignInPage />} />
         </Route>
       </Route>
 

@@ -12,6 +12,7 @@ export {
 } from "./CsmPage";
 export { LandingPage } from "./LandingPage";
 export { LoginPage } from "./LoginPage";
+export { FirstSignInPage } from "./FirstSignInPage";
 export { MeetingsPage } from "./MeetingsPage";
 export { SettingsPage } from "./SettingsPage";
 export { SignupPage } from "./SignupPage";

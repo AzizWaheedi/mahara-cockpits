@@ -21,6 +21,7 @@ import {
   KeyLinksPage,
   LandingPage,
   LoginPage,
+  FirstSignInPage,
   MeetingsPage,
   PlaybookPage,
   ReviewPage,
@@ -43,6 +44,7 @@ export function AuthenticatedRoutes() {
         <Route element={<PublicOnlyRoute />}>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/signup" element={<SignupPage />} />
+          <Route path="/first-sign-in" element={<FirstSignInPage />} />
         </Route>
       </Route>
 
