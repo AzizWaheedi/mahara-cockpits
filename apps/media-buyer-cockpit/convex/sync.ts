@@ -30,6 +30,8 @@ import {
   unwrap,
 } from "./tools";
 
+declare const process: { env: Record<string, string | undefined> };
+
 const TRACKER = "1pBEyClUxPLc4-RdXR8gZ0MxsLkLLFkWJwkiVqVf2rro";
 const DATABASE = "1_0Nv-IFvzhH4NBNh1dxCUm6Ryp414ctM_8EO5QORBF0";
 const ADS_LIST = "901817774521";
