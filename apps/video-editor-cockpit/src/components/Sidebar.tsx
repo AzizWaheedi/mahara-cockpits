@@ -11,6 +11,7 @@ import {
   Send,
   ShieldCheck,
   Trophy,
+  UsersRound,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { NavLink } from "react-router";
@@ -196,6 +197,23 @@ export default function Sidebar({
             </ul>
           </div>
         ))}
+
+        <div>
+          <p className="muted mb-1 px-2 text-[10px] font-semibold tracking-[0.12em] uppercase">
+            Team
+          </p>
+          <ul className="space-y-0.5">
+            <li>
+              <a
+                href={`${portalUrl()}/team`}
+                className="muted flex items-center gap-2.5 rounded-[var(--radius-md)] py-1.5 pr-2 pl-3 text-sm transition-colors hover:bg-[color:var(--secondary)] hover:text-[color:var(--foreground)]"
+              >
+                <UsersRound className="size-4 shrink-0" strokeWidth={1.75} />
+                <span className="truncate">Team meetings</span>
+              </a>
+            </li>
+          </ul>
+        </div>
 
         {doors.length ? (
           <div>

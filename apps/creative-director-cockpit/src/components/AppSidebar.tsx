@@ -26,6 +26,7 @@ import {
   Sunrise,
   Trophy,
   Users,
+  UsersRound,
 } from "lucide-react";
 import { Link, useLocation } from "react-router";
 import { portalUrl } from "@/components/PortalAutoSignIn";
@@ -198,12 +199,34 @@ function PortalGroup() {
   );
 }
 
+/** The team's meetings and agendas, in the portal, for everyone. */
+function TeamGroup() {
+  return (
+    <SidebarGroup>
+      <SidebarGroupLabel>Team</SidebarGroupLabel>
+      <SidebarGroupContent>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild>
+              <a href={`${portalUrl()}/team`}>
+                <UsersRound className="size-4" />
+                <span>Team meetings</span>
+              </a>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarGroupContent>
+    </SidebarGroup>
+  );
+}
+
 function SidebarNav() {
   const location = useLocation();
 
   return (
     <SidebarContent>
       <PortalGroup />
+      <TeamGroup />
       {navGroups.map(group => (
         <SidebarGroup key={group.label}>
           <SidebarGroupLabel>{group.label}</SidebarGroupLabel>

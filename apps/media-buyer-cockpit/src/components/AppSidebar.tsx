@@ -162,6 +162,7 @@ function CeoRail() {
   // are one click away in the user menu, so the rail stays short enough for
   // a laptop.
   const elsewhere = [
+    { key: "team", label: "Team meetings", href: "/team", icon: UsersRound },
     ...(me?.isAdmin
       ? [{ key: "admin", label: "Admin", href: "/admin", icon: ShieldCheck }]
       : []),
