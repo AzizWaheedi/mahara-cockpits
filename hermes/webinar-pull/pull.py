@@ -1081,14 +1081,20 @@ class Supabase:
 # --- The two pulls ---------------------------------------------------------------
 
 def join_link_ok() -> Optional[bool]:
-    """Does the reminders' join link lead to Zoom? None when it cannot be checked."""
+    """Does the reminders' join link lead to Zoom? Either a redirect to it, or
+    the site's /live page, which records the click and then opens the
+    meeting (sites/webinar/live.html). None when it cannot be checked."""
     class NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, *a, **k):  # noqa: D401
             return None
     opener = urllib.request.build_opener(NoRedirect)
     try:
-        r = opener.open(urllib.request.Request(JOIN_LINK, method="GET"), timeout=20)
-        return "zoom.us" in str(r.headers.get("Location") or "")
+        r = opener.open(urllib.request.Request(JOIN_LINK, method="GET",
+                                               headers={"User-Agent": BROWSER_UA}), timeout=20)
+        if "zoom.us" in str(r.headers.get("Location") or ""):
+            return True
+        page = r.read(20000).decode("utf-8", "replace")
+        return bool(re.search(r"location\.replace\(\s*[\"']https://[a-z0-9.]*zoom\.us/j/", page))
     except urllib.error.HTTPError as e:
         return 300 <= e.code < 400 and "zoom.us" in str(e.headers.get("Location") or "")
     except (urllib.error.URLError, TimeoutError, OSError):
