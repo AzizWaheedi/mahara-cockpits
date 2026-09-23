@@ -82,6 +82,21 @@ The cockpit recomputes every section every 15 minutes on the production Convex d
 | **Average LTV** | The LTV field on the cards, averaged over cards that have one. | Typed, not computed from payments. |
 | **Expenses** | The bank CSV loaded into `expenses`, by category, latest loaded month; unloads excluded from "money out". | KWD converted at an inferred 3.248/3.25, not the cockpit's 3.26. Profit and margin stay empty until revenue is declared complete. Payroll is not in it. |
 
+## Billing tab (and the client success cockpit's Billing page)
+
+One sheet in both cockpits (`components/billing/BillingSheet.tsx`, rules in
+`convex/billingCore.ts`, the same files in both apps). Added 2026-09-23.
+
+| Number | Where it comes from | What it leaves out |
+|---|---|---|
+| **Every row** | The Clients - Mahara cards in ClickUp (list 901816559981), mirrored into `cockpit_billing_accounts` (Creative Triage) at every CEO refresh, on "Read ClickUp again" in either cockpit, and on every edit. On the books = Client Status active, paused or pipeline. | Cards on the sales list, gone cards and Mahara's own cards. |
+| **Due in 7 days, Late** | The Next Payment Amount and Date typed on each active card, due today to 7 days out, or past. | Paused clients are never late. A card with no date is counted under "No method set" as "with no payment date", not as zero. Checked on 2026-09-23 against Maher's own scan: every difference was a client his exact-day rungs had stopped firing for (25 days late, never paused), since added to his scan. |
+| **What to do** | The Billing And Invoice Reminders SOP's ladder, the same as Maher's: 4–7 days out confirm the method, 3 days out send the invoice, the day, day 1, day 2 is a call, day 3 pause, day 15 churn; paused clients are counted from Paused On. | A paused card with no Paused On reads "stamp one": the fifteen-day clock cannot start. |
+| **LTV** | The LTV plan (`ceo/ltv.ts`): the card's LTV on 21 Sep plus every payment tied to the client since. The client success page shows the card's LTV field. | Money nobody tied to a client; tie it on the tab's "Money not tied to a client" card. |
+| **Money not tied to a client** | Payments in over the last 12 months that the money section could not attribute, grouped by payer. Tying a payer writes `cockpit_payer_clients`, so every payment from them counts for that client from the next refresh. | The first refresh after tying. |
+| **Waiting for the ledger** | `cockpit_billing_inbox`: payments a success manager or Maher logged. The CEO refresh takes each into `ceoManualPayments` (dropping one already logged that day) and writes back ingested, duplicate or rejected. | Card and Whop payments: they arrive on their own feed and are refused here. |
+| **Billing log** | `cockpit_billing_events`: every change made from either cockpit or by Maher, who and why. | Changes typed straight into ClickUp show on the row at the next mirror but have no log line. |
+
 ## Delivery tab (clients)
 
 | Number | Where it comes from | What it leaves out |

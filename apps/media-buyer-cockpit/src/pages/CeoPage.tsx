@@ -13,6 +13,7 @@ import { trustSummary, useCeo, useNow } from "@/components/ceo/useCeo";
 import { api } from "../../convex/_generated/api";
 import { AdsTab } from "./ceo/AdsTab";
 import { BackendTab } from "./ceo/BackendTab";
+import { BillingTab } from "./ceo/BillingTab";
 import { CallsTab } from "./ceo/CallsTab";
 import { ClientSuccessTab } from "./ceo/ClientSuccessTab";
 import { DeliveryTab } from "./ceo/DeliveryTab";
@@ -52,6 +53,7 @@ const TAB_VIEWS: Record<CeoTabKey, (props: CeoTabProps) => ReactNode> = {
   team: TeamTab,
   hiring: HiringTab,
   money: MoneyTab,
+  billing: BillingTab,
   transactions: TransactionsTab,
   machine: MachineTab,
 };

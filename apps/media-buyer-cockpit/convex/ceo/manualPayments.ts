@@ -1,6 +1,6 @@
 import { ConvexError, v } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
-import type { QueryCtx } from "../_generated/server";
+import { internalMutation, type QueryCtx } from "../_generated/server";
 import { authenticatedMutation, authenticatedQuery } from "../functions";
 import {
   byNewest,
@@ -163,7 +163,9 @@ async function paymentOrRefuse(
  * ask before counting such a pair twice.
  */
 async function liveTwin(
-  ctx: CeoMutationCtx,
+  // Only the database is read, so the inbox ingest (which has no signed-in
+  // user) can run the same duplicate check as a payment typed by Aziz.
+  ctx: { db: CeoMutationCtx["db"] },
   p: {
     day: string;
     currency: Doc<"ceoManualPayments">["currency"];
@@ -194,6 +196,25 @@ async function liveTwin(
 }
 
 // --- Writes ---
+
+/**
+ * Whether a ClickUp card is a client card a payment can belong to: on the
+ * CSM roster, or anywhere on the Clients - Mahara list. The roster leaves out
+ * cards in onboarding and paused cards the CSM sync skips, and the billing
+ * sheet logs payments against those too (2026-09-23).
+ */
+async function onClientCard(
+  ctx: { db: CeoMutationCtx["db"] },
+  taskId: string,
+): Promise<boolean> {
+  const cards = await ctx.db.query("clients").take(1000);
+  if (cards.some(c => c.taskId === taskId)) return true;
+  const billing = await ctx.db
+    .query("ceoClientBilling")
+    .withIndex("by_task", q => q.eq("taskId", taskId))
+    .first();
+  return billing !== null;
+}
 
 export const add = authenticatedMutation({
   args: {
@@ -245,8 +266,7 @@ export const add = authenticatedMutation({
         if (task) {
           if (!/^[A-Za-z0-9_-]{1,40}$/.test(task))
             throw new Error("That is not a ClickUp card id.");
-          const cards = await ctx.db.query("clients").take(1000);
-          if (!cards.some(c => c.taskId === task))
+          if (!(await onClientCard(ctx, task)))
             throw new Error(
               "That client card is not on the roster any more. Pick the client again.",
             );
@@ -504,4 +524,104 @@ export const history = authenticatedQuery({
         limit: 20,
       })
     ).map(r => ({ ...r, what: maskContact(r.what) })),
+});
+
+/**
+ * A payment logged outside the CEO cockpit, taken into the ledger.
+ *
+ * Maher and the client success cockpit log payments into the Supabase inbox
+ * (cockpit_billing_inbox) rather than here, because neither can sign in as
+ * Aziz. The refresh brings each one in through this mutation, with the same
+ * rules as a payment typed on the Money tab: a real day, whole cents, a card
+ * still on the roster, and the same payment on the same day for the same
+ * client treated as one payment, not two. The row records who logged it
+ * where, so the ledger still says where every entry came from.
+ */
+export const ingestFromInbox = internalMutation({
+  args: {
+    inboxId: v.number(),
+    day: v.string(),
+    amount: v.number(),
+    currency: vManualCurrency,
+    rail: vManualRail,
+    clientName: v.string(),
+    clickupTaskId: v.string(),
+    note: v.optional(v.string()),
+    loggedBy: v.string(),
+    source: v.string(),
+  },
+  returns: v.object({
+    status: v.union(
+      v.literal("ingested"),
+      v.literal("duplicate"),
+      v.literal("rejected"),
+    ),
+    id: v.optional(v.string()),
+    note: v.string(),
+  }),
+  handler: async (ctx, a) => {
+    const reject = (note: string) => ({ status: "rejected" as const, note });
+    const today = kuwaitDay();
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/.test(a.day) ||
+      a.day > today ||
+      a.day < "2025-01-01"
+    )
+      return reject(`The day ${a.day} is not a day money could have arrived.`);
+    if (!(a.amount > 0) || Math.round(a.amount * 1000) !== a.amount * 1000)
+      return reject("The amount is not a real payment.");
+    if (a.rail === "tap" && (await tapConnected(ctx)))
+      return reject(
+        "Tap is connected, so a Tap payment arrives on the Tap rail by itself; logging it would count it twice.",
+      );
+    if (!(await onClientCard(ctx, a.clickupTaskId)))
+      return reject("That client card is not on the roster any more.");
+    const clientName = cleanText(a.clientName, 120) || a.clickupTaskId;
+    const paid = usdAtWrite(a.amount, a.currency);
+    const twin = await liveTwin(ctx, {
+      day: a.day,
+      currency: a.currency,
+      amount: paid.amount,
+      clientName,
+      clickupTaskId: a.clickupTaskId,
+    });
+    if (twin)
+      return {
+        status: "duplicate" as const,
+        id: String(twin._id),
+        note: `${paidText(twin)} from ${twin.clientName} on ${a.day} was already in the ledger (${MANUAL_RAIL_LABEL[twin.rail]}), so this was not counted a second time.`,
+      };
+    const by = `${a.source}: ${cleanText(a.loggedBy, 80)}`;
+    const note = cleanText(a.note, 500);
+    const at = Date.now();
+    const row = {
+      day: a.day,
+      amount: paid.amount,
+      currency: a.currency,
+      amountUsd: paid.usd,
+      usdPerUnit: paid.usdPerUnit,
+      clientName,
+      rail: a.rail,
+      clickupTaskId: a.clickupTaskId,
+      addedBy: by,
+      addedAt: at,
+      ...(note ? { note } : {}),
+    };
+    const id = await ctx.db.insert("ceoManualPayments", row);
+    await ctx.db.insert("ceoAudit", {
+      action: "manualPayment.ingest",
+      table: "ceoManualPayments",
+      rowId: String(id),
+      what: `Took ${paidText(row)} ${ARRIVED[a.rail]} from ${clientName}, received ${a.day}, into the ledger from the billing inbox (row ${a.inboxId}, logged by ${by}).`,
+      before: {},
+      after: row,
+      by,
+      at,
+    });
+    return {
+      status: "ingested" as const,
+      id: String(id),
+      note: "In the ledger.",
+    };
+  },
 });

@@ -102,6 +102,11 @@ export const RUNBOOK: Record<
     fix: "Live previews are fetched only when someone opens one; if none open, check the Meta Ads line first. If winners have no saved picture, the Meta token may be broken (see Meta Ads), or the ad was deleted before a picture was saved, and nothing can bring those back. If saved pictures do not load, open the deployment's File Storage page in the Convex dashboard and check the storage limit.",
     owner: "Hermes or Aziz",
   },
+  supabase: {
+    label: "Supabase (Creative Triage)",
+    fix: "The billing sheet and the cockpit tables live here. If 401: SUPABASE_SERVICE_ROLE_KEY on the deployment is wrong or was rotated; copy the service role key from the Creative Triage project settings and set it again. If 404 on a cockpit_ table: the migration in supabase/migrations was not applied. If 5xx: Supabase status page; it recovers by itself and nothing is lost, ClickUp stays the record.",
+    owner: "Aziz",
+  },
   hermes: {
     label: "Hermes (AI agent)",
     fix: "Hermes has not polled for jobs. Restart the Hermes poller on its host. While it is down, chat answers, reply drafts, call briefs and report narratives wait; nothing is lost, they run when it is back.",

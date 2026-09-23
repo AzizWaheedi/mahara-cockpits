@@ -11,6 +11,7 @@ import { ViktorAutoSignIn } from "@/components/ViktorAutoSignIn";
 import { ViktorProductAuthProvider } from "@/lib/viktor-spaces-access/ViktorProductAuthProvider";
 import {
   BacklogPage,
+  BillingPage,
   ClientPerformancePage,
   ClientsPage,
   EndOfDayPage,
@@ -58,6 +59,7 @@ export function AuthenticatedRoutes() {
                 another seat gets "not yours", not a crashed screen. */}
             <Route path="/meetings" element={<MeetingsPage />} />
             <Route path="/backlog" element={<BacklogPage />} />
+            <Route path="/billing" element={<BillingPage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Route>
         </Route>

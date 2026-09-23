@@ -3,6 +3,7 @@ import { useQuery } from "convex/react";
 import {
   ArrowRightLeft,
   BarChart3,
+  CalendarClock,
   CalendarDays,
   DollarSign,
   Flame,
@@ -69,6 +70,7 @@ const navGroups = [
     items: [
       { href: "/clients", label: "Clients & touchpoints", icon: MessageSquare },
       { href: "/performance", label: "Client performance", icon: BarChart3 },
+      { href: "/billing", label: "Billing", icon: CalendarClock },
       { href: "/backlog", label: "Data backlog", icon: ListTodo },
     ],
   },

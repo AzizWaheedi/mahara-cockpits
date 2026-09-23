@@ -194,6 +194,23 @@ export const refreshAll = internalAction({
         report[a.key] = `FAILED ${error}`;
       }
     };
+    // Billing first: payments Maher or a CSM logged go into the ledger before
+    // the money section reads it, and the ClickUp cards are mirrored so the
+    // billing sheet and Maher see edits made on a card within one cycle.
+    // Neither can stop the refresh.
+    if (!only?.length) {
+      for (const [key, job] of [
+        ["_billingInbox", internal.billing.ingestInbox],
+        ["_billingMirror", internal.billing.syncMirror],
+      ] as const) {
+        try {
+          report[key] = await ctx.runAction(job, {});
+        } catch (e) {
+          report[key] =
+            `FAILED ${String(e instanceof Error ? e.message : e).slice(0, 200)}`;
+        }
+      }
+    }
     await Promise.all(
       ADAPTERS.filter(a => !only?.length || only.includes(a.key)).map(run),
     );
