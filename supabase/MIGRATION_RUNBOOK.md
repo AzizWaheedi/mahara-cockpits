@@ -129,8 +129,10 @@ day/key pairs appeared in both deployments. One human completion differed:
 `2026-09-14 / sprint_1` is checked in client success but not in the media-buyer
 copy. Two labels/details also differed. The tool reports these differences and
 refuses a backfill-ready result if a media-buyer CSM key is missing from the
-client-success snapshot. No checks table, backfill, or live mirror has yet been
-created in Supabase.
+client-success snapshot. The service-only Supabase checks table is now live;
+the one checked CSM canary was inserted and its audit read back. Rerunning the
+canary found an exact match and made no write. The other historical checks and
+the live writer remain in Convex.
 
 ### Checks schema and one-row canary
 
@@ -152,4 +154,10 @@ Give it the three private ZIP paths and their Convex `start_ts` values using
 `--client-success-ts`, `--creative`, and `--creative-ts`. After comparing the
 report, `--apply-one --canary-role csm --canary-day 2026-09-14 --canary-key
 sprint_1` inserts only the child cockpit's checked row and verifies Supabase
-read-back plus one INSERT audit. No bulk flag or live mirror is provided yet.
+read-back plus one INSERT audit. After that canary, `--plan-batch --through-day
+2026-09-22 --limit 25` prints a read-only live diff for up to 25 rows from
+the same three snapshots. Review that output before replacing `--plan-batch`
+with `--apply-batch`; each run preflights all eligible historical rows, writes
+at most 25, and checks every row and INSERT audit. The cutoff must precede the
+current Kuwait day. A live daily-checks mirror is not provided yet, so
+reconcile later edits before any read cutover.

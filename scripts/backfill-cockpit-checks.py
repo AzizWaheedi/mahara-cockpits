@@ -1,8 +1,9 @@
 """Canary one authoritative daily check from three Convex snapshots.
 
 DRY_RUN = True by default: read and reconcile offline only. --apply-one writes
-exactly the requested role/day/key, then reads that row and its audit entry
-back. No bulk flag exists; do not import the media-buyer CSM mirror.
+exactly the requested role/day/key. After that canary, --apply-batch imports at
+most 25 checks strictly before the current Kuwait day, with a full preflight
+and per-row read-back/audit. Never import the media-buyer CSM mirror.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -149,15 +150,40 @@ def verify_row(expected: dict[str, Any], actual: dict[str, Any]) -> None:
                 raise RuntimeError(f"Supabase checks read-back differs in {field}")
 
 
+def insert_and_verify(expected: dict[str, Any], key: str) -> None:
+    endpoint = f"{PROJECT_URL}/rest/v1/cockpit_daily_checks?on_conflict=source_deployment,source_id"
+    request_json(endpoint, key, method="POST", body=expected)
+    written = remote_rows(key, source_deployment=expected["source_deployment"], source_id=expected["source_id"])
+    if len(written) != 1:
+        raise RuntimeError("Selected checks write was not visible on read-back")
+    verify_row(expected, written[0])
+    audits = request_json(
+        f"{PROJECT_URL}/rest/v1/cockpit_audit_log?" + urllib.parse.urlencode({
+            "entity_type": "eq.cockpit_daily_checks",
+            "entity_id": f"eq.{written[0]['id']}",
+            "action": "eq.INSERT",
+            "select": "id",
+        }),
+        key,
+    )
+    if len(audits) != 1:
+        raise RuntimeError("Selected check was written but exactly one INSERT audit was not found")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("media-buyer", "client-success", "creative"):
         parser.add_argument(f"--{name}", type=Path, required=True)
         parser.add_argument(f"--{name}-ts", required=True)
-    parser.add_argument("--apply-one", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--apply-one", action="store_true")
+    mode.add_argument("--plan-batch", action="store_true", help="read-only live diff before a batch")
+    mode.add_argument("--apply-batch", action="store_true")
     parser.add_argument("--canary-role", choices=SOURCE)
     parser.add_argument("--canary-day")
     parser.add_argument("--canary-key")
+    parser.add_argument("--through-day", help="last historical Kuwait day eligible for a batch")
+    parser.add_argument("--limit", type=int, help="maximum inserts in one guarded batch, 1 to 25")
     parser.add_argument("--env-path", type=Path, default=DEFAULT_ENV)
     args = parser.parse_args(argv)
     snapshots = {
@@ -168,35 +194,112 @@ def main(argv: list[str] | None = None) -> int:
     report = checks.reconcile(snapshots["media_buyer"], snapshots["csm"], snapshots["creative"])
     if not report["safe_to_backfill_selected_rows"]:
         raise ValueError("CSM mirror has keys missing from client success; no write allowed")
-    print(json.dumps({"DRY_RUN": not args.apply_one, "ownership": report, "bulk_write_supported": False}))
-    if not args.apply_one:
+    print(json.dumps({
+        "DRY_RUN": not (args.apply_one or args.apply_batch),
+        "ownership": report,
+        "max_batch_rows": 25,
+    }))
+    if not args.apply_one and not args.apply_batch and not args.plan_batch:
         return 0
-    if not all((args.canary_role, args.canary_day, args.canary_key)):
-        raise ValueError("--apply-one requires --canary-role, --canary-day, and --canary-key")
     selected = {
         "media_buyer": [row for row in snapshots["media_buyer"] if row.get("role") == "media_buyer"],
         "csm": snapshots["csm"],
         "creative": snapshots["creative"],
     }
-    matches = [
-        row for row in selected[args.canary_role]
-        if row["day"] == args.canary_day and row["key"] == args.canary_key
-    ]
-    if len(matches) != 1:
-        raise ValueError("Canary must select exactly one authoritative check")
-    snapshot_ts = {
+    snapshot_ts_by_role = {
         "media_buyer": args.media_buyer_ts,
         "csm": args.client_success_ts,
         "creative": args.creative_ts,
-    }[args.canary_role]
-    if not snapshot_ts.isdigit():
-        raise ValueError("Snapshot timestamp must contain only digits")
-    expected = build_row(matches[0], args.canary_role, snapshot_ts)
+    }
+    if any(not value.isdigit() for value in snapshot_ts_by_role.values()):
+        raise ValueError("Snapshot timestamps must contain only digits")
+
+    if args.apply_one:
+        if not all((args.canary_role, args.canary_day, args.canary_key)):
+            raise ValueError("--apply-one requires --canary-role, --canary-day, and --canary-key")
+        matches = [
+            row for row in selected[args.canary_role]
+            if row["day"] == args.canary_day and row["key"] == args.canary_key
+        ]
+        if len(matches) != 1:
+            raise ValueError("Canary must select exactly one authoritative check")
+        expected = build_row(matches[0], args.canary_role, snapshot_ts_by_role[args.canary_role])
+    else:
+        if args.limit is None or not 1 <= args.limit <= 25 or not args.through_day:
+            raise ValueError("Batch planning/apply requires --limit 1..25 and --through-day")
+        cutoff = date.fromisoformat(args.through_day)
+        kuwait_today = datetime.now(timezone(timedelta(hours=3))).date()
+        if cutoff >= kuwait_today:
+            raise ValueError("Batch cutoff must be strictly before the current Kuwait day")
+
     if read_env_value(args.env_path, "SUPABASE_URL") != PROJECT_URL:
         raise ValueError("SUPABASE_URL is not Creative Triage")
     key = read_env_value(args.env_path, "SUPABASE_SERVICE_ROLE_KEY")
     if not key:
         raise ValueError("SUPABASE_SERVICE_ROLE_KEY is missing")
+
+    if args.apply_batch or args.plan_batch:
+        expected_rows = sorted(
+            (
+                build_row(doc, role, snapshot_ts_by_role[role])
+                for role, docs in selected.items()
+                for doc in docs
+                if date.fromisoformat(doc["day"]) <= cutoff
+            ),
+            key=lambda row: (row["day"], row["role"], row["check_key"]),
+        )
+        if len(expected_rows) >= 1000:
+            raise ValueError("Batch preflight is limited to fewer than 1000 historical rows")
+        all_remote = request_json(f"{PROJECT_URL}/rest/v1/cockpit_daily_checks?select=*&limit=1000", key)
+        if len(all_remote) >= 1000:
+            raise RuntimeError("Supabase checks query reached its limit; no batch write allowed")
+        by_source = {}
+        by_logical = {}
+        for row in all_remote:
+            source_key = (row["source_deployment"], row["source_id"])
+            logical_key = (row["role"], row["day"], row["check_key"])
+            if source_key in by_source or logical_key in by_logical:
+                raise RuntimeError("Duplicate Supabase check identity in batch preflight")
+            by_source[source_key] = row
+            by_logical[logical_key] = row
+
+        canary_key = ("csm", "2026-09-14", "sprint_1")
+        canary = by_logical.get(canary_key)
+        if not canary or not canary["done"] or canary["source_deployment"] != SOURCE["csm"][1]:
+            raise RuntimeError("The checked CSM canary is not present; no batch write allowed")
+
+        planned = []
+        existing_count = 0
+        for row in expected_rows:
+            source_key = (row["source_deployment"], row["source_id"])
+            logical_key = (row["role"], row["day"], row["check_key"])
+            source_match = by_source.get(source_key)
+            logical_match = by_logical.get(logical_key)
+            if source_match or logical_match:
+                if not source_match or not logical_match or source_match["id"] != logical_match["id"]:
+                    raise RuntimeError("Supabase source/logical check identity conflict; no batch write allowed")
+                verify_row(row, source_match)
+                existing_count += 1
+            else:
+                planned.append(row)
+        print(json.dumps({
+            "DRY_RUN": args.plan_batch,
+            "eligible_historical_rows": len(expected_rows),
+            "already_verified": existing_count,
+            "planned_missing": len(planned),
+            "this_run": min(args.limit, len(planned)),
+            "through_day": args.through_day,
+            "first_planned": [
+                {"role": row["role"], "day": row["day"], "key": row["check_key"]}
+                for row in planned[:args.limit]
+            ],
+        }))
+        if args.plan_batch:
+            return 0
+        for row in planned[:args.limit]:
+            insert_and_verify(row, key)
+        print(f"Verified {min(args.limit, len(planned))} historical check inserts and their audit rows.")
+        return 0
 
     by_source = remote_rows(key, source_deployment=expected["source_deployment"], source_id=expected["source_id"])
     by_logical = remote_rows(key, role=expected["role"], day=expected["day"], check_key=expected["check_key"])
@@ -213,23 +316,7 @@ def main(argv: list[str] | None = None) -> int:
         "Planned database change: insert one authoritative "
         f"{expected['role']} check for {expected['day']} / {expected['check_key']}."
     )
-    endpoint = f"{PROJECT_URL}/rest/v1/cockpit_daily_checks?on_conflict=source_deployment,source_id"
-    request_json(endpoint, key, method="POST", body=expected)
-    written = remote_rows(key, source_deployment=expected["source_deployment"], source_id=expected["source_id"])
-    if len(written) != 1:
-        raise RuntimeError("Single-row checks write was not visible on read-back")
-    verify_row(expected, written[0])
-    audits = request_json(
-        f"{PROJECT_URL}/rest/v1/cockpit_audit_log?" + urllib.parse.urlencode({
-            "entity_type": "eq.cockpit_daily_checks",
-            "entity_id": f"eq.{written[0]['id']}",
-            "action": "eq.INSERT",
-            "select": "id",
-        }),
-        key,
-    )
-    if len(audits) != 1:
-        raise RuntimeError("Selected check was written but exactly one INSERT audit was not found")
+    insert_and_verify(expected, key)
     print("One authoritative historical check and its INSERT audit verified. No bulk import performed.")
     return 0
 
