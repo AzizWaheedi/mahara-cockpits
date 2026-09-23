@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
-import logo from "../assets/mahara-logo.png";
+import logo from "../assets/mahara-logo-dark.png";
 import { supabase } from "../lib/supabase";
 import "../review.css";
 

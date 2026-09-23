@@ -1,8 +1,17 @@
+import logoOnDark from "../assets/mahara-logo-dark.png";
+import logoOnLight from "../assets/mahara-logo-light.png";
+
 /**
- * The Mahara Media wordmark, set in Geist until the logo files are dropped
- * into /public (brand guidelines §2, §3): tight tracking, "MEDIA" spaced out
- * in mono, teal only on the mark, never as a fill.
+ * The Mahara Media logo: the real wordmark from Brand Guidelines v1.0
+ * (page 6), not a typeset imitation of it. MAHARA in teal; MEDIA in white
+ * on dark surfaces, as the guidelines' primary lockup, and in the official
+ * colour file's near-black on light ones. The two files swap with the
+ * theme, so the mark never disappears into its background.
+ *
+ * Kept identical in all four cockpits, so the family reads as one product.
  */
+const HEIGHT = { sm: "h-6", md: "h-7", lg: "h-10" } as const;
+
 export function Wordmark({
   size = "md",
   className = "",
@@ -10,32 +19,25 @@ export function Wordmark({
   size?: "sm" | "md" | "lg";
   className?: string;
 }) {
-  const scale =
-    size === "lg"
-      ? { word: "text-3xl", sub: "text-[11px]", mark: "size-2.5" }
-      : size === "sm"
-        ? { word: "text-base", sub: "text-[8px]", mark: "size-1.5" }
-        : { word: "text-xl", sub: "text-[9px]", mark: "size-2" };
+  const h = HEIGHT[size];
   return (
     <span
-      className={`inline-flex flex-col items-start leading-none select-none ${className}`}
+      className={`inline-flex shrink-0 select-none items-center ${className}`}
       role="img"
       aria-label="Mahara Media"
     >
-      <span
-        className={`${scale.word} font-semibold tracking-[-0.04em] text-foreground inline-flex items-center gap-1.5`}
-      >
-        MAHARA
-        <span
-          className={`${scale.mark} rounded-full bg-mahara-teal shadow-[0_0_10px_var(--mahara-teal)]`}
-          aria-hidden
-        />
-      </span>
-      <span
-        className={`${scale.sub} font-mono font-medium tracking-[0.32em] text-muted-foreground uppercase mt-1`}
-      >
-        Media
-      </span>
+      <img
+        src={logoOnLight}
+        alt=""
+        draggable={false}
+        className={`${h} w-auto dark:hidden`}
+      />
+      <img
+        src={logoOnDark}
+        alt=""
+        draggable={false}
+        className={`${h} hidden w-auto dark:block`}
+      />
     </span>
   );
 }
