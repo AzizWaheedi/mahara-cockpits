@@ -12,7 +12,13 @@ import { cleanDosDonts } from "./dosDonts";
 import { flush } from "./health";
 import { loadSheetCache, type SheetCache, saveSheetCache } from "./sheetCache";
 import { CLIENTS_LIST, CONTENT_LIST, CREATIVE_LIST, VIDEO_LIST } from "./sync";
-import { callTool, googleAccessToken, graph, unwrap } from "./tools";
+import {
+  callTool,
+  creativeRequestRest,
+  googleAccessToken,
+  graph,
+  unwrap,
+} from "./tools";
 
 /**
  * Feed the other two cockpits.
@@ -641,7 +647,167 @@ async function gatherCreative(clients: Any[]) {
       };
     });
 
-  return { tasks, videos, posts };
+  const requestLinks = ((video?.tasks ?? []) as Any[]).flatMap(t => {
+    const brief = String(t.description ?? t.text_content ?? "");
+    const scriptTaskId = brief.match(
+      /Script task:\s*https?:\/\/app\.clickup\.com\/t\/([\w-]+)/i,
+    )?.[1];
+    if (!scriptTaskId) return [];
+    const f = fieldsOf(t);
+    return [
+      {
+        scriptTaskId,
+        editorTaskId: String(t.id),
+        editorTaskUrl: String(t.url ?? `https://app.clickup.com/t/${t.id}`),
+        assetUrl:
+          typeof f["Edited Video Link"] === "string"
+            ? f["Edited Video Link"]
+            : null,
+      },
+    ];
+  });
+  return { tasks, videos, posts, requestLinks };
+}
+
+/** Match only exact ClickUp task ids carried through the existing handoff. */
+async function reconcileCreativeRequests(
+  tasks: Any[],
+  requestLinks: {
+    scriptTaskId: string;
+    editorTaskId: string;
+    editorTaskUrl: string;
+    assetUrl: string | null;
+  }[],
+): Promise<void> {
+  type Request = {
+    id: string;
+    campaign_name: string;
+    script_task_id: string | null;
+    status: string;
+    editor_task_id: string | null;
+    asset_url: string | null;
+    last_error: string | null;
+  };
+  const params = new URLSearchParams({
+    select:
+      "id,campaign_name,script_task_id,status,editor_task_id,asset_url,last_error",
+    status: "not.in.(reviewed,cancelled)",
+    limit: "100",
+  });
+  const requests = await creativeRequestRest<Request[]>(
+    `cockpit_creative_requests?${params}`,
+  );
+  const scriptById = new Map(tasks.map(task => [String(task.taskId), task]));
+  type EditorLink = (typeof requestLinks)[number];
+  const videosByScript = new Map<string, Map<string, EditorLink>>();
+  const addVideo = (link: EditorLink) => {
+    const tasks =
+      videosByScript.get(link.scriptTaskId) ?? new Map<string, EditorLink>();
+    const previous = tasks.get(link.editorTaskId);
+    tasks.set(link.editorTaskId, {
+      ...previous,
+      ...link,
+      assetUrl: link.assetUrl ?? previous?.assetUrl ?? null,
+    });
+    videosByScript.set(link.scriptTaskId, tasks);
+  };
+  for (const link of requestLinks) addVideo(link);
+  // The editor desk also stores the exact source script task id. Its record
+  // wins when ClickUp's video brief was edited and lost the original URL.
+  let editorJobs: {
+    task_id: string;
+    script_task_id: string | null;
+    edited_url: string | null;
+    url: string | null;
+  }[] = [];
+  try {
+    editorJobs = await creativeRequestRest<typeof editorJobs>(
+      "editor_jobs?select=task_id,script_task_id,edited_url,url&script_task_id=not.is.null&limit=500",
+    );
+  } catch (error) {
+    console.warn(`editor job request links: ${String(error).slice(0, 160)}`);
+  }
+  for (const job of editorJobs) {
+    if (!job.script_task_id) continue;
+    addVideo({
+      scriptTaskId: job.script_task_id,
+      editorTaskId: job.task_id,
+      editorTaskUrl: job.url ?? `https://app.clickup.com/t/${job.task_id}`,
+      assetUrl: job.edited_url,
+    });
+  }
+  for (const request of requests) {
+    const recoveredTasks = request.script_task_id
+      ? []
+      : tasks.filter(task =>
+          String(task.script ?? "").includes(`Creative request: ${request.id}`),
+        );
+    const recovered = recoveredTasks.length === 1 ? recoveredTasks[0] : null;
+    const scriptTaskId =
+      request.script_task_id ?? (recovered ? String(recovered.taskId) : "");
+    const task = scriptById.get(scriptTaskId);
+    const videoChoices = [
+      ...(videosByScript.get(scriptTaskId)?.values() ?? []),
+    ];
+    const video =
+      videoChoices.length === 1
+        ? videoChoices[0]
+        : videoChoices.find(
+            link => link.editorTaskId === request.editor_task_id,
+          );
+    const completed =
+      task &&
+      ["complete", "closed", "done", "live 🚀"].includes(
+        String(task.status ?? "").toLowerCase(),
+      );
+    const patch: Record<string, unknown> = {};
+    if (recovered) {
+      patch.script_task_id = scriptTaskId;
+      patch.script_task_url =
+        recovered.url ?? `https://app.clickup.com/t/${scriptTaskId}`;
+      patch.last_error = null;
+    }
+    const ambiguity =
+      "Several editor tasks refer to this script. Check which cut belongs to this request.";
+    if (videoChoices.length > 1 && !video && request.last_error !== ambiguity)
+      patch.last_error = ambiguity;
+    if (video && request.last_error === ambiguity) patch.last_error = null;
+    if (video && video.editorTaskId !== request.editor_task_id) {
+      patch.editor_task_id = video.editorTaskId;
+      patch.editor_task_url = video.editorTaskUrl;
+    }
+    if (video?.assetUrl && video.assetUrl !== request.asset_url)
+      patch.asset_url = video.assetUrl;
+    if (!["launched", "reviewed"].includes(request.status)) {
+      const next = video?.assetUrl
+        ? "asset_ready"
+        : video
+          ? "editing"
+          : completed
+            ? "script_ready"
+            : "requested";
+      if (next !== request.status) patch.status = next;
+    }
+    if (Object.keys(patch).length === 0) continue;
+    const pilot = process.env.CREATIVE_REQUEST_PILOT_CAMPAIGN ?? "";
+    const dryRun = process.env.CREATIVE_REQUEST_LINKS_DRY_RUN !== "false";
+    if (
+      dryRun ||
+      !pilot ||
+      (pilot !== "*" && pilot !== request.campaign_name)
+    ) {
+      console.info(
+        `creative request link dry run: ${request.id} ${JSON.stringify(patch)}`,
+      );
+      continue;
+    }
+    patch.last_actor = "system";
+    patch.updated_at = new Date().toISOString();
+    await creativeRequestRest(`cockpit_creative_requests?id=eq.${request.id}`, {
+      method: "PATCH",
+      body: patch,
+    });
+  }
 }
 
 // --- Funnels: one row per destination per ad account ---------------------------
@@ -954,7 +1120,16 @@ export const feedCreative = internalAction({
 
     try {
       const cre = await gatherCreative(roster);
-      report.boards = await bridge("creative", "storeCreative", cre);
+      report.boards = await bridge("creative", "storeCreative", {
+        tasks: cre.tasks,
+        videos: cre.videos,
+        posts: cre.posts,
+      });
+      try {
+        await reconcileCreativeRequests(cre.tasks, cre.requestLinks);
+      } catch (error) {
+        console.warn(`creative request links: ${String(error).slice(0, 180)}`);
+      }
     } catch (e) {
       fail("boards", e);
     }

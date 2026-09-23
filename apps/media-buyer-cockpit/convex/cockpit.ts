@@ -8,7 +8,7 @@ import {
 } from "./_generated/server";
 import { CPL_GATE } from "./constants";
 import { authenticatedMutation, authenticatedQuery } from "./functions";
-import { scopeFilter } from "./gate";
+import { assertScope, emailOf, scopeFilter } from "./gate";
 import { flush, note } from "./health";
 import { allowedClients, assertRole } from "./roles";
 import {
@@ -432,9 +432,19 @@ export const logManualChange = authenticatedMutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     await assertRole(ctx, "media_buyer");
+    await assertScope(ctx, { campaignName: args.campaignName });
+    const campaign = await ctx.db
+      .query("campaigns")
+      .filter(q => q.eq(q.field("campaignName"), args.campaignName))
+      .first();
+    if (!campaign) throw new Error("That campaign is not on the board.");
+    const what = args.what.trim();
+    if (!what || what.length > 500)
+      throw new Error("Describe the change in 500 characters or fewer.");
     const id = await ctx.db.insert("manualChanges", {
       ...args,
-      by: "Media buyer",
+      what,
+      by: await emailOf(ctx),
       at: Date.now(),
     });
     await ctx.scheduler.runAfter(0, internal.writeback.logManualChange, { id });

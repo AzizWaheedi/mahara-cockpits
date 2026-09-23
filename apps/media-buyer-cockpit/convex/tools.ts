@@ -30,6 +30,56 @@ function env(name: string): string {
   return value;
 }
 
+/** Server-only Creative Triage request link store. Never sent to the browser. */
+export async function creativeRequestRest<T>(
+  path: string,
+  options: {
+    method?: "GET" | "POST" | "PATCH";
+    body?: unknown;
+    prefer?: string;
+  } = {},
+): Promise<T> {
+  const base = (process.env.SUPABASE_URL ?? "").replace(/\/+$/, "");
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+  if (base !== "https://bldgtotkfmhoxmlzowdx.supabase.co" || !key) {
+    note("supabase", false, "creative request store is not configured");
+    throw new Error(
+      "Creative requests are not connected to the shared cockpit store.",
+    );
+  }
+  const url = `${base}/rest/v1/${path}`;
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: options.method ?? "GET",
+      headers: {
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+        Accept: "application/json",
+        ...(options.body === undefined
+          ? {}
+          : { "Content-Type": "application/json" }),
+        ...(options.prefer ? { Prefer: options.prefer } : {}),
+      },
+      ...(options.body === undefined
+        ? {}
+        : { body: JSON.stringify(options.body) }),
+    });
+  } catch (error) {
+    note("supabase", false, "creative request store network error");
+    throw error;
+  }
+  if (!response.ok) {
+    note("supabase", false, `creative request store HTTP ${response.status}`);
+    throw new Error(
+      `Creative request store refused the operation (${response.status}).`,
+    );
+  }
+  note(sourceFor(url), true);
+  const body = await response.text();
+  return (body ? JSON.parse(body) : null) as T;
+}
+
 // biome-ignore lint/suspicious/noExplicitAny: HTTP bodies are untyped
 async function bodyOf(res: Response): Promise<any> {
   const text = await res.text();

@@ -251,11 +251,15 @@ export const getManualChange = internalQuery({
 });
 
 export const markChangeLogged = internalMutation({
-  args: { id: v.id("manualChanges") },
+  args: { id: v.id("manualChanges"), taskId: v.string() },
   returns: v.null(),
-  handler: async (ctx, { id }) => {
+  handler: async (ctx, { id, taskId }) => {
     const m = await ctx.db.get(id);
-    if (m) await ctx.db.patch(id, { clickupTaskId: m.clickupTaskId });
+    if (m)
+      await ctx.db.patch(id, {
+        clickupTaskId: taskId,
+        clickupLoggedAt: Date.now(),
+      });
     return null;
   },
 });
@@ -472,7 +476,7 @@ export const logManualChange = internalAction({
     const m = await ctx.runQuery(internal.writeback.getManualChange, { id });
     if (!m?.taskId) return null;
     try {
-      await post(
+      const posted = await post(
         ctx,
         `https://api.clickup.com/api/v2/task/${m.taskId}/comment`,
         {
@@ -487,7 +491,12 @@ export const logManualChange = internalAction({
           notify_all: false,
         },
       );
-      await ctx.runMutation(internal.writeback.markChangeLogged, { id });
+      if (posted) {
+        await ctx.runMutation(internal.writeback.markChangeLogged, {
+          id,
+          taskId: m.taskId,
+        });
+      }
     } catch {
       // The cockpit entry stands even if ClickUp is down.
     }

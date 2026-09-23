@@ -2527,35 +2527,46 @@ async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
     `ad performance rows: ${ads.length}, ${adsWithCreative} with a Meta picture`,
   );
 
-  // Who changed what in each account over the last 7 days.
+  // Who changed what in each campaign over the last 14 days. Meta activities
+  // belong to an account; use the object id to avoid showing one campaign's
+  // edits under every other campaign in that account.
   // biome-ignore lint/suspicious/noExplicitAny: change rows
   const adChanges: any[] = [];
   try {
-    const byAct = new Map<string, string[]>();
+    const byObject = new Map<string, string>();
     for (const c of campaigns) {
-      if (!c.metaAccountId) continue;
-      const list = byAct.get(c.metaAccountId) ?? [];
-      list.push(c.campaignName);
-      byAct.set(c.metaAccountId, list);
+      if (c.metaCampaignId)
+        byObject.set(String(c.metaCampaignId), c.campaignName);
     }
+    for (const node of metaTree)
+      byObject.set(String(node.metaId), node.campaignName);
     for (const r of await supabaseQuery(`
-        select meta_ad_account_id, event_time, actor_name, event_type,
-               translated_event_type, object_name, object_type
+        select activity_hash, meta_ad_account_id, event_time, actor_name,
+               event_type, translated_event_type, object_id, object_name, object_type
         from ad_account_activities
-        where event_time >= now() - interval '7 days'
-        order by event_time desc limit 400
+        where event_time >= now() - interval '14 days'
+        order by event_time desc limit 1500
       `)) {
-      const act = String(r.meta_ad_account_id ?? "").replace("act_", "");
-      for (const cn of byAct.get(act) ?? []) {
-        adChanges.push({
-          campaignName: cn,
-          at: Date.parse(String(r.event_time)),
-          actor: r.actor_name ? String(r.actor_name) : undefined,
-          eventType: String(r.translated_event_type ?? r.event_type ?? ""),
-          objectName: r.object_name ? String(r.object_name) : undefined,
-          objectType: r.object_type ? String(r.object_type) : undefined,
-        });
-      }
+      const objectId = String(r.object_id ?? "");
+      const campaignName = byObject.get(objectId);
+      if (!campaignName) continue;
+      const campaign = campaigns.find(c => c.campaignName === campaignName);
+      if (
+        !campaign ||
+        String(campaign.metaAccountId ?? "").replace(/^act_/, "") !==
+          String(r.meta_ad_account_id ?? "").replace(/^act_/, "")
+      )
+        continue;
+      adChanges.push({
+        campaignName,
+        at: Date.parse(String(r.event_time)),
+        activityHash: r.activity_hash ? String(r.activity_hash) : undefined,
+        objectId,
+        actor: r.actor_name ? String(r.actor_name) : undefined,
+        eventType: String(r.translated_event_type ?? r.event_type ?? ""),
+        objectName: r.object_name ? String(r.object_name) : undefined,
+        objectType: r.object_type ? String(r.object_type) : undefined,
+      });
     }
   } catch {
     // The change feed is a bonus; never fail the sync over it.

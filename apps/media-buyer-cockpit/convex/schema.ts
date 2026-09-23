@@ -249,6 +249,8 @@ const schema = defineSchema({
   adChanges: defineTable({
     campaignName: v.string(),
     at: v.number(),
+    activityHash: v.optional(v.string()),
+    objectId: v.optional(v.string()),
     actor: v.optional(v.string()),
     eventType: v.string(),
     objectName: v.optional(v.string()),
@@ -330,6 +332,7 @@ const schema = defineSchema({
     by: v.string(),
     at: v.number(),
     clickupTaskId: v.optional(v.string()),
+    clickupLoggedAt: v.optional(v.number()),
   })
     .index("by_campaign", ["campaignName"])
     .index("by_at", ["at"]),
