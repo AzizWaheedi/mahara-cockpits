@@ -41,6 +41,8 @@ if [ -f apps/media-buyer-cockpit/scripts/webinar.test.ts ]; then
   (cd apps/media-buyer-cockpit && bun test scripts/webinar.test.ts >/dev/null 2>&1) \
     || { echo "the webinar room tests fail"; exit 1; }
 fi
+DEPLOYED_CONVEX=0
+
 ship() {
   local app="$1"
   local SITE dir url
@@ -53,6 +55,13 @@ ship() {
     video-editor)    dir=apps/video-editor-cockpit;      url=; SITE=https://cockpit.maharamedia.com/editor ;;
     *) echo "unknown app: $app"; exit 2 ;;
   esac
+
+  # Under Supabase cutover (USE_SUPABASE=1 or COCKPITS_BACKEND=supabase),
+  # cockpits operate directly on Supabase with no Convex backend.
+  if [ "${COCKPITS_BACKEND:-}" = "supabase" ] || [ "${USE_SUPABASE:-}" = "1" ]; then
+    url=""
+  fi
+
   # The CLI upload stamps local HEAD and does not check GitHub. Refuse a
   # commit main does not have, a dirty app directory, or a production SHA
   # this clone cannot see (2026-09-22, cockpit.maharamedia.com on 7efca15f).
@@ -73,6 +82,9 @@ ship() {
   if [ -n "$url" ]; then
     echo "== $app: backend"
     (cd "$dir" && bunx convex deploy --yes --typecheck enable)
+    DEPLOYED_CONVEX=1
+  else
+    echo "== $app: backend (Supabase direct, skipping Convex deploy)"
   fi
   # What the site serves right now, so the check after the deploy compares
   # the page against itself rather than against a local build. Vercel builds
@@ -83,7 +95,14 @@ ship() {
   was=$(curl -fsS -m 20 -H 'Cache-Control: no-cache' "$SITE/?cb=$RANDOM" 2>/dev/null \
         | grep -oE 'index-[A-Za-z0-9_-]+\.js' | head -1)
   echo "== $app: site"
-  (cd "$dir" && VITE_CONVEX_URL="$url" bun run build)
+  if [ -n "$url" ]; then
+    (cd "$dir" && VITE_CONVEX_URL="$url" bun run build)
+  else
+    local -a sup_env=()
+    [ -n "${VITE_SUPABASE_URL:-}" ] && sup_env+=(VITE_SUPABASE_URL="$VITE_SUPABASE_URL")
+    [ -n "${VITE_SUPABASE_ANON_KEY:-}" ] && sup_env+=(VITE_SUPABASE_ANON_KEY="$VITE_SUPABASE_ANON_KEY")
+    (cd "$dir" && VITE_CONVEX_URL="" ${sup_env[@]+"${sup_env[@]}"} bun run build)
+  fi
   # The Vercel CLI prints JSON when not on a terminal and can exit 0 without a
   # production deployment (seen 2026-09-18: the creative site kept the old
   # bundle while the log showed one "}"), so the confirmation is checked, not
@@ -148,7 +167,11 @@ case "${1:-all}" in
 esac
 
 echo "== smoke check"
-if [ "${SHIP_SMOKE_READ_ONLY:-}" = 1 ]; then
+if [ "${COCKPITS_BACKEND:-}" = "supabase" ] || [ "${USE_SUPABASE:-}" = "1" ] || [ "${DEPLOYED_CONVEX:-0}" -eq 0 ]; then
+  py_bin="python3"
+  command -v python3 >/dev/null 2>&1 || py_bin="python"
+  "$py_bin" scripts/verify-cutover-readiness.py
+elif [ "${SHIP_SMOKE_READ_ONLY:-}" = 1 ]; then
   # A migration release must not send the failure alert to Slack without a
   # separately approved outward action. The local query checks the live page.
   (cd apps/media-buyer-cockpit && bunx convex run --prod smoke:local | grep -E '"ok"|failures' | head -5)

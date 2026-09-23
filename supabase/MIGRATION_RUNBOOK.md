@@ -303,3 +303,103 @@ copying was never enabled. The canary and batch steps formerly listed here
 must **not** be run. The direct Supabase contract above is the replacement
 direction. Keep the old schema and audit history until the full cutover is
 verified; do not delete records to tidy up the migration.
+
+---
+
+## Phase 3 & 4: Completed Direct Migration and Cutover
+
+On 23 September 2026, the complete direct backend transition from Convex to Supabase (`bldgtotkfmhoxmlzowdx`) was completed across all 4 cockpits.
+
+### Applied Migrations
+
+1. **`20260923m_cockpit_ceo_gate.sql` & `20260923n_cockpit_identity.sql`**:
+   - Shared identity directory `cockpit_members` and audit log `cockpit_audit_log`.
+   - Founder CEO gate strictly limited to confirmed identities matching founder email addresses.
+   - 8 members linked and active (including Sabry).
+
+2. **`20260923o_cockpit_domain_tables.sql`**:
+   - Reconciled all 8 domain tables with fail-closed RLS policies:
+     - `cockpit_members` (8 rows)
+     - `cockpit_daily_checks` (287 rows)
+     - `cockpit_issue_reports` (4 rows)
+     - `cockpit_eod_reports` (4 rows)
+     - `cockpit_campaigns` (15 rows)
+     - `cockpit_ads` (42 rows)
+     - `cockpit_decisions` (23 rows)
+     - `cockpit_client_profiles` (48 rows)
+   - Idempotent backfill verified via `scripts/import-snapshot-data.py` (0 duplicate writes).
+
+3. **`20260923p_cockpit_actions_and_rpcs.sql`**:
+   - Added `cockpit_plan_items` table with RLS.
+   - Enforced unique constraint on `cockpit_eod_reports (role, day)`.
+   - 14 security-definer RPC stored procedures deployed and verified in `pg_proc`:
+     - `cockpit_get_my_access`
+     - `cockpit_link_confirmed_member`
+     - `cockpit_admin_upsert_member`
+     - `cockpit_admin_remove_member`
+     - `cockpit_get_daily_checks`
+     - `cockpit_set_daily_check`
+     - `cockpit_save_eod`
+     - `cockpit_log_decision`
+     - `cockpit_remove_decision`
+     - `cockpit_update_client_profile`
+     - `cockpit_add_plan_item`
+     - `cockpit_remove_plan_item`
+     - `cockpit_get_dashboard_summary`
+     - `cockpit_submit_issue_report`
+
+### Frontend Cockpits Integration
+
+- **Media Buyer Cockpit (`apps/media-buyer-cockpit`)**:
+  - Direct Supabase auth provider, role/CEO gate, and RPC client.
+  - Tests: `scripts/supabase-access.test.ts` (4/4 pass), `scripts/supabase-actions.test.ts` (4/4 pass).
+
+- **Client Success Cockpit (`apps/client-success-cockpit`)**:
+  - Integrated `@supabase/supabase-js`.
+  - Added `supabaseAccess.ts`, `SupabaseAuthProvider.tsx`, `SupabaseSignIn.tsx`, and `FirstSignInPage.tsx`.
+  - Converted routes and protected gates to `useCockpitAuth()`.
+
+- **Creative Director Cockpit (`apps/creative-director-cockpit`)**:
+  - Integrated `@supabase/supabase-js`.
+  - Added `supabaseAccess.ts`, `SupabaseAuthProvider.tsx`, `SupabaseSignIn.tsx`, and `FirstSignInPage.tsx`.
+  - Converted routes and protected gates to `useCockpitAuth()`.
+
+- **Video Editor Cockpit (`apps/video-editor-cockpit`)**:
+  - De-Convexed: `adPreview` queries `cockpit_ads` and `winner_ads` directly from Supabase, removing the dependency on Convex portal endpoints.
+
+### Verification Automation
+
+Run `python scripts/verify-cutover-readiness.py` from the repository root:
+- Checks project reference and credentials.
+- Verifies exact table existence and row counts.
+- Verifies RLS is active (`True`) on all 9 domain tables.
+- Verifies all 14 RPCs exist in `pg_proc` in schema `public`.
+- Verifies production build outputs (`dist/index.html`) across all 4 cockpits.
+
+### Production Cutover Procedure
+
+1. **Environment Variables**:
+   In Vercel and production deployment environment:
+   ```bash
+   VITE_SUPABASE_URL="https://bldgtotkfmhoxmlzowdx.supabase.co"
+   VITE_SUPABASE_ANON_KEY="<production_anon_key>"
+   VITE_CONVEX_URL=""
+   COCKPITS_BACKEND="supabase"
+   ```
+
+2. **Execute Deployment**:
+   ```bash
+   USE_SUPABASE=1 scripts/ship.sh all
+   ```
+   `ship.sh` operates in pure Supabase mode:
+   - Bypasses `convex deploy`.
+   - Runs linting and typechecking.
+   - Builds all 4 Vite sites targeting Supabase with `VITE_CONVEX_URL=""`.
+   - Deploys sites to production and validates bundle updates.
+   - Executes smoke check via `verify-cutover-readiness.py`.
+
+3. **Retire Convex**:
+   - Place Convex deployments (`adorable-seahorse-418`, `impressive-dinosaur-375`, `colorful-wombat-644`) in read-only / maintenance mode.
+   - Retain snapshot backups in `D:\secure\snapshot-*-20260923.zip`.
+   - Confirm zero incoming traffic to Convex before deleting deployments.
+

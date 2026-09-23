@@ -13,7 +13,7 @@ import { supabase } from "./supabase";
  */
 
 const PORTAL_URL = "https://cockpit.maharamedia.com";
-const PORTAL_SITE = "https://adorable-seahorse-418.convex.site";
+const PORTAL_SITE = "https://bldgtotkfmhoxmlzowdx.supabase.co";
 const OWN_HOSTS = ["mahara-video-editor.vercel.app"];
 
 export const COCKPIT = "editor";
@@ -99,27 +99,44 @@ export interface AdPreview {
  */
 export async function adPreview(
   adId: string,
-  format?: string,
+  _format?: string,
 ): Promise<AdPreview> {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
   if (!token) return { ok: false, error: "Sign in again to load previews." };
   try {
-    const res = await fetch(`${portalSite()}/portal/editor-preview`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ adId, format }),
-    });
-    const body = (await res.json().catch(() => null)) as AdPreview | null;
-    if (!res.ok || !body?.ok)
+    const { data: ad } = await supabase
+      .from("cockpit_ads")
+      .select("still_url, thumbnail_url")
+      .eq("meta_ad_id", adId)
+      .maybeSingle();
+
+    if (ad && (ad.still_url || ad.thumbnail_url)) {
       return {
-        ok: false,
-        error: body?.error ?? `the portal answered ${res.status}`,
+        ok: true,
+        stillUrl: ad.still_url ?? undefined,
+        thumbUrl: ad.thumbnail_url ?? undefined,
       };
-    return body;
+    }
+
+    const { data: winner } = await supabase
+      .from("winner_ads")
+      .select("thumbnail_url")
+      .eq("ad_id", adId)
+      .maybeSingle();
+
+    if (winner?.thumbnail_url) {
+      return {
+        ok: true,
+        thumbUrl: winner.thumbnail_url ?? undefined,
+      };
+    }
+
+    return {
+      ok: true,
+      stillUrl: undefined,
+      thumbUrl: undefined,
+    };
   } catch (e) {
     return { ok: false, error: String((e as Error).message ?? e) };
   }
