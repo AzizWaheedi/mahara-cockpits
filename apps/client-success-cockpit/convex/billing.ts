@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalQuery } from "./_generated/server";
 import {
@@ -33,6 +33,32 @@ declare const process: { env: Record<string, string | undefined> };
  * and the CEO cockpit takes it in at its next refresh, where a payment
  * already there is caught instead of counted twice.
  */
+
+/**
+ * A refusal the screen can read. In production Convex hides the text of an
+ * error an action throws ("Server Error"), but not a ConvexError's data, so
+ * every sentence written for a person is sent as one. [2026-09-23]
+ */
+function plain(e: unknown): ConvexError<{ message: string }> {
+  if (e instanceof ConvexError) return e as ConvexError<{ message: string }>;
+  const raw = e instanceof Error ? e.message : String(e);
+  const message =
+    raw
+      .replace(/^[\s\S]*?Uncaught Error: /, "")
+      .split("\n")[0]
+      .trim()
+      .slice(0, 300) || "That did not work. Try again in a minute.";
+  return new ConvexError({ message });
+}
+
+/** Run a public action so its refusals reach the screen as written. */
+async function plainly<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    throw plain(e);
+  }
+}
 
 function env(): { token: string; url: string; key: string } {
   const token =
@@ -92,48 +118,51 @@ async function upsert(e: ReturnType<typeof env>, a: Account): Promise<void> {
 export const sheet = authenticatedAction({
   args: { fresh: v.optional(v.boolean()) },
   returns: v.any(),
-  handler: async (ctx, a): Promise<Sheet> => {
-    const w: Who = await ctx.runQuery(internal.billing.who, {
-      userId: ctx.userId,
-    });
-    const e = env();
-    if (a.fresh)
-      await mirrorAccounts(e.url, e.key, await readAccounts(e.token));
-    const s = await readSheet(e.url, e.key);
-    if (w.clients === null) return s;
-    const mine = new Set(
-      s.rows.filter(r => mayBill(w, r.name)).map(r => r.taskId),
-    );
-    const rows = s.rows.filter(r => mine.has(r.taskId));
-    return {
-      ...s,
-      rows,
-      cards: s.cards.filter(c => mine.has(c.taskId)),
-      events: s.events.filter(x => mine.has(x.clickup_task_id)),
-      inbox: s.inbox.filter(x => mine.has(String(x.clickup_task_id))),
-      // The figures are this person's clients only, like the rows.
-      totals: {
-        ...s.totals,
-        dueThisWeek: sum(
-          rows,
-          r =>
-            r.ladder.days !== null &&
-            r.ladder.days >= 0 &&
-            r.ladder.days <= 7 &&
-            r.group !== "paused",
-        ),
-        overdue: sum(
-          rows,
-          r =>
-            r.ladder.days !== null && r.ladder.days < 0 && r.group !== "paused",
-        ),
-        paused: rows.filter(r => r.group === "paused").length,
-        extended: rows.filter(r => (r.extensionWeeks ?? 0) > 0).length,
-        noMethod: rows.filter(r => r.group === "active" && !r.method).length,
-        noDate: rows.filter(r => r.group === "active" && !r.nextDate).length,
-      },
-    };
-  },
+  handler: (ctx, a): Promise<Sheet> =>
+    plainly(async () => {
+      const w: Who = await ctx.runQuery(internal.billing.who, {
+        userId: ctx.userId,
+      });
+      const e = env();
+      if (a.fresh)
+        await mirrorAccounts(e.url, e.key, await readAccounts(e.token));
+      const s = await readSheet(e.url, e.key);
+      if (w.clients === null) return s;
+      const mine = new Set(
+        s.rows.filter(r => mayBill(w, r.name)).map(r => r.taskId),
+      );
+      const rows = s.rows.filter(r => mine.has(r.taskId));
+      return {
+        ...s,
+        rows,
+        cards: s.cards.filter(c => mine.has(c.taskId)),
+        events: s.events.filter(x => mine.has(x.clickup_task_id)),
+        inbox: s.inbox.filter(x => mine.has(String(x.clickup_task_id))),
+        // The figures are this person's clients only, like the rows.
+        totals: {
+          ...s.totals,
+          dueThisWeek: sum(
+            rows,
+            r =>
+              r.ladder.days !== null &&
+              r.ladder.days >= 0 &&
+              r.ladder.days <= 7 &&
+              r.group !== "paused",
+          ),
+          overdue: sum(
+            rows,
+            r =>
+              r.ladder.days !== null &&
+              r.ladder.days < 0 &&
+              r.group !== "paused",
+          ),
+          paused: rows.filter(r => r.group === "paused").length,
+          extended: rows.filter(r => (r.extensionWeeks ?? 0) > 0).length,
+          noMethod: rows.filter(r => r.group === "active" && !r.method).length,
+          noDate: rows.filter(r => r.group === "active" && !r.nextDate).length,
+        },
+      };
+    }),
 });
 
 function sum<T extends { nextUsd: number | null }>(
@@ -176,24 +205,30 @@ const vEdit = v.union(
 export const edit = authenticatedAction({
   args: { taskId: v.string(), edit: vEdit },
   returns: v.any(),
-  handler: async (ctx, a): Promise<Account> => {
-    const w: Who = await ctx.runQuery(internal.billing.who, {
-      userId: ctx.userId,
-    });
-    const e = env();
-    const current = await readAccount(e.token, a.taskId);
-    if (!mayBill(w, current.name))
-      throw new Error(
-        `${current.name} is not one of your clients in the portal, so its billing is not yours to change.`,
+  handler: (ctx, a): Promise<Account> =>
+    plainly(async () => {
+      const w: Who = await ctx.runQuery(internal.billing.who, {
+        userId: ctx.userId,
+      });
+      const e = env();
+      const current = await readAccount(e.token, a.taskId);
+      if (!mayBill(w, current.name))
+        throw new Error(
+          `${current.name} is not one of your clients in the portal, so its billing is not yours to change.`,
+        );
+      const { next, event } = await applyEdit(
+        e.token,
+        current,
+        a.edit as Edit,
+        {
+          by: w.email,
+          source: "csm",
+        },
       );
-    const { next, event } = await applyEdit(e.token, current, a.edit as Edit, {
-      by: w.email,
-      source: "csm",
-    });
-    await upsert(e, next);
-    await logEvent(e.url, e.key, event);
-    return next;
-  },
+      await upsert(e, next);
+      await logEvent(e.url, e.key, event);
+      return next;
+    }),
 });
 
 const RAILS = ["bank_transfer", "cheque", "cash", "tap", "other"] as const;
@@ -223,73 +258,74 @@ export const logPayment = authenticatedAction({
     nextDate: v.optional(v.string()),
   },
   returns: v.string(),
-  handler: async (ctx, a): Promise<string> => {
-    const w: Who = await ctx.runQuery(internal.billing.who, {
-      userId: ctx.userId,
-    });
-    const e = env();
-    const today = kuwaitToday();
-    if (!DAY.test(a.day) || a.day > today || a.day < "2025-01-01")
-      throw new Error("Pick the day the money arrived, today or before.");
-    const wrong = amountProblem(a.amount, a.currency);
-    if (wrong) throw new Error(wrong);
-    if (!(RAILS as readonly string[]).includes(a.rail))
-      throw new Error("Pick how the money came.");
-    const evidence = (a.evidenceUrl ?? "").trim();
-    if (evidence && !/^https?:\/\/\S+$/.test(evidence))
-      throw new Error(
-        "The receipt has to be a link that opens, starting https://.",
-      );
-    // Maher's rule and the SOP's: a transfer without its photo is unpaid.
-    if (a.rail === "bank_transfer" && !evidence)
-      throw new Error(
-        "Add the link to the transfer's receipt photo first. A bank transfer without its photo counts as unpaid.",
-      );
-    if (a.nextDate && (!DAY.test(a.nextDate) || a.nextDate <= a.day))
-      throw new Error("Their next payment has to be after this one.");
+  handler: (ctx, a): Promise<string> =>
+    plainly(async () => {
+      const w: Who = await ctx.runQuery(internal.billing.who, {
+        userId: ctx.userId,
+      });
+      const e = env();
+      const today = kuwaitToday();
+      if (!DAY.test(a.day) || a.day > today || a.day < "2025-01-01")
+        throw new Error("Pick the day the money arrived, today or before.");
+      const wrong = amountProblem(a.amount, a.currency);
+      if (wrong) throw new Error(wrong);
+      if (!(RAILS as readonly string[]).includes(a.rail))
+        throw new Error("Pick how the money came.");
+      const evidence = (a.evidenceUrl ?? "").trim();
+      if (evidence && !/^https?:\/\/\S+$/.test(evidence))
+        throw new Error(
+          "The receipt has to be a link that opens, starting https://.",
+        );
+      // Maher's rule and the SOP's: a transfer without its photo is unpaid.
+      if (a.rail === "bank_transfer" && !evidence)
+        throw new Error(
+          "Add the link to the transfer's receipt photo first. A bank transfer without its photo counts as unpaid.",
+        );
+      if (a.nextDate && (!DAY.test(a.nextDate) || a.nextDate <= a.day))
+        throw new Error("Their next payment has to be after this one.");
 
-    const current = await readAccount(e.token, a.taskId);
-    if (!mayBill(w, current.name))
-      throw new Error(
-        `${current.name} is not one of your clients in the portal, so its payments are not yours to log.`,
-      );
-    const clip = (s: string | undefined, n: number) =>
-      (s ?? "").replace(/\s+/g, " ").trim().slice(0, n) || null;
-    const [row] = await sb(e.url, e.key, "cockpit_billing_inbox", {
-      method: "POST",
-      body: {
-        clickup_task_id: current.taskId,
-        client_name: current.name,
-        paid_on: a.day,
-        amount: Math.round(a.amount * 1000) / 1000,
-        currency: a.currency,
-        method: a.rail,
-        reference: clip(a.reference, 120),
-        evidence_url: evidence || null,
-        note: clip(a.note, 500),
-        source: "csm",
-        logged_by: w.email,
-      },
-      prefer: "return=representation",
-    });
+      const current = await readAccount(e.token, a.taskId);
+      if (!mayBill(w, current.name))
+        throw new Error(
+          `${current.name} is not one of your clients in the portal, so its payments are not yours to log.`,
+        );
+      const clip = (s: string | undefined, n: number) =>
+        (s ?? "").replace(/\s+/g, " ").trim().slice(0, n) || null;
+      const [row] = await sb(e.url, e.key, "cockpit_billing_inbox", {
+        method: "POST",
+        body: {
+          clickup_task_id: current.taskId,
+          client_name: current.name,
+          paid_on: a.day,
+          amount: Math.round(a.amount * 1000) / 1000,
+          currency: a.currency,
+          method: a.rail,
+          reference: clip(a.reference, 120),
+          evidence_url: evidence || null,
+          note: clip(a.note, 500),
+          source: "csm",
+          logged_by: w.email,
+        },
+        prefer: "return=representation",
+      });
 
-    let moved = "";
-    if (a.nextDate && a.nextDate !== current.nextDate) {
-      const { next, event } = await applyEdit(
-        e.token,
-        current,
-        { kind: "date", value: a.nextDate, reason: "Paid; next payment set" },
-        { by: w.email, source: "csm" },
-        today,
-      );
-      await upsert(e, next);
-      await logEvent(e.url, e.key, event);
-      moved = `, and the card says they pay next on ${a.nextDate}`;
-    }
-    const paid =
-      a.currency === "KWD"
-        ? `${a.amount.toLocaleString("en-US")} KWD`
-        : `$${a.amount.toLocaleString("en-US")}`;
-    return `Logged ${paid} from ${current.name} (inbox ${row?.id ?? "row"})${moved}. It reaches the ledger and the client's LTV at the CEO cockpit's next refresh.`;
-  },
+      let moved = "";
+      if (a.nextDate && a.nextDate !== current.nextDate) {
+        const { next, event } = await applyEdit(
+          e.token,
+          current,
+          { kind: "date", value: a.nextDate, reason: "Paid; next payment set" },
+          { by: w.email, source: "csm" },
+          today,
+        );
+        await upsert(e, next);
+        await logEvent(e.url, e.key, event);
+        moved = `, and the card says they pay next on ${a.nextDate}`;
+      }
+      const paid =
+        a.currency === "KWD"
+          ? `${a.amount.toLocaleString("en-US")} KWD`
+          : `$${a.amount.toLocaleString("en-US")}`;
+      return `Logged ${paid} from ${current.name} (inbox ${row?.id ?? "row"})${moved}. It reaches the ledger and the client's LTV at the CEO cockpit's next refresh.`;
+    }),
 });

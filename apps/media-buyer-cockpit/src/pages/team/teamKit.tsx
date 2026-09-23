@@ -135,6 +135,11 @@ export function Field({
 }
 
 export function errorText(e: unknown): string {
+  // The server sends each refusal as a ConvexError, whose data survives.
+  const data = (e as { data?: unknown } | null)?.data;
+  if (typeof data === "string") return data;
+  if (data && typeof (data as { message?: unknown }).message === "string")
+    return (data as { message: string }).message;
   const raw = e instanceof Error ? e.message : String(e);
   const m = raw.match(/Uncaught Error: ([\s\S]*?)(?:\n\s+at |$)/);
   return (

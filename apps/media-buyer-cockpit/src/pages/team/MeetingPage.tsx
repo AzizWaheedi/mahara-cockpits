@@ -609,9 +609,11 @@ function AgendaRow({
         aria-label={`Mark "${item.text}" done`}
         disabled={busy}
         onClick={() => run(onDone)}
-        className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border-2 border-muted-foreground/40 text-transparent transition-colors hover:border-primary hover:text-primary disabled:opacity-50"
+        className="group/done -my-1.5 -ml-2 flex size-9 shrink-0 self-start items-center justify-center rounded-full disabled:opacity-50"
       >
-        <Check className="size-3" aria-hidden />
+        <span className="flex size-5 items-center justify-center rounded-full border-2 border-muted-foreground/40 text-transparent transition-colors group-hover/done:border-primary group-hover/done:text-primary group-focus-visible/done:border-primary">
+          <Check className="size-3" aria-hidden />
+        </span>
       </button>
       <div className="grid min-w-0 flex-1 gap-1.5">
         {editing ? (

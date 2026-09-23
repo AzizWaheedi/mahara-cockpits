@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import { type ActionCtx, internalQuery } from "./_generated/server";
 import { rest, type SbRow } from "./ceo/sbWrite";
@@ -93,9 +93,28 @@ async function db(
   return rows;
 }
 
+/**
+ * A refusal the screen can read. In production Convex hides the text of an
+ * error an action throws ("Server Error"), but not a ConvexError's data, so
+ * every sentence written for a person is sent as one. [2026-09-23]
+ */
+function plain(e: unknown): ConvexError<{ message: string }> {
+  if (e instanceof ConvexError) return e as ConvexError<{ message: string }>;
+  const raw = e instanceof Error ? e.message : String(e);
+  const message =
+    raw
+      .replace(/^[\s\S]*?Uncaught Error: /, "")
+      .split("\n")[0]
+      .trim()
+      .slice(0, 300) || "That did not work. Try again in a minute.";
+  return new ConvexError({ message });
+}
+
 async function noted<T>(ctx: ActionCtx, fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
+  } catch (e) {
+    throw plain(e);
   } finally {
     await flush(ctx);
   }

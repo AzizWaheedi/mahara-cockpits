@@ -59,8 +59,13 @@ export function BillingTab(_: CeoTabProps) {
             ...(p.reference ? { reference: p.reference } : {}),
           });
         } catch (e) {
-          const why = e instanceof Error ? e.message : String(e);
-          return `The payment is in the ledger, but the card's next date did not move (${why.replace(/^[\s\S]*Uncaught Error: /, "").slice(0, 120)}). Move it with "Move the date".`;
+          const data = (e as { data?: { message?: string } } | null)?.data;
+          const why =
+            data?.message ??
+            (e instanceof Error ? e.message : String(e))
+              .replace(/^[\s\S]*Uncaught Error: /, "")
+              .slice(0, 120);
+          return `The payment is in the ledger, but the card's next date did not move (${why}). Move it with "Move the date".`;
         }
         const paid =
           p.currency === "KWD"
