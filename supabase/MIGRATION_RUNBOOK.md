@@ -114,3 +114,20 @@ After the first new shadow-written row and audit entry pass read-back, compare
 a later Convex snapshot with Supabase by source ID, row count, newest timestamp,
 and exceptions. Switch this read path only after sustained parity. Daily checks
 and EOD each need their own mapping, guarded backfill, and parity gate.
+
+## Next domain: daily checks ownership (read-only inventory)
+
+Before creating or backfilling a Supabase checks table, run
+`scripts/reconcile-cockpit-checks.py` against one database-only ZIP from each
+production cockpit. It never writes. The media-buyer deployment stores its own
+checks **and a second CSM copy**; client success owns the CSM human checkmarks.
+Do not union both CSM copies or let the media-buyer copy overwrite them.
+
+The 23 September snapshots selected 165 media-buyer checks, 122 client-success
+checks, and zero creative checks: 287 distinct authoritative rows. All 122 CSM
+day/key pairs appeared in both deployments. One human completion differed:
+`2026-09-14 / sprint_1` is checked in client success but not in the media-buyer
+copy. Two labels/details also differed. The tool reports these differences and
+refuses a backfill-ready result if a media-buyer CSM key is missing from the
+client-success snapshot. No checks table, backfill, or live mirror has yet been
+created in Supabase.
