@@ -737,6 +737,20 @@ export type FunnelWindow = {
   roasContracted: number | null;
   /** Every numeric key the B2B window function returned, as is. */
   raw: Record<string, number | null>;
+  /**
+   * What the webinar funnel took out of this window (2026-09-23): the spend
+   * of its campaigns, and the leads, calls and deals of anyone tagged
+   * webby-*. Zero until the webinar runs; absent on older payloads.
+   */
+  webinarOut?: {
+    spend: number;
+    leads: number;
+    callsBooked: number;
+    demosShown: number;
+    closes: number;
+    contracted: number;
+    cash: number;
+  };
 };
 
 export type GrowthDay = {

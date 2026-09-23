@@ -8,6 +8,7 @@ import { B2B, num, type Row, sql } from "../sb";
 import { workingHoursForAdapters } from "../settings";
 import { addDays, daysInMonth, kuwaitDay, monthStart } from "../time";
 import type { Adapter, DailyPoint, SourceStamp } from "../types";
+import { webbyCall, webbyCampaign, webbyDeal, webbyLead } from "../webinarSql";
 import { describeWorkingHours, workingMinutesSql } from "../workingHours";
 
 // biome-ignore lint/suspicious/noExplicitAny: the B2B functions return jsonb
@@ -152,6 +153,7 @@ still_confirmed as (
   from w
   join public.calls c on c.call_type = 'demo'
     and (c.start_at at time zone 'Asia/Riyadh')::date between w.f and w.t
+    and not ${webbyCall("c")}
   group by w.k
 ),
 roas as (
@@ -162,6 +164,7 @@ roas as (
     count(*) filter (where ${ROAS_NONE}) as untagged
   from w
   join public.leads l on (l.lead_created_at at time zone 'Asia/Riyadh')::date between w.f and w.t
+    and not ${webbyLead("l")}
   group by w.k
 ),
 speed as (
@@ -180,6 +183,7 @@ speed as (
     count(*) filter (where ${LEAD_SOURCE.assumed}) as src_assumed
   from w
   join public.leads l on ${IS_LEAD} and (l.lead_created_at at time zone 'Asia/Riyadh')::date between w.f and w.t
+    and not ${webbyLead("l")}
   cross join lateral (
     select min(m.occurred_at) as first_call from public.maqsam_calls m
     where m.occurred_at >= l.lead_created_at
@@ -196,6 +200,74 @@ fe as (
     coalesce(sum(d.cash_collected) filter (where ${DEPOSIT_CONFIRMED}), 0) as fe_confirmed
   from w
   join public.closed_deals d on (d.submitted_at at time zone 'Asia/Riyadh')::date between w.f and w.t
+    and not ${webbyDeal("d")}
+  group by w.k
+),
+-- The webinar's share of what b2b_window_metrics counts, with its exact
+-- rules, so the call funnel is the dashboard's total less the webinar.
+wb_meta as (
+  select w.k,
+    coalesce(sum(s.spend), 0) as spend,
+    coalesce(sum(s.impressions), 0) as impressions,
+    coalesce(sum(s.clicks), 0) as clicks,
+    coalesce(sum(s.inline_link_clicks), 0) as link_clicks
+  from w
+  join public.meta_ad_snapshots s on s.date between w.f and w.t
+    and public.b2b_campaign_type(s.campaign_name) = 'lead_gen'
+    and ${webbyCampaign("s")}
+  group by w.k
+),
+wb_leads as (
+  select w.k, count(*) as leads
+  from w
+  join public.leads l on l.is_lead
+    and (l.lead_created_at at time zone 'Asia/Riyadh')::date between w.f and w.t
+    and ${webbyLead("l")}
+  group by w.k
+),
+wb_calls as (
+  select w.k,
+    count(*) filter (where c.call_type='intro' and (c.booked_at at time zone 'Asia/Riyadh')::date between w.f and w.t) as intros_booked,
+    count(*) filter (where c.call_type='intro' and (c.status='showed' or (c.status in ('confirmed','invalid') and c.start_at <= now())) and (c.start_at at time zone 'Asia/Riyadh')::date between w.f and w.t) as intros_shown,
+    count(*) filter (where c.call_type='intro' and (c.status='showed' or (c.status='confirmed' and c.start_at <= now())) and (c.start_at at time zone 'Asia/Riyadh')::date between w.f and w.t) as intros_qualified,
+    count(*) filter (where c.call_type='intro' and c.status='invalid' and c.start_at <= now() and (c.start_at at time zone 'Asia/Riyadh')::date between w.f and w.t) as intros_disqualified,
+    count(*) filter (where c.call_type='intro' and c.status='cancelled' and (c.start_at at time zone 'Asia/Riyadh')::date between w.f and w.t) as intros_cancelled,
+    count(*) filter (where c.call_type='intro' and c.start_at <= now() and (c.start_at at time zone 'Asia/Riyadh')::date between w.f and w.t) as intros_due,
+    count(*) filter (where c.call_type='intro' and (c.start_at at time zone 'Asia/Riyadh')::date between w.f and w.t) as intros_scheduled,
+    count(*) filter (where c.call_type='demo' and (c.booked_at at time zone 'Asia/Riyadh')::date between w.f and w.t) as demos_booked,
+    count(*) filter (where c.call_type='demo' and (c.status='showed' or (c.status in ('confirmed','invalid') and c.start_at <= now())) and (c.start_at at time zone 'Asia/Riyadh')::date between w.f and w.t) as demos_shown,
+    count(*) filter (where c.call_type='demo' and (c.status='showed' or (c.status='confirmed' and c.start_at <= now())) and (c.start_at at time zone 'Asia/Riyadh')::date between w.f and w.t) as demos_qualified,
+    count(*) filter (where c.call_type='demo' and c.status='invalid' and c.start_at <= now() and (c.start_at at time zone 'Asia/Riyadh')::date between w.f and w.t) as demos_disqualified,
+    count(*) filter (where c.call_type='demo' and c.status='cancelled' and (c.start_at at time zone 'Asia/Riyadh')::date between w.f and w.t) as demos_cancelled,
+    count(*) filter (where c.call_type='demo' and c.start_at <= now() and (c.start_at at time zone 'Asia/Riyadh')::date between w.f and w.t) as demos_due,
+    count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between w.f and w.t) as demos_scheduled
+  from w
+  join public.calls c on ${webbyCall("c")}
+  group by w.k
+),
+wb_handoff as (
+  select w.k,
+    count(*) as shown_intros,
+    count(*) filter (where exists (
+      select 1 from public.calls d2
+      where d2.contact_id = i.contact_id and d2.call_type = 'demo' and d2.booked_at >= i.start_at
+    )) as intros_advanced
+  from w
+  join public.calls i on i.call_type = 'intro'
+    and (i.status = 'showed' or (i.status in ('confirmed','invalid') and i.start_at <= now()))
+    and (i.start_at at time zone 'Asia/Riyadh')::date between w.f and w.t
+    and ${webbyCall("i")}
+  group by w.k
+),
+wb_signed as (
+  select w.k,
+    count(*) as signed,
+    coalesce(sum(d.contracted_revenue), 0) as revenue,
+    coalesce(sum(d.cash_collected), 0) as cash_collected,
+    coalesce(sum(d.new_mrr), 0) as new_mrr
+  from w
+  join public.closed_deals d on (d.submitted_at at time zone 'Asia/Riyadh')::date between w.f and w.t
+    and ${webbyDeal("d")}
   group by w.k
 )
 select w.k, w.f::text as d_from, w.t::text as d_to,
@@ -207,12 +279,33 @@ select w.k, w.f::text as d_from, w.t::text as d_to,
   coalesce(sp.booked_leads, 0) as booked_leads,
   coalesce(sp.src_ads, 0) as src_ads, coalesce(sp.src_organic, 0) as src_organic, coalesce(sp.src_assumed, 0) as src_assumed,
   coalesce(fe.fe_deals, 0) as fe_deals, coalesce(fe.fe_deposit, 0) as fe_deposit,
-  coalesce(fe.fe_deals_confirmed, 0) as fe_deals_confirmed, coalesce(fe.fe_confirmed, 0) as fe_confirmed
+  coalesce(fe.fe_deals_confirmed, 0) as fe_deals_confirmed, coalesce(fe.fe_confirmed, 0) as fe_confirmed,
+  json_build_object(
+    'spend', coalesce(wm.spend, 0), 'impressions', coalesce(wm.impressions, 0),
+    'clicks', coalesce(wm.clicks, 0), 'link_clicks', coalesce(wm.link_clicks, 0),
+    'leads', coalesce(wl.leads, 0),
+    'intros_booked', coalesce(wc.intros_booked, 0), 'intros_shown', coalesce(wc.intros_shown, 0),
+    'intros_qualified', coalesce(wc.intros_qualified, 0), 'intros_disqualified', coalesce(wc.intros_disqualified, 0),
+    'intros_cancelled', coalesce(wc.intros_cancelled, 0), 'intros_due', coalesce(wc.intros_due, 0),
+    'intros_scheduled', coalesce(wc.intros_scheduled, 0),
+    'demos_booked', coalesce(wc.demos_booked, 0), 'demos_shown', coalesce(wc.demos_shown, 0),
+    'demos_qualified', coalesce(wc.demos_qualified, 0), 'demos_disqualified', coalesce(wc.demos_disqualified, 0),
+    'demos_cancelled', coalesce(wc.demos_cancelled, 0), 'demos_due', coalesce(wc.demos_due, 0),
+    'demos_scheduled', coalesce(wc.demos_scheduled, 0),
+    'shown_intros', coalesce(wh.shown_intros, 0), 'intros_advanced', coalesce(wh.intros_advanced, 0),
+    'signed', coalesce(ws.signed, 0), 'revenue', coalesce(ws.revenue, 0),
+    'cash_collected', coalesce(ws.cash_collected, 0), 'new_mrr', coalesce(ws.new_mrr, 0)
+  ) as wb
 from w
 left join still_confirmed sc on sc.k = w.k
 left join roas r on r.k = w.k
 left join speed sp on sp.k = w.k
-left join fe fe on fe.k = w.k`;
+left join fe fe on fe.k = w.k
+left join wb_meta wm on wm.k = w.k
+left join wb_leads wl on wl.k = w.k
+left join wb_calls wc on wc.k = w.k
+left join wb_handoff wh on wh.k = w.k
+left join wb_signed ws on ws.k = w.k`;
 }
 
 /**
@@ -232,11 +325,11 @@ function dailySql(from: string, to: string): string {
   select generate_series(${f}, ${t}, interval '1 day')::date as d
 ),
 meta as (
-  select date as d,
-    sum(spend) filter (where public.b2b_campaign_type(campaign_name) = 'lead_gen') as spend,
-    sum(spend) filter (where public.b2b_campaign_type(campaign_name) = 'retargeting') as spend_rt
-  from public.meta_ad_snapshots
-  where date between ${f} and ${t}
+  select s.date as d,
+    sum(s.spend) filter (where public.b2b_campaign_type(s.campaign_name) = 'lead_gen' and not ${webbyCampaign("s")}) as spend,
+    sum(s.spend) filter (where public.b2b_campaign_type(s.campaign_name) = 'retargeting') as spend_rt
+  from public.meta_ad_snapshots s
+  where s.date between ${f} and ${t}
   group by 1
 ),
 ld as (
@@ -262,16 +355,18 @@ ld as (
       and ${CALL_IS_WITH_LEAD}
   ) fc
   where (l.lead_created_at at time zone 'Asia/Riyadh')::date between ${f} and ${t}
+    and not ${webbyLead("l")}
   group by 1
 ),
 bk as (
-  select (booked_at at time zone 'Asia/Riyadh')::date as d,
+  select (c.booked_at at time zone 'Asia/Riyadh')::date as d,
     count(*) as n,
-    count(*) filter (where call_type = 'intro') as intros_booked,
-    count(*) filter (where call_type = 'demo') as demos_booked
-  from public.calls
-  where call_type in ('intro', 'demo')
-    and (booked_at at time zone 'Asia/Riyadh')::date between ${f} and ${t}
+    count(*) filter (where c.call_type = 'intro') as intros_booked,
+    count(*) filter (where c.call_type = 'demo') as demos_booked
+  from public.calls c
+  where c.call_type in ('intro', 'demo')
+    and (c.booked_at at time zone 'Asia/Riyadh')::date between ${f} and ${t}
+    and not ${webbyCall("c")}
   group by 1
 ),
 held as (
@@ -285,18 +380,20 @@ held as (
     count(*) filter (where call_type = 'demo' and (status = 'showed' or (status = 'confirmed' and start_at <= now()))) as demos_qualified,
     count(*) filter (where call_type = 'intro' and status = 'cancelled') as intros_cancelled,
     count(*) filter (where call_type = 'demo' and status = 'cancelled') as demos_cancelled
-  from public.calls
+  from public.calls c
   where call_type in ('intro', 'demo')
     and (start_at at time zone 'Asia/Riyadh')::date between ${f} and ${t}
+    and not ${webbyCall("c")}
   group by 1
 ),
 cl as (
-  select (submitted_at at time zone 'Asia/Riyadh')::date as d,
+  select (d.submitted_at at time zone 'Asia/Riyadh')::date as d,
     count(*) as n,
-    coalesce(sum(contracted_revenue), 0) as contracted,
-    coalesce(sum(cash_collected), 0) as deposit
-  from public.closed_deals
-  where (submitted_at at time zone 'Asia/Riyadh')::date between ${f} and ${t}
+    coalesce(sum(d.contracted_revenue), 0) as contracted,
+    coalesce(sum(d.cash_collected), 0) as deposit
+  from public.closed_deals d
+  where (d.submitted_at at time zone 'Asia/Riyadh')::date between ${f} and ${t}
+    and not ${webbyDeal("d")}
   group by 1
 )
 select days.d::text as date,
@@ -353,6 +450,9 @@ function topAdsSql(from: string, to: string): string {
   e.value->>'cpl' as cpl
 from json_array_elements(public.b2b_marketing_ads(${day(from)}, ${day(to)}, null::text[])) with ordinality e
 where (e.value->>'spend')::numeric > 0
+  and not exists (
+    select 1 from public.meta_ad_snapshots ws
+    where ws.ad_id = e.value->>'ad_id' and ${webbyCampaign("ws")})
 order by (e.value->>'spend')::numeric desc, e.ordinality
 limit 6`;
 }
@@ -384,8 +484,11 @@ function winningAdsSql(from: string, to: string): string {
   e.value->>'cpa' as cpa,
   e.value->>'rev_roas' as rev_roas
 from json_array_elements(public.b2b_marketing_ads(${day(from)}, ${day(to)}, null::text[])) with ordinality e
-where coalesce((e.value->>'leads')::numeric, 0) > 0
-   or coalesce((e.value->>'spend')::numeric, 0) > 0
+where (coalesce((e.value->>'leads')::numeric, 0) > 0
+   or coalesce((e.value->>'spend')::numeric, 0) > 0)
+  and not exists (
+    select 1 from public.meta_ad_snapshots ws
+    where ws.ad_id = e.value->>'ad_id' and ${webbyCampaign("ws")})
 order by coalesce((e.value->>'sales')::numeric, 0) desc,
          coalesce((e.value->>'demos_booked')::numeric, 0) desc,
          coalesce((e.value->>'leads')::numeric, 0) desc,
@@ -399,6 +502,7 @@ function leadSourcesSql(from: string, to: string): string {
 from public.leads
 where is_lead
   and (lead_created_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)}
+  and not ${webbyLead("leads")}
 group by 1
 order by leads desc, source
 limit 10`;
@@ -505,8 +609,121 @@ function metricsOf(r: Row): Row {
   return m;
 }
 
+/** The webinar's share of a window, as the window query returns it. */
+type WebinarPart = Record<string, number>;
+
+function partOf(r: Row): WebinarPart {
+  const raw = typeof r.wb === "string" ? JSON.parse(r.wb) : (r.wb ?? {});
+  const out: WebinarPart = {};
+  for (const [k, x] of Object.entries(raw as Record<string, unknown>))
+    out[k] = num(x);
+  return out;
+}
+
+/**
+ * The dashboard's window less the webinar's share, every rate worked out
+ * again with b2b_window_metrics' own formulas (read 2026-09-23), so the call
+ * funnel is the dashboard's rule applied to the calls that are not the
+ * webinar's. A window the webinar has nothing in is returned untouched.
+ */
+function withoutWebinar(m: Row, wb: WebinarPart): Row {
+  if (!Object.values(wb).some(x => x !== 0)) return m;
+  const less = (k: string) => num(m[k]) - (wb[k] ?? 0);
+  const div = (a: number, b: number, times: number, places: number) =>
+    b > 0 ? Math.round(((times * a) / b) * 10 ** places) / 10 ** places : null;
+  const r2 = (x: number) => Math.round(x * 100) / 100;
+  const leads = less("leads");
+  const spend = less("spend");
+  const impressions = less("impressions");
+  const clicks = less("clicks");
+  const linkClicks = less("link_clicks");
+  const c = {
+    ib: less("intros_booked"),
+    is: less("intros_shown"),
+    iq: less("intros_qualified"),
+    idq: less("intros_disqualified"),
+    ic: less("intros_cancelled"),
+    idue: less("intros_due"),
+    isch: less("intros_scheduled"),
+    db: less("demos_booked"),
+    ds: less("demos_shown"),
+    dq: less("demos_qualified"),
+    ddq: less("demos_disqualified"),
+    dc: less("demos_cancelled"),
+    ddue: less("demos_due"),
+    dsch: less("demos_scheduled"),
+  };
+  const advanced = less("intros_advanced");
+  const shownIntros = num(m.intros_shown) - (wb.shown_intros ?? 0);
+  const signed = less("signed");
+  const revenue = less("revenue");
+  const leadgen = num(m.spend_leadgen) - (wb.spend ?? 0);
+  return {
+    ...m,
+    leads,
+    spend: r2(spend),
+    spend_leadgen: r2(leadgen),
+    retargeting_share: div(
+      num(m.spend_retargeting),
+      leadgen + num(m.spend_retargeting),
+      100,
+      1,
+    ),
+    impressions,
+    clicks,
+    link_clicks: linkClicks,
+    ctr: div(clicks, impressions, 100, 2),
+    ctr_link: div(linkClicks, impressions, 100, 2),
+    cost_per_lead: div(spend, leads, 1, 2),
+    intros_booked: c.ib,
+    intros_shown: c.is,
+    intros_qualified: c.iq,
+    intros_disqualified: c.idq,
+    intros_cancelled: c.ic,
+    intros_due: c.idue,
+    intros_scheduled: c.isch,
+    intros_advanced: advanced,
+    demos_booked: c.db,
+    demos_shown: c.ds,
+    demos_qualified: c.dq,
+    demos_disqualified: c.ddq,
+    demos_cancelled: c.dc,
+    demos_due: c.ddue,
+    demos_scheduled: c.dsch,
+    calls_booked: c.ib + c.db,
+    calls_shown: c.is + c.ds,
+    calls_qualified: c.iq + c.dq,
+    calls_disqualified: c.idq + c.ddq,
+    calls_cancelled: c.ic + c.dc,
+    calls_due: c.idue + c.ddue,
+    calls_scheduled: c.isch + c.dsch,
+    signed,
+    revenue: r2(revenue),
+    cash_collected: r2(less("cash_collected")),
+    new_mrr: r2(less("new_mrr")),
+    roas: div(revenue, spend, 1, 2),
+    cac: div(spend, signed, 1, 2),
+    cost_per_demo: div(spend, c.ds, 1, 2),
+    cost_per_demo_booked: div(spend, c.db, 1, 2),
+    close_rate: div(signed, c.dq, 100, 1),
+    close_rate_all: div(signed, c.ds, 100, 1),
+    lead_to_client: div(signed, leads, 100, 1),
+    lead_to_demo: div(c.dsch, leads, 100, 1),
+    demo_show_rate: div(c.ds, c.ddue, 100, 1),
+    intro_show_rate: div(c.is, c.idue, 100, 1),
+    intro_disqualified_rate: div(c.idq, c.idue, 100, 1),
+    demo_disqualified_rate: div(c.ddq, c.ddue, 100, 1),
+    disqualified_rate: div(c.idq + c.ddq, c.idue + c.ddue, 100, 1),
+    intro_cancel_rate: div(c.ic, c.isch, 100, 1),
+    demo_cancel_rate: div(c.dc, c.dsch, 100, 1),
+    cancel_rate: div(c.ic + c.dc, c.isch + c.dsch, 100, 1),
+    intro_to_demo: div(advanced, shownIntros, 100, 1),
+  };
+}
+
 function toWindow(r: Row): FunnelWindow {
-  const m = metricsOf(r);
+  const wb = partOf(r);
+  const m = withoutWebinar(metricsOf(r), wb);
   const spend = num(m.spend);
   const qualified = num(r.roas_q);
   const unqualified = num(r.roas_u);
@@ -595,6 +812,15 @@ function toWindow(r: Row): FunnelWindow {
     roasCash: ratio(frontEndCash, spend),
     roasContracted: ratio(contracted, spend),
     raw: rawNumbers(m),
+    webinarOut: {
+      spend: round2(wb.spend ?? 0),
+      leads: wb.leads ?? 0,
+      callsBooked: (wb.intros_booked ?? 0) + (wb.demos_booked ?? 0),
+      demosShown: wb.demos_shown ?? 0,
+      closes: wb.signed ?? 0,
+      contracted: round2(wb.revenue ?? 0),
+      cash: round2(wb.cash_collected ?? 0),
+    },
   };
 }
 
