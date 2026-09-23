@@ -150,6 +150,10 @@ builds run at the repository root, where the command is `bun run build`
 (`scripts/build-video-editor.sh`): install and build `apps/video-editor-cockpit`
 with its lockfile, then copy that `dist/` to the repository `dist/`. Install
 at the root is `bun install` (no dependencies, so there is no root lockfile).
+That lockfile is Bun 1.4 (`lockfileVersion` 2). The bun Vercel puts on PATH
+is 1.3.x, which exits 1 on `bun install --frozen-lockfile` ("Unknown lockfile
+version"). The script uses `bun@1.4.2` for the install and the app build when
+the bun on PATH is older.
 The root `vercel.json` is the Git deployment's routes; `scripts/ship.sh
 video-editor` still uploads `apps/video-editor-cockpit`, whose own
 `vercel.json` has the same routes. A second project linked to this
