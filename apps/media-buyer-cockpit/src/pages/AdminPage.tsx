@@ -12,8 +12,9 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -139,6 +140,8 @@ function useRetained<T>(
 }
 
 export function AdminPage() {
+  const auth = useCockpitAuth();
+  const supabase = auth.client;
   const me = useQuery(api.roles.me, {});
   const visible = usePageVisible();
   const now = useNow();
@@ -146,8 +149,47 @@ export function AdminPage() {
   const [editing, setEditing] = useState<Any | null | "new">(null);
   const [query, setQuery] = useState("");
   const args = visible ? {} : "skip";
-  const cacheKey = me?.email ?? undefined;
-  const members = useRetained(useQuery(api.portal.members, args), cacheKey);
+  const cacheKey = (auth.email || me?.email) ?? undefined;
+
+  const [supabaseMembers, setSupabaseMembers] = useState<Any[] | null>(null);
+  const loadMembers = useCallback(async () => {
+    if (!supabase) return;
+    try {
+      const { data, error } = await supabase
+        .from("cockpit_members")
+        .select("*")
+        .eq("active", true)
+        .order("name", { ascending: true });
+      if (!error && data) {
+        setSupabaseMembers(data);
+      }
+    } catch (err) {
+      console.error("Failed to load cockpit_members from Supabase:", err);
+    }
+  }, [supabase]);
+
+  useEffect(() => {
+    void loadMembers();
+  }, [loadMembers]);
+
+  const [supabaseClients, setSupabaseClients] = useState<string[]>([]);
+  useEffect(() => {
+    if (!supabase) return;
+    supabase
+      .from("clients")
+      .select("name")
+      .eq("is_active", true)
+      .order("name")
+      .then(({ data, error }) => {
+        if (!error && data) {
+          setSupabaseClients(data.map((c: { name: string }) => c.name).filter(Boolean));
+        }
+      });
+  }, [supabase]);
+
+  const convexMembers = useRetained(useQuery(api.portal.members, args), cacheKey);
+  const members = supabaseMembers ?? convexMembers;
+
   const cockpitHealth = useRetained(
     useQuery(api.portal.adminHealth, args),
     cacheKey,
@@ -173,11 +215,33 @@ export function AdminPage() {
     useQuery(api.portal.adminHermes, visible ? { since } : "skip"),
     cacheKey,
   );
-  const clientNames = useQuery(
+  const convexClientNames = useQuery(
     api.portal.clientNames,
     visible && editing ? {} : "skip",
   );
+  const clientNames = supabaseClients.length > 0 ? supabaseClients : (convexClientNames ?? []);
   const remove = useMutation(api.portal.removeMember);
+
+  const handleRemove = async (email: string) => {
+    if (!confirm(`Remove ${email} from every cockpit?`)) return;
+    if (supabase) {
+      try {
+        const { error: rpcErr } = await supabase.rpc("cockpit_admin_remove_member", {
+          p_email: email,
+        });
+        if (rpcErr) {
+          alert(`Could not remove member: ${rpcErr.message}`);
+          return;
+        }
+        await loadMembers();
+        return;
+      } catch (err: unknown) {
+        alert(`Could not remove member: ${err instanceof Error ? err.message : String(err)}`);
+        return;
+      }
+    }
+    void remove({ email });
+  };
   const overview = useMemo(
     () => ({
       health: cockpitHealth,
@@ -191,10 +255,10 @@ export function AdminPage() {
       hermes: hermes
         ? {
             queued: hermes.queued,
-            doneToday: hermes.recentDone.filter(at => at > now - 86400_000)
+            doneToday: hermes.recentDone.filter((at: number) => at > now - 86400_000)
               .length,
             lastDone: hermes.lastDone,
-            actions: (actions ?? []).filter(a => a.at > now - 86400_000),
+            actions: (actions ?? []).filter((a: Any) => a.at > now - 86400_000),
           }
         : undefined,
     }),
@@ -204,7 +268,7 @@ export function AdminPage() {
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
     return (members ?? []).filter(
-      m =>
+      (m: Any) =>
         !q || m.email.includes(q) || (m.name ?? "").toLowerCase().includes(q),
     );
   }, [members, query]);
@@ -350,7 +414,7 @@ export function AdminPage() {
                 </TableRow>
               ) : (
                 rows.map(m => (
-                  <TableRow key={m._id}>
+                  <TableRow key={m.id || m._id}>
                     <TableCell>
                       <div className="font-medium">
                         {m.name || m.email.split("@")[0]}
@@ -366,30 +430,42 @@ export function AdminPage() {
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-1">
-                        {m.roles.map((r: string) => (
+                        {(m.roles ?? []).map((r: string) => (
                           <RoleChip key={r} role={r} />
                         ))}
                       </div>
                     </TableCell>
                     <TableCell className="text-sm">
-                      {m.roles.includes("admin") || m.clients.length === 0 ? (
+                      {(m.roles ?? []).includes("admin") || (m.clients ?? []).length === 0 ? (
                         <span className="text-muted-foreground">
                           All clients
                         </span>
                       ) : (
-                        <span title={m.clients.join(", ")}>
+                        <span title={(m.clients ?? []).join(", ")}>
                           {m.clients.length} client
                           {m.clients.length === 1 ? "" : "s"}
                         </span>
                       )}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
-                      {ago(m.lastSeenAt)}
-                      {m.lastCockpit ? (
-                        <span className="block text-xs">
-                          {COCKPIT_META[m.lastCockpit]?.label ?? m.lastCockpit}
+                      {m.auth_user_id ? (
+                        <span className="inline-flex items-center text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                          Linked & active
                         </span>
-                      ) : null}
+                      ) : m.lastSeenAt ? (
+                        <>
+                          {ago(m.lastSeenAt)}
+                          {m.lastCockpit ? (
+                            <span className="block text-xs">
+                              {COCKPIT_META[m.lastCockpit]?.label ?? m.lastCockpit}
+                            </span>
+                          ) : null}
+                        </>
+                      ) : (
+                        <span className="text-xs text-amber-600 dark:text-amber-400">
+                          Invited / unlinked
+                        </span>
+                      )}
                     </TableCell>
                     <TableCell>
                       <div className="flex justify-end gap-1">
@@ -405,13 +481,8 @@ export function AdminPage() {
                           size="icon"
                           variant="ghost"
                           aria-label="Remove"
-                          disabled={m.email === me?.email}
-                          onClick={() => {
-                            if (
-                              confirm(`Remove ${m.email} from every cockpit?`)
-                            )
-                              void remove({ email: m.email });
-                          }}
+                          disabled={m.email === (auth.email || me?.email)}
+                          onClick={() => handleRemove(m.email)}
                         >
                           <Trash2 className="size-4" />
                         </Button>
@@ -646,6 +717,8 @@ export function AdminPage() {
         <MemberDialog
           member={editing === "new" ? null : editing}
           clientNames={clientNames ?? []}
+          supabase={supabase}
+          onSaved={loadMembers}
           onClose={() => setEditing(null)}
         />
       ) : null}
@@ -691,10 +764,14 @@ function Stat({
 function MemberDialog({
   member,
   clientNames,
+  supabase,
+  onSaved,
   onClose,
 }: {
   member: Any | null;
   clientNames: string[];
+  supabase?: Any | null;
+  onSaved: () => void;
   onClose: () => void;
 }) {
   const upsert = useMutation(api.portal.upsertMember);
@@ -855,14 +932,45 @@ function MemberDialog({
             onClick={async () => {
               setSaving(true);
               setError("");
+              const cleanEmail = email.trim().toLowerCase();
+              const cleanRoles = roles;
+              const cleanClients = allClients ? [] : clients;
+
+              if (supabase) {
+                try {
+                  const { error: rpcErr } = await supabase.rpc(
+                    "cockpit_admin_upsert_member",
+                    {
+                      p_email: cleanEmail,
+                      p_name: name.trim(),
+                      p_roles: cleanRoles,
+                      p_clients: cleanClients,
+                    },
+                  );
+                  if (rpcErr) {
+                    setError(rpcErr.message);
+                    setSaving(false);
+                    return;
+                  }
+                  onSaved();
+                  onClose();
+                  return;
+                } catch (err: unknown) {
+                  setError(err instanceof Error ? err.message : String(err));
+                  setSaving(false);
+                  return;
+                }
+              }
+
               try {
                 await upsert({
-                  email,
+                  email: cleanEmail,
                   name: name || undefined,
-                  roles,
-                  clients: allClients ? [] : clients,
+                  roles: cleanRoles,
+                  clients: cleanClients,
                   note: note || undefined,
                 });
+                onSaved();
                 onClose();
               } catch (e) {
                 setError(String((e as Error).message ?? e));

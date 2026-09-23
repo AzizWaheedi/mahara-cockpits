@@ -102,13 +102,35 @@ export function accessFromSupabaseMember(
   };
 }
 
-/** Fail closed on failed Auth or directory reads; no legacy static-role fallback. */
 export async function loadSupabaseAccess(
   client: SupabaseClient,
 ): Promise<SupabaseAccess | null> {
   const { data: authData, error: authError } = await client.auth.getUser();
   if (authError) throw authError;
   if (!authData.user) return null;
+
+  if (typeof client.rpc === "function") {
+    try {
+      const { data: rpcAccess, error: rpcError } = await client.rpc(
+        "cockpit_get_my_access",
+      );
+      if (!rpcError && rpcAccess && typeof rpcAccess === "object") {
+        const raw = rpcAccess as Record<string, unknown>;
+        return {
+          email: String(raw.email ?? authData.user.email ?? ""),
+          name: (raw.name as string | null) ?? null,
+          roles: (raw.roles as string[]) ?? [],
+          clients: (raw.clients as string[]) ?? [],
+          isAdmin: Boolean(raw.is_admin),
+          isCeo: Boolean(raw.is_ceo),
+          cockpits: (raw.cockpits as string[]) ?? [],
+          home: (raw.home as string | null) ?? null,
+        };
+      }
+    } catch {
+      // Fallback to table query
+    }
+  }
 
   const { data: member, error: memberError } = await client
     .from("cockpit_members")
