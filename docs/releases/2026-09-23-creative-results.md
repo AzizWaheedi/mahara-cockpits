@@ -1,6 +1,6 @@
 # Creative requests and Changes & Results
 
-Status: implemented on `codex/creative-results`; **not deployed**. The context repo could not be fast-forwarded because its local `main` had diverged. No live migration, ClickUp task, or production sync was run in this session.
+Status: release in progress on `codex/creative-results`. The context repo could not be fast-forwarded because its local `main` had diverged; it was left untouched.
 
 ## Buyer flow
 
@@ -21,7 +21,7 @@ Status: implemented on `codex/creative-results`; **not deployed**. The context r
 
 ## Release gate and pilot
 
-1. Inspect the SQL migration and apply it to Creative Triage only. Read back table grants, row security and audit trigger before deploying Convex functions. This step was **not run**.
+1. Inspect the SQL migration and apply it to Creative Triage only. `scripts/apply-creative-results-migration.ps1` defaults to a rolled-back dry run, verifies an audit row inside that transaction, and then supports `-Apply` and `-VerifyOnly`. On 2026-09-23 the dry run and apply passed. Both tables had row security and service-role grants, no browser grants, the audit trigger was present, and both row counts were zero after apply.
 2. Configure the existing Convex deployment with the Creative Triage `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` and ClickUp token. The new server helper rejects another Supabase project. Run `bunx convex codegen` from `apps/media-buyer-cockpit` in the release environment before `scripts/ship.sh`, since that script typechecks before deploying Convex. Local ignored generated types were used only for the build.
 3. Run the creative bridge with its default `CREATIVE_REQUEST_LINKS_DRY_RUN` state. The logs print each proposed request-link diff. For one approved campaign, set `CREATIVE_REQUEST_LINKS_DRY_RUN=false` and `CREATIVE_REQUEST_PILOT_CAMPAIGN=<exact campaign name>`, then read back the request row, event rows, director task, editor task and cut. Leave other campaigns in dry run. After the pilot passes, `CREATIVE_REQUEST_PILOT_CAMPAIGN=*` allows all campaigns while keeping the same dry-run switch.
 4. Verify one campaign's Meta change activity directly against Meta's activity history and its daily spend/leads against Meta reporting for the same Kuwait dates. Check matched bookings against GHL. Confirm the three-day guard and missing-data messages using a recent change and an older one.
@@ -34,3 +34,4 @@ Status: implemented on `codex/creative-results`; **not deployed**. The context r
 - `node node_modules/typescript/bin/tsc -p convex/tsconfig.json --noEmit`: passed with local ignored generated API types.
 - `node --experimental-strip-types --test scripts/change-results.test.ts`: three tests passed.
 - `git diff --check`: passed.
+- Read-only source checks on 2026-09-23: the most recent sampled human activity matched Meta's activity API by object, event, and time. A sampled 2026-09-22 ad had $34 spend and 4 leads in both the cockpit daily feed and direct Meta Insights. These checks cover one sample, not every campaign or booking.
