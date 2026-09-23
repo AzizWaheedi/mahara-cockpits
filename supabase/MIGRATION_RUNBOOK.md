@@ -1,5 +1,34 @@
 # Convex to Supabase migration
 
+## Current direction, 23 September 2026
+
+Muhammed rejected ongoing Convex-to-Supabase shadow copying. The target is a
+one-time, verified move of existing records followed by direct Supabase reads,
+writes, authentication, and jobs. Do not activate either checklist shadow flag.
+The old phases below document what was built; they are not the rollout plan.
+
+The media-buyer production deployment `adorable-seahorse-418` now has
+`SUPABASE_MIGRATION_DRY_RUN=true`, read back after the change. Its legacy
+issue-report mirror is disabled. The checklist mirror remains disabled.
+
+The first direct checklist backend contract is installed in Creative Triage:
+`cockpit_get_daily_checks(text,date)` and
+`cockpit_set_daily_check(bigint,boolean,boolean)`. Both require a linked,
+confirmed, active Supabase member with the owning role or CEO/admin access;
+browser roles have no table access. An expected-value check prevents a stale
+checkmark overwrite, and the existing trigger audits each accepted write.
+Run `scripts/apply-cockpit-check-direct-migration.ps1` for a rolled-back dry run,
+`-Apply` to install, and `-VerifyOnly` to read back schema and permissions.
+Production installation and a synthetic one-row authenticated read/write inside
+`ROLLBACK` passed. Counts remained 268 checks and 268 check audits afterward.
+
+**This is not a live cockpit cutover.** The current screens still use Convex
+Auth, Convex queries, and Convex writes. Before routing any screen to the new
+contract, build Supabase sign-in and role gating, migrate the daily check
+creation job, and perform a fresh one-time source reconciliation. Then replace
+each remaining Convex-owned feature and job, verify production parity, and
+remove Convex only when no runtime dependency remains.
+
 ## Phase 1: identity, audit, and media-buyer feedback
 
 This phase creates the shared cockpit member directory and immutable audit log,
@@ -32,8 +61,8 @@ SUPABASE_MIGRATION_DRY_RUN=true
 ```
 
 Dry-run is the default when the setting is absent. It performs no Supabase
-write. After the migration has been applied and the checks below pass, change
-the setting to `false` for the media-buyer Convex deployment only.
+write. The earlier instruction to enable this mirror is retired; production is
+explicitly set to `true` while direct replacement is built.
 
 ## Verification
 
@@ -244,36 +273,10 @@ and current row/audit counts with zero writes.
 - The mirror defaults to no-write (`DRY_RUN = true`) unless explicitly enabled via
   `SUPABASE_CHECKS_SHADOW_DRY_RUN=false`.
 
-### Rollout order
+### Retired rollout
 
-1. **Local verification**: Run focused unit/contract tests:
-   ```bash
-   cd apps/media-buyer-cockpit && bun test scripts/supabase-daily-check-mirror.test.ts
-   ```
-2. **Database dry run**: Run `powershell -File scripts/apply-cockpit-check-shadow-migration.ps1`
-   against Creative Triage. Confirm synthetic smoke passes and table state remains unchanged.
-3. **Database apply**: Run `powershell -File scripts/apply-cockpit-check-shadow-migration.ps1 -Apply`.
-4. **Database verification**: Run `powershell -File scripts/apply-cockpit-check-shadow-migration.ps1 -VerifyOnly`.
-5. **Ship media-buyer cockpit**: Deploy media-buyer backend while keeping default dry-run
-   (`SUPABASE_CHECKS_SHADOW_DRY_RUN` unset or `true`).
-6. **Bounded canary**: After deployment, choose one existing media-buyer-owned Convex
-   check from a read-only source query. Set `SUPABASE_CHECKS_SHADOW_CANARY_SOURCE_ID`
-   to that exact ID, then set `SUPABASE_CHECKS_SHADOW_DRY_RUN=false`. The next sync
-   replays that one row without changing its checkmark. Compare its full Supabase row
-   and audit before removing the canary setting. Do not flip a teammate's checkmark
-   merely to test the mirror.
-7. **Guarded catch-up**: Set `SUPABASE_CHECKS_SHADOW_BATCH_ENABLED=true`, then remove
-   the canary setting. Each sync sends at most 25
-   unacknowledged media-buyer-owned checks; read back and compare every batch until
-   there are no unacknowledged rows. If the mirror repeatedly fails, the existing
-   health system may send an internal Slack alert; this outward behavior needs its
-   own approval before enabling the live flag.
-
-> [!NOTE]
-> **Status on 23 September: SCHEMA APPLIED; WRITER UNDEPLOYED AND UNENABLED**
-> The additive schema and RPC were applied to Creative Triage after a rollback-only
-> synthetic smoke test. Read-only verification returned 268 checks and 268 audit rows,
-> both new columns and the RPC present, RLS and service-only access intact, and browser
-> roles denied. PR #14 merged the gated writer and this follow-up adds durable
-> acknowledgement/replay, but the Convex code is not deployed. `SUPABASE_CHECKS_SHADOW_DRY_RUN` defaults to
-> `true` (no-write). No checklist values or credentials were changed.
+The shadow schema and writer were deployed on 23 September, but checklist
+copying was never enabled. The canary and batch steps formerly listed here
+must **not** be run. The direct Supabase contract above is the replacement
+direction. Keep the old schema and audit history until the full cutover is
+verified; do not delete records to tidy up the migration.
