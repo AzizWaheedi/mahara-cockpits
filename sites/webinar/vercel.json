@@ -1,0 +1,19 @@
+{
+  "rewrites": [
+    { "source": "/live", "destination": "/live.html" },
+    { "source": "/thank-you", "destination": "/thank-you.html" }
+  ],
+  "headers": [
+    {
+      "source": "/mm-track.js",
+      "headers": [{ "key": "Cache-Control", "value": "public, max-age=300" }]
+    },
+    {
+      "source": "/live",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store" },
+        { "key": "X-Robots-Tag", "value": "noindex" }
+      ]
+    }
+  ]
+}

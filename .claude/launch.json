@@ -79,6 +79,20 @@
       ],
       "port": 5181,
       "url": "http://localhost:5181"
+    },
+    {
+      "name": "webinar-site",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "5188",
+        "--bind",
+        "127.0.0.1",
+        "--directory",
+        "sites/webinar"
+      ],
+      "port": 5188
     }
   ]
 }

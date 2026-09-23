@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>تدريب مباشر مجاني · مهارة ميديا</title>
+<meta name="description" content="تدريب مباشر مجاني لأصحاب شركات التصميم والمقاولات بالخليج: الخمس خطوات من الإعلان لين توقيع العقد.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://embed-ssl.wistia.com">
+<link rel="preconnect" href="https://fast.wistia.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=Geist:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="icon" type="image/png" sizes="512x512" href="https://maharamedia.com/icon.png">
+<link rel="apple-touch-icon" href="https://maharamedia.com/apple-icon.png">
+<style>
+:root {
+--teal: #00CFC8;
+--deep: #091333;
+--deep-2: #060d26;
+--ink: #10182f;
+--muted: #5b6478;
+--light: #f4f6f9;
+--line-dark: rgba(255,255,255,0.1);
+--line-light: rgba(9,19,51,0.1);
+--f-ar: "IBM Plex Sans Arabic", sans-serif;
+--f-en: "Geist", "Inter", sans-serif;
+--wrap: 1080px;
+--pad: clamp(18px, 5vw, 44px);
+}
+*, *::before, *::after { box-sizing: border-box; }
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; overflow-x: clip; }
+body {
+margin: 0; background: #fff; color: var(--ink);
+font-family: var(--f-ar); font-size: 16.5px; line-height: 1.8; font-weight: 400;
+-webkit-font-smoothing: antialiased; overflow-x: clip;
+}
+body[data-lang="en"] { font-family: var(--f-en); line-height: 1.7; }
+[data-only="ar"], [data-only="en"] { display: none; }
+body[data-lang="ar"] [data-only="ar"] { display: revert; }
+body[data-lang="en"] [data-only="en"] { display: revert; }
+.num, .tm { font-family: var(--f-en); }
+img { max-width: 100%; }
+.wrap { max-width: var(--wrap); margin: 0 auto; padding-inline: var(--pad); }
+h1, h2, h3 { margin: 0 0 14px; font-weight: 700; line-height: 1.45; letter-spacing: 0; }
+body[data-lang="en"] :is(h1,h2,h3) { line-height: 1.25; letter-spacing: -0.01em; font-weight: 800; }
+
+/* lang toggle */
+.lang-btn {
+position: fixed; top: 14px; inset-inline-end: 14px; z-index: 99;
+background: rgba(9,19,51,0.72); color: #fff; border: 1px solid var(--line-dark);
+font-family: var(--f-en); font-size: 12px; font-weight: 600; letter-spacing: 0.08em;
+padding: 8px 14px; border-radius: 999px; cursor: pointer;
+backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.lang-btn:hover { border-color: var(--teal); }
+
+/* CTA */
+.cta {
+display: flex; align-items: center; justify-content: center; gap: 10px;
+width: 100%; max-width: 460px; margin-inline: auto;
+min-height: 60px; padding: 16px 26px; border: 0; border-radius: 16px; cursor: pointer;
+background: var(--teal); color: var(--deep);
+font-family: inherit; font-size: 18px; font-weight: 700; text-decoration: none;
+box-shadow: 0 14px 34px -12px rgba(0,207,200,0.55);
+transition: transform 160ms, box-shadow 160ms, filter 160ms;
+}
+.cta:hover { filter: brightness(1.06); transform: translateY(-2px); box-shadow: 0 18px 40px -12px rgba(0,207,200,0.6); }
+.cta:active { transform: translateY(0) scale(0.99); }
+.cta .arr { font-family: var(--f-en); font-weight: 800; }
+.cta-micro { margin: 12px auto 0; text-align: center; font-size: 13px; color: rgba(255,255,255,0.75); max-width: 460px; }
+.light .cta-micro, .white .cta-micro { color: var(--muted); }
+
+/* ---------- HERO ---------- */
+.hero {
+position: relative; overflow: hidden; color: #fff;
+background: linear-gradient(180deg, var(--deep) 0%, var(--deep-2) 100%);
+padding: clamp(44px, 6vw, 76px) 0 clamp(34px, 5vw, 56px);
+text-align: center;
+}
+.hero::before {
+content: ""; position: absolute; inset: 0; pointer-events: none;
+background-image:
+linear-gradient(rgba(0,207,200,0.05) 1px, transparent 1px),
+linear-gradient(90deg, rgba(0,207,200,0.05) 1px, transparent 1px);
+background-size: 44px 44px;
+mask-image: radial-gradient(ellipse 90% 70% at 50% 20%, #000 20%, transparent 75%);
+-webkit-mask-image: radial-gradient(ellipse 90% 70% at 50% 20%, #000 20%, transparent 75%);
+}
+.blueprint { position: absolute; inset: auto 0 0 0; width: 100%; height: auto; opacity: 0.5; pointer-events: none; }
+.hero .wrap { position: relative; z-index: 2; }
+.pre-head {
+display: inline-block; font-size: 13px; font-weight: 600; color: var(--teal);
+border: 1px solid rgba(0,207,200,0.35); background: rgba(0,207,200,0.07);
+padding: 7px 16px; border-radius: 999px; margin-bottom: 18px;
+}
+.hero h1 { font-size: clamp(26px, 5.4vw, 46px); max-width: 21ch; margin-inline: auto; color: #fff; }
+.hero h1 .hl { color: var(--teal); }
+.hero-sub { max-width: 60ch; margin: 0 auto 20px; font-size: clamp(14.5px, 3.9vw, 17.5px); color: rgba(255,255,255,0.82); }
+.hero-sub b { color: #fff; font-weight: 700; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 0 0 22px; }
+.chip {
+display: inline-flex; align-items: center; gap: 7px;
+background: rgba(255,255,255,0.06); border: 1px solid var(--line-dark);
+border-radius: 999px; padding: 7px 14px; font-size: 12.5px; font-weight: 500; color: rgba(255,255,255,0.9);
+}
+.chip svg { width: 14px; height: 14px; stroke: var(--teal); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+
+/* countdown */
+.count { display: flex; gap: 10px; justify-content: center; margin: 0 0 24px; direction: ltr; }
+.count-box {
+min-width: 68px; padding: 10px 8px 8px; border-radius: 14px;
+background: rgba(255,255,255,0.05); border: 1px solid var(--line-dark);
+}
+.count-num { font-family: var(--f-en); font-size: clamp(24px, 6vw, 34px); font-weight: 800; line-height: 1; color: var(--teal); }
+.count-lab { font-size: 11px; color: rgba(255,255,255,0.65); margin-top: 5px; }
+.count-over { display: none; font-size: 16px; font-weight: 700; color: var(--teal); margin: 0 0 24px; }
+@media (max-width: 400px) { .count-box { min-width: 60px; } }
+
+/* ---------- PROOF STRIP ---------- */
+.proof { background: var(--deep-2); color: #fff; border-block: 1px solid var(--line-dark); }
+.proof .wrap { display: flex; flex-wrap: wrap; gap: 14px 30px; justify-content: center; padding-block: 20px; }
+.proof-item { display: flex; align-items: baseline; gap: 8px; font-size: 14px; color: rgba(255,255,255,0.8); }
+.proof-item b { color: var(--teal); font-weight: 700; font-size: 16.5px; }
+
+/* ---------- SECTIONS ---------- */
+.sec { padding: clamp(40px, 6vw, 72px) 0; }
+.sec.light { background: var(--light); }
+.sec.dark { background: linear-gradient(180deg, var(--deep) 0%, var(--deep-2) 100%); color: #fff; }
+.sec-head { text-align: center; max-width: 720px; margin: 0 auto clamp(20px, 3vw, 30px); }
+.sec-title { font-size: clamp(22px, 4.8vw, 34px); }
+.sec.dark .sec-title { color: #fff; }
+.sec-intro { font-size: 16px; color: var(--muted); margin: 0; }
+.sec.dark .sec-intro { color: rgba(255,255,255,0.75); }
+
+/* step timeline */
+.path { position: relative; max-width: 780px; margin: 0 auto; }
+.path::before {
+content: ""; position: absolute; top: 26px; bottom: 26px; inset-inline-start: 23px; width: 2px;
+background: linear-gradient(180deg, rgba(0,207,200,0.65), rgba(0,207,200,0.12));
+}
+.step-card {
+position: relative; margin-inline-start: 64px; margin-bottom: 16px;
+background: #fff; border: 1px solid var(--line-light); border-radius: 18px;
+padding: 20px 22px 18px;
+box-shadow: 0 10px 30px -18px rgba(9,19,51,0.18);
+transition: transform 220ms, box-shadow 220ms;
+}
+.step-card:hover { transform: translateY(-3px); box-shadow: 0 18px 40px -20px rgba(9,19,51,0.3); }
+.step-card:last-child { margin-bottom: 0; }
+.step-node {
+position: absolute; inset-inline-start: -64px; top: 16px;
+width: 48px; height: 48px; border-radius: 14px;
+display: flex; align-items: center; justify-content: center;
+background: var(--teal); color: var(--deep);
+font-family: var(--f-en); font-size: 20px; font-weight: 800;
+box-shadow: 0 8px 22px -8px rgba(0,207,200,0.6);
+}
+.step-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }
+.step-icon { width: 34px; height: 34px; border-radius: 9px; background: rgba(0,207,200,0.1); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.step-icon svg { width: 18px; height: 18px; stroke: var(--teal); fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.step-name { margin: 0; font-family: var(--f-en); font-size: 16.5px; font-weight: 700; color: var(--deep); direction: ltr; text-align: start; }
+body[dir="rtl"] .step-name { text-align: right; }
+.step-name .tm { font-size: 0.62em; vertical-align: super; }
+.step-desc { margin: 0; font-size: 15px; font-weight: 600; color: var(--ink); line-height: 1.75; }
+.step-more { margin: 6px 0 0; font-size: 13.5px; color: var(--muted); line-height: 1.75; }
+@media (max-width: 480px) {
+.path::before { inset-inline-start: 19px; }
+.step-card { margin-inline-start: 54px; padding: 18px 18px 16px; }
+.step-node { inset-inline-start: -54px; width: 40px; height: 40px; font-size: 17px; border-radius: 12px; }
+}
+
+/* scenario cards */
+.scen { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; max-width: 860px; margin: 0 auto; }
+@media (max-width: 700px) { .scen { grid-template-columns: 1fr; } }
+.scen-card {
+background: rgba(255,255,255,0.05); border: 1px solid var(--line-dark); border-radius: 16px;
+padding: 20px 22px; font-size: 15px; font-weight: 500; color: #fff; line-height: 1.8;
+display: flex; gap: 12px; align-items: flex-start;
+}
+.scen-card svg { width: 20px; height: 20px; margin-top: 5px; flex-shrink: 0; stroke: var(--teal); fill: none; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+
+/* testimonials */
+.testi { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; max-width: 1020px; margin: 0 auto; }
+@media (max-width: 820px) { .testi { grid-template-columns: 1fr; max-width: 480px; } }
+.testi-card {
+background: #fff; border: 1px solid var(--line-light); border-radius: 18px; overflow: hidden;
+box-shadow: 0 12px 34px -20px rgba(9,19,51,0.25);
+display: flex; flex-direction: column;
+}
+.testi-thumb { position: relative; aspect-ratio: 16/9; background: var(--deep); }
+.testi-thumb .wistia_embed { width: 100% !important; height: 100% !important; position: absolute; inset: 0; }
+.testi-body { padding: 16px 18px 18px; }
+.testi-meta { font-size: 12.5px; font-weight: 600; color: var(--teal); margin: 0 0 6px; }
+.testi-quote { margin: 0; font-size: 15px; font-weight: 600; color: var(--deep); line-height: 1.7; }
+.reviews-shell { max-width: 860px; margin: clamp(26px, 4vw, 40px) auto 0; }
+
+/* bio */
+.bio { display: grid; grid-template-columns: 300px 1fr; gap: clamp(22px, 4vw, 40px); align-items: center; max-width: 900px; margin: 0 auto; }
+@media (max-width: 720px) { .bio { grid-template-columns: 1fr; max-width: 460px; } }
+.bio-photo { border-radius: 20px; overflow: hidden; box-shadow: 0 24px 50px -24px rgba(9,19,51,0.45); }
+.bio-photo img { display: block; width: 100%; height: auto; }
+.bio-name { font-size: 21px; font-weight: 700; color: var(--deep); margin: 0 0 2px; }
+.bio-role { font-size: 13px; font-weight: 600; color: var(--teal); margin: 0 0 12px; }
+.bio-stats { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 0; }
+.bio-stat { background: rgba(0,207,200,0.1); border: 1px solid rgba(0,207,200,0.35); color: var(--deep); font-size: 12.5px; font-weight: 700; padding: 6px 13px; border-radius: 999px; }
+.bio-text { margin: 0 0 10px; font-size: 15px; color: var(--muted); }
+.bio-text:last-of-type { margin-bottom: 0; }
+.bio-text b { color: var(--deep); }
+
+/* form section */
+.form-shell { max-width: 640px; margin: 0 auto; }
+.form-card { background: #fff; border-radius: 20px; padding: 10px; box-shadow: 0 30px 70px -30px rgba(0,0,0,0.5); }
+.form-note { text-align: center; font-size: 12.5px; color: rgba(255,255,255,0.65); margin: 14px 0 0; }
+
+/* footer */
+.footer { background: var(--deep-2); color: rgba(255,255,255,0.6); text-align: center; padding: 34px var(--pad); font-size: 12.5px; line-height: 2; }
+.footer a { color: rgba(255,255,255,0.75); text-decoration: none; }
+.footer a:hover { color: var(--teal); }
+.footer .legal { font-size: 11px; opacity: 0.65; max-width: 640px; margin: 8px auto 0; }
+.f-logo { height: 20px; width: auto; opacity: 0.8; margin-bottom: 10px; }
+
+.reveal { opacity: 0; transform: translateY(22px); transition: opacity 800ms cubic-bezier(0.25,1,0.5,1), transform 800ms cubic-bezier(0.25,1,0.5,1); }
+.reveal.in { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) { .reveal { opacity: 1 !important; transform: none !important; transition: none !important; } }
+</style>
+</head>
+<body data-lang="ar">
+
+<button class="lang-btn" id="langBtn" type="button">EN</button>
+
+<!-- ============ HERO ============ -->
+<header class="hero">
+<svg class="blueprint" viewBox="0 0 1440 220" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" preserveAspectRatio="xMidYMax slice">
+<g stroke="#00CFC8" stroke-width="1" fill="none" opacity="0.16">
+<path d="M80 220 V150 L200 90 L320 150 V220"/>
+<path d="M120 220 V160 h60 v60"/>
+<rect x="230" y="160" width="40" height="30"/>
+<path d="M400 220 V120 h180 V220"/>
+<path d="M430 120 V90 h80 v30"/>
+<rect x="430" y="150" width="34" height="40"/>
+<rect x="500" y="150" width="46" height="26"/>
+<path d="M660 220 V100 L790 60 L920 100 V220"/>
+<rect x="710" y="140" width="56" height="46"/>
+<rect x="810" y="140" width="56" height="46"/>
+<path d="M1000 220 V130 h200 V220"/>
+<path d="M1000 130 L1100 80 L1200 130"/>
+<rect x="1040" y="160" width="40" height="34"/>
+<rect x="1120" y="160" width="40" height="34"/>
+<path d="M1280 220 V150 h120 v70"/>
+<path d="M0 220 h1440" stroke-width="1.4" opacity="0.9"/>
+</g>
+</svg>
+<div class="wrap">
+<div class="pre-head">
+<span data-only="ar">تدريب مباشر مجاني.. لأصحاب شركات التصميم والمقاولات بالخليج</span>
+<span data-only="en">FREE LIVE TRAINING · FOR GCC DESIGN &amp; CONTRACTING COMPANY OWNERS</span>
+</div>
+<h1>
+<span data-only="ar">النظام اللي وسّعنا فيه <span class="hl">فوق ٦٥ شركة</span> تصميم ومقاولات بالخليج.</span>
+<span data-only="en">The system we used to scale <span class="hl">65+ design &amp; contracting companies</span> across the GCC.</span>
+</h1>
+<p class="hero-sub">
+<span data-only="ar">بالتدريب هذا، بشرح خطوة بخطوة الخمس خطوات اللي ركبناها لـ٦٥ شركة تصميم وبناء ومقاولات بالخليج.. نفس النظام اللي ياب لهم فوق ٧٦ مليون دولار مشاريع يديدة. من الإعلان.. لين توقيع العقد.</span>
+<span data-only="en">In this training, I walk you step by step through the five steps we installed for 65 design, build, and contracting companies across the GCC. The same system that brought them over $76 million in new projects. From the ad, all the way to the signed contract.</span>
+</p>
+<div class="chips">
+<span class="chip"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg><span data-only="ar">الخميس ١٧ سبتمبر</span><span data-only="en">Thursday, September 17</span></span>
+<span class="chip"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span data-only="ar">٨:٠٠ مساءً بتوقيت مكة</span><span data-only="en">8:00 PM Mecca time (GMT+3)</span></span>
+<span class="chip"><svg viewBox="0 0 24 24"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg><span data-only="ar">لايف على زوم</span><span data-only="en">Live on Zoom</span></span>
+<span class="chip"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg><span data-only="ar">مجاني ١٠٠٪</span><span data-only="en">100% Free</span></span>
+</div>
+<div class="count" id="countdown">
+<div class="count-box"><div class="count-num" id="cd-d">--</div><div class="count-lab"><span data-only="ar">أيام</span><span data-only="en">Days</span></div></div>
+<div class="count-box"><div class="count-num" id="cd-h">--</div><div class="count-lab"><span data-only="ar">ساعات</span><span data-only="en">Hours</span></div></div>
+<div class="count-box"><div class="count-num" id="cd-m">--</div><div class="count-lab"><span data-only="ar">دقايق</span><span data-only="en">Minutes</span></div></div>
+<div class="count-box"><div class="count-num" id="cd-s">--</div><div class="count-lab"><span data-only="ar">ثواني</span><span data-only="en">Seconds</span></div></div>
+</div>
+<p class="count-over" id="countOver">
+<span data-only="ar">التدريب بدأ.. چك إيميلك للرابط</span>
+<span data-only="en">The training has started. Check your email for the link.</span>
+</p>
+<a class="cta" href="#register" data-mm-cta="hero">
+<span data-only="ar">احجز مقعدك المجاني الآن</span>
+<span data-only="en">Save My Free Seat Now</span>
+<span class="arr" data-only="ar">&#8592;</span><span class="arr" data-only="en">&#8594;</span>
+</a>
+<p class="cta-micro">
+<span data-only="ar">المقاعد محدودة.. والتدريب ما ينسجل وما فيه إعادة.</span>
+<span data-only="en">Seats are limited. The training is not recorded and there is no replay.</span>
+</p>
+</div>
+</header>
+
+<!-- ============ PROOF STRIP ============ -->
+<div class="proof">
+<div class="wrap">
+<span class="proof-item"><b><span data-only="ar">٦٥</span><span data-only="en" class="num">65</span></b><span data-only="ar">شركة بالخليج</span><span data-only="en">GCC companies</span></span>
+<span class="proof-item"><b><span data-only="ar">فوق ٧٦ مليون دولار</span><span data-only="en" class="num">$76M+</span></b><span data-only="ar">مشاريع يديدة</span><span data-only="en">in new projects</span></span>
+<span class="proof-item"><b><span data-only="ar">قطاع واحد</span><span data-only="en">One industry</span></b><span data-only="ar">متخصصين فيه بس</span><span data-only="en">is all we do</span></span>
+</div>
+</div>
+
+<!-- ============ 5 STEPS ============ -->
+<section class="sec light">
+<div class="wrap">
+<div class="sec-head reveal">
+<h2 class="sec-title">
+<span data-only="ar">شنو بتاخذ من التدريب</span>
+<span data-only="en">What you take from the training</span>
+</h2>
+<p class="sec-intro">
+<span data-only="ar">الخمس خطوات.. من الإعلان لين توقيع العقد:</span>
+<span data-only="en">The five steps, from the ad to the signed contract:</span>
+</p>
+</div>
+<div class="path">
+<div class="step-card reveal">
+<div class="step-node">1</div>
+<div class="step-head">
+<span class="step-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg></span>
+<p class="step-name">Premium Engineered Ads<span class="tm">&trade;</span></p>
+</div>
+<p class="step-desc">
+<span data-only="ar">شلون توصل إعلاناتك لصاحب المشروع الصح.. مو لأي أحد ماسك تليفون.</span>
+<span data-only="en">How your ads reach the right project owner, not just anyone holding a phone.</span>
+</p>
+<p class="step-more">
+<span data-only="ar">بنوريك الفرق بين إعلان يجيب فضوليين.. وإعلان مهندس يجيب ملاك مشاريع جادين من أول يوم.</span>
+<span data-only="en">You'll see the difference between an ad that pulls the curious, and an engineered ad that pulls serious project owners from day one.</span>
+</p>
+</div>
+<div class="step-card reveal">
+<div class="step-node">2</div>
+<div class="step-head">
+<span class="step-icon"><svg viewBox="0 0 24 24"><path d="M3 4h18l-7 8v6l-4 2v-8z"/></svg></span>
+<p class="step-name">Funnel Filtration/Education System<span class="tm">&trade;</span></p>
+</div>
+<p class="step-desc">
+<span data-only="ar">النظام اللي يصفّي غير الجادين قبل لا يوصلونك، ويعلّم الجادين عن شغلك قبل لا تكلمهم.</span>
+<span data-only="en">The system that filters out the unserious before they reach you, and educates the serious about your work before you ever speak to them.</span>
+</p>
+<p class="step-more">
+<span data-only="ar">بتشوف شلون العميل يوصلك وهو عارف شركتك، شايف شغلك، ومقتنع فيك.. قبل أول مكالمة.</span>
+<span data-only="en">You'll see how a lead arrives already knowing your company, having seen your work, and convinced, before the first call.</span>
+</p>
+</div>
+<div class="step-card reveal">
+<div class="step-node">3</div>
+<div class="step-head">
+<span class="step-icon"><svg viewBox="0 0 24 24"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.13.96.36 1.9.7 2.8a2 2 0 0 1-.45 2.1L8.1 9.9a16 16 0 0 0 6 6l1.3-1.27a2 2 0 0 1 2.1-.45c.9.34 1.84.57 2.8.7a2 2 0 0 1 1.7 2z"/></svg></span>
+<p class="step-name">Project Sales Calling Team<span class="tm">&trade;</span></p>
+</div>
+<p class="step-desc">
+<span data-only="ar">شلون تنحجز المواعيد المؤهلة بتقويمك.. بدون ما تلحق أحد.</span>
+<span data-only="en">How qualified appointments get booked into your calendar, without you chasing anyone.</span>
+</p>
+<p class="step-more">
+<span data-only="ar">فريق مبيعات يتصل خلال دقايق من التسجيل، يأهل العميل، ويثبت الموعد.. وانت مركز على مشاريعك.</span>
+<span data-only="en">A sales team that calls within minutes of the sign-up, qualifies the lead, and locks the appointment, while you stay focused on your projects.</span>
+</p>
+</div>
+<div class="step-card reveal">
+<div class="step-node">4</div>
+<div class="step-head">
+<span class="step-icon"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="m9 15 2 2 4-4"/></svg></span>
+<p class="step-name">Project Closing Mastery<span class="tm">&trade;</span></p>
+</div>
+<p class="step-desc">
+<span data-only="ar">طريقة العرض والتدريب وأدوات المبيعات اللي تقفل فيها المشروع.</span>
+<span data-only="en">The pitch, the training, and the sales tools you close the project with.</span>
+</p>
+<p class="step-more">
+<span data-only="ar">من الاستشارة الأولى لين التوقيع: شنو تقول، شنو تعرض، وشلون ترد على أصعب الاعتراضات.</span>
+<span data-only="en">From the first consultation to the signature: what to say, what to show, and how to answer the toughest objections.</span>
+</p>
+</div>
+<div class="step-card reveal">
+<div class="step-node">5</div>
+<div class="step-head">
+<span class="step-icon"><svg viewBox="0 0 24 24"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg></span>
+<p class="step-name">Project Scaling Strategy<span class="tm">&trade;</span></p>
+</div>
+<p class="step-desc">
+<span data-only="ar">شلون تكبّر النظام عقب ما يثبت نفسه.. وتكبر ربع ورا ربع.</span>
+<span data-only="en">How to scale the system once it proves itself, and grow quarter after quarter.</span>
+</p>
+<p class="step-more">
+<span data-only="ar">متى تزيد الميزانية، متى توسع الفريق، ومتى تفتح سوق يديد.. بقرارات مبنية على أرقام، مو إحساس.</span>
+<span data-only="en">When to raise the budget, when to grow the team, and when to open a new market. Decisions built on numbers, not gut feel.</span>
+</p>
+</div>
+</div>
+<div style="margin-top: clamp(26px, 4vw, 38px);">
+<a class="cta" href="#register" data-mm-cta="middle">
+<span data-only="ar">احجز مقعدك المجاني الآن</span>
+<span data-only="en">Save My Free Seat Now</span>
+<span class="arr" data-only="ar">&#8592;</span><span class="arr" data-only="en">&#8594;</span>
+</a>
+</div>
+</div>
+</section>
+
+<!-- ============ WHO IT'S FOR ============ -->
+<section class="sec dark">
+<div class="wrap">
+<div class="sec-head reveal">
+<h2 class="sec-title">
+<span data-only="ar">التدريب مبني لك إذا كنت..</span>
+<span data-only="en">This training is built for you if you are:</span>
+</h2>
+</div>
+<div class="scen">
+<div class="scen-card reveal"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg><span data-only="ar">شركة يديدة.. وتدوّر أول عملائك</span><span data-only="en">A new company, looking for your first clients</span></div>
+<div class="scen-card reveal"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg><span data-only="ar">ايونك عملاء.. بس مو عملائك المثاليين، مو الناس الصح</span><span data-only="en">Getting clients, but not your ideal clients, not the right people</span></div>
+<div class="scen-card reveal"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg><span data-only="ar">معتمد بالكامل على المعارف والتوصيات.. وتدوّر ثبات أكثر</span><span data-only="en">Fully dependent on connections and referrals, and looking for more stability</span></div>
+<div class="scen-card reveal"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg><span data-only="ar">وضعك زين.. وبس تبي تتوسّع أكثر، بفريق تسويق ومبيعات محترف يشتغل معاك</span><span data-only="en">Doing well, and you simply want to scale further, with a professional marketing and sales team working alongside you</span></div>
+</div>
+</div>
+</section>
+
+<!-- ============ SOCIAL PROOF ============ -->
+<section class="sec white">
+<div class="wrap">
+<div class="sec-head reveal">
+<h2 class="sec-title">
+<span data-only="ar">نتائج حقيقية من شركات مثل شركتك</span>
+<span data-only="en">Real results from companies like yours</span>
+</h2>
+<p class="sec-intro">
+<span data-only="ar">مو وعود.. نتائج مسجلة بالفيديو من ملاك شركات بالخليج، بكلامهم هم.</span>
+<span data-only="en">Not promises. Results on video from Gulf company owners, in their own words.</span>
+</p>
+</div>
+<div class="testi">
+<div class="testi-card reveal">
+<div class="testi-thumb">
+<div class="wistia_embed wistia_async_4gt6ep2jxr popover=true popoverAnimateThumbnail=true videoFoam=false playerColor=00CFC8" style="width:100%;height:100%;">&nbsp;</div>
+</div>
+<div class="testi-body">
+<p class="testi-meta"><span data-only="ar">علي · شركة تصميم وبناء</span><span data-only="en">Ali · Design &amp; Build firm</span></p>
+<p class="testi-quote"><span data-only="ar">مليونين دولار مشاريع بشهرين</span><span data-only="en">$2M in projects in two months</span></p>
+</div>
+</div>
+<div class="testi-card reveal">
+<div class="testi-thumb">
+<div class="wistia_embed wistia_async_6dlcwraqde popover=true popoverAnimateThumbnail=true videoFoam=false playerColor=00CFC8" style="width:100%;height:100%;">&nbsp;</div>
+</div>
+<div class="testi-body">
+<p class="testi-meta"><span data-only="ar">جوزيف · شركة تصميم وبناء</span><span data-only="en">Joseph · Design &amp; Build firm</span></p>
+<p class="testi-quote"><span data-only="ar">٥ مشاريع كبيرة بشهرين.. وكان نص مقتنع إن التسويق يشتغل بقطاعه</span><span data-only="en">5 major projects in two months, and he was only half convinced marketing could work in his industry</span></p>
+</div>
+</div>
+<div class="testi-card reveal">
+<div class="testi-thumb">
+<div class="wistia_embed wistia_async_qecv9jfnwp popover=true popoverAnimateThumbnail=true videoFoam=false playerColor=00CFC8" style="width:100%;height:100%;">&nbsp;</div>
+</div>
+<div class="testi-body">
+<p class="testi-meta"><span data-only="ar">نواف · شركة تصميم داخلي وتنفيذ</span><span data-only="en">Nawaf · Interior design &amp; build</span></p>
+<p class="testi-quote"><span data-only="ar">ضاعف دخل شركته ٤ مرات</span><span data-only="en">Quadrupled his company's revenue</span></p>
+</div>
+</div>
+</div>
+<div class="reviews-shell reveal">
+<div class="elfsight-app-0e4367cc-f2b5-4319-855b-df5f0c0d46e9"></div>
+</div>
+</div>
+</section>
+
+<!-- ============ TRAINER BIO ============ -->
+<section class="sec light">
+<div class="wrap">
+<div class="sec-head reveal">
+<h2 class="sec-title">
+<span data-only="ar">منو اللي بيدرّبك</span>
+<span data-only="en">Who's training you</span>
+</h2>
+</div>
+<div class="bio reveal">
+<div class="bio-photo">
+<img src="https://embed-ssl.wistia.com/deliveries/e50a1967ec1919845d526206f53d56ea.bin" alt="عزيز الوحيدي" loading="lazy">
+</div>
+<div>
+<p class="bio-name"><span data-only="ar">عبدالعزيز وحيدي</span><span data-only="en">Abdulaziz Waheedi</span></p>
+<p class="bio-role"><span data-only="ar">مؤسس مهارة ميديا</span><span data-only="en">Founder, Mahara Media</span></p>
+<p class="bio-text">
+<span data-only="ar">قروث بارتنر متخصص بقطاع واحد بس: شركات التصميم والبناء والمقاولات بالخليج. ساعدنا ٦٥ شركة بالقطاع تبني أنظمة تسويق ومبيعات يابت لهم فوق ٧٦ مليون دولار مشاريع يديدة. بالتدريب، بفتح لك النظام من داخل.. نفس اللي نركبه لعملائنا.</span>
+<span data-only="en">A growth partner specialized in exactly one industry: design, build, and contracting companies in the GCC. We have helped 65 companies in the industry build marketing and sales systems that brought them over $76 million in new projects. In this training, I open the system from the inside. The same one we install for our clients.</span>
+</p>
+<p class="bio-text">
+<span data-only="ar">قبل مهارة، اشتغل عبدالعزيز داخل كم شركة مقاولات وتصميم بالخليج.. مو عشان الشغل نفسه، عشان يدرس القطاع من الداخل. ونفس الشي كان يتكرر قدامه: شركات من أفضل اللي بالمنطقة، شغلها فعلاً فخم، وتخسر مشاريعها لمنافسين أضعف.. بس يسوقون أحسن. الشغل الزين وحده ما كان كافي. فبنى النظام اللي يوصل أفضل الشركات للعميل الصح.. قبل غيرها.</span>
+<span data-only="en">Before Mahara, Abdulaziz worked inside several construction and design firms across the Gulf, less for the work itself than to study the industry from the inside. And the same thing kept happening: some of the best firms in the region, doing genuinely great work, were losing projects to weaker competitors who simply marketed better. Great work alone was not enough. So he built the system that gets the best firms to the right client first.</span>
+</p>
+<p class="bio-text">
+<span data-only="ar">من الكويت.. ونخدم الخليج كله: الكويت، السعودية، الإمارات، قطر، والبحرين. نفهم السوق لأننا منه: اللغة، الثقافة، وشلون عميل الخليج يقرر منو يعطيه مشروعه.</span>
+<span data-only="en">Based in Kuwait, working across the whole Gulf: Kuwait, Saudi Arabia, the UAE, Qatar, and Bahrain. We understand this market because we come from it: the language, the culture, and how Gulf clients decide who to trust with their projects.</span>
+</p>
+<div class="bio-stats">
+<span class="bio-stat"><span data-only="ar">٦٥ شركة بالخليج</span><span data-only="en">65 GCC companies</span></span>
+<span class="bio-stat"><span data-only="ar">فوق ٧٦ مليون دولار مشاريع</span><span data-only="en">$76M+ in projects</span></span>
+<span class="bio-stat"><span data-only="ar">٥ أسواق خليجية</span><span data-only="en">5 Gulf markets</span></span>
+</div>
+</div>
+</div>
+</div>
+</section>
+
+<!-- ============ FINAL CTA + FORM ============ -->
+<section class="sec dark" id="register" style="scroll-margin-top: 20px;">
+<div class="wrap">
+<div class="sec-head reveal">
+<h2 class="sec-title">
+<span data-only="ar">احجز مقعدك قبل ما تمتلي المقاعد</span>
+<span data-only="en">Save your seat before they fill up</span>
+</h2>
+<p class="sec-intro">
+<span data-only="ar">التدريب لايف، مو مسجل، وما فيه إعادة. واللي بيحضر.. بيقدر يسأل عن وضع شركته بالذات.</span>
+<span data-only="en">The training is live, not recorded, and there is no replay. And whoever attends can ask about their own company's situation.</span>
+</p>
+</div>
+<div class="form-shell reveal">
+<div class="form-card">
+<iframe
+    src="https://link.maharamedia.com/widget/form/5wC0SkFcgCfFzbpOUBWk"
+    style="width:100%;height:100%;border:none;border-radius:3px"
+    id="inline-5wC0SkFcgCfFzbpOUBWk"
+    data-layout="{'id':'INLINE'}"
+    data-trigger-type="alwaysShow"
+    data-trigger-value=""
+    data-activation-type="alwaysActivated"
+    data-activation-value=""
+    data-deactivation-type="neverDeactivate"
+    data-deactivation-value=""
+    data-form-name="Webinar Opt In"
+    data-height="1150"
+    data-layout-iframe-id="inline-5wC0SkFcgCfFzbpOUBWk"
+    data-form-id="5wC0SkFcgCfFzbpOUBWk"
+    title="Webinar Opt In"
+        >
+</iframe>
+</div>
+<p class="form-note">
+<span data-only="ar">بياناتك ما تنشارك مع أي طرف ثالث.</span>
+<span data-only="en">Your data is never shared with any third party.</span>
+</p>
+</div>
+</div>
+</section>
+
+<!-- ============ FOOTER ============ -->
+<footer class="footer">
+<img class="f-logo" src="https://embed-ssl.wistia.com/deliveries/85b8f1fb3e89ef1215f9dc6d59a4b7c3.bin" alt="Mahara Media">
+<div>
+<span data-only="ar">© مهارة ميديا ٢٠٢٦</span><span data-only="en">© Mahara Media 2026</span>
+&nbsp;·&nbsp;
+<a href="#"><span data-only="ar">سياسة الخصوصية</span><span data-only="en">Privacy Policy</span></a>
+&nbsp;·&nbsp;
+<a href="#"><span data-only="ar">الشروط والأحكام</span><span data-only="en">Terms &amp; Conditions</span></a>
+</div>
+<p class="legal">
+<span data-only="ar">هذا الموقع غير تابع لشركة Meta أو Facebook أو Instagram بأي شكل. Facebook هي علامة تجارية مسجلة لشركة Meta Platforms, Inc.</span>
+<span data-only="en">This site is not a part of Meta, Facebook or Instagram in any way. Facebook is a registered trademark of Meta Platforms, Inc.</span>
+</p>
+</footer>
+
+<script src="https://link.maharamedia.com/js/form_embed.js"></script>
+<script src="https://fast.wistia.com/assets/external/E-v1.js" async></script>
+<script src="https://elfsightcdn.com/platform.js" async></script>
+<script>
+(function () {
+/* ---- language toggle ---- */
+var body = document.body, html = document.documentElement, btn = document.getElementById('langBtn');
+function applyLang(lang) {
+body.setAttribute('data-lang', lang);
+html.setAttribute('lang', lang);
+html.setAttribute('dir', lang === 'ar' ? 'rtl' : 'ltr');
+btn.textContent = lang === 'ar' ? 'EN' : 'AR';
+}
+applyLang(/[?&]en\b/.test(location.search) ? 'en' : 'ar');
+btn.addEventListener('click', function () {
+applyLang(body.getAttribute('data-lang') === 'ar' ? 'en' : 'ar');
+});
+
+/* ---- countdown ---- */
+/* SET BEFORE LAUNCH: ISO datetime with Kuwait offset, e.g. '2026-08-12T19:00:00+03:00' */
+var COUNTDOWN_ISO = '2026-09-17T20:00:00+03:00';
+var target = Date.parse(COUNTDOWN_ISO);
+if (isNaN(target)) { target = Date.now() + 3 * 86400000 + 7 * 3600000; } /* preview fallback until the real date is set */
+var elD = document.getElementById('cd-d'), elH = document.getElementById('cd-h'),
+    elM = document.getElementById('cd-m'), elS = document.getElementById('cd-s'),
+    box = document.getElementById('countdown'), over = document.getElementById('countOver');
+function pad(n) { return n < 10 ? '0' + n : '' + n; }
+function tick() {
+var diff = target - Date.now();
+if (diff <= 0) { box.style.display = 'none'; over.style.display = 'block'; return; }
+elD.textContent = pad(Math.floor(diff / 86400000));
+elH.textContent = pad(Math.floor(diff / 3600000) % 24);
+elM.textContent = pad(Math.floor(diff / 60000) % 60);
+elS.textContent = pad(Math.floor(diff / 1000) % 60);
+setTimeout(tick, 1000);
+}
+tick();
+
+/* ---- reveals ---- */
+var io = new IntersectionObserver(function (entries) {
+entries.forEach(function (e) {
+if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+});
+}, { threshold: 0.1 });
+document.querySelectorAll('.reveal').forEach(function (el) { io.observe(el); });
+})();
+</script>
+<script src="/mm-track.js" data-page="landing" defer></script>
+</body>
+</html>
