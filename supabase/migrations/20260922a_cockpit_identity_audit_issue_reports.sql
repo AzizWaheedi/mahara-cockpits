@@ -132,7 +132,9 @@ WITH seats(email, roles) AS (
 INSERT INTO public.cockpit_members (email, auth_user_id, roles)
 SELECT seats.email, users.id, seats.roles
 FROM seats
-LEFT JOIN auth.users AS users ON lower(users.email) = seats.email
+LEFT JOIN auth.users AS users
+  ON lower(users.email) = seats.email
+ AND users.email_confirmed_at IS NOT NULL
 ON CONFLICT (email) DO UPDATE
 SET
   auth_user_id = coalesce(public.cockpit_members.auth_user_id, excluded.auth_user_id),
@@ -249,33 +251,22 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
-  v_email text;
   v_uid uuid;
   v_is_ceo boolean;
 BEGIN
   v_uid := auth.uid();
-  v_email := lower(trim(coalesce(
-    auth.jwt() ->> 'email',
-    current_setting('request.jwt.claim.email', true),
-    ''
-  )));
-
-  IF v_email IN ('aziz@maharamedia.com', 'awaheedi2008@gmail.com') THEN
-    RETURN true;
-  END IF;
-
-  IF v_uid IS NULL AND v_email = '' THEN
+  IF v_uid IS NULL THEN
     RETURN false;
   END IF;
 
   SELECT exists (
     SELECT 1
     FROM public.cockpit_members cm
+    JOIN auth.users au ON au.id = cm.auth_user_id
     WHERE cm.active = true
-      AND (
-        (v_uid IS NOT NULL AND cm.auth_user_id = v_uid)
-        OR (v_email <> '' AND cm.email = v_email)
-      )
+      AND cm.auth_user_id = v_uid
+      AND au.email_confirmed_at IS NOT NULL
+      AND cm.email = lower(trim(au.email))
       AND (
         'ceo' = ANY(cm.roles)
         OR 'admin' = ANY(cm.roles)
@@ -293,33 +284,22 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
-  v_email text;
   v_uid uuid;
   v_has_role boolean;
 BEGIN
   v_uid := auth.uid();
-  v_email := lower(trim(coalesce(
-    auth.jwt() ->> 'email',
-    current_setting('request.jwt.claim.email', true),
-    ''
-  )));
-
-  IF v_email IN ('aziz@maharamedia.com', 'awaheedi2008@gmail.com') THEN
-    RETURN true;
-  END IF;
-
-  IF v_uid IS NULL AND v_email = '' THEN
+  IF v_uid IS NULL THEN
     RETURN false;
   END IF;
 
   SELECT exists (
     SELECT 1
     FROM public.cockpit_members cm
+    JOIN auth.users au ON au.id = cm.auth_user_id
     WHERE cm.active = true
-      AND (
-        (v_uid IS NOT NULL AND cm.auth_user_id = v_uid)
-        OR (v_email <> '' AND cm.email = v_email)
-      )
+      AND cm.auth_user_id = v_uid
+      AND au.email_confirmed_at IS NOT NULL
+      AND cm.email = lower(trim(au.email))
       AND (
         required_role = ANY(cm.roles)
         OR 'admin' = ANY(cm.roles)
@@ -445,8 +425,9 @@ TO authenticated
 USING (
   active = true
   AND (
-    (auth.uid() IS NOT NULL AND auth_user_id = auth.uid())
-    OR (email = lower(trim(coalesce(auth.jwt() ->> 'email', current_setting('request.jwt.claim.email', true), ''))))
+    auth.uid() IS NOT NULL
+    AND auth_user_id = auth.uid()
+    AND email = lower(trim(coalesce(auth.jwt() ->> 'email', '')))
   )
 );
 

@@ -63,6 +63,40 @@ BEGIN
   END IF;
 END;
 $smoke$;
+DO $auth_smoke$
+DECLARE
+  v_uid uuid;
+  v_email text;
+  v_role text;
+  v_unknown_uid uuid := gen_random_uuid();
+BEGIN
+  SELECT auth_user_id, email, roles[1]
+  INTO v_uid, v_email, v_role
+  FROM public.cockpit_members
+  WHERE auth_user_id IS NOT NULL AND active = true AND array_length(roles, 1) > 0
+  LIMIT 1;
+
+  IF v_uid IS NULL THEN
+    RAISE EXCEPTION 'No linked cockpit seat available for role smoke check';
+  END IF;
+
+  PERFORM set_config('request.jwt.claim.sub', v_uid::text, true);
+  PERFORM set_config('request.jwt.claims', jsonb_build_object(
+    'sub', v_uid, 'email', v_email, 'role', 'authenticated'
+  )::text, true);
+  IF NOT public.cockpit_has_role(v_role) THEN
+    RAISE EXCEPTION 'Linked confirmed seat failed role smoke check';
+  END IF;
+
+  PERFORM set_config('request.jwt.claim.sub', v_unknown_uid::text, true);
+  PERFORM set_config('request.jwt.claims', jsonb_build_object(
+    'sub', v_unknown_uid, 'email', 'aziz@maharamedia.com', 'role', 'authenticated'
+  )::text, true);
+  IF public.cockpit_is_ceo() OR public.cockpit_has_role('admin') THEN
+    RAISE EXCEPTION 'Unlinked user passed role smoke check';
+  END IF;
+END;
+$auth_smoke$;
 '@
 $drySql = [regex]::Replace($drySql, '(?i)\bROLLBACK;\s*$', "$rowSmoke`nROLLBACK;")
 
@@ -90,6 +124,8 @@ if ($VerifyOnly) {
   $verification = Invoke-Sql @'
 select
   (select count(*) from public.cockpit_members) as member_count,
+  (select count(*) from public.cockpit_members where auth_user_id is not null) as linked_auth_users,
+  (select count(*) from public.cockpit_members cm join auth.users au on au.id = cm.auth_user_id where au.email_confirmed_at is null) as unverified_auth_links,
   (select count(*) from public.cockpit_issue_reports) as issue_report_count,
   (select count(*) from public.cockpit_audit_log where entity_type = 'cockpit_members' and action = 'INSERT') as member_insert_audits,
   (select count(*) from public.cockpit_feedback) as existing_ceo_feedback_count,
@@ -109,6 +145,7 @@ select
   $verification | ConvertTo-Json -Depth 4 -Compress | Write-Output
   $row = @($verification)[0]
   if ($row.member_count -lt 6 -or $row.member_insert_audits -lt 6 -or
+      $row.unverified_auth_links -ne 0 -or
       -not $row.all_rls_enabled -or -not $row.authenticated_can_read_reports -or
       $row.authenticated_can_insert_reports -or $row.anon_can_read_reports -or
       -not $row.service_can_insert_reports -or
@@ -131,7 +168,7 @@ Write-Output 'Creative Triage migration preflight:'
 $before | ConvertTo-Json -Depth 4 -Compress | Write-Output
 Write-Output 'Planned: cockpit_members, cockpit_audit_log, cockpit_issue_reports, role checks, gated issue-report RPC, RLS and grants.'
 Write-Output 'Existing cockpit_feedback (Aziz changes queue) is not changed.'
-Write-Output 'DRY_RUN = True: executing migration and one-row audit smoke check inside a transaction that ends in ROLLBACK.'
+Write-Output 'DRY_RUN = True: executing migration, one-row audit, and positive/negative role checks inside a transaction that ends in ROLLBACK.'
 [void](Invoke-Sql $drySql $false)
 
 $afterDryRun = Invoke-Sql @'

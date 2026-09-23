@@ -22,7 +22,8 @@ powershell -File scripts/apply-cockpit-supabase-migration.ps1 -VerifyOnly
 
 The script defaults to `DRY_RUN = True` and checks the project reference
 before any query. `-Apply` repeats the dry run before committing; the dry run
-checks one issue report and its audit row, then rolls everything back.
+checks one issue report and its audit row, a linked confirmed user's role, and
+an unlinked user's denial, then rolls everything back.
 `-VerifyOnly` checks table counts, RLS, and grants without writing. Keep this
 deployment setting while verifying:
 
