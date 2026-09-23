@@ -246,6 +246,24 @@ export function calculateNextRevision(prior?: number): number {
   return Math.max(Date.now(), p + 1);
 }
 
+export function needsDailyCheckShadow(
+  revision?: number,
+  acknowledgedRevision?: number,
+): boolean {
+  return revision === undefined || acknowledgedRevision !== revision;
+}
+
+export function canAcknowledgeDailyCheckRevision(
+  currentRevision: number | undefined,
+  sentRevision: number,
+  acknowledgedRevision: number | undefined,
+): boolean {
+  return (
+    currentRevision === sentRevision &&
+    (acknowledgedRevision ?? 0) < sentRevision
+  );
+}
+
 export type CockpitDailyCheckInput = {
   _id: string;
   _creationTime?: number;
@@ -400,6 +418,12 @@ export async function mirrorCockpitDailyCheck(
   const dryRun =
     options.dryRun ?? process.env.SUPABASE_CHECKS_SHADOW_DRY_RUN !== "false";
   if (dryRun) return { mode: "dry-run" };
+
+  const canary = process.env.SUPABASE_CHECKS_SHADOW_CANARY_SOURCE_ID?.trim();
+  const batchEnabled =
+    process.env.SUPABASE_CHECKS_SHADOW_BATCH_ENABLED === "true";
+  if (!canary && !batchEnabled) return { mode: "dry-run" };
+  if (canary && doc._id !== canary) return { mode: "dry-run" };
 
   const base = (process.env.SUPABASE_URL ?? "").replace(/\/+$/, "");
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";

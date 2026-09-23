@@ -21,9 +21,11 @@ import {
 import { latestStillAt } from "./previews";
 import {
   allAdAccounts,
+  calculateNextRevision,
   callTool,
   graph,
   MAHARA_BUSINESS_ID,
+  needsDailyCheckShadow,
   supabaseQuery,
   unwrap,
 } from "./tools";
@@ -1009,6 +1011,7 @@ export const store = internalMutation({
       .withIndex("by_role_day", q => q.eq("role", "media_buyer").eq("day", day))
       .collect();
     const byKey = new Map(existing.map(c => [c.key, c]));
+    const scheduledShadowIds = new Set<string>();
     for (const c of args.checks) {
       const prev = byKey.get(c.key);
       if (prev) {
@@ -1016,15 +1019,17 @@ export const store = internalMutation({
           prev.label !== c.label ||
           (prev.detail ?? undefined) !== (c.detail ?? undefined) ||
           (prev.phase ?? undefined) !== (c.phase ?? undefined) ||
+          (prev.block ?? undefined) !== (c.block ?? undefined) ||
           (prev.order ?? undefined) !== (c.order ?? undefined) ||
           (prev.href ?? undefined) !== (c.href ?? undefined);
 
         if (contentChanged) {
-          const revision = Math.max(Date.now(), (prev.shadowRevision ?? 0) + 1);
+          const revision = calculateNextRevision(prev.shadowRevision);
           await ctx.db.patch(prev._id, {
             detail: c.detail,
             label: c.label,
             phase: c.phase,
+            block: c.block,
             order: c.order,
             href: c.href,
             shadowRevision: revision,
@@ -1033,9 +1038,10 @@ export const store = internalMutation({
           await ctx.scheduler.runAfter(0, internal.cockpit.shadowDailyCheck, {
             id: prev._id,
           });
+          scheduledShadowIds.add(prev._id);
         }
       } else {
-        const revision = Math.max(Date.now(), 1);
+        const revision = calculateNextRevision();
         const newId = await ctx.db.insert("checks", {
           ...c,
           role: "media_buyer",
@@ -1047,6 +1053,38 @@ export const store = internalMutation({
         await ctx.scheduler.runAfter(0, internal.cockpit.shadowDailyCheck, {
           id: newId,
         });
+        scheduledShadowIds.add(newId);
+      }
+    }
+
+    // After the explicit live flag is enabled, catch up unchanged checks too.
+    // A failed request remains unacknowledged and is retried on the next sync.
+    const canary = process.env.SUPABASE_CHECKS_SHADOW_CANARY_SOURCE_ID?.trim();
+    if (
+      process.env.SUPABASE_CHECKS_SHADOW_DRY_RUN === "false" &&
+      (canary || process.env.SUPABASE_CHECKS_SHADOW_BATCH_ENABLED === "true")
+    ) {
+      const ownedChecks = await ctx.db
+        .query("checks")
+        .withIndex("by_role_day", q => q.eq("role", "media_buyer"))
+        .collect();
+      let replayed = 0;
+      for (const row of ownedChecks) {
+        if (scheduledShadowIds.has(row._id)) continue;
+        if (canary && row._id !== canary) continue;
+        if (!needsDailyCheckShadow(row.shadowRevision, row.shadowAckRevision))
+          continue;
+        if (row.shadowRevision === undefined) {
+          await ctx.db.patch(row._id, {
+            shadowRevision: calculateNextRevision(),
+            shadowActor: "reconcile",
+          });
+        }
+        await ctx.scheduler.runAfter(0, internal.cockpit.shadowDailyCheck, {
+          id: row._id,
+        });
+        replayed += 1;
+        if (replayed >= 25) break;
       }
     }
 

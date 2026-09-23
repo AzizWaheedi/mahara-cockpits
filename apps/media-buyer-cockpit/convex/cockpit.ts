@@ -9,9 +9,13 @@ import {
 import { CPL_GATE } from "./constants";
 import { authenticatedMutation, authenticatedQuery } from "./functions";
 import { scopeFilter } from "./gate";
-import { flush } from "./health";
+import { flush, note } from "./health";
 import { allowedClients, assertRole } from "./roles";
-import { mirrorCockpitDailyCheck } from "./tools";
+import {
+  calculateNextRevision,
+  canAcknowledgeDailyCheckRevision,
+  mirrorCockpitDailyCheck,
+} from "./tools";
 
 function kuwaitToday(): string {
   return new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 10);
@@ -188,7 +192,7 @@ export const toggleCheck = authenticatedMutation({
         `Only media_buyer checks can be toggled in this cockpit (got role: "${row.role}").`,
       );
     }
-    const revision = Math.max(Date.now(), (row.shadowRevision ?? 0) + 1);
+    const revision = calculateNextRevision(row.shadowRevision);
     const user = await ctx.db.get(ctx.userId);
     const actor = user?.email ?? "media_buyer";
     await ctx.db.patch(id, {
@@ -223,6 +227,26 @@ export const getCheckForShadow = internalQuery({
   },
 });
 
+export const ackDailyCheckShadow = internalMutation({
+  args: { id: v.id("checks"), revision: v.number() },
+  returns: v.null(),
+  handler: async (ctx, { id, revision }) => {
+    const row = await ctx.db.get(id);
+    if (!row || row.role !== "media_buyer") return null;
+    // An older request cannot acknowledge a newer human checkmark.
+    if (
+      canAcknowledgeDailyCheckRevision(
+        row.shadowRevision,
+        revision,
+        row.shadowAckRevision,
+      )
+    ) {
+      await ctx.db.patch(id, { shadowAckRevision: revision });
+    }
+    return null;
+  },
+});
+
 export const shadowDailyCheck = internalAction({
   args: { id: v.id("checks") },
   returns: v.null(),
@@ -237,7 +261,24 @@ export const shadowDailyCheck = internalAction({
           `Non-media-buyer check rejected in shadow action: role="${check.role}".`,
         );
       }
-      await mirrorCockpitDailyCheck(check);
+      const outcome = await mirrorCockpitDailyCheck(check);
+      if (outcome.mode === "written") {
+        const result = outcome.result as {
+          status: string;
+          source_revision: number;
+        };
+        if (
+          result.status === "stale" ||
+          result.source_revision !== check.shadowRevision
+        ) {
+          note("supabase", false, "daily check shadow revision conflict");
+          throw new Error("Supabase check revision did not match Convex.");
+        }
+        await ctx.runMutation(internal.cockpit.ackDailyCheckShadow, {
+          id,
+          revision: check.shadowRevision,
+        });
+      }
     } catch (error) {
       console.error(`Shadow daily check failed for ${id}:`, error);
     }

@@ -1,22 +1,33 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
   buildCockpitDailyCheckRow,
   type CockpitDailyCheckInput,
   calculateNextRevision,
+  canAcknowledgeDailyCheckRevision,
   mirrorCockpitDailyCheck,
+  needsDailyCheckShadow,
 } from "../convex/tools";
 
 const originalEnv = {
   dryRun: process.env.SUPABASE_CHECKS_SHADOW_DRY_RUN,
   url: process.env.SUPABASE_URL,
   key: process.env.SUPABASE_SERVICE_ROLE_KEY,
+  canary: process.env.SUPABASE_CHECKS_SHADOW_CANARY_SOURCE_ID,
+  batch: process.env.SUPABASE_CHECKS_SHADOW_BATCH_ENABLED,
 };
+
+beforeEach(() => {
+  process.env.SUPABASE_CHECKS_SHADOW_BATCH_ENABLED = "true";
+  delete process.env.SUPABASE_CHECKS_SHADOW_CANARY_SOURCE_ID;
+});
 
 afterEach(() => {
   for (const [name, value] of [
     ["SUPABASE_CHECKS_SHADOW_DRY_RUN", originalEnv.dryRun],
     ["SUPABASE_URL", originalEnv.url],
     ["SUPABASE_SERVICE_ROLE_KEY", originalEnv.key],
+    ["SUPABASE_CHECKS_SHADOW_CANARY_SOURCE_ID", originalEnv.canary],
+    ["SUPABASE_CHECKS_SHADOW_BATCH_ENABLED", originalEnv.batch],
   ] as const) {
     if (value === undefined) delete process.env[name];
     else process.env[name] = value;
@@ -202,6 +213,36 @@ describe("Supabase daily check shadow contract", () => {
     expect(fetchCalled).toBe(false);
   });
 
+  it("limits an enabled pilot to one exact canary source ID", async () => {
+    process.env.SUPABASE_CHECKS_SHADOW_CANARY_SOURCE_ID = "another-check-id";
+    let called = false;
+    const fetchImpl = (async () => {
+      called = true;
+      throw new Error("non-canary check must not be sent");
+    }) as typeof fetch;
+    expect(
+      await mirrorCockpitDailyCheck(sampleCheck, {
+        dryRun: false,
+        fetchImpl,
+      }),
+    ).toEqual({ mode: "dry-run" });
+    expect(called).toBe(false);
+  });
+
+  it("keeps writes off when live flag lacks both canary and batch approval", async () => {
+    process.env.SUPABASE_CHECKS_SHADOW_DRY_RUN = "false";
+    delete process.env.SUPABASE_CHECKS_SHADOW_BATCH_ENABLED;
+    let called = false;
+    const fetchImpl = (async () => {
+      called = true;
+      throw new Error("unguarded write");
+    }) as typeof fetch;
+    expect(await mirrorCockpitDailyCheck(sampleCheck, { fetchImpl })).toEqual({
+      mode: "dry-run",
+    });
+    expect(called).toBe(false);
+  });
+
   it("outgoing RPC request and headers: sends expected payload without exposing service key", async () => {
     process.env.SUPABASE_CHECKS_SHADOW_DRY_RUN = "false";
     process.env.SUPABASE_URL = "https://bldgtotkfmhoxmlzowdx.supabase.co/";
@@ -370,5 +411,16 @@ describe("Supabase daily check shadow contract", () => {
     expect(toggle2.source_revision).toBe(r2);
     expect(toggle2.source_snapshot_ts).toBe(`live:${r2}`);
     expect(toggle2.source_revision).toBeGreaterThan(toggle1.source_revision);
+  });
+
+  it("replays a check until the current revision is acknowledged", () => {
+    expect(needsDailyCheckShadow(undefined, undefined)).toBe(true);
+    expect(needsDailyCheckShadow(200, undefined)).toBe(true);
+    expect(needsDailyCheckShadow(200, 100)).toBe(true);
+    expect(needsDailyCheckShadow(200, 200)).toBe(false);
+    expect(needsDailyCheckShadow(200, 201)).toBe(true);
+    expect(canAcknowledgeDailyCheckRevision(200, 200, undefined)).toBe(true);
+    expect(canAcknowledgeDailyCheckRevision(201, 200, undefined)).toBe(false);
+    expect(canAcknowledgeDailyCheckRevision(200, 200, 200)).toBe(false);
   });
 });
