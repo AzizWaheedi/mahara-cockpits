@@ -446,6 +446,16 @@ function stages(p: WebinarPayload, r: WebinarRound): StageDef[] {
           status: s.tied,
         },
         {
+          label: "Missed it, booked anyway",
+          value: r.showUp.salvage
+            ? `${count(r.showUp.salvage.booked)} of ${count(r.showUp.salvage.missed)}`
+            : NA,
+          source: r.showUp.salvage
+            ? "Registrants who did not come and booked a call"
+            : "Needs attendees tied to registrants",
+          status: r.showUp.salvage ? s.attend : s.tied,
+        },
+        {
           label: "Show rate by lead time",
           value: r.showUp.showRateByLead
             ? r.showUp.showRateByLead
@@ -526,6 +536,14 @@ function stages(p: WebinarPayload, r: WebinarRound): StageDef[] {
       question: "Did the pitch turn attendees into booked calls?",
       people: r.conversion.booked,
       rows: [
+        {
+          label: "Pitch link clicks",
+          value: pg
+            ? `${count(pg.pitch1Clicks)} and ${count(pg.pitch2Clicks)}`
+            : NA,
+          source: "Pitch 1 and pitch 2: webinar.maharamedia.com/p1 and /p2",
+          status: s.pitch,
+        },
         {
           label: "Bookings by pitch link",
           value:
@@ -816,12 +834,14 @@ function Headline({ p, r }: { p: WebinarPayload; r: WebinarRound }) {
 function RollUp({ p }: { p: WebinarPayload }) {
   return (
     <div className="ceo-scroll-x overflow-x-auto">
-      <table className="w-full min-w-[640px] text-sm">
+      <table className="w-full min-w-[820px] text-sm">
         <thead>
           <tr className="border-b text-left text-xs text-muted-foreground">
             <th className="py-2 pr-3 font-normal">Session</th>
             <th className="py-2 pr-3 text-right font-normal">Registered</th>
+            <th className="py-2 pr-3 text-right font-normal">Repeat</th>
             <th className="py-2 pr-3 text-right font-normal">Show rate</th>
+            <th className="py-2 pr-3 text-right font-normal">Missed, booked</th>
             <th className="py-2 pr-3 text-right font-normal">Booked</th>
             <th className="py-2 pr-3 text-right font-normal">Closed</th>
             <th className="py-2 pr-3 text-right font-normal">Cash</th>
@@ -837,7 +857,15 @@ function RollUp({ p }: { p: WebinarPayload }) {
                 {count(r.registration.registrations)}
               </td>
               <td className="py-2 pr-3 text-right tabular-nums">
+                {count(r.registration.repeat)}
+              </td>
+              <td className="py-2 pr-3 text-right tabular-nums">
                 {pct(r.showUp.showRate)}
+              </td>
+              <td className="py-2 pr-3 text-right tabular-nums">
+                {r.showUp.salvage
+                  ? `${count(r.showUp.salvage.booked)} of ${count(r.showUp.salvage.missed)}`
+                  : NA}
               </td>
               <td className="py-2 pr-3 text-right tabular-nums">
                 {count(r.conversion.booked)}

@@ -2000,6 +2000,8 @@ export type WebinarRound = {
   registration: {
     registrations: number;
     withAdId: number;
+    /** Registrants who also registered for another session (two round tags or more). */
+    repeat: number;
     costPerRegistration: number | null;
     /** Days between registering and the session; null without a session date. */
     leadDays: {
@@ -2026,6 +2028,8 @@ export type WebinarRound = {
      * per-person rates (attendee to booked, by lead time, by ad) are honest.
      */
     personLevel: boolean;
+    /** People who did not come, and of them who booked a call anyway; null until attendees are tied. */
+    salvage: { missed: number; booked: number } | null;
     showRateByLead:
       | {
           bucket: "d0_1" | "d2_3" | "d4_7" | "d8plus";

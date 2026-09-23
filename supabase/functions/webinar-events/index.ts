@@ -34,8 +34,9 @@ const EVENTS = new Set([
   "survey_start",
   "survey_submit",
   "join_click",
+  "pitch_click",
 ]);
-const PAGES = new Set(["landing", "thank_you", "live"]);
+const PAGES = new Set(["landing", "thank_you", "live", "pitch"]);
 const LIVE_HOST = "webinar.maharamedia.com";
 const BOT =
   /bot|crawl|spider|slurp|facebookexternalhit|meta-externalagent|embedly|preview|headless|lighthouse|pingdom|uptime|curl\/|python-requests|wget/i;

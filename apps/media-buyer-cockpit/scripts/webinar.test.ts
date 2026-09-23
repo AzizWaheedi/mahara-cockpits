@@ -373,6 +373,18 @@ describe("the landing page", () => {
     expect([s.joinBefore, s.joinAfter]).toEqual([1, 2]);
   });
 
+  test("pitch link clicks: each person once per pitch, around the session", () => {
+    const s = pageStats([], [], T0, [
+      { visitorId: "a", at: at(40), pitch: 1 },
+      { visitorId: "a", at: at(41), pitch: 1 },
+      { visitorId: "b", at: at(42), pitch: 1 },
+      { visitorId: "a", at: at(75), pitch: 2 },
+      { visitorId: "c", at: at(-120), pitch: 2 },
+      { visitorId: "d", at: at(60 * 30), pitch: 2 },
+    ]);
+    expect([s.pitch1Clicks, s.pitch2Clicks]).toEqual([2, 2]);
+  });
+
   test("no session time, no join-link split", () => {
     const s = pageStats([], [{ visitorId: "x", at: at(1) }], null);
     expect([s.joinBefore, s.joinAfter]).toEqual([0, 0]);

@@ -18,6 +18,7 @@ import {
   AD_ID,
   type JoinClick,
   type PageVisitor,
+  type PitchClick,
   pageStats,
 } from "../webinarPage";
 import {
@@ -110,6 +111,7 @@ const JOURNEY_SQL = `select
   ${webbyFrom("l")} as registered_at,
   ${sessionAt("l")} as session_at,
   (select t from unnest(l.tags) t where t ~ '^webby-[a-z]{3}-[0-9]{4}$' order by t desc limit 1) as round_tag,
+  (select count(*) from unnest(l.tags) t where t ~ '^webby-[a-z]{3}-[0-9]{4}$') as round_tags,
   ${fieldValue("l", ROUND_FIELD)} as round_field,
   'webby-attended' = any(l.tags) as attended,
   'webby-noshow' = any(l.tags) as noshow,
@@ -221,16 +223,18 @@ const COLLECTED_SQL = `select
     where e.origin_host = 'webinar.maharamedia.com' and e.event = 'join_click'
       and e.at > now() - interval '180 days') x) as joins,
   (select coalesce(json_agg(x), '[]'::json) from (
+    select e.visitor_id, e.at, e.label
+    from public.cockpit_webinar_page_events e
+    where e.origin_host = 'webinar.maharamedia.com' and e.event = 'pitch_click'
+      and e.label in ('pitch1', 'pitch2')
+      and e.at > now() - interval '180 days') x) as pitches,
+  (select coalesce(json_agg(x), '[]'::json) from (
     select m.contact_id, m.channel, m.step, m.status, count(*) as n
     from public.cockpit_webinar_messages m
     group by 1, 2, 3, 4) x) as messages,
   (select coalesce(json_agg(x), '[]'::json) from (
     select o.call_id, o.contact_id, o.categories, o.objections
     from public.cockpit_webinar_objections o) x) as objections`;
-
-/** The booking links to share at each pitch; HighLevel keeps utm_content on the contact who books. */
-const PITCH_LINK =
-  "funnel.maharamedia.com/intro-booking?utm_source=webinar&utm_content=pitch";
 
 type SurveyRow = {
   submittedAt: number;
@@ -273,6 +277,8 @@ type Journey = {
   roas: "qualified" | "unqualified" | "not_ready" | null;
   /** The pitch whose booking link the contact came through, from utm_content. */
   pitchUtm: 1 | 2 | null;
+  /** How many sessions' round tags the contact carries; 2 or more is a repeat registrant. */
+  roundTags: number;
   calls: {
     type: string;
     bookedAt: number;
@@ -341,6 +347,7 @@ function journeyOf(r: Row): Journey {
             ? "not_ready"
             : null,
     pitchUtm: r.pitch_utm === "1" ? 1 : r.pitch_utm === "2" ? 2 : null,
+    roundTags: num(r.round_tags),
     calls: jsonArray(r.calls).map(c => ({
       type: String(c.type),
       bookedAt: ms(c.booked_at) ?? 0,
@@ -531,6 +538,13 @@ export const webinar: Adapter = {
     const joinClicks: JoinClick[] = jsonArray(collected?.joins)
       .map(r => ({ visitorId: String(r.visitor_id), at: ms(r.at) ?? 0 }))
       .filter(j => j.at > 0);
+    const pitchClicks: PitchClick[] = jsonArray(collected?.pitches)
+      .map(r => ({
+        visitorId: String(r.visitor_id),
+        at: ms(r.at) ?? 0,
+        pitch: (r.label === "pitch2" ? 2 : 1) as 1 | 2,
+      }))
+      .filter(c => c.at > 0);
     const messageCounts: MessageCount[] = jsonArray(collected?.messages).map(
       r => ({
         contactId: String(r.contact_id),
@@ -867,6 +881,7 @@ export const webinar: Adapter = {
         registration: {
           registrations,
           withAdId: list.filter(j => j.adId).length,
+          repeat: list.filter(j => j.roundTags > 1).length,
           costPerRegistration: per(totalSpend, registrations),
           leadDays: session ? leadDays : null,
           firstRegisteredAt: list.length
@@ -881,6 +896,16 @@ export const webinar: Adapter = {
           source: attendSource,
           matched,
           personLevel,
+          // The brief's non-attendee salvage: people who did not come and
+          // booked a call anyway. Only with attendees tied to registrants.
+          salvage:
+            attendanceRecorded && personLevel
+              ? {
+                  missed: list.filter(j => !cameJ(j)).length,
+                  booked: list.filter(j => !cameJ(j) && j.calls.length > 0)
+                    .length,
+                }
+              : null,
           showRateByLead:
             session && attendanceRecorded && personLevel
               ? (["d0_1", "d2_3", "d4_7", "d8plus"] as const).map(k => {
@@ -916,12 +941,22 @@ export const webinar: Adapter = {
         page:
           (visitorsByRound.get(r.key) ?? []).length ||
           (session !== null &&
-            joinClicks.some(
+            (joinClicks.some(
               j =>
                 j.at >= session - 24 * 3_600_000 &&
                 j.at <= session + 3 * 3_600_000,
-            ))
-            ? pageStats(visitorsByRound.get(r.key) ?? [], joinClicks, session)
+            ) ||
+              pitchClicks.some(
+                c =>
+                  c.at >= session - 3_600_000 &&
+                  c.at <= session + 48 * 3_600_000,
+              )))
+            ? pageStats(
+                visitorsByRound.get(r.key) ?? [],
+                joinClicks,
+                session,
+                pitchClicks,
+              )
             : null,
         qualification: {
           surveyAnswered: answered.length,
@@ -1279,11 +1314,11 @@ export const webinar: Adapter = {
       },
       {
         stage: 4,
-        metric: "Bookings by pitch link",
+        metric: "Pitch link clicks and bookings, per pitch",
         source:
-          "utm_content=pitch1 / pitch2 on the booking link, kept by HighLevel",
-        status: anyPitch ? "live" : "waiting",
-        note: `Share ${PITCH_LINK}1 at pitch 1 and ${PITCH_LINK}2 at pitch 2. HighLevel keeps the link on the contact who books, so each booking says which pitch it came from. Clicks that do not book are not counted.`,
+          "webinar.maharamedia.com/p1 and /p2; utm_content=pitch1 / pitch2 kept by HighLevel",
+        status: anyPitch || pitchClicks.length ? "live" : "waiting",
+        note: "Share webinar.maharamedia.com/p1 at pitch 1 and webinar.maharamedia.com/p2 at pitch 2. Each records the click and opens the booking page with its pitch in utm_content, which HighLevel keeps on whoever books, so clicks and bookings both say which pitch converted.",
       },
       {
         stage: 4,

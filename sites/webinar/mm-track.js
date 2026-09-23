@@ -11,7 +11,7 @@
  * came from (utm_*, kept for 30 days so the thank-you page knows the ad).
  * Nothing here can stop the page from working: every step is in a try.
  *
- * <script src="/mm-track.js" data-page="landing|thank_you|live" defer></script>
+ * <script src="/mm-track.js" data-page="landing|thank_you|live|pitch" defer></script>
  */
 (function () {
   "use strict";
@@ -131,6 +131,11 @@
   // redirects itself to Zoom; nothing else happens there.
   if (page === "live") {
     track("join_click", null, null, true);
+    return;
+  }
+  // /p1 and /p2, the booking links shared at each pitch: same idea.
+  if (page === "pitch") {
+    track("pitch_click", (script && script.getAttribute("data-label")) || null, null, true);
     return;
   }
   track("page_view", null, null, true);

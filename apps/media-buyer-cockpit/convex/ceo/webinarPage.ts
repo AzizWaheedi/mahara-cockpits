@@ -40,6 +40,8 @@ export type PageVisitor = {
 };
 
 export type JoinClick = { visitorId: string; at: number };
+/** A click on /p1 or /p2, the booking links shared at each pitch. */
+export type PitchClick = { visitorId: string; at: number; pitch: 1 | 2 };
 
 export type PageStats = {
   /** Distinct people who opened the landing page. */
@@ -73,6 +75,9 @@ export type PageStats = {
   /** Distinct people who opened the reminders' join link, before and after the start. */
   joinBefore: number;
   joinAfter: number;
+  /** Distinct people who opened each pitch's booking link, from the start to two days after. */
+  pitch1Clicks: number;
+  pitch2Clicks: number;
   mobile: number;
   withAd: number;
   /** Per ad (utm_content): visitors and thank-you page views. */
@@ -102,6 +107,8 @@ export const EMPTY_PAGE: PageStats = {
   surveySubmit: 0,
   joinBefore: 0,
   joinAfter: 0,
+  pitch1Clicks: 0,
+  pitch2Clicks: 0,
   mobile: 0,
   withAd: 0,
   byAd: [],
@@ -122,6 +129,7 @@ export function pageStats(
   visitors: PageVisitor[],
   joins: JoinClick[],
   sessionAt: number | null,
+  pitches: PitchClick[] = [],
 ): PageStats {
   const landing = visitors.filter(v => v.firstLanding !== null);
   const count = (f: (v: PageVisitor) => boolean) => visitors.filter(f).length;
@@ -143,6 +151,13 @@ export function pageStats(
         continue;
       (j.at < sessionAt ? before : after).add(j.visitorId);
     }
+  // The pitch links: from an hour before the start (a test click) to two
+  // days after (the recording and the follow-ups carry them too).
+  const pitch = { 1: new Set<string>(), 2: new Set<string>() };
+  if (sessionAt !== null)
+    for (const c of pitches)
+      if (c.at >= sessionAt - 3_600_000 && c.at <= sessionAt + 48 * 3_600_000)
+        pitch[c.pitch].add(c.visitorId);
   const secs = landing
     .map(v => v.landingSeconds)
     .filter((x): x is number => x !== null && x > 0);
@@ -170,6 +185,8 @@ export function pageStats(
     surveySubmit: count(v => v.surveySubmit),
     joinBefore: before.size,
     joinAfter: after.size,
+    pitch1Clicks: pitch[1].size,
+    pitch2Clicks: pitch[2].size,
     mobile: landing.filter(v => v.device === "mobile").length,
     withAd: landing.filter(v => v.utmContent && AD_ID.test(v.utmContent))
       .length,

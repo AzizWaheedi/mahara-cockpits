@@ -9,6 +9,7 @@ the files here are the site.
 | `index.html` | `/` | The landing page with the GHL opt-in form (5wC0SkFcgCfFzbpOUBWk) |
 | `thank-you.html` | `/thank-you.html`, `/thank-you` | Where the form sends a new registrant: calendar, email, WhatsApp group, the gift survey (Typeform) |
 | `live.html` | `/live` | The join link in the WhatsApp reminders: records the click, then opens the Zoom meeting 88628953097 |
+| `p1.html`, `p2.html` | `/p1`, `/p2` | The booking links to share at pitch 1 and pitch 2: record the click, then open funnel.maharamedia.com/intro-booking with `utm_content=pitch1` or `pitch2` |
 | `mm-track.js` | `/mm-track.js` | Page events for the CEO cockpit's webinar funnel |
 | `vercel.json` | | The two rewrites and cache headers |
 
@@ -52,6 +53,7 @@ thank-you page knows the ad).
 | `whatsapp_click` | The WhatsApp group button (label `placeholder` while the link is still `[WHATSAPP_LINK]`) |
 | `survey_start`, `survey_submit` | The gift survey's Typeform embed starts and is sent |
 | `join_click` | `/live` opened, from the reminders |
+| `pitch_click` | `/p1` or `/p2` opened (label `pitch1`, `pitch2`) |
 
 Registrations themselves are counted from HighLevel, never from the page;
 the page's own `form_submit` and thank-you views are the second source.
