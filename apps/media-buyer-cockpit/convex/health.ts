@@ -126,6 +126,7 @@ export function sourceFor(url: string): string | undefined {
   if (/slack\.com/.test(url)) return "slack";
   if (/whapi\.cloud/.test(url)) return "whapi";
   if (/api\.resend\.com/.test(url)) return "resend";
+  if (/\.supabase\.(co|com)/.test(url)) return "supabase";
   return undefined;
 }
 

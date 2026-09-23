@@ -11,6 +11,8 @@ convex/_generated/
 test-results/
 playwright-report/
 .vercel/
+__pycache__/
+*.pyc
 
 # Read-only query helpers and one-off SQL, never part of a build.
 scratchpad/
