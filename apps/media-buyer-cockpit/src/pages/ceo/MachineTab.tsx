@@ -69,6 +69,7 @@ const SECTION_NAMES: Record<SectionKey, string> = {
   money: "Money",
   expenses: "Expenses and P&L",
   growth: "Marketing and sales",
+  webinar: "Webinar funnel",
   b2bAds: "Our ads",
   delivery: "Client delivery",
   calls: "Calls",

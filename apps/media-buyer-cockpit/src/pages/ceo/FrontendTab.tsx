@@ -1,8 +1,10 @@
 import { Target } from "lucide-react";
 import { type ReactNode, useMemo } from "react";
+import { useTabParam } from "@/components/ceo/CeoTabs";
 import { Delta, type DeltaKind, type GoodWhen } from "@/components/ceo/Delta";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { Facts } from "@/components/ceo/Facts";
+import { FilterChips } from "@/components/ceo/FilterChips";
 import { FunnelStrip } from "@/components/ceo/FunnelStrip";
 import {
   change,
@@ -51,6 +53,7 @@ import type {
   Note,
 } from "../../../convex/ceo/payloads";
 import type { CeoTabProps } from "./types";
+import { WebinarFunnel } from "./WebinarFunnel";
 
 /** The month before this one as a long name, for the pace comparisons. */
 function previousMonthName(ym: string): string {
@@ -203,7 +206,58 @@ const PART_MONTH_NOTE: Note = {
  * spend through leads, calls and closes to the cash that was actually won.
  * The rep table and the ad table stay on the Marketing and Sales tabs.
  */
-export function FrontendTab({ sections, now, day, goTab }: CeoTabProps) {
+const FUNNELS = ["call", "webinar"] as const;
+
+export function FrontendTab(props: CeoTabProps) {
+  // Two funnels, never mixed (Aziz, 2026-09-23): the call funnel as it has
+  // always run, and the webinar. The choice rides the address, ?funnel=.
+  const [funnel, setFunnel] = useTabParam(FUNNELS, "call", "funnel");
+  return (
+    <div className="grid gap-5 lg:gap-7">
+      <FilterChips
+        ariaLabel="Which funnel"
+        value={funnel}
+        onChange={setFunnel}
+        options={[
+          {
+            key: "call",
+            label: "Call funnel",
+            hint: "Ads to leads, booked calls, closes and cash, without the webinar.",
+          },
+          {
+            key: "webinar",
+            label: "Webinar funnel",
+            hint: "Registrations, attendance, the pitch, booked calls and cash from the live training.",
+          },
+        ]}
+      />
+      {funnel === "webinar" ? (
+        <WebinarFunnel section={props.sections.webinar} />
+      ) : (
+        <CallFunnel {...props} />
+      )}
+    </div>
+  );
+}
+
+/** What the webinar funnel took out of this window, as a note, when anything. */
+function webinarOutNote(w: FunnelWindow | null | undefined): Note[] {
+  const o = w?.webinarOut;
+  if (!o || !(o.spend || o.callsBooked || o.closes || o.leads)) return [];
+  const bits = [
+    o.spend ? `${money(o.spend)} of ad spend` : null,
+    o.callsBooked ? `${o.callsBooked} booked calls` : null,
+    o.closes ? `${o.closes} closes (${money(o.contracted)} contracted)` : null,
+  ].filter(Boolean);
+  return [
+    {
+      level: "info",
+      text: `The webinar's ${bits.join(", ")} in this window are counted in the webinar funnel, not here.`,
+    },
+  ];
+}
+
+function CallFunnel({ sections, now, day, goTab }: CeoTabProps) {
   const growthSection = sections.growth;
   const moneySection = sections.money;
   const g = growthSection?.payload ?? null;
@@ -274,7 +328,12 @@ export function FrontendTab({ sections, now, day, goTab }: CeoTabProps) {
         kicker={windowLabel}
         title="The whole funnel"
         section={growthSection}
-        notes={join(notes.growth.funnel, notes.money.funnel, [CASH_CLASH_NOTE])}
+        notes={join(
+          notes.growth.funnel,
+          notes.money.funnel,
+          [CASH_CLASH_NOTE],
+          webinarOutNote(current),
+        )}
         actions={
           <>
             <TabLink tab="marketing" label="Marketing" goTab={goTab} />

@@ -1954,3 +1954,139 @@ export type HiringPayload = {
   };
   notes: Note[];
 };
+
+// --- Webinar funnel (B2B: leads tagged webby-*, calls, closed_deals, meta_ad_snapshots, lt_*) ---
+
+/** One webinar round (a session and the registrants and spend that led to it). */
+export type WebinarRound = {
+  /** The round tag (webby-oct-2026), `round:<field>`, `untagged`, or `next`. */
+  key: string;
+  label: string;
+  /** The session's start, epoch ms, from the registrants' Webinar Datetime. */
+  sessionAt: number | null;
+  status: "upcoming" | "held" | "unknown";
+  campaigns: { id: string; name: string }[];
+  spendFrom: string | null;
+  spendTo: string | null;
+  /** Stage 1, Meta. Reach and frequency come from one insights call for the round. */
+  traffic: {
+    spend: number;
+    impressions: number;
+    reach: number | null;
+    frequency: number | null;
+    clicks: number;
+    linkClicks: number;
+    ctr: number | null;
+    linkCtr: number | null;
+  };
+  /** Stage 1, HighLevel. */
+  registration: {
+    registrations: number;
+    withAdId: number;
+    costPerRegistration: number | null;
+    /** Days between registering and the session; null without a session date. */
+    leadDays: {
+      d0_1: number;
+      d2_3: number;
+      d4_7: number;
+      d8plus: number;
+    } | null;
+    firstRegisteredAt: number | null;
+  };
+  /** Stage 2. Show rate is null until attendance is recorded. */
+  showUp: {
+    attendanceRecorded: boolean;
+    attended: number;
+    noShow: number;
+    showRate: number | null;
+    showRateByLead:
+      | {
+          bucket: "d0_1" | "d2_3" | "d4_7" | "d8plus";
+          registrants: number;
+          attended: number;
+        }[]
+      | null;
+  };
+  /** Stage 4. */
+  conversion: {
+    surveys: number;
+    booked: number;
+    bookedIntro: number;
+    bookedDemo: number;
+    bookedWhileLive: number | null;
+    attendeeToBooked: number | null;
+    registrantToBooked: number | null;
+    costPerBooked: number | null;
+  };
+  /** Stage 5. */
+  sales: {
+    due: number;
+    held: number;
+    bookedToHeld: number | null;
+    closes: number;
+    closeRate: number | null;
+    attendeeToClose: number | null;
+    contracted: number;
+    cash: number;
+    cashConfirmed: number;
+    cac: number | null;
+    roasCash: number | null;
+    roasContracted: number | null;
+    firstContactMedianMin: number | null;
+    neverContacted: number;
+  };
+};
+
+export type WebinarPayload = {
+  today: string;
+  /** Newest session first. */
+  rounds: WebinarRound[];
+  /** Per ad, per round: spend to cash. */
+  ads: {
+    roundKey: string;
+    adId: string;
+    adName: string;
+    campaignName: string | null;
+    spend: number;
+    impressions: number;
+    clicks: number;
+    ctr: number | null;
+    registrations: number;
+    attended: number;
+    booked: number;
+    closes: number;
+    cash: number;
+    costPerRegistration: number | null;
+  }[];
+  /** Every metric of the tracking brief, with where it comes from and whether it flows. */
+  tracking: {
+    stage: 1 | 2 | 3 | 4 | 5 | 6;
+    metric: string;
+    source: string;
+    /** live: flowing. waiting: connected, nothing to count yet. missing: not connected. */
+    status: "live" | "waiting" | "missing";
+    note: string;
+  }[];
+  /** The brief's targets for a $2,000 four-day flight. */
+  targets: {
+    plannedSpend: number;
+    costPerRegistration: { low: number; high: number; plan: number };
+    registrations: { low: number; high: number; plan: number };
+    pageConversion: { low: number; high: number; floor: number };
+    showRate: { low: number; high: number };
+    retentionAtPitch1: number;
+    attendeeToBooked: { low: number; high: number };
+    bookedToHeld: number;
+    closeRate: number;
+    killRule: { spendAfter: number; costPerRegistrationAbove: number };
+  };
+  surveyResponses: number | null;
+  /** Rows in the B2B live training tables, which Zoom and the page would fill. */
+  lt: {
+    events: number;
+    pageEvents: number;
+    attendance: number;
+    engagement: number;
+  };
+  notes: Note[];
+};

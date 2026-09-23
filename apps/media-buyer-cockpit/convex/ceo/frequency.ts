@@ -10,6 +10,7 @@ import { authenticatedAction } from "../functions";
 import { graph } from "../tools";
 import { isCeoEmail } from "./gate";
 import { addDays, kuwaitDay } from "./time";
+import { WEBINAR_CAMPAIGN_NAME } from "./webinarSql";
 
 /**
  * Reach and frequency for Mahara's own ad account over a chosen window, one
@@ -37,13 +38,20 @@ export const FRESH_MS = 3 * 60 * 60_000;
 /** The longest window one read may cover. */
 export const MAX_SPAN_DAYS = 400;
 
-export type CampaignType = "lead_gen" | "retargeting" | "excluded";
+export type CampaignType = "lead_gen" | "retargeting" | "excluded" | "webinar";
 
-/** The B2B dashboard's rule, `public.b2b_campaign_type`, kept in step by hand. */
+const WEBINAR_NAME = new RegExp(WEBINAR_CAMPAIGN_NAME, "i");
+
+/**
+ * The B2B dashboard's rule, `public.b2b_campaign_type`, kept in step by hand,
+ * plus the webinar: its campaigns are the webinar funnel's, never the call
+ * funnel's lead gen (webinarSql.ts, 2026-09-23).
+ */
 export function campaignType(name: string | null | undefined): CampaignType {
   const n = name ?? "";
   if (/(hiring|recruit)/i.test(n)) return "excluded";
   if (/(hammer them|retarget|remarket)/i.test(n)) return "retargeting";
+  if (WEBINAR_NAME.test(n)) return "webinar";
   return "lead_gen";
 }
 
@@ -126,7 +134,7 @@ async function listCampaigns(): Promise<{ id: string; name: string }[]> {
 }
 
 /** One insights call for a set of campaigns over the window, at account level so reach is deduplicated. */
-async function readInsights(
+export async function readInsights(
   ids: string[],
   from: string,
   to: string,

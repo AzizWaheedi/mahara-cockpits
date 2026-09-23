@@ -8,7 +8,12 @@ import { B2B, num, type Row, sql } from "../sb";
 import { workingHoursForAdapters } from "../settings";
 import { addDays, daysInMonth, kuwaitDay, monthStart } from "../time";
 import type { Adapter, DailyPoint, SourceStamp } from "../types";
-import { webbyCall, webbyCampaign, webbyDeal, webbyLead } from "../webinarSql";
+import {
+  webbyCall,
+  webbyCampaign,
+  webbyDeal,
+  webbyNewLead,
+} from "../webinarSql";
 import { describeWorkingHours, workingMinutesSql } from "../workingHours";
 
 // biome-ignore lint/suspicious/noExplicitAny: the B2B functions return jsonb
@@ -85,11 +90,11 @@ export const LEAD_SOURCE = {
  * both (Aziz, 2026-09-21: "never a call-centre agent"). The sync stamps
  * `sales_rep_id` on every call it can tie to the roster.
  */
-const BY_SALES_REP = `exists (select 1 from public.sales_reps sr where sr.id = m.sales_rep_id and sr.role in ('setter', 'closer', 'both', 'rep'))`;
+export const BY_SALES_REP = `exists (select 1 from public.sales_reps sr where sr.id = m.sales_rep_id and sr.role in ('setter', 'closer', 'both', 'rep'))`;
 
 /** The phone digits of a lead, and whether a Maqsam call is with that lead. */
 const LEAD_DIGITS = `regexp_replace(coalesce(l.phone, ''), '[^0-9]', '', 'g')`;
-const CALL_IS_WITH_LEAD = `(m.contact_id = l.contact_id
+export const CALL_IS_WITH_LEAD = `(m.contact_id = l.contact_id
         or (length(${LEAD_DIGITS}) >= 8 and (regexp_replace(coalesce(m.lead_phone, ''), '[^0-9]', '', 'g') like '%' || right(${LEAD_DIGITS}, 8) or regexp_replace(coalesce(m.callee_number, ''), '[^0-9]', '', 'g') like '%' || right(${LEAD_DIGITS}, 8) or regexp_replace(coalesce(m.caller_number, ''), '[^0-9]', '', 'g') like '%' || right(${LEAD_DIGITS}, 8))))`;
 
 /**
@@ -99,7 +104,7 @@ const CALL_IS_WITH_LEAD = `(m.contact_id = l.contact_id
  * name. Tap is read from its API by the money section, not here, so a
  * deposit paid on Tap reads as unconfirmed on this tab.
  */
-const DEPOSIT_CONFIRMED = `(exists (
+export const DEPOSIT_CONFIRMED = `(exists (
           select 1 from public.whop_payments wp
           where wp.status = 'paid'
             and (wp.deal_response_id = d.response_id
@@ -164,7 +169,7 @@ roas as (
     count(*) filter (where ${ROAS_NONE}) as untagged
   from w
   join public.leads l on (l.lead_created_at at time zone 'Asia/Riyadh')::date between w.f and w.t
-    and not ${webbyLead("l")}
+    and not ${webbyNewLead("l")}
   group by w.k
 ),
 speed as (
@@ -183,7 +188,7 @@ speed as (
     count(*) filter (where ${LEAD_SOURCE.assumed}) as src_assumed
   from w
   join public.leads l on ${IS_LEAD} and (l.lead_created_at at time zone 'Asia/Riyadh')::date between w.f and w.t
-    and not ${webbyLead("l")}
+    and not ${webbyNewLead("l")}
   cross join lateral (
     select min(m.occurred_at) as first_call from public.maqsam_calls m
     where m.occurred_at >= l.lead_created_at
@@ -222,7 +227,7 @@ wb_leads as (
   from w
   join public.leads l on l.is_lead
     and (l.lead_created_at at time zone 'Asia/Riyadh')::date between w.f and w.t
-    and ${webbyLead("l")}
+    and ${webbyNewLead("l")}
   group by w.k
 ),
 wb_calls as (
@@ -355,7 +360,7 @@ ld as (
       and ${CALL_IS_WITH_LEAD}
   ) fc
   where (l.lead_created_at at time zone 'Asia/Riyadh')::date between ${f} and ${t}
-    and not ${webbyLead("l")}
+    and not ${webbyNewLead("l")}
   group by 1
 ),
 bk as (
@@ -502,7 +507,7 @@ function leadSourcesSql(from: string, to: string): string {
 from public.leads
 where is_lead
   and (lead_created_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)}
-  and not ${webbyLead("leads")}
+  and not ${webbyNewLead("leads")}
 group by 1
 order by leads desc, source
 limit 10`;

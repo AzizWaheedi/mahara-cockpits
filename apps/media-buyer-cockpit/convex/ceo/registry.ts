@@ -11,6 +11,7 @@ import { money } from "./adapters/money";
 import { organic } from "./adapters/organic";
 import { portal } from "./adapters/portal";
 import { team } from "./adapters/team";
+import { webinar } from "./adapters/webinar";
 import type { Adapter } from "./types";
 
 /**
@@ -21,6 +22,7 @@ export const ADAPTERS: Adapter[] = [
   money,
   expenses,
   growth,
+  webinar,
   b2bAds,
   delivery,
   calls,

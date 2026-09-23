@@ -16,6 +16,7 @@ import type {
   OrganicPayload,
   PortalPayload,
   TeamPayload,
+  WebinarPayload,
 } from "../../../convex/ceo/payloads";
 import type { SourceStamp } from "../../../convex/ceo/types";
 
@@ -23,6 +24,7 @@ export const SECTION_KEYS = [
   "money",
   "expenses",
   "growth",
+  "webinar",
   "b2bAds",
   "delivery",
   "calls",
@@ -41,6 +43,7 @@ export type PayloadMap = {
   money: MoneyPayload;
   expenses: ExpensesPayload;
   growth: GrowthPayload;
+  webinar: WebinarPayload;
   b2bAds: B2bAdsPayload;
   delivery: DeliveryPayload;
   calls: CallsPayload;
