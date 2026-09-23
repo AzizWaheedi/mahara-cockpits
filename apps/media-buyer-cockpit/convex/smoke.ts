@@ -8,6 +8,7 @@ import {
 import { buildSnapshot } from "./cockpit";
 import { bridge } from "./comms";
 import { AZIZ_SLACK_ID } from "./constants";
+import { scheduledJobHealth } from "./cronFreshness";
 import { flush, recordManyDirect } from "./health";
 import { runRotCheck } from "./previews";
 import { callTool } from "./tools";
@@ -191,16 +192,7 @@ export const check = internalAction({
     // Jobs that stopped running are an outage nobody sees in a screen.
     try {
       const stale: Any[] = await ctx.runQuery(internal.health.staleJobs, {});
-      if (stale.length)
-        await recordManyDirect(
-          ctx,
-          stale.map(j => ({
-            source: "jobs",
-            ok: false,
-            error: `"${j.job}" last ran ${j.minutes} min ago`,
-          })),
-        );
-      else await recordManyDirect(ctx, [{ source: "jobs", ok: true }]);
+      await recordManyDirect(ctx, scheduledJobHealth(stale));
     } catch (e) {
       console.error(`stale jobs: ${String(e).slice(0, 120)}`);
     }
