@@ -241,6 +241,203 @@ export async function mirrorCockpitFeedback(
   return { mode: "written" };
 }
 
+export function calculateNextRevision(prior?: number): number {
+  const p = typeof prior === "number" && Number.isFinite(prior) ? prior : 0;
+  return Math.max(Date.now(), p + 1);
+}
+
+export type CockpitDailyCheckInput = {
+  _id: string;
+  _creationTime?: number;
+  role: string;
+  day: string;
+  key: string;
+  label: string;
+  detail?: string;
+  phase?: string;
+  block?: string;
+  order?: number;
+  href?: string;
+  done: boolean;
+  doneAt?: number;
+  shadowRevision?: number;
+  shadowActor?: string;
+  sourceDeleted?: boolean;
+};
+
+export type CockpitDailyCheckRpcRow = {
+  role: "media_buyer";
+  owner_app: "media-buyer";
+  day: string;
+  check_key: string;
+  label: string;
+  detail: string | null;
+  phase: string | null;
+  block: string | null;
+  display_order: number | null;
+  href: string | null;
+  done: boolean;
+  done_at: string | null;
+  source_system: "convex";
+  source_deployment: "adorable-seahorse-418";
+  source_id: string;
+  source_created_at: string | null;
+  source_snapshot_ts: string;
+  source_row: Record<string, unknown>;
+  changed_by: string;
+  source_revision: number;
+  source_deleted: boolean;
+};
+
+export function buildCockpitDailyCheckRow(
+  doc: CockpitDailyCheckInput,
+): CockpitDailyCheckRpcRow {
+  if (doc.role !== "media_buyer") {
+    throw new Error(
+      `Only media_buyer checks can be mirrored from this cockpit (got role: "${doc.role}").`,
+    );
+  }
+  const sourceId = clipped(doc._id, 200);
+  const day = clipped(doc.day, 10);
+  const checkKey = clipped(doc.key, 200);
+  const label = clipped(doc.label, 500);
+
+  if (!sourceId || !day || !checkKey || !label) {
+    throw new Error(
+      "Supabase daily check mirror is missing required source ID, day, key, or label.",
+    );
+  }
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+    throw new Error(`Invalid day format for daily check: "${day}".`);
+  }
+
+  if (typeof doc.done !== "boolean") {
+    throw new Error("Daily check done status must be boolean.");
+  }
+
+  const revision = doc.shadowRevision;
+  if (
+    typeof revision !== "number" ||
+    !Number.isFinite(revision) ||
+    !Number.isInteger(revision) ||
+    revision <= 0
+  ) {
+    throw new Error(
+      `Daily check must have a positive integral shadowRevision (got: ${revision}).`,
+    );
+  }
+
+  const changedBy = clipped(doc.shadowActor || "media_buyer", 320);
+
+  return {
+    role: "media_buyer",
+    owner_app: "media-buyer",
+    day,
+    check_key: checkKey,
+    label,
+    detail: doc.detail ? clipped(doc.detail, 2000) : null,
+    phase: doc.phase ? clipped(doc.phase, 64) : null,
+    block: doc.block ? clipped(doc.block, 64) : null,
+    display_order:
+      typeof doc.order === "number" && Number.isFinite(doc.order)
+        ? doc.order
+        : null,
+    href: doc.href ? clipped(doc.href, 1000) : null,
+    done: doc.done,
+    done_at:
+      typeof doc.doneAt === "number" && Number.isFinite(doc.doneAt)
+        ? new Date(doc.doneAt).toISOString()
+        : null,
+    source_system: "convex",
+    source_deployment: "adorable-seahorse-418",
+    source_id: sourceId,
+    source_created_at:
+      typeof doc._creationTime === "number" &&
+      Number.isFinite(doc._creationTime)
+        ? new Date(doc._creationTime).toISOString()
+        : null,
+    source_snapshot_ts: `live:${revision}`,
+    source_row: {
+      _id: doc._id,
+      ...(doc._creationTime !== undefined
+        ? { _creationTime: doc._creationTime }
+        : {}),
+      role: doc.role,
+      day: doc.day,
+      key: doc.key,
+      label: doc.label,
+      ...(doc.detail !== undefined ? { detail: doc.detail } : {}),
+      ...(doc.phase !== undefined ? { phase: doc.phase } : {}),
+      ...(doc.block !== undefined ? { block: doc.block } : {}),
+      ...(doc.order !== undefined ? { order: doc.order } : {}),
+      ...(doc.href !== undefined ? { href: doc.href } : {}),
+      done: doc.done,
+      ...(doc.doneAt !== undefined ? { doneAt: doc.doneAt } : {}),
+      ...(doc.shadowRevision !== undefined
+        ? { shadowRevision: doc.shadowRevision }
+        : {}),
+      ...(doc.shadowActor !== undefined
+        ? { shadowActor: doc.shadowActor }
+        : {}),
+    },
+    changed_by: changedBy,
+    source_revision: revision,
+    source_deleted: Boolean(doc.sourceDeleted),
+  };
+}
+
+export type DailyCheckMirrorOptions = {
+  dryRun?: boolean;
+  fetchImpl?: typeof fetch;
+};
+
+export async function mirrorCockpitDailyCheck(
+  doc: CockpitDailyCheckInput,
+  options: DailyCheckMirrorOptions = {},
+): Promise<{ mode: "dry-run" | "written"; result?: unknown }> {
+  const row = buildCockpitDailyCheckRow(doc);
+  const dryRun =
+    options.dryRun ??
+    process.env.SUPABASE_CHECKS_SHADOW_DRY_RUN !== "false";
+  if (dryRun) return { mode: "dry-run" };
+
+  const base = (process.env.SUPABASE_URL ?? "").replace(/\/+$/, "");
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+  if (!base || !key) {
+    note("supabase", false, "daily check shadow mirror is not configured");
+    throw new Error(
+      "Supabase daily check mirror is not configured on this deployment.",
+    );
+  }
+
+  const url = `${base}/rest/v1/rpc/cockpit_apply_daily_check_shadow`;
+  let res: Response;
+  try {
+    res = await (options.fetchImpl ?? fetch)(url, {
+      method: "POST",
+      headers: {
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ p_row: row }),
+    });
+  } catch (error) {
+    note("supabase", false, "daily check mirror network error");
+    throw error;
+  }
+
+  if (!res.ok) {
+    note("supabase", false, `daily check mirror HTTP ${res.status}`);
+    throw new Error(`Supabase daily check mirror failed (${res.status}).`);
+  }
+
+  note(sourceFor(url), true);
+  const result = await bodyOf(res);
+  return { mode: "written", result };
+}
+
 // biome-ignore lint/suspicious/noExplicitAny: Graph payloads
 type Any = any;
 

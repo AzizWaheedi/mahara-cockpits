@@ -1012,19 +1012,40 @@ export const store = internalMutation({
     for (const c of args.checks) {
       const prev = byKey.get(c.key);
       if (prev) {
-        await ctx.db.patch(prev._id, {
-          detail: c.detail,
-          label: c.label,
-          phase: c.phase,
-          order: c.order,
-          href: c.href,
-        });
+        const contentChanged =
+          prev.label !== c.label ||
+          (prev.detail ?? undefined) !== (c.detail ?? undefined) ||
+          (prev.phase ?? undefined) !== (c.phase ?? undefined) ||
+          (prev.order ?? undefined) !== (c.order ?? undefined) ||
+          (prev.href ?? undefined) !== (c.href ?? undefined);
+
+        if (contentChanged) {
+          const revision = Math.max(Date.now(), (prev.shadowRevision ?? 0) + 1);
+          await ctx.db.patch(prev._id, {
+            detail: c.detail,
+            label: c.label,
+            phase: c.phase,
+            order: c.order,
+            href: c.href,
+            shadowRevision: revision,
+            shadowActor: "sync",
+          });
+          await ctx.scheduler.runAfter(0, internal.cockpit.shadowDailyCheck, {
+            id: prev._id,
+          });
+        }
       } else {
-        await ctx.db.insert("checks", {
+        const revision = Math.max(Date.now(), 1);
+        const newId = await ctx.db.insert("checks", {
           ...c,
           role: "media_buyer",
           day,
           done: false,
+          shadowRevision: revision,
+          shadowActor: "sync",
+        });
+        await ctx.scheduler.runAfter(0, internal.cockpit.shadowDailyCheck, {
+          id: newId,
         });
       }
     }

@@ -1,11 +1,17 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { QueryCtx } from "./_generated/server";
-import { internalMutation } from "./_generated/server";
+import {
+  internalAction,
+  internalMutation,
+  internalQuery,
+} from "./_generated/server";
 import { CPL_GATE } from "./constants";
 import { authenticatedMutation, authenticatedQuery } from "./functions";
 import { scopeFilter } from "./gate";
+import { flush } from "./health";
 import { allowedClients, assertRole } from "./roles";
+import { mirrorCockpitDailyCheck } from "./tools";
 
 function kuwaitToday(): string {
   return new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 10);
@@ -177,13 +183,65 @@ export const toggleCheck = authenticatedMutation({
     await assertRole(ctx, "media_buyer");
     const row = await ctx.db.get(id);
     if (!row) return null;
-    await ctx.db.patch(id, { done: !row.done, doneAt: Date.now() });
+    if (row.role !== "media_buyer") {
+      throw new Error(
+        `Only media_buyer checks can be toggled in this cockpit (got role: "${row.role}").`,
+      );
+    }
+    const revision = Math.max(Date.now(), (row.shadowRevision ?? 0) + 1);
+    const user = await ctx.db.get(ctx.userId);
+    const actor = user?.email ?? "media_buyer";
+    await ctx.db.patch(id, {
+      done: !row.done,
+      doneAt: Date.now(),
+      shadowRevision: revision,
+      shadowActor: actor,
+    });
     await ctx.db.insert("usage", {
       role: "media_buyer",
       event: row.done ? "check_untick" : "check_tick",
       detail: row.key,
       at: Date.now(),
     });
+    await ctx.scheduler.runAfter(0, internal.cockpit.shadowDailyCheck, { id });
+    return null;
+  },
+});
+
+export const getCheckForShadow = internalQuery({
+  args: { id: v.id("checks") },
+  returns: v.any(),
+  handler: async (ctx, { id }) => {
+    const row = await ctx.db.get(id);
+    if (!row) return null;
+    if (row.role !== "media_buyer") {
+      throw new Error(
+        `Non-media-buyer check rejected in shadow query: role="${row.role}".`,
+      );
+    }
+    return row;
+  },
+});
+
+export const shadowDailyCheck = internalAction({
+  args: { id: v.id("checks") },
+  returns: v.null(),
+  handler: async (ctx, { id }) => {
+    try {
+      const check = await ctx.runQuery(internal.cockpit.getCheckForShadow, {
+        id,
+      });
+      if (!check) return null;
+      if (check.role !== "media_buyer") {
+        throw new Error(
+          `Non-media-buyer check rejected in shadow action: role="${check.role}".`,
+        );
+      }
+      await mirrorCockpitDailyCheck(check);
+    } catch (error) {
+      console.error(`Shadow daily check failed for ${id}:`, error);
+    }
+    await flush(ctx);
     return null;
   },
 });

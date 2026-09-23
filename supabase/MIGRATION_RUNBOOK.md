@@ -173,7 +173,84 @@ connection resets interrupted batches; after each, the read-only plan
 reconciled any rows already written before the next capped batch. No duplicate
 or overwrite was observed.
 
-Next: add a live shadow writer for each owning cockpit's checkmark changes,
-including creation of new-day rows; use a versioned update so delayed writes
-cannot reverse a later human checkmark. Then compare a fresh Convex snapshot
-with Supabase, including the open-day rows, before any Supabase read cutover.
+## Phase 3: Version-safe daily check shadow writer (pilot)
+
+This phase establishes a generic, version-safe service-only write contract
+for `public.cockpit_daily_checks` in Creative Triage (`bldgtotkfmhoxmlzowdx`),
+and implements the live shadow writer for the media-buyer cockpit (`adorable-seahorse-418`).
+Convex remains the live user-facing read and write source. No read cutover,
+CSM/creative bridge, or external client notifications occur in this phase.
+
+### Schema: additive columns and shadow RPC
+
+Migration `supabase/migrations/20260923f_cockpit_daily_check_shadow.sql`:
+- Adds `source_revision bigint NOT NULL DEFAULT 0` (historical rows through 2026-09-22 have implicit 0)
+  and `source_deleted boolean NOT NULL DEFAULT false` for future soft tombstones.
+- Provides `public.cockpit_apply_daily_check_shadow(p_row jsonb)` as a `SECURITY INVOKER`
+  procedure with `SET search_path = ''` and schema-qualified relations.
+- Revokes execute from `PUBLIC`, `anon`, and `authenticated`; grants execute only to `service_role`.
+- Enforces strict role/owner_app/deployment mapping across all three cockpits:
+  - `media_buyer` / `media-buyer` / `adorable-seahorse-418`
+  - `csm` / `client-success` / `impressive-dinosaur-375`
+  - `creative` / `creative-director` / `colorful-wombat-644`
+- Validates `source_system = 'convex'`, nonblank source ID, day, key, label, boolean `done`,
+  positive integral `source_revision`, and full provenance.
+- Serializes concurrent writes per source identity and logical key using transaction advisory locks.
+- Inserts new checks, updates on rising revision while preserving the primary key (`id`),
+  returns `stale` or `duplicate` without writing or creating audit entries,
+  and raises exceptions on same-revision divergent content or logical/source key mismatches.
+- The existing `trg_cockpit_daily_checks_audit` table trigger remains the sole audit writer.
+
+### Migration script: dry run and apply
+
+`scripts/apply-cockpit-check-shadow-migration.ps1` defaults to `DRY_RUN = True`:
+it runs the schema changes and a synthetic smoke sequence (insert, update, stale replay,
+duplicate replay, conflicting same-revision rejection, and audit verification) inside
+a transaction that rolls back.
+
+```powershell
+powershell -File scripts/apply-cockpit-check-shadow-migration.ps1
+powershell -File scripts/apply-cockpit-check-shadow-migration.ps1 -Apply
+powershell -File scripts/apply-cockpit-check-shadow-migration.ps1 -VerifyOnly
+```
+
+`-Apply` repeats the dry run before committing the schema.
+`-VerifyOnly` checks column presence, default values, RPC presence, service-only grants,
+and current row/audit counts with zero writes.
+
+### Media-buyer Convex shadow writer
+
+- `checks` schema gains optional `shadowRevision` and `shadowActor`.
+- `toggleCheck` and new-day sync-created checks compute a strictly increasing revision
+  `Math.max(Date.now(), (prior ?? 0) + 1)`, preserve existing checkmark fields,
+  and schedule `internal.cockpit.shadowDailyCheck`.
+- Non-media-buyer checks are rejected at the mutation and action/query level. The separate
+  CSM copy in `csmSync.ts` is untouched.
+- Sync metadata updates schedule the shadow action only when mapped content actually changed.
+- Out-of-order scheduled action safety: the action reads the current latest check row from the DB
+  rather than an old event payload, and the database revision gate drops stale revisions.
+- Shadow errors are logged and recorded to the `sourceHealth` ledger via `note("supabase", ...)`
+  and `flush(ctx)`. Shadow failures never block or roll back the user's Convex checkmark mutation.
+- The mirror defaults to no-write (`DRY_RUN = true`) unless explicitly enabled via
+  `SUPABASE_CHECKS_SHADOW_DRY_RUN=false`.
+
+### Rollout order
+
+1. **Local verification**: Run focused unit/contract tests:
+   ```bash
+   cd apps/media-buyer-cockpit && bun test scripts/supabase-daily-check-mirror.test.ts
+   ```
+2. **Database dry run**: Run `powershell -File scripts/apply-cockpit-check-shadow-migration.ps1`
+   against Creative Triage. Confirm synthetic smoke passes and table state remains unchanged.
+3. **Database apply**: Run `powershell -File scripts/apply-cockpit-check-shadow-migration.ps1 -Apply`.
+4. **Database verification**: Run `powershell -File scripts/apply-cockpit-check-shadow-migration.ps1 -VerifyOnly`.
+5. **Ship media-buyer cockpit**: Deploy media-buyer backend while keeping default dry-run
+   (`SUPABASE_CHECKS_SHADOW_DRY_RUN` unset or `true`).
+6. **Enable shadow writer**: Set `SUPABASE_CHECKS_SHADOW_DRY_RUN=false` on `adorable-seahorse-418` Convex deployment.
+7. **Verify first live shadow check**: Toggle a test checkmark, confirm Supabase read-back
+   contains matching `source_revision`, and exactly one `UPDATE` audit log is recorded.
+
+> [!NOTE]
+> **Status: UNSHIPPED and UNENABLED**
+> All code in this phase is currently local, unshipped, and unenabled. `SUPABASE_CHECKS_SHADOW_DRY_RUN`
+> defaults to `true` (no-write). No live system has been mutated, no migrations applied, and no credentials modified.
