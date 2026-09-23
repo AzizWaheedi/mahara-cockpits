@@ -141,5 +141,11 @@ case "${1:-all}" in
 esac
 
 echo "== smoke check"
-(cd apps/media-buyer-cockpit && bunx convex run --prod smoke:check | grep -E '"ok"|failures' | head -5)
+if [ "${SHIP_SMOKE_READ_ONLY:-}" = 1 ]; then
+  # A migration release must not send the failure alert to Slack without a
+  # separately approved outward action. The local query checks the live page.
+  (cd apps/media-buyer-cockpit && bunx convex run --prod smoke:local | grep -E '"ok"|failures' | head -5)
+else
+  (cd apps/media-buyer-cockpit && bunx convex run --prod smoke:check | grep -E '"ok"|failures' | head -5)
+fi
 echo "shipped."
