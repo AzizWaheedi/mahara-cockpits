@@ -93,8 +93,12 @@ ship() {
   # macOS ships, and set -u would stop the ship here)
   local -a tok=()
   [ -n "${VERCEL_TOKEN:-}" ] && tok=(--token "$VERCEL_TOKEN")
-  if (cd "$dir" && bunx vercel whoami ${tok[@]+"${tok[@]}"} >/dev/null 2>&1); then
-    out=$(cd "$dir" && bunx vercel deploy --prod --yes --force ${tok[@]+"${tok[@]}"} 2>&1) || { echo "$out" | tail -20; echo "vercel deploy failed for $app"; exit 1; }
+  # An installed Vercel CLI may be signed in while bunx downloads a newer,
+  # logged-out copy. Use the installed CLI first; bunx remains the fallback.
+  local -a vercel_cli=(bunx vercel)
+  command -v vercel >/dev/null 2>&1 && vercel_cli=(vercel)
+  if (cd "$dir" && "${vercel_cli[@]}" whoami ${tok[@]+"${tok[@]}"} >/dev/null 2>&1); then
+    out=$(cd "$dir" && "${vercel_cli[@]}" deploy --prod --yes --force ${tok[@]+"${tok[@]}"} 2>&1) || { echo "$out" | tail -20; echo "vercel deploy failed for $app"; exit 1; }
   else
     # No Vercel login on this Mac (2026-09-20): the same source goes up
     # through Composio's Vercel connection instead. `bunx vercel login`
@@ -137,5 +141,11 @@ case "${1:-all}" in
 esac
 
 echo "== smoke check"
-(cd apps/media-buyer-cockpit && bunx convex run --prod smoke:check | grep -E '"ok"|failures' | head -5)
+if [ "${SHIP_SMOKE_READ_ONLY:-}" = 1 ]; then
+  # A migration release must not send the failure alert to Slack without a
+  # separately approved outward action. The local query checks the live page.
+  (cd apps/media-buyer-cockpit && bunx convex run --prod smoke:local | grep -E '"ok"|failures' | head -5)
+else
+  (cd apps/media-buyer-cockpit && bunx convex run --prod smoke:check | grep -E '"ok"|failures' | head -5)
+fi
 echo "shipped."
