@@ -1,6 +1,6 @@
 # Creative requests and Changes & Results
 
-Status: release in progress on `codex/creative-results`. The context repo could not be fast-forwarded because its local `main` had diverged; it was left untouched.
+Status: deployed to [cockpit.maharamedia.com](https://cockpit.maharamedia.com) on 2026-09-23 from GitHub main `8fe506d`. The original local context repo could not be fast-forwarded because its `main` had diverged; it was left untouched.
 
 ## Buyer flow
 
@@ -35,3 +35,12 @@ Status: release in progress on `codex/creative-results`. The context repo could 
 - `node --experimental-strip-types --test scripts/change-results.test.ts`: three tests passed.
 - `git diff --check`: passed.
 - Read-only source checks on 2026-09-23: the most recent sampled human activity matched Meta's activity API by object, event, and time. A sampled 2026-09-22 ad had $34 spend and 4 leads in both the cockpit daily feed and direct Meta Insights. These checks cover one sample, not every campaign or booking.
+
+## Production verification
+
+- `scripts/ship.sh media-buyer` passed the shared-file gate, existing cross-cockpit tests, lint, typecheck, Convex deploy, Vercel Ready/alias checks, changed live bundle check, and the three-cockpit smoke check.
+- The live site returned HTTP 200 and its authenticated app chunk contained Changes & Results, Request creative, and the review controls. Production Convex function metadata listed the new campaign result and creative request actions.
+- The production Convex service key matched the verified Creative Triage service key. Its REST request table returned HTTP 200 and an empty list. The existing ClickUp Media/Creative list was reachable.
+- The link worker was enabled for buyer-created requests after readback confirmed zero existing request rows. The first real request still needs end-to-end observation through the script task, editor task, cut, launch, review, and audit events. No synthetic task was sent to the creative team during deployment.
+- The 2026-09-23T18:02:07Z production sync completed successfully. It replaced the previous 368 unscoped activity rows with 203 rows carrying Meta object IDs and activity hashes; all 203 mapped back to the correct campaign/ad object in the current Meta tree.
+- The matched booking feed is unchanged by this release; a booking was not independently matched against a client GHL account in this deployment check.
