@@ -237,8 +237,9 @@ export function CampaignChangesResults({
 
 type CreativeRequest = {
   id: string;
-  source_meta_ad_id: string;
-  source_ad_name: string;
+  source_meta_ad_id: string | null;
+  source_ad_name: string | null;
+  request_reason?: string | null;
   status: string;
   script_task_url?: string | null;
   editor_task_url?: string | null;
@@ -270,7 +271,7 @@ function CreativeLaunchResult({
     request.launched_meta_ad_id && request.launched_at
       ? {
           campaignName,
-          sourceAdId: request.source_meta_ad_id,
+          sourceAdId: request.source_meta_ad_id ?? undefined,
           launchedAdId: request.launched_meta_ad_id,
           launchedAt: Date.parse(request.launched_at),
         }
@@ -278,7 +279,7 @@ function CreativeLaunchResult({
   ) as
     | {
         campaign: Change["result"];
-        sourceBefore: WindowResult;
+        sourceBefore: WindowResult | null;
         replacementAfter: WindowResult;
       }
     | undefined;
@@ -295,13 +296,15 @@ function CreativeLaunchResult({
         Observed after the creative launch
       </div>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {result.sourceBefore && (
+          <Window
+            title="Original ad before"
+            data={result.sourceBefore}
+            leadsOnly={leadsOnly}
+          />
+        )}
         <Window
-          title="Original ad before"
-          data={result.sourceBefore}
-          leadsOnly={leadsOnly}
-        />
-        <Window
-          title="Replacement ad after"
+          title="New ad after"
           data={result.replacementAfter}
           leadsOnly={leadsOnly}
         />
@@ -318,8 +321,10 @@ function CreativeLaunchResult({
           " Launch day was entered by the media buyer."}
       </p>
       <p className="text-[11px] text-muted-foreground">
-        These ads ran in different periods. The comparison is observational, and
-        matched bookings are only those traced to an ad.
+        {result.sourceBefore
+          ? "These ads ran in different periods. The comparison is observational."
+          : "No original ad was selected; the campaign result above is observational."}{" "}
+        Matched bookings are only those traced to an ad.
       </p>
     </div>
   );
@@ -416,19 +421,28 @@ function CreativeRequests({
       )}
       {rows?.length === 0 && (
         <p className="mt-2 text-[12px] text-muted-foreground">
-          No linked creative request yet. Start one from an ad in
-          Recommendations.
+          No creative request yet. Start one in Recommendations.
         </p>
       )}
       {rows?.map(row => {
         const choices = ads.filter(ad => ad.metaId !== row.source_meta_ad_id);
+        const reasonLabels: Record<string, string> = {
+          more_ads: "More ads to test",
+          new_angle: "New message, angle, or hook",
+          fatigue: "Refresh a fatigued ad",
+          edit_visuals: "Improve the edit or visuals",
+        };
+        const reasonLabel = reasonLabels[row.request_reason ?? ""];
         return (
           <div
             key={row.id}
             className="mt-2 rounded-md border bg-background p-3"
           >
             <div className="flex flex-wrap items-center gap-2 text-[12px]">
-              <strong dir="auto">{row.source_ad_name}</strong>
+              <strong dir="auto">{reasonLabel ?? "Creative request"}</strong>
+              <span className="text-muted-foreground" dir="auto">
+                {row.source_ad_name ?? "Campaign-wide"}
+              </span>
               <span className="rounded border px-1.5 py-0.5 text-[11px]">
                 {row.status.replaceAll("_", " ")}
               </span>
@@ -439,7 +453,7 @@ function CreativeRequests({
                   rel="noreferrer"
                   className="underline"
                 >
-                  Script task
+                  Director task
                 </a>
               )}
               {safeLink(row.editor_task_url) && (
@@ -472,7 +486,7 @@ function CreativeRequests({
                   Confirm this ad uses the finished cut before linking it.
                 </p>
                 <select
-                  aria-label={`Replacement ad for ${row.source_ad_name}`}
+                  aria-label={`Launched ad for ${row.source_ad_name ?? "campaign"}`}
                   value={picked[row.id] ?? ""}
                   onChange={event =>
                     setPicked(prev => ({
@@ -482,7 +496,7 @@ function CreativeRequests({
                   }
                   className="min-w-40 flex-1 rounded-md border bg-background px-2 py-1 text-[12px]"
                 >
-                  <option value="">Select the launched replacement ad</option>
+                  <option value="">Select the launched new ad</option>
                   {choices.map(ad => (
                     <option key={ad.metaId} value={ad.metaId}>
                       {ad.name} · {ad.status}
@@ -493,7 +507,7 @@ function CreativeRequests({
                   Day ad went live
                   <input
                     type="date"
-                    aria-label={`Launch day for ${row.source_ad_name}`}
+                    aria-label={`Launch day for ${row.source_ad_name ?? "campaign"}`}
                     max={new Date(Date.now() + 3 * 3_600_000)
                       .toISOString()
                       .slice(0, 10)}

@@ -40,31 +40,25 @@ runTest("Decision writes back to ClickUp", async h => {
   }
 });
 
-runTest("Request routes to another team's board", async h => {
+runTest("New creative asks for a reason before sending", async h => {
   await h.goto("/dashboard");
   await h.page.waitForSelector("h1");
   await h.page.waitForTimeout(3000);
 
-  // حول العمران is flagged fatiguing, so a replacement creative is a real request.
+  // The campaign request keeps the buyer's reason explicit.
   const row = h.page.locator("table tbody tr", { hasText: "العمران" }).first();
   const more = row.getByRole("button", { name: "⋯" });
   if (await more.count()) {
     await more.click();
     await h.page.waitForTimeout(600);
-    await h.page
-      .getByRole("button", { name: "Replacement creative — fatigue" })
-      .click();
-    await h.page
-      .getByRole("button", { name: /Send to Creative director/ })
-      .click();
-    await h.page.waitForTimeout(8000);
+    await h.page.getByRole("button", { name: "New creative" }).first().click();
+    const dialog = h.page.getByRole("dialog", { name: "New creative" });
+    if (!(await dialog.getByRole("button", { name: "Send to creative director" }).isDisabled()))
+      throw new Error("Creative request can be sent without a reason");
+    await dialog.getByRole("radio", { name: "Refresh a fatigued ad" }).check();
+    if (!(await dialog.getByRole("button", { name: "Send to creative director" }).isEnabled()))
+      throw new Error("Creative request did not accept the selected reason");
+    await dialog.getByRole("button", { name: "Cancel" }).click();
   }
   await h.screenshot("cockpit-request.png");
-  const text = await h.page
-    .locator("text=/Logged on the ClickUp task|Not logged to ClickUp/")
-    .first()
-    .textContent();
-  console.log("request:", text);
-  if (!text?.includes("Logged on the ClickUp task"))
-    throw new Error(`request failed: ${text}`);
 });

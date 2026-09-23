@@ -535,7 +535,9 @@ function clientFromName(name: string): string | undefined {
 function kindOf(name: string): string {
   const low = name.toLowerCase();
   if (low.includes("brand dna")) return "brandDNA";
-  if (low.includes("script request")) return "script";
+  // The director triages creative requests in the existing script work queue.
+  if (low.includes("script request") || low.includes("creative request"))
+    return "script";
   if (low.includes("creative onboarding")) return "onboarding";
   if (low.includes("website")) return "website";
   return "other";

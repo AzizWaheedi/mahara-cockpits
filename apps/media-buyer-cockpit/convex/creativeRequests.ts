@@ -12,8 +12,10 @@ type RequestRow = {
   id: string;
   campaign_name: string;
   client_name: string;
-  source_meta_ad_id: string;
-  source_ad_name: string;
+  source_meta_ad_id: string | null;
+  source_ad_name: string | null;
+  request_reason?: string | null;
+  already_open?: boolean;
   status: string;
   script_task_id?: string | null;
   script_task_url?: string | null;
@@ -60,7 +62,7 @@ async function patch(
 
 /** Retry-safe task comments; a task is checked before its result is posted. */
 type ReviewMetrics = {
-  before: ReturnType<typeof windowResult>;
+  before: ReturnType<typeof windowResult> | null;
   after: ReturnType<typeof windowResult>;
 };
 
@@ -85,7 +87,7 @@ async function shareFeedback(
   const metrics: ReviewMetrics | null = row.launched_at
     ? await ctx.runQuery(internal.creativeRequests.reviewMetrics, {
         campaignName: row.campaign_name,
-        sourceAdId: row.source_meta_ad_id,
+        sourceAdId: row.source_meta_ad_id ?? undefined,
         launchedAdId: row.launched_meta_ad_id,
         launchedAt: Date.parse(row.launched_at),
       })
@@ -96,13 +98,15 @@ async function shareFeedback(
       : `${label} (${period.from} to ${period.to}): $${period.spend.toFixed(2)} spend, ${period.leads} leads, ${period.cpl === null ? "CPL unavailable" : `$${period.cpl.toFixed(2)} CPL`}, ${period.attributedBookings} bookings matched to this ad. ${period.daysWithData} of 3 days had ad records.`;
   const text = [
     marker,
-    "Buyer reviewed the replacement creative.",
-    `Original ad: ${row.source_ad_name} (${row.source_meta_ad_id})`,
+    "Buyer reviewed the new creative.",
+    row.source_meta_ad_id
+      ? `Original ad: ${row.source_ad_name} (${row.source_meta_ad_id})`
+      : "Requested for the campaign without an original ad.",
     `Launched ad: ${row.launched_meta_ad_id}`,
     `Assessment: ${row.verdict.replaceAll("_", " ")}`,
-    metrics
+    metrics?.before
       ? describe("Original ad before", metrics.before)
-      : "Original ad result unavailable.",
+      : "No original ad was linked for comparison.",
     metrics
       ? describe("Replacement ad after", metrics.after)
       : "Replacement ad result unavailable.",
@@ -144,36 +148,36 @@ async function shareFeedback(
 }
 
 export const sourceAd = internalQuery({
-  args: { campaignName: v.string(), adId: v.string() },
+  args: { campaignName: v.string(), adId: v.optional(v.string()) },
   returns: v.any(),
   handler: async (ctx, { campaignName, adId }) => {
     const campaign = await ctx.db
       .query("campaigns")
       .filter(q => q.eq(q.field("campaignName"), campaignName))
       .first();
-    const ad = await ctx.db
-      .query("metaTree")
-      .withIndex("by_meta", q => q.eq("metaId", adId))
-      .first();
-    if (
-      !campaign ||
-      !ad ||
-      ad.kind !== "ad" ||
-      ad.campaignName !== campaignName
-    )
+    if (!campaign) return null;
+    const ad = adId
+      ? await ctx.db
+          .query("metaTree")
+          .withIndex("by_meta", q => q.eq("metaId", adId))
+          .first()
+      : null;
+    if (adId && (!ad || ad.kind !== "ad" || ad.campaignName !== campaignName))
       return null;
-    const performance = (
-      await ctx.db
-        .query("ads")
-        .withIndex("by_campaign", q => q.eq("campaignName", campaignName))
-        .collect()
-    ).find(row => row.metaAdId === adId);
+    const performance = adId
+      ? (
+          await ctx.db
+            .query("ads")
+            .withIndex("by_campaign", q => q.eq("campaignName", campaignName))
+            .collect()
+        ).find(row => row.metaAdId === adId)
+      : null;
     return {
       campaignName,
       clientName: campaign.clientName ?? campaign.accountName,
       clientTag: campaign.clientTag,
       accountId: campaign.metaAccountId,
-      adName: ad.name,
+      adName: ad?.name ?? null,
       reason: campaign.reason,
       cpl: campaign.cpl,
       spend7d: campaign.spend7d,
@@ -203,7 +207,7 @@ export const launchContext = internalQuery({
 export const reviewMetrics = internalQuery({
   args: {
     campaignName: v.string(),
-    sourceAdId: v.string(),
+    sourceAdId: v.optional(v.string()),
     launchedAdId: v.string(),
     launchedAt: v.number(),
   },
@@ -235,12 +239,14 @@ export const reviewMetrics = internalQuery({
         .collect(),
     ]);
     return {
-      before: windowResult(
-        beforeFrom,
-        beforeTo,
-        daily.filter(row => row.metaAdId === args.sourceAdId),
-        bookings.filter(row => row.adId === args.sourceAdId),
-      ),
+      before: args.sourceAdId
+        ? windowResult(
+            beforeFrom,
+            beforeTo,
+            daily.filter(row => row.metaAdId === args.sourceAdId),
+            bookings.filter(row => row.adId === args.sourceAdId),
+          )
+        : null,
       after: windowResult(
         afterFrom,
         afterTo,
@@ -267,11 +273,17 @@ export const list = authenticatedAction({
   },
 });
 
-/** One buyer click opens one trace and one script task on the existing board. */
+/** One buyer request opens one trace and one task on the director's board. */
 export const request = authenticatedAction({
   args: {
     campaignName: v.string(),
-    sourceAdId: v.string(),
+    sourceAdId: v.optional(v.string()),
+    reason: v.union(
+      v.literal("more_ads"),
+      v.literal("new_angle"),
+      v.literal("fatigue"),
+      v.literal("edit_visuals"),
+    ),
     note: v.optional(v.string()),
   },
   returns: v.any(),
@@ -285,28 +297,39 @@ export const request = authenticatedAction({
       adId: args.sourceAdId,
     });
     if (!source?.accountId)
-      throw new Error("This ad is not available in the synced Meta campaign.");
+      throw new Error(
+        "This campaign or ad is not available in the synced Meta account.",
+      );
+    const reasonLabel = {
+      more_ads: "More ads to test",
+      new_angle: "New message, angle, or hook",
+      fatigue: "Refresh a fatigued ad",
+      edit_visuals: "Improve the edit or visuals",
+    }[args.reason];
     const note = args.note?.trim().slice(0, 500) || null;
     const existing = await creativeRequestRest<RequestRow[]>(
       query({
         campaign_name: `eq.${args.campaignName}`,
-        source_meta_ad_id: `eq.${args.sourceAdId}`,
+        source_meta_ad_id: args.sourceAdId
+          ? `eq.${args.sourceAdId}`
+          : "is.null",
+        ...(args.sourceAdId ? {} : { request_reason: `eq.${args.reason}` }),
         status: "not.in.(reviewed,cancelled)",
         limit: "1",
       }),
     );
-    if (existing[0]) return existing[0];
+    if (existing[0]) return { ...existing[0], already_open: true };
 
     const by = await ctx.runQuery(internal.creativeRequests.userEmail, {
       userId: ctx.userId,
     });
     const evidence = [
-      source.adReason ??
-        source.reason ??
-        "Buyer requested a new creative for this ad.",
-      source.adSpend7d !== undefined
-        ? `Affected ad, last 7 days: $${Number(source.adSpend7d).toFixed(2)} spend, ${source.adLeads7d} leads, ${source.adCpl7d === undefined ? "CPL unavailable" : `$${Number(source.adCpl7d).toFixed(2)} CPL`}.`
-        : "Affected ad performance was not available at request time.",
+      source.adReason ?? source.reason ?? "Buyer requested new creative.",
+      args.sourceAdId
+        ? source.adSpend7d != null
+          ? `Affected ad, last 7 days: $${Number(source.adSpend7d).toFixed(2)} spend, ${source.adLeads7d == null ? "leads unavailable" : `${source.adLeads7d} leads`}, ${source.adCpl7d == null ? "CPL unavailable" : `$${Number(source.adCpl7d).toFixed(2)} CPL`}.`
+          : "Affected ad performance was not available at request time."
+        : `Campaign, last 7 days: ${source.spend7d == null ? "spend unavailable" : `$${Number(source.spend7d).toFixed(2)} spend`}; ${source.cpl == null ? "CPL unavailable" : `$${Number(source.cpl).toFixed(2)} CPL`}.`,
     ].join(" ");
     let inserted: RequestRow[];
     try {
@@ -319,8 +342,9 @@ export const request = authenticatedAction({
             client_name: source.clientName,
             client_tag: source.clientTag,
             meta_account_id: String(source.accountId).replace(/^act_/, ""),
-            source_meta_ad_id: args.sourceAdId,
+            source_meta_ad_id: args.sourceAdId ?? null,
             source_ad_name: source.adName,
+            request_reason: args.reason,
             requested_by: by,
             evidence,
             note,
@@ -334,12 +358,15 @@ export const request = authenticatedAction({
       const concurrent = await creativeRequestRest<RequestRow[]>(
         query({
           campaign_name: `eq.${args.campaignName}`,
-          source_meta_ad_id: `eq.${args.sourceAdId}`,
+          source_meta_ad_id: args.sourceAdId
+            ? `eq.${args.sourceAdId}`
+            : "is.null",
+          ...(args.sourceAdId ? {} : { request_reason: `eq.${args.reason}` }),
           status: "not.in.(reviewed,cancelled)",
           limit: "1",
         }),
       );
-      if (concurrent[0]) return concurrent[0];
+      if (concurrent[0]) return { ...concurrent[0], already_open: true };
       throw error;
     }
     const row = inserted[0];
@@ -349,7 +376,7 @@ export const request = authenticatedAction({
         await callTool("pd_clickup_proxy_post", {
           url: `https://api.clickup.com/api/v2/list/${DEPARTMENT_LIST.creative.id}/task`,
           json_body: {
-            name: `Script Request — ${source.clientName} — ${source.adName}`.slice(
+            name: `Creative Request — ${source.clientName} — ${reasonLabel}`.slice(
               0,
               180,
             ),
@@ -357,7 +384,10 @@ export const request = authenticatedAction({
               "Requested from the Media Buyer Cockpit.",
               `Client: ${source.clientName}`,
               `Campaign: ${args.campaignName}`,
-              `Affected ad: ${source.adName} (${args.sourceAdId})`,
+              `Reason: ${reasonLabel}`,
+              args.sourceAdId
+                ? `Affected ad: ${source.adName} (${args.sourceAdId})`
+                : "Campaign request: no specific ad selected.",
               `Why: ${evidence}`,
               note ? `Buyer note: ${note}` : "",
               `Creative request: ${row.id}`,
@@ -369,7 +399,7 @@ export const request = authenticatedAction({
         }),
       ) as { id?: string; url?: string } | null;
       if (!created?.id)
-        throw new Error("ClickUp did not confirm the script task.");
+        throw new Error("ClickUp did not confirm the creative task.");
       return await patch(row.id, {
         script_task_id: created.id,
         script_task_url:
@@ -388,7 +418,7 @@ export const request = authenticatedAction({
       });
       // The row remains visible; a repeated click cannot create a second task.
       throw new Error(
-        "The request was saved, but the script task was not confirmed. Check ClickUp before trying again.",
+        "The request was saved, but the creative task was not confirmed. Check ClickUp before trying again.",
       );
     }
   },

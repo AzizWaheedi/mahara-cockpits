@@ -38,17 +38,6 @@ import { RequestCreativeButton } from "../components/RequestCreativeButton";
 
 /** What one role can actually ask another for. Picking the request picks the board. */
 const REQUESTS: { label: string; dept: string; deptLabel: string }[] = [
-  { label: "New ads needed", dept: "creative", deptLabel: "Creative director" },
-  {
-    label: "New scripts needed",
-    dept: "creative",
-    deptLabel: "Creative director",
-  },
-  {
-    label: "Replacement creative — fatigue",
-    dept: "creative",
-    deptLabel: "Creative director",
-  },
   {
     label: "Thank-you video to lift show rate",
     dept: "creative",
@@ -2143,6 +2132,8 @@ function Cockpit({ view }: { view: View }) {
                                               <RequestCreativeButton
                                                 campaignName={c.campaignName}
                                                 adId={requestAdId}
+                                                adName={adName}
+                                                compact
                                               />
                                             </div>
                                           );
@@ -2265,6 +2256,18 @@ function Cockpit({ view }: { view: View }) {
                                       board as a request.
                                     </div>
                                     <div className="flex flex-wrap gap-1.5">
+                                      <RequestCreativeButton
+                                        campaignName={c.campaignName}
+                                        ads={tree
+                                          .filter(
+                                            (t: Campaign) =>
+                                              t.kind === "ad" && t.metaId,
+                                          )
+                                          .map((t: Campaign) => ({
+                                            metaId: String(t.metaId),
+                                            name: String(t.name),
+                                          }))}
+                                      />
                                       {REQUESTS.map(r => (
                                         <button
                                           key={r.label}

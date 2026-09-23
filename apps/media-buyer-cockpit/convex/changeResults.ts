@@ -96,7 +96,7 @@ export const forCampaign = authenticatedQuery({
 export const forCreativeLaunch = authenticatedQuery({
   args: {
     campaignName: v.string(),
-    sourceAdId: v.string(),
+    sourceAdId: v.optional(v.string()),
     launchedAdId: v.string(),
     launchedAt: v.number(),
   },
@@ -162,12 +162,14 @@ export const forCreativeLaunch = authenticatedQuery({
     );
     return {
       campaign,
-      sourceBefore: windowResult(
-        campaign.before.from,
-        campaign.before.to,
-        daily.filter(row => row.metaAdId === args.sourceAdId),
-        bookings.filter(row => row.adId === args.sourceAdId),
-      ),
+      sourceBefore: args.sourceAdId
+        ? windowResult(
+            campaign.before.from,
+            campaign.before.to,
+            daily.filter(row => row.metaAdId === args.sourceAdId),
+            bookings.filter(row => row.adId === args.sourceAdId),
+          )
+        : null,
       replacementAfter: windowResult(
         campaign.after.from,
         campaign.after.to,
