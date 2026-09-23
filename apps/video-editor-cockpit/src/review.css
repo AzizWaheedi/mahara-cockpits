@@ -2,119 +2,268 @@
  * The client review page.
  *
  * Scoped to `.screen` and loaded only by that route, so nothing here
- * touches the cockpit's own styling. The palette is Mahara's public one
- * -- Midnight, Pearl, Ocean -- because this is the only page in the
- * repository a client ever sees, and the cockpit's internal teal is not
- * the face the agency puts on a delivery.
+ * touches the cockpit's own styling. This is the page a client sees, so
+ * it wears Mahara Media Brand Guidelines v1.0 exactly: Deep Space as the
+ * canvas, Mahara Teal as the one accent, Royal Blue only inside the Mahara
+ * Gradient, Geist with Geist Mono for labels and timecodes, an 8px grid,
+ * and the teal glow as the only elevation.
+ *
+ * The signature is the frame around the film: the Mahara Gradient as a
+ * 1px ring with the teal glow under it. The guidelines reserve that ring
+ * for featured content, and on this page the featured content is the
+ * client's cut. Everything else stays quiet so the picture is the
+ * brightest thing in the room.
  */
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=IBM+Plex+Sans+Arabic:wght@400;500;600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=IBM+Plex+Sans+Arabic:wght@400;500;600&display=swap");
 
 .screen {
-  --midnight: #122c4f;
-  --ink: #0b1a30;      /* one step under Midnight, for the stage */
-  --pearl: #fbf9e4;
-  --ocean: #5b88b2;
-  --fade: #9cb1c7;
+  --deep-space: #091333;
+  --stage: #060d26; /* a step under Deep Space: the room the film plays in */
+  --surface: #0f1b45; /* cards, one step lighter, as in the cockpits */
+  --teal: #00cfc8;
+  --royal: #2e5bd6;
+  --white: #ffffff;
+  --muted: rgb(226 233 255 / 0.62);
+  --faint: rgb(226 233 255 / 0.4);
+  --hair: rgb(255 255 255 / 0.1);
+  --gradient: linear-gradient(
+    135deg,
+    var(--royal) 0%,
+    var(--teal) 65%,
+    var(--teal) 100%
+  );
+  --glow: 0 24px 80px -28px rgb(0 207 200 / 0.45),
+    0 0 0 1px rgb(0 207 200 / 0.06);
 
   min-height: 100dvh;
-  background: var(--midnight);
-  color: var(--pearl);
-  font-family: Inter, "IBM Plex Sans Arabic", system-ui, sans-serif;
-  /* Arabic notes come back in the client's own script; Plex Arabic is
-     here for them rather than for decoration. */
-  font-feature-settings: "ss01";
+  background: var(--deep-space);
+  color: var(--white);
+  color-scheme: dark;
+  /* Geist has no Arabic letters, so a client's Arabic note falls through
+     to Plex Arabic rather than to whatever the phone happens to have. */
+  font-family: Geist, "IBM Plex Sans Arabic", ui-sans-serif, system-ui,
+    sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
   display: flex;
   flex-direction: column;
-}
-.screen:lang(ar),
-.screen [dir="rtl"] {
-  font-family: "IBM Plex Sans Arabic", Inter, sans-serif;
 }
 .screen.center {
   align-items: center;
   justify-content: center;
 }
+.screen ::selection {
+  background: rgb(0 207 200 / 0.3);
+}
 
-.bar {
-  display: flex;
-  align-items: baseline;
-  gap: 1rem;
-  padding: 1.25rem 1.5rem;
-}
-.mark {
-  font-weight: 600;
-  letter-spacing: 0.01em;
-}
-.count {
-  margin-left: auto;
-  color: var(--fade);
-  font-size: 0.8125rem;
+/* Labels, counts and timecodes: Geist Mono, upper case, tracked 0.08em. */
+.mono {
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   font-variant-numeric: tabular-nums;
 }
 
-/* The video is the page. It sits on a darker ground so the picture is
-   the brightest thing in the room, which is the whole idea. */
+/* ---------------------------------------------------------------- bar */
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: max(16px, env(safe-area-inset-top)) 24px 16px;
+  max-width: 1248px;
+  width: 100%;
+  margin: 0 auto;
+}
+.logo {
+  display: block;
+  height: 28px;
+  width: auto;
+}
+.for {
+  margin-left: auto;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--muted);
+}
+.for bdi {
+  font-family: Geist, "IBM Plex Sans Arabic", sans-serif;
+  font-size: 14px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--white);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* One segment per cut, in order: teal once decided, white where you are.
+   How far through the delivery they are, without a word. */
+.progress {
+  display: flex;
+  gap: 4px;
+  padding: 0 24px;
+  max-width: 1248px;
+  width: 100%;
+  margin: 0 auto 16px;
+}
+.seg {
+  flex: 1;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--hair);
+  transition: background-color 240ms ease;
+}
+.seg.approved,
+.seg.changes {
+  background: var(--teal);
+}
+.seg.here {
+  background: var(--white);
+}
+
+/* -------------------------------------------------------------- stage */
+
 .stage {
-  background: var(--ink);
+  background:
+    radial-gradient(60% 55% at 50% 45%, rgb(0 207 200 / 0.07), transparent 70%),
+    var(--stage);
   display: flex;
   justify-content: center;
+  padding: 32px 24px 40px;
+}
+.ring {
+  width: fit-content;
+  max-width: min(100%, 1200px);
+  padding: 1px;
+  border-radius: 16px;
+  background: var(--gradient);
+  box-shadow: var(--glow);
+  line-height: 0;
 }
 .film {
-  width: 100%;
-  max-height: 72dvh;
-  max-width: 1200px;
   display: block;
+  max-width: 100%;
+  max-height: 68dvh;
+  width: auto;
+  height: auto;
+  border-radius: 15px;
   background: #000;
 }
 /* A still is not a film: letterbox it rather than crop, because a board
    the client approves has to be the board they were shown. */
 img.film {
   object-fit: contain;
-  height: auto;
 }
 
+/* -------------------------------------------------------------- below */
+
 .below {
-  max-width: 1200px;
+  max-width: 1248px;
   width: 100%;
   margin: 0 auto;
-  padding: 1.5rem;
+  padding: 32px 24px 24px;
   display: grid;
-  gap: 1rem;
+  gap: 16px;
 }
-.titling {
-  display: grid;
-  gap: 0.25rem;
+.eyebrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+.cut {
+  color: var(--teal);
+}
+.dur {
+  color: var(--muted);
+}
+.eyebrow .pill {
+  margin-left: auto;
 }
 .title {
-  font-size: clamp(1.25rem, 1rem + 1.2vw, 1.75rem);
+  font-size: clamp(24px, 20px + 1.2vw, 32px);
   font-weight: 600;
   line-height: 1.15;
-  letter-spacing: -0.015em;
+  letter-spacing: -0.02em;
   margin: 0;
+  text-wrap: balance;
 }
 .lede {
-  color: var(--fade);
+  color: var(--muted);
   margin: 0;
   max-width: 62ch;
-  line-height: 1.55;
+  line-height: 1.6;
 }
+
+/* Badges, as in the guidelines: a teal fill for the good news, an outline
+   for a change, a quiet pill with a live dot for what is still to do. */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.pill.ok {
+  background: var(--teal);
+  color: var(--deep-space);
+}
+.pill.change {
+  border: 1px solid rgb(255 255 255 / 0.55);
+  color: var(--white);
+}
+.pill.wait {
+  background: var(--surface);
+  color: var(--white);
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+.pill.wait i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--teal);
+  box-shadow: 0 0 8px var(--teal);
+}
+.pill svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* ------------------------------------------------------------ buttons */
 
 .row {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.625rem;
+  gap: 8px;
+  margin-top: 8px;
 }
 .btn {
   font: inherit;
-  font-weight: 500;
-  border-radius: 999px;
-  padding: 0.75rem 1.5rem;
+  font-size: 15px;
+  font-weight: 600;
+  height: 48px;
+  padding: 0 24px;
+  border-radius: 8px;
   border: 1px solid transparent;
   cursor: pointer;
-  transition: background-color 120ms ease, border-color 120ms ease;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    color 160ms ease;
 }
-.btn:focus-visible {
-  outline: 2px solid var(--pearl);
+.btn:focus-visible,
+.stamp:focus-visible,
+.frame:focus-visible {
+  outline: 2px solid var(--teal);
   outline-offset: 3px;
 }
 .btn[disabled] {
@@ -124,204 +273,384 @@ img.film {
 /* One filled button on the page. Approving is what usually happens and
    the only thing that should look like the obvious move. */
 .solid {
-  background: var(--pearl);
-  color: var(--midnight);
+  background: var(--teal);
+  color: var(--deep-space);
 }
 .solid:hover:not([disabled]) {
-  background: #fff;
+  box-shadow: 0 0 0 4px rgb(0 207 200 / 0.18), 0 8px 32px -8px rgb(0 207 200 / 0.6);
 }
 .quiet {
-  background: transparent;
-  color: var(--pearl);
-  border-color: color-mix(in srgb, var(--pearl) 35%, transparent);
+  background: rgb(255 255 255 / 0.06);
+  color: var(--white);
+  border-color: var(--hair);
 }
 .quiet:hover:not([disabled]) {
-  border-color: var(--pearl);
+  background: rgb(255 255 255 / 0.1);
+}
+/* A third weight, for what a client may do after deciding: present, but
+   not competing with the decision. */
+.btn.link {
+  height: auto;
+  padding: 0;
+  background: none;
+  border: 0;
+  font-weight: 500;
+  color: var(--teal);
+  text-decoration: underline;
+  text-decoration-color: rgb(0 207 200 / 0.4);
+  text-underline-offset: 4px;
+}
+.btn.link:hover:not([disabled]) {
+  text-decoration-color: var(--teal);
 }
 
-.ask {
-  display: grid;
-  gap: 0.625rem;
-  max-width: 44rem;
-}
-.askLabel {
-  color: var(--fade);
-  font-size: 0.875rem;
-}
-.ask textarea {
-  font: inherit;
-  width: 100%;
-  padding: 0.875rem 1rem;
-  border-radius: 0.875rem;
-  background: var(--ink);
-  color: var(--pearl);
-  border: 1px solid color-mix(in srgb, var(--pearl) 20%, transparent);
-  resize: vertical;
-  line-height: 1.55;
-}
-.ask textarea:focus-visible {
-  outline: none;
-  border-color: var(--ocean);
-}
-.ask textarea::placeholder {
-  color: color-mix(in srgb, var(--fade) 70%, transparent);
-}
+/* ----------------------------------------------------- asking, verdict */
 
+.ask,
 .verdict {
   display: grid;
-  gap: 0.5rem;
+  gap: 16px;
+  max-width: 44rem;
+  padding: 24px;
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+.askLabel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+}
+.askLabel .mono {
+  color: var(--teal);
+  background: rgb(0 207 200 / 0.1);
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+.ask textarea,
+.who {
+  font: inherit;
+  width: 100%;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: var(--deep-space);
+  color: var(--white);
+  border: 1px solid var(--hair);
+  line-height: 1.6;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+.ask textarea {
+  resize: vertical;
+  min-height: 104px;
+}
+.who {
+  max-width: 24rem;
+}
+.ask textarea:focus-visible,
+.who:focus-visible {
+  outline: none;
+  border-color: var(--teal);
+  box-shadow: 0 0 0 4px rgb(0 207 200 / 0.14);
+}
+.ask textarea::placeholder,
+.who::placeholder {
+  color: var(--faint);
+}
+.verdictLine {
   margin: 0;
-  padding-left: 0.875rem;
-  border-left: 2px solid var(--ocean);
-  color: var(--pearl);
-  max-width: 62ch;
-}
-.verdict.approved {
-  border-left-color: var(--ocean);
-}
-.verdict.changes {
-  border-left-color: var(--pearl);
+  font-weight: 500;
 }
 .notes {
   display: grid;
-  gap: 0.375rem;
+  gap: 8px;
 }
 .note {
-  color: var(--fade);
-  line-height: 1.55;
+  color: var(--muted);
+  line-height: 1.6;
 }
-/* A timecode you can press: it is the fastest way back to the frame the
-   note is about, and the reason the note carries one. */
+/* A timecode you can press: the fastest way back to the frame the note
+   is about, and the reason the note carries one. */
 .stamp {
-  font: inherit;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
-  color: var(--ocean);
-  background: none;
+  color: var(--teal);
+  background: rgb(0 207 200 / 0.1);
   border: 0;
-  padding: 0 0.375rem 0 0;
+  border-radius: 4px;
+  padding: 2px 8px;
+  margin-inline-end: 8px;
   cursor: pointer;
 }
 .stamp:hover {
-  color: var(--pearl);
+  background: rgb(0 207 200 / 0.18);
 }
 
-/* The reel. Each frame carries its own decision, so the whole delivery
-   and how far through it they are is one glance, with no progress bar. */
+/* --------------------------------------------------------------- reel */
+
 .reel {
-  display: flex;
-  gap: 0.75rem;
-  overflow-x: auto;
-  padding: 0.5rem 1.5rem 2rem;
-  max-width: 1200px;
+  max-width: 1248px;
   width: 100%;
   margin: 0 auto;
+  padding: 24px 24px 48px;
+}
+.reelLabel {
+  margin: 0 0 16px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.reelLabel::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--hair);
+}
+.frames {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 168px;
+  gap: 16px;
+  overflow-x: auto;
+  padding: 4px 4px 8px;
+  margin: -4px;
   scrollbar-width: thin;
-  /* Centred when the reel fits, still scrollable from the start when it
-     does not -- which is what `safe` buys over plain `center`. */
-  justify-content: safe center;
+  scroll-snap-type: x proximity;
 }
 .frame {
-  flex: 0 0 9.5rem;
+  font: inherit;
+  color: inherit;
   background: none;
   border: 0;
   padding: 0;
   cursor: pointer;
-  text-align: left;
+  text-align: start;
   display: grid;
-  gap: 0.4rem;
-  opacity: 0.55;
-  transition: opacity 120ms ease;
+  gap: 8px;
+  scroll-snap-align: start;
+  border-radius: 12px;
 }
-.frame:hover,
-.frame.on {
+.thumb {
+  position: relative;
+  display: block;
+  aspect-ratio: 4 / 5;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--hair);
+  transition: box-shadow 160ms ease, transform 160ms ease;
+}
+.thumb img,
+.thumb video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  opacity: 0.72;
+  transition: opacity 160ms ease;
+}
+.frame:hover .thumb img,
+.frame:hover .thumb video,
+.frame.on .thumb img,
+.frame.on .thumb video {
   opacity: 1;
 }
-.frame img,
-.frame .blank {
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  object-fit: cover;
-  border-radius: 0.5rem;
-  background: var(--ink);
-  display: block;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pearl) 12%, transparent);
+.frame.on .thumb {
+  box-shadow: 0 0 0 2px var(--teal), 0 12px 32px -12px rgb(0 207 200 / 0.55);
 }
-.frame.on img,
-.frame.on .blank {
-  box-shadow: inset 0 0 0 2px var(--pearl);
+.num {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgb(6 13 38 / 0.72);
+  color: var(--white);
+  font-size: 11px;
 }
-.frame.approved img,
-.frame.approved .blank {
-  box-shadow: inset 0 0 0 2px var(--ocean);
+.mini {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
 }
-.frame.changes img,
-.frame.changes .blank {
-  box-shadow: inset 0 0 0 2px var(--pearl);
+.mini.approved {
+  background: var(--teal);
+  color: var(--deep-space);
+}
+.mini.changes {
+  background: rgb(6 13 38 / 0.72);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.7);
+  color: var(--white);
+}
+.mini svg {
+  width: 11px;
+  height: 11px;
 }
 .frameTitle {
-  font-size: 0.75rem;
-  color: var(--fade);
+  font-size: 13px;
+  color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .frame.on .frameTitle {
-  color: var(--pearl);
+  color: var(--white);
 }
+
+/* ---------------------------------------------------- done, expired */
 
 .sheet {
-  max-width: 34rem;
-  padding: 3rem 1.5rem;
+  max-width: 40rem;
+  width: 100%;
+  padding: 48px 24px;
   margin: 0 auto;
   display: grid;
-  gap: 0.625rem;
-}
-.sheet.done {
+  gap: 16px;
+  justify-items: center;
   text-align: center;
 }
+.sheet .logo {
+  height: 40px;
+  margin-bottom: 16px;
+}
+.sheet .cut {
+  margin-bottom: -8px;
+}
 .display {
-  font-size: clamp(1.75rem, 1.2rem + 2.2vw, 2.5rem);
+  font-size: clamp(32px, 24px + 2.4vw, 48px);
   font-weight: 600;
-  letter-spacing: -0.02em;
-  line-height: 1.1;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
   margin: 0;
+  text-wrap: balance;
+}
+.sheet .lede {
+  max-width: 44ch;
+}
+/* Numbers first, the way the guidelines set a stat: the figure in teal,
+   the label in mono under it. */
+.stats {
+  display: flex;
+  justify-content: center;
+  gap: 48px;
+  margin-top: 16px;
+}
+.stat {
+  display: grid;
+  gap: 4px;
+}
+.stat b {
+  font-size: 56px;
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  color: var(--teal);
+  font-variant-numeric: tabular-nums;
+}
+.stat span {
+  color: var(--muted);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .screen * {
-    transition: none !important;
+/* The logo while the delivery loads: present at once, never a blank. */
+.loadingMark {
+  height: 36px;
+  width: auto;
+  opacity: 0.5;
+  animation: breathe 1.6s ease-in-out infinite;
+}
+@keyframes breathe {
+  50% {
+    opacity: 0.9;
   }
 }
 
-.verdictLine {
-  margin: 0;
+.foot {
+  margin-top: auto;
+  padding: 24px 24px max(24px, env(safe-area-inset-bottom));
+  max-width: 1248px;
+  width: 100%;
+  margin-inline: auto;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--faint);
+  border-top: 1px solid var(--hair);
 }
-/* A third weight of button, for the things a client may do after they
-   have already decided: present, but not competing with the decision. */
-.btn.link {
-  background: none;
-  border: 0;
-  padding: 0;
-  color: var(--ocean);
-  text-decoration: underline;
-  text-underline-offset: 3px;
+.foot a {
+  color: inherit;
+  text-decoration: none;
 }
-.btn.link:hover:not([disabled]) {
-  color: var(--pearl);
+.foot a:hover {
+  color: var(--teal);
 }
-.who {
-  font: inherit;
-  padding: 0.625rem 0.875rem;
-  border-radius: 0.75rem;
-  background: var(--ink);
-  color: var(--pearl);
-  border: 1px solid color-mix(in srgb, var(--pearl) 20%, transparent);
-  max-width: 24rem;
+
+/* ------------------------------------------------------------- phones */
+
+@media (max-width: 640px) {
+  .bar {
+    padding-inline: 16px;
+  }
+  .logo {
+    height: 24px;
+  }
+  .for .lbl {
+    display: none;
+  }
+  .progress {
+    padding-inline: 16px;
+  }
+  .stage {
+    padding: 16px 12px 24px;
+  }
+  .ring {
+    border-radius: 12px;
+  }
+  .film {
+    border-radius: 11px;
+    max-height: 64dvh;
+  }
+  .below {
+    padding: 24px 16px 16px;
+  }
+  .ask,
+  .verdict {
+    padding: 16px;
+  }
+  /* Full width and stacked: a thumb reaches either, and the decision is
+     never squeezed onto one line. */
+  .row .btn:not(.link) {
+    flex: 1 1 100%;
+  }
+  .reel {
+    padding: 16px 16px 40px;
+  }
+  .frames {
+    grid-auto-columns: 136px;
+  }
+  .stats {
+    gap: 32px;
+  }
+  .stat b {
+    font-size: 44px;
+  }
+  .foot {
+    padding-inline: 16px;
+  }
 }
-.who:focus-visible {
-  outline: none;
-  border-color: var(--ocean);
-}
-.who::placeholder {
-  color: color-mix(in srgb, var(--fade) 70%, transparent);
+
+@media (prefers-reduced-motion: reduce) {
+  .screen *,
+  .screen *::before,
+  .screen *::after {
+    transition: none !important;
+    animation: none !important;
+  }
 }
