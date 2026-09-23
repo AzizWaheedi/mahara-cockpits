@@ -31,6 +31,7 @@
     "env:get": "bunx convex env get",
     "env:list": "bunx convex env list",
     "test:frameio": "bun test scripts/frameio-webhook.test.ts",
+    "test:supabase-daily-checks": "bun test scripts/supabase-daily-check-mirror.test.ts",
     "harness": "vite --config vite.harness.config.ts"
   },
   "dependencies": {
