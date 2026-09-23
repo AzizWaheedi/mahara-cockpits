@@ -1,6 +1,6 @@
 # Unified creative request, prepared 23 September 2026
 
-Status: local branch only. Production was not changed by this preparation.
+Status: live on 23 September 2026 at https://cockpit.maharamedia.com. Source commit `9256577a4e42fcd3541414899eb0e314c2e56eb8` is on GitHub main. Production Vercel deployment `dpl_DMH3pax5wqyz4iZCYLhaNyvLZhiW` was Ready and aliased to the cockpit domain.
 
 ## Buyer flow
 
@@ -9,15 +9,16 @@ Status: local branch only. Production was not changed by this preparation.
 - One audited Creative Triage request and one Creative Request task on the director's existing board are linked. Existing open requests are reused. The director's work feed recognizes the new task title.
 - Changes & Results shows the chosen reason and lets the buyer link the new ad and review results. A campaign-wide request has no original-ad comparison; it shows the new ad and the campaign's observed change without treating missing original-ad data as zero.
 
-## Rollout order
+## Rollout and verification
 
-1. Run `scripts/apply-unified-creative-migration.ps1` with its default rollback dry run, then `-Apply`, then `-VerifyOnly` against Creative Triage.
-2. Deploy the media buyer backend, then the front end via `scripts/ship.sh media-buyer` and verify the live form and director work queue.
-3. Observe the first real buyer-created request through ClickUp, asset handoff, launch link, and result review. Do not create a synthetic client request for verification.
+1. The Creative Triage migration passed rollback smoke, was applied, and passed read-only verification. Both new nullable source fields, the reason check, campaign deduplication index, RLS, service-role grant, and audit trigger were present. The browser role had no direct table access. Request count was zero at verification.
+2. `scripts/ship.sh media-buyer` deployed the production Convex backend, built the Vite/PWA site, uploaded it to Vercel, confirmed the changed live bundle, and returned an `ok` read-only smoke check. The first Vercel attempt lacked locally generated Convex bindings in the upload; a retry with real generated files passed.
+3. The live site returned HTTP 200. Its authenticated app chunk contained **New creative** and all four reasons, and did not contain the removed **Replacement creative — fatigue** label. Vercel reported Ready on the production domain.
+4. The first real buyer-created request still needs observation through ClickUp, asset handoff, launch link, and result review. No synthetic client request was created.
 
-## Preparation checks
+## Preflight checks
 
-- Schema migration rollback smoke passed, including an audited campaign-wide request. No schema or row persisted.
+- Schema migration rollback smoke passed, including an audited campaign-wide request. No schema or row persisted during the dry run.
 - Media buyer TypeScript build and Vite/PWA production build passed using the existing generated-code and package dependencies.
 - `scripts/change-results.test.ts`: 3 passed.
 - Targeted Biome lint passed with existing warnings; `git diff --check` passed.
