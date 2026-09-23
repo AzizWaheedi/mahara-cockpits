@@ -24,10 +24,26 @@ import "../review.css";
  */
 
 type Note = { at_seconds: number | null; body: string; at: string };
+type PostMedia = {
+  kind: "image" | "video";
+  url: string;
+  cover?: string | null;
+};
+/** A social post, read live from the calendar: what will go out. */
+type Post = {
+  media: PostMedia[] | null;
+  caption: string | null;
+  caption_facebook: string | null;
+  aspect: string | null;
+  platforms: string[] | null;
+  goes_out_at: string | null;
+};
 type Item = {
   id: string;
   n: number;
-  kind: "video" | "image";
+  kind: "video" | "image" | "post";
+  /** Null for a post somebody has since taken off the calendar. */
+  post?: Post | null;
   title: string;
   video_url: string;
   poster_url: string | null;
@@ -91,11 +107,192 @@ function Status({ decision }: { decision: Item["decision"] }) {
 /** A frame for the reel: the poster, the still itself, or the film's own
  *  first moment -- never an empty box where a cut should be. */
 function Thumb({ x }: { x: Item }) {
+  const first = x.post?.media?.[0];
+  if (first) {
+    const still = first.kind === "image" ? first.url : first.cover;
+    if (still) return <img src={still} alt="" loading="lazy" />;
+    return (
+      <video src={`${first.url}#t=0.5`} muted playsInline preload="metadata" />
+    );
+  }
   if (x.poster_url) return <img src={x.poster_url} alt="" loading="lazy" />;
   if (x.kind === "image")
     return <img src={x.video_url} alt="" loading="lazy" />;
   return (
     <video src={`${x.video_url}#t=0.5`} muted playsInline preload="metadata" />
+  );
+}
+
+/** Width over height, the way Instagram will show it. */
+const RATIO: Record<string, number> = {
+  "1:1": 1,
+  "4:5": 4 / 5,
+  "3:4": 3 / 4,
+  "1.91:1": 1.91,
+};
+
+function ratioOf(post: Post): number {
+  const m = post.media ?? [];
+  if (m.length === 1 && m[0].kind === "video") return 9 / 16;
+  return RATIO[post.aspect ?? "4:5"] ?? 4 / 5;
+}
+
+function outDay(iso: string | null): string {
+  if (!iso) return "";
+  return new Date(iso).toLocaleDateString("en-GB", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    timeZone: "Asia/Kuwait",
+  });
+}
+
+const PLATFORM: Record<string, string> = {
+  instagram: "Instagram",
+  facebook: "Facebook",
+};
+
+/**
+ * The post as it will go out: every item, in its shape, swiped the way the
+ * client's own followers will swipe it.
+ */
+function PostStage({
+  post,
+  slide,
+  onSlide,
+}: {
+  post: Post;
+  slide: number;
+  onSlide: (n: number) => void;
+}) {
+  const media = post.media ?? [];
+  const ratio = ratioOf(post);
+  const reel = media.length === 1 && media[0].kind === "video";
+  const track = useRef<HTMLDivElement>(null);
+  const go = (n: number) => {
+    const el = track.current;
+    if (el) el.scrollTo({ left: n * el.clientWidth, behavior: "smooth" });
+  };
+  return (
+    <>
+      <div className="ring">
+        <div
+          className="post"
+          style={{
+            aspectRatio: String(ratio),
+            width: `min(calc(100vw - 26px), calc(64dvh * ${ratio}), 1200px)`,
+          }}
+        >
+          <div
+            className="track"
+            ref={track}
+            onScroll={e => {
+              const el = e.currentTarget;
+              onSlide(Math.round(el.scrollLeft / Math.max(1, el.clientWidth)));
+            }}
+          >
+            {media.map((m, i) => (
+              // Items are ordered, and the same file may sit twice.
+              <div className="slide" key={`${m.url}-${i}`}>
+                {m.kind === "image" ? (
+                  <img src={m.url} alt={`Slide ${i + 1}`} />
+                ) : (
+                  /* biome-ignore lint/a11y/useMediaCaption: the client's own footage */
+                  <video
+                    src={m.cover ? m.url : `${m.url}#t=0.1`}
+                    poster={m.cover ?? undefined}
+                    controls
+                    playsInline
+                    preload="metadata"
+                    style={{ objectFit: reel ? "contain" : "cover" }}
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+          {media.length > 1 ? (
+            <>
+              <span className="slideCount mono">
+                {slide + 1} / {media.length}
+              </span>
+              <button
+                type="button"
+                className="slideNav prev"
+                aria-label="Previous slide"
+                disabled={slide === 0}
+                onClick={() => go(slide - 1)}
+              >
+                ‹
+              </button>
+              <button
+                type="button"
+                className="slideNav next"
+                aria-label="Next slide"
+                disabled={slide >= media.length - 1}
+                onClick={() => go(slide + 1)}
+              >
+                ›
+              </button>
+            </>
+          ) : null}
+        </div>
+      </div>
+      {media.length > 1 ? (
+        <div className="dots">
+          {media.map((m, i) => (
+            <button
+              key={`${m.url}-${i}`}
+              type="button"
+              aria-label={`Slide ${i + 1}`}
+              aria-current={i === slide}
+              className={`no-touch ${i === slide ? "on" : ""}`}
+              onClick={() => go(i)}
+            />
+          ))}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+/** The words that will go out with it, per platform when they differ. */
+function CaptionCard({ post }: { post: Post }) {
+  const where = post.platforms ?? ["instagram", "facebook"];
+  const ig = (post.caption ?? "").trim();
+  const fb = (post.caption_facebook ?? "").trim();
+  const split =
+    where.includes("instagram") &&
+    where.includes("facebook") &&
+    fb &&
+    fb !== ig;
+  const [tab, setTab] = useState<"instagram" | "facebook">(
+    where.includes("instagram") ? "instagram" : "facebook",
+  );
+  const text = tab === "facebook" ? fb || ig : ig || fb;
+  if (!text) return null;
+  return (
+    <div className="caption">
+      <div className="captionHead">
+        <span className="mono">Caption</span>
+        {split ? (
+          <span className="tabs" role="tablist">
+            {(["instagram", "facebook"] as const).map(k => (
+              <button
+                key={k}
+                type="button"
+                role="tab"
+                aria-selected={tab === k}
+                className={`no-touch mono ${tab === k ? "on" : ""}`}
+                onClick={() => setTab(k)}
+              >
+                {PLATFORM[k]}
+              </button>
+            ))}
+          </span>
+        ) : null}
+      </div>
+      <p dir="auto">{text}</p>
+    </div>
   );
 }
 
@@ -125,6 +322,7 @@ export default function ReviewPage() {
   const [name, setName] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  const [slide, setSlide] = useState(0);
   const video = useRef<HTMLVideoElement>(null);
 
   const draftKey = `review:${token}:note`;
@@ -205,11 +403,15 @@ export default function ReviewPage() {
   const approvedCount = items.filter(i => i.decision === "approved").length;
   const changeCount = items.filter(i => i.decision === "changes").length;
   const watching = Boolean(item) && (!allDone || reopened);
-  const noun = items.every(i => i.kind === "image")
-    ? " images"
-    : items.every(i => i.kind === "video")
-      ? " cuts"
-      : "";
+  const posts = items.length > 0 && items.every(i => i.kind === "post");
+  const slides = item?.post?.media?.length ?? 0;
+  const noun = posts
+    ? " posts"
+    : items.every(i => i.kind === "image")
+      ? " images"
+      : items.every(i => i.kind === "video")
+        ? " cuts"
+        : "";
 
   async function decide(decision: "approved" | "changes" | null) {
     if (!item) return;
@@ -219,11 +421,16 @@ export default function ReviewPage() {
         p_token: token,
         p_item: item.id,
         p_decision: decision,
-        p_note: decision === "approved" ? "" : note,
+        p_note:
+          decision === "approved"
+            ? ""
+            : item.kind === "post" && slides > 1
+              ? `Slide ${slide + 1}: ${note.trim()}`
+              : note,
         // A still has no timecode, and 0:00 on an image is a lie the
         // editor would have to decode.
         p_at:
-          decision === "approved" || item.kind === "image"
+          decision === "approved" || item.kind !== "video"
             ? null
             : Math.floor(at),
         p_name: name.trim() || null,
@@ -234,6 +441,7 @@ export default function ReviewPage() {
       }
       setNote("");
       setAsking(false);
+      setSlide(0);
       try {
         window.localStorage.removeItem(draftKey);
       } catch {
@@ -283,18 +491,31 @@ export default function ReviewPage() {
         </div>
       ) : null}
 
+      {posts && bundle.note && watching ? (
+        <p className="brief" dir="auto">
+          <span className="mono">From the team</span>
+          {bundle.note}
+        </p>
+      ) : null}
+
       {allDone && !reopened ? (
         <section className="sheet done">
           <p className="cut mono">Thank you</p>
           <h1 className="display">
             {changeCount === 0
               ? "Everything is approved."
-              : "Your notes are with the editor."}
+              : posts
+                ? "Your notes are with the team."
+                : "Your notes are with the editor."}
           </h1>
           <p className="lede">
             {changeCount === 0
-              ? "We will take it from here."
-              : "You will have the next cut shortly."}
+              ? posts
+                ? "We will post them on their days."
+                : "We will take it from here."
+              : posts
+                ? "We will send you the changes shortly."
+                : "You will have the next cut shortly."}
           </p>
           <div className="stats">
             <div className="stat">
@@ -315,62 +536,99 @@ export default function ReviewPage() {
 
       {watching && item ? (
         <>
-          <section className="stage">
-            <div className="ring">
-              {item.kind === "image" ? (
-                <img src={item.video_url} alt={item.title} className="film" />
-              ) : (
-                /* biome-ignore lint/a11y/useMediaCaption: the client's own footage, no track exists */
-                <video
+          <section className={`stage ${item.kind === "post" ? "stack" : ""}`}>
+            {item.kind === "post" ? (
+              item.post?.media?.length ? (
+                <PostStage
                   key={item.id}
-                  ref={video}
-                  /* Without a poster a browser shows a black rectangle until
+                  post={item.post}
+                  slide={slide}
+                  onSlide={setSlide}
+                />
+              ) : (
+                <p className="gone">This post was taken off the calendar.</p>
+              )
+            ) : (
+              <div className="ring">
+                {item.kind === "image" ? (
+                  <img src={item.video_url} alt={item.title} className="film" />
+                ) : (
+                  /* biome-ignore lint/a11y/useMediaCaption: the client's own footage, no track exists */
+                  <video
+                    key={item.id}
+                    ref={video}
+                    /* Without a poster a browser shows a black rectangle until
                  somebody presses play. Asking for a fraction of a second
                  in makes it decode and show the first frame instead,
                  which is the difference between a delivery and a broken
                  embed. */
-                  src={
-                    item.poster_url ? item.video_url : `${item.video_url}#t=0.1`
-                  }
-                  poster={item.poster_url ?? undefined}
-                  controls
-                  playsInline
-                  preload="metadata"
-                  onTimeUpdate={e =>
-                    setAt((e.target as HTMLVideoElement).currentTime)
-                  }
-                  className="film"
-                />
-              )}
-            </div>
+                    src={
+                      item.poster_url
+                        ? item.video_url
+                        : `${item.video_url}#t=0.1`
+                    }
+                    poster={item.poster_url ?? undefined}
+                    controls
+                    playsInline
+                    preload="metadata"
+                    onTimeUpdate={e =>
+                      setAt((e.target as HTMLVideoElement).currentTime)
+                    }
+                    className="film"
+                  />
+                )}
+              </div>
+            )}
           </section>
 
           <section className="below">
             <div className="eyebrow">
               <span className="cut mono">
                 {items.length > 1
-                  ? `${item.kind === "image" ? "Image" : "Cut"} ${two(here + 1)} / ${two(items.length)}`
+                  ? `${item.kind === "image" ? "Image" : item.kind === "post" ? "Post" : "Cut"} ${two(here + 1)} / ${two(items.length)}`
                   : item.kind === "image"
                     ? "Image"
-                    : "Video"}
+                    : item.kind === "post"
+                      ? "Post"
+                      : "Video"}
               </span>
               {item.kind === "video" && item.seconds ? (
                 <span className="dur mono">{clock(item.seconds)}</span>
+              ) : null}
+              {item.kind === "post" && item.post?.goes_out_at ? (
+                <span className="dur mono">
+                  {outDay(item.post.goes_out_at)}
+                </span>
+              ) : null}
+              {item.kind === "post" && item.post ? (
+                <span className="dur mono">
+                  {(item.post.platforms ?? ["instagram", "facebook"])
+                    .map(k => PLATFORM[k] ?? k)
+                    .join(" + ")}
+                </span>
               ) : null}
               <Status decision={item.decision} />
             </div>
             <h1 className="title" dir="auto">
               {item.title}
             </h1>
-            <p className="lede" dir="auto">
-              {bundle.note ?? bundle.title}
-            </p>
+            {item.kind === "post" ? (
+              item.post ? (
+                <CaptionCard key={item.id} post={item.post} />
+              ) : null
+            ) : (
+              <p className="lede" dir="auto">
+                {bundle.note ?? bundle.title}
+              </p>
+            )}
 
             {item.decision && !asking ? (
               <div className={`verdict ${item.decision}`}>
                 <p className="verdictLine">
                   {item.decision === "approved"
-                    ? "You approved this one."
+                    ? item.kind === "post"
+                      ? "You approved this post."
+                      : "You approved this one."
                     : "You asked for a change."}
                 </p>
                 {item.notes.length ? (
@@ -380,7 +638,7 @@ export default function ReviewPage() {
                         {n.at_seconds != null ? (
                           <button
                             type="button"
-                            className="stamp"
+                            className="stamp no-touch"
                             onClick={() => {
                               if (video.current)
                                 video.current.currentTime = n.at_seconds ?? 0;
@@ -421,9 +679,11 @@ export default function ReviewPage() {
               <div className="ask">
                 <label htmlFor="note" className="askLabel">
                   What should change?
-                  {item.kind === "image" ? null : (
+                  {item.kind === "video" ? (
                     <span className="mono">At {clock(at) || "0:00"}</span>
-                  )}
+                  ) : item.kind === "post" && slides > 1 ? (
+                    <span className="mono">Slide {slide + 1}</span>
+                  ) : null}
                 </label>
                 <textarea
                   id="note"
@@ -431,14 +691,22 @@ export default function ReviewPage() {
                   dir="auto"
                   value={note}
                   onChange={e => setNote(e.target.value)}
-                  placeholder="The logo at the end is the old one"
+                  placeholder={
+                    item.kind === "post"
+                      ? "Use the photo of the finished kitchen instead"
+                      : "The logo at the end is the old one"
+                  }
                 />
                 {bundle.reviewer ? null : (
                   <input
                     className="who"
                     value={name}
                     onChange={e => setName(e.target.value)}
-                    placeholder="Your name, so the editor knows who asked"
+                    placeholder={
+                      posts
+                        ? "Your name, so the team knows who asked"
+                        : "Your name, so the editor knows who asked"
+                    }
                   />
                 )}
                 <div className="row">
@@ -469,7 +737,12 @@ export default function ReviewPage() {
                   disabled={busy}
                   onClick={() => void decide("approved")}
                 >
-                  Approve this {item.kind === "image" ? "image" : "video"}
+                  Approve this{" "}
+                  {item.kind === "post"
+                    ? "post"
+                    : item.kind === "image"
+                      ? "image"
+                      : "video"}
                 </button>
                 <button
                   type="button"
@@ -492,11 +765,21 @@ export default function ReviewPage() {
         <nav
           className="reel"
           aria-label={
-            watching ? "Every cut in this delivery" : "Watch one again"
+            watching
+              ? posts
+                ? "Every post in this month"
+                : "Every cut in this delivery"
+              : posts
+                ? "Look at one again"
+                : "Watch one again"
           }
         >
           <p className="reelLabel mono">
-            {watching ? `All ${items.length}${noun}` : "Watch one again"}
+            {watching
+              ? `All ${items.length}${noun}`
+              : posts
+                ? "Look at one again"
+                : "Watch one again"}
           </p>
           <div className="frames">
             {items.map((x, i) => (
@@ -514,6 +797,7 @@ export default function ReviewPage() {
                 onClick={() => {
                   setOpenIndex(i);
                   setAsking(false);
+                  setSlide(0);
                   setReopened(true);
                 }}
                 className={`frame ${x.decision ?? ""} ${

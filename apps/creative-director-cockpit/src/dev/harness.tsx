@@ -24,6 +24,11 @@ async function main() {
   const posts: Row[] = await fetch("/tmp/harness/posts.json")
     .then(r => (r.ok ? r.json() : []))
     .catch(() => []);
+  // The Pages our Meta account manages, as Salma last saw them.
+  const metaPages: Row[] = await fetch("/tmp/harness/pages.json")
+    .then(r => (r.ok ? r.json() : []))
+    .catch(() => []);
+  let refreshingUntil = 0;
   const drawn = posts.flatMap(p =>
     ((p.media ?? []) as Row[]).map(m => String(m.url)),
   );
@@ -40,6 +45,7 @@ async function main() {
     ghlLocationId: null,
     platforms: ["instagram", "facebook"],
     autoApprove: false,
+    page: null as Row | null,
   };
   const jobs: Row[] = [];
   const library: Row[] = drawn.slice(0, 3).map((url, i) => ({
@@ -244,6 +250,70 @@ async function main() {
       return { ok: true };
     },
     "social:setActive": () => ({ active: true }),
+    "social:pages": () => {
+      // The harness has no client with ads, so the first Page that has a
+      // client stands in for "their ads run here".
+      const adsPage = metaPages.find(p => (p.ad_clients ?? []).length)?.page_id;
+      return {
+        pages: metaPages.map(p => ({
+          pageId: p.page_id,
+          name: p.name,
+          picture: p.picture_url,
+          igUserId: p.ig_user_id,
+          igUsername: p.ig_username,
+          igPicture: p.ig_picture_url,
+          suggested: p.page_id === adsPage ? "ads" : null,
+        })),
+        current: client.page
+          ? {
+              pageId: client.page.id,
+              name: client.page.name,
+              igUserId: client.page.igUserId,
+              igUsername: client.page.igUsername,
+              linkedAt: null,
+              linkedBy: null,
+            }
+          : null,
+        refreshedAt: new Date().toISOString(),
+        refreshing: Date.now() < refreshingUntil,
+        refreshError: null,
+      };
+    },
+    "social:linkAccounts": a => {
+      const p = metaPages.find(x => x.page_id === a.pageId);
+      client.page = p
+        ? {
+            id: p.page_id,
+            name: p.name,
+            igUserId: p.ig_user_id,
+            igUsername: p.ig_username,
+          }
+        : null;
+      return { linked: Boolean(p) };
+    },
+    "social:refreshPages": () => {
+      refreshingUntil = Date.now() + 6000;
+      return null;
+    },
+    "social:sendForSignoff": a => {
+      const ids = a.postIds as string[];
+      const ready = posts.filter(
+        p =>
+          ids.includes(p.id) &&
+          (p.media ?? []).length &&
+          String(p.caption ?? "").trim(),
+      );
+      for (const p of ready) {
+        p.client_status = "sent";
+        p.client_sent_at = new Date().toISOString();
+        p.review_token = "harness-token";
+      }
+      return {
+        url: "https://cockpit.maharamedia.com/editor/review/harness-token",
+        sent: ready.length,
+        skipped: ids.length - ready.length,
+      };
+    },
     "social:fillMonth": () => ({ filling: 0, days: [] }),
     "social:library": () => structuredClone(library),
     "social:addToLibrary": a => {

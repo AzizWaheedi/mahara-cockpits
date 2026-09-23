@@ -15,6 +15,7 @@ import {
   postIdOf,
   USER_ID,
 } from "./ghlSocial";
+import { REVIEW_BASE } from "./review";
 import { hasAccess } from "./roles";
 
 /**
@@ -299,6 +300,14 @@ export const roster = authenticatedAction({
         ghlLocationId: s?.ghl_location_id ?? null,
         platforms: s?.platforms ?? ["instagram", "facebook"],
         autoApprove: Boolean(s?.auto_approve),
+        page: s?.fb_page_id
+          ? {
+              id: s.fb_page_id,
+              name: s.fb_page_name ?? null,
+              igUserId: s.ig_user_id ?? null,
+              igUsername: s.ig_username ?? null,
+            }
+          : null,
         // Onboarding is done when all four are set; the screen shows what
         // is missing rather than a single misleading tick.
         onboarding: {
@@ -2128,5 +2137,333 @@ export const removeFromLibrary = authenticatedAction({
       active: false,
     });
     return null;
+  },
+});
+
+// ---------------------------------------------------------------------------
+// The accounts a client posts from.
+//
+// Salma keeps the Pages the ads token manages in social_meta_pages, each
+// with the clients whose ad accounts advertise with it. Here a person picks
+// the client's Page; the Instagram account comes with it. Nothing is linked
+// by guesswork: a wrong link posts one client's work on another's account.
+
+/** Words every agency client name has, which say nothing about which one. */
+const GENERIC = new Set([
+  "co",
+  "company",
+  "group",
+  "llc",
+  "wll",
+  "est",
+  "the",
+  "and",
+  "for",
+  "of",
+  "design",
+  "designs",
+  "interior",
+  "interiors",
+  "contracting",
+  "construction",
+  "trading",
+  "general",
+  "studio",
+  "شركة",
+  "مؤسسة",
+  "مجموعة",
+  "للمقاولات",
+  "للتصميم",
+  "والديكور",
+  "للاستشارات",
+  "الهندسية",
+]);
+
+function words(s: string): Set<string> {
+  return new Set(
+    s
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, " ")
+      .split(" ")
+      .filter(w => w.length > 1 && !GENERIC.has(w)),
+  );
+}
+
+/** Share of the client's name found in the Page's name or handle. */
+function nameScore(client: string, page: string): number {
+  const a = words(client);
+  if (!a.size) return 0;
+  const b = words(page);
+  let hit = 0;
+  for (const w of a) if (b.has(w)) hit++;
+  return hit / a.size;
+}
+
+export const pages = authenticatedAction({
+  args: { clientTaskId: v.string() },
+  returns: v.any(),
+  handler: async (ctx, { clientTaskId }) => {
+    await who(ctx);
+    const [all, client, job] = await Promise.all([
+      rest(
+        "social_meta_pages?select=page_id,name,picture_url,ig_user_id,ig_username,ig_name,ig_picture_url,ad_clients,seen_at&order=name.asc",
+      ),
+      rest(
+        `social_clients?select=fb_page_id,fb_page_name,ig_user_id,ig_username,accounts_linked_at,accounts_linked_by&client_task_id=eq.${enc(clientTaskId)}&limit=1`,
+      ),
+      rest("social_jobs?select=status,error,updated_at&id=eq.accounts&limit=1"),
+    ]);
+    const names: Row[] = await ctx.runQuery(internal.social.clientNames, {});
+    const clientName = String(
+      names.find(c => String(c.taskId) === clientTaskId)?.name ?? "",
+    );
+    const list = rows(all).map(p => {
+      const byAds = ((p.ad_clients as string[]) ?? []).includes(clientTaskId);
+      const score = Math.max(
+        nameScore(clientName, String(p.name ?? "")),
+        nameScore(
+          clientName,
+          String(p.ig_username ?? "").replace(/[._]/g, " "),
+        ),
+      );
+      return {
+        pageId: p.page_id,
+        name: p.name,
+        picture: p.picture_url ?? null,
+        igUserId: p.ig_user_id ?? null,
+        igUsername: p.ig_username ?? null,
+        igPicture: p.ig_picture_url ?? null,
+        suggested: byAds ? "ads" : score >= 0.5 ? "name" : null,
+        score: byAds ? 2 : score,
+      };
+    });
+    list.sort(
+      (x, y) =>
+        y.score - x.score || String(x.name).localeCompare(String(y.name)),
+    );
+    const c = rows(client)[0];
+    const j = rows(job)[0];
+    const seen = rows(all)
+      .map(p => String(p.seen_at))
+      .sort()
+      .pop();
+    return {
+      pages: list,
+      current: c?.fb_page_id
+        ? {
+            pageId: c.fb_page_id,
+            name: c.fb_page_name,
+            igUserId: c.ig_user_id ?? null,
+            igUsername: c.ig_username ?? null,
+            linkedAt: c.accounts_linked_at ?? null,
+            linkedBy: c.accounts_linked_by ?? null,
+          }
+        : null,
+      refreshedAt: seen ?? null,
+      refreshing: j ? j.status === "queued" || j.status === "running" : false,
+      refreshError: j?.status === "failed" ? String(j.error ?? "") : null,
+    };
+  },
+});
+
+/** Link a client to a Page (and its Instagram account), or unlink. */
+export const linkAccounts = authenticatedAction({
+  args: { clientTaskId: v.string(), pageId: v.union(v.string(), v.null()) },
+  returns: v.any(),
+  handler: async (ctx, { clientTaskId, pageId }) => {
+    const { email } = await who(ctx);
+    let body: Row;
+    if (pageId) {
+      const p = rows(
+        await rest(
+          `social_meta_pages?select=page_id,name,ig_user_id,ig_username&page_id=eq.${enc(pageId)}&limit=1`,
+        ),
+      )[0];
+      if (!p)
+        throw new Error(
+          "That Page is not one our Meta account manages any more. Refresh the list and pick again.",
+        );
+      // One Page, one client: two clients on the same Page is how a post
+      // lands on the wrong account.
+      const taken = rows(
+        await rest(
+          `social_clients?select=client_task_id&fb_page_id=eq.${enc(pageId)}&client_task_id=neq.${enc(clientTaskId)}&limit=1`,
+        ),
+      )[0];
+      if (taken)
+        throw new Error(
+          "Another client is already linked to that Page. Unlink it there first.",
+        );
+      body = {
+        fb_page_id: p.page_id,
+        fb_page_name: p.name,
+        ig_user_id: p.ig_user_id ?? null,
+        ig_username: p.ig_username ?? null,
+        accounts_linked_at: now(),
+        accounts_linked_by: email,
+      };
+    } else {
+      body = {
+        fb_page_id: null,
+        fb_page_name: null,
+        ig_user_id: null,
+        ig_username: null,
+        accounts_linked_at: null,
+        accounts_linked_by: null,
+      };
+    }
+    await rest("social_clients?on_conflict=client_task_id", {
+      method: "POST",
+      prefer: "resolution=merge-duplicates,return=minimal",
+      body: [{ client_task_id: clientTaskId, ...body, updated_at: now() }],
+    });
+    await audit(
+      email,
+      "social.client.accounts",
+      "social_client",
+      clientTaskId,
+      body,
+    );
+    return { linked: Boolean(pageId) };
+  },
+});
+
+/** Ask Salma for a fresh list of Pages from Meta. */
+export const refreshPages = authenticatedAction({
+  args: {},
+  returns: v.null(),
+  handler: async ctx => {
+    const { email } = await who(ctx);
+    await rest("social_jobs?on_conflict=id", {
+      method: "POST",
+      prefer: "resolution=merge-duplicates,return=minimal",
+      body: [
+        {
+          id: "accounts",
+          kind: "accounts",
+          params: {},
+          status: "queued",
+          attempts: 0,
+          error: null,
+          result: null,
+          requested_by: email,
+          updated_at: now(),
+        },
+      ],
+    });
+    return null;
+  },
+});
+
+// ---------------------------------------------------------------------------
+// The client's sign-off.
+//
+// Clients who must approve get their posts on the same Mahara review page
+// the videos use: each post as it will appear, approve or ask for a change.
+// Their answer lands on the post (review_decide writes it in the same
+// transaction), and changing a post after they approved it puts it back to
+// "needs sign-off" -- a trigger on social_posts, so nothing slips past.
+
+function monthName(month: string): string {
+  const [y, m] = month.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("en-GB", {
+    month: "long",
+    timeZone: "UTC",
+  });
+}
+
+export const sendForSignoff = authenticatedAction({
+  args: {
+    clientTaskId: v.string(),
+    month: v.string(),
+    postIds: v.array(v.string()),
+    note: v.optional(v.string()),
+  },
+  returns: v.any(),
+  handler: async (ctx, { clientTaskId, month, postIds, note }) => {
+    const { email } = await who(ctx);
+    if (!/^\d{4}-\d{2}$/.test(month)) throw new Error("That is not a month.");
+    if (!postIds.length) throw new Error("Pick at least one post to send.");
+    const found = rows(
+      await rest(
+        `social_posts?select=id,topic,media,images,caption,scheduled_at,status&client_task_id=eq.${enc(clientTaskId)}` +
+          `&id=in.(${postIds.map(id => `"${id.replace(/"/g, "")}"`).join(",")})&order=scheduled_at.asc`,
+      ),
+    );
+    const itemsOfRow = (p: Row): Row[] =>
+      Array.isArray(p.media) && p.media.length
+        ? (p.media as Row[])
+        : ((p.images as string[]) ?? []).map(url => ({ kind: "image", url }));
+    const ready = found.filter(
+      p =>
+        itemsOfRow(p).length > 0 &&
+        String(p.caption ?? "").trim() &&
+        p.status !== "published",
+    );
+    if (!ready.length)
+      throw new Error(
+        "None of those posts is finished yet. Each needs its pictures and a caption before the client sees it.",
+      );
+    const names: Row[] = await ctx.runQuery(internal.social.clientNames, {});
+    const clientName =
+      String(names.find(c => String(c.taskId) === clientTaskId)?.name ?? "") ||
+      null;
+
+    // A function returning jsonb answers with the object itself, not a list.
+    const made = (await rest("rpc/review_create", {
+      method: "POST",
+      body: {
+        p_title: `${monthName(month)} posts`,
+        p_note: clip(note, 600),
+        p_client: clientName,
+        p_client_task_id: clientTaskId,
+        p_by: email,
+        p_days: 30,
+        p_items: ready.map(p => {
+          const first = itemsOfRow(p)[0];
+          // What the reel of posts shows: the picture, or a video's cover.
+          const still =
+            first.kind === "video" ? (first.cover ?? first.url) : first.url;
+          return {
+            kind: "post",
+            post_id: p.id,
+            title: clip(p.topic, 200) ?? "Post",
+            video_url: still,
+            poster_url: first.kind === "video" ? (first.cover ?? null) : null,
+          };
+        }),
+      },
+    })) as Row | null;
+    const token = String(made?.token ?? "");
+    if (!token) throw new Error("The link could not be made. Try again.");
+
+    await rest(
+      `social_posts?id=in.(${ready.map(p => `"${String(p.id).replace(/"/g, "")}"`).join(",")})`,
+      {
+        method: "PATCH",
+        prefer: "return=minimal",
+        body: {
+          client_status: "sent",
+          client_sent_at: now(),
+          review_token: token,
+          updated_at: now(),
+        },
+      },
+    );
+    await audit(
+      email,
+      "social.signoff.send",
+      "social_batch",
+      `${clientTaskId}:${month}`,
+      {
+        token,
+        posts: ready.map(p => p.id),
+      },
+    );
+    return {
+      url: `${REVIEW_BASE}/${token}`,
+      sent: ready.length,
+      skipped: postIds.length - ready.length,
+    };
   },
 });

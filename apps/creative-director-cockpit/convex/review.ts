@@ -15,7 +15,7 @@ const SUPABASE_URL = (process.env.SUPABASE_URL ?? "").replace(/\/+$/, "");
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 
 /** Where the client's page lives, whichever cockpit made the link. */
-const REVIEW_BASE = "https://cockpit.maharamedia.com/editor/review";
+export const REVIEW_BASE = "https://cockpit.maharamedia.com/editor/review";
 
 async function rpc(fn: string, args: Record<string, unknown>) {
   if (!SUPABASE_URL || !SUPABASE_KEY)

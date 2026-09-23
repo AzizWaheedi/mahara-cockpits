@@ -25,7 +25,7 @@ import urllib.request
 from datetime import datetime, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-KINDS = ("fill", "plan", "caption", "generate", "cover")
+KINDS = ("fill", "plan", "caption", "generate", "cover", "accounts")
 MAX_ATTEMPTS = 3
 
 
@@ -1104,6 +1104,140 @@ def do_cover(sb: Store, job: dict) -> dict:
             "placed": at is not None}
 
 
+# ---------------------------------------------------------------------------
+# The accounts clients post from.
+#
+# The ads system token ("Claude", META_ACCESS_TOKEN) manages the client
+# Pages and the Instagram accounts linked to them. This keeps that list in
+# social_meta_pages, where Settings offers it, with one fact beside each
+# Page that names its owner better than any spelling: which clients' ad
+# accounts advertise with it. The link itself is always a person's choice.
+
+GRAPH = "https://graph.facebook.com/v21.0"
+
+
+def graph_get(path: str, **params) -> dict:
+    token = os.environ.get("META_ACCESS_TOKEN")
+    if not token:
+        raise RuntimeError("META_ACCESS_TOKEN is not set, so the Pages cannot be listed")
+    q = urllib.parse.urlencode({**params, "access_token": token})
+    req = urllib.request.Request(f"{GRAPH}/{path}?{q}", headers={"User-Agent": "Mahara social desk"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        # Meta's own sentence, never the URL: the URL carries the token.
+        try:
+            why = json.load(e).get("error", {}).get("message", "")
+        except Exception:  # noqa: BLE001
+            why = ""
+        raise RuntimeError(f"Meta refused {path.split('?')[0]}: {why or e.code}") from None
+
+
+def graph_all(path: str, **params) -> list[dict]:
+    out: list[dict] = []
+    data = graph_get(path, **params)
+    while True:
+        out += data.get("data") or []
+        nxt = (data.get("paging") or {}).get("next")
+        if not nxt or len(out) >= 2000:
+            return out
+        with urllib.request.urlopen(nxt, timeout=60) as r:
+            data = json.load(r)
+
+
+def plain(name) -> str:
+    return re.sub(r"\s+", " ", str(name or "")).strip().lower()
+
+
+def do_accounts(sb: Store, job: dict) -> dict:
+    """Refresh the Pages and Instagram accounts the ads token can post to."""
+    started = now()
+    pages = graph_all(
+        "me/accounts",
+        fields="id,name,picture{url},instagram_business_account{id,username,name,profile_picture_url}",
+        limit=100,
+    )
+    ad_accounts = graph_all("me/adaccounts", fields="id,name", limit=200)
+    by_name: dict[str, str] = {}
+    for a in ad_accounts:
+        by_name.setdefault(plain(a.get("name")), str(a["id"]))
+
+    # ClickUp client -> ad account (by name, as GoHighLevel's sync keeps it)
+    # -> the Pages that ad account advertises with.
+    clients = sb.get(
+        "ghl_clients?select=clickup_id,meta_ad_account"
+        "&meta_ad_account=not.is.null&clickup_id=not.is.null&limit=500"
+    )
+    advertised: dict[str, set[str]] = {}
+    matched = 0
+    for c in clients:
+        act = by_name.get(plain(c.get("meta_ad_account")))
+        if not act:
+            continue
+        matched += 1
+        try:
+            for pg in graph_all(f"{act}/promote_pages", fields="id", limit=100):
+                advertised.setdefault(str(pg["id"]), set()).add(str(c["clickup_id"]))
+        except Exception as e:  # noqa: BLE001 - one closed ad account must not stop the list
+            note(f"  could not read the Pages one ad account promotes: {str(e)[:120]}")
+
+    rows = []
+    for pg in pages:
+        ig = pg.get("instagram_business_account") or {}
+        rows.append({
+            "page_id": str(pg["id"]),
+            "name": str(pg.get("name") or pg["id"]),
+            "picture_url": ((pg.get("picture") or {}).get("data") or {}).get("url"),
+            "ig_user_id": ig.get("id"),
+            "ig_username": ig.get("username"),
+            "ig_name": ig.get("name"),
+            "ig_picture_url": ig.get("profile_picture_url"),
+            "ad_clients": sorted(advertised.get(str(pg["id"]), set())),
+            "seen_at": started,
+        })
+    if not rows:
+        raise RuntimeError("Meta returned no Pages for the ads token; nothing was changed")
+    sb.post("social_meta_pages?on_conflict=page_id", rows,
+            prefer="resolution=merge-duplicates,return=minimal")
+    # A Page the token no longer manages is never offered again.
+    sb._call("DELETE", f"social_meta_pages?seen_at=lt.{urllib.parse.quote(started)}",
+             None, "return=minimal")
+    return {
+        "pages": len(rows),
+        "with_instagram": sum(1 for r in rows if r["ig_user_id"]),
+        "ad_accounts": len(ad_accounts),
+        "clients_matched_to_ad_accounts": matched,
+        "pages_with_a_client": sum(1 for r in rows if r["ad_clients"]),
+    }
+
+
+def queue_daily_accounts(sb: Store) -> None:
+    """Once a day, and never in a loop when Meta is refusing."""
+    latest = sb.get("social_meta_pages?select=seen_at&order=seen_at.desc&limit=1")
+    if latest:
+        from datetime import datetime, timedelta
+
+        seen = datetime.fromisoformat(str(latest[0]["seen_at"]).replace("Z", "+00:00"))
+        if datetime.now(timezone.utc) - seen < timedelta(hours=20):
+            return
+    job = sb.get("social_jobs?select=status,updated_at&id=eq.accounts&limit=1")
+    if job:
+        from datetime import datetime, timedelta
+
+        st = str(job[0].get("status"))
+        at = datetime.fromisoformat(str(job[0]["updated_at"]).replace("Z", "+00:00"))
+        if st in ("queued", "running"):
+            return
+        if st == "failed" and datetime.now(timezone.utc) - at < timedelta(hours=6):
+            return
+    sb.post("social_jobs?on_conflict=id", [{
+        "id": "accounts", "kind": "accounts", "params": {}, "status": "queued",
+        "attempts": 0, "error": None, "result": None, "requested_by": "salma-daily",
+        "updated_at": now(),
+    }], prefer="resolution=merge-duplicates,return=minimal")
+
+
 def on_post(sb: Store, post_id: str, error: str | None, job_id: str = "") -> None:
     """Record a job's outcome where the calendar can see it.
 
@@ -1126,12 +1260,16 @@ def on_post(sb: Store, post_id: str, error: str | None, job_id: str = "") -> Non
 
 
 HANDLERS = {"fill": do_fill, "plan": do_plan, "caption": do_caption,
-            "generate": do_generate, "cover": do_cover}
+            "generate": do_generate, "cover": do_cover, "accounts": do_accounts}
 
 
 def main() -> int:
     limit = int(sys.argv[1]) if len(sys.argv) > 1 else 5
     sb = Store()
+    try:
+        queue_daily_accounts(sb)
+    except Exception as e:  # noqa: BLE001 - the queue below matters more
+        note(f"could not check the Pages list's age: {type(e).__name__}")
     queued = sb.get(
         f"social_jobs?select=*&status=eq.queued&attempts=lt.{MAX_ATTEMPTS}"
         "&order=created_at.asc&limit=200"
@@ -1140,7 +1278,7 @@ def main() -> int:
     # every post at once; in arrival order each two-minute render would
     # hold up the next post's ten-second caption, and the calendar would
     # sit empty of words while the first image drew.
-    speed = {"fill": 0, "plan": 1, "caption": 2, "cover": 3, "generate": 3}
+    speed = {"accounts": 0, "fill": 0, "plan": 1, "caption": 2, "cover": 3, "generate": 3}
     queued.sort(key=lambda j: speed.get(str(j.get("kind")), 9))
     # Images take minutes each, so fewer of them per run; everything else
     # is quick enough to clear in one pass.

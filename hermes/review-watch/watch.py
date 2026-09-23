@@ -148,7 +148,7 @@ def main() -> int:
         token = link["token"]
         items = sb.call(
             "GET",
-            f"review_items?select=n,title,decision&token=eq."
+            f"review_items?select=n,title,decision,post_id&token=eq."
             f"{urllib.parse.quote(token)}&order=n",
         )
         notes = sb.call(
@@ -168,7 +168,12 @@ def main() -> int:
         for n in notes[:4]:
             stamp = clock(n.get("at_seconds"))
             lines.append(f"> {stamp + '  ' if stamp else ''}{str(n.get('body'))[:180]}")
-        lines.append("The notes are already on the job in the editor cockpit.")
+        # A review of social posts lands on the posts, not on an editor's
+        # job, and saying otherwise sends people to the wrong cockpit.
+        if any(i.get("post_id") for i in items):
+            lines.append("The answers are on the posts in the social calendar.")
+        else:
+            lines.append("The notes are already on the job in the editor cockpit.")
 
         # Onto the cards first: the board is where the work is tracked,
         # and Slack saying "there are notes" before the notes exist on

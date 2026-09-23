@@ -654,3 +654,192 @@ img.film {
     animation: none !important;
   }
 }
+
+/* -------------------------------------------------------------- posts */
+
+/* A social post: the carousel sits in the same gradient ring as a film,
+   at the post's own shape, and swipes like Instagram. */
+.stage.stack {
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+.post {
+  position: relative;
+  border-radius: 15px;
+  overflow: hidden;
+  background: #000;
+}
+.track {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+}
+.track::-webkit-scrollbar {
+  display: none;
+}
+.slide {
+  flex: 0 0 100%;
+  height: 100%;
+  scroll-snap-align: start;
+}
+.slide img,
+.slide video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #000;
+}
+.slideCount {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgb(6 13 38 / 0.72);
+  color: var(--white);
+  font-size: 11px;
+  pointer-events: none;
+}
+.slideNav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 0;
+  background: rgb(255 255 255 / 0.92);
+  color: var(--deep-space);
+  font-size: 22px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+.slideNav.prev {
+  left: 12px;
+}
+.slideNav.next {
+  right: 12px;
+}
+.post:hover .slideNav:not([disabled]),
+.slideNav:focus-visible {
+  opacity: 1;
+}
+.slideNav:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+}
+/* On a phone the thumb swipes; arrows would only cover the picture. */
+@media (hover: none) {
+  .slideNav {
+    display: none;
+  }
+}
+/* A 24px target around a 6px dot: small to look at, easy to hit. */
+.dots {
+  display: flex;
+}
+.dots button {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: none;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.dots button::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 3px;
+  background: rgb(255 255 255 / 0.35);
+  transition: width 200ms ease, background-color 200ms ease;
+}
+.dots button.on::before {
+  width: 18px;
+  background: var(--teal);
+}
+.dots button:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+.gone {
+  margin: 0;
+  padding: 64px 24px;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* The words that go out with it, set like the post they belong to. */
+.caption {
+  max-width: 44rem;
+  padding: 16px 24px 24px;
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+.captionHead {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 8px;
+  color: var(--muted);
+}
+.caption p {
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.7;
+}
+.tabs {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: auto;
+}
+.tabs button {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--hair);
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.tabs button.on {
+  border-color: var(--teal);
+  color: var(--teal);
+}
+
+/* The team's line for the month, said once above the posts. */
+.brief {
+  max-width: 1248px;
+  width: 100%;
+  margin: 0 auto 16px;
+  padding: 0 24px;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+.brief .mono {
+  color: var(--teal);
+}
+@media (max-width: 640px) {
+  .brief {
+    padding: 0 16px;
+  }
+  .caption {
+    padding: 16px;
+  }
+}

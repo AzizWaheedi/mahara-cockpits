@@ -10,6 +10,7 @@ import {
   Play,
   Plus,
   RefreshCw,
+  Send,
   SlidersHorizontal,
   Sparkles,
   Trash2,
@@ -20,6 +21,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { api } from "../../convex/_generated/api";
 import { pillarColor } from "../components/SocialMonth";
+import { AccountsPicker } from "../components/social/Accounts";
 import { Captions } from "../components/social/Captions";
 import {
   ASPECTS,
@@ -62,6 +64,12 @@ type Client = {
   ghlLocationId: string | null;
   platforms: Platform[];
   autoApprove: boolean;
+  page: {
+    id: string;
+    name: string | null;
+    igUserId: string | null;
+    igUsername: string | null;
+  } | null;
 };
 
 type Post = {
@@ -79,12 +87,19 @@ type Post = {
   scheduled_at: string | null;
   status: string;
   error: string | null;
+  client_status: "sent" | "approved" | "changes" | "changed" | null;
+  client_note: string | null;
+  client_sent_at: string | null;
+  client_decided_at: string | null;
+  client_reviewer: string | null;
+  review_token: string | null;
 };
 
 type Sheet =
   | { mode: "post"; id: string }
   | { mode: "new"; day: string }
   | { mode: "settings" }
+  | { mode: "signoff" }
   | null;
 
 /** Mahara's week runs Saturday to Thursday, so the row does too. */
@@ -128,23 +143,49 @@ function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-type State = "posted" | "client" | "attention" | "ready" | "drafting";
+type State =
+  | "posted"
+  | "approved"
+  | "client"
+  | "changes"
+  | "changed"
+  | "attention"
+  | "ready"
+  | "drafting";
 
 function stateOf(p: Post): State {
   if (p.status === "published") return "posted";
-  if (p.status === "with_client") return "client";
+  if (p.client_status === "changes") return "changes";
   if (p.error) return "attention";
+  if (p.client_status === "changed") return "changed";
+  if (p.client_status === "sent" || p.status === "with_client") return "client";
+  if (p.client_status === "approved") return "approved";
   if (p.caption && itemsOf(p).length > 0) return "ready";
   return "drafting";
 }
 
 const STATE: Record<State, { label: string; dot: string }> = {
   posted: { label: "Posted", dot: "var(--success)" },
+  approved: { label: "Client approved", dot: "var(--success)" },
   client: { label: "With the client", dot: "var(--info)" },
+  changes: { label: "Client asked for a change", dot: "var(--warning)" },
+  changed: {
+    label: "Changed after the client approved it",
+    dot: "var(--warning)",
+  },
   attention: { label: "Needs attention", dot: "var(--destructive)" },
   ready: { label: "Ready", dot: "var(--primary)" },
   drafting: { label: "Drafting", dot: "var(--muted-foreground)" },
 };
+
+/** Finished enough to show the client: pictures and words, not yet out. */
+function showable(p: Post): boolean {
+  return (
+    itemsOf(p).length > 0 &&
+    Boolean(p.caption?.trim()) &&
+    p.status !== "published"
+  );
+}
 
 function message(e: unknown): string {
   const raw = e instanceof Error ? e.message : String(e ?? "");
@@ -245,13 +286,24 @@ export function SocialCalendarPage() {
   }, [posts]);
 
   const counts = useMemo(() => {
-    const c = { ready: 0, drafting: 0, attention: 0, total: 0 };
+    const c = {
+      ready: 0,
+      drafting: 0,
+      attention: 0,
+      total: 0,
+      withClient: 0,
+      approved: 0,
+      changes: 0,
+    };
     for (const p of posts ?? []) {
       const s = stateOf(p);
       c.total++;
-      if (s === "ready" || s === "client" || s === "posted") c.ready++;
+      if (s !== "drafting" && s !== "attention") c.ready++;
       if (s === "drafting") c.drafting++;
       if (s === "attention") c.attention++;
+      if (s === "client") c.withClient++;
+      if (s === "approved") c.approved++;
+      if (s === "changes" || s === "changed") c.changes++;
     }
     return c;
   }, [posts]);
@@ -397,6 +449,15 @@ export function SocialCalendarPage() {
                 {counts.total === 0
                   ? `Nothing planned yet. ${client.name} gets ${want} posts a month.`
                   : `${counts.ready} of ${counts.total} ready` +
+                    (counts.withClient
+                      ? `, ${counts.withClient} with the client`
+                      : "") +
+                    (counts.approved
+                      ? `, ${counts.approved} approved by the client`
+                      : "") +
+                    (counts.changes
+                      ? `, ${counts.changes} to send again`
+                      : "") +
                     (counts.drafting
                       ? `, ${counts.drafting} being written`
                       : "") +
@@ -407,10 +468,38 @@ export function SocialCalendarPage() {
                     (open ? ` ${open} still to plan.` : "")}
               </p>
             ) : null}
+            {client && !client.page ? (
+              <p className="mt-1 text-[12px] text-warning">
+                Not linked to its Instagram and Facebook yet.{" "}
+                <button
+                  type="button"
+                  onClick={() => setSheet({ mode: "settings" })}
+                  className="font-medium underline underline-offset-2"
+                >
+                  Link it in Settings
+                </button>
+              </p>
+            ) : null}
           </div>
 
           {client ? (
-            <div className="ml-auto flex items-center gap-2">
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              {!client.autoApprove ? (
+                <button
+                  type="button"
+                  disabled={!(posts ?? []).some(showable)}
+                  title={
+                    (posts ?? []).some(showable)
+                      ? undefined
+                      : "Nothing is finished yet: a post needs its pictures and a caption"
+                  }
+                  onClick={() => setSheet({ mode: "signoff" })}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-[13px] font-medium hover:bg-muted disabled:opacity-50"
+                >
+                  <Send className="h-4 w-4" />
+                  Send to the client
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={() => setSheet({ mode: "settings" })}
@@ -490,6 +579,14 @@ export function SocialCalendarPage() {
             <SettingsSheet
               client={client}
               onChanged={loadClients}
+              onClose={() => setSheet(null)}
+            />
+          ) : sheet.mode === "signoff" ? (
+            <SignoffSheet
+              client={client}
+              month={month}
+              posts={posts ?? []}
+              onChanged={loadMonth}
               onClose={() => setSheet(null)}
             />
           ) : sheet.mode === "new" ? (
@@ -1166,6 +1263,8 @@ function PostSheet({
             ) : null}
           </div>
 
+          <ClientSide post={post} client={client} />
+
           {post.topic ? (
             <p className="text-[14px] font-medium leading-snug" dir="auto">
               {post.topic}
@@ -1484,6 +1583,12 @@ function SettingsSheet({
           </span>
         </div>
 
+        <AccountsPicker
+          clientId={client.taskId}
+          wantsInstagram={platforms.includes("instagram")}
+          onChanged={onChanged}
+        />
+
         <label className="flex items-start gap-3">
           <input
             type="checkbox"
@@ -1588,6 +1693,275 @@ function SettingsSheet({
           className="ml-auto h-10 rounded-lg bg-primary px-5 text-[14px] font-semibold text-primary-foreground disabled:opacity-50"
         >
           Save
+        </button>
+      </div>
+    </>
+  );
+}
+
+function shortDate(iso: string | null): string {
+  if (!iso) return "";
+  return new Date(iso).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    timeZone: "Asia/Kuwait",
+  });
+}
+
+/** Where the post stands with the client, in one or two plain lines. */
+function ClientSide({ post, client }: { post: Post; client: Client }) {
+  const who = post.client_reviewer || "The client";
+  if (post.client_status === "approved")
+    return (
+      <p className="rounded-lg border border-success/30 bg-success/5 p-3 text-[13px]">
+        {who} approved it on {shortDate(post.client_decided_at)}.
+      </p>
+    );
+  if (post.client_status === "changes")
+    return (
+      <div className="rounded-lg border border-warning/40 bg-warning/5 p-3 text-[13px]">
+        <p className="font-medium">{who} asked for a change</p>
+        {post.client_note ? (
+          <p
+            className="mt-1 whitespace-pre-wrap text-muted-foreground"
+            dir="auto"
+          >
+            {post.client_note}
+          </p>
+        ) : null}
+        <p className="mt-2 text-[12px] text-muted-foreground">
+          Fix it, then send it again. They can also approve it on the link they
+          already have.
+        </p>
+      </div>
+    );
+  if (post.client_status === "changed")
+    return (
+      <p className="rounded-lg border border-warning/40 bg-warning/5 p-3 text-[13px]">
+        Changed after {who.toLowerCase() === "the client" ? "the client" : who}{" "}
+        approved it. Send it again so they see what will go out.
+      </p>
+    );
+  if (post.client_status === "sent")
+    return (
+      <p className="text-[13px] text-muted-foreground">
+        With the client since {shortDate(post.client_sent_at)}. Their answer
+        lands here.
+      </p>
+    );
+  if (client.autoApprove) return null;
+  return (
+    <p className="text-[13px] text-muted-foreground">
+      Not sent to the client yet.
+    </p>
+  );
+}
+
+function SignoffSheet({
+  client,
+  month,
+  posts,
+  onChanged,
+  onClose,
+}: {
+  client: Client;
+  month: string;
+  posts: Post[];
+  onChanged: () => Promise<void>;
+  onClose: () => void;
+}) {
+  const send = useAction(api.social.sendForSignoff);
+  const list = [...posts].sort((a, b) =>
+    String(a.scheduled_at ?? "").localeCompare(String(b.scheduled_at ?? "")),
+  );
+  const [picked, setPicked] = useState<Set<string>>(
+    () =>
+      new Set(
+        list
+          .filter(p => showable(p) && p.client_status !== "approved")
+          .map(p => p.id),
+      ),
+  );
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [made, setMade] = useState<{
+    url: string;
+    sent: number;
+    skipped: number;
+  } | null>(null);
+
+  async function make() {
+    setBusy(true);
+    try {
+      const out = (await send({
+        clientTaskId: client.taskId,
+        month,
+        postIds: list.filter(p => picked.has(p.id)).map(p => p.id),
+        note: note.trim() || undefined,
+      })) as { url: string; sent: number; skipped: number };
+      setMade(out);
+      await onChanged();
+    } catch (e) {
+      toast.error(message(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (made)
+    return (
+      <>
+        <SheetHead title="Send to the client" onClose={onClose} />
+        <div className="flex-1 space-y-4 overflow-y-auto px-5 py-5">
+          <p className="text-[14px] font-medium">
+            The link is ready: {made.sent} {made.sent === 1 ? "post" : "posts"}
+            {made.skipped
+              ? `, ${made.skipped} left out because ${made.skipped === 1 ? "it is" : "they are"} not finished`
+              : ""}
+            .
+          </p>
+          <div className="flex gap-2">
+            <input
+              readOnly
+              value={made.url}
+              onFocus={e => e.target.select()}
+              aria-label="The link for the client"
+              className="h-10 min-w-0 flex-1 rounded-lg border bg-muted/40 px-3 text-[13px]"
+            />
+            <button
+              type="button"
+              onClick={() =>
+                void navigator.clipboard
+                  ?.writeText(made.url)
+                  .then(() => toast.success("Copied."))
+              }
+              className="h-10 rounded-lg bg-primary px-4 text-[13px] font-semibold text-primary-foreground"
+            >
+              Copy the link
+            </button>
+          </div>
+          <p className="text-[13px] text-muted-foreground">
+            Send it to {client.name} on WhatsApp. They see each post as it will
+            go out, approve it or ask for a change, and their answer lands on
+            the post here.
+          </p>
+        </div>
+        <div className="border-t px-5 py-4">
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-10 w-full rounded-lg border text-[13px] font-medium hover:bg-muted"
+          >
+            Done
+          </button>
+        </div>
+      </>
+    );
+
+  return (
+    <>
+      <SheetHead title="Send to the client" onClose={onClose} />
+      <div className="flex-1 space-y-5 overflow-y-auto px-5 py-5">
+        <p className="text-[13px] text-muted-foreground">
+          {client.name} sees each post on a Mahara page, as it will go out, and
+          approves it or asks for a change. Their answers land on the posts
+          here.
+        </p>
+
+        <ul className="divide-y rounded-lg border">
+          {list.map(p => {
+            const ok = showable(p);
+            const items = itemsOf(p);
+            const lead = items[0];
+            const still = lead
+              ? lead.kind === "image"
+                ? lead.url
+                : (lead.cover ?? null)
+              : null;
+            const s = stateOf(p);
+            return (
+              <li key={p.id}>
+                <label
+                  className={`flex items-center gap-3 px-3 py-2 ${ok ? "cursor-pointer" : "opacity-50"}`}
+                >
+                  <input
+                    type="checkbox"
+                    disabled={!ok}
+                    checked={picked.has(p.id)}
+                    onChange={e => {
+                      const next = new Set(picked);
+                      if (e.target.checked) next.add(p.id);
+                      else next.delete(p.id);
+                      setPicked(next);
+                    }}
+                    className="h-4 w-4 accent-[var(--primary)]"
+                  />
+                  <span className="h-10 w-8 shrink-0 overflow-hidden rounded bg-muted">
+                    {still ? (
+                      <img
+                        src={still}
+                        alt=""
+                        className="h-full w-full object-cover"
+                      />
+                    ) : lead?.kind === "video" ? (
+                      // A video with no cover yet shows its own frame.
+                      <video
+                        src={`${lead.url}#t=0.5`}
+                        muted
+                        playsInline
+                        preload="metadata"
+                        className="h-full w-full object-cover"
+                      />
+                    ) : null}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13px]" dir="auto">
+                      {p.topic ?? "Post"}
+                    </span>
+                    <span className="block text-[12px] text-muted-foreground">
+                      {p.scheduled_at
+                        ? dayLabel(p.scheduled_at.slice(0, 10))
+                        : "No day yet"}
+                      {" · "}
+                      {ok ? STATE[s].label : "Not finished"}
+                    </span>
+                  </span>
+                </label>
+              </li>
+            );
+          })}
+        </ul>
+
+        <label className="block">
+          <span className="mb-1.5 block text-[13px] font-medium">
+            A line for the client
+          </span>
+          <textarea
+            value={note}
+            onChange={e => setNote(e.target.value)}
+            rows={3}
+            dir="auto"
+            placeholder="Here are your posts for the month. Approve the ones you like and tell us what to change."
+            className="w-full rounded-lg border bg-background p-3 text-[14px] leading-relaxed focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+          <span className="mt-1 block text-[12px] text-muted-foreground">
+            Optional. It shows under each post on their page.
+          </span>
+        </label>
+      </div>
+      <div className="border-t px-5 py-4">
+        <button
+          type="button"
+          disabled={busy || picked.size === 0}
+          onClick={() => void make()}
+          className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-primary text-[14px] font-semibold text-primary-foreground disabled:opacity-50"
+        >
+          {busy ? (
+            <LoaderCircle className="h-4 w-4 animate-spin" />
+          ) : (
+            <Send className="h-4 w-4" />
+          )}
+          Make the link for {picked.size} {picked.size === 1 ? "post" : "posts"}
         </button>
       </div>
     </>
