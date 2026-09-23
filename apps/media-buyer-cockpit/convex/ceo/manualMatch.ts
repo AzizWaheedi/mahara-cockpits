@@ -23,6 +23,14 @@ import type { PossibleDuplicate } from "./payloads";
 export const MATCH_DAYS = 3;
 /** Largest amount gap, as a share of the larger amount. */
 export const MATCH_GAP = 0.05;
+/**
+ * How long after it was handed over a cheque may reach the bank statement
+ * and still be the same money. A cheque counts on the day it is received and
+ * clears later, when it is deposited and collected, often a week or more; a
+ * transfer lands within MATCH_DAYS. Without this, a cheque whose deposit
+ * showed four days later counted twice (Liwan's, logged 2026-09-23).
+ */
+export const CHEQUE_DAYS = 14;
 
 /** A gap kept to four decimals (0.0123 is 1.23%). */
 const gap4 = (x: number) => Math.round(x * 10_000) / 10_000;
@@ -44,6 +52,17 @@ export function dayGap(a: string, b: string): number {
   return Number.isFinite(ms)
     ? Math.round(ms / 86_400_000)
     : Number.POSITIVE_INFINITY;
+}
+
+/**
+ * Whether a bank statement line on `lineDay` can be the hand-logged payment
+ * of `day` on `rail`: within MATCH_DAYS either way, and for a cheque up to
+ * CHEQUE_DAYS after it was received.
+ */
+export function bankCanBe(rail: string, day: string, lineDay: string): boolean {
+  const gap = dayGap(day, lineDay);
+  if (rail === "cheque" && lineDay >= day) return gap <= CHEQUE_DAYS;
+  return gap <= MATCH_DAYS;
 }
 
 /** |a - b| / max(a, b), 0 when both are 0. */

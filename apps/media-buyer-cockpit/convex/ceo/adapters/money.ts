@@ -23,6 +23,7 @@ import { byNewest, type ManualLoad, type ManualRow } from "../data/money";
 import { type TapCharge, USD_PER } from "../data/tap";
 import {
   amountGap,
+  bankCanBe,
   cashDuplicates,
   coverWithTap,
   type DealLike,
@@ -1019,8 +1020,8 @@ export const money: Adapter = {
         let best: { id: number; d: number; g: number } | null = null;
         for (const l of bankClientLines) {
           if (usedBankLine.has(l.id)) continue;
+          if (!bankCanBe(e.rail, e.day, l.day)) continue;
           const d = dayGap(e.day, l.day);
-          if (d > MATCH_DAYS) continue;
           const g = amountGap(e.amountUsd, l.usd);
           if (g > MATCH_GAP) continue;
           if (!best || d < best.d || (d === best.d && g < best.g))

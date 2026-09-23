@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { type Account, amountProblem, ladderOf } from "../convex/billingCore";
+import { bankCanBe } from "../convex/ceo/manualMatch";
 
 // The rules both cockpits and Maher bill by (convex/billingCore.ts).
 
@@ -91,5 +92,22 @@ describe("the ladder, as the SOP and Maher's scan have it", () => {
   test("cards that are not paying clients have no step", () => {
     expect(ladderOf(card({ group: "gone" }), today).rung).toBe("none");
     expect(ladderOf(card({ group: "sales" }), today).rung).toBe("none");
+  });
+});
+
+describe("a hand-logged payment and the bank line that is the same money", () => {
+  test("a transfer matches within three days either way", () => {
+    expect(bankCanBe("bank_transfer", "2026-09-23", "2026-09-26")).toBe(true);
+    expect(bankCanBe("bank_transfer", "2026-09-23", "2026-09-20")).toBe(true);
+    expect(bankCanBe("bank_transfer", "2026-09-23", "2026-09-27")).toBe(false);
+  });
+
+  test("a cheque matches its deposit up to two weeks later", () => {
+    // Liwan's cheque: logged the day it was handed over, cleared later.
+    expect(bankCanBe("cheque", "2026-09-23", "2026-09-30")).toBe(true);
+    expect(bankCanBe("cheque", "2026-09-23", "2026-10-07")).toBe(true);
+    expect(bankCanBe("cheque", "2026-09-23", "2026-10-08")).toBe(false);
+    // Never a deposit from long before the cheque was received.
+    expect(bankCanBe("cheque", "2026-09-23", "2026-09-19")).toBe(false);
   });
 });
