@@ -50,6 +50,16 @@ The cockpit recomputes every section every 15 minutes on the production Convex d
 | **Reps scorecard** | The dashboard's `b2b_rep_scorecard`, joined to `sales_reps`. | The read-only database role is refused this function, so the Sales tab shows no rep rows. |
 | **Daily series** (365 days) | Spend, leads (ROAS rule), bookings and signed deals per day from the tables above. | — |
 
+## Frontend tab: the call funnel and the webinar funnel (2026-09-23)
+
+Two funnels, never mixed. `convex/ceo/webinarSql.ts` is the one rule for what is the webinar's; the call funnel subtracts exactly that and the webinar section counts exactly that.
+
+| Number | Where it comes from | What it leaves out |
+|---|---|---|
+| **What is the webinar's** | A contact tagged `webby-*` (the WEBBY workflows tag every registrant). Their calls and signed deals count for the webinar from the moment they registered: the later of the contact's creation and three weeks before their session (the Webinar Datetime field). Campaigns whose name says webinar, webby, training, تدريب or ويبينار, or that lt_events names. | Registration time is approximate for an older contact: the CRM keeps no time for when a tag was added. |
+| **Call funnel** | `b2b_window_metrics` for the window, less the webinar's share computed with the same filters, every rate recomputed with the dashboard's formulas. The daily series, ROAS leads, speed to lead, front-end cash, top and winning ads and lead sources leave the webinar out too. | Proven on 2026-09-23: identical to before across all windows and 40 days while the webinar has nothing; with a stand-in tag, total = part + rest for every count. |
+| **Webinar funnel** | Per session (the `webby-mmm-yyyy` round tag): Meta spend, impressions, clicks, CTR from the B2B snapshots of webinar campaigns; reach and frequency from one Meta insights call per round; registrations from HighLevel; attendance from `webby-attended` / `webby-noshow`; booked, held, closes, contracted and cash with the call funnel's rules; speed to first contact on Maqsam; survey completions (tag, plus Typeform P1xP4r24). Targets are the Live Training tracking brief's (6 Aug 2026). | Not connected yet, shown n/a: landing page events (webinar.maharamedia.com sends none; lt-events-ingest only accepts training.maharamedia.com), qualification fields (the opt-in form does not ask), reminder stats (no API), calendar-add clicks, Zoom minutes and engagement, pitch link clicks, objection tags. |
+
 ## Ads tab (Mahara's own account)
 
 | Number | Where it comes from | What it leaves out |
