@@ -93,7 +93,22 @@ On 23 September 2026, production snapshot `1790160145656784473` from
 inserted separately and read back against the snapshot; each insert had an
 audit row. SHA-256 of the downloaded ZIP:
 `937EF5C1FC6FBC36AFB81480276D8C03608A62F101B64DAC8C934F05CC6FBB37`.
-The live Convex-to-Supabase shadow writer is still not deployed.
+On 23 September, a second database-only snapshot at `1790165016462021861`
+(SHA-256 `6297E462336FC011E8189909FB094E31A5C03CC72A91327530806E5FBF8F9149`)
+still contained exactly those two feedback rows. The backfill comparison found
+both in Supabase unchanged and made no write. Neither snapshot contains file
+storage.
+
+The media-buyer backend and site shipped through `scripts/ship.sh media-buyer`
+from GitHub main `c94c371`, with `SHIP_SMOKE_READ_ONLY=1`. Vercel confirmed
+production READY and the live bundle changed; the production `smoke:local`
+query returned `ok: true` without sending a Slack alert. The mirror helper's
+duplicate probe reached Creative Triage using the production configuration;
+the existing historical row remained unchanged. Only then was the production
+media-buyer `SUPABASE_MIGRATION_DRY_RUN` setting changed from `true` to `false`
+and read back. The Supabase issue count remained two. No new organic feedback
+arrived during this verification window, so a first new shadow-written row and
+its audit entry are still an open acceptance check, not a completed claim.
 
 After that: implement and run a guarded full backfill; reconcile source IDs,
 row counts, newest timestamps, and exceptions; then switch this read path only
