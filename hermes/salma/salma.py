@@ -636,7 +636,11 @@ def hf_image(prompt: str, refs: list[str] | None = None, aspect: str = ASPECT) -
                 "Higgsfield is out of credits. Top up, then make the picture again."
             )
         if "session expired" in tail.lower() or "auth login" in tail.lower():
-            raise RuntimeError(SIGNED_OUT)
+            # The tool's own words ride along: "no response received" and
+            # "session expired" both end in the same hint, and only the first
+            # line says which one it was.
+            first = next((ln.strip() for ln in out.splitlines() if ln.strip().lower().startswith("error")), "")
+            raise RuntimeError(f"{SIGNED_OUT} (Higgsfield said: {first[:160]})" if first else SIGNED_OUT)
         raise RuntimeError(f"Higgsfield failed: {tail}")
     urls = hf._result_urls(out)
     if not urls:
@@ -1116,10 +1120,10 @@ def do_cover(sb: Store, job: dict) -> dict:
 GRAPH = "https://graph.facebook.com/v21.0"
 
 
-def graph_get(path: str, **params) -> dict:
-    token = os.environ.get("META_ACCESS_TOKEN")
+def graph_get(path: str, token: str | None = None, **params) -> dict:
+    token = token or os.environ.get("META_ACCESS_TOKEN")
     if not token:
-        raise RuntimeError("META_ACCESS_TOKEN is not set, so the Pages cannot be listed")
+        raise RuntimeError("META_ACCESS_TOKEN is not set, so Meta cannot be reached")
     q = urllib.parse.urlencode({**params, "access_token": token})
     req = urllib.request.Request(f"{GRAPH}/{path}?{q}", headers={"User-Agent": "Mahara social desk"})
     try:
@@ -1132,6 +1136,24 @@ def graph_get(path: str, **params) -> dict:
         except Exception:  # noqa: BLE001
             why = ""
         raise RuntimeError(f"Meta refused {path.split('?')[0]}: {why or e.code}") from None
+
+
+def graph_post(path: str, token: str | None = None, **params) -> dict:
+    token = token or os.environ.get("META_ACCESS_TOKEN")
+    if not token:
+        raise RuntimeError("META_ACCESS_TOKEN is not set, so Meta cannot be reached")
+    data = urllib.parse.urlencode({**params, "access_token": token}).encode()
+    req = urllib.request.Request(f"{GRAPH}/{path}", data=data, method="POST",
+                                 headers={"User-Agent": "Mahara social desk"})
+    try:
+        with urllib.request.urlopen(req, timeout=180) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        try:
+            why = json.load(e).get("error", {}).get("message", "")
+        except Exception:  # noqa: BLE001
+            why = ""
+        raise RuntimeError(f"Meta refused {path.split('/')[-1]}: {why or e.code}") from None
 
 
 def graph_all(path: str, **params) -> list[dict]:
@@ -1238,6 +1260,322 @@ def queue_daily_accounts(sb: Store) -> None:
     }], prefer="resolution=merge-duplicates,return=minimal")
 
 
+# ---------------------------------------------------------------------------
+# Posting.
+#
+# Aziz, 2026-09-23: nothing posts until a client is sold and switched on. A
+# client posts only when `publishing` is on, and only posts due after the
+# moment it was switched on, so turning a client on never sends last week's
+# posts. SOCIAL_PUBLISHING=off in the environment stops every client at once.
+#
+# What goes out is what was approved: a client who must sign off gets only
+# posts with client_status 'approved' (a trigger resets that the moment a
+# post is edited), a client who does not gets any finished post.
+
+API_SHAPES = ("1:1", "4:5", "1.91:1")  # what Meta's publishing API takes
+
+
+def publish_decision(post: dict, client: dict | None, now_iso: str) -> tuple[bool, str]:
+    """Whether a post goes out now, and in words why not when it cannot.
+
+    An empty reason means "not yet, and nothing to say" (not due, client not
+    switched on); a sentence is shown on the post.
+    """
+    if not client or not client.get("active") or not client.get("publishing"):
+        return False, ""
+    due = str(post.get("scheduled_at") or "")
+    if not due or due[:19] > now_iso[:19]:
+        return False, ""
+    since = str(client.get("publishing_since") or "")
+    if since and due[:19] < since[:19]:
+        return False, ""
+    items = post.get("media") or [{"kind": "image", "url": u} for u in (post.get("images") or [])]
+    if not items or not str(post.get("caption") or "").strip():
+        return False, "Not finished: it has no pictures or no caption, so it did not go out."
+    if not client.get("auto_approve") and post.get("client_status") != "approved":
+        return False, "The client has not approved it, so it did not go out."
+    return True, ""
+
+
+def targets_of(post: dict, client: dict) -> tuple[list[str], list[str]]:
+    """The platforms it goes to, and a sentence for each that it cannot."""
+    wanted = [p for p in (post.get("platforms") or client.get("platforms") or ["instagram", "facebook"])
+              if p in (client.get("platforms") or ["instagram", "facebook"])]
+    go, why = [], []
+    if "instagram" in wanted:
+        if not client.get("ig_user_id"):
+            why.append("Instagram: the client's Page has no Instagram account linked.")
+        elif (post.get("aspect") or ASPECT) not in API_SHAPES and not reel_of(post):
+            why.append("Instagram: 3:4 goes out by hand, Meta's publishing refuses it.")
+        else:
+            go.append("instagram")
+    if "facebook" in wanted:
+        if not client.get("fb_page_id"):
+            why.append("Facebook: the client is not linked to a Page.")
+        else:
+            go.append("facebook")
+    return go, why
+
+
+def items_of(post: dict) -> list[dict]:
+    return post.get("media") or [{"kind": "image", "url": u, "source": "ai"} for u in (post.get("images") or [])]
+
+
+def reel_of(post: dict) -> bool:
+    items = items_of(post)
+    return len(items) == 1 and items[0].get("kind") == "video"
+
+
+def fetch_bytes(url: str) -> bytes:
+    req = urllib.request.Request(url, headers={"User-Agent": "Mahara social desk"})
+    with urllib.request.urlopen(req, timeout=120) as r:
+        return r.read()
+
+
+class Prepared:
+    """Pictures made ready once per post, shared by both platforms."""
+
+    def __init__(self, sb: Store, post: dict):
+        self.sb, self.post, self.urls = sb, post, {}
+
+    def image(self, n: int, url: str) -> str:
+        if n not in self.urls:
+            _, size, _ = SHAPES.get(self.post.get("aspect") or ASPECT, SHAPES[ASPECT])
+            self.urls[n] = keep_image(self.sb, fit_jpeg(fetch_bytes(url), size),
+                                      str(self.post["id"]), f"out-{n}")
+        return self.urls[n]
+
+
+def ig_wait(container: str, minutes: int = 10) -> None:
+    """Instagram processes a container (a video can take minutes) before it posts."""
+    deadline = time.time() + minutes * 60
+    while True:
+        st = graph_get(container, fields="status_code,status")
+        code = str(st.get("status_code") or "")
+        if code == "FINISHED":
+            return
+        if code in ("ERROR", "EXPIRED"):
+            raise RuntimeError(f"Instagram could not take it: {st.get('status') or code}")
+        if time.time() > deadline:
+            raise RuntimeError("Instagram was still processing it after ten minutes")
+        time.sleep(6)
+
+
+def ig_publish(prep: Prepared, client: dict) -> dict:
+    post, ig = prep.post, str(client["ig_user_id"])
+    items = items_of(post)[:10]
+    caption = str(post.get("caption") or "").strip()[:2200]
+    if len(items) == 1:
+        it = items[0]
+        if it.get("kind") == "video":
+            params = {"media_type": "REELS", "video_url": it["url"], "caption": caption,
+                      "share_to_feed": "true"}
+            if it.get("cover"):
+                params["cover_url"] = it["cover"]
+        else:
+            params = {"image_url": prep.image(0, it["url"]), "caption": caption}
+        container = graph_post(f"{ig}/media", **params)["id"]
+    else:
+        children = []
+        for n, it in enumerate(items):
+            if it.get("kind") == "video":
+                c = graph_post(f"{ig}/media", media_type="VIDEO", video_url=it["url"],
+                               is_carousel_item="true")
+            else:
+                c = graph_post(f"{ig}/media", image_url=prep.image(n, it["url"]),
+                               is_carousel_item="true")
+            children.append(str(c["id"]))
+        for c in children:
+            ig_wait(c)
+        container = graph_post(f"{ig}/media", media_type="CAROUSEL",
+                               children=",".join(children), caption=caption)["id"]
+    ig_wait(str(container))
+    media_id = str(graph_post(f"{ig}/media_publish", creation_id=container)["id"])
+    try:
+        permalink = graph_get(media_id, fields="permalink").get("permalink")
+    except Exception:  # noqa: BLE001 - posted is what matters
+        permalink = None
+    return {"id": media_id, "permalink": permalink, "at": now()}
+
+
+def page_token(page_id: str) -> str:
+    tok = graph_get(page_id, fields="access_token").get("access_token")
+    if not tok:
+        raise RuntimeError(
+            "Meta gave no Page token. Add pages_manage_posts to the Claude system user "
+            "in Business Manager, then it posts to Facebook too."
+        )
+    return str(tok)
+
+
+def fb_publish(prep: Prepared, client: dict) -> dict:
+    post, page = prep.post, str(client["fb_page_id"])
+    tok = page_token(page)
+    items = items_of(post)[:10]
+    text = str(post.get("caption_facebook") or post.get("caption") or "").strip()[:5000]
+    images = [(n, it) for n, it in enumerate(items) if it.get("kind") != "video"]
+    videos = [it for it in items if it.get("kind") == "video"]
+    if videos and (images or len(videos) > 1):
+        raise RuntimeError(
+            "Facebook takes photos or one video in a post, not both; this one went out on Instagram only."
+        )
+    if videos:
+        out = graph_post(f"{page}/videos", token=tok, file_url=videos[0]["url"], description=text)
+    elif len(images) == 1:
+        n, it = images[0]
+        out = graph_post(f"{page}/photos", token=tok, url=prep.image(n, it["url"]), message=text)
+    else:
+        ids = [graph_post(f"{page}/photos", token=tok, url=prep.image(n, it["url"]),
+                          published="false")["id"] for n, it in images]
+        out = graph_post(f"{page}/feed", token=tok, message=text,
+                         attached_media=json.dumps([{"media_fbid": i} for i in ids]))
+    return {"id": str(out.get("post_id") or out.get("id")), "at": now()}
+
+
+def publish_post(sb: Store, post: dict, client: dict) -> dict:
+    """Post it everywhere it goes. Each platform is recorded the moment it
+    succeeds, so a retry never posts the same thing twice."""
+    q = urllib.parse.quote(str(post["id"]))
+    done = dict(post.get("published") or {})
+    go, errors = targets_of(post, client)
+    prep = Prepared(sb, post)
+    for platform in go:
+        if platform in done:
+            continue
+        try:
+            done[platform] = (ig_publish if platform == "instagram" else fb_publish)(prep, client)
+            sb.patch(f"social_posts?id=eq.{q}", {"published": done, "updated_at": now()})
+            note(f"  posted {post['id']} to {platform}")
+        except Exception as e:  # noqa: BLE001 - the other platform still goes
+            errors.append(f"{platform.capitalize()}: {str(e)[:220]}")
+    body: dict = {"published": done, "publish_error": " ".join(errors)[:600] or None,
+                  "updated_at": now()}
+    if done:
+        body.update(status="published", published_at=now())
+    elif errors:
+        body["publish_attempts"] = int(post.get("publish_attempts") or 0) + 1
+    sb.patch(f"social_posts?id=eq.{q}", body)
+    return {"post": post["id"], "posted": sorted(done), "errors": errors}
+
+
+def publishing_on() -> bool:
+    return os.environ.get("SOCIAL_PUBLISHING", "on").strip().lower() not in ("off", "0", "false", "no")
+
+
+def publish_due(sb: Store) -> None:
+    """Post what is due for the clients switched on. A few a minute at most."""
+    if not publishing_on():
+        return
+    clients = {str(c["client_task_id"]): c for c in
+               sb.get("social_clients?select=*&publishing=is.true&active=is.true")}
+    if not clients:
+        return
+    ids = ",".join(f'"{k}"' for k in clients)
+    now_iso = now()
+    due = sb.get(
+        f"social_posts?select=*&client_task_id=in.({urllib.parse.quote(ids)})"
+        f"&status=neq.published&scheduled_at=lte.{urllib.parse.quote(now_iso)}"
+        "&publish_attempts=lt.3&order=scheduled_at.asc&limit=5"
+    )
+    for post in due:
+        client = clients.get(str(post.get("client_task_id")))
+        ok, why = publish_decision(post, client, now_iso)
+        if not ok:
+            if why and post.get("publish_error") != why:
+                sb.patch(f"social_posts?id=eq.{urllib.parse.quote(str(post['id']))}",
+                         {"publish_error": why, "updated_at": now()})
+            continue
+        note(f"  {json.dumps(publish_post(sb, post, client))[:300]}")
+
+
+def results_due(sb: Store) -> None:
+    """Bring the numbers back onto posts that went out in the last month."""
+    from datetime import timedelta
+
+    since = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    stale = (datetime.now(timezone.utc) - timedelta(hours=20)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    posts = sb.get(
+        "social_posts?select=id,client_task_id,published,results&status=eq.published"
+        f"&published_at=gte.{since}&or=(results_at.is.null,results_at.lt.{stale})&limit=10"
+    )
+    for post in posts:
+        out = dict(post.get("results") or {})
+        pub = post.get("published") or {}
+        ig = (pub.get("instagram") or {}).get("id")
+        if ig:
+            try:
+                basic = graph_get(ig, fields="like_count,comments_count")
+                row = {"likes": basic.get("like_count"), "comments": basic.get("comments_count")}
+                try:
+                    ins = graph_get(f"{ig}/insights", metric="reach,saved,shares")
+                    for m in ins.get("data") or []:
+                        row[m.get("name")] = ((m.get("values") or [{}])[0]).get("value")
+                except Exception:  # noqa: BLE001 - reach needs more rights than likes
+                    pass
+                out["instagram"] = row
+            except Exception as e:  # noqa: BLE001
+                note(f"  results for {post['id']} on Instagram: {str(e)[:120]}")
+        sb.patch(f"social_posts?id=eq.{urllib.parse.quote(str(post['id']))}",
+                 {"results": out, "results_at": now()})
+
+
+def health_checks() -> list[tuple[str, bool, str]]:
+    """What this worker needs, checked, each with a sentence for the screen."""
+    import shutil
+
+    from radar.posting import higgsfield as hf
+
+    import subprocess
+
+    out = []
+    # Asked, not assumed: a credentials file on disk can hold a session
+    # Higgsfield has already ended ("Session expired" on the first request,
+    # 2026-09-23), so the check makes one free request of its own.
+    ok, _ = hf.available()
+    detail = "Pictures and covers are paused: Higgsfield is signed out on the server. Sign it in again."
+    if ok:
+        res = subprocess.run([hf.cli_path() or "higgsfield", "account", "status"],
+                             capture_output=True, text=True, timeout=60, check=False,
+                             stdin=subprocess.DEVNULL)
+        ok = res.returncode == 0
+        said = next((ln.strip() for ln in (res.stdout + res.stderr).splitlines()
+                     if ln.strip().lower().startswith("error")), "")
+        detail = ("Pictures and covers are paused: Higgsfield refused the server's sign-in"
+                  + (f" ({said[:100]})" if said else "") + ". Sign it in again.")
+    out.append(("higgsfield", ok, "" if ok else detail))
+    try:
+        graph_get("me", fields="id")
+        out.append(("meta", True, ""))
+    except Exception as e:  # noqa: BLE001
+        out.append(("meta", False, f"Meta is refusing the ads token, so nothing can post: {str(e)[:120]}"))
+    frontier_ok = bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY"))
+    out.append(("captions", frontier_ok, "" if frontier_ok else
+                "Captions are paused: the server has no ANTHROPIC_API_KEY or OPENAI_API_KEY."))
+    ds = bool(os.environ.get("DEEPSEEK_API_KEY"))
+    out.append(("planning", ds, "" if ds else
+                "Filling the month is paused: the server has no DEEPSEEK_API_KEY."))
+    ff = bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
+    out.append(("video", ff, "" if ff else "Video covers are paused: ffmpeg is not installed on the server."))
+    out.append(("publishing", publishing_on(), "" if publishing_on() else
+                "Posting is stopped for every client (SOCIAL_PUBLISHING=off on the server)."))
+    return out
+
+
+def write_health(sb: Store) -> None:
+    rows = [{"check_name": n, "ok": ok, "detail": d or None, "checked_at": now()}
+            for n, ok, d in health_checks()]
+    sb.post("social_worker_status?on_conflict=check_name", rows,
+            prefer="resolution=merge-duplicates,return=minimal")
+
+
+def doctor() -> int:
+    bad = 0
+    for n, ok, d in health_checks():
+        print(f"{'ok  ' if ok else 'FAIL'} {n}{'' if ok else ': ' + d}")
+        bad += 0 if ok else 1
+    return 1 if bad else 0
+
+
 def on_post(sb: Store, post_id: str, error: str | None, job_id: str = "") -> None:
     """Record a job's outcome where the calendar can see it.
 
@@ -1263,13 +1601,36 @@ HANDLERS = {"fill": do_fill, "plan": do_plan, "caption": do_caption,
             "generate": do_generate, "cover": do_cover, "accounts": do_accounts}
 
 
+def sweeps(sb: Store) -> None:
+    """The work nobody queues: posting what is due, the numbers, the health
+    rows. Each is fenced off, so one failing never stops the queue."""
+    minute = datetime.now(timezone.utc).minute
+    try:
+        publish_due(sb)
+    except Exception as e:  # noqa: BLE001
+        note(f"posting sweep failed: {type(e).__name__}: {str(e)[:200]}")
+    if minute % 15 == 0:
+        try:
+            results_due(sb)
+        except Exception as e:  # noqa: BLE001
+            note(f"results sweep failed: {type(e).__name__}: {str(e)[:200]}")
+    if minute % 10 == 0:
+        try:
+            write_health(sb)
+        except Exception as e:  # noqa: BLE001
+            note(f"health check failed: {type(e).__name__}: {str(e)[:200]}")
+
+
 def main() -> int:
+    if sys.argv[1:] == ["doctor"]:
+        return doctor()
     limit = int(sys.argv[1]) if len(sys.argv) > 1 else 5
     sb = Store()
     try:
         queue_daily_accounts(sb)
     except Exception as e:  # noqa: BLE001 - the queue below matters more
         note(f"could not check the Pages list's age: {type(e).__name__}")
+    sweeps(sb)
     queued = sb.get(
         f"social_jobs?select=*&status=eq.queued&attempts=lt.{MAX_ATTEMPTS}"
         "&order=created_at.asc&limit=200"

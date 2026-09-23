@@ -64,6 +64,8 @@ type Client = {
   ghlLocationId: string | null;
   platforms: Platform[];
   autoApprove: boolean;
+  publishing: boolean;
+  publishingSince: string | null;
   page: {
     id: string;
     name: string | null;
@@ -93,7 +95,18 @@ type Post = {
   client_decided_at: string | null;
   client_reviewer: string | null;
   review_token: string | null;
+  published: {
+    instagram?: { id: string; permalink?: string | null; at: string };
+    facebook?: { id: string; at: string };
+  } | null;
+  publish_error: string | null;
+  results: {
+    instagram?: Record<string, number | null>;
+    facebook?: Record<string, number | null>;
+  } | null;
 };
+
+type Health = { check: string; detail: string | null; at: string };
 
 type Sheet =
   | { mode: "post"; id: string }
@@ -213,6 +226,7 @@ export function SocialCalendarPage() {
   const [month, setMonth] = useState(() => monthOf(new Date()));
   const [posts, setPosts] = useState<Post[] | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [health, setHealth] = useState<Health[]>([]);
   const [sheet, setSheet] = useState<Sheet>(null);
   const [filling, setFilling] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -233,9 +247,10 @@ export function SocialCalendarPage() {
     const out = (await batch({
       clientTaskId: clientId,
       month,
-    })) as unknown as { posts: Post[]; jobs?: Job[] };
+    })) as unknown as { posts: Post[]; jobs?: Job[]; health?: Health[] };
     setPosts(out.posts ?? []);
     setJobs(out.jobs ?? []);
+    setHealth(out.health ?? []);
   }, [batch, clientId, month]);
 
   useEffect(() => {
@@ -468,6 +483,11 @@ export function SocialCalendarPage() {
                     (open ? ` ${open} still to plan.` : "")}
               </p>
             ) : null}
+            {health.map(h => (
+              <p key={h.check} className="mt-1 text-[12px] text-destructive">
+                {h.detail}
+              </p>
+            ))}
             {client && !client.page ? (
               <p className="mt-1 text-[12px] text-warning">
                 Not linked to its Instagram and Facebook yet.{" "}
@@ -1264,6 +1284,7 @@ function PostSheet({
           </div>
 
           <ClientSide post={post} client={client} />
+          <PostedSide post={post} />
 
           {post.topic ? (
             <p className="text-[14px] font-medium leading-snug" dir="auto">
@@ -1329,7 +1350,7 @@ function PostSheet({
       </div>
 
       <div className="flex gap-2 border-t px-5 py-4">
-        {drawn || !items.length ? (
+        {(drawn || !items.length) && post.status !== "published" ? (
           <button
             type="button"
             disabled={busy || drawingAll}
@@ -1589,6 +1610,8 @@ function SettingsSheet({
           onChanged={onChanged}
         />
 
+        <ReadyToPost client={client} onChanged={onChanged} />
+
         <label className="flex items-start gap-3">
           <input
             type="checkbox"
@@ -1749,7 +1772,7 @@ function ClientSide({ post, client }: { post: Post; client: Client }) {
         lands here.
       </p>
     );
-  if (client.autoApprove) return null;
+  if (client.autoApprove || post.status === "published") return null;
   return (
     <p className="text-[13px] text-muted-foreground">
       Not sent to the client yet.
@@ -1965,5 +1988,175 @@ function SignoffSheet({
         </button>
       </div>
     </>
+  );
+}
+
+const NUMBERS: [string, string][] = [
+  ["reach", "reached"],
+  ["likes", "likes"],
+  ["comments", "comments"],
+  ["saved", "saves"],
+  ["shares", "shares"],
+];
+
+/** Where it went out, the link to it, and how it did once the numbers are in. */
+function PostedSide({ post }: { post: Post }) {
+  const pub = post.published ?? {};
+  const ig = pub.instagram;
+  const fb = pub.facebook;
+  const res = post.results?.instagram;
+  if (!ig && !fb && !post.publish_error) return null;
+  return (
+    <div className="space-y-2">
+      {ig || fb ? (
+        <p className="text-[13px]">
+          Posted
+          {ig ? (
+            <>
+              {" "}
+              on Instagram
+              {ig.permalink ? (
+                <>
+                  {" "}
+                  <a
+                    href={ig.permalink}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-medium text-primary underline underline-offset-2"
+                  >
+                    see it
+                  </a>
+                </>
+              ) : null}
+            </>
+          ) : null}
+          {ig && fb ? " and" : ""}
+          {fb ? " on Facebook" : ""} on {shortDate(ig?.at ?? fb?.at ?? null)}.
+        </p>
+      ) : null}
+      {res ? (
+        <p className="flex flex-wrap gap-x-3 text-[12px] text-muted-foreground">
+          {NUMBERS.filter(([k]) => typeof res[k] === "number").map(
+            ([k, label]) => (
+              <span key={k}>
+                <span className="font-semibold tabular-nums text-foreground">
+                  {Number(res[k]).toLocaleString("en-GB")}
+                </span>{" "}
+                {label}
+              </span>
+            ),
+          )}
+        </p>
+      ) : null}
+      {post.publish_error ? (
+        <p className="rounded-lg border border-warning/40 bg-warning/5 p-3 text-[13px]">
+          {post.publish_error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * What a client needs before posts go out by themselves, and the switch.
+ * The switch is the moment a sold client goes live; until then nothing
+ * posts, and posts due before it was turned on never go out on their own.
+ */
+function ReadyToPost({
+  client,
+  onChanged,
+}: {
+  client: Client;
+  onChanged: () => Promise<void>;
+}) {
+  const configure = useAction(api.social.configure);
+  const [busy, setBusy] = useState(false);
+  const wantsIg = client.platforms.includes("instagram");
+  const steps: [boolean, string][] = [
+    [Boolean(client.page), "Linked to the client's Facebook Page"],
+    ...(wantsIg
+      ? ([
+          [Boolean(client.page?.igUserId), "An Instagram account on that Page"],
+        ] as [boolean, string][])
+      : []),
+    [Boolean(client.dialect?.trim()), "Caption dialect set"],
+    [client.pillars.length > 0, "Pillars chosen"],
+  ];
+  const ready = steps.every(([ok]) => ok);
+
+  async function flip(on: boolean) {
+    if (
+      on &&
+      !window.confirm(
+        `From now on, ${client.name}'s ${client.autoApprove ? "finished" : "approved"} posts go out on their day by themselves. Posts that were due before now never go out on their own. Turn it on?`,
+      )
+    )
+      return;
+    setBusy(true);
+    try {
+      await configure({ clientTaskId: client.taskId, publishing: on });
+      toast.success(on ? "Posting automatically." : "Posting stopped.");
+      await onChanged();
+    } catch (e) {
+      toast.error(message(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div>
+      <span className="mb-1.5 block text-[13px] font-medium">
+        Ready to post
+      </span>
+      <ul className="space-y-1">
+        {steps.map(([ok, label]) => (
+          <li key={label} className="flex items-center gap-2 text-[13px]">
+            <span
+              aria-hidden
+              className={`inline-flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-bold ${
+                ok
+                  ? "bg-success/15 text-success"
+                  : "bg-muted text-muted-foreground"
+              }`}
+            >
+              {ok ? "✓" : ""}
+            </span>
+            <span className={ok ? "" : "text-muted-foreground"}>{label}</span>
+          </li>
+        ))}
+        <li className="flex items-center gap-2 text-[13px] text-muted-foreground">
+          <span className="h-4 w-4" aria-hidden />
+          {client.autoApprove
+            ? "Posts go out without the client's sign-off"
+            : "Only posts the client approved go out"}
+        </li>
+      </ul>
+      <label
+        className={`mt-3 flex items-start gap-3 rounded-lg border p-3 ${
+          client.publishing ? "border-success/40 bg-success/5" : ""
+        }`}
+      >
+        <input
+          type="checkbox"
+          checked={client.publishing}
+          disabled={busy || (!client.publishing && !ready)}
+          onChange={e => void flip(e.target.checked)}
+          className="mt-0.5 h-4 w-4 accent-[var(--primary)]"
+        />
+        <span>
+          <span className="block text-[13px] font-medium">
+            Post automatically on their day
+          </span>
+          <span className="mt-0.5 block text-[12px] text-muted-foreground">
+            {client.publishing
+              ? `On since ${shortDate(client.publishingSince)}. A post that cannot go out says why on the post.`
+              : ready
+                ? "Off. Turn it on when the client has bought the package and knows we post for them."
+                : "Off. Finish the steps above first."}
+          </span>
+        </span>
+      </label>
+    </div>
   );
 }

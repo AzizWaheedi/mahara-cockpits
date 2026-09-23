@@ -300,6 +300,8 @@ export const roster = authenticatedAction({
         ghlLocationId: s?.ghl_location_id ?? null,
         platforms: s?.platforms ?? ["instagram", "facebook"],
         autoApprove: Boolean(s?.auto_approve),
+        publishing: Boolean(s?.publishing),
+        publishingSince: s?.publishing_since ?? null,
         page: s?.fb_page_id
           ? {
               id: s.fb_page_id,
@@ -396,7 +398,12 @@ export const batch = authenticatedAction({
         j.status === "queued" ||
         new Date(String(j.updated_at)).getTime() > stale,
     );
-    return { month, batch: found[0] ?? null, posts, jobs };
+    const health = rows(
+      await rest(
+        "social_worker_status?select=check_name,ok,detail,checked_at&ok=is.false",
+      ).catch(() => []),
+    ).map(h => ({ check: h.check_name, detail: h.detail, at: h.checked_at }));
+    return { month, batch: found[0] ?? null, posts, jobs, health };
   },
 });
 
@@ -440,11 +447,33 @@ export const configure = authenticatedAction({
     note: v.optional(v.string()),
     platforms: v.optional(v.array(v.string())),
     autoApprove: v.optional(v.boolean()),
+    /**
+     * Posts go out on their day by themselves. Off for every client until
+     * the client is sold; only posts due after the moment it is switched on
+     * ever go out, so turning it on never sends last week's posts.
+     */
+    publishing: v.optional(v.boolean()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
     const { email } = await who(ctx);
     const body: Row = { client_task_id: args.clientTaskId, updated_at: now() };
+    if (args.publishing !== undefined) {
+      if (args.publishing) {
+        const c = rows(
+          await rest(
+            `social_clients?select=fb_page_id&client_task_id=eq.${enc(args.clientTaskId)}&limit=1`,
+          ),
+        )[0];
+        if (!c?.fb_page_id)
+          throw new Error(
+            "Link the client's Instagram and Facebook first: there is nowhere to post yet.",
+          );
+      }
+      body.publishing = args.publishing;
+      body.publishing_since = args.publishing ? now() : null;
+      body.publishing_by = email;
+    }
     if (args.platforms) {
       const kept = cleanPlatforms(args.platforms);
       if (!kept.length)

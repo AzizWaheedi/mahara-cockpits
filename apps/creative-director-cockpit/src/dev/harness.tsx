@@ -45,8 +45,27 @@ async function main() {
     ghlLocationId: null,
     platforms: ["instagram", "facebook"],
     autoApprove: false,
+    publishing: false,
+    publishingSince: null as string | null,
     page: null as Row | null,
   };
+  // One post shown as already out, with its numbers, so that state is seen.
+  const shown = posts.find(p => String(p.id).endsWith(":2"));
+  if (shown) {
+    shown.status = "published";
+    shown.published = {
+      instagram: {
+        id: "179000",
+        permalink: "https://www.instagram.com/p/harness/",
+        at: "2026-10-15T07:02:00Z",
+      },
+    };
+    shown.results = {
+      instagram: { reach: 1840, likes: 96, comments: 11, saved: 14, shares: 6 },
+    };
+    shown.publish_error =
+      "Facebook: Meta gave no Page token. Add pages_manage_posts to the Claude system user in Business Manager, then it posts to Facebook too.";
+  }
   const jobs: Row[] = [];
   const library: Row[] = drawn.slice(0, 3).map((url, i) => ({
     id: `lib${i}`,
@@ -99,6 +118,14 @@ async function main() {
         jobs: structuredClone(
           jobs.filter(j => here.some(p => p.id === j.post_id)),
         ),
+        health: [
+          {
+            check: "higgsfield",
+            detail:
+              "Pictures and covers are paused: Higgsfield is signed out on the server. Sign it in again.",
+            at: new Date().toISOString(),
+          },
+        ],
       };
     },
     "social:setMedia": a => {
@@ -243,6 +270,10 @@ async function main() {
       if (a.platforms) client.platforms = a.platforms as string[];
       if (a.autoApprove !== undefined)
         client.autoApprove = Boolean(a.autoApprove);
+      if (a.publishing !== undefined) {
+        client.publishing = Boolean(a.publishing);
+        client.publishingSince = a.publishing ? new Date().toISOString() : null;
+      }
       if (a.pillars) client.pillars = a.pillars as string[];
       if (a.dialect !== undefined) client.dialect = String(a.dialect);
       if (a.postsPerMonth !== undefined)
