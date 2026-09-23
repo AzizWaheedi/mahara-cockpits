@@ -182,14 +182,27 @@ export function SocialCalendarPage() {
     }
   }, [loadMonth, clientId]);
 
-  // While anything is still being written or drawn, look again every few
-  // seconds, so a fill lands on the calendar in front of whoever pressed it.
+  // While anything is still being written or drawn, look again, so a fill
+  // lands on the calendar in front of whoever pressed it. Every ten
+  // seconds and only while the tab is on screen: captions take seconds and
+  // pictures minutes, so faster buys nothing, and every look is a paid
+  // function call -- on 2026-09-23 Convex disabled the media buyer's
+  // deployment for going over its plan, and a background tab polling all
+  // afternoon is exactly how that happens.
   const working =
     filling > Date.now() || (posts ?? []).some(p => stateOf(p) === "drafting");
   useEffect(() => {
     if (!working) return;
-    const t = window.setInterval(() => void loadMonth(), 4000);
-    return () => window.clearInterval(t);
+    const tick = () => {
+      if (document.visibilityState === "visible") void loadMonth();
+    };
+    const t = window.setInterval(tick, 10_000);
+    // Coming back to the tab catches up straight away, not a tick later.
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      window.clearInterval(t);
+      document.removeEventListener("visibilitychange", tick);
+    };
   }, [working, loadMonth]);
 
   const client = clients?.find(c => c.taskId === clientId) ?? null;
