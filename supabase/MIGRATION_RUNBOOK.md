@@ -220,7 +220,8 @@ and current row/audit counts with zero writes.
 
 ### Media-buyer Convex shadow writer
 
-- `checks` schema gains optional `shadowRevision` and `shadowActor`.
+- `checks` schema gains optional `shadowRevision`, `shadowActor`, and
+  `shadowAckRevision` (the last Supabase-confirmed revision).
 - `toggleCheck` and new-day sync-created checks compute a strictly increasing revision
   `Math.max(Date.now(), (prior ?? 0) + 1)`, preserve existing checkmark fields,
   and schedule `internal.cockpit.shadowDailyCheck`.
@@ -229,6 +230,15 @@ and current row/audit counts with zero writes.
 - Sync metadata updates schedule the shadow action only when mapped content actually changed.
 - Out-of-order scheduled action safety: the action reads the current latest check row from the DB
   rather than an old event payload, and the database revision gate drops stale revisions.
+- A successful `inserted`, `updated`, or `duplicate` RPC response acknowledges only the
+  revision still current in Convex. An old action cannot acknowledge a newer checkmark.
+  The next media-buyer sync schedules up to 25 unacknowledged owned checks, including
+  unchanged and older-day rows, so dry-run or transient failures do not leave silent gaps.
+- `SUPABASE_CHECKS_SHADOW_CANARY_SOURCE_ID` restricts live writes to one exact Convex
+  check ID during the first production canary. Other actions remain no-write until that
+  setting is removed. The CSM duplicate copy is excluded from replay.
+- Live writes additionally require either that canary ID or
+  `SUPABASE_CHECKS_SHADOW_BATCH_ENABLED=true`; the live flag alone cannot fan out.
 - Shadow errors are logged and recorded to the `sourceHealth` ledger via `note("supabase", ...)`
   and `flush(ctx)`. Shadow failures never block or roll back the user's Convex checkmark mutation.
 - The mirror defaults to no-write (`DRY_RUN = true`) unless explicitly enabled via
@@ -246,18 +256,24 @@ and current row/audit counts with zero writes.
 4. **Database verification**: Run `powershell -File scripts/apply-cockpit-check-shadow-migration.ps1 -VerifyOnly`.
 5. **Ship media-buyer cockpit**: Deploy media-buyer backend while keeping default dry-run
    (`SUPABASE_CHECKS_SHADOW_DRY_RUN` unset or `true`).
-6. **Close the catch-up gap before enabling**: The current writer schedules on new-day rows,
-   user toggles, and changed sync metadata. It has no durable retry/acknowledgement or
-   replay of unchanged checks seeded while the flag is dry-run. Add and verify that
-   reconciliation path before setting `SUPABASE_CHECKS_SHADOW_DRY_RUN=false`.
-7. **Verify a real canary**: Use a read-only comparison of one naturally changed check
-   against Supabase and its audit row. Do not flip a teammate's checkmark merely to test
-   the mirror.
+6. **Bounded canary**: After deployment, choose one existing media-buyer-owned Convex
+   check from a read-only source query. Set `SUPABASE_CHECKS_SHADOW_CANARY_SOURCE_ID`
+   to that exact ID, then set `SUPABASE_CHECKS_SHADOW_DRY_RUN=false`. The next sync
+   replays that one row without changing its checkmark. Compare its full Supabase row
+   and audit before removing the canary setting. Do not flip a teammate's checkmark
+   merely to test the mirror.
+7. **Guarded catch-up**: Set `SUPABASE_CHECKS_SHADOW_BATCH_ENABLED=true`, then remove
+   the canary setting. Each sync sends at most 25
+   unacknowledged media-buyer-owned checks; read back and compare every batch until
+   there are no unacknowledged rows. If the mirror repeatedly fails, the existing
+   health system may send an internal Slack alert; this outward behavior needs its
+   own approval before enabling the live flag.
 
 > [!NOTE]
-> **Status on 23 September: SCHEMA APPLIED; WRITER UNSHIPPED AND UNENABLED**
+> **Status on 23 September: SCHEMA APPLIED; WRITER UNDEPLOYED AND UNENABLED**
 > The additive schema and RPC were applied to Creative Triage after a rollback-only
 > synthetic smoke test. Read-only verification returned 268 checks and 268 audit rows,
 > both new columns and the RPC present, RLS and service-only access intact, and browser
-> roles denied. The code is not deployed; `SUPABASE_CHECKS_SHADOW_DRY_RUN` defaults to
+> roles denied. PR #14 merged the gated writer and this follow-up adds durable
+> acknowledgement/replay, but the Convex code is not deployed. `SUPABASE_CHECKS_SHADOW_DRY_RUN` defaults to
 > `true` (no-write). No checklist values or credentials were changed.

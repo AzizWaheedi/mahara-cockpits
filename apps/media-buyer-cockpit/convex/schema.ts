@@ -318,6 +318,7 @@ const schema = defineSchema({
     doneAt: v.optional(v.number()),
     shadowRevision: v.optional(v.number()),
     shadowActor: v.optional(v.string()),
+    shadowAckRevision: v.optional(v.number()),
   }).index("by_role_day", ["role", "day"]),
 
   /** Plan Tomorrow Today items, which also become the EOD report. */
