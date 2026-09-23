@@ -60,7 +60,7 @@ ship() {
   local lint_dirs="src"
   [ -d "$dir/convex" ] && lint_dirs="convex src"
   # shellcheck disable=SC2086
-  (cd "$dir" && bunx biome check $lint_dirs >/dev/null) || { echo "lint failed in $dir (run: cd $dir && bunx biome check --write $lint_dirs)"; exit 1; }
+  (cd "$dir" && bunx biome check --line-ending=auto $lint_dirs >/dev/null) || { echo "lint failed in $dir (run: cd $dir && bunx biome check --line-ending=auto --write $lint_dirs)"; exit 1; }
   echo "== $app: typecheck"
   (cd "$dir" && bun run typecheck)
   if [ -n "$url" ]; then
