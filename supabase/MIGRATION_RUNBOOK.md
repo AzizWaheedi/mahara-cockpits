@@ -66,8 +66,26 @@ Set `SUPABASE_MIGRATION_DRY_RUN=true` and redeploy the media-buyer backend. Do
 not drop the tables or delete audit history. Convex continues to own reads and
 the existing Slack workflow in this phase.
 
-## Next slice
+## Phase 2 preparation: historical issue reports
 
-Backfill historic feedback from a Convex export, compare row counts and newest
-timestamps, then switch the feedback read path to Supabase. After that, repeat
-the same shadow, compare, cutover sequence for daily checks and EOD reports.
+The backfill tool accepts the official Convex snapshot ZIP layout
+(`feedback/documents.jsonl`) or a standalone feedback JSONL. It does not
+extract or modify the source file. From the repository root:
+
+```powershell
+python scripts/backfill-cockpit-issue-reports.py --source D:\secure\snapshot.zip
+python scripts/backfill-cockpit-issue-reports.py --source D:\secure\snapshot.zip --apply-one
+```
+
+The first command is the default `DRY_RUN = True`: it reports source counts,
+the skipped non-media-buyer rows, and the first legacy ID without network
+access or writes. `--apply-one` checks Creative Triage and inserts at most one
+missing historical row. It reads the row and audit entry back. Existing rows
+are compared rather than overwritten. Historical rows carry their old delivery
+and reply fields as metadata and are marked `historical`; the tool never
+triggers a new Slack/ClickUp delivery. Bulk import is intentionally disabled
+until a production snapshot and one-row result are reviewed.
+
+After that: implement and run a guarded full backfill; reconcile source IDs,
+row counts, newest timestamps, and exceptions; then switch this read path only
+after shadow-write parity. Repeat the same sequence for daily checks and EOD.

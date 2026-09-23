@@ -11,3 +11,5 @@ convex/_generated/
 test-results/
 playwright-report/
 .vercel/
+__pycache__/
+*.pyc
