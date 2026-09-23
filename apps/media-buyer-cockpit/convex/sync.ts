@@ -119,18 +119,31 @@ function normalize(s: string): string {
 
 /**
  * Ad-level daily rows, straight from Meta, for every visible account with
- * spend in the last 30 days that has no row in the tracker sheet. Same
- * columns as `data_fb` (see `C`), so the rest of the sync does not care
- * where a row came from.
+ * spend in the last 30 days that the tracker sheet does not keep up to date:
+ * accounts with no row at all, and accounts whose rows stop more than a day
+ * short of yesterday. Same columns as `data_fb` (see `C`), so the rest of
+ * the sync does not care where a row came from.
+ *
+ * The second kind is Arcturus on 2026-09-23: its connector stopped on the
+ * 14th while the account kept spending, and because the sheet had *some*
+ * rows the old check never asked Meta -- nine days of spend went missing
+ * from the grain, and with them every per-ad cost per booking. Only the
+ * days after the sheet's last one are taken, so no day is counted twice.
  */
 async function metaRowsForMissingAccounts(
   sheetRows: string[][],
   since: string,
 ): Promise<{ rows: string[][]; accounts: string[] }> {
-  const inSheet = new Set<string>();
+  const lastInSheet = new Map<string, string>();
   for (const r of sheetRows)
-    if (r[C.date] >= since && r[C.account])
-      inSheet.add(normalize(r[C.account]));
+    if (r[C.date] >= since && r[C.account]) {
+      const k = normalize(r[C.account]);
+      if ((lastInSheet.get(k) ?? "") < r[C.date]) lastInSheet.set(k, r[C.date]);
+    }
+  // A day of slack: the connector fills yesterday some time today, and a
+  // sheet one day behind is on schedule, not broken.
+  const stale = daysAgo(2);
+  const until = daysAgo(1);
   // One call per edge for the 30-day spend of every account at once.
   // biome-ignore lint/suspicious/noExplicitAny: Graph rows
   const accounts: any[] = [];
@@ -147,15 +160,25 @@ async function metaRowsForMissingAccounts(
   for (const a of accounts) {
     const name = String(a.name ?? "").trim();
     const key = normalize(name);
-    if (!key || inSheet.has(key) || INTERNAL_ACCOUNTS.includes(key)) continue;
+    if (!key || INTERNAL_ACCOUNTS.includes(key)) continue;
+    const last = lastInSheet.get(key);
+    if (last && last >= stale) continue;
     const spend = num(a.insights?.data?.[0]?.spend);
     if (spend <= 0) continue;
     const currency = String(a.currency ?? "USD");
+    // From the day after the sheet's last row, or the whole window when the
+    // sheet has none.
+    const from = last
+      ? new Date(Date.parse(`${last}T00:00:00Z`) + 86400000)
+          .toISOString()
+          .slice(0, 10)
+      : since;
+    if (from > until) continue;
     // biome-ignore lint/suspicious/noExplicitAny: Graph rows
     let page: any = await graph<any>(`${a.id}/insights`, {
       level: "ad",
       time_increment: 1,
-      date_preset: "last_30d",
+      time_range: JSON.stringify({ since: from, until }),
       fields:
         "date_start,campaign_name,adset_name,ad_name,ad_id,spend,impressions,inline_link_clicks,frequency,actions",
       limit: 500,
@@ -191,7 +214,7 @@ async function metaRowsForMissingAccounts(
       page = await res.json();
       if (page?.error) break;
     }
-    names.push(name);
+    names.push(last ? `${name} (after ${last}, the sheet stopped)` : name);
   }
   return { rows: out, accounts: names };
 }
