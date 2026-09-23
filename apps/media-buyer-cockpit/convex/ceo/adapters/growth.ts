@@ -1,7 +1,14 @@
-import type { FunnelWindow, GrowthPayload, Note } from "../payloads";
+import type {
+  FunnelWindow,
+  GrowthPayload,
+  Note,
+  WorkingHours,
+} from "../payloads";
 import { B2B, num, type Row, sql } from "../sb";
+import { workingHoursForAdapters } from "../settings";
 import { addDays, daysInMonth, kuwaitDay, monthStart } from "../time";
 import type { Adapter, DailyPoint, SourceStamp } from "../types";
+import { describeWorkingHours, workingMinutesSql } from "../workingHours";
 
 // biome-ignore lint/suspicious/noExplicitAny: the B2B functions return jsonb
 type Any = any;
@@ -43,12 +50,95 @@ function windowRanges(today: string): Record<WindowKey, Range> {
 }
 
 /**
- * One statement for all six windows: b2b_window_metrics per window (the
- * Overview tiles), plus a count of past demos still marked confirmed, a
- * record-keeping fact for the Sales tab. The show rate itself is the
- * dashboard's and is never worked out here.
+ * A lead, since 2026-09-21, is what the setters tagged it in GoHighLevel
+ * (Aziz: "the tags should be the ROAS tags"): `roas-qualified` or
+ * `roas-unqualified` counts as a lead, dated by the day it was created;
+ * `roas-unprepared` is "not ready" and is shown but never counted; a
+ * contact with none of the three is "not yet tagged" and is shown, not
+ * counted. When a contact carries more than one, qualified wins.
  */
-function windowsSql(ranges: Record<WindowKey, Range>): string {
+const ROAS_Q = `'roas-qualified' = any(coalesce(l.tags, '{}'::text[]))`;
+const ROAS_U = `'roas-qualified' <> all(coalesce(l.tags, '{}'::text[])) and 'roas-unqualified' = any(coalesce(l.tags, '{}'::text[]))`;
+const ROAS_NR = `'roas-qualified' <> all(coalesce(l.tags, '{}'::text[])) and 'roas-unqualified' <> all(coalesce(l.tags, '{}'::text[])) and 'roas-unprepared' = any(coalesce(l.tags, '{}'::text[]))`;
+const ROAS_NONE = `not ('roas-qualified' = any(coalesce(l.tags, '{}'::text[])) or 'roas-unqualified' = any(coalesce(l.tags, '{}'::text[])) or 'roas-unprepared' = any(coalesce(l.tags, '{}'::text[])))`;
+/** A lead on this cockpit: a contact tagged roas-qualified or roas-unqualified (Aziz, 2026-09-21). */
+export const IS_LEAD = `('roas-qualified' = any(coalesce(l.tags, '{}'::text[])) or 'roas-unqualified' = any(coalesce(l.tags, '{}'::text[])))`;
+
+/**
+ * Where a lead came from (Aziz, 2026-09-21): an ad id on the contact, or an
+ * ad id inside GoHighLevel's attribution (a click-to-message ad carries it as
+ * mediumId), means ads. No ad id and a source, tag or attribution medium
+ * that says inbound WhatsApp, Instagram DM, YouTube, referral or organic
+ * means organic. Neither means ads, and the screen labels it "assumed".
+ */
+const HAS_AD = `(l.ad_id is not null or coalesce(l.raw_contact->'attributionSource'->>'mediumId', l.raw_contact->'lastAttributionSource'->>'mediumId', '') <> '')`;
+const SAYS_ORGANIC = `(concat_ws(' ', l.source, array_to_string(coalesce(l.tags, '{}'::text[]), ' '), l.raw_contact->'attributionSource'->>'medium', l.raw_contact->'lastAttributionSource'->>'medium') ~* '(whatsapp|instagram dm|insta dm|ig dm|\\mdm\\M|youtube|organic|inbound|referr)')`;
+export const LEAD_SOURCE = {
+  ads: HAS_AD,
+  organic: `(not ${HAS_AD} and ${SAYS_ORGANIC})`,
+  assumed: `(not ${HAS_AD} and not ${SAYS_ORGANIC})`,
+};
+
+/**
+ * A Maqsam call made by somebody on the sales roster: a setter, a closer or
+ * both (Aziz, 2026-09-21: "never a call-centre agent"). The sync stamps
+ * `sales_rep_id` on every call it can tie to the roster.
+ */
+const BY_SALES_REP = `exists (select 1 from public.sales_reps sr where sr.id = m.sales_rep_id and sr.role in ('setter', 'closer', 'both', 'rep'))`;
+
+/** The phone digits of a lead, and whether a Maqsam call is with that lead. */
+const LEAD_DIGITS = `regexp_replace(coalesce(l.phone, ''), '[^0-9]', '', 'g')`;
+const CALL_IS_WITH_LEAD = `(m.contact_id = l.contact_id
+        or (length(${LEAD_DIGITS}) >= 8 and (regexp_replace(coalesce(m.lead_phone, ''), '[^0-9]', '', 'g') like '%' || right(${LEAD_DIGITS}, 8) or regexp_replace(coalesce(m.callee_number, ''), '[^0-9]', '', 'g') like '%' || right(${LEAD_DIGITS}, 8) or regexp_replace(coalesce(m.caller_number, ''), '[^0-9]', '', 'g') like '%' || right(${LEAD_DIGITS}, 8))))`;
+
+/**
+ * A closer-form deposit confirmed on a rail the database holds: a paid Whop
+ * payment tied to the deal by response id or by the payer's email within
+ * 60 days of signing, or a bank transfer tied to the deal or to the business
+ * name. Tap is read from its API by the money section, not here, so a
+ * deposit paid on Tap reads as unconfirmed on this tab.
+ */
+const DEPOSIT_CONFIRMED = `(exists (
+          select 1 from public.whop_payments wp
+          where wp.status = 'paid'
+            and (wp.deal_response_id = d.response_id
+              or (nullif(lower(btrim(wp.user_email)), '') is not null and lower(btrim(wp.user_email)) = lower(btrim(d.email))))
+            and wp.paid_on between (d.submitted_at at time zone 'Asia/Riyadh')::date - 7 and (d.submitted_at at time zone 'Asia/Riyadh')::date + 60)
+        or exists (
+          select 1 from public.transfers t
+          where t.deal_response_id = d.response_id
+             or (nullif(lower(btrim(t.client_name)), '') is not null and lower(btrim(t.client_name)) = lower(btrim(d.business_name)))))`;
+
+/**
+ * One statement for all six windows: b2b_window_metrics per window (the
+ * Overview tiles), plus the ROAS lead classes, speed to lead on Maqsam,
+ * and a count of past demos still marked confirmed. The show rate itself
+ * is the dashboard's and is never worked out here.
+ *
+ * Speed to lead (Aziz, 2026-09-21): from the lead's creation to the first
+ * Maqsam call with that lead made by a sales rep (the roster: setter, closer
+ * or both, never a call-centre agent), matched by the CRM contact id or the
+ * last eight digits of the phone. Median over the leads that were called;
+ * the never-called are counted beside it.
+ *
+ * Lead to booked call: leads created in the window with at least one intro
+ * or demo booked against their contact, ever, over leads. Per lead, never
+ * per booking, so it cannot pass 100%.
+ *
+ * Front-end cash: the deposit the closer typed on the form for deals signed
+ * in the window, plus the kickoff cash the CSM collects on the onboarding
+ * call once that form is read (it is not yet), with the share a Whop payment
+ * or a bank transfer confirms.
+ */
+function windowsSql(
+  ranges: Record<WindowKey, Range>,
+  hours: WorkingHours,
+): string {
+  const workingMin = workingMinutesSql(
+    "l.lead_created_at",
+    "fc.first_call",
+    hours,
+  );
   const values = Object.entries(ranges)
     .map(([k, [f, t]]) => `('${k}', ${day(f)}, ${day(t)})`)
     .join(",\n    ");
@@ -63,11 +153,66 @@ still_confirmed as (
   join public.calls c on c.call_type = 'demo'
     and (c.start_at at time zone 'Asia/Riyadh')::date between w.f and w.t
   group by w.k
+),
+roas as (
+  select w.k,
+    count(*) filter (where ${ROAS_Q}) as q,
+    count(*) filter (where ${ROAS_U}) as u,
+    count(*) filter (where ${ROAS_NR}) as nr,
+    count(*) filter (where ${ROAS_NONE}) as untagged
+  from w
+  join public.leads l on (l.lead_created_at at time zone 'Asia/Riyadh')::date between w.f and w.t
+  group by w.k
+),
+speed as (
+  select w.k,
+    count(*) as sp_leads,
+    count(fc.first_call) as sp_called,
+    percentile_cont(0.5) within group (order by extract(epoch from (fc.first_call - l.lead_created_at)) / 60.0) filter (where fc.first_call is not null) as sp_median_min,
+    count(*) filter (where fc.first_call is not null and fc.first_call - l.lead_created_at <= interval '5 minutes') as sp_within_5,
+    percentile_cont(0.5) within group (order by (${workingMin})) filter (where fc.first_call is not null) as sp_working_median_min,
+    count(*) filter (where fc.first_call is not null and (${workingMin}) <= 5) as sp_working_within_5,
+    count(*) filter (where exists (
+      select 1 from public.calls c
+      where c.contact_id is not null and c.contact_id = l.contact_id and c.call_type in ('intro', 'demo'))) as booked_leads,
+    count(*) filter (where ${LEAD_SOURCE.ads}) as src_ads,
+    count(*) filter (where ${LEAD_SOURCE.organic}) as src_organic,
+    count(*) filter (where ${LEAD_SOURCE.assumed}) as src_assumed
+  from w
+  join public.leads l on ${IS_LEAD} and (l.lead_created_at at time zone 'Asia/Riyadh')::date between w.f and w.t
+  cross join lateral (
+    select min(m.occurred_at) as first_call from public.maqsam_calls m
+    where m.occurred_at >= l.lead_created_at
+      and ${BY_SALES_REP}
+      and ${CALL_IS_WITH_LEAD}
+  ) fc
+  group by w.k
+),
+fe as (
+  select w.k,
+    count(*) as fe_deals,
+    coalesce(sum(d.cash_collected), 0) as fe_deposit,
+    count(*) filter (where coalesce(d.cash_collected, 0) > 0 and ${DEPOSIT_CONFIRMED}) as fe_deals_confirmed,
+    coalesce(sum(d.cash_collected) filter (where ${DEPOSIT_CONFIRMED}), 0) as fe_confirmed
+  from w
+  join public.closed_deals d on (d.submitted_at at time zone 'Asia/Riyadh')::date between w.f and w.t
+  group by w.k
 )
 select w.k, w.f::text as d_from, w.t::text as d_to,
   public.b2b_window_metrics(w.f, w.t, null::text[]) as m,
-  coalesce(sc.demos_still_confirmed, 0) as demos_still_confirmed
-from w left join still_confirmed sc on sc.k = w.k`;
+  coalesce(sc.demos_still_confirmed, 0) as demos_still_confirmed,
+  coalesce(r.q, 0) as roas_q, coalesce(r.u, 0) as roas_u, coalesce(r.nr, 0) as roas_nr, coalesce(r.untagged, 0) as roas_untagged,
+  coalesce(sp.sp_leads, 0) as sp_leads, coalesce(sp.sp_called, 0) as sp_called, sp.sp_median_min, coalesce(sp.sp_within_5, 0) as sp_within_5,
+  sp.sp_working_median_min, coalesce(sp.sp_working_within_5, 0) as sp_working_within_5,
+  coalesce(sp.booked_leads, 0) as booked_leads,
+  coalesce(sp.src_ads, 0) as src_ads, coalesce(sp.src_organic, 0) as src_organic, coalesce(sp.src_assumed, 0) as src_assumed,
+  coalesce(fe.fe_deals, 0) as fe_deals, coalesce(fe.fe_deposit, 0) as fe_deposit,
+  coalesce(fe.fe_deals_confirmed, 0) as fe_deals_confirmed, coalesce(fe.fe_confirmed, 0) as fe_confirmed
+from w
+left join still_confirmed sc on sc.k = w.k
+left join roas r on r.k = w.k
+left join speed sp on sp.k = w.k
+left join fe fe on fe.k = w.k`;
 }
 
 /**
@@ -79,45 +224,104 @@ from w left join still_confirmed sc on sc.k = w.k`;
 function dailySql(from: string, to: string): string {
   const f = day(from);
   const t = day(to);
+  // Every tile on the growth tabs can be rebuilt for any timeframe from these
+  // days (Aziz, 2026-09-21: "any number with a time dimension gets the same
+  // timeframe control as the charts"): each stage carries its own counts by
+  // its own day, so a window is a sum and a rate is a quotient of sums.
   return `with days as (
   select generate_series(${f}, ${t}, interval '1 day')::date as d
 ),
 meta as (
-  select date as d, sum(spend) as spend
+  select date as d,
+    sum(spend) filter (where public.b2b_campaign_type(campaign_name) = 'lead_gen') as spend,
+    sum(spend) filter (where public.b2b_campaign_type(campaign_name) = 'retargeting') as spend_rt
   from public.meta_ad_snapshots
   where date between ${f} and ${t}
-    and public.b2b_campaign_type(campaign_name) = 'lead_gen'
   group by 1
 ),
 ld as (
-  select (lead_created_at at time zone 'Asia/Riyadh')::date as d, count(*) as n
-  from public.leads
-  where is_lead
-    and (lead_created_at at time zone 'Asia/Riyadh')::date between ${f} and ${t}
+  select (l.lead_created_at at time zone 'Asia/Riyadh')::date as d,
+    count(*) filter (where ${IS_LEAD}) as n,
+    count(*) filter (where ${ROAS_Q}) as q,
+    count(*) filter (where ${ROAS_U}) as u,
+    count(*) filter (where ${ROAS_NR}) as nr,
+    count(*) filter (where ${ROAS_NONE}) as untagged,
+    count(*) filter (where ${IS_LEAD} and exists (
+      select 1 from public.calls c where c.contact_id is not null and c.contact_id = l.contact_id and c.call_type in ('intro', 'demo'))) as booked_leads,
+    count(*) filter (where ${IS_LEAD} and ${LEAD_SOURCE.ads}) as src_ads,
+    count(*) filter (where ${IS_LEAD} and ${LEAD_SOURCE.organic}) as src_organic,
+    count(*) filter (where ${IS_LEAD} and ${LEAD_SOURCE.assumed}) as src_assumed,
+    count(fc.first_call) filter (where ${IS_LEAD}) as sp_called,
+    coalesce(sum(extract(epoch from (fc.first_call - l.lead_created_at)) / 60.0) filter (where ${IS_LEAD} and fc.first_call is not null), 0) as sp_minutes,
+    count(*) filter (where ${IS_LEAD} and fc.first_call is not null and fc.first_call - l.lead_created_at <= interval '5 minutes') as sp_within_5
+  from public.leads l
+  cross join lateral (
+    select min(m.occurred_at) as first_call from public.maqsam_calls m
+    where m.occurred_at >= l.lead_created_at
+      and ${BY_SALES_REP}
+      and ${CALL_IS_WITH_LEAD}
+  ) fc
+  where (l.lead_created_at at time zone 'Asia/Riyadh')::date between ${f} and ${t}
   group by 1
 ),
 bk as (
-  select (booked_at at time zone 'Asia/Riyadh')::date as d, count(*) as n
+  select (booked_at at time zone 'Asia/Riyadh')::date as d,
+    count(*) as n,
+    count(*) filter (where call_type = 'intro') as intros_booked,
+    count(*) filter (where call_type = 'demo') as demos_booked
   from public.calls
   where call_type in ('intro', 'demo')
     and (booked_at at time zone 'Asia/Riyadh')::date between ${f} and ${t}
   group by 1
 ),
+held as (
+  select (start_at at time zone 'Asia/Riyadh')::date as d,
+    count(*) filter (where call_type = 'intro') as intros_scheduled,
+    count(*) filter (where call_type = 'demo') as demos_scheduled,
+    count(*) filter (where call_type = 'intro' and start_at <= now()) as intros_due,
+    count(*) filter (where call_type = 'demo' and start_at <= now()) as demos_due,
+    count(*) filter (where call_type = 'intro' and (status = 'showed' or (status in ('confirmed', 'invalid') and start_at <= now()))) as intros_shown,
+    count(*) filter (where call_type = 'demo' and (status = 'showed' or (status in ('confirmed', 'invalid') and start_at <= now()))) as demos_shown,
+    count(*) filter (where call_type = 'demo' and (status = 'showed' or (status = 'confirmed' and start_at <= now()))) as demos_qualified,
+    count(*) filter (where call_type = 'intro' and status = 'cancelled') as intros_cancelled,
+    count(*) filter (where call_type = 'demo' and status = 'cancelled') as demos_cancelled
+  from public.calls
+  where call_type in ('intro', 'demo')
+    and (start_at at time zone 'Asia/Riyadh')::date between ${f} and ${t}
+  group by 1
+),
 cl as (
-  select (submitted_at at time zone 'Asia/Riyadh')::date as d, count(*) as n
+  select (submitted_at at time zone 'Asia/Riyadh')::date as d,
+    count(*) as n,
+    coalesce(sum(contracted_revenue), 0) as contracted,
+    coalesce(sum(cash_collected), 0) as deposit
   from public.closed_deals
   where (submitted_at at time zone 'Asia/Riyadh')::date between ${f} and ${t}
   group by 1
 )
 select days.d::text as date,
   round(coalesce(meta.spend, 0)::numeric, 2) as spend,
+  round(coalesce(meta.spend_rt, 0)::numeric, 2) as spend_rt,
   coalesce(ld.n, 0) as leads,
+  coalesce(ld.q, 0) as qualified, coalesce(ld.u, 0) as unqualified, coalesce(ld.nr, 0) as not_ready, coalesce(ld.untagged, 0) as untagged,
+  coalesce(ld.booked_leads, 0) as booked_leads,
+  coalesce(ld.src_ads, 0) as src_ads, coalesce(ld.src_organic, 0) as src_organic, coalesce(ld.src_assumed, 0) as src_assumed,
+  coalesce(ld.sp_called, 0) as sp_called, round(coalesce(ld.sp_minutes, 0)::numeric, 1) as sp_minutes, coalesce(ld.sp_within_5, 0) as sp_within_5,
   coalesce(bk.n, 0) as booked,
-  coalesce(cl.n, 0) as closes
+  coalesce(bk.intros_booked, 0) as intros_booked, coalesce(bk.demos_booked, 0) as demos_booked,
+  coalesce(held.intros_scheduled, 0) as intros_scheduled, coalesce(held.demos_scheduled, 0) as demos_scheduled,
+  coalesce(held.intros_due, 0) as intros_due, coalesce(held.demos_due, 0) as demos_due,
+  coalesce(held.intros_shown, 0) as intros_shown, coalesce(held.demos_shown, 0) as demos_shown,
+  coalesce(held.demos_qualified, 0) as demos_qualified,
+  coalesce(held.intros_cancelled, 0) as intros_cancelled, coalesce(held.demos_cancelled, 0) as demos_cancelled,
+  coalesce(cl.n, 0) as closes,
+  round(coalesce(cl.contracted, 0)::numeric, 2) as contracted,
+  round(coalesce(cl.deposit, 0)::numeric, 2) as deposit
 from days
 left join meta on meta.d = days.d
 left join ld on ld.d = days.d
 left join bk on bk.d = days.d
+left join held on held.d = days.d
 left join cl on cl.d = days.d
 order by days.d`;
 }
@@ -256,6 +460,8 @@ const orNull = (x: unknown): number | null =>
 const pct = (x: unknown): number | null =>
   x === null || x === undefined ? null : Math.round(num(x) * 10) / 1000;
 
+const round2 = (x: number) => Math.round(x * 100) / 100;
+
 function usd(x: number): string {
   return `$${x.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}`;
 }
@@ -301,27 +507,93 @@ function metricsOf(r: Row): Row {
 
 function toWindow(r: Row): FunnelWindow {
   const m = metricsOf(r);
+  const spend = num(m.spend);
+  const qualified = num(r.roas_q);
+  const unqualified = num(r.roas_u);
+  const leads = qualified + unqualified;
+  const called = num(r.sp_called);
+  const medianMin = orNull(r.sp_median_min);
+  const spLeads = num(r.sp_leads);
+  const bookedLeads = num(r.booked_leads);
+  const deposit = round2(num(r.fe_deposit));
+  const confirmed = round2(num(r.fe_confirmed));
+  // Kickoff cash joins the deposit once the CSM's kickoff form is read.
+  const frontEndCash = deposit;
+  const contracted = num(m.revenue);
+  const ratio = (a: number, b: number, places = 2) =>
+    b > 0 ? Math.round((a / b) * 10 ** places) / 10 ** places : null;
   return {
     from: String(r.d_from),
     to: String(r.d_to),
-    spend: num(m.spend),
-    leads: num(m.leads),
-    cpl: orNull(m.cost_per_lead),
+    spend,
+    leads,
+    cpl: ratio(spend, leads),
+    leadClasses: {
+      qualified,
+      unqualified,
+      notReady: num(r.roas_nr),
+      untagged: num(r.roas_untagged),
+    },
+    sources: {
+      ads: num(r.src_ads),
+      organic: num(r.src_organic),
+      assumedAds: num(r.src_assumed),
+    },
+    speedToLead: {
+      leads: spLeads,
+      called,
+      neverCalled: Math.max(0, spLeads - called),
+      medianMin: medianMin === null ? null : Math.round(medianMin * 10) / 10,
+      within5Share: ratio(num(r.sp_within_5), called, 3),
+      workingMedianMin:
+        orNull(r.sp_working_median_min) === null
+          ? null
+          : Math.round(num(r.sp_working_median_min) * 10) / 10,
+      workingWithin5Share: ratio(num(r.sp_working_within_5), called, 3),
+    },
+    leadToBooked: {
+      bookedLeads,
+      rate: ratio(bookedLeads, leads, 3),
+    },
     introsBooked: num(m.intros_booked),
+    introsShown: num(m.intros_shown),
+    introsDue: num(m.intros_due),
     demosBooked: num(m.demos_booked),
     demosShown: num(m.demos_shown),
+    demosDue: num(m.demos_due),
     demoShowRate: pct(m.demo_show_rate),
     introShowRate: pct(m.intro_show_rate),
     introToDemo: pct(m.intro_to_demo),
     demosStillConfirmed: num(r.demos_still_confirmed),
+    cancel: {
+      intro: pct(m.intro_cancel_rate),
+      demo: pct(m.demo_cancel_rate),
+      total: pct(m.cancel_rate),
+      introsCancelled: num(m.intros_cancelled),
+      introsScheduled: num(m.intros_scheduled),
+      demosCancelled: num(m.demos_cancelled),
+      demosScheduled: num(m.demos_scheduled),
+    },
     costPerDemo: orNull(m.cost_per_demo),
     costPerDemoBooked: orNull(m.cost_per_demo_booked),
     closes: num(m.signed),
-    closeRate: pct(m.close_rate),
-    contracted: num(m.revenue),
+    closeRate: pct(m.close_rate_all),
+    qualifiedCloseRate: pct(m.close_rate),
+    contracted,
     cash: num(m.cash_collected),
+    frontEndCash: {
+      deposit,
+      kickoff: null,
+      total: frontEndCash,
+      deals: num(r.fe_deals),
+      dealsConfirmed: num(r.fe_deals_confirmed),
+      confirmed,
+      confirmedShare: ratio(confirmed, deposit, 3),
+    },
     cac: orNull(m.cac),
     roas: orNull(m.roas),
+    roasCash: ratio(frontEndCash, spend),
+    roasContracted: ratio(contracted, spend),
     raw: rawNumbers(m),
   };
 }
@@ -353,8 +625,10 @@ export const growth: Adapter = {
     const ranges = windowRanges(today);
     const notes: Note[] = [];
 
+    // The working hours the speed-to-lead clock uses (cockpit_settings, or the default).
+    const wh = await workingHoursForAdapters();
     // Core read. No fallback: a failure keeps the last good payload.
-    const windowRows = await sql(B2B, windowsSql(ranges));
+    const windowRows = await sql(B2B, windowsSql(ranges, wh.hours));
     const byKey = new Map(windowRows.map(r => [String(r.k), r]));
     const rowOf = (k: WindowKey): Row => {
       const r = byKey.get(k);
@@ -371,17 +645,63 @@ export const growth: Adapter = {
     };
     const mtd = windows.mtd;
 
+    // How much of this month's leads carry any first-touch attribution at all
+    // (GoHighLevel's attributionSource is `{}` on most contacts), so the
+    // organic split can say how much of it is a guess.
+    const organicEmptyShare = await attempt(
+      "The attribution coverage",
+      notes,
+      "an unknown share",
+      async () => {
+        const [row] = await sql(
+          B2B,
+          `select count(*) as n,
+                  count(*) filter (where coalesce(l.raw_contact->'attributionSource'->>'medium', '') = '') as empty
+           from public.leads l
+           where ${IS_LEAD}
+             and (l.lead_created_at at time zone 'Asia/Riyadh')::date between ${day(ranges.mtd[0])} and ${day(ranges.mtd[1])}`,
+        );
+        const n = num(row?.n);
+        return n > 0 ? `${Math.round((num(row?.empty) / n) * 100)}%` : "all";
+      },
+    );
+
     const daily = await attempt(
-      "The 60-day daily series",
+      "The 365-day daily series",
       notes,
       [] as GrowthPayload["daily"],
       async () =>
         (await sql(B2B, dailySql(addDays(today, -364), today))).map(r => ({
           date: String(r.date),
           spend: num(r.spend),
+          spendRetargeting: num(r.spend_rt),
           leads: num(r.leads),
+          qualified: num(r.qualified),
+          unqualified: num(r.unqualified),
+          notReady: num(r.not_ready),
+          untagged: num(r.untagged),
+          bookedLeads: num(r.booked_leads),
+          srcAds: num(r.src_ads),
+          srcOrganic: num(r.src_organic),
+          srcAssumed: num(r.src_assumed),
+          spCalled: num(r.sp_called),
+          spMinutes: num(r.sp_minutes),
+          spWithin5: num(r.sp_within_5),
           booked: num(r.booked),
+          introsBooked: num(r.intros_booked),
+          demosBooked: num(r.demos_booked),
+          introsScheduled: num(r.intros_scheduled),
+          demosScheduled: num(r.demos_scheduled),
+          introsDue: num(r.intros_due),
+          demosDue: num(r.demos_due),
+          introsShown: num(r.intros_shown),
+          demosShown: num(r.demos_shown),
+          demosQualified: num(r.demos_qualified),
+          introsCancelled: num(r.intros_cancelled),
+          demosCancelled: num(r.demos_cancelled),
           closes: num(r.closes),
+          contracted: num(r.contracted),
+          deposit: num(r.deposit),
         })),
     );
 
@@ -452,11 +772,19 @@ export const growth: Adapter = {
       },
       {
         level: "info",
-        text: "Leads are every opted-in GHL contact with a phone or email, including WhatsApp, organic and manual contacts.",
+        text: "Leads are the contacts the setters tagged roas-qualified or roas-unqualified in GoHighLevel, dated by creation. Not ready (roas-unprepared) and contacts with no ROAS tag are shown beside the count and never in it.",
       },
       {
         level: "info",
-        text: "Contracted and cash come from the closed-deal form. Cash is the upfront amount the closer typed, not Whop payments.",
+        text: `Where leads come from is judged by the ad id on the contact: with one, ads; without one, organic when the source, a tag or the attribution medium says inbound WhatsApp, Instagram DM, YouTube, referral or organic; otherwise ads, assumed. GoHighLevel's first-touch attribution is empty on ${organicEmptyShare} of this month's leads, so a true first click needs UTMs on the forms and the WhatsApp link, or a "how did you find us" answer.`,
+      },
+      {
+        level: "info",
+        text: `Speed to lead runs from the lead's creation to the first Maqsam call with it by a sales rep on the roster (setter, closer or both), never a call-centre agent. The median is over the leads that were called; the never-called are counted beside it. The working-hours figure starts the clock at the later of the lead's creation and the next working window and counts working minutes only (${describeWorkingHours(wh.hours)}${wh.ready ? "" : ", the default"}).`,
+      },
+      {
+        level: "info",
+        text: "Contracted comes from the closed-deal form. Front-end cash is the deposit the closer typed on that form, plus the kickoff cash the CSM collects on the onboarding call once the kickoff form is read: it is not read yet, so front-end cash is the deposit alone and reads low. The share confirmed is what a Whop payment or a bank transfer on record backs; Tap is not checked here.",
       },
       {
         level: "info",

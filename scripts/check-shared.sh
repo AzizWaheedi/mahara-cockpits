@@ -59,6 +59,15 @@ same adAsIdea "$CD/convex/adAsIdea.ts" "$ED/src/lib/adAsIdea.ts"
 # role each one checks.
 same convex/foreplay.ts "$CD/convex/foreplay.ts" "$MB/convex/foreplay.ts"
 
+# Client billing: one set of rules (what is late, what an extension does to
+# a date, which ClickUp field is which) and one screen, in the CEO cockpit
+# and the client success cockpit. The two differ only in how each app's
+# actions are wired to the screen (ceo/BillingTab.tsx, pages/BillingPage.tsx).
+CS=apps/client-success-cockpit
+same convex/billingCore.ts "$MB/convex/billingCore.ts" "$CS/convex/billingCore.ts"
+same BillingSheet.tsx "$MB/src/components/billing/BillingSheet.tsx" \
+  "$CS/src/components/billing/BillingSheet.tsx"
+
 # The Python worker writes that same row. Its field list is pinned by a test
 # (IdeaRowShapeTests); this checks the list the test pins is the list the
 # TypeScript pins, which is the half a Python test cannot see.

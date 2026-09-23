@@ -1,5 +1,6 @@
 import { useConvexAuth } from "convex/react";
-import { Navigate, Outlet } from "react-router";
+import { Navigate, Outlet, useSearchParams } from "react-router";
+import { BackendWait } from "./BackendWait";
 import {
   Card,
   CardContent,
@@ -43,13 +44,21 @@ function AuthFormSkeleton() {
 
 export function PublicOnlyRoute() {
   const { isAuthenticated, isLoading } = useConvexAuth();
+  const [params] = useSearchParams();
 
   if (isLoading) {
-    return <AuthFormSkeleton />;
+    return (
+      <BackendWait>
+        <AuthFormSkeleton />
+      </BackendWait>
+    );
   }
 
   if (isAuthenticated) {
-    return <Navigate to="/" replace />;
+    // Only a path on this site: never an address someone pasted into the link.
+    const next = params.get("next") ?? "";
+    const safe = /^\/(?!\/)[^\s]*$/.test(next) ? next : "/";
+    return <Navigate to={safe} replace />;
   }
 
   return <Outlet />;

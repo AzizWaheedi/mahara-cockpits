@@ -1,3 +1,4 @@
+import { useAction } from "convex/react";
 import {
   CalendarClock,
   CalendarSync,
@@ -18,6 +19,7 @@ import {
   count,
   date,
   dateTime,
+  decimal,
   isNum,
   kuwaitDay,
   money,
@@ -42,8 +44,14 @@ import {
   StatusDot,
   type StatusTone,
 } from "@/components/ceo/StatusChip";
+import { Button } from "@/components/ui/button";
 import { CPL_GATE } from "@/lib/kpi";
 import { cn } from "@/lib/utils";
+import { api } from "../../../convex/_generated/api";
+import type {
+  ApplyResult,
+  ExtensionsWithLastMonth,
+} from "../../../convex/ceo/extensions";
 import type {
   ChurnClient,
   ClientRow,
@@ -90,6 +98,8 @@ const HINT = {
     "The ClickUp card has neither a Last POC nor a Last Call date, so there is no contact to date",
   payDate: "No Next Payment Date on the ClickUp card",
   paid: "The cockpit ties only some payments to a client, and only as renewal evidence for the churn card, so it cannot say whether this one was collected",
+  mrr: "No figure in the MRR field on the client card, or the billing fields were not read this run",
+  ltv: "No figure in the LTV field on the client card, or the billing fields were not read this run",
 };
 
 // Happiness is free text from the ClickUp card; the unhappy words match the risk rules.
@@ -231,6 +241,7 @@ type CardKey =
   | "silence"
   | "payments"
   | "onboarding"
+  | "extensions"
   | "terms"
   | "churn"
   | "roster"
@@ -244,11 +255,15 @@ type CardKey =
 const NOTE_ROUTES: readonly (readonly [RegExp, CardKey[]])[] = [
   [
     /roster was last stored/i,
-    ["book", "silence", "payments", "onboarding", "churn"],
+    ["book", "silence", "payments", "onboarding", "extensions", "churn"],
   ],
   [/last poc date/i, ["silence"]],
   [/churn and renewals/i, ["terms"]],
   [/risk points/i, ["risk"]],
+  [
+    /extension form|current extension|first launch|average retainer|billing fields/i,
+    ["extensions"],
+  ],
   [/portal/i, ["portal", "roster"]],
 ];
 
@@ -299,9 +314,10 @@ const OWN_NOTES: Record<CardKey, Note[]> = {
     },
     {
       level: "info",
-      text: "No stage carries a date in the client rows, so how long a client has been onboarding and how far it is from launch cannot be shown.",
+      text: "No stage carries a date in the client rows, so time in each onboarding stage cannot be shown. Time from the card's creation to its Launch Date is on the Extensions and launches card.",
     },
   ],
+  extensions: [],
   terms: [],
   churn: [
     {
@@ -364,7 +380,7 @@ export function ClientSuccessTab({ sections, now, day }: CeoTabProps) {
   // One empty state for the whole roster, not six stacked ones.
   if (!payload)
     return (
-      <div className="grid gap-4 lg:gap-6">
+      <div className="grid gap-5 lg:gap-7">
         <SectionCard title="Clients" section={clients}>
           {() => null}
         </SectionCard>
@@ -379,7 +395,7 @@ export function ClientSuccessTab({ sections, now, day }: CeoTabProps) {
   const churnHead = churnHeadline(payload);
 
   return (
-    <div className="grid gap-4 lg:gap-6">
+    <div className="grid gap-5 lg:gap-7">
       <SectionCard
         kicker="The roster right now"
         title={
@@ -461,6 +477,21 @@ export function ClientSuccessTab({ sections, now, day }: CeoTabProps) {
         order={4}
       >
         {p => <Onboarding payload={p} />}
+      </SectionCard>
+
+      <SectionCard
+        kicker="The Client Extension Form and the card's dates"
+        title={
+          <>
+            Extensions and launches
+            <TitleNote>month to date, first launch only</TitleNote>
+          </>
+        }
+        section={clients}
+        notes={cardNotes(routed, "extensions")}
+        order={5}
+      >
+        {p => <ExtensionsLaunches payload={p} />}
       </SectionCard>
 
       <SectionCard
@@ -744,6 +775,289 @@ function Mini({
   );
 }
 
+// --- Extensions and launches (Aziz's spec of 2026-09-21, points 12 to 15) ---
+
+type Extensions = NonNullable<ClientsPayload["extensions"]>;
+
+/** Last month rides along in the stored payload beside the typed block; read it when it is there. */
+function lastMonthOf(
+  ext: Extensions,
+): ExtensionsWithLastMonth["lastMonth"] | null {
+  const lm = (ext as Partial<ExtensionsWithLastMonth>).lastMonth;
+  return lm && isNum(lm.totalWeeks) && isNum(lm.grants) ? lm : null;
+}
+
+const EXT_LIST_START = 8;
+const LAUNCH_LIST_MAX = 10;
+
+/**
+ * Weeks of extension granted on the Client Extension Form, who is covered
+ * today, time from the card's creation to its Launch Date, and the average
+ * retainer, with the one write this tab makes: the current extension onto
+ * the ClickUp card, by hand.
+ */
+function ExtensionsLaunches({ payload }: { payload: ClientsPayload }) {
+  const ext = payload.extensions ?? null;
+  const launch = payload.launch ?? null;
+  const retainer = payload.retainer ?? null;
+  const live = useMemo(() => (ext?.perClient ?? []).filter(c => c.live), [ext]);
+  const lastMonth = ext ? lastMonthOf(ext) : null;
+  const nextToEnd = live.length
+    ? [...live].sort((a, b) => a.until.localeCompare(b.until))[0].until
+    : null;
+
+  if (!ext && !launch && !retainer)
+    return (
+      <EmptyState
+        icon={CalendarSync}
+        title="Not computed yet"
+        text="Extensions, time to first launch and the average retainer fill in after the next refresh of the clients section."
+        compact
+      />
+    );
+
+  return (
+    <div className="@container">
+      <div className="grid grid-cols-2 gap-x-6 gap-y-5 @xl:grid-cols-4">
+        <StatTile
+          variant="plain"
+          label="Weeks granted this month"
+          value={ext ? count(ext.totalWeeks) : null}
+          naHint="The Client Extension Form was not read this run"
+          sub={
+            ext
+              ? `${plural(ext.grants, "grant")}${lastMonth ? ` · last month ${plural(lastMonth.totalWeeks, "week")}` : ""}`
+              : undefined
+          }
+          hint="Weeks of billing extension granted on the Client Extension Form from the 1st of the month to today, dated by the day the form was submitted."
+        />
+        <StatTile
+          variant="plain"
+          label="Clients with a live extension"
+          value={ext ? count(live.length) : null}
+          naHint="The Client Extension Form was not read this run"
+          sub={
+            ext
+              ? nextToEnd
+                ? `next to end ${date(nextToEnd)}`
+                : "no cover running today"
+              : undefined
+          }
+          hint="Clients whose latest extension ends today or later. The clock starts at submission."
+        />
+        <StatTile
+          variant="plain"
+          label="Average days to first launch"
+          value={
+            launch && isNum(launch.averageDays)
+              ? decimal(launch.averageDays)
+              : null
+          }
+          naHint="No launched client has both a creation day and a Launch Date yet"
+          sub={
+            launch && launch.clients > 0
+              ? `median ${decimal(launch.medianDays)} · ${plural(launch.clients, "client")}`
+              : undefined
+          }
+          hint="From the day the ClickUp card was created to the card's Launch Date, first launch only."
+        />
+        <StatTile
+          variant="plain"
+          label="Average retainer"
+          value={
+            retainer && isNum(retainer.averageUsd)
+              ? money(retainer.averageUsd)
+              : null
+          }
+          naHint={
+            retainer
+              ? "No active card on a recurring plan carries an MRR figure"
+              : "The client cards' billing fields were not read this run"
+          }
+          sub={
+            retainer
+              ? plural(retainer.cards, "recurring active card")
+              : undefined
+          }
+          hint="The mean of the MRR field over active cards whose Payment Plan is recurring: not paid in full, split pay, one-off or upfront."
+        />
+      </div>
+
+      <div className="mt-6 grid gap-6 border-t border-[color:var(--ceo-grid)] pt-4 @3xl:grid-cols-2">
+        <ListBlock
+          title="Extensions per client"
+          sub={
+            ext
+              ? `${date(ext.from)} to ${date(ext.to)}, plus any cover still running`
+              : "the form was not read this run"
+          }
+        >
+          {ext ? (
+            <ExtensionList rows={ext.perClient} />
+          ) : (
+            <EmptyState icon={CalendarSync} title="Not read this run" compact />
+          )}
+        </ListBlock>
+        <ListBlock
+          title="Time to first launch"
+          sub={
+            launch
+              ? `slowest first · ${plural(launch.notLaunched, "live client")} not launched yet`
+              : "not computed yet"
+          }
+        >
+          {launch ? (
+            <BarList
+              items={launch.rows.map(r => ({
+                key: r.clickupTaskId || r.client,
+                label: r.client,
+                value: r.days,
+                sub: `launched ${date(r.launchDate)}`,
+              }))}
+              format={d => plural(d, "day")}
+              limit={LAUNCH_LIST_MAX}
+              ariaLabel="Days from card creation to launch, per client"
+              emptyText="No launched client has a creation day and a Launch Date yet."
+            />
+          ) : (
+            <EmptyState icon={Rocket} title="Not computed yet" compact />
+          )}
+          {launch && launch.rows.length > LAUNCH_LIST_MAX ? (
+            <p className="mt-3 text-xs text-muted-foreground">
+              {plural(
+                launch.rows.length - LAUNCH_LIST_MAX,
+                "faster launch",
+                "faster launches",
+              )}{" "}
+              not shown; the average and median count them all.
+            </p>
+          ) : null}
+        </ListBlock>
+      </div>
+
+      {ext ? <WriteExtensions field={ext.clickupField} /> : null}
+    </div>
+  );
+}
+
+function ExtensionList({ rows }: { rows: Extensions["perClient"] }) {
+  const [expanded, setExpanded] = useState(false);
+  if (rows.length === 0)
+    return (
+      <EmptyState
+        icon={CalendarSync}
+        title="No extension this month and none running"
+        text="Nothing was granted on the Client Extension Form in the window."
+        compact
+      />
+    );
+  const shown = expanded ? rows : rows.slice(0, EXT_LIST_START);
+  return (
+    <>
+      <ul className="divide-y divide-[color:var(--ceo-grid)]">
+        {shown.map(c => (
+          <li
+            key={c.clickupTaskId ?? c.client}
+            className="flex min-w-0 items-center justify-between gap-3 py-2"
+          >
+            <div className="min-w-0">
+              <ClientName
+                row={{ name: c.client, clickupTaskId: c.clickupTaskId ?? "" }}
+                className="block truncate text-[13px] font-medium"
+              />
+              {!c.clickupTaskId ? (
+                <p className="truncate text-xs text-muted-foreground">
+                  as typed on the form, no card matched
+                </p>
+              ) : null}
+            </div>
+            <div className="flex shrink-0 items-center gap-3 text-xs tabular-nums">
+              <span className="text-foreground">
+                {c.weeks > 0
+                  ? `${plural(c.weeks, "week")} this month`
+                  : "none this month"}
+              </span>
+              <span className="text-muted-foreground">
+                until {date(c.until)}
+              </span>
+              <StatusChip
+                tone={c.live ? "good" : "neutral"}
+                label={c.live ? "Live" : "Ended"}
+                hint={
+                  c.live
+                    ? `Cover runs to ${date(c.until)}`
+                    : `The last extension ended ${date(c.until)}`
+                }
+              />
+            </div>
+          </li>
+        ))}
+      </ul>
+      {rows.length > EXT_LIST_START ? (
+        <ShowMore
+          total={rows.length}
+          expanded={expanded}
+          onToggle={() => setExpanded(e => !e)}
+        />
+      ) : null}
+    </>
+  );
+}
+
+/** One sentence from the write's result: what landed, what did not, and why. */
+function applySentence(r: ApplyResult): string {
+  const parts: string[] = [];
+  if (r.written) parts.push(`${plural(r.written, "card")} set`);
+  if (r.cleared) parts.push(`${plural(r.cleared, "card")} cleared to 0`);
+  if (r.skipped) parts.push(`${plural(r.skipped, "gone card")} left alone`);
+  if (r.errors.length)
+    parts.push(
+      `${plural(r.errors.length, "write")} failed: ${r.errors.slice(0, 3).join("; ")}`,
+    );
+  return `${parts.length ? `${parts.join(", ")}. ` : ""}${r.note}`;
+}
+
+/** The one write on this tab: the current extension onto the ClickUp cards, on request. */
+function WriteExtensions({ field }: { field: Extensions["clickupField"] }) {
+  const apply = useAction(api.ceo.extensions.applyToClickUp);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const run = async () => {
+    setBusy(true);
+    try {
+      const r: ApplyResult = await apply({});
+      setResult(applySentence(r));
+    } catch (e) {
+      setResult(
+        `Nothing was written: ${String(e instanceof Error ? e.message : e).slice(0, 200)}`,
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="mt-6 flex flex-wrap items-start gap-3 border-t border-[color:var(--ceo-grid)] pt-4">
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        onClick={() => void run()}
+        disabled={busy}
+        aria-busy={busy}
+      >
+        <CalendarSync aria-hidden />
+        {busy ? "Writing..." : "Write current extensions to ClickUp"}
+      </Button>
+      <p
+        role="status"
+        className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground"
+      >
+        {result ?? field.note}
+      </p>
+    </div>
+  );
+}
+
 // --- Roster ---
 
 type RosterFilter =
@@ -871,6 +1185,22 @@ function rosterColumns(now: number, today: string): Column<ClientRow>[] {
       hideBelow: "md",
       cell: r => <TermCell row={r} today={today} />,
       sortValue: r => (r.termState ? TERM_RANK[r.termState] : null),
+    },
+    {
+      key: "mrr",
+      header: "MRR",
+      numeric: true,
+      hideBelow: "md",
+      cell: r => (isNum(r.mrrUsd) ? money(r.mrrUsd) : <Na hint={HINT.mrr} />),
+      sortValue: r => r.mrrUsd ?? null,
+    },
+    {
+      key: "ltv",
+      header: "LTV",
+      numeric: true,
+      hideBelow: "md",
+      cell: r => (isNum(r.ltvUsd) ? money(r.ltvUsd) : <Na hint={HINT.ltv} />),
+      sortValue: r => r.ltvUsd ?? null,
     },
     {
       key: "csm",
@@ -2445,11 +2775,10 @@ function PortalRoster({ rows, now }: { rows: ClientRow[]; now: number }) {
 // --- What client success has no source for at all ---
 
 const NO_CLIENT_MONEY =
-  "The client card carries MRR, LTV and Next Payment Amount, but the cockpit's client adapter does not read them. Payments are tied to a client only as renewal evidence, through portal logins and hand entries, which the churn card's notes show is not complete enough to call revenue.";
+  "The roster now shows the MRR and LTV fields from the client card, but they are typed by hand, not cash received. Payments are tied to a client only as renewal evidence, through portal logins and hand entries, which the churn card's notes show is not complete enough to call revenue.";
 
 const NOT_MEASURED: { label: string; why: string }[] = [
-  { label: "Revenue per client", why: NO_CLIENT_MONEY },
-  { label: "Monthly recurring revenue", why: NO_CLIENT_MONEY },
+  { label: "Cash received per client", why: NO_CLIENT_MONEY },
   {
     label: "Money at risk on the clients above",
     why: "It needs revenue per client, which the cockpit does not have, so a risk list can name clients but never a sum.",
@@ -2467,8 +2796,8 @@ const NOT_MEASURED: { label: string; why: string }[] = [
     why: "No field on the client card records a churn reason.",
   },
   {
-    label: "Time in onboarding and days to launch",
-    why: "The client rows carry the Launch Date, but not the day the client signed or the day each stage began, so onboarding cycle time cannot be measured.",
+    label: "Time in each onboarding stage",
+    why: "The card's creation day and Launch Date give time to first launch (the Extensions and launches card), but no stage carries the day it began, so how long a client sat in each onboarding stage cannot be measured.",
   },
   {
     label: "A renewal as its own record",

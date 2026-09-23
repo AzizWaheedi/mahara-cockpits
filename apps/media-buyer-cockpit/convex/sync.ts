@@ -2760,13 +2760,27 @@ export async function replaceGrainForSync(
   },
 ) {
   if (data.campaignCount === 0) return { preserved: true };
-  await ctx.runMutation(internal.sync.clearGrain, { since: data.since });
-  const chunk = 400;
-  for (let i = 0; i < data.daily.length; i += chunk)
-    await ctx.runMutation(internal.sync.storeGrain, {
-      daily: data.daily.slice(i, i + chunk),
-      bookings: [],
+  // Daily rows: one difference per campaign, so a day that has not changed
+  // is not rewritten and nothing reading the table re-runs for nothing.
+  const byCampaign = new Map<string, any[]>();
+  for (const r of data.daily) {
+    const list = byCampaign.get(r.campaignName) ?? [];
+    list.push(r);
+    byCampaign.set(r.campaignName, list);
+  }
+  for (const [campaignName, rows] of byCampaign)
+    await ctx.runMutation(internal.sync.syncDailyCampaign, {
+      campaignName,
+      since: data.since,
+      rows: rows.filter(r => r.date >= data.since),
     });
+  await ctx.runMutation(internal.sync.pruneDaily, {
+    since: data.since,
+    keep: [...byCampaign.keys()],
+  });
+  // Bookings: the window is wiped and written, read as an index range.
+  await ctx.runMutation(internal.sync.clearBookings, { since: data.since });
+  const chunk = 400;
   for (let i = 0; i < data.bookings.length; i += chunk)
     await ctx.runMutation(internal.sync.storeGrain, {
       daily: [],
@@ -2788,12 +2802,169 @@ export const clearGrain = internalMutation({
     const yearAgo = new Date(Date.now() - 365 * 86400_000)
       .toISOString()
       .slice(0, 10);
-    for (const row of await ctx.db.query("dailyStats").collect())
-      if (!since || row.date >= since || row.date < yearAgo)
-        await ctx.db.delete(row._id);
-    for (const row of await ctx.db.query("bookingEvents").collect())
-      if (!since || row.date >= since || row.date < yearAgo)
-        await ctx.db.delete(row._id);
+    // Only the rows being rewritten and the ones past a year, read as index
+    // ranges. This used to read both tables whole on every sync, a hundred
+    // times a day, and Convex flagged it at the per-call read limit on
+    // 161 runs in three days.
+    for (const table of ["dailyStats", "bookingEvents"] as const) {
+      const window = since
+        ? await ctx.db
+            .query(table)
+            .withIndex("by_date", q => q.gte("date", since))
+            .collect()
+        : await ctx.db.query(table).collect();
+      for (const row of window) await ctx.db.delete(row._id);
+      const tail = await ctx.db
+        .query(table)
+        .withIndex("by_date", q => q.lt("date", yearAgo))
+        .collect();
+      for (const row of tail) await ctx.db.delete(row._id);
+    }
+    return null;
+  },
+});
+
+/** The fields a daily row can change on; the key is everything else. */
+const DAILY_VALUES = [
+  "spend",
+  "leads",
+  "impressions",
+  "linkClicks",
+  "frequency",
+] as const;
+// biome-ignore lint/suspicious/noExplicitAny: grain rows
+const dailyKey = (r: any) =>
+  `${r.date}|${r.adName}|${r.metaAdId ?? ""}|${r.adSetName ?? ""}`;
+
+/**
+ * One campaign's last thirty days, written as a difference rather than a
+ * wipe. A day that is over rarely changes, so most rows are left alone, and
+ * every live screen reading the table is not made to re-run by a rewrite of
+ * rows that are identical to what was there. A campaign whose incoming rows
+ * repeat a key (the same ad twice on one day) is rewritten whole instead,
+ * because a difference cannot tell the two apart.
+ */
+export const syncDailyCampaign = internalMutation({
+  args: {
+    campaignName: v.string(),
+    since: v.string(),
+    // biome-ignore lint/suspicious/noExplicitAny: grain rows
+    rows: v.array(v.any()),
+  },
+  returns: v.object({
+    inserted: v.number(),
+    patched: v.number(),
+    deleted: v.number(),
+    same: v.number(),
+  }),
+  handler: async (ctx, { campaignName, since, rows }) => {
+    const existing = await ctx.db
+      .query("dailyStats")
+      .withIndex("by_campaign_date", q =>
+        q.eq("campaignName", campaignName).gte("date", since),
+      )
+      .collect();
+    const keys = rows.map(dailyKey);
+    const repeated = new Set(keys).size !== keys.length;
+    const existingKeys = existing.map(dailyKey);
+    const existingRepeated = new Set(existingKeys).size !== existingKeys.length;
+    if (repeated || existingRepeated) {
+      for (const old of existing) await ctx.db.delete(old._id);
+      for (const r of rows) await ctx.db.insert("dailyStats", r);
+      return {
+        inserted: rows.length,
+        patched: 0,
+        deleted: existing.length,
+        same: 0,
+      };
+    }
+    const byKey = new Map(existing.map(r => [dailyKey(r), r]));
+    const seen = new Set<string>();
+    let inserted = 0;
+    let patched = 0;
+    let same = 0;
+    for (const r of rows) {
+      const k = dailyKey(r);
+      seen.add(k);
+      const old = byKey.get(k);
+      if (!old) {
+        await ctx.db.insert("dailyStats", r);
+        inserted += 1;
+        continue;
+      }
+      // biome-ignore lint/suspicious/noExplicitAny: grain rows
+      const was = old as any;
+      const changed = DAILY_VALUES.some(
+        f => (was[f] ?? null) !== (r[f] ?? null),
+      );
+      if (changed) {
+        const patch: Record<string, unknown> = {};
+        for (const f of DAILY_VALUES) patch[f] = r[f];
+        await ctx.db.patch(old._id, patch);
+        patched += 1;
+      } else same += 1;
+    }
+    let deleted = 0;
+    for (const old of existing)
+      if (!seen.has(dailyKey(old))) {
+        await ctx.db.delete(old._id);
+        deleted += 1;
+      }
+    return { inserted, patched, deleted, same };
+  },
+});
+
+/**
+ * The rows the per-campaign pass cannot see: a campaign that is in the
+ * window on the table but no longer in what Meta returned, and anything
+ * older than a year.
+ */
+export const pruneDaily = internalMutation({
+  args: { since: v.string(), keep: v.array(v.string()) },
+  returns: v.number(),
+  handler: async (ctx, { since, keep }) => {
+    const yearAgo = new Date(Date.now() - 365 * 86400_000)
+      .toISOString()
+      .slice(0, 10);
+    const kept = new Set(keep);
+    let deleted = 0;
+    for (const r of await ctx.db
+      .query("dailyStats")
+      .withIndex("by_date", q => q.gte("date", since))
+      .collect())
+      if (!kept.has(r.campaignName)) {
+        await ctx.db.delete(r._id);
+        deleted += 1;
+      }
+    for (const r of await ctx.db
+      .query("dailyStats")
+      .withIndex("by_date", q => q.lt("date", yearAgo))
+      .collect()) {
+      await ctx.db.delete(r._id);
+      deleted += 1;
+    }
+    return deleted;
+  },
+});
+
+/** Bookings keep the old wipe of the window: every row carries syncedAt, so every row differs. */
+export const clearBookings = internalMutation({
+  args: { since: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { since }) => {
+    const yearAgo = new Date(Date.now() - 365 * 86400_000)
+      .toISOString()
+      .slice(0, 10);
+    for (const r of await ctx.db
+      .query("bookingEvents")
+      .withIndex("by_date", q => q.gte("date", since))
+      .collect())
+      await ctx.db.delete(r._id);
+    for (const r of await ctx.db
+      .query("bookingEvents")
+      .withIndex("by_date", q => q.lt("date", yearAgo))
+      .collect())
+      await ctx.db.delete(r._id);
     return null;
   },
 });

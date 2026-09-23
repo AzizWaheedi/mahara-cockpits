@@ -22,7 +22,7 @@ function HeaderView({
     location.pathname === "/login" || location.pathname === "/signup";
 
   return (
-    <header className="sticky top-0 z-50 border-b bg-background/80 backdrop-blur-md">
+    <header className="sticky top-0 z-50 border-b bg-background/80 backdrop-blur-md pt-safe">
       <div className="container">
         <div className="flex h-16 items-center justify-between">
           <Link

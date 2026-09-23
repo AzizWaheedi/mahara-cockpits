@@ -52,5 +52,9 @@ export function range(from: string, to: string): string {
   if (from === to) return date(from);
   if (from.slice(0, 7) === to.slice(0, 7))
     return `${Number(from.slice(8, 10))} to ${shortDate(to)}`;
+  // A window that crosses a new year reads as "23 Sep to 22 Sep" without the
+  // years, which is either three days or a year and nobody can tell which.
+  if (from.slice(0, 4) !== to.slice(0, 4))
+    return `${shortDate(from)} ${from.slice(0, 4)} to ${shortDate(to)} ${to.slice(0, 4)}`;
   return `${shortDate(from)} to ${shortDate(to)}`;
 }

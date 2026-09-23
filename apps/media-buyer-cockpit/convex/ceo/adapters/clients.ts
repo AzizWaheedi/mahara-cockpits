@@ -1,7 +1,22 @@
 import { internal } from "../../_generated/api";
 import { CPB_GATE, CPL_GATE } from "../../constants";
+import type { BillingRow } from "../billing";
 import { BUCKET_CHURNED, BUCKET_METRIC, LAUNCH_METRIC } from "../data/clients";
 import { tapKeyState } from "../data/tap";
+import {
+  averageRetainer,
+  type Card,
+  createdDayOf,
+  daysToLaunchOf,
+  EXT_PAGE,
+  EXTENSION_FIELD_NAME,
+  type ExtensionsWithLastMonth,
+  FIELD_ASK,
+  findExtensionField,
+  readExtensionForm,
+  summariseExtensions,
+  summariseLaunch,
+} from "../extensions";
 import { CEO_EMAILS } from "../gate";
 import { nameKey } from "../manualMatch";
 import type {
@@ -999,6 +1014,15 @@ export const clients: Adapter = {
       ties => ({ ok: true, ties }),
       e => ({ ok: false, error: errText(e) }),
     );
+    // The Client Extension Form and the cards' billing fields run beside it,
+    // for the same reason (Aziz's spec of 2026-09-21, points 12 to 15).
+    const extRead = readExtensionForm(ctx);
+    const billingRead: Promise<
+      { ok: true; rows: BillingRow[] } | { ok: false; error: string }
+    > = ctx.runQuery(internal.ceo.billing.allBilling, {}).then(
+      (rows: BillingRow[]) => ({ ok: true as const, rows }),
+      (e: unknown) => ({ ok: false as const, error: errText(e) }),
+    );
 
     const data: Any = await ctx.runQuery(internal.ceo.data.clients.load, {});
     const roster: Any[] = data?.clients ?? [];
@@ -1147,6 +1171,12 @@ export const clients: Adapter = {
 
     const latest: Record<string, { at: number; summary: string }> =
       data.latestUpdate ?? {};
+    // The MRR, LTV and Payment Plan fields per card, when the billing table
+    // could be read; a card that is not in it carries null, not zero.
+    const billing = await billingRead;
+    const billingByTask = new Map<string, BillingRow>(
+      billing.ok ? billing.rows.map(r => [r.taskId, r]) : [],
+    );
     const rows: ClientRow[] = roster.map(c => {
       const bucket = bucketOf(c.bucket, String(c.stage ?? ""));
       const p = perf.get(c.taskId);
@@ -1163,6 +1193,13 @@ export const clients: Adapter = {
         c.paymentDue === null || extended ? null : num(c.paymentDue);
       const contacts = [dayStart(c.lastPoc), dayStart(c.lastCall)].filter(
         (x): x is number => x !== null,
+      );
+      const bill = billingByTask.get(c.taskId);
+      // The card's creation day, anchored on the day the sync counted from.
+      const syncedAt = num(c.syncedAt);
+      const createdDay = createdDayOf(
+        c.signupDays,
+        syncedAt > 0 ? kuwaitDay(syncedAt) : today,
       );
       return {
         name: c.name,
@@ -1196,6 +1233,18 @@ export const clients: Adapter = {
           now,
         ),
         latestUpdate: latest[c.taskId]?.summary ?? null,
+        ...(billing.ok
+          ? {
+              ltvUsd: typeof bill?.ltvUsd === "number" ? bill.ltvUsd : null,
+              mrrUsd: typeof bill?.mrrUsd === "number" ? bill.mrrUsd : null,
+              paymentPlan: bill?.paymentPlan ?? null,
+            }
+          : {}),
+        createdDay,
+        daysToLaunch: daysToLaunchOf(createdDay, c.launchDate, today),
+        // The sync's own reading of the form; replaced below when the form
+        // is read here.
+        extendedUntil: extended ? String(c.extendedUntil) : null,
       };
     });
 
@@ -1462,11 +1511,153 @@ export const clients: Adapter = {
       sources.push({ name: "Hand-logged payments (Convex)", ok: true });
     }
 
+    // --- Extensions, time to first launch, average retainer (Aziz, 2026-09-21).
+    const ext = await extRead;
+    const cards: Card[] = roster.map(c => ({ taskId: c.taskId, name: c.name }));
+    let extensions: ExtensionsWithLastMonth | undefined;
+    if (ext.ok) {
+      const s = summariseExtensions(ext.grants, cards, today);
+      const fieldId = await findExtensionField();
+      // The field is kept current by the cockpit itself once it exists (Aziz, 2026-09-21).
+      if (fieldId)
+        await ctx.scheduler.runAfter(0, internal.ceo.extensions.applyAuto, {});
+      extensions = {
+        from: s.from,
+        to: s.to,
+        totalWeeks: s.totalWeeks,
+        grants: s.grants,
+        perClient: s.perClient,
+        read: true,
+        // The write is started from the button on the tab, never here.
+        clickupField: {
+          written: 0,
+          note: fieldId
+            ? `The current extension is written to the '${EXTENSION_FIELD_NAME}' field by hand, from the button on this card, never automatically.`
+            : FIELD_ASK,
+        },
+        lastMonth: s.lastMonth,
+      };
+      const perTask = new Map(
+        s.perClient
+          .filter(p => p.clickupTaskId)
+          .map(p => [p.clickupTaskId as string, p]),
+      );
+      for (const r of rows) {
+        const p = perTask.get(r.clickupTaskId);
+        if (p && p.weeks > 0) r.extensionWeeks = p.weeks;
+        r.extendedUntil = p?.live ? p.until : null;
+      }
+      sources.push({
+        name: "Client Extension Form (Typeform)",
+        freshestAt: s.newestAt ?? undefined,
+        ok: true,
+      });
+      const liveCount = s.perClient.filter(p => p.live).length;
+      notes.push({
+        level: "info",
+        text: `Extensions are the Client Extension Form's responses, read from Typeform (${plural(ext.responses, "response")} on the form, the newest ${EXT_PAGE} at most): 1, 2 or 4 weeks each, dated by the day the form was submitted, so the clock starts at submission and a late form cannot backdate cover. Month to date (${shortDay(s.from)} to ${shortDay(s.to)}): ${plural(s.totalWeeks, "week")} over ${plural(s.grants, "grant")}, ${plural(liveCount, "client")} covered today; last month ${plural(s.lastMonth.totalWeeks, "week")} over ${plural(s.lastMonth.grants, "grant")}. The typed client is matched to a card by name${
+          s.unmatched
+            ? `: ${plural(s.unmatched, "response")} of ${ext.responses} matched no card and ${s.unmatched === 1 ? "is" : "are"} listed under the typed name`
+            : ""
+        }.${
+          s.internalTest
+            ? ` ${plural(s.internalTest, "test submission")} (an internal test card) ${s.internalTest === 1 ? "is" : "are"} left out.`
+            : ""
+        }`,
+      });
+      notes.push({
+        level: fieldId ? "info" : "warn",
+        text: fieldId
+          ? `The current extension reaches the ClickUp card only when the button on this card is pressed: it writes the live extension's weeks, or 0 once it has ended, to the '${EXTENSION_FIELD_NAME}' field on every card the form has named.`
+          : `The current extension is not on the ClickUp cards yet. ClickUp's API cannot create a field, so: ${FIELD_ASK}. The button on this card then writes the live extension's weeks, or 0 once it has ended.`,
+      });
+    } else {
+      sources.push({
+        name: "Client Extension Form (Typeform)",
+        ok: false,
+        note: ext.error,
+      });
+      notes.push({
+        level: "warn",
+        text: `The Client Extension Form could not be read this run (${ext.error}), so extension weeks are missing, not zero, and a live extension is known only from the last CSM sync.`,
+      });
+    }
+
+    const launchSummary = summariseLaunch(
+      rows.map(r => ({
+        client: r.name,
+        clickupTaskId: r.clickupTaskId,
+        bucket: r.bucket,
+        internal: INTERNAL_CARD.test(r.name),
+        createdDay: r.createdDay ?? null,
+        launchDate: r.launchDate ?? null,
+      })),
+      today,
+    );
+    const launch: NonNullable<ClientsPayload["launch"]> = {
+      averageDays: launchSummary.averageDays,
+      medianDays: launchSummary.medianDays,
+      clients: launchSummary.clients,
+      rows: launchSummary.rows,
+      notLaunched: launchSummary.notLaunched,
+    };
+    const after = launchSummary.createdAfterLaunch;
+    notes.push({
+      level: "info",
+      text: `Time to first launch runs from the day the ClickUp card was created (derived from the sync's days since creation, so within a day of it) to the card's Launch Date, first launch only: a relaunch after a pause keeps the original date. ${
+        launchSummary.clients
+          ? `Over ${plural(launchSummary.clients, "launched client")} the average is ${launchSummary.averageDays} days and the median ${launchSummary.medianDays}.`
+          : "No launched client has both a creation day and a Launch Date yet."
+      } ${plural(launchSummary.notLaunched, "live client")} ${launchSummary.notLaunched === 1 ? "has" : "have"} not launched yet, a Launch Date still ahead included.${
+        after.length
+          ? ` ${nameList(after)} ${after.length === 1 ? "was created after its" : "were created after their"} Launch Date and ${after.length === 1 ? "is" : "are"} left out.`
+          : ""
+      }${
+        launchSummary.noCreatedDay
+          ? ` ${plural(launchSummary.noCreatedDay, "launched card")} ${launchSummary.noCreatedDay === 1 ? "has" : "have"} no creation day stored and ${launchSummary.noCreatedDay === 1 ? "is" : "are"} left out.`
+          : ""
+      }`,
+    });
+
+    let retainer: ClientsPayload["retainer"];
+    if (billing.ok) {
+      retainer = averageRetainer(billing.rows);
+      sources.push({
+        name: "Client card billing fields (CSM sync)",
+        freshestAt: billing.rows.length
+          ? Math.max(...billing.rows.map(r => num(r.syncedAt)))
+          : undefined,
+        ok: billing.rows.length > 0,
+        note: billing.rows.length ? undefined : "no billing rows stored yet",
+      });
+      notes.push({
+        level: "info",
+        text: `Average retainer is the mean of the MRR field over active cards on a recurring plan (a Payment Plan that is not paid in full, split pay, one-off or upfront)${
+          retainer.cards
+            ? `: ${plural(retainer.cards, "card")}`
+            : ": no card qualifies today"
+        }. A card with a blank plan or a blank MRR is left out, so it is a figure over the cards that carry both, typed by hand. MRR and LTV on the roster are the same card fields.`,
+      });
+    } else {
+      sources.push({
+        name: "Client card billing fields (CSM sync)",
+        ok: false,
+        note: billing.error,
+      });
+      notes.push({
+        level: "warn",
+        text: `The client cards' billing fields could not be read this run (${billing.error}), so the average retainer, MRR and LTV per client are missing, not zero.`,
+      });
+    }
+
     const payload = {
       counts: { ...counts, total: rows.length },
       atRisk,
       rows,
       churn,
+      extensions,
+      launch,
+      retainer,
       notes,
     } satisfies ClientsPayload;
 
@@ -1507,6 +1698,18 @@ export const clients: Adapter = {
           daily.push(point("clients.churn.rateMtd", churn.rate));
       }
     }
+    if (extensions)
+      daily.push(
+        point("clients.extensions.weeksMtd", extensions.totalWeeks),
+        point(
+          "clients.extensions.live",
+          extensions.perClient.filter(p => p.live).length,
+        ),
+      );
+    if (launch.averageDays !== null)
+      daily.push(point("clients.launch.averageDays", launch.averageDays));
+    if (retainer && retainer.averageUsd !== null)
+      daily.push(point("clients.retainer.averageUsd", retainer.averageUsd));
     // Each card's stage and Launch Date, so a stop can be dated later
     // (ClickUp keeps no history) and a card that leaves the list is still known.
     for (const r of rows) {

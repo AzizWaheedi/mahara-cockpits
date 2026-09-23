@@ -1,5 +1,6 @@
 import { useConvexAuth } from "convex/react";
-import { Navigate, Outlet } from "react-router";
+import { Navigate, Outlet, useLocation } from "react-router";
+import { BackendWait } from "./BackendWait";
 import {
   Sidebar,
   SidebarContent,
@@ -65,13 +66,22 @@ function AppSkeleton() {
 
 export function ProtectedRoute() {
   const { isAuthenticated, isLoading } = useConvexAuth();
+  const location = useLocation();
 
   if (isLoading) {
-    return <AppSkeleton />;
+    return (
+      <BackendWait>
+        <AppSkeleton />
+      </BackendWait>
+    );
   }
 
   if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
+    // Carry the page asked for, so a hand-off to another cockpit (/go/...)
+    // or a deep link resumes right after the one sign-in (Aziz, 2026-09-21).
+    const wanted = `${location.pathname}${location.search}`;
+    const next = wanted === "/" ? "" : `?next=${encodeURIComponent(wanted)}`;
+    return <Navigate to={`/login${next}`} replace />;
   }
 
   return <Outlet />;

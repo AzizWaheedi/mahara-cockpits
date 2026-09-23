@@ -30,6 +30,7 @@ import {
   STALE_AFTER_MS,
 } from "@/components/ceo/useCeo";
 import type { MachinePayload } from "../../../convex/ceo/payloads";
+import { FeedbackQueueCard } from "./feedbackQueue";
 import {
   feedState,
   jobState,
@@ -64,6 +65,7 @@ const SOURCE_LABELS: Record<string, string> = {
 // The name each section is known by on screen, matching the tab it feeds. Used
 // only when a section has never computed and so carries no label of its own.
 const SECTION_NAMES: Record<SectionKey, string> = {
+  hiring: "Recruiting",
   money: "Money",
   expenses: "Expenses and P&L",
   growth: "Marketing and sales",
@@ -129,7 +131,9 @@ export function MachineTab({ sections, now }: CeoTabProps) {
   const info = payload?.notes.filter(n => n.level !== "warn") ?? [];
 
   return (
-    <div className="grid gap-4 lg:gap-6">
+    <div className="grid gap-5 lg:gap-7">
+      <FeedbackQueueCard order={0} now={now} />
+
       <SectionCard
         kicker="Right now"
         title="Machine status"

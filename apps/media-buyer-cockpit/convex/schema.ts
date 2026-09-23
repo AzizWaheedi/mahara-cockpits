@@ -150,7 +150,14 @@ const schema = defineSchema({
     impressions: v.number(),
     linkClicks: v.number(),
     frequency: v.optional(v.number()),
-  }).index("by_campaign_date", ["campaignName", "date"]),
+  })
+    .index("by_campaign_date", ["campaignName", "date"])
+    // Every reader that wants a window of days ("the last 30", "the first
+    // day on record") used to scan the whole table to find it, and the sync
+    // rewrote the table every ten minutes, so each open screen re-read a
+    // year of ad history six times an hour (2026-09-23: the deployment was
+    // disabled for exceeding its plan). A window is now an index range.
+    .index("by_date", ["date"]),
 
   /**
    * One row per booked appointment, with the Meta ad that bought it.
@@ -169,7 +176,9 @@ const schema = defineSchema({
     status: v.string(), // confirmed | showed | noshow | ...
     adId: v.optional(v.string()),
     syncedAt: v.number(),
-  }).index("by_campaign_date", ["campaignName", "date"]),
+  })
+    .index("by_campaign_date", ["campaignName", "date"])
+    .index("by_date", ["date"]),
 
   /** One row per ad, last 7 days, for the expanded view. */
   ads: defineTable({
@@ -1269,6 +1278,38 @@ const schema = defineSchema({
     .index("by_metric_scope_date", ["metric", "scope", "date"])
     .index("by_date", ["date"]),
   /**
+   * CEO cockpit: Meta reach and frequency for Mahara's own ad account over a
+   * chosen window, one figure for lead-gen campaigns and one for retargeting
+   * (convex/ceo/frequency.ts). One row per window, refreshed after three
+   * hours. Read by the Marketing tab as the chart timeframe changes.
+   */
+  ceoFrequency: defineTable({
+    from: v.string(),
+    to: v.string(),
+    computedAt: v.number(),
+    leadGen: v.union(
+      v.object({
+        campaigns: v.number(),
+        impressions: v.number(),
+        reach: v.number(),
+        frequency: v.union(v.number(), v.null()),
+        spend: v.number(),
+      }),
+      v.null(),
+    ),
+    retargeting: v.union(
+      v.object({
+        campaigns: v.number(),
+        impressions: v.number(),
+        reach: v.number(),
+        frequency: v.union(v.number(), v.null()),
+        spend: v.number(),
+      }),
+      v.null(),
+    ),
+    note: v.union(v.string(), v.null()),
+  }).index("by_range", ["from", "to"]),
+  /**
    * CEO cockpit writes (2026-09-16). Only Aziz writes these, only through a
    * mutation that goes through convex/ceo/writeGuard.ts (the CEO gate plus an
    * audit row in the same transaction). Nothing here is ever sent to
@@ -1325,6 +1366,12 @@ const schema = defineSchema({
       v.literal("tap"),
       v.literal("other"),
     ),
+    /**
+     * "refund" when the entry is money given back rather than received
+     * (Aziz, 2026-09-21: refunds = Whop refunds + refunds logged by hand).
+     * Absent means a payment.
+     */
+    kind: v.optional(v.union(v.literal("payment"), v.literal("refund"))),
     /** Contract value of a new deal signed with this payment, as typed, in `currency`. */
     dealContracted: v.optional(v.number()),
     /** `dealContracted` in USD at the same rate as `amountUsd`. Adds to contracted, never to cash. */

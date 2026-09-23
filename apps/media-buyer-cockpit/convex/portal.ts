@@ -39,6 +39,11 @@ type Any = any;
 
 const AUDIENCE = "mahara-portal";
 const TOKEN_TTL_S = 120;
+/**
+ * What an admin may hand out. "ceo" is deliberately absent and must stay
+ * absent: the CEO cockpit is Aziz's own and is decided by the address on the
+ * account, never by a row here (Aziz, 2026-09-22).
+ */
 const ROLES = ["admin", ...COCKPITS];
 
 const norm = (e: string) => e.trim().toLowerCase();

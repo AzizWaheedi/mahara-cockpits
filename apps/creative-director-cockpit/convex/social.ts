@@ -134,6 +134,41 @@ function clip(x: unknown, max = TEXT_MAX): string | null {
   return s ? s.slice(0, max) : null;
 }
 
+/**
+ * One row in the shared audit log for every change made from this screen.
+ *
+ * The change has already landed when this runs, so failing to write the
+ * row is logged rather than thrown: telling somebody their caption did
+ * not save when it did is worse than a gap that Convex's logs still show.
+ */
+async function audit(
+  email: string,
+  action: string,
+  entityType: "social_post" | "social_client" | "social_asset" | "social_batch",
+  entityId: string,
+  after: Row | null = null,
+): Promise<void> {
+  try {
+    await rest("cockpit_audit_log", {
+      method: "POST",
+      prefer: "return=minimal",
+      body: [
+        {
+          action,
+          entity_type: entityType,
+          entity_id: entityId,
+          actor_email: email || null,
+          source_app: "creative-social",
+          source_system: "convex",
+          after,
+        },
+      ],
+    });
+  } catch (e) {
+    console.error(`audit ${action} ${entityId} was not written: ${e}`);
+  }
+}
+
 /** A short unique suffix, the shape the rest of the codebase writes. */
 function rid(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}${Math.floor(Math.random() * 1e9).toString(36)}`;
@@ -262,6 +297,8 @@ export const roster = authenticatedAction({
         batchDay: s?.batch_day ?? null,
         dialect: s?.dialect ?? null,
         ghlLocationId: s?.ghl_location_id ?? null,
+        platforms: s?.platforms ?? ["instagram", "facebook"],
+        autoApprove: Boolean(s?.auto_approve),
         // Onboarding is done when all four are set; the screen shows what
         // is missing rather than a single misleading tick.
         onboarding: {
@@ -336,23 +373,21 @@ export const batch = authenticatedAction({
     const posts: Row[] = rows(
       await rest(`social_posts?select=*&batch_id=eq.${enc(id)}&order=n.asc`),
     );
-    return { month, batch: found[0] ?? null, posts };
-  },
-});
-
-/** The Content Bank: what this client's audience actually asks, and every
- *  correction anybody has made. */
-export const bank = authenticatedAction({
-  args: { clientTaskId: v.string() },
-  returns: v.any(),
-  handler: async (ctx, { clientTaskId }) => {
-    await who(ctx);
-    return rows(
+    // Work in flight on this month. A job left running by a worker that
+    // died is not in flight: past twenty minutes it is dropped here, or
+    // the screen would say "drawing" forever and keep polling.
+    const stale = Date.now() - 20 * 60_000;
+    const jobs = rows(
       await rest(
-        `social_bank?select=*&client_task_id=eq.${enc(clientTaskId)}` +
-          "&order=active.desc,at.desc&limit=500",
+        `social_jobs?select=id,kind,post_id,params,status,updated_at&batch_id=eq.${enc(id)}` +
+          "&status=in.(queued,running)&order=created_at.asc&limit=200",
       ),
+    ).filter(
+      j =>
+        j.status === "queued" ||
+        new Date(String(j.updated_at)).getTime() > stale,
     );
+    return { month, batch: found[0] ?? null, posts, jobs };
   },
 });
 
@@ -364,7 +399,7 @@ export const setActive = authenticatedAction({
   args: { clientTaskId: v.string(), active: v.boolean() },
   returns: v.any(),
   handler: async (ctx, { clientTaskId, active }) => {
-    await who(ctx);
+    const { email } = await who(ctx);
     await rest("social_clients?on_conflict=client_task_id", {
       method: "POST",
       prefer: "resolution=merge-duplicates,return=minimal",
@@ -376,6 +411,9 @@ export const setActive = authenticatedAction({
           updated_at: now(),
         },
       ],
+    });
+    await audit(email, "social.client.active", "social_client", clientTaskId, {
+      active,
     });
     return { active };
   },
@@ -391,11 +429,20 @@ export const configure = authenticatedAction({
     batchDay: v.optional(v.number()),
     ghlLocationId: v.optional(v.string()),
     note: v.optional(v.string()),
+    platforms: v.optional(v.array(v.string())),
+    autoApprove: v.optional(v.boolean()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
-    await who(ctx);
+    const { email } = await who(ctx);
     const body: Row = { client_task_id: args.clientTaskId, updated_at: now() };
+    if (args.platforms) {
+      const kept = cleanPlatforms(args.platforms);
+      if (!kept.length)
+        throw new Error("A client posts to at least one platform.");
+      body.platforms = kept;
+    }
+    if (args.autoApprove !== undefined) body.auto_approve = args.autoApprove;
     if (args.pillars) {
       const kept = cleanPillars(args.pillars);
       if (!kept.length)
@@ -418,6 +465,13 @@ export const configure = authenticatedAction({
       prefer: "resolution=merge-duplicates,return=minimal",
       body: [body],
     });
+    await audit(
+      email,
+      "social.client.configure",
+      "social_client",
+      args.clientTaskId,
+      body,
+    );
     return { ok: true };
   },
 });
@@ -452,66 +506,6 @@ export const onboardingStep = authenticatedAction({
       ],
     });
     return { ok: true };
-  },
-});
-
-/** Add something the audience actually asked, or a correction somebody made. */
-export const bankAdd = authenticatedAction({
-  args: {
-    clientTaskId: v.string(),
-    text: v.string(),
-    kind: v.optional(v.string()),
-    pillar: v.optional(v.string()),
-    source: v.optional(v.string()),
-  },
-  returns: v.any(),
-  handler: async (ctx, args) => {
-    const { email } = await who(ctx);
-    const text = clip(args.text);
-    if (!text) throw new Error("Type the question, objection or correction.");
-    const kind = ["question", "objection", "correction"].includes(
-      args.kind ?? "",
-    )
-      ? args.kind
-      : "question";
-    const id = rid("bank");
-    await rest("social_bank", {
-      method: "POST",
-      prefer: "return=minimal",
-      body: [
-        {
-          id,
-          client_task_id: args.clientTaskId,
-          kind,
-          text,
-          pillar: args.pillar ?? null,
-          source: args.source ?? "cockpit",
-          added_by: email,
-          at: now(),
-        },
-      ],
-    });
-    return { id };
-  },
-});
-
-/**
- * Retire an item rather than delete it.
- *
- * A correction that stops applying is still a record of what somebody
- * asked for once, and the bank is meant to be the memory of this client.
- */
-export const bankRetire = authenticatedAction({
-  args: { id: v.string(), active: v.optional(v.boolean()) },
-  returns: v.null(),
-  handler: async (ctx, { id, active }) => {
-    await who(ctx);
-    await rest(`social_bank?id=eq.${enc(id)}`, {
-      method: "PATCH",
-      prefer: "return=minimal",
-      body: { active: active ?? false },
-    });
-    return null;
   },
 });
 
@@ -1324,7 +1318,7 @@ export const schedulePost = authenticatedAction({
   args: { postId: v.string(), when: v.string() },
   returns: v.any(),
   handler: async (ctx, { postId, when }) => {
-    await who(ctx);
+    const { email } = await who(ctx);
     const at = new Date(when);
     if (Number.isNaN(at.getTime())) throw new Error("That is not a date.");
     if (at.getTime() < Date.now() - 60_000)
@@ -1352,6 +1346,10 @@ export const schedulePost = authenticatedAction({
       method: "PATCH",
       prefer: "return=minimal",
       body: { scheduled_at: at.toISOString(), updated_at: now() },
+    });
+    await audit(email, "social.post.schedule", "social_post", postId, {
+      scheduled_at: at.toISOString(),
+      pushed_to_ghl: pushed,
     });
     return { at: at.toISOString(), pushedToGhl: pushed };
   },
@@ -1419,11 +1417,22 @@ export const addPost = authenticatedAction({
     when: v.optional(v.string()),
     /** Queue the pictures straight away, so one gesture is enough. */
     generate: v.optional(v.boolean()),
+    /** Our own images and videos, already uploaded, in order. */
+    media: v.optional(v.any()),
+    /** Example pictures for the AI to take its look from. */
+    refs: v.optional(v.array(v.string())),
+    /** 1:1, 4:5, 3:4 or 1.91:1; 4:5 when not given. */
+    aspect: v.optional(v.string()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
     const { email } = await who(ctx);
     const topic = args.topic.trim();
+    const media = args.media ? cleanMedia(args.media) : [];
+    const aspect = cleanAspect(args.aspect ?? "4:5");
+    const refs = (args.refs ?? [])
+      .filter(r => /^https:\/\//i.test(r))
+      .slice(0, 6);
     if (!topic) throw new Error("Give the post a topic, even a rough one.");
 
     const month = args.month || thisMonth();
@@ -1473,7 +1482,13 @@ export const addPost = authenticatedAction({
             String(args.pillar).trim().toLowerCase().slice(0, 24) ||
             "portfolio",
           topic: clip(topic, 300),
-          slides: Math.max(1, Math.min(10, Math.floor(args.slides ?? 1))),
+          slides: media.length
+            ? media.length
+            : Math.max(1, Math.min(10, Math.floor(args.slides ?? 1))),
+          media,
+          images: media.filter(i => i.kind === "image").map(i => i.url),
+          refs,
+          aspect,
           status: "approved",
           scheduled_at: at,
           updated_at: now(),
@@ -1481,57 +1496,106 @@ export const addPost = authenticatedAction({
       ],
     });
     const id = `${batchId}:${n}`;
-    if (args.generate) {
-      await rest("social_jobs?on_conflict=id", {
-        method: "POST",
-        prefer: "resolution=merge-duplicates,return=minimal",
-        body: [
-          {
-            id: `gen:${id}`,
-            kind: "generate",
-            client_task_id: args.clientTaskId,
-            batch_id: batchId,
-            post_id: id,
-            status: "queued",
-            attempts: 0,
-            error: null,
-            result: null,
-            requested_by: email,
-            updated_at: now(),
-          },
-        ],
-      });
-    }
-    return { id, n, generating: Boolean(args.generate) };
+    // The caption always, pictures only when asked and when there is
+    // nothing of ours already on the post. Adding a post by hand used to
+    // queue only the picture, so the caption the screen promised in a
+    // few seconds never came.
+    const drawing = Boolean(args.generate) && media.length === 0;
+    // A lone video is a Reel, and a Reel is seen on the grid by its cover,
+    // so that one is made without being asked. A video inside a carousel
+    // shows its own first frame; its cover is a button, not a charge.
+    const reel = media.length === 1 && media[0].kind === "video";
+    const jobs: { id: string; kind: string; params: Row }[] = [
+      { id: `caption:${id}`, kind: "caption", params: {} },
+      ...(drawing
+        ? [{ id: `generate:${id}`, kind: "generate", params: {} }]
+        : []),
+      ...(reel
+        ? [{ id: `cover:${id}:0`, kind: "cover", params: { index: 0 } }]
+        : []),
+    ];
+    await rest("social_jobs?on_conflict=id", {
+      method: "POST",
+      prefer: "resolution=merge-duplicates,return=minimal",
+      body: jobs.map(j => ({
+        id: j.id,
+        kind: j.kind,
+        client_task_id: args.clientTaskId,
+        batch_id: batchId,
+        post_id: id,
+        params: j.params,
+        status: "queued",
+        attempts: 0,
+        error: null,
+        result: null,
+        requested_by: email,
+        updated_at: now(),
+      })),
+    });
+    await audit(email, "social.post.add", "social_post", id, {
+      topic: clip(topic, 300),
+      pillar: args.pillar,
+      when: at,
+      items: media.length,
+      references: refs.length,
+      aspect,
+      queued: jobs.map(j => j.kind),
+    });
+    return { id, n, generating: drawing, cover: reel };
   },
 });
 
 /**
- * Make the pictures for one post, or make them again.
+ * Make the AI pictures for one post, or make them again.
  *
  * Generation used to be all-or-nothing for a month. One weak image
- * should not mean re-running the other eleven, and a post added by hand
- * needs a way to get pictures at all.
+ * should not mean re-running the other eleven -- nor, inside a carousel,
+ * the other three slides: `index` draws only the picture at that place,
+ * and `add` draws one more on the end. Uploaded items are never redrawn.
  */
 export const generatePost = authenticatedAction({
-  args: { postId: v.string() },
+  args: {
+    postId: v.string(),
+    index: v.optional(v.number()),
+    add: v.optional(v.boolean()),
+  },
   returns: v.any(),
-  handler: async (ctx, { postId }) => {
+  handler: async (ctx, { postId, index, add }) => {
     const { email } = await who(ctx);
     const p = rows(
       await rest(`social_posts?select=*&id=eq.${enc(postId)}&limit=1`),
     )[0];
     if (!p) throw new Error("That post is gone.");
+    const media = Array.isArray(p.media) ? (p.media as Row[]) : [];
+    if (add && media.length >= 10)
+      throw new Error("Instagram takes at most ten items in a carousel.");
+    if (index !== undefined && media[index]?.source !== "ai")
+      throw new Error("Only a picture the AI drew can be drawn again.");
+    // One job per thing asked for, so asking for slide two and then slide
+    // three does not overwrite the first request with the second.
+    const id =
+      index !== undefined
+        ? `generate:${postId}:${Math.floor(index)}`
+        : add
+          ? `generate:${postId}:add:${Date.now().toString(36)}`
+          : `generate:${postId}`;
+    const params: Row =
+      index !== undefined
+        ? { index: Math.floor(index) }
+        : add
+          ? { add: true }
+          : {};
     await rest("social_jobs?on_conflict=id", {
       method: "POST",
       prefer: "resolution=merge-duplicates,return=minimal",
       body: [
         {
-          id: `gen:${postId}`,
+          id,
           kind: "generate",
           client_task_id: p.client_task_id,
           batch_id: p.batch_id,
           post_id: postId,
+          params,
           status: "queued",
           attempts: 0,
           error: null,
@@ -1541,6 +1605,7 @@ export const generatePost = authenticatedAction({
         },
       ],
     });
+    await audit(email, "social.post.draw", "social_post", postId, params);
     return { queued: true };
   },
 });
@@ -1550,10 +1615,10 @@ export const removePost = authenticatedAction({
   args: { postId: v.string() },
   returns: v.any(),
   handler: async (ctx, { postId }) => {
-    await who(ctx);
+    const { email } = await who(ctx);
     const p = rows(
       await rest(
-        `social_posts?select=ghl_post_id,status&id=eq.${enc(postId)}&limit=1`,
+        `social_posts?select=ghl_post_id,status,topic,scheduled_at&id=eq.${enc(postId)}&limit=1`,
       ),
     )[0];
     if (!p) throw new Error("That post is gone.");
@@ -1566,6 +1631,502 @@ export const removePost = authenticatedAction({
       method: "DELETE",
       prefer: "return=minimal",
     });
+    await audit(email, "social.post.remove", "social_post", postId, {
+      removed: { topic: p.topic, scheduled_at: p.scheduled_at },
+    });
     return { removed: true };
+  },
+});
+
+/**
+ * Fill the month: a finished draft on every empty day it needs.
+ *
+ * This replaces the mix, the written plan and the plan approval -- the
+ * part Aziz said he did not understand, which is a fair verdict on four
+ * steps that each asked a question before anything appeared. Now the
+ * calendar is the plan. It counts how many posts the client's package
+ * wants this month, finds the empty days still to come, spreads the
+ * missing posts across them, rotates the client's own pillars so the
+ * month is not six of the same, and hands Salma one job.
+ */
+export const fillMonth = authenticatedAction({
+  args: { clientTaskId: v.string(), month: v.string() },
+  returns: v.any(),
+  handler: async (ctx, { clientTaskId, month }) => {
+    const { email } = await who(ctx);
+    if (!/^\d{4}-\d{2}$/.test(month)) throw new Error("That is not a month.");
+
+    const c = rows(
+      await rest(
+        `social_clients?select=*&client_task_id=eq.${enc(clientTaskId)}&limit=1`,
+      ),
+    )[0];
+    if (!c) throw new Error("That client is not set up for social media yet.");
+    const perMonth = Math.max(1, Number(c.posts_per_month ?? 12));
+    const pillars = cleanPillars(
+      (Array.isArray(c.pillars) ? c.pillars : []) as string[],
+    );
+    const rotation = pillars.length ? pillars : [...DEFAULT_PILLARS];
+
+    const batchId = `${clientTaskId}:${month}`;
+    const existing = rows(
+      await rest(
+        `social_posts?select=pillar,scheduled_at&batch_id=eq.${enc(batchId)}`,
+      ),
+    );
+    const need = perMonth - existing.length;
+    if (need <= 0)
+      throw new Error(
+        `This month already has ${existing.length} posts, which is what the package asks for. ` +
+          "Click a day to add one more.",
+      );
+
+    // The days still to come that have nothing on them.
+    const [y, m] = month.split("-").map(Number);
+    const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    const today = new Date().toISOString().slice(0, 10);
+    const taken = new Set(
+      existing
+        .map(p => String(p.scheduled_at ?? "").slice(0, 10))
+        .filter(Boolean),
+    );
+    const open: string[] = [];
+    for (let d = 1; d <= last; d++) {
+      const day = `${month}-${String(d).padStart(2, "0")}`;
+      if (day > today && !taken.has(day)) open.push(day);
+    }
+    if (!open.length)
+      throw new Error("There are no empty days left in this month to fill.");
+
+    // Evenly spread, so the feed does not bunch at the start of the month.
+    const k = Math.min(need, open.length);
+    const days = Array.from(
+      { length: k },
+      (_, i) =>
+        open[
+          Math.min(open.length - 1, Math.floor(((i + 0.5) * open.length) / k))
+        ],
+    );
+
+    // Carry on the rotation from wherever the month's existing posts left it.
+    const lastPillar = String(existing[existing.length - 1]?.pillar ?? "");
+    let start = Math.max(0, rotation.indexOf(lastPillar) + 1);
+    const slots = days.map(day => ({
+      day,
+      pillar: rotation[start++ % rotation.length],
+    }));
+
+    await rest("social_batches?on_conflict=id", {
+      method: "POST",
+      prefer: "resolution=ignore-duplicates,return=minimal",
+      body: [
+        {
+          id: batchId,
+          client_task_id: clientTaskId,
+          month,
+          status: "generating",
+          updated_at: now(),
+        },
+      ],
+    });
+    await rest("social_jobs?on_conflict=id", {
+      method: "POST",
+      prefer: "resolution=merge-duplicates,return=minimal",
+      body: [
+        {
+          id: `fill:${batchId}:${Date.now()}`,
+          kind: "fill",
+          client_task_id: clientTaskId,
+          batch_id: batchId,
+          params: { slots },
+          status: "queued",
+          attempts: 0,
+          requested_by: email,
+          updated_at: now(),
+        },
+      ],
+    });
+    await audit(email, "social.month.fill", "social_batch", batchId, {
+      slots,
+    });
+    return { filling: slots.length, days };
+  },
+});
+
+/**
+ * Change a post's words at any stage before it goes out.
+ *
+ * The old edit refused anything already generated, which is exactly when
+ * somebody reads the caption and wants to fix one word.
+ */
+export const updatePost = authenticatedAction({
+  args: {
+    postId: v.string(),
+    caption: v.optional(v.string()),
+    captionFacebook: v.optional(v.string()),
+    topic: v.optional(v.string()),
+    platforms: v.optional(v.array(v.string())),
+    aspect: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const { email } = await who(ctx);
+    const p = rows(
+      await rest(
+        `social_posts?select=ghl_post_id,status&id=eq.${enc(args.postId)}&limit=1`,
+      ),
+    )[0];
+    if (!p) throw new Error("That post is gone.");
+    if (String(p.status) === "published")
+      throw new Error(
+        "That post has already gone out, so there is nothing to change.",
+      );
+    const body: Row = { updated_at: now() };
+    if (args.caption !== undefined) body.caption = clip(args.caption, 2200);
+    if (args.captionFacebook !== undefined)
+      body.caption_facebook = clip(args.captionFacebook, 5000);
+    if (args.topic !== undefined) body.topic = clip(args.topic, 300);
+    if (args.aspect !== undefined) body.aspect = cleanAspect(args.aspect);
+    if (args.platforms !== undefined) {
+      const kept = cleanPlatforms(args.platforms);
+      if (!kept.length)
+        throw new Error("A post goes to at least one platform.");
+      body.platforms = kept;
+    }
+    await rest(`social_posts?id=eq.${enc(args.postId)}`, {
+      method: "PATCH",
+      prefer: "return=minimal",
+      body,
+    });
+    await audit(email, "social.post.edit", "social_post", args.postId, body);
+    return null;
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Media: uploads, the ordered items on a post, references, covers.
+//
+// Aziz, 2026-09-23: a post is not only pictures the AI made. It can be our
+// own images, our own video, a carousel that mixes both, with example
+// pictures to steer the AI and a cover made for a video.
+
+const PLATFORMS = ["instagram", "facebook"] as const;
+
+/**
+ * The shapes a post can take, as Instagram's composer offers them:
+ * square, portrait, tall and landscape. A lone video is a Reel and 9:16
+ * whatever this says. 3:4 posts by hand only -- Instagram's publishing
+ * API takes images between 4:5 and 1.91:1 and refuses it.
+ */
+const ASPECTS = ["1:1", "4:5", "3:4", "1.91:1"] as const;
+
+function cleanAspect(raw: string): string {
+  if (!(ASPECTS as readonly string[]).includes(raw))
+    throw new Error(
+      "That is not a shape Instagram takes. Pick 1:1, 4:5, 3:4 or 1.91:1.",
+    );
+  return raw;
+}
+
+export function cleanPlatforms(raw: string[]): string[] {
+  return PLATFORMS.filter(p =>
+    raw.map(x => String(x).toLowerCase()).includes(p),
+  );
+}
+
+type MediaItem = {
+  kind: "image" | "video";
+  url: string;
+  source: "upload" | "ai";
+  cover?: string | null;
+};
+
+/**
+ * The items as stored: typed, https, and no more than Instagram allows.
+ * One item is a single post, a lone video is a Reel, two to ten is a
+ * carousel of images and videos in any mix.
+ */
+function cleanMedia(raw: unknown): MediaItem[] {
+  if (!Array.isArray(raw)) throw new Error("That is not a list of media.");
+  const out: MediaItem[] = [];
+  for (const x of raw as Record<string, unknown>[]) {
+    const url = String(x?.url ?? "").trim();
+    if (!/^https:\/\//i.test(url))
+      throw new Error(
+        "Every item needs a link Instagram can fetch, starting https://",
+      );
+    const kind = x?.kind === "video" ? "video" : "image";
+    const cover = x?.cover ? String(x.cover) : null;
+    out.push({
+      kind,
+      url,
+      source: x?.source === "ai" ? "ai" : "upload",
+      ...(kind === "video" ? { cover } : {}),
+    });
+  }
+  if (out.length > 10)
+    throw new Error("Instagram takes at most ten items in a carousel.");
+  return out;
+}
+
+/**
+ * A one-off link the browser uploads straight to storage with.
+ *
+ * This cockpit signs in through Convex, so the browser holds no storage
+ * key. The server asks storage for a single-use upload link instead; the
+ * file then goes from the browser to storage directly and never passes
+ * through a Convex function -- a reel is far too big for that.
+ */
+export const uploadUrl = authenticatedAction({
+  args: {
+    clientTaskId: v.string(),
+    filename: v.string(),
+    contentType: v.string(),
+  },
+  returns: v.any(),
+  handler: async (ctx, { clientTaskId, filename, contentType }) => {
+    await who(ctx);
+    const type = contentType.toLowerCase();
+    const kind = type.startsWith("video/")
+      ? "video"
+      : type.startsWith("image/")
+        ? "image"
+        : null;
+    if (!kind) throw new Error("Only images and videos can be uploaded here.");
+    if (/heic|heif/.test(type))
+      throw new Error(
+        "Instagram does not take HEIC photos. Export it as a JPEG and upload that.",
+      );
+    const safe =
+      filename
+        .normalize("NFKD")
+        .replace(/[^a-zA-Z0-9._-]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(-60) || "file";
+    const path = `${clientTaskId}/${new Date().toISOString().slice(0, 7)}/${crypto.randomUUID()}-${safe}`;
+    const res = await fetch(
+      `${SUPABASE_URL}/storage/v1/object/upload/sign/social-media/${path}`,
+      {
+        method: "POST",
+        headers: {
+          apikey: SUPABASE_KEY,
+          Authorization: `Bearer ${SUPABASE_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: "{}",
+      },
+    );
+    if (!res.ok)
+      throw new Error(`Storage would not take the upload (${res.status}).`);
+    const signed = (await res.json()) as { url: string };
+    return {
+      uploadUrl: `${SUPABASE_URL}/storage/v1${signed.url}`,
+      publicUrl: `${SUPABASE_URL}/storage/v1/object/public/social-media/${path}`,
+      kind,
+    };
+  },
+});
+
+/**
+ * Replace a post's items: after an upload, a removal or a reorder.
+ * `images` is kept in step for the parts that still read it.
+ */
+export const setMedia = authenticatedAction({
+  args: { postId: v.string(), media: v.any() },
+  returns: v.null(),
+  handler: async (ctx, { postId, media }) => {
+    const { email } = await who(ctx);
+    const items = cleanMedia(media);
+    const p = rows(
+      await rest(
+        `social_posts?select=media,status&id=eq.${enc(postId)}&limit=1`,
+      ),
+    )[0];
+    if (!p) throw new Error("That post is gone.");
+    if (String(p.status) === "published")
+      throw new Error(
+        "That post has already gone out, so there is nothing to change.",
+      );
+    const firstVideo = (list: Row[]) =>
+      list.find(i => i.kind === "video")?.url ?? null;
+    const body: Row = {
+      media: items,
+      images: items.filter(i => i.kind === "image").map(i => i.url),
+      slides: Math.max(1, items.length),
+      error: null,
+      updated_at: now(),
+    };
+    // The captions are written from the first video's words; a different
+    // video is different words, so the kept transcript goes with it.
+    if (firstVideo(Array.isArray(p.media) ? p.media : []) !== firstVideo(items))
+      body.transcript = null;
+    await rest(`social_posts?id=eq.${enc(postId)}`, {
+      method: "PATCH",
+      prefer: "return=minimal",
+      body,
+    });
+    await audit(email, "social.post.media", "social_post", postId, {
+      media: items,
+    });
+    return null;
+  },
+});
+
+/** The example pictures the AI takes its look from for this post. */
+export const setRefs = authenticatedAction({
+  args: { postId: v.string(), refs: v.array(v.string()) },
+  returns: v.null(),
+  handler: async (ctx, { postId, refs }) => {
+    const { email } = await who(ctx);
+    const kept = refs.map(r => r.trim()).filter(r => /^https:\/\//i.test(r));
+    if (kept.length > 6)
+      throw new Error(
+        "Six references is plenty. More only blurs what the picture should be.",
+      );
+    await rest(`social_posts?id=eq.${enc(postId)}`, {
+      method: "PATCH",
+      prefer: "return=minimal",
+      body: { refs: kept, updated_at: now() },
+    });
+    await audit(email, "social.post.references", "social_post", postId, {
+      refs: kept,
+    });
+    return null;
+  },
+});
+
+/**
+ * Queue work for Salma on one post: its captions, or a cover for one of
+ * its videos. A cover job is per video, so asking for two covers queues
+ * two rather than the second replacing the first.
+ */
+async function queuePostJob(
+  postId: string,
+  kind: "caption" | "cover",
+  email: string,
+  params: Row = {},
+) {
+  const p = rows(
+    await rest(
+      `social_posts?select=client_task_id,batch_id&id=eq.${enc(postId)}&limit=1`,
+    ),
+  )[0];
+  if (!p) throw new Error("That post is gone.");
+  await rest("social_jobs?on_conflict=id", {
+    method: "POST",
+    prefer: "resolution=merge-duplicates,return=minimal",
+    body: [
+      {
+        id:
+          kind === "cover"
+            ? `cover:${postId}:${Number(params.index ?? 0)}`
+            : `${kind}:${postId}`,
+        kind,
+        client_task_id: p.client_task_id,
+        batch_id: p.batch_id,
+        post_id: postId,
+        params,
+        status: "queued",
+        attempts: 0,
+        error: null,
+        result: null,
+        requested_by: email,
+        updated_at: now(),
+      },
+    ],
+  });
+}
+
+/** Write (or rewrite) the Instagram and Facebook captions with the AI. */
+export const writeCaption = authenticatedAction({
+  args: { postId: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { postId }) => {
+    const { email } = await who(ctx);
+    await queuePostJob(postId, "caption", email);
+    await audit(email, "social.post.caption", "social_post", postId);
+    return null;
+  },
+});
+
+/** Make a cover for a video on the post. */
+export const makeCover = authenticatedAction({
+  args: { postId: v.string(), index: v.number() },
+  returns: v.null(),
+  handler: async (ctx, { postId, index }) => {
+    const { email } = await who(ctx);
+    await queuePostJob(postId, "cover", email, { index: Math.floor(index) });
+    await audit(email, "social.post.cover", "social_post", postId, {
+      index: Math.floor(index),
+    });
+    return null;
+  },
+});
+
+/** The client's own photos: the pool references are picked from. */
+export const library = authenticatedAction({
+  args: { clientTaskId: v.string() },
+  returns: v.any(),
+  handler: async (ctx, { clientTaskId }) => {
+    await who(ctx);
+    return rows(
+      await rest(
+        `social_assets?select=id,url,caption,at&client_task_id=eq.${enc(clientTaskId)}` +
+          "&active=is.true&url=not.is.null&order=at.desc&limit=200",
+      ),
+    );
+  },
+});
+
+export const addToLibrary = authenticatedAction({
+  args: {
+    clientTaskId: v.string(),
+    url: v.string(),
+    caption: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, { clientTaskId, url, caption }) => {
+    const { email } = await who(ctx);
+    if (!/^https:\/\//i.test(url))
+      throw new Error("That is not a link to a picture.");
+    const id = crypto.randomUUID();
+    await rest("social_assets", {
+      method: "POST",
+      prefer: "return=minimal",
+      body: [
+        {
+          id,
+          client_task_id: clientTaskId,
+          kind: "photo",
+          url,
+          caption: caption ? clip(caption, 300) : null,
+          active: true,
+          added_by: email,
+          at: now(),
+        },
+      ],
+    });
+    await audit(email, "social.library.add", "social_asset", id, {
+      client_task_id: clientTaskId,
+      url,
+    });
+    return null;
+  },
+});
+
+export const removeFromLibrary = authenticatedAction({
+  args: { id: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { id }) => {
+    const { email } = await who(ctx);
+    await rest(`social_assets?id=eq.${enc(id)}`, {
+      method: "PATCH",
+      prefer: "return=minimal",
+      body: { active: false },
+    });
+    await audit(email, "social.library.remove", "social_asset", id, {
+      active: false,
+    });
+    return null;
   },
 });

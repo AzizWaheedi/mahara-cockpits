@@ -363,11 +363,45 @@ export const INTRO_SHOW_RATE = {
  * 100%.
  */
 export const CLOSE_RATE = {
-  hint: "Deals signed over the demos counted as shown in the same window, leaving out calls marked invalid, as the B2B dashboard computes it. A deal can be signed after the window its demo sat in, so this can pass 100%.",
-  naHint:
-    "No demo in this window counts as shown once calls marked invalid are left out.",
+  label: "Close rate",
+  hint: "Deals signed over every demo counted as shown in the same window (the B2B dashboard's close_rate_all). A deal can be signed after the window its demo sat in, so this can pass 100%.",
+  naHint: "No demo in this window counts as shown.",
   /** One decimal, as the dashboard prints it: 14.3%, not 14%. */
   format: pct1,
+} as const;
+
+/**
+ * The dashboard's `close_rate`: deals signed over demos qualified, which is
+ * demos shown minus the calls marked invalid.
+ */
+export const QUALIFIED_CLOSE_RATE = {
+  label: "Qualified close rate",
+  hint: "Deals signed over demos qualified: demos shown minus the calls marked invalid (the B2B dashboard's close_rate). A demo with an invalid prospect was held but could never close, so this rate judges the closer on the demos that could.",
+  naHint:
+    "No demo in this window counts as shown once calls marked invalid are left out.",
+  format: pct1,
+} as const;
+
+/** Cancellations: calls with status cancelled over calls scheduled in the window, by call day. */
+export const CANCEL_RATE = {
+  label: "Cancel rate",
+  hint: "Intro and demo calls marked cancelled over every intro and demo scheduled in this window, by the day of the call (the B2B dashboard's cancel_rate). The intro and demo rates beside it use the same rule for each kind.",
+  naHint: "No calls were scheduled in this window.",
+  format: pct1,
+} as const;
+
+/** Front-end ROAS, the main one: front-end cash over lead-gen spend. */
+export const ROAS_CASH = {
+  label: "Front-end ROAS",
+  hint: "Front-end cash over lead-gen ad spend in the same window. Front-end cash is the deposit the closer typed at signing plus the kickoff cash the CSM collects on the onboarding call; the kickoff form is not read yet, so this is the deposit alone and reads low.",
+  naHint: "No lead-gen spend in this window.",
+} as const;
+
+/** Contracted ROAS: contracted value over lead-gen spend. */
+export const ROAS_CONTRACTED = {
+  label: "Contracted ROAS",
+  hint: "Contracted value typed on the closer form over lead-gen ad spend in the same window (the B2B dashboard's roas). Signed money, not collected money.",
+  naHint: "No lead-gen spend in this window.",
 } as const;
 
 /**

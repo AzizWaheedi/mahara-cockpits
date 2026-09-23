@@ -1,20 +1,35 @@
 import { internal } from "../../_generated/api";
-import { type BillingRow, LIVE_GROUPS, summariseBilling } from "../billing";
+import {
+  type Attributed,
+  attribute,
+  totals as attributionTotals,
+  byPerson,
+  type CardRef,
+  type DealRef,
+  FRONT_END_DAYS,
+  FRONT_END_DAYS_MONTHLY,
+  type PaymentIn,
+} from "../attribution";
+import { KIND_LABEL, type LineKind, matchPayouts } from "../bank";
+import {
+  type BillingRow,
+  type BillingRow as BillingRowType,
+  groupOf,
+  isOneOffPlan,
+  LIVE_GROUPS,
+  summariseBilling,
+} from "../billing";
 import { byNewest, type ManualLoad, type ManualRow } from "../data/money";
+import { type TapCharge, USD_PER } from "../data/tap";
 import {
-  capturedCharges,
-  TAP_CONNECT_COMMAND,
-  TAP_KEY_NAME,
-  type TapCharge,
-  tapKeyState,
-  USD_PER,
-} from "../data/tap";
-import {
+  amountGap,
   cashDuplicates,
   coverWithTap,
   type DealLike,
+  dayGap,
   dealDuplicates,
   MATCH_DAYS,
+  MATCH_GAP,
   nameBook,
   type TapCover,
   usdWords,
@@ -27,8 +42,10 @@ import type {
   Note,
   Point,
   PossibleDuplicate,
+  Transaction,
 } from "../payloads";
-import { B2B, num, sql } from "../sb";
+import { B2B, num, type Row, sql, TRIAGE } from "../sb";
+import { sbWritable, upsertMerge } from "../sbWrite";
 import {
   addDays,
   daysInMonth,
@@ -37,6 +54,7 @@ import {
   monthStart,
 } from "../time";
 import type { Adapter, DailyPoint, SourceStamp } from "../types";
+import { IS_LEAD } from "./growth";
 
 /** Whop and the closer form sync every 15 minutes; an hour behind is stale. */
 const STALE_MS = 60 * 60_000;
@@ -111,6 +129,24 @@ const says = (n: number, one: string, many: string) => (n === 1 ? one : many);
 const kuwaitMidnight = (d: string) =>
   new Date(`${d}T00:00:00Z`).getTime() - KUWAIT_OFFSET_MS;
 
+/** Run a secondary read; on failure keep going with a fallback and a warning. */
+async function attempt<T>(
+  what: string,
+  notes: Note[],
+  fallback: T,
+  run: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await run();
+  } catch (e) {
+    notes.push({
+      level: "warn",
+      text: `${what} could not be read this run (${errText(e)}).`,
+    });
+    return fallback;
+  }
+}
+
 /**
  * Money: cash by rail, deals and contracted value from the closer form,
  * monthly targets and the bank expense import. Everything but Tap and the
@@ -147,7 +183,10 @@ export const money: Adapter = {
       Math.min(dayOfMonth, daysInMonth(lastMonthStart)),
     ).padStart(2, "0")}`;
     const lastMonthEnd = addDays(monthStart(today), -1);
-    const from90 = addDays(today, -179);
+    // The daily series and the Tap read cover 180 days so a chart can show
+    // six months; the "90 days" figures (refunds, average contract) keep to 90.
+    const from180 = addDays(today, -179);
+    const from90 = addDays(today, -89);
     const from30 = addDays(today, -29);
     const firstMonthStart = `${shiftMonth(month, -11)}-01`;
     const notes: Note[] = [];
@@ -160,12 +199,12 @@ export const money: Adapter = {
       `select to_char(paid_on, 'YYYY-MM-DD') as day, sum(net_amount) as cash
        from public.whop_payments
        where status = 'paid' and currency = 'usd'
-         and paid_on between ${day(from90)} and ${day(today)}
+         and paid_on between ${day(from180)} and ${day(today)}
        group by paid_on`,
     );
     const byDay = new Map(cashRows.map(r => [String(r.day), num(r.cash)]));
     const cashDaily: Point[] = [];
-    for (let d = from90; d <= today; d = addDays(d, 1))
+    for (let d = from180; d <= today; d = addDays(d, 1))
       cashDaily.push({ date: d, value: usd(byDay.get(d) ?? 0) });
     const cashBetween = (from: string, to: string) =>
       usd(
@@ -309,7 +348,6 @@ export const money: Adapter = {
     // something is logged. The note keeps its place here and its level and
     // text are filled in after the rails are built. It is the one note about
     // scope: the Tap note below only says why Tap is or is not read.
-    const tapState = tapKeyState();
     const cashScopeNote: Note = { level: "warn", text: "" };
     notes.push(cashScopeNote);
     // The one note that says how the rails add up. Every tab that shows the
@@ -442,12 +480,26 @@ export const money: Adapter = {
             B2B,
             `select m.key as metric, (m.value #>> '{}')::numeric as actual
              from jsonb_each(public.b2b_window_metrics(${day(monthStart(today))}, ${day(today)}, null::text[])::jsonb) m
-             where jsonb_typeof(m.value) = 'number'
-               and m.key in (select metric from public.monthly_targets where period_month = ${day(monthStart(today))})`,
+             where jsonb_typeof(m.value) = 'number'`,
           );
           for (const r of got)
             if (!(String(r.metric) in actuals))
               actuals[String(r.metric)] = num(r.actual);
+          // Leads on this cockpit are the ROAS-tagged contacts (growth.ts),
+          // not the dashboard's is_lead flag, so the three lead actuals are
+          // recomputed on that rule from the dashboard's own spend and demos.
+          const [roas] = await sql(
+            B2B,
+            `select count(*) as leads from public.leads l
+             where ${IS_LEAD}
+               and (l.lead_created_at at time zone 'Asia/Riyadh')::date
+                   between ${day(monthStart(today))} and ${day(today)}`,
+          );
+          const leads = num(roas?.leads);
+          actuals.leads = leads;
+          actuals.cost_per_lead = leads > 0 ? (actuals.spend ?? 0) / leads : 0;
+          actuals.lead_to_demo =
+            leads > 0 ? (100 * (actuals.demos_scheduled ?? 0)) / leads : 0;
         } catch (e) {
           notes.push({
             level: "warn",
@@ -601,40 +653,71 @@ export const money: Adapter = {
       lastPaymentAt: null,
     };
 
-    // The charges themselves, for matching hand-logged Tap payments. Null
-    // while Tap is not read.
+    // The charges themselves, for matching hand-logged Tap payments and
+    // settlement lines. Null while Tap is not read. Since 2026-09-21 the
+    // charges come from cockpit_tap_charges in Creative Triage, filled every
+    // 15 minutes by the tap-charges-sync Edge Function, which holds the Tap
+    // key as a Supabase secret; nothing on Convex touches Tap any more.
     let tapCharges: TapCharge[] | null = null;
-
-    if (tapState === "missing") {
-      notes.push({
-        level: "warn",
-        text: `Tap is not connected yet, so every Tap number is n/a. To connect it, set the key on this Convex deployment: ${TAP_CONNECT_COMMAND}`,
-      });
-      sources.push({
-        name: "Tap payments (not connected)",
-        ok: true,
-        note: `${TAP_KEY_NAME} is not set on this deployment. Run: ${TAP_CONNECT_COMMAND}`,
-      });
-    } else if (tapState === "test") {
-      notes.push({
-        level: "warn",
-        text: `Tap is not connected: the key on this deployment is a test key, so Tap charges are test money and every Tap number is n/a. Set the live key to turn the rail on: ${TAP_CONNECT_COMMAND}`,
-      });
-      sources.push({
-        name: "Tap payments (test key)",
-        ok: true,
-        note: "A Tap test key is set, so Tap is not read as cash.",
-      });
-    } else {
-      try {
-        const read = await capturedCharges(from90, today);
-        tapCharges = read.charges;
+    try {
+      const [stateRows, chargeRows] = await Promise.all([
+        sql(
+          TRIAGE,
+          `select ok, note, rows_seen,
+                  floor(extract(epoch from last_run_at) * 1000) as run_ms,
+                  floor(extract(epoch from last_ok_at) * 1000) as ok_ms
+           from public.cockpit_sync_state where key = 'tap-charges-sync'`,
+        ),
+        sql(
+          TRIAGE,
+          `select id, to_char(day, 'YYYY-MM-DD') as day,
+                  floor(extract(epoch from at) * 1000) as at_ms,
+                  currency, amount, usd, email, name
+           from public.cockpit_tap_charges
+           where live and status = 'CAPTURED' and day between ${day(from180)} and ${day(today)}
+           order by at`,
+        ),
+      ]);
+      const st = stateRows[0];
+      const lastOk = epoch(st?.ok_ms);
+      const synced = lastOk !== undefined && now - lastOk < 3 * 60 * 60_000;
+      if (!st) {
+        notes.push({
+          level: "warn",
+          text: "Tap is not connected yet: the tap-charges-sync job in Supabase has never run. Once TAP_SECRET_KEY is set under Edge Functions, Secrets, in the Supabase dashboard, it fills cockpit_tap_charges every 15 minutes and every Tap number fills in.",
+        });
+        sources.push({
+          name: "Tap payments (not connected)",
+          ok: true,
+          note: "tap-charges-sync has never run",
+        });
+      } else if (!synced) {
+        notes.push({
+          level: "warn",
+          text: `Tap is not in the total this run: the tap-charges-sync job in Supabase ${lastOk ? `last succeeded ${Math.round((now - lastOk) / 60_000)} minutes ago` : "has not succeeded yet"}${st.note ? ` (${String(st.note).slice(0, 160)})` : ""}.`,
+        });
+        sources.push({
+          name: "Tap payments",
+          ok: false,
+          note: String(st.note ?? "no successful run").slice(0, 160),
+        });
+      } else {
+        tapCharges = chargeRows.map(r => ({
+          id: String(r.id),
+          day: String(r.day),
+          at: num(r.at_ms),
+          currency: String(r.currency ?? "USD"),
+          amount: num(r.amount),
+          usd: r.usd === null || r.usd === undefined ? null : usd(num(r.usd)),
+          email: r.email ? String(r.email) : null,
+          name: r.name ? String(r.name) : null,
+        }));
         const byTapDay = new Map<string, number>();
-        for (const c of read.charges)
+        for (const c of tapCharges)
           if (c.usd !== null)
             byTapDay.set(c.day, (byTapDay.get(c.day) ?? 0) + c.usd);
         const tapDaily: Point[] = [];
-        for (let d = from90; d <= today; d = addDays(d, 1))
+        for (let d = from180; d <= today; d = addDays(d, 1))
           tapDaily.push({ date: d, value: usd(byTapDay.get(d) ?? 0) });
         const tapBetween = (from: string, to: string) =>
           usd(
@@ -643,7 +726,6 @@ export const money: Adapter = {
               .reduce((t, p) => t + p.value, 0),
           );
         const tapMtd = tapBetween(monthStart(today), today);
-
         tapRail.connected = true;
         tapRail.today = tapBetween(today, today);
         tapRail.yesterday = tapBetween(addDays(today, -1), addDays(today, -1));
@@ -655,51 +737,209 @@ export const money: Adapter = {
         tapRail.lastMonth = tapBetween(lastMonthStart, lastMonthEnd);
         tapRail.projectedMonth = usd((tapMtd / dayOfMonth) * dim);
         tapRail.daily = tapDaily;
-        tapRail.lastPaymentAt = read.newestAt;
-
+        tapRail.lastPaymentAt = tapCharges.length
+          ? tapCharges[tapCharges.length - 1].at
+          : null;
         sources.push({
           name: "Tap payments",
-          freshestAt: read.newestAt ?? undefined,
+          freshestAt: lastOk,
           ok: true,
-          note: `${read.charges.length} captured charges over 90 days in ${read.requests} calls`,
+          note: `${tapCharges.length} captured charges in the table, sync ${String(st.note ?? "").slice(0, 100)}`,
         });
         notes.push({
-          level: "warn",
-          text: `Tap cash is captured Tap charges from the last 90 days, counted on the Kuwait day the charge was made and converted at the cockpit's fixed rates (1 KWD reads as $${USD_PER.KWD}), the same rates ad spend uses. Tap refunds are not read yet, so Tap refunds show n/a and Tap cash, like the rails total, is gross of anything refunded on Tap, while Whop is net.`,
+          level: "info",
+          text: `Tap cash is captured Tap charges from the last 45 days as the Supabase job tap-charges-sync holds them, counted on the Kuwait day the charge was made and converted at the cockpit's fixed rates (1 KWD reads as $${USD_PER.KWD}). Tap refunds are not read yet, so Tap is gross of anything refunded on Tap while Whop is net. A charge a bank settlement line covers counts once, on the Bank rail.`,
         });
-        if (read.unconverted.length)
+        const unconverted = tapCharges.filter(c => c.usd === null).length;
+        if (unconverted)
           notes.push({
             level: "warn",
-            text: `Tap charges in ${read.unconverted
-              .map(u => `${u.currency} (${u.count})`)
-              .join(
-                ", ",
-              )} are left out of Tap cash: the cockpit has no fixed rate for ${read.unconverted.length === 1 ? "that currency" : "those currencies"} and a guessed rate would be a made up number.`,
+            text: `${unconverted} Tap charges are in a currency the cockpit has no fixed rate for and are left out of Tap cash.`,
           });
-        if (read.testRows > 0)
-          notes.push({
-            level: "warn",
-            text: `${read.testRows} Tap charges are marked as test mode and are left out, because test charges are not cash.`,
-          });
-        if (read.undated > 0)
-          notes.push({
-            level: "warn",
-            text: `${read.undated} Tap charges carry no time and could not be placed on a day, so they are left out of Tap cash.`,
-          });
-        if (read.truncated)
-          notes.push({
-            level: "warn",
-            text: "The Tap read stopped early on its page or time limit, so Tap cash is a floor and reads low.",
-          });
-      } catch (e) {
-        sources.push({
-          name: "Tap payments",
-          ok: false,
-          note: errText(e),
-        });
+      }
+    } catch (e) {
+      sources.push({ name: "Tap payments", ok: false, note: errText(e) });
+      notes.push({
+        level: "warn",
+        text: "Tap could not be read this run, so every Tap number is n/a and Tap money is not in the total.",
+      });
+    }
+
+    // --- The Bank rail: the statements Aziz uploads (cockpit_bank_lines,
+    // 2026-09-21). Client payments on them are cash; Whop payouts, Tap
+    // settlements and Mahara's own transfers are dropped, so nothing is
+    // counted twice; the debits are the expenses, personal exclusions apart.
+    type BankLine = {
+      id: number;
+      day: string;
+      usd: number;
+      amount: number;
+      currency: string;
+      reference: string;
+      account: string;
+      kind: LineKind;
+      category: string | null;
+      note: string | null;
+    };
+    let bankLines: BankLine[] = [];
+    let bankStatements: NonNullable<MoneyPayload["bank"]>["statements"] = [];
+    let bankExclusions: NonNullable<MoneyPayload["bank"]>["exclusions"] = [];
+    let bankRead = false;
+    try {
+      const [lineRows, stmtRows, exRows] = await Promise.all([
+        sql(
+          TRIAGE,
+          `select id, to_char(day, 'YYYY-MM-DD') as day, usd, amount, currency, reference, account, kind, category, note
+           from public.cockpit_bank_lines
+           where day >= ${day(firstMonthStart)}
+           order by day, id`,
+        ),
+        sql(
+          TRIAGE,
+          `select id, account, account_kind, to_char(from_day, 'YYYY-MM-DD') as from_day,
+                  to_char(to_day, 'YYYY-MM-DD') as to_day, lines,
+                  floor(extract(epoch from imported_at) * 1000) as imported_ms
+           from public.cockpit_statements
+           order by to_day desc nulls last, imported_at desc
+           limit 36`,
+        ),
+        sql(
+          TRIAGE,
+          `select id, kind, pattern, note from public.cockpit_expense_exclusions order by id`,
+        ),
+      ]);
+      bankLines = lineRows.map(r => ({
+        id: num(r.id),
+        day: String(r.day),
+        usd: usd(num(r.usd)),
+        amount: num(r.amount),
+        currency: String(r.currency ?? "KWD"),
+        reference: String(r.reference ?? ""),
+        account: String(r.account ?? ""),
+        kind: String(r.kind ?? "unknown") as LineKind,
+        category: r.category ? String(r.category) : null,
+        note: r.note ? String(r.note) : null,
+      }));
+      bankStatements = stmtRows.map(r => ({
+        id: String(r.id),
+        account: String(r.account),
+        accountKind: String(r.account_kind ?? "account"),
+        fromDay: r.from_day ? String(r.from_day) : null,
+        toDay: r.to_day ? String(r.to_day) : null,
+        lines: num(r.lines),
+        importedAt: epoch(r.imported_ms) ?? null,
+      }));
+      bankExclusions = exRows.map(r => ({
+        id: num(r.id),
+        kind: r.kind === "card" ? ("card" as const) : ("vendor" as const),
+        pattern: String(r.pattern ?? ""),
+        note: r.note ? String(r.note) : null,
+      }));
+      bankRead = true;
+      sources.push({
+        name: "Bank statements",
+        freshestAt: bankStatements[0]?.importedAt ?? undefined,
+        ok: true,
+        note: `${bankStatements.length} statement${bankStatements.length === 1 ? "" : "s"}, ${bankLines.length} lines in 12 months`,
+      });
+    } catch (e) {
+      sources.push({ name: "Bank statements", ok: false, note: errText(e) });
+      notes.push({
+        level: "warn",
+        text: "The uploaded bank statements could not be read this run, so the Bank rail is n/a and not in the total.",
+      });
+    }
+
+    // Whop payouts on the statements against the Whop payments they carry,
+    // and Tap settlements against Tap charges: neither is cash here, the
+    // payments behind them already are, on their own rail.
+    const whopPaymentsForPayouts = await attempt(
+      "Whop payments for the payout match",
+      notes,
+      [] as { id: string; day: string; usd: number }[],
+      async () =>
+        bankLines.some(l => l.kind === "whop_payout")
+          ? (
+              await sql(
+                B2B,
+                `select payment_id, to_char(paid_on, 'YYYY-MM-DD') as day, net_amount
+                 from public.whop_payments
+                 where status = 'paid' and currency = 'usd' and net_amount > 0
+                   and paid_on >= ${day(addDays(firstMonthStart, -30))}`,
+              )
+            ).map(r => ({
+              id: String(r.payment_id),
+              day: String(r.day),
+              usd: usd(num(r.net_amount)),
+            }))
+          : [],
+    );
+    const payoutLines = bankLines.filter(l => l.kind === "whop_payout");
+    const payoutMatches = matchPayouts(
+      payoutLines.map(l => ({ id: String(l.id), day: l.day, usd: l.usd })),
+      whopPaymentsForPayouts,
+    );
+    const settlementLines = bankLines.filter(l => l.kind === "tap_settlement");
+    const settlementMatches = matchPayouts(
+      settlementLines.map(l => ({ id: String(l.id), day: l.day, usd: l.usd })),
+      (tapCharges ?? [])
+        .filter(c => c.usd !== null)
+        .map(c => ({ id: c.id, day: c.day, usd: c.usd as number })),
+      { lookback: 10, tolerance: 0.05 },
+    );
+    // Tap charges a settlement line accounts for count on the bank line, not twice.
+    const tapCoveredIds = new Set<string>();
+    if (tapCharges && settlementMatches.size) {
+      const sorted = [...tapCharges]
+        .filter(c => c.usd !== null)
+        .sort((a, b) => (a.day < b.day ? -1 : 1));
+      for (const [lineId, m] of settlementMatches) {
+        const line = settlementLines.find(l => String(l.id) === lineId);
+        if (!line) continue;
+        let left = m.count;
+        for (const c of sorted)
+          if (
+            left > 0 &&
+            c.day >= m.from &&
+            c.day <= m.to &&
+            !tapCoveredIds.has(c.id)
+          ) {
+            tapCoveredIds.add(c.id);
+            left -= 1;
+          }
+      }
+      if (tapCoveredIds.size) {
+        const covered = usd(
+          (tapCharges ?? [])
+            .filter(c => tapCoveredIds.has(c.id) && c.usd !== null)
+            .reduce((t, c) => t + (c.usd as number), 0),
+        );
+        const drop = (rail: CashRail) => {
+          const byDay = new Map<string, number>();
+          for (const c of tapCharges ?? [])
+            if (tapCoveredIds.has(c.id) && c.usd !== null)
+              byDay.set(c.day, (byDay.get(c.day) ?? 0) + (c.usd as number));
+          rail.daily = rail.daily.map(p => ({
+            date: p.date,
+            value: usd(p.value - (byDay.get(p.date) ?? 0)),
+          }));
+          const between = (f: string, t: string) =>
+            usd(
+              rail.daily
+                .filter(p => p.date >= f && p.date <= t)
+                .reduce((x, p) => x + p.value, 0),
+            );
+          rail.today = between(today, today);
+          rail.yesterday = between(addDays(today, -1), addDays(today, -1));
+          rail.mtd = between(monthStart(today), today);
+          rail.lastMonthToDate = between(lastMonthStart, lastMonthToDateEnd);
+          rail.lastMonth = between(lastMonthStart, lastMonthEnd);
+          rail.projectedMonth = usd(((rail.mtd ?? 0) / dayOfMonth) * dim);
+        };
+        if (tapRail.connected) drop(tapRail);
         notes.push({
-          level: "warn",
-          text: "Tap could not be read this run, so every Tap number is n/a and Tap money is not in the total. The Machine tab carries the error.",
+          level: "info",
+          text: `${tapCoveredIds.size} Tap charges (${usdWords(covered)}) are covered by ${settlementMatches.size} Tap settlement line${settlementMatches.size === 1 ? "" : "s"} on the bank statements, so they count once, on the Bank rail, with Tap as the confirmation.`,
         });
       }
     }
@@ -730,6 +970,11 @@ export const money: Adapter = {
     let dealsChecked = false;
 
     let manual: ManualLoad | null = null;
+    /** The hand-logged entries that count (not covered by a Tap charge or a statement line), for the attribution below. */
+    let manualCounted: ManualRow[] = [];
+    /** Refunds logged by hand, for the refunds figures and the Transactions tab. */
+    let manualRefunds: ManualRow[] = [];
+    let manualCoveredByBank = 0;
     try {
       manual = await ctx.runQuery(internal.ceo.data.money.load, {
         from: firstMonthStart,
@@ -744,7 +989,13 @@ export const money: Adapter = {
     }
 
     if (manual) {
-      const entries: ManualRow[] = manual.live;
+      // Refunds logged by hand are money given back: they come off the
+      // manual rail on their day and are counted among refunds, never as cash.
+      const refundEntries: ManualRow[] = manual.live.filter(
+        e => e.kind === "refund",
+      );
+      manualRefunds = refundEntries;
+      const entries: ManualRow[] = manual.live.filter(e => e.kind !== "refund");
       const book = nameBook(manual.cards);
       const sumUsd = (rows: ManualRow[], pick: (e: ManualRow) => number) =>
         usd(rows.reduce((t, e) => t + pick(e), 0));
@@ -753,14 +1004,43 @@ export const money: Adapter = {
 
       // A payment logged as Tap before Tap was connected drops out once a
       // Tap charge shows the same money, so it counts once, on the Tap rail.
-      const tapFrom = addDays(from90, -MATCH_DAYS);
+      const tapFrom = addDays(from180, -MATCH_DAYS);
       const covered = tapCharges
         ? coverWithTap(entries, tapCharges, tapFrom)
         : new Map<string, TapCover>();
+      // A bank transfer, cheque or cash payment logged by hand drops out once
+      // a statement line shows the same money: it counts once, on the Bank rail.
+      const bankClientLines = bankLines.filter(
+        l => l.kind === "client_payment",
+      );
+      const usedBankLine = new Set<number>();
+      for (const e of entries) {
+        if (covered.has(e.id) || e.rail === "tap") continue;
+        let best: { id: number; d: number; g: number } | null = null;
+        for (const l of bankClientLines) {
+          if (usedBankLine.has(l.id)) continue;
+          const d = dayGap(e.day, l.day);
+          if (d > MATCH_DAYS) continue;
+          const g = amountGap(e.amountUsd, l.usd);
+          if (g > MATCH_GAP) continue;
+          if (!best || d < best.d || (d === best.d && g < best.g))
+            best = { id: l.id, d, g };
+        }
+        if (best) {
+          usedBankLine.add(best.id);
+          const line = bankClientLines.find(l => l.id === best?.id);
+          covered.set(e.id, {
+            chargeDay: line?.day ?? e.day,
+            chargeUsd: line?.usd ?? e.amountUsd,
+          });
+          manualCoveredByBank += 1;
+        }
+      }
       const counted = entries.filter(e => !covered.has(e.id));
+      manualCounted = counted;
 
       // Cash that Whop may already have: live entries of the last 90 days.
-      const recent = counted.filter(e => e.day >= from90);
+      const recent = counted.filter(e => e.day >= from180);
       let whopRows: WhopLike[] = [];
       if (recent.length)
         try {
@@ -862,7 +1142,7 @@ export const money: Adapter = {
         for (const e of recent)
           byManualDay.set(e.day, (byManualDay.get(e.day) ?? 0) + e.amountUsd);
         const manualDaily: Point[] = [];
-        for (let d = from90; d <= today; d = addDays(d, 1))
+        for (let d = from180; d <= today; d = addDays(d, 1))
           manualDaily.push({ date: d, value: usd(byManualDay.get(d) ?? 0) });
         const manualMtd = between(monthStart(today), today);
         const newestDay = counted.reduce<string | null>(
@@ -950,7 +1230,7 @@ export const money: Adapter = {
       if (manualRail.connected)
         notes.push({
           level: "info",
-          text: `Payments logged by hand are only what was typed in on the Money tab, so a transfer, cheque or cash payment nobody logged is missing, not zero. Each is converted to USD at the fixed rate stored on it when it was logged (1 KWD reads as $${USD_PER.KWD} today), and a refund of a hand-logged payment is recorded by removing the entry.`,
+          text: `Payments logged by hand are only what was typed in on the Money tab, so a transfer, cheque or cash payment nobody logged is missing, not zero. Each is converted to USD at the fixed rate stored on it when it was logged (1 KWD reads as $${USD_PER.KWD} today). A refund is logged as an entry of its own kind and comes off cash on its day.${manualCoveredByBank ? ` ${manualCoveredByBank} hand-logged payment${manualCoveredByBank === 1 ? "" : "s"} now show on an uploaded statement and count once, on the Bank rail.` : ""}`,
         });
       const tapEntries = entries.filter(e => e.rail === "tap");
       if (!tapCharges && tapEntries.length)
@@ -990,9 +1270,65 @@ export const money: Adapter = {
         });
     }
 
+    // --- The Bank rail itself: client payments on the statements, by day.
+    const bankRail: CashRail = {
+      label: "Bank",
+      connected: false,
+      today: null,
+      yesterday: null,
+      mtd: null,
+      lastMonthToDate: null,
+      lastMonth: null,
+      projectedMonth: null,
+      refundsMtd: null,
+      daily: [],
+      lastPaymentAt: null,
+    };
+    if (bankRead && bankStatements.length) {
+      const byBankDay = new Map<string, number>();
+      for (const l of bankLines)
+        if (l.kind === "client_payment")
+          byBankDay.set(l.day, (byBankDay.get(l.day) ?? 0) + l.usd);
+      const bankDaily: Point[] = [];
+      for (let d = from180; d <= today; d = addDays(d, 1))
+        bankDaily.push({ date: d, value: usd(byBankDay.get(d) ?? 0) });
+      const bankBetween = (f: string, t: string) =>
+        usd(
+          bankDaily
+            .filter(p => p.date >= f && p.date <= t)
+            .reduce((x, p) => x + p.value, 0),
+        );
+      const bankMtd = bankBetween(monthStart(today), today);
+      const newestClient = bankLines
+        .filter(l => l.kind === "client_payment")
+        .reduce<string | null>(
+          (m, l) => (m === null || l.day > m ? l.day : m),
+          null,
+        );
+      bankRail.connected = true;
+      bankRail.today = bankBetween(today, today);
+      bankRail.yesterday = bankBetween(addDays(today, -1), addDays(today, -1));
+      bankRail.mtd = bankMtd;
+      bankRail.lastMonthToDate = bankBetween(
+        lastMonthStart,
+        lastMonthToDateEnd,
+      );
+      bankRail.lastMonth = bankBetween(lastMonthStart, lastMonthEnd);
+      bankRail.projectedMonth = usd((bankMtd / dayOfMonth) * dim);
+      // A refund given back never shows on our statement as a debit we can
+      // tell from an expense, so the Bank rail carries no refund figure.
+      bankRail.refundsMtd = null;
+      bankRail.daily = bankDaily;
+      bankRail.lastPaymentAt = newestClient
+        ? kuwaitMidnight(newestClient)
+        : null;
+    }
+
     // --- The total covers the connected rails only, and a total over a
     // number no rail can give stays null rather than quietly dropping to 0.
-    const connected = [whopRail, tapRail, manualRail].filter(r => r.connected);
+    const connected = [whopRail, tapRail, manualRail, bankRail].filter(
+      r => r.connected,
+    );
     const railSum = (
       rails: CashRail[],
       pick: (r: CashRail) => number | null,
@@ -1010,7 +1346,7 @@ export const money: Adapter = {
       r => new Map(r.daily.map(p => [p.date, p.value])),
     );
     const totalDaily: Point[] = [];
-    for (let d = from90; d <= today; d = addDays(d, 1)) {
+    for (let d = from180; d <= today; d = addDays(d, 1)) {
       let t = 0;
       for (const m of railMaps) t += m.get(d) ?? 0;
       totalDaily.push({ date: d, value: usd(t) });
@@ -1022,11 +1358,13 @@ export const money: Adapter = {
     // is not an empty log, and with a live Tap key a hand-logged Tap payment
     // is refused, so the scope note never asks for one. A Tap read that failed
     // this run has its own note above.
-    const handWords =
-      tapState === "live"
-        ? "Bank transfers, cheques and cash count only once they are logged by hand on the Money tab"
-        : "Bank transfers, cheques, cash and, until Tap is connected, Tap payments count only once they are logged by hand on the Money tab";
-    if (!tapRail.connected && !manualRail.connected) {
+    const handWords = tapRail.connected
+      ? "Bank transfers, cheques and cash count only once they are logged by hand on the Money tab"
+      : "Bank transfers, cheques, cash and, until Tap is connected, Tap payments count only once they are logged by hand on the Money tab";
+    if (bankRail.connected) {
+      cashScopeNote.level = "info";
+      cashScopeNote.text = `Cash on the rails covers Whop, the uploaded bank statements (client payments on them), ${tapRail.connected ? "Tap charges no settlement line covers, " : ""}and payments logged by hand that no statement line covers. Whop payouts, Tap settlements and Mahara's own transfers on the statements are never counted, so nothing is counted twice. Processor fees are not taken off.`;
+    } else if (!tapRail.connected && !manualRail.connected) {
       cashScopeNote.level = "warn";
       cashScopeNote.text =
         manual === null
@@ -1055,7 +1393,8 @@ export const money: Adapter = {
       lastMonthToDate: railSum(connected, r => r.lastMonthToDate),
       lastMonth: railSum(connected, r => r.lastMonth),
       projectedMonth: railSum(connected, r => r.projectedMonth),
-      // Hand-logged money has no refunds to add: a refunded entry is removed.
+      // Hand-logged refunds are entries of their own kind; the Manual rail's
+      // own figure is filled below from them.
       refundsMtd: railSum(
         connected.filter(r => r !== manualRail),
         r => r.refundsMtd,
@@ -1309,6 +1648,677 @@ export const money: Adapter = {
       });
     }
 
+    // --- Every payment in, given a side, a person and a deal or a client --
+    // (Aziz, 2026-09-21). The rules live in ../attribution; this loads the
+    // rows: Whop and bank transfers from the B2B database, Tap from the read
+    // above, hand-logged entries from the Convex table, the closer-form deals,
+    // the client cards with their portal logins and hand-kept payer mapping,
+    // and the money out the database holds (Whop refunds, the bank expenses).
+    let attribution: MoneyPayload["attribution"];
+    const attributionDaily: DailyPoint[] = [];
+    try {
+      const from12 = firstMonthStart;
+      const [whopRows, transferRows, dealRows, loginRows, expenseRows] =
+        await Promise.all([
+          sql(
+            B2B,
+            `select payment_id, to_char(paid_on, 'YYYY-MM-DD') as day,
+                    net_amount, final_amount, refunded_amount,
+                    to_char((refunded_at at time zone 'Asia/Kuwait')::date, 'YYYY-MM-DD') as refund_day,
+                    nullif(lower(btrim(user_email)), '') as email,
+                    nullif(btrim(billing_name), '') as billing,
+                    nullif(btrim(user_username), '') as username,
+                    deal_response_id, billing_reason
+             from public.whop_payments
+             where status = 'paid' and currency = 'usd' and paid_on >= ${day(from12)}
+             order by paid_on`,
+          ),
+          sql(
+            B2B,
+            `select id, to_char(received_at, 'YYYY-MM-DD') as day, amount_usd, method,
+                    nullif(btrim(client_name), '') as client, reference, deal_response_id
+             from public.transfers
+             where received_at >= ${day(from12)}`,
+          ),
+          sql(
+            B2B,
+            `select response_id,
+                    to_char((submitted_at at time zone 'Asia/Kuwait')::date, 'YYYY-MM-DD') as day,
+                    nullif(lower(btrim(email)), '') as email,
+                    nullif(btrim(business_name), '') as business,
+                    nullif(btrim(concat_ws(' ', client_first_name, client_last_name)), '') as contact,
+                    closer, csm, cash_collected, payment_structure
+             from public.closed_deals
+             where submitted_at >= ${day(addDays(from12, -90))}`,
+          ),
+          sql(
+            B2B,
+            `with docs as (
+               select key, body from public.mahara_portal_documents
+               where key in ('directory.json', 'client-access.json')
+             ),
+             dir as (
+               select e->>'id' as client_id, e->>'clickupId' as clickup_id
+               from docs, jsonb_array_elements(case when jsonb_typeof(docs.body) = 'array' then docs.body else '[]'::jsonb end) e
+               where docs.key = 'directory.json' and coalesce(e->>'id', '') <> '' and coalesce(e->>'clickupId', '') <> ''
+             ),
+             logins as (
+               select lower(btrim(pr->>'email')) as email, dir.clickup_id
+               from docs
+               cross join lateral jsonb_each(case when jsonb_typeof(docs.body->'profiles') = 'object' then docs.body->'profiles' else '{}'::jsonb end) p
+               cross join lateral jsonb_array_elements(case when jsonb_typeof(p.value->'principals') = 'array' then p.value->'principals' else '[]'::jsonb end) pr
+               join dir on dir.client_id = p.key
+               where docs.key = 'client-access.json' and jsonb_typeof(pr) = 'object' and coalesce(btrim(pr->>'email'), '') <> ''
+             )
+             select email, min(clickup_id) as clickup_id
+             from logins group by email having count(distinct clickup_id) = 1`,
+          ),
+          sql(
+            B2B,
+            `select id, to_char(incurred_at, 'YYYY-MM-DD') as day, amount_usd, category, vendor
+             from public.expenses
+             where incurred_at >= ${day(from12)}
+             order by incurred_at desc
+             limit 600`,
+          ),
+        ]);
+      let payerRows: Row[] = [];
+      try {
+        payerRows = await sql(
+          TRIAGE,
+          `select payer, payer_key, clickup_task_id
+           from public.cockpit_payer_clients
+           where coalesce(clickup_task_id, '') <> ''`,
+        );
+      } catch (e) {
+        notes.push({
+          level: "info",
+          text: `The hand-kept payer mapping could not be read this run (${errText(e)}), so a payer mapped by hand matches by name alone.`,
+        });
+      }
+
+      const detailOf = new Map<string, string | null>();
+      const paymentsIn: PaymentIn[] = [];
+      for (const r of whopRows) {
+        // A payment refunded in full is not money in; its refund is listed below.
+        if (num(r.net_amount) <= 0) continue;
+        const id = `whop:${r.payment_id}`;
+        detailOf.set(id, r.billing_reason ? String(r.billing_reason) : null);
+        paymentsIn.push({
+          id,
+          rail: "whop",
+          day: String(r.day),
+          usd: usd(num(r.net_amount)),
+          currency: "USD",
+          amount: usd(num(r.final_amount)),
+          payerEmail: r.email ? String(r.email) : null,
+          payerName: r.billing
+            ? String(r.billing)
+            : r.username
+              ? String(r.username)
+              : null,
+          dealResponseId: r.deal_response_id
+            ? String(r.deal_response_id)
+            : null,
+          clickupTaskId: null,
+          billingReason: r.billing_reason ? String(r.billing_reason) : null,
+        });
+      }
+      for (const c of tapCharges ?? []) {
+        if (c.usd === null) continue;
+        const id = `tap:${c.id}`;
+        detailOf.set(id, null);
+        paymentsIn.push({
+          id,
+          rail: "tap",
+          day: c.day,
+          usd: c.usd,
+          currency: c.currency,
+          amount: c.amount,
+          payerEmail: c.email,
+          payerName: c.name,
+          dealResponseId: null,
+          clickupTaskId: null,
+          billingReason: null,
+        });
+      }
+      for (const r of transferRows) {
+        const id = `transfer:${r.id}`;
+        detailOf.set(id, r.method ? String(r.method) : null);
+        paymentsIn.push({
+          id,
+          rail: "transfer",
+          day: String(r.day),
+          usd: usd(num(r.amount_usd)),
+          currency: "USD",
+          amount: usd(num(r.amount_usd)),
+          payerEmail: null,
+          payerName: r.client ? String(r.client) : null,
+          dealResponseId: r.deal_response_id
+            ? String(r.deal_response_id)
+            : null,
+          clickupTaskId: null,
+          billingReason: null,
+        });
+      }
+      for (const l of bankLines) {
+        if (l.kind !== "client_payment") continue;
+        const id = `bank:${l.id}`;
+        detailOf.set(id, l.reference.slice(0, 80) || null);
+        paymentsIn.push({
+          id,
+          rail: "transfer",
+          day: l.day,
+          usd: l.usd,
+          currency: l.currency,
+          amount: l.amount,
+          payerEmail: null,
+          payerName: l.reference || null,
+          dealResponseId: null,
+          clickupTaskId: null,
+          billingReason: null,
+        });
+      }
+      for (const e of manualCounted) {
+        const id = `manual:${e.id}`;
+        detailOf.set(id, e.rail);
+        paymentsIn.push({
+          id,
+          rail: "manual",
+          day: e.day,
+          usd: e.amountUsd,
+          currency: e.currency,
+          amount: e.amount,
+          payerEmail: null,
+          payerName: e.client || null,
+          dealResponseId: null,
+          clickupTaskId: e.clickupTaskId,
+          billingReason: null,
+        });
+      }
+
+      const dealRefs: DealRef[] = dealRows
+        .filter(r => r.response_id && r.business)
+        .map(r => ({
+          responseId: String(r.response_id),
+          day: String(r.day),
+          email: r.email ? String(r.email) : null,
+          business: String(r.business),
+          contactName: r.contact ? String(r.contact) : null,
+          closer: r.closer ? String(r.closer) : null,
+          csm: r.csm ? String(r.csm) : null,
+          deposit: usd(num(r.cash_collected)),
+          paymentStructure: r.payment_structure
+            ? String(r.payment_structure)
+            : null,
+        }));
+      const emailsByCard = new Map<string, string[]>();
+      for (const r of loginRows)
+        if (r.email && r.clickup_id)
+          emailsByCard.set(String(r.clickup_id), [
+            ...(emailsByCard.get(String(r.clickup_id)) ?? []),
+            String(r.email),
+          ]);
+      const payersByCard = new Map<string, string[]>();
+      for (const r of payerRows)
+        payersByCard.set(String(r.clickup_task_id), [
+          ...(payersByCard.get(String(r.clickup_task_id)) ?? []),
+          ...[r.payer_key, r.payer].filter(Boolean).map(String),
+        ]);
+      const cardRefs: CardRef[] = (manual?.cards ?? []).map(c => ({
+        taskId: c.taskId,
+        names: c.names,
+        csm: c.csm,
+        emails: emailsByCard.get(c.taskId) ?? [],
+        payerKeys: payersByCard.get(c.taskId) ?? [],
+      }));
+
+      const rows = attribute(paymentsIn, dealRefs, cardRefs);
+      const toTx = (r: Attributed): Transaction => ({
+        id: r.id,
+        day: r.day,
+        rail: r.rail,
+        direction: "in",
+        usd: r.usd,
+        currency: r.currency,
+        amount: r.amount,
+        payerEmail: r.payerEmail,
+        payerName: r.payerName,
+        side: r.side,
+        kind: r.kind,
+        person: r.person,
+        personRole: r.personRole,
+        dealBusiness: r.dealBusiness,
+        clientName: r.clientName,
+        clientTaskId: r.clientTaskId,
+        matchedBy: r.matchedBy,
+        detail: detailOf.get(r.id) ?? null,
+      });
+      const outRows: Transaction[] = [];
+      for (const r of whopRows) {
+        if (num(r.refunded_amount) <= 0 || !r.refund_day) continue;
+        outRows.push({
+          id: `whop-refund:${r.payment_id}`,
+          day: String(r.refund_day),
+          rail: "whop",
+          direction: "out",
+          usd: usd(num(r.refunded_amount)),
+          currency: "USD",
+          amount: usd(num(r.refunded_amount)),
+          payerEmail: r.email ? String(r.email) : null,
+          payerName: r.billing ? String(r.billing) : null,
+          side: "out",
+          kind: "refund",
+          person: null,
+          personRole: null,
+          dealBusiness: null,
+          clientName: null,
+          clientTaskId: null,
+          matchedBy: "none",
+          detail: "Whop refund, already netted off the charge it refunds",
+        });
+      }
+      // Every other statement line: expenses, fees and exclusions as money
+      // out; payouts, settlements, own transfers and refunds received as
+      // lines that are neither cash in nor an expense, so the tab shows why
+      // a bank credit did not become cash.
+      for (const l of bankLines) {
+        if (l.kind === "client_payment") continue;
+        const out = l.usd < 0;
+        const isExpense =
+          l.kind === "expense" || l.kind === "fee" || l.kind === "excluded";
+        outRows.push({
+          id: `bankline:${l.id}`,
+          day: l.day,
+          rail: "bank",
+          direction: out ? "out" : "in",
+          usd: Math.abs(l.usd),
+          currency: l.currency,
+          amount: Math.abs(l.amount),
+          payerEmail: null,
+          payerName: l.reference || null,
+          side: isExpense || out ? "out" : "unattributed",
+          kind:
+            l.kind === "excluded" ? "expense" : isExpense ? "expense" : "none",
+          person: null,
+          personRole: null,
+          dealBusiness: null,
+          clientName: null,
+          clientTaskId: null,
+          matchedBy:
+            l.kind === "whop_payout"
+              ? payoutMatches.get(String(l.id))
+                ? `Whop payments ${payoutMatches.get(String(l.id))?.from} to ${payoutMatches.get(String(l.id))?.to}`
+                : "none"
+              : "none",
+          detail: `${KIND_LABEL[l.kind] ?? l.kind}${l.category ? ` · ${l.category}` : ""}${l.note ? ` · ${l.note}` : ""}`,
+          bankKind: l.kind,
+          bankLineId: l.id,
+        });
+      }
+      for (const e of manualRefunds)
+        outRows.push({
+          id: `manual-refund:${e.id}`,
+          day: e.day,
+          rail: "manual",
+          direction: "out",
+          usd: e.amountUsd,
+          currency: e.currency,
+          amount: e.amount,
+          payerEmail: null,
+          payerName: e.client || null,
+          side: "out",
+          kind: "refund",
+          person: null,
+          personRole: null,
+          dealBusiness: null,
+          clientName: e.client || null,
+          clientTaskId: e.clickupTaskId,
+          matchedBy: "none",
+          detail: `Refund logged by hand (${e.rail})`,
+        });
+      for (const r of expenseRows)
+        outRows.push({
+          id: `bank:${r.id}`,
+          day: String(r.day),
+          rail: "bank",
+          direction: "out",
+          usd: usd(num(r.amount_usd)),
+          currency: "USD",
+          amount: usd(num(r.amount_usd)),
+          payerEmail: null,
+          payerName: r.vendor ? String(r.vendor) : null,
+          side: "out",
+          kind: "expense",
+          person: null,
+          personRole: null,
+          dealBusiness: null,
+          clientName: null,
+          clientTaskId: null,
+          matchedBy: "none",
+          detail: r.category ? String(r.category) : null,
+        });
+      const transactions = [...rows.map(toTx), ...outRows]
+        .sort((a, b) =>
+          a.day === b.day ? a.id.localeCompare(b.id) : a.day < b.day ? 1 : -1,
+        )
+        .slice(0, 1500);
+      const inMonth = (m: string) => rows.filter(r => r.day.slice(0, 7) === m);
+      const all = attributionTotals(rows);
+      const out = usd(outRows.reduce((t, r) => t + r.usd, 0));
+      attribution = {
+        from: from12,
+        to: today,
+        kickoffRead: false,
+        tapRead: tapCharges !== null,
+        totals: { ...all, out, outCount: outRows.length },
+        mtd: attributionTotals(inMonth(month)),
+        lastMonth: attributionTotals(inMonth(lastMonth)),
+        byPerson: byPerson(rows),
+        transactions,
+      };
+
+      notes.push({
+        level: "info",
+        text: `Every payment in over the last 12 months is given a side. Front end is the deposit at signing (the closer's) and the rest of the cash inside ${FRONT_END_DAYS} days of the deal (${FRONT_END_DAYS_MONTHLY} on a monthly plan, the CSM's); back end is a payment matched to an existing client (that client's CSM's). A payment is tied to a deal by Whop's own link, the payer's email or the business name, and to a client by a portal login, the hand-kept payer mapping, the card's names or the card typed on a hand-logged entry. ${payments(all.unattributedCount)} (${usdWords(all.unattributed)}) match no deal and no client; the Transactions tab lists every payment in and out.`,
+      });
+      notes.push({
+        level: "warn",
+        text: "Kickoff cash is not read: the CSM's kickoff form (Typeform BbJy6xg4) has no field for the remaining cash and is not loaded into the database. Until it has two fields (remaining cash collected, and the amount) and Muhammed's Typeform sync loads it, the rest of the cash is judged from the rails alone.",
+      });
+      if (tapCharges === null)
+        notes.push({
+          level: "info",
+          text: "Tap charges are not in the attribution this run, because Tap was not read.",
+        });
+
+      const point = (metric: string, value: number): DailyPoint => ({
+        date: today,
+        metric,
+        scope: "company",
+        value,
+      });
+      attributionDaily.push(
+        point("money.attribution.frontEndMtd", attribution.mtd.frontEnd),
+        point("money.attribution.backEndMtd", attribution.mtd.backEnd),
+        point(
+          "money.attribution.unattributedMtd",
+          attribution.mtd.unattributed,
+        ),
+      );
+    } catch (e) {
+      notes.push({
+        level: "warn",
+        text: `Payments could not be attributed this run (${errText(e)}), so the front end and back end split and the Transactions tab keep their last figures.`,
+      });
+    }
+
+    // --- Refunds logged by hand, this month and 90 days.
+    const manualRefundsMtd = usd(
+      manualRefunds
+        .filter(e => e.day >= monthStart(today) && e.day <= today)
+        .reduce((t, e) => t + e.amountUsd, 0),
+    );
+    const manualRefunds90 = usd(
+      manualRefunds
+        .filter(e => e.day >= from90 && e.day <= today)
+        .reduce((t, e) => t + e.amountUsd, 0),
+    );
+    if (manualRail.connected) manualRail.refundsMtd = manualRefundsMtd;
+    if (manualRefunds.length)
+      notes.push({
+        level: "info",
+        text: `Refunds are Whop refunds by refund day plus ${payments(manualRefunds.length)} logged by hand as refunds (${usdWords(manualRefunds90)} in 90 days). A hand-logged refund comes off the Manual rail on its day.`,
+      });
+
+    // --- The bank block: what the statements hold, how old the newest is,
+    // the expenses on them by month, and the exclusions.
+    const lastStatementTo = bankStatements.reduce<string | null>(
+      (m, st) => (st.toDay && (!m || st.toDay > m) ? st.toDay : m),
+      null,
+    );
+    const daysSince = lastStatementTo
+      ? Math.round(
+          (Date.parse(today) - Date.parse(lastStatementTo)) / 86_400_000,
+        )
+      : null;
+    const bankKinds = new Map<string, { count: number; usd: number }>();
+    for (const l of bankLines) {
+      const r = bankKinds.get(l.kind) ?? { count: 0, usd: 0 };
+      r.count += 1;
+      r.usd += l.usd;
+      bankKinds.set(l.kind, r);
+    }
+    const expByMonth = new Map<
+      string,
+      {
+        total: number;
+        byCategory: Map<string, { usd: number; lines: number }>;
+        excluded: { usd: number; lines: number };
+        fees: number;
+      }
+    >();
+    for (const l of bankLines) {
+      if (!["expense", "fee", "excluded"].includes(l.kind)) continue;
+      const m = l.day.slice(0, 7);
+      const row = expByMonth.get(m) ?? {
+        total: 0,
+        byCategory: new Map(),
+        excluded: { usd: 0, lines: 0 },
+        fees: 0,
+      };
+      const amount = Math.abs(l.usd);
+      if (l.kind === "excluded") {
+        row.excluded.usd += amount;
+        row.excluded.lines += 1;
+      } else {
+        row.total += amount;
+        if (l.kind === "fee") row.fees += amount;
+        const cat = l.category ?? (l.kind === "fee" ? "bank" : "other");
+        const c = row.byCategory.get(cat) ?? { usd: 0, lines: 0 };
+        c.usd += amount;
+        c.lines += 1;
+        row.byCategory.set(cat, c);
+      }
+      expByMonth.set(m, row);
+    }
+    const bankBlock: MoneyPayload["bank"] = {
+      lastStatementTo,
+      daysSince,
+      stale: daysSince === null || daysSince > 7,
+      statements: bankStatements,
+      accounts: [...new Set(bankStatements.map(st => st.account))].sort(),
+      kinds: [...bankKinds.entries()]
+        .map(([kind, r]) => ({
+          kind,
+          label: KIND_LABEL[kind as LineKind] ?? kind,
+          count: r.count,
+          usd: usd(r.usd),
+        }))
+        .sort((a, b) => Math.abs(b.usd) - Math.abs(a.usd)),
+      payouts: {
+        count: payoutLines.length,
+        matched: payoutMatches.size,
+        usd: usd(payoutLines.reduce((t, l) => t + l.usd, 0)),
+        matchedUsd: usd(
+          [...payoutMatches.values()].reduce((t, m) => t + m.usd, 0),
+        ),
+      },
+      tapSettlements: {
+        count: settlementLines.length,
+        usd: usd(settlementLines.reduce((t, l) => t + l.usd, 0)),
+        chargesCovered: tapCoveredIds.size,
+      },
+      manualCovered: manualCoveredByBank,
+      expenses: [...expByMonth.entries()]
+        .sort((a, b) => (a[0] < b[0] ? 1 : -1))
+        .map(([m, row]) => ({
+          month: m,
+          total: usd(row.total),
+          byCategory: [...row.byCategory.entries()]
+            .map(([category, c]) => ({
+              category,
+              usd: usd(c.usd),
+              lines: c.lines,
+            }))
+            .sort((a, b) => b.usd - a.usd),
+          excluded: { usd: usd(row.excluded.usd), lines: row.excluded.lines },
+          fees: usd(row.fees),
+        })),
+      exclusions: bankExclusions,
+      unknown: bankLines.filter(l => l.kind === "unknown").length,
+    };
+    if (bankRead) {
+      notes.push({
+        level: bankBlock.stale ? "warn" : "info",
+        text: lastStatementTo
+          ? `The newest bank statement ends ${lastStatementTo}, ${daysSince} day${daysSince === 1 ? "" : "s"} ago${bankBlock.stale ? ": upload the latest CBK export on the Money tab, cash and expenses since then are missing, not zero" : ""}. Statements are the CBK Online CSV export; CBK has no API.`
+          : "No bank statement has been uploaded yet, so bank cash and bank expenses are missing, not zero. Drop the CBK Online CSV export on the Money tab.",
+      });
+      if (payoutLines.length)
+        notes.push({
+          level: "info",
+          text: `${payoutLines.length} Whop payout${payoutLines.length === 1 ? "" : "s"} (${usdWords(bankBlock.payouts.usd)}) on the statements ${payoutLines.length === 1 ? "is" : "are"} not cash: the Whop payments behind ${payoutLines.length === 1 ? "it" : "them"} already count on the Whop rail. ${payoutMatches.size} of them match a run of Whop payments within 3% and 14 days.`,
+        });
+      if (bankBlock.unknown)
+        notes.push({
+          level: "info",
+          text: `${bankBlock.unknown} statement line${bankBlock.unknown === 1 ? "" : "s"} could not be sorted by the rules and ${bankBlock.unknown === 1 ? "sits" : "sit"} as unknown on the Transactions tab; mark them by hand.`,
+        });
+    }
+
+    // --- Projected MRR and the collection rate (Aziz, 2026-09-21).
+    let book: MoneyPayload["book"];
+    const bookDaily: DailyPoint[] = [];
+    try {
+      const billingRows: BillingRowType[] = await ctx.runQuery(
+        internal.ceo.billing.allBilling,
+        {},
+      );
+      const recurring = billingRows.filter(
+        r =>
+          groupOf(r.stage) === "active" &&
+          typeof r.mrrUsd === "number" &&
+          r.paymentPlan &&
+          !isOneOffPlan(r.paymentPlan),
+      );
+      const projected = usd(recurring.reduce((t, r) => t + (r.mrrUsd ?? 0), 0));
+      const cardIds = new Set(recurring.map(r => r.taskId));
+      const collected = usd(
+        (attribution?.transactions ?? [])
+          .filter(
+            t =>
+              t.direction === "in" &&
+              t.clientTaskId &&
+              cardIds.has(t.clientTaskId) &&
+              t.day.slice(0, 7) === month,
+          )
+          .reduce((t, x) => t + x.usd, 0),
+      );
+      const [projSeries, collSeries] = await Promise.all([
+        ctx.runQuery(internal.ceo.store.series, {
+          metric: "money.book.projected",
+          scope: "company",
+          since: firstMonthStart,
+        }),
+        ctx.runQuery(internal.ceo.store.series, {
+          metric: "money.book.collected",
+          scope: "company",
+          since: firstMonthStart,
+        }),
+      ]);
+      const collByMonth = new Map(
+        collSeries.map(p => [p.date.slice(0, 7), p.value]),
+      );
+      const history = projSeries
+        .filter(p => p.date.slice(0, 7) !== month)
+        .map(p => {
+          const m = p.date.slice(0, 7);
+          const c = collByMonth.get(m) ?? 0;
+          return {
+            month: m,
+            projected: p.value,
+            collected: c,
+            rate: p.value > 0 ? Math.round((c / p.value) * 1000) / 1000 : null,
+          };
+        });
+      book = {
+        month,
+        projectedMrr: projected,
+        projectedCards: recurring.length,
+        collected,
+        collectionRate:
+          projected > 0
+            ? Math.round((collected / projected) * 1000) / 1000
+            : null,
+        averageRetainer: recurring.length
+          ? usd(projected / recurring.length)
+          : null,
+        history,
+      };
+      const monthDay = `${month}-01`;
+      bookDaily.push(
+        {
+          date: monthDay,
+          metric: "money.book.projected",
+          scope: "company",
+          value: projected,
+        },
+        {
+          date: monthDay,
+          metric: "money.book.collected",
+          scope: "company",
+          value: collected,
+        },
+      );
+      notes.push({
+        level: "info",
+        text: `Projected MRR is the MRR field added up over the ${recurring.length} active cards on a recurring plan; collection rate is the cash attributed to those clients this month, every rail, over it. Both are kept per month from ${month} on, so the history grows from here.`,
+      });
+    } catch (e) {
+      notes.push({
+        level: "warn",
+        text: `Projected MRR and the collection rate could not be worked out this run (${errText(e)}).`,
+      });
+    }
+
+    // --- The client's LTV table: every payment attributed to a card, mirrored
+    // to cockpit_client_payments in Creative Triage, one row per payment.
+    if (attribution && sbWritable())
+      try {
+        const rows = attribution.transactions
+          .filter(t => t.direction === "in" && t.clientTaskId)
+          .map(t => ({
+            payment_id: t.id,
+            clickup_task_id: t.clientTaskId,
+            client_name: t.clientName ?? t.dealBusiness ?? null,
+            day: t.day,
+            usd: t.usd,
+            rail: t.rail,
+            side: t.side,
+            kind: t.kind,
+            person: t.person,
+            recorded_at: new Date().toISOString(),
+          }));
+        for (let i = 0; i < rows.length; i += 200)
+          await upsertMerge(
+            "cockpit_client_payments",
+            rows.slice(i, i + 200),
+            "payment_id",
+          );
+        sources.push({
+          name: "Client payments mirror",
+          ok: true,
+          note: `${rows.length} attributed payments written to cockpit_client_payments`,
+        });
+      } catch (e) {
+        sources.push({
+          name: "Client payments mirror",
+          ok: false,
+          note: errText(e),
+        });
+      }
+
     const byMonth = manualByMonth;
     const payload = {
       month,
@@ -1321,6 +2331,7 @@ export const money: Adapter = {
         // Left off when the hand log could not be read, so the screen says
         // "not read" rather than "nothing logged".
         ...(manual ? { manual: manualRail } : {}),
+        ...(bankRead ? { bank: bankRail } : {}),
         total: totalRail,
       },
       manualEntries,
@@ -1335,8 +2346,10 @@ export const money: Adapter = {
           }))
         : monthly,
       refunds: {
-        mtd: refundsMtd,
-        last90: usd(num(s.refunds_90)),
+        mtd: usd(refundsMtd + manualRefundsMtd),
+        last90: usd(num(s.refunds_90) + manualRefunds90),
+        manualMtd: manualRefundsMtd,
+        manualLast90: manualRefunds90,
       },
       deals,
       failedCharges: { count30d: failedCount, amount30d: failedAmount },
@@ -1346,6 +2359,9 @@ export const money: Adapter = {
       // read" rather than showing a book of zero.
       ...(mrr ? { mrr } : {}),
       ...(collection ? { collection } : {}),
+      ...(attribution ? { attribution } : {}),
+      ...(bankRead ? { bank: bankBlock } : {}),
+      ...(book ? { book } : {}),
       notes,
     } satisfies MoneyPayload;
 
@@ -1366,6 +2382,8 @@ export const money: Adapter = {
       },
       ...mrrDaily,
       ...collectionDaily,
+      ...attributionDaily,
+      ...bookDaily,
     ];
 
     return { payload, daily, sources };

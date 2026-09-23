@@ -1,7 +1,15 @@
-import type { CallsPayload, CallWindow, Note } from "../payloads";
+import type {
+  CallGap,
+  CallsPayload,
+  CallWindow,
+  Note,
+  WorkingHours,
+} from "../payloads";
 import { num, type Row, sql, TRIAGE } from "../sb";
+import { workingHoursForAdapters } from "../settings";
 import { addDays, KUWAIT_OFFSET_MS, kuwaitDay } from "../time";
 import type { Adapter, DailyPoint, SourceStamp } from "../types";
+import { describeWorkingHours, workingMinutesSql } from "../workingHours";
 
 /**
  * Call centre numbers from the dialer's reporting store in Creative Triage
@@ -129,13 +137,66 @@ left join agg a on true`;
  * - Speed to lead: for leads of DFY clients created in the window, the first
  *   outbound call to the same phone at or after creation (1 minute of clock
  *   skew allowed). The dialer console's own speed metric is empty (2
- *   attempts), so this replaces it.
+ *   attempts), so this replaces it. Two clocks over the same leads: the
+ *   plain clock, and the working clock (Aziz, 2026-09-21, item 10), whose
+ *   minutes are counted by workingMinutesSql in the `clocked` CTE: the
+ *   clock starts at the later of the lead's creation and the next working
+ *   window in `hours`, and only working minutes count.
  * Both sides are materialized so each join is one hash join: row-by-row
  * lookups and parallel scans hang on this instance. The per-client rows hang
  * off the single speed row, so the speed numbers survive a window with no
  * dials.
  */
-function leadQuery(from: string): string {
+/**
+ * The gap between calls, on the working clock.
+ *
+ * Aziz, 2026-09-22: "during working hours, I want to know the call gap time as
+ * well between each call." Talk time says how long an agent was on the phone.
+ * The gap says how long they were not, which is the number that tells you
+ * whether a shift is being worked.
+ *
+ * A gap is measured from the end of one outbound call to the start of the
+ * next by the same agent, and it is counted in working minutes only, using the
+ * same clock as speed to lead. So the overnight gap is zero, and so is the gap
+ * across a weekend: an agent is not idle when nobody is meant to be dialling.
+ *
+ * Only gaps inside one Kuwait day are counted, and a gap longer than a full
+ * working day is dropped rather than averaged in: that is a day off or a break
+ * in the import, not an agent sitting still.
+ */
+function gapQuery(from: string, hours: WorkingHours): string {
+  const workingMin = workingMinutesSql("g.prev_end", "g.ts", hours);
+  return `with c as (
+  select (f.data->>'timestamp')::timestamptz as ts,
+    (f.data->>'duration')::numeric as dur,
+    f.data->'agents'->0->>'name' as agent
+  from mahara_reporting.facts f
+  where f.namespace = 'production' and f.source = 'maqsam' and f.kind = 'call'
+    and not f.conflict
+    and jsonb_array_length(f.data->'agents') = 1
+    and f.data->>'type' = 'outbound'
+    and (f.data->>'timestamp')::timestamptz >= ${midnight(from)}
+), g as materialized (
+  select agent, ts,
+    (ts at time zone 'Asia/Kuwait')::date::text as day,
+    lag(ts + make_interval(secs => coalesce(dur, 0)))
+      over (partition by agent, (ts at time zone 'Asia/Kuwait')::date order by ts) as prev_end
+  from c
+), m as (
+  select agent, day, ${workingMin} as gap_min
+  from g where prev_end is not null and ts > prev_end
+)
+select agent, day, count(*) as gaps,
+  percentile_cont(0.5) within group (order by gap_min) as median_min,
+  avg(gap_min) as mean_min,
+  max(gap_min) as longest_min,
+  count(*) filter (where gap_min > 30) as over_30
+from m
+where gap_min is not null and gap_min <= 600
+group by 1, 2`;
+}
+
+function leadQuery(from: string, hours: WorkingHours): string {
   return `with c as materialized (
   select f.external_id as id,
     (f.data->>'timestamp')::timestamptz as ts,
@@ -176,6 +237,10 @@ function leadQuery(from: string): string {
   left join c on c.pkey = l.pkey and c.ts >= l.created_at - interval '1 minute'
   where l.in_scope and l.created_at >= ${midnight(from)}
   group by 1, 2
+), clocked as (
+  select f.*,
+    ${workingMinutesSql("f.created_at", "f.first_call", hours)} as working_min
+  from first_calls f
 ), speed as (
   select count(*) as leads,
     count(first_call) as called,
@@ -183,6 +248,9 @@ function leadQuery(from: string): string {
       order by greatest(0, extract(epoch from first_call - created_at)) / 60
     ) filter (where first_call is not null) as median_min,
     count(*) filter (where first_call - created_at <= interval '5 minutes') as within5,
+    percentile_cont(0.5) within group (order by working_min)
+      filter (where first_call is not null) as working_median_min,
+    count(*) filter (where first_call is not null and working_min <= 5) as working_within5,
     count(*) filter (where first_call is null and created_at < now() - interval '1 day') as uncalled_1d,
     (select (extract(epoch from max(last_synced_at)) * 1000)::bigint
       from public.lead_sync_state where last_status = 'success') as leads_synced_ms,
@@ -190,7 +258,7 @@ function leadQuery(from: string): string {
       where l.blank_mode and l.created_at >= ${midnight(from)}) as blank_leads,
     (select string_agg(distinct l.client_name, ', ' order by l.client_name) from l
       where l.blank_mode and l.created_at >= ${midnight(from)}) as blank_clients
-  from first_calls
+  from clocked
 )
 select s.*, pc.*
 from speed s
@@ -360,7 +428,7 @@ export const calls: Adapter = {
     });
 
     // Agents who dialed in the last 30 days, so one who stopped still shows.
-    const byAgent = [...agents.entries()]
+    let byAgent = [...agents.entries()]
       .filter(([, a]) => a.dials30 > 0)
       .sort(
         ([n1, a1], [n2, a2]) =>
@@ -371,6 +439,7 @@ export const calls: Adapter = {
         today: toWindow(a.today),
         last7: toWindow(a.last7),
         lastCallAt: a.lastCallAt,
+        gap7d: null as CallGap | null,
       }));
 
     // Freshness of the dialer store: today reads 0 when imports stall. A gap
@@ -419,11 +488,17 @@ export const calls: Adapter = {
       within5minShare7d: null,
       sample: 0,
       since: PHONE_SINCE,
+      workingMedianMinutes7d: null,
+      workingWithin5minShare7d: null,
     };
     let uncalled: number | null = null;
     let leadsError: string | undefined;
+    // The working clock's hours: saved in cockpit_settings, or the default.
+    // Never a throw; a problem becomes a note beside the number.
+    const settings = await workingHoursForAdapters();
+    const clockHours = settings.hours;
     try {
-      const lead = await triage(leadQuery(leadFrom));
+      const lead = await triage(leadQuery(leadFrom, clockHours));
       const s = lead[0];
       if (!s) throw new Error("no summary row");
       leadsOk = true;
@@ -466,6 +541,15 @@ export const calls: Adapter = {
         within5minShare7d: called ? round(num(s.within5) / called, 4) : null,
         sample: called,
         since: PHONE_SINCE,
+        workingMedianMinutes7d:
+          called &&
+          s.working_median_min !== null &&
+          s.working_median_min !== undefined
+            ? round(num(s.working_median_min), 1)
+            : null,
+        workingWithin5minShare7d: called
+          ? round(num(s.working_within5) / called, 4)
+          : null,
       };
       if (uncalled > 0)
         notes.push({
@@ -508,6 +592,68 @@ export const calls: Adapter = {
     });
     notes.push({
       level: "info",
+      text: `Speed to lead on the working clock: the clock starts at the later of the lead's creation and the next working window, and only working minutes count, so a call before the clock starts is 0 minutes. Hours in force: ${describeWorkingHours(clockHours)} (${clockHours.source === "settings" ? "saved in the Working hours card" : "the default, nothing saved yet"}).`,
+    });
+    if (settings.problem)
+      notes.push({
+        level: "warn",
+        text: `Speed to lead ran on the default working hours because the saved ones could not be read: ${settings.problem}`,
+      });
+    // How long agents are off the phone during the hours they are meant to be
+    // dialling. A failure here costs the gap numbers and nothing else.
+    const gapRows = await triage(gapQuery(from30, clockHours)).catch(() => []);
+    const roll = (rows: Row[]): CallGap | null => {
+      const gaps = rows.reduce((t, r) => t + num(r.gaps), 0);
+      if (!gaps) return null;
+      // A median of medians is not a median, so the day medians are weighted
+      // by how many gaps each day held, which is the honest middle to hand.
+      const weighted =
+        rows.reduce((t, r) => t + num(r.median_min) * num(r.gaps), 0) / gaps;
+      return {
+        medianMin: round(weighted, 1),
+        meanMin: round(
+          rows.reduce((t, r) => t + num(r.mean_min) * num(r.gaps), 0) / gaps,
+          1,
+        ),
+        longestMin: round(
+          rows.reduce((t, r) => Math.max(t, num(r.longest_min)), 0),
+          1,
+        ),
+        gaps,
+        over30: rows.reduce((t, r) => t + num(r.over_30), 0),
+      };
+    };
+    const gapByDay = new Map<string, Row[]>();
+    for (const r of gapRows) {
+      const day = String(r.day ?? "");
+      gapByDay.set(day, [...(gapByDay.get(day) ?? []), r]);
+    }
+    const gap = {
+      today: roll(gapByDay.get(today) ?? []),
+      last7: roll(gapRows.filter(r => String(r.day) >= from7)),
+      daily: daily.map(d => {
+        const rolled = roll(gapByDay.get(d.date) ?? []);
+        return {
+          date: d.date,
+          medianMin: rolled?.medianMin ?? null,
+          gaps: rolled?.gaps ?? 0,
+        };
+      }),
+    };
+    const gapByAgent = new Map<string, Row[]>();
+    for (const r of gapRows)
+      if (String(r.day) >= from7) {
+        const a = String(r.agent ?? "");
+        gapByAgent.set(a, [...(gapByAgent.get(a) ?? []), r]);
+      }
+
+    byAgent = byAgent.map(a => ({
+      ...a,
+      gap7d: roll(gapByAgent.get(a.agent) ?? []),
+    }));
+
+    notes.push({
+      level: "info",
       text: "B2B maqsam_client_calls is an old one-off import (history to 2026-07-18) and is not used for these live numbers.",
     });
 
@@ -521,6 +667,8 @@ export const calls: Adapter = {
       byHourToday: hours,
       perClient7d,
       speedToLead,
+      gap,
+      workingHours: clockHours,
       lastCallAt,
       notes,
     } satisfies CallsPayload;
@@ -538,6 +686,14 @@ export const calls: Adapter = {
     };
     keep("speedToLeadMedianMin7d", speedToLead.medianMinutes7d);
     keep("speedToLeadWithin5minShare7d", speedToLead.within5minShare7d);
+    keep(
+      "speedToLeadWorkingMedianMin7d",
+      speedToLead.workingMedianMinutes7d ?? null,
+    );
+    keep(
+      "speedToLeadWorkingWithin5minShare7d",
+      speedToLead.workingWithin5minShare7d ?? null,
+    );
     keep("leadsUncalled1d", uncalled);
 
     const sources: SourceStamp[] = [

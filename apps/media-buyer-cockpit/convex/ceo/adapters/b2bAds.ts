@@ -27,7 +27,8 @@ type Any = Record<string, any>;
  * typed in by hand, and are simply not on this screen.
  *
  * Two lead counts, on purpose. `metaLeads` is what Meta says the ad produced.
- * `leads` is what actually arrived in the CRM attributed to it. They disagree
+ * `leads` is what actually arrived in the CRM attributed to it and carries a
+ * ROAS tag of qualified or unqualified (Aziz, 2026-09-21). They disagree
  * per ad, sometimes by a lot, and the gap is a diagnosis in itself: Meta
  * counted a form fill that never became a contact, or the contact arrived
  * without its attribution.
@@ -102,30 +103,37 @@ function treeSql(from7: string, from30: string, to: string): string {
     where date between ${day(from)} and ${day(to)}
     group by 1,2,3),
   ${alias}_leads as (
-    select ad_id, count(*) as leads,
-      count(*) filter (where stage_name ~* 'Demo Booked|CONFIRMED|Closed|Hot Lead') as qualified_leads,
-      count(*) filter (where stage_name ilike '%disqualif%') as disqualified_leads
-    from public.leads
-    where is_lead and ad_id is not null
-      and (lead_created_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)}
+    -- Leads by the setters' ROAS tags (Aziz, 2026-09-21): qualified plus
+    -- unqualified count; unprepared is "not ready" and is shown apart.
+    select l.ad_id,
+      count(*) filter (where ('roas-qualified' = any(coalesce(l.tags, '{}'::text[])) or 'roas-unqualified' = any(coalesce(l.tags, '{}'::text[])))) as leads,
+      count(*) filter (where 'roas-qualified' = any(coalesce(l.tags, '{}'::text[]))) as qualified_leads,
+      count(*) filter (where 'roas-qualified' <> all(coalesce(l.tags, '{}'::text[])) and 'roas-unqualified' <> all(coalesce(l.tags, '{}'::text[])) and 'roas-unprepared' = any(coalesce(l.tags, '{}'::text[]))) as not_ready_leads
+    from public.leads l
+    where l.ad_id is not null
+      and (l.lead_created_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)}
     group by 1),
   ${alias}_calls as (
+    -- The dashboard's dating (b2b_window_metrics): a booking counts on the
+    -- day it was booked; due, shown, qualified and cancelled count on the
+    -- day the call was for, and only once that day has passed.
     select c.ad_id,
-      count(*) filter (where c.call_type='intro') as intros_booked,
-      count(*) filter (where c.call_type='intro' and c.start_at < now()) as intros_due,
-      count(*) filter (where c.call_type='intro' and c.status in ('showed','confirmed','invalid') and c.start_at < now()) as intros_shown,
-      count(*) filter (where c.call_type='intro' and (c.status='showed' or (c.status='confirmed' and c.start_at < now()))) as intros_qualified,
-      count(*) filter (where c.call_type='intro' and c.status='cancelled') as intros_cancelled,
-      count(*) filter (where c.call_type='intro' and c.status in ('showed','confirmed','invalid') and c.start_at < now()
+      count(*) filter (where c.call_type='intro' and (c.booked_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)}) as intros_booked,
+      count(*) filter (where c.call_type='intro' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and c.start_at <= now()) as intros_due,
+      count(*) filter (where c.call_type='intro' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and (c.status='showed' or (c.status in ('confirmed','invalid') and c.start_at <= now()))) as intros_shown,
+      count(*) filter (where c.call_type='intro' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and (c.status='showed' or (c.status='confirmed' and c.start_at <= now()))) as intros_qualified,
+      count(*) filter (where c.call_type='intro' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and c.status='cancelled') as intros_cancelled,
+      count(*) filter (where c.call_type='intro' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and (c.status='showed' or (c.status in ('confirmed','invalid') and c.start_at <= now()))
         and exists (select 1 from public.calls d where d.contact_id = c.contact_id and d.call_type='demo' and d.booked_at >= c.start_at)) as intros_advanced,
-      count(*) filter (where c.call_type='demo') as demos_booked,
-      count(*) filter (where c.call_type='demo' and c.start_at < now()) as demos_due,
-      count(*) filter (where c.call_type='demo' and c.status in ('showed','confirmed','invalid') and c.start_at < now()) as demos_shown,
-      count(*) filter (where c.call_type='demo' and (c.status='showed' or (c.status='confirmed' and c.start_at < now()))) as demos_qualified,
-      count(*) filter (where c.call_type='demo' and c.status='cancelled') as demos_cancelled
+      count(*) filter (where c.call_type='demo' and (c.booked_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)}) as demos_booked,
+      count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and c.start_at <= now()) as demos_due,
+      count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and (c.status='showed' or (c.status in ('confirmed','invalid') and c.start_at <= now()))) as demos_shown,
+      count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and (c.status='showed' or (c.status='confirmed' and c.start_at <= now()))) as demos_qualified,
+      count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and c.status='cancelled') as demos_cancelled
     from public.calls c
     where c.ad_id is not null
-      and (c.booked_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)}
+      and ((c.booked_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)}
+        or (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)})
     group by 1),
   ${alias}_deals as (
     select ad_id, count(*) as closes,
@@ -145,7 +153,7 @@ function treeSql(from7: string, from30: string, to: string): string {
     ${a}_ads.freq as ${a}_freq,
     coalesce(${a}_leads.leads,0) as ${a}_leads,
     coalesce(${a}_leads.qualified_leads,0) as ${a}_qualified_leads,
-    coalesce(${a}_leads.disqualified_leads,0) as ${a}_disqualified_leads,
+    coalesce(${a}_leads.not_ready_leads,0) as ${a}_not_ready_leads,
     coalesce(${a}_calls.intros_booked,0) as ${a}_intros_booked,
     coalesce(${a}_calls.intros_due,0) as ${a}_intros_due,
     coalesce(${a}_calls.intros_shown,0) as ${a}_intros_shown,
@@ -217,7 +225,7 @@ const COUNTS = [
   "metaLeads",
   "leads",
   "qualifiedLeads",
-  "disqualifiedLeads",
+  "notReadyLeads",
   "introsBooked",
   "introsDue",
   "introsShown",
@@ -239,7 +247,7 @@ const COLUMN: Record<(typeof COUNTS)[number], string> = {
   metaLeads: "meta_leads",
   leads: "leads",
   qualifiedLeads: "qualified_leads",
-  disqualifiedLeads: "disqualified_leads",
+  notReadyLeads: "not_ready_leads",
   introsBooked: "intros_booked",
   introsDue: "intros_due",
   introsShown: "intros_shown",
@@ -537,27 +545,37 @@ function constraintOf(
   };
 }
 
-export const b2bAds: Adapter = {
-  key: "b2bAds",
-  label: "Our ads",
-  compute: async ctx => {
-    void ctx;
-    const now = Date.now();
-    const today = kuwaitDay(now);
-    const from7 = addDays(today, -6);
-    const from30 = addDays(today, -29);
+/**
+ * The whole account read for a pair of windows.
+ *
+ * The scheduled adapter asks for seven days and thirty. A custom timeframe
+ * (Aziz, 2026-09-22: "I should be able to see the metrics on a custom
+ * timeframe, not just 7 days or 30 days") asks for the same run of days
+ * twice, so the screen reads one window and every verdict judges it against
+ * itself. One query, one set of rules, no second definition of a number.
+ */
+export async function adsPayload(
+  from7: string,
+  from30: string,
+  today: string,
+): Promise<{ payload: B2bAdsPayload; sources: SourceStamp[] }> {
+  {
     const notes: Note[] = [];
 
     // Freshness first, because every verdict below needs to know it.
     const freshRows = await sql(
       B2B,
       `select max(extract(epoch from last_synced_at) * 1000) as ms,
-              to_char(max(date), 'YYYY-MM-DD') as last_day
+              to_char(max(date), 'YYYY-MM-DD') as last_day,
+              to_char(min(date), 'YYYY-MM-DD') as first_day
        from public.meta_ad_snapshots`,
     );
     const freshestAt = num(freshRows[0]?.ms) || undefined;
     const lastDay = freshRows[0]?.last_day
       ? String(freshRows[0].last_day)
+      : null;
+    const firstDay = freshRows[0]?.first_day
+      ? String(freshRows[0].first_day)
       : null;
     // Yesterday is the newest day Meta can reasonably have closed out.
     const staleSince = lastDay && lastDay < addDays(today, -1) ? lastDay : null;
@@ -598,8 +616,8 @@ export const b2bAds: Adapter = {
     const totals = await sql(
       B2B,
       `select
-        (select count(*) from public.leads where is_lead and (lead_created_at at time zone 'Asia/Riyadh')::date between ${day(from7)} and ${day(today)}) as w7_leads,
-        (select count(*) from public.leads where is_lead and (lead_created_at at time zone 'Asia/Riyadh')::date between ${day(from30)} and ${day(today)}) as w30_leads,
+        (select count(*) from public.leads l where ('roas-qualified' = any(coalesce(l.tags, '{}'::text[])) or 'roas-unqualified' = any(coalesce(l.tags, '{}'::text[]))) and (l.lead_created_at at time zone 'Asia/Riyadh')::date between ${day(from7)} and ${day(today)}) as w7_leads,
+        (select count(*) from public.leads l where ('roas-qualified' = any(coalesce(l.tags, '{}'::text[])) or 'roas-unqualified' = any(coalesce(l.tags, '{}'::text[]))) and (l.lead_created_at at time zone 'Asia/Riyadh')::date between ${day(from30)} and ${day(today)}) as w30_leads,
         (select count(*) from public.closed_deals where (submitted_at at time zone 'Asia/Riyadh')::date between ${day(from7)} and ${day(today)}) as w7_closes,
         (select count(*) from public.closed_deals where (submitted_at at time zone 'Asia/Riyadh')::date between ${day(from30)} and ${day(today)}) as w30_closes,
         (select coalesce(sum(contracted_revenue),0) from public.closed_deals where (submitted_at at time zone 'Asia/Riyadh')::date between ${day(from7)} and ${day(today)}) as w7_contracted,
@@ -815,6 +833,7 @@ export const b2bAds: Adapter = {
       verdicts,
       campaigns: list,
       lastSnapshotDay: lastDay,
+      firstSnapshotDay: firstDay,
       accountStatus,
       notes,
     };
@@ -831,40 +850,55 @@ export const b2bAds: Adapter = {
         : { name: "Meta ad account (Graph API)", ok: false, note: accountNote },
     ];
 
+    return { payload, sources };
+  }
+}
+
+export const b2bAds: Adapter = {
+  key: "b2bAds",
+  label: "Our ads",
+  compute: async ctx => {
+    void ctx;
+    const today = kuwaitDay(Date.now());
+    const { payload, sources } = await adsPayload(
+      addDays(today, -6),
+      addDays(today, -29),
+      today,
+    );
+    const a7 = payload.account.w7;
     const daily: DailyPoint[] = [
       {
         date: today,
         metric: "b2bAds.running",
         scope: "company",
-        value: running,
+        value: payload.running,
       },
       {
         date: today,
         metric: "b2bAds.spend7",
         scope: "company",
-        value: account7.spend,
+        value: a7.spend,
       },
       {
         date: today,
         metric: "b2bAds.leads7",
         scope: "company",
-        value: account7.leads,
+        value: a7.leads,
       },
       {
         date: today,
         metric: "b2bAds.metaLeads7",
         scope: "company",
-        value: account7.metaLeads,
+        value: a7.metaLeads,
       },
     ];
-    for (const c of list)
+    for (const c of payload.campaigns)
       daily.push({
         date: today,
         metric: "b2bAds.campaign.spend7",
         scope: `campaign:${c.id}`,
         value: c.w7.spend,
       });
-
     return { payload, daily, sources };
   },
 };

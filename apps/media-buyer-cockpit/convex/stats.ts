@@ -207,15 +207,23 @@ export const coverage = authenticatedQuery({
   returns: v.any(),
   handler: async ctx => {
     await assertRole(ctx, "media_buyer");
-    const rows = await ctx.db.query("dailyStats").take(20000);
-    if (rows.length === 0) return { first: null, last: null, rows: 0 };
-    let first = rows[0].date;
-    let last = rows[0].date;
-    for (const r of rows) {
-      if (r.date < first) first = r.date;
-      if (r.date > last) last = r.date;
-    }
-    return { first, last, rows: rows.length };
+    // The first and the last day on record are the two ends of the date
+    // index: two documents. This read twenty thousand to find them, and as a
+    // live query it did so for every open screen on every sync.
+    const first = await ctx.db
+      .query("dailyStats")
+      .withIndex("by_date")
+      .order("asc")
+      .first();
+    if (!first) return { first: null, last: null, rows: null };
+    const last = await ctx.db
+      .query("dailyStats")
+      .withIndex("by_date")
+      .order("desc")
+      .first();
+    // `rows` was a count and nothing on screen reads it; counting needs the
+    // whole table, so it is no longer computed.
+    return { first: first.date, last: last?.date ?? first.date, rows: null };
   },
 });
 
@@ -305,8 +313,13 @@ export const portfolioTrend = authenticatedQuery({
       .toISOString()
       .slice(0, 10);
     const byDate = new Map<string, { spend: number; leads: number }>();
-    for (const d of await ctx.db.query("dailyStats").take(30000)) {
-      if (d.date < since || !allowed.has(d.campaignName)) continue;
+    // Thirty days, read as thirty days. This read the whole table and threw
+    // eleven months of it away, for every open screen, on every sync.
+    for (const d of await ctx.db
+      .query("dailyStats")
+      .withIndex("by_date", q => q.gte("date", since))
+      .collect()) {
+      if (!allowed.has(d.campaignName)) continue;
       const row = byDate.get(d.date) ?? { spend: 0, leads: 0 };
       row.spend += Number(d.spend ?? 0);
       row.leads += Number(d.leads ?? 0);

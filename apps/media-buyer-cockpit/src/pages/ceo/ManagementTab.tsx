@@ -1,4 +1,4 @@
-import { useMutation, useQueries } from "convex/react";
+import { useAction, useMutation, useQueries } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { History, LoaderCircle, UserRoundX, Users } from "lucide-react";
 import {
@@ -6,6 +6,7 @@ import {
   type ReactNode,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
 } from "react";
@@ -59,7 +60,10 @@ import type {
   TeamPerson,
   TeamStatus,
 } from "../../../convex/ceo/payloads";
+import type { Roster } from "../../../convex/ceo/people";
 import { PeopleCard } from "./peopleCard";
+import { PersonPage, usePersonParam } from "./personPage";
+import { ScorecardTemplates } from "./scorecardTemplates";
 import {
   buildRoster,
   saveError,
@@ -323,7 +327,53 @@ function routeNotes(notes: Note[] | null | undefined) {
 }
 
 /** Management: every department side by side, its people, EODs, activity and output. */
+/**
+ * Names on this tab come from the EOD roster, which keys people by
+ * "<role>:<first>" and carries no payroll id. The file lives against the
+ * payroll id, so the two are matched on the name and a name that matches
+ * nothing is simply not a link.
+ */
+const PeopleIndex = createContext<Map<string, number>>(new Map());
+
+function PersonName({ name }: { name: string }) {
+  const index = useContext(PeopleIndex);
+  const [, setPerson] = usePersonParam();
+  const id = index.get(name.trim().toLowerCase());
+  if (!id) return <>{name}</>;
+  return (
+    <button
+      type="button"
+      onClick={() => setPerson(id)}
+      title={`Open ${name}'s file`}
+      className="underline decoration-transparent underline-offset-4 transition-colors hover:decoration-current"
+    >
+      {name}
+    </button>
+  );
+}
+
 export function ManagementTab({ sections, now, day }: CeoTabProps) {
+  const [personId, setPerson] = usePersonParam();
+  const loadRoster = useAction(api.ceo.people.list);
+  const [index, setIndex] = useState<Map<string, number>>(new Map());
+  useEffect(() => {
+    let alive = true;
+    loadRoster({})
+      .then(r => {
+        if (!alive) return;
+        const roster = r as Roster;
+        setIndex(
+          new Map(roster.people.map(x => [x.name.trim().toLowerCase(), x.id])),
+        );
+      })
+      .catch(() => {
+        // Without the roster the names are plain text, which is the old
+        // behaviour and not worth an error on this tab.
+      });
+    return () => {
+      alive = false;
+    };
+  }, [loadRoster]);
   const team = sections.team;
   const payload = team?.payload ?? null;
   const people = payload?.people ?? NO_PEOPLE;
@@ -359,9 +409,14 @@ export function ManagementTab({ sections, now, day }: CeoTabProps) {
     [today, now, roster, switcher, live.rows],
   );
 
+  // One person, fullscreen, at ?person=7. Management is where the people are,
+  // so this is where their file lives; the payroll roster links into it.
+  if (personId !== null)
+    return <PersonPage personId={personId} onBack={() => setPerson(null)} />;
+
   if (!payload)
     return (
-      <div className="grid gap-4 lg:gap-6">
+      <div className="grid gap-5 lg:gap-7">
         <PeopleCard order={0} />
         <SectionCard title="Management" section={team}>
           {() => null}
@@ -375,151 +430,162 @@ export function ManagementTab({ sections, now, day }: CeoTabProps) {
 
   return (
     <StatusUiContext.Provider value={ui}>
-      <div className="grid gap-4 lg:gap-6">
-        <PeopleCard order={0} />
+      <PeopleIndex.Provider value={index}>
+        <div className="grid gap-5 lg:gap-7">
+          <PeopleCard order={0} />
 
-        <SectionCard
-          kicker="Yesterday and the last 14 working days"
-          title={
-            <>
-              Departments
-              <span className="ml-2 font-normal text-muted-foreground">
-                {plural(departments.length, "department")},{" "}
-                {plural(roster.active.length, "active person", "active people")}
-                {roster.inactive.length
-                  ? `, ${count(roster.inactive.length)} not active`
-                  : ""}
-              </span>
-            </>
-          }
-          section={team}
-          notes={[...(routed.departments ?? []), DERIVED_NOTE, ROSTER_NOTE]}
-          order={0}
-        >
-          <div className="space-y-6">
-            <CompanySummary people={roster.active} />
-            {updatingNames.length ? (
-              <p
-                role="status"
-                className="flex items-start gap-2 text-xs text-muted-foreground"
-              >
-                <LoaderCircle
-                  className="ceo-spin mt-0.5 size-3.5 shrink-0 animate-spin text-[color:var(--ceo-emphasis)]"
-                  aria-hidden
-                />
-                <span>
-                  Status saved for {updatingNames.join(", ")}. The counts above
-                  already leave out everyone paused or left; their own EOD
-                  figures are being recomputed.
-                </span>
-              </p>
-            ) : null}
-            <div className="border-t border-[color:var(--ceo-grid)] pt-5">
-              <p className="mb-3 text-[13px] text-muted-foreground">
-                Every department side by side: EOD discipline, activity today
-                and output over the last 7 days
-              </p>
-              <DepartmentTable departments={departments} now={now} />
-            </div>
-          </div>
-        </SectionCard>
-
-        <SectionCard
-          kicker="Yesterday, today and the last 14 working days"
-          title="People by department"
-          section={team}
-          notes={routed.people}
-          order={1}
-        >
-          <PeopleByDept departments={departments} now={now} />
-        </SectionCard>
-
-        <SectionCard
-          kicker="Paused and left, set by hand"
-          title={
-            <>
-              Not active
-              <span className="ml-2 font-normal text-muted-foreground">
-                {plural(roster.inactive.length, "person", "people")}
-              </span>
-            </>
-          }
-          section={team}
-          notes={[
-            ...(live.error
-              ? [
-                  {
-                    level: "warn" as const,
-                    text: `Statuses could not be loaded, so the switch is off and this list is the one from the last refresh: ${live.error}`,
-                  },
-                ]
-              : []),
-            ...(payload.inactive === undefined
-              ? [
-                  {
-                    level: "info" as const,
-                    text: "The stored team numbers predate the switch. The list fills in fully after the next refresh.",
-                  },
-                ]
-              : []),
-            ...(routed.inactive ?? []),
-            SWITCH_NOTE,
-          ]}
-          order={2}
-        >
-          <NotActive people={roster.inactive} />
-        </SectionCard>
-
-        <div className="grid gap-4 lg:grid-cols-3 lg:items-start lg:gap-6">
           <SectionCard
-            kicker="Last 7 days"
-            title="Live feed"
+            kicker="Yesterday and the last 14 working days"
+            title={
+              <>
+                Departments
+                <span className="ml-2 font-normal text-muted-foreground">
+                  {plural(departments.length, "department")},{" "}
+                  {plural(
+                    roster.active.length,
+                    "active person",
+                    "active people",
+                  )}
+                  {roster.inactive.length
+                    ? `, ${count(roster.inactive.length)} not active`
+                    : ""}
+                </span>
+              </>
+            }
             section={team}
-            order={3}
-            className="lg:col-span-2"
+            notes={[...(routed.departments ?? []), DERIVED_NOTE, ROSTER_NOTE]}
+            order={0}
           >
-            <Feed feed={feed} now={now} />
+            <div className="space-y-6">
+              <CompanySummary people={roster.active} />
+              {updatingNames.length ? (
+                <p
+                  role="status"
+                  className="flex items-start gap-2 text-xs text-muted-foreground"
+                >
+                  <LoaderCircle
+                    className="ceo-spin mt-0.5 size-3.5 shrink-0 animate-spin text-[color:var(--ceo-emphasis)]"
+                    aria-hidden
+                  />
+                  <span>
+                    Status saved for {updatingNames.join(", ")}. The counts
+                    above already leave out everyone paused or left; their own
+                    EOD figures are being recomputed.
+                  </span>
+                </p>
+              ) : null}
+              <div className="border-t border-[color:var(--ceo-grid)] pt-5">
+                <p className="mb-3 text-[13px] text-muted-foreground">
+                  Every department side by side: EOD discipline, activity today
+                  and output over the last 7 days
+                </p>
+                <DepartmentTable departments={departments} now={now} />
+              </div>
+            </div>
           </SectionCard>
-          <div className="grid min-w-0 gap-4 lg:gap-6">
-            <SectionCard
-              kicker="Today"
-              title="Actions today"
-              section={team}
-              notes={routed.activity}
-              order={4}
-            >
-              <ActionsToday people={roster.active} inactive={roster.inactive} />
-            </SectionCard>
+
+          <SectionCard
+            kicker="Yesterday, today and the last 14 working days"
+            title="People by department"
+            section={team}
+            notes={routed.people}
+            order={1}
+          >
+            <PeopleByDept departments={departments} now={now} />
+          </SectionCard>
+
+          <SectionCard
+            kicker="Paused and left, set by hand"
+            title={
+              <>
+                Not active
+                <span className="ml-2 font-normal text-muted-foreground">
+                  {plural(roster.inactive.length, "person", "people")}
+                </span>
+              </>
+            }
+            section={team}
+            notes={[
+              ...(live.error
+                ? [
+                    {
+                      level: "warn" as const,
+                      text: `Statuses could not be loaded, so the switch is off and this list is the one from the last refresh: ${live.error}`,
+                    },
+                  ]
+                : []),
+              ...(payload.inactive === undefined
+                ? [
+                    {
+                      level: "info" as const,
+                      text: "The stored team numbers predate the switch. The list fills in fully after the next refresh.",
+                    },
+                  ]
+                : []),
+              ...(routed.inactive ?? []),
+              SWITCH_NOTE,
+            ]}
+            order={2}
+          >
+            <NotActive people={roster.inactive} />
+          </SectionCard>
+
+          <div className="grid gap-4 lg:grid-cols-3 lg:items-start lg:gap-6">
             <SectionCard
               kicker="Last 7 days"
-              title="Activity by department"
+              title="Live feed"
               section={team}
-              notes={[ACTIVITY_NOTE]}
-              order={5}
+              order={3}
+              className="lg:col-span-2"
             >
-              <ActivityByDept
-                departments={departments}
-                unattributed={unattributed}
-              />
+              <Feed feed={feed} now={now} />
             </SectionCard>
+            <div className="grid min-w-0 gap-4 lg:gap-6">
+              <SectionCard
+                kicker="Today"
+                title="Actions today"
+                section={team}
+                notes={routed.activity}
+                order={4}
+              >
+                <ActionsToday
+                  people={roster.active}
+                  inactive={roster.inactive}
+                />
+              </SectionCard>
+              <SectionCard
+                kicker="Last 7 days"
+                title="Activity by department"
+                section={team}
+                notes={[ACTIVITY_NOTE]}
+                order={5}
+              >
+                <ActivityByDept
+                  departments={departments}
+                  unattributed={unattributed}
+                />
+              </SectionCard>
+            </div>
           </div>
-        </div>
 
-        <SectionCard
-          kicker="Management"
-          title="Not in any source yet"
-          section={team}
-          order={6}
-        >
-          <Gaps />
-        </SectionCard>
-      </div>
-      <StatusDialog
-        target={switcher.editing}
-        today={today}
-        onClose={switcher.close}
-        onConfirm={switcher.confirm}
-      />
+          <SectionCard
+            kicker="Management"
+            title="Not in any source yet"
+            section={team}
+            order={6}
+          >
+            <Gaps />
+          </SectionCard>
+
+          <ScorecardTemplates order={7} />
+        </div>
+        <StatusDialog
+          target={switcher.editing}
+          today={today}
+          onClose={switcher.close}
+          onConfirm={switcher.confirm}
+        />
+      </PeopleIndex.Provider>
     </StatusUiContext.Provider>
   );
 }
@@ -1151,7 +1217,7 @@ function InactiveCard({ person }: { person: TeamPerson }) {
       <div className="flex min-w-0 items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold text-foreground">
-            {person.name}
+            <PersonName name={person.name} />
           </p>
           <p className="truncate text-xs text-muted-foreground">
             {person.role}
@@ -1633,7 +1699,7 @@ function PersonCard({ person, now }: { person: TeamPerson; now: number }) {
       <div className="flex min-w-0 items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold text-foreground">
-            {person.name}
+            <PersonName name={person.name} />
           </p>
           <p className="truncate text-xs text-muted-foreground">
             {person.role}

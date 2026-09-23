@@ -742,10 +742,16 @@ export const submitEod = internalAction({
     // written on the row, retried on the outbox ladder, and left visible.
     let posted: any;
     try {
+      // `text`, not `blocks`. A blocks-only message stores the EOD inside
+      // the block and leaves `message.text` as the tool's fallback --
+      // "Message from the cockpit". The EOD Radar reads `message.text`,
+      // as anything reading Slack reasonably would, so it saw no name and
+      // no "Submitted by", and marked the person MISSED every single day
+      // while the EOD sat in the channel in plain sight. Found 2026-09-22.
       posted = await callTool<any>("coworker_send_slack_message", {
         channel_id: MEDIA_EODS_CHANNEL,
         do_send: true,
-        blocks: [{ type: "section", text: { type: "mrkdwn", text: msg } }],
+        text: msg,
       });
     } catch (e) {
       const n = Number(row.attempts ?? 0);

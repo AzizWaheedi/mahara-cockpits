@@ -1,6 +1,54 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "../_generated/server";
 
+const SECTION_FIELDS = {
+  key: v.string(),
+  label: v.string(),
+  ok: v.boolean(),
+  payload: v.optional(v.any()),
+  error: v.optional(v.string()),
+  sources: v.array(v.any()),
+  ms: v.number(),
+};
+
+/**
+ * Store several sections in one write.
+ *
+ * The CEO page is one live query that reads every section, and every save to
+ * the table makes every open copy of the page read all of it again, about
+ * 2.6 MB. Saving thirteen sections one at a time made each open screen do
+ * that thirteen times every fifteen minutes, day and night, which is most of
+ * why the deployment was disabled for exceeding its plan on 2026-09-23. The
+ * refresh now saves once per cycle.
+ */
+export const saveSections = internalMutation({
+  args: { items: v.array(v.object(SECTION_FIELDS)) },
+  returns: v.null(),
+  handler: async (ctx, { items }) => {
+    const now = Date.now();
+    for (const a of items) {
+      const row = await ctx.db
+        .query("ceoSections")
+        .withIndex("by_key", q => q.eq("key", a.key))
+        .first();
+      const next = {
+        key: a.key,
+        label: a.label,
+        ok: a.ok,
+        error: a.ok ? undefined : a.error,
+        sources: a.sources,
+        computedAt: now,
+        ms: a.ms,
+        // A failed compute keeps the last good payload.
+        ...(a.ok ? { payload: a.payload, lastOkAt: now } : {}),
+      };
+      if (row) await ctx.db.patch(row._id, next);
+      else await ctx.db.insert("ceoSections", next);
+    }
+    return null;
+  },
+});
+
 /** Store one section. A failed compute keeps the last good payload. */
 export const saveSection = internalMutation({
   args: {
@@ -70,4 +118,36 @@ export const sectionRows = internalQuery({
   args: {},
   returns: v.array(v.any()),
   handler: async ctx => await ctx.db.query("ceoSections").collect(),
+});
+
+/**
+ * Just the payloads asked for, by key. The goals board needs four of the
+ * thirteen sections and reading all of them to get four is a megabyte of
+ * read bandwidth for nothing.
+ */
+export const payloadsFor = internalQuery({
+  args: { keys: v.array(v.string()) },
+  returns: v.any(),
+  handler: async (ctx, { keys }) => {
+    const want = new Set(keys);
+    const rows = await ctx.db.query("ceoSections").collect();
+    const out: Record<string, unknown> = {};
+    for (const r of rows) if (want.has(r.key)) out[r.key] = r.payload ?? null;
+    return out;
+  },
+});
+
+/** One metric's daily points in a scope since a day, oldest first, for an adapter that needs its own history. */
+export const series = internalQuery({
+  args: { metric: v.string(), scope: v.string(), since: v.string() },
+  returns: v.array(v.object({ date: v.string(), value: v.number() })),
+  handler: async (ctx, { metric, scope, since }) => {
+    const rows = await ctx.db
+      .query("ceoDaily")
+      .withIndex("by_metric_scope_date", q =>
+        q.eq("metric", metric).eq("scope", scope).gte("date", since),
+      )
+      .collect();
+    return rows.map(r => ({ date: r.date, value: r.value }));
+  },
 });

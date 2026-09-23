@@ -1,9 +1,8 @@
 import { Target } from "lucide-react";
 import { type ReactNode, useMemo } from "react";
-import { useTabParam } from "@/components/ceo/CeoTabs";
 import { Delta, type DeltaKind, type GoodWhen } from "@/components/ceo/Delta";
 import { EmptyState } from "@/components/ceo/EmptyState";
-import { FilterChips } from "@/components/ceo/FilterChips";
+import { Facts } from "@/components/ceo/Facts";
 import { FunnelStrip } from "@/components/ceo/FunnelStrip";
 import {
   change,
@@ -16,10 +15,12 @@ import {
   money,
   month,
   NA,
+  pct,
   plural,
   shiftMonth,
   type Unit,
 } from "@/components/ceo/format";
+import { DERIVED_NOTE, useGrowthWindow } from "@/components/ceo/growthWindow";
 import { HeroFigure } from "@/components/ceo/HeroFigure";
 import {
   CAC_AD_SPEND_ONLY,
@@ -28,6 +29,8 @@ import {
   cashHeadline,
   contractedHeadline,
   INTRO_TO_DEMO,
+  ROAS_CASH,
+  ROAS_CONTRACTED,
   SHOW_RATE,
 } from "@/components/ceo/metrics";
 import { SectionCard } from "@/components/ceo/SectionCard";
@@ -36,14 +39,10 @@ import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import { TabLink } from "@/components/ceo/TabLink";
 import { TargetMeter } from "@/components/ceo/TargetMeter";
+import { TimeframeBar } from "@/components/ceo/TimeframeBar";
 import { TimeSeriesChart } from "@/components/ceo/TimeSeriesChart";
-import {
-  COMPARE_WITH,
-  range,
-  WINDOW_CHIPS,
-  WINDOW_KEYS,
-  WINDOW_LABEL,
-} from "@/components/ceo/windows";
+import { useTimeframe } from "@/components/ceo/timeframe";
+import { range } from "@/components/ceo/windows";
 import { cn } from "@/lib/utils";
 import type {
   FunnelWindow,
@@ -210,7 +209,8 @@ export function FrontendTab({ sections, now, day, goTab }: CeoTabProps) {
   const g = growthSection?.payload ?? null;
   const m = moneySection?.payload ?? null;
   const today = day ?? kuwaitDay(now);
-  const [win, setWin] = useTabParam(WINDOW_KEYS, "mtd", "window");
+  const tf = useTimeframe("mtd");
+  const gw = useGrowthWindow(g, tf, today);
 
   const notes = useMemo(
     () => ({
@@ -220,10 +220,11 @@ export function FrontendTab({ sections, now, day, goTab }: CeoTabProps) {
     [g, m],
   );
 
-  const compareKey = COMPARE_WITH[win];
-  const current = g?.windows[win] ?? null;
-  const previous = compareKey ? (g?.windows[compareKey] ?? null) : null;
+  const { current, previous } = gw;
   const vs = previous ? `vs ${range(previous.from, previous.to)}` : undefined;
+  const windowLabel = gw.bounds
+    ? range(gw.bounds.from, gw.bounds.to)
+    : "Timeframe";
   const monthKey = m?.month ?? today.slice(0, 7);
 
   // With neither section computed, one card says so instead of six empty states.
@@ -237,7 +238,7 @@ export function FrontendTab({ sections, now, day, goTab }: CeoTabProps) {
     );
 
   return (
-    <div className="grid gap-4 lg:gap-6">
+    <div className="grid gap-5 lg:gap-7">
       <SectionCard
         id="frontend-cash"
         kicker={month(monthKey, { long: true, year: true })}
@@ -257,27 +258,20 @@ export function FrontendTab({ sections, now, day, goTab }: CeoTabProps) {
         )}
       </SectionCard>
 
-      <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <FilterChips
-          options={WINDOW_CHIPS}
-          value={win}
-          onChange={setWin}
-          ariaLabel="Window for the funnel and what it costs"
+      <div className="mt-2">
+        <TimeframeBar
+          tf={tf}
+          bounds={gw.bounds}
+          compare={gw.compare}
+          ariaLabel="Timeframe for the funnel and what it costs"
+          first={gw.first}
+          last={gw.last}
+          note={gw.derived ? DERIVED_NOTE : undefined}
         />
-        {current ? (
-          <p className="text-sm text-muted-foreground tabular-nums">
-            <span className="font-medium text-foreground">
-              {range(current.from, current.to)}
-            </span>
-            {previous
-              ? `, compared with ${range(previous.from, previous.to)}`
-              : ", shown without a comparison"}
-          </p>
-        ) : null}
       </div>
 
       <SectionCard
-        kicker={WINDOW_LABEL[win]}
+        kicker={windowLabel}
         title="The whole funnel"
         section={growthSection}
         notes={join(notes.growth.funnel, notes.money.funnel, [CASH_CLASH_NOTE])}
@@ -291,10 +285,10 @@ export function FrontendTab({ sections, now, day, goTab }: CeoTabProps) {
       >
         {p => (
           <FunnelBody
-            w={p.windows[win]}
-            prev={compareKey ? p.windows[compareKey] : null}
+            w={current ?? p.windows.mtd}
+            prev={previous}
             vs={vs}
-            label={WINDOW_LABEL[win]}
+            label={windowLabel}
             onOtherTabs={notes.growth.otherTabs?.length ?? 0}
             goTab={goTab}
           />
@@ -302,7 +296,7 @@ export function FrontendTab({ sections, now, day, goTab }: CeoTabProps) {
       </SectionCard>
 
       <SectionCard
-        kicker={WINDOW_LABEL[win]}
+        kicker={windowLabel}
         title="What it costs"
         section={growthSection}
         alsoReads={[moneySection]}
@@ -315,8 +309,8 @@ export function FrontendTab({ sections, now, day, goTab }: CeoTabProps) {
       >
         {p => (
           <CostsBody
-            w={p.windows[win]}
-            prev={compareKey ? p.windows[compareKey] : null}
+            w={current ?? p.windows.mtd}
+            prev={previous}
             vs={vs}
             m={m}
           />
@@ -578,6 +572,8 @@ function FunnelBody({
       label: "Leads",
       value: count(w.leads),
       delta: delta(change(w.leads, prev?.leads), "up"),
+      sub: `${count(w.leadClasses.qualified)} qualified · ${count(w.leadClasses.unqualified)} unqualified`,
+      hint: "The setters' ROAS tags in GoHighLevel: qualified plus unqualified, dated by creation. Not ready and untagged contacts are on the Marketing tab.",
     },
     {
       label: "Cost per lead",
@@ -586,45 +582,29 @@ function FunnelBody({
       naHint: "No leads in this window, so there is no cost per lead.",
     },
     {
-      label: "Demos booked",
-      value: count(w.demosBooked),
-      delta: delta(change(w.demosBooked, prev?.demosBooked), "up"),
-    },
-    {
-      label: "Demos shown",
-      value: count(w.demosShown),
-      delta: delta(change(w.demosShown, prev?.demosShown), "up"),
-    },
-    {
-      label: SHOW_RATE.label,
-      value: SHOW_RATE.format(w.demoShowRate),
-      delta: delta(diff(w.demoShowRate, prev?.demoShowRate), "up", "points"),
-      hint: SHOW_RATE.hint,
-      naHint: SHOW_RATE.naHint,
-    },
-    {
       label: "Closes",
       value: count(w.closes),
       delta: delta(change(w.closes, prev?.closes), "up"),
     },
     {
-      label: "Close rate",
+      label: CLOSE_RATE.label,
       value: CLOSE_RATE.format(w.closeRate),
       delta: delta(diff(w.closeRate, prev?.closeRate), "up", "points"),
       hint: CLOSE_RATE.hint,
       naHint: CLOSE_RATE.naHint,
     },
     {
-      label: "Contracted on the closer form",
-      value: money(w.contracted),
-      delta: delta(change(w.contracted, prev?.contracted), "up"),
-      hint: "The contract value the closer typed on the form, in this window. Deal values logged by hand on the Money tab are not in it; the contracted this month figure further down adds them.",
-    },
-    {
-      label: "Cash typed on the form",
-      value: money(w.cash),
-      delta: delta(change(w.cash, prev?.cash), "up"),
-      hint: "The upfront amount the closer typed at signing, never a Whop payment. Do not add it to the cash won above.",
+      label: "Front-end cash",
+      value: money(w.frontEndCash.total),
+      delta: delta(
+        change(w.frontEndCash.total, prev?.frontEndCash.total),
+        "up",
+      ),
+      sub:
+        w.frontEndCash.deposit > 0
+          ? `${pct(w.frontEndCash.confirmedShare)} confirmed on a rail · kickoff cash not read yet`
+          : "kickoff cash not read yet",
+      hint: "The deposit the closer typed at signing plus the kickoff cash collected on the onboarding call. The kickoff form is not read yet, so this is the deposit alone. Confirmed means a Whop payment or a bank transfer on record backs it. Do not add it to the cash won above: that is the same money arriving on the rails.",
     },
   ];
 
@@ -636,7 +616,7 @@ function FunnelBody({
           { label: "Leads", value: w.leads },
           { label: "Intros booked", value: w.introsBooked },
           // The dashboard's own rates: intro to demo on intros shown, show rate
-          // on calls due, close rate on qualified demos.
+          // on calls due, close rate on every demo shown.
           {
             label: "Demos booked",
             value: w.demosBooked,
@@ -657,7 +637,7 @@ function FunnelBody({
           },
         ]}
       />
-      <div className="mt-6 grid grid-cols-2 gap-x-6 gap-y-5 border-t pt-5 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="mt-6 grid grid-cols-2 gap-x-8 gap-y-6 border-t pt-5 sm:grid-cols-3 lg:grid-cols-6">
         {tiles.map(t => (
           <StatTile
             key={t.label}
@@ -671,6 +651,24 @@ function FunnelBody({
           />
         ))}
       </div>
+      <Facts
+        items={[
+          {
+            label: "Contracted",
+            value: money(w.contracted),
+            hint: "Typed on the closer form, not paid.",
+          },
+          { label: "Demos booked", value: count(w.demosBooked) },
+          {
+            label: "Demos shown",
+            value: `${count(w.demosShown)} of ${count(w.demosDue)} due`,
+          },
+          {
+            label: "Intros shown",
+            value: `${count(w.introsShown)} of ${count(w.introsDue)} due`,
+          },
+        ]}
+      />
       {onOtherTabs > 0 ? (
         <p className="mt-5 border-t pt-3 text-xs text-muted-foreground">
           {plural(onOtherTabs, "more caveat")} about call records and the rep
@@ -732,17 +730,66 @@ function CostsBody({
       naHint: costToWin.naHint,
     },
     {
-      label: "Return on ad spend",
-      value: ratio(w.roas),
-      delta: delta(change(w.roas, prev?.roas), "up"),
-      hint: "As the B2B dashboard computes it, against the money the closer typed rather than cash collected.",
-      naHint: "No ad spend in this window.",
+      label: ROAS_CASH.label,
+      value: ratio(w.roasCash),
+      delta: delta(change(w.roasCash, prev?.roasCash), "up"),
+      sub: `${money(w.frontEndCash.total)} front-end cash`,
+      hint: ROAS_CASH.hint,
+      naHint: ROAS_CASH.naHint,
+    },
+    {
+      label: ROAS_CONTRACTED.label,
+      value: ratio(w.roasContracted),
+      delta: delta(change(w.roasContracted, prev?.roasContracted), "up"),
+      hint: ROAS_CONTRACTED.hint,
+      naHint: ROAS_CONTRACTED.naHint,
     },
     {
       label: "Cost per lead",
       value: money(w.cpl),
       delta: delta(change(w.cpl, prev?.cpl), "down"),
       naHint: "No leads in this window, so there is no cost per lead.",
+    },
+  ];
+
+  // What each call is worth: front-end cash over the calls that led to it.
+  const fe = w.frontEndCash.total;
+  const worth = (n: number) => (n > 0 ? fe / n : null);
+  const worthTiles: Tile[] = [
+    {
+      label: "Front-end cash per intro booked",
+      value: money(worth(w.introsBooked)),
+      delta: delta(
+        change(
+          worth(w.introsBooked),
+          prev
+            ? prev.introsBooked > 0
+              ? prev.frontEndCash.total / prev.introsBooked
+              : null
+            : null,
+        ),
+        "up",
+      ),
+      sub: `${money(fe)} over ${plural(w.introsBooked, "intro")} booked`,
+      naHint: "No intro calls were booked in this window.",
+    },
+    {
+      label: "Front-end cash per intro shown",
+      value: money(worth(w.introsShown)),
+      sub: `over ${plural(w.introsShown, "intro")} shown`,
+      naHint: "No intro calls were shown in this window.",
+    },
+    {
+      label: "Front-end cash per demo booked",
+      value: money(worth(w.demosBooked)),
+      sub: `over ${plural(w.demosBooked, "demo")} booked`,
+      naHint: "No demos were booked in this window.",
+    },
+    {
+      label: "Front-end cash per demo shown",
+      value: money(worth(w.demosShown)),
+      sub: `over ${plural(w.demosShown, "demo")} shown`,
+      naHint: "No demos were shown in this window.",
     },
   ];
 
@@ -779,7 +826,10 @@ function CostsBody({
 
   const groups: { title: string; tiles: Tile[] }[] = [
     { title: "In the chosen window", tiles: windowTiles },
-    { title: "This month against last month", tiles: monthTiles },
+    {
+      title: "What front-end cash buys, in the chosen window",
+      tiles: worthTiles,
+    },
   ];
 
   return (
@@ -793,7 +843,7 @@ function CostsBody({
           <p className="mb-3 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
             {group.title}
           </p>
-          <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3">
+          <div className="grid grid-cols-2 gap-x-8 gap-y-6 sm:grid-cols-4">
             {group.tiles.map(t => (
               <StatTile
                 key={t.label}
@@ -809,6 +859,13 @@ function CostsBody({
           </div>
         </section>
       ))}
+      <Facts
+        items={monthTiles.map(t => ({
+          label: t.label,
+          value: `${t.value}${t.sub ? ` (${String(t.sub)})` : ""}`,
+          hint: t.hint,
+        }))}
+      />
     </div>
   );
 }

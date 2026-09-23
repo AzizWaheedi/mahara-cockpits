@@ -101,10 +101,33 @@ export const plan = internalQuery({
       throw new Error("The CEO cockpit is Aziz's only.");
 
     const billing = await ctx.db.query("ceoClientBilling").collect();
-    const payments = await ctx.db
-      .query("ceoManualPayments")
-      .take(5000)
-      .then(rows => rows.filter(r => !r.deletedAt && r.clickupTaskId));
+    // Every payment in attributed to a client card, from the money section's
+    // attribution (Whop, Tap, bank statements, hand-logged): the client's LTV
+    // table (Aziz, 2026-09-21). Hand-logged entries are inside it already,
+    // so they are not read twice.
+    const moneyRow = await ctx.db
+      .query("ceoSections")
+      .withIndex("by_key", q => q.eq("key", "money"))
+      .first();
+    // biome-ignore lint/suspicious/noExplicitAny: the stored payload is untyped
+    const tx: any[] = moneyRow?.payload?.attribution?.transactions ?? [];
+    const payments: {
+      clickupTaskId: string;
+      day: string;
+      amountUsd: number;
+    }[] = tx
+      .filter(
+        t =>
+          t &&
+          t.direction === "in" &&
+          t.clientTaskId &&
+          typeof t.usd === "number",
+      )
+      .map(t => ({
+        clickupTaskId: String(t.clientTaskId),
+        day: String(t.day),
+        amountUsd: Number(t.usd),
+      }));
 
     const byCard = new Map<string, { usd: number; n: number; first: string }>();
     for (const p of payments) {

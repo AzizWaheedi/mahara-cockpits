@@ -28,6 +28,12 @@ if [ -f apps/creative-director-cockpit/scripts/social.test.ts ]; then
     || { echo "the social planner tests fail"; exit 1; }
 fi
 
+# Billing: who is late, what a step on the ladder is, what an amount may be.
+# Wrong either way is a client chased who paid, or a real payment refused.
+if [ -f apps/media-buyer-cockpit/scripts/billing.test.ts ]; then
+  (cd apps/media-buyer-cockpit && bun test scripts/billing.test.ts >/dev/null 2>&1) \
+    || { echo "the billing rules tests fail"; exit 1; }
+fi
 ship() {
   local app="$1"
   local SITE dir url
@@ -40,6 +46,14 @@ ship() {
     video-editor)    dir=apps/video-editor-cockpit;      url=; SITE=https://cockpit.maharamedia.com/editor ;;
     *) echo "unknown app: $app"; exit 2 ;;
   esac
+  # The CLI upload stamps local HEAD and does not check GitHub. Refuse a
+  # commit main does not have, a dirty app directory, or a production SHA
+  # this clone cannot see (2026-09-22, cockpit.maharamedia.com on 7efca15f).
+  echo "== $app: source is on GitHub main"
+  scripts/require-github-main.sh "$dir" "$SITE"
+  # So the Composio path, which ship calls only after this, does not fetch
+  # and decide again. A direct run of that script still checks.
+  export GITHUB_MAIN_OK=1
   echo "== $app: lint"
   # The path is tested here, not inside the subshell, where it would be
   # resolved against the app directory instead of the repository root.
@@ -53,6 +67,14 @@ ship() {
     echo "== $app: backend"
     (cd "$dir" && bunx convex deploy --yes --typecheck enable)
   fi
+  # What the site serves right now, so the check after the deploy compares
+  # the page against itself rather than against a local build. Vercel builds
+  # from the uploaded source with its own environment, so the entry chunk's
+  # hash is legitimately different from the one built here and comparing the
+  # two reported a stale deploy on every ship (2026-09-22).
+  local was
+  was=$(curl -fsS -m 20 -H 'Cache-Control: no-cache' "$SITE/?cb=$RANDOM" 2>/dev/null \
+        | grep -oE 'index-[A-Za-z0-9_-]+\.js' | head -1)
   echo "== $app: site"
   (cd "$dir" && VITE_CONVEX_URL="$url" bun run build)
   # The Vercel CLI prints JSON when not on a terminal and can exit 0 without a
@@ -88,20 +110,24 @@ ship() {
   # Read the live page a few times before believing it. Checked straight
   # after a deploy it returns the previous bundle from the CDN, which
   # once made a perfectly good deploy look stale (2026-09-20).
-  local want live prev
-  want=$(basename "$(ls -t "$dir"/dist/assets/index-*.js 2>/dev/null | head -1)" 2>/dev/null)
-  prev=""
-  for _ in 1 2 3 4; do
+  local live
+  live=""
+  for _ in 1 2 3 4 5 6; do
     live=$(curl -fsS -m 30 -H 'Cache-Control: no-cache' "$SITE/?cb=$RANDOM" 2>/dev/null \
            | grep -oE 'index-[A-Za-z0-9_-]+\.js' | head -1)
-    [ -n "$live" ] && [ "$live" = "$prev" ] && break
-    prev="$live"
-    sleep 4
+    [ -n "$live" ] && [ "$live" != "$was" ] && break
+    sleep 5
   done
-  if [ -n "$live" ]; then
-    echo "  live bundle: $live (built locally: ${want:-unknown})"
-  else
+  if [ -z "$live" ]; then
     echo "  could not read $SITE to confirm the bundle"
+  elif [ -z "$was" ]; then
+    echo "  live bundle: $live (nothing to compare it with)"
+  elif [ "$live" = "$was" ]; then
+    # Only a warning: a deploy that changes the backend alone, or a rebuild
+    # of identical source, legitimately leaves the same bundle in place.
+    echo "  live bundle unchanged: $live — check that the change was in the site"
+  else
+    echo "  live bundle: $live (was $was)"
   fi
 }
 

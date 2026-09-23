@@ -1,8 +1,20 @@
 import { internal } from "../../_generated/api";
 import { OFF_STATUSES } from "../../board";
-import { CPB_GATE, CPL_GATE } from "../../constants";
-import { clientDelivery, type TriageDelivery } from "../data/triage";
-import type { DeliveryPayload, DeliveryWindow, Note } from "../payloads";
+import { CPB_BAD, CPB_GATE, CPL_GATE, SHOW_RATE_GOOD } from "../../constants";
+import {
+  attendanceOf,
+  clientDelivery,
+  hasNoOutcome,
+  isWon,
+  type TriageDelivery,
+} from "../data/triage";
+import type {
+  DeliveryPayload,
+  DeliveryRates,
+  DeliveryWindow,
+  NoOutcomeAppointment,
+  Note,
+} from "../payloads";
 import { addDays, kuwaitDay, monthStart } from "../time";
 import type { Adapter, DailyPoint, SourceStamp } from "../types";
 
@@ -60,27 +72,81 @@ function shortIssue(text: string): string {
   return (/[.!?]$/.test(s) ? s : `${s}.`).slice(0, 200);
 }
 
-function statusOf(
-  spend: number,
-  leads: number,
-  cpl: number | null,
-  cpb: number | null,
-  tracked: boolean,
-): Status {
-  if (spend <= 0) return "no-data";
-  if (leads === 0 || (cpl !== null && cpl > CPL_GATE * 1.5)) return "bad";
-  // A client whose bookings are not read (DWY, or no GHL connection) is
-  // judged on cost per lead alone, as the sync judges DWY campaigns. One
-  // whose bookings are read also needs bookings within the booking gate, as
-  // the sync holds a campaign over it. Recent bookings read low, so a cost
-  // per booking over the gate is a watch, never bad on its own.
+/** The cost per lead that makes a client bad: 50% over the gate, $22.50, the same line the sync kills a campaign on. */
+const CPL_BAD = CPL_GATE * 1.5;
+
+/**
+ * Aziz's client status rule (2026-09-21). Costs are the last 7 days, the show
+ * rate the last 30.
+ *
+ * - good: cost per lead within CPL_GATE, cost per confirmed booking within
+ *   CPB_GATE and show rate at least SHOW_RATE_GOOD.
+ * - bad: cost per confirmed booking over CPB_BAD, or cost per lead over
+ *   CPL_BAD (spend with no leads is that). A low show rate alone is watch,
+ *   not bad: the one show rate line for clients is 60 (Aziz, 2026-09-21).
+ * - watch: everything between, including a show rate nobody has recorded,
+ *   which cannot be shown to be good.
+ * - no-data: nothing spent.
+ *
+ * `weBook` false is a Done With You client with no bookings: they book their
+ * own, so cost per lead is the only number we own and the only one judged,
+ * as the sync judges DWY campaigns.
+ */
+export function clientStatus(x: {
+  spend: number;
+  leads: number;
+  cpl: number | null;
+  cpbConfirmed: number | null;
+  showRate: number | null;
+  weBook: boolean;
+}): Status {
+  if (x.spend <= 0) return "no-data";
+  const cplBad = x.leads === 0 || x.cpl === null || x.cpl > CPL_BAD;
+  const cplGood = x.cpl !== null && x.cpl <= CPL_GATE;
+  if (!x.weBook) return cplBad ? "bad" : cplGood ? "good" : "watch";
+  if (cplBad || (x.cpbConfirmed !== null && x.cpbConfirmed > CPB_BAD))
+    return "bad";
   if (
-    cpl !== null &&
-    cpl <= CPL_GATE &&
-    (!tracked || (cpb !== null && cpb <= CPB_GATE))
+    cplGood &&
+    x.cpbConfirmed !== null &&
+    x.cpbConfirmed <= CPB_GATE &&
+    x.showRate !== null &&
+    x.showRate >= SHOW_RATE_GOOD / 100
   )
     return "good";
   return "watch";
+}
+
+/** What a booking that shows would cost at the good show rate: cost per confirmed booking over 0.6. */
+export function costPerShownAt60(cpbConfirmed: number | null): number | null {
+  return cpbConfirmed === null
+    ? null
+    : usd(cpbConfirmed / (SHOW_RATE_GOOD / 100));
+}
+
+/** A fraction to three places, or null when the denominator is zero. */
+const share = (a: number, b: number) =>
+  b > 0 ? Math.round((a / b) * 1000) / 1000 : null;
+
+/** A client's rates over one window, from its counts. */
+export function deliveryRates(
+  c: Omit<
+    DeliveryRates,
+    | "bookRate"
+    | "bookRateConfirmed"
+    | "bookRateProvisional"
+    | "showRate"
+    | "closeRate"
+  >,
+): DeliveryRates {
+  return {
+    ...c,
+    bookRate: share(c.bookings, c.leads),
+    bookRateConfirmed: share(c.confirmed, c.leads),
+    bookRateProvisional: share(c.provisional, c.leads),
+    showRate: share(c.showed, c.showed + c.noshow),
+    closeRate: share(c.closes, c.showed),
+  };
 }
 
 /**
@@ -100,10 +166,13 @@ export const delivery: Adapter = {
     // Creative Triage is the source of truth for what a client was delivered
     // (see ../data/triage.ts). It is read for the whole 30-day series plus the
     // previous week, which is every window this section shows.
+    // The rates the table shows cover the last 30 full days; the past
+    // appointments with their Mahara OS outcomes are read for that window.
+    const from30 = addDays(today, -30);
     let triage: TriageDelivery | null = null;
     let triageError: string | null = null;
     try {
-      triage = await clientDelivery(addDays(today, -180), today);
+      triage = await clientDelivery(addDays(today, -180), today, from30);
     } catch (e) {
       triageError = String(e instanceof Error ? e.message : e).slice(0, 200);
     }
@@ -120,8 +189,11 @@ export const delivery: Adapter = {
     const info = (text: string) => notes.push({ level: "info", text });
     info(
       triage
-        ? `Spend, leads and bookings come from the Creative Triage database, which holds every client ad account and every appointment, not only the campaigns carrying an Ads Management card. Spend is Meta only, converted to USD with the one fixed rate table the cockpit uses; a day is the ad account's reporting day, and a booking is dated by the day it is for. Gates are Aziz's (2026-09-16): cost per lead $${CPL_GATE}, cost per booking $${CPB_GATE}. A client is good within both gates, bad with no leads or a cost per lead over $${(CPL_GATE * 1.5).toFixed(2)}, and on watch otherwise.`
-        : `Spend and leads are Meta only, for campaigns on the Ads Management board, in USD after a fixed exchange table. A day is the ad account's reporting day. Gates are Aziz's (2026-09-16): cost per lead $${CPL_GATE}, cost per booking $${CPB_GATE}. A client is good within both gates, bad with no leads or a cost per lead over $${(CPL_GATE * 1.5).toFixed(2)}, and on watch otherwise.`,
+        ? `Spend, leads and bookings come from the Creative Triage database, which holds every client ad account and every appointment, not only the campaigns carrying an Ads Management card. Spend is Meta only, converted to USD with the one fixed rate table the cockpit uses; a day is the ad account's reporting day, and a booking is dated by the day it is for. Gates are Aziz's (2026-09-16): cost per lead $${CPL_GATE}, cost per booking $${CPB_GATE}.`
+        : `Spend and leads are Meta only, for campaigns on the Ads Management board, in USD after a fixed exchange table. A day is the ad account's reporting day. Gates are Aziz's (2026-09-16): cost per lead $${CPL_GATE}, cost per booking $${CPB_GATE}.`,
+    );
+    info(
+      `Client status is Aziz's rule (2026-09-21): good with cost per lead within $${CPL_GATE}, cost per confirmed booking within $${CPB_GATE} and a show rate of at least ${SHOW_RATE_GOOD}%; bad with cost per booking over $${CPB_BAD}, cost per lead over $${CPL_BAD.toFixed(2)} (spend with no leads counts as that); watch otherwise, which includes a show rate under ${SHOW_RATE_GOOD}% or one nobody has recorded. There is one show rate line for clients, ${SHOW_RATE_GOOD}%. Costs are the last 7 days, the show rate the last 30. Beside each status is what a booking that shows would cost at a ${SHOW_RATE_GOOD}% show rate: cost per confirmed booking over 0.${SHOW_RATE_GOOD}. A Done With You client with no bookings is judged on cost per lead alone.`,
     );
     if (triageError)
       warn(
@@ -190,7 +262,8 @@ export const delivery: Adapter = {
       if (!triage) return null;
       let spend = 0;
       let leads = 0;
-      let bookings = 0;
+      let provisional = 0;
+      let confirmed = 0;
       for (const d of triage.days)
         if (d.date >= from && d.date <= to) {
           spend += d.spend;
@@ -199,8 +272,15 @@ export const delivery: Adapter = {
       // Only appointments that have come due are counted, so the figure means
       // the same thing as the board's did and a month's number does not grow
       // as future bookings arrive. The ones still to come are named in a note.
+      // Confirmed is the main and online calendars; provisional the
+      // Not Confirmed calendar; total is both.
       for (const b of triage.bookings)
-        if (b.date >= from && b.date <= to) bookings += b.count - b.future;
+        if (b.date >= from && b.date <= to) {
+          const due = b.count - b.future;
+          if (b.kind === "provisional") provisional += due;
+          else confirmed += due;
+        }
+      const bookings = provisional + confirmed;
       return {
         spend: usd(spend),
         leads,
@@ -210,6 +290,10 @@ export const delivery: Adapter = {
         // appointments for every client, not only those whose GHL the board
         // sync reads, so there is no untracked remainder to hold back.
         cpb: bookings > 0 && spend > 0 ? usd(spend / bookings) : null,
+        provisional,
+        confirmed,
+        cpbConfirmed:
+          confirmed > 0 && spend > 0 ? usd(spend / confirmed) : null,
       };
     };
 
@@ -308,24 +392,54 @@ export const delivery: Adapter = {
         info(
           `${plural(future, "appointment")} booked for later this month ${future === 1 ? "is" : "are"} not in the booking counts above, which include only appointments that have come due. The board's own figure could never see them at all.`,
         );
-      // Say what a booking is and, just as important, what it is not. The
-      // provisional and callback calendars are configured on dozens of client
-      // locations and have never produced a row, so a reader who knows they
-      // exist should be told they are not hiding inside this number.
+      // Say what a booking is and, just as important, what it is not: the
+      // three calendar groups by name, the provisional calendar that has
+      // never synced a row, and what is held out (a reader who knows the
+      // reschedule and follow-up calendars exist should be told they are not
+      // hiding inside this number).
       const KIND_WORDS: Record<string, string> = {
-        provisional: "provisional holds",
-        callback: "callback requests",
+        callback: "agent callback requests",
         reschedule: "reschedules of an appointment already counted",
         other: "appointments on calendars that are not a booking calendar",
       };
+      const names = (list: string[], fallback: string) =>
+        list.length ? list.join(", ") : fallback;
       const held = triage.notBookings.filter(k => k.count > 0);
+      const provisionalSynced = triage.provisional.rowsEver > 0;
       info(
-        `A booking is an appointment on a client's own appointment calendar, the main one or the online one, counted on the day it is for. ${
+        `Bookings are appointments on three calendar groups, counted on the day the meeting is for, future ones left out. Confirmed is the main group (${names(triage.calendarNames.main, "Main Appointment Calendar, In Office, In Home")}) plus the online group (${names(triage.calendarNames.online, "A. Appointment Calendar (Online)")}); provisional is the ${names(triage.provisional.names, "Not Confirmed Appointments")} calendar; total is confirmed plus provisional. ${
+          provisionalSynced
+            ? `The provisional calendar has synced ${plural(triage.provisional.rowsEver, "row")} so far.`
+            : `The provisional calendar is set up on ${plural(triage.provisional.calendars, "client location")} and has produced no appointment row in this database yet, so provisional reads 0 everywhere until the sync covers it.`
+        }${
           held.length
-            ? `Left out of it: ${held.map(k => `${plural(k.count, "row")} from ${KIND_WORDS[k.kind] ?? k.kind}`).join(", ")}.`
-            : "Your provisional and callback calendars are set up on dozens of client locations but have never produced a single appointment row, so nothing from either is inside this figure, and no provisional booking or agent callback is visible anywhere in the cockpit."
+            ? ` Held out: ${held.map(k => `${plural(k.count, "row")} of ${KIND_WORDS[k.kind] ?? k.kind} (${k.calendars.join(", ")})`).join("; ")}.`
+            : ""
         }`,
       );
+      if (triage.noClientLocation.rows > 0)
+        info(
+          `${plural(triage.noClientLocation.rows, "appointment row")} in the last 180 days belong to GoHighLevel locations that have no client card, mostly the four Arabic-named calendars of one location (all of them: ${triage.noClientLocation.calendars.join(", ")}); they are not a client's bookings and are in no figure here.`,
+        );
+      {
+        const recent = triage.untied.filter(
+          u => u.date >= from30 && u.date <= today,
+        );
+        const rows = recent.reduce((n, u) => n + u.count, 0);
+        if (rows > 0) {
+          const byClient = new Map<string, number>();
+          for (const u of recent)
+            byClient.set(u.client, (byClient.get(u.client) ?? 0) + u.count);
+          warn(
+            `${plural(rows, "booking")} in the last 30 days ${rows === 1 ? "sits" : "sit"} on a client's own calendar but ${rows === 1 ? "reaches" : "reach"} no client row here, because the client had no ad spend in the window or the row carries no client id and its location is tied to no ad account, or to two: ${[
+              ...byClient.entries(),
+            ]
+              .sort((a, b) => b[1] - a[1])
+              .map(([c, n]) => `${c} (${n})`)
+              .join(", ")}. They are in no total above.`,
+          );
+        }
+      }
       // Spend on a client we have already lost is money leaving for nothing,
       // and it is the kind of thing a total hides. The headline above still
       // counts every client account, because which clients belong in "what we
@@ -480,66 +594,90 @@ export const delivery: Adapter = {
               r.leads += d.leads;
               spendBy.set(d.clientId, r);
             }
-          const bookBy = new Map<string, number>();
+          const bookBy = new Map<
+            string,
+            { provisional: number; confirmed: number }
+          >();
           for (const b of triage.bookings)
-            if (b.date >= last7From && b.date <= yesterday)
-              bookBy.set(
-                b.clientId,
-                (bookBy.get(b.clientId) ?? 0) + b.count - b.future,
-              );
-          // The rates the master dashboard reads, over thirty days so a week
-          // with three meetings does not swing them.
-          const from30 = addDays(today, -30);
-          type R = NonNullable<DeliveryPayload["clients"][number]["rates30"]>;
-          const rateBy = new Map<string, R>();
-          const rateOf = (id: string): R => {
-            let r = rateBy.get(id);
+            if (b.date >= last7From && b.date <= yesterday) {
+              const r = bookBy.get(b.clientId) ?? {
+                provisional: 0,
+                confirmed: 0,
+              };
+              const due = b.count - b.future;
+              if (b.kind === "provisional") r.provisional += due;
+              else r.confirmed += due;
+              bookBy.set(b.clientId, r);
+            }
+          // The rates over thirty full days, so a week with three meetings
+          // does not swing them: leads and bookings by day, then every past
+          // appointment with what the CRM, the attendance sheet and Mahara OS
+          // say about it.
+          type Counts = Parameters<typeof deliveryRates>[0];
+          const countsBy = new Map<string, Counts>();
+          const countsOf = (id: string): Counts => {
+            let r = countsBy.get(id);
             if (!r) {
               r = {
                 leads: 0,
                 bookings: 0,
+                provisional: 0,
+                confirmed: 0,
                 showed: 0,
                 noshow: 0,
                 closes: 0,
-                bookRate: null,
-                showRate: null,
-                closeRate: null,
+                noOutcome: 0,
               };
-              rateBy.set(id, r);
+              countsBy.set(id, r);
             }
             return r;
           };
           for (const d of triage.days)
             if (d.date >= from30 && d.date <= yesterday)
-              rateOf(d.clientId).leads += d.leads;
+              countsOf(d.clientId).leads += d.leads;
           for (const b of triage.bookings)
             if (b.date >= from30 && b.date <= yesterday) {
-              const r = rateOf(b.clientId);
-              r.bookings += b.count - b.future;
-              r.showed += b.showed;
-              r.noshow += b.noshow;
+              const r = countsOf(b.clientId);
+              const due = b.count - b.future;
+              r.bookings += due;
+              if (b.kind === "provisional") r.provisional += due;
+              else r.confirmed += due;
             }
-          for (const w of triage.wins)
-            if (w.date >= from30 && w.date <= yesterday)
-              rateOf(w.clientId).closes += w.count;
-          const share = (a: number, b: number) =>
-            b > 0 ? Math.round((a / b) * 1000) / 1000 : null;
-          for (const r of rateBy.values()) {
-            r.bookRate = share(r.bookings, r.leads);
-            r.showRate = share(r.showed, r.showed + r.noshow);
-            r.closeRate = share(r.closes, r.showed);
+          const noOutcomeBy = new Map<string, NoOutcomeAppointment[]>();
+          for (const a of triage.appointments) {
+            if (a.date < from30 || a.date > yesterday) continue;
+            const r = countsOf(a.clientId);
+            const att = attendanceOf(a);
+            if (att === "showed") r.showed += 1;
+            else if (att === "noshow") r.noshow += 1;
+            if (isWon(a)) r.closes += 1;
+            if (hasNoOutcome(a)) {
+              r.noOutcome += 1;
+              const list = noOutcomeBy.get(a.clientId) ?? [];
+              // The read is newest first; the screen shows at most 20.
+              if (list.length < 20)
+                list.push({ at: a.at, calendar: a.calendar, status: a.status });
+              noOutcomeBy.set(a.clientId, list);
+            }
           }
           return triage.clients
             .map(c => {
               const r = spendBy.get(c.clientId);
               if (!r || r.spend <= 0) return null;
-              const bookings = bookBy.get(c.clientId) ?? 0;
+              const booked = bookBy.get(c.clientId) ?? {
+                provisional: 0,
+                confirmed: 0,
+              };
+              const bookings = booked.provisional + booked.confirmed;
               const cpl = r.leads > 0 ? usd(r.spend / r.leads) : null;
               const cpb = bookings > 0 ? usd(r.spend / bookings) : null;
+              const cpbConfirmed =
+                booked.confirmed > 0 ? usd(r.spend / booked.confirmed) : null;
+              const rates30 = deliveryRates(countsOf(c.clientId));
               // Done With You clients book their own appointments, so none of
               // ours exist to count and cost per lead is the only number we
-              // own. A client we do book for is judged on both, even in a week
-              // that produced nothing.
+              // own. A client we do book for is judged on all three, even in
+              // a week that produced nothing.
               const weBook =
                 bookings > 0 || /dfy|done for/i.test(c.serviceMode ?? "");
               return {
@@ -551,8 +689,20 @@ export const delivery: Adapter = {
                 bookings7d: bookings,
                 cpb7d: cpb,
                 campaigns: c.campaigns,
-                status: statusOf(r.spend, r.leads, cpl, cpb, weBook),
-                rates30: rateOf(c.clientId),
+                status: clientStatus({
+                  spend: r.spend,
+                  leads: r.leads,
+                  cpl,
+                  cpbConfirmed,
+                  showRate: rates30.showRate,
+                  weBook,
+                }),
+                provisional7d: booked.provisional,
+                confirmed7d: booked.confirmed,
+                cpbConfirmed7d: cpbConfirmed,
+                costPerShownAt60: costPerShownAt60(cpbConfirmed),
+                rates30,
+                noOutcome: noOutcomeBy.get(c.clientId) ?? [],
               };
             })
             .filter((x): x is NonNullable<typeof x> => x !== null)
@@ -571,6 +721,8 @@ export const delivery: Adapter = {
           g.bookings > 0 && g.trackedSpend > 0
             ? usd(g.trackedSpend / g.bookings)
             : null;
+        // The board fallback has no calendar split and no show rate: the
+        // status is judged on cost per lead and cost per booking alone.
         return {
           client: g.client,
           clickupTaskId: g.clickupTaskId,
@@ -580,7 +732,14 @@ export const delivery: Adapter = {
           bookings7d: g.bookings,
           cpb7d: cpb,
           campaigns: g.campaigns,
-          status: statusOf(g.spend, g.leads, cpl, cpb, g.tracked),
+          status: clientStatus({
+            spend: g.spend,
+            leads: g.leads,
+            cpl,
+            cpbConfirmed: cpb,
+            showRate: null,
+            weBook: g.tracked,
+          }),
           rates30: null,
         };
       })
@@ -591,15 +750,32 @@ export const delivery: Adapter = {
       );
 
     const clients: DeliveryPayload["clients"] = triageClients ?? boardClients;
+    // Company-wide, the same 30 full days as the rates: how much of the past
+    // appointment book has an outcome in Mahara OS, and the close rate's
+    // second source, the clients' own CRM.
+    let outcomes: DeliveryPayload["outcomes"];
     if (triage) {
-      const wins30 = triage.wins.reduce((n, w) => n + w.count, 0);
-      const decided = triage.bookings.reduce(
-        (n, b) => n + b.showed + b.noshow,
-        0,
+      const past = triage.appointments.filter(
+        a => a.date >= from30 && a.date <= yesterday,
       );
-      const past = triage.bookings.reduce((n, b) => n + b.count - b.future, 0);
+      const withOutcome = past.filter(a => a.outcome !== null).length;
+      const won = past.filter(isWon).length;
+      const sheetOnly = past.filter(
+        a => a.outcome === null && a.attended !== null,
+      ).length;
+      const noOutcome = past.filter(hasNoOutcome).length;
+      const shown = past.filter(a => attendanceOf(a) === "showed").length;
+      const crmWins30 = triage.wins
+        .filter(w => w.date >= from30 && w.date <= yesterday)
+        .reduce((n, w) => n + w.count, 0);
+      outcomes = {
+        pastAppointments: past.length,
+        withOutcome,
+        won,
+        since: triage.outcomes.since,
+      };
       info(
-        `The three rates read the way the master dashboard does, over the last 30 days: lead to booking is bookings over platform leads; show rate is showed over showed plus no-show, on meetings whose day has passed (${decided} of ${past} past meetings have an outcome recorded, the rest count as neither); close rate is closes over showed, a close being an opportunity the client's own CRM marked won (${wins30} across every client in the window, so it reads low wherever a client never marks a win). "Running" is campaigns that spent in the last three days.`,
+        `The rates cover the last 30 full days. Lead to booking is confirmed bookings over platform leads, the main one; lead to provisional and lead to any booking sit beside it. Show rate is showed over showed plus no-show on meetings whose time has passed: showed is the CRM status, else the attendance sheet's mark, else Mahara OS's attendance. Close rate is deals the client marked won in Mahara OS over shown appointments (${won} won over ${shown} shown across every client). Mahara OS outcomes start on ${triage.outcomes.since ?? "2026-09-18"}: ${plural(triage.outcomes.rows, "outcome row")} so far, ${triage.outcomes.joined} of them on an appointment in this database, and ${withOutcome} of the ${plural(past.length, "past appointment")} in the window have one, so the close rate reads low until clients report. ${plural(noOutcome, "past appointment")} ${noOutcome === 1 ? "has" : "have"} no outcome at all: an appointment still marked confirmed after its time counts as no outcome unless the attendance sheet marked it${sheetOnly ? ` (the sheet marked ${sheetOnly} that Mahara OS has not)` : ""}. The clients' own CRM marked ${plural(crmWins30, "opportunity", "opportunities")} won in the same window; that figure is not the one shown. "Running" is campaigns that spent in the last three days.`,
       );
     }
 
@@ -784,6 +960,16 @@ export const delivery: Adapter = {
           : (triageError ?? "Not read; falling back to GHL through the board"),
       },
       {
+        name: "Mahara OS appointment outcomes",
+        freshestAt: triage?.outcomes.latestAt,
+        ok: !!triage,
+        note: triage
+          ? triage.outcomes.rows === 0
+            ? "No outcome reported yet"
+            : undefined
+          : (triageError ?? "Not read"),
+      },
+      {
         name: "Meta ads (media buyer sync)",
         freshestAt: syncAt || undefined,
         ok: metaFresh && health.meta?.ok !== false,
@@ -829,6 +1015,8 @@ export const delivery: Adapter = {
         verdicts,
       },
       clients,
+      outcomes,
+      provisionalSynced: triage ? triage.provisional.rowsEver > 0 : undefined,
       launches: { inFlight: onboarding.length, stuck },
       accountIssues,
       notes,

@@ -32,6 +32,7 @@ SCHEMA: dict[str, Any] = {
         "yt_tags": {"type": "array", "items": {"type": "string"}},
         "ig_caption": {"type": "string"},
         "ig_hashtags": {"type": "array", "items": {"type": "string"}},
+        "cover_graphic": {"type": "string"},
         "thumb_text_options": {"type": "array", "items": {"type": "string"}},
         "cover_lines": {"type": "array", "items": {"type": "string"}},
         "notes": {"type": "string"},
@@ -126,10 +127,11 @@ def prompt_for(post: dict[str, Any], transcript: dict[str, Any], info: dict[str,
             voice,
             "",
             "What to return (JSON per the schema):",
-            "- cover_lines: the two lines of the cover, at the top of the frame over Aziz's face: the first is the setup in two to four words (it is set bold white), the second is the punch in two to four words (it is set in glowing teal). Together they make someone stop scrolling; they are not the title repeated.",
-            "- thumb_text_options: three alternative covers, each written as one string `setup | punch`.",
-            "- ig_caption: the first line is the hook and fits before the fold (under 125 characters); then two to five short lines; then one call to action. No hashtags in the caption itself.",
-            "- ig_hashtags: eight to twelve hashtags with the # sign, mixing Arabic and English, specific to the topic and the audience.",
+            "- cover_lines: the two lines of the cover, at the top of the frame beside Aziz: line one is the winning idea, at most four words (it is set bold white); line two is what it beats, at most four words (it is set in glowing teal). Plain spoken phrasing over clever verbs (say 'أحسن من', not 'يكسر'). Arabic-Indic numerals. No symbols, arrows, quotes, guillemets or brackets inside the lines: right-to-left breaks them, say it in words.",
+            "- thumb_text_options: three to five alternative covers, each written as one string `line one | line two` with the same rules; put the recommended one first.",
+            "- cover_graphic: one sentence in English describing one small minimal neon teal line-art visual that argues the video's point (for example: one upward arrow rising cleanly from a baseline next to three faint dim grey arrows trailing downward and fading out). Small, subtle, low contrast.",
+            "- ig_caption: short. A hook line first, drawn from the video's actual argument; then a few punchy lines, mixing very short lines with one longer one; '..' for pauses; no hashtags in the caption itself. No em-dashes anywhere. No guillemets or quotation marks: write quoted words bare. A call to action only if the video itself has one, and then the same call to action it speaks; a video with no call to action gets no call to action. Say 'دولار', never the dollar sign.",
+            "- ig_hashtags: exactly five hashtags with the # sign, specific to the topic and the audience.",
             "- yt_title_options: three titles for the Short, under 60 characters each, specific, no lies. Arabic-Indic numerals inside Arabic.",
             "- yt_description: two to four short lines that say what the Short is about, then a call to action, then three to five hashtags on the last line including #Shorts.",
             "- yt_tags: eight to twelve search tags, a mix of Arabic and English, no hashes.",
@@ -137,7 +139,7 @@ def prompt_for(post: dict[str, Any], transcript: dict[str, Any], info: dict[str,
             "- language: the language you wrote in (ar or en).",
             "- notes: one line for Aziz on the angle you chose and why.",
             "",
-            "Proof and numbers: only the approved figures in the voice rules; anything else gets a bracketed placeholder rather than a guess.",
+            "Proof and numbers: only the approved figures in the voice rules; for new work the Mahara proof is 'أكثر من ٧٠ شركة بالخليج', and the 76 or 80 million dollar figure is retired: say 'مشاريع كبيرة' instead. Anything else gets a bracketed placeholder rather than a guess. No em-dashes anywhere, in any field.",
         ]
     else:
         parts = [
@@ -262,7 +264,7 @@ def normalise(result: dict[str, Any], duration: float, kind: str = "video") -> d
             chapters = []
     tags = [t.lstrip("#") for t in _strs(r.get("yt_tags"), limit=15, each=30)]
     hashtags = []
-    for h in _strs(r.get("ig_hashtags"), limit=12, each=40):
+    for h in _strs(r.get("ig_hashtags"), limit=5, each=40):
         h = "#" + re.sub(r"[^\w؀-ۿ]", "", h.lstrip("#"))
         if len(h) > 1 and h not in hashtags:
             hashtags.append(h)
@@ -277,12 +279,22 @@ def normalise(result: dict[str, Any], duration: float, kind: str = "video") -> d
         "yt_description": description or None,
         "chapters": chapters,
         "yt_tags": tags,
-        "ig_caption": str(r.get("ig_caption") or "").strip()[:2200] or None,
+        "ig_caption": tidy_caption(str(r.get("ig_caption") or ""))[:2200] or None,
         "ig_hashtags": hashtags,
         "thumb_text_options": thumbs,
         "thumb_text": thumbs[0] if thumbs else None,
         "notes": str(r.get("notes") or "").strip()[:400] or None,
     }
+
+
+def tidy_caption(text: str) -> str:
+    """Aziz's caption rules applied after the model: no em-dashes (a pause is
+    '..'), no guillemets or straight quotes around words, no dollar signs."""
+    t = str(text or "")
+    t = t.replace("—", "..").replace("–", "..").replace("«", "").replace("»", "")
+    t = re.sub(r"[“”\"]", "", t)
+    t = t.replace("$", " دولار ")
+    return re.sub(r"[ \t]{2,}", " ", t).strip()
 
 
 def compose(cfg: Config, log: Callable[[str], None], post: dict[str, Any], transcript: dict[str, Any], info: dict[str, Any], outliers: list[dict[str, Any]]) -> tuple[dict[str, Any], str]:
@@ -329,14 +341,14 @@ def is_arabic_text(text: str) -> bool:
 def normalise_post(result: dict[str, Any]) -> dict[str, Any]:
     r = result if isinstance(result, dict) else {}
     hashtags: list[str] = []
-    for h in _strs(r.get("ig_hashtags"), limit=12, each=40):
+    for h in _strs(r.get("ig_hashtags"), limit=5, each=40):
         h = "#" + re.sub(r"[^\w؀-ۿ]", "", h.lstrip("#"))
         if len(h) > 1 and h not in hashtags:
             hashtags.append(h)
     lang = str(r.get("language") or "").strip().lower()[:5] or None
     return {
         "language": lang,
-        "ig_caption": str(r.get("ig_caption") or "").strip()[:2200] or None,
+        "ig_caption": tidy_caption(str(r.get("ig_caption") or ""))[:2200] or None,
         "ig_hashtags": hashtags,
         "notes": str(r.get("notes") or "").strip()[:400] or None,
     }

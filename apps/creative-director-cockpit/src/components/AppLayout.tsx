@@ -60,7 +60,7 @@ function LayoutContent() {
     <>
       <AppSidebar />
       <SidebarInset ref={inset}>
-        <div className="sticky top-2.5 z-40 px-3 md:px-4">
+        <div className="sticky top-2.5 z-40 px-3 md:px-4 pt-safe">
           <header className="flex h-11 items-center justify-between rounded-full border border-border/60 bg-card/80 px-3.5 shadow-xs backdrop-blur-md transition-all">
             <SidebarTrigger className="md:hidden" />
             <div className="ml-auto flex items-center gap-2">

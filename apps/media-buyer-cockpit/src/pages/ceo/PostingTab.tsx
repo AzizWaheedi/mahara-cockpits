@@ -539,7 +539,7 @@ function NewPost({ onCreated }: { onCreated: (p: Post) => void }) {
           onChange={e => setRef(e.target.value)}
           placeholder={
             source === "drive"
-              ? "https://drive.google.com/file/d/…"
+              ? "https://drive.google.com/file/d/… or a folder link"
               : "https://…/video.mp4"
           }
           dir="ltr"
@@ -1243,7 +1243,7 @@ export function PostingTab(_props: CeoTabProps) {
   }, [posts]);
 
   return (
-    <div className="grid gap-4 lg:gap-6">
+    <div className="grid gap-5 lg:gap-7">
       <SectionCard
         kicker="Mahara's own channels · nothing goes out before you approve it"
         title="Posting desk"

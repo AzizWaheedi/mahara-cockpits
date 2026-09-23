@@ -6,7 +6,6 @@ import {
   ChevronRight,
   LoaderCircle,
   PlugZap,
-  Plus,
   Share2,
   SlidersHorizontal,
   X,
@@ -53,7 +52,6 @@ type Client = {
     socials: boolean;
     tested: boolean;
     slots: boolean;
-    bank: boolean;
   };
   batch: { id: string; status: string; mix: Record<string, number> } | null;
 };
@@ -76,16 +74,6 @@ function queues(pending: {
     .filter(q => q.list?.length)
     .map(q => ({ label: q.label, clients: (q.list ?? []).map(b => b.client) }));
 }
-
-type BankItem = {
-  id: string;
-  kind: string;
-  text: string;
-  pillar: string | null;
-  source: string | null;
-  active: boolean;
-  at: string;
-};
 
 function serverMessage(e: unknown): string {
   const raw = e instanceof Error ? e.message : String(e ?? "");
@@ -132,7 +120,6 @@ function Onboarding({ c }: { c: Client }) {
     ["socials", "socials connected"],
     ["tested", "test post"],
     ["slots", "calendar slots"],
-    ["bank", "content bank"],
   ];
   const missing = steps.filter(([k]) => !c.onboarding[k]);
   if (!missing.length)
@@ -221,136 +208,6 @@ function ClientRow({
         </span>
       )}
     </li>
-  );
-}
-
-/** The Content Bank for one client: what their audience asks, and every
- *  correction anybody has made. */
-function Bank({ clientTaskId }: { clientTaskId: string }) {
-  const read = useAction(api.social.bank);
-  const add = useAction(api.social.bankAdd);
-  const retire = useAction(api.social.bankRetire);
-  const alive = useRef(true);
-  const [items, setItems] = useState<BankItem[] | null>(null);
-  const [text, setText] = useState("");
-  const [kind, setKind] = useState("question");
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    alive.current = true;
-    return () => {
-      alive.current = false;
-    };
-  }, []);
-
-  const load = useCallback(async () => {
-    try {
-      const out = await read({ clientTaskId });
-      if (alive.current) setItems(out as BankItem[]);
-    } catch (e) {
-      toast.error(serverMessage(e));
-    }
-  }, [read, clientTaskId]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  async function submit() {
-    if (!text.trim()) return;
-    setBusy(true);
-    try {
-      await add({ clientTaskId, text, kind });
-      setText("");
-      await load();
-    } catch (e) {
-      toast.error(serverMessage(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const live = (items ?? []).filter(i => i.active);
-  const retired = (items ?? []).filter(i => !i.active);
-
-  return (
-    <div>
-      <div className="mb-2 flex flex-wrap items-center gap-1.5">
-        <select
-          value={kind}
-          onChange={e => setKind(e.target.value)}
-          aria-label="Kind"
-          className="h-8 rounded-md border bg-background px-2 text-[12px]"
-        >
-          <option value="question">Question</option>
-          <option value="objection">Objection</option>
-          <option value="correction">Correction</option>
-        </select>
-        <input
-          id="bank-text"
-          value={text}
-          onChange={e => setText(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === "Enter") void submit();
-          }}
-          dir="auto"
-          placeholder="What they actually ask, or what somebody said was wrong"
-          className="h-8 min-w-0 flex-1 rounded-md border bg-background px-2 text-[13px]"
-        />
-        <button
-          type="button"
-          onClick={() => void submit()}
-          disabled={busy || !text.trim()}
-          className="flex h-8 items-center gap-1 rounded-md border px-2.5 text-[12px] font-semibold hover:bg-muted disabled:opacity-50"
-        >
-          <Plus className="h-3 w-3" />
-          Add
-        </button>
-      </div>
-
-      {items === null ? (
-        <p className="flex items-center gap-2 py-3 text-[13px] text-muted-foreground">
-          <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> Reading the bank
-        </p>
-      ) : !live.length ? (
-        <p className="py-3 text-[13px] text-muted-foreground">
-          Nothing here yet. This is the raw material for the Education pillar,
-          so it is worth filling from real comments and real objections rather
-          than inventing questions each cycle.
-        </p>
-      ) : (
-        <ul className="space-y-1">
-          {live.map(i => (
-            <li key={i.id} className="flex items-start gap-2 py-1">
-              <span
-                className="mt-0.5 shrink-0 rounded-full border px-1.5 text-[11px] text-muted-foreground"
-                title={i.source ?? undefined}
-              >
-                {i.kind}
-              </span>
-              <p dir="auto" className="min-w-0 flex-1 text-[13px]">
-                {i.text}
-              </p>
-              <button
-                type="button"
-                onClick={async () => {
-                  await retire({ id: i.id });
-                  await load();
-                }}
-                className="shrink-0 text-[11px] text-muted-foreground hover:text-foreground"
-              >
-                retire
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      {retired.length ? (
-        <p className="mt-2 text-[11px] text-muted-foreground">
-          {retired.length} retired, kept as a record of what was asked once.
-        </p>
-      ) : null}
-    </div>
   );
 }
 
@@ -453,7 +310,7 @@ function Month({ c, onChanged }: { c: Client; onChanged: () => void }) {
 
   const load = useCallback(async () => {
     try {
-      const out = (await read({ clientTaskId: c.taskId })) as {
+      const out = (await read({ clientTaskId: c.taskId })) as unknown as {
         month: string;
         // biome-ignore lint/suspicious/noExplicitAny: same
         batch: any;
@@ -511,9 +368,9 @@ function Month({ c, onChanged }: { c: Client; onChanged: () => void }) {
         ) : null}
       </div>
 
-      {/* How many of each, decided before anything is written. Once the
-          month is past planning it is a fact rather than a control, so it
-          reads as one instead of a row of dead inputs. */}
+      {/* How many of each. Only a control while the month is being
+          planned, and never the reason somebody opened the screen, so it
+          folds away and the calendar is what you see. */}
       {!["", "planning", "planned"].includes(status) ? (
         <p className="mb-2 text-[12px] text-muted-foreground">
           {pillars
@@ -522,47 +379,54 @@ function Month({ c, onChanged }: { c: Client; onChanged: () => void }) {
             .join(", ")}
         </p>
       ) : (
-        <div className="mb-2 flex flex-wrap items-end gap-3">
-          {pillars.map(p => (
-            <label
-              key={p}
-              htmlFor={`mix-${c.taskId}-${p}`}
-              className="text-[12px] font-medium capitalize"
-            >
-              {p}
-              <input
-                id={`mix-${c.taskId}-${p}`}
-                type="number"
-                min={0}
-                max={30}
-                value={mix[p] ?? 0}
-                disabled={busy || !["", "planning", "planned"].includes(status)}
-                onChange={e =>
-                  setLocalMix({ ...mix, [p]: Number(e.target.value) })
+        <details className="mb-2">
+          <summary className="cursor-pointer list-none text-[12px] text-muted-foreground hover:text-foreground">
+            How many of each ({total} {total === 1 ? "post" : "posts"})
+          </summary>
+          <div className="mt-2 flex flex-wrap items-end gap-3">
+            {pillars.map(p => (
+              <label
+                key={p}
+                htmlFor={`mix-${c.taskId}-${p}`}
+                className="text-[12px] font-medium capitalize"
+              >
+                {p}
+                <input
+                  id={`mix-${c.taskId}-${p}`}
+                  type="number"
+                  min={0}
+                  max={30}
+                  value={mix[p] ?? 0}
+                  disabled={
+                    busy || !["", "planning", "planned"].includes(status)
+                  }
+                  onChange={e =>
+                    setLocalMix({ ...mix, [p]: Number(e.target.value) })
+                  }
+                  className="mt-1 block h-8 w-16 rounded-md border bg-background px-2 text-[13px] font-normal tabular-nums disabled:opacity-50"
+                />
+              </label>
+            ))}
+            <span className="pb-1.5 text-[12px] text-muted-foreground tabular-nums">
+              {total} posts
+            </span>
+            {["", "planning", "planned"].includes(status) ? (
+              <button
+                type="button"
+                disabled={busy || !total}
+                onClick={() =>
+                  run(
+                    () => setMix({ clientTaskId: c.taskId, mix }),
+                    "Mix saved for the month.",
+                  )
                 }
-                className="mt-1 block h-8 w-16 rounded-md border bg-background px-2 text-[13px] font-normal tabular-nums disabled:opacity-50"
-              />
-            </label>
-          ))}
-          <span className="pb-1.5 text-[12px] text-muted-foreground tabular-nums">
-            {total} posts
-          </span>
-          {["", "planning", "planned"].includes(status) ? (
-            <button
-              type="button"
-              disabled={busy || !total}
-              onClick={() =>
-                run(
-                  () => setMix({ clientTaskId: c.taskId, mix }),
-                  "Mix saved for the month.",
-                )
-              }
-              className="mb-0.5 h-8 rounded-md border px-2.5 text-[12px] font-semibold hover:bg-muted disabled:opacity-50"
-            >
-              Save the mix
-            </button>
-          ) : null}
-        </div>
+                className="mb-0.5 h-8 rounded-md border px-2.5 text-[12px] font-semibold hover:bg-muted disabled:opacity-50"
+              >
+                Save the mix
+              </button>
+            ) : null}
+          </div>
+        </details>
       )}
 
       {!batch ? (
@@ -875,7 +739,6 @@ function ClientPanel({
                     ["socials", "Socials connected in GHL"],
                     ["tested", "Test post as a private draft"],
                     ["slots", "Calendar slots pre-blocked"],
-                    ["bank", "Content Bank has 10-15 items"],
                   ] as const
                 ).map(([k, label]) => (
                   <label
@@ -913,11 +776,6 @@ function ClientPanel({
 
         <div>
           <Month c={c} onChanged={onChanged} />
-        </div>
-
-        <div>
-          <p className="mb-1.5 text-[12px] font-semibold">Content Bank</p>
-          <Bank clientTaskId={c.taskId} />
         </div>
       </div>
     </div>
@@ -993,9 +851,9 @@ export function SocialPage() {
         </button>
       </div>
       <p className="mb-3 text-[13px] text-muted-foreground">
-        Three pillars, a batch a month, and a written plan approved before
-        anything is generated. Grouped by batch day so one sitting covers every
-        client on the same day rather than one client end to end.
+        A month of posts on a calendar, written and illustrated before anything
+        reaches a client. Grouped by batch day, so one sitting covers every
+        client due that day rather than one client end to end.
       </p>
 
       {error ? (

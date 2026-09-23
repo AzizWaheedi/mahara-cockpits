@@ -23,11 +23,12 @@ import {
   LoginPage,
   MeetingsPage,
   PlaybookPage,
+  ReviewPage,
   ScriptDatabasePage,
   ScriptsPage,
   SettingsPage,
   SignupPage,
-  SocialPage,
+  SocialCalendarPage,
   SwipePage,
   TouchpointsPage,
   WorkPage,
@@ -63,13 +64,14 @@ export function AuthenticatedRoutes() {
             <Route path="/messages" element={<TouchpointsPage />} />
             <Route path="/links" element={<KeyLinksPage />} />
             <Route path="/what-works" element={<PlaybookPage />} />
+            <Route path="/review" element={<ReviewPage />} />
             <Route path="/funnels" element={<FunnelsPage />} />
             <Route path="/calendar" element={<CalendarPage />} />
             <Route path="/scripting" element={<ScriptDatabasePage />} />
             <Route path="/scripts" element={<ScriptsPage />} />
             <Route path="/ideation" element={<IdeationPage />} />
             <Route path="/swipe" element={<SwipePage />} />
-            <Route path="/social" element={<SocialPage />} />
+            <Route path="/social" element={<SocialCalendarPage />} />
             <Route path="/profiles" element={<ClientsPage />} />
             <Route path="/eod" element={<CreativeEodPage />} />
             <Route path="/meetings" element={<MeetingsPage />} />

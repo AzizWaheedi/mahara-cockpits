@@ -123,7 +123,7 @@ export function SectionCard<K extends SectionKey>({
         delay: reduce ? 0 : Math.min(order, 8) * 0.04,
       }}
       className={cn(
-        "ceo-card min-w-0 rounded-xl border bg-card p-5 text-card-foreground",
+        "ceo-card min-w-0 rounded-xl border bg-card p-5 text-card-foreground sm:p-6",
         className,
       )}
     >
@@ -153,10 +153,10 @@ export function SectionCard<K extends SectionKey>({
         <StaleBanner key={s.key} section={s} showLabel={present.length > 1} />
       ))}
 
-      <div className={cn("mt-4 min-w-0", bodyClassName)}>{body}</div>
+      <div className={cn("mt-5 min-w-0", bodyClassName)}>{body}</div>
 
       {notes?.length ? (
-        <Notes notes={notes} className="mt-4 border-t pt-3" />
+        <Notes notes={notes} className="mt-5 border-t pt-3" />
       ) : null}
     </motion.section>
   );

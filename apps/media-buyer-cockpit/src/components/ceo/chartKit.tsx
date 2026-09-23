@@ -47,11 +47,22 @@ export const AXIS_TICK = { fill: "var(--muted-foreground)", fontSize: 11 };
 // a graph can be read over a week or a year without the page changing. The
 // rows arrive oldest first; the control keeps the ones inside the range.
 
-export type RangeKey = "7d" | "30d" | "90d" | "6m" | "12m" | "all" | "custom";
+export type RangeKey =
+  | "7d"
+  | "30d"
+  | "mtd"
+  | "lastMonth"
+  | "90d"
+  | "6m"
+  | "12m"
+  | "all"
+  | "custom";
 export type CustomRange = { from: string; to: string };
 export const RANGE_OPTIONS: { key: RangeKey; label: string }[] = [
   { key: "7d", label: "7 days" },
   { key: "30d", label: "30 days" },
+  { key: "mtd", label: "This month" },
+  { key: "lastMonth", label: "Last month" },
   { key: "90d", label: "90 days" },
   { key: "6m", label: "6 months" },
   { key: "12m", label: "12 months" },
@@ -73,6 +84,11 @@ function shiftMonths(month: string, n: number): string {
 /** The first x kept for a preset, given the newest x in the data. */
 export function rangeStart(key: RangeKey, last: string): string | null {
   if (key === "all" || key === "custom") return null;
+  if (key === "mtd") return isMonth(last) ? last : `${last.slice(0, 7)}-01`;
+  if (key === "lastMonth")
+    return isMonth(last)
+      ? shiftMonths(last, -1)
+      : `${shiftMonths(last.slice(0, 7), -1)}-01`;
   if (isMonth(last)) {
     const months = { "7d": 1, "30d": 1, "90d": 3, "6m": 6, "12m": 12 }[key];
     return shiftMonths(last, -(months - 1));
@@ -110,7 +126,23 @@ export function filterRange(
     });
   }
   const start = rangeStart(range, last);
-  return start ? data.filter(r => String(r[x] ?? "") >= start) : data;
+  const end = rangeEnd(range, last);
+  return start
+    ? data.filter(r => {
+        const v = String(r[x] ?? "");
+        return v >= start && (!end || v <= end);
+      })
+    : data;
+}
+
+/** The last x kept for a preset that does not run to the newest x (last month), else null. */
+export function rangeEnd(key: RangeKey, last: string): string | null {
+  if (key !== "lastMonth") return null;
+  if (isMonth(last)) return shiftMonths(last, -1);
+  const prev = shiftMonths(last.slice(0, 7), -1);
+  const [y, m] = prev.split("-").map(Number);
+  const dim = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return `${prev}-${String(dim).padStart(2, "0")}`;
 }
 
 /** Range state for one chart: the choice, the custom dates, and the rows that survive. */

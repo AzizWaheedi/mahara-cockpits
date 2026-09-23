@@ -76,7 +76,15 @@ function Body({ m }: { m: Message }) {
   return <span dir="auto">{text}</span>;
 }
 
-function Thread({ t, onDone }: { t: Thread; onDone: () => void }) {
+function Thread({
+  t,
+  desk,
+  onDone,
+}: {
+  t: Thread;
+  desk: Desk;
+  onDone: () => void;
+}) {
   const send = useAction(api.wa.send);
   const archive = useAction(api.wa.archive);
 
@@ -119,7 +127,7 @@ function Thread({ t, onDone }: { t: Thread; onDone: () => void }) {
           onClick={async () => {
             setBusy(true);
             try {
-              await archive({ threadId: t.id });
+              await archive({ threadId: t.id, desk });
               toast.success("Archived.");
               onDone();
             } catch (e) {
@@ -203,7 +211,7 @@ function Thread({ t, onDone }: { t: Thread; onDone: () => void }) {
               onClick={async () => {
                 setBusy(true);
                 try {
-                  await send({ threadId: t.id, body: text, lang });
+                  await send({ threadId: t.id, desk, body: text, lang });
                   toast.success("Sent.");
                   onDone();
                 } catch (e) {
@@ -233,7 +241,23 @@ function Thread({ t, onDone }: { t: Thread; onDone: () => void }) {
   );
 }
 
-export function WhatsAppDesk({ desk }: { desk: "csm" | "ads" | "creative" }) {
+type Desk = "csm" | "ads" | "creative";
+
+/**
+ * Whose WhatsApp each desk is looking at.
+ *
+ * Only the CSM's is connected. The other two desks must not fall back to
+ * it -- it is a real person's own inbox -- so they say plainly that
+ * theirs is not connected rather than showing an empty list that reads
+ * like everything is answered.
+ */
+const CONNECTED: Record<Desk, boolean> = {
+  csm: true,
+  ads: false,
+  creative: false,
+};
+
+export function WhatsAppDesk({ desk }: { desk: Desk }) {
   const inbox = useAction(api.wa.inbox);
   const [threads, setThreads] = useState<Thread[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -249,8 +273,25 @@ export function WhatsAppDesk({ desk }: { desk: "csm" | "ads" | "creative" }) {
   }, [inbox, desk]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (CONNECTED[desk]) void load();
+  }, [load, desk]);
+
+  if (!CONNECTED[desk])
+    return (
+      <section>
+        <div className="mb-2 flex flex-wrap items-baseline gap-2">
+          <h2 className="text-[15px] font-semibold tracking-tight">WhatsApp</h2>
+          <span className="text-[12px] text-muted-foreground">
+            not connected yet
+          </span>
+        </div>
+        <p className="rounded-lg border border-dashed p-4 text-[12px] text-muted-foreground">
+          This desk has no WhatsApp of its own. Connect one in GoHighLevel and
+          the conversations waiting on a reply appear here, with the reply
+          already drafted. Another desk's messages are never shown here.
+        </p>
+      </section>
+    );
 
   if (error)
     return (
@@ -279,7 +320,7 @@ export function WhatsAppDesk({ desk }: { desk: "csm" | "ads" | "creative" }) {
       {threads.length ? (
         <ul className="space-y-2">
           {threads.map(t => (
-            <Thread key={t.id} t={t} onDone={() => void load()} />
+            <Thread key={t.id} t={t} desk={desk} onDone={() => void load()} />
           ))}
         </ul>
       ) : (

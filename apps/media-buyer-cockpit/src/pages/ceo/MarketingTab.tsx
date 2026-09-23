@@ -1,11 +1,16 @@
 import { Image as ImageIcon } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { BarList, type BarListItem } from "@/components/ceo/BarList";
-import { useTabParam } from "@/components/ceo/CeoTabs";
+import {
+  type CustomRange,
+  RangeControl,
+  type RangeKey,
+  rangeStart,
+} from "@/components/ceo/chartKit";
 import { type Column, DataTable } from "@/components/ceo/DataTable";
 import { Delta, type DeltaKind, type GoodWhen } from "@/components/ceo/Delta";
 import { EmptyState } from "@/components/ceo/EmptyState";
-import { FilterChips } from "@/components/ceo/FilterChips";
+import { Facts } from "@/components/ceo/Facts";
 import {
   change,
   count,
@@ -19,17 +24,16 @@ import {
   plural,
   type Unit,
 } from "@/components/ceo/format";
+import { DERIVED_NOTE, useGrowthWindow } from "@/components/ceo/growthWindow";
 import { Na, Value } from "@/components/ceo/Na";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
+import { TimeframeBar } from "@/components/ceo/TimeframeBar";
 import { TimeSeriesChart } from "@/components/ceo/TimeSeriesChart";
-import {
-  COMPARE_WITH,
-  range,
-  WINDOW_CHIPS,
-  WINDOW_KEYS,
-  WINDOW_LABEL,
-} from "@/components/ceo/windows";
+import { useTimeframe } from "@/components/ceo/timeframe";
+import { useFrequency } from "@/components/ceo/useFrequency";
+import { range } from "@/components/ceo/windows";
+import type { FrequencyFigure } from "../../../convex/ceo/frequency";
 import type {
   FunnelWindow,
   GrowthPayload,
@@ -39,14 +43,20 @@ import type { CeoTabProps } from "./types";
 
 // --- Derived numbers, each null when its denominator is 0 ---
 
+/** "20.5 h" or "35 min", a dash when there is none. */
+function minutesText(m: number | null | undefined): string {
+  if (m === null || m === undefined) return "—";
+  return m >= 120 ? `${(m / 60).toFixed(1)} h` : `${Math.round(m)} min`;
+}
+
 /** Intro plus demo calls booked in the window. */
 function bookedCalls(w: FunnelWindow): number {
   return w.introsBooked + w.demosBooked;
 }
 
-/** Booked calls over leads. Can pass 100%: a lead and its booking are dated on different days. */
+/** Leads that booked at least one call, over leads. Per lead, so it never passes 100%. */
 function bookedRate(w: FunnelWindow): number | null {
-  return w.leads > 0 ? bookedCalls(w) / w.leads : null;
+  return w.leadToBooked.rate;
 }
 
 /**
@@ -107,7 +117,7 @@ const OWN_NOTES: Record<CardKey, Note[]> = {
   booked: [
     {
       level: "info",
-      text: "A lead is dated on the day it was created and a booking on the day it was booked, so a lead created on Monday and booked on Thursday lands in two different windows. The lead to booked call rate can pass 100% in a short window for that reason, and it is not a cohort conversion.",
+      text: "Lead to booked call is per lead: the leads created in this window that have at least one intro or demo booked against their contact, whenever it was booked, over the leads created in this window. A lead booked twice counts once, so the rate never passes 100%. The booked-call counts beside it are dated by booking day, which is a different clock.",
     },
     {
       level: "info",
@@ -127,7 +137,7 @@ const OWN_NOTES: Record<CardKey, Note[]> = {
   sources: [
     {
       level: "info",
-      text: "The top 10 sources by leads this month. A lead that arrived without a source reads as no source recorded.",
+      text: "The three tiles split this month's leads by the ad id rule; the bars below are the raw source field, top 10, and a lead that arrived without one reads as no source recorded. GoHighLevel's first-touch attribution is empty on most contacts, so a true first click needs UTMs on the forms and the WhatsApp link, or a \"how did you find us\" answer at the form.",
     },
   ],
   daily: [
@@ -157,20 +167,15 @@ const NOT_MEASURED: { label: string; why: string }[] = [
   { label: "Clicks", why: META_ONLY },
   { label: "Click through rate", why: META_ONLY },
   { label: "Cost per click", why: META_ONLY },
-  { label: "Frequency", why: META_ONLY },
   { label: "Landing page views", why: NO_ANALYTICS },
   { label: "Landing page conversion rate", why: NO_ANALYTICS },
   {
-    label: "Organic, content, email and social",
-    why: "Nothing in either Supabase project holds them, so no organic or owned channel can be reported.",
+    label: "Email and owned social as lead sources",
+    why: "Organic is split by the ad id rule on the sources card. Email and owned social carry no marker of their own on a contact, so they cannot be told apart from it.",
   },
   {
     label: "Hook rate, thumbstop and video views",
     why: "Creative level performance is not in the Meta snapshots and not in the Creative Triage project.",
-  },
-  {
-    label: "Leads by the ad that made them",
-    why: "Nothing exposes the ad on a lead, so a funnel by ad cannot be drawn. The ads card credits leads to an ad inside the B2B dashboard only.",
   },
 ];
 
@@ -216,17 +221,18 @@ export function MarketingTab({ sections, now, day }: CeoTabProps) {
   const section = sections.growth;
   const payload = section?.payload ?? null;
   const today = day ?? kuwaitDay(now);
-  const [win, setWin] = useTabParam(WINDOW_KEYS, "mtd", "window");
+  const tf = useTimeframe("mtd");
+  const gw = useGrowthWindow(payload, tf, today);
+  const { current, previous } = gw;
   const notes = useMemo(() => routeNotes(payload?.notes), [payload]);
-
-  const compareKey = COMPARE_WITH[win];
-  const current = payload?.windows?.[win] ?? null;
-  const previous = compareKey ? (payload?.windows?.[compareKey] ?? null) : null;
+  const windowLabel = gw.bounds
+    ? range(gw.bounds.from, gw.bounds.to)
+    : "Timeframe";
 
   // With nothing to show, one card says so instead of five identical empty states.
   if (!payload)
     return (
-      <div className="grid gap-4 lg:gap-6">
+      <div className="grid gap-5 lg:gap-7">
         <SectionCard title="Marketing" section={section}>
           {() => null}
         </SectionCard>
@@ -235,56 +241,37 @@ export function MarketingTab({ sections, now, day }: CeoTabProps) {
     );
 
   return (
-    <div className="grid gap-4 lg:gap-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <FilterChips
-          options={WINDOW_CHIPS}
-          value={win}
-          onChange={setWin}
-          ariaLabel="Window for spend, leads and calls booked"
-        />
-        {current ? (
-          <p className="text-sm text-muted-foreground tabular-nums">
-            <span className="font-medium text-foreground">
-              {range(current.from, current.to)}
-            </span>
-            {previous
-              ? `, compared with ${range(previous.from, previous.to)}`
-              : ", shown without a comparison"}
-          </p>
-        ) : null}
-      </div>
+    <div className="grid gap-5 lg:gap-7">
+      <TimeframeBar
+        tf={tf}
+        bounds={gw.bounds}
+        compare={gw.compare}
+        ariaLabel="Timeframe for spend, leads and calls booked"
+        first={gw.first}
+        last={gw.last}
+        note={gw.derived ? DERIVED_NOTE : undefined}
+      />
 
-      <div className="grid gap-4 lg:gap-6 xl:grid-cols-12">
+      <div className="grid gap-5 lg:gap-7 xl:grid-cols-12">
         <SectionCard
-          kicker={WINDOW_LABEL[win]}
+          kicker={windowLabel}
           title="Spend and leads"
           section={section}
           notes={cardNotes(notes, "spend")}
           order={0}
           className="xl:col-span-7"
         >
-          {p => (
-            <SpendAndLeads
-              w={p.windows[win]}
-              prev={compareKey ? p.windows[compareKey] : null}
-            />
-          )}
+          {p => <SpendAndLeads w={current ?? p.windows.mtd} prev={previous} />}
         </SectionCard>
         <SectionCard
-          kicker={WINDOW_LABEL[win]}
+          kicker={windowLabel}
           title="Calls booked and cost per call"
           section={section}
           notes={cardNotes(notes, "booked")}
           order={1}
           className="xl:col-span-5"
         >
-          {p => (
-            <CallsBooked
-              w={p.windows[win]}
-              prev={compareKey ? p.windows[compareKey] : null}
-            />
-          )}
+          {p => <CallsBooked w={current ?? p.windows.mtd} prev={previous} />}
         </SectionCard>
       </div>
 
@@ -293,11 +280,12 @@ export function MarketingTab({ sections, now, day }: CeoTabProps) {
           Ads, sources and the trend
         </h2>
         <p className="text-xs text-muted-foreground">
-          These keep their own ranges and do not follow the window above.
+          The ads table is always the last 7 days and the source bars this
+          month; the charts and the reach card carry their own timeframe.
         </p>
       </div>
 
-      <div className="grid gap-4 lg:gap-6 xl:grid-cols-12">
+      <div className="grid gap-5 lg:gap-7 xl:grid-cols-12">
         <SectionCard
           kicker="Last 7 days"
           title="Ads by spend"
@@ -316,7 +304,9 @@ export function MarketingTab({ sections, now, day }: CeoTabProps) {
           order={3}
           className="xl:col-span-5"
         >
-          {p => <LeadSources sources={p.leadSources} />}
+          {p => (
+            <LeadSources sources={p.leadSources} w={current ?? p.windows.mtd} />
+          )}
         </SectionCard>
       </div>
 
@@ -331,15 +321,25 @@ export function MarketingTab({ sections, now, day }: CeoTabProps) {
       </SectionCard>
 
       <SectionCard
+        kicker="Meta, over the timeframe chosen here"
+        title="Reach and frequency"
+        section={section}
+        notes={FREQUENCY_NOTES}
+        order={5}
+      >
+        {p => <FrequencyBody rows={p.daily} today={today} />}
+      </SectionCard>
+
+      <SectionCard
         kicker={`Last ${payload?.winningAds?.windowDays ?? 90} days, best first`}
         title="Winning ads"
         section={section}
-        order={5}
+        order={6}
       >
         {p => <WinningAdsBody p={p} />}
       </SectionCard>
 
-      <NotMeasured order={6} />
+      <NotMeasured order={7} />
     </div>
   );
 }
@@ -364,38 +364,53 @@ function SpendAndLeads({
     ) : undefined;
 
   const retarget = retargeting(w);
-  const prevRetarget = prev ? retargeting(prev) : null;
 
   return (
-    <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4">
-      <StatTile
-        variant="plain"
-        label="Lead-gen ad spend"
-        value={money(w.spend)}
-        delta={delta(change(w.spend, prev?.spend), "neither")}
-        hint="What Mahara spends on its own lead-gen campaigns, as on the B2B dashboard overview. Days are the Meta ad account's reporting day. Money spent on client ads is a different pool and sits on the Delivery tab."
-      />
-      <StatTile
-        variant="plain"
-        label="Leads"
-        value={count(w.leads)}
-        delta={delta(change(w.leads, prev?.leads), "up")}
-        hint="Every opted-in GHL contact with a phone or email, dated by the day it was created."
-      />
-      <StatTile
-        variant="plain"
-        label="Cost per lead"
-        value={money(w.cpl)}
-        delta={delta(change(w.cpl, prev?.cpl), "down")}
-        naHint="No leads in this window, so there is no cost per lead."
-      />
-      <StatTile
-        variant="plain"
-        label="Retargeting spend"
-        value={money(retarget)}
-        delta={delta(change(retarget, prevRetarget), "neither")}
-        hint="Retargeting money in this window, on top of the lead-gen spend. It is different money and is never part of cost per lead."
-        naHint="The B2B window function gave no retargeting figure for this window."
+    <div>
+      <div className="grid grid-cols-2 gap-x-8 gap-y-6 sm:grid-cols-4">
+        <StatTile
+          variant="plain"
+          label="Lead-gen ad spend"
+          value={money(w.spend)}
+          delta={delta(change(w.spend, prev?.spend), "neither")}
+          hint="What Mahara spends on its own lead-gen campaigns, as on the B2B dashboard overview. Days are the Meta ad account's reporting day. Money spent on client ads is a different pool and sits on the Delivery tab."
+        />
+        <StatTile
+          variant="plain"
+          label="Leads"
+          value={count(w.leads)}
+          delta={delta(change(w.leads, prev?.leads), "up")}
+          sub={`${count(w.leadClasses.qualified)} qualified · ${count(w.leadClasses.unqualified)} unqualified`}
+          hint="What the setters tagged in GoHighLevel, dated by the day the contact was created: ROAS qualified and ROAS unqualified are leads; ROAS unprepared is not ready and is shown but not counted; a contact with no ROAS tag yet is shown but not counted."
+        />
+        <StatTile
+          variant="plain"
+          label="Speed to lead"
+          value={minutesText(
+            w.speedToLead.workingMedianMin ?? w.speedToLead.medianMin,
+          )}
+          sub={`${typeof w.speedToLead.workingMedianMin === "number" ? `working hours · ${minutesText(w.speedToLead.medianMin)} on the plain clock · ` : ""}${count(w.speedToLead.called)} of ${count(w.speedToLead.leads)} leads called by a sales rep · ${count(w.speedToLead.neverCalled)} never called${w.speedToLead.within5Share !== null ? ` · ${pct(w.speedToLead.workingWithin5Share ?? w.speedToLead.within5Share)} within 5 min` : ""}`}
+          hint="From the lead's creation to the first Maqsam call with it made by a sales rep on the roster (setter, closer or both), never a call-centre agent, matched by the CRM contact or the phone's last eight digits. On the working clock the time starts at the later of the lead's creation and the next working window and only working minutes count; the plain clock figure is beside it. The median over the leads that were called; the never-called are counted beside it, not inside it."
+          naHint="No lead in this window has a sales rep's Maqsam call against it."
+        />
+        <StatTile
+          variant="plain"
+          label="Cost per lead"
+          value={money(w.cpl)}
+          delta={delta(change(w.cpl, prev?.cpl), "down")}
+          naHint="No leads in this window, so there is no cost per lead."
+        />
+      </div>
+      <Facts
+        items={[
+          {
+            label: "Retargeting spend",
+            value: money(retarget),
+            hint: "Different money, never in cost per lead.",
+          },
+          { label: "Not ready", value: count(w.leadClasses.notReady) },
+          { label: "Not yet tagged", value: count(w.leadClasses.untagged) },
+        ]}
       />
     </div>
   );
@@ -424,63 +439,61 @@ function CallsBooked({
   const rate = bookedRate(w);
   const prevRate = prev ? bookedRate(prev) : null;
   const perIntro = costPerIntroShown(w);
-  const prevPerIntro = prev ? costPerIntroShown(prev) : null;
 
   return (
-    <div className="grid grid-cols-2 gap-x-6 gap-y-5">
-      <StatTile
-        variant="plain"
-        label="Intro calls booked"
-        value={count(w.introsBooked)}
-        delta={delta(change(w.introsBooked, prev?.introsBooked), "up")}
-        hint="Intro calls on a rep's calendar, dated by the day they were booked."
-      />
-      <StatTile
-        variant="plain"
-        label="Demos booked"
-        value={count(w.demosBooked)}
-        delta={delta(change(w.demosBooked, prev?.demosBooked), "up")}
-        hint="Demos on a rep's calendar, dated by the day they were booked. What happens on the call is on the Sales tab."
-      />
-      <StatTile
-        variant="plain"
-        label="Lead to booked call"
-        value={pct(rate)}
-        delta={delta(diff(rate, prevRate), "up", "points")}
-        sub={
-          <span>
-            {plural(booked, "call")} booked, {plural(w.leads, "lead")}
-          </span>
-        }
-        hint="Intro plus demo calls booked in this window, divided by the leads created in it."
-        naHint="No leads in this window, so there is no rate."
-      />
-      <StatTile
-        variant="plain"
-        label="Cost per intro shown"
-        value={money(perIntro)}
-        delta={delta(change(perIntro, prevPerIntro), "down")}
-        hint="Lead-gen ad spend in this window divided by the intro calls shown in it. The cockpit works this out from two of the B2B dashboard's figures; the dashboard's database functions give no cost per intro of their own."
-        naHint="No intro calls were shown in this window."
-      />
-      <StatTile
-        variant="plain"
-        label="Cost per demo shown"
-        value={money(w.costPerDemo)}
-        delta={delta(change(w.costPerDemo, prev?.costPerDemo), "down")}
-        hint="The B2B dashboard's cost per demo: lead-gen ad spend in this window divided by the demos shown in it."
-        naHint="No demos were shown in this window."
-      />
-      <StatTile
-        variant="plain"
-        label="Cost per demo booked"
-        value={money(w.costPerDemoBooked)}
-        delta={delta(
-          change(w.costPerDemoBooked, prev?.costPerDemoBooked),
-          "down",
-        )}
-        hint="The B2B dashboard's cost per demo booked: lead-gen ad spend in this window divided by the demos booked in it."
-        naHint="No demos were booked in this window."
+    <div>
+      <div className="grid grid-cols-2 gap-x-8 gap-y-6">
+        <StatTile
+          variant="plain"
+          label="Intro calls booked"
+          value={count(w.introsBooked)}
+          delta={delta(change(w.introsBooked, prev?.introsBooked), "up")}
+          hint="Intro calls on a rep's calendar, dated by the day they were booked."
+        />
+        <StatTile
+          variant="plain"
+          label="Demos booked"
+          value={count(w.demosBooked)}
+          delta={delta(change(w.demosBooked, prev?.demosBooked), "up")}
+          hint="Demos on a rep's calendar, dated by the day they were booked. What happens on the call is on the Sales tab."
+        />
+        <StatTile
+          variant="plain"
+          label="Lead to booked call"
+          value={pct(rate)}
+          delta={delta(diff(rate, prevRate), "up", "points")}
+          sub={
+            <span>
+              {count(w.leadToBooked.bookedLeads)} of {plural(w.leads, "lead")}{" "}
+              booked a call · {plural(booked, "call")} booked in the window
+            </span>
+          }
+          hint="Leads created in this window with at least one intro or demo booked against their contact, ever, over the leads created in this window. Per lead, never per booking."
+          naHint="No leads in this window, so there is no rate."
+        />
+        <StatTile
+          variant="plain"
+          label="Cost per demo shown"
+          value={money(w.costPerDemo)}
+          delta={delta(change(w.costPerDemo, prev?.costPerDemo), "down")}
+          hint="The B2B dashboard's cost per demo: lead-gen ad spend in this window divided by the demos shown in it."
+          naHint="No demos were shown in this window."
+        />
+      </div>
+      <Facts
+        items={[
+          {
+            label: "Cost per intro shown",
+            value: money(perIntro),
+            hint: "Lead-gen spend over intro calls shown; worked out here from two of the dashboard's figures.",
+          },
+          {
+            label: "Cost per demo booked",
+            value: money(w.costPerDemoBooked),
+            hint: "The dashboard's own: lead-gen spend over demos booked.",
+          },
+          { label: "Calls booked", value: count(booked) },
+        ]}
       />
     </div>
   );
@@ -548,20 +561,54 @@ function TopAds({ ads }: { ads: Ad[] }) {
 
 // --- Card 4: lead sources ---
 
-function LeadSources({ sources }: { sources: GrowthPayload["leadSources"] }) {
+function LeadSources({
+  sources,
+  w,
+}: {
+  sources: GrowthPayload["leadSources"];
+  w: FunnelWindow;
+}) {
   const items: BarListItem[] = sources.map((s, i) => ({
     key: `${s.source}-${i}`,
     label: s.source === "(none)" ? "No source recorded" : s.source,
     value: s.leads,
   }));
+  const split = w.sources;
+  const total = split.ads + split.organic + split.assumedAds;
+  const share = (n: number) => (total > 0 ? pct(n / total) : NA);
   return (
-    <BarList
-      items={items}
-      format={count}
-      limit={10}
-      ariaLabel="Leads by source this month"
-      emptyText="No leads this month yet."
-    />
+    <div className="grid gap-5">
+      <div className="grid grid-cols-3 gap-x-4 gap-y-3">
+        <StatTile
+          variant="plain"
+          label="Ads"
+          value={count(split.ads)}
+          sub={share(split.ads)}
+          hint="Leads whose contact carries an ad id, or whose GoHighLevel attribution carries one (a click-to-message ad puts it in mediumId)."
+        />
+        <StatTile
+          variant="plain"
+          label="Organic"
+          value={count(split.organic)}
+          sub={share(split.organic)}
+          hint="Leads with no ad id whose source, tags or attribution medium say inbound WhatsApp, Instagram DM, YouTube, referral or organic."
+        />
+        <StatTile
+          variant="plain"
+          label="Ads, assumed"
+          value={count(split.assumedAds)}
+          sub={share(split.assumedAds)}
+          hint="Leads with no ad id and nothing that says organic. They are counted as ads because that is where nearly every lead comes from, and labelled assumed because nothing proves it."
+        />
+      </div>
+      <BarList
+        items={items}
+        format={count}
+        limit={10}
+        ariaLabel="Leads by source this month"
+        emptyText="No leads this month yet."
+      />
+    </div>
   );
 }
 
@@ -618,6 +665,138 @@ function DailyBody({
         />
       ))}
     </div>
+  );
+}
+
+// --- Card 6: reach and frequency, straight from Meta for the chosen window ---
+
+const FREQUENCY_NOTES: Note[] = [
+  {
+    level: "info",
+    text: "Frequency is impressions over the distinct people reached in the whole timeframe, read from Meta for that timeframe. It cannot be added up from daily rows, because the same person on two days is one person. Lead-gen and retargeting campaigns are sorted by name the way the B2B dashboard sorts them; hiring campaigns are left out.",
+  },
+  {
+    level: "info",
+    text: "The timeframe choices are the same as the charts above; days run to yesterday. A new timeframe is read from Meta once and kept for three hours.",
+  },
+];
+
+function FrequencyBody({
+  rows,
+  today,
+}: {
+  rows: GrowthPayload["daily"];
+  today: string;
+}) {
+  const [rangeKey, setRangeKey] = useState<RangeKey>("90d");
+  const [custom, setCustom] = useState<CustomRange>({ from: "", to: "" });
+  const days = rows.filter(r => r.date < today);
+  const first = days[0]?.date ?? null;
+  const last = days[days.length - 1]?.date ?? null;
+  let from: string | null = null;
+  let to: string | null = null;
+  if (rangeKey === "custom") {
+    from = custom.from || null;
+    to = custom.to || null;
+  } else if (last) {
+    from = rangeStart(rangeKey, last) ?? first;
+    to = last;
+  }
+  const { read, loading, error } = useFrequency(from, to);
+
+  return (
+    <div className="grid gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-muted-foreground tabular-nums">
+          {from && to ? (
+            <span className="font-medium text-foreground">
+              {range(from, to)}
+            </span>
+          ) : (
+            "Pick both dates"
+          )}
+          {loading ? ", reading Meta" : ""}
+        </p>
+        <RangeControl
+          range={rangeKey}
+          onRange={setRangeKey}
+          custom={custom}
+          onCustom={setCustom}
+          first={first}
+          last={last}
+        />
+      </div>
+      {error ? (
+        <p className="text-xs text-destructive">
+          Meta could not be read for this timeframe: {error}
+        </p>
+      ) : null}
+      <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
+        <FrequencyFigureTiles
+          title="Lead-gen campaigns"
+          figure={read?.leadGen ?? null}
+          stale={read !== null && (read.from !== from || read.to !== to)}
+        />
+        <FrequencyFigureTiles
+          title="Retargeting campaigns"
+          figure={read?.retargeting ?? null}
+          stale={read !== null && (read.from !== from || read.to !== to)}
+        />
+      </div>
+    </div>
+  );
+}
+
+function FrequencyFigureTiles({
+  title,
+  figure,
+  stale,
+}: {
+  title: string;
+  figure: FrequencyFigure | null;
+  stale: boolean;
+}) {
+  const na = figure
+    ? undefined
+    : "No campaign of this kind on the account, or Meta has not answered yet.";
+  return (
+    <section aria-label={title} className={stale ? "opacity-60" : undefined}>
+      <p className="mb-3 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        {title}
+      </p>
+      <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4">
+        <StatTile
+          variant="plain"
+          label="Frequency"
+          value={
+            figure?.frequency !== null && figure?.frequency !== undefined
+              ? `${figure.frequency.toFixed(1)}x`
+              : NA
+          }
+          hint="Impressions over the distinct people reached in this timeframe, as Meta computes it."
+          naHint={na ?? "Nobody was reached in this timeframe."}
+        />
+        <StatTile
+          variant="plain"
+          label="People reached"
+          value={figure ? count(figure.reach) : NA}
+          naHint={na}
+        />
+        <StatTile
+          variant="plain"
+          label="Impressions"
+          value={figure ? count(figure.impressions) : NA}
+          naHint={na}
+        />
+        <StatTile
+          variant="plain"
+          label="Spend"
+          value={figure ? money(figure.spend) : NA}
+          sub={figure ? plural(figure.campaigns, "campaign") : undefined}
+          naHint={na}
+        />
+      </div>
+    </section>
   );
 }
 

@@ -19,6 +19,7 @@ import {
   kuwaitDay,
   minutes,
   money,
+  month,
   pct,
   plural,
 } from "@/components/ceo/format";
@@ -43,6 +44,7 @@ import type {
   DeliveryPayload,
   Note,
 } from "../../../convex/ceo/payloads";
+import { DeliveryTimeframeCard } from "./timeframeCards";
 import type { CeoTabProps } from "./types";
 
 type GoTab = CeoTabProps["goTab"];
@@ -152,6 +154,17 @@ export function BackendTab({ sections, now, day, goTab }: CeoTabProps) {
         goTab={goTab}
       />
 
+      {/* The same card, series and rules as the Delivery tab, so a client-ad
+          number on this tab can be read for any run of days rather than only
+          month to date and the fixed seven (Aziz, 2026-09-22). */}
+      <DeliveryTimeframeCard
+        section={sections.delivery}
+        rows={deliveryPayload?.daily ?? []}
+        now={now}
+        day={day}
+        order={1}
+      />
+
       <div className="grid min-w-0 items-start gap-4 lg:gap-6 @4xl:grid-cols-2">
         <CallCentreCard
           section={sections.calls}
@@ -175,6 +188,18 @@ export function BackendTab({ sections, now, day, goTab }: CeoTabProps) {
 
 // --- 0. The book: what the existing clients bring in -----------------------
 
+/** The rules behind the book tiles, the same as on the Client success and Money tabs. */
+const BOOK_NOTES: Note[] = [
+  {
+    level: "info",
+    text: "Recurring a month, the average retainer and projected MRR all read the MRR field typed on the client cards, over active cards on a recurring plan (a Payment Plan that is not paid in full, split pay, one-off or upfront). A card with a blank plan or a blank MRR is left out, not counted as zero.",
+  },
+  {
+    level: "info",
+    text: "The collection rate is the cash attributed to those clients this month, on every rail, over the projected MRR. Projected MRR and the collection rate are absent until the money section computes them.",
+  },
+];
+
 function BookCard({
   money: moneySection,
   clients,
@@ -185,10 +210,16 @@ function BookCard({
   goTab: GoTab;
 }) {
   const m = moneySection?.payload?.mrr ?? null;
+  const book = moneySection?.payload?.book ?? null;
   const churn = clients?.payload?.churn ?? null;
+  const retainer = clients?.payload?.retainer ?? null;
   const active = m?.groups.find(g => g.group === "active") ?? null;
   const paused = m?.groups.find(g => g.group === "paused") ?? null;
   const avgLtv = m && m.ltv.filled > 0 ? m.ltv.totalUsd / m.ltv.filled : null;
+  const onHold =
+    paused && paused.cards > 0
+      ? ` · ${count(paused.cards)} paused${paused.recurringUsd > 0 ? ` (${money(paused.recurringUsd)} a month on hold)` : ""}`
+      : "";
   return (
     <SectionCard
       kicker="What the clients already here bring in"
@@ -196,33 +227,64 @@ function BookCard({
       section={moneySection}
       alsoReads={[clients]}
       actions={<TabLink tab="money" label="Money" goTab={goTab} />}
+      notes={BOOK_NOTES}
       order={0}
     >
-      <div className="grid grid-cols-2 gap-x-6 gap-y-5 @lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-x-6 gap-y-5 @lg:grid-cols-3 @3xl:grid-cols-6">
         <StatTile
           variant="plain"
           label="Recurring a month"
           value={active ? money(active.recurringUsd) : "—"}
           sub={
             active
-              ? `${plural(active.cards, "active client")}${active.oneOffUsd > 0 ? ` · ${money(active.oneOffUsd)} on one-off plans` : ""}`
+              ? `${plural(active.cards, "active client")}${active.oneOffUsd > 0 ? ` · ${money(active.oneOffUsd)} on one-off plans` : ""}${onHold}`
               : "client cards not read yet"
           }
-          hint="The MRR typed on the active client cards that sit on a recurring plan, in USD. A card with no figure is missing from it, not zero."
+          hint="The MRR typed on the active client cards that sit on a recurring plan, in USD. A card with no figure is missing from it, not zero. A pause holds the money; it is not counted as churn."
         />
         <StatTile
           variant="plain"
-          label="Churn this month"
-          value={churn && churn.rate !== null ? pct(churn.rate) : "—"}
+          label="Average retainer"
+          value={
+            retainer && isNum(retainer.averageUsd)
+              ? money(retainer.averageUsd)
+              : "—"
+          }
           sub={
-            churn
-              ? churn.rate === null
-                ? (churn.rateWhy ?? "not known yet")
-                : `${count(churn.churnedThisMonth.length)} of ${count(churn.launchedAtMonthStart ?? 0)} launched clients${churn.complete ? "" : ", partial month"}`
+            retainer
+              ? plural(retainer.cards, "recurring active card")
               : "clients not read yet"
           }
-          hint="Launched clients lost this month over launched clients at the start of the month. A pause is not churn, and a client that stops before its launch date is lost before launch, not churn."
+          hint="The mean of the MRR field over active cards on a recurring plan. Typed by hand on the card; a blank card is left out."
         />
+        {book ? (
+          <>
+            <StatTile
+              variant="plain"
+              label="Projected MRR"
+              value={money(book.projectedMrr)}
+              sub={`${plural(book.projectedCards, "card")} · ${month(book.month, { long: true })}`}
+              hint="The MRR field summed over active cards on a recurring plan: what the book is due to bring in this month."
+            />
+            <StatTile
+              variant="plain"
+              label="Collection rate"
+              value={
+                isNum(book.collectionRate) ? pct(book.collectionRate) : "—"
+              }
+              sub={`${money(book.collected)} collected of ${money(book.projectedMrr)}`}
+              hint="Cash attributed to those clients this month, on every rail, over the projected MRR."
+            />
+          </>
+        ) : (
+          <div className="col-span-2 min-w-0">
+            <EmptyState
+              title="Projected MRR and collection rate are not computed yet"
+              text="They fill in when the money section next refreshes with the book rule."
+              compact
+            />
+          </div>
+        )}
         <StatTile
           variant="plain"
           label="Average LTV"
@@ -236,16 +298,16 @@ function BookCard({
         />
         <StatTile
           variant="plain"
-          label="Paused"
-          value={paused ? count(paused.cards) : "—"}
+          label="Churn this month"
+          value={churn && churn.rate !== null ? pct(churn.rate) : "—"}
           sub={
-            paused && paused.recurringUsd > 0
-              ? `${money(paused.recurringUsd)} a month on hold`
-              : paused
-                ? "nothing on hold"
-                : undefined
+            churn
+              ? churn.rate === null
+                ? (churn.rateWhy ?? "not known yet")
+                : `${count(churn.churnedThisMonth.length)} of ${count(churn.launchedAtMonthStart ?? 0)} launched clients${churn.complete ? "" : ", partial month"}`
+              : "clients not read yet"
           }
-          hint="Clients on pause. A pause holds the money; it is not counted as churn."
+          hint="Launched clients lost this month over launched clients at the start of the month. A pause is not churn, and a client that stops before its launch date is lost before launch, not churn."
         />
       </div>
     </SectionCard>

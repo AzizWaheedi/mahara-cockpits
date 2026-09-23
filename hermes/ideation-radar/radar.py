@@ -219,6 +219,13 @@ def cmd_pending(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     return 1 if failed and not ideas else 0
 
 
+def cmd_hiring(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    """The recruiting agent: score the applications nobody has looked at yet."""
+    from radar import hiring
+
+    return hiring.main(args, cfg, log.info)
+
+
 def cmd_posts(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     """The posting desk: drain the cockpit's jobs, or say what is missing."""
     from radar.posting import jobs as posting_jobs
@@ -477,6 +484,7 @@ def main(argv: list[str] | None = None) -> int:
     rq = sub.add_parser("requests"); rq.add_argument("--limit", type=int, default=3); rq.add_argument("--dry-run", action="store_true")
     st = sub.add_parser("speechtest"); st.add_argument("url", nargs="+")
     ps = sub.add_parser("posts", help="the posting desk: drain the cockpit's jobs"); ps.add_argument("--limit", type=int, default=2); ps.add_argument("--dry-run", action="store_true"); ps.add_argument("--doctor", action="store_true"); ps.add_argument("--auth-url", action="store_true", help="print the YouTube consent link")
+    hr = sub.add_parser("hiring", help="the recruiting agent: score new applications"); hr.add_argument("--limit", type=int, default=10); hr.add_argument("--role", help="only this role, e.g. csm"); hr.add_argument("--dry-run", action="store_true"); hr.add_argument("--doctor", action="store_true"); hr.add_argument("--calibrate-only", action="store_true", dest="calibrate_only"); hr.add_argument("--headhunt", help="a role key: where to look and what to send"); hr.add_argument("--note", help="anything to add to the headhunt brief")
     rs = sub.add_parser("resend"); rs.add_argument("--scan", help="a latest.json to re-send (default out/latest.json)"); rs.add_argument("--ideas", help="an ideas.jsonl to re-send (default out/ideas.jsonl)")
     args = ap.parse_args(argv)
     cfg = Config.from_env()
@@ -484,7 +492,7 @@ def main(argv: list[str] | None = None) -> int:
     log = Logger(cfg.out_dir / "radar.log", quiet=args.quiet)
     if args.cmd in ("add", "remove") or (args.cmd == "watchlist" and args.action in ("add", "remove") and not (args.platform and args.value)):
         ap.error("watchlist add/remove need <platform> <value>")
-    handlers = {"doctor": cmd_doctor, "scan": cmd_scan, "capture": cmd_capture, "pending": cmd_pending, "watchlist": cmd_watchlist, "digest": cmd_digest, "resend": cmd_resend, "trends": cmd_trends, "speechtest": cmd_speechtest, "requests": cmd_requests, "posts": cmd_posts}
+    handlers = {"doctor": cmd_doctor, "scan": cmd_scan, "capture": cmd_capture, "pending": cmd_pending, "watchlist": cmd_watchlist, "digest": cmd_digest, "resend": cmd_resend, "trends": cmd_trends, "speechtest": cmd_speechtest, "requests": cmd_requests, "posts": cmd_posts, "hiring": cmd_hiring}
     try:
         return handlers[args.cmd](cfg, args, log)
     except KeyboardInterrupt:

@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
 import type { QueryCtx } from "./_generated/server";
 import { authenticatedMutation, authenticatedQuery } from "./functions";
 import {
@@ -1006,6 +1007,16 @@ export const saveEod = authenticatedMutation({
     };
     if (existing) await ctx.db.patch(existing._id, row);
     else await ctx.db.insert("eodReports", row);
+
+    // And out to Slack and the EOD sheet. Saving it here was never
+    // enough: the tracking sheet is built from what EOD Radar sees in
+    // the channels, so an EOD that stays in Convex is one nobody filed.
+    await ctx.scheduler.runAfter(0, internal.eodOut.send, {
+      day,
+      answers: args.answers,
+      computed: args.computed,
+      email: row.email,
+    });
     return null;
   },
 });

@@ -47,16 +47,38 @@ export function Notes({
       })}
     </ul>
   );
-  if (!folded || !info.length)
+  if (!folded)
     return <div className={cn("space-y-1.5", className)}>{list(notes)}</div>;
+  // Everything folds under one line (Aziz, 2026-09-21: "notes folded"); the
+  // line says how many warnings wait inside, so a caveat is never hidden
+  // without a trace.
+  const summary = [
+    warn.length
+      ? `${warn.length} warning${warn.length === 1 ? "" : "s"}`
+      : null,
+    info.length
+      ? `where these numbers come from${info.length > 1 ? ` (${info.length})` : ""}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return (
     <div className={cn("space-y-2", className)}>
-      {warn.length ? list(warn) : null}
       <details className="group">
-        <summary className="cursor-pointer select-none text-xs text-muted-foreground hover:text-foreground">
-          {`Where these numbers come from${info.length > 1 ? ` (${info.length} notes)` : ""}`}
+        <summary className="flex cursor-pointer select-none items-center gap-2 text-xs text-muted-foreground hover:text-foreground">
+          {warn.length ? (
+            <TriangleAlert
+              className="size-3.5 shrink-0"
+              style={{ color: "var(--ceo-warning)" }}
+              aria-hidden
+            />
+          ) : null}
+          <span>{summary.charAt(0).toUpperCase() + summary.slice(1)}</span>
         </summary>
-        <div className="mt-2">{list(info)}</div>
+        <div className="mt-2 space-y-2">
+          {warn.length ? list(warn) : null}
+          {info.length ? list(info) : null}
+        </div>
       </details>
     </div>
   );

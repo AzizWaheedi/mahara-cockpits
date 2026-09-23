@@ -86,7 +86,7 @@ describe("Supabase feedback shadow migration", () => {
       apikey: "service-role-test",
       Authorization: "Bearer service-role-test",
       "Content-Type": "application/json",
-      Prefer: "resolution=merge-duplicates,return=minimal",
+      Prefer: "resolution=ignore-duplicates,return=minimal",
     });
     expect(JSON.parse(String(request?.init?.body))).toMatchObject({
       kind: "issue",

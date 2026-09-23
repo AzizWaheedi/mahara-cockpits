@@ -12,7 +12,7 @@ from typing import Any, Callable, Optional
 
 from .. import media, speech
 from ..config import Config
-from . import thumbs, write
+from . import higgsfield, thumbs, write
 from .fetch import fetch_video
 from .store import PostStore, now_iso
 
@@ -110,12 +110,23 @@ def run(cfg: Config, log: Callable[[str], None], store: PostStore, post: dict[st
     kind = write.kind_of(post, duration)
     text = copy.get("thumb_text") or str(post.get("title_working") or "").strip()
     thumb_path = cover_path = None
+    render = "pillow"
+    render_note = None
     if best and text:
         # A video gets the 16:9 thumbnail; a reel gets the 9:16 cover. Never both.
         if kind == "video":
             thumb_path = store.upload(f"posts/{pid}/thumb.jpg", thumbs.render_youtube(best["_local"], text, fonts=fonts, log=log), "image/jpeg")
         else:
-            cover_path = store.upload(f"posts/{pid}/cover.jpg", thumbs.render_cover(best["_local"], text, fonts=fonts, log=log), "image/jpeg")
+            # Every reel cover is a Higgsfield photo composite (Aziz's rule);
+            # when it cannot run, the cover stays empty and the post says why.
+            try:
+                data = higgsfield.generate_cover(best["_local"], thumbs.split_cover(text), graphic=copy.get("cover_graphic"), log=log)
+                cover_path = store.upload(f"posts/{pid}/cover.jpg", data, "image/jpeg")
+                render = "higgsfield"
+            except Exception as e:  # noqa: BLE001 - the reason goes on the row, never a silent fallback
+                render = "none"
+                render_note = str(e)[:300]
+                log(f"post {pid}: cover not made: {render_note}")
 
     patch.update({
         "status": "ready",
@@ -135,9 +146,11 @@ def run(cfg: Config, log: Callable[[str], None], store: PostStore, post: dict[st
         "thumb_path": thumb_path,
         "cover_path": cover_path,
         "frames": [{k: v for k, v in f.items() if not k.startswith("_")} for f in frames],
-        "method": {"speech": transcript.get("method"), "copy": copy_method, "render": "pillow", "notes": copy.get("notes"), "at": now_iso()},
+        "method": {"speech": transcript.get("method"), "copy": copy_method, "render": render, "notes": " ".join(x for x in [str(copy.get("notes") or ""), render_note or ""] if x).strip() or None, "at": now_iso()},
         "outlier_refs": [o.get("key") for o in outliers if o.get("key")],
     })
+    if render_note:
+        patch["error"] = render_note
     store.patch_post(pid, patch)
     return {"frames": len(frames), "transcript_chars": len(str(transcript.get("text") or "")), "speech": transcript.get("method"), "copy": copy_method, "thumb": bool(thumb_path), "cover": bool(cover_path)}
 
@@ -163,6 +176,7 @@ def render(cfg: Config, log: Callable[[str], None], store: PostStore, post: dict
     if kind == "video":
         thumb_path = store.upload(f"posts/{pid}/thumb.jpg", thumbs.render_youtube(local, text, fonts=fonts, log=log), "image/jpeg")
     else:
-        cover_path = store.upload(f"posts/{pid}/cover.jpg", thumbs.render_cover(local, text, fonts=fonts, log=log), "image/jpeg")
+        data = higgsfield.generate_cover(local, thumbs.split_cover(text), graphic=str(params.get("cover_graphic") or (post.get("method") or {}).get("graphic") or "") or None, log=log)
+        cover_path = store.upload(f"posts/{pid}/cover.jpg", data, "image/jpeg")
     store.patch_post(pid, {"thumb_text": text, "thumb_frame_ms": int(frame.get("ms") or 0), "thumb_path": thumb_path, "cover_path": cover_path, "error": None})
     return {"thumb": thumb_path, "cover": cover_path, "frame_ms": frame.get("ms")}

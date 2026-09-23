@@ -30,6 +30,7 @@ import { SectionCard } from "@/components/ceo/SectionCard";
 import { ShowMore } from "@/components/ceo/ShowMore";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip, type StatusTone } from "@/components/ceo/StatusChip";
+import { TabLink } from "@/components/ceo/TabLink";
 import { TargetMeter } from "@/components/ceo/TargetMeter";
 import { TimeSeriesChart } from "@/components/ceo/TimeSeriesChart";
 import type { CeoSection } from "@/components/ceo/useCeo";
@@ -41,6 +42,7 @@ import type {
   MoneyPayload,
   Note,
 } from "../../../convex/ceo/payloads";
+import { BankExpensesBody, BankStatementsCard } from "./moneyBank";
 import { ImportPaymentsCard, LtvWriteCard } from "./moneyImport";
 import {
   DuplicatesCard,
@@ -48,10 +50,13 @@ import {
   ManualEntriesCard,
 } from "./moneyManual";
 import { PayerMappingCard } from "./moneyPayers";
+import { MoneyTimeframeCard } from "./timeframeCards";
 import type { CeoTabProps } from "./types";
 
 type Deal = MoneyPayload["deals"]["recent"][number];
 type CardKey =
+  | "attribution"
+  | "bank"
   | "cash"
   | "rails"
   | "manual"
@@ -74,6 +79,14 @@ type PnlKey = "month" | "software" | "overhead" | "labour" | "ads" | "totals";
 // and "Expenses and bank transfers" the expenses card before it. Anything
 // unmatched lands on the cash card, so no note is ever dropped.
 const NOTE_ROUTES: readonly (readonly [RegExp, CardKey])[] = [
+  [
+    /bank statement|statements? (is|are|ends|held)|statement line|whop payout|tap settlement|exclusion|uploaded/i,
+    "bank",
+  ],
+  [
+    /attribut|transactions tab|kickoff cash|payer mapping could not/i,
+    "attribution",
+  ],
   // The MRR card's own notes first: several of them name Whop, a target or a
   // client, which the generic routes further down would otherwise claim.
   [
@@ -179,7 +192,7 @@ function HalfHeading({
  * refunds, targets and the last twelve months. Then the P&L: what was spent on
  * software, overhead, labour and ads, and the profit when it can be drawn.
  */
-export function MoneyTab({ sections, now, day }: CeoTabProps) {
+export function MoneyTab({ sections, now, day, goTab }: CeoTabProps) {
   const section = sections.money;
   const payload = section?.payload ?? null;
   const expensesSection = sections.expenses;
@@ -195,7 +208,7 @@ export function MoneyTab({ sections, now, day }: CeoTabProps) {
   const showLegacy = expenses === null;
 
   return (
-    <div className="grid gap-4 lg:gap-6">
+    <div className="grid gap-5 lg:gap-7">
       <HalfHeading
         first
         title="Cash in"
@@ -228,6 +241,33 @@ export function MoneyTab({ sections, now, day }: CeoTabProps) {
           >
             {p => <RailsBody p={p} today={today} now={now} />}
           </SectionCard>
+
+          <MoneyTimeframeCard
+            section={section}
+            rails={[
+              payload.rails?.total,
+              payload.rails?.whop,
+              payload.rails?.tap,
+              payload.rails?.manual,
+              payload.rails?.bank,
+            ].filter((r): r is NonNullable<typeof r> => Boolean(r))}
+            now={now}
+            day={day}
+            order={2}
+          />
+
+          <SectionCard
+            kicker={`${month(monthKey, { long: true, year: true })}, with last month and the last 12 months beside it`}
+            title="Front end and back end"
+            section={section}
+            notes={notes.attribution}
+            actions={
+              <TabLink tab="transactions" label="Transactions" goTab={goTab} />
+            }
+            order={2}
+          >
+            {p => <AttributionBody p={p} />}
+          </SectionCard>
         </>
       )}
 
@@ -237,6 +277,7 @@ export function MoneyTab({ sections, now, day }: CeoTabProps) {
         recentDeals={payload?.deals.recent ?? null}
         order={2}
       />
+      <BankStatementsCard section={section} payload={payload} order={3} />
       <ImportPaymentsCard order={3} />
       <ManualEntriesCard
         section={section}
@@ -294,7 +335,7 @@ export function MoneyTab({ sections, now, day }: CeoTabProps) {
           <PayerMappingCard order={10} />
           <LtvWriteCard order={11} />
 
-          <div className="grid gap-4 lg:gap-6 xl:grid-cols-12">
+          <div className="grid gap-5 lg:gap-7 xl:grid-cols-12">
             <SectionCard
               kicker="Last 12 months"
               title="Cash and contracted by month"
@@ -320,11 +361,21 @@ export function MoneyTab({ sections, now, day }: CeoTabProps) {
           </div>
 
           <SectionCard
+            kicker="From the uploaded statements, personal exclusions apart"
+            title="Expenses on the statements"
+            section={section}
+            notes={notes.bank ?? []}
+            order={14}
+          >
+            {p => <BankExpensesBody p={p} />}
+          </SectionCard>
+
+          <SectionCard
             kicker="Newest 10"
             title="Recent deals"
             section={section}
             notes={notes.deals}
-            order={14}
+            order={15}
           >
             {p => <DealsTable deals={p.deals.recent} />}
           </SectionCard>
@@ -341,6 +392,75 @@ export function MoneyTab({ sections, now, day }: CeoTabProps) {
         now={now}
         carried={showLegacy ? undefined : notes.expenses}
       />
+    </div>
+  );
+}
+
+// --- Front end and back end: every payment in, given a side and a person ---
+
+function AttributionBody({ p }: { p: MoneyPayload }) {
+  const a = p.attribution;
+  if (!a)
+    return (
+      <EmptyState
+        title="Payments have not been attributed yet"
+        text="Every payment in gets a side, a person and a deal or a client on the next refresh."
+        compact
+      />
+    );
+  const lastMonthName = previousMonthName(p.month);
+  return (
+    <div className="grid gap-5">
+      <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3">
+        <StatTile
+          variant="plain"
+          label="Front-end cash"
+          value={money(a.mtd.frontEnd)}
+          sub={`${money(a.mtd.deposit)} deposits · ${money(a.mtd.kickoff)} rest of the cash · ${money(a.lastMonth.frontEnd)} in all of ${lastMonthName}`}
+          hint="Deposits at signing, credited to the closer, plus the rest of the cash collected inside the front-end window, credited to the CSM on the deal. Judged from the rails, because the kickoff form is not read yet."
+        />
+        <StatTile
+          variant="plain"
+          label="Back-end cash"
+          value={money(a.mtd.backEnd)}
+          sub={`${money(a.lastMonth.backEnd)} in all of ${lastMonthName}`}
+          hint="Payments matched to an existing client after its front-end window, credited to that client's CSM."
+        />
+        <StatTile
+          variant="plain"
+          label="Not attributed"
+          value={money(a.mtd.unattributed)}
+          sub={`${plural(a.mtd.unattributedCount, "payment")} this month · ${money(a.totals.unattributed)} over 12 months`}
+          hint="Payments in that match no deal and no client. The Transactions tab lists each one with its payer, so it can be mapped."
+        />
+      </div>
+      {a.byPerson.length ? (
+        <div className="border-t pt-5">
+          <p className="mb-3 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            By person, last 12 months
+          </p>
+          <ul className="grid gap-2 sm:grid-cols-2">
+            {a.byPerson.slice(0, 8).map(x => (
+              <li
+                key={`${x.role}:${x.name}`}
+                className="flex items-baseline justify-between gap-3 text-sm tabular-nums"
+              >
+                <span className="min-w-0 truncate">
+                  {x.name}
+                  <span className="text-muted-foreground">
+                    , {x.role === "closer" ? "closer" : "CSM"}
+                  </span>
+                </span>
+                <span className="shrink-0 text-muted-foreground">
+                  {x.frontEnd > 0 ? `${money(x.frontEnd)} front` : ""}
+                  {x.frontEnd > 0 && x.backEnd > 0 ? " · " : ""}
+                  {x.backEnd > 0 ? `${money(x.backEnd)} back` : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -560,6 +680,7 @@ function RailsBody({
     const extra = [
       { key: "tap", rail: rails.tap, label: "Tap" },
       { key: "manual", rail: rails.manual, label: "Logged by hand" },
+      { key: "bank", rail: rails.bank, label: "Bank statements" },
     ].filter(x => x.rail?.connected);
     if (!extra.length) return { data: [], series: [] as ChartSeries[] };
     const maps = extra.map(
@@ -602,9 +723,10 @@ function RailsBody({
     { key: "whop", rail: rails.whop },
     { key: "tap", rail: rails.tap },
     ...(manual ? [{ key: "manual", rail: manual }] : []),
+    ...(rails.bank ? [{ key: "bank", rail: rails.bank }] : []),
     { key: "total", rail: rails.total },
   ];
-  const liveRails = [rails.whop, rails.tap, manual].filter(
+  const liveRails = [rails.whop, rails.tap, manual, rails.bank ?? null].filter(
     r => r?.connected,
   ).length;
 
@@ -1078,7 +1200,7 @@ function MoneyTiles({ p }: { p: MoneyPayload }) {
         variant="plain"
         label="Refunds this month"
         value={money(p.refunds.mtd)}
-        sub={`${money(p.refunds.last90)} in the last 90 days`}
+        sub={`${money(p.refunds.last90)} in the last 90 days${p.refunds.manualLast90 ? `, ${money(p.refunds.manualLast90)} of it logged by hand` : ""}`}
       />
       <StatTile
         variant="plain"
@@ -1459,7 +1581,7 @@ function PnlHalf({
     : "no month loaded";
 
   return (
-    <div className="grid gap-4 lg:gap-6">
+    <div className="grid gap-5 lg:gap-7">
       <SectionCard
         title={`Expenses, ${monthLabel}`}
         section={section}

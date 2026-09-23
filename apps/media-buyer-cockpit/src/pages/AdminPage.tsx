@@ -44,12 +44,14 @@ import { COCKPIT_META } from "./PortalHome";
 // biome-ignore lint/suspicious/noExplicitAny: admin rows
 type Any = any;
 
+/**
+ * The roles an admin can hand out. The CEO cockpit is not among them and must
+ * not be added: it is Aziz's own and is decided by the address on the account
+ * (Aziz, 2026-09-22, "even admins can't assign themselves the CEO position").
+ * The server refused the word already; showing the tick box only taught people
+ * to ask for something that never worked.
+ */
 const ROLE_META: { key: string; label: string; hint: string }[] = [
-  {
-    key: "ceo",
-    label: "CEO",
-    hint: "The business: money, delivery, calls, clients, team. Nothing else, unless another role is ticked too.",
-  },
   {
     key: "admin",
     label: "Admin",

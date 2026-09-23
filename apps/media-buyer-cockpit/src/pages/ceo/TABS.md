@@ -561,6 +561,33 @@ so the badge, the sentence and this card never disagree.
 
 ---
 
+# Tab 5b: Transactions (added 2026-09-21)
+
+Key `transactions`, in the Money group of the rail. Reads `money.attribution`
+(convex/ceo/attribution.ts decides, the money adapter loads). One card of
+totals over the last twelve months (in, front end with deposits and the rest
+of the cash, back end, not attributed, out) plus this month, then one table
+of every payment in and out: day, amount, rail, payer name and email, the
+side and kind, the person credited (closer for a deposit, CSM for the rest
+and for back-end money), the deal or client, how it was tied, and a detail.
+Filter chips: everything, not attributed, front end, back end, out.
+
+Rules the tab must keep visible: kickoff cash is judged from the rails until
+the kickoff form is read; Tap is in it only when the deployment has a live
+key; a payment that matches nothing is listed, never dropped, and the Money
+tab's payer mapping card is where it gets mapped.
+
+# Timeframes and the Supabase mirror (2026-09-21)
+
+Every tab with a time dimension carries the chart timeframe control
+(`src/components/ceo/timeframe.ts`, `TimeframeBar`): Frontend, Marketing and
+Sales rebuild every tile from `growth.daily` (`windowFromDaily`), Delivery,
+Calls and Money add a timeframe card from their daily series. Every refresh
+writes each section's payload and every headline metric to Creative Triage
+(`convex/ceo/metricRegistry.ts` → `cockpit_sections`,
+`cockpit_metric_definitions`, `cockpit_metric_values`). Notes fold under one
+line; cards keep four to six tiles and put the rest on a `Facts` line.
+
 # Tab 6: Delivery
 
 **File:** `DeliveryTab.tsx`. **Status:** built, unchanged. **Reads:** `sections.delivery`.
@@ -836,6 +863,74 @@ are the existing one month summary the Money tab already renders. Once
   processor fees. That caveat is already in `money.notes[]` and must stay.
 
 ---
+
+# Tab 10b: Recruiting (added 2026-09-22)
+
+Aziz, 2026-09-22: "make me an amazing recruiting and hiring part of the CEO
+cockpit", with a GoHighLevel back end "for specifically hiring, especially
+these roles that are repetitive and we can repeat them", a pipeline whose
+stages are his interview process, a test project per role held in custom
+values, applications pulled straight in, and a score on every candidate.
+
+**The six boards.** Media buyer, client success manager, sales closer (B2B),
+sales setter (B2B), call centre agent, video editor. One GoHighLevel pipeline
+each, named after the role alone because the sub-account holds nothing but
+hiring. Sales splits in two (Aziz, 2026-09-22): everyone answers the one
+closer's form and lands on the closer board, and he either starts them as a
+setter and moves them up later, or takes them straight to closer. The track
+switch is on the grading row and calls `hiring.actions.reassign`.
+
+**The ten stages**, in his words: Application, Disqualified, Loom request,
+Group interview, One-to-one interview, Job offer, Bench, Hired, Fired, Churn.
+Six advance, three are exits, Bench is a hold.
+
+**What the tab shows, in priority order.**
+1. The grading queue. Anyone at a stage whose score is missing. This is the
+   signature element: the tab's job is to put the next decision in front of
+   him, not to report.
+2. The funnel per role, with the count and the median days in each stage, so a
+   stage everyone dies in is visible rather than felt.
+3. Going stale: no move in more than the engine's stale line.
+4. The bench, best total score first, each with the reason it was benched.
+5. The engine: armed or not, the per-action switches, the drafts it is
+   holding, and what is missing before it could be armed.
+6. Recent activity.
+
+**Grading.** Out of ten per stage, written to the GoHighLevel contact so the
+card and the cockpit never disagree. The total is the mean of the scores
+given. Disqualified and Bench refuse to save without a reason.
+
+**The engine.** Two of them, and only one may be armed. The cockpit's own is
+code rather than a workflow, because his first attempt at workflows "hasn't
+really worked the best"; the GoHighLevel one is 36 workflows (six roles by six
+stages) built by a console script, because he asked for it native. Either way
+every message goes out on email and on SMS, with WhatsApp tried only when SMS
+refuses, and every changeable word comes from a custom value. It reacts to a move: Loom request
+sends the role's prompt, Group interview the booking link, One-to-one the test
+project, Job offer the offer, Disqualified the rejection, Bench the holding
+note. Disarmed by default: it writes every message down and sends nothing
+until he arms it. It never acts on a first sighting, so importing form history
+messages nobody, and it never sends the same message twice.
+
+**What he edits, and where.** Every word a candidate reads comes from a
+GoHighLevel custom value, per role: test project, Loom request, compensation,
+daily responsibilities, position breakdown video, job post. Plus the global
+booking links and sender details. Code seeds them once and never overwrites.
+
+**The recruiting agent.** It runs on the VPS, not here (Aziz, 2026-09-22:
+"You don't need the API key. Just tell me what you want the VPS to do. It can
+make the agent."). `radar.py hiring` every half hour, cheapest model first,
+reading the application out of `cockpit_hiring_applications` and the scorecard
+out of `cockpit_hiring_meta` so there is no second copy of the spec to drift.
+It writes its score, verdict, reasoning and the questions to ask onto the
+candidate row, and the grading queue shows them beside the box Aziz types his
+own score into. It proposes only, and it learns from the gap.
+
+**Build contract.** `convex/hiring/spec.ts` is the one description of roles,
+stages and fields. Change it there, run `hiring/setup:apply` then
+`hiring/sync:refreshIds`, never click it into GoHighLevel by hand. Three jobs
+run it: `hiring intake` every 30 minutes, `hiring board` every 10, `hiring
+engine` every 10, all in the health ledger.
 
 # Tab 11: Machine
 

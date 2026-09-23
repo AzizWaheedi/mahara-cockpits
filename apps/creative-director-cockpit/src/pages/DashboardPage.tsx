@@ -19,6 +19,7 @@ import {
   stillPropsFor,
   useLocalStills,
 } from "@/components/CreativePreview";
+import { SendForReview } from "@/components/SendForReview";
 import { TemplateCard } from "@/components/TemplateCard";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -189,6 +190,14 @@ function Creative({ view }: { view: View }) {
       {view === "sod" && (
         <div className="mb-5">
           <WhatsAppDesk desk="creative" />
+        </div>
+      )}
+
+      {/* Sending a cut out sits next to answering clients, because they
+          are the same job: the reply is usually "here it is". */}
+      {view === "sod" && (
+        <div className="mb-5">
+          <SendForReview />
         </div>
       )}
 

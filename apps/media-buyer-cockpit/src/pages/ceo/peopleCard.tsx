@@ -9,6 +9,7 @@ import { StatusChip } from "@/components/ceo/StatusChip";
 import { api } from "../../../convex/_generated/api";
 import { commissionText } from "../../../convex/ceo/commission";
 import type { Person, Roster } from "../../../convex/ceo/people";
+import { usePersonParam } from "./personPage";
 
 /**
  * Who Mahara pays.
@@ -21,10 +22,16 @@ import type { Person, Roster } from "../../../convex/ceo/people";
 
 type Engagement = Person["engagement"];
 
+/**
+ * The same roster the Team and payroll tab edits, shown here too. Pausing
+ * somebody is done on that tab, where the reason can be typed; this one only
+ * has to tell the truth about the state so the two never disagree.
+ */
 const ENGAGEMENTS: { value: Engagement; label: string }[] = [
   { value: "staff", label: "Staff" },
   { value: "freelancer", label: "Freelancer" },
   { value: "agency", label: "Agency" },
+  { value: "bot", label: "Shared account" },
   { value: "intern", label: "Intern" },
 ];
 
@@ -42,6 +49,8 @@ const blank = {
 };
 
 export function PeopleCard({ order }: { order?: number }) {
+  // Pressing a name opens their file: goals, flags, CV and the scorecard.
+  const [, setPerson] = usePersonParam();
   const load = useAction(api.ceo.people.list);
   const save = useAction(api.ceo.people.save);
   const setActive = useAction(api.ceo.people.setActive);
@@ -209,14 +218,34 @@ export function PeopleCard({ order }: { order?: number }) {
                   {live.map(p => (
                     <tr key={p.id} className="border-t align-top">
                       <td className="p-2">
-                        {p.name}
+                        <button
+                          type="button"
+                          onClick={() => setPerson(p.id)}
+                          title={`Open ${p.name}'s file`}
+                          className="font-medium underline decoration-transparent underline-offset-4 transition-colors hover:decoration-current"
+                        >
+                          {p.name}
+                        </button>
                         <span className="block text-xs text-muted-foreground">
                           {[p.role, p.isSales ? "sells" : null]
                             .filter(Boolean)
                             .join(" · ") || "no role set"}
                         </span>
                       </td>
-                      <td className="p-2 capitalize">{p.engagement}</td>
+                      <td className="p-2">
+                        <span className="capitalize">
+                          {p.engagement === "bot"
+                            ? "Shared account"
+                            : p.engagement}
+                        </span>
+                        {p.pausedOn ? (
+                          <span className="block text-xs text-muted-foreground">
+                            Paused since {p.pausedOn}
+                            {p.pausedWhy ? `: ${p.pausedWhy}` : ""}. Change it
+                            on Team and payroll.
+                          </span>
+                        ) : null}
+                      </td>
                       <td className="p-2 text-right">
                         {p.monthlyUsd === null ? (
                           <span className="text-muted-foreground">not set</span>
@@ -465,7 +494,14 @@ export function PeopleCard({ order }: { order?: number }) {
                 <ul className="mt-3 grid gap-1 sm:grid-cols-2">
                   {gone.map(p => (
                     <li key={p.id} className="text-sm">
-                      {p.name}
+                      <button
+                        type="button"
+                        onClick={() => setPerson(p.id)}
+                        title={`Open ${p.name}'s file`}
+                        className="underline decoration-transparent underline-offset-4 transition-colors hover:decoration-current"
+                      >
+                        {p.name}
+                      </button>
                       <span className="text-muted-foreground">
                         {p.endedOn ? ` · left ${p.endedOn}` : ""}
                       </span>

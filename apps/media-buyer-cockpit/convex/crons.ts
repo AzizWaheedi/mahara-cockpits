@@ -120,6 +120,39 @@ crons.interval(
   { job: "client comment watch" },
 );
 
+/**
+ * Hiring. Applications are pulled from the five careers forms every half hour
+ * (none of them had a webhook, so nothing left Typeform at all before this),
+ * the GoHighLevel board is mirrored every ten minutes so a card Aziz drags on
+ * his phone shows up in the cockpit, and the engine looks at what moved and
+ * sends what that move asks for. The engine is disarmed until Aziz arms it,
+ * so until then it writes the messages down instead. [Aziz, 2026-09-22]
+ */
+crons.interval(
+  "pull job applications",
+  { minutes: 30 },
+  internal.health.runJob,
+  {
+    job: "hiring intake",
+  },
+);
+crons.interval(
+  "mirror the hiring board",
+  { minutes: 10 },
+  internal.health.runJob,
+  {
+    job: "hiring board",
+  },
+);
+crons.interval(
+  "run the hiring engine",
+  { minutes: 10 },
+  internal.health.runJob,
+  {
+    job: "hiring engine",
+  },
+);
+
 /** The CEO cockpit's prepared sections: every 15 minutes, all sources. [Aziz, 2026-09-15] */
 crons.interval(
   "refresh the CEO cockpit",

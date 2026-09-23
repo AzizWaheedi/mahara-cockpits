@@ -65,10 +65,15 @@ export function PayerMappingCard({ order }: { order?: number }) {
         )}
       </SectionCard>
     );
-  if (!data) return null;
+  // A payload without the list is a card that says nothing, never a tab that
+  // dies: one card throwing takes the whole Money screen down with it.
+  if (!data || !Array.isArray(data.payers)) return null;
 
   const rows = showAll ? data.payers : data.payers.slice(0, 15);
-  const share = data.totalUsd > 0 ? data.mappedUsd / data.totalUsd : null;
+  const share =
+    Number(data.totalUsd) > 0
+      ? Number(data.mappedUsd) / Number(data.totalUsd)
+      : null;
 
   return (
     <SectionCard

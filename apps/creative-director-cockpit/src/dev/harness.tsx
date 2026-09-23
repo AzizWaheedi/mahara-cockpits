@@ -1,0 +1,281 @@
+/**
+ * The social calendar harness: the real page and sheets, fed by an
+ * in-memory backend instead of Convex, so they can be checked at phone
+ * and laptop widths without signing in. Started with `bun run harness`;
+ * open /harness.html.
+ *
+ * Fixtures live in tmp/harness/ (ignored by git and Vercel):
+ *   posts.json - rows of social_posts for the demo client
+ * Work the real backend hands to Salma (captions, pictures, covers) is
+ * faked here: it finishes a few seconds after it is asked for, with
+ * stand-in results, so the in-flight states can be seen.
+ */
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import { Toaster } from "@/components/ui/sonner";
+import { ThemeProvider } from "@/contexts/ThemeContext";
+import { SocialCalendarPage } from "@/pages/SocialCalendarPage";
+import "@/index.css";
+import { setHandlers } from "./convexStub";
+
+type Row = Record<string, any>;
+
+async function main() {
+  const posts: Row[] = await fetch("/tmp/harness/posts.json")
+    .then(r => (r.ok ? r.json() : []))
+    .catch(() => []);
+  const drawn = posts.flatMap(p =>
+    ((p.media ?? []) as Row[]).map(m => String(m.url)),
+  );
+  const sample = (i: number) => drawn[i % Math.max(1, drawn.length)] ?? "";
+  let n = 0;
+
+  const client = {
+    taskId: "demo-social",
+    name: "Sample Client (demo)",
+    active: true,
+    pillars: ["portfolio", "craft", "education"],
+    postsPerMonth: 3,
+    dialect: "Gulf Arabic (Qatari)",
+    ghlLocationId: null,
+    platforms: ["instagram", "facebook"],
+    autoApprove: false,
+  };
+  const jobs: Row[] = [];
+  const library: Row[] = drawn.slice(0, 3).map((url, i) => ({
+    id: `lib${i}`,
+    url,
+    caption: null,
+  }));
+  const post = (id: unknown) => {
+    const p = posts.find(x => x.id === id);
+    if (!p) throw new Error("That post is gone.");
+    return p;
+  };
+  const sync = (p: Row) => {
+    p.images = (p.media as Row[])
+      .filter(m => m.kind === "image")
+      .map(m => m.url);
+  };
+  // Salma, faked: the job finishes after `ms` with a stand-in result.
+  const later = (job: Row, ms: number, finish: () => void) => {
+    jobs.push(job);
+    setTimeout(() => {
+      finish();
+      jobs.splice(jobs.indexOf(job), 1);
+    }, ms);
+  };
+  const caption = (p: Row) =>
+    later(
+      { id: `caption:${p.id}`, kind: "caption", post_id: p.id, params: {} },
+      3000,
+      () => {
+        p.caption = `Instagram caption for "${p.topic}".\n\n#harness`;
+        p.caption_facebook = `Facebook caption for "${p.topic}", a little longer and without hashtags.`;
+      },
+    );
+
+  setHandlers({
+    "social:roster": () => ({
+      month: "2026-09",
+      clients: [
+        client,
+        { ...client, taskId: "other", name: "Another client", active: false },
+      ],
+    }),
+    "social:batch": a => {
+      const id = `${a.clientTaskId}:${a.month}`;
+      const here = posts.filter(p => p.batch_id === id);
+      return {
+        month: a.month,
+        batch: null,
+        posts: structuredClone(here),
+        jobs: structuredClone(
+          jobs.filter(j => here.some(p => p.id === j.post_id)),
+        ),
+      };
+    },
+    "social:setMedia": a => {
+      const p = post(a.postId);
+      p.media = a.media;
+      p.slides = Math.max(1, (a.media as Row[]).length);
+      sync(p);
+      return null;
+    },
+    "social:setRefs": a => {
+      post(a.postId).refs = a.refs;
+      return null;
+    },
+    "social:updatePost": a => {
+      const p = post(a.postId);
+      if (a.caption !== undefined) p.caption = a.caption;
+      if (a.captionFacebook !== undefined)
+        p.caption_facebook = a.captionFacebook;
+      if (a.platforms !== undefined) p.platforms = a.platforms;
+      if (a.aspect !== undefined) p.aspect = a.aspect;
+      return null;
+    },
+    "social:writeCaption": a => {
+      caption(post(a.postId));
+      return null;
+    },
+    "social:generatePost": a => {
+      const p = post(a.postId);
+      const params =
+        a.index !== undefined ? { index: a.index } : a.add ? { add: true } : {};
+      later(
+        {
+          id: `generate:${p.id}:${n++}`,
+          kind: "generate",
+          post_id: p.id,
+          params,
+        },
+        6000,
+        () => {
+          const media = (p.media ?? []) as Row[];
+          if (a.index !== undefined)
+            media[a.index as number] = {
+              ...media[a.index as number],
+              url: sample(n++),
+            };
+          else if (a.add)
+            media.push({ kind: "image", url: sample(n++), source: "ai" });
+          else if (media.some(m => m.source === "ai"))
+            media.forEach((m, i) => {
+              if (m.source === "ai") media[i] = { ...m, url: sample(n++) };
+            });
+          else
+            for (let i = 0; i < p.slides; i++)
+              media.push({ kind: "image", url: sample(n++), source: "ai" });
+          p.media = media;
+          sync(p);
+        },
+      );
+      return { queued: true };
+    },
+    "social:makeCover": a => {
+      const p = post(a.postId);
+      later(
+        {
+          id: `cover:${p.id}:${a.index}`,
+          kind: "cover",
+          post_id: p.id,
+          params: { index: a.index },
+        },
+        6000,
+        () => {
+          const m = (p.media as Row[])[a.index as number];
+          if (m) m.cover = sample(n++);
+        },
+      );
+      return null;
+    },
+    "social:addPost": a => {
+      const month = String(a.month);
+      const batch = `${a.clientTaskId}:${month}`;
+      const id = `${batch}:${100 + n++}`;
+      const media = (a.media as Row[] | undefined) ?? [];
+      const p: Row = {
+        id,
+        batch_id: batch,
+        client_task_id: a.clientTaskId,
+        n: 100 + n,
+        pillar: a.pillar,
+        topic: a.topic,
+        slides: media.length || (a.slides as number) || 1,
+        caption: null,
+        caption_facebook: null,
+        images: [],
+        media,
+        refs: a.refs ?? [],
+        platforms: null,
+        aspect: a.aspect ?? "4:5",
+        scheduled_at: a.when,
+        status: "approved",
+        error: null,
+      };
+      sync(p);
+      posts.push(p);
+      caption(p);
+      if (a.generate && !media.length)
+        later(
+          { id: `generate:${id}`, kind: "generate", post_id: id, params: {} },
+          6000,
+          () => {
+            p.media = Array.from({ length: p.slides }, () => ({
+              kind: "image",
+              url: sample(n++),
+              source: "ai",
+            }));
+            sync(p);
+          },
+        );
+      if (media.length === 1 && media[0].kind === "video")
+        later(
+          {
+            id: `cover:${id}:0`,
+            kind: "cover",
+            post_id: id,
+            params: { index: 0 },
+          },
+          7000,
+          () => {
+            (p.media as Row[])[0].cover = sample(n++);
+          },
+        );
+      return { id, n: p.n, generating: Boolean(a.generate) };
+    },
+    "social:removePost": a => {
+      posts.splice(posts.indexOf(post(a.postId)), 1);
+      return { removed: true };
+    },
+    "social:schedulePost": a => {
+      post(a.postId).scheduled_at = a.when;
+      return { at: a.when, pushedToGhl: false };
+    },
+    "social:configure": a => {
+      if (a.platforms) client.platforms = a.platforms as string[];
+      if (a.autoApprove !== undefined)
+        client.autoApprove = Boolean(a.autoApprove);
+      if (a.pillars) client.pillars = a.pillars as string[];
+      if (a.dialect !== undefined) client.dialect = String(a.dialect);
+      if (a.postsPerMonth !== undefined)
+        client.postsPerMonth = Number(a.postsPerMonth);
+      return { ok: true };
+    },
+    "social:setActive": () => ({ active: true }),
+    "social:fillMonth": () => ({ filling: 0, days: [] }),
+    "social:library": () => structuredClone(library),
+    "social:addToLibrary": a => {
+      library.unshift({ id: `lib${n++}`, url: a.url, caption: null });
+      return null;
+    },
+    "social:removeFromLibrary": a => {
+      library.splice(
+        library.findIndex(l => l.id === a.id),
+        1,
+      );
+      return null;
+    },
+    "social:uploadUrl": async a => {
+      const r = await fetch("/__harness/sign", {
+        method: "POST",
+        body: JSON.stringify(a),
+      });
+      if (!r.ok) throw new Error("The harness could not sign that upload.");
+      return r.json();
+    },
+  });
+  Object.assign(window, { __harness: { posts, jobs, client, library } });
+
+  createRoot(document.getElementById("root")!).render(
+    <StrictMode>
+      <ThemeProvider defaultTheme="light" switchable>
+        <Toaster />
+        <SocialCalendarPage />
+      </ThemeProvider>
+    </StrictMode>,
+  );
+}
+
+void main();

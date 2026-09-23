@@ -13,10 +13,13 @@ import { trustSummary, useCeo, useNow } from "@/components/ceo/useCeo";
 import { api } from "../../convex/_generated/api";
 import { AdsTab } from "./ceo/AdsTab";
 import { BackendTab } from "./ceo/BackendTab";
+import { BillingTab } from "./ceo/BillingTab";
 import { CallsTab } from "./ceo/CallsTab";
 import { ClientSuccessTab } from "./ceo/ClientSuccessTab";
 import { DeliveryTab } from "./ceo/DeliveryTab";
 import { FrontendTab } from "./ceo/FrontendTab";
+import { GoalsTab } from "./ceo/GoalsTab";
+import { HiringTab } from "./ceo/HiringTab";
 import { IdeationTab } from "./ceo/IdeationTab";
 import { MachineTab } from "./ceo/MachineTab";
 import { ManagementTab } from "./ceo/ManagementTab";
@@ -29,10 +32,12 @@ import { SalesTab } from "./ceo/SalesTab";
 import { statusSentence } from "./ceo/statusSentence";
 import { TeamTab } from "./ceo/TeamTab";
 import { TodayTab } from "./ceo/TodayTab";
+import { TransactionsTab } from "./ceo/TransactionsTab";
 import { CEO_TAB_KEYS, type CeoTabKey, type CeoTabProps } from "./ceo/types";
 
 const TAB_VIEWS: Record<CeoTabKey, (props: CeoTabProps) => ReactNode> = {
   today: TodayTab,
+  goals: GoalsTab,
   frontend: FrontendTab,
   marketing: MarketingTab,
   ads: AdsTab,
@@ -46,7 +51,10 @@ const TAB_VIEWS: Record<CeoTabKey, (props: CeoTabProps) => ReactNode> = {
   "client-success": ClientSuccessTab,
   management: ManagementTab,
   team: TeamTab,
+  hiring: HiringTab,
   money: MoneyTab,
+  billing: BillingTab,
+  transactions: TransactionsTab,
   machine: MachineTab,
 };
 

@@ -15,12 +15,11 @@ they are hosted now and what was changed to get there. Started 2026-09-09.
 Convex team `aziz-00129`, projects `mahara-media-buyer`, `mahara-client-success`,
 `mahara-creative-director`. Vercel team `aziz-6097s-projects`, same three project names.
 
-Redeploy after a change, from the app folder:
-
-```bash
-bunx convex deploy --yes        # backend to prod
-bunx vercel deploy --prod --yes # frontend
-```
+Redeploy with `scripts/ship.sh <app>` from a commit that is already on GitHub
+`main`. The script refuses otherwise. `bunx vercel deploy --prod` from the
+app folder uploads the working tree and stamps the local SHA even when GitHub
+has never seen it; that is how cockpit.maharamedia.com came to serve
+`7efca15f` on 2026-09-22. See "Shipping a fix" in `RUNBOOK.md`.
 
 `bunx convex dev` pushes to the dev deployment and is what local `bun run dev` talks to.
 
@@ -140,8 +139,27 @@ the install and the cron lines.
 
 ## Vercel (frontend)
 
-One project per app, root directory `apps/<app>`, framework Vite, build `bun run build`,
-output `dist`. Build-time env:
+One project per app, framework Vite, build `bun run build`, output `dist`.
+
+Media buyer, client success, and creative director ship with the CLI from
+`apps/<app>` (`scripts/ship.sh`). Set each project's Root Directory to that
+folder when it is linked to Git.
+
+`mahara-video-editor` is the project linked to this GitHub repository. Git
+builds run at the repository root, where the command is `bun run build`
+(`scripts/build-video-editor.sh`): install and build `apps/video-editor-cockpit`
+with its lockfile, then copy that `dist/` to the repository `dist/`. Install
+at the root is `bun install` (no dependencies, so there is no root lockfile).
+That lockfile is Bun 1.4 (`lockfileVersion` 2). The bun Vercel puts on PATH
+is 1.3.x, which exits 1 on `bun install --frozen-lockfile` ("Unknown lockfile
+version"). The script uses `bun@1.4.2` for the install and the app build when
+the bun on PATH is older.
+The root `vercel.json` is the Git deployment's routes; `scripts/ship.sh
+video-editor` still uploads `apps/video-editor-cockpit`, whose own
+`vercel.json` has the same routes. A second project linked to this
+repository needs its own Root Directory. The root config is the video editor.
+
+Build-time env:
 
 | Variable | Value |
 |---|---|

@@ -134,3 +134,21 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* A quiet line of secondary facts under a tile row, so a card carries fewer tiles. */
+.ceo-root .ceo-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.75rem;
+  line-height: 1.25rem;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.ceo-root .ceo-facts strong {
+  font-weight: 500;
+  color: var(--foreground);
+}

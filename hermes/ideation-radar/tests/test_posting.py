@@ -1,3 +1,4 @@
+import json
 import os
 import unittest
 from pathlib import Path
@@ -319,3 +320,61 @@ class HardeningTest(unittest.TestCase):
                 self.assertEqual(img.size, (1080, 1920))
         finally:
             frame.unlink(missing_ok=True)
+
+
+class HandoverRules(unittest.TestCase):
+    """Drive links both ways, and the banner and caption rules from the 2026-09-13 handover."""
+
+    def test_drive_ref_reads_file_and_folder_links(self):
+        from radar.posting.fetch import drive_id, drive_ref
+
+        assert drive_ref("https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUvWxYz012345/view?usp=drive_link") == ("file", "1AbCdEfGhIjKlMnOpQrStUvWxYz012345")
+        assert drive_ref("https://drive.google.com/open?id=1AbCdEfGhIjKlMnOpQrStUvWxYz012345") == ("file", "1AbCdEfGhIjKlMnOpQrStUvWxYz012345")
+        assert drive_ref("1AbCdEfGhIjKlMnOpQrStUvWxYz012345") == ("file", "1AbCdEfGhIjKlMnOpQrStUvWxYz012345")
+        assert drive_ref("https://drive.google.com/drive/folders/1FoLdErIdAbCdEfGhIjKlMnOp?usp=sharing") == ("folder", "1FoLdErIdAbCdEfGhIjKlMnOp")
+        assert drive_ref("https://drive.google.com/drive/u/0/folders/1FoLdErIdAbCdEfGhIjKlMnOp") == ("folder", "1FoLdErIdAbCdEfGhIjKlMnOp")
+        assert drive_ref("https://example.com/video.mp4") is None
+        assert drive_id("https://drive.google.com/drive/folders/1FoLdErIdAbCdEfGhIjKlMnOp") is None
+
+    def test_higgsfield_prompt_and_caption_rules(self):
+        from radar.posting.higgsfield import _result_urls, clean_line, compose_prompt
+        from radar.posting.write import tidy_caption
+
+        p = compose_prompt(["أحسن من الإعلانات", "«العروض» → المشاريع"], graphic="one small teal spark", side="right")
+        assert "Line one in solid white: أحسن من الإعلانات." in p
+        assert "«" not in p and "→" not in p
+        assert "GRAPHIC ELEMENT: one small teal spark." in p
+        assert "PHOTO COMPOSITING task" in p
+        assert clean_line("«كلمة»") == "كلمة"
+        assert _result_urls('{"results":[{"url":"https://d1.cloudfront.net/a/b.png"}]}') == ["https://d1.cloudfront.net/a/b.png"]
+        assert _result_urls("done: https://x.higgsfield.ai/out/1.jpg") == ["https://x.higgsfield.ai/out/1.jpg"]
+        assert tidy_caption("جرّب — «الطريقة» بـ $500") == "جرّب .. الطريقة بـ دولار 500"
+
+
+class ResultLinks(unittest.TestCase):
+    def test_result_url_wins_over_the_uploaded_reference(self):
+        from radar.posting import higgsfield
+        raw = json.dumps([{
+            "id": "job",
+            "params": {"input_images": [{"url": "https://in.cloudfront.net/frame.jpg"}], "prompt": "x"},
+            "min_result_url": "https://out.cloudfront.net/min.png",
+            "result_url": "https://out.cloudfront.net/full.png",
+            "status": "completed",
+        }])
+        urls = higgsfield._result_urls(raw)
+        self.assertEqual(urls[0], "https://out.cloudfront.net/full.png")
+        self.assertNotIn("https://in.cloudfront.net/frame.jpg", urls)
+
+    def test_plain_text_output_still_yields_a_link(self):
+        from radar.posting import higgsfield
+        urls = higgsfield._result_urls("done: https://out.cloudfront.net/x.png")
+        self.assertEqual(urls, ["https://out.cloudfront.net/x.png"])
+
+
+class CoverLayout(unittest.TestCase):
+    def test_cover_layout_defaults_to_the_middle(self):
+        from radar.posting.higgsfield import compose_prompt
+        self.assertIn("the man centred, occupying the lower middle", compose_prompt(["عشرين ضعف العائد"]))
+        self.assertIn("lower right portion", compose_prompt(["عشرين ضعف العائد"], side="right"))
+        self.assertIn("lower left portion", compose_prompt(["عشرين ضعف العائد"], side="left"))
+

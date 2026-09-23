@@ -20,18 +20,63 @@ TOKEN_URL = "https://oauth2.googleapis.com/token"
 FILES = "https://www.googleapis.com/drive/v3/files"
 _DRIVE_ID = [
     re.compile(r"/file/d/([A-Za-z0-9_-]{10,})"),
+    re.compile(r"/document/d/([A-Za-z0-9_-]{10,})"),
     re.compile(r"[?&]id=([A-Za-z0-9_-]{10,})"),
     re.compile(r"^([A-Za-z0-9_-]{20,})$"),
 ]
+_DRIVE_FOLDER = [
+    re.compile(r"/folders/([A-Za-z0-9_-]{10,})"),
+    re.compile(r"[?&]folderId=([A-Za-z0-9_-]{10,})"),
+]
 
 
-def drive_id(ref: str) -> Optional[str]:
+def drive_ref(ref: str) -> tuple[str, str] | None:
+    """What a Google Drive link points at: ("file", id) for a file link
+    (/file/d/<id>, ?id=<id>, or a bare id), ("folder", id) for a folder link
+    (/drive/folders/<id>, /drive/u/0/folders/<id>), else None. Aziz pastes
+    both, so both are links (2026-09-21)."""
     v = (ref or "").strip()
+    if not v:
+        return None
+    for pat in _DRIVE_FOLDER:
+        m = pat.search(v)
+        if m:
+            return ("folder", m.group(1))
     for pat in _DRIVE_ID:
         m = pat.search(v)
         if m:
-            return m.group(1)
+            return ("file", m.group(1))
     return None
+
+
+def drive_id(ref: str) -> Optional[str]:
+    """The file id of a Drive file link, or None (a folder link is not a file)."""
+    r = drive_ref(ref)
+    return r[1] if r and r[0] == "file" else None
+
+
+def drive_folder_video(token: str, folder_id: str, log: Callable[[str], None] = lambda m: None) -> dict[str, Any]:
+    """The video to use from a Drive folder: the newest video file in it. One
+    video is the usual case; with several the newest wins and the log says
+    so; with none the error says what the folder holds."""
+    q = urllib.parse.urlencode({
+        "q": f"'{folder_id}' in parents and trashed = false",
+        "fields": "files(id,name,mimeType,size,createdTime,modifiedTime)",
+        "orderBy": "createdTime desc",
+        "pageSize": "100",
+        "supportsAllDrives": "true",
+        "includeItemsFromAllDrives": "true",
+    })
+    _, _, raw = http.request("GET", f"{FILES}?{q}", headers={"Authorization": f"Bearer {token}"}, timeout=60, retries=2)
+    files = list(json.loads(raw or b"{}").get("files") or [])
+    videos = [f for f in files if str(f.get("mimeType", "")).startswith("video/") or str(f.get("name", "")).lower().endswith((".mp4", ".mov", ".m4v", ".webm", ".mkv"))]
+    if not videos:
+        kinds = ", ".join(sorted({str(f.get("mimeType", "")).split("/")[0] or "?" for f in files})) or "nothing"
+        raise ValueError(f"that Drive folder has no video in it ({len(files)} items: {kinds})")
+    videos.sort(key=lambda f: str(f.get("createdTime", "")), reverse=True)
+    if len(videos) > 1:
+        log(f"drive folder {folder_id}: {len(videos)} videos, taking the newest: {videos[0].get('name')}")
+    return videos[0]
 
 
 def google_token(*, scope_note: str = "drive") -> str:
@@ -82,10 +127,16 @@ def fetch_video(cfg: Config, log: Callable[[str], None], store: PostStore, post:
         log(f"post {pid}: uploaded file, {size >> 20} MB")
         return dest, patch
     if kind == "drive":
-        fid = drive_id(ref)
-        if not fid:
-            raise ValueError("that is not a Google Drive file link")
+        r = drive_ref(ref)
+        if not r:
+            raise ValueError("that is not a Google Drive link: paste a file link (drive.google.com/file/d/...) or a folder link (drive.google.com/drive/folders/...)")
         token = google_token(scope_note="Drive")
+        fid = r[1]
+        if r[0] == "folder":
+            chosen = drive_folder_video(token, fid, log)
+            fid = str(chosen["id"])
+            patch["source_note"] = f"from the Drive folder: {chosen.get('name')}"
+            log(f"post {pid}: Drive folder, using {chosen.get('name')}")
         q = urllib.parse.urlencode({"alt": "media", "supportsAllDrives": "true"})
         size = stream_to(f"{FILES}/{urllib.parse.quote(fid)}?{q}", dest, headers={"Authorization": f"Bearer {token}"})
         log(f"post {pid}: from Drive, {size >> 20} MB")
