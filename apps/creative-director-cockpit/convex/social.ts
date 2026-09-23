@@ -1493,3 +1493,152 @@ export const removePost = authenticatedAction({
     return { removed: true };
   },
 });
+
+/**
+ * Fill the month: a finished draft on every empty day it needs.
+ *
+ * This replaces the mix, the written plan and the plan approval -- the
+ * part Aziz said he did not understand, which is a fair verdict on four
+ * steps that each asked a question before anything appeared. Now the
+ * calendar is the plan. It counts how many posts the client's package
+ * wants this month, finds the empty days still to come, spreads the
+ * missing posts across them, rotates the client's own pillars so the
+ * month is not six of the same, and hands Salma one job.
+ */
+export const fillMonth = authenticatedAction({
+  args: { clientTaskId: v.string(), month: v.string() },
+  returns: v.any(),
+  handler: async (ctx, { clientTaskId, month }) => {
+    const { email } = await who(ctx);
+    if (!/^\d{4}-\d{2}$/.test(month)) throw new Error("That is not a month.");
+
+    const c = rows(
+      await rest(
+        `social_clients?select=*&client_task_id=eq.${enc(clientTaskId)}&limit=1`,
+      ),
+    )[0];
+    if (!c) throw new Error("That client is not set up for social media yet.");
+    const perMonth = Math.max(1, Number(c.posts_per_month ?? 12));
+    const pillars = cleanPillars(
+      (Array.isArray(c.pillars) ? c.pillars : []) as string[],
+    );
+    const rotation = pillars.length ? pillars : [...DEFAULT_PILLARS];
+
+    const batchId = `${clientTaskId}:${month}`;
+    const existing = rows(
+      await rest(
+        `social_posts?select=pillar,scheduled_at&batch_id=eq.${enc(batchId)}`,
+      ),
+    );
+    const need = perMonth - existing.length;
+    if (need <= 0)
+      throw new Error(
+        `This month already has ${existing.length} posts, which is what the package asks for. ` +
+          "Click a day to add one more.",
+      );
+
+    // The days still to come that have nothing on them.
+    const [y, m] = month.split("-").map(Number);
+    const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    const today = new Date().toISOString().slice(0, 10);
+    const taken = new Set(
+      existing
+        .map(p => String(p.scheduled_at ?? "").slice(0, 10))
+        .filter(Boolean),
+    );
+    const open: string[] = [];
+    for (let d = 1; d <= last; d++) {
+      const day = `${month}-${String(d).padStart(2, "0")}`;
+      if (day > today && !taken.has(day)) open.push(day);
+    }
+    if (!open.length)
+      throw new Error("There are no empty days left in this month to fill.");
+
+    // Evenly spread, so the feed does not bunch at the start of the month.
+    const k = Math.min(need, open.length);
+    const days = Array.from(
+      { length: k },
+      (_, i) =>
+        open[
+          Math.min(open.length - 1, Math.floor(((i + 0.5) * open.length) / k))
+        ],
+    );
+
+    // Carry on the rotation from wherever the month's existing posts left it.
+    const lastPillar = String(existing.at(-1)?.pillar ?? "");
+    let start = Math.max(0, rotation.indexOf(lastPillar) + 1);
+    const slots = days.map(day => ({
+      day,
+      pillar: rotation[start++ % rotation.length],
+    }));
+
+    await rest("social_batches?on_conflict=id", {
+      method: "POST",
+      prefer: "resolution=ignore-duplicates,return=minimal",
+      body: [
+        {
+          id: batchId,
+          client_task_id: clientTaskId,
+          month,
+          status: "generating",
+          updated_at: now(),
+        },
+      ],
+    });
+    await rest("social_jobs?on_conflict=id", {
+      method: "POST",
+      prefer: "resolution=merge-duplicates,return=minimal",
+      body: [
+        {
+          id: `fill:${batchId}:${Date.now()}`,
+          kind: "fill",
+          client_task_id: clientTaskId,
+          batch_id: batchId,
+          params: { slots },
+          status: "queued",
+          attempts: 0,
+          requested_by: email,
+          updated_at: now(),
+        },
+      ],
+    });
+    return { filling: slots.length, days };
+  },
+});
+
+/**
+ * Change a post's words at any stage before it goes out.
+ *
+ * The old edit refused anything already generated, which is exactly when
+ * somebody reads the caption and wants to fix one word.
+ */
+export const updatePost = authenticatedAction({
+  args: {
+    postId: v.string(),
+    caption: v.optional(v.string()),
+    topic: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await who(ctx);
+    const p = rows(
+      await rest(
+        `social_posts?select=ghl_post_id,status&id=eq.${enc(args.postId)}&limit=1`,
+      ),
+    )[0];
+    if (!p) throw new Error("That post is gone.");
+    if (String(p.status) === "published")
+      throw new Error(
+        "That post has already gone out, so there is nothing to change.",
+      );
+    const body: Row = { updated_at: now() };
+    if (args.caption !== undefined) body.caption = clip(args.caption, 2200);
+    if (args.topic !== undefined) body.topic = clip(args.topic, 300);
+    await rest(`social_posts?id=eq.${enc(args.postId)}`, {
+      method: "PATCH",
+      prefer: "return=minimal",
+      body,
+    });
+    return null;
+  },
+});

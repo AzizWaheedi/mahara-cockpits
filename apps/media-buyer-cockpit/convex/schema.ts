@@ -150,7 +150,14 @@ const schema = defineSchema({
     impressions: v.number(),
     linkClicks: v.number(),
     frequency: v.optional(v.number()),
-  }).index("by_campaign_date", ["campaignName", "date"]),
+  })
+    .index("by_campaign_date", ["campaignName", "date"])
+    // Every reader that wants a window of days ("the last 30", "the first
+    // day on record") used to scan the whole table to find it, and the sync
+    // rewrote the table every ten minutes, so each open screen re-read a
+    // year of ad history six times an hour (2026-09-23: the deployment was
+    // disabled for exceeding its plan). A window is now an index range.
+    .index("by_date", ["date"]),
 
   /**
    * One row per booked appointment, with the Meta ad that bought it.
@@ -169,7 +176,9 @@ const schema = defineSchema({
     status: v.string(), // confirmed | showed | noshow | ...
     adId: v.optional(v.string()),
     syncedAt: v.number(),
-  }).index("by_campaign_date", ["campaignName", "date"]),
+  })
+    .index("by_campaign_date", ["campaignName", "date"])
+    .index("by_date", ["date"]),
 
   /** One row per ad, last 7 days, for the expanded view. */
   ads: defineTable({

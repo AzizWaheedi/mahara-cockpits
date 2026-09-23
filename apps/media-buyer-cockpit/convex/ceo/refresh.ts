@@ -132,11 +132,24 @@ export const refreshAll = internalAction({
     } catch (e) {
       report._definitions = `mirror FAILED ${String(e instanceof Error ? e.message : e).slice(0, 200)}`;
     }
+    // Every section is saved together at the end of the cycle, not as each
+    // one finishes: the CEO page re-reads every section on every save, so
+    // thirteen saves were thirteen full re-reads per open screen per cycle.
+    type Pending = {
+      key: string;
+      label: string;
+      ok: boolean;
+      payload?: unknown;
+      error?: string;
+      sources: unknown[];
+      ms: number;
+    };
+    const pending: Pending[] = [];
     const run = async (a: Adapter) => {
       const started = Date.now();
       try {
         const res = await withBudget(a.compute(ctx), a.key);
-        await ctx.runMutation(internal.ceo.store.saveSection, {
+        pending.push({
           key: a.key,
           label: a.label,
           ok: true,
@@ -165,7 +178,7 @@ export const refreshAll = internalAction({
           `ok ${Date.now() - started}ms, ${daily.length} daily points, ${mirrored}`;
       } catch (e) {
         const error = String(e instanceof Error ? e.message : e).slice(0, 400);
-        await ctx.runMutation(internal.ceo.store.saveSection, {
+        pending.push({
           key: a.key,
           label: a.label,
           ok: false,
@@ -184,6 +197,34 @@ export const refreshAll = internalAction({
     await Promise.all(
       ADAPTERS.filter(a => !only?.length || only.includes(a.key)).map(run),
     );
+    // One write per cycle, split only when the payloads together would be too
+    // big for one mutation. A save that fails is reported, never thrown: the
+    // sections already stored stay, which is the old "keep the last good"
+    // behaviour.
+    const LIMIT = 3_000_000;
+    let batch: Pending[] = [];
+    let size = 0;
+    const flush = async () => {
+      if (!batch.length) return;
+      try {
+        await ctx.runMutation(internal.ceo.store.saveSections, {
+          items: batch as never,
+        });
+      } catch (e) {
+        for (const b of batch)
+          report[b.key] =
+            `${report[b.key] ?? ""} · save FAILED ${String(e instanceof Error ? e.message : e).slice(0, 160)}`;
+      }
+      batch = [];
+      size = 0;
+    };
+    for (const item of pending) {
+      const bytes = JSON.stringify(item.payload ?? null).length;
+      if (size + bytes > LIMIT) await flush();
+      batch.push(item);
+      size += bytes;
+    }
+    await flush();
     return report;
   },
 });
