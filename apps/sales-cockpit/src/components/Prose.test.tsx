@@ -13,13 +13,17 @@ describe("Prose", () => {
     expect(out).toContain("&lt;script&gt;");
   });
   test("only http links become links", () => {
-    const out = html("[see](javascript:alert(1)) and [call](https://fathom.video/share/x)");
+    const out = html(
+      "[see](javascript:alert(1)) and [call](https://fathom.video/share/x)",
+    );
     expect(out).not.toContain('href="javascript');
     expect(out).toContain('href="https://fathom.video/share/x"');
     expect(out).toContain('rel="noreferrer noopener"');
   });
   test("Slack bold, markdown bold, bullets and headings", () => {
-    const out = html("### Topics\n*Frame Set — 4/10*\n- **Budget** asked early\n- next step");
+    const out = html(
+      "### Topics\n*Frame Set — 4/10*\n- **Budget** asked early\n- next step",
+    );
     expect(out).toContain("<strong>Frame Set — 4/10</strong>");
     expect(out).toContain("<strong>Budget</strong>");
     expect(out).toContain("<ul");
