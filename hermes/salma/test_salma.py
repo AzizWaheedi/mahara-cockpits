@@ -4,7 +4,10 @@ The ones that decide what reaches a client's account are here on purpose:
 who posts, when, and why not.
 """
 
+import contextlib
 import io
+import os
+import tempfile
 
 import salma
 
@@ -95,6 +98,96 @@ def test_fit_jpeg():
 
 def test_strip_codes():
     assert salma.strip_codes("Bronze (#4A3B2A) finish #facade") == "Bronze finish #facade"
+
+
+def test_api_shapes():
+    # Every shape a post or a Reel cover asks for is one the API model draws.
+    for draw_as, _, _ in salma.SHAPES.values():
+        assert salma.HF_API_DRAW.get(draw_as, draw_as) in salma.HF_API_ASPECTS, draw_as
+    assert "9:16" in salma.HF_API_ASPECTS
+
+
+class FakeHiggsfield:
+    """The API's answers in order, and what was sent, kept for checking."""
+
+    def __init__(self, *answers):
+        self.answers, self.sent = list(answers), []
+
+    def __call__(self, method, url, body=None):
+        self.sent.append((method, url, body))
+        return self.answers.pop(0)
+
+
+@contextlib.contextmanager
+def api(*answers):
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.effect_noise((300, 300), 60).convert("RGB").save(buf, "PNG")
+    fake = FakeHiggsfield(*answers)
+    saved = (salma.hf_api, salma.fetch_bytes, salma.HF_POLL_S, salma.HF_WALLET_FILE)
+    env = {k: os.environ.pop(k, None) for k in ("HF_KEY", "SALMA_IMAGES")}
+    with tempfile.TemporaryDirectory() as d:
+        salma.hf_api, salma.HF_POLL_S = fake, 0
+        salma.fetch_bytes = lambda url: buf.getvalue()
+        salma.HF_WALLET_FILE = os.path.join(d, "wallet.json")
+        os.environ["HF_KEY"] = "id:secret"
+        try:
+            yield fake
+        finally:
+            salma.hf_api, salma.fetch_bytes, salma.HF_POLL_S, salma.HF_WALLET_FILE = saved
+            for k, v in env.items():
+                os.environ.pop(k, None)
+                if v is not None:
+                    os.environ[k] = v
+
+
+SUBMITTED = (200, {"request_id": "r1", "status_url": "https://api.higgsfield.ai/requests/r1/status",
+                   "cancel_url": "https://api.higgsfield.ai/requests/r1/cancel"})
+
+
+def test_api_picture():
+    done = (200, {"status": "completed", "images": [{"url": "https://cdn.example/r1.png"}]})
+    with api(SUBMITTED, (200, {"status": "queued"}), (200, {"status": "in_progress"}), done) as hf:
+        assert salma.images_via() == "api"
+        jpeg = salma.hf_image("a villa", ["/tmp/frame.jpg", "https://x/ref.jpg"], aspect="4:5")
+        assert jpeg[:2] == b"\xff\xd8"
+        method, url, body = hf.sent[0]
+        assert method == "POST" and url.endswith("/" + salma.HF_API_MODEL)
+        # 4:5 is drawn 3:4; only links go to the API, a local path cannot.
+        assert body["aspect_ratio"] == "3:4" and body["image_urls"] == ["https://x/ref.jpg"]
+        assert salma.wallet_state() == "ok"
+    with api(SUBMITTED, done) as hf:
+        salma.hf_image("a villa", [], aspect="9:16")
+        assert "image_urls" not in hf.sent[0][2] and hf.sent[0][2]["aspect_ratio"] == "9:16"
+    with api() as hf:
+        os.environ["SALMA_IMAGES"] = "cli"
+        assert salma.images_via() == "cli"
+
+
+def test_api_refusals():
+    with api((403, {"detail": "not_enough_credits"})):
+        try:
+            salma.hf_image("x")
+            raise AssertionError("an empty wallet must stop the picture")
+        except salma.NoCredits as e:
+            assert "wallet is empty" in str(e) and "open.higgsfield.ai/billing" in str(e)
+        assert salma.wallet_state() == "empty"
+    for answers, words in [
+        (((401, {"detail": "Invalid credentials"}),), "refused the API key"),
+        ((SUBMITTED, (200, {"status": "nsfw"})), "safety check"),
+        ((SUBMITTED, (200, {"status": "failed", "error": "boom"})), "could not draw it: boom"),
+        ((SUBMITTED, (200, {"status": "canceled"})), "cancelled"),
+        ((SUBMITTED, (200, {"status": "completed", "images": []})), "no picture back"),
+    ]:
+        with api(*answers):
+            try:
+                salma.hf_image("x")
+                raise AssertionError(words)
+            except salma.NoCredits:
+                raise AssertionError(f"not a credits problem: {words}")
+            except RuntimeError as e:
+                assert words in str(e), (words, str(e))
 
 
 if __name__ == "__main__":

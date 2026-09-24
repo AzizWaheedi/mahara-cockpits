@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 """Salma: drain the social jobs queue.
 
-Two of the three job kinds are plain model calls and run here. The third,
-`generate`, needs Higgsfield's MCP, which a script cannot speak -- it is
-left for the openclaw agent session that can, and this says so rather than
-pretending.
-
-Nothing here publishes. There are no GoHighLevel credentials in this
-process and there should never be.
+Ideas, captions, pictures, Reel covers and the accounts list are made here;
+due posts go out from here too, but only for clients someone has switched
+on (`publish_due`). There are no GoHighLevel credentials in this process
+and there should never be.
 
 Environment: DESK_SUPABASE_URL, DESK_SUPABASE_KEY, DEEPSEEK_API_KEY,
-ANTHROPIC_API_KEY. Read by name, never printed.
+ANTHROPIC_API_KEY, META_ACCESS_TOKEN, HF_KEY (or the file named by
+HF_KEY_FILE). Read by name, never printed.
 """
 from __future__ import annotations
 
@@ -548,14 +546,25 @@ name itself is the instruction -- read it and frame accordingly.
 Return JSON only: {"prompts":["slide 1 prompt","slide 2 prompt", ...]}"""
 
 
-# Images come from Higgsfield through its CLI on this machine, signed in
-# with Aziz's own account -- his subscription credits, not the metered
-# API wallet, which was empty. The posting desk already drives the CLI
-# for covers, so its caller is borrowed rather than rewritten: that is
-# where the result_url lesson lives (the CLI's JSON lists the uploaded
-# reference before the result, and reading the first URL once handed
-# back the input as the output), and where the conversion to what
-# Instagram accepts lives. One Higgsfield caller, fixed in one place.
+# Pictures come from Higgsfield by one of two roads, one at a time
+# (`images_via`):
+#
+# - Its API, with a key (HF_KEY, "id:secret"). Aziz, 2026-09-24: "Try this
+#   API key instead." Higgsfield ended the CLI's session on its first use
+#   after every fresh sign-in (2026-09-23); a key does not lapse that way.
+#   Two differences are said on screen, not hidden: the API pays from its
+#   own wallet (open.higgsfield.ai/billing), never the app's subscription
+#   credits; and Nano Banana Pro is switched off on it ("model_disabled",
+#   2026-09-24), so it draws with Marketing Studio Image, Higgsfield's GPT
+#   Image route, which reads references from links.
+# - Its CLI on this machine, signed in as Aziz: his subscription credits and
+#   Nano Banana Pro. Used when there is no key, or when SALMA_IMAGES=cli.
+#   The posting desk drives the same CLI for covers, so its caller is
+#   borrowed rather than rewritten: that is where the result_url lesson
+#   lives (the CLI's JSON lists the uploaded reference before the result,
+#   and reading the first URL once handed back the input as the output).
+#   The posting desk's covers of Aziz stay on the CLI whatever this says:
+#   his face is only ever composited by Nano Banana Pro.
 _RADAR = [
     "/home/hermes/mahara-cockpits/hermes/ideation-radar",
     os.path.join(HERE, "..", "ideation-radar"),
@@ -596,13 +605,180 @@ class NoCredits(RuntimeError):
     """
 
 
+HF_API = "https://api.higgsfield.ai"
+HF_API_MODEL = "marketing-studio/image"
+HF_KEY_FILE = os.environ.get("HF_KEY_FILE") or os.path.expanduser("~/.higgsfield-api.env")
+# The shapes the API model draws. It has no 4:5, so 4:5 is drawn 3:4 and
+# fit_jpeg trims the difference from top and bottom, as 1.91:1 is from 16:9.
+HF_API_ASPECTS = ("1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16", "21:9")
+HF_API_DRAW = {"4:5": "3:4"}
+HF_POLL_S = 4.0
+HF_WAIT_S = 480
+# The API has no free way to ask for its balance: a real picture is the only
+# question that gets "not_enough_credits" back. The last answer is kept here
+# so the health line can say so between pictures.
+HF_WALLET_FILE = os.path.expanduser("~/.salma-higgsfield-wallet.json")
+
+WALLET_EMPTY = (
+    "Higgsfield's API wallet is empty. Top it up at open.higgsfield.ai/billing "
+    "(the app's own credits do not pay for the API), then ask for the picture again."
+)
+KEY_REFUSED = (
+    "Higgsfield refused the API key. Make a new one at open.higgsfield.ai/api-keys "
+    "and put it on the server."
+)
+NSFW = (
+    "Higgsfield's safety check refused this picture. Change the topic or the "
+    "reference pictures, then draw it again."
+)
+
+
+def hf_key() -> str:
+    """The API key by name: HF_KEY in the environment, else the file kept for it."""
+    key = os.environ.get("HF_KEY", "").strip()
+    if key:
+        return key
+    try:
+        with open(HF_KEY_FILE) as fh:
+            for line in fh:
+                if line.startswith("HF_KEY="):
+                    return line.split("=", 1)[1].strip().strip("'\"")
+    except OSError:
+        pass
+    return ""
+
+
+def images_via() -> str:
+    """"api" when there is a key, unless SALMA_IMAGES=cli asks for the CLI."""
+    asked = os.environ.get("SALMA_IMAGES", "").strip().lower()
+    if asked in ("api", "cli"):
+        return asked
+    return "api" if hf_key() else "cli"
+
+
+def hf_api(method: str, url: str, body: dict | None = None) -> tuple[int, object]:
+    """One call to Higgsfield's API: the status and the JSON (or text) it sent."""
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method, headers={
+        "Authorization": f"Key {hf_key()}", "Content-Type": "application/json",
+        "User-Agent": "Mahara social desk"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            code, raw = r.status, r.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        code, raw = e.code, e.read().decode("utf-8", "replace")
+    try:
+        return code, json.loads(raw or "{}")
+    except ValueError:
+        return code, raw[:300]
+
+
+def remember_wallet(state: str) -> None:
+    try:
+        with open(HF_WALLET_FILE, "w") as fh:
+            json.dump({"state": state, "at": now()}, fh)
+    except OSError:
+        pass
+
+
+def wallet_state() -> str:
+    try:
+        with open(HF_WALLET_FILE) as fh:
+            return str(json.load(fh).get("state") or "")
+    except (OSError, ValueError):
+        return ""
+
+
+def hf_refusal(code: int, said: object) -> Exception:
+    """Higgsfield's no, as a sentence a person can act on."""
+    detail = said.get("detail") if isinstance(said, dict) else said
+    text = detail if isinstance(detail, str) else json.dumps(detail)[:200]
+    if text == "not_enough_credits":
+        remember_wallet("empty")
+        return NoCredits(WALLET_EMPTY)
+    if code == 401:
+        return RuntimeError(KEY_REFUSED)
+    if text in ("model_disabled", "model_not_found"):
+        return RuntimeError(f"Higgsfield has switched {HF_API_MODEL} off for this key ({text}).")
+    return RuntimeError(f"Higgsfield said no ({code}): {text[:200]}")
+
+
+def hf_api_image(prompt: str, refs: list[str], aspect: str) -> bytes:
+    """One picture through the API key, as JPEG bytes, as the model drew it.
+
+    `refs` are public links (our own bucket); the API fetches them itself.
+    A refusal is never retried here: an empty wallet or a refused key is a
+    person's job, and the sentence says which.
+    """
+    if not hf_key():
+        raise RuntimeError("Pictures need Higgsfield, and the server has no HF_KEY.")
+    body: dict = {"prompt": prompt[:3000], "resolution": "2k", "quality": "high",
+                  "aspect_ratio": HF_API_DRAW.get(aspect, aspect)}
+    if refs:
+        body["image_urls"] = refs[:6]
+    code, sub = hf_api("POST", f"{HF_API}/{HF_API_MODEL}", body)
+    if code >= 400 or not isinstance(sub, dict) or not sub.get("request_id"):
+        raise hf_refusal(code, sub)
+    status_url = str(sub.get("status_url") or f"{HF_API}/requests/{sub['request_id']}/status")
+    deadline = time.time() + HF_WAIT_S
+    while True:
+        time.sleep(HF_POLL_S)
+        try:
+            code, st = hf_api("GET", status_url)
+        except urllib.error.URLError:
+            code, st = 0, None  # a blip while it draws is not a failed picture
+        status = st.get("status") if isinstance(st, dict) else None
+        if status == "completed":
+            break
+        if status == "nsfw":
+            raise RuntimeError(NSFW)
+        if status == "failed":
+            why = st.get("error") or st.get("detail") or "no reason given"
+            raise RuntimeError(f"Higgsfield could not draw it: {str(why)[:200]}")
+        if status == "canceled":
+            raise RuntimeError("The picture was cancelled at Higgsfield. Ask for it again.")
+        if 400 <= code < 500:
+            raise hf_refusal(code, st)
+        if time.time() > deadline:
+            try:
+                hf_api("POST", str(sub.get("cancel_url") or status_url.replace("/status", "/cancel")))
+            except Exception:  # noqa: BLE001 - the sentence below matters more
+                pass
+            raise RuntimeError("Higgsfield took longer than eight minutes on this picture. Ask for it again.")
+    images = st.get("images") or []
+    url = images[0].get("url") if images and isinstance(images[0], dict) else None
+    if not url:
+        raise RuntimeError("Higgsfield finished but sent no picture back")
+    data = fetch_bytes(str(url))
+    if len(data) < 10_000:
+        raise RuntimeError("Higgsfield returned an empty file")
+    remember_wallet("ok")
+    return as_jpeg(data)
+
+
 def hf_image(prompt: str, refs: list[str] | None = None, aspect: str = ASPECT) -> bytes:
     """One picture as JPEG bytes, as the model drew it.
 
-    `refs` are local files the model takes its look from -- the client's
-    own photos, or examples somebody attached to the post. The caller fits
-    it to its exact size with `fit_jpeg`.
+    `refs` are links to pictures the model takes its look from: the
+    client's own photos, examples somebody attached to the post, or the
+    video frame a cover is made from. The caller fits the result to its
+    exact size with `fit_jpeg`.
     """
+    links = [str(r) for r in (refs or []) if str(r).startswith(("http://", "https://"))][:6]
+    if images_via() == "api":
+        return hf_api_image(prompt, links, aspect)
+    import shutil
+    import tempfile
+
+    workdir = tempfile.mkdtemp(prefix="salma-refs-")
+    try:
+        return hf_cli_image(prompt, fetch_refs(links, workdir), aspect)
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
+def hf_cli_image(prompt: str, refs: list[str], aspect: str) -> bytes:
+    """One picture through the CLI; `refs` are local files."""
     import subprocess
 
     from radar.posting import higgsfield as hf
@@ -622,7 +798,7 @@ def hf_image(prompt: str, refs: list[str] | None = None, aspect: str = ASPECT) -
         "--wait", "--wait-timeout", hf.WAIT_TIMEOUT,
         "--json",
     ]
-    for r in (refs or [])[:6]:
+    for r in refs[:6]:
         cmd += ["--image-references", r]
     res = subprocess.run(
         cmd, capture_output=True, text=True, timeout=660, check=False,
@@ -645,9 +821,7 @@ def hf_image(prompt: str, refs: list[str] | None = None, aspect: str = ASPECT) -
     urls = hf._result_urls(out)
     if not urls:
         raise RuntimeError("Higgsfield finished but printed no result link")
-    req = urllib.request.Request(urls[0], headers={"User-Agent": "Mahara social desk"})
-    with urllib.request.urlopen(req, timeout=120) as r:
-        data = r.read()
+    data = fetch_bytes(urls[0])
     if len(data) < 10_000:
         raise RuntimeError("Higgsfield returned an empty file")
     return as_jpeg(data)
@@ -807,27 +981,21 @@ def do_generate(sb: Store, job: dict) -> dict:
     if len(prompts) < count:
         note(f"  {post_id}: {len(prompts)} prompts for {count} pictures")
 
-    # Then the pictures, 4:5, the same shape for every slide of a carousel.
-    import shutil
-    import tempfile
-
-    workdir = tempfile.mkdtemp(prefix="salma-refs-")
-    refs = fetch_refs([str(u) for u in (post.get("refs") or [])], workdir)
+    # Then the pictures, in the post's shape, the same for every slide of a
+    # carousel.
+    refs = [str(u) for u in (post.get("refs") or [])][:6]
     images: list[str] = []
-    try:
-        for i, prompt in enumerate(prompts, 1):
-            try:
-                drawn_jpeg = hf_image(prompt, refs, aspect=draw_as)
-                images.append(keep_image(sb, fit_jpeg(drawn_jpeg, size), post_id, i))
-            except NoCredits:
-                # Whatever was drawn before the credits ran out is kept, so
-                # topping up and running again costs only the rest.
-                if images:
-                    place_drawn(sb, post_id, images, prompts, index=index,
-                                target=target, add=add, done=False)
-                raise
-    finally:
-        shutil.rmtree(workdir, ignore_errors=True)
+    for i, prompt in enumerate(prompts, 1):
+        try:
+            drawn_jpeg = hf_image(prompt, refs, aspect=draw_as)
+            images.append(keep_image(sb, fit_jpeg(drawn_jpeg, size), post_id, i))
+        except NoCredits:
+            # Whatever was drawn before the credits ran out is kept, so
+            # topping up and running again costs only the rest.
+            if images:
+                place_drawn(sb, post_id, images, prompts, index=index,
+                            target=target, add=add, done=False)
+            raise
     place_drawn(sb, post_id, images, prompts, index=index, target=target,
                 add=add, done=True)
     return {"post": post_id, "prompts": len(prompts), "images": len(images),
@@ -1085,9 +1253,12 @@ def do_cover(sb: Store, job: dict) -> dict:
             raise ValueError("no headline came back for the cover")
 
         rtl = ", as perfectly connected right to left Arabic script" if wants_arabic(dialect) else ""
+        # The frame goes up to our own bucket first: the API reads its
+        # references from links, and the CLI fetches the same link.
+        frame_url = keep_image(sb, as_jpeg(frame.read_bytes()), post_id, f"frame-{index}")
         blob = fit_jpeg(
             hf_image(COVER_PROMPT.format(headline=headline, rtl=rtl),
-                     [str(frame)], aspect="9:16"),
+                     [frame_url], aspect="9:16"),
             REEL_COVER,
         )
         url = keep_image(sb, blob, post_id, f"cover-{index}")
@@ -1519,30 +1690,53 @@ def results_due(sb: Store) -> None:
                  {"results": out, "results_at": now()})
 
 
+def higgsfield_health() -> tuple[bool, str]:
+    """Whether pictures can be drawn, asked rather than assumed."""
+    paused = "Pictures and covers are paused: "
+    if images_via() == "api":
+        if not hf_key():
+            return False, paused + "the server has no Higgsfield API key (HF_KEY)."
+        # Free, and it checks the key: a wrong one is answered 401.
+        try:
+            code, _ = hf_api("GET", f"{HF_API}/models?size=1")
+        except urllib.error.URLError as e:
+            return False, paused + f"Higgsfield could not be reached ({type(e).__name__})."
+        if code == 401:
+            return False, paused + KEY_REFUSED
+        if code >= 400:
+            return False, paused + f"Higgsfield answered {code} when asked for its models."
+        if wallet_state() == "empty":
+            return False, paused + WALLET_EMPTY
+        return True, ""
+
+    import subprocess
+
+    from radar.posting import higgsfield as hf
+
+    # A credentials file on disk can hold a session Higgsfield has already
+    # ended ("Session expired" on the first request, 2026-09-23), so the
+    # check makes one free request of its own.
+    ok, _ = hf.available()
+    if not ok:
+        return False, paused + "Higgsfield is signed out on the server. Sign it in again."
+    res = subprocess.run([hf.cli_path() or "higgsfield", "account", "status"],
+                         capture_output=True, text=True, timeout=60, check=False,
+                         stdin=subprocess.DEVNULL)
+    if res.returncode == 0:
+        return True, ""
+    said = next((ln.strip() for ln in (res.stdout + res.stderr).splitlines()
+                 if ln.strip().lower().startswith("error")), "")
+    return False, (paused + "Higgsfield refused the server's sign-in"
+                   + (f" ({said[:100]})" if said else "") + ". Sign it in again.")
+
+
 def health_checks() -> list[tuple[str, bool, str]]:
     """What this worker needs, checked, each with a sentence for the screen."""
     import shutil
 
-    from radar.posting import higgsfield as hf
-
-    import subprocess
-
     out = []
-    # Asked, not assumed: a credentials file on disk can hold a session
-    # Higgsfield has already ended ("Session expired" on the first request,
-    # 2026-09-23), so the check makes one free request of its own.
-    ok, _ = hf.available()
-    detail = "Pictures and covers are paused: Higgsfield is signed out on the server. Sign it in again."
-    if ok:
-        res = subprocess.run([hf.cli_path() or "higgsfield", "account", "status"],
-                             capture_output=True, text=True, timeout=60, check=False,
-                             stdin=subprocess.DEVNULL)
-        ok = res.returncode == 0
-        said = next((ln.strip() for ln in (res.stdout + res.stderr).splitlines()
-                     if ln.strip().lower().startswith("error")), "")
-        detail = ("Pictures and covers are paused: Higgsfield refused the server's sign-in"
-                  + (f" ({said[:100]})" if said else "") + ". Sign it in again.")
-    out.append(("higgsfield", ok, "" if ok else detail))
+    ok, detail = higgsfield_health()
+    out.append(("higgsfield", ok, detail))
     try:
         graph_get("me", fields="id")
         out.append(("meta", True, ""))
