@@ -450,6 +450,52 @@ async function proposalFill(who: Who, b: Row) {
   return { proposal: { ...p, ...patch }, changed: out.changed };
 }
 
+/**
+ * Draft a proposal again with the same choices (language, recording,
+ * offer). The worker closes a request as done even when its draft fails the
+ * checker, so a retry is a new request on the same proposal, never a replay
+ * of the old one.
+ */
+async function proposalRetry(who: Who, b: Row) {
+  const id = cleanText(b.id, 40);
+  const p = (await svc(`cockpit_sales_proposals?id=eq.${enc(id)}&select=*`))[0];
+  if (!p) throw new Refusal("That proposal is not there any more.", 404);
+  if (!who.manager && p.created_by !== who.email)
+    throw new Refusal("Only the closer who drafted it or a manager can try it again.", 403);
+  if (!["failed", "needs_input", "ready"].includes(String(p.status)))
+    throw new Refusal("This proposal is already being written.");
+  const open = await svc(
+    `cockpit_sales_requests?kind=eq.proposal&params->>proposal_id=eq.${enc(id)}&status=in.(queued,running)&select=id`,
+  );
+  if (open.length) throw new Refusal("This proposal is already being written.");
+  const first = (await svc(
+    `cockpit_sales_requests?kind=eq.proposal&params->>proposal_id=eq.${enc(id)}&select=params&order=requested_at.asc&limit=1`,
+  ))[0];
+  const was = ((first?.params ?? {}) as Row) ?? {};
+  const requestId = crypto.randomUUID();
+  await svc("cockpit_sales_requests", {
+    method: "POST",
+    body: {
+      id: requestId,
+      kind: "proposal",
+      contact_id: p.contact_id,
+      appointment_id: p.appointment_id,
+      params: {
+        lang: p.lang,
+        recording_id: p.recording_id ?? was.recording_id ?? null,
+        proposal_id: id,
+        offer: was.offer ?? { guarantee: false, payment: "pif" },
+      },
+      requested_by: who.email,
+    },
+    prefer: "return=minimal",
+  });
+  const patch = { status: "drafting", request_id: requestId, error: null, updated_at: new Date().toISOString() };
+  await svc(`cockpit_sales_proposals?id=eq.${enc(id)}`, { method: "PATCH", body: patch, prefer: "return=minimal" });
+  await audit(who, "proposal.retry", "cockpit_sales_proposals", id, { status: p.status }, patch);
+  return { proposal: { ...p, ...patch } };
+}
+
 async function requestSet(who: Who, b: Row) {
   const id = cleanText(b.id, 40);
   const to = String(b.to);
@@ -1016,6 +1062,7 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   "proposal.draft": proposalDraft,
   "proposal.set": proposalSet,
   "proposal.fill": proposalFill,
+  "proposal.retry": proposalRetry,
   "request.set": requestSet,
   "person.save": personSave,
   "link.save": linkSave,

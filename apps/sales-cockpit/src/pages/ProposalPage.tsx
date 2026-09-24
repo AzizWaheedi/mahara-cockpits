@@ -227,20 +227,20 @@ export default function ProposalPage({ me }: { me: Me }) {
           <p>
             The draft did not finish: {p.error ?? "the writer gave no reason"}.
           </p>
-          {mine && p.request_id ? (
+          {mine ? (
             <button
               type="button"
               disabled={busy}
               className="underline underline-offset-2"
               onClick={() =>
                 act(
-                  "request.set",
-                  { id: p.request_id, to: "queued" },
-                  "Asked the writer to try again.",
+                  "proposal.retry",
+                  { id: p.id },
+                  "Drafting again with the same choices. About ten minutes.",
                 )
               }
             >
-              Try again
+              Draft again
             </button>
           ) : null}
         </div>
