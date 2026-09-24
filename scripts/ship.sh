@@ -146,8 +146,18 @@ ship() {
   # A Supabase-only app opens on a blank page without its project address
   # in the bundle, and nothing above notices (2026-09-24: the sales app
   # went out with Vercel ciphertext in both variables). Read the bundle.
+  # Read it a few times: straight after a deploy the page can name the new
+  # bundle a few seconds before the proxy serves it (seen 2026-09-24).
   if [ -n "$live" ] && grep -q '^VITE_SUPABASE_URL=' "$dir/.env.example" 2>/dev/null; then
-    if curl -fsS -m 30 "$SITE/assets/$live" 2>/dev/null | grep -q 'https://[a-z0-9]\{20\}\.supabase\.co'; then
+    local carries=""
+    for _ in 1 2 3 4 5 6; do
+      if curl -fsS -m 30 "$SITE/assets/$live" 2>/dev/null | grep -q 'https://[a-z0-9]\{20\}\.supabase\.co'; then
+        carries=1
+        break
+      fi
+      sleep 5
+    done
+    if [ -n "$carries" ]; then
       echo "  the live bundle carries its Supabase address"
     else
       echo "the live bundle for $app has no Supabase address, so the page opens blank: check VITE_SUPABASE_URL on its Vercel project"
