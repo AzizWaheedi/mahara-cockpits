@@ -8,6 +8,7 @@ import {
 import { bridge } from "./comms";
 import { AZIZ_SLACK_ID } from "./constants";
 import { flush } from "./health";
+import { shouldMarkThreadReading } from "./relayPolicy";
 import { callTool } from "./tools";
 
 // biome-ignore lint/suspicious/noExplicitAny: chat rows and job results
@@ -300,7 +301,7 @@ export const run = internalAction({
         error = `No answer from Hermes after ${GIVE_UP_MIN} minutes. Ask again, or check that he is running.`;
       } else {
         // Claimed but not answered yet: the panel shows "typing".
-        if (job.claimedAt && !r.readingAt) {
+        if (job.claimedAt && !r.readingAt && shouldMarkThreadReading(app)) {
           try {
             await markReading(ctx, app, r.messageId);
             await ctx.runMutation(internal.hermesDrain.markRelayReading, {

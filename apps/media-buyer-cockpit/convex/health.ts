@@ -6,6 +6,7 @@ import {
   internalMutation,
   internalQuery,
 } from "./_generated/server";
+import { overdueCronRows } from "./cronFreshness";
 
 /**
  * The health ledger: one row per outside system the cockpits depend on.
@@ -425,14 +426,13 @@ export const staleJobs = internalQuery({
   returns: v.array(v.any()),
   handler: async ctx => {
     const rows = await ctx.db.query("cronRuns").collect();
-    const now = Date.now();
-    return rows
-      .filter(r => now - r.at > Math.max(3 * r.everyMin, 45) * 60_000)
-      .map(r => ({
+    return overdueCronRows(rows, Date.now(), new Set(Object.keys(JOBS))).map(
+      r => ({
         job: r.job,
         at: r.at,
-        minutes: Math.round((now - r.at) / 60_000),
-      }));
+        minutes: r.minutes,
+      }),
+    );
   },
 });
 
