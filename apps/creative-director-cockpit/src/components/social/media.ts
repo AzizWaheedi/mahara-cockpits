@@ -12,11 +12,60 @@ import { api } from "../../../convex/_generated/api";
  * two to ten is a carousel -- Instagram's own rule.
  */
 
+export type Words = {
+  headline?: string;
+  title?: string;
+  line?: string;
+  accent?: string;
+  cta?: string;
+  handle?: string;
+};
+
+/**
+ * How a client's pictures carry words (Aziz, 2026-09-24; the
+ * clickable-carousels and architecture-showcase skills). Bold draws them
+ * into the picture; showcase sets them in type over a clean one, so they
+ * can be fixed without drawing again and stay still when it moves.
+ */
+export type Look = "bold" | "showcase" | "plain";
+
+export const LOOKS: { key: Look; label: string; note: string }[] = [
+  {
+    key: "bold",
+    label: "Bold carousels",
+    note: "Teaching and opinion posts: a huge headline drawn into a striking picture, read back letter by letter before anyone sees it.",
+  },
+  {
+    key: "showcase",
+    label: "Project showcase",
+    note: "Architecture and interiors: a clean render with the project's name set in type and a consultation footer. Pictures can be made to move.",
+  },
+  {
+    key: "plain",
+    label: "Pictures only",
+    note: "No words on the pictures; the caption carries them.",
+  },
+];
+
 export type MediaItem = {
   kind: "image" | "video";
   url: string;
   source: "upload" | "ai";
   cover?: string | null;
+  /** The picture without its words, when words sit on top of it. */
+  clean?: string;
+  layer?: string;
+  words?: Words;
+  look?: "bold" | "showcase";
+  readback?: {
+    ok: boolean | null;
+    missing?: string[];
+    seen?: string;
+    error?: string;
+  };
+  /** A moving picture: the still it came from and the shot it was given. */
+  from?: string;
+  motion?: { camera?: string; motion?: string; person?: string };
 };
 
 /** Work Salma has queued or is doing on the month. */
@@ -24,7 +73,7 @@ export type Job = {
   id: string;
   kind: string;
   post_id: string | null;
-  params: { index?: number; add?: boolean } | null;
+  params: { index?: number; add?: boolean; write?: boolean } | null;
   status: string;
 };
 

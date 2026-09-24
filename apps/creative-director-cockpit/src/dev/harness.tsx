@@ -44,6 +44,7 @@ async function main() {
     dialect: "Gulf Arabic (Qatari)",
     ghlLocationId: null,
     platforms: ["instagram", "facebook"],
+    look: "showcase" as string,
     autoApprove: false,
     publishing: false,
     publishingSince: null as string | null,
@@ -270,6 +271,7 @@ async function main() {
       if (a.platforms) client.platforms = a.platforms as string[];
       if (a.autoApprove !== undefined)
         client.autoApprove = Boolean(a.autoApprove);
+      if (a.look !== undefined) client.look = String(a.look);
       if (a.publishing !== undefined) {
         client.publishing = Boolean(a.publishing);
         client.publishingSince = a.publishing ? new Date().toISOString() : null;
@@ -279,6 +281,87 @@ async function main() {
       if (a.postsPerMonth !== undefined)
         client.postsPerMonth = Number(a.postsPerMonth);
       return { ok: true };
+    },
+    "social:setWords": a => {
+      const p = post(a.postId);
+      const m = (p.media as Row[])[a.index as number];
+      if (!m) throw new Error("There is no picture at that place on the post.");
+      m.words = a.words;
+      later(
+        {
+          id: `words:${p.id}:${a.index}`,
+          kind: "words",
+          post_id: p.id,
+          params: { index: a.index },
+        },
+        1500,
+        () => {
+          delete m.readback;
+        },
+      );
+      return null;
+    },
+    "social:addWords": a => {
+      const p = post(a.postId);
+      const m = (p.media as Row[])[a.index as number];
+      later(
+        {
+          id: `words:${p.id}:${a.index}`,
+          kind: "words",
+          post_id: p.id,
+          params: { index: a.index, write: true },
+        },
+        2500,
+        () => {
+          m.words = {
+            title: "فيلا السدرة",
+            line: "VILLA AL SIDRA · DOHA",
+            cta: "احجز استشارتك المجانية",
+            handle: "@sampleclient",
+          };
+          m.look = "showcase";
+        },
+      );
+      return null;
+    },
+    "social:makeItMove": a => {
+      const p = post(a.postId);
+      const media = p.media as Row[];
+      const m = media[a.index as number];
+      if (m?.look === "bold" && m.words)
+        throw new Error(
+          "The words on this picture are drawn into it, so it cannot move without bending them. Move a picture from the project look, or one without words.",
+        );
+      const video = posts
+        .flatMap(x => (x.media ?? []) as Row[])
+        .find(x => x.kind === "video")?.url;
+      later(
+        {
+          id: `motion:${p.id}:${a.index}`,
+          kind: "motion",
+          post_id: p.id,
+          params: { index: a.index },
+        },
+        6000,
+        () => {
+          media[a.index as number] = {
+            kind: "video",
+            url: video ?? m.url,
+            source: "ai",
+            cover: m.url,
+            from: m.url,
+            words: m.words,
+            look: m.look,
+            motion: {
+              camera: "A slow, smooth dolly-in toward the villa",
+              person: "a man in a white thobe walks along the pool's edge",
+              motion: "palm fronds sway",
+            },
+          };
+          sync(p);
+        },
+      );
+      return null;
     },
     "social:setActive": () => ({ active: true }),
     "social:pages": () => {

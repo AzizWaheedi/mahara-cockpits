@@ -31,6 +31,8 @@ import {
   formatOf,
   itemsOf,
   type Job,
+  LOOKS,
+  type Look,
   type MediaItem,
   PLATFORMS,
   type Platform,
@@ -65,6 +67,7 @@ type Client = {
   dialect: string | null;
   ghlLocationId: string | null;
   platforms: Platform[];
+  look?: Look;
   autoApprove: boolean;
   publishing: boolean;
   publishingSince: string | null;
@@ -1242,6 +1245,7 @@ function PostSheet({
           clientId={client.taskId}
           jobs={jobs}
           onChanged={onChanged}
+          look={client.look ?? "bold"}
         />
 
         <div className="space-y-5 px-5 pb-6 pt-3">
@@ -1522,6 +1526,7 @@ function SettingsSheet({
     client.platforms.length ? client.platforms : ["instagram", "facebook"],
   );
   const [autoApprove, setAutoApprove] = useState(client.autoApprove);
+  const [look, setLook] = useState<Look>(client.look ?? "bold");
   const [adding, setAdding] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -1535,6 +1540,7 @@ function SettingsSheet({
         postsPerMonth: Math.max(1, Math.min(60, Number(perMonth) || 12)),
         platforms,
         autoApprove,
+        look,
       });
       toast.success("Saved.");
       await onChanged();
@@ -1606,6 +1612,42 @@ function SettingsSheet({
             Take Facebook off for a client who only has Instagram.
           </span>
         </div>
+
+        <fieldset>
+          <legend className="mb-1.5 block text-[13px] font-medium">
+            Words on the pictures
+          </legend>
+          <div className="space-y-1.5">
+            {LOOKS.map(l => (
+              <label
+                key={l.key}
+                className={`flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 ${
+                  look === l.key ? "border-foreground" : "hover:bg-muted/50"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="look"
+                  checked={look === l.key}
+                  onChange={() => setLook(l.key)}
+                  className="mt-0.5 h-4 w-4 accent-[var(--primary)]"
+                />
+                <span>
+                  <span className="block text-[13px] font-medium">
+                    {l.label}
+                  </span>
+                  <span className="mt-0.5 block text-[12px] text-muted-foreground">
+                    {l.note}
+                  </span>
+                </span>
+              </label>
+            ))}
+          </div>
+          <span className="mt-1.5 block text-[12px] text-muted-foreground">
+            New pictures follow it. Pictures already drawn keep their words
+            until they are drawn again.
+          </span>
+        </fieldset>
 
         <AccountsPicker
           clientId={client.taskId}
