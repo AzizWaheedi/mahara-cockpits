@@ -25,6 +25,7 @@ const ProposalsPage = lazy(() => import("./pages/ProposalsPage"));
 const ProposalPage = lazy(() => import("./pages/ProposalPage"));
 const NumbersPage = lazy(() => import("./pages/NumbersPage"));
 const GoalsPage = lazy(() => import("./pages/GoalsPage"));
+const EodPage = lazy(() => import("./pages/EodPage"));
 const RecordingsPage = lazy(() => import("./pages/RecordingsPage"));
 const RecordingPage = lazy(() => import("./pages/RecordingPage"));
 const ReviewOnlyPage = lazy(() =>
@@ -240,6 +241,7 @@ export function Seated({
               <Route path="/proposal/:id" element={<ProposalPage me={me} />} />
               <Route path="/numbers" element={<NumbersPage me={me} />} />
               <Route path="/goals" element={<GoalsPage me={me} />} />
+              <Route path="/eod" element={<EodPage me={me} />} />
               <Route path="/recordings" element={<RecordingsPage me={me} />} />
               <Route path="/recording/:id" element={<RecordingPage />} />
               <Route path="/review/:id" element={<ReviewOnlyPage />} />

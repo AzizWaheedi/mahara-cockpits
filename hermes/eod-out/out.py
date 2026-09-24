@@ -87,7 +87,16 @@ def slack_post(channel: str, text: str) -> str:
     return str(out.get("ts") or "")
 
 
-def file_row(tab: str, values: list) -> None:
+def order_by_header(cols: list, values) -> list:
+    """A row given as named columns goes under the tab's own header, in its
+    order, matching names without case; a list is already in order."""
+    if not isinstance(values, dict):
+        return list(values)
+    named = {str(k).strip().lower(): v for k, v in values.items()}
+    return [named.get(str(c).strip().lower(), "") for c in cols]
+
+
+def file_row(tab: str, values) -> None:
     """Append to the tab, in that tab's own column order."""
     from desk import sheets
     from desk.config import Config
@@ -97,7 +106,7 @@ def file_row(tab: str, values: list) -> None:
     cols = sheets.header(token, EOD_SHEET, tab)
     if not cols:
         raise ValueError(f"the '{tab}' tab has no header row")
-    sheets.append(token, EOD_SHEET, tab, values)
+    sheets.append(token, EOD_SHEET, tab, order_by_header(cols, values))
 
 
 def main() -> int:
@@ -112,38 +121,41 @@ def main() -> int:
 
     sent = failed = 0
     for row in rows:
-        try:
-            ts = slack_post(str(row["channel"]), str(row["body"]))
-            if row.get("tab") and row.get("row_values"):
-                try:
-                    file_row(str(row["tab"]), list(row["row_values"]))
-                except Exception as e:
-                    # Slack is what the radar reads, so a sheet failure
-                    # must not undo a post that already succeeded and
-                    # must not cause it to be sent twice.
-                    note(f"  {row['id']}: posted, but the sheet refused it: {e}")
-            sb.call(
-                "PATCH",
-                f"eod_outbox?id=eq.{row['id']}",
-                {"status": "sent", "slack_ts": ts, "sent_at": now(), "error": None},
-                "return=minimal",
-            )
+        patch: dict = {}
+        # The sheet and Slack each go once, on their own clocks. A Slack
+        # refusal (the bot not invited to the channel, say) used to keep the
+        # EOD out of the sheet as well; now the row is in the sheet as soon
+        # as the sheet takes it, and only the part still missing is retried.
+        if row.get("tab") and row.get("row_values") and not row.get("sheet_at"):
+            try:
+                file_row(str(row["tab"]), row["row_values"])
+                patch.update({"sheet_at": now(), "sheet_error": None})
+            except Exception as e:
+                patch["sheet_error"] = str(e)[:400]
+                note(f"  {row['id']}: the sheet refused it: {e}")
+        slack_ts = row.get("slack_ts")
+        slack_error = None
+        if not slack_ts:
+            try:
+                slack_ts = slack_post(str(row["channel"]), str(row["body"]))
+                patch.update({"slack_ts": slack_ts, "sent_at": now(), "error": None})
+            except Exception as e:
+                slack_error = f"{type(e).__name__}: {str(e)[:380]}"
+        sheet_done = bool(patch.get("sheet_at") or row.get("sheet_at")) or not (row.get("tab") and row.get("row_values"))
+        if slack_ts and sheet_done:
+            patch["status"] = "sent"
             sent += 1
             note(f"  {row['person']} ({row['role']}) -> {row['channel']}")
-        except Exception as e:
+        else:
             n = int(row.get("attempts") or 0) + 1
-            sb.call(
-                "PATCH",
-                f"eod_outbox?id=eq.{row['id']}",
-                {
-                    "attempts": n,
-                    "error": str(e)[:400],
-                    "status": "failed" if n >= MAX_ATTEMPTS else "queued",
-                },
-                "return=minimal",
-            )
+            patch.update({
+                "attempts": n,
+                "status": "failed" if n >= MAX_ATTEMPTS else "queued",
+                **({"error": slack_error} if slack_error else {}),
+            })
             failed += 1
-            note(f"  {row['person']}: {type(e).__name__}: {str(e)[:120]}")
+            note(f"  {row['person']}: {slack_error or 'the sheet is still to go'}")
+        sb.call("PATCH", f"eod_outbox?id=eq.{row['id']}", patch, "return=minimal")
 
     note(f"{sent} sent, {failed} failed")
     return 0

@@ -33,6 +33,13 @@ import {
   type ThreadMessage,
   toThread,
   whatsappWindow,
+  EOD_FIELDS,
+  EOD_TAB,
+  type EodRole,
+  eodColumns,
+  eodDay,
+  eodMessage,
+  eodValue,
   type Who,
 } from "./lib.ts";
 import {
@@ -859,6 +866,265 @@ async function convoSend(who: Who, b: Row) {
 }
 
 // ---------------------------------------------------------------------------
+// End of day
+// ---------------------------------------------------------------------------
+
+/** #eods-salesreps, where the Typeform EODs were posted (Make scenarios 9327584/9327485). */
+const EOD_CHANNEL = "C0AF5PJEAUX";
+const HOUR = 3_600_000;
+
+function eodRoleFor(who: Who, asked: unknown): EodRole {
+  const role = String(who.role ?? "");
+  if (role === "setter") return "setter";
+  if (role === "closer") return "closer";
+  return asked === "closer" ? "closer" : "setter";
+}
+
+function eodDayOk(day: unknown): string {
+  const today = eodDay(Date.now());
+  const d = String(day ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return today;
+  const back = (Date.parse(`${today}T00:00:00Z`) - Date.parse(`${d}T00:00:00Z`)) / 86_400_000;
+  if (back < 0) throw new Refusal("An end of day cannot be filed ahead of the day.");
+  if (back > 7) throw new Refusal("An end of day can be filed for the last seven days only.");
+  return d;
+}
+
+interface EodCounted {
+  values: Record<string, number | null>;
+  /** Where each number came from and what it leaves out, shown beside it. */
+  notes: Record<string, string>;
+  /** Numbers that mean what the question means, so the form starts with them. */
+  prefill: string[];
+}
+
+/**
+ * What the cockpit already knows about this rep's day. Checked against the
+ * Typeform EODs (Tahrir, 30 Aug and 5 Sept): Maqsam's outbound calls include
+ * the intro calls and miss calls made outside Maqsam (17 against the 9 she
+ * reported; 5 against 8), so a setter's call counts are shown as reference
+ * beside the question, never typed in for her. A closer's calendar and
+ * deals mean what the questions mean, so those start filled in.
+ */
+async function eodCount(who: Who, role: EodRole, day: string): Promise<EodCounted> {
+  const notes: Record<string, string> = {};
+  const prefill: string[] = [];
+  const from = new Date(Date.parse(`${day}T00:00:00Z`) - 3 * HOUR).toISOString();
+  const to = new Date(Date.parse(`${day}T00:00:00Z`) + 21 * HOUR).toISOString();
+  const between = (col: string) => `${col}=gte.${enc(from)}&${col}=lt.${enc(to)}`;
+  const ghlUser = String(who.ghl_user_id ?? "");
+  const out: Record<string, number | null> = {};
+  const person = (await svc(`cockpit_sales_people?email=eq.${enc(String(who.email))}&select=b2b_rep_id,name`))[0];
+  const rep = person?.b2b_rep_id
+    ? (await svc(`cockpit_sales_reps?id=eq.${enc(String(person.b2b_rep_id))}&select=display_name,closer_aliases`))[0]
+    : null;
+  const names = [rep?.display_name, ...((rep?.closer_aliases as string[] | null) ?? [])]
+    .map(x => String(x ?? "").trim().toLowerCase())
+    .filter(Boolean);
+  const deals = names.length
+    ? (await svc(`cockpit_sales_deals?${between("submitted_at")}&select=closer,setter,cash_collected,contracted_revenue,voided`))
+        .filter(d => !d.voided)
+    : [];
+  const sum = (rows: Row[], k: string) => rows.reduce((a, r) => a + Number(r[k] ?? 0), 0);
+  // The show rule used everywhere: showed, or confirmed or invalid once past.
+  const shown = (r: Row) =>
+    r.status === "showed" || ((r.status === "confirmed" || r.status === "invalid") && Date.parse(String(r.start_at)) < Date.now());
+
+  if (role === "setter") {
+    const maqsam = String(who.maqsam_email ?? "").toLowerCase();
+    if (maqsam) {
+      const dials = await svc(
+        `cockpit_sales_dials?agent_email=eq.${enc(maqsam)}&direction=eq.outbound&${between("occurred_at")}&select=state,duration_s&limit=2000`,
+      );
+      const done = dials.filter(d => d.state === "completed");
+      out.dials = dials.length;
+      out.contact_made = done.length;
+      out.conversations = done.filter(d => Number(d.duration_s ?? 0) >= 60).length;
+      out.quality_conversations = done.filter(d => Number(d.duration_s ?? 0) >= 180).length;
+      const minutes = Math.round(sum(done, "duration_s") / 60);
+      out.talk_time = minutes;
+      notes.dials = "Outbound calls from your Maqsam line, intro calls included; calls made outside Maqsam are not counted.";
+      notes.contact_made = "Of those, the ones someone answered.";
+      notes.conversations = "Answered, and a minute or longer.";
+      notes.quality_conversations = "Answered, and three minutes or longer.";
+      notes.talk_time = done.length
+        ? `${minutes} min in all over ${done.length} answered calls, about ${Math.round(minutes / done.length)} min each.`
+        : "No answered calls from your Maqsam line.";
+    } else {
+      notes.dials = "Your seat has no Maqsam address, so the cockpit cannot count your calls.";
+    }
+    if (ghlUser) {
+      const held = await svc(
+        `cockpit_sales_calendar?call_type=eq.intro&assigned_user_id=eq.${enc(ghlUser)}&${between("start_at")}&select=status,start_at`,
+      );
+      out.intros_scheduled = held.length;
+      out.intro_shows = held.filter(shown).length;
+      out.intros_booked = (await svc(
+        `cockpit_sales_calendar?call_type=eq.intro&assigned_user_id=eq.${enc(ghlUser)}&${between("booked_at")}&select=appointment_id`,
+      )).length;
+      // Demos booked today for leads whose intro was theirs in the last 60 days.
+      const demos = await svc(`cockpit_sales_calendar?call_type=eq.demo&${between("booked_at")}&select=contact_id`);
+      const ids = [...new Set(demos.map(d => String(d.contact_id ?? "")).filter(Boolean))];
+      if (ids.length) {
+        const since = new Date(Date.parse(from) - 60 * 24 * HOUR).toISOString();
+        const mine = await svc(
+          `cockpit_sales_calendar?call_type=eq.intro&assigned_user_id=eq.${enc(ghlUser)}&start_at=gte.${enc(since)}&contact_id=in.(${ids.map(i => `"${i}"`).join(",")})&select=contact_id`,
+        );
+        const theirs = new Set(mine.map(m => String(m.contact_id)));
+        out.demos_booked = demos.filter(d => theirs.has(String(d.contact_id))).length;
+      } else out.demos_booked = 0;
+      notes.intros_scheduled = "Intro calls on your calendar that day.";
+      notes.intros_booked = "Intro calls booked that day onto your calendar.";
+      notes.intro_shows = "Intros that day marked showed (a confirmed call that has passed counts as shown).";
+      notes.demos_booked = "Demos booked that day for leads whose intro was yours in the last 60 days.";
+    }
+    const sets = deals.filter(d => names.includes(String(d.setter ?? "").trim().toLowerCase()));
+    out.deals_closed = sets.length;
+    out.cash = sum(sets, "cash_collected");
+    out.contracted = sum(sets, "contracted_revenue");
+    for (const k of ["deals_closed", "cash", "contracted"])
+      notes[k] = "New Client Forms that day naming you as the setter (the form asks since 24 September), voided ones out.";
+    prefill.push("deals_closed", "cash", "contracted");
+  } else {
+    if (ghlUser) {
+      const demos = await svc(
+        `cockpit_sales_calendar?call_type=eq.demo&assigned_user_id=eq.${enc(ghlUser)}&${between("start_at")}&select=status,start_at`,
+      );
+      out.demos_scheduled = demos.length;
+      out.demos_showed = demos.filter(shown).length;
+      out.no_shows = demos.filter(d => d.status === "noshow").length;
+      out.cancels = demos.filter(d => d.status === "cancelled").length;
+      notes.demos_scheduled = "Demos on your calendar that day.";
+      notes.demos_showed = "Of those, marked showed (a confirmed call that has passed counts as shown).";
+      notes.no_shows = "Of those, marked no-show.";
+      notes.cancels = "Of those, cancelled.";
+      prefill.push("demos_scheduled", "demos_showed", "no_shows", "cancels");
+    }
+    const closed = deals.filter(d => names.includes(String(d.closer ?? "").trim().toLowerCase()));
+    out.closed = closed.length;
+    out.cash = sum(closed, "cash_collected");
+    out.contracted = sum(closed, "contracted_revenue");
+    for (const k of ["closed", "cash", "contracted"]) notes[k] = "New Client Forms that day naming you as the closer, voided ones out.";
+    prefill.push("closed", "cash", "contracted");
+  }
+  return { values: out, notes, prefill };
+}
+
+async function eodPrefill(who: Who, b: Row) {
+  const role = eodRoleFor(who, b.role);
+  const day = eodDayOk(b.day);
+  const [counted, saved, person] = await Promise.all([
+    eodCount(who, role, day),
+    svc(`cockpit_sales_eods?email=eq.${enc(String(who.email))}&day=eq.${day}&role=eq.${role}&select=*`),
+    svc(`cockpit_sales_people?email=eq.${enc(String(who.email))}&select=name,slack_user_id`),
+  ]);
+  const eod = saved[0] ?? null;
+  const outbox = eod?.outbox_id
+    ? (await svc(`eod_outbox?id=eq.${eod.outbox_id}&select=status,slack_ts,sent_at,sheet_at,error,sheet_error,attempts`))[0] ?? null
+    : null;
+  const role_choice = ["setter", "closer"].includes(String(who.role)) ? [String(who.role)] : ["setter", "closer"];
+  return {
+    day,
+    today: eodDay(Date.now()),
+    role,
+    roles: role_choice,
+    name: person[0]?.name ?? who.name ?? String(who.email).split("@")[0],
+    has_slack_id: Boolean(person[0]?.slack_user_id),
+    has_maqsam: Boolean(who.maqsam_email),
+    has_ghl: Boolean(who.ghl_user_id),
+    fields: EOD_FIELDS[role],
+    computed: counted.values,
+    notes: counted.notes,
+    prefill: counted.prefill,
+    eod,
+    outbox,
+  };
+}
+
+async function eodSubmit(who: Who, b: Row) {
+  const role = eodRoleFor(who, b.role);
+  const day = eodDayOk(b.day);
+  const raw = (b.answers ?? {}) as Row;
+  const answers: Record<string, number | string | null> = {};
+  const missing: string[] = [];
+  for (const f of EOD_FIELDS[role]) {
+    const v = eodValue(f.kind, raw[f.key]);
+    if (!v.ok) throw new Refusal(`"${f.label}" has to be ${f.kind === "count" ? "a whole number" : "a number"} of 0 or more.`);
+    answers[f.key] = v.value;
+    if (f.required && (v.value === null || v.value === "")) missing.push(f.label);
+  }
+  if (missing.length) throw new Refusal(`Fill in ${missing.slice(0, 3).join(", ")}${missing.length > 3 ? " and the rest" : ""} first.`);
+
+  const email = String(who.email);
+  const existing = (await svc(`cockpit_sales_eods?email=eq.${enc(email)}&day=eq.${day}&role=eq.${role}&select=*`))[0];
+  if (existing?.submitted_at)
+    throw new Refusal("This day's end of day is already in. If a number was wrong, tell your manager.", 409);
+  const person = (await svc(`cockpit_sales_people?email=eq.${enc(email)}&select=name,slack_user_id`))[0];
+  const name = String(person?.name ?? who.name ?? email.split("@")[0]);
+  const slackId = person?.slack_user_id ? String(person.slack_user_id) : null;
+  const computed = (await eodCount(who, role, day)).values;
+  const now = Date.now();
+  const responseId = `cockpit-${crypto.randomUUID().slice(0, 8)}`;
+
+  let outbox: Row;
+  try {
+    outbox = (await svc("eod_outbox", {
+      method: "POST",
+      body: {
+        role: `sales_${role}`,
+        day,
+        person: name,
+        slack_id: slackId,
+        channel: EOD_CHANNEL,
+        tab: EOD_TAB[role],
+        body: eodMessage(role, name, slackId, day, answers),
+        row_values: eodColumns(role, name, day, now, responseId, answers),
+      },
+      prefer: "return=representation",
+    }))[0];
+  } catch (e) {
+    if (/23505|duplicate/.test(String((e as Error).message ?? e)))
+      throw new Refusal("An end of day for this day and name is already on its way out.", 409);
+    throw e;
+  }
+  const saved = (await svc("cockpit_sales_eods?on_conflict=email,day,role", {
+    method: "POST",
+    body: {
+      email,
+      name,
+      role,
+      day,
+      answers,
+      computed,
+      submitted_at: new Date(now).toISOString(),
+      outbox_id: outbox.id,
+      updated_at: new Date(now).toISOString(),
+    },
+    prefer: "resolution=merge-duplicates,return=representation",
+  }))[0];
+  await audit(who, "eod.submit", "cockpit_sales_eods", String(saved.id), existing ?? null, { role, day, outbox_id: outbox.id });
+  return { eod: saved, outbox: { status: outbox.status } };
+}
+
+/** Put a stalled EOD back in the queue (the bot was invited after it gave up, say). */
+async function eodRetry(who: Who, b: Row) {
+  const id = cleanText(b.id, 40);
+  const eod = (await svc(`cockpit_sales_eods?id=eq.${enc(id)}&select=*`))[0];
+  if (!eod) throw new Refusal("That end of day is not here.", 404);
+  if (!who.manager && eod.email !== who.email) throw new Refusal("That is someone else's end of day.", 403);
+  if (!eod.outbox_id) throw new Refusal("That end of day was never sent.", 409);
+  const out = (await svc(`eod_outbox?id=eq.${eod.outbox_id}&select=status`))[0];
+  if (out?.status === "sent") return { status: "sent" };
+  await svc(`eod_outbox?id=eq.${eod.outbox_id}`, {
+    method: "PATCH",
+    body: { status: "queued", attempts: 0, error: null },
+    prefer: "return=minimal",
+  });
+  await audit(who, "eod.retry", "eod_outbox", String(eod.outbox_id), out ?? null, { status: "queued" });
+  return { status: "queued" };
+}
+
+// ---------------------------------------------------------------------------
 // Goals by the month
 // ---------------------------------------------------------------------------
 
@@ -1374,6 +1640,9 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   "setting.save": settingSave,
   "lead.live": leadLive,
   "ghl.users": ghlUsers,
+  "eod.prefill": eodPrefill,
+  "eod.submit": eodSubmit,
+  "eod.retry": eodRetry,
   "convo.read": convoRead,
   "convo.send": convoSend,
   "goal.set": goalSet,

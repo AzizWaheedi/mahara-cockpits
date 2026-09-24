@@ -2,6 +2,7 @@ import {
   ArrowRightLeft,
   CalendarDays,
   ChartNoAxesColumn,
+  ClipboardCheck,
   FileText,
   Link2,
   type LucideIcon,
@@ -51,6 +52,7 @@ export const GROUPS: { label: string; items: Item[] }[] = [
         icon: FileText,
         badge: "proposals",
       },
+      { to: "/eod", label: "End of day", icon: ClipboardCheck },
     ],
   },
   {
