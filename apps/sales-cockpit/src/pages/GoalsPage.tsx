@@ -1,5 +1,5 @@
 import { ChevronLeft, ChevronRight, Target } from "lucide-react";
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import {
   button,
@@ -508,7 +508,12 @@ function GoalLine({
   );
 }
 
-/** A number that saves when you leave the box or press Enter. */
+/**
+ * A number that saves when you leave the box or press Enter, once: Enter
+ * followed by the box losing focus must not save twice (it did, 2026-09-24,
+ * two audit rows for one goal), so a save in flight and the last value saved
+ * are both remembered.
+ */
 function NumberField({
   label,
   value,
@@ -525,20 +530,28 @@ function NumberField({
   const shown = value === null ? "" : String(value);
   const [text, setText] = useState(shown);
   const [busy, setBusy] = useState(false);
-  useEffect(() => setText(shown), [shown]);
+  const saving = useRef(false);
+  const saved = useRef(shown);
+  useEffect(() => {
+    setText(shown);
+    saved.current = shown;
+  }, [shown]);
 
   async function save(e?: FormEvent) {
     e?.preventDefault();
     const t = text.replace(/,/g, "").trim();
-    if (t === shown) return;
+    if (saving.current || t === saved.current) return;
+    saving.current = true;
     setBusy(true);
     try {
       await onSave(t);
+      saved.current = t;
       toast.success(t ? `${label} saved.` : `${label} cleared.`);
     } catch (err) {
       toast.error(String((err as Error).message ?? err));
-      setText(shown);
+      setText(saved.current);
     } finally {
+      saving.current = false;
       setBusy(false);
     }
   }
@@ -559,7 +572,7 @@ function NumberField({
         <input
           inputMode="decimal"
           value={text}
-          disabled={busy}
+          aria-busy={busy}
           onChange={e => setText(e.target.value)}
           onBlur={() => void save()}
           placeholder="--"
