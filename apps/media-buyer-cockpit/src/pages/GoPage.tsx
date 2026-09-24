@@ -20,7 +20,7 @@ export function GoPage() {
   const { cockpit = "" } = useParams();
   const [params] = useSearchParams();
   const navigate = useNavigate();
-  const { access, ready, isAuthenticated, session } = useCockpitAuth();
+  const { access, ready, isAuthenticated } = useCockpitAuth();
   const [error, setError] = useState<string | null>(null);
   const started = useRef(false);
 
@@ -55,14 +55,8 @@ export function GoPage() {
     const cleanNext = next.startsWith("/") ? next : `/${next}`;
     const targetPath = `${path}${cleanNext === "/dashboard" && path ? "/dashboard" : cleanNext}`;
 
-    // Pass hash tokens if available so standalone or cross-origin environments detect the session
-    const hash =
-      session?.access_token && session?.refresh_token
-        ? `#access_token=${session.access_token}&refresh_token=${session.refresh_token}&token_type=bearer`
-        : "";
-
-    window.location.replace(`${targetPath}${hash}`);
-  }, [ready, isAuthenticated, access, cockpit, params, navigate, session]);
+    window.location.replace(targetPath);
+  }, [ready, isAuthenticated, access, cockpit, params, navigate]);
 
   return (
     <div className="flex flex-1 items-center justify-center p-6">
