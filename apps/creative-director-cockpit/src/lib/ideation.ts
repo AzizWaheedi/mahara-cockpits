@@ -611,6 +611,75 @@ async function requestsList({ limit }: { limit?: number } = {}) {
   return data ?? [];
 }
 
+async function saveFromWinner({ adId, note }: { adId: string; note?: string }) {
+  const { data: winner, error: wErr } = await supabase
+    .from("winner_ads")
+    .select("*")
+    .eq("ad_id", adId)
+    .maybeSingle();
+  boom(wErr);
+  if (!winner) throw new Error("That ad is not in the scripting database any more.");
+
+  const { email, name } = await who();
+  const key = `meta_ads:${adId}`;
+  const now = new Date().toISOString();
+  const clientName = winner.client || "";
+
+  const { data: existing } = await supabase
+    .from("ideation_posts")
+    .select("key, status, saved_at, saved_by, saved_by_name, note, saved_note, tags")
+    .eq("key", key)
+    .maybeSingle();
+
+  const body = {
+    key,
+    platform: "meta_ads",
+    post_id: adId,
+    url: winner.watch_url || `https://www.facebook.com/ads/library/?id=${adId}`,
+    origin: "library",
+    status: existing?.status === "dismissed" ? "saved" : (existing?.status ?? "saved"),
+    at: now,
+    updated_at: now,
+    author_handle: clientName.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+    author_name: clientName,
+    advertiser: clientName,
+    client: clientName,
+    caption: winner.headline || winner.body || "",
+    transcript: winner.transcript || "",
+    hook: winner.hook ? { text: winner.hook, type: "" } : null,
+    voice: winner.voice || null,
+    language: winner.service_line || null,
+    cta: winner.cta || null,
+    ad_format: winner.format || null,
+    thumb_url: winner.thumb_url || null,
+    industry: "ours",
+    tags: [
+      ...new Set([
+        ...(existing?.tags ?? []),
+        "ours",
+        "winner",
+        clientName ? `client:${clientName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}` : "",
+        winner.service_line ? `service:${winner.service_line}` : "",
+      ].filter(Boolean)),
+    ],
+    spend: winner.spend ? Number(winner.spend) : null,
+    leads: winner.leads ? Number(winner.leads) : null,
+    cpl: winner.cpl ? Number(winner.cpl) : null,
+    why_it_works: note || "",
+    saved_by: existing?.saved_by ?? email,
+    saved_by_name: existing?.saved_by_name ?? name,
+    saved_at: existing?.saved_at ?? now,
+    saved_note: note ?? existing?.saved_note ?? null,
+    note: note ?? existing?.note ?? null,
+  };
+
+  const { error: insErr } = await supabase
+    .from("ideation_posts")
+    .upsert(body, { onConflict: "key" });
+  boom(insErr);
+  return { key, status: body.status };
+}
+
 /**
  * The same shape the page imports from Convex in the other two cockpits, so
  * the page file itself does not have to know which one it is running in.
@@ -631,8 +700,39 @@ export const api = {
     watchlistRemove,
     requestScrape,
     requestsList,
+    saveFromWinner,
+    saveFromClientAd,
   },
 };
+
+export async function saveFromClientAd(props: {
+  metaAdId: string;
+  client: string;
+  name?: string;
+  campaignName?: string;
+  thumbUrl?: string;
+  spend?: number;
+  leads?: number;
+  cpl?: number;
+  live?: boolean;
+}) {
+  const { email, name } = await who();
+  const key = `meta_ads:${props.metaAdId}`;
+  const now = new Date().toISOString();
+  const { error } = await supabase.from("ideation_posts").upsert({
+    key,
+    platform: "meta",
+    post_id: props.metaAdId,
+    status: "saved",
+    caption: props.name || props.campaignName || "",
+    thumb_url: props.thumbUrl,
+    industry: props.client,
+    saved_by: email,
+    saved_by_name: name,
+    saved_at: now,
+  });
+  if (error) boom(error);
+}
 
 /**
  * Convex's hook, minus Convex. It returns the function unchanged -- the

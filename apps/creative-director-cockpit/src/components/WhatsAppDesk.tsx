@@ -1,4 +1,3 @@
-import { useAction } from "convex/react";
 import {
   Archive,
   CheckCheck,
@@ -9,7 +8,8 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { api } from "../../convex/_generated/api";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { archiveWaThread, fetchWaInbox, sendReply } from "@/lib/comms";
 
 /**
  * The WhatsApp desk.
@@ -85,8 +85,18 @@ function Thread({
   desk: Desk;
   onDone: () => void;
 }) {
-  const send = useAction(api.wa.send);
-  const archive = useAction(api.wa.archive);
+  const auth = useCockpitAuth();
+  const send = async (args: { threadId?: string; chatId?: string; text?: string; body?: string; lang?: "ar" | "en"; desk?: Desk }) => {
+    if (!auth.client) return;
+    const cid = args.chatId ?? args.threadId ?? "";
+    const msg = args.text ?? args.body ?? "";
+    await sendReply(auth.client, auth.session?.user?.email ?? "creative", { chatId: cid, text: msg });
+  };
+  const archive = async (args: { threadId?: string; chatId?: string; desk?: Desk }) => {
+    if (!auth.client) return;
+    const cid = args.chatId ?? args.threadId ?? "";
+    await archiveWaThread(auth.client, cid);
+  };
 
   const hasAr = Boolean(t.draft?.ar);
   const [lang, setLang] = useState<"ar" | "en">(hasAr ? "ar" : "en");
@@ -258,7 +268,11 @@ const CONNECTED: Record<Desk, boolean> = {
 };
 
 export function WhatsAppDesk({ desk }: { desk: Desk }) {
-  const inbox = useAction(api.wa.inbox);
+  const auth = useCockpitAuth();
+  const inbox = useCallback(async (_args: { desk: Desk }) => {
+    if (!auth.client) return { threads: [], totalAwaiting: 0 };
+    return fetchWaInbox(auth.client, desk);
+  }, [auth.client, desk]);
   const [threads, setThreads] = useState<Thread[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 

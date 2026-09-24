@@ -1,8 +1,7 @@
-import { useAction } from "convex/react";
 import { Facebook, Instagram, LoaderCircle, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { api } from "../../../convex/_generated/api";
+import { api, useAction } from "@/lib/social";
 import { PLATFORMS, type Platform } from "./media";
 
 /**

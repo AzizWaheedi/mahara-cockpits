@@ -1,5 +1,5 @@
 import type { StatusTone } from "@/components/ceo/StatusChip";
-import type { MachinePayload } from "../../../convex/ceo/payloads";
+import type { MachinePayload } from "@/types/ceo/payloads";
 
 /**
  * Health rules for the machine payload, shared by the Machine tab and the

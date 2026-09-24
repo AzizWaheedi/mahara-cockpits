@@ -1,9 +1,15 @@
-import { useAction } from "convex/react";
 import { Check, Copy, ExternalLink, LoaderCircle, Plus, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { AnimatedSelect } from "@/components/ui/animated-select";
-import { api } from "../../convex/_generated/api";
+import {
+  checkReviewImportStatus,
+  createReview,
+  importReviewFolder,
+  listReviewClients,
+  listSentReviews,
+} from "@/lib/review";
 
 /**
  * Send a finished video to a client for review.
@@ -37,11 +43,12 @@ function ago(iso: string | null): string {
 type Client = { task_id: string; name: string };
 
 export function SendForReview() {
-  const create = useAction(api.review.create);
-  const listSent = useAction(api.review.sent);
-  const listClients = useAction(api.review.clients);
-  const importFolder = useAction(api.review.importFolder);
-  const importStatus = useAction(api.review.importStatus);
+  const auth = useCockpitAuth();
+  const create = useCallback((args: any) => createReview(auth.client, auth.session?.user?.email ?? "creative", args), [auth.client, auth.session?.user?.email]);
+  const listSent = useCallback((_args?: any) => listSentReviews(auth.client, auth.session?.user?.email ?? "creative"), [auth.client, auth.session?.user?.email]);
+  const listClients = useCallback((_args?: any) => listReviewClients(auth.client, auth.session?.user?.email ?? "creative"), [auth.client, auth.session?.user?.email]);
+  const importFolder = useCallback((args: any) => importReviewFolder(auth.client, auth.session?.user?.email ?? "creative", args), [auth.client, auth.session?.user?.email]);
+  const importStatus = useCallback((args: any) => checkReviewImportStatus(auth.client, auth.session?.user?.email ?? "creative", args), [auth.client, auth.session?.user?.email]);
 
   const [links, setLinks] = useState<string[]>([""]);
   const [folder, setFolder] = useState("");

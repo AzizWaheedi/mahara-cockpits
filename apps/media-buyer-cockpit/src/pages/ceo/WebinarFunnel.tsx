@@ -1,4 +1,4 @@
-import { useAction } from "convex/react";
+import { useAction } from "@/lib/cockpitApi";
 import { type ReactNode, useId, useMemo, useState } from "react";
 import {
   Area,
@@ -30,12 +30,12 @@ import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import type { CeoSection } from "@/components/ceo/useCeo";
-import { api } from "../../../convex/_generated/api";
+import { api } from "@/lib/cockpitApi";
 import type {
   WebinarPayload,
   WebinarRound,
-} from "../../../convex/ceo/payloads";
-import type { Room } from "../../../convex/ceo/webinarRoom";
+} from "@/types/ceo/payloads";
+import type { Room } from "@/types/ceo/webinarRoom";
 
 /**
  * The webinar funnel, beside the call funnel on the Frontend tab (Aziz,

@@ -1,4 +1,3 @@
-import { useQuery } from "convex/react";
 import {
   Activity,
   ArrowUpRight,
@@ -16,7 +15,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { api } from "../../convex/_generated/api";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 
 const stats = [
   {
@@ -50,7 +49,8 @@ const quickActions = [
 ];
 
 export function DashboardPage() {
-  const user = useQuery(api.auth.currentUser);
+  const auth = useCockpitAuth();
+  const user = { name: auth.session?.user?.user_metadata?.full_name ?? auth.session?.user?.email ?? "Media Buyer" };
 
   return (
     <div className="space-y-8">

@@ -1,6 +1,12 @@
-import { useMutation, useQuery } from "convex/react";
-import { useState } from "react";
-import { api } from "../../convex/_generated/api";
+import { useCallback, useEffect, useState } from "react";
+import { toast } from "sonner";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import {
+  fetchMeetingsOverview,
+  linkCalendar,
+  sendReply,
+  unlinkCalendar,
+} from "@/lib/comms";
 
 // biome-ignore lint/suspicious/noExplicitAny: feed rows
 type Any = any;
@@ -48,9 +54,17 @@ const KIND_CLASS: Record<string, string> = {
  * Connect your own Google Calendar: share it with the cockpit's service
  * account, type the Google email, done. Checked within a minute.
  */
-function CalendarLink({ link, saEmail }: { link: Any; saEmail: string }) {
-  const linkCalendar = useMutation(api.comms.linkCalendar);
-  const unlinkCalendar = useMutation(api.comms.unlinkCalendar);
+function CalendarLink({
+  link,
+  saEmail,
+  onLink,
+  onUnlink,
+}: {
+  link: Any;
+  saEmail: string;
+  onLink: (email: string) => Promise<void>;
+  onUnlink: () => Promise<void>;
+}) {
   const [email, setEmail] = useState("");
   const [open, setOpen] = useState(false);
   const [err, setErr] = useState("");
@@ -68,7 +82,7 @@ function CalendarLink({ link, saEmail }: { link: Any; saEmail: string }) {
         <button
           type="button"
           className="underline"
-          onClick={() => unlinkCalendar({})}
+          onClick={() => onUnlink()}
         >
           disconnect
         </button>
@@ -95,7 +109,7 @@ function CalendarLink({ link, saEmail }: { link: Any; saEmail: string }) {
         e.preventDefault();
         setErr("");
         try {
-          await linkCalendar({ calendarId: email });
+          await onLink(email);
           setOpen(false);
         } catch (x) {
           setErr(String((x as Error).message ?? x));
@@ -143,15 +157,60 @@ function CalendarLink({ link, saEmail }: { link: Any; saEmail: string }) {
 }
 
 export function MeetingsPage() {
-  const data = useQuery(api.comms.overview, {});
-  const sendReply = useMutation(api.comms.sendReply);
+  const auth = useCockpitAuth();
+  const [data, setData] = useState<Any | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [sending, setSending] = useState<Record<string, boolean>>({});
-  const [openThread, setOpenThread] = useState<string | null>(null);
+  const [_openThread, _setOpenThread] = useState<string | null>(null);
+
+  const loadOverview = useCallback(() => {
+    if (!auth.client) return;
+    fetchMeetingsOverview(auth.client, auth.clients)
+      .then(setData)
+      .catch(console.error);
+  }, [auth.client, auth.clients]);
+
+  useEffect(() => {
+    loadOverview();
+  }, [loadOverview]);
+
+  const handleSendReply = async ({ chatId, text }: { chatId: string; text: string }) => {
+    if (!auth.client) return;
+    try {
+      await sendReply(auth.client, auth.email, { chatId, text });
+      toast.success("Sent on WhatsApp");
+      loadOverview();
+    } catch (e) {
+      toast.error(String(e));
+    }
+  };
+
+  const handleLinkCalendar = async (calId: string) => {
+    if (!auth.client) return;
+    try {
+      await linkCalendar(auth.client, auth.email, calId);
+      toast.success("Calendar connected");
+      loadOverview();
+    } catch (e) {
+      toast.error(String(e));
+    }
+  };
+
+  const handleUnlinkCalendar = async () => {
+    if (!auth.client) return;
+    try {
+      await unlinkCalendar(auth.client, auth.email);
+      toast.success("Calendar disconnected");
+      loadOverview();
+    } catch (e) {
+      toast.error(String(e));
+    }
+  };
+
   if (!data) return <p className="text-sm text-muted-foreground">Loading…</p>;
   const {
     today,
-    upcoming,
+    upcoming: _upcoming,
     nextCall,
     threads,
     calendarConfigured,
@@ -205,7 +264,12 @@ export function MeetingsPage() {
               </span>
             ) : null}
           </h2>
-          <CalendarLink link={myCalendar} saEmail={saEmail} />
+          <CalendarLink
+            link={myCalendar}
+            saEmail={saEmail}
+            onLink={handleLinkCalendar}
+            onUnlink={handleUnlinkCalendar}
+          />
         </div>
         {today.length === 0 ? (
           <p className="text-[13px] text-muted-foreground">
@@ -361,7 +425,7 @@ export function MeetingsPage() {
                         onClick={async () => {
                           setSending(x => ({ ...x, [t.chatId]: true }));
                           try {
-                            await sendReply({ chatId: t.chatId, text });
+                            await handleSendReply({ chatId: t.chatId, text });
                           } finally {
                             setSending(x => ({ ...x, [t.chatId]: false }));
                           }
@@ -399,85 +463,6 @@ export function MeetingsPage() {
           </ul>
         </section>
       ) : null}
-
-      <section className="rounded-xl border bg-card p-4 shadow-sm">
-        <h2 className="mb-2 text-[12px] font-bold uppercase tracking-widest text-teal-600">
-          Next 7 days
-        </h2>
-        {upcoming.length === 0 ? (
-          <p className="text-[13px] text-muted-foreground">Nothing booked.</p>
-        ) : (
-          <ul className="divide-y">
-            {(upcoming as Any[]).map(e => (
-              <li
-                key={e.eventId}
-                className="flex flex-wrap items-baseline gap-3 py-2 text-[13px]"
-              >
-                <span className="w-24 font-mono tabular-nums text-muted-foreground">
-                  {day(e.start)}
-                </span>
-                <span className="w-12 font-mono tabular-nums">
-                  {e.allDay ? "" : clock(e.start)}
-                </span>
-                <span>{e.title}</span>
-                {e.clientName ? (
-                  <span className="rounded bg-muted px-1.5 py-0.5 text-[12px]">
-                    {e.clientName}
-                  </span>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <section className="rounded-xl border bg-card p-4 shadow-sm">
-        <h2 className="mb-2 text-[12px] font-bold uppercase tracking-widest text-teal-600">
-          All WhatsApp threads
-        </h2>
-        <ul className="divide-y">
-          {(threads as Any[]).map(t => (
-            <li key={t.chatId} className="py-2 text-[13px]">
-              <button
-                type="button"
-                className="flex w-full flex-wrap items-baseline gap-2 text-left"
-                onClick={() =>
-                  setOpenThread(v => (v === t.chatId ? null : t.chatId))
-                }
-              >
-                <span className="font-semibold">{t.name}</span>
-                {!t.isGroup ? (
-                  <span className="text-[12px] text-muted-foreground">
-                    private
-                  </span>
-                ) : null}
-                {t.clientName ? (
-                  <span className="rounded bg-muted px-1.5 py-0.5 text-[12px]">
-                    {t.clientName}
-                  </span>
-                ) : null}
-                <span className="ml-auto text-[12px] text-muted-foreground">
-                  {t.lastAt
-                    ? `${t.lastFromUs ? "we wrote" : "they wrote"} ${ago(t.lastAt)} ago`
-                    : (t.error ?? "")}
-                </span>
-              </button>
-              {openThread === t.chatId ? (
-                <ul className="mt-2 space-y-1 rounded-md bg-muted/40 p-2">
-                  {(t.recent as Any[]).map((m, i) => (
-                    <li key={i} className={m.fromMe ? "text-right" : ""}>
-                      <span className="text-[12px] text-muted-foreground">
-                        {m.who} · {ago(m.at)} ago
-                      </span>
-                      <p>{m.text}</p>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      </section>
     </div>
   );
 }

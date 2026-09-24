@@ -7,7 +7,7 @@
  * lead on Marketing then cover the same days, whatever either tab does with it.
  */
 
-import type { GrowthPayload } from "../../../convex/ceo/payloads";
+import type { GrowthPayload } from "@/types/ceo/payloads";
 import type { FilterOption } from "./FilterChips";
 import { date, shortDate } from "./format";
 

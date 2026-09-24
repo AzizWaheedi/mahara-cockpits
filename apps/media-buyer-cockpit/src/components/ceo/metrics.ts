@@ -14,7 +14,7 @@ import type {
   FunnelWindow,
   MoneyPayload,
   Note,
-} from "../../../convex/ceo/payloads";
+} from "@/types/ceo/payloads";
 import { isNum, money, month as monthLabel, pct, pct1, plural } from "./format";
 
 // --- Cash collected ------------------------------------------------------

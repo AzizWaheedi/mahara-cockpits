@@ -1,11 +1,11 @@
-import { useAction } from "convex/react";
+import { useAction } from "@/lib/cockpitApi";
 import { Loader2, Wand2 } from "lucide-react";
 import { Fragment, useMemo, useState } from "react";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import { DateInput } from "@/components/ui/date-input";
-import { api } from "../../../convex/_generated/api";
-import type { Board, TargetRow } from "../../../convex/ceo/goals";
+import { api } from "@/lib/cockpitApi";
+import type { Board, TargetRow } from "@/types/ceo/goals";
 import { fmt } from "./goalsKit";
 
 /**

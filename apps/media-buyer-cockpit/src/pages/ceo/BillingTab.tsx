@@ -1,12 +1,16 @@
-import { useAction, useMutation } from "convex/react";
 import { useMemo } from "react";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import {
   type BillingApi,
   type BillingPayload,
   BillingSheet,
 } from "@/components/billing/BillingSheet";
-import { api } from "../../../convex/_generated/api";
-import type { Account } from "../../../convex/billingCore";
+import {
+  assignBillingPayer,
+  editBillingAccount,
+  fetchBillingSheet,
+  logBillingPayment,
+} from "@/lib/billing";
 import type { CeoTabProps } from "./types";
 
 /**
@@ -17,77 +21,67 @@ import type { CeoTabProps } from "./types";
  * can be tied from the same screen, so LTV adds up.
  */
 export function BillingTab(_: CeoTabProps) {
-  const sheet = useAction(api.billing.sheet);
-  const edit = useAction(api.billing.edit);
-  const addPayment = useMutation(api.ceo.manualPayments.add);
-  const afterPayment = useAction(api.billing.afterPayment);
-  const assign = useAction(api.ceo.payers.assign);
-  const afterAssign = useAction(api.billing.afterAssign);
+  const auth = useCockpitAuth();
 
   const wired = useMemo<BillingApi>(
     () => ({
-      sheet: a => sheet(a) as Promise<BillingPayload>,
-      edit: a => edit(a) as Promise<Account>,
+      sheet: async () => {
+        if (!auth.client) {
+          return {
+            today: new Date().toISOString().slice(0, 10),
+            rows: [],
+            cards: [],
+            events: [],
+            inbox: [],
+            syncedAt: null,
+            totals: {
+              dueThisWeek: { count: 0, usd: 0 },
+              overdue: { count: 0, usd: 0 },
+              paused: 0,
+              extended: 0,
+              noMethod: 0,
+              noDate: 0,
+            },
+          } as unknown as BillingPayload;
+        }
+        return fetchBillingSheet(auth.client, null);
+      },
+      edit: async args => {
+        if (!auth.client) throw new Error("Not signed in");
+        return editBillingAccount(
+          auth.client,
+          auth.email,
+          args,
+          "ceo",
+        );
+      },
       logPayment: async p => {
-        const note = [
-          p.reference ? `ref ${p.reference}` : null,
-          p.note || null,
-          p.evidenceUrl ? `receipt ${p.evidenceUrl}` : null,
-        ]
-          .filter(Boolean)
-          .join("; ");
-        // The ledger first: if it refuses (a repeat, a Tap charge that
-        // arrives by itself), nothing else moves.
-        await addPayment({
-          day: p.day,
-          amount: p.amount,
-          currency: p.currency,
-          clientName: p.account.name,
-          clickupTaskId: p.account.taskId,
-          rail: p.rail,
-          ...(note ? { note } : {}),
-          ...(p.allowRepeat ? { allowRepeat: true } : {}),
-        });
-        try {
-          await afterPayment({
-            taskId: p.account.taskId,
+        if (!auth.client) throw new Error("Not signed in");
+        return logBillingPayment(
+          auth.client,
+          auth.email,
+          {
+            account: p.account,
+            day: p.day,
             amount: p.amount,
             currency: p.currency,
-            day: p.day,
             rail: p.rail,
-            ...(p.nextDate ? { nextDate: p.nextDate } : {}),
-            ...(p.reference ? { reference: p.reference } : {}),
-          });
-        } catch (e) {
-          const data = (e as { data?: { message?: string } } | null)?.data;
-          const why =
-            data?.message ??
-            (e instanceof Error ? e.message : String(e))
-              .replace(/^[\s\S]*Uncaught Error: /, "")
-              .slice(0, 120);
-          return `The payment is in the ledger, but the card's next date did not move (${why}). Move it with "Move the date".`;
-        }
-        const paid =
-          p.currency === "KWD"
-            ? `${p.amount.toLocaleString("en-US")} KWD`
-            : `$${p.amount.toLocaleString("en-US")}`;
-        return `Logged ${paid} from ${p.account.name}. It counts toward cash and LTV at the next refresh${p.nextDate ? `, and the card now says they pay next on ${p.nextDate}` : ""}.`;
+            reference: p.reference ?? undefined,
+            evidenceUrl: p.evidenceUrl ?? undefined,
+            note: p.note ?? undefined,
+            nextDate: p.nextDate ?? undefined,
+          },
+          "ceo",
+        );
       },
       assign: async p => {
-        await assign({ payer: p.payer, clickupTaskId: p.taskId });
-        await afterAssign({
-          taskId: p.taskId,
-          clientName: p.clientName,
-          payer: p.payer,
-          usd: p.usd,
-          count: p.count,
-        }).catch(() => null);
-        return `Tied ${p.payer} to ${p.clientName}. Their payments count as ${p.clientName}'s money from the next refresh; LTV adds only the ones from 19 September on, so nothing already on the card is counted twice.`;
+        if (!auth.client) throw new Error("Not signed in");
+        return assignBillingPayer(auth.client, auth.email, p);
       },
       ledgerLine:
         "It goes straight into the ledger the Money tab reads, and counts toward cash and LTV at the next refresh.",
     }),
-    [sheet, edit, addPayment, afterPayment, assign, afterAssign],
+    [auth.client, auth.email],
   );
 
   return <BillingSheet api={wired} />;

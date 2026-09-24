@@ -1,9 +1,9 @@
-import { useAction, useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "@/lib/cockpitApi";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { DateInput } from "@/components/ui/date-input";
-import { api } from "../../convex/_generated/api";
+import { api } from "@/lib/cockpitApi";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 

@@ -1,6 +1,6 @@
-import { useMutation, useQuery } from "convex/react";
-import type { FunctionReturnType } from "convex/server";
-import { ConvexError } from "convex/values";
+import { useMutation, useQuery } from "@/lib/cockpitApi";
+import type { FunctionReturnType } from "@/lib/cockpitApi";
+import { ConvexError } from "@/lib/cockpitApi";
 import {
   CopyCheck,
   HandCoins,
@@ -54,16 +54,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { api } from "../../../convex/_generated/api";
-import type { Id } from "../../../convex/_generated/dataModel";
-import type { ManualPaymentRefusal } from "../../../convex/ceo/manualPayments";
+import { api } from "@/lib/cockpitApi";
+import type { Id } from "@/lib/cockpitApi";
+import type { ManualPaymentRefusal } from "@/types/ceo/manualPayments";
 import type {
   ManualPaymentRow,
   ManualRail,
   MoneyPayload,
   Note,
   PossibleDuplicate,
-} from "../../../convex/ceo/payloads";
+} from "@/types/ceo/payloads";
 
 /**
  * Payments Aziz logs by hand (decision of 2026-09-16): the form, this
@@ -413,7 +413,7 @@ export function LogPaymentCard({
   const card = useMemo(() => {
     const key = nameMatch(draft.client);
     if (!key || !options) return null;
-    return options.find(o => nameMatch(o.name) === key) ?? null;
+    return (options ?? []).find((o: any) => nameMatch(o.name) === key) ?? null;
   }, [draft.client, options]);
   const { errors, ready } = validate(
     draft,
@@ -634,7 +634,7 @@ export function LogPaymentCard({
               aria-describedby={describe("client")}
             />
             <datalist id={id("clients")}>
-              {(options ?? []).map(o => (
+              {(options ?? []).map((o: any) => (
                 <option key={o.clickupTaskId} value={o.name} />
               ))}
             </datalist>
@@ -1029,7 +1029,7 @@ export function ManualEntriesCard({
               {r.client}
             </span>
             <span className="block max-w-[10rem] truncate text-xs text-muted-foreground sm:max-w-[16rem]">
-              {RAIL_LABEL[r.rail]}
+              {(RAIL_LABEL as Record<string, string>)[r.rail] ?? r.rail}
               {r.clickupTaskId ? "" : ", no client card"}
               {r.note ? `, ${r.note}` : ""}
             </span>
@@ -1128,7 +1128,7 @@ export function ManualEntriesCard({
     [computed, flags, hasFlags, kinds, now, tapConnected],
   );
 
-  const live = (rows ?? []).filter(r => r.deletedAt === null);
+  const live = (rows ?? []).filter((r: any) => r.deletedAt === null);
   const removedCount = (rows ?? []).length - live.length;
   const monthRow = payload?.monthly.find(m => m.month === shownMonth);
   const railFigure = computed
@@ -1177,7 +1177,7 @@ export function ManualEntriesCard({
               variant="plain"
               label="Live entries"
               value={count(live.length)}
-              sub={`${money(live.reduce((t, r) => t + r.amountUsd, 0))} as logged`}
+              sub={`${money(live.reduce((t: any, r: any) => t + r.amountUsd, 0))} as logged`}
             />
             <StatTile
               variant="plain"

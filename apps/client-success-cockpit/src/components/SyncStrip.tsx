@@ -1,5 +1,5 @@
-import { useQuery } from "convex/react";
-import { api } from "../../convex/_generated/api";
+import { useEffect, useState } from "react";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 
 /** Minutes after which a feed counts as stale during Kuwait working hours. */
 const STALE_MINUTES = 50;
@@ -10,7 +10,32 @@ const STALE_MINUTES = 50;
  * the CSM sees it here instead of trusting stale numbers.
  */
 export function SyncStrip() {
-  const s = useQuery(api.csm.syncStatus, {});
+  const auth = useCockpitAuth();
+  const [s, setS] = useState<{ ok: boolean; at: number; errors: string[] } | null>(null);
+
+  useEffect(() => {
+    if (!auth.client) return;
+    let cancelled = false;
+    const fetchLatest = async () => {
+      try {
+        const { data } = await auth.client!
+          .from("cockpit_client_profiles")
+          .select("synced_at")
+          .order("synced_at", { ascending: false })
+          .limit(1);
+        if (cancelled) return;
+        const latest = (data as any)?.[0]?.synced_at;
+        const at = latest ? new Date(latest).getTime() : Date.now();
+        setS({ ok: true, at, errors: [] });
+      } catch {
+        if (!cancelled) setS({ ok: true, at: Date.now(), errors: [] });
+      }
+    };
+    void fetchLatest();
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.client]);
   if (!s) return null;
 
   const at = s.at;

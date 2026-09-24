@@ -53,7 +53,7 @@ import type {
   GrowthPayload,
   MoneyPayload,
   Note,
-} from "../../../convex/ceo/payloads";
+} from "@/types/ceo/payloads";
 import type { CeoTabKey, CeoTabProps } from "./types";
 
 /** a over b, null when b cannot carry a rate. A real zero stays 0. */

@@ -1,7 +1,7 @@
-import { useAction } from "convex/react";
+import { useAction } from "@/lib/cockpitApi";
 import { useEffect, useRef, useState } from "react";
-import { api } from "../../../convex/_generated/api";
-import type { FrequencyRead } from "../../../convex/ceo/frequency";
+import { api } from "@/lib/cockpitApi";
+import type { FrequencyRead } from "@/types/ceo/frequency";
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -27,10 +27,10 @@ export function useFrequency(from: string | null, to: string | null) {
       setLoading(true);
       setError(null);
       forRange({ from, to })
-        .then(r => {
+        .then((r: any) => {
           if (latest.current === key) setRead(r);
         })
-        .catch(e => {
+        .catch((e: any) => {
           if (latest.current === key)
             setError(String(e instanceof Error ? e.message : e).slice(0, 200));
         })

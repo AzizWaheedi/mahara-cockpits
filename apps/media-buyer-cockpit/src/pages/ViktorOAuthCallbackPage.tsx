@@ -1,7 +1,7 @@
-import { useConvexAuth } from "convex/react";
 import { Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Navigate } from "react-router";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import {
   LOGIN_FAILED_PATH,
   pageLoadHadOAuthCode,
@@ -34,16 +34,6 @@ export function resolveOAuthCallbackDestination(state: {
   return null;
 }
 
-/**
- * Landing route for the "Sign in with Viktor" OAuth return leg
- * (`signIn("viktor", { redirectTo: OAUTH_CALLBACK_PATH })`). It renders a
- * neutral signing-in screen while Convex Auth exchanges the verification
- * code, then routes to the app on success or to the login page — with an
- * explicit failure param — when the attempt was denied. Keeping the return
- * leg on its own route means the login page never has to interpret a
- * transient unauthenticated state, so no failure message can flash during a
- * successful sign-in.
- */
 export function ViktorOAuthCallbackPage({
   hadOAuthCode = pageLoadHadOAuthCode(),
   returnedFromSignIn = pageLoadReturnedFromViktorSignIn(),
@@ -51,7 +41,8 @@ export function ViktorOAuthCallbackPage({
   hadOAuthCode?: boolean;
   returnedFromSignIn?: boolean;
 }) {
-  const { isAuthenticated, isLoading } = useConvexAuth();
+  const { isAuthenticated, ready } = useCockpitAuth();
+  const isLoading = !ready;
   const [timedOut, setTimedOut] = useState(false);
 
   useEffect(() => {

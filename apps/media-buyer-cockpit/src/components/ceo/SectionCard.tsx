@@ -2,7 +2,7 @@ import { motion, useReducedMotion } from "framer-motion";
 import { CircleDashed, Clock, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
-import type { Note } from "../../../convex/ceo/payloads";
+import type { Note } from "@/types/ceo/payloads";
 import { EmptyState } from "./EmptyState";
 import { dateTime, relative } from "./format";
 import { Hint } from "./Hint";

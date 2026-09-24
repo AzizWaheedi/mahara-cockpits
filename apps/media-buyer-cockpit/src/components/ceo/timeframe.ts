@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import type { FunnelWindow, GrowthDay } from "../../../convex/ceo/payloads";
+import type { FunnelWindow, GrowthDay } from "@/types/ceo/payloads";
 import {
   type CustomRange,
   type RangeKey,

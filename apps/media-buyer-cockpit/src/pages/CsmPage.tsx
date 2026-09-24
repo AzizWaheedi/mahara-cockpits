@@ -1,11 +1,38 @@
-import { useMutation, useQuery } from "convex/react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router";
 import { toast } from "sonner";
+import { SendForReview } from "@/components/SendForReview";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
+import { DateInput } from "@/components/ui/date-input";
 import { Textarea } from "@/components/ui/textarea";
-import { api } from "../../convex/_generated/api";
-import type { Id } from "../../convex/_generated/dataModel";
+import { WhatsAppDesk } from "@/components/WhatsAppDesk";
+import { opportunitiesFor, rankOpportunities } from "@/lib/csmHotList";
+import { LINK_GROUPS } from "@/lib/csmLinks";
+import {
+  CHURN_TARGET,
+  type Counts,
+  computePay,
+  EARNERS,
+  FOUR_RS,
+  PENALTIES,
+} from "@/lib/csmMoney";
+import { spineFor } from "@/lib/csmOnboardingSpine";
+import {
+  cadence,
+  draftsFor,
+  guessLang,
+  humanise,
+  isChurned,
+  type Lang,
+  LINKS,
+  nextCall,
+  nextPocState,
+  serviceModel,
+} from "@/lib/csmTemplates";
+import { publishOpenClient } from "@/lib/openClient";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { useCsmSnapshot } from "@/lib/useCsmSnapshot";
 
 /** Tickets the CSM raises. Picking the request picks the board — she never picks a team. */
 const TICKETS: { label: string; dept: string; deptLabel: string }[] = [
@@ -29,7 +56,7 @@ const TICKETS: { label: string; dept: string; deptLabel: string }[] = [
     deptLabel: "Creative",
   },
   {
-    label: "Lead quality is poor — review targeting",
+    label: "Lead quality is poor, review targeting",
     dept: "media_buyer",
     deptLabel: "Media buyer",
   },
@@ -38,6 +65,11 @@ const TICKETS: { label: string; dept: string; deptLabel: string }[] = [
     dept: "media_buyer",
     deptLabel: "Media buyer",
   },
+  // Lifecycle requests. They all land on Operations/Tech, which is where the
+  // Request Type field with the pause / relaunch / offboarding options actually lives.
+  { label: "Pause this client", dept: "tech", deptLabel: "Tech" },
+  { label: "Relaunch this client", dept: "tech", deptLabel: "Tech" },
+  { label: "Offboard this client", dept: "tech", deptLabel: "Tech" },
   {
     label: "Leads are not being called",
     dept: "call_center",
@@ -78,87 +110,9 @@ const REASONS = [
 ];
 const CLOCKS = ["Tomorrow", "In 3 days", "Next week"];
 
-/** Booking links and forms, lifted from the Client Journey SOP so nobody hunts. */
-const LINKS = {
-  onboardingCall:
-    "https://api.leadconnectorhq.com/widget/booking/z1Ne59rohCCj87KhcXoi",
-  checkInCall:
-    "https://api.leadconnectorhq.com/widget/booking/SHjlq0UjeR11maltYNyh",
-  callSummaryForm: "https://maharamedia.typeform.com/to/fRokTITH",
-  kickoffForm: "https://maharamedia.typeform.com/to/BbJy6xg4",
-  calculator: "http://calculator.maharamedia.com",
-};
-
-/**
- * Which call is next in the journey, its booking link, and a message the CSM can send
- * as-is. Arabic, because the clients are Arabic — the CSM edits, then sends by hand.
- */
-function nextCall(c: Client): { label: string; url: string; message: string } {
-  const name = c.name;
-  if (c.stage === "Needs Contacting")
-    return {
-      label: "Welcome call, then the onboarding call",
-      url: LINKS.onboardingCall,
-      message: `أهلاً ${name} 👋 معك فريق مهارة. حاولنا نتواصل معك للترحيب فيك في البرنامج. خطوتنا القادمة هي مكالمة الانضمام (٦٠ دقيقة) ويفضل تكون من الكمبيوتر ومسجّل دخول على حساب فيسبوك. تحجز الوقت المناسب لك من هنا: ${LINKS.onboardingCall}`,
-    };
-  if (c.bucket === "onboarding")
-    return {
-      label: "Onboarding call",
-      url: LINKS.onboardingCall,
-      message: `أهلاً ${name} 👋 لتثبيت موعد مكالمة الانضمام، اختر الوقت المناسب لك من هنا: ${LINKS.onboardingCall} — ويفضل تكون من الكمبيوتر ومسجّل دخول على فيسبوك حتى نجهز كل شيء في نفس المكالمة.`,
-    };
-  return {
-    label: "Client check-in call",
-    url: LINKS.checkInCall,
-    message: `أهلاً ${name} 👋 حاب نراجع معك أرقام الحملة: عدد العملاء المحتملين، الحجوزات، وتكلفة الحجز، ونتفق على الخطوة القادمة. احجز الوقت المناسب لك من هنا: ${LINKS.checkInCall}`,
-  };
-}
-
-/**
- * The message the CSM should actually send, chosen from the cadence rule that fired.
- * Arabic, editable, never auto-sent — Viktor drafts, a human sends.
- */
-function draftFor(c: Client): { why: string; message: string } {
-  const name = c.name;
-  if (c.pauseRequired)
-    return {
-      why: `Invoice ${c.paymentDue}d past due with no extension logged`,
-      message: `أهلاً ${name} 👋 تنبيه ودّي بخصوص الفاتورة المستحقة. نحتاج تسويتها اليوم حتى لا تتوقف الحملة، وإذا تحتاج تمديد بسيط أخبرني وأرتبها لك.`,
-    };
-  if (c.stage === "Needs Contacting")
-    return {
-      why: "New signup — welcome call first, then the onboarding call",
-      message: `أهلاً ${name} 👋 معك فريق مهارة، مبروك انضمامك للبرنامج! حاولنا نتواصل معك للترحيب. خطوتنا القادمة مكالمة الانضمام، وأرسل لك الرابط للحجز.`,
-    };
-  if (c.bucket === "onboarding")
-    return {
-      why: `In onboarding (${c.stage}) — message every working day until they move`,
-      message: `أهلاً ${name} 👋 متابعة بسيطة على خطوة الانضمام حتى نطلق حملتك في أسرع وقت. باقي علينا تثبيت الموعد وتجهيز الوصول للحسابات — تحب أساعدك فيها الآن؟`,
-    };
-  if ((c.liveDays ?? 99) <= 7)
-    return {
-      why: `Launch week (day ${c.liveDays}) — daily message, review call on day 7`,
-      message: `صباح الخير ${name} 👋 تحديث سريع على الحملة في أسبوعها الأول. أي استفسار من العملاء الجدد أو أي شيء تحب نعدّله، خبرني وأتابعه فوراً.`,
-    };
-  if ((c.callDays ?? 99) >= 14)
-    return {
-      why: "14 days since the last check-in call",
-      message: `أهلاً ${name} 👋 حاب نراجع معك الأرقام في مكالمة قصيرة: العملاء المحتملين، الحجوزات، وتكلفة الحجز، ونتفق على الخطوة القادمة.`,
-    };
-  if ((c.silentDays ?? 99) >= 7)
-    return {
-      why: `No contact for ${c.silentDays ?? "?"} days`,
-      message: `أهلاً ${name} 👋 أطمئن عليك وعلى الحملة. آخر الأرقام عندنا إيجابية، وحاب أسمع منك كيف الحجوزات من ناحيتكم.`,
-    };
-  return {
-    why: c.todo,
-    message: `أهلاً ${name} 👋 تحديث سريع على الحملة، وأي شيء تحتاجه أنا موجود.`,
-  };
-}
-
 const LEVEL: Record<string, string> = {
   red: "border-l-4 border-rose-500 bg-rose-50/40",
-  amber: "border-l-4 border-amber-500 bg-amber-50/40",
+  amber: "border-l-4 border-amber-500 bg-amber-50/40 dark:bg-amber-950/30",
   blue: "border-l-4 border-sky-500 bg-sky-50/30",
   green: "border-l-4 border-emerald-500",
 };
@@ -172,6 +126,48 @@ const CHIP: Record<string, string> = {
 
 // biome-ignore lint/suspicious/noExplicitAny: snapshot payload is untyped by design
 type Client = any;
+
+function ShortList({
+  title,
+  items,
+  render,
+  limit = 5,
+  empty,
+}: {
+  title: string;
+  items: unknown[];
+  render: (item: never) => React.ReactNode;
+  limit?: number;
+  empty: string;
+}) {
+  const [all, setAll] = useState(false);
+  const shown = all ? items : items.slice(0, limit);
+  return (
+    <div className="space-y-2">
+      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        {title} ({items.length})
+      </div>
+      {items.length === 0 ? (
+        <p className="rounded-lg border border-dashed px-3 py-4 text-sm text-muted-foreground">
+          {empty}
+        </p>
+      ) : (
+        <>
+          {shown.map(i => render(i as never))}
+          {items.length > limit && (
+            <button
+              type="button"
+              onClick={() => setAll(v => !v)}
+              className="text-sm text-muted-foreground underline"
+            >
+              {all ? "Show fewer" : `Show the other ${items.length - limit}`}
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
 
 function Stat({
   label,
@@ -196,20 +192,51 @@ function Stat({
  * Bottom-right escape hatch: if the screen is wrong, say so where you noticed it.
  * It files an owned task rather than becoming a message someone forgets.
  */
-function IssueReporter({ page }: { page: string }) {
-  const report = useMutation(api.csm.reportIssue);
+/**
+ * The floating AI button, on every screen.
+ *
+ * Two things behind one button: ask anything (answered from the Client Communication SOP
+ * and this client's real numbers), or tell me the screen itself is wrong. It is not
+ * labelled as a bug reporter — the CSM should reach for it because it helps, and fixing
+ * the app is just one of the things it can do.
+ *
+ * Answers are not instant: the app cannot call a model itself, so the question is queued
+ * and answered on the next sync. The panel says so rather than faking a live chat.
+ */
+export function AiHelper({ page }: { page: string; clientName?: string }) {
+  // Questions now go to the Hermes chat (bottom right). This box is only for
+  // reporting a wrong screen, so the fix lands as a task. [aziz, 2026-09-10]
+  const auth = useCockpitAuth();
+  const report = async (args: { page: string; text: string }) => {
+    if (auth.client) {
+      await auth.client.rpc("cockpit_submit_issue_report", {
+        p_role: "csm",
+        p_title: `Screen report: ${args.page}`,
+        p_description: args.text,
+        p_category: "screen_issue",
+        p_metadata: { page: args.page },
+      });
+    }
+  };
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
   return (
-    <div className="fixed bottom-4 left-4 z-30 w-[min(22rem,calc(100vw-2rem))] md:left-[calc(var(--sidebar-width,16rem)+1rem)]">
+    <div className="fixed bottom-4 left-4 z-40 w-[min(22rem,calc(100vw-2rem))] md:left-[calc(var(--sidebar-width,16rem)+1rem)]">
       {open ? (
         <div className="space-y-2 rounded-lg border bg-card p-3 shadow-lg">
-          <div className="text-sm font-semibold">
-            Something wrong on this screen?
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold">This screen is wrong</span>
+            <button
+              type="button"
+              className="ml-auto text-xs text-muted-foreground"
+              onClick={() => setOpen(false)}
+            >
+              close
+            </button>
           </div>
           <p className="text-xs text-muted-foreground">
-            Wrong client, wrong instruction, missing field — say it here and It
-            gets fixed.
+            Wrong client, wrong instruction, missing field: say it here and a
+            fix task is created. Questions go to Ask Hermes, bottom right.
           </p>
           <Textarea
             rows={3}
@@ -223,15 +250,12 @@ function IssueReporter({ page }: { page: string }) {
               onClick={async () => {
                 if (!text.trim()) return;
                 await report({ page, text: text.trim() });
-                setText("");
+                toast.success("Sent, a fix task was created");
                 setOpen(false);
-                toast.success("Sent. A fix task was created");
+                setText("");
               }}
             >
               Send it
-            </Button>
-            <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>
-              Cancel
             </Button>
           </div>
         </div>
@@ -242,7 +266,7 @@ function IssueReporter({ page }: { page: string }) {
           className="shadow-lg"
           onClick={() => setOpen(true)}
         >
-          Something wrong here?
+          Report an issue
         </Button>
       )}
     </div>
@@ -250,25 +274,365 @@ function IssueReporter({ page }: { page: string }) {
 }
 
 /**
- * One client, one recommended message, editable and sendable by hand. Shows when the
- * last proactive message actually went out, so silence is visible per row.
+ * Book the next CALL, written into ClickUp's `Next POC` field.
+ *
+ * The company rule: next point of contact means the next call, and we always want to know when it
+ * is. So this carries the right booking link for their stage (onboarding call or client
+ * check-in call), the invite text to send with it, and the date field that puts it on the
+ * board. Messages are not booked here, they are tracked automatically off the cadence.
  */
-function TouchpointRow({
+function NextPocControl({
   c,
+  today,
+  lang,
   onLog,
+  emphasise,
 }: {
   c: Client;
+  today: string;
+  lang: Lang;
   onLog: (
     c: Client,
     action: string,
     kind: string,
     extra?: Record<string, unknown>,
   ) => void;
+  emphasise?: boolean;
 }) {
-  const draft = draftFor(c);
-  const [text, setText] = useState(draft.message);
-  const [open, setOpen] = useState(false);
-  const nc = nextCall(c);
+  const st = nextPocState(c, today);
+  const call = nextCall(c, lang);
+  const [date, setDate] = useState(
+    st.date && !st.past ? st.date : st.suggested,
+  );
+  const bad = st.missing || st.past;
+  return (
+    <div
+      className={`space-y-2 rounded border px-3 py-2 text-xs ${
+        bad
+          ? "border-rose-300 bg-rose-50 text-rose-800"
+          : "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-100"
+      } ${emphasise && bad ? "ring-1 ring-rose-300" : ""}`}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-semibold">Next call:</span>
+        <span>{st.label}</span>
+        <span className="text-muted-foreground">
+          ({call.label.toLowerCase()})
+        </span>
+      </div>
+      <p className="text-[12px] font-medium">
+        {call.doNow}
+        {call.framework ? (
+          <>
+            {" "}
+            <a
+              className="underline"
+              href={call.framework}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Open the framework
+            </a>
+          </>
+        ) : null}
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        {call.url ? (
+          <a
+            className="rounded bg-foreground px-2 py-1 text-background"
+            href={call.url}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {call.label} booking link
+          </a>
+        ) : (
+          <span className="rounded border border-current px-2 py-1 font-medium">
+            {call.label}, no link needed
+          </span>
+        )}
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            navigator.clipboard.writeText(call.message);
+            toast.success("Invite copied, send it on WhatsApp");
+          }}
+        >
+          Copy the invite with the link
+        </Button>
+        <DateInput
+          value={date}
+          onChange={e => setDate(e.target.value)}
+          className="rounded border bg-background px-1.5 py-0.5 text-foreground"
+        />
+        <Button
+          size="sm"
+          variant={bad ? "default" : "outline"}
+          onClick={() =>
+            onLog(c, `Next call booked for ${date}`, "booked", {
+              value: date,
+              note: `Booked via ${call.label.toLowerCase()}${
+                call.url ? ` (${call.url})` : ""
+              }.`,
+            })
+          }
+        >
+          They booked, save it to ClickUp
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A date field with its button, for the places that book a call in one click.
+ * A date input can only produce a real day, so free text never reaches the
+ * Next POC field in ClickUp.
+ */
+function BookDate({
+  c,
+  today,
+  label,
+  onBook,
+}: {
+  c: Client;
+  today: string;
+  label: string;
+  onBook: (date: string) => void;
+}) {
+  const st = nextPocState(c, today);
+  const [date, setDate] = useState(
+    st.date && !st.past ? st.date : st.suggested,
+  );
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1">
+      <DateInput
+        value={date}
+        onChange={e => setDate(e.target.value)}
+        aria-label="Date of the next call"
+        className="rounded border bg-background px-1.5 py-0.5 text-xs text-foreground"
+      />
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={!date}
+        onClick={() => onBook(date)}
+      >
+        {label}
+      </Button>
+    </span>
+  );
+}
+
+/**
+ * The message picker: every SOP template that applies to this client right now, English or
+ * Arabic, editable, with the two clocks and the next point of contact underneath. Shared by
+ * the touchpoints view and the client management rows so the templates are never more than
+ * one click away, wherever she is standing.
+ */
+function TemplatePicker({
+  c,
+  lang,
+  onLang,
+  onLog,
+  today,
+}: {
+  c: Client;
+  lang: Lang;
+  onLang: (lang: Lang) => void;
+  onLog: (
+    c: Client,
+    action: string,
+    kind: string,
+    extra?: Record<string, unknown>,
+  ) => void;
+  today: string;
+}) {
+  const drafts = draftsFor(c, lang);
+  const [angle, setAngle] = useState(drafts[0].id);
+  const [edits, setEdits] = useState<Record<string, string>>({});
+  // Set after she logs a message, so the next point of contact control is the thing she
+  // cannot walk past.
+  const [justSent, setJustSent] = useState(false);
+  const chosen = drafts.find((d: any) => d.id === angle) ?? drafts[0];
+  const editKey = `${lang}:${chosen.id}`;
+  const text = edits[editKey] ?? chosen.message;
+  const nc = nextCall(c, lang);
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-1">
+        {drafts.map((d: any) => (
+          <button
+            key={d.id}
+            type="button"
+            onClick={() => setAngle(d.id)}
+            className={`rounded border px-2 py-0.5 text-[12px] font-medium ${
+              d.id === chosen.id
+                ? "border-teal-400 bg-teal-50 text-teal-800 dark:bg-teal-950/40 dark:text-teal-100"
+                : "bg-background text-muted-foreground"
+            }`}
+          >
+            {d.title}
+          </button>
+        ))}
+        <span className="ml-auto flex items-center gap-1 text-[12px] text-muted-foreground">
+          writes in:
+          {(["en", "ar"] as const).map(l => (
+            <button
+              key={l}
+              type="button"
+              onClick={() => {
+                setEdits({});
+                onLang(l);
+              }}
+              className={`rounded border px-1.5 py-0.5 font-semibold uppercase ${
+                lang === l
+                  ? "border-teal-400 bg-teal-50 text-teal-800 dark:bg-teal-950/40 dark:text-teal-100"
+                  : "bg-background"
+              }`}
+            >
+              {l}
+            </button>
+          ))}
+        </span>
+      </div>
+      <p className="text-[12px] text-muted-foreground">
+        From the client communication SOP. {chosen.why} Messages are tracked for
+        you off the cadence, you only book the calls.
+      </p>
+      <Textarea
+        rows={8}
+        value={text}
+        onChange={e => setEdits(x => ({ ...x, [editKey]: e.target.value }))}
+        dir={lang === "ar" ? "rtl" : "ltr"}
+      />
+      <div className="flex flex-wrap gap-2">
+        <Button
+          size="sm"
+          onClick={() => {
+            navigator.clipboard.writeText(text);
+            toast.success("Copied, paste it into the client's WhatsApp group");
+          }}
+        >
+          Copy the message
+        </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => {
+            onLog(c, `Messaged the client, ${chosen.short}`, "touchpoint", {
+              note: text,
+            });
+            setJustSent(true);
+          }}
+        >
+          Sent it, log the touchpoint
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            navigator.clipboard.writeText(nc.message);
+            toast.success(`Copied the ${nc.label.toLowerCase()} invite`);
+          }}
+        >
+          Copy the {nc.label.toLowerCase()} invite
+        </Button>
+        {nc.url ? (
+          <a
+            className="rounded bg-muted px-2 py-1 text-xs"
+            href={nc.url}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {nc.label} booking link
+          </a>
+        ) : (
+          <span className="rounded border px-2 py-1 text-xs">
+            {nc.label}, no link needed
+          </span>
+        )}
+        {c.reportDue && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() =>
+              onLog(c, "Monthly report sent to the client", "report", {})
+            }
+          >
+            Monthly report sent, log it
+          </Button>
+        )}
+        {c.sheetLink && (
+          <a
+            className="rounded bg-muted px-2 py-1 text-xs"
+            href={c.sheetLink}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Their report sheet
+          </a>
+        )}
+        {c.noteMissing && (
+          <a
+            className="rounded bg-rose-100 px-2 py-1 text-xs text-rose-700"
+            href={LINKS.callSummaryForm}
+            target="_blank"
+            rel="noreferrer"
+          >
+            1-1 notes missing for the last call
+          </a>
+        )}
+      </div>
+      {justSent && (
+        <p className="text-[12px] font-medium text-rose-700">
+          Logged. Now set the next point of contact, we always want to know when
+          the next call is.
+        </p>
+      )}
+      <NextPocControl
+        c={c}
+        today={today}
+        lang={lang}
+        onLog={onLog}
+        emphasise={justSent}
+      />
+    </div>
+  );
+}
+
+/**
+ * One client on the touchpoints view, with the cadence they are on, both clocks, and the
+ * SOP messages behind one click. Messages run on `lastPoc`, calls on `lastCall`.
+ */
+function TouchpointRow({
+  c,
+  lang,
+  onLang,
+  onLog,
+  defaultOpen,
+  today,
+}: {
+  c: Client;
+  lang: Lang;
+  onLang: (lang: Lang) => void;
+  onLog: (
+    c: Client,
+    action: string,
+    kind: string,
+    extra?: Record<string, unknown>,
+  ) => void;
+  defaultOpen?: boolean;
+  today: string;
+}) {
+  const count = draftsFor(c, lang).length;
+  // The top row opens itself, otherwise the ready-to-send drafts are invisible
+  // behind a collapsed row and nobody knows they exist.
+  const [open, setOpen] = useState(defaultOpen ?? false);
+  const cad = cadence(c);
+  const poc = nextPocState(c, today);
+  const spineDay = spineFor(c).dayIndex;
   return (
     <div className={`rounded-lg border ${LEVEL[c.level] ?? ""}`}>
       <button
@@ -284,79 +648,90 @@ function TouchpointRow({
             >
               {c.stage}
             </span>
-            {c.defcon && (
-              <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[12px] text-slate-600">
-                {c.defcon}
+            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[12px] text-slate-600">
+              {cad.stage} · {cad.label}
+            </span>
+            <span
+              className={`rounded px-1.5 py-0.5 text-[12px] ${
+                serviceModel(c.service).code
+                  ? "bg-slate-100 text-slate-600"
+                  : "bg-amber-100 text-amber-800"
+              }`}
+              title={serviceModel(c.service).kpi}
+            >
+              {serviceModel(c.service).label}
+            </span>
+            <span
+              className={`rounded px-1.5 py-0.5 text-[12px] font-medium ${
+                poc.missing || poc.past
+                  ? "bg-rose-100 text-rose-700"
+                  : "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-100"
+              }`}
+            >
+              {poc.label}
+            </span>
+            {spineDay != null && (
+              <span className="rounded bg-teal-50 px-1.5 py-0.5 text-[12px] font-medium text-teal-800 dark:bg-teal-950/40 dark:text-teal-100">
+                Day {spineDay} of the 14 day spine
               </span>
             )}
           </div>
-          <div className="mt-1 text-sm">{draft.why}</div>
           <div className="mt-1 text-xs text-muted-foreground">
-            last proactive message{" "}
-            {c.lastPoc ? `${c.lastPoc} (${c.silentDays}d ago)` : "never"} · last
-            call {c.lastCall ?? "never"} · 1-1 notes {c.lastNoteOn ?? "none"}
+            <span
+              className={
+                cad.messageOverdue ? "font-semibold text-rose-600" : ""
+              }
+            >
+              message:{" "}
+              {c.lastPoc ? `${c.lastPoc} (${c.silentDays}d ago)` : "never"}
+              {cad.daysLate > 0 ? ` · ${cad.daysLate}d late` : ""}
+            </span>
+            {" · "}
+            <span
+              className={cad.callOverdue ? "font-semibold text-rose-600" : ""}
+            >
+              call: {c.lastCall ?? "never"} ({cad.callLabel})
+              {cad.callOverdue ? " · due" : ""}
+            </span>
+            {" · 1-1 notes "}
+            {c.lastNoteOn ?? "none"}
+            {serviceModel(c.service).dwy ? "" : " · report: "}
+            {!serviceModel(c.service).dwy && (
+              <span
+                className={c.reportDue ? "font-semibold text-rose-600" : ""}
+              >
+                {c.reportTracked === false
+                  ? "not tracked yet"
+                  : c.lastReport
+                    ? `${c.lastReport} (${c.reportDays}d ago)`
+                    : "never sent"}
+              </span>
+            )}
           </div>
         </div>
-        <span className="text-xs text-muted-foreground">
-          {open ? "close" : "draft"}
+        <span className="shrink-0 rounded border border-teal-400 bg-teal-50 px-2 py-1 text-xs font-semibold text-teal-800 dark:bg-teal-950/40 dark:text-teal-100">
+          {open ? "close" : `Open the message${count > 1 ? ` (${count})` : ""}`}
         </span>
       </button>
       {open && (
-        <div className="space-y-2 border-t px-4 py-3">
-          <Textarea
-            rows={4}
-            value={text}
-            onChange={e => setText(e.target.value)}
-            dir="auto"
+        <div className="border-t px-4 py-3">
+          <TemplatePicker
+            c={c}
+            lang={lang}
+            onLang={onLang}
+            onLog={onLog}
+            today={today}
           />
-          <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              onClick={() => {
-                navigator.clipboard.writeText(text);
-                toast.success(
-                  "Copied — paste it into the client's WhatsApp group",
-                );
-              }}
-            >
-              Copy the message
-            </Button>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() =>
-                onLog(c, "Sent the recommended message", "touchpoint", {
-                  note: text,
-                })
-              }
-            >
-              Sent it — log the touchpoint
-            </Button>
-            {/* biome-ignore lint/a11y/noAmbiguousAnchorText: the card name next to it says what opens */}
-            <a
-              className="rounded bg-muted px-2 py-1 text-xs"
-              href={nc.url}
-              target="_blank"
-              rel="noreferrer"
-            >
-              {nc.label} link
-            </a>
-            {c.noteMissing && (
-              <a
-                className="rounded bg-rose-100 px-2 py-1 text-xs text-rose-700"
-                href={LINKS.callSummaryForm}
-                target="_blank"
-                rel="noreferrer"
-              >
-                1-1 notes missing for the last call
-              </a>
-            )}
-          </div>
         </div>
       )}
     </div>
   );
 }
+
+/**
+ * One hot-list opportunity — the same columns as the old sheet, plus the ask and the
+ * objection answer. Her edits to the columns persist; the pitch is regenerated live.
+ */
 
 /** Every checklist item carries the reason it exists — click it and you see why. */
 function ChecklistItem({
@@ -391,29 +766,333 @@ function ChecklistItem({
   );
 }
 
-export function CsmPage() {
-  const snap = useQuery(api.csm.snapshot, {});
-  const toggleCheck = useMutation(api.csm.toggleCheck);
-  const act = useMutation(api.csm.act);
-  const addPlanItems = useMutation(api.csm.addPlanItems);
-  const submitEod = useMutation(api.csm.submitEod);
+type Section =
+  | "start"
+  | "clients"
+  | "tasks"
+  | "hot"
+  | "links"
+  | "money"
+  | "eod";
+
+/**
+ * The hot list, as a sheet.
+ *
+ * The instruction: keep it simple and let the CSM own it. So this is the same ten
+ * columns as his Hot List sheet, fully editable, and nothing writes itself into it. What I
+ * see in the data appears underneath as a suggestion with an "add it" button, because a
+ * recommendation the CSM chose to accept gets worked, and a row that appeared by itself
+ * gets ignored.
+ *
+ * Last follow-up and next follow-up are the accountability columns: they are his promise
+ * to himself, in his own handwriting.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: stored row shape mirrors the table
+type Any = any;
+
+function HotSheet({
+  suggestions,
+  saved,
+  onSave,
+}: {
+  // biome-ignore lint/suspicious/noExplicitAny: opportunity + row shapes live in the libs
+  suggestions: any[];
+  // biome-ignore lint/suspicious/noExplicitAny: mirrors the hotList table
+  saved: any[];
+  // biome-ignore lint/suspicious/noExplicitAny: Convex mutation reference
+  onSave: (args: any) => Promise<unknown>;
+}) {
+  /**
+   * The dropdown lists, exactly as they are on his Hot List sheet (he sent screenshots of
+   * the sheet's own validation, so these are copies, not my guesses), with the same
+   * colours: RED HOT is red, Hot pink, Warm amber, Closed green, Nurturing amber.
+   */
+  const OPTIONS: Record<string, string[]> = {
+    leadType: ["RED HOT", "Hot", "Warm", "On Hold"],
+    status: ["Closed", "Nurturing", "On Hold"],
+    type: [
+      "Upsell - SMM",
+      "Upsell - Service",
+      "Upsell - SEO + GEO",
+      "Upsell - Closer Placement",
+      "Upsell - UGC Package",
+      "Upsell - Website",
+      "Upsell - BE Program",
+      "Referral",
+      "Review",
+    ],
+  };
+  const PILL: Record<string, string> = {
+    "RED HOT": "bg-red-700 text-white",
+    Hot: "bg-red-100 text-red-700",
+    Warm: "bg-orange-200 text-orange-900",
+    "On Hold": "bg-slate-200 text-slate-700",
+    Closed: "bg-green-200 text-green-900",
+    Nurturing: "bg-orange-200 text-orange-900",
+  };
+  const DATE_FIELDS = new Set(["lastFu", "nextFu"]);
+  const COLS = [
+    ["clientName", "Name", "w-40"],
+    ["leadType", "Lead type", "w-24"],
+    ["status", "Status", "w-24"],
+    ["type", "Type", "w-44"],
+    ["contactUrl", "Contact URL", "w-40"],
+    ["lastObjection", "Last objection", "w-40"],
+    ["amount", "Amount", "w-24"],
+    ["lastFu", "Last FU", "w-20"],
+    ["nextFu", "Next FU", "w-20"],
+    ["notes", "Notes", "w-64"],
+  ] as const;
+  const rows = saved.filter(r => !r.hidden);
+  const takenKeys = new Set(saved.map(r => r.key));
+  // Win-backs are 24 of the 25 things I can see, and a wall of them is the opposite of a
+  // hot list. Best few first, the rest behind a click.
+  const [showAll, setShowAll] = useState(false);
+  const allOpen = suggestions.filter(o => !takenKeys.has(o.key));
+  const open = showAll ? allOpen : allOpen.slice(0, 6);
+  const patch = (row: Any, field: string, value: string) =>
+    onSave({
+      key: row.key,
+      clientName: row.clientName,
+      type: row.type,
+      leadType: row.leadType,
+      status: row.status,
+      lastObjection: row.lastObjection,
+      contactUrl: row.contactUrl,
+      amount: row.amount,
+      lastFu: row.lastFu,
+      nextFu: row.nextFu,
+      notes: row.notes,
+      manual: row.manual,
+      [field]: value,
+    });
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-muted-foreground">
+        Your list, your handwriting. Track the last follow-up and the next one
+        so nothing sits. I do not add rows for you, I only suggest them
+        underneath.
+      </p>
+      <div className="overflow-x-auto rounded-lg border">
+        <table className="w-full text-sm">
+          <thead className="bg-muted/50">
+            <tr>
+              {COLS.map(([, label]) => (
+                <th
+                  key={label}
+                  className="px-2 py-1.5 text-left text-[12px] uppercase tracking-wide text-muted-foreground"
+                >
+                  {label}
+                </th>
+              ))}
+              <th className="w-8" />
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {rows.length === 0 ? (
+              <tr>
+                <td
+                  colSpan={COLS.length + 1}
+                  className="px-2 py-3 text-muted-foreground"
+                >
+                  Nothing on your list yet. Add a row, or take one of the
+                  suggestions below.
+                </td>
+              </tr>
+            ) : (
+              rows.map(r => (
+                <tr key={r.key}>
+                  {COLS.map(([field, , width]) => (
+                    <td key={field} className={`px-1 py-1 ${width}`}>
+                      {OPTIONS[field] ? (
+                        <AnimatedSelect
+                          value={r[field] ?? ""}
+                          onChange={e => void patch(r, field, e.target.value)}
+                          className={`w-full rounded px-1.5 py-0.5 text-xs font-medium ${PILL[r[field] ?? ""] ?? "bg-muted text-foreground"}`}
+                        >
+                          <option value="">-</option>
+                          {OPTIONS[field].map(o => (
+                            <option key={o} value={o}>
+                              {o}
+                            </option>
+                          ))}
+                        </AnimatedSelect>
+                      ) : (
+                        <input
+                          type={DATE_FIELDS.has(field) ? "date" : "text"}
+                          defaultValue={r[field] ?? ""}
+                          onBlur={e => {
+                            if (e.target.value !== (r[field] ?? ""))
+                              void patch(r, field, e.target.value);
+                          }}
+                          className={`w-full rounded border-transparent bg-transparent px-1 py-0.5 hover:border-input focus:border-input focus:bg-background ${
+                            field === "nextFu" &&
+                            r.nextFu &&
+                            r.nextFu < new Date().toISOString().slice(0, 10)
+                              ? "bg-rose-100 text-rose-700"
+                              : ""
+                          }`}
+                        />
+                      )}
+                    </td>
+                  ))}
+                  <td className="px-1">
+                    <button
+                      type="button"
+                      title="Remove from my list"
+                      className="text-xs text-muted-foreground hover:text-rose-600"
+                      onClick={() =>
+                        onSave({
+                          key: r.key,
+                          clientName: r.clientName,
+                          type: r.type,
+                          hidden: true,
+                        }).then(() => toast.success("Removed from your list"))
+                      }
+                    >
+                      ✕
+                    </button>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+      <Button
+        size="sm"
+        variant="secondary"
+        onClick={() =>
+          onSave({
+            key: `manual:${Date.now()}`,
+            clientName: "",
+            type: "",
+            manual: true,
+          })
+        }
+      >
+        Add a row
+      </Button>
+
+      <div className="space-y-2">
+        <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          What I would put on it ({open.length})
+        </div>
+        <p className="text-xs text-muted-foreground/80">
+          From live data: who has earned the ask and what to ask for. Yours to
+          take or ignore.
+        </p>
+        {open.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            Nothing new to suggest today.
+          </p>
+        ) : (
+          open.map(o => (
+            <div
+              key={o.key}
+              className="flex flex-wrap items-center justify-between gap-2 rounded border px-3 py-2 text-sm"
+            >
+              <div>
+                <span className="font-medium">{o.client?.name}</span>{" "}
+                <span className="text-muted-foreground">
+                  {o.type} · {humanise(o.why ?? "")}
+                </span>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  onSave({
+                    key: o.key,
+                    clientName: o.client?.name ?? "",
+                    type: o.type ?? "",
+                    leadType: "Warm",
+                    notes: humanise(o.why ?? ""),
+                    contactUrl: o.client?.taskUrl,
+                  }).then(() => toast.success("Added to your list"))
+                }
+              >
+                Add it
+              </Button>
+            </div>
+          ))
+        )}
+        {allOpen.length > open.length || showAll ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setShowAll(!showAll)}
+          >
+            {showAll
+              ? "Show fewer"
+              : `Show the other ${allOpen.length - open.length}`}
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+export function CsmPage({ section = "clients" }: { section?: Section } = {}) {
+  const auth = useCockpitAuth();
+  const sb = useCsmSnapshot(auth.client, auth.clients);
+  const snap = sb.snap;
+  const toggleCheck = sb.toggleCheck as any;
+  const act = sb.act as any;
+  const addPlanItems = sb.addPlanItems as any;
+  const submitEod = sb.submitEod as any;
+  const setClientLanguage = sb.setClientLanguage as any;
+  const saveHotRow = sb.saveHotRow as any;
+  const clearLooseEnds = sb.clearLooseEnds as any;
+  const saveMoneyGoals = sb.saveMoneyGoals as any;
+
+  /** Her saved choice wins; the client's own name is only the fallback guess. */
+  const langOf = (c: Client): Lang => {
+    const saved = (snap?.prefs ?? []).find(
+      (p: { clientName: string }) => p.clientName === c.name,
+    )?.language;
+    return saved === "ar" || saved === "en" ? saved : guessLang(c.name);
+  };
 
   const [open, setOpen] = useState<string | null>(null);
+  // The open row is state, not a URL: tell the Hermes chat which client it is.
+  useEffect(() => {
+    publishOpenClient(open);
+    return () => publishOpenClient(null);
+  }, [open]);
   const [panel, setPanel] = useState<
-    "actions" | "book" | "ticket" | "leave" | "update"
-  >("actions");
+    "message" | "actions" | "book" | "ticket" | "leave" | "update"
+  >("message");
   const [ticket, setTicket] = useState(TICKETS[0].label);
   const [ticketNote, setTicketNote] = useState("");
   const [reason, setReason] = useState(REASONS[0]);
   const [clock, setClock] = useState(CLOCKS[1]);
   const [note, setNote] = useState("");
   const [dump, setDump] = useState("");
-  const [energy, setEnergy] = useState("Energy 4");
-  const [stress, setStress] = useState("Stress 2");
+  // 1 to 10, because the EOD sheet has always been scored out of 10.
+  const [energy, setEnergy] = useState("7");
+  const [stress, setStress] = useState("4");
+  // The rest of the Account Manager EOD Typeform, so this replaces it column for column.
+  const [callSummary, setCallSummary] = useState("");
+  const [expectations, setExpectations] = useState("");
+  const [touchpoints, setTouchpoints] = useState("Y");
+  const [fathom, setFathom] = useState("Y");
+  const [newSignups, setNewSignups] = useState("N");
+  const [upsells, setUpsells] = useState("N");
+  const [reviews, setReviews] = useState("N");
+  const [referrals, setReferrals] = useState("N");
   const [lost, setLost] = useState("");
   const [onePercent, setOnePercent] = useState("");
   const [rollup, setRollup] = useState("");
-  const [tab, setTab] = useState<
+  // The churn ledger. One line per client, typed once, at the end of the day.
+  const [offboarded, setOffboarded] = useState("");
+  const [extended, setExtended] = useState("");
+  const [pausedToday, setPausedToday] = useState("");
+  // Income plan. Local overrides win over the saved row until he saves again.
+  const [targetEdit, setTargetEdit] = useState<string | null>(null);
+  const [clientsEdit, setClientsEdit] = useState<string | null>(null);
+  const [countEdits, setCountEdits] = useState<Counts>({});
+  const [tabState, setTab] = useState<
     | "today"
     | "touchpoints"
     | "management"
@@ -421,7 +1100,24 @@ export function CsmPage() {
     | "hot"
     | "loose"
     | "tasks"
+    | "links"
+    | "money"
   >("today");
+  const TABS: Record<Section, string[]> = {
+    start: [],
+    clients: ["today", "touchpoints", "management", "onboarding"],
+    tasks: ["tasks", "loose"],
+    hot: ["hot"], // its own screen in the sidebar, so the tab bar stays hidden
+    links: ["links"],
+    money: ["money"],
+    eod: [],
+  };
+  // Start of day and End of day have no tabs, and must not fall back to the client lists:
+  // those live on the Clients screen. Falling back to "today" made both screens twice as
+  // long as they needed to be.
+  const tab = TABS[section].includes(tabState)
+    ? tabState
+    : (TABS[section][0] ?? "none");
 
   const done = useMemo(
     () =>
@@ -441,7 +1137,7 @@ export function CsmPage() {
 
   const t = snap.totals;
   // biome-ignore lint/suspicious/noExplicitAny: decision rows
-  const ds: any[] = snap.decisions;
+  const ds: any[] = snap.decisions ?? [];
   const callsToday = ds.filter(d => /call/i.test(d.action)).length;
   const signupsToday = ds.filter(d =>
     /signup|welcome|onboarding/i.test(d.action),
@@ -457,7 +1153,17 @@ export function CsmPage() {
   const todayList = clients.filter(needsAction);
   const managementList = clients.filter(c => c.bucket === "management");
   const onboardingList = clients.filter(c => c.bucket === "onboarding");
-  const hotList = clients.filter(c => c.hot.length > 0 && !c.hotBlocked);
+  /**
+   * Opportunities, not clients: one client can owe a review and an upsell. Deliberately
+   * NOT a useMemo — this sits after the loading early-return, and a hook below an early
+   * return changes the hook count between renders (React error #310).
+   */
+  const hotRows = rankOpportunities(
+    clients
+      // Churned clients are never an upsell, a review or a referral. Keep them out.
+      .filter((c: Client) => !c.hotBlocked && !isChurned(c))
+      .flatMap((c: Client) => opportunitiesFor(c)),
+  );
   const looseList = clients.filter(c => c.loose.length > 0);
   const ticketRows = ds.filter(d => d.kind === "rerouted");
   // A commitment counts as outstanding until the CSM turns it into a task or says done.
@@ -477,7 +1183,19 @@ export function CsmPage() {
     kind: string,
     extra: Record<string, unknown> = {},
   ) => {
-    await act({ clientId: c._id as Id<"clients">, action, kind, ...extra });
+    try {
+      // The ClickUp id survives the sync replacing every row; the document id may not.
+      await act({
+        clientId: c._id as string,
+        taskId: c.taskId,
+        action,
+        kind,
+        ...extra,
+      });
+    } catch (e) {
+      toast.error(String((e as Error).message ?? e));
+      return;
+    }
     setOpen(null);
     setNote("");
     setTicketNote("");
@@ -517,7 +1235,7 @@ export function CsmPage() {
           className="flex w-full flex-wrap items-start justify-between gap-2 px-4 py-3 text-left"
           onClick={() => {
             setOpen(isOpen ? null : c.name);
-            setPanel("actions");
+            setPanel("message");
           }}
         >
           <div className="min-w-0">
@@ -533,6 +1251,35 @@ export function CsmPage() {
                   {c.happiness}
                 </span>
               )}
+              {(() => {
+                const sm = serviceModel(c.service);
+                return (
+                  <span
+                    className={`rounded px-1.5 py-0.5 text-[12px] font-medium ${
+                      sm.code
+                        ? "bg-slate-100 text-slate-600"
+                        : "bg-amber-100 text-amber-800"
+                    }`}
+                    title={sm.kpi}
+                  >
+                    {sm.label}
+                  </span>
+                );
+              })()}
+              {(() => {
+                const poc = nextPocState(c, snap.day);
+                return (
+                  <span
+                    className={`rounded px-1.5 py-0.5 text-[12px] font-medium ${
+                      poc.missing || poc.past
+                        ? "bg-rose-100 text-rose-700"
+                        : "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-100"
+                    }`}
+                  >
+                    {poc.label}
+                  </span>
+                );
+              })()}
               {handled && (
                 <span className="text-[12px] text-emerald-700">
                   ✓ handled today
@@ -543,7 +1290,6 @@ export function CsmPage() {
             <div className="mt-1 text-xs text-muted-foreground">
               {c.lastPoc ? `last contact ${c.lastPoc}` : "never contacted"}
               {c.lastCall ? ` · last call ${c.lastCall}` : " · no call logged"}
-              {c.nextPoc ? ` · next ${c.nextPoc}` : ""}
               {c.liveDays !== undefined ? ` · live ${c.liveDays}d` : ""}
               {c.csmAssigned ? ` · ${c.csmAssigned}` : ""}
             </div>
@@ -556,15 +1302,25 @@ export function CsmPage() {
         {isOpen && (
           <div className="space-y-3 border-t px-4 py-3">
             <div className="flex flex-wrap gap-2 text-xs">
-              {(["actions", "book", "update", "ticket", "leave"] as const).map(
-                p => (
-                  <button
-                    key={p}
-                    type="button"
-                    onClick={() => setPanel(p)}
-                    className={`rounded px-2 py-1 ${panel === p ? "bg-foreground text-background" : "bg-muted"}`}
-                  >
-                    {p === "actions"
+              {(
+                [
+                  "message",
+                  "actions",
+                  "book",
+                  "update",
+                  "ticket",
+                  "leave",
+                ] as const
+              ).map(p => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => setPanel(p)}
+                  className={`rounded px-2 py-1 ${panel === p ? "bg-foreground text-background" : "bg-muted"}`}
+                >
+                  {p === "message"
+                    ? "Message (SOP template)"
+                    : p === "actions"
                       ? "Do it"
                       : p === "book"
                         ? "Book the next call"
@@ -573,15 +1329,26 @@ export function CsmPage() {
                           : p === "ticket"
                             ? "Raise a ticket"
                             : "Leave it"}
-                  </button>
-                ),
-              )}
+                </button>
+              ))}
             </div>
+
+            {panel === "message" && (
+              <TemplatePicker
+                c={c}
+                today={snap.day}
+                lang={langOf(c)}
+                onLang={l =>
+                  void setClientLanguage({ clientName: c.name, language: l })
+                }
+                onLog={run}
+              />
+            )}
 
             {panel === "actions" && (
               <div className="space-y-2">
                 <Textarea
-                  placeholder="Call summary or what you said to them (optional — goes on the ClickUp task)"
+                  placeholder="Call summary or what you said to them (optional, goes on the ClickUp task)"
                   value={note}
                   onChange={e => setNote(e.target.value)}
                   rows={2}
@@ -602,22 +1369,16 @@ export function CsmPage() {
                   >
                     Logged a call + summary
                   </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      const d = prompt("Next touchpoint date (YYYY-MM-DD)");
-                      if (d)
-                        run(
-                          c,
-                          `Booked the next touchpoint for ${d}`,
-                          "booked",
-                          { value: d },
-                        );
-                    }}
-                  >
-                    Book the next touchpoint
-                  </Button>
+                  <BookDate
+                    c={c}
+                    today={snap.day}
+                    label="Book the next touchpoint"
+                    onBook={d =>
+                      run(c, `Booked the next touchpoint for ${d}`, "booked", {
+                        value: d,
+                      })
+                    }
+                  />
                   {c.sheetLink && (
                     <a
                       className="text-xs underline"
@@ -640,7 +1401,7 @@ export function CsmPage() {
                   )}
                 </div>
                 {c.hot.length > 0 && !c.hotBlocked && (
-                  <div className="rounded border border-emerald-300 bg-emerald-50/60 p-2">
+                  <div className="rounded border border-emerald-300 bg-emerald-50/60 p-2 dark:border-emerald-800 dark:bg-emerald-950/30">
                     <div className="text-xs font-semibold text-emerald-800">
                       Hot list
                     </div>
@@ -650,7 +1411,7 @@ export function CsmPage() {
                         className="mt-1 flex items-center justify-between gap-2 text-xs"
                       >
                         <span>
-                          <strong>{h.kind}</strong> — {h.why}
+                          <strong>{h.kind}</strong>, {h.why}
                         </span>
                         <Button
                           size="sm"
@@ -681,7 +1442,7 @@ export function CsmPage() {
                           key={`${ch.day}-${i}`}
                           className="mt-1 text-xs text-muted-foreground"
                         >
-                          <span className="text-foreground">{ch.day}</span> —{" "}
+                          <span className="text-foreground">{ch.day}</span>,{" "}
                           {ch.action}. {ch.evidence}
                         </div>
                       ),
@@ -699,31 +1460,46 @@ export function CsmPage() {
             {panel === "book" && (
               <div className="space-y-2 text-sm">
                 {(() => {
-                  const nc = nextCall(c);
+                  const nc = nextCall(c, langOf(c));
                   return (
                     <>
                       <div className="text-xs text-muted-foreground">
                         Next in the journey: <strong>{nc.label}</strong>
                       </div>
+                      <div className="text-xs">{nc.doNow}</div>
                       <div className="flex flex-wrap gap-2">
-                        <a
-                          className="rounded bg-foreground px-2 py-1 text-xs text-background"
-                          href={nc.url}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          Open the booking link
-                        </a>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            navigator.clipboard.writeText(nc.url);
-                            toast.success("Booking link copied");
-                          }}
-                        >
-                          Copy the link
-                        </Button>
+                        {nc.url ? (
+                          <>
+                            <a
+                              className="rounded bg-foreground px-2 py-1 text-xs text-background"
+                              href={nc.url}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Open the booking link
+                            </a>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                navigator.clipboard.writeText(nc.url);
+                                toast.success("Booking link copied");
+                              }}
+                            >
+                              Copy the link
+                            </Button>
+                          </>
+                        ) : null}
+                        {nc.framework ? (
+                          <a
+                            className="text-xs underline"
+                            href={nc.framework}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Call framework
+                          </a>
+                        ) : null}
                         <a
                           className="text-xs underline"
                           href={LINKS.callSummaryForm}
@@ -750,43 +1526,43 @@ export function CsmPage() {
                               el?.value ?? nc.message,
                             );
                             toast.success(
-                              "Message copied — send it from WhatsApp",
+                              "Message copied, send it from WhatsApp",
                             );
                           }}
                         >
                           Copy the message
                         </Button>
-                        <Button
-                          size="sm"
-                          onClick={() => {
-                            const d = prompt(
-                              "Booked for which date? (YYYY-MM-DD)",
-                            );
-                            if (d)
-                              run(c, `Booked ${nc.label} for ${d}`, "booked", {
-                                value: d,
-                                note: `Sent the booking link (${nc.url}).`,
-                              });
-                          }}
-                        >
-                          They booked — log the date
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() =>
-                            run(
-                              c,
-                              `Sent the ${nc.label} booking link`,
-                              "touchpoint",
-                              {
-                                note: `Booking link sent: ${nc.url}`,
-                              },
-                            )
+                        <BookDate
+                          c={c}
+                          today={snap.day}
+                          label="They booked, log the date"
+                          onBook={d =>
+                            run(c, `Booked ${nc.label} for ${d}`, "booked", {
+                              value: d,
+                              note: nc.url
+                                ? `Sent the booking link (${nc.url}).`
+                                : `${nc.label} booked.`,
+                            })
                           }
-                        >
-                          Sent it, not booked yet
-                        </Button>
+                        />
+                        {nc.url ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                              run(
+                                c,
+                                `Sent the ${nc.label} booking link`,
+                                "touchpoint",
+                                {
+                                  note: `Booking link sent: ${nc.url}`,
+                                },
+                              )
+                            }
+                          >
+                            Sent it, not booked yet
+                          </Button>
+                        ) : null}
                       </div>
                       <p className="text-[12px] text-muted-foreground">
                         The cockpit drafts, you send. Nothing goes to the client
@@ -817,6 +1593,34 @@ export function CsmPage() {
                         {s}
                       </button>
                     ))}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">
+                    Service model, what we owe them
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-1">
+                    {(["DFY", "DWY"] as const).map(v => (
+                      <button
+                        key={v}
+                        type="button"
+                        className={`rounded px-2 py-1 text-xs ${
+                          serviceModel(c.service).code === v
+                            ? "bg-foreground text-background"
+                            : "bg-muted"
+                        }`}
+                        onClick={() =>
+                          run(c, `Service model set to ${v}`, "service", {
+                            value: v,
+                          })
+                        }
+                      >
+                        {v}
+                      </button>
+                    ))}
+                    <span className="text-[12px] text-muted-foreground">
+                      {serviceModel(c.service).kpi}
+                    </span>
                   </div>
                 </div>
                 <div>
@@ -920,10 +1724,22 @@ export function CsmPage() {
 
   return (
     <div className="space-y-6">
-      <IssueReporter page={tab} />
-      <header>
+      <AiHelper page={tab} />
+      <header className="border-b pb-4">
         <h1 className="text-2xl font-bold tracking-tight">
-          Client Success Cockpit
+          {section === "start"
+            ? "Start of day"
+            : section === "clients"
+              ? "Client management & touchpoints"
+              : section === "tasks"
+                ? "Task list"
+                : section === "hot"
+                  ? "Hot list"
+                  : section === "links"
+                    ? "Key links"
+                    : section === "money"
+                      ? "My money"
+                      : "End of day"}
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {new Date().toLocaleDateString("en-GB", {
@@ -937,115 +1753,233 @@ export function CsmPage() {
             : "not yet synced"}{" "}
           · clients on WhatsApp, team on Slack
         </p>
+        {section === "start" && (
+          <p className="mt-3 text-base">
+            {t.dueToday === 0
+              ? "Nothing is waiting on you. Use the time on the hot list."
+              : `${t.dueToday} ${t.dueToday === 1 ? "client needs" : "clients need"} a message or a call today.`}
+            {t.pastDue > 0
+              ? ` ${t.pastDue} ${t.pastDue === 1 ? "invoice is" : "invoices are"} past due.`
+              : ""}{" "}
+            {t.dueToday > 0 && (
+              <Link
+                to="/clients"
+                className="font-medium underline underline-offset-4"
+              >
+                Open the client list
+              </Link>
+            )}
+          </p>
+        )}
       </header>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <Stat label="Need you today" value={t.dueToday} tone="text-rose-600" />
-        <Stat
-          label="New signups"
-          value={t.newSignups}
-          tone={t.newSignups ? "text-rose-600" : ""}
-        />
-        <Stat label="In onboarding" value={t.onboarding} />
-        <Stat label="Managed clients" value={t.managed ?? 0} />
-        <Stat
-          label="Invoices past due"
-          value={t.pastDue}
-          tone={t.pastDue ? "text-rose-600" : ""}
-        />
-        <Stat label="Hot list" value={t.hot} tone="text-emerald-600" />
-        <Stat label="Loose ends" value={t.loose} />
-      </div>
-
-      <section className="rounded-lg border">
-        <div className="border-b px-4 py-2 text-sm font-semibold">
-          Your day — three sprints
+      {/* The replies waiting on her, above the counts. A number saying
+          somebody needs a message is worth less than the message, already
+          written, with a send button on it. */}
+      {section === "start" && (
+        <div className="mb-4">
+          <WhatsAppDesk desk="csm" />
         </div>
-        <div className="divide-y">
-          {snap.checks.map(
-            (c: {
-              _id: string;
-              label: string;
-              detail?: string;
-              done: boolean;
-            }) => (
-              <button
-                key={c._id}
-                type="button"
-                className="flex w-full items-start gap-3 px-4 py-2 text-left text-sm"
-                onClick={() => toggleCheck({ id: c._id as Id<"checks"> })}
+      )}
+
+      {/* Sending a cut for review sits with answering clients, because
+          the reply they are waiting for is usually "here it is". */}
+      {section === "start" && (
+        <div className="mb-4">
+          <SendForReview />
+        </div>
+      )}
+
+      {section === "start" && (
+        <div className="space-y-2">
+          <div className="grid grid-cols-3 gap-3">
+            <Stat
+              label="Need you today"
+              value={t.dueToday}
+              tone={t.dueToday ? "text-rose-600" : "text-emerald-600"}
+            />
+            <Stat
+              label="New signups"
+              value={t.newSignups}
+              tone={t.newSignups ? "text-rose-600" : ""}
+            />
+            <Stat
+              label="Invoices past due"
+              value={t.pastDue}
+              tone={t.pastDue ? "text-rose-600" : ""}
+            />
+          </div>
+          <details className="text-sm">
+            <summary className="cursor-pointer text-muted-foreground">
+              The rest of the numbers
+            </summary>
+            <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <Stat label="In onboarding" value={t.onboarding} />
+              <Stat label="Managed clients" value={t.managed ?? 0} />
+              <Stat label="Hot list" value={t.hot} tone="text-emerald-600" />
+              <Stat label="Loose ends" value={t.loose} />
+            </div>
+          </details>
+        </div>
+      )}
+
+      {section === "start" && <TodaysCalls snap={snap} />}
+
+      {section === "start" && (
+        <div className="space-y-3">
+          {(
+            [
+              [
+                "sprint_am",
+                "1 · Morning sprint",
+                "10:00–10:30 · every client group, cleared and closed",
+              ],
+              [
+                "work_am",
+                "2 · Then the work",
+                "Signups, calls, notes, billing, before the day fills up",
+              ],
+              [
+                "sprint_midday",
+                "3 · Midday sprint",
+                "~14:00 · replies to clients, answers to the team",
+              ],
+              [
+                "work_pm",
+                "4 · Then the work",
+                "Commitments, reports, hot list",
+              ],
+              [
+                "sprint_pm",
+                "5 · Evening sprint",
+                "17:30–18:00 · close every loop, then file your end of day",
+              ],
+            ] as const
+          ).map(([block, title, hint]) => {
+            const rows = (
+              snap.checks as {
+                _id: string;
+                label: string;
+                detail?: string;
+                done: boolean;
+                block?: string;
+              }[]
+            ).filter(c => (c.block ?? "work_am") === block);
+            if (rows.length === 0) return null;
+            const isSprint = block.startsWith("sprint");
+            const doneCount = rows.filter(c => c.done).length;
+            const allDone = doneCount === rows.length;
+            return (
+              <details
+                key={block}
+                open={!allDone}
+                className={`rounded-lg border ${isSprint ? "border-teal-300 bg-teal-50/40 dark:border-teal-800 dark:bg-teal-950/30" : ""} ${allDone ? "opacity-70" : ""}`}
               >
-                <span
-                  className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[11px] ${c.done ? "bg-emerald-600 text-white" : ""}`}
-                >
-                  {c.done ? "✓" : ""}
-                </span>
-                <span className={c.done ? "line-through opacity-60" : ""}>
-                  {c.label}
-                  {c.detail && (
-                    <span className="ml-2 text-xs text-muted-foreground">
-                      {c.detail}
-                    </span>
-                  )}
-                </span>
-              </button>
-            ),
-          )}
+                <summary className="flex cursor-pointer flex-wrap items-baseline justify-between gap-2 px-4 py-2">
+                  <span className="text-sm font-semibold">
+                    {allDone ? "✓ " : ""}
+                    {title}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {doneCount}/{rows.length} done · {hint}
+                  </span>
+                </summary>
+                <div className="divide-y border-t">
+                  {rows.map(c => (
+                    <button
+                      key={c._id}
+                      type="button"
+                      className="flex w-full items-start gap-3 px-4 py-2 text-left text-sm"
+                      onClick={() => toggleCheck({ id: c._id })}
+                    >
+                      <span
+                        className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[11px] ${c.done ? "bg-emerald-600 text-white" : ""}`}
+                      >
+                        {c.done ? "✓" : ""}
+                      </span>
+                      <span className={c.done ? "line-through opacity-60" : ""}>
+                        {c.label.replace(
+                          /^(Morning|Midday|Evening) sprint\s*[-—:]\s*/i,
+                          "",
+                        )}
+                        {c.detail && (
+                          <span className="ml-2 text-xs text-muted-foreground">
+                            {c.detail}
+                          </span>
+                        )}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </details>
+            );
+          })}
         </div>
-      </section>
+      )}
 
-      <div className="flex flex-wrap gap-2 text-sm">
-        {(
-          [
-            ["today", `Today (${todayList.length})`],
+      {TABS[section].length > 1 && (
+        <div className="flex flex-wrap gap-2 text-sm">
+          {(
             [
-              "management",
-              `Client management (${managementList.filter(needsAction).length}/${managementList.length})`,
-            ],
-            [
-              "onboarding",
-              `Client onboarding (${onboardingList.filter(needsAction).length}/${onboardingList.length})`,
-            ],
-            ["hot", `Hot list (${hotList.length})`],
-            ["loose", `Loose ends (${looseList.length})`],
-            ["tasks", `ClickUp tasks (${snap.tasks.length})`],
-          ] as const
-        ).map(([k, label]) => (
-          <button
-            key={k}
-            type="button"
-            onClick={() => setTab(k)}
-            className={`rounded px-3 py-1 ${tab === k ? "bg-foreground text-background" : "bg-muted"}`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+              ["today", `Today (${todayList.length})`],
+              [
+                "management",
+                `Client management (${managementList.filter(needsAction).length}/${managementList.length})`,
+              ],
+              [
+                "onboarding",
+                `Client onboarding (${onboardingList.filter(needsAction).length}/${onboardingList.length})`,
+              ],
+              ["hot", `Hot list (${hotRows.length})`],
+              ["loose", `Loose ends (${looseList.length})`],
+              ["tasks", `ClickUp tasks (${snap.tasks.length})`],
+            ] as const
+          )
+            .filter(([k]) => TABS[section].includes(k))
+            .map(([k, label]) => (
+              <button
+                key={k}
+                type="button"
+                onClick={() => setTab(k)}
+                className={`rounded px-3 py-1 ${tab === k ? "bg-foreground text-background" : "bg-muted"}`}
+              >
+                {label}
+              </button>
+            ))}
+        </div>
+      )}
 
       {tab === "today" && (
-        <div className="space-y-3">
-          <div className="space-y-2">
-            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Onboarding — get them live (
-              {onboardingList.filter(needsAction).length})
-            </div>
-            {onboardingList.filter(needsAction).map(row)}
-          </div>
-          <div className="space-y-2">
-            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Management — keep them alive (
-              {managementList.filter(needsAction).length})
-            </div>
-            {managementList.filter(needsAction).map(row)}
-          </div>
+        <div className="space-y-5">
+          <ShortList
+            title="Onboarding, get them live"
+            items={onboardingList.filter(needsAction)}
+            render={row}
+            empty="Every onboarding client has been dealt with today."
+          />
+          <ShortList
+            title="Management, keep them alive"
+            items={managementList.filter(needsAction)}
+            render={row}
+            empty="Every managed client has been dealt with today."
+          />
         </div>
       )}
       {tab === "touchpoints" && (
         <div className="space-y-4">
           {[
             {
+              key: "nopoc",
+              title: "No next call booked",
+              hint: "Every client needs a booked next call. Send the booking link here and save the date, it writes to the Next POC field in ClickUp. Messages are tracked automatically, they do not need booking.",
+              rows: clients.filter(c => {
+                const poc = nextPocState(c, snap.day);
+                return poc.missing || poc.past;
+              }),
+            },
+            {
               key: "launch",
-              title: "Launch week — message every day",
+              title: "Launch week, message every day",
               hint: "Day 1–7 after launch, plus the day-7 review call.",
               rows: clients.filter(
                 c => c.bucket === "management" && (c.liveDays ?? 99) <= 7,
@@ -1053,25 +1987,21 @@ export function CsmPage() {
             },
             {
               key: "pipeline",
-              title:
-                "In onboarding — message every working day until they move",
+              title: "In onboarding, message every working day until they move",
               hint: "Nothing else moves them forward.",
               rows: onboardingList.filter(needsAction),
             },
             {
               key: "call",
-              title: "Check-in call due — 14 days since the last one",
-              hint: "A message does not clear this. It needs a call.",
+              title: "Check-in call due",
+              hint: "Weekly through their first month live, every 2 weeks after that. A message does not clear this, it needs a call.",
               rows: clients.filter(
-                c =>
-                  c.bucket === "management" &&
-                  (c.liveDays ?? 0) > 7 &&
-                  (c.callDays === undefined || c.callDays >= 14),
+                c => c.bucket === "management" && cadence(c).callOverdue,
               ),
             },
             {
               key: "silent",
-              title: "Going quiet — 7 days or more with no contact",
+              title: "Going quiet, 7 days or more with no contact",
               hint: "Comms level slips to Meh at 14 days, Danger at 30.",
               rows: clients.filter(
                 c =>
@@ -1081,7 +2011,7 @@ export function CsmPage() {
             },
             {
               key: "booked",
-              title: "Booked ahead — nothing due",
+              title: "Booked ahead, nothing due",
               hint: "Suppressed until the booked date, unless an invoice goes past due.",
               rows: clients.filter(c => c.nextPoc && c.nextPoc > snap.day),
             },
@@ -1100,8 +2030,21 @@ export function CsmPage() {
                   Nothing here today.
                 </p>
               ) : (
-                group.rows.map(c => (
-                  <TouchpointRow key={c.taskId} c={c} onLog={run} />
+                group.rows.map((c, i) => (
+                  <TouchpointRow
+                    key={c.taskId}
+                    today={snap.day}
+                    defaultOpen={i === 0}
+                    c={c}
+                    lang={langOf(c)}
+                    onLang={l =>
+                      void setClientLanguage({
+                        clientName: c.name,
+                        language: l,
+                      })
+                    }
+                    onLog={run}
+                  />
                 ))
               )}
             </div>
@@ -1115,18 +2058,43 @@ export function CsmPage() {
         <div className="space-y-2">{onboardingList.map(row)}</div>
       )}
       {tab === "hot" && (
-        <div className="space-y-2">
-          {hotList.length === 0 ? (
+        <HotSheet
+          suggestions={hotRows}
+          saved={(snap.hotRows ?? []) as Any[]}
+          onSave={saveHotRow}
+        />
+      )}
+      {tab === "loose" && (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-card px-3 py-2">
+            <p className="text-xs text-muted-foreground">
+              Loose ends are what the board says nobody closed. Anything about
+              money stays, everything else can be written off in one go, and I
+              record who cleared it.
+            </p>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() =>
+                clearLooseEnds({}).then((r: any) =>
+                  toast.success(
+                    `Cleared ${r.cleared}, kept ${r.kept} money ones`,
+                  ),
+                )
+              }
+            >
+              Clear these (money stays)
+            </Button>
+          </div>
+          {looseList.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              Nobody is eligible today. The list only opens after a first win,
-              and only once per client per month.
+              Nothing loose. This is what a clean board looks like.
             </p>
           ) : (
-            hotList.map(row)
+            looseList.map(row)
           )}
         </div>
       )}
-      {tab === "loose" && <div className="space-y-2">{looseList.map(row)}</div>}
       {tab === "tasks" && (
         <div className="space-y-4">
           <div className="space-y-2">
@@ -1142,47 +2110,86 @@ export function CsmPage() {
                 Nothing outstanding from the last round of calls.
               </p>
             ) : (
-              commitmentRows.map(({ client, item }, i) => (
-                <ChecklistItem
-                  key={`${client.taskId}-${i}`}
-                  title={`${client.name} — ${item.text}`}
-                  why={`You said this on a call. Source: ${item.source}.`}
-                  action={
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        size="sm"
-                        onClick={() =>
-                          addPlanItems({
-                            items: [
-                              { text: item.text, clientName: client.name },
-                            ],
-                          }).then(() =>
-                            toast.success("Task created on Client Success"),
-                          )
-                        }
-                      >
-                        Create the task
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() =>
-                          run(
-                            client,
-                            `Commitment handled: ${item.text}`,
-                            "touchpoint",
-                            {
-                              note: item.source,
-                            },
-                          )
-                        }
-                      >
-                        Already done
-                      </Button>
-                    </div>
-                  }
-                />
-              ))
+              // One card per CALL, not per line. A call is one conversation: here is what
+              // you said, here are the tasks I think come out of it, and here is the
+              // ticketing form for the ones another team has to do.
+              [
+                ...new Map(
+                  commitmentRows.map(r => [
+                    `${r.client.taskId}|${r.item.source}`,
+                    r,
+                  ]),
+                ).values(),
+              ].map(({ client, item }) => {
+                const call = item.source;
+                const items = commitmentRows
+                  .filter(
+                    r =>
+                      r.client.taskId === client.taskId &&
+                      r.item.source === call,
+                  )
+                  .map(r => r.item);
+                const when = call.replace("1-1 call notes, ", "");
+                return (
+                  <ChecklistItem
+                    key={`${client.taskId}-${call}`}
+                    title={`${client.name}, your call on ${when}`}
+                    why={`${items.length} thing${items.length === 1 ? "" : "s"} you said you would do. Anything another team has to do goes on the ticketing form.`}
+                    action={
+                      <div className="space-y-2">
+                        <ul className="ml-4 list-disc space-y-1 text-sm">
+                          {items.map(i => (
+                            <li key={i.text}>{i.text}</li>
+                          ))}
+                        </ul>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            size="sm"
+                            onClick={() =>
+                              addPlanItems({
+                                items: items.map(i => ({
+                                  text: i.text,
+                                  clientName: client.name,
+                                })),
+                              }).then(() =>
+                                toast.success(
+                                  `${items.length} task${items.length === 1 ? "" : "s"} created on Client Success`,
+                                ),
+                              )
+                            }
+                          >
+                            Create{" "}
+                            {items.length === 1 ? "the task" : "the tasks"}
+                          </Button>
+                          <a
+                            className="rounded bg-muted px-2 py-1 text-xs"
+                            href={LINKS.ticketingForm}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Ticketing form ↗
+                          </a>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={async () => {
+                              for (const i of items)
+                                await run(
+                                  client,
+                                  `Commitment handled: ${i.text}`,
+                                  "touchpoint",
+                                  { note: i.source },
+                                );
+                            }}
+                          >
+                            All done already
+                          </Button>
+                        </div>
+                      </div>
+                    }
+                  />
+                );
+              })
             )}
           </div>
 
@@ -1210,13 +2217,13 @@ export function CsmPage() {
                 }) => (
                   <ChecklistItem
                     key={d._id}
-                    title={`${d.subject} — ${d.action} → ${d.reroutedTo ?? "?"} ${d.clickupTaskUrl ? "✓ landed" : d.logError ? "✗ failed" : "… sending"}`}
+                    title={`${d.subject}, ${d.action} → ${d.reroutedTo ?? "?"} ${d.clickupTaskUrl ? "✓ landed" : d.logError ? "✗ failed" : "… sending"}`}
                     why={
                       d.clickupTaskUrl
                         ? `Created on the ${d.reroutedTo} board. Open it: ${d.clickupTaskUrl}`
                         : d.logError
                           ? `ClickUp rejected it: ${d.logError}. Raise it again.`
-                          : "Still being created — refresh in a moment."
+                          : "Still being created, refresh in a moment."
                     }
                   />
                 ),
@@ -1232,7 +2239,7 @@ export function CsmPage() {
               c.loose.map((l: string, i: number) => (
                 <ChecklistItem
                   key={`${c.taskId}-loose-${i}`}
-                  title={`${c.name} — ${l}`}
+                  title={`${c.name}, ${l}`}
                   why={`${c.stage}. ${c.todo}. Clear it before 18:00 or it shows in your EOD.`}
                   action={
                     c.taskUrl ? (
@@ -1253,8 +2260,8 @@ export function CsmPage() {
 
           <div className="space-y-2">
             <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Client Success board — due, overdue or undated (
-              {snap.tasks.length})
+              Client Success board, due, overdue or undated ({snap.tasks.length}
+              )
             </div>
             {snap.tasks.map(
               (task: {
@@ -1298,164 +2305,811 @@ export function CsmPage() {
         </div>
       )}
 
-      <section className="rounded-lg border">
-        <div className="border-b px-4 py-2 text-sm font-semibold">
-          End of day — plan tomorrow today
+      {tab === "links" && (
+        <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            Everything you need to open in a day. Pulled from the Client Journey
+            SOP, the exit process and #csm-general, if a link is missing, use
+            the report button and I will add it.
+          </p>
+          {LINK_GROUPS.map((g: any) => (
+            <section key={g.title} className="rounded-lg border">
+              <div className="border-b px-4 py-2">
+                <div className="text-sm font-semibold">{g.title}</div>
+                <div className="text-xs text-muted-foreground">{g.blurb}</div>
+              </div>
+              <div className="divide-y">
+                {g.rows.map((r: any) => (
+                  <div
+                    key={r.url + r.label}
+                    className="flex flex-wrap items-center justify-between gap-2 px-4 py-2"
+                  >
+                    <div>
+                      <a
+                        href={r.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-sm font-medium text-teal-700 underline"
+                      >
+                        {r.label}
+                      </a>
+                      {r.note && (
+                        <div className="text-xs text-muted-foreground">
+                          {r.note}
+                        </div>
+                      )}
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        void navigator.clipboard.writeText(r.url);
+                        toast.success("Link copied");
+                      }}
+                    >
+                      Copy
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ))}
         </div>
-        <div className="space-y-3 px-4 py-3">
-          <div className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
-            <div className="rounded bg-muted/50 p-2">
-              <div className="text-xs text-muted-foreground">
-                Clients handled today
+      )}
+
+      {tab === "money" && (
+        <MoneySection
+          snap={snap}
+          targetEdit={targetEdit}
+          setTargetEdit={setTargetEdit}
+          clientsEdit={clientsEdit}
+          setClientsEdit={setClientsEdit}
+          countEdits={countEdits}
+          setCountEdits={setCountEdits}
+          onSave={saveMoneyGoals}
+        />
+      )}
+
+      {section === "eod" && (
+        <section className="rounded-lg border">
+          <div className="border-b px-4 py-2 text-sm font-semibold">
+            End of day, plan tomorrow today
+          </div>
+          <div className="space-y-3 px-4 py-3">
+            <div className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
+              <div className="rounded bg-muted/50 p-2">
+                <div className="text-xs text-muted-foreground">
+                  Clients handled today
+                </div>
+                <div className="text-lg font-semibold">
+                  {snap.decisions.length}
+                </div>
               </div>
-              <div className="text-lg font-semibold">
-                {snap.decisions.length}
+              <div className="rounded bg-muted/50 p-2">
+                <div className="text-xs text-muted-foreground">
+                  Calls logged
+                </div>
+                <div className="text-lg font-semibold">
+                  {
+                    snap.decisions.filter(
+                      (d: { kind: string; action: string }) =>
+                        /call/i.test(d.action),
+                    ).length
+                  }
+                </div>
+              </div>
+              <div className="rounded bg-muted/50 p-2">
+                <div className="text-xs text-muted-foreground">
+                  Tickets raised
+                </div>
+                <div className="text-lg font-semibold">
+                  {
+                    snap.decisions.filter(
+                      (d: { kind: string }) => d.kind === "rerouted",
+                    ).length
+                  }
+                </div>
+              </div>
+              <div className="rounded bg-muted/50 p-2">
+                <div className="text-xs text-muted-foreground">
+                  Left with a reason
+                </div>
+                <div className="text-lg font-semibold">
+                  {
+                    snap.decisions.filter(
+                      (d: { kind: string }) => d.kind === "left",
+                    ).length
+                  }
+                </div>
               </div>
             </div>
-            <div className="rounded bg-muted/50 p-2">
-              <div className="text-xs text-muted-foreground">Calls logged</div>
-              <div className="text-lg font-semibold">
-                {
-                  snap.decisions.filter((d: { kind: string; action: string }) =>
-                    /call/i.test(d.action),
-                  ).length
-                }
+            <p className="text-xs text-muted-foreground">
+              This is your end-of-day report, it writes itself from what you
+              actually did. Add anything you want on tomorrow's board, one per
+              line.
+            </p>
+            <Textarea
+              rows={3}
+              value={dump}
+              onChange={e => setDump(e.target.value)}
+              placeholder="Arabic or English. One line per thing."
+            />
+            <Button size="sm" onClick={submitPlan}>
+              Create tomorrow's tasks
+            </Button>
+
+            {/* This replaces the Account Manager EOD Typeform, same questions, but the
+              countable ones are already answered from today's activity. */}
+            <div className="space-y-2 border-t pt-3">
+              <div className="text-sm font-semibold">
+                Your EOD {snap.eod ? "· submitted ✓" : ""}
               </div>
-            </div>
-            <div className="rounded bg-muted/50 p-2">
-              <div className="text-xs text-muted-foreground">
-                Tickets raised
+              <div className="grid gap-2 text-xs sm:grid-cols-2">
+                <div className="rounded bg-muted/50 p-2">
+                  Call summaries logged: <strong>{callsToday}</strong> · new
+                  signups contacted: <strong>{signupsToday}</strong>
+                </div>
+                <div className="rounded bg-muted/50 p-2">
+                  Upsell / referral / review conversations:{" "}
+                  <strong>{hotToday}</strong> · tickets raised:{" "}
+                  <strong>{ticketsToday}</strong>
+                </div>
               </div>
-              <div className="text-lg font-semibold">
-                {
-                  snap.decisions.filter(
-                    (d: { kind: string }) => d.kind === "rerouted",
-                  ).length
-                }
+              <div className="flex flex-wrap gap-2">
+                {/* biome-ignore lint/a11y/noLabelWithoutControl: The custom control renders a button inside this label. */}
+                <label className="flex items-center gap-2 text-xs">
+                  Energy
+                  <AnimatedSelect
+                    className="rounded border bg-background px-2 py-1 text-xs"
+                    value={energy}
+                    onChange={e => setEnergy(e.target.value)}
+                  >
+                    {SCORES.map(x => (
+                      <option key={x}>{x}</option>
+                    ))}
+                  </AnimatedSelect>
+                </label>
+                {/* biome-ignore lint/a11y/noLabelWithoutControl: The custom control renders a button inside this label. */}
+                <label className="flex items-center gap-2 text-xs">
+                  Stress
+                  <AnimatedSelect
+                    className="rounded border bg-background px-2 py-1 text-xs"
+                    value={stress}
+                    onChange={e => setStress(e.target.value)}
+                  >
+                    {SCORES.map(x => (
+                      <option key={x}>{x}</option>
+                    ))}
+                  </AnimatedSelect>
+                </label>
               </div>
-            </div>
-            <div className="rounded bg-muted/50 p-2">
-              <div className="text-xs text-muted-foreground">
-                Left with a reason
+              <div>
+                <div className="mb-1 text-xs font-medium">Call summary</div>
+                <Textarea
+                  rows={4}
+                  value={callSummary}
+                  onChange={e => setCallSummary(e.target.value)}
+                  placeholder="One line per call or client. This is the part leadership reads."
+                />
               </div>
-              <div className="text-lg font-semibold">
-                {
-                  snap.decisions.filter(
-                    (d: { kind: string }) => d.kind === "left",
-                  ).length
-                }
+              <div>
+                <div className="mb-1 text-xs font-medium">
+                  Daily expectations done
+                </div>
+                <Textarea
+                  rows={2}
+                  value={expectations}
+                  onChange={e => setExpectations(e.target.value)}
+                  placeholder="What you said you would finish today, and whether it is finished"
+                />
               </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <YesNo
+                  label="Defcon 3 touchpoints"
+                  value={touchpoints}
+                  onChange={setTouchpoints}
+                />
+                <YesNo
+                  label="Fathom summaries sent"
+                  value={fathom}
+                  onChange={setFathom}
+                />
+                <YesNo
+                  label="New signups / pre-onboarding"
+                  value={newSignups}
+                  onChange={setNewSignups}
+                />
+                <YesNo label="Upsells" value={upsells} onChange={setUpsells} />
+                <YesNo
+                  label="Google reviews"
+                  value={reviews}
+                  onChange={setReviews}
+                />
+                <YesNo
+                  label="Referrals"
+                  value={referrals}
+                  onChange={setReferrals}
+                />
+              </div>
+              <Textarea
+                rows={2}
+                value={lost}
+                onChange={e => setLost(e.target.value)}
+                placeholder="Clients lost or at risk today (blank = none)"
+              />
+              {/* These three feed the churn number directly, one client per line. */}
+              <div className="rounded border border-dashed p-2">
+                <div className="mb-1 text-xs font-semibold">
+                  Churn ledger, this is what your churn % is built from
+                </div>
+                <div className="space-y-2">
+                  <Textarea
+                    rows={2}
+                    value={offboarded}
+                    onChange={e => setOffboarded(e.target.value)}
+                    placeholder="Fully offboarded today, one client per line (blank = none)"
+                  />
+                  <Textarea
+                    rows={2}
+                    value={extended}
+                    onChange={e => setExtended(e.target.value)}
+                    placeholder="Extensions given today, one client per line"
+                  />
+                  <Textarea
+                    rows={2}
+                    value={pausedToday}
+                    onChange={e => setPausedToday(e.target.value)}
+                    placeholder="Clients paused today, one client per line"
+                  />
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  Leave blank and nothing is counted. A pause that runs past 14
+                  days becomes churn on its own.
+                </div>
+              </div>
+              <Textarea
+                rows={2}
+                value={onePercent}
+                onChange={e => setOnePercent(e.target.value)}
+                placeholder="One 1% improvement for you or the company"
+              />
+              <Textarea
+                rows={2}
+                value={rollup}
+                onChange={e => setRollup(e.target.value)}
+                placeholder="Daily roll up, fires, anything leadership should know"
+              />
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={async () => {
+                  await submitEod({
+                    energy,
+                    stress,
+                    answers: {
+                      callSummary,
+                      expectations,
+                      touchpoints,
+                      fathom,
+                      newSignups,
+                      upsells,
+                      reviews,
+                      referrals,
+                      lost,
+                      onePercent,
+                      rollup,
+                      offboarded,
+                      extended,
+                      paused: pausedToday,
+                    },
+                    computed: {
+                      handled: snap.decisions.length,
+                      calls: callsToday,
+                      signups: signupsToday,
+                      hot: hotToday,
+                      tickets: ticketsToday,
+                      left: snap.decisions.filter(
+                        (d: { kind: string }) => d.kind === "left",
+                      ).length,
+                    },
+                  });
+                  toast.success(
+                    "EOD filed. It posts to the EOD channel and the sheet on its own.",
+                  );
+                }}
+              >
+                File my EOD
+              </Button>
             </div>
           </div>
-          <p className="text-xs text-muted-foreground">
-            This is your end-of-day report — it writes itself from what you
-            actually did. Add anything you want on tomorrow's board, one per
-            line.
-          </p>
-          <Textarea
-            rows={3}
-            value={dump}
-            onChange={e => setDump(e.target.value)}
-            placeholder="Arabic or English. One line per thing."
-          />
-          <Button size="sm" onClick={submitPlan}>
-            Create tomorrow's tasks
-          </Button>
+        </section>
+      )}
+    </div>
+  );
+}
 
-          {/* This replaces the Account Manager EOD Typeform — same questions, but the
-              countable ones are already answered from today's activity. */}
-          <div className="space-y-2 border-t pt-3">
-            <div className="text-sm font-semibold">
-              Your EOD {snap.eod ? "· submitted ✓" : ""}
+/**
+ * His own money screen. Churn is never computed here — it is read from the company's Churn
+ * Tracker sheet and shown with its month and source, so nobody argues about the number.
+ */
+function MoneySection({
+  snap,
+  targetEdit,
+  setTargetEdit,
+  clientsEdit,
+  setClientsEdit,
+  countEdits,
+  setCountEdits,
+  onSave,
+}: {
+  // biome-ignore lint/suspicious/noExplicitAny: snapshot
+  snap: any;
+  targetEdit: string | null;
+  setTargetEdit: (v: string) => void;
+  clientsEdit: string | null;
+  setClientsEdit: (v: string) => void;
+  countEdits: Counts;
+  setCountEdits: (v: Counts) => void;
+  // biome-ignore lint/suspicious/noExplicitAny: convex mutation
+  onSave: any;
+}) {
+  const saved = snap.money ?? null;
+  const kpis: {
+    key: string;
+    label: string;
+    value?: string;
+    numeric?: number;
+    month?: string;
+    source: string;
+    note?: string;
+  }[] = snap.kpis ?? [];
+  const churnKpi = kpis.find(k => k.key === "churn");
+  const churnMissing = kpis.find(k => k.key === "churn_missing");
+  // My own measurement wins. The sheet is kept as a cross-check underneath.
+  const measured = snap.churn ?? null;
+  const churn: number | null = measured?.pct ?? null;
+
+  const target = Number(targetEdit ?? saved?.target ?? 0);
+  const clients = Number(
+    clientsEdit ?? saved?.clients ?? snap.totals.clients ?? 0,
+  );
+  const counts: Counts = { ...(saved?.counts ?? {}), ...countEdits };
+  const pay = computePay(clients, churn, counts);
+  const gap = target - pay.total;
+
+  const field =
+    "w-24 rounded border bg-background px-2 py-1 text-right text-sm";
+
+  return (
+    <div className="space-y-4">
+      <section
+        className={`rounded-lg border ${
+          churn === null
+            ? ""
+            : churn <= CHURN_TARGET
+              ? "border-teal-400 bg-teal-50/60 dark:bg-teal-950/30"
+              : "border-rose-400 bg-rose-50/60"
+        }`}
+      >
+        <div className="border-b px-4 py-2 text-sm font-semibold">
+          Churn, the one number you are held to
+        </div>
+        <div className="flex flex-wrap items-end gap-8 px-4 py-3">
+          <div>
+            <div className="text-3xl font-bold">
+              {churn === null ? "measuring" : `${churn.toFixed(1)}%`}
             </div>
-            <div className="grid gap-2 text-xs sm:grid-cols-2">
-              <div className="rounded bg-muted/50 p-2">
-                Call summaries logged: <strong>{callsToday}</strong> · new
-                signups contacted: <strong>{signupsToday}</strong>
+            <div className="text-xs text-muted-foreground">
+              target: under {CHURN_TARGET}%
+            </div>
+          </div>
+          {measured ? (
+            <div className="text-sm">
+              <div>
+                <span className="font-semibold">{measured.lost}</span> lost out
+                of <span className="font-semibold">{measured.baseline}</span>{" "}
+                paying clients
               </div>
-              <div className="rounded bg-muted/50 p-2">
-                Upsell / referral / review conversations:{" "}
-                <strong>{hotToday}</strong> · tickets raised:{" "}
-                <strong>{ticketsToday}</strong>
+              <div className="text-xs text-muted-foreground">
+                counted from the roster of {measured.baselineDay} to{" "}
+                {measured.latestDay} · {measured.daysTracked} day(s) recorded
+                {measured.partial
+                  ? " · partial month, tracking started mid-month"
+                  : ""}
+                {measured.extensions
+                  ? ` · ${measured.extensions} extension(s) given`
+                  : ""}
+                {measured.pausedThisMonth
+                  ? ` · ${measured.pausedThisMonth} paused`
+                  : ""}
               </div>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <AnimatedSelect
-                className="rounded border bg-background px-2 py-1 text-xs"
-                value={energy}
-                onChange={e => setEnergy(e.target.value)}
-              >
-                {[
-                  "Energy 1",
-                  "Energy 2",
-                  "Energy 3",
-                  "Energy 4",
-                  "Energy 5",
-                ].map(x => (
-                  <option key={x}>{x}</option>
-                ))}
-              </AnimatedSelect>
-              <AnimatedSelect
-                className="rounded border bg-background px-2 py-1 text-xs"
-                value={stress}
-                onChange={e => setStress(e.target.value)}
-              >
-                {[
-                  "Stress 1",
-                  "Stress 2",
-                  "Stress 3",
-                  "Stress 4",
-                  "Stress 5",
-                ].map(x => (
-                  <option key={x}>{x}</option>
-                ))}
-              </AnimatedSelect>
+          ) : (
+            <div className="text-sm text-muted-foreground">
+              The roster starts recording today. From the 1st of next month this
+              is exact, and every loss below is named and dated.
             </div>
-            <Textarea
-              rows={2}
-              value={lost}
-              onChange={e => setLost(e.target.value)}
-              placeholder="Clients lost or at risk today (blank = none)"
+          )}
+          <div className="text-sm">
+            <div>
+              Retention bonus at this rate:{" "}
+              <span className="font-semibold">
+                {pay.retention < 0 ? "-" : ""}${Math.abs(pay.retention)}
+              </span>
+            </div>
+            <div className="text-xs text-muted-foreground">
+              band: {pay.band}
+            </div>
+          </div>
+        </div>
+        {measured && measured.lostClients.length > 0 && (
+          <div className="border-t px-4 py-2">
+            <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">
+              Who we lost this month
+            </div>
+            <div className="space-y-1">
+              {measured.lostClients.map(
+                (l: { name: string; reason: string; day?: string }) => (
+                  <div key={l.name} className="text-sm">
+                    {l.name}{" "}
+                    <span className="text-xs text-muted-foreground">
+                      , {l.reason}
+                      {l.day ? ` · ${l.day}` : ""}
+                    </span>
+                  </div>
+                ),
+              )}
+            </div>
+          </div>
+        )}
+        <div className="border-t px-4 py-2 text-xs text-muted-foreground">
+          Measured from our own daily client roster: paying clients at the start
+          of the month, minus the ones now stopped, cancelled, paused or off the
+          board. Nobody has to fill anything in for this to stay correct.
+          {churnKpi?.value
+            ? ` Your churn tracker sheet says ${churnKpi.value} for the same month.`
+            : churnMissing
+              ? " Your churn tracker sheet has no usable number for this month."
+              : ""}
+        </div>
+      </section>
+
+      <section className="rounded-lg border">
+        <div className="border-b px-4 py-2 text-sm font-semibold">
+          What I want to earn this month
+        </div>
+        <div className="flex flex-wrap items-center gap-4 px-4 py-3 text-sm">
+          <label className="flex items-center gap-2">
+            My target ($)
+            <input
+              className={field}
+              value={targetEdit ?? String(saved?.target ?? "")}
+              onChange={e => setTargetEdit(e.target.value)}
+              inputMode="numeric"
             />
-            <Textarea
-              rows={2}
-              value={onePercent}
-              onChange={e => setOnePercent(e.target.value)}
-              placeholder="One 1% improvement for you or the company"
+          </label>
+          <label className="flex items-center gap-2">
+            Clients I manage
+            <input
+              className={field}
+              value={clientsEdit ?? String(saved?.clients ?? clients)}
+              onChange={e => setClientsEdit(e.target.value)}
+              inputMode="numeric"
             />
-            <Textarea
-              rows={2}
-              value={rollup}
-              onChange={e => setRollup(e.target.value)}
-              placeholder="Daily roll up — fires, anything Aziz should know"
-            />
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={async () => {
-                await submitEod({
-                  energy,
-                  stress,
-                  answers: { lost, onePercent, rollup },
-                  computed: {
-                    handled: snap.decisions.length,
-                    calls: callsToday,
-                    signups: signupsToday,
-                    hot: hotToday,
-                    tickets: ticketsToday,
-                    left: snap.decisions.filter(
-                      (d: { kind: string }) => d.kind === "left",
-                    ).length,
-                  },
-                });
-                toast.success("EOD filed — no Typeform needed");
-              }}
-            >
-              File my EOD
-            </Button>
+          </label>
+          <div>
+            Base pay: <span className="font-semibold">${pay.base}</span>
+            <span className="ml-1 text-xs text-muted-foreground">
+              $1,200 up to 20 clients, then $50 each
+            </span>
           </div>
         </div>
       </section>
+
+      <section className="rounded-lg border">
+        <div className="border-b px-4 py-2">
+          <div className="text-sm font-semibold">
+            The four Rs, where the rest of the money is
+          </div>
+          <div className="text-xs text-muted-foreground">
+            {FOUR_RS.map((x: any) => `${x.r}: ${x.meaning}`).join(" · ")}
+          </div>
+        </div>
+        <div className="divide-y">
+          {EARNERS.map((e: any) => {
+            const n = counts[e.id] ?? 0;
+            return (
+              <div
+                key={e.id}
+                className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 text-sm"
+              >
+                <div>
+                  <span className="rounded bg-muted px-1.5 py-0.5 text-[12px]">
+                    {e.r}
+                  </span>{" "}
+                  {e.label}
+                  {e.note && (
+                    <div className="text-xs text-muted-foreground">
+                      {e.note}
+                    </div>
+                  )}
+                  {e.form && (
+                    <a
+                      href={e.form}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs text-teal-700 underline"
+                    >
+                      Log it in the form →
+                    </a>
+                  )}
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-muted-foreground">
+                    ${e.rate} {e.unit}
+                  </span>
+                  <input
+                    className={field}
+                    value={String(n)}
+                    inputMode="numeric"
+                    onChange={ev =>
+                      setCountEdits({
+                        ...countEdits,
+                        [e.id]: Number(ev.target.value) || 0,
+                      })
+                    }
+                  />
+                  <span className="w-16 text-right font-semibold">
+                    ${n * e.rate}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="rounded-lg border">
+        <div className="border-b px-4 py-2 text-sm font-semibold">
+          What costs you money
+        </div>
+        <div className="divide-y">
+          {PENALTIES.map((e: any) => {
+            const n = counts[e.id] ?? 0;
+            return (
+              <div
+                key={e.id}
+                className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 text-sm"
+              >
+                <div>{e.label}</div>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-muted-foreground">
+                    ${e.rate} {e.unit}
+                  </span>
+                  <input
+                    className={field}
+                    value={String(n)}
+                    inputMode="numeric"
+                    onChange={ev =>
+                      setCountEdits({
+                        ...countEdits,
+                        [e.id]: Number(ev.target.value) || 0,
+                      })
+                    }
+                  />
+                  <span className="w-16 text-right font-semibold text-rose-600">
+                    ${n * e.rate}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+          <div className="px-4 py-2 text-xs text-muted-foreground">
+            Penalties stop at $500 a month. Upsells that cancel within 60 days
+            reverse the commission.
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-lg border">
+        <div className="grid gap-3 px-4 py-3 text-sm sm:grid-cols-5">
+          {[
+            ["Base", `$${pay.base}`],
+            ["Retention", `$${pay.retention}`],
+            ["Commission", `$${pay.commission}`],
+            ["Penalties", `$${pay.penalties}`],
+          ].map(([k, val]) => (
+            <div key={k} className="rounded bg-muted/50 p-2">
+              <div className="text-xs text-muted-foreground">{k}</div>
+              <div className="text-lg font-semibold">{val}</div>
+            </div>
+          ))}
+          <div className="rounded bg-foreground p-2 text-background">
+            <div className="text-xs opacity-80">On track this month</div>
+            <div className="text-lg font-semibold">${pay.total}</div>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3 text-sm">
+          <div>
+            {target > 0 ? (
+              gap > 0 ? (
+                <>
+                  <span className="font-semibold text-rose-600">
+                    ${gap} short
+                  </span>{" "}
+                  of your ${target} target, that is {Math.ceil(gap / 250)}{" "}
+                  referrals, or {Math.ceil(gap / 350)} UGC packs, or{" "}
+                  {Math.ceil(gap / 150)} video testimonials.
+                </>
+              ) : (
+                <span className="font-semibold text-teal-700">
+                  Target hit, ${-gap} over.
+                </span>
+              )
+            ) : (
+              "Set a target above and I will tell you exactly what closes the gap."
+            )}
+          </div>
+          <Button
+            onClick={async () => {
+              await onSave({
+                month: snap.month,
+                target: Number(targetEdit ?? saved?.target ?? 0) || undefined,
+                clients: clients || undefined,
+                counts,
+              });
+              toast.success("Saved, this is your month");
+            }}
+          >
+            Save my plan
+          </Button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+export const StartOfDayPage = () => <CsmPage section="start" />;
+export const ClientsPage = () => <CsmPage section="clients" />;
+export const TaskListPage = () => <CsmPage section="tasks" />;
+export const HotListPage = () => <CsmPage section="hot" />;
+export const KeyLinksPage = () => <CsmPage section="links" />;
+export const MyMoneyPage = () => <CsmPage section="money" />;
+/** The EOD sheet is scored out of 10, so the app must offer the same range. */
+const SCORES = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
+
+/** A Y / N / NA answer, the three values his EOD sheet already contains. */
+function YesNo({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <>
+      {/* biome-ignore lint/a11y/noLabelWithoutControl: The custom control renders a button inside this label. */}
+      <label className="flex items-center justify-between gap-2 rounded border px-2 py-1 text-xs">
+        <span>{label}</span>
+        <AnimatedSelect
+          className="rounded border bg-background px-2 py-1 text-xs"
+          value={value}
+          onChange={e => onChange(e.target.value)}
+        >
+          {["Y", "N", "NA"].map(x => (
+            <option key={x}>{x}</option>
+          ))}
+        </AnimatedSelect>
+      </label>
+    </>
+  );
+}
+
+export const EndOfDayPage = () => <CsmPage section="eod" />;
+
+type Appt = {
+  _id: string;
+  apptId: string;
+  calendar: string;
+  title: string;
+  kind: string;
+  startTime: string;
+  day: string;
+  status: string;
+  contactName?: string;
+  clientName?: string;
+  joinUrl?: string;
+};
+
+const CALL_LABEL: Record<string, string> = {
+  welcome: "Welcome call",
+  onboarding: "Onboarding call",
+  blueprint: "Brand blueprint",
+  launch: "Launch call",
+  checkin: "Check in call",
+  other: "Call",
+};
+
+function apptTime(iso: string): string {
+  // GHL already returns Kuwait time, so the clock in the string is the clock on the wall.
+  const hhmm = iso.slice(11, 16);
+  return hhmm || iso;
+}
+
+/**
+ * What the CSM actually has booked today, read from the client GHL account. Nobody has to
+ * type their own schedule into a form, and a call that exists here is proof of a booked
+ * touchpoint.
+ */
+function TodaysCalls({
+  snap,
+}: {
+  snap: { day: string; appointments?: Appt[] };
+}) {
+  const all = snap.appointments ?? [];
+  const today = snap.day;
+  const todays = all.filter(a => a.day === today && a.status !== "cancelled");
+  const next = all
+    .filter(a => a.day > today && a.status !== "cancelled")
+    .slice(0, 3);
+  return (
+    <div className="rounded-lg border p-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-sm font-semibold">Your calls today</h2>
+        <span className="text-xs text-muted-foreground">
+          Live from the client booking calendars
+        </span>
+      </div>
+      {todays.length === 0 ? (
+        <p className="mt-2 text-sm text-muted-foreground">
+          Nothing booked today. If a client is due a call, book it from the
+          touchpoints screen.
+        </p>
+      ) : (
+        <ul className="mt-2 space-y-2">
+          {todays.map(a => (
+            <li key={a._id} className="rounded border px-3 py-2 text-sm">
+              <div className="flex flex-wrap items-baseline gap-2">
+                <span className="font-semibold">{apptTime(a.startTime)}</span>
+                <span>{CALL_LABEL[a.kind] ?? "Call"}</span>
+                <span className="text-muted-foreground">
+                  {a.clientName ?? a.contactName ?? a.title}
+                </span>
+                {a.joinUrl ? (
+                  <a
+                    className="text-blue-700 underline"
+                    href={a.joinUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Join
+                  </a>
+                ) : null}
+              </div>
+              {!a.clientName ? (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Booked as {a.title}. Not matched to a client record yet.
+                </p>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      )}
+      {next.length > 0 ? (
+        <p className="mt-3 text-xs text-muted-foreground">
+          Coming up:{" "}
+          {next
+            .map(
+              a =>
+                `${a.day.slice(5)} ${apptTime(a.startTime)} ${
+                  a.clientName ?? a.contactName ?? a.title
+                }`,
+            )
+            .join(" · ")}
+        </p>
+      ) : null}
     </div>
   );
 }

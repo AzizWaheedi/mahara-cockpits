@@ -1,6 +1,6 @@
-import { useMutation, useQuery } from "convex/react";
+import { useMutation, useQuery } from "@/lib/cockpitApi";
 import { useState } from "react";
-import { api } from "../../convex/_generated/api";
+import { api } from "@/lib/cockpitApi";
 
 // biome-ignore lint/suspicious/noExplicitAny: calendar rows
 type Any = any;

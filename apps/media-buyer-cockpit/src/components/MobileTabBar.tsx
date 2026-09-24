@@ -1,4 +1,4 @@
-import { useQuery } from "convex/react";
+import { useQuery } from "@/lib/cockpitApi";
 import type { LucideIcon } from "lucide-react";
 import {
   Gauge,
@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { Link, useLocation, useSearchParams } from "react-router";
 import { cn } from "@/lib/utils";
-import { api } from "../../convex/_generated/api";
+import { api } from "@/lib/cockpitApi";
 import { useSidebar } from "./ui/sidebar";
 
 type Item = {

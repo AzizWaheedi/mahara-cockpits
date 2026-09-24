@@ -1,4 +1,4 @@
-import type { MoneyPayload } from "../../../convex/ceo/payloads";
+import type { MoneyPayload } from "@/types/ceo/payloads";
 import { count, humanize, isNum, money, pct, pct1 } from "./format";
 import { Meter } from "./Meter";
 import { gateTone } from "./StatusChip";

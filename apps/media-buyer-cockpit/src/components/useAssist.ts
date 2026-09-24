@@ -1,8 +1,8 @@
-import { useMutation, useQuery } from "convex/react";
+import { useMutation, useQuery } from "@/lib/cockpitApi";
 import { useCallback, useEffect, useState } from "react";
-import { api } from "../../convex/_generated/api";
-import type { Id } from "../../convex/_generated/dataModel";
-import { waitingLabel } from "../../convex/driveCreative";
+import { api } from "@/lib/cockpitApi";
+import type { Id } from "@/lib/cockpitApi";
+import { waitingLabel } from "@/lib/driveCreative";
 
 /**
  * Hand a job over and watch it come back.

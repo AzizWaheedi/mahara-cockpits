@@ -1,7 +1,6 @@
-import { useAction } from "convex/react";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
-import { api } from "../../../convex/_generated/api";
+import { api, useAction } from "@/lib/social";
 
 /**
  * What a post is made of, and how files get onto it.

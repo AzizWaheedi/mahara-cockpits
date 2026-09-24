@@ -1,5 +1,5 @@
-import { useQuery } from "convex/react";
-import { api } from "../../convex/_generated/api";
+import { useQuery } from "@/lib/cockpitApi";
+import { api } from "@/lib/cockpitApi";
 import { TrendChart } from "./TrendChart";
 
 // biome-ignore lint/suspicious/noExplicitAny: series rows

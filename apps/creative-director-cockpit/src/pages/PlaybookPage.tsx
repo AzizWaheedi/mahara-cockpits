@@ -1,12 +1,21 @@
-import { useQuery } from "convex/react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import {
   WinnerFilter,
   type WinnerOrigin,
   WinningAds,
 } from "@/components/WinningAds";
-import { api } from "../../convex/_generated/api";
+import {
+  fetchCreativePatterns,
+  fetchDimensions,
+  fetchPlaybook,
+  fetchWinners,
+  type CreativePatternRow,
+  type DimensionsResult,
+  type PlaybookRow,
+  type WinnerAdRow,
+} from "@/lib/playbook";
 
 /**
  * What works in the GCC.
@@ -23,24 +32,44 @@ import { api } from "../../convex/_generated/api";
  * tried in another, and to copy it.
  */
 export function PlaybookPage() {
+  const auth = useCockpitAuth();
   const [service, setService] = useState("");
   const [city, setCity] = useState("");
   const [origin, setOrigin] = useState<WinnerOrigin>("all");
   const [savedBy, setSavedBy] = useState("");
-  const dims = useQuery(api.market.dimensions, {});
-  const rows = useQuery(api.market.playbook, {
-    serviceLine: service || undefined,
-    city: city || undefined,
-  });
-  const patterns = useQuery(api.market.creativePatterns, {
-    serviceLine: service || undefined,
-  });
-  const winners = useQuery(api.market.winners, {
-    serviceLine: service || undefined,
-    limit: 40,
-    origin: origin === "all" ? undefined : origin,
-    savedBy: savedBy || undefined,
-  });
+  const [dims, setDims] = useState<DimensionsResult | undefined>(undefined);
+  const [rows, setRows] = useState<PlaybookRow[] | undefined>(undefined);
+  const [patterns, setPatterns] = useState<CreativePatternRow[] | undefined>(undefined);
+  const [winners, setWinners] = useState<WinnerAdRow[] | undefined>(undefined);
+
+  useEffect(() => {
+    if (!auth.client) return;
+    void fetchDimensions(auth.client).then(setDims);
+  }, [auth.client]);
+
+  useEffect(() => {
+    if (!auth.client) return;
+    void fetchPlaybook(auth.client, {
+      serviceLine: service || undefined,
+      city: city || undefined,
+    }).then(setRows);
+  }, [auth.client, service, city]);
+
+  useEffect(() => {
+    if (!auth.client) return;
+    void fetchCreativePatterns(auth.client, {
+      serviceLine: service || undefined,
+    }).then(setPatterns);
+  }, [auth.client, service]);
+
+  useEffect(() => {
+    if (!auth.client) return;
+    void fetchWinners(auth.client, {
+      serviceLine: service || undefined,
+      limit: 40,
+      origin: origin === "all" ? undefined : origin,
+    }).then(setWinners);
+  }, [auth.client, service, origin]);
 
   const verdictTone = (v: string) =>
     v === "Proven"

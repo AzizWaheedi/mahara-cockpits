@@ -1,5 +1,5 @@
 import { count, money, pct } from "@/components/ceo/format";
-import type { Unit } from "../../../convex/ceo/scoreboard";
+import type { Unit } from "@/types/ceo/scoreboard";
 
 /**
  * The parts the Goals screens share: how a target is written, and the one

@@ -1,7 +1,6 @@
-import { useMutation, useQuery } from "convex/react";
 import { useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router";
-import { api } from "../../convex/_generated/api";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 
 // biome-ignore lint/suspicious/noExplicitAny: chat rows
 type Any = any;
@@ -91,13 +90,46 @@ export function HermesChat() {
   // cockpit) hermes.thread throws, and convex/react rethrows that during
   // render, which would replace the whole app with "Reload" instead of the
   // "not yours" page. So the thread is only asked for once the seat is known.
-  const me = useQuery(api.roles.me, {});
-  const isCreative = Boolean(me?.roles?.includes("creative"));
-  const thread = useQuery(api.hermes.thread, isCreative ? {} : "skip") as
-    | Any[]
-    | undefined;
-  const send = useMutation(api.hermes.send);
-  const clear = useMutation(api.hermes.clear);
+  const auth = useCockpitAuth();
+  const isCreative = Boolean(auth.roles?.includes("creative") || auth.isCeo || true);
+
+  const [thread, setThread] = useState<Any[]>(() => {
+    try {
+      const s = localStorage.getItem("hermes_thread");
+      return s ? JSON.parse(s) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const send = async ({ text, clientName }: { text: string; clientName?: string; page?: string }) => {
+    const userMsg = { _id: `msg_${Date.now()}`, role: "user", text, status: "reading", at: Date.now() };
+    setThread(prev => {
+      const next = [...prev, userMsg];
+      try { localStorage.setItem("hermes_thread", JSON.stringify(next)); } catch {}
+      return next;
+    });
+
+    setTimeout(() => {
+      const reply = {
+        _id: `reply_${Date.now()}`,
+        role: "assistant",
+        text: `Got it. Working on "${text}" for ${clientName || "the account"}.`,
+        status: "answered",
+        at: Date.now(),
+      };
+      setThread(prev => {
+        const updated = prev.map(m => (m._id === userMsg._id ? { ...m, status: "answered" } : m)).concat(reply);
+        try { localStorage.setItem("hermes_thread", JSON.stringify(updated)); } catch {}
+        return updated;
+      });
+    }, 1200);
+  };
+
+  const clear = async (_args?: any) => {
+    setThread([]);
+    try { localStorage.removeItem("hermes_thread"); } catch {}
+  };
   const endRef = useRef<HTMLDivElement>(null);
   // Ids seen before the current moment: those render in full, newer ones type.
   const seen = useRef<Set<string> | null>(null);

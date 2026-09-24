@@ -1,11 +1,11 @@
-import { useAction } from "convex/react";
+import { useAction } from "@/lib/cockpitApi";
 import { Loader2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { shortDate } from "@/components/ceo/format";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import { AnimatedSelect } from "@/components/ui/animated-select";
-import { api } from "../../../convex/_generated/api";
-import type { Scorecard, ScorecardItem } from "../../../convex/ceo/profiles";
+import { api } from "@/lib/cockpitApi";
+import type { Scorecard, ScorecardItem } from "@/types/ceo/profiles";
 
 /**
  * The working document of a monthly one-to-one.
@@ -92,7 +92,7 @@ function Item({
           <p className="text-sm font-medium">{item.accountability}</p>
           {item.lookingAt?.length ? (
             <ul className="mt-0.5 grid gap-0.5 text-xs text-muted-foreground">
-              {(item.lookingAt ?? []).map(x => (
+              {(item.lookingAt ?? []).map((x: any) => (
                 <li key={x}>{x}</li>
               ))}
             </ul>
@@ -101,7 +101,7 @@ function Item({
         <GradePicker
           name={item.accountability}
           value={item.grade}
-          onChange={grade => onChange({ ...item, grade })}
+          onChange={(grade: any) => onChange({ ...item, grade })}
         />
       </div>
 
@@ -131,11 +131,11 @@ function Item({
         aria-label={`Comments on ${item.accountability}`}
         placeholder={
           item.prompts?.length
-            ? (item.prompts ?? []).map(p => `${p} `).join("\n")
+            ? (item.prompts ?? []).map((p: any) => `${p} `).join("\n")
             : "What happened, with the numbers."
         }
         value={item.comment}
-        onChange={e => onChange({ ...item, comment: e.target.value })}
+        onChange={(e: any) => onChange({ ...item, comment: e.target.value })}
       />
     </div>
   );
@@ -324,7 +324,7 @@ export function ScorecardPanel({
             What an A-player looks like in any role
           </summary>
           <ul className="mt-2 grid gap-1 text-xs text-muted-foreground">
-            {(card.competencies ?? []).map(c => (
+            {(card.competencies ?? []).map((c: any) => (
               <li key={c}>{c}</li>
             ))}
           </ul>

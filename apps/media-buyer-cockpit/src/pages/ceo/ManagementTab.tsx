@@ -1,5 +1,5 @@
-import { useAction, useMutation, useQueries } from "convex/react";
-import type { FunctionReturnType } from "convex/server";
+import { useAction, useMutation, useQueries } from "@/lib/cockpitApi";
+import type { FunctionReturnType } from "@/lib/cockpitApi";
 import { History, LoaderCircle, UserRoundX, Users } from "lucide-react";
 import {
   createContext,
@@ -53,14 +53,14 @@ import {
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import { api } from "../../../convex/_generated/api";
+import { api } from "@/lib/cockpitApi";
 import type {
   FeedItem,
   Note,
   TeamPerson,
   TeamStatus,
-} from "../../../convex/ceo/payloads";
-import type { Roster } from "../../../convex/ceo/people";
+} from "@/types/ceo/payloads";
+import type { Roster } from "@/types/ceo/people";
 import { PeopleCard } from "./peopleCard";
 import { PersonPage, usePersonParam } from "./personPage";
 import { ScorecardTemplates } from "./scorecardTemplates";
@@ -359,7 +359,7 @@ export function ManagementTab({ sections, now, day }: CeoTabProps) {
   useEffect(() => {
     let alive = true;
     loadRoster({})
-      .then(r => {
+      .then((r: any) => {
         if (!alive) return;
         const roster = r as Roster;
         setIndex(
@@ -678,22 +678,24 @@ function useStatusSwitch(today: string) {
   // Convex applies this at once and rolls it back if the server refuses.
   const mutate = useMemo(
     () =>
-      setStatus.withOptimisticUpdate((store, args) => {
-        const rows = store.getQuery(api.ceo.teamStatus.list, {});
-        if (rows === undefined) return;
-        const note = args.note?.trim();
-        store.setQuery(api.ceo.teamStatus.list, {}, [
-          ...rows.filter(r => r.personKey !== args.personKey),
-          {
-            personKey: args.personKey,
-            status: args.status,
-            since: args.since,
-            note: note ? note : null,
-            setAt: Date.now(),
-            setBy: "Aziz",
-          },
-        ]);
-      }),
+      typeof (setStatus as any).withOptimisticUpdate === "function"
+        ? (setStatus as any).withOptimisticUpdate((store: any, args: any) => {
+            const rows = store.getQuery(api.ceo.teamStatus.list, {});
+            if (rows === undefined) return;
+            const note = args.note?.trim();
+            store.setQuery(api.ceo.teamStatus.list, {}, [
+              ...rows.filter((r: any) => r.personKey !== args.personKey),
+              {
+                personKey: args.personKey,
+                status: args.status,
+                since: args.since,
+                note: note ? note : null,
+                setAt: Date.now(),
+                setBy: "Aziz",
+              },
+            ]);
+          })
+        : setStatus,
     [setStatus],
   );
 

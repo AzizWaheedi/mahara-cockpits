@@ -5,7 +5,7 @@ import { StatTile } from "@/components/ceo/StatTile";
 import { TimeframeBar } from "@/components/ceo/TimeframeBar";
 import { useTimeframe } from "@/components/ceo/timeframe";
 import type { CeoSection } from "@/components/ceo/useCeo";
-import type { Note } from "../../../convex/ceo/payloads";
+import type { Note } from "@/types/ceo/payloads";
 
 /**
  * One card per tab that rebuilds the headline numbers for any timeframe from

@@ -1,4 +1,4 @@
-import { useAction } from "convex/react";
+import { useAction } from "@/lib/cockpitApi";
 import {
   ChevronDown,
   ChevronUp,
@@ -17,7 +17,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { api } from "../../../convex/_generated/api";
+import { api } from "@/lib/cockpitApi";
 
 /**
  * The scorecard behind every role, editable.

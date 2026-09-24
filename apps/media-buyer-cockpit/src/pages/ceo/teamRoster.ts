@@ -1,9 +1,9 @@
-import { useQueries } from "convex/react";
-import type { FunctionReturnType } from "convex/server";
-import { ConvexError } from "convex/values";
+import { useQueries } from "@/lib/cockpitApi";
+import type { FunctionReturnType } from "@/lib/cockpitApi";
+import { ConvexError } from "@/lib/cockpitApi";
 import { useMemo } from "react";
-import { api } from "../../../convex/_generated/api";
-import type { TeamPerson, TeamStatus } from "../../../convex/ceo/payloads";
+import { api } from "@/lib/cockpitApi";
+import type { TeamPerson, TeamStatus } from "@/types/ceo/payloads";
 
 /**
  * The team switch's live layer (2026-09-16), shared by every tab that counts

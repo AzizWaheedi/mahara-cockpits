@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from "convex/react";
+import { useMutation, useQuery } from "@/lib/cockpitApi";
 import { useState } from "react";
 import { toast } from "sonner";
 import { AnimatedSelect } from "@/components/ui/animated-select";
@@ -9,7 +9,7 @@ import {
   SERVICE_LINES,
   type ServiceLine,
 } from "@/lib/audiences";
-import { api } from "../../convex/_generated/api";
+import { api } from "@/lib/cockpitApi";
 import { CreativePreview } from "./CreativePreview";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -543,7 +543,7 @@ function ProvenPlays({
         Worked elsewhere for {info.serviceLine?.toLowerCase()} — not tried here
       </div>
       <div className="mt-1.5 space-y-1.5">
-        {info.suggestions.map(s => (
+        {info.suggestions.map((s: any) => (
           <div
             key={`${s.city}${s.playType}${s.interests.join()}`}
             className="flex flex-wrap items-center justify-between gap-2 rounded border bg-background p-1.5"

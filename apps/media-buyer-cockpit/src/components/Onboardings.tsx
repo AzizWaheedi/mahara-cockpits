@@ -1,8 +1,8 @@
-import { useQuery } from "convex/react";
+import { useQuery } from "@/lib/cockpitApi";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { assistLabel, useAssist } from "@/components/useAssist";
-import { api } from "../../convex/_generated/api";
+import { api } from "@/lib/cockpitApi";
 
 /**
  * New client launches, as one job instead of a ClickUp scavenger hunt.
@@ -120,10 +120,10 @@ export function Onboardings({
       )}
 
       <div className="space-y-2">
-        {(rows ?? []).map(r => {
+        {(rows ?? []).map((r: any) => {
           const mine = r.groups
-            .flatMap(g => g.items)
-            .filter(i => i.viktorCanDo && !i.done).length;
+            .flatMap((g: any) => g.items)
+            .filter((i: any) => i.viktorCanDo && !i.done).length;
           const isOpen = open === r.taskId;
           return (
             <div key={r.taskId} className="rounded-lg border">
@@ -199,13 +199,13 @@ export function Onboardings({
 
               {isOpen && (
                 <div className="border-t p-2.5 pt-2">
-                  {r.groups.map(g => (
+                  {r.groups.map((g: any) => (
                     <div key={g.name} className="mb-2.5 last:mb-0">
                       <div className="mb-1 text-[12px] font-bold uppercase tracking-wide text-muted-foreground">
                         {g.name}
                       </div>
                       <ul className="space-y-1">
-                        {g.items.map(i => (
+                        {g.items.map((i: any) => (
                           <li
                             key={i.name}
                             className="flex items-start gap-1.5 text-[13px]"

@@ -1,12 +1,12 @@
-import { useAction } from "convex/react";
+import { useAction } from "@/lib/cockpitApi";
 import { Loader2, Plus, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { DateInput } from "@/components/ui/date-input";
-import { api } from "../../../convex/_generated/api";
-import type { Board, TargetRow } from "../../../convex/ceo/goals";
-import type { MetricDef } from "../../../convex/ceo/scoreboard";
+import { api } from "@/lib/cockpitApi";
+import type { Board, TargetRow } from "@/types/ceo/goals";
+import type { MetricDef } from "@/types/ceo/scoreboard";
 import { fmt } from "./goalsKit";
 
 /**

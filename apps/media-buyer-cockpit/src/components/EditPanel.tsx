@@ -1,4 +1,4 @@
-import { useAction } from "convex/react";
+import { useAction } from "@/lib/cockpitApi";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AnimatedSelect } from "@/components/ui/animated-select";
@@ -8,8 +8,8 @@ import {
   creativeWaitLabel,
   useAssist,
 } from "@/components/useAssist";
-import { api } from "../../convex/_generated/api";
-import { isDriveLink } from "../../convex/driveCreative";
+import { api } from "@/lib/cockpitApi";
+import { isDriveLink } from "@/lib/driveCreative";
 
 /**
  * "Change what's already running" — the other half of the builder.

@@ -1,4 +1,4 @@
-import { useAction, useQuery } from "convex/react";
+import { useAction, useQuery } from "@/lib/cockpitApi";
 import { UserSearch } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
@@ -7,8 +7,8 @@ import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import { AnimatedSelect } from "@/components/ui/animated-select";
-import { api } from "../../../convex/_generated/api";
-import type { PayerList, UnmappedPayer } from "../../../convex/ceo/payers";
+import { api } from "@/lib/cockpitApi";
+import type { PayerList, UnmappedPayer } from "@/types/ceo/payers";
 
 /**
  * Say who each unattributed Whop payer is.
@@ -166,7 +166,7 @@ export function PayerMappingCard({ order }: { order?: number }) {
                           className="w-full min-w-48 rounded-md border bg-background px-2 py-1 text-sm"
                         >
                           <option value="">—</option>
-                          {cards.map(c => (
+                          {cards.map((c: any) => (
                             <option
                               key={c.clickupTaskId}
                               value={c.clickupTaskId}

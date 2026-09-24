@@ -16,8 +16,8 @@ import type {
   PortalPayload,
   TeamPayload,
   WebinarPayload,
-} from "../../../convex/ceo/payloads";
-import type { SourceStamp } from "../../../convex/ceo/types";
+} from "@/types/ceo/payloads";
+import type { SourceStamp } from "@/types/ceo/types";
 
 export const SECTION_KEYS = [
   "money",

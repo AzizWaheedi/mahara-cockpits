@@ -1,6 +1,6 @@
-import { useMutation, useQuery } from "convex/react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { ClientUpdates } from "@/components/ClientUpdates";
 import {
   CreativePreview,
@@ -16,7 +16,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { type Constraint, diagnose } from "@/lib/csmDiagnosis";
 import { serviceModel } from "@/lib/csmTemplates";
 import { publishOpenClient } from "@/lib/openClient";
-import { api } from "../../convex/_generated/api";
+import {
+  addTask,
+  fetchClientProfile,
+  fetchPerformanceOverview,
+  fetchTasksAdded,
+  requestReportDoc,
+} from "@/lib/performance";
 import { AiHelper } from "./CsmPage";
 
 /**
@@ -617,7 +623,7 @@ const REPORT_EXTRAS: { key: string; label: string }[] = [
 ];
 
 function ReportSection({ p }: { p: Any }) {
-  const request = useMutation(api.csm.requestReportDoc);
+  const auth = useCockpitAuth();
   const [note, setNote] = useState("");
   const [lang, setLang] = useState<"en" | "ar">("en");
   const [busy, setBusy] = useState(false);
@@ -684,11 +690,12 @@ function ReportSection({ p }: { p: Any }) {
         ))}
         <Button
           size="sm"
-          disabled={busy}
+          disabled={busy || !auth.client}
           onClick={async () => {
+            if (!auth.client) return;
             setBusy(true);
             try {
-              await request({
+              await requestReportDoc(auth.client, {
                 clientName: p.clientName,
                 language: lang,
                 note: note.trim() || undefined,
@@ -817,16 +824,28 @@ function AddTask({
   taskId: string;
   clientName: string;
 }) {
-  const add = useMutation(api.csm.addTask);
-  const added = useQuery(api.csm.tasksAdded, { taskId }) as Any[] | undefined;
+  const auth = useCockpitAuth();
+  const [added, setAdded] = useState<Any[] | undefined>(undefined);
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [note, setNote] = useState("");
   const [team, setTeam] = useState("");
   const [due, setDue] = useState("");
+
+  const reloadTasks = useCallback(() => {
+    if (!auth.client) return;
+    fetchTasksAdded(auth.client, taskId)
+      .then(setAdded)
+      .catch(console.error);
+  }, [auth.client, taskId]);
+
+  useEffect(() => {
+    reloadTasks();
+  }, [reloadTasks]);
+
   const submit = async () => {
-    if (!title.trim()) return;
-    await add({
+    if (!title.trim() || !auth.client) return;
+    await addTask(auth.client, auth.email, {
       taskId,
       clientName,
       title: title.trim(),
@@ -843,6 +862,7 @@ function AddTask({
     setNote("");
     setDue("");
     setOpen(false);
+    reloadTasks();
   };
   return (
     <div className="space-y-2">
@@ -1522,7 +1542,24 @@ function RangePicker({
 }
 
 function Profile({ name, onBack }: { name: string; onBack: () => void }) {
-  const p = useQuery(api.csm.clientProfile, { clientName: name });
+  const auth = useCockpitAuth();
+  const [p, setP] = useState<Any | undefined>(undefined);
+
+  useEffect(() => {
+    if (!auth.client) return;
+    let active = true;
+    fetchClientProfile(auth.client, name)
+      .then(res => {
+        if (active) setP(res);
+      })
+      .catch(err => {
+        console.error("fetchClientProfile error", err);
+        if (active) setP(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [auth.client, name]);
   // Hooks before any early return, so their order never changes.
   const [range, setRange] = useState<RangeKey>("month");
   const rv = useMemo(() => rangeMetrics(p ?? {}, range), [p, range]);
@@ -1906,7 +1943,29 @@ const isChurnedStage = (stage: string) =>
   /stop|cancel|churn|offboard|lost/i.test(stage ?? "");
 
 export function ClientPerformancePage() {
-  const data = useQuery(api.csm.performanceOverview, {});
+  const auth = useCockpitAuth();
+  const [data, setData] = useState<Any | undefined>(undefined);
+
+  useEffect(() => {
+    if (!auth.client) return;
+    let active = true;
+    fetchPerformanceOverview(auth.client, auth.clients)
+      .then(res => {
+        if (active) setData(res);
+      })
+      .catch(err => {
+        console.error("fetchPerformanceOverview error", err);
+        if (active)
+          setData({
+            clients: [],
+            totals: { all: 0, active: 0, onboarding: 0, paused: 0, churned: 0 },
+            trends: { days: [], weeks: [] },
+          });
+      });
+    return () => {
+      active = false;
+    };
+  }, [auth.client, auth.clients]);
   const [openClient, setOpenClient] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [group, setGroup] = useState<"active" | "onboarding" | "paused">(

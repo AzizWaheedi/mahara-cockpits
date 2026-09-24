@@ -1,7 +1,3 @@
-// A namespace import: the client success page test mocks convex/react with
-// only useQuery and useMutation, and the hooks used here must not fail there.
-import * as convexReact from "convex/react";
-import { makeFunctionReference } from "convex/server";
 import {
   ExternalLink,
   ImageOff,
@@ -36,86 +32,22 @@ import {
   uniqueUrls,
 } from "@/lib/metaMedia";
 
-/**
- * One ad, shown so it never breaks.
- *
- * Meta's links expire (preview iframes after about a day, CDN images after a
- * few days), so nothing stored from Meta is shown without checking its age.
- * The picture comes from a chain, and each image that fails to load moves on
- * to the next one:
- *
- *   this cockpit's saved small still, the media buyer's copy, the bigger
- *   stills, Meta's own still while its link is still valid, then a grey
- *   placeholder that says why there is no picture.
- *
- * The live preview (Meta's iframe, video and all) is fetched only when someone
- * opens the ad, through this cockpit's previews.fresh (which asks the media
- * buyer system), and is kept in memory for this tab. If it cannot be fetched,
- * or does not load, the saved picture is shown with a plain reason and a link
- * to the ad in Ads Manager.
- *
- * The media buyer and creative director cockpits hold a copy of this
- * component with the same behaviour. Only their data calls differ.
- */
-
-/** This cockpit's own copy of a saved still (convex/previews.ts stillUrls). */
 export type LocalStill = { url?: string; tinyUrl?: string };
 
 type FreshArgs = { adId: string; campaignName?: string; clientName?: string };
 type FreshCall = (args: FreshArgs) => Promise<PreviewResult>;
 
-// Both functions live in convex/previews.ts. Named references keep this file
-// compiling before the generated api lists that module; they can become
-// api.previews.fresh and api.previews.stillUrls after the next codegen.
-const freshRef = makeFunctionReference<"action", FreshArgs, PreviewResult>(
-  "previews:fresh",
-);
-const stillUrlsRef = makeFunctionReference<
-  "query",
-  { keys: string[] },
-  Record<string, LocalStill>
->("previews:stillUrls");
-
 const NO_STILLS: Record<string, LocalStill> = {};
-const noClient = () => undefined;
 const noFresh: FreshCall = () =>
   Promise.reject(new Error("Live previews are not available here."));
-const noFreshHook = () => noFresh;
 
 /**
- * This cockpit's saved stills for the rows a screen shows, in one query.
- * The query only re-runs when those stills change, not on every feed.
- *
- * It never breaks the page: if the lookup fails (for example the backend
- * does not have it yet), rows fall back to the media buyer's copies. That
- * is why it watches the query itself rather than using useQuery, which
- * throws into the page on an error.
+ * Saved stills for the rows a screen shows.
  */
 export function useLocalStills(
-  keys: (string | null | undefined)[],
+  _keys: (string | null | undefined)[],
 ): Record<string, LocalStill> {
-  const joined = [...new Set(keys.filter((k): k is string => Boolean(k)))]
-    .sort()
-    .slice(0, 400)
-    .join("\n");
-  const convex = (convexReact.useConvex ?? noClient)();
-  const [stills, setStills] = useState<Record<string, LocalStill>>();
-  useEffect(() => {
-    if (!joined || !convex) return;
-    const watch = convex.watchQuery(stillUrlsRef, { keys: joined.split("\n") });
-    const read = () => {
-      try {
-        const value = watch.localQueryResult();
-        if (value) setStills(value);
-      } catch {
-        // No local copies this time; the media buyer's copies still show.
-      }
-    };
-    const stop = watch.onUpdate(read);
-    read();
-    return stop;
-  }, [convex, joined]);
-  return stills ?? NO_STILLS;
+  return NO_STILLS;
 }
 
 /** The picture props for a row: this cockpit's copy first, the media buyer's as backup. */
@@ -575,14 +507,7 @@ function PreviewBody({
   header?: (description: string) => ReactNode;
   onClose?: () => void;
 }) {
-  // Mounted only while a preview is open, so a page test that mocks
-  // convex/react without useAction still renders the closed thumbnails.
-  const useFresh: (ref: typeof freshRef) => FreshCall =
-    convexReact.useAction ?? noFreshHook;
-  const fresh = useFresh(freshRef);
-  // Held in a ref, so a new function identity never starts another fetch.
-  const callRef = useRef(fresh);
-  callRef.current = fresh;
+  const callRef = useRef<FreshCall>(noFresh);
   const adId = cleanId(p.metaAdId);
   const campaignName = cleanName(p.campaignName);
   const clientName = cleanName(p.clientName);

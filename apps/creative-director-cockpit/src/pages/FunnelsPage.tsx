@@ -1,7 +1,7 @@
-import { useQuery } from "convex/react";
 import { ExternalLink, Filter } from "lucide-react";
-import { useState } from "react";
-import { api } from "@/../convex/_generated/api";
+import { useEffect, useState } from "react";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { fetchFunnels } from "@/lib/clients";
 
 /**
  * Funnels and lead forms.
@@ -163,7 +163,17 @@ export function FunnelRow({ r }: { r: any }) {
 }
 
 export function FunnelsPage() {
-  const data = useQuery(api.funnels.list, {});
+  const auth = useCockpitAuth();
+  // biome-ignore lint/suspicious/noExplicitAny: funnels shape is untyped
+  const [data, setData] = useState<any>(undefined);
+  useEffect(() => {
+    if (!auth.client) return;
+    let cancelled = false;
+    void fetchFunnels(auth.client).then(res => {
+      if (!cancelled) setData(res);
+    }).catch(console.error);
+    return () => { cancelled = true; };
+  }, [auth.client]);
   if (!data) return <div className="p-4 text-[13px]">Loading…</div>;
 
   return (

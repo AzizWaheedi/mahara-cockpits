@@ -1,4 +1,4 @@
-import { useAction } from "convex/react";
+import { useAction } from "@/lib/cockpitApi";
 import {
   ChevronDown,
   ChevronRight,
@@ -17,14 +17,14 @@ import { useServerWindow } from "@/components/ceo/serverWindow";
 import { TimeframeBar } from "@/components/ceo/TimeframeBar";
 import { useTimeframe } from "@/components/ceo/timeframe";
 import { range as rangeText } from "@/components/ceo/windows";
-import { api } from "../../../convex/_generated/api";
+import { api } from "@/lib/cockpitApi";
 import type {
   B2bAdNode,
   B2bAdsPayload,
   B2bAdWindow,
   B2bPeople,
   B2bVerdict,
-} from "../../../convex/ceo/payloads";
+} from "@/types/ceo/payloads";
 import { ManageBar, ManagePanel, type Target } from "./adsManage";
 import { LaunchCard } from "./LaunchCard";
 import type { CeoTabProps } from "./types";

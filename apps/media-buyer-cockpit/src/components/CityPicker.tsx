@@ -1,7 +1,7 @@
-import { useAction } from "convex/react";
+import { useAction } from "@/lib/cockpitApi";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { api } from "../../convex/_generated/api";
+import { api } from "@/lib/cockpitApi";
 
 type CityOption = { id: string; label: string; color?: string };
 
@@ -48,11 +48,11 @@ export function CityPicker({
   useEffect(() => {
     if (!hasCard) return;
     if (!optionsCache)
-      optionsCache = load({}).catch(e => {
+      optionsCache = load({}).catch((e: any) => {
         optionsCache = null;
         throw e;
       });
-    optionsCache.then(setOptions).catch(() => setOptions([]));
+    (optionsCache as Promise<CityOption[]> | null)?.then(setOptions).catch(() => setOptions([]));
   }, [hasCard, load]);
 
   useEffect(() => {

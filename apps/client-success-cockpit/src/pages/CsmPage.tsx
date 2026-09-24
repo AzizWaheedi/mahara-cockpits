@@ -1,4 +1,3 @@
-import { useMutation, useQuery } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
@@ -34,8 +33,6 @@ import {
 import { publishOpenClient } from "@/lib/openClient";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { useCsmSnapshot } from "@/lib/useCsmSnapshot";
-import { api } from "../../convex/_generated/api";
-import type { Id } from "../../convex/_generated/dataModel";
 
 /** Tickets the CSM raises. Picking the request picks the board — she never picks a team. */
 const TICKETS: { label: string; dept: string; deptLabel: string }[] = [
@@ -210,7 +207,6 @@ export function AiHelper({ page }: { page: string; clientName?: string }) {
   // Questions now go to the Hermes chat (bottom right). This box is only for
   // reporting a wrong screen, so the fix lands as a task. [aziz, 2026-09-10]
   const auth = useCockpitAuth();
-  const convexReport = useMutation(api.csm.reportIssue);
   const report = async (args: { page: string; text: string }) => {
     if (auth.client) {
       await auth.client.rpc("cockpit_submit_issue_report", {
@@ -220,9 +216,7 @@ export function AiHelper({ page }: { page: string; clientName?: string }) {
         p_category: "screen_issue",
         p_metadata: { page: args.page },
       });
-      return;
     }
-    return convexReport(args);
   };
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
@@ -1042,16 +1036,15 @@ function HotSheet({
 export function CsmPage({ section }: { section: Section }) {
   const auth = useCockpitAuth();
   const sb = useCsmSnapshot(auth.client, auth.clients);
-  const convexSnap = useQuery(api.csm.snapshot, {});
-  const snap = sb.snap ?? convexSnap;
-  const toggleCheck = auth.client ? (sb.toggleCheck as any) : useMutation(api.csm.toggleCheck);
-  const act = auth.client ? (sb.act as any) : useMutation(api.csm.act);
-  const addPlanItems = auth.client ? (sb.addPlanItems as any) : useMutation(api.csm.addPlanItems);
-  const submitEod = auth.client ? (sb.submitEod as any) : useMutation(api.csm.submitEod);
-  const setClientLanguage = useMutation(api.csm.setClientLanguage);
-  const saveHotRow = useMutation(api.csm.saveHotRow);
-  const clearLooseEnds = useMutation(api.csm.clearLooseEnds);
-  const saveMoneyGoals = useMutation(api.csm.saveMoneyGoals);
+  const snap = sb.snap;
+  const toggleCheck = sb.toggleCheck as any;
+  const act = sb.act as any;
+  const addPlanItems = sb.addPlanItems as any;
+  const submitEod = sb.submitEod as any;
+  const setClientLanguage = sb.setClientLanguage as any;
+  const saveHotRow = sb.saveHotRow as any;
+  const clearLooseEnds = sb.clearLooseEnds as any;
+  const saveMoneyGoals = sb.saveMoneyGoals as any;
 
   /** Her saved choice wins; the client's own name is only the fallback guess. */
   const langOf = (c: Client): Lang => {
@@ -1193,7 +1186,7 @@ export function CsmPage({ section }: { section: Section }) {
     try {
       // The ClickUp id survives the sync replacing every row; the document id may not.
       await act({
-        clientId: c._id as Id<"clients">,
+        clientId: c._id as string,
         taskId: c.taskId,
         action,
         kind,
@@ -1897,7 +1890,7 @@ export function CsmPage({ section }: { section: Section }) {
                       key={c._id}
                       type="button"
                       className="flex w-full items-start gap-3 px-4 py-2 text-left text-sm"
-                      onClick={() => toggleCheck({ id: c._id as Id<"checks"> })}
+                      onClick={() => toggleCheck({ id: c._id })}
                     >
                       <span
                         className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[11px] ${c.done ? "bg-emerald-600 text-white" : ""}`}
@@ -2083,7 +2076,7 @@ export function CsmPage({ section }: { section: Section }) {
               size="sm"
               variant="secondary"
               onClick={() =>
-                clearLooseEnds({}).then(r =>
+                clearLooseEnds({}).then((r: any) =>
                   toast.success(
                     `Cleared ${r.cleared}, kept ${r.kept} money ones`,
                   ),

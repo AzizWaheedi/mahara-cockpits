@@ -1,13 +1,17 @@
-import { useAction } from "convex/react";
 import { CalendarDays, Loader2, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { usePageVisible } from "@/lib/usePageVisible";
-import { api } from "../../../convex/_generated/api";
-import type { MeetingSummary, Overview } from "../../../convex/team";
+import {
+  fetchTeamOverview,
+  saveMeeting as saveMeetingApi,
+  type MeetingSummary,
+  type Overview,
+} from "@/lib/team";
 import {
   dayName,
   errorText,
@@ -32,8 +36,7 @@ const CADENCES = [
 ];
 
 export function TeamPage() {
-  const overview = useAction(api.team.overview);
-  const saveMeeting = useAction(api.team.saveMeeting);
+  const auth = useCockpitAuth();
   const navigate = useNavigate();
   const visible = usePageVisible();
   const [data, setData] = useState<Overview | null>(null);
@@ -42,16 +45,39 @@ export function TeamPage() {
   const [dept, setDept] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
+  const userContext = useMemo(
+    () => ({
+      email: auth.email ?? "",
+      isCeo: auth.isCeo,
+      isAdmin: auth.isAdmin,
+    }),
+    [auth.email, auth.isCeo, auth.isAdmin],
+  );
+
   const load = useCallback(async () => {
+    if (!auth.client) return;
     try {
-      const d = (await overview({})) as Overview;
+      const d = await fetchTeamOverview(auth.client, userContext);
       setData(d);
       setError(null);
       setFilter(f => f ?? (d.meetings.some(m => m.mine) ? "mine" : "all"));
     } catch (e) {
       setError(errorText(e));
     }
-  }, [overview]);
+  }, [auth.client, userContext]);
+
+  const saveMeeting = useCallback(
+    async (args: {
+      title: string;
+      purpose: string;
+      cadence: string;
+      department?: string;
+    }) => {
+      if (!auth.client) throw new Error("Not signed in");
+      return saveMeetingApi(auth.client, userContext, args);
+    },
+    [auth.client, userContext],
+  );
 
   useEffect(() => {
     if (!visible) return;

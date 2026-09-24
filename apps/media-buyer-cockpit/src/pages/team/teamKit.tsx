@@ -1,7 +1,7 @@
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import type { Person } from "../../../convex/team";
+import type { Person } from "@/lib/team";
 
 /** Native selects styled as the kit's Input, so a phone gets its own picker. */
 export const selectClass =

@@ -1,7 +1,7 @@
 import { ChevronRight, Loader2, Moon, Palette, Sun, User } from "lucide-react";
 import { useState } from "react";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
-import { portalUrl } from "@/components/PortalAutoSignIn";
+import { portalUrl } from "@/lib/portal";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";

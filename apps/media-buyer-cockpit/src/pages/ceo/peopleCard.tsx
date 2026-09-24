@@ -1,4 +1,4 @@
-import { useAction } from "convex/react";
+import { useAction } from "@/lib/cockpitApi";
 import { UserPlus } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
@@ -7,9 +7,9 @@ import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import { AnimatedSelect } from "@/components/ui/animated-select";
-import { api } from "../../../convex/_generated/api";
-import { commissionText } from "../../../convex/ceo/commission";
-import type { Person, Roster } from "../../../convex/ceo/people";
+import { api } from "@/lib/cockpitApi";
+import { commissionText } from "@/types/ceo/commission";
+import type { Person, Roster } from "@/types/ceo/people";
 import { usePersonParam } from "./personPage";
 
 /**

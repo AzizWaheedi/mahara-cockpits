@@ -146,8 +146,38 @@ for app in apps:
         print(f"  [FAIL] {app:28}: dist/index.html missing")
         all_builds_ok = False
 
-# 6. Run Core Automated Test Suites
-print("\n--- 5. Automated Unit, Access & Shared Files Test Suites ---")
+# 6. Check Convex Independence
+print("\n--- 5. Convex Independence (Zero Remaining Imports in apps/*/src) ---")
+import re
+
+IMPORT_CONVEX_RE = re.compile(r'from\s+["\'](?:convex|@convex-dev|_generated).*?["\']')
+convex_imports = []
+
+for app in apps:
+    src_dir = REPO_ROOT / "apps" / app / "src"
+    if not src_dir.exists():
+        continue
+    for p in src_dir.rglob("*.[tj]s*"):
+        if p.name.endswith(".d.ts"):
+            continue
+        try:
+            content = p.read_text(encoding="utf-8", errors="ignore")
+            if IMPORT_CONVEX_RE.search(content):
+                convex_imports.append(str(p.relative_to(REPO_ROOT)))
+        except Exception:
+            pass
+
+if convex_imports:
+    print(f"  [FAIL] Found {len(convex_imports)} files with Convex imports:")
+    for ci in convex_imports:
+        print(f"    - {ci}")
+    all_convex_free = False
+else:
+    print("  [PASS] Zero Convex imports across all 5 applications in apps/*/src")
+    all_convex_free = True
+
+# 7. Run Core Automated Test Suites
+print("\n--- 6. Automated Unit, Access & Shared Files Test Suites ---")
 import subprocess
 
 # Verify shared files
@@ -180,7 +210,7 @@ else:
     print(f"  [FAIL] Bun test suites failed:\n{proc.stderr}\n{proc.stdout}")
 
 print("\n" + "=" * 70)
-if all_tables_ok and all_rls_ok and all_rpcs_ok and all_builds_ok and all_tests_ok:
+if all_tables_ok and all_rls_ok and all_rpcs_ok and all_builds_ok and all_convex_free and all_tests_ok:
     print("ALL VERIFICATION CHECKS PASSED: SYSTEM IS READY FOR CUTOVER.")
     print("=" * 70)
     sys.exit(0)

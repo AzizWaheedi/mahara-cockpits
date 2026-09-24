@@ -47,7 +47,7 @@ import type {
   DeliveryPayload,
   DeliveryWindow,
   Note,
-} from "../../../convex/ceo/payloads";
+} from "@/types/ceo/payloads";
 import { DeliveryTimeframeCard } from "./timeframeCards";
 import type { CeoTabProps } from "./types";
 

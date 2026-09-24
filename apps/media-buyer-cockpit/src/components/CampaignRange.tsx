@@ -1,9 +1,9 @@
-import { useQuery } from "convex/react";
+import { useQuery } from "@/lib/cockpitApi";
 import type { ReactNode } from "react";
 import { CPB_GATE, CPL_GATE } from "@/lib/kpi";
 import type { Range } from "@/lib/range";
 import { rangeDays } from "@/lib/range";
-import { api } from "../../convex/_generated/api";
+import { api } from "@/lib/cockpitApi";
 import { RangePicker } from "./RangePicker";
 import { SaveWinnerButton } from "./SaveWinnerButton";
 import { CampaignTrend } from "./Trends";

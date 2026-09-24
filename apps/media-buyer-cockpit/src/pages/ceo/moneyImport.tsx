@@ -1,4 +1,4 @@
-import { useAction, useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "@/lib/cockpitApi";
 import { Upload } from "lucide-react";
 import { type ChangeEvent, useMemo, useRef, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
@@ -6,7 +6,7 @@ import { money, plural } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import { AnimatedSelect } from "@/components/ui/animated-select";
-import { api } from "../../../convex/_generated/api";
+import { api } from "@/lib/cockpitApi";
 
 /**
  * Bring a month of bank transfers and cheques in at once.

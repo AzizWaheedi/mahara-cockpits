@@ -1,4 +1,3 @@
-import { useAction } from "convex/react";
 import { Lightbulb, Star } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
@@ -9,7 +8,7 @@ import {
   useLocalStills,
 } from "@/components/CreativePreview";
 import { AnimatedSelect } from "@/components/ui/animated-select";
-import { api } from "../../convex/_generated/api";
+import { api, useAction } from "@/lib/ideation";
 
 /**
  * The winning ads, word for word.

@@ -1,4 +1,3 @@
-import { useMutation, useQuery } from "convex/react";
 import {
   CalendarDays,
   ExternalLink,
@@ -6,13 +5,14 @@ import {
   Plus,
   Sparkles,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
-import { api } from "@/../convex/_generated/api";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
 import { Textarea } from "@/components/ui/textarea";
+import { fetchCalendar, fetchScriptQueue, queueClientAction } from "@/lib/clients";
 
 /**
  * The scripting calendar.
@@ -165,7 +165,17 @@ function ScriptQueue({
 }: {
   onPlan: (client: string, title: string) => void;
 }) {
-  const q = useQuery(api.creative.scriptQueue, {});
+  const auth = useCockpitAuth();
+  // biome-ignore lint/suspicious/noExplicitAny: query shape is untyped
+  const [q, setQ] = useState<any>(undefined);
+  useEffect(() => {
+    if (!auth.client) return;
+    let cancelled = false;
+    void fetchScriptQueue(auth.client).then(res => {
+      if (!cancelled) setQ(res);
+    }).catch(console.error);
+    return () => { cancelled = true; };
+  }, [auth.client]);
   const [showOptional, setShowOptional] = useState(false);
   if (!q) return null;
   // biome-ignore lint/suspicious/noExplicitAny: query payload is untyped
@@ -216,8 +226,22 @@ function ScriptQueue({
 }
 
 export function ScriptingCalendar({ compact = false }: { compact?: boolean }) {
-  const cal = useQuery(api.creative.calendar, {});
-  const queueAction = useMutation(api.clients.queueAction);
+  const auth = useCockpitAuth();
+  // biome-ignore lint/suspicious/noExplicitAny: calendar shape is untyped
+  const [cal, setCal] = useState<any>(undefined);
+  const queueAction = async (args: any) => {
+    if (!auth.client) return;
+    await queueClientAction(auth.client, args);
+  };
+
+  useEffect(() => {
+    if (!auth.client) return;
+    let cancelled = false;
+    void fetchCalendar(auth.client).then(res => {
+      if (!cancelled) setCal(res);
+    }).catch(console.error);
+    return () => { cancelled = true; };
+  }, [auth.client]);
 
   const [moving, setMoving] = useState<string | null>(null);
   const [moveTo, setMoveTo] = useState(todayKey());

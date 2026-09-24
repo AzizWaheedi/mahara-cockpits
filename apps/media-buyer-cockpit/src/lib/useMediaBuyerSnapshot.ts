@@ -261,13 +261,14 @@ export function useMediaBuyerSnapshot(
   }, [fetchSnapshot]);
 
   const toggleCheck = useCallback(
-    async (args: { id: string | number; done: boolean; expectedCurrent?: boolean }) => {
+    async (args: { id: string | number; done?: boolean; expectedCurrent?: boolean; [key: string]: any }) => {
       if (!client) return;
       const numId = Number(args.id);
+      const done = args.done ?? true;
       const { error: rpcErr } = await client.rpc("cockpit_set_daily_check", {
         p_id: numId,
-        p_expected_done: args.expectedCurrent ?? !args.done,
-        p_done: args.done,
+        p_expected_done: args.expectedCurrent ?? !done,
+        p_done: done,
       });
       if (rpcErr) throw rpcErr;
       await fetchSnapshot();
@@ -283,6 +284,7 @@ export function useMediaBuyerSnapshot(
       kind?: string;
       reroutedTo?: string;
       amount?: number;
+      [key: string]: any;
     }) => {
       if (!client) return;
       const day = kuwaitToday();
@@ -317,7 +319,7 @@ export function useMediaBuyerSnapshot(
   );
 
   const saveEod = useCallback(
-    async (args: { energy?: string; answers?: Any; computed?: Any }) => {
+    async (args: { energy?: string; answers?: Any; computed?: Any; body?: string; [key: string]: any }) => {
       if (!client) return;
       const day = kuwaitToday();
       const { error: rpcErr } = await client.rpc("cockpit_save_eod", {
@@ -363,12 +365,12 @@ export function useMediaBuyerSnapshot(
   );
 
   const sendFeedback = useCallback(
-    async (args: { title: string; description: string; category?: string }) => {
+    async (args: { title?: string; description?: string; message?: string; category?: string; [key: string]: any }) => {
       if (!client) return;
       const { error: rpcErr } = await client.rpc("cockpit_submit_issue_report", {
         p_role: "media_buyer",
-        p_title: args.title,
-        p_description: args.description,
+        p_title: args.title || "Feedback",
+        p_description: args.description || args.message || "",
         p_category: args.category ?? "feedback",
         p_metadata: {},
       });

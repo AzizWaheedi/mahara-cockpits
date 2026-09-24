@@ -1,5 +1,7 @@
-import { useMutation, useQuery } from "convex/react";
-import { api } from "../../convex/_generated/api";
+import { useCallback, useEffect, useState } from "react";
+import { toast } from "sonner";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { fetchBacklog, queueGap } from "@/lib/backlog";
 
 // biome-ignore lint/suspicious/noExplicitAny: gap rows
 type Any = any;
@@ -19,8 +21,39 @@ const GAP_NAMES: Record<string, string> = {
  * the media buyer backend sends queued tasks every five minutes.
  */
 export function BacklogPage() {
-  const data = useQuery(api.gaps.list, {});
-  const queue = useMutation(api.gaps.queue);
+  const auth = useCockpitAuth();
+  const [data, setData] = useState<Any | null>(null);
+
+  const loadData = useCallback(() => {
+    if (!auth.client) return;
+    fetchBacklog(auth.client, auth.clients)
+      .then(setData)
+      .catch(err => {
+        console.error("fetchBacklog error", err);
+        setData({ rows: [], counts: {}, activeClients: 0 });
+      });
+  }, [auth.client, auth.clients]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const handleQueue = async (args: {
+    taskId?: string;
+    clientName: string;
+    label: string;
+    fix: string;
+  }) => {
+    if (!auth.client) return;
+    try {
+      await queueGap(auth.client, auth.email, args);
+      toast.success(`Queued task for ${args.clientName}`);
+      loadData();
+    } catch (e) {
+      toast.error(String(e));
+    }
+  };
+
   if (!data) return <p className="text-sm text-muted-foreground">Loading…</p>;
   const { rows, counts, activeClients } = data as Any;
 
@@ -104,7 +137,7 @@ export function BacklogPage() {
                         type="button"
                         className="rounded-md border px-2.5 py-1 text-[12px] hover:bg-muted"
                         onClick={() =>
-                          queue({
+                          handleQueue({
                             taskId: r.taskId,
                             clientName: r.clientName,
                             label: g.label,

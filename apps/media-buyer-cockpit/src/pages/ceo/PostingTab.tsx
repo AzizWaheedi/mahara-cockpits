@@ -1,12 +1,12 @@
-import { useAction } from "convex/react";
+import { useAction } from "@/lib/cockpitApi";
 import { Clapperboard, ExternalLink } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { shortDate } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatusChip, type StatusTone } from "@/components/ceo/StatusChip";
-import { api } from "../../../convex/_generated/api";
-import type { Post } from "../../../convex/ceo/posting";
+import { api } from "@/lib/cockpitApi";
+import type { Post } from "@/types/ceo/posting";
 import type { CeoTabProps } from "./types";
 
 /**
@@ -921,7 +921,7 @@ function Editor({
               />
               {post.thumbTextOptions.length ? (
                 <div className="flex flex-wrap gap-1.5">
-                  {post.thumbTextOptions.map(o => (
+                  {post.thumbTextOptions.map((o: any) => (
                     <button
                       key={o}
                       type="button"
@@ -993,7 +993,7 @@ function Editor({
               </div>
               {post.ytTitleOptions.length ? (
                 <div className="flex flex-wrap gap-1.5">
-                  {post.ytTitleOptions.map(o => (
+                  {post.ytTitleOptions.map((o: any) => (
                     <button
                       key={o}
                       type="button"
@@ -1184,7 +1184,7 @@ export function PostingTab(_props: CeoTabProps) {
 
   const [channels, setChannels] = useState<Channel[]>([]);
   const [posts, setPosts] = useState<Post[] | null>(null);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedId, setSelectedId] = useState<number | string | null>(null);
   const [post, setPost] = useState<Post | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -1319,7 +1319,7 @@ export function PostingTab(_props: CeoTabProps) {
                           tone={STATUS_TONE[p.status] ?? "neutral"}
                           label={STATUS_LABEL[p.status] ?? p.status}
                         />
-                        <span className="text-[11px] text-muted-foreground">{`${p.kind === "video" ? "video" : "reel"} · ${p.targets.map(t => PLATFORM_LABEL[t] ?? t).join(", ")}`}</span>
+                        <span className="text-[11px] text-muted-foreground">{`${p.kind === "video" ? "video" : "reel"} · ${p.targets.map((t: any) => PLATFORM_LABEL[t] ?? t).join(", ")}`}</span>
                       </div>
                     </div>
                   </button>

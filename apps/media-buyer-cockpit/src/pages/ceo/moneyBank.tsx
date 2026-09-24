@@ -1,4 +1,4 @@
-import { useAction, useMutation } from "convex/react";
+import { useAction, useMutation } from "@/lib/cockpitApi";
 import { Landmark } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
@@ -8,8 +8,8 @@ import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import type { CeoSection } from "@/components/ceo/useCeo";
 import { AnimatedSelect } from "@/components/ui/animated-select";
-import { api } from "../../../convex/_generated/api";
-import type { MoneyPayload, Note } from "../../../convex/ceo/payloads";
+import { api } from "@/lib/cockpitApi";
+import type { MoneyPayload, Note } from "@/types/ceo/payloads";
 
 /**
  * The bank statement door (Aziz, 2026-09-21). CBK has no API, so the CBK

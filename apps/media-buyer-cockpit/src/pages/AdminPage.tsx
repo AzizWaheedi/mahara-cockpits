@@ -1,4 +1,3 @@
-import { useMutation, useQuery } from "convex/react";
 import {
   Activity,
   AlertTriangle,
@@ -12,7 +11,7 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { Button } from "@/components/ui/button";
@@ -38,8 +37,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useNow } from "@/lib/useNow";
-import { usePageVisible } from "@/lib/usePageVisible";
-import { api } from "../../convex/_generated/api";
 import { COCKPIT_META } from "./PortalHome";
 
 // biome-ignore lint/suspicious/noExplicitAny: admin rows
@@ -152,33 +149,14 @@ function RoleChip({ role }: { role: string }) {
  * me an admin view, make it completely amazing, and combine them all in one
  * project so I can switch to them whenever I want."
  */
-function useRetained<T>(
-  value: T | undefined,
-  key: string | undefined,
-): T | undefined {
-  const saved = useRef<{ key: string | undefined; value: T } | undefined>(
-    undefined,
-  );
-  useEffect(() => {
-    if (value !== undefined) saved.current = { key, value };
-    else if (saved.current?.key !== key) saved.current = undefined;
-  }, [value, key]);
-  return (
-    value ?? (saved.current?.key === key ? saved.current?.value : undefined)
-  );
-}
-
 export function AdminPage() {
   const auth = useCockpitAuth();
   const supabase = auth.client;
-  const me = useQuery(api.roles.me, {});
-  const visible = usePageVisible();
+  const me = { email: auth.email };
   const now = useNow();
   const ago = (ms?: number | null) => agoAt(now, ms);
   const [editing, setEditing] = useState<Any | null | "new">(null);
   const [query, setQuery] = useState("");
-  const args = visible ? {} : "skip";
-  const cacheKey = (auth.email || me?.email) ?? undefined;
 
   const [supabaseMembers, setSupabaseMembers] = useState<Any[] | null>(null);
   const loadMembers = useCallback(async () => {
@@ -216,40 +194,15 @@ export function AdminPage() {
       });
   }, [supabase]);
 
-  const convexMembers = useRetained(useQuery(api.portal.members, args), cacheKey);
-  const members = supabaseMembers ?? convexMembers;
-
-  const cockpitHealth = useRetained(
-    useQuery(api.portal.adminHealth, args),
-    cacheKey,
-  );
-  const sources = useRetained(
-    useQuery(api.portal.adminSources, args),
-    cacheKey,
-  );
-  const scheduled = useRetained(useQuery(api.portal.adminJobs, args), cacheKey);
-  const activity = useRetained(
-    useQuery(api.portal.adminActivity, args),
-    cacheKey,
-  );
-  const actions = useRetained(
-    useQuery(api.portal.adminActions, args),
-    cacheKey,
-  );
-  const counts = useRetained(useQuery(api.portal.adminCounts, args), cacheKey);
-  const quarterHour = 15 * 60_000;
-  const since =
-    Math.floor(now / quarterHour) * quarterHour - 86400_000 - quarterHour;
-  const hermes = useRetained(
-    useQuery(api.portal.adminHermes, visible ? { since } : "skip"),
-    cacheKey,
-  );
-  const convexClientNames = useQuery(
-    api.portal.clientNames,
-    visible && editing ? {} : "skip",
-  );
-  const clientNames = supabaseClients.length > 0 ? supabaseClients : (convexClientNames ?? []);
-  const remove = useMutation(api.portal.removeMember);
+  const members = supabaseMembers ?? [];
+  const cockpitHealth = null;
+  const sources = null;
+  const scheduled: Any[] = [];
+  const activity: Any[] = [];
+  const actions: Any[] = [];
+  const counts = null;
+  const hermes: any = null;
+  const clientNames = supabaseClients;
 
   const handleRemove = async (email: string) => {
     if (!confirm(`Remove ${email} from every cockpit?`)) return;
@@ -269,9 +222,9 @@ export function AdminPage() {
         return;
       }
     }
-    void remove({ email });
+    alert("Supabase client not initialized");
   };
-  const overview = useMemo(
+  const overview: any = useMemo(
     () => ({
       health: cockpitHealth,
       sources,
@@ -813,7 +766,6 @@ function MemberDialog({
   onSaved: () => void;
   onClose: () => void;
 }) {
-  const upsert = useMutation(api.portal.upsertMember);
   const [email, setEmail] = useState<string>(member?.email ?? "");
   const [name, setName] = useState<string>(member?.name ?? "");
   const [note, setNote] = useState<string>(member?.note ?? "");
@@ -1035,22 +987,8 @@ function MemberDialog({
                 }
               }
 
-              try {
-                await upsert({
-                  email: cleanEmail,
-                  name: name || undefined,
-                  roles: cleanRoles,
-                  clients: cleanClients,
-                  note: note || undefined,
-                  salesRole: roles.includes("sales") ? salesRole : undefined,
-                });
-                onSaved();
-                onClose();
-              } catch (e) {
-                setError(String((e as Error).message ?? e));
-              } finally {
-                setSaving(false);
-              }
+              setError("Supabase client is required.");
+              setSaving(false);
             }}
           >
             {saving ? "Saving…" : member ? "Save" : "Add"}

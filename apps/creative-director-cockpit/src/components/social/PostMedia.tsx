@@ -1,4 +1,3 @@
-import { useAction } from "convex/react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -14,7 +13,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { api } from "../../../convex/_generated/api";
+import { api, useAction } from "@/lib/social";
 import {
   itemsOf,
   type Job,

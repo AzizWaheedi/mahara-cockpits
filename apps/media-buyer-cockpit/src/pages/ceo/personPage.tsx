@@ -1,4 +1,4 @@
-import { useAction } from "convex/react";
+import { useAction } from "@/lib/cockpitApi";
 import { ArrowLeft, FileText, Loader2, Paperclip, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router";
@@ -7,12 +7,12 @@ import { money, shortDate } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import { AnimatedSelect } from "@/components/ui/animated-select";
-import { api } from "../../../convex/_generated/api";
+import { api } from "@/lib/cockpitApi";
 import type {
   PersonFile as FileRow,
   Profile,
   Scorecard,
-} from "../../../convex/ceo/profiles";
+} from "@/types/ceo/profiles";
 import { Dial } from "./goalsKit";
 import { ScorecardPanel } from "./personScorecard";
 
@@ -510,7 +510,7 @@ export function PersonPage({
             <Box
               title="Notes"
               hint="Anything else worth remembering before the next one-to-one."
-              value={form.notes}
+              value={form.notes ?? ""}
               onChange={notes => set({ notes })}
               rows={5}
             />

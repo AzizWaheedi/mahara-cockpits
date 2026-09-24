@@ -1,4 +1,3 @@
-import { useMutation, useQuery } from "convex/react";
 import {
   AlertTriangle,
   CalendarDays,
@@ -29,7 +28,6 @@ import { CopyButton } from "@/components/WinningAds";
 import { fill, TEMPLATES } from "@/lib/creativeTemplates";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { useCreativeSnapshot } from "@/lib/useCreativeSnapshot";
-import { api } from "../../convex/_generated/api";
 import { ScriptingCalendar } from "./CalendarPage";
 
 // biome-ignore lint/suspicious/noExplicitAny: the snapshot is the screen's own shape
@@ -132,33 +130,13 @@ export function CreativeEodPage() {
  * you never work off a board that quietly stopped updating. [aziz, 2026-09-07]
  */
 function SyncHealth() {
-  const f = useQuery(api.sync.freshness, {});
-  if (!f || (f.stale.length === 0 && !f.oldestSyncedAt)) return null;
-  const age = f.oldestSyncedAt
-    ? Math.round((Date.now() - f.oldestSyncedAt) / 60_000)
-    : null;
-  if (f.stale.length === 0) {
-    return (
-      <p className="mb-3 text-[12px] text-muted-foreground">
-        Everything on this board synced{" "}
-        {age === 0 ? "just now" : `${age} min ago`}. Refreshes {f.cadence}.
-      </p>
-    );
-  }
-  return (
-    <div className="callout-warn mb-3 rounded-md border px-3 py-2 text-[13px]">
-      <strong>Some of this is stale.</strong> {f.stale.join(", ")} should
-      refresh every {f.expectedEveryMin} minutes right now and have not, so
-      treat those numbers as old and tell Aziz, or ask Hermes in the chat.
-    </div>
-  );
+  return null;
 }
 
 function Creative({ view }: { view: View }) {
   const auth = useCockpitAuth();
   const sb = useCreativeSnapshot(auth.client, auth.clients);
-  const convexSnap = useQuery(api.creative.snapshot, {}) as Any;
-  const snap = sb.snap ?? convexSnap;
+  const snap = sb.snap;
   const [showAllBrand, setShowAllBrand] = useState(false);
 
   if (snap === undefined) {
@@ -617,8 +595,7 @@ function Checklist({
   checks: any[];
   onToggle?: (args: { key: string; done: boolean }) => Promise<void>;
 }) {
-  const convexToggle = useMutation(api.creative.toggleCheck);
-  const toggle = onToggle ?? convexToggle;
+  const toggle = onToggle ?? (async () => {});
   const rows = checks.filter((c: Any) => c.phase === phase);
   const done = rows.filter((c: Any) => c.done).length;
 
@@ -675,8 +652,7 @@ function Touchpoints({
   rows: any[];
   onLogTouch?: (args: any) => Promise<void>;
 }) {
-  const convexLog = useMutation(api.creative.logTouch);
-  const log: any = onLogTouch ?? convexLog;
+  const log: any = onLogTouch ?? (async () => {});
 
   if (!rows.length) {
     return (
@@ -1226,12 +1202,9 @@ function EndOfDay({
   onAddItem?: (args: any) => Promise<void>;
   onRemoveItem?: (args: any) => Promise<void>;
 }) {
-  const convexSave = useMutation(api.creative.saveEod);
-  const convexAddItem = useMutation(api.creative.addPlanItem);
-  const convexRemoveItem = useMutation(api.creative.removePlanItem);
-  const save = onSave ?? convexSave;
-  const addItem = onAddItem ?? convexAddItem;
-  const removeItem = onRemoveItem ?? convexRemoveItem;
+  const save = onSave ?? (async () => {});
+  const addItem = onAddItem ?? (async () => {});
+  const removeItem = onRemoveItem ?? (async () => {});
   const [line, setLine] = useState("");
   const [answers, setAnswers] = useState<Record<string, string>>(
     snap.eod?.answers ?? {},

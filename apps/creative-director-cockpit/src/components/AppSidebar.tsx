@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 import { Link, useLocation } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
-import { portalUrl } from "@/components/PortalAutoSignIn";
+import { portalUrl } from "@/lib/portal";
 import { Wordmark } from "@/components/Wordmark";
 import { useTheme } from "@/contexts/ThemeContext";
 import { Avatar, AvatarFallback } from "./ui/avatar";

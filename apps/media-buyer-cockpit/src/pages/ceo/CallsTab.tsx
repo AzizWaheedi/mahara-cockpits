@@ -1,4 +1,4 @@
-import { useAction } from "convex/react";
+import { useAction } from "@/lib/cockpitApi";
 import { useEffect, useRef, useState } from "react";
 import { type Column, DataTable } from "@/components/ceo/DataTable";
 import {
@@ -13,13 +13,13 @@ import {
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { cn } from "@/lib/utils";
-import { api } from "../../../convex/_generated/api";
+import { api } from "@/lib/cockpitApi";
 import {
   type CallCenterMetrics,
   type CallCenterReport,
   callCenterRange,
   parseCallCenterReport,
-} from "../../../convex/ceo/callCenterContract";
+} from "@/types/ceo/callCenterContract";
 import type { CeoTabProps } from "./types";
 
 const FIELD =

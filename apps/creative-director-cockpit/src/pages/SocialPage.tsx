@@ -1,4 +1,3 @@
-import { useAction } from "convex/react";
 import {
   CalendarClock,
   Check,
@@ -19,7 +18,7 @@ import {
   useState,
 } from "react";
 import { toast } from "sonner";
-import { api } from "../../convex/_generated/api";
+import { api, useAction } from "@/lib/social";
 import { PostPanel, SocialMonth } from "../components/SocialMonth";
 
 /**

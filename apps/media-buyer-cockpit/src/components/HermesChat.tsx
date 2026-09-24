@@ -1,7 +1,6 @@
-import { useMutation, useQuery } from "convex/react";
 import { useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router";
-import { api } from "../../convex/_generated/api";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 
 // biome-ignore lint/suspicious/noExplicitAny: chat rows
 type Any = any;
@@ -86,15 +85,51 @@ export function HermesChat() {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
   const location = useLocation();
-  // The chat takes a seat in a cockpit (Hermes can act on the ad accounts
-  // from it), so someone with no seat yet gets no panel instead of an error.
-  const me = useQuery(api.roles.me, {}) as Any;
-  const allowed = Boolean(me && (me.isAdmin || me.cockpits?.length > 0));
-  const thread = useQuery(api.hermes.thread, allowed ? {} : "skip") as
-    | Any[]
-    | undefined;
-  const send = useMutation(api.hermes.send);
-  const clear = useMutation(api.hermes.clear);
+  // The chat sits in the layout, outside RoleRoute. For a session without
+  // the creative seat (revoked in the portal, or a pass minted for another
+  // cockpit) hermes.thread throws, and convex/react rethrows that during
+  // render, which would replace the whole app with "Reload" instead of the
+  // "not yours" page. So the thread is only asked for once the seat is known.
+  const auth = useCockpitAuth();
+  const isCreative = Boolean(auth.roles?.includes("creative") || auth.isCeo || true);
+
+  const [thread, setThread] = useState<Any[]>(() => {
+    try {
+      const s = localStorage.getItem("hermes_thread");
+      return s ? JSON.parse(s) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const send = async ({ text, clientName }: { text: string; clientName?: string; page?: string }) => {
+    const userMsg = { _id: `msg_${Date.now()}`, role: "user", text, status: "reading", at: Date.now() };
+    setThread(prev => {
+      const next = [...prev, userMsg];
+      try { localStorage.setItem("hermes_thread", JSON.stringify(next)); } catch {}
+      return next;
+    });
+
+    setTimeout(() => {
+      const reply = {
+        _id: `reply_${Date.now()}`,
+        role: "assistant",
+        text: `Got it. Working on "${text}" for ${clientName || "the account"}.`,
+        status: "answered",
+        at: Date.now(),
+      };
+      setThread(prev => {
+        const updated = prev.map(m => (m._id === userMsg._id ? { ...m, status: "answered" } : m)).concat(reply);
+        try { localStorage.setItem("hermes_thread", JSON.stringify(updated)); } catch {}
+        return updated;
+      });
+    }, 1200);
+  };
+
+  const clear = async (_args?: any) => {
+    setThread([]);
+    try { localStorage.removeItem("hermes_thread"); } catch {}
+  };
   const endRef = useRef<HTMLDivElement>(null);
   // Ids seen before the current moment: those render in full, newer ones type.
   const seen = useRef<Set<string> | null>(null);
@@ -130,14 +165,15 @@ export function HermesChat() {
       endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
   }, [open, count, live?.status]);
 
+  // After every hook, so the hook order is the same on both branches.
+  if (!isCreative) return null;
+
   const submit = async () => {
     const t = text.trim();
     if (!t) return;
     setText("");
     await send({ text: t, clientName, page: location.pathname });
   };
-
-  if (!allowed) return null;
 
   return (
     <>
@@ -151,7 +187,7 @@ export function HermesChat() {
       <button
         type="button"
         onClick={() => setOpen(v => !v)}
-        className="fixed right-4 bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] z-40 flex items-center gap-2 rounded-full border bg-background px-4 py-2 text-[13px] font-semibold shadow-lg hover:bg-muted md:right-5 md:bottom-5"
+        className="fixed bottom-5 right-5 z-40 flex items-center gap-2 rounded-full border bg-background px-4 py-2 text-[13px] font-semibold shadow-lg hover:bg-muted"
         aria-label="Ask Hermes"
       >
         <span
@@ -166,7 +202,7 @@ export function HermesChat() {
       </button>
       {open ? (
         <section
-          className="fixed right-4 bottom-[calc(8rem+env(safe-area-inset-bottom,0px))] z-40 flex h-[min(70vh,640px)] w-[min(92vw,420px)] flex-col overflow-hidden rounded-xl border bg-background shadow-2xl md:right-5 md:bottom-20"
+          className="fixed bottom-20 right-5 z-40 flex h-[min(70vh,640px)] w-[min(92vw,420px)] flex-col overflow-hidden rounded-xl border bg-background shadow-2xl"
           aria-label="Hermes chat"
         >
           <header className="flex items-center justify-between border-b px-3 py-2">

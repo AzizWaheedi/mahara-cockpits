@@ -1,4 +1,3 @@
-import { useAction } from "convex/react";
 import {
   ChevronDown,
   ChevronLeft,
@@ -21,7 +20,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { DateInput } from "@/components/ui/date-input";
-import { api } from "../../convex/_generated/api";
+import { api, useAction } from "@/lib/social";
 import { pillarColor } from "../components/SocialMonth";
 import { AccountsPicker } from "../components/social/Accounts";
 import { Captions } from "../components/social/Captions";

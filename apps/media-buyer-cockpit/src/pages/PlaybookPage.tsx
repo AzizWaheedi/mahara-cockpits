@@ -1,8 +1,17 @@
-import { useQuery } from "convex/react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { CreativePreview } from "@/components/CreativePreview";
 import { AnimatedSelect } from "@/components/ui/animated-select";
-import { api } from "../../convex/_generated/api";
+import {
+  fetchCreativePatterns,
+  fetchDimensions,
+  fetchPlaybook,
+  fetchWinners,
+  type CreativePatternRow,
+  type DimensionsResult,
+  type PlaybookRow,
+  type WinnerAdRow,
+} from "@/lib/playbook";
 
 /**
  * What works in the GCC.
@@ -13,16 +22,32 @@ import { api } from "../../convex/_generated/api";
  * tried in another, and to copy it.
  */
 export function PlaybookPage() {
+  const auth = useCockpitAuth();
   const [service, setService] = useState("");
   const [city, setCity] = useState("");
-  const dims = useQuery(api.market.dimensions, {});
-  const rows = useQuery(api.market.playbook, {
-    serviceLine: service || undefined,
-    city: city || undefined,
-  });
-  const patterns = useQuery(api.market.creativePatterns, {
-    serviceLine: service || undefined,
-  });
+  const [dims, setDims] = useState<DimensionsResult | undefined>(undefined);
+  const [rows, setRows] = useState<PlaybookRow[] | undefined>(undefined);
+  const [patterns, setPatterns] = useState<CreativePatternRow[] | undefined>(undefined);
+
+  useEffect(() => {
+    if (!auth.client) return;
+    void fetchDimensions(auth.client).then(setDims);
+  }, [auth.client]);
+
+  useEffect(() => {
+    if (!auth.client) return;
+    void fetchPlaybook(auth.client, {
+      serviceLine: service || undefined,
+      city: city || undefined,
+    }).then(setRows);
+  }, [auth.client, service, city]);
+
+  useEffect(() => {
+    if (!auth.client) return;
+    void fetchCreativePatterns(auth.client, {
+      serviceLine: service || undefined,
+    }).then(setPatterns);
+  }, [auth.client, service]);
 
   const verdictTone = (v: string) =>
     v === "Proven"
@@ -311,11 +336,17 @@ function WinningAds({ serviceLine }: { serviceLine?: string }) {
   const [open, setOpen] = useState<string | null>(null);
   const [origin, setOrigin] = useState<Origin>("all");
   const [savedBy, setSavedBy] = useState("");
-  const rows: any[] | undefined = useQuery(api.market.winners, {
-    serviceLine,
-    limit: 40,
-    origin,
-  });
+  const auth = useCockpitAuth();
+  const [rows, setRows] = useState<WinnerAdRow[] | undefined>(undefined);
+
+  useEffect(() => {
+    if (!auth.client) return;
+    void fetchWinners(auth.client, {
+      serviceLine,
+      limit: 40,
+      origin,
+    }).then(setRows);
+  }, [auth.client, serviceLine, origin]);
 
   // Who has saved ads in this list, for the "Saved by" filter.
   const names = useRef(new Map<string, string>()).current;
@@ -503,7 +534,7 @@ function WinningAds({ serviceLine }: { serviceLine?: string }) {
                         r.playType,
                         ...(r.copyTraits ?? []),
                       ]
-                        .filter(t => Boolean(t) && t !== "unknown")
+                        .filter((t): t is string => Boolean(t) && t !== "unknown")
                         .map((t: string) => (
                           <span
                             key={t}
@@ -553,12 +584,12 @@ function WinningAds({ serviceLine }: { serviceLine?: string }) {
                         </div>
                       )
                     )}
-                    {r.interests?.length > 0 && (
+                    {Boolean(r.interests && r.interests.length > 0) && (
                       <div>
                         <div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
                           Targeting
                         </div>
-                        <div dir="auto">{r.interests.join(" · ")}</div>
+                        <div dir="auto">{r.interests?.join(" · ")}</div>
                       </div>
                     )}
                     {r.isSaved && r.savedStats && (
@@ -576,8 +607,7 @@ function WinningAds({ serviceLine }: { serviceLine?: string }) {
                             `, link CTR ${r.savedStats.linkCtr.toFixed(2)}%`}
                           {typeof r.savedStats.cpm === "number" &&
                             `, CPM ${money2(r.savedStats.cpm)}`}
-                          {r.savedStats.bookingsAttributed &&
-                            r.savedStats.bookings > 0 &&
+                          {Boolean(r.savedStats.bookingsAttributed && r.savedStats.bookings && r.savedStats.bookings > 0) &&
                             `, ${r.savedStats.bookings} booking${r.savedStats.bookings === 1 ? "" : "s"}`}
                           {typeof r.savedStats.costPerBooking === "number" &&
                             r.savedStats.bookingsAttributed &&

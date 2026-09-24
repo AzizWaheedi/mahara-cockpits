@@ -1,6 +1,12 @@
-import { useMutation, useQuery } from "convex/react";
-import { useState } from "react";
-import { api } from "../../convex/_generated/api";
+import { useCallback, useEffect, useState } from "react";
+import { toast } from "sonner";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import {
+  fetchMeetingsOverview,
+  linkCalendar,
+  sendReply,
+  unlinkCalendar,
+} from "@/lib/comms";
 
 // biome-ignore lint/suspicious/noExplicitAny: feed rows
 type Any = any;
@@ -48,9 +54,17 @@ const KIND_CLASS: Record<string, string> = {
  * Connect your own Google Calendar: share it with the cockpit's service
  * account, type the Google email, done. Checked within a minute.
  */
-function CalendarLink({ link, saEmail }: { link: Any; saEmail: string }) {
-  const linkCalendar = useMutation(api.comms.linkCalendar);
-  const unlinkCalendar = useMutation(api.comms.unlinkCalendar);
+function CalendarLink({
+  link,
+  saEmail,
+  onLink,
+  onUnlink,
+}: {
+  link: Any;
+  saEmail: string;
+  onLink: (email: string) => Promise<void>;
+  onUnlink: () => Promise<void>;
+}) {
   const [email, setEmail] = useState("");
   const [open, setOpen] = useState(false);
   const [err, setErr] = useState("");
@@ -68,7 +82,7 @@ function CalendarLink({ link, saEmail }: { link: Any; saEmail: string }) {
         <button
           type="button"
           className="underline"
-          onClick={() => unlinkCalendar({})}
+          onClick={() => onUnlink()}
         >
           disconnect
         </button>
@@ -95,7 +109,7 @@ function CalendarLink({ link, saEmail }: { link: Any; saEmail: string }) {
         e.preventDefault();
         setErr("");
         try {
-          await linkCalendar({ calendarId: email });
+          await onLink(email);
           setOpen(false);
         } catch (x) {
           setErr(String((x as Error).message ?? x));
@@ -143,11 +157,55 @@ function CalendarLink({ link, saEmail }: { link: Any; saEmail: string }) {
 }
 
 export function MeetingsPage() {
-  const data = useQuery(api.comms.overview, {});
-  const sendReply = useMutation(api.comms.sendReply);
+  const auth = useCockpitAuth();
+  const [data, setData] = useState<Any | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [sending, setSending] = useState<Record<string, boolean>>({});
   const [openThread, setOpenThread] = useState<string | null>(null);
+
+  const loadOverview = useCallback(() => {
+    if (!auth.client) return;
+    fetchMeetingsOverview(auth.client, auth.clients)
+      .then(setData)
+      .catch(console.error);
+  }, [auth.client, auth.clients]);
+
+  useEffect(() => {
+    loadOverview();
+  }, [loadOverview]);
+
+  const handleSendReply = async ({ chatId, text }: { chatId: string; text: string }) => {
+    if (!auth.client) return;
+    try {
+      await sendReply(auth.client, auth.email, { chatId, text });
+      toast.success("Sent on WhatsApp");
+      loadOverview();
+    } catch (e) {
+      toast.error(String(e));
+    }
+  };
+
+  const handleLinkCalendar = async (calId: string) => {
+    if (!auth.client) return;
+    try {
+      await linkCalendar(auth.client, auth.email, calId);
+      toast.success("Calendar connected");
+      loadOverview();
+    } catch (e) {
+      toast.error(String(e));
+    }
+  };
+
+  const handleUnlinkCalendar = async () => {
+    if (!auth.client) return;
+    try {
+      await unlinkCalendar(auth.client, auth.email);
+      toast.success("Calendar disconnected");
+      loadOverview();
+    } catch (e) {
+      toast.error(String(e));
+    }
+  };
   if (!data) return <p className="text-sm text-muted-foreground">Loading…</p>;
   const {
     today,
@@ -205,7 +263,12 @@ export function MeetingsPage() {
               </span>
             ) : null}
           </h2>
-          <CalendarLink link={myCalendar} saEmail={saEmail} />
+          <CalendarLink
+            link={myCalendar}
+            saEmail={saEmail}
+            onLink={handleLinkCalendar}
+            onUnlink={handleUnlinkCalendar}
+          />
         </div>
         {today.length === 0 ? (
           <p className="text-[13px] text-muted-foreground">
@@ -361,7 +424,7 @@ export function MeetingsPage() {
                         onClick={async () => {
                           setSending(x => ({ ...x, [t.chatId]: true }));
                           try {
-                            await sendReply({ chatId: t.chatId, text });
+                            await handleSendReply({ chatId: t.chatId, text });
                           } finally {
                             setSending(x => ({ ...x, [t.chatId]: false }));
                           }

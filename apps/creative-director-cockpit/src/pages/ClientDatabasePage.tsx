@@ -1,14 +1,15 @@
-import { useQuery } from "convex/react";
 import { Search, Sparkles, Users } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import {
   WinnerFilter,
   type WinnerOrigin,
   WinningAds,
 } from "@/components/WinningAds";
-import { api } from "../../convex/_generated/api";
+import { fetchClientRoster, type ClientRosterResult } from "@/lib/clients";
+import { fetchScriptDatabase, type ScriptDatabaseResult } from "@/lib/playbook";
 
 /**
  * The client database.
@@ -16,9 +17,6 @@ import { api } from "../../convex/_generated/api";
  * One row per live client, click through to everything: the Brand DNA and
  * Offer Cheat Sheet you already wrote, every open task with its real ClickUp
  * status, what is live on the ad account right now, and what has run before.
- *
- * Actions queue into the outbox and are executed by the sync, so the screen
- * never pretends a ClickUp write already landed.
  */
 
 function Pill({
@@ -38,8 +36,28 @@ function Pill({
 }
 
 export function ClientDatabasePage() {
-  const data = useQuery(api.clients.roster, {});
+  const auth = useCockpitAuth();
+  const [data, setData] = useState<ClientRosterResult | null | undefined>(undefined);
   const [q, setQ] = useState("");
+
+  useEffect(() => {
+    if (!auth.client) {
+      setData(null);
+      return;
+    }
+    let cancelled = false;
+    void fetchClientRoster(auth.client, auth.clients)
+      .then(res => {
+        if (!cancelled) setData(res);
+      })
+      .catch(err => {
+        console.error("Failed to load client roster:", err);
+        if (!cancelled) setData(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.client, auth.clients]);
 
   const rows = useMemo(() => {
     if (!data) return [];
@@ -52,6 +70,10 @@ export function ClientDatabasePage() {
 
   if (data === undefined) {
     return <p className="p-4 text-[14px] text-muted-foreground">Loading…</p>;
+  }
+
+  if (data === null) {
+    return <p className="p-4 text-[14px] text-muted-foreground">Unable to load clients.</p>;
   }
 
   return (
@@ -104,31 +126,45 @@ export function ClientDatabasePage() {
 
 /**
  * The scripting database.
- *
- * Aziz, 2026-09-07: the first version of this was a bare table of ad names and
- * it did not help anyone. So it is now the same view the media buyer has, on
- * the same rows: the creative itself, watchable, with the hook, the copy and
- * the transcript, and one click through to the client it ran for.
  */
 export function ScriptDatabasePage() {
+  const auth = useCockpitAuth();
   const [service, setService] = useState<string>("");
   const [liveOnly, setLiveOnly] = useState(false);
   const [q, setQ] = useState("");
   const [origin, setOrigin] = useState<WinnerOrigin>("all");
   const [savedBy, setSavedBy] = useState("");
-  const latest = useQuery(api.winners.list, {
-    serviceLine: service || undefined,
-    liveOnly: liveOnly || undefined,
-    limit: 200,
-    origin: origin === "all" ? undefined : origin,
-    savedBy: savedBy || undefined,
-  });
-  // A new filter loads in the background: keep showing the last list so the
-  // page (and the "Saved by" names it has seen) stays put meanwhile.
-  const kept = useRef(latest);
-  if (latest !== undefined) kept.current = latest;
-  const data = latest ?? kept.current;
-  const roster = useQuery(api.clients.roster, {});
+  const [data, setData] = useState<ScriptDatabaseResult | undefined>(undefined);
+  const [roster, setRoster] = useState<ClientRosterResult | null>(null);
+
+  useEffect(() => {
+    if (!auth.client) return;
+    void fetchClientRoster(auth.client, auth.clients).then(setRoster).catch(console.error);
+  }, [auth.client, auth.clients]);
+
+  useEffect(() => {
+    if (!auth.client) {
+      setData(undefined);
+      return;
+    }
+    let cancelled = false;
+    void fetchScriptDatabase(auth.client, {
+      serviceLine: service || undefined,
+      liveOnly: liveOnly || undefined,
+      limit: 200,
+      origin: origin === "all" ? undefined : origin,
+      savedBy: savedBy || undefined,
+    })
+      .then(res => {
+        if (!cancelled) setData(res);
+      })
+      .catch(err => {
+        console.error("Failed to load script database:", err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.client, service, liveOnly, origin, savedBy]);
 
   const rows = useMemo(() => {
     if (!data) return undefined;

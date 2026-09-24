@@ -1,14 +1,10 @@
 import { Navigate, Route, Routes } from "react-router";
 import { OAUTH_CALLBACK_PATH } from "@/auth/oauthReturn";
 import { AppLayout } from "@/components/AppLayout";
-import { PortalAutoSignIn } from "@/components/PortalAutoSignIn";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { PublicLayout } from "@/components/PublicLayout";
 import { PublicOnlyRoute } from "@/components/PublicOnlyRoute";
 import { RoleRoute } from "@/components/RoleRoute";
-import { SpaceSessionAutoSignIn } from "@/components/SpaceSessionAutoSignIn";
-import { ViktorAutoSignIn } from "@/components/ViktorAutoSignIn";
-import { ViktorProductAuthProvider } from "@/lib/viktor-spaces-access/ViktorProductAuthProvider";
 import {
   CalendarPage,
   ClientDatabasePage,
@@ -88,19 +84,5 @@ export function AuthenticatedRoutes() {
 }
 
 export function AuthenticatedAppRoutes() {
-  const hasConvex = Boolean(import.meta.env.VITE_CONVEX_URL);
-  return (
-    <ViktorProductAuthProvider enabled={hasConvex}>
-      {/* Outside the routes so links carrying `viktor_sign_in=auto` work no
-          matter which page they land on. */}
-      {hasConvex ? <ViktorAutoSignIn /> : null}
-      {/* Exchanges a backend-minted space-session token (put in sessionStorage
-          by the e2e/screenshot runner) for a Convex Auth session. Inert on a
-          normal visit. */}
-      {hasConvex ? <SpaceSessionAutoSignIn /> : null}
-      {/* One sign-in for every cockpit: swaps the portal's pass for a session here. */}
-      {hasConvex ? <PortalAutoSignIn /> : null}
-      <AuthenticatedRoutes />
-    </ViktorProductAuthProvider>
-  );
+  return <AuthenticatedRoutes />;
 }

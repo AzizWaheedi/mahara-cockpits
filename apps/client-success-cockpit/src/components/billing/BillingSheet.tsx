@@ -25,8 +25,8 @@ import type {
   Ladder,
   Sheet,
   SheetRow,
-} from "../../../convex/billingCore";
-import { ladderOf, METHODS, PLANS } from "../../../convex/billingCore";
+} from "@/lib/billingCore";
+import { ladderOf, METHODS, PLANS } from "@/lib/billingCore";
 
 /**
  * The client billing sheet. The same file in the CEO cockpit and the client

@@ -1,7 +1,7 @@
-import { useQuery } from "convex/react";
+import { useQuery } from "@/lib/cockpitApi";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { api } from "../../convex/_generated/api";
+import { api } from "@/lib/cockpitApi";
 
 /**
  * Tracking faults on live ads, checked against Meta directly.
@@ -14,7 +14,7 @@ export function TrackingIssues() {
   const [open, setOpen] = useState(false);
   if (!rows || rows.length === 0) return null;
 
-  const total = rows.reduce((n, r) => n + r.count, 0);
+  const total = rows.reduce((n: any, r: any) => n + r.count, 0);
 
   return (
     <section className="mb-4 rounded-xl border p-3">
@@ -42,7 +42,7 @@ export function TrackingIssues() {
 
       {open && (
         <div className="mt-2.5 space-y-1.5">
-          {rows.map(r => (
+          {rows.map((r: any) => (
             <div key={r.client} className="rounded border bg-background p-2">
               <div className="text-[13px] font-semibold">
                 {r.client}{" "}
@@ -51,7 +51,7 @@ export function TrackingIssues() {
                 </span>
               </div>
               <div className="mt-0.5 text-[12px] text-muted-foreground">
-                {[...new Set(r.ads.map(a => a.issue))].join(" · ")}
+                {[...new Set((r.ads ?? []).map((a: any) => a.issue))].join(" · ")}
               </div>
             </div>
           ))}

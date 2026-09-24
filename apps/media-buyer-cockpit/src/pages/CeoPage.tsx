@@ -1,7 +1,8 @@
 import "@/components/ceo/ceo.css";
-import { useQuery } from "convex/react";
 import { LoaderCircle, ShieldOff } from "lucide-react";
 import { type ReactNode, useMemo } from "react";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { AdsTab } from "./ceo/AdsTab";
 import { panelId, tabId, useTabParam } from "@/components/ceo/CeoTabs";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { kuwaitDay, longDate } from "@/components/ceo/format";
@@ -10,8 +11,6 @@ import { RefreshButton } from "@/components/ceo/RefreshButton";
 import { TrustPills } from "@/components/ceo/TrustPills";
 import type { CeoSections } from "@/components/ceo/useCeo";
 import { trustSummary, useCeo, useNow } from "@/components/ceo/useCeo";
-import { api } from "../../convex/_generated/api";
-import { AdsTab } from "./ceo/AdsTab";
 import { BackendTab } from "./ceo/BackendTab";
 import { BillingTab } from "./ceo/BillingTab";
 import { CallsTab } from "./ceo/CallsTab";
@@ -80,8 +79,7 @@ export function ceoBadges(
  * and the one section on screen.
  */
 export function CeoPage() {
-  const me = useQuery(api.roles.me, {});
-  const isCeo = me?.isCeo === true;
+  const { isCeo, ready: authReady } = useCockpitAuth();
   const { sections, day, loading } = useCeo(isCeo);
   const now = useNow();
   const [tab, setTab] = useTabParam(CEO_TAB_KEYS, "today");
@@ -89,7 +87,7 @@ export function CeoPage() {
   const trust = useMemo(() => trustSummary(sections, now), [sections, now]);
   const sentence = useMemo(() => statusSentence(sections), [sections]);
 
-  if (me && !me.isCeo)
+  if (authReady && !isCeo)
     return (
       <div className="mx-auto max-w-md py-16">
         <EmptyState
@@ -101,7 +99,7 @@ export function CeoPage() {
     );
 
   const View = TAB_VIEWS[tab];
-  const ready = me !== undefined && !loading;
+  const ready = authReady && !loading;
 
   return (
     <div className="ceo-root mx-auto w-full min-w-0 max-w-[1440px]">

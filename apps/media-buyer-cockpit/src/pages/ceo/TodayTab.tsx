@@ -48,7 +48,7 @@ import type {
   Note,
   Point,
   TeamPerson,
-} from "../../../convex/ceo/payloads";
+} from "@/types/ceo/payloads";
 import { feedState, syncEvery, syncState } from "./machineState";
 import { buildRoster, useLiveStatuses } from "./teamRoster";
 import type { CeoTabProps } from "./types";
