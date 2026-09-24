@@ -180,7 +180,7 @@ export function Seated({
   const mine = me.manager ? null : (me.ghl_user_id ?? "__none__");
   const owed = useOwed(mine, 30, 120_000);
   const proposals = useProposals(me.manager ? null : (me.email ?? null));
-  const followups = useFollowupsWaiting(me.email ?? null);
+  const followups = useFollowupsWaiting(me.email ?? null, Boolean(me.manager));
   const counts = {
     followups: (followups.data ?? []).length,
     owed: (owed.data ?? []).length,

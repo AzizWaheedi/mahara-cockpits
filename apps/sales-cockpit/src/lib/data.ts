@@ -553,22 +553,28 @@ export async function loadTranscript(path: string): Promise<string> {
   return await data.text();
 }
 
-/** Follow-up drafts waiting for this person, for the sidebar's count. */
+/**
+ * Follow-up drafts waiting for this person, for the sidebar's count. A
+ * manager also answers for drafts on leads whose rep has no seat yet.
+ */
 export function useFollowupsWaiting(
   email: string | null,
+  manager = false,
 ): Loaded<{ id: string }[]> {
   return useQuery<{ id: string }[]>(
-    () =>
-      email
-        ? supabase
-            .from("cockpit_sales_followups")
-            .select("id")
-            .eq("status", "draft")
-            .eq("owner_email", email)
-            .gt("expires_at", new Date().toISOString())
-            .limit(100)
-        : none<{ id: string }[]>(),
-    [email],
+    () => {
+      if (!email) return none<{ id: string }[]>();
+      const q = supabase
+        .from("cockpit_sales_followups")
+        .select("id")
+        .eq("status", "draft")
+        .gt("expires_at", new Date().toISOString())
+        .limit(100);
+      return manager
+        ? q.or(`owner_email.eq.${email},owner_email.is.null`)
+        : q.eq("owner_email", email);
+    },
+    [email, manager],
     120_000,
   );
 }
