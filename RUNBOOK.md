@@ -193,10 +193,16 @@ copy run and the writer's status.
 | Someone cannot open the cockpit | Give them the Sales seat on the portal's Admin page, with Setter, Closer, Both or Manager | Aziz |
 | A proposal sits on "Drafting" for more than 20 minutes | On the VPS as `hermes`: `tail ~/.sales-desk.log`, then `python3 desk.py doctor` in `hermes/sales-desk`. A request that failed four times says why on the proposal page, with Try again | Hermes or Aziz |
 | A proposal failed with "No Fathom recording" | The demo was not recorded or not shared with the team in Fathom. Share it, then Try again | The closer |
+| The page is blank, or says "The sales cockpit did not start" | The startup message names the cause. A bad Supabase address or key now stops the build itself (`src/lib/env.ts`), and `ship.sh` reads the live bundle for its address. If a build still shipped wrong: set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` on the Vercel project `mahara-sales` (read one back with `GET /v1/projects/mahara-sales/env/{id}`; the list call returns ciphertext) and ship again | Aziz or Hermes |
+| The dialer says "Away in Maqsam" or "Maqsam seat off" | The rep opens the Maqsam softphone and sets Available; a seat that is off or cannot call out is switched on in Maqsam. The seat's Maqsam address comes from B2B's rep list unless the Team page sets one | The rep, or Aziz |
+| A message says "WhatsApp only takes a free message within 24 hours" | Meta's rule, not the cockpit's: until the lead writes again, email them, or use a HighLevel workflow with an approved template | The rep |
+| A message shows "Did not send" with a reason | The reason is Meta's or HighLevel's own: 131049 is Meta's cap on marketing messages to one person; "insufficient funds" is the HighLevel wallet. The send is kept in `cockpit_sales_messages` either way | Aziz |
+| An end of day shows "Slack refused it" | The cockpit's Slack bot (@abdulazizs_second_ass) is not in #eods-salesreps: invite it, then press Post again. The sheet row goes in regardless | Aziz |
+| An end of day says "no Slack id" | Put the rep's Slack member id on their seat on the Team page, so EOD Radar credits them | Aziz |
 
 ## Sales desk
 
-The worker on the VPS (`hermes/sales-desk`) that drafts the sales cockpit's proposals from the lead's demo call in Fathom, rebuilds them after the closer fills the gaps, and indexes every rep's sales calls. Cron as `hermes`: requests every two minutes, recordings every half hour, each under its own lock; log `~/.sales-desk.log`. `python3 desk.py doctor` names what is wrong; `python3 desk.py status` shows the queue.
+The worker on the VPS (`hermes/sales-desk`) that drafts the sales cockpit's proposals from the lead's demo call in Fathom, rebuilds them after the closer fills the gaps, indexes every rep's sales calls, copies the Obsidian vault's sales calls in, writes Vince's call reviews, researches leads, and drafts follow-ups. Cron as `hermes`, each job under its own lock: requests and research every two minutes, recordings at :11 and :41, calls-vault at :26 and :56, reviews at :03 and :33, followups at :07 and :37; log `~/.sales-desk.log`. `python3 desk.py doctor` names what is wrong; `python3 desk.py status` shows the queue.
 
 | Symptom | Fix | Who |
 | --- | --- | --- |
@@ -206,6 +212,11 @@ The worker on the VPS (`hermes/sales-desk`) that drafts the sales cockpit's prop
 | "Fathom refused the key" or FATHOM_API_KEY not set | New FATHOM_API_KEY in /opt/data/bibi/api-keys.env | Aziz |
 | A proposal failed with "The draft did not pass the checks: ..." | The draft broke a rule the validator enforces (a figure never said on the call, an em dash, the fee band, a sheet overflowing A4). Open the saved version, then draft again | The closer |
 | Proposals say "The PDF was skipped" | Playwright or its Chrome is missing on the VPS (`doctor`'s playwright and render lines). The HTML is complete meanwhile | Aziz |
+| Recordings stop growing | `calls-vault` (cron :26 and :56) copies the Obsidian vault's sales calls (`/opt/data/obsidian-sync-vault/Calls`, written by the vault's own Fathom sync); if the vault stopped, the vault's sync job is the fault. `python3 desk.py calls-vault --dry` shows what it would copy | Hermes |
+| Calls are not reviewed | `reviews` (cron :03 and :33, two calls a run) is Vince on the desk's OpenAI key; its knowledge files are in `~/.sales-desk/vince` (copied from the OpenClaw sales-coach). "knowledge files are missing" means that folder was emptied: copy them back from `/home/aziz/.openclaw/agents/sales-coach/knowledge` | Hermes |
+| Research sits on "Researching" | `research` runs every two minutes; `tail ~/.sales-desk.log`. It needs OPENAI_API_KEY; without APIFY_API_KEY it still runs on the model's own web search and says so | Hermes |
+| No follow-up drafts appear | `followups` runs at :07 and :37 outside quiet hours (setting `followups` in `cockpit_sales_settings`, on the Follow-ups page for managers). A run's line in the worker status says how many leads were due and how many had no open channel (no WhatsApp window and no email) | Hermes or Aziz |
+| A follow-up kind sends by itself when it should not | A manager switches it off on Follow-ups → How it is learning; the desk can only send kinds switched on, through `followup.autosend`, the one action its service key opens | Aziz |
 | Every proposal's notes say "No reference deal on this machine" | Put a finished proposal per variant in ~/.sales-desk/reference with extract_reference.py (README) | Aziz |
 | A request stays "running" for over half an hour | The run died. It goes back in the queue by itself and is parked as failed, with the reason, after four tries | nobody |
 | The cockpit's payment choices differ from offer.json | `python3 desk.py offer-sync` (requests does it every run) | Aziz |

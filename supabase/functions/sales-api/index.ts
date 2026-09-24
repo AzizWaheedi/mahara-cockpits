@@ -1830,6 +1830,19 @@ const DESK_ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   "followup.autosend": followupAutosend,
 };
 
+/** The role claim of a token the gateway has already verified. */
+function jwtRole(jwt: string): string | null {
+  const part = jwt.split(".")[1];
+  if (!part) return null;
+  try {
+    const b64 = part.replace(/-/g, "+").replace(/_/g, "/");
+    const claims = JSON.parse(atob(b64 + "=".repeat((4 - (b64.length % 4)) % 4)));
+    return typeof claims?.role === "string" ? claims.role : null;
+  } catch {
+    return null;
+  }
+}
+
 Deno.serve(async (req: Request) => {
   const origin = req.headers.get("origin");
   const headers: Record<string, string> = { ...cors(origin), "Cache-Control": "no-store" };
@@ -1854,9 +1867,12 @@ Deno.serve(async (req: Request) => {
     return reply({ ok: false, error: "Unknown action." }, 400);
 
   // The sales desk on the VPS calls with the service key, for the one thing
-  // it may do by itself: send a follow-up a manager trusts to go alone.
-  const service = env("SUPABASE_SERVICE_ROLE_KEY");
-  if (service && jwt === service) {
+  // it may do by itself: send a follow-up a manager trusts to go alone. The
+  // gateway has already checked the token's signature (this function is
+  // deployed with verify_jwt), so its role claim can be read as it stands;
+  // comparing the key's text failed because the desk and the function hold
+  // two different, equally valid service keys (2026-09-24).
+  if (jwtRole(jwt) === "service_role") {
     const deskHandler = DESK_ACTIONS[String(body?.action ?? "")];
     if (!deskHandler) return reply({ ok: false, error: "Not an action the desk may take." }, 403);
     const desk: Who = { signed_in: true, seat: true, manager: false, email: "sales-desk", name: "Sales desk" };
