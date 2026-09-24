@@ -552,11 +552,14 @@ Return JSON only: {"prompts":["slide 1 prompt","slide 2 prompt", ...]}"""
 # - Its API, with a key (HF_KEY, "id:secret"). Aziz, 2026-09-24: "Try this
 #   API key instead." Higgsfield ended the CLI's session on its first use
 #   after every fresh sign-in (2026-09-23); a key does not lapse that way.
-#   Two differences are said on screen, not hidden: the API pays from its
-#   own wallet (open.higgsfield.ai/billing), never the app's subscription
-#   credits; and Nano Banana Pro is switched off on it ("model_disabled",
-#   2026-09-24), so it draws with Marketing Studio Image, Higgsfield's GPT
-#   Image route, which reads references from links.
+#   The API pays from its own wallet (open.higgsfield.ai/billing), never the
+#   app's subscription credits, and an empty one is said on screen. Nano
+#   Banana Pro is switched off on it ("model_disabled"), and Aziz chose GPT
+#   Image anyway ("It's better", same day): GPT Image 2.5 Sunburst, through
+#   Higgsfield's Marketing Studio route, which reads references from links.
+#   Of the three GPT Image routes drawn from one demo prompt, Sunburst kept
+#   the camera square to the wall as asked; Flare bent the skirting line and
+#   the 2.0 route took twice as long (2026-09-24).
 # - Its CLI on this machine, signed in as Aziz: his subscription credits and
 #   Nano Banana Pro. Used when there is no key, or when SALMA_IMAGES=cli.
 #   The posting desk drives the same CLI for covers, so its caller is
@@ -606,7 +609,7 @@ class NoCredits(RuntimeError):
 
 
 HF_API = "https://api.higgsfield.ai"
-HF_API_MODEL = "marketing-studio/image"
+HF_API_MODEL = "marketing-studio/image/sunburst"
 HF_KEY_FILE = os.environ.get("HF_KEY_FILE") or os.path.expanduser("~/.higgsfield-api.env")
 # The shapes the API model draws. It has no 4:5, so 4:5 is drawn 3:4 and
 # fit_jpeg trims the difference from top and bottom, as 1.91:1 is from 16:9.
