@@ -299,6 +299,7 @@ export const roster = authenticatedAction({
         dialect: s?.dialect ?? null,
         ghlLocationId: s?.ghl_location_id ?? null,
         platforms: s?.platforms ?? ["instagram", "facebook"],
+        look: s?.look ?? "bold",
         autoApprove: Boolean(s?.auto_approve),
         publishing: Boolean(s?.publishing),
         publishingSince: s?.publishing_since ?? null,
@@ -453,11 +454,20 @@ export const configure = authenticatedAction({
      * ever go out, so turning it on never sends last week's posts.
      */
     publishing: v.optional(v.boolean()),
+    /** How the pictures carry words: bold, showcase (projects) or plain. */
+    look: v.optional(v.string()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
     const { email } = await who(ctx);
     const body: Row = { client_task_id: args.clientTaskId, updated_at: now() };
+    if (args.look !== undefined) {
+      if (!["bold", "showcase", "plain"].includes(args.look))
+        throw new Error(
+          "Pick a look: bold, project showcase or pictures only.",
+        );
+      body.look = args.look;
+    }
     if (args.publishing !== undefined) {
       if (args.publishing) {
         const c = rows(
@@ -1872,12 +1882,61 @@ export function cleanPlatforms(raw: string[]): string[] {
   );
 }
 
+type Words = Record<string, string>;
+
 type MediaItem = {
   kind: "image" | "video";
   url: string;
   source: "upload" | "ai";
   cover?: string | null;
+  /** The picture without its words, when words sit on top of it. */
+  clean?: string;
+  /** The words as a transparent layer, set over `clean` (project look). */
+  layer?: string;
+  words?: Words;
+  /** How the words were made: drawn in (bold) or set in type (showcase). */
+  look?: "bold" | "showcase";
+  /** Salma reading the drawn words back: ok, or what did not match. */
+  readback?: Row;
+  /** A moving picture: the still it came from, and the shot it was given. */
+  from?: string;
+  motion?: Words;
 };
+
+const WORD_KEYS = ["headline", "line", "accent", "title", "cta", "handle"];
+
+/** Words as stored: the keys a look uses, trimmed, never anything else. */
+export function cleanWords(raw: unknown): Words | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: Words = {};
+  for (const k of WORD_KEYS) {
+    const v = String((raw as Row)[k] ?? "")
+      .replace(/\s+/g, " ")
+      .replace(/\s*[\u2014\u2013]\s*/g, " ")
+      .trim();
+    if (v) out[k] = v.slice(0, 120);
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+function httpsOrNone(x: unknown): string | undefined {
+  const s = String(x ?? "").trim();
+  return /^https:\/\//i.test(s) ? s : undefined;
+}
+
+function shortStrings(
+  raw: unknown,
+  keys: string[],
+  max = 300,
+): Words | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: Words = {};
+  for (const k of keys) {
+    const v = String((raw as Row)[k] ?? "").trim();
+    if (v) out[k] = v.slice(0, max);
+  }
+  return Object.keys(out).length ? out : undefined;
+}
 
 /**
  * The items as stored: typed, https, and no more than Instagram allows.
@@ -1895,12 +1954,42 @@ function cleanMedia(raw: unknown): MediaItem[] {
       );
     const kind = x?.kind === "video" ? "video" : "image";
     const cover = x?.cover ? String(x.cover) : null;
-    out.push({
+    const item: MediaItem = {
       kind,
       url,
       source: x?.source === "ai" ? "ai" : "upload",
       ...(kind === "video" ? { cover } : {}),
-    });
+    };
+    // What Salma put on the item rides along untouched: the picture without
+    // its words, the words, the layer, the read-back. A reorder that dropped
+    // them would lose the words on the next "Save words".
+    const clean = httpsOrNone(x?.clean);
+    if (clean) item.clean = clean;
+    const layer = httpsOrNone(x?.layer);
+    if (layer) item.layer = layer;
+    const words = cleanWords(x?.words);
+    if (words) item.words = words;
+    if (x?.look === "bold" || x?.look === "showcase") item.look = x.look;
+    const from = httpsOrNone(x?.from);
+    if (from) item.from = from;
+    const motion = shortStrings(x?.motion, ["camera", "motion", "person"]);
+    if (motion) item.motion = motion;
+    if (x?.readback && typeof x.readback === "object") {
+      const r = x.readback as Row;
+      item.readback = {
+        ok: r.ok === true ? true : r.ok === false ? false : null,
+        ...(Array.isArray(r.missing)
+          ? {
+              missing: (r.missing as unknown[])
+                .slice(0, 5)
+                .map(m => String(m).slice(0, 120)),
+            }
+          : {}),
+        ...(r.seen ? { seen: String(r.seen).slice(0, 300) } : {}),
+        ...(r.error ? { error: String(r.error).slice(0, 200) } : {}),
+      };
+    }
+    out.push(item);
   }
   if (out.length > 10)
     throw new Error("Instagram takes at most ten items in a carousel.");
@@ -2040,7 +2129,7 @@ export const setRefs = authenticatedAction({
  */
 async function queuePostJob(
   postId: string,
-  kind: "caption" | "cover",
+  kind: "caption" | "cover" | "words" | "motion",
   email: string,
   params: Row = {},
 ) {
@@ -2056,9 +2145,9 @@ async function queuePostJob(
     body: [
       {
         id:
-          kind === "cover"
-            ? `cover:${postId}:${Number(params.index ?? 0)}`
-            : `${kind}:${postId}`,
+          kind === "caption"
+            ? `caption:${postId}`
+            : `${kind}:${postId}:${Number(params.index ?? 0)}`,
         kind,
         client_task_id: p.client_task_id,
         batch_id: p.batch_id,
@@ -2096,6 +2185,92 @@ export const makeCover = authenticatedAction({
     await queuePostJob(postId, "cover", email, { index: Math.floor(index) });
     await audit(email, "social.post.cover", "social_post", postId, {
       index: Math.floor(index),
+    });
+    return null;
+  },
+});
+
+/** A post and the picture at `index`, or a sentence saying why not. */
+async function pictureAt(
+  postId: string,
+  index: number,
+): Promise<{ post: Row; media: Row[]; item: Row }> {
+  const post = rows(
+    await rest(`social_posts?select=*&id=eq.${enc(postId)}&limit=1`),
+  )[0];
+  if (!post) throw new Error("That post is gone.");
+  const media = Array.isArray(post.media) ? (post.media as Row[]) : [];
+  const item = media[Math.floor(index)];
+  if (!item || item.kind !== "image")
+    throw new Error("There is no picture at that place on the post.");
+  return { post, media, item };
+}
+
+/**
+ * Change the words on a picture. The project look sets them again in type
+ * in seconds, with no drawing; a bold picture has its words drawn in, so it
+ * is drawn again with the new ones.
+ */
+export const setWords = authenticatedAction({
+  args: { postId: v.string(), index: v.number(), words: v.any() },
+  returns: v.null(),
+  handler: async (ctx, { postId, index, words }) => {
+    const { email } = await who(ctx);
+    const i = Math.floor(index);
+    const { media, item } = await pictureAt(postId, i);
+    const kept = cleanWords(words);
+    if (!kept)
+      throw new Error(
+        "Write at least one line, or leave the words as they are.",
+      );
+    media[i] = { ...item, words: kept };
+    await rest(`social_posts?id=eq.${enc(postId)}`, {
+      method: "PATCH",
+      body: { media, updated_at: now() },
+    });
+    await queuePostJob(postId, "words", email, { index: i });
+    await audit(email, "social.post.words", "social_post", postId, {
+      index: i,
+      words: kept,
+    });
+    return null;
+  },
+});
+
+/** Have Salma write words for a picture and set them in the project look. */
+export const addWords = authenticatedAction({
+  args: { postId: v.string(), index: v.number() },
+  returns: v.null(),
+  handler: async (ctx, { postId, index }) => {
+    const { email } = await who(ctx);
+    const i = Math.floor(index);
+    await pictureAt(postId, i);
+    await queuePostJob(postId, "words", email, { index: i, write: true });
+    await audit(email, "social.post.words.write", "social_post", postId, {
+      index: i,
+    });
+    return null;
+  },
+});
+
+/**
+ * Make a picture move a little, with its words kept still. One picture on
+ * its own becomes a Reel; in a carousel it keeps the post's shape.
+ */
+export const makeItMove = authenticatedAction({
+  args: { postId: v.string(), index: v.number() },
+  returns: v.null(),
+  handler: async (ctx, { postId, index }) => {
+    const { email } = await who(ctx);
+    const i = Math.floor(index);
+    const { item } = await pictureAt(postId, i);
+    if (item.look === "bold" && item.words)
+      throw new Error(
+        "The words on this picture are drawn into it, so it cannot move without bending them. Move a picture from the project look, or one without words.",
+      );
+    await queuePostJob(postId, "motion", email, { index: i });
+    await audit(email, "social.post.motion", "social_post", postId, {
+      index: i,
     });
     return null;
   },

@@ -172,6 +172,12 @@ function PortalGroup() {
       href: `${portal}/go/editor`,
       show: isAdmin || roles.includes("editor"),
     },
+    {
+      key: "sales",
+      label: "Sales",
+      href: `${portal}/go/sales`,
+      show: isAdmin || roles.includes("sales"),
+    },
   ].filter(d => d.show);
   if (doors.length === 0) return null;
   return (

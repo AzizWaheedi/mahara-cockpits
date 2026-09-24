@@ -1179,9 +1179,22 @@ const schema = defineSchema({
   members: defineTable({
     email: v.string(),
     name: v.optional(v.string()),
-    /** admin | media_buyer | csm | creative */
+    /** admin | media_buyer | csm | creative | editor | sales */
     roles: v.array(v.string()),
     clients: v.array(v.string()),
+    /**
+     * What the person does in the sales cockpit, chosen on the Admin page
+     * with the Sales seat (Aziz, 2026-09-24). Kept only while `roles` has
+     * "sales"; salesPortal.ts writes it to `cockpit_sales_people.role`.
+     */
+    salesRole: v.optional(
+      v.union(
+        v.literal("setter"),
+        v.literal("closer"),
+        v.literal("both"),
+        v.literal("manager"),
+      ),
+    ),
     note: v.optional(v.string()),
     addedBy: v.optional(v.string()),
     addedAt: v.number(),

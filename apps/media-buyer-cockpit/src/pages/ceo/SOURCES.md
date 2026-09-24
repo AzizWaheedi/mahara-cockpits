@@ -123,9 +123,12 @@ One sheet in both cockpits (`components/billing/BillingSheet.tsx`, rules in
 
 | Number | Where it comes from | What it leaves out |
 |---|---|---|
-| **Dials, connected, talk time** | The Maqsam dialer import in Creative Triage (`mahara_reporting.facts`): outbound calls with one agent; connected = completed with duration. | Connected can include voicemail. Only the accounts the dialer imports. |
-| **Gap between calls** | For each agent, the time from one outbound call ending to their next one starting, on the same Kuwait day, counted in working minutes only (`mahara_reporting.facts`, source maqsam). The median leads because one long break drags a mean; the count of gaps over 30 minutes is the part to act on. | An overnight or a weekend is never idle time. A gap longer than a full working day is left out: that is a day off or a break in the import. It needs two calls by the same agent on the same day, so a one call day has no gap. |
-| **Speed to lead (clients)** | For DFY clients' leads, the first outbound dial to the lead's phone. Two clocks: the plain clock, and the working clock, where the time starts at the later of the lead's creation and the next working window and only working minutes count. Working hours live in `cockpit_settings` (key `working_hours`), editable on the tab; the default is 10:00 to 18:00 Asia/Kuwait, Saturday to Thursday. | Only since 2026-09-12. A call before the clock starts counts as 0 minutes. |
+| **Shared scorecard** | `public.mahara_call_center_report` v1 in Creative Triage, the same canonical read as the power dialer. Overall, caller, client and daily results are computed for one inclusive Kuwait date range, up to 93 days. | Report warnings and coverage travel with the numbers; unknown is not zero. No browser service-role access. The CEO backend remains an authenticated consumer while its wider migration continues. |
+| **Dials / actual calls** | Dials are saved dispositions with a nonblank note, counted once by save date. Actual calls are verified Maqsam outbound calls. Connections and talk time come from provider evidence; connection rate is connections over actual provider dials. | A saved disposition does not fabricate a physical call. Connected can include voicemail. |
+| **Gap between calls** | The shared source removes ringing and talk time, uses the caller's exact email mapping to `cockpit_people.schedule`, and calculates a sample-weighted average inside working hours. | Missing timing, missing/ambiguous schedules, interrupted chains and overnight/off-day periods are not invented. Current schedules/date exceptions apply to history; no effective-dated schedule history or recorded breaks yet. |
+| **Speed to lead** | Working time from creation to first verified actual dial, using that first caller's Team & Payroll schedule. The average/true median use verified timed samples; the 2-minute share divides qualifying leads by all new leads in the selected creation cohort. | Untouched/ambiguous leads remain unverified and outside timed samples; they remain in the all-lead denominator. Lead attribution uses exact attempt identity or an unambiguous full normalized phone, never newest-lead or last-digit guessing. Caller cohort rows use the first verified caller; untouched leads are Unassigned. |
+| **Confirmed / provisional bookings** | New unique main or online calendar bookings are confirmed; provisional calendars are counted separately. Both use booking creation date. Reschedule replacements and callback calendars are excluded. | Unknown calendar classifications stay separate. The Delivery tab retains its **appointment-date** cohort, so its booking total need not match booking-created activity. |
+| **Shows / no-shows / closed projects** | Authoritative client-sheet outcome snapshots in the shared report. Show rate = shows / (shows + no-shows); close rate = closed projects / shows. Project values retain their currencies. | Blank attendance is excluded, no denominator means no rate, and currencies are not added together. These definitions are for the client call center; Mahara's own sales metrics remain separate. |
 
 ## Client success tab
 
@@ -143,7 +146,7 @@ One sheet in both cockpits (`components/billing/BillingSheet.tsx`, rules in
 
 | Number | Where it comes from | What it leaves out |
 |---|---|---|
-| **End of days** | Today: the B2B database's `eod_reports` and `team_eod_reports` (the Typeforms) plus this app's own EOD form. **Aziz's rule: the EOD Reports sheet on Google Sheets is the source of truth.** | The sheet (`1K10In9fyYa_hN7X4z_HGcCuoxGBRZoF4q7Z0r2SalZE`) is not yet shared with the cockpit's service account; the read is built and waiting. |
+| **End of days** | Today: the B2B database's `eod_reports` and `team_eod_reports` (the Typeforms) plus this app's own EOD form. **Aziz's rule: the EOD Reports sheet on Google Sheets is the source of truth.** | The sheet is `1EhPp7x0jZfV8dNjUvmuWv_alNvduMGpe_COjUAB13bw` (the first workbook, `1K10In9f…`, was deleted on 3-4 August and rebuilt under this id; corrected 2026-09-24). The read works once the cockpit's service account can open it. |
 | **Payroll a month** | `cockpit_people`: monthly cost × the fixed currency table, over active people. | A floor while anyone is uncosted; those are named. |
 | **Commission** | A rule per person: what it is paid on, then the rate. | No payout is computed yet: nothing links the roster to the CRM's sales reps. |
 | **Working hours per person** | `cockpit_people.schedule`: days and times per weekday plus per-day exceptions, edited on the row. | Shown and stored only; nothing is computed from it yet. |
@@ -190,7 +193,7 @@ The one funnel Mahara runs on repeat, for five roles. Built 2026-09-22.
 ## Two things only Aziz can settle (from the first pass)
 
 1. **The rest of the cash.** Add two fields to the kickoff form (collected at kickoff: yes/no, and the amount) and have Make write them somewhere structured. The cleanest landing is a row in the B2B `transfers` table linked to the deal, because the cockpit already counts that ledger as confirmed cash.
-2. **The EOD sheet.** Share `1K10In9fyYa_hN7X4z_HGcCuoxGBRZoF4q7Z0r2SalZE` with `claude@studied-handler-508106-m5.iam.gserviceaccount.com` (viewer), and confirm it is the sheet that pulls in everyone's end of day. The read is built; the Team tab switches to it once it can see the tabs.
+2. **The EOD sheet.** Share `1EhPp7x0jZfV8dNjUvmuWv_alNvduMGpe_COjUAB13bw` with `claude@studied-handler-508106-m5.iam.gserviceaccount.com` (viewer), and confirm it is the sheet that pulls in everyone's end of day. The read is built; the Team tab switches to it once it can see the tabs.
 
 ## Changed on 2026-09-21, third pass (the twenty-point batch)
 

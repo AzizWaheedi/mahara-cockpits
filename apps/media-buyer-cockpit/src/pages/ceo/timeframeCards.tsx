@@ -127,7 +127,7 @@ export function CallsTimeframeCard({
     date: string;
     dials: number;
     connected: number;
-    conversations90s: number;
+    conversations90s: number | null;
   }[];
   now: number;
   day: string | null;
@@ -143,7 +143,9 @@ export function CallsTimeframeCard({
   );
   const dials = inRange.reduce((t, r) => t + r.dials, 0);
   const connected = inRange.reduce((t, r) => t + r.connected, 0);
-  const conv = inRange.reduce((t, r) => t + r.conversations90s, 0);
+  const conv = inRange.some(r => r.conversations90s === null)
+    ? null
+    : inRange.reduce((t, r) => t + (r.conversations90s ?? 0), 0);
   return (
     <SectionCard
       kicker={`${count(days)} days`}

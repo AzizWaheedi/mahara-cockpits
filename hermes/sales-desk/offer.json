@@ -1,0 +1,59 @@
+{
+  "_about": [
+    "The offer a proposal prints, and the options a closer picks for each one.",
+    "Aziz edits this file; the drafter's prompt and the validator both read it, so a change here changes both on the next draft.",
+    "Money is whole US dollars. A proposal request may override price and months; everything else comes from here.",
+    "Anything carrying a 'confirm' line is a default written by the engineer, waiting for Aziz to confirm."
+  ],
+  "currency": "USD",
+  "program": {
+    "name": "Premium Project Program",
+    "price": 6000,
+    "months": 3,
+    "meetings": 30,
+    "ads_monthly_min": 1000,
+    "ads_monthly_max": 1500,
+    "ads_daily_min": 30,
+    "ads_daily_max": 50,
+    "deposit": 500
+  },
+  "guarantee": {
+    "default": false,
+    "text": "{meetings} qualified appointments in {days} days, or we work for free until we deliver.",
+    "source": "Aziz's closer framework, stage 13 (Investment & Close). The script's em dash is a comma here, because a proposal carries no em dashes.",
+    "confirm": "Aziz to confirm. It is printed only when the closer chooses the guarantee; a request that does not say is taken as no guarantee. {meetings}, {days} and {months} are filled in from the program and the closer's choice."
+  },
+  "payment": {
+    "default": "pif",
+    "options": {
+      "pif": {
+        "label": "Paid in full at the start",
+        "instalments": [
+          {"share": 1, "due_days": 0, "due": "at the start"}
+        ]
+      },
+      "two_payments": {
+        "label": "Two payments",
+        "confirm": "Aziz to confirm: half at the start, half 45 days in.",
+        "instalments": [
+          {"share": 1, "due_days": 0, "due": "at the start"},
+          {"share": 1, "due_days": 45, "due": "45 days after the start"}
+        ]
+      },
+      "monthly": {
+        "label": "Monthly across the term",
+        "confirm": "Aziz to confirm: one equal payment a month, the first at the start.",
+        "per_month": true
+      }
+    }
+  },
+  "pitch": {
+    "_about": "The funnel arithmetic quoted on every call at the agreed advertising budget (PATTERNS.md).",
+    "enquiries_month": 75,
+    "best_share_pct": 30,
+    "meetings_month": "15 to 20",
+    "quotations_month": "10 to 15",
+    "close_rate_pct": 25,
+    "signed_month": "2 to 4"
+  }
+}

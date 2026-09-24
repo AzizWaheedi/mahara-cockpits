@@ -1,6 +1,11 @@
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
-import { authenticatedMutation, authenticatedQuery } from "../functions";
+import {
+  authenticatedAction,
+  authenticatedMutation,
+  authenticatedQuery,
+} from "../functions";
+import { readCallCenterReport } from "./callCenterSource";
 import { requireCeo } from "./gate";
 import { addDays, kuwaitDay } from "./time";
 
@@ -62,5 +67,15 @@ export const refreshNow = authenticatedMutation({
     await requireCeo(ctx);
     await ctx.scheduler.runAfter(0, internal.ceo.refresh.refreshAll, { only });
     return null;
+  },
+});
+
+/** Date-filtered shared report. The caller is checked before any privileged read. */
+export const callCenterReport = authenticatedAction({
+  args: { from: v.string(), to: v.string() },
+  returns: v.any(),
+  handler: async (ctx, { from, to }) => {
+    await ctx.runQuery(internal.ceo.people.gate, { userId: ctx.userId });
+    return readCallCenterReport(from, to);
   },
 });

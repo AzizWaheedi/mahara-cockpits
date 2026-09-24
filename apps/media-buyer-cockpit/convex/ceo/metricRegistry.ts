@@ -1,3 +1,4 @@
+import type { CallCenterMetrics } from "./callCenterContract";
 import type {
   CallsPayload,
   ClientsPayload,
@@ -68,6 +69,182 @@ const B2B =
   "B2B GoHighLevel and Meta through the B2B Supabase database (flwboeijllbtrufxkhts)";
 const TRIAGE = "Creative Triage Supabase (bldgtotkfmhoxmlzowdx)";
 const CLICKUP = "ClickUp, the Clients - Mahara list, synced into the cockpit";
+
+/** Definitions and projections point to the exact report the dialer reads. */
+const CALL_CENTER_METRICS: [
+  string,
+  keyof CallCenterMetrics,
+  string,
+  string,
+  Unit,
+  number?,
+][] = [
+  [
+    "dials",
+    "dials",
+    "Dials",
+    "Saved dispositions with a nonblank note, counted once on their save date.",
+    "count",
+  ],
+  [
+    "provider_dials",
+    "providerDials",
+    "Actual calls",
+    "Verified outbound provider calls, separate from operational dispositions.",
+    "count",
+  ],
+  [
+    "connected",
+    "connections",
+    "Connected",
+    "Completed provider calls with talk time; may include voicemail.",
+    "count",
+  ],
+  [
+    "connect_rate",
+    "connectionRate",
+    "Connect rate",
+    "Connected provider calls divided by actual provider dials.",
+    "share",
+  ],
+  [
+    "talk_minutes",
+    "talkSeconds",
+    "Talk minutes",
+    "Provider talk seconds converted to minutes.",
+    "minutes",
+    1 / 60,
+  ],
+  [
+    "leads",
+    "leads",
+    "New leads",
+    "Distinct leads created during the selected Kuwait date range.",
+    "count",
+  ],
+  [
+    "leads_dialed",
+    "leadsDialed",
+    "New leads dialed",
+    "Creation-cohort leads with a verified matched dial, including after the creation window.",
+    "count",
+  ],
+  [
+    "leads_contacted",
+    "leadsContacted",
+    "New leads contacted",
+    "Creation-cohort leads with a completed provider call and talk time; voicemail is possible.",
+    "count",
+  ],
+  [
+    "no_verified_dial",
+    "noVerifiedDial",
+    "No verified dial",
+    "Creation-cohort leads without an unambiguous verified call link.",
+    "count",
+  ],
+  [
+    "confirmed_bookings",
+    "confirmedBookings",
+    "Confirmed bookings",
+    "Unique new main or online calendar bookings by booking creation date. Reschedule replacements are excluded.",
+    "count",
+  ],
+  [
+    "provisional_bookings",
+    "provisionalBookings",
+    "Provisional bookings",
+    "Unique new provisional calendar bookings by booking creation date, kept separate from confirmed bookings.",
+    "count",
+  ],
+  [
+    "unclassified_bookings",
+    "unclassifiedBookings",
+    "Unclassified bookings",
+    "Bookings without a verified main, online or provisional calendar mapping.",
+    "count",
+  ],
+  [
+    "shows",
+    "shows",
+    "Shows",
+    "Shown appointments from the authoritative client outcome snapshot.",
+    "count",
+  ],
+  [
+    "no_show",
+    "noShow",
+    "No-shows",
+    "Recorded no-show outcomes; blank outcomes are excluded.",
+    "count",
+  ],
+  [
+    "show_rate",
+    "showRate",
+    "Show rate",
+    "Shows divided by shows plus no-shows. Blank attendance is excluded.",
+    "share",
+  ],
+  [
+    "closed",
+    "closed",
+    "Closed projects",
+    "Closed projects from the authoritative client outcome snapshot.",
+    "count",
+  ],
+  [
+    "close_rate",
+    "closeRate",
+    "Close rate",
+    "Closed projects divided by shown appointments.",
+    "share",
+  ],
+  [
+    "speed_to_lead_working_median_min",
+    "medianSpeedSeconds",
+    "Median working speed to lead",
+    "True period median from lead arrival to first actual dial, inside the first caller's Team & Payroll schedule.",
+    "minutes",
+    1 / 60,
+  ],
+  [
+    "speed_to_lead_working_average_min",
+    "avgSpeedSeconds",
+    "Average working speed to lead",
+    "Period sample average of working seconds to first actual dial. Missing schedules and ambiguous links are excluded.",
+    "minutes",
+    1 / 60,
+  ],
+  [
+    "speed_samples",
+    "speedSamples",
+    "Timed leads",
+    "Number of verified working-time samples in the creation cohort.",
+    "count",
+  ],
+  [
+    "within_two_minutes_share",
+    "withinTwoMinutesRate",
+    "Within 2 working minutes",
+    "New leads verified dialed within two working minutes divided by all new leads in the cohort, including uncalled leads.",
+    "share",
+  ],
+  [
+    "call_gap_average_min",
+    "avgCallGapSeconds",
+    "Average working call gap",
+    "Mean verified gap from one call ending to the next starting; ringing and talk time are removed.",
+    "minutes",
+    1 / 60,
+  ],
+  [
+    "call_gap_samples",
+    "callGapSamples",
+    "Call gap samples",
+    "Number of measurable call gaps with verified timing and schedules.",
+    "count",
+  ],
+];
 
 export const DEFINITIONS: MetricDefinition[] = [
   // --- growth (Mahara's own funnel) ---
@@ -617,56 +794,17 @@ export const DEFINITIONS: MetricDefinition[] = [
     TRIAGE,
     "count",
   ),
-  // --- calls (the clients' dialer) ---
-  d(
-    "calls.dials",
-    "calls",
-    "Dials",
-    "Outbound calls with one agent on the Maqsam accounts the dialer imports.",
-    "mahara_reporting.facts in Creative Triage",
-    "count",
-  ),
-  d(
-    "calls.connected",
-    "calls",
-    "Connected",
-    "Outbound calls completed with talk time.",
-    "mahara_reporting.facts",
-    "count",
-    "Can include voicemail.",
-  ),
-  d(
-    "calls.connect_rate",
-    "calls",
-    "Connect rate",
-    "Connected over dials.",
-    "mahara_reporting.facts",
-    "share",
-  ),
-  d(
-    "calls.talk_minutes",
-    "calls",
-    "Talk minutes",
-    "Minutes of talk on connected calls.",
-    "mahara_reporting.facts",
-    "minutes",
-  ),
-  d(
-    "calls.speed_to_lead_median_min",
-    "calls",
-    "Speed to lead, clients, median minutes",
-    "Minutes from a DFY client's lead creation to the first outbound dial to its phone, median over called leads.",
-    "mahara_reporting.facts and client_leads",
-    "minutes",
-    "Only since 2026-09-12.",
-  ),
-  d(
-    "calls.speed_to_lead_working_median_min",
-    "calls",
-    "Speed to lead on working hours, median minutes",
-    "The same on the working clock: the clock starts at the later of creation and the next working window, working minutes only.",
-    "cockpit_settings working hours",
-    "minutes",
+  // --- calls: the canonical source, shared with the dialer ---
+  ...CALL_CENTER_METRICS.map(([key, , label, definition, unit]) =>
+    d(
+      `calls.${key}`,
+      "calls",
+      label,
+      definition,
+      "public.mahara_call_center_report v1 in Creative Triage",
+      unit,
+      "Coverage, source watermarks and exclusions are part of the shared report. Delivery uses a separate appointment-date cohort.",
+    ),
   ),
   // --- clients ---
   d(
@@ -986,35 +1124,36 @@ export function extractDelivery(p: DeliveryPayload): MetricValue[] {
 
 export function extractCalls(p: CallsPayload): MetricValue[] {
   const out: MetricValue[] = [];
-  const v = (
-    metric: string,
-    window: string,
-    value: unknown,
-    scope = "company",
-  ): void => {
-    out.push({ metric, scope, window, value: r(value) });
-  };
-  for (const w of ["today", "yesterday", "last7", "prevLast7"] as const) {
-    const x = p[w];
-    if (!x) continue;
-    v("calls.dials", w, x.dials);
-    v("calls.connected", w, x.connected);
-    v("calls.connect_rate", w, x.connectRate);
-    v("calls.talk_minutes", w, x.talkMinutes);
+  // Old stored payloads used different definitions; never republish them as v1.
+  for (const [window, report] of [
+    ["last30", p.report],
+    ["last7", p.report7d],
+  ] as const) {
+    if (!report) continue;
+    const rows = [
+      { scope: "company", row: report.overall },
+      ...report.callers.map(row => ({
+        scope: `person:${row.email ?? "unassigned"}`,
+        row,
+      })),
+      ...report.clients.map(row => ({
+        scope: `location:${row.id ?? "unassigned"}`,
+        row,
+      })),
+    ];
+    for (const { scope, row } of rows)
+      for (const [name, key, , , , factor = 1] of CALL_CENTER_METRICS) {
+        const value = row[key];
+        out.push({
+          metric: `calls.${name}`,
+          scope,
+          window,
+          value: typeof value === "number" ? value * factor : null,
+          windowFrom: report.from,
+          windowTo: report.to,
+        });
+      }
   }
-  v("calls.speed_to_lead_median_min", "last7", p.speedToLead?.medianMinutes7d);
-  v(
-    "calls.speed_to_lead_working_median_min",
-    "last7",
-    p.speedToLead?.workingMedianMinutes7d,
-  );
-  for (const a of p.byAgent ?? []) {
-    v("calls.dials", "last7", a.last7?.dials, `person:${a.agent}`);
-    v("calls.connected", "last7", a.last7?.connected, `person:${a.agent}`);
-  }
-  for (const c of p.perClient7d ?? [])
-    if (c.clickupTaskId)
-      v("calls.dials", "last7", c.dials, `client:${c.clickupTaskId}`);
   return out;
 }
 

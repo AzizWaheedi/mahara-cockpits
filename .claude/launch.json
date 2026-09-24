@@ -93,6 +93,17 @@
         "sites/webinar"
       ],
       "port": 5188
+    },
+    {
+      "name": "sales-cockpit",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": [
+        "run",
+        "--cwd",
+        "apps/sales-cockpit",
+        "dev"
+      ],
+      "port": 5190
     }
   ]
 }

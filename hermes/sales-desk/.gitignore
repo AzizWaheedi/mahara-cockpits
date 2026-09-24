@@ -1,0 +1,8 @@
+# The engine is tracked. What goes through it is not: a reference deal is a
+# real client's proposal, and the working files are a client's call and
+# figures. On the VPS they live in ~/.sales-desk; these cover a copy made here.
+data/
+reference/
+out/
+__pycache__/
+*.pyc

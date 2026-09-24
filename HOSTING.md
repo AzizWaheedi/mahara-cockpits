@@ -11,6 +11,7 @@ they are hosted now and what was changed to get there. Started 2026-09-09.
 | Client success | https://mahara-client-success.vercel.app | `impressive-dinosaur-375` → https://impressive-dinosaur-375.convex.cloud | `successful-gnu-925` |
 | Creative director | https://mahara-creative-director.vercel.app | `colorful-wombat-644` → https://colorful-wombat-644.convex.cloud | `diligent-koala-992` |
 | Video editor | https://cockpit.maharamedia.com/editor/ (own domain https://mahara-video-editor.vercel.app) | none — Supabase, read from the browser | none |
+| Sales | https://cockpit.maharamedia.com/sales/ (own domain https://mahara-sales.vercel.app, Vercel project `mahara-sales`, added 2026-09-24) | none — Supabase, read from the browser; writes through the Edge Function `sales-api` | none |
 
 Convex team `aziz-00129`, projects `mahara-media-buyer`, `mahara-client-success`,
 `mahara-creative-director`. Vercel team `aziz-6097s-projects`, same three project names.
@@ -30,6 +31,7 @@ apps/media-buyer-cockpit        Convex deployment + Vercel project, one each
 apps/client-success-cockpit     same
 apps/creative-director-cockpit  same
 apps/video-editor-cockpit       Vercel project only; Supabase is the backend
+apps/sales-cockpit              Vercel project only; Supabase (tables, Edge Functions) is the backend
 viktor-side-scripts/            reference only (Viktor SDK imports), see "Still pending"
 context/                        data spine and workflow docs, read before changing behaviour
 ```
@@ -57,6 +59,18 @@ switching a removed seat off rather than deleting it. Portal roles ride in Supab
 `app_metadata`, which only the service key can write, so the switcher cannot be edited by the
 person looking at it. Email and password still works as a direct way in on a day the portal is
 down.
+
+The sales cockpit, added 2026-09-24 for Mahara's own setters and closers, is built the same
+way with three differences. Its seats are `cockpit_sales_people`, written by
+`convex/salesPortal.ts` at `/portal/sales-session` (the portal's Admin page gives the Sales seat
+and chooses setter, closer, both or manager). It never writes from the browser: every change
+(marking a call, notes, proposals, seats, links) goes through the Edge Function `sales-api` in
+Creative Triage, which asks the database who the caller is (`cockpit_sales_whoami`), writes an
+audit row and is the only thing that talks to HighLevel. And its data is a copy: B2B
+(Muhammed's project, read only) is read every three minutes by the Edge Function `sales-mirror`
+(pg_cron job `mahara-sales-mirror`, the shared cron secret, the management API with
+`read_only: true`) into `cockpit_sales_*` tables. The AI work (proposals, and later reviews and
+drafts) runs in `hermes/sales-desk` on the VPS from `cockpit_sales_requests`.
 
 ## What changed versus the export (and nothing else)
 

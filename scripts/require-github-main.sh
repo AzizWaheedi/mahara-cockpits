@@ -27,6 +27,7 @@ case "$dir" in
   apps/client-success-cockpit)   default_site=https://cockpit.maharamedia.com/client-success ;;
   apps/creative-director-cockpit) default_site=https://cockpit.maharamedia.com/creative ;;
   apps/video-editor-cockpit)     default_site=https://cockpit.maharamedia.com/editor ;;
+  apps/sales-cockpit)            default_site=https://cockpit.maharamedia.com/sales ;;
   *) default_site="" ;;
 esac
 site="${2:-$default_site}"

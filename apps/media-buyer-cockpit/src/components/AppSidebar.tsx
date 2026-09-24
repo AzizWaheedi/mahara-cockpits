@@ -276,6 +276,7 @@ function SidebarNav() {
     { key: "csm", label: "Client success", href: "/go/csm" },
     { key: "creative", label: "Creative director", href: "/go/creative" },
     { key: "editor", label: "Editor desk", href: "/go/editor" },
+    { key: "sales", label: "Sales", href: "/go/sales" },
   ].filter(c => cockpits.includes(c.key));
 
   return (
@@ -355,6 +356,7 @@ const OTHER_COCKPITS = [
   { key: "csm", label: "Client success", href: "/go/csm" },
   { key: "creative", label: "Creative director", href: "/go/creative" },
   { key: "editor", label: "Editor desk", href: "/go/editor" },
+  { key: "sales", label: "Sales", href: "/go/sales" },
 ];
 
 function SidebarUserMenu() {

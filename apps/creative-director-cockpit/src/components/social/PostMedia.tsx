@@ -2,11 +2,14 @@ import { useAction } from "convex/react";
 import {
   ArrowLeft,
   ArrowRight,
+  Clapperboard,
   ImageUp,
   LoaderCircle,
   Play,
   Sparkles,
   Trash2,
+  TriangleAlert,
+  Type,
   Upload,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -15,10 +18,12 @@ import { api } from "../../../convex/_generated/api";
 import {
   itemsOf,
   type Job,
+  type Look,
   type MediaItem,
   type Pending,
   ratioOf,
   useUploader,
+  type Words,
 } from "./media";
 
 /**
@@ -282,6 +287,234 @@ export function Strip({
   );
 }
 
+const FIELDS: Record<
+  "bold" | "showcase",
+  { key: keyof Words; label: string; hint: string }[]
+> = {
+  bold: [
+    { key: "headline", label: "Headline", hint: "Two to six words: the hook." },
+    { key: "line", label: "Under it", hint: "Optional, up to nine words." },
+    {
+      key: "accent",
+      label: "Word in the accent colour",
+      hint: "One word of the headline, exactly.",
+    },
+  ],
+  showcase: [
+    {
+      key: "title",
+      label: "Title",
+      hint: "The project or the idea, two to four words.",
+    },
+    {
+      key: "line",
+      label: "Line",
+      hint: "What and where, or what this slide shows.",
+    },
+    {
+      key: "cta",
+      label: "Footer offer",
+      hint: "Three or four words, e.g. a free consultation.",
+    },
+  ],
+};
+
+/**
+ * The words on the picture, where a person can read and fix them.
+ *
+ * Project words are set in type, so saving sets them again in seconds.
+ * Bold words are drawn into the picture, so saving draws it again. The
+ * read-back sits here too: when the drawn letters did not match, it says
+ * what was read, so nobody has to squint at the picture to find it.
+ */
+function WordsPanel({
+  postId,
+  index,
+  item,
+  look,
+  busy,
+  onChanged,
+}: {
+  postId: string;
+  index: number;
+  item: MediaItem;
+  look: Look;
+  busy: string | undefined;
+  onChanged: () => Promise<void>;
+}) {
+  const setWords = useAction(api.social.setWords);
+  const addWords = useAction(api.social.addWords);
+  const kind: "bold" | "showcase" =
+    item.look ??
+    (look === "bold" && item.source === "ai" ? "bold" : "showcase");
+  const [draft, setDraft] = useState<Words>(item.words ?? {});
+  const [saving, setSaving] = useState(false);
+  // Words that arrive from Salma (or another screen) replace the draft.
+  const wordsKey = JSON.stringify(item.words ?? {});
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on the words' content
+  useEffect(() => {
+    setDraft(item.words ?? {});
+  }, [wordsKey]);
+  const changed = FIELDS[kind].some(
+    f => (draft[f.key] ?? "").trim() !== (item.words?.[f.key] ?? "").trim(),
+  );
+
+  if (item.kind === "video") {
+    if (!item.from) return null;
+    const shot = [item.motion?.camera, item.motion?.person, item.motion?.motion]
+      .filter(Boolean)
+      .join(" · ");
+    return (
+      <p className="px-5 pb-2 pt-1 text-[12px] text-muted-foreground">
+        Made to move from the picture; the words stay still on top.
+        {shot ? ` ${shot}` : ""}
+      </p>
+    );
+  }
+
+  async function save() {
+    setSaving(true);
+    try {
+      await setWords({ postId, index, words: draft });
+      toast.success(
+        kind === "bold"
+          ? "Drawing it again with these words. It takes a couple of minutes."
+          : "Setting the words. It takes a few seconds.",
+      );
+      await onChanged();
+    } catch (e) {
+      toast.error(message(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!item.words) {
+    // A bold picture gets its words when it is drawn; a project picture or
+    // our own photo can have them set in type now.
+    if (look === "plain" || (kind === "bold" && item.source === "ai"))
+      return null;
+    return (
+      <div className="px-5 pb-2 pt-1">
+        <button
+          type="button"
+          disabled={Boolean(busy) || saving}
+          onClick={async () => {
+            setSaving(true);
+            try {
+              await addWords({ postId, index });
+              toast.success("Writing the words. It takes about a minute.");
+              await onChanged();
+            } catch (e) {
+              toast.error(message(e));
+            } finally {
+              setSaving(false);
+            }
+          }}
+          className="inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-[12px] font-medium hover:bg-muted disabled:opacity-50"
+        >
+          {busy === "words" ? (
+            <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Type className="h-3.5 w-3.5" />
+          )}
+          {busy === "words" ? "Writing the words" : "Add words"}
+        </button>
+      </div>
+    );
+  }
+
+  const rb = item.readback;
+  return (
+    <div className="mx-5 mb-2 mt-1 rounded-lg border px-3 py-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="text-[13px] font-medium">Words on the picture</span>
+        <span className="text-[11px] text-muted-foreground">
+          {kind === "bold"
+            ? "Drawn into the picture"
+            : "Set in type, fixable in seconds"}
+        </span>
+      </div>
+      {rb?.ok === false ? (
+        <p className="mb-2 flex gap-1.5 rounded-md bg-destructive/10 px-2.5 py-2 text-[12px] text-destructive">
+          <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>
+            The letters may be wrong on this picture:{" "}
+            {(rb.missing ?? []).map(m => (
+              <span key={m}>
+                «<bdi>{m}</bdi>»{" "}
+              </span>
+            ))}
+            did not read back as written
+            {rb.seen ? (
+              <>
+                {" "}
+                (it reads «<bdi>{rb.seen.replace(/\s+/g, " ")}</bdi>»)
+              </>
+            ) : null}
+            . Fix the words or draw it again.
+          </span>
+        </p>
+      ) : rb?.ok === null ? (
+        <p className="mb-2 text-[12px] text-muted-foreground">
+          The words were not read back{rb.error ? `: ${rb.error}` : ""}. Check
+          them by eye.
+        </p>
+      ) : rb?.ok === true && kind === "bold" ? (
+        // Tested 2026-09-24: the reader finds a missing or wrong word, but
+        // no model tried saw a doubled letter's missing dots.
+        <p className="mb-2 text-[12px] text-muted-foreground">
+          Every word read back. A single missing dot can still get past the
+          check, so look at the letters before sending.
+        </p>
+      ) : null}
+      <div className="space-y-2">
+        {FIELDS[kind].map(f => (
+          <label key={f.key} className="block">
+            <span className="mb-1 block text-[12px] text-muted-foreground">
+              {f.label}
+            </span>
+            <input
+              dir="auto"
+              value={draft[f.key] ?? ""}
+              placeholder={f.hint}
+              onChange={e => setDraft({ ...draft, [f.key]: e.target.value })}
+              className="h-9 w-full rounded-lg border bg-background px-3 text-[14px]"
+            />
+          </label>
+        ))}
+      </div>
+      {changed ? (
+        <div className="mt-2.5 flex justify-end gap-1.5">
+          <button
+            type="button"
+            onClick={() => setDraft(item.words ?? {})}
+            className="h-8 rounded-md px-2.5 text-[12px] text-muted-foreground hover:bg-muted"
+          >
+            Undo
+          </button>
+          <button
+            type="button"
+            disabled={saving || Boolean(busy)}
+            onClick={() => void save()}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-[12px] font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+          >
+            {saving ? (
+              <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+            ) : null}
+            {kind === "bold" ? "Save and draw again" : "Save words"}
+          </button>
+        </div>
+      ) : busy === "words" ? (
+        <p className="mt-2 flex items-center gap-1.5 text-[12px] text-muted-foreground">
+          <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> Setting the
+          words
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function move<T>(list: T[], from: number, to: number): T[] {
   const next = [...list];
   const [it] = next.splice(from, 1);
@@ -295,6 +528,7 @@ export function MediaEditor({
   clientId,
   jobs,
   onChanged,
+  look = "bold",
 }: {
   post: {
     id: string;
@@ -307,10 +541,13 @@ export function MediaEditor({
   clientId: string;
   jobs: Job[];
   onChanged: () => Promise<void>;
+  /** How this client's pictures carry words. */
+  look?: Look;
 }) {
   const setMedia = useAction(api.social.setMedia);
   const draw = useAction(api.social.generatePost);
   const cover = useAction(api.social.makeCover);
+  const moveIt = useAction(api.social.makeItMove);
   const { pending, upload } = useUploader(clientId);
 
   const [override, setOverride] = useState<MediaItem[] | null>(null);
@@ -333,6 +570,8 @@ export function MediaEditor({
   for (const j of jobs) {
     const i = j.params?.index;
     if (j.kind === "cover" && i !== undefined) busyAt.set(i, "cover");
+    if (j.kind === "words" && i !== undefined) busyAt.set(i, "words");
+    if (j.kind === "motion" && i !== undefined) busyAt.set(i, "motion");
     if (j.kind !== "generate") continue;
     if (i !== undefined) busyAt.set(i, "draw");
     else if (j.params?.add) drawing++;
@@ -445,6 +684,31 @@ export function MediaEditor({
               {busy === "draw" ? "Drawing again" : "Draw again"}
             </button>
           ) : null}
+          {item.kind === "image" && !(item.look === "bold" && item.words) ? (
+            <button
+              type="button"
+              disabled={Boolean(busy)}
+              title={
+                items.length === 1
+                  ? "Becomes a Reel: the picture moves a little, the words stay still."
+                  : "Becomes a video in the carousel, in the post's shape; the words stay still."
+              }
+              onClick={() =>
+                void queue(
+                  () => moveIt({ postId: post.id, index: selected }),
+                  "Making it move. It takes two or three minutes.",
+                )
+              }
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-[12px] font-medium hover:bg-muted disabled:opacity-50"
+            >
+              {busy === "motion" ? (
+                <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Clapperboard className="h-3.5 w-3.5" />
+              )}
+              {busy === "motion" ? "Making it move" : "Make it move"}
+            </button>
+          ) : null}
           {item.kind === "video" ? (
             <>
               <button
@@ -551,6 +815,18 @@ export function MediaEditor({
             </button>
           </span>
         </div>
+      ) : null}
+
+      {item ? (
+        <WordsPanel
+          key={`${post.id}:${selected}:${item.url}`}
+          postId={post.id}
+          index={selected}
+          item={item}
+          look={look}
+          busy={busy}
+          onChanged={onChanged}
+        />
       ) : null}
 
       {zoom && item?.kind === "image" ? (

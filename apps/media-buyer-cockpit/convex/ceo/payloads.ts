@@ -1,3 +1,4 @@
+import type { CallCenterReport } from "./callCenterContract";
 /**
  * The exact shape of every CEO section payload. Adapters on the backend fill
  * these; the /ceo screens read them. Change a shape here first.
@@ -908,12 +909,13 @@ export type GrowthPayload = {
 
 export type CallWindow = {
   dials: number;
+  providerDials?: number;
   connected: number;
   connectRate: number | null;
   talkMinutes: number;
   avgTalkSec: number | null;
   /** Connected calls lasting 90 seconds or more. */
-  conversations90s: number;
+  conversations90s: number | null;
 };
 
 /**
@@ -933,6 +935,9 @@ export type CallGap = {
 };
 
 export type CallsPayload = {
+  /** Canonical Supabase report, also read by the dialer; absent only on old stored payloads. */
+  report?: CallCenterReport;
+  report7d?: CallCenterReport;
   today: CallWindow;
   yesterday: CallWindow;
   last7: CallWindow;
@@ -942,7 +947,7 @@ export type CallsPayload = {
     date: string;
     dials: number;
     connected: number;
-    conversations90s: number;
+    conversations90s: number | null;
   }[];
   byAgent: {
     agent: string;
@@ -988,6 +993,8 @@ export type CallsPayload = {
      */
     workingMedianMinutes7d?: number | null;
     workingWithin5minShare7d?: number | null;
+    /** All new leads in the cohort, including leads with no verified dial. */
+    withinTwoMinutesRate7d?: number | null;
   };
   /**
    * The working hours the clock uses, from cockpit_settings in Creative

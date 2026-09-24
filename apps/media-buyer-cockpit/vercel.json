@@ -36,6 +36,14 @@
       "destination": "https://mahara-video-editor.vercel.app/editor/:path*"
     },
     {
+      "source": "/sales/",
+      "destination": "https://mahara-sales.vercel.app/sales/"
+    },
+    {
+      "source": "/sales/:path*",
+      "destination": "https://mahara-sales.vercel.app/sales/:path*"
+    },
+    {
       "source": "/((?!api/|assets/|__viktor_meta\\.json).*)",
       "destination": "/index.html"
     }

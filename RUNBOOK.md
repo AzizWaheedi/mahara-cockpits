@@ -175,6 +175,41 @@ names what is wrong.
 | No objection categories though registrants had sales calls | The call's invitee email is not the registrant's, or the title reads like a client call (launch, check-in, onboarding). `python3 pull.py objections` prints what it matched | Aziz |
 | Landing page numbers stop moving | `webinar.maharamedia.com` must still load `/mm-track.js` (sites/webinar); the Edge Function `webinar-events` must be ACTIVE in Creative Triage | Aziz |
 
+## Sales cockpit
+
+cockpit.maharamedia.com/sales/, for the setters and closers (plan:
+`SALES_COCKPIT_PLAN.md`). Three moving parts: the copy of B2B (the Edge
+Function `sales-mirror`, every three minutes), the server that makes every
+change (`sales-api`), and the proposal writer on the VPS (`hermes/sales-desk`).
+Today shows when the CRM copy was last read; the Team page shows the last
+copy run and the writer's status.
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| Today says "The CRM copy is late" or the last read had a problem | Read the newest row of `cockpit_sales_mirror_runs` (its `error` names the step). `B2B 401`: the function secret `SALES_B2B_MGMT_TOKEN` (a Supabase management token) was revoked; set a new one. `HighLevel 401`: set `SALES_GHL_TOKEN`. Nothing at all: the pg_cron job `mahara-sales-mirror` is gone or the vault secret `cockpit_sync_secret` changed | Aziz or Hermes |
+| Numbers look a day behind the CRM | B2B itself syncs HighLevel every 15 minutes; if B2B's own sync stopped, its `b2b_sync_health` says so. That is Muhammed's | Muhammed |
+| A mark says "HighLevel refused it" | The row shows HighLevel's own words. A `401` means `SALES_GHL_TOKEN` changed; anything else, press Send again on the call. The mark is kept in the cockpit either way | Aziz |
+| "Your seat is not linked to your HighLevel user yet" | A manager picks the rep's HighLevel user on the Team page (it also links their B2B numbers) | Aziz |
+| Someone cannot open the cockpit | Give them the Sales seat on the portal's Admin page, with Setter, Closer, Both or Manager | Aziz |
+| A proposal sits on "Drafting" for more than 20 minutes | On the VPS as `hermes`: `tail ~/.sales-desk.log`, then `python3 desk.py doctor` in `hermes/sales-desk`. A request that failed four times says why on the proposal page, with Try again | Hermes or Aziz |
+| A proposal failed with "No Fathom recording" | The demo was not recorded or not shared with the team in Fathom. Share it, then Try again | The closer |
+
+## Sales desk
+
+The worker on the VPS (`hermes/sales-desk`) that drafts the sales cockpit's proposals from the lead's demo call in Fathom, rebuilds them after the closer fills the gaps, and indexes every rep's sales calls. Cron as `hermes`: requests every two minutes, recordings every half hour, each under its own lock; log `~/.sales-desk.log`. `python3 desk.py doctor` names what is wrong; `python3 desk.py status` shows the queue.
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| A proposal says "No Fathom recording of this lead's demo was found" | The demo was not recorded, or was recorded by a rep whose calls the key cannot see. Share the recording with the team in Fathom (and put the rep's Fathom email on their seat), then draft again | The closer |
+| Requests wait with "OPENAI_API_KEY is not set" or "refused the key" | Set OPENAI_API_KEY in /opt/data/bibi/api-keys.env; waiting requests go ahead on the next run | Aziz |
+| "The model … is not available to this openai key" | `desk.py doctor` lists the models the key can use; set SALES_PROPOSAL_MODEL in ~/.sales-desk/env | Aziz |
+| "Fathom refused the key" or FATHOM_API_KEY not set | New FATHOM_API_KEY in /opt/data/bibi/api-keys.env | Aziz |
+| A proposal failed with "The draft did not pass the checks: ..." | The draft broke a rule the validator enforces (a figure never said on the call, an em dash, the fee band, a sheet overflowing A4). Open the saved version, then draft again | The closer |
+| Proposals say "The PDF was skipped" | Playwright or its Chrome is missing on the VPS (`doctor`'s playwright and render lines). The HTML is complete meanwhile | Aziz |
+| Every proposal's notes say "No reference deal on this machine" | Put a finished proposal per variant in ~/.sales-desk/reference with extract_reference.py (README) | Aziz |
+| A request stays "running" for over half an hour | The run died. It goes back in the queue by itself and is parked as failed, with the reason, after four tries | nobody |
+| The cockpit's payment choices differ from offer.json | `python3 desk.py offer-sync` (requests does it every run) | Aziz |
+
 ## What never needs a person
 
 - Rate limits: every Google, ClickUp and Meta call waits and retries.

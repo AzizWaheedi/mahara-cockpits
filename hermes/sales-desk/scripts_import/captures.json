@@ -1,0 +1,43 @@
+{
+  "intro": [
+    {"stage": 2, "key": "pain", "label": "The pain", "type": "choice", "options": ["Not enough leads", "Leads are the wrong fit", "Not closing the ones that come", "Up and down, no consistency", "Burned by an agency", "Something else"]},
+    {"stage": 2, "key": "why_now", "label": "Why now, what changed", "type": "text"},
+    {"stage": 3, "key": "focus_project", "label": "Projects they want more of", "type": "text"},
+    {"stage": 3, "key": "project_value", "label": "Typical project value", "type": "text"},
+    {"stage": 3, "key": "margin", "label": "Margin on those", "type": "text"},
+    {"stage": 3, "key": "projects_closed_12m", "label": "Projects closed, last 12 months", "type": "number"},
+    {"stage": 3, "key": "quotes_12m", "label": "Quotes given, last 12 months", "type": "number"},
+    {"stage": 3, "key": "revenue_12m", "label": "Revenue, last 12 months", "type": "text"},
+    {"stage": 3, "key": "revenue_stable", "label": "Revenue", "type": "choice", "options": ["Stable", "Up and down"]},
+    {"stage": 3, "key": "capacity", "label": "Room for more work", "type": "choice", "options": ["Has room", "Stretched", "No capacity"]},
+    {"stage": 3, "key": "decision_maker", "label": "Who decides", "type": "choice", "options": ["Them alone", "With a partner", "Father or family", "A board", "Someone else"]},
+    {"stage": 4, "key": "tried", "label": "What they tried before", "type": "text"},
+    {"stage": 4, "key": "why_it_failed", "label": "Which of the three", "type": "choice", "options": ["Not enough leads", "Leads not qualified", "Leads not signing", "Never marketed", "Referrals only"]},
+    {"stage": 5, "key": "goal", "label": "Goal for the next 6 to 12 months", "type": "text"},
+    {"stage": 5, "key": "why_goal", "label": "Why it matters to them", "type": "text"},
+    {"stage": 6, "key": "demo", "label": "Demo", "type": "choice", "options": ["Booked", "Not booked"]},
+    {"stage": 6, "key": "partner_on_demo", "label": "Partner on the demo", "type": "choice", "options": ["Yes", "No", "Not needed"]},
+    {"stage": 6, "key": "for_the_closer", "label": "For the closer", "type": "text"}
+  ],
+  "demo": [
+    {"stage": 2, "key": "decision_maker", "label": "Who decides", "type": "choice", "options": ["Them alone", "With a partner", "Father or family", "A board", "Someone else"]},
+    {"stage": 2, "key": "partner_joining", "label": "Partner joining", "type": "choice", "options": ["Yes", "No", "Not needed"]},
+    {"stage": 2, "key": "budget_signal", "label": "Budget signal", "type": "choice", "options": ["Ready to invest", "Unsure", "No budget"]},
+    {"stage": 3, "key": "pain", "label": "The problem in their words", "type": "text"},
+    {"stage": 4, "key": "project_types", "label": "Projects they want more of", "type": "text"},
+    {"stage": 4, "key": "project_value", "label": "Average contract value", "type": "text"},
+    {"stage": 4, "key": "margin", "label": "Margin", "type": "text"},
+    {"stage": 4, "key": "revenue_12m", "label": "Revenue, last 12 months", "type": "text"},
+    {"stage": 4, "key": "profit", "label": "Profit they take home", "type": "text"},
+    {"stage": 4, "key": "quotes_per_month", "label": "Quotes a month", "type": "number"},
+    {"stage": 4, "key": "close_rate", "label": "Quotes they win", "type": "text"},
+    {"stage": 6, "key": "gap_per_year", "label": "The gap a year", "type": "text"},
+    {"stage": 8, "key": "cost_of_inaction", "label": "Cost of doing nothing", "type": "text"},
+    {"stage": 9, "key": "desired_state", "label": "Where they want to be", "type": "text"},
+    {"stage": 12, "key": "temperature", "label": "Their number, 1 to 10", "type": "number"},
+    {"stage": 12, "key": "temperature_why", "label": "Why that number", "type": "text"},
+    {"stage": 13, "key": "outcome", "label": "Outcome", "type": "choice", "options": ["Signed", "Deposit paid", "Follow-up booked", "Thinking it over", "Lost"]},
+    {"stage": 13, "key": "objection", "label": "The objection", "type": "text"},
+    {"stage": 13, "key": "next_step", "label": "Next step", "type": "text"}
+  ]
+}
