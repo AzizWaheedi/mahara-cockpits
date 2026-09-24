@@ -1,5 +1,6 @@
 import { useQuery } from "convex/react";
 import type { ReactNode } from "react";
+import { bookingCostCell, bookingCostTone } from "@/lib/booking-cost";
 import { CPB_GATE, CPL_GATE } from "@/lib/kpi";
 import type { Range } from "@/lib/range";
 import { rangeDays } from "@/lib/range";
@@ -111,6 +112,20 @@ export function CampaignRange({
   );
 
   const days = rangeDays(range);
+  // When bookings this week came from ads that last spent earlier, the
+  // seven-day CPB is undefined. Show their 30-day CPB separately, labelled.
+  const trailing = useQuery(
+    api.stats.range,
+    !leadsOnly && days < 30
+      ? {
+          campaignName,
+          start: new Date(Date.parse(`${range.end}T00:00:00Z`) - 29 * 86400_000)
+            .toISOString()
+            .slice(0, 10),
+          end: range.end,
+        }
+      : "skip",
+  );
 
   return (
     <div className="mt-3">
@@ -224,6 +239,7 @@ export function CampaignRange({
           <Table
             title="Ads"
             rows={withQuietAds(data.ads as Row[], extraAds)}
+            referenceRows={(trailing?.ads ?? []) as Row[]}
             leadsOnly={leadsOnly}
             renderKey={renderAdCell}
             renderTail={renderAdCall}
@@ -238,6 +254,13 @@ export function CampaignRange({
             )}
             tailTitle="Call"
           />
+          {data.ads.some((r: Row) => r.spend === 0 && r.bookings > 0) && (
+            <p className="mt-1 text-[12px] text-muted-foreground">
+              Some bookings came from ads that spent before this range. Their
+              bookings are counted here; a cost marked 30d uses the last 30 days
+              of spend and bookings, not this range's $0 spend.
+            </p>
+          )}
           {quietCount(data.ads as Row[], extraAds) > 0 && (
             <p className="mt-1 text-[12px] text-muted-foreground">
               {quietCount(data.ads as Row[], extraAds)} ad
@@ -266,6 +289,7 @@ export function CampaignRange({
 function Table({
   title,
   rows,
+  referenceRows,
   renderKey,
   renderTail,
   renderSave,
@@ -275,6 +299,7 @@ function Table({
 }: {
   title: string;
   rows: Row[];
+  referenceRows?: Row[];
   leadsOnly?: boolean;
   renderKey?: (key: string, row?: Row) => ReactNode;
   renderTail?: (key: string, row?: Row) => ReactNode;
@@ -284,6 +309,10 @@ function Table({
   emptyNote?: string;
 }) {
   const hasTail = Boolean(renderTail || renderSave);
+  const cost = (r: Row) =>
+    referenceRows
+      ? bookingCostCell(r, referenceRows)
+      : { value: r.costPerBooking };
   if (!rows || rows.length === 0) {
     return emptyNote ? (
       <p className="mb-2 text-[12px] text-muted-foreground">{emptyNote}</p>
@@ -368,15 +397,20 @@ function Table({
                     )}
                   </td>
                   <td
-                    className={`tabular-nums ${
-                      r.costPerBooking === undefined
-                        ? ""
-                        : r.costPerBooking > CPB_GATE
-                          ? "txt-bad"
-                          : "txt-good"
-                    }`}
+                    className={`tabular-nums ${bookingCostTone(cost(r).value, CPB_GATE)}`}
                   >
-                    {r.bookingsAttributed ? money(r.costPerBooking, 0) : "n/a"}
+                    {r.bookingsAttributed ? (
+                      <>
+                        {money(cost(r).value, 0)}
+                        {"label" in cost(r) && cost(r).label === "30d" && (
+                          <span className="ml-1 text-[11px] font-normal text-muted-foreground">
+                            30d
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      "n/a"
+                    )}
                   </td>
                 </>
               )}

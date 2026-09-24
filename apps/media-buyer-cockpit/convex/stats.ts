@@ -68,7 +68,10 @@ function finish(b: Bucket) {
     showed: b.showed,
     // A cost per booking of "infinity" is not a number, it is a warning; we
     // return undefined and the screen says so in words.
-    costPerBooking: b.bookings > 0 ? b.spend / b.bookings : undefined,
+    // A booking this week can come from an ad that last spent before this
+    // window. Zero current spend is not a free booking or a $0 CPB.
+    costPerBooking:
+      b.bookings > 0 && b.spend > 0 ? b.spend / b.bookings : undefined,
     bookingRate: b.leads > 0 ? (b.bookings / b.leads) * 100 : undefined,
     bookingsAttributed: b.bookingsAttributed,
     adIds: b.adIds,
@@ -130,6 +133,55 @@ async function computeRange(
       }
       bySet.set(setName, s);
       byAd.set(r.adName, a);
+    }
+
+    // The spend window may not contain the ad that produced a booking in it.
+    // Look back at most 30 days for identities only, never add old spend to
+    // this window. This keeps quiet ads and their bookings visible without
+    // reporting a misleading $0 cost per booking.
+    const missingIds = new Set(
+      bookings
+        .map((b: { adId?: string }) => b.adId)
+        .filter(
+          (id: string | undefined): id is string =>
+            Boolean(id) && !adNameOfId.has(id as string),
+        ),
+    );
+    if (missingIds.size) {
+      const lookback = new Date(
+        Date.parse(`${start}T00:00:00Z`) - 30 * 86400_000,
+      )
+        .toISOString()
+        .slice(0, 10);
+      const historical = await ctx.db
+        .query("dailyStats")
+        .withIndex("by_campaign_date", (q: any) =>
+          q
+            .eq("campaignName", campaignName)
+            .gte("date", lookback)
+            .lt("date", start),
+        )
+        .collect();
+      for (const r of historical.reverse()) {
+        if (!r.metaAdId || !missingIds.has(r.metaAdId)) continue;
+        const setName = r.adSetName ?? "unnamed ad set";
+        const s = bySet.get(setName) ?? empty(setName);
+        // A quiet ad may share its display name with one that spent this
+        // week. Give it a distinct row keyed by its Meta ID, or its booking
+        // would be charged against the other ad's spend.
+        const adKey =
+          byAd.has(r.adName) && !byAd.get(r.adName)?.adIds.includes(r.metaAdId)
+            ? `${r.adName} [${r.metaAdId}]`
+            : r.adName;
+        const a = byAd.get(adKey) ?? empty(adKey);
+        setOfAd.set(r.metaAdId, setName);
+        adNameOfId.set(r.metaAdId, adKey);
+        if (!s.adIds.includes(r.metaAdId)) s.adIds.push(r.metaAdId);
+        if (!a.adIds.includes(r.metaAdId)) a.adIds.push(r.metaAdId);
+        bySet.set(setName, s);
+        byAd.set(adKey, a);
+        missingIds.delete(r.metaAdId);
+      }
     }
 
     let attributed = 0;
