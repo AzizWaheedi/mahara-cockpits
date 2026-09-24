@@ -36,5 +36,18 @@ describe("fortnightly creative batch planning", () => {
     expect(
       batchBrief("Safad", "2026-09-28", batchKey("client-123", "2026-09-28")),
     ).toContain("Client approval target: 2026-10-05");
+    const brief = batchBrief(
+      "Safad",
+      "2026-09-28",
+      batchKey("client-123", "2026-09-28"),
+    );
+    expect(brief).toContain("client's script approval before filming");
+    expect(brief).toContain(
+      "internal approved, client review and client approved",
+    );
+    expect(brief).toContain("preview sent to the client is not approval");
+    expect(brief).toContain(
+      "does not replace script, production or approval tasks",
+    );
   });
 });
