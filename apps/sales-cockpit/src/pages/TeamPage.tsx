@@ -308,9 +308,7 @@ function HealthCard({ now }: { now: number }) {
 
   return (
     <SectionCard title="Health">
-      <h3 className="text-xs font-semibold">
-        Copy from B2B
-      </h3>
+      <h3 className="text-xs font-semibold">Copy from B2B</h3>
       <div className="mt-2">
         {mirror.error ? (
           <Failed
@@ -367,9 +365,7 @@ function HealthCard({ now }: { now: number }) {
         )}
       </div>
 
-      <h3 className="mt-5 text-xs font-semibold">
-        Proposal worker
-      </h3>
+      <h3 className="mt-5 text-xs font-semibold">Proposal worker</h3>
       <div className="mt-2">
         {workers.error ? (
           <Failed
