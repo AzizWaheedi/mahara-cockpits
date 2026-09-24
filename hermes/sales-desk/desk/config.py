@@ -129,6 +129,8 @@ class Config:
     reasoning_effort: str = ""
 
     tighten_rounds: int = 3
+    # Rounds that hand the checker's fixable findings back to the drafter.
+    repair_rounds: int = 1
     render_timeout: int = 120
     requests_per_run: int = 3
     stuck_minutes: int = 30
@@ -155,6 +157,7 @@ class Config:
             max_tokens=int(max_tokens) if max_tokens.isdigit() else None,
             reasoning_effort=key("SALES_REASONING_EFFORT", "").strip().lower(),
             tighten_rounds=max(0, _int("SALES_TIGHTEN_ROUNDS", 3)),
+            repair_rounds=max(0, _int("SALES_REPAIR_ROUNDS", 1)),
             render_timeout=_int("SALES_RENDER_TIMEOUT", _int("PROPOSAL_RENDER_TIMEOUT", 120)),
             requests_per_run=max(1, _int("SALES_REQUESTS_PER_RUN", 3)),
             stuck_minutes=max(5, _int("SALES_STUCK_MINUTES", 30)),

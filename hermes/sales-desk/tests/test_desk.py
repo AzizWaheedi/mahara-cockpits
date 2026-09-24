@@ -618,6 +618,26 @@ class EngineTests(unittest.TestCase):
         self.assertIn("about a third", p.calls[3]["user"])
         self.assertEqual(out.result.status(), "ready")
 
+    def test_a_guarantee_nobody_chose_is_handed_back_and_removed(self):
+        promised = specific_deal()
+        promised["terms"] = list(promised.get("terms") or []) + [
+            "If we do not deliver 30 qualified appointments in 90 days, we work for free until we do."
+        ]
+        repaired = specific_deal()
+        out, p = self.run_engine([triage_answer(), promised, repaired], over=[[], []])
+        self.assertIn("guarantee", p.calls[2]["user"])
+        self.assertEqual(p.calls[2]["temperature"], 0.2)
+        self.assertFalse(failing(out.result, "guarantee"))
+        self.assertTrue(any("handed back once and fixed" in n for n in out.notes))
+
+    def test_a_repair_that_does_not_help_keeps_the_draft(self):
+        promised = specific_deal()
+        promised["terms"] = list(promised.get("terms") or []) + [
+            "If we do not deliver 30 qualified appointments in 90 days, we work for free until we do."
+        ]
+        out, _ = self.run_engine([triage_answer(), promised, promised], over=[[], []])
+        self.assertTrue(failing(out.result, "guarantee"))
+
     def test_rounds_continue_while_each_one_helps(self):
         out, _ = self.run_engine([triage_answer(), specific_deal(), specific_deal(), specific_deal()],
                                  over=[[4, 5], [4], []])

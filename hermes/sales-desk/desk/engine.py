@@ -68,6 +68,12 @@ class Call:
         }
 
 
+# Checks whose failures are a matter of words the drafter can change. Not
+# here: schema (the shape is wrong), render (the tightening rounds), the
+# arithmetic and the fee band (they follow from figures the client gave).
+REPAIRABLE = {"guarantee", "brand", "language", "echoes", "currency", "dates", "evidence", "prose", "offer"}
+
+
 @dataclass
 class Outcome:
     deal: dict[str, Any]
@@ -259,6 +265,40 @@ def run(call: Call, *, lang: str, resolved: dict[str, Any], offer: dict[str, Any
     result = validate_mod.validate(best, call.transcript_text, resolved=resolved, offer=offer, dom=best_dom,
                                    engine=engine_name(renderer))
     log("    gate: %s, %d placeholder(s)" % (result.status(), result.fills))
+
+    # One repair round for the faults the drafter can fix by editing words:
+    # a guarantee nobody chose, a figure the client never said, the brand,
+    # the language, a date, an echo. The checker's own sentences go back to
+    # the model; the repaired draft is kept only if it is measurably better
+    # and still fits the page. (A real demo on 2026-09-24 copied a guarantee
+    # line into `terms` from the reference deal although none was chosen.)
+    fixable = [e for e in result.errors() if e.split(":", 1)[0].strip() in REPAIRABLE]
+    if fixable and cfg.repair_rounds > 0:
+        log("    asking the drafter to fix: %s" % "; ".join(e.split(":", 1)[0] for e in fixable))
+        try:
+            fixed, _r = model_mod.call_json(
+                p, system, prompt_mod.repair_user(best, fixable), temperature=0.2, attempts=1,
+                timeout=cfg.model_timeout, expect=prompt_mod.is_deal, log=log, what="repair", beat=beat)
+            stamp(fixed, variant=variant, resolved=resolved, lang=lang)
+            fixed_html = workdir / "draft-repaired.html"
+            fixed_over, fixed_dom = overflowing(fixed, fixed_html, renderer)
+            fixed_result = validate_mod.validate(fixed, call.transcript_text, resolved=resolved, offer=offer,
+                                                 dom=fixed_dom if fixed_dom is not None else best_dom,
+                                                 engine=engine_name(renderer))
+            better = len(fixed_result.errors()) < len(result.errors()) and len(fixed_over) <= len(best_over)
+            if better:
+                best, best_over, best_dom, best_html, result = fixed, fixed_over, fixed_dom, fixed_html, fixed_result
+                (workdir / "deal.json").write_text(json.dumps(best, ensure_ascii=False, indent=2), encoding="utf-8")
+                notes.append("The checker's findings were handed back once and fixed: " + "; ".join(
+                    e.split(":", 1)[0] for e in fixable) + ".")
+                log("    repaired: gate now %s" % result.status())
+            else:
+                log("    the repair did not help; keeping the draft as it was")
+        except NotNow:
+            raise
+        except Exception as e:  # noqa: BLE001
+            log(f"    repair failed ({e}); keeping the draft as it was")
+        beat()
     return Outcome(
         deal=best, variant=variant, why=why, found=found, result=result, html_path=best_html, dom=best_dom,
         model=used, rounds=rounds, overflow_first=first, overflow_last=list(best_over),

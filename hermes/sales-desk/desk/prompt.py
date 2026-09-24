@@ -326,6 +326,21 @@ def tighten_user(deal: dict[str, Any], over: list[int], round_no: int = 1) -> st
     )
 
 
+def repair_user(deal: dict[str, Any], problems: list[str]) -> str:
+    """Hand the checker's findings back, word for word, and ask for exactly
+    those to be fixed. The checker names the field; the drafter fixes it."""
+    listed = "\n".join(f"- {p}" for p in problems)
+    return (
+        "The checker found these problems in this draft:\n\n"
+        + listed
+        + "\n\nReturn the same JSON object with each problem fixed and nothing else changed. "
+        "Remove a promise rather than rewording it. Where a figure was never said on the "
+        "call, write FILL in its place. Keep every other field exactly as it is, and add "
+        "nothing new.\n\nReturn only the JSON object.\n\n"
+        + json.dumps(deal, ensure_ascii=False, indent=1)
+    )
+
+
 def is_triage(value: dict[str, Any]) -> bool:
     return "avg_project_value" in value or "net_margin" in value
 
