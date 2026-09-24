@@ -45,7 +45,7 @@ def query_sql(sql):
     req_headers = {"Authorization": f"Bearer {mgmt_token}", "Content-Type": "application/json"}
     body = json.dumps({"query": sql, "read_only": True}).encode("utf-8")
     req = urllib.request.Request(url, data=body, headers=req_headers, method="POST")
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req, timeout=20) as resp:
         return json.load(resp)
 
 # 2. Check Tables & Row Counts
@@ -67,7 +67,7 @@ for t in tables:
     url = f"{PROJECT_URL}/rest/v1/{t}?select=*"
     req = urllib.request.Request(url, headers={**headers, "Prefer": "count=exact", "Range": "0-0"})
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=20) as resp:
             content_range = resp.headers.get("Content-Range", "")
             count = content_range.split("/")[-1] if "/" in content_range else "0"
             print(f"  [PASS] {t:28}: {count} rows")
@@ -133,7 +133,8 @@ apps = [
     "media-buyer-cockpit",
     "client-success-cockpit",
     "creative-director-cockpit",
-    "video-editor-cockpit"
+    "video-editor-cockpit",
+    "sales-cockpit"
 ]
 all_builds_ok = True
 for app in apps:
@@ -145,9 +146,28 @@ for app in apps:
         print(f"  [FAIL] {app:28}: dist/index.html missing")
         all_builds_ok = False
 
+# 6. Run Core Automated Test Suites
+print("\n--- 5. Automated Unit & Access Test Suites ---")
+import subprocess
+test_files = [
+    "apps/media-buyer-cockpit/scripts/supabase-access.test.ts",
+    "apps/media-buyer-cockpit/scripts/supabase-actions.test.ts",
+    "apps/sales-cockpit/src/lib/pay.test.ts"
+]
+test_cmd = ["bun", "test"] + test_files
+proc = subprocess.run(test_cmd, cwd=str(REPO_ROOT), capture_output=True, text=True, shell=True)
+all_tests_ok = (proc.returncode == 0)
+if all_tests_ok:
+    print(f"  [PASS] Bun test suites passed ({len(test_files)} test files)")
+else:
+    print(f"  [FAIL] Bun test suites failed:\n{proc.stderr}\n{proc.stdout}")
+
 print("\n" + "=" * 70)
-if all_tables_ok and all_rls_ok and all_rpcs_ok and all_builds_ok:
+if all_tables_ok and all_rls_ok and all_rpcs_ok and all_builds_ok and all_tests_ok:
     print("ALL VERIFICATION CHECKS PASSED: SYSTEM IS READY FOR CUTOVER.")
+    print("=" * 70)
+    sys.exit(0)
 else:
     print("SOME CHECKS FAILED: Review the log output above.")
-print("=" * 70)
+    print("=" * 70)
+    sys.exit(1)

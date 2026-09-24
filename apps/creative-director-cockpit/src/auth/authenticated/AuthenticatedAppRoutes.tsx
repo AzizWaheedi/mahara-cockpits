@@ -88,17 +88,18 @@ export function AuthenticatedRoutes() {
 }
 
 export function AuthenticatedAppRoutes() {
+  const hasConvex = Boolean(import.meta.env.VITE_CONVEX_URL);
   return (
-    <ViktorProductAuthProvider enabled>
+    <ViktorProductAuthProvider enabled={hasConvex}>
       {/* Outside the routes so links carrying `viktor_sign_in=auto` work no
           matter which page they land on. */}
-      <ViktorAutoSignIn />
+      {hasConvex ? <ViktorAutoSignIn /> : null}
       {/* Exchanges a backend-minted space-session token (put in sessionStorage
           by the e2e/screenshot runner) for a Convex Auth session. Inert on a
           normal visit. */}
-      <SpaceSessionAutoSignIn />
+      {hasConvex ? <SpaceSessionAutoSignIn /> : null}
       {/* One sign-in for every cockpit: swaps the portal's pass for a session here. */}
-      <PortalAutoSignIn />
+      {hasConvex ? <PortalAutoSignIn /> : null}
       <AuthenticatedRoutes />
     </ViktorProductAuthProvider>
   );

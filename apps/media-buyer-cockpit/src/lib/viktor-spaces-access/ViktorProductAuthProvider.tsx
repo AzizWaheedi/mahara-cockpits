@@ -9,6 +9,6 @@ export function ViktorProductAuthProvider({
   children: ReactNode;
   enabled: boolean;
 }) {
-  if (!enabled) return <>{children}</>;
+  if (!enabled || !convex) return <>{children}</>;
   return <ConvexAuthProvider client={convex}>{children}</ConvexAuthProvider>;
 }
