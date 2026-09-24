@@ -557,10 +557,9 @@ function Creative({ view }: { view: View }) {
                 </h3>
                 {!snap.anyBurning && (
                   <p className="mb-1.5 text-[13px] text-muted-foreground">
-                    Nothing is fatiguing — the highest frequency in the accounts
-                    is {snap.fatiguing[0]?.frequency.toFixed(1) ?? "—"}, well
-                    under the {snap.fatigueGate} gate. No replacements needed
-                    today.
+                    No live ad crossed the {snap.fatigueGate} frequency review
+                    cue. Keep the next approved creative batch moving; frequency
+                    alone does not decide when to replace an ad.
                   </p>
                 )}
                 <div className="space-y-1.5">

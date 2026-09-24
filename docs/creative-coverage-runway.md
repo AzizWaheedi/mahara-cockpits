@@ -1,6 +1,16 @@
 # Creative coverage runway for the Creative Director Cockpit
 
-Status: implementation design, not deployed. Aziz asked on 2026-09-24 for a sustainable video cadence and a cockpit view that prevents an approval delay from leaving client ads without a ready challenger.
+Status: planning workflow implemented on branch `codex/creative-cadence-calendar`; not deployed or pilot-verified. Aziz asked on 2026-09-24 for a sustainable video cadence and a cockpit view that prevents an approval delay from leaving client ads without a ready challenger.
+
+## Director's daily workflow now implemented
+
+The start-of-day checklist opens `/work` to check creative batches and client approvals. The mid-day checklist prompts a review of live response and an approved challenger. The calendar has a **Next creative batch** panel: choose one active client and schedule one real dated Media/Creative ClickUp task, or fill all active clients with an exact campaign mapping. The card's brief contains the production, internal review, client approval, media-buyer handoff and performance-review steps. It shows the briefing Monday, an approval target seven days later, and an intended first launch window fourteen days later. The director can move the card to another calendar date; ClickUp remains the source of truth.
+
+Each client's auto-plan switch starts off. If the director enables it for an active client with an exact campaign mapping, a Thursday 08:17 Kuwait cron queues the next fortnight's card. A stable client-task-ID/date key and a claimed outbox prevent ordinary retries and overlapping syncs from creating duplicate cards. The bridge only creates planning tasks. It does not publish ads, contact a client, assert approval, or pause a winner. For an unmapped client, manual single-client planning remains available.
+
+The cockpit's frequency wording now calls frequency a review cue and limits that watch to live ads. It does not label an ad fatigued solely because it crossed 2.5.
+
+Before using this in production, deploy both the cockpit backend/site and the updated `viktor-side-scripts/sync_cockpit.py` on the actual sync host, then verify one supervised task creation and its appearance on the calendar. The full approved-asset runway and risk colors below remain a later phase because no verified per-asset approval evidence or 7-day comparable ad history is present in the current feed. Until then, the calendar card is a reminder and workflow container, not proof of approved coverage.
 
 ## Operating rule
 

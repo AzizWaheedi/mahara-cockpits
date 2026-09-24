@@ -467,6 +467,8 @@ const schema = defineSchema({
     /** comment | complete | videoRequest */
     kind: v.string(),
     taskId: v.optional(v.string()),
+    /** Stable client-and-fortnight key for duplicate-safe creative planning. */
+    cadenceKey: v.optional(v.string()),
     payload: v.any(),
     /** pending | sending | done | failed (failed only after the last retry) */
     state: v.string(),
@@ -478,7 +480,17 @@ const schema = defineSchema({
     claimedAt: v.optional(v.number()),
     attempts: v.optional(v.number()),
     nextTryAt: v.optional(v.number()),
-  }).index("by_state", ["state"]),
+  })
+    .index("by_state", ["state"])
+    .index("by_cadence_key", ["cadenceKey"]),
+
+  /** Opt-in only. ClickUp remains the source of truth for the actual batch task. */
+  creativeCadencePrefs: defineTable({
+    clientTaskId: v.string(),
+    autoPlan: v.boolean(),
+    updatedAt: v.number(),
+    updatedBy: v.string(),
+  }).index("by_client", ["clientTaskId"]),
 
   /** Staging for large sync payloads, drained by sync:storeCreative. */
   syncInput: defineTable({

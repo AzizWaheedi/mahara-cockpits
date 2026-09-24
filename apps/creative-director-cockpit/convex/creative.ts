@@ -74,6 +74,14 @@ const CHECKLIST: {
     href: "/editors",
   },
   {
+    key: "creative_runway",
+    label: "Check the next creative batch and client approvals",
+    detail:
+      "Keep one video and two image concepts moving per two-week sprint. Open the calendar and chase anything blocking the approved reserve.",
+    phase: "sod",
+    href: "/work",
+  },
+  {
     key: "brand_dna",
     label: "Move the oldest Brand DNA forward",
     detail: "Nothing else can be produced for a client until this is locked.",
@@ -89,8 +97,9 @@ const CHECKLIST: {
   },
   {
     key: "replace_fatigued",
-    label: "Replace the creatives that are burning out",
-    detail: "Frequency over the gate means the audience has seen it enough.",
+    label: "Review creative response and prepare a challenger",
+    detail:
+      "Frequency is a review cue. Check qualified results and keep a current winner live until a replacement is approved and delivering.",
     phase: "mid",
     href: "/what-works",
   },
@@ -441,10 +450,31 @@ export async function buildSnapshot(
     campaigns.map(c => [c.campaignName, c.clientName ?? c.accountName]),
   );
 
+  const tree = await ctx.db.query("metaTree").collect();
+  const activeAdIds = new Set(
+    tree
+      .filter(
+        n => n.kind === "ad" && (n.effectiveStatus ?? n.status) === "ACTIVE",
+      )
+      .map(n => n.metaId),
+  );
+  const activeAdNames = new Set(
+    tree
+      .filter(
+        n => n.kind === "ad" && (n.effectiveStatus ?? n.status) === "ACTIVE",
+      )
+      .map(n => `${n.campaignName}:${n.name}`),
+  );
   // Frequency watch. Showing an empty "fatiguing" box would be useless, so
   // this is the leaderboard with the gate marked: he can see what is
   // trending towards burnout before it crosses.
-  const withFreq = ads.filter(a => a.frequency !== undefined && a.spend > 0);
+  const withFreq = ads.filter(
+    a =>
+      a.frequency !== undefined &&
+      a.spend > 0 &&
+      ((a.metaAdId && activeAdIds.has(a.metaAdId)) ||
+        activeAdNames.has(`${a.campaignName}:${a.adName}`)),
+  );
   const fatiguing = withFreq
     .map(a => ({
       adName: a.adName,
@@ -508,8 +538,6 @@ export async function buildSnapshot(
     if (!prev || b.submittedAt > prev.submittedAt) blueprintByClient.set(k, b);
   }
 
-  const tree = await ctx.db.query("metaTree").collect();
-
   // Show data comes from the client reporting sheets, not GHL, and that pipe
   // is not connected yet: every campaign reports 0 shows against 42 bookings.
   // Rendering "0% show rate" would read as "nobody turns up" when the truth is
@@ -541,7 +569,10 @@ export async function buildSnapshot(
       const spend = myAds.reduce((n, a) => n + a.spend, 0);
       const leads = myAds.reduce((n, a) => n + a.leads, 0);
       const burning = myAds.filter(
-        a => (a.frequency ?? 0) >= FATIGUE_FREQUENCY,
+        a =>
+          (a.frequency ?? 0) >= FATIGUE_FREQUENCY &&
+          ((a.metaAdId && activeAdIds.has(a.metaAdId)) ||
+            activeAdNames.has(`${a.campaignName}:${a.adName}`)),
       ).length;
       const journey = journeys.find(j => mine(j.client));
       const myCampaigns = campaigns.filter(
@@ -748,7 +779,7 @@ export async function buildSnapshot(
       const reasons: string[] = [];
       if (c.burningAds > 0) {
         reasons.push(
-          `${c.burningAds} creative${c.burningAds > 1 ? "s are" : " is"} burning out — tell them new creative is coming and when.`,
+          `${c.burningAds} live creative${c.burningAds > 1 ? "s have" : " has"} high frequency — review response and approved replacements before promising a refresh.`,
         );
       }
       if (c.postsLate > 0) {
@@ -1075,7 +1106,13 @@ export async function buildCalendar(
     id: string;
     day: string | null;
     client: string | null;
-    kind: "script" | "video" | "post" | "brandDNA" | "onboarding";
+    kind:
+      | "script"
+      | "video"
+      | "post"
+      | "brandDNA"
+      | "onboarding"
+      | "creativeBatch";
     title: string;
     status: string;
     open: boolean;
@@ -1092,11 +1129,13 @@ export async function buildCalendar(
     const kind =
       t.kind === "brandDNA"
         ? "brandDNA"
-        : t.kind === "script"
-          ? "script"
-          : t.kind === "onboarding"
-            ? "onboarding"
-            : null;
+        : t.kind === "creativeBatch"
+          ? "creativeBatch"
+          : t.kind === "script"
+            ? "script"
+            : t.kind === "onboarding"
+              ? "onboarding"
+              : null;
     // Aziz, 2026-09-10: onboarding shows as the one parent task, never the
     // checklist of subtasks under it.
     if (!kind) continue;
@@ -1206,11 +1245,17 @@ export async function buildCalendar(
     .sort((a, b) => (a.client ?? "").localeCompare(b.client ?? ""));
 
   // --- Proactive suggestions ---------------------------------------------
-  // A live client with no open script work, or with creative burning out, is
+  // A live client with no open script work, or with creative due for review, is
   // a client nobody is writing for right now.
   const openScriptClients = new Set(
     items
-      .filter(it => it.open && (it.kind === "script" || it.kind === "video"))
+      .filter(
+        it =>
+          it.open &&
+          (it.kind === "script" ||
+            it.kind === "video" ||
+            it.kind === "creativeBatch"),
+      )
       .map(it => (it.client ?? "").toLowerCase()),
   );
   // Ads carry no client of their own: the campaign is what maps an ad back
@@ -1239,7 +1284,7 @@ export async function buildCalendar(
       const nothingPlanned = !openScriptClients.has(c.name.toLowerCase());
       const burn = burning.get(c.name) ?? 0;
       const why = burn
-        ? `${burn} live creative past ${FATIGUE_FREQUENCY} frequency, they need a replacement`
+        ? `${burn} creative at the frequency review cue; check response and approved backup`
         : nothingPlanned
           ? "nothing being written for them right now"
           : null;
@@ -1385,6 +1430,9 @@ export async function buildScriptQueue(
     const openScripts = tasks.filter(
       t => mine(t) && t.kind === "script" && isOpen(t.status),
     );
+    const openBatches = tasks.filter(
+      t => mine(t) && t.kind === "creativeBatch" && isOpen(t.status),
+    );
     const openVideos = videos.filter(t => mine(t) && isOpen(t.status));
     const live = LIVE.has(statusKey(c.clientStatus));
 
@@ -1397,8 +1445,8 @@ export async function buildScriptQueue(
       out.push({
         client: c.name,
         type: "Ad creative",
-        why: "Live creative is burning out and needs a replacement ready",
-        evidence: `${burning.length} live ad${burning.length === 1 ? "" : "s"} at or past ${FATIGUE_FREQUENCY} frequency: ${burning.map(a => a.adName).join(", ")}`,
+        why: "Review live creative response and keep an approved challenger ready",
+        evidence: `${burning.length} live ad${burning.length === 1 ? "" : "s"} at or past the ${FATIGUE_FREQUENCY} frequency review cue: ${burning.map(a => a.adName).join(", ")}`,
         priority: 1,
         suggestedTitle: "Replacement ad scripts",
       });
@@ -1475,12 +1523,18 @@ export async function buildScriptQueue(
     }
 
     // 7. Live, paying, and nobody is writing anything for them at all.
-    if (live && openScripts.length === 0 && openVideos.length === 0) {
+    if (
+      live &&
+      openScripts.length === 0 &&
+      openVideos.length === 0 &&
+      openBatches.length === 0
+    ) {
       out.push({
         client: c.name,
         type: "Ad creative",
         why: "Active client with nothing being written or edited for them",
-        evidence: "0 open script requests, 0 videos in the pipeline",
+        evidence:
+          "0 open script requests, 0 videos in the pipeline, 0 creative batches",
         priority: 3,
         suggestedTitle: "Fresh angles",
       });
