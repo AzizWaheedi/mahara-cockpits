@@ -553,6 +553,26 @@ export async function loadTranscript(path: string): Promise<string> {
   return await data.text();
 }
 
+/** Follow-up drafts waiting for this person, for the sidebar's count. */
+export function useFollowupsWaiting(
+  email: string | null,
+): Loaded<{ id: string }[]> {
+  return useQuery<{ id: string }[]>(
+    () =>
+      email
+        ? supabase
+            .from("cockpit_sales_followups")
+            .select("id")
+            .eq("status", "draft")
+            .eq("owner_email", email)
+            .gt("expires_at", new Date().toISOString())
+            .limit(100)
+        : none<{ id: string }[]>(),
+    [email],
+    120_000,
+  );
+}
+
 /** Rates only, everyone with a seat. */
 export function useBoard(windowKey: WindowKey): Loaded<BoardRow[]> {
   return useQuery<BoardRow[]>(

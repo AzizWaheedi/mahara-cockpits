@@ -7,6 +7,8 @@
     python3 desk.py calls-vault [--dry]     copy every sales call in the Obsidian vault in, transcripts too
     python3 desk.py reviews-import [--dry]  Vince's archived reviews into the cockpit
     python3 desk.py reviews [--limit N]     Vince reviews the newest unreviewed calls
+    python3 desk.py research [--limit N]    research the leads a rep asked about (web search, sources kept)
+    python3 desk.py followups               draft follow-ups for the leads who need one now, for approval
     python3 desk.py status                  the queue, the last proposals, the last runs
     python3 desk.py offer-sync              offer.json into the cockpit's proposal form (requests does it too)
 
@@ -44,6 +46,8 @@ from desk import prompt as prompt_mod  # noqa: E402
 from desk import queue as queue_mod  # noqa: E402
 from desk import recordings as recordings_mod  # noqa: E402
 from desk import render as render_mod  # noqa: E402
+from desk import followups as followups_mod  # noqa: E402
+from desk import research as research_mod  # noqa: E402
 from desk import reviews as reviews_mod  # noqa: E402
 from desk import validate as validate_mod  # noqa: E402
 from desk.config import DEFAULT_MODELS, WORKER, Config, key  # noqa: E402
@@ -379,6 +383,60 @@ def cmd_reviews(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     return 1 if out["failed"] and not out["reviewed"] else 0
 
 
+def cmd_research(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    """Research the leads the cockpit asked about. Quiet when nothing is queued."""
+    sb = _sb(cfg)
+    if not cfg.openai_key:
+        _status(cfg, log, "research", False, "OPENAI_API_KEY is not set, so the researcher cannot search.")
+        return 1
+    apify = key("APIFY_API_KEY") or key("APIFY_TOKEN")
+    out = research_mod.run(sb, cfg, log.info, host=WORKER, limit=args.limit or 3,
+                           model=key("SALES_RESEARCH_MODEL", "").strip() or "gpt-5", apify_key=apify)
+    if out["seen"] or args.json:
+        detail = f"{out['done']} researched, {out['failed']} failed" + ("" if apify else " (no Apify key: web search only)")
+        _status(cfg, log, "research", not out["failed"], detail)
+        _print(out if args.json else detail, args.json)
+    return 0
+
+
+def cmd_followups(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    """Write follow-up drafts for the leads who need one now, for their reps to approve."""
+    sb = _sb(cfg)
+    settings = sb.setting("followups") or {}
+    try:
+        model = key("SALES_FOLLOWUP_MODEL", "").strip()
+        if model:
+            cfg.model = model
+        p = model_mod.provider(cfg, log.info)
+    except model_mod.ModelUnreachable as e:
+        _status(cfg, log, "followups", False, str(e))
+        log.error(str(e))
+        return 1
+    def autosend(followup_id: str) -> dict:
+        """The cockpit's own send, asked by the desk with its service key."""
+        _, _, raw = http.request(
+            "POST", f"{cfg.supabase_url.rstrip('/')}/functions/v1/sales-api",
+            headers={"Authorization": f"Bearer {cfg.supabase_key}", "Content-Type": "application/json"},
+            data=json.dumps({"action": "followup.autosend", "id": followup_id}).encode(),
+            timeout=60, retries=0, ok_statuses=(200, 400, 403, 404, 409, 500, 502),
+        )
+        return json.loads(raw.decode("utf-8") or "{}")
+
+    out = followups_mod.run(sb, p, log.info, settings=settings,
+                            ghl_token=key("GHL_B2B_API_KEY") or key("SALES_GHL_TOKEN"), autosend=autosend)
+    if "skipped" in out:
+        detail = out["skipped"]
+    else:
+        detail = (f"{out['written']} drafts written of {out['picked']} leads due"
+                  + (f", {out['sent_by_itself']} sent by themselves" if out.get("sent_by_itself") else "")
+                  + (f", {out['no_open_channel']} with no open channel" if out["no_open_channel"] else "")
+                  + (f", {out['failed']} failed" if out["failed"] else ""))
+    _status(cfg, log, "followups", not out.get("failed"), detail)
+    if out.get("written") or out.get("failed") or args.json:
+        _print(out if args.json else detail, args.json)
+    return 0
+
+
 def cmd_status(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     sb = _sb(cfg)
     queue = sb.select("cockpit_sales_requests", "select=id,kind,contact_id,params,status,requested_by,requested_at,"
@@ -502,6 +560,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     cv = sub.add_parser("calls-vault"); cv.add_argument("--vault"); cv.add_argument("--dry", action="store_true")
     ri = sub.add_parser("reviews-import"); ri.add_argument("--folder"); ri.add_argument("--dry", action="store_true")
     rv = sub.add_parser("reviews"); rv.add_argument("--limit", type=int); rv.add_argument("--days", type=int)
+    rs = sub.add_parser("research"); rs.add_argument("--limit", type=int)
+    sub.add_parser("followups")
     sub.add_parser("status")
     sub.add_parser("offer-sync")
     v = sub.add_parser("validate"); v.add_argument("deal"); v.add_argument("--transcript")
@@ -523,13 +583,15 @@ def main(argv: Optional[list[str]] = None) -> int:
     handlers: dict[str, Callable[[Config, argparse.Namespace, Logger], int]] = {
         "doctor": cmd_doctor, "requests": cmd_requests, "recordings": cmd_recordings, "status": cmd_status,
         "calls-vault": cmd_calls_vault, "reviews-import": cmd_reviews_import, "reviews": cmd_reviews,
+        "research": cmd_research, "followups": cmd_followups,
         "validate": cmd_validate, "build": cmd_build, "draft": cmd_draft, "offer-sync": cmd_offer_sync,
     }
     try:
         return handlers[args.cmd](cfg, args, log)
     except (SupabaseError, http.HttpError, NotNow, Refused) as e:
         log.error(http.scrub(str(e))[:400])
-        if args.cmd in ("requests", "recordings", "status", "offer-sync", "calls-vault", "reviews"):
+        if args.cmd in ("requests", "recordings", "status", "offer-sync", "calls-vault", "reviews", "research",
+                        "followups"):
             _status(cfg, log, args.cmd, False, http.scrub(str(e))[:400])
         return 1
     except KeyboardInterrupt:

@@ -32,6 +32,13 @@ PK = {
     "cockpit_sales_reps": ("id",),
     "cockpit_sales_reviews": ("source_ref",),
     "cockpit_sales_dials": ("call_id",),
+    "cockpit_sales_followups": ("id",),
+    "cockpit_sales_messages": ("id",),
+    "cockpit_sales_inbox": ("conversation_id",),
+    "cockpit_sales_calendar": ("appointment_id",),
+    "cockpit_sales_notes": ("id",),
+    "cockpit_sales_research": ("id",),
+    "cockpit_sales_deals": ("response_id",),
 }
 
 
@@ -119,6 +126,8 @@ class FakePostgrest:
         if negate:
             expr = expr[4:]
         op, _, operand = expr.partition(".")
+        if op != "in":
+            operand = _unquote(operand)
         v = self._value(row, column)
         if op == "eq":
             ok = v is not None and (str(v).lower() if isinstance(v, bool) else str(v)) == operand
@@ -206,9 +215,15 @@ class FakePostgrest:
         if method == "GET":
             return 200, {}, json.dumps(self._select(table, params), default=str).encode()
         if method == "POST":
+            made = []
             for row in body if isinstance(body, list) else [body]:
+                if "id" in PK[table] and "id" not in row:
+                    row = {"id": f"gen-{len(self.tables[table]) + 1}", **row}
                 key = tuple(str(row[k]) for k in PK[table])
                 self.tables[table].setdefault(key, {}).update(row)
+                made.append(self.tables[table][key])
+            if "representation" in prefer:
+                return 201, {}, json.dumps(made, default=str).encode()
             return 201, {}, b""
         if method == "PATCH":
             hit = [r for r in self.rows(table) if self._match(r, params)]

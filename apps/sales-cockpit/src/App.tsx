@@ -9,7 +9,7 @@ import {
 import Sidebar from "./components/Sidebar";
 import { Wordmark } from "./components/Wordmark";
 import { SessionProvider, useWho } from "./lib/auth";
-import { useMe, useOwed, useProposals } from "./lib/data";
+import { useFollowupsWaiting, useMe, useOwed, useProposals } from "./lib/data";
 import { portalUrl } from "./lib/portal";
 import { Toaster } from "./lib/toast";
 import type { Me } from "./lib/types";
@@ -26,6 +26,7 @@ const ProposalPage = lazy(() => import("./pages/ProposalPage"));
 const NumbersPage = lazy(() => import("./pages/NumbersPage"));
 const GoalsPage = lazy(() => import("./pages/GoalsPage"));
 const EodPage = lazy(() => import("./pages/EodPage"));
+const FollowupsPage = lazy(() => import("./pages/FollowupsPage"));
 const RecordingsPage = lazy(() => import("./pages/RecordingsPage"));
 const RecordingPage = lazy(() => import("./pages/RecordingPage"));
 const ReviewOnlyPage = lazy(() =>
@@ -179,7 +180,9 @@ export function Seated({
   const mine = me.manager ? null : (me.ghl_user_id ?? "__none__");
   const owed = useOwed(mine, 30, 120_000);
   const proposals = useProposals(me.manager ? null : (me.email ?? null));
+  const followups = useFollowupsWaiting(me.email ?? null);
   const counts = {
+    followups: (followups.data ?? []).length,
     owed: (owed.data ?? []).length,
     proposals: (proposals.data ?? []).filter(
       p => p.status === "needs_input" || p.status === "ready",
@@ -242,6 +245,7 @@ export function Seated({
               <Route path="/numbers" element={<NumbersPage me={me} />} />
               <Route path="/goals" element={<GoalsPage me={me} />} />
               <Route path="/eod" element={<EodPage me={me} />} />
+              <Route path="/followups" element={<FollowupsPage me={me} />} />
               <Route path="/recordings" element={<RecordingsPage me={me} />} />
               <Route path="/recording/:id" element={<RecordingPage />} />
               <Route path="/review/:id" element={<ReviewOnlyPage />} />

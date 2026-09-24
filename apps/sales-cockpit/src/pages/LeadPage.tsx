@@ -15,6 +15,7 @@ import { LeadTimeline, type LiveMessage } from "../components/LeadTimeline";
 import { CrmLine, MarkControls } from "../components/MarkControls";
 import { NotesPanel } from "../components/NotesPanel";
 import { ProposalPanel } from "../components/ProposalPanel";
+import { ResearchPanel } from "../components/ResearchPanel";
 import { useLead, useLeadActivity, useTeam } from "../lib/data";
 import {
   ago,
@@ -275,6 +276,9 @@ export default function LeadPage({ me }: { me: Me }) {
               </p>
             </SectionCard>
           ) : null}
+          <SectionCard title="Research">
+            <ResearchPanel contactId={l.contact_id} me={me} />
+          </SectionCard>
           <SectionCard title="Notes">
             <NotesPanel
               me={me}

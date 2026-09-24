@@ -1125,6 +1125,174 @@ async function eodRetry(who: Who, b: Row) {
 }
 
 // ---------------------------------------------------------------------------
+// The agents: research briefs and follow-up drafts
+// ---------------------------------------------------------------------------
+
+/** Ask the desk to research a lead: once at a time, and not again within six hours unless a manager asks. */
+async function researchRequest(who: Who, b: Row) {
+  const contact = cleanText(b.contact_id, 80);
+  const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contact)}&select=contact_id,name`))[0];
+  if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
+  const open = await svc(`cockpit_sales_research?contact_id=eq.${enc(contact)}&status=in.(queued,running)&select=id`);
+  if (open.length) throw new Refusal("This lead is already being researched. It takes a minute or two.", 409);
+  const since = new Date(Date.now() - 6 * 3_600_000).toISOString();
+  const fresh = await svc(
+    `cockpit_sales_research?contact_id=eq.${enc(contact)}&status=eq.ready&requested_at=gte.${enc(since)}&select=id`,
+  );
+  if (fresh.length && !who.manager)
+    throw new Refusal("This lead was researched in the last six hours; the brief is below.", 409);
+  const req = (await svc("cockpit_sales_requests", {
+    method: "POST",
+    body: { kind: "research", contact_id: contact, params: { contact_id: contact }, requested_by: who.email },
+    prefer: "return=representation",
+  }))[0];
+  const row = (await svc("cockpit_sales_research", {
+    method: "POST",
+    body: { request_id: req.id, contact_id: contact, status: "queued", requested_by: who.email },
+    prefer: "return=representation",
+  }))[0];
+  await audit(who, "research.request", "cockpit_sales_research", String(row.id), null, { contact_id: contact });
+  return { research: row };
+}
+
+async function followupRow(id: string): Promise<Row> {
+  const f = (await svc(`cockpit_sales_followups?id=eq.${enc(id)}&select=*`))[0];
+  if (!f) throw new Refusal("That draft is not here any more.", 404);
+  return f;
+}
+
+/**
+ * Send a follow-up draft, as written or as the rep edited it. The draft is
+ * claimed first (draft -> sending), so two taps or two reps cannot both
+ * send it, and its own id is the send's request id, so a retry returns the
+ * first send. The words go out through convo.send's checks: do-not-disturb,
+ * the WhatsApp window, the read-back.
+ */
+async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean) {
+  if (f.status !== "draft") throw new Refusal(`This draft was already ${f.status}.`, 409);
+  if (f.expires_at && Date.parse(String(f.expires_at)) < Date.now()) {
+    await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}&status=eq.draft`, {
+      method: "PATCH",
+      body: { status: "expired", decided_at: new Date().toISOString() },
+      prefer: "return=minimal",
+    });
+    throw new Refusal(
+      f.channel === "whatsapp"
+        ? "This draft went stale: the lead's WhatsApp window has closed. The agent writes a new one if it is still due."
+        : "This draft went stale. The agent writes a new one if it is still due.",
+      409,
+    );
+  }
+  const body = String(b.body ?? f.body).replace(/\r\n/g, "\n").trim();
+  const subject = f.channel === "email" ? cleanText(b.subject ?? f.subject, 300) : null;
+  const claimed = await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}&status=eq.draft`, {
+    method: "PATCH",
+    body: { status: "sending", decided_by: who.email, decided_at: new Date().toISOString() },
+    prefer: "return=representation",
+  });
+  if (!claimed.length) throw new Refusal("Someone else has just dealt with this draft.", 409);
+  const edited = body !== String(f.body).trim() || (f.channel === "email" && subject !== (f.subject ?? null));
+  try {
+    const out = await convoSend(who, {
+      contact_id: f.contact_id,
+      channel: f.channel,
+      body,
+      subject,
+      request_id: f.id,
+      followup_id: f.id,
+    });
+    const m = out.message as Row;
+    const saved = (await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}`, {
+      method: "PATCH",
+      body: {
+        status: m.state === "failed" ? "failed" : "sent",
+        final_body: body,
+        final_subject: subject,
+        edited,
+        message_id: m.id ?? null,
+        error: m.state === "failed" ? (m.error ?? "HighLevel marked it failed") : null,
+        auto,
+      },
+      prefer: "return=representation",
+    }))[0];
+    await audit(who, auto ? "followup.autosend" : "followup.approve", "cockpit_sales_followups", String(f.id), f,
+      { status: saved.status, edited, segment: f.segment, channel: f.channel });
+    return { followup: saved, message: m };
+  } catch (e) {
+    const err = e instanceof Refusal ? e.message : redact(String((e as Error).message ?? e));
+    await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}`, {
+      method: "PATCH",
+      body: { status: "failed", error: err, final_body: body, final_subject: subject, edited },
+      prefer: "return=minimal",
+    });
+    await audit(who, auto ? "followup.autosend" : "followup.approve", "cockpit_sales_followups", String(f.id), f,
+      { status: "failed", error: err });
+    throw e;
+  }
+}
+
+async function followupApprove(who: Who, b: Row) {
+  const f = await followupRow(cleanText(b.id, 40));
+  if (!who.manager && f.owner_email !== who.email) throw new Refusal("That is another rep's lead.", 403);
+  return await sendFollowup(who, f, b, false);
+}
+
+/** The desk sends a draft by itself, only for a kind of message a manager trusts. */
+async function followupAutosend(who: Who, b: Row) {
+  const f = await followupRow(cleanText(b.id, 40));
+  const settings = (await setting<Row>("followups")) ?? {};
+  const auto = ((settings.autosend ?? {}) as Row)[String(f.segment)] === true;
+  if (!auto) throw new Refusal(`${String(f.segment)} drafts wait for a person; a manager has not switched them to send by themselves.`, 403);
+  return await sendFollowup(who, f, {}, true);
+}
+
+async function followupSkip(who: Who, b: Row) {
+  const f = await followupRow(cleanText(b.id, 40));
+  if (!who.manager && f.owner_email !== who.email) throw new Refusal("That is another rep's lead.", 403);
+  if (f.status !== "draft") throw new Refusal(`This draft was already ${f.status}.`, 409);
+  const reason = cleanText(b.reason, 200) || null;
+  const saved = (await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}&status=eq.draft`, {
+    method: "PATCH",
+    body: { status: "skipped", skip_reason: reason, decided_by: who.email, decided_at: new Date().toISOString() },
+    prefer: "return=representation",
+  }))[0];
+  if (!saved) throw new Refusal("Someone else has just dealt with this draft.", 409);
+  await audit(who, "followup.skip", "cockpit_sales_followups", String(f.id), f, { reason, segment: f.segment });
+  return { followup: saved };
+}
+
+const FOLLOWUP_SEGMENTS = ["reply", "no_show", "new", "after_call", "nurture"] as const;
+
+async function followupSettings(who: Who, b: Row) {
+  needManager(who);
+  const v = (b.value ?? {}) as Row;
+  const auto = (v.autosend ?? {}) as Row;
+  const int = (x: unknown, lo: number, hi: number, name: string) => {
+    const n = Number(x);
+    if (!Number.isInteger(n) || n < lo || n > hi) throw new Refusal(`${name} has to be a whole number from ${lo} to ${hi}.`);
+    return n;
+  };
+  const quietFrom = int((v.quiet as Row | undefined)?.from ?? 21, 0, 23, "The quiet hours' start");
+  const quietTo = int((v.quiet as Row | undefined)?.to ?? 9, 0, 23, "The quiet hours' end");
+  const value = {
+    enabled: v.enabled !== false,
+    autosend: Object.fromEntries(FOLLOWUP_SEGMENTS.map(s => [s, auto[s] === true])),
+    per_run: int(v.per_run ?? 12, 1, 50, "Drafts per run"),
+    per_day: int(v.per_day ?? 60, 1, 400, "Drafts per day"),
+    quiet: { from: quietFrom, to: quietTo },
+    nurture_every_days: int(v.nurture_every_days ?? 7, 2, 60, "Days between nurture messages"),
+  };
+  const before = await setting<Row>("followups");
+  await svc("cockpit_sales_settings?on_conflict=key", {
+    method: "POST",
+    body: { key: "followups", value, updated_by: who.email, updated_at: new Date().toISOString() },
+    prefer: "resolution=merge-duplicates,return=minimal",
+  });
+  await audit(who, "followup.settings", "cockpit_sales_settings", "followups", before, value);
+  return { setting: { key: "followups", value } };
+}
+
+// ---------------------------------------------------------------------------
 // Goals by the month
 // ---------------------------------------------------------------------------
 
@@ -1640,6 +1808,10 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   "setting.save": settingSave,
   "lead.live": leadLive,
   "ghl.users": ghlUsers,
+  "research.request": researchRequest,
+  "followup.approve": followupApprove,
+  "followup.skip": followupSkip,
+  "followup.settings": followupSettings,
   "eod.prefill": eodPrefill,
   "eod.submit": eodSubmit,
   "eod.retry": eodRetry,
@@ -1651,6 +1823,11 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   "dial.call": dialCall,
   "dial.save": dialSave,
   "dial.release": dialRelease,
+};
+
+/** What the desk's service key may do: nothing but a trusted follow-up. */
+const DESK_ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
+  "followup.autosend": followupAutosend,
 };
 
 Deno.serve(async (req: Request) => {
@@ -1673,7 +1850,23 @@ Deno.serve(async (req: Request) => {
     return reply({ ok: false, error: "Send a JSON body." }, 400);
   }
   const handler = ACTIONS[String(body?.action ?? "")];
-  if (!handler) return reply({ ok: false, error: "Unknown action." }, 400);
+  if (!handler && !DESK_ACTIONS[String(body?.action ?? "")])
+    return reply({ ok: false, error: "Unknown action." }, 400);
+
+  // The sales desk on the VPS calls with the service key, for the one thing
+  // it may do by itself: send a follow-up a manager trusts to go alone.
+  const service = env("SUPABASE_SERVICE_ROLE_KEY");
+  if (service && jwt === service) {
+    const deskHandler = DESK_ACTIONS[String(body?.action ?? "")];
+    if (!deskHandler) return reply({ ok: false, error: "Not an action the desk may take." }, 403);
+    const desk: Who = { signed_in: true, seat: true, manager: false, email: "sales-desk", name: "Sales desk" };
+    try {
+      return reply({ ok: true, ...(await deskHandler(desk, body)) });
+    } catch (e) {
+      if (e instanceof Refusal) return reply({ ok: false, error: e.message }, e.status);
+      return reply({ ok: false, error: `That did not work: ${redact(String((e as Error).message ?? e))}` }, 500);
+    }
+  }
 
   let who: Who;
   try {
@@ -1685,6 +1878,8 @@ Deno.serve(async (req: Request) => {
   if (!who.seat)
     return reply({ ok: false, error: "The sales cockpit is not on your access. Ask Aziz." }, 403);
 
+  // The desk's own action is not a person's to take.
+  if (!handler) return reply({ ok: false, error: "Unknown action." }, 400);
   try {
     return reply({ ok: true, ...(await handler(who, body)) });
   } catch (e) {
