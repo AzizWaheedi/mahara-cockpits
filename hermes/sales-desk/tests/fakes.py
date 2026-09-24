@@ -31,6 +31,7 @@ PK = {
     "cockpit_sales_settings": ("key",),
     "cockpit_sales_reps": ("id",),
     "cockpit_sales_reviews": ("source_ref",),
+    "cockpit_sales_dials": ("call_id",),
 }
 
 
@@ -184,6 +185,10 @@ class FakePostgrest:
             bucket = key.split("/", 1)[0]
             if bucket not in self.buckets:
                 raise HttpError(404, '{"error":"Bucket not found"}', b"", url)
+            if method == "GET":
+                if key not in self.objects:
+                    raise HttpError(404, '{"error":"Object not found"}', b"", url)
+                return 200, {}, self.objects[key][1]
             self.objects[key] = (headers.get("Content-Type", ""), data or b"")
             return 200, {}, json.dumps({"Key": key}).encode()
         if path.startswith("/storage/v1/bucket/"):

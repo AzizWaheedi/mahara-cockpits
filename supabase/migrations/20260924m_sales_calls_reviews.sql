@@ -102,3 +102,9 @@ create policy sales_calls_seat_read on storage.objects
 notify pgrst, 'reload schema';
 
 commit;
+
+-- How a review found its call: link (the Fathom share link in it), maqsam (the
+-- intro's call id), day_name (that day's one call naming the lead), day_longest
+-- (the rep's longest call that day, the one Vince picked), or null.
+alter table public.cockpit_sales_reviews add column if not exists joined_by text;
+notify pgrst, 'reload schema';

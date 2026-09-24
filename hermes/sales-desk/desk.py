@@ -5,6 +5,8 @@
     python3 desk.py requests [--limit N]    draft (or rebuild) the proposals the cockpit asked for
     python3 desk.py recordings [--days N]   index Fathom's sales calls and match them to leads
     python3 desk.py calls-vault [--dry]     copy every sales call in the Obsidian vault in, transcripts too
+    python3 desk.py reviews-import [--dry]  Vince's archived reviews into the cockpit
+    python3 desk.py reviews [--limit N]     Vince reviews the newest unreviewed calls
     python3 desk.py status                  the queue, the last proposals, the last runs
     python3 desk.py offer-sync              offer.json into the cockpit's proposal form (requests does it too)
 
@@ -25,6 +27,7 @@ import argparse
 import json
 import sys
 import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -41,6 +44,7 @@ from desk import prompt as prompt_mod  # noqa: E402
 from desk import queue as queue_mod  # noqa: E402
 from desk import recordings as recordings_mod  # noqa: E402
 from desk import render as render_mod  # noqa: E402
+from desk import reviews as reviews_mod  # noqa: E402
 from desk import validate as validate_mod  # noqa: E402
 from desk.config import DEFAULT_MODELS, WORKER, Config, key  # noqa: E402
 from desk.errors import NotNow, Refused  # noqa: E402
@@ -313,6 +317,68 @@ def cmd_calls_vault(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     return 0
 
 
+def cmd_reviews_import(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    """Vince's archived reviews into the cockpit, joined to their calls."""
+    sb = _sb(cfg)
+    folder = Path(args.folder or (cfg.home / "vince")).expanduser()
+    try:
+        out = reviews_mod.import_archive(sb, folder, log.info, dry=args.dry)
+    except FileNotFoundError as e:
+        log.error(str(e))
+        return 1
+    _print(out, True)
+    return 0
+
+
+def review_provider(cfg: Config, log: Logger) -> Any:
+    """The model Vince writes with: the desk's own provider and key (the VPS
+    keys), SALES_REVIEW_MODEL when set, and plain text rather than JSON."""
+    model = key("SALES_REVIEW_MODEL", "").strip() or cfg.model
+    if (cfg.provider or "openai") == "openai":
+        if not cfg.openai_key:
+            raise model_mod.ModelUnreachable("OPENAI_API_KEY is not set, so Vince cannot review calls.")
+        if "deepseek" in model.lower():
+            raise model_mod.ModelUnreachable("Lead data never goes to DeepSeek; set SALES_REVIEW_MODEL to another model.")
+        return model_mod.OpenAIShaped("openai", model_mod.OPENAI_URL, cfg.openai_key, model,
+                                      max_tokens=cfg.max_tokens, reasoning_effort=cfg.reasoning_effort,
+                                      json_mode=False, log=log.info)
+    cfg.model = model
+    return model_mod.provider(cfg, log.info)
+
+
+def cmd_reviews(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    """Vince reviews the newest sales calls nobody has reviewed yet."""
+    sb = _sb(cfg)
+    knowledge = Path(key("SALES_VINCE_DIR", str(cfg.home / "vince"))).expanduser()
+    missing = [f for f in ("coaching-log-template.md", "sales-framework.md",
+                           "intro-coaching-log-template.md", "intro-call-framework.md")
+               if not (knowledge / f).is_file()]
+    if missing:
+        detail = f"Vince's knowledge files are missing from {knowledge}: {', '.join(missing)}"
+        _status(cfg, log, "reviews", False, detail)
+        log.error(detail)
+        return 1
+    since_text = key("SALES_REVIEW_SINCE", "2026-08-24").strip()
+    since = datetime.fromisoformat(since_text).replace(tzinfo=timezone.utc) if args.days is None else (
+        datetime.now(timezone.utc) - timedelta(days=args.days))
+    try:
+        p = review_provider(cfg, log)
+        out = reviews_mod.review_new(sb, p, log.info, knowledge=knowledge, since=since,
+                                     limit=args.limit or 2, min_chars=cfg.min_transcript_chars,
+                                     timeout=cfg.model_timeout)
+    except model_mod.ModelUnreachable as e:
+        _status(cfg, log, "reviews", False, str(e))
+        log.error(str(e))
+        return 1
+    detail = ("nothing to review" if not out["due"] else
+              f"{out['reviewed']} reviewed, {out['failed']} failed of {out['due']} due"
+              + (f": {out['errors'][0]}" if out["errors"] else ""))
+    _status(cfg, log, "reviews", not out["failed"], detail)
+    if out["due"] or args.json:
+        _print(out if args.json else detail, args.json)
+    return 1 if out["failed"] and not out["reviewed"] else 0
+
+
 def cmd_status(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     sb = _sb(cfg)
     queue = sb.select("cockpit_sales_requests", "select=id,kind,contact_id,params,status,requested_by,requested_at,"
@@ -434,6 +500,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     rq = sub.add_parser("requests"); rq.add_argument("--limit", type=int)
     rc = sub.add_parser("recordings"); rc.add_argument("--days", type=int)
     cv = sub.add_parser("calls-vault"); cv.add_argument("--vault"); cv.add_argument("--dry", action="store_true")
+    ri = sub.add_parser("reviews-import"); ri.add_argument("--folder"); ri.add_argument("--dry", action="store_true")
+    rv = sub.add_parser("reviews"); rv.add_argument("--limit", type=int); rv.add_argument("--days", type=int)
     sub.add_parser("status")
     sub.add_parser("offer-sync")
     v = sub.add_parser("validate"); v.add_argument("deal"); v.add_argument("--transcript")
@@ -454,14 +522,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     log = Logger(quiet=args.quiet)
     handlers: dict[str, Callable[[Config, argparse.Namespace, Logger], int]] = {
         "doctor": cmd_doctor, "requests": cmd_requests, "recordings": cmd_recordings, "status": cmd_status,
-        "calls-vault": cmd_calls_vault,
+        "calls-vault": cmd_calls_vault, "reviews-import": cmd_reviews_import, "reviews": cmd_reviews,
         "validate": cmd_validate, "build": cmd_build, "draft": cmd_draft, "offer-sync": cmd_offer_sync,
     }
     try:
         return handlers[args.cmd](cfg, args, log)
     except (SupabaseError, http.HttpError, NotNow, Refused) as e:
         log.error(http.scrub(str(e))[:400])
-        if args.cmd in ("requests", "recordings", "status", "offer-sync", "calls-vault"):
+        if args.cmd in ("requests", "recordings", "status", "offer-sync", "calls-vault", "reviews"):
             _status(cfg, log, args.cmd, False, http.scrub(str(e))[:400])
         return 1
     except KeyboardInterrupt:

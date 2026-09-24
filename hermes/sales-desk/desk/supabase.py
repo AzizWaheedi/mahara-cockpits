@@ -137,6 +137,14 @@ class Supabase:
         )
         return path
 
+    def download_from(self, bucket: str, path: str) -> bytes:
+        """An object from a private bucket (a call's transcript)."""
+        _, _, body = http.request(
+            "GET", f"{self.url}/storage/v1/object/{bucket}/{path}",
+            headers=self._headers(), timeout=max(self.timeout, 120), retries=2,
+        )
+        return body
+
     def bucket_info(self) -> dict[str, Any]:
         _, _, body = http.request(
             "GET", f"{self.url}/storage/v1/bucket/{self.bucket}",
