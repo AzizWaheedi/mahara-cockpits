@@ -77,7 +77,7 @@ const CHECKLIST: {
     key: "creative_runway",
     label: "Check the next creative batch and client approvals",
     detail:
-      "Keep one video and two image concepts moving per two-week sprint. Open the calendar and chase anything blocking the approved reserve.",
+      "Keep one video and two image concepts moving per two-week sprint. Check script approval, production and each asset's client approval in the existing tasks.",
     phase: "sod",
     href: "/work",
   },
@@ -133,7 +133,9 @@ const VIDEO_STAGES = [
   "planning",
   "in progress",
   "internal review",
+  "internal approved",
   "client review",
+  "client approved",
   "update required",
   "on hold",
   "live 🚀",
@@ -142,6 +144,8 @@ const VIDEO_STAGES = [
 const HIS_MOVE = new Set([
   "client review",
   "internal review",
+  "internal approved",
+  "client approved",
   "update required",
 ]);
 
