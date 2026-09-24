@@ -105,6 +105,9 @@ class Run(unittest.TestCase):
         self.assertEqual((d["segment"], d["channel"], d["owner_email"], d["status"]),
                          ("reply", "whatsapp", "rami@maharamedia.com", "draft"))
         self.assertIn("Why this lead now", provider.calls[0]["system"])
+        self.assertIn("Never propose a specific day or time", provider.calls[0]["system"])
+        # With no rep on B2B's list for the lead's owner, the facts say so and nothing is signed.
+        self.assertIn('"rep": null', provider.calls[0]["user"])
 
     def test_a_trusted_kind_is_sent_by_itself_and_others_wait(self):
         pg = FakePostgrest()

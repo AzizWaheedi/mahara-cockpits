@@ -52,7 +52,11 @@ VOICE = """How Mahara writes to a lead:
   and not in the facts, leave it out. Mahara's only approved proof line is «أكثر من ٧٠ شركة بالخليج».
 - Say «دولار», never put $ inside Arabic text. No em-dashes. No emojis beyond one at most.
 - Never pretend to be the lead's friend or invent urgency ("last chance", fake deadlines).
-- Sign as the rep by first name when the channel is email; WhatsApp needs no signature."""
+- Never propose a specific day or time: the rep's calendar is not in front of you. Ask when suits
+  them, or offer "today or tomorrow" in words.
+- In Arabic text write numbers in Arabic-Indic digits, all of them.
+- Email: sign with the rep's first name as given in the facts ("rep"); if no rep is given, sign
+  nothing. WhatsApp needs no signature. Never sign as anyone else."""
 
 GOAL = {
     "reply": "They wrote to us and nobody has answered. Answer what they asked, then move them to the next step.",
@@ -198,7 +202,8 @@ def ghl_thread(token: str, contact_id: str, limit: int = 20) -> list[dict[str, A
     return msgs[-limit:]
 
 
-def context_for(sb: Any, lead: dict[str, Any], ghl_token: str, now: datetime) -> dict[str, Any]:
+def context_for(sb: Any, lead: dict[str, Any], ghl_token: str, now: datetime,
+                rep_name: Optional[str] = None) -> dict[str, Any]:
     """Everything the cockpit knows that a rep would want the message to know."""
     c = str(lead["contact_id"])
     appts = sb.select("cockpit_sales_calendar",
@@ -232,6 +237,8 @@ def context_for(sb: Any, lead: dict[str, Any], ghl_token: str, now: datetime) ->
                      "talking_points": brief.get("talking_points")} if brief else None,
         "conversation": thread,
         "now_kuwait": kuwait_now(now).strftime("%A %d %B %Y, %H:%M"),
+        # Who the message is from: the lead's own rep, by first name, or nobody.
+        "rep": (rep_name or "").split(" ")[0] or None,
     }
 
 
@@ -313,6 +320,8 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
     by_id = {str(l["contact_id"]): l for l in leads}
     people = sb.select("cockpit_sales_people", "select=email,ghl_user_id,active&active=eq.true&limit=200")
     seat_of = {str(p["ghl_user_id"]): str(p["email"]) for p in people if p.get("ghl_user_id")}
+    reps = sb.select("cockpit_sales_reps", "select=ghl_user_id,display_name&limit=200")
+    rep_name_of = {str(r["ghl_user_id"]): str(r.get("display_name") or "") for r in reps if r.get("ghl_user_id")}
 
     written = no_channel = failed = sent_auto = 0
     for contact, segment in picked:
@@ -322,7 +331,7 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
         if not lead or lead.get("dnd"):
             continue
         try:
-            ctx = context_for(sb, lead, ghl_token, now)
+            ctx = context_for(sb, lead, ghl_token, now, rep_name_of.get(str(lead.get("assigned_to") or "")))
             ins = [_ts(m["at"]) for m in ctx["conversation"]
                    if m["from"] == "lead" and m["channel"] == "whatsapp" and _ts(m.get("at"))]
             ins += [_ts(r.get("inbound_whatsapp_at")) for r in inbox
