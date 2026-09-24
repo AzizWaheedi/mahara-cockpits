@@ -15,6 +15,7 @@ import {
   StatusChip,
   type Tone,
 } from "../components/kit";
+import { LeadRecordings } from "../components/LeadRecordings";
 import { LeadTimeline, type LiveMessage } from "../components/LeadTimeline";
 import { CrmLine, MarkControls } from "../components/MarkControls";
 import { NotesPanel } from "../components/NotesPanel";
@@ -309,6 +310,12 @@ export default function LeadPage({ me }: { me: Me }) {
                 messages={live?.messages ?? []}
               />
             )}
+          </SectionCard>
+          <SectionCard title="Recorded calls">
+            <LeadRecordings
+              contactId={l.contact_id}
+              recordings={a?.recordings ?? []}
+            />
           </SectionCard>
         </div>
 

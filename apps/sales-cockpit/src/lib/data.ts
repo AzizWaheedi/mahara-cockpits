@@ -15,6 +15,7 @@ import type {
   Proposal,
   Recording,
   Rep,
+  Review,
   SalesLink,
   ScoreRow,
   TeamMember,
@@ -468,6 +469,88 @@ export function useDialMonths(
     [email, month],
     300_000,
   );
+}
+
+// ---------------------------------------------------------------------------
+// Recorded calls and Vince's reviews
+// ---------------------------------------------------------------------------
+
+/** The list columns: no summary or invitees, which only one call's page needs. */
+const RECORDING_LIST =
+  "recording_id,title,recorded_by,started_at,duration_s,share_url,contact_id,matched_by,source,language,transcript_path,transcript_chars,indexed_at,appointment_id";
+
+export interface RecordingFilter {
+  q: string;
+  /** A rep's Fathom address, or "" for everyone. */
+  by: string;
+  page: number;
+}
+
+export function useRecordings(f: RecordingFilter): Loaded<Recording[]> {
+  return useQuery<Recording[]>(() => {
+    let q = supabase
+      .from("cockpit_sales_recordings")
+      .select(RECORDING_LIST)
+      .order("started_at", { ascending: false, nullsFirst: false })
+      .order("recording_id", { ascending: true })
+      .range(f.page * PAGE, f.page * PAGE + PAGE - 1);
+    if (f.by) q = q.eq("recorded_by", f.by);
+    const text = f.q
+      .trim()
+      .replace(/[,()*]/g, " ")
+      .trim();
+    if (text) q = q.ilike("title", `%${text}%`);
+    return q as unknown as Result<Recording[]>;
+  }, [f.q, f.by, f.page]);
+}
+
+export function useRecording(id: string): Loaded<Recording> {
+  return useQuery<Recording>(
+    () =>
+      id
+        ? supabase
+            .from("cockpit_sales_recordings")
+            .select("*")
+            .eq("recording_id", id)
+            .maybeSingle()
+        : none<Recording>(),
+    [id],
+  );
+}
+
+/** Reviews of these calls, or of this lead's calls, or by this rep; newest first. */
+export function useReviews(by: {
+  recordingIds?: string[];
+  contactId?: string;
+  repKey?: string;
+  all?: boolean;
+  limit?: number;
+}): Loaded<Review[]> {
+  const ids = (by.recordingIds ?? []).slice(0, 100);
+  const key = `${ids.join(",")}|${by.contactId ?? ""}|${by.repKey ?? ""}|${by.all ? 1 : 0}|${by.limit ?? 50}`;
+  return useQuery<Review[]>(() => {
+    if (!ids.length && !by.contactId && !by.repKey && !by.all)
+      return none<Review[]>();
+    let q = supabase
+      .from("cockpit_sales_reviews")
+      .select("*")
+      .order("call_at", { ascending: false, nullsFirst: false })
+      .limit(by.limit ?? 50);
+    if (ids.length) q = q.in("recording_id", ids);
+    if (by.contactId) q = q.eq("contact_id", by.contactId);
+    if (by.repKey) q = q.eq("rep_key", by.repKey);
+    return q;
+  }, [key]);
+}
+
+/** A call's transcript from the private bucket. */
+export async function loadTranscript(path: string): Promise<string> {
+  const { data, error } = await supabase.storage
+    .from("sales-calls")
+    .download(path);
+  if (error || !data)
+    throw new Error(error?.message ?? "the transcript file came back empty");
+  return await data.text();
 }
 
 /** Rates only, everyone with a seat. */

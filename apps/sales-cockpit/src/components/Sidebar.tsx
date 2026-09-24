@@ -5,6 +5,7 @@ import {
   FileText,
   Link2,
   type LucideIcon,
+  Mic,
   PhoneCall,
   ShieldCheck,
   Sun,
@@ -57,6 +58,7 @@ export const GROUPS: { label: string; items: Item[] }[] = [
     items: [
       { to: "/numbers", label: "Numbers", icon: ChartNoAxesColumn },
       { to: "/goals", label: "Goals", icon: Target },
+      { to: "/recordings", label: "Recordings", icon: Mic },
     ],
   },
   {

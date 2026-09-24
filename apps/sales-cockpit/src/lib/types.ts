@@ -220,6 +220,39 @@ export interface Recording {
   appointment_id: string | null;
   matched_by: string | null;
   indexed_at: string;
+  /** fathom (the desk's look-back), vault (the Obsidian copy), drive. */
+  source?: string | null;
+  language?: string | null;
+  people?: { name: string; email: string }[] | null;
+  summary?: string | null;
+  action_items?: string | null;
+  /** In the private bucket sales-calls. */
+  transcript_path?: string | null;
+  transcript_chars?: number | null;
+}
+
+/** One of Vince's reviews: his archive, or one the desk wrote since. */
+export interface Review {
+  id: string;
+  source_ref: string;
+  source: "vince-archive" | "desk";
+  recording_id: string | null;
+  maqsam_call_id: string | null;
+  contact_id: string | null;
+  call_type: "intro" | "demo" | null;
+  rep_name: string | null;
+  rep_key: string | null;
+  lead_name: string | null;
+  call_at: string | null;
+  reviewed_at: string;
+  model: string | null;
+  score: number | null;
+  score_max: number | null;
+  items: { name: string; score: number; max: number }[] | null;
+  pros: string | null;
+  feedback: string | null;
+  body: string;
+  joined_by: string | null;
 }
 
 export interface TeamMember {
