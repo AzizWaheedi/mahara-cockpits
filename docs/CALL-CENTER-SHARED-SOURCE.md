@@ -14,7 +14,7 @@ The CEO Calls view consumes `public.mahara_call_center_report` v1 in Creative Tr
 
 Dials are saved dispositions with notes; actual calls, connections, talk time, gaps and first-dial speed require provider evidence. The two-minute share includes all new leads; averages and medians include only measurable samples. The first actual caller supplies the lead's caller attribution and working-hours schedule; untouched or ambiguous leads remain unassigned/unverified.
 
-Confirmed bookings are main plus online calendars; provisional bookings are separate. Both use booking creation date and exclude replacement reschedules. Unknown calendars remain outside those two totals. Client-sheet outcomes supply shows, no-shows and closes; show rate uses recorded outcomes and close rate uses shown appointments. Project values keep their currencies; the source omits values whose currency is unknown and reports the limitation.
+Confirmed bookings are main plus online calendars; provisional bookings are separate. Both use booking creation date and exclude replacement reschedules. Unknown calendars remain outside those two totals. Client-sheet outcomes supply shows, no-shows and closes; show rate uses recorded outcomes and close rate uses shown appointments. Project values keep their currencies. Unknown-currency values may appear within a single client's total; the source withholds them when multiple clients would be combined and reports the limitation.
 
 Delivery remains a separate appointment-date cohort. Mahara's own B2B sales project and its metrics are unchanged. The global `cockpit_settings.working_hours` editor no longer drives the call center report. Current Team & Payroll schedules apply historically until effective-dated schedules and recorded breaks exist.
 
