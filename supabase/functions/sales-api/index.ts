@@ -25,6 +25,14 @@ import {
   redact,
   refuseMark,
   trimMessages,
+  type Channel,
+  dndFor,
+  mergeThreads,
+  sendBody,
+  stateOf,
+  type ThreadMessage,
+  toThread,
+  whatsappWindow,
   type Who,
 } from "./lib.ts";
 import {
@@ -167,7 +175,9 @@ async function ghl(
     let msg = text;
     try {
       const j = JSON.parse(text);
-      msg = String(j.message ?? j.msg ?? j.error ?? text);
+      // HighLevel's message is sometimes an object: {error, status}.
+      const m = j.message ?? j.msg ?? j.error ?? text;
+      msg = typeof m === "string" ? m : String((m as Row)?.error ?? (m as Row)?.message ?? JSON.stringify(m));
     } catch {
       // not JSON
     }
@@ -635,6 +645,217 @@ async function settingSave(who: Who, b: Row) {
   });
   await audit(who, "setting.save", "cockpit_sales_settings", key, before, value);
   return { setting: { key, value } };
+}
+
+// ---------------------------------------------------------------------------
+// Talking to a lead: HighLevel conversations on the sales sub-account
+// ---------------------------------------------------------------------------
+
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+const MAX_CHARS: Record<Channel, number> = { whatsapp: 4096, sms: 1600, email: 10000 };
+const CHANNEL_WORD: Record<Channel, string> = { whatsapp: "WhatsApp", sms: "SMS", email: "email" };
+
+function agoWords(iso: string | null): string {
+  if (!iso) return "never";
+  const h = (Date.now() - Date.parse(iso)) / 3_600_000;
+  if (h < 48) return `${Math.max(1, Math.round(h))} hours ago`;
+  return `${Math.round(h / 24)} days ago`;
+}
+
+/** The newest inbound WhatsApp message across the lead's conversations. */
+function lastWhatsappIn(convs: Row[], thread: ThreadMessage[]): string | null {
+  const times = [
+    ...convs.map(c => c.lastInboundWhatsappMessageDate ?? c.lastInboundWhatsAppMessageDate),
+    ...thread.filter(m => m.direction === "inbound" && m.channel === "whatsapp").map(m => m.at),
+  ]
+    .map(v => (v ? Date.parse(String(typeof v === "number" ? new Date(v).toISOString() : v)) : Number.NaN))
+    .filter(Number.isFinite);
+  return times.length ? new Date(Math.max(...times)).toISOString() : null;
+}
+
+async function messagingSwitch(): Promise<Record<Channel, boolean>> {
+  const v = (await setting<Row>("messaging")) ?? {};
+  return { whatsapp: v.whatsapp !== false, email: v.email !== false, sms: v.sms === true };
+}
+
+/**
+ * A lead's conversation as one thread: every HighLevel conversation the
+ * contact has, merged, newest first, 40 at a time each (`older` with the
+ * cursors reads further back), with what each channel allows right now.
+ */
+async function convoRead(_who: Who, b: Row) {
+  const id = cleanText(b.contact_id, 80);
+  if (!id) throw new Refusal("Which lead?");
+  const now = Date.now();
+  const [contactOut, convsOut, sends, switches] = await Promise.all([
+    ghl("GET", `/contacts/${enc(id)}`, undefined, "2021-07-28"),
+    ghl("GET", `/conversations/search?locationId=${LOCATION}&contactId=${enc(id)}&limit=20`),
+    svc(
+      `cockpit_sales_messages?contact_id=eq.${enc(id)}&select=id,request_id,channel,state,sent_by,source,ghl_message_id,error,created_at&order=created_at.desc&limit=50`,
+    ),
+    messagingSwitch(),
+  ]);
+  const c = ((contactOut as Row).contact ?? {}) as Row;
+  const convs = (((convsOut as Row).conversations ?? []) as Row[]).slice(0, 6);
+  const older = Boolean(b.older);
+  const cursors = (b.cursors ?? {}) as Record<string, string>;
+  const pages = await Promise.all(
+    convs.map(async cv => {
+      const cid = String(cv.id);
+      if (older && !cursors[cid]) return { cid, list: [] as ThreadMessage[], next: null as string | null };
+      const q = `limit=40${older && cursors[cid] ? `&lastMessageId=${enc(cursors[cid])}` : ""}`;
+      const m = await ghl("GET", `/conversations/${enc(cid)}/messages?${q}`);
+      const inner = ((m as Row).messages ?? {}) as Row;
+      const list = toThread(Array.isArray(inner.messages) ? inner.messages : (m as Row).messages, cid);
+      const next = inner.nextPage ? String(inner.lastMessageId ?? list.at(-1)?.id ?? "") || null : null;
+      return { cid, list, next };
+    }),
+  );
+  const thread = mergeThreads(pages.map(p => p.list), 160);
+  const window = whatsappWindow(lastWhatsappIn(convs, thread), now);
+  return {
+    contact: {
+      name: [c.firstName, c.lastName].filter(Boolean).join(" ") || c.contactName || null,
+      email: c.email ?? null,
+      phone: c.phone ?? null,
+      tags: c.tags ?? [],
+      dnd: c.dnd ?? null,
+      assigned_to: c.assignedTo ?? null,
+      source: c.source ?? null,
+    },
+    channels: {
+      whatsapp: { on: switches.whatsapp, dnd: dndFor(c, "whatsapp"), reachable: Boolean(c.phone), window },
+      email: { on: switches.email, dnd: dndFor(c, "email"), reachable: Boolean(c.email) },
+      sms: { on: switches.sms, dnd: dndFor(c, "sms"), reachable: Boolean(c.phone) },
+    },
+    thread,
+    cursors: Object.fromEntries(pages.filter(p => p.next).map(p => [p.cid, p.next])),
+    sends,
+    read_at: new Date(now).toISOString(),
+  };
+}
+
+/**
+ * Send one message to a lead now. Written first (request_id is unique, so a
+ * retry returns the first send and never sends twice), then sent, then read
+ * back from HighLevel for up to ten seconds, because a WhatsApp send
+ * HighLevel accepts can still fail at Meta.
+ */
+async function convoSend(who: Who, b: Row) {
+  const contactId = cleanText(b.contact_id, 80);
+  const channel = String(b.channel ?? "") as Channel;
+  const requestId = String(b.request_id ?? "");
+  const text = String(b.body ?? "").replace(/\r\n/g, "\n").trim();
+  if (!contactId) throw new Refusal("Which lead?");
+  if (!(channel in MAX_CHARS)) throw new Refusal("Send on WhatsApp or by email.");
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestId))
+    throw new Refusal("Reload the page and send again.");
+  if (!text) throw new Refusal("Write the message first.");
+  if (text.length > MAX_CHARS[channel])
+    throw new Refusal(`That is too long for ${CHANNEL_WORD[channel]} (${MAX_CHARS[channel]} characters at most).`);
+  const subject = channel === "email" ? cleanText(b.subject, 300) : null;
+  if (channel === "email" && !subject) throw new Refusal("An email needs a subject.");
+  const followupId = b.followup_id ? cleanText(b.followup_id, 40) : null;
+
+  const already = (await svc(`cockpit_sales_messages?request_id=eq.${enc(requestId)}&select=*`))[0];
+  if (already) {
+    if (already.contact_id === contactId && already.body === text && already.channel === channel)
+      return { message: already, repeated: true };
+    throw new Refusal("That send was already used for another message. Reload and send again.", 409);
+  }
+  if (!(await messagingSwitch())[channel])
+    throw new Refusal(`Sending by ${CHANNEL_WORD[channel]} is switched off in the cockpit.`, 409);
+  const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contactId)}&select=contact_id,name`))[0];
+  if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
+
+  const contact = (((await ghl("GET", `/contacts/${enc(contactId)}`, undefined, "2021-07-28")) as Row).contact ??
+    {}) as Row;
+  if (dndFor(contact, channel))
+    throw new Refusal(`This lead asked not to be contacted by ${CHANNEL_WORD[channel]} (do not disturb is on in HighLevel).`, 409);
+  if (channel === "email" && !contact.email) throw new Refusal("This lead has no email address in HighLevel.", 409);
+  if (channel !== "email" && !contact.phone) throw new Refusal("This lead has no phone number in HighLevel.", 409);
+  if (channel === "whatsapp") {
+    const convs = (((await ghl("GET", `/conversations/search?locationId=${LOCATION}&contactId=${enc(contactId)}&limit=20`)) as Row)
+      .conversations ?? []) as Row[];
+    const w = whatsappWindow(lastWhatsappIn(convs, []), Date.now());
+    if (!w.open)
+      throw new Refusal(
+        `WhatsApp only takes a free message within 24 hours of the lead's own last message; they last wrote ${agoWords(w.last_inbound_at)}. Email them instead, or wait for them to write.`,
+        409,
+      );
+  }
+
+  let row: Row;
+  try {
+    row = (await svc("cockpit_sales_messages", {
+      method: "POST",
+      body: {
+        request_id: requestId,
+        contact_id: contactId,
+        channel,
+        subject,
+        body: text,
+        source: followupId ? "followup" : "rep",
+        followup_id: followupId,
+        sent_by: who.email,
+        state: "sending",
+      },
+      prefer: "return=representation",
+    }))[0];
+  } catch (e) {
+    if (/23505|duplicate/.test(String((e as Error).message ?? e))) {
+      const twin = (await svc(`cockpit_sales_messages?request_id=eq.${enc(requestId)}&select=*`))[0];
+      return { message: twin, repeated: true };
+    }
+    throw e;
+  }
+
+  let out: Row;
+  try {
+    out = await ghl("POST", "/conversations/messages", sendBody(channel, contactId, text, subject));
+  } catch (e) {
+    const err = redact(String((e as Error).message ?? e));
+    await svc(`cockpit_sales_messages?id=eq.${row.id}`, {
+      method: "PATCH",
+      body: { state: "failed", error: err, updated_at: new Date().toISOString() },
+      prefer: "return=minimal",
+    });
+    await audit(who, "convo.send", "cockpit_sales_messages", String(row.id), null, { channel, state: "failed", error: err });
+    throw new Refusal(`HighLevel did not send it: ${err}`, 502);
+  }
+  const messageId = String(out.messageId ?? "");
+  let status = String(out.status ?? "pending");
+  let error: string | null = null;
+  // Read it back: HighLevel answers "pending" and Meta decides afterwards.
+  for (let i = 0; i < 5 && messageId; i++) {
+    await sleep(2000);
+    try {
+      const m = (await ghl("GET", `/conversations/messages/${enc(messageId)}`)) as Row;
+      const one = (m.message ?? m) as Row;
+      status = String(one.status ?? status);
+      const [shaped] = toThread([{ ...one, id: one.id ?? messageId }], String(out.conversationId ?? ""));
+      error = shaped?.error ?? null;
+      if (["delivered", "read", "failed", "undelivered", "opened"].includes(status)) break;
+    } catch {
+      break; // an email's id is not always readable this way; keep what we have
+    }
+  }
+  const state = stateOf(status === "pending" && !error ? "sent" : status);
+  const saved = (await svc(`cockpit_sales_messages?id=eq.${row.id}`, {
+    method: "PATCH",
+    body: {
+      state,
+      provider_status: status,
+      error: state === "failed" ? (error ?? "HighLevel marked it failed without a reason") : null,
+      ghl_message_id: messageId || null,
+      ghl_conversation_id: out.conversationId ?? null,
+      updated_at: new Date().toISOString(),
+    },
+    prefer: "return=representation",
+  }))[0];
+  await audit(who, "convo.send", "cockpit_sales_messages", String(row.id), null,
+    { channel, state, provider_status: status, followup_id: followupId }, { lead: lead.name ?? null });
+  return { message: saved };
 }
 
 // ---------------------------------------------------------------------------
@@ -1153,6 +1374,8 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   "setting.save": settingSave,
   "lead.live": leadLive,
   "ghl.users": ghlUsers,
+  "convo.read": convoRead,
+  "convo.send": convoSend,
   "goal.set": goalSet,
   "dial.agent": dialAgent,
   "dial.queue": dialQueue,

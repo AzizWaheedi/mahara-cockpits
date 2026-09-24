@@ -299,3 +299,140 @@ export function applyFills(
   }
   return { ok: true, deal: copy, changed };
 }
+
+// ---------------------------------------------------------------------------
+// Conversations: reading a lead's thread and sending on it
+// ---------------------------------------------------------------------------
+
+export type Channel = "whatsapp" | "sms" | "email";
+
+export interface ThreadMessage {
+  id: string;
+  conversation_id: string;
+  direction: "inbound" | "outbound" | null;
+  channel: Channel | "call" | "other";
+  type: string | null;
+  status: string | null;
+  at: string | null;
+  body: string | null;
+  subject: string | null;
+  attachments: string[];
+  error: string | null;
+  source: string | null;
+}
+
+/** HighLevel's messageType as the channel a rep would name. */
+export function channelOf(messageType: unknown): ThreadMessage["channel"] {
+  const t = String(messageType ?? "").toUpperCase();
+  if (t.includes("WHATSAPP")) return "whatsapp";
+  if (t.includes("EMAIL")) return "email";
+  if (t.includes("CALL") || t.includes("VOICEMAIL")) return "call";
+  if (t.includes("SMS")) return "sms";
+  return "other";
+}
+
+/** A failure's reason, wherever HighLevel put it on this message. */
+function errorOf(m: Record<string, unknown>): string | null {
+  const meta = (m.meta ?? {}) as Record<string, unknown>;
+  for (const v of [m.error, m.errorMessage, meta.error, meta.errorMessage, meta.failedReason, m.statusReason]) {
+    if (!v) continue;
+    const s = typeof v === "string" ? v : JSON.stringify(v);
+    if (s && s !== "{}") return cleanText(s, 300);
+  }
+  return null;
+}
+
+/** One conversation's messages in the cockpit's shape; only https attachments. */
+export function toThread(list: unknown, conversationId: string): ThreadMessage[] {
+  const arr = Array.isArray(list) ? list : [];
+  return arr.flatMap(x => {
+    const m = (x ?? {}) as Record<string, unknown>;
+    if (!m.id) return [];
+    const meta = (m.meta ?? {}) as Record<string, unknown>;
+    const email = (meta.email ?? {}) as Record<string, unknown>;
+    const direction = m.direction === "inbound" || m.direction === "outbound" ? m.direction : null;
+    return [{
+      id: String(m.id),
+      conversation_id: String(m.conversationId ?? conversationId),
+      direction,
+      channel: channelOf(m.messageType ?? m.type),
+      type: m.messageType ? String(m.messageType) : null,
+      status: m.status ? String(m.status) : null,
+      at: m.dateAdded ? String(m.dateAdded) : null,
+      body: cleanText(m.body, 4000) || null,
+      subject: cleanText(email.subject ?? m.subject, 300) || null,
+      attachments: (Array.isArray(m.attachments) ? m.attachments : [])
+        .map(a => String(a ?? ""))
+        .filter(a => /^https:\/\//.test(a))
+        .slice(0, 5),
+      error: m.status === "failed" || m.status === "undelivered" ? errorOf(m) : null,
+      source: m.source ? String(m.source) : null,
+    }];
+  });
+}
+
+/** Several conversations as one thread, newest first, each message once. */
+export function mergeThreads(lists: ThreadMessage[][], limit = 80): ThreadMessage[] {
+  const seen = new Set<string>();
+  const all: ThreadMessage[] = [];
+  for (const l of lists)
+    for (const m of l)
+      if (!seen.has(m.id)) {
+        seen.add(m.id);
+        all.push(m);
+      }
+  const t = (m: ThreadMessage) => (m.at ? Date.parse(m.at) : 0);
+  return all.sort((a, b) => t(b) - t(a)).slice(0, limit);
+}
+
+/**
+ * WhatsApp takes a free message only within 24 hours of the lead's last
+ * message to us; after that, only an approved template (through a
+ * HighLevel workflow, not this API).
+ */
+export function whatsappWindow(lastInboundAt: string | null | undefined, now: number): {
+  open: boolean;
+  closes_at: string | null;
+  last_inbound_at: string | null;
+} {
+  const t = lastInboundAt ? Date.parse(String(lastInboundAt)) : Number.NaN;
+  if (!Number.isFinite(t)) return { open: false, closes_at: null, last_inbound_at: null };
+  const closes = t + 24 * 3_600_000;
+  return { open: now < closes, closes_at: new Date(closes).toISOString(), last_inbound_at: new Date(t).toISOString() };
+}
+
+/** Do-not-disturb for one channel, as HighLevel records it on the contact. */
+export function dndFor(contact: Record<string, unknown>, channel: Channel): boolean {
+  if (contact.dnd === true) return true;
+  const key = channel === "whatsapp" ? "WhatsApp" : channel === "email" ? "Email" : "SMS";
+  const s = ((contact.dndSettings ?? {}) as Record<string, Record<string, unknown>>)[key];
+  return String(s?.status ?? "").toLowerCase() === "active";
+}
+
+/** A plain-text email as simple, escaped HTML: paragraphs and line breaks. */
+export function emailHtml(text: string): string {
+  const esc = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return text
+    .trim()
+    .split(/\n{2,}/)
+    .map(p => `<p dir="auto">${esc(p).replace(/\n/g, "<br>")}</p>`)
+    .join("\n");
+}
+
+/** The body HighLevel's POST /conversations/messages takes for one send. */
+export function sendBody(channel: Channel, contactId: string, text: string, subject?: string | null) {
+  if (channel === "email")
+    return { type: "Email", contactId, subject: String(subject ?? "").trim(), html: emailHtml(text), message: text };
+  return { type: channel === "whatsapp" ? "WhatsApp" : "SMS", contactId, message: text };
+}
+
+/** HighLevel's message status as the cockpit's send state. */
+export function stateOf(status: unknown): "sending" | "sent" | "delivered" | "read" | "failed" {
+  const s = String(status ?? "").toLowerCase();
+  if (["failed", "undelivered", "opt_out"].includes(s)) return "failed";
+  if (s === "read" || s === "opened" || s === "clicked") return "read";
+  if (s === "delivered") return "delivered";
+  if (["sent", "connected"].includes(s)) return "sent";
+  return "sending";
+}

@@ -1,13 +1,8 @@
 import { ArrowLeft, Copy, ExternalLink, Phone, ScrollText } from "lucide-react";
-import {
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import { type ReactNode, useEffect, useMemo } from "react";
 import { Link, useParams } from "react-router";
 import { AdOrigin } from "../components/AdOrigin";
+import { Conversation, useConversation } from "../components/Conversation";
 import {
   EmptyState,
   Failed,
@@ -20,7 +15,6 @@ import { LeadTimeline, type LiveMessage } from "../components/LeadTimeline";
 import { CrmLine, MarkControls } from "../components/MarkControls";
 import { NotesPanel } from "../components/NotesPanel";
 import { ProposalPanel } from "../components/ProposalPanel";
-import { api } from "../lib/api";
 import { useLead, useLeadActivity, useTeam } from "../lib/data";
 import {
   ago,
@@ -37,21 +31,6 @@ import type { CalendarRow, Lead, Me } from "../lib/types";
 
 const GHL_LOCATION = "7NI8yyJtwsh2OOWA5Icr";
 
-interface Live {
-  contact: { tags: string[]; dnd: boolean | null; assigned_to: string | null };
-  contact_error: string | null;
-  conversations: {
-    id: string;
-    type: string | null;
-    unread: number;
-    inbound_whatsapp_at: string | null;
-  }[];
-  conversations_error: string | null;
-  messages: LiveMessage[];
-  messages_error: string | null;
-  read_at: string;
-}
-
 const CLASS_TONE: Record<string, Tone> = {
   qualified: "good",
   unqualified: "neutral",
@@ -64,25 +43,24 @@ export default function LeadPage({ me }: { me: Me }) {
   const lead = useLead(contactId);
   const activity = useLeadActivity(contactId, lead.data?.phone8 ?? null);
   const team = useTeam();
-  const [live, setLive] = useState<Live | null>(null);
-  const [liveError, setLiveError] = useState<string | null>(null);
-
-  const loadLive = useCallback(async () => {
-    setLiveError(null);
-    try {
-      const out = await api<{ live: Live }>("lead.live", {
-        contact_id: contactId,
-      });
-      setLive(out.live);
-    } catch (e) {
-      setLiveError(String((e as Error).message ?? e));
-    }
-  }, [contactId]);
-
-  useEffect(() => {
-    setLive(null);
-    void loadLive();
-  }, [loadLive]);
+  // One read of HighLevel feeds the conversation, the timeline's messages,
+  // the owner and the do-not-disturb flag.
+  const convo = useConversation(contactId);
+  const live = convo.data;
+  const timelineMessages: LiveMessage[] = useMemo(
+    () =>
+      convo.thread.map(m => ({
+        id: m.id,
+        direction: m.direction,
+        type: m.type,
+        status: m.status,
+        at: m.at,
+        body: m.body,
+        has_attachments: m.attachments.length > 0,
+        source: m.source,
+      })),
+    [convo.thread],
+  );
 
   // While a proposal is being written, look again every 15 seconds.
   const drafting = (activity.data?.proposals ?? []).some(
@@ -137,11 +115,6 @@ export default function LeadPage({ me }: { me: Me }) {
     )[0];
   const lastDemo = appointments.find(r => r.call_type === "demo");
   const owed = appointments.filter(r => r.needs_mark);
-  const whatsappOpen = live?.conversations.some(
-    c =>
-      c.inbound_whatsapp_at &&
-      Date.now() - Date.parse(c.inbound_whatsapp_at) < 24 * 3_600_000,
-  );
 
   return (
     <Page>
@@ -262,39 +235,10 @@ export default function LeadPage({ me }: { me: Me }) {
         </div>
 
         <div className="min-w-0 space-y-5 xl:col-span-5">
-          <SectionCard
-            title="Everything so far"
-            side={
-              live ? (
-                <span className="muted text-xs">
-                  messages read {ago(live.read_at)}
-                </span>
-              ) : null
-            }
-          >
-            {liveError ? (
-              <p className="callout-warn mb-3 rounded-[var(--radius-md)] border px-3 py-2 text-xs">
-                The conversation could not be read from HighLevel: {liveError}{" "}
-                <button type="button" onClick={loadLive} className="underline">
-                  Try again
-                </button>
-              </p>
-            ) : !live ? (
-              <p className="muted mb-3 text-xs">
-                Reading the conversation from HighLevel…
-              </p>
-            ) : live.messages_error || live.conversations_error ? (
-              <p className="callout-warn mb-3 rounded-[var(--radius-md)] border px-3 py-2 text-xs">
-                Part of the conversation could not be read:{" "}
-                {live.messages_error ?? live.conversations_error}
-              </p>
-            ) : null}
-            {live && !whatsappOpen ? (
-              <p className="muted mb-3 text-xs">
-                The lead has not written on WhatsApp in the last 24 hours, so
-                WhatsApp will only take an approved template.
-              </p>
-            ) : null}
+          <SectionCard title="Conversation">
+            <Conversation contactId={l.contact_id} convo={convo} />
+          </SectionCard>
+          <SectionCard title="Everything so far">
             {activity.error ? (
               <Failed
                 what="This lead's history"
@@ -307,7 +251,7 @@ export default function LeadPage({ me }: { me: Me }) {
                 dials={a?.dials ?? []}
                 deals={a?.deals ?? []}
                 proposals={a?.proposals ?? []}
-                messages={live?.messages ?? []}
+                messages={timelineMessages}
               />
             )}
           </SectionCard>
