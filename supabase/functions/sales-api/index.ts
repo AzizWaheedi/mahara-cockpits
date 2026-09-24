@@ -638,6 +638,71 @@ async function settingSave(who: Who, b: Row) {
 }
 
 // ---------------------------------------------------------------------------
+// Goals by the month
+// ---------------------------------------------------------------------------
+
+const GOAL_METRICS = ["booked", "shown", "closes", "cash", "dials"] as const;
+
+/**
+ * One month's goal or forecast for one measure, for one B2B rep (the same
+ * person_key the scorecards use, so goals can be set before a rep has a
+ * seat). A manager sets goals; the rep themself, or a manager, puts the
+ * forecast beside it. A blank value clears it, and a row left with neither
+ * is removed.
+ */
+async function goalSet(who: Who, b: Row) {
+  const rep = cleanText(b.rep, 60);
+  const month = String(b.month ?? "");
+  const metric = String(b.metric ?? "");
+  const field = String(b.field ?? "");
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new Refusal("Which month? Give it as 2026-09.");
+  if (!(GOAL_METRICS as readonly string[]).includes(metric)) throw new Refusal("That measure has no goal.");
+  if (field !== "goal" && field !== "forecast") throw new Refusal("Set a goal or a forecast.");
+  if (field === "goal") needManager(who);
+  else if (!who.manager && rep !== String(who.b2b_rep_id ?? ""))
+    throw new Refusal("You can put a forecast for yourself only.", 403);
+  const first = `${month}-01`;
+  const t = Date.parse(`${first}T00:00:00Z`);
+  const now = Date.now();
+  if (t < now - 740 * 86_400_000 || t > now + 100 * 86_400_000)
+    throw new Refusal("Goals go from two years back to three months ahead.");
+  if (!/^[0-9a-f-]{36}$/.test(rep)) throw new Refusal("Whose goal?");
+  const known = (await svc(`cockpit_sales_reps?id=eq.${enc(rep)}&select=id,display_name`))[0];
+  if (!known) throw new Refusal("That rep is not in B2B's rep list.", 404);
+
+  let value: number | null = null;
+  const raw = b.value;
+  if (raw !== null && raw !== undefined && String(raw).trim() !== "") {
+    value = Number(String(raw).replace(/,/g, "").trim());
+    if (!Number.isFinite(value) || value < 0 || value > 10_000_000) throw new Refusal("Type a number of 0 or more.");
+    if (metric !== "cash" && !Number.isInteger(value)) throw new Refusal("Counts are whole numbers.");
+  }
+
+  const key = `person_key=eq.${enc(rep)}&month=eq.${first}&metric=eq.${metric}`;
+  const before = (await svc(`cockpit_sales_goals?${key}&select=*`))[0] ?? null;
+  const at = new Date().toISOString();
+  const patch =
+    field === "goal"
+      ? { goal: value, goal_by: who.email, goal_at: at }
+      : { forecast: value, forecast_by: who.email, forecast_at: at };
+  // PostgREST updates only the columns sent, so the other field is kept.
+  let row: Row | null = (await svc("cockpit_sales_goals?on_conflict=person_key,month,metric", {
+    method: "POST",
+    body: { person_key: rep, month: first, metric, ...patch },
+    prefer: "resolution=merge-duplicates,return=representation",
+  }))[0] ?? null;
+  if (row && row.goal === null && row.forecast === null) {
+    await svc(`cockpit_sales_goals?${key}`, { method: "DELETE", prefer: "return=minimal" });
+    row = null;
+  }
+  await audit(who, "goal.set", "cockpit_sales_goals", `${rep}|${month}|${metric}`, before, row, {
+    field,
+    rep_name: known.display_name ?? null,
+  });
+  return { goal: row };
+}
+
+// ---------------------------------------------------------------------------
 // Live reads from HighLevel
 // ---------------------------------------------------------------------------
 
@@ -732,22 +797,41 @@ async function maqsam(path: string, method = "GET", values: Record<string, strin
   return d;
 }
 
-/** The rep's Maqsam seat, which must be free to take an outgoing call. */
-async function maqsamReady(email: string): Promise<void> {
+/** The Maqsam agent with this address, or null when Maqsam has none. */
+async function findAgent(email: string): Promise<Row | null> {
   for (let page = 1; page <= 5; page++) {
     const d = await maqsam(`/v1/agents/page/${page}`);
     const list = (Array.isArray(d.message) ? d.message : []) as Row[];
     const a = list.find(x => String(x.email ?? "").toLowerCase() === email.toLowerCase());
-    if (a) {
-      if (!a.active || !a.outgoingEnabled)
-        throw new Refusal("Your Maqsam seat is switched off or cannot call out. Ask Aziz to turn it on.", 409);
-      if (a.state !== "available")
-        throw new Refusal("Open the Maqsam softphone and set yourself Available, then call again.", 409);
-      return;
-    }
+    if (a) return a;
     if (!list.length) break;
   }
-  throw new Refusal(`No Maqsam seat has the address ${email}. Ask Aziz to add it on the Team page or in Maqsam.`, 409);
+  return null;
+}
+
+/** The rep's Maqsam seat, which must be free to take an outgoing call. */
+async function maqsamReady(email: string): Promise<void> {
+  const a = await findAgent(email);
+  if (!a)
+    throw new Refusal(`No Maqsam seat has the address ${email}. Ask Aziz to add it on the Team page or in Maqsam.`, 409);
+  if (!a.active || !a.outgoingEnabled)
+    throw new Refusal("Your Maqsam seat is switched off or cannot call out. Ask Aziz to turn it on.", 409);
+  if (a.state !== "available")
+    throw new Refusal("Open the Maqsam softphone and set yourself Available, then call again.", 409);
+}
+
+/**
+ * The caller's Maqsam seat as the dialer shows it before anyone presses
+ * Call. Read-only; a state that stops calls is an answer, not an error.
+ */
+async function dialAgent(who: Who) {
+  const email = String(who.maqsam_email ?? "").trim();
+  if (!email) return { email: null, from: null, ready: false, state: "no_address" };
+  const a = await findAgent(email);
+  const from = who.maqsam_from ?? null;
+  if (!a) return { email, from, ready: false, state: "not_found" };
+  const state = !a.active ? "switched_off" : !a.outgoingEnabled ? "no_outgoing" : String(a.state ?? "unknown");
+  return { email, from, ready: state === "available", state };
 }
 
 const ms = (v: unknown) => {
@@ -1069,6 +1153,8 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   "setting.save": settingSave,
   "lead.live": leadLive,
   "ghl.users": ghlUsers,
+  "goal.set": goalSet,
+  "dial.agent": dialAgent,
   "dial.queue": dialQueue,
   "dial.call": dialCall,
   "dial.save": dialSave,

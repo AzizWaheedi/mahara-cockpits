@@ -24,6 +24,7 @@ const DialerPage = lazy(() => import("./pages/DialerPage"));
 const ProposalsPage = lazy(() => import("./pages/ProposalsPage"));
 const ProposalPage = lazy(() => import("./pages/ProposalPage"));
 const NumbersPage = lazy(() => import("./pages/NumbersPage"));
+const GoalsPage = lazy(() => import("./pages/GoalsPage"));
 const LinksPage = lazy(() => import("./pages/LinksPage"));
 const TeamPage = lazy(() => import("./pages/TeamPage"));
 
@@ -233,6 +234,7 @@ export function Seated({
               <Route path="/proposals" element={<ProposalsPage me={me} />} />
               <Route path="/proposal/:id" element={<ProposalPage me={me} />} />
               <Route path="/numbers" element={<NumbersPage me={me} />} />
+              <Route path="/goals" element={<GoalsPage me={me} />} />
               <Route path="/links" element={<LinksPage me={me} />} />
               <Route
                 path="/team"

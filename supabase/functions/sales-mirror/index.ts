@@ -41,6 +41,10 @@ import {
   scorecardRows,
   scorecardSql,
   scorecardWindows,
+  monthWindows,
+  applyVoids,
+  voidedDealsSql,
+  type VoidedDeal,
 } from "./lib.ts";
 
 type Row = Record<string, unknown>;
@@ -50,6 +54,7 @@ const DAY = 24 * HOUR;
 const FULL_LEADS_EVERY = 6 * HOUR;
 const FULL_CALLS_EVERY = 30 * 60_000;
 const SCORECARDS_EVERY = 15 * 60_000;
+const MONTHS_EVERY = 6 * 3_600_000;
 const LEAD_PAGE = 1000;
 const GHL = "https://services.leadconnectorhq.com";
 // HighLevel sits behind Cloudflare, which refuses a request with no
@@ -63,6 +68,7 @@ interface State {
   calls_full_at?: string | null;
   dials_since?: string | null;
   scorecards_at?: string | null;
+  months_at?: string | null;
 }
 
 function env(name: string): string {
@@ -375,11 +381,24 @@ async function mirrorDials(state: State, at: string, now: number): Promise<numbe
 
 async function mirrorScorecards(state: State, at: string, now: number): Promise<number> {
   if (!older(state.scorecards_at, SCORECARDS_EVERY, now)) return 0;
+  // The running month goes with the others every fifteen minutes; the eleven
+  // closed months before it every six hours (a late mark or deal still
+  // moves them, just not often).
+  const closed = older(state.months_at, MONTHS_EVERY, now);
+  const months = monthWindows(now).filter(w => w.current || closed);
+  // Voided deals come out of every window (B2B's scorecard still counts them).
+  const [voids, reps] = await Promise.all([b2b(voidedDealsSql()), b2b(repsSql())]);
   let n = 0;
-  for (const w of scorecardWindows(now)) {
+  for (const w of [...scorecardWindows(now), ...months]) {
     const out = await b2b(scorecardSql(w.from, w.to));
     const raw = out[0]?.payload;
-    const list = typeof raw === "string" ? JSON.parse(raw) : raw;
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    const list = applyVoids(
+      Array.isArray(parsed) ? (parsed as Record<string, unknown>[]) : [],
+      voids as unknown as VoidedDeal[],
+      reps as unknown as { id: string; closer_aliases: string[] | null }[],
+      w,
+    );
     const rows = scorecardRows(w, list, at);
     n += await upsert("cockpit_sales_scorecards", "window_key,person_key", rows);
     // Anyone who dropped out of this window since the last read.
@@ -389,6 +408,7 @@ async function mirrorScorecards(state: State, at: string, now: number): Promise<
     );
   }
   state.scorecards_at = at;
+  if (closed) state.months_at = at;
   return n;
 }
 

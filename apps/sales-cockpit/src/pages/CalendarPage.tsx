@@ -123,10 +123,11 @@ function chipFor(r: CalendarRow, now: number): { tone: Tone; label: string } {
 
 export default function CalendarPage({ me }: { me: Me }) {
   const now = useNow();
-  const { scope, ScopeSwitch } = useScope(me);
-  const mine = scope === "mine" ? (me.ghl_user_id ?? "__none__") : null;
-  const team = scope === "team";
-  const unlinked = scope === "mine" && !me.ghl_user_id;
+  const { view: whose, ScopeSwitch } = useScope(me, { people: true });
+  const mine = whose.ghl;
+  const team = whose.kind === "team";
+  const unlinked = whose.kind === "mine" && !me.ghl_user_id;
+  const scope = whose.kind === "person" ? `rep:${whose.repId}` : whose.kind;
 
   const [params, setParams] = useSearchParams();
   const view = toView(params.get("view"));

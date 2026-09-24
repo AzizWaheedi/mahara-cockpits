@@ -15,7 +15,10 @@ export interface Me {
   ghl_user_id?: string | null;
   b2b_rep_id?: string | null;
   maqsam_email?: string | null;
+  /** "seat" when the seat names it, "b2b" when it comes from B2B's rep directory. */
+  maqsam_from?: "seat" | "b2b" | null;
   fathom_email?: string | null;
+  fathom_from?: "seat" | "b2b" | null;
   slack_user_id?: string | null;
 }
 

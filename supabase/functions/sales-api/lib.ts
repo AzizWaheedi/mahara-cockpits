@@ -31,7 +31,11 @@ export interface Who {
   name?: string | null;
   role?: string | null;
   ghl_user_id?: string | null;
+  b2b_rep_id?: string | null;
   maqsam_email?: string | null;
+  /** "seat" when the seat names it, "b2b" when it comes from the rep directory. */
+  maqsam_from?: "seat" | "b2b" | null;
+  fathom_email?: string | null;
 }
 
 export interface Appointment {

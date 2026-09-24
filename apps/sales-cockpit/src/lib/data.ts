@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { GoalRow } from "./goals";
 import { supabase } from "./supabase";
 import type {
   BoardRow,
@@ -402,6 +403,70 @@ export function useScoreRows(windowKey: WindowKey): Loaded<ScoreRow[]> {
         .eq("window_key", windowKey),
     [windowKey],
     120_000,
+  );
+}
+
+/**
+ * B2B's scorecard by Kuwait month (window keys "m2026-09" and back a year),
+ * for one rep or, for a manager, everyone. Voided deals are already out.
+ */
+export function useMonthCards(
+  rep: string | null,
+  month?: string,
+): Loaded<ScoreRow[]> {
+  return useQuery<ScoreRow[]>(
+    () => {
+      let q = supabase
+        .from("cockpit_sales_scorecards")
+        .select("*")
+        .like("window_key", month ? `m${month}` : "m2%");
+      if (rep) q = q.eq("person_key", rep);
+      return q.order("window_key", { ascending: false }).limit(1000);
+    },
+    [rep, month],
+    300_000,
+  );
+}
+
+/** Monthly goals and forecasts from `fromMonth` on: one rep's, or all a manager may read. */
+export function useGoalRows(
+  rep: string | null,
+  fromMonth: string,
+  toMonth?: string,
+): Loaded<GoalRow[]> {
+  return useQuery<GoalRow[]>(() => {
+    let q = supabase
+      .from("cockpit_sales_goals")
+      .select("*")
+      .gte("month", `${fromMonth}-01`);
+    if (toMonth) q = q.lte("month", `${toMonth}-01`);
+    if (rep) q = q.eq("person_key", rep);
+    return q.order("month", { ascending: false }).limit(1000);
+  }, [rep, fromMonth, toMonth]);
+}
+
+export interface DialMonth {
+  agent_email: string;
+  month: string;
+  outbound: number;
+  connected: number;
+}
+
+/** Outbound Maqsam dials per address per month: one address, or everyone's for one month. */
+export function useDialMonths(
+  email: string | null,
+  month?: string,
+): Loaded<DialMonth[]> {
+  return useQuery<DialMonth[]>(
+    () => {
+      if (!email && !month) return none<DialMonth[]>();
+      let q = supabase.from("cockpit_sales_dials_monthly").select("*");
+      if (email) q = q.eq("agent_email", email.toLowerCase());
+      if (month) q = q.eq("month", month);
+      return q.limit(1000);
+    },
+    [email, month],
+    300_000,
   );
 }
 

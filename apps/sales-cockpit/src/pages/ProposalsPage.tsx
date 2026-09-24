@@ -10,7 +10,7 @@ import type { Me } from "../lib/types";
 
 /** Every proposal in flight: the closer's own, or the team's for a manager. */
 export default function ProposalsPage({ me }: { me: Me }) {
-  const { scope, ScopeSwitch } = useScope(me);
+  const { scope, ScopeSwitch } = useScope(me, { label: "Whose proposals" });
   const proposals = useProposals(scope === "mine" ? (me.email ?? "") : null);
   const ids = (proposals.data ?? [])
     .map(p => p.contact_id)

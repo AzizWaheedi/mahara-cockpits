@@ -213,6 +213,93 @@ export function dealsSql(): string {
 from public.closed_deals as d`;
 }
 
+/** Deals B2B has voided, with what the scorecard attributes them by. */
+export function voidedDealsSql(): string {
+  return `select cd.response_id, cd.closer, cd.submitted_at,
+  cd.contracted_revenue, cd.cash_collected, cd.new_mrr
+from public.closed_deals as cd
+where exists (
+  select 1 from public.record_voids as v
+   where v.entity = 'closed_deal' and v.record_id = cd.response_id
+)`;
+}
+
+export interface VoidedDeal {
+  response_id: string;
+  closer: string | null;
+  submitted_at: string;
+  contracted_revenue: number | string | null;
+  cash_collected: number | string | null;
+  new_mrr: number | string | null;
+}
+
+const n0 = (v: unknown) => {
+  const x = Number(v);
+  return Number.isFinite(x) ? x : 0;
+};
+
+/**
+ * Take voided deals out of B2B's scorecard rows for one window.
+ *
+ * B2B's b2b_rep_scorecard counts every row of closed_deals, voided or not
+ * (August 2026: 12 closes and $6,500 there, 10 and $5,000 without the two
+ * voids). Voids are attributed exactly as the scorecard attributes deals:
+ * the Riyadh day the form was submitted, and the rep whose closer_aliases
+ * hold the deal's closer name, else "unattributed". The row keeps B2B's own
+ * figures under `b2b` and what was taken out under `voided`, so a page can
+ * say how and why it differs from the CEO cockpit.
+ */
+export function applyVoids(
+  rows: Record<string, unknown>[],
+  voids: VoidedDeal[],
+  reps: { id: string; closer_aliases: string[] | null }[],
+  w: { from: string; to: string },
+): Record<string, unknown>[] {
+  const byPerson = new Map<string, { closes: number; revenue: number; cash: number; mrr: number }>();
+  for (const d of voids) {
+    const day = new Date(Date.parse(d.submitted_at) + 3 * 3_600_000).toISOString().slice(0, 10);
+    if (!(day >= w.from && day <= w.to)) continue;
+    const name = String(d.closer ?? "").trim().toLowerCase();
+    const matches = reps.filter(r => (r.closer_aliases ?? []).some(a => String(a).trim().toLowerCase() === name));
+    // The scorecard's left join counts a deal once per matching rep.
+    for (const key of matches.length ? matches.map(r => r.id) : ["unattributed"]) {
+      const t = byPerson.get(key) ?? { closes: 0, revenue: 0, cash: 0, mrr: 0 };
+      t.closes += 1;
+      t.revenue += n0(d.contracted_revenue);
+      t.cash += n0(d.cash_collected);
+      t.mrr += n0(d.new_mrr);
+      byPerson.set(key, t);
+    }
+  }
+  return rows.map(r => {
+    const v = byPerson.get(String(r.person_key ?? ""));
+    if (!v) return r;
+    const closes = Math.max(0, n0(r.closes) - v.closes);
+    const revenue = Math.max(0, n0(r.revenue) - v.revenue);
+    const cash = Math.max(0, n0(r.cash_collected) - v.cash);
+    const mrr = Math.max(0, n0(r.new_mrr) - v.mrr);
+    const qualified = n0(r.demos_qualified);
+    return {
+      ...r,
+      closes,
+      revenue: Math.round(revenue * 100) / 100,
+      cash_collected: Math.round(cash * 100) / 100,
+      new_mrr: Math.round(mrr * 100) / 100,
+      close_rate: qualified > 0 ? Math.round((1000 * closes) / qualified) / 10 : null,
+      avg_deal: closes > 0 ? Math.round(revenue / closes) : null,
+      b2b: {
+        closes: r.closes ?? null,
+        revenue: r.revenue ?? null,
+        cash_collected: r.cash_collected ?? null,
+        new_mrr: r.new_mrr ?? null,
+        close_rate: r.close_rate ?? null,
+        avg_deal: r.avg_deal ?? null,
+      },
+      voided: { closes: v.closes, revenue: v.revenue, cash_collected: v.cash, new_mrr: v.mrr },
+    };
+  });
+}
+
 export function repsSql(): string {
   return `select id, display_name, role, ghl_user_id,
   coalesce(closer_aliases, '{}') as closer_aliases, is_active, maqsam_email, fathom_email
@@ -255,6 +342,27 @@ export function scorecardWindows(
     { key: "d30", from: addDays(today, -29), to: today },
     { key: "d90", from: addDays(today, -89), to: today },
   ];
+}
+
+/**
+ * One scorecard window per Kuwait month, newest first: the current month
+ * up to today (key "m2026-09"), then `back` whole months before it. The
+ * Goals page reads these for "past numbers" against each month's goal.
+ */
+export function monthWindows(
+  nowMs: number,
+  back = 11,
+): { key: string; from: string; to: string; current: boolean }[] {
+  const today = kuwaitDay(nowMs);
+  const out: { key: string; from: string; to: string; current: boolean }[] = [];
+  let start = `${today.slice(0, 8)}01`;
+  let end = today;
+  for (let i = 0; i <= back; i++) {
+    out.push({ key: `m${start.slice(0, 7)}`, from: start, to: end, current: i === 0 });
+    end = addDays(start, -1);
+    start = `${end.slice(0, 8)}01`;
+  }
+  return out;
 }
 
 /**

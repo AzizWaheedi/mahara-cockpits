@@ -1,54 +1,105 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { useReps } from "../lib/data";
 import type { Me } from "../lib/types";
 
 /**
- * Mine or the team's. A rep only ever sees their own calls; a manager
- * chooses, and the choice is remembered on this device.
+ * Whose calls a page shows. Everyone opens on their own (Aziz, 2026-09-24:
+ * "for today, it should only show the calls that are assigned to whoever
+ * that person is specifically"). A manager can switch to the whole team or
+ * to one rep, to see their day as they see it; the choice is remembered on
+ * this device.
  */
-const KEY = "sales_scope";
+const KEY = "sales_scope_v2";
 
-export function useScope(me: Me) {
-  const [scope, setScope] = useState<"mine" | "team">(() => {
+export interface ScopeView {
+  kind: "mine" | "team" | "person";
+  /** The HighLevel user whose calls to show; null means everyone's. */
+  ghl: string | null;
+  /** The B2B rep behind the scorecard rows; null means the team. */
+  repId: string | null;
+  /** "you", "the team" or the rep's name, for sentences. */
+  label: string;
+}
+
+export function useScope(
+  me: Me,
+  opts: { people?: boolean; label?: string } = {},
+) {
+  const reps = useReps();
+  const [choice, setChoice] = useState<string>(() => {
     if (!me.manager) return "mine";
     try {
-      const s = localStorage.getItem(KEY);
-      if (s === "mine" || s === "team") return s;
+      return localStorage.getItem(KEY) || "mine";
     } catch {
-      // storage off: fall through to the default
+      return "mine";
     }
-    return "team";
   });
-  const effective = me.manager ? scope : "mine";
-  const pick = (s: "mine" | "team") => {
-    setScope(s);
+
+  // Reps a manager can look through: active, with a HighLevel user to own
+  // calls, and not the manager themself.
+  const others = useMemo(
+    () =>
+      (reps.data ?? [])
+        .filter(
+          r => r.is_active && r.ghl_user_id && r.ghl_user_id !== me.ghl_user_id,
+        )
+        .sort((a, b) =>
+          String(a.display_name).localeCompare(String(b.display_name)),
+        ),
+    [reps.data, me.ghl_user_id],
+  );
+
+  let view: ScopeView = {
+    kind: "mine",
+    ghl: me.ghl_user_id ?? "__none__",
+    repId: me.b2b_rep_id ?? null,
+    label: "you",
+  };
+  if (me.manager && choice === "team")
+    view = { kind: "team", ghl: null, repId: null, label: "the team" };
+  else if (me.manager && opts.people && choice.startsWith("rep:")) {
+    const r = others.find(x => x.id === choice.slice(4));
+    if (r)
+      view = {
+        kind: "person",
+        ghl: r.ghl_user_id,
+        repId: r.id,
+        label: r.display_name ?? "this rep",
+      };
+  }
+
+  const pick = (v: string) => {
+    setChoice(v);
     try {
-      localStorage.setItem(KEY, s);
+      localStorage.setItem(KEY, v);
     } catch {
       // it still works, it just forgets
     }
   };
+
+  const current = view.kind === "person" ? `rep:${view.repId}` : view.kind;
   const ScopeSwitch = me.manager ? (
-    <div
-      className="raised inline-flex rounded-[var(--radius-md)] p-0.5 text-sm"
-      role="group"
-      aria-label="Whose calls"
-    >
-      {(["mine", "team"] as const).map(s => (
-        <button
-          key={s}
-          type="button"
-          aria-pressed={effective === s}
-          onClick={() => pick(s)}
-          className={`rounded-[calc(var(--radius-md)-2px)] px-3 py-1 ${
-            effective === s
-              ? "bg-[color:var(--card)] font-medium shadow-sm"
-              : "muted"
-          }`}
-        >
-          {s === "mine" ? "Mine" : "Team"}
-        </button>
-      ))}
-    </div>
+    <label className="inline-flex items-center gap-2 text-sm">
+      <span className="muted">{opts.label ?? "Whose calls"}</span>
+      <select
+        value={current}
+        onChange={e => pick(e.target.value)}
+        className="h-8 rounded-[var(--radius-md)] border hairline bg-[color:var(--card)] px-2 text-sm"
+      >
+        <option value="mine">Mine</option>
+        <option value="team">The whole team</option>
+        {opts.people && others.length ? (
+          <optgroup label="One rep">
+            {others.map(r => (
+              <option key={r.id} value={`rep:${r.id}`}>
+                {r.display_name}
+              </option>
+            ))}
+          </optgroup>
+        ) : null}
+      </select>
+    </label>
   ) : null;
-  return { scope: effective, ScopeSwitch };
+
+  return { scope: view.kind, view, ScopeSwitch };
 }

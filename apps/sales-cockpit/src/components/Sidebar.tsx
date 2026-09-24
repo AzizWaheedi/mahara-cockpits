@@ -8,6 +8,7 @@ import {
   PhoneCall,
   ShieldCheck,
   Sun,
+  Target,
   UserSearch,
   UsersRound,
 } from "lucide-react";
@@ -53,7 +54,10 @@ export const GROUPS: { label: string; items: Item[] }[] = [
   },
   {
     label: "How it is going",
-    items: [{ to: "/numbers", label: "Numbers", icon: ChartNoAxesColumn }],
+    items: [
+      { to: "/numbers", label: "Numbers", icon: ChartNoAxesColumn },
+      { to: "/goals", label: "Goals", icon: Target },
+    ],
   },
   {
     label: "Kit",

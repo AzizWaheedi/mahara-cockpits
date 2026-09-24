@@ -17,7 +17,7 @@ import {
   StatusChip,
 } from "../components/kit";
 import { MarkControls } from "../components/MarkControls";
-import { useScope } from "../components/Scope";
+import { type ScopeView, useScope } from "../components/Scope";
 import {
   useCalendar,
   useLeadsById,
@@ -46,8 +46,8 @@ import type { CalendarRow, InboxRow, Lead, Me } from "../lib/types";
 /** The rep's day: where they are, what they owe, what comes next. */
 export default function TodayPage({ me }: { me: Me }) {
   const now = useNow();
-  const { scope, ScopeSwitch } = useScope(me);
-  const mine = scope === "mine" ? (me.ghl_user_id ?? "__none__") : null;
+  const { scope, view, ScopeSwitch } = useScope(me, { people: true });
+  const mine = view.ghl;
 
   const today = kuwaitDay(now);
   const dayStart = kuwaitMidnight(today).toISOString();
@@ -73,7 +73,7 @@ export default function TodayPage({ me }: { me: Me }) {
     [briefs.data],
   );
 
-  const unlinked = scope === "mine" && !me.ghl_user_id;
+  const unlinked = view.kind === "mine" && !me.ghl_user_id;
   const dateLine = new Date(now).toLocaleDateString("en-GB", {
     timeZone: "Asia/Kuwait",
     weekday: "long",
@@ -111,7 +111,8 @@ export default function TodayPage({ me }: { me: Me }) {
         )}
         {!todays.loading && !todays.error && !(todays.data ?? []).length ? (
           <p className="muted mt-3 text-sm">
-            No calls on the calendar today{scope === "mine" ? " for you" : ""}.
+            No calls on the calendar today
+            {view.kind === "team" ? "" : ` for ${view.label}`}.
           </p>
         ) : null}
       </section>
@@ -124,7 +125,7 @@ export default function TodayPage({ me }: { me: Me }) {
             reload={owed.reload}
             team={scope === "team"}
           />
-          <WeekCard me={me} scope={scope} />
+          <WeekCard me={me} view={view} />
         </div>
         <div className="min-w-0 space-y-5 lg:col-span-5">
           <SectionCard
@@ -396,19 +397,23 @@ function NewLeadsCard({
 }
 
 /** This week against the weekly goal, from B2B's scorecard. */
-function WeekCard({ me, scope }: { me: Me; scope: "mine" | "team" }) {
+function WeekCard({ me, view }: { me: Me; view: ScopeView }) {
   const week = useScoreRows("week");
   const people = usePeople();
-  const myRow = (week.data ?? []).find(r => r.person_key === me.b2b_rep_id);
-  const rows = scope === "team" ? (week.data ?? []) : myRow ? [myRow] : [];
+  const theirRow = (week.data ?? []).find(r => r.person_key === view.repId);
+  const rows =
+    view.kind === "team" ? (week.data ?? []) : theirRow ? [theirRow] : [];
   const sum = (
     k: "calls_scheduled" | "calls_shown" | "closes" | "cash_collected",
   ) =>
     rows.length ? rows.reduce((a, r) => a + Number(r.row[k] ?? 0), 0) : null;
   const goals =
-    scope === "mine"
+    view.kind === "mine"
       ? (people.data ?? []).find(p => p.email === me.email)?.goals?.weekly
-      : undefined;
+      : view.kind === "person"
+        ? (people.data ?? []).find(p => p.b2b_rep_id === view.repId)?.goals
+            ?.weekly
+        : undefined;
   const pace = (actual: number | null, goal?: number) => {
     if (actual === null || !goal) return undefined;
     return actual >= goal ? (
@@ -427,7 +432,7 @@ function WeekCard({ me, scope }: { me: Me; scope: "mine" | "team" }) {
         />
       </SectionCard>
     );
-  if (scope === "mine" && !me.b2b_rep_id)
+  if (view.kind === "mine" && !me.b2b_rep_id)
     return (
       <SectionCard title="This week">
         <EmptyState
