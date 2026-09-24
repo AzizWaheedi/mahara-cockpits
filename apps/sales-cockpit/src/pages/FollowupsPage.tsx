@@ -68,6 +68,7 @@ interface Settings {
   per_day: number;
   quiet: { from: number; to: number };
   nurture_every_days: number;
+  nurture_per_day?: number;
 }
 
 const SEGMENT: Record<Segment, { label: string; tone: Tone }> = {
@@ -648,12 +649,13 @@ function SettingsForm({
             ["per_run", "Drafts each half hour"],
             ["per_day", "Drafts a day, at most"],
             ["nurture_every_days", "Days between long-term messages"],
+            ["nurture_per_day", "Long-term messages a day, at most"],
           ] as const
         ).map(([k, label]) => (
           <label key={k} className="block space-y-1 text-sm">
             <span className="muted block text-xs">{label}</span>
             <input
-              value={String(v[k])}
+              value={String(v[k] ?? (k === "nurture_per_day" ? 20 : ""))}
               onChange={e => setV({ ...v, [k]: Number(e.target.value) || 0 })}
               inputMode="numeric"
               className={field}

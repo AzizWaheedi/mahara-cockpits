@@ -120,7 +120,8 @@ values ('followups', '{
   "per_run": 12,
   "per_day": 60,
   "quiet": {"from": 21, "to": 9},
-  "nurture_every_days": 7
+  "nurture_every_days": 7,
+  "nurture_per_day": 20
 }'::jsonb, 'migration')
 on conflict (key) do nothing;
 

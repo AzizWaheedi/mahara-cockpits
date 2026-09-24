@@ -1281,6 +1281,7 @@ async function followupSettings(who: Who, b: Row) {
     per_day: int(v.per_day ?? 60, 1, 400, "Drafts per day"),
     quiet: { from: quietFrom, to: quietTo },
     nurture_every_days: int(v.nurture_every_days ?? 7, 2, 60, "Days between nurture messages"),
+    nurture_per_day: int(v.nurture_per_day ?? 20, 0, 200, "Long-term messages a day"),
   };
   const before = await setting<Row>("followups");
   await svc("cockpit_sales_settings?on_conflict=key", {

@@ -116,7 +116,7 @@ def channel_for(lead: dict[str, Any], last_inbound_wa: Optional[datetime], now: 
 
 def pick(now: datetime, *, inbox: list[dict[str, Any]], calendar: list[dict[str, Any]], leads: list[dict[str, Any]],
          sends: list[dict[str, Any]], open_drafts: set[str], deals: set[str], nurture_every_days: int = 7,
-         recent_dials: set[str] = frozenset()) -> list[tuple[str, str]]:
+         recent_dials: set[str] = frozenset(), nurture_room: int = 1_000_000) -> list[tuple[str, str]]:
     """(contact_id, segment) for everyone who needs a message now, most urgent first,
     each lead once. `sends` are recent cockpit sends and follow-ups; `recent_dials`
     leads someone called in the last day."""
@@ -162,12 +162,21 @@ def pick(now: datetime, *, inbox: list[dict[str, Any]], calendar: list[dict[str,
         if a.get("call_type") == "demo" and a.get("status") == "showed" and t and now - t < timedelta(days=2) \
                 and c not in deals:
             add(c, "after_call")
-    for lead in leads:
-        c = str(lead.get("contact_id") or "")
-        if "nurture" in str(lead.get("stage_name") or "").lower():
-            last = _ts(lead.get("last_touch_at"))
-            if not last or now - last >= timedelta(days=nurture_every_days):
-                add(c, "nurture")
+    # Long-term leads last, qualified ones first and the newest first, and no
+    # more of them than today's room for check-ins: hundreds of them are due
+    # at once, and they must not bury the drafts that cannot wait.
+    nurture = [l for l in leads if "nurture" in str(l.get("stage_name") or "").lower()
+               and (not _ts(l.get("last_touch_at")) or now - _ts(l.get("last_touch_at")) >= timedelta(days=nurture_every_days))]
+    nurture.sort(key=lambda l: (l.get("lead_class") != "qualified", str(l.get("lead_created_at") or "")), reverse=False)
+    nurture.sort(key=lambda l: str(l.get("lead_created_at") or ""), reverse=True)
+    nurture.sort(key=lambda l: l.get("lead_class") != "qualified")
+    added = 0
+    for lead in nurture:
+        if added >= nurture_room:
+            break
+        before = len(out)
+        add(lead.get("contact_id"), "nurture")
+        added += len(out) - before
     return out
 
 
@@ -305,18 +314,26 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
     recent_dials = {str(d["contact_id"]) for d in sb.select(
         "cockpit_sales_dials", f"select=contact_id&state=eq.completed&occurred_at=gte.{_q((now - timedelta(days=1)).isoformat())}&limit=1000")
         if d.get("contact_id")}
-    # When a nurture lead was last touched: our sends, or the inbox's last message.
+    # When a lead was last touched: our sends, their conversation's last
+    # message (the whole inbox copy, not only the last two days), or a call.
     last_touch: dict[str, str] = {}
-    for s in sends + sent_followups:
-        last_touch[str(s["contact_id"])] = max(last_touch.get(str(s["contact_id"]), ""), str(s.get("created_at") or ""))
-    for r in inbox:
-        last_touch[str(r["contact_id"])] = max(last_touch.get(str(r["contact_id"]), ""), str(r.get("last_message_at") or ""))
+    whole_inbox = sb.select("cockpit_sales_inbox", "select=contact_id,last_message_at&limit=1000")
+    calls = sb.select("cockpit_sales_dials", "select=contact_id,occurred_at"
+                                             f"&occurred_at=gte.{_q((now - timedelta(days=60)).isoformat())}&limit=5000")
+    for s, col in [(x, "created_at") for x in sends + sent_followups] + [(x, "last_message_at") for x in whole_inbox] \
+            + [(x, "occurred_at") for x in calls]:
+        c = str(s.get("contact_id") or "")
+        if c:
+            last_touch[c] = max(last_touch.get(c, ""), str(s.get(col) or ""))
     for lead in leads:
         lead["last_touch_at"] = last_touch.get(str(lead["contact_id"])) or None
 
+    nurture_today = len(sb.select("cockpit_sales_followups",
+                                  f"select=id&segment=eq.nurture&created_at=gte.{_q(today)}&limit=500"))
+    nurture_room = max(0, int(settings.get("nurture_per_day", 20)) - nurture_today)
     picked = pick(now, inbox=inbox, calendar=calendar, leads=leads, sends=sends + sent_followups,
                   open_drafts=open_drafts, deals=deals, recent_dials=recent_dials,
-                  nurture_every_days=int(settings.get("nurture_every_days", 7)))
+                  nurture_every_days=int(settings.get("nurture_every_days", 7)), nurture_room=nurture_room)
     by_id = {str(l["contact_id"]): l for l in leads}
     people = sb.select("cockpit_sales_people", "select=email,ghl_user_id,active&active=eq.true&limit=200")
     seat_of = {str(p["ghl_user_id"]): str(p["email"]) for p in people if p.get("ghl_user_id")}

@@ -64,6 +64,24 @@ class Pick(unittest.TestCase):
         self.assertEqual(self.base(calendar=cal, leads=leads, deals={"e"}), [("d", "after_call"), ("f", "nurture")])
 
 
+class NurturePace(unittest.TestCase):
+    def test_long_term_check_ins_wait_their_turn_qualified_and_newest_first(self):
+        leads = [{"contact_id": f"l{i}", "stage_name": "Long Term Nurture", "lead_class": cls,
+                  "lead_created_at": ago(days=d), "last_touch_at": None}
+                 # all older than three days, so none of them is a new lead
+                 for i, (cls, d) in enumerate([("unqualified", 6), ("qualified", 30), ("qualified", 5), (None, 4)])]
+        out = fu.pick(NOW, inbox=[], calendar=[], leads=leads, sends=[], open_drafts=set(), deals=set(),
+                      nurture_room=2)
+        self.assertEqual(out, [("l2", "nurture"), ("l1", "nurture")])
+
+    def test_urgent_kinds_are_never_capped_by_the_nurture_room(self):
+        inbox = [{"contact_id": "r", "last_direction": "inbound", "last_message_at": ago(hours=1)}]
+        leads = [{"contact_id": "n", "stage_name": "Nurture", "lead_class": "qualified", "last_touch_at": None}]
+        out = fu.pick(NOW, inbox=inbox, calendar=[], leads=leads, sends=[], open_drafts=set(), deals=set(),
+                      nurture_room=0)
+        self.assertEqual(out, [("r", "reply")])
+
+
 class Rules(unittest.TestCase):
     def test_quiet_hours_are_kuwait_time(self):
         self.assertFalse(fu.quiet(NOW, {"from": 21, "to": 9}))
