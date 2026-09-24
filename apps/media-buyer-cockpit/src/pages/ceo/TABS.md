@@ -503,21 +503,25 @@ booking, from convex/constants.ts. Name the gate wherever it decides a colour.
 
 | What it shows | Payload field |
 | --- | --- |
-| Dials today | `calls.today.dials` |
+| Saved dispositions today | `calls.today.dials` |
+| Actual provider dials today | `calls.today.providerDials` |
 | Connected today | `calls.today.connected` |
 | Connect rate today | `calls.today.connectRate` |
 | Talk minutes today | `calls.today.talkMinutes` |
-| Conversations of 90 seconds or more today | `calls.today.conversations90s` |
+| Confirmed bookings, last 7 days | `calls.report7d.overall.confirmedBookings` |
 | The same for the last 7 days | `calls.last7.*` |
 | The 7 days before, for the delta | `calls.prevLast7.*` |
-| Median minutes to first call | `calls.speedToLead.medianMinutes7d` |
-| Share called within 5 minutes | `calls.speedToLead.within5minShare7d` |
+| Median working minutes to first actual call | `calls.speedToLead.workingMedianMinutes7d` |
+| Share called within 2 working minutes | `calls.speedToLead.withinTwoMinutesRate7d` |
 | How many leads that median covers | `calls.speedToLead.sample` |
 | First day the number can cover | `calls.speedToLead.since` |
-| Newest call in the store | `calls.lastCallAt` |
 
-Speed to lead counts only leads that were actually called, so an uncalled lead
-never lengthens the median. That caveat belongs on this card.
+Speed averages and medians include verified, measurable calls only. The
+two-minute share includes all new leads in its denominator; missing verified
+dials never become fast responses. The report uses the first caller's Team &
+Payroll schedule. The old plain-clock / five-minute fields, 90-second
+conversation count and newest-call field are unavailable in this contract
+and must not be rendered as zero.
 
 ### Card 3: Client success
 
@@ -601,16 +605,28 @@ here beyond keeping it working.
 
 # Tab 7: Calls
 
-**File:** `CallsTab.tsx`. **Status:** built, unchanged. **Reads:** `sections.calls`.
+**File:** `CallsTab.tsx`. **Status:** shared Supabase scorecard released
+24 September 2026. **Reads:** `sections.calls.report` and `report7d`, plus
+date-filtered reports through the CEO-gated `ceo/queries:callCenterReport`
+action. `public.mahara_call_center_report` is the canonical source shared
+with the power dialer; there are no independent lead/call joins here.
 
-Already rendered: the four windows, `daily[]` (dials and connected),
-`byAgent[]`, `byHourToday[]`, `perClient7d[]`, `speedToLead`, `lastCallAt`,
-`notes[]`.
+The scorecard offers Overall, Per caller, Per client and Day by day views;
+a common Kuwait date range up to 93 inclusive days; and searchable, sortable
+tables with Calling & response or Bookings & outcomes columns. It shows
+saved dispositions separately from actual provider calls, lead-cohort
+contact coverage, working speed/gap samples, the two-minute share, separate
+confirmed/provisional bookings, recorded show/close rates and project
+values by currency. Source times, omissions and attribution warnings stay
+visible. Team & Payroll owns caller hours.
 
-Computed but not rendered, free to use if a card wants them:
-`calls.daily[].conversations90s`, `calls.byAgent[].today.avgTalkSec`,
-`calls.byAgent[].today.conversations90s`, `calls.byAgent[].last7.avgTalkSec`,
-`calls.byAgent[].last7.conversations90s`.
+The existing section refresh requests 30-day and 7-day aggregates once per
+15-minute cycle. Failed or mismatched responses preserve the prior report
+with its original dates and timestamp. Delivery's appointment-date cohort
+and Mahara's own B2B sales metrics remain separate. Historical
+`cockpit_metric_values` without exact window bounds retain their old meaning;
+query the canonical RPC for cross-period comparisons. See
+`docs/CALL-CENTER-SHARED-SOURCE.md` for the contract and release evidence.
 
 ---
 

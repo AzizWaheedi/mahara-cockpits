@@ -10,6 +10,8 @@ The CEO Calls view consumes `public.mahara_call_center_report` v1 in Creative Tr
 - `convex/ceo/callCenterContract.ts` validates the version, dates, identity dimensions and metric values. A missing field fails visibly rather than becoming zero. `callCenterSource.ts` uses the existing instrumented service-role transport; the browser never receives the key.
 - `cockpit_metric_values` remains an existing downstream projection, with exact report window bounds, caller email scopes and location scopes. It is not the canonical calculator. Legacy payloads with earlier definitions are not republished as the new definitions.
 
+The canonical projection cutover is **24 September 2026 at 11:18:25.982 Asia/Kuwait** (`2026-09-24T08:18:25.982Z`). Older `calls.*` rows in `cockpit_metric_values` predate these definitions and must not be reinterpreted under the updated labels. Consumers must require non-null, exact `window_from` / `window_to` bounds and use the canonical RPC for historical comparisons. Historical aggregates have not been deleted or rewritten.
+
 ## Meaning
 
 Dials are saved dispositions with notes; actual calls, connections, talk time, gaps and first-dial speed require provider evidence. The two-minute share includes all new leads; averages and medians include only measurable samples. The first actual caller supplies the lead's caller attribution and working-hours schedule; untouched or ambiguous leads remain unassigned/unverified.
@@ -49,3 +51,14 @@ This establishes live contract and authorization compatibility, not independent 
 5. Record the source commit, hosted deployment, aggregate comparison and any remaining data-coverage gaps in shared Mahara context. A successful build is not a substitute for this hosted acceptance.
 
 The consumer reuses the existing service-role connection and 15-minute section refresh. It adds no subscription, independent metrics database, extra recurring schedule or change to the paused local reliability automation. Before release, rollback remains the previous cockpit deployment; a consumer failure must retain the last successful report with its original timestamp instead of substituting zeroes or legacy definitions.
+
+## Production release, 24 September 2026
+
+- Published application source: `270665b771e6947e6917a32f3b3359e905260515` on `AzizWaheedi/mahara-cockpits` main. The release includes the shared scorecard and preserves the concurrent Salma and creative-runway changes.
+- Ran the repository's normal `SHIP_SMOKE_READ_ONLY=1 scripts/ship.sh media-buyer` process. Required test gates, lint and typechecking passed, Convex schema validation/finalization succeeded on `adorable-seahorse-418`, and the production frontend build passed. Existing bundle-size and unused-suppression warnings remain.
+- Vercel confirmed `dpl_FN8sHGgray8EKzhNcqYxkAABEqzC` as production `READY`, with source metadata matching the exact SHA above. Deployment: <https://mahara-media-buyer-6ws9s5l5u-aziz-6097s-projects.vercel.app>; public alias: <https://cockpit.maharamedia.com>.
+- Public entry changed from `index-BX1MV4l1.js` to `index-BlWD_97q.js`. The isolated browser's existing service worker updated automatically; the subsequent navigation loaded the new entry and retained the sign-in screen. An unauthenticated request to the new report action returned an error without report data.
+- The script's `smoke:local` check reported `ok: true` and the release exited successfully. No global `smoke:check`, outbound alert, call, message or appointment action was invoked; the paused local reliability automation was not changed.
+- An exact scoped `ceo/refresh:refreshAll` invocation with `only: ["calls"]` completed in 3,820 ms and stored 911 metric values. It skipped billing and every other section. The resulting stored report was version 1 from `mahara_reporting.call_center_events`, generated at 11:18:23.012766 Kuwait, with 30-day and 7-day bounds; all 23 metric definitions pointed to the shared RPC. A read-only SQL comparison checked every one of the 911 numeric projections across company, caller and client dimensions and both windows: zero missing rows and zero mismatches after the existing four-decimal projection rounding. No additional report calculation was introduced for this verification.
+
+Authenticated CEO visual acceptance remains outstanding because the isolated browser has no signed-in CEO session. Local fictional-data acceptance and live aggregate/authorization checks above are verified independently; neither is described as authenticated production UI acceptance.
