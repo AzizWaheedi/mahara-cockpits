@@ -1398,9 +1398,9 @@ const EOD_QUESTIONS: { key: string; label: string; choices?: string[] }[] = [
 /**
  * The pipeline as stages, not a flat list.
  *
- * The point is the handoff: anything in "client review" is yours to send to the
- * client, and once they pass it you move it on and tell the media buyer.
- * Those are highlighted because they are where work silently stops.
+ * The point is the handoff: internal approval, client review and client
+ * approval are separate states. The director moves approved work onward and
+ * tells the media buyer; these stages are highlighted because work stalls here.
  */
 function VideoPipeline({
   snap,
@@ -1459,10 +1459,21 @@ function VideoPipeline({
               >
                 <span>
                   <strong>{j.stage}</strong> · {j.client ?? j.name}
+                  {j.stage === "internal approved" && (
+                    <span className="block text-muted-foreground">
+                      Ready for client review. Send the approved preview through
+                      the existing client process.
+                    </span>
+                  )}
                   {j.stage === "client review" && (
                     <span className="block text-muted-foreground">
-                      Send it to the client. When they pass it, move the stage
-                      and tell the media buyer.
+                      Await explicit client feedback. Sending a preview does not
+                      mean it is approved.
+                    </span>
+                  )}
+                  {j.stage === "client approved" && (
+                    <span className="block text-muted-foreground">
+                      Record the approval and hand the asset to the media buyer.
                     </span>
                   )}
                 </span>
