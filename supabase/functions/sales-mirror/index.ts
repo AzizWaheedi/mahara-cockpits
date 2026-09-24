@@ -30,6 +30,7 @@ import {
   callsSql,
   dealsSql,
   dialsSql,
+  ghlContactRow,
   ghlEventRow,
   inboxRow,
   leadRow,
@@ -317,6 +318,44 @@ async function mirrorInbox(at: string): Promise<{ n: number; skipped?: string }>
   return { n: await upsert("cockpit_sales_inbox", "conversation_id", rows) };
 }
 
+/**
+ * Leads created in the last day that B2B has not copied yet, straight from
+ * HighLevel, so a new lead is on the setter's list within one run.
+ */
+async function mirrorNewContacts(at: string, now: number): Promise<{ n: number; skipped?: string }> {
+  const token = env("SALES_GHL_TOKEN");
+  if (!token) return { n: 0, skipped: "SALES_GHL_TOKEN is not set" };
+  const res = await fetch(`${GHL}/contacts/search`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Version: "2021-07-28",
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "User-Agent": UA,
+    },
+    body: JSON.stringify({
+      locationId: SALES_LOCATION,
+      pageLimit: 50,
+      sort: [{ field: "dateAdded", direction: "desc" }],
+    }),
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`HighLevel ${res.status} on contacts: ${redact(text)}`);
+  const rows = ((JSON.parse(text)?.contacts ?? []) as Row[])
+    .filter(c => c.dateAdded && now - Date.parse(String(c.dateAdded)) <= DAY)
+    .map(c => ghlContactRow(c, at))
+    .filter((r): r is Row => r !== null);
+  if (!rows.length) return { n: 0 };
+  // Insert only: a lead B2B already has keeps B2B's row.
+  await rest("cockpit_sales_leads?on_conflict=contact_id", {
+    method: "POST",
+    body: rows,
+    prefer: "resolution=ignore-duplicates,return=minimal",
+  });
+  return { n: rows.length };
+}
+
 async function mirrorDials(state: State, at: string, now: number): Promise<number> {
   const since =
     state.dials_since ?? new Date(now - 180 * DAY).toISOString();
@@ -397,6 +436,7 @@ Deno.serve(async (req: Request) => {
   await step("reps", () => mirrorReps(at));
   await step("deals", () => mirrorDeals(at));
   await step("leads", () => mirrorLeads(state, at, now));
+  await step("new_contacts", () => mirrorNewContacts(at, now));
   await step("appointments", () => mirrorCalls(state, at, now));
   await step("ghl_calendars", () => mirrorGhlCalendars(calendars, at, now));
   await step("inbox", () => mirrorInbox(at));

@@ -370,3 +370,61 @@ export function inboxRow(c: Record<string, unknown>, at: string): Record<string,
     mirrored_at: at,
   };
 }
+
+/**
+ * A contact straight from HighLevel, as a lead row, for the minutes before
+ * B2B's own sync has it (B2B reads HighLevel every 15 minutes; a new lead
+ * should be called in two). Only inserted when the lead is not there yet:
+ * B2B's fuller row always wins.
+ */
+export function ghlContactRow(c: Record<string, unknown>, at: string): Record<string, unknown> | null {
+  const id = String(c.id ?? "");
+  if (!id) return null;
+  const cf = new Map<string, unknown>();
+  for (const f of (Array.isArray(c.customFields) ? c.customFields : []) as Record<string, unknown>[])
+    if (f?.id) cf.set(String(f.id), f.value);
+  const field = (fid: string) => {
+    const v = cf.get(fid);
+    const t = Array.isArray(v) ? v.join(", ") : String(v ?? "").trim();
+    return t || null;
+  };
+  const answers = Object.fromEntries(Object.entries(LEAD_FIELDS).map(([col, fid]) => [col, field(fid)]));
+  const name =
+    String(c.contactName ?? "").trim() ||
+    [c.firstName, c.lastName].filter(Boolean).join(" ").trim() ||
+    null;
+  const tags = Array.isArray(c.tags) ? c.tags.map(String) : [];
+  const added = c.dateAdded ? new Date(String(c.dateAdded)) : null;
+  const updated = c.dateUpdated ? new Date(String(c.dateUpdated)) : null;
+  return {
+    contact_id: id,
+    name,
+    email: c.email ? String(c.email) : null,
+    phone: c.phone ? String(c.phone) : null,
+    phone8: phone8(c.phone),
+    company: c.companyName ? String(c.companyName) : null,
+    country: c.country ? String(c.country) : null,
+    source: c.source ? String(c.source) : null,
+    tags,
+    lead_class: leadClass(tags),
+    is_lead: null,
+    contact_type: c.type ? String(c.type) : null,
+    dnd: typeof c.dnd === "boolean" ? c.dnd : null,
+    assigned_to: c.assignedTo ? String(c.assignedTo) : null,
+    ad_id: field("oNCqOSC5QOhkzEbP1BrZ"),
+    adset_id: null,
+    campaign_id: null,
+    ...answers,
+    opportunity_id: null,
+    pipeline_id: null,
+    pipeline_name: null,
+    stage_id: null,
+    stage_name: null,
+    opp_status: null,
+    monetary_value: null,
+    opp_updated_at: null,
+    lead_created_at: added && !Number.isNaN(added.getTime()) ? added.toISOString() : null,
+    lead_updated_at: updated && !Number.isNaN(updated.getTime()) ? updated.toISOString() : null,
+    mirrored_at: at,
+  };
+}

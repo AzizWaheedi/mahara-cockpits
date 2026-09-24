@@ -194,6 +194,22 @@ copy run and the writer's status.
 | A proposal sits on "Drafting" for more than 20 minutes | On the VPS as `hermes`: `tail ~/.sales-desk.log`, then `python3 desk.py doctor` in `hermes/sales-desk`. A request that failed four times says why on the proposal page, with Try again | Hermes or Aziz |
 | A proposal failed with "No Fathom recording" | The demo was not recorded or not shared with the team in Fathom. Share it, then Try again | The closer |
 
+## Sales desk
+
+The worker on the VPS (`hermes/sales-desk`) that drafts the sales cockpit's proposals from the lead's demo call in Fathom, rebuilds them after the closer fills the gaps, and indexes every rep's sales calls. Cron as `hermes`: requests every two minutes, recordings every half hour, each under its own lock; log `~/.sales-desk.log`. `python3 desk.py doctor` names what is wrong; `python3 desk.py status` shows the queue.
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| A proposal says "No Fathom recording of this lead's demo was found" | The demo was not recorded, or was recorded by a rep whose calls the key cannot see. Share the recording with the team in Fathom (and put the rep's Fathom email on their seat), then draft again | The closer |
+| Requests wait with "OPENAI_API_KEY is not set" or "refused the key" | Set OPENAI_API_KEY in /opt/data/bibi/api-keys.env; waiting requests go ahead on the next run | Aziz |
+| "The model … is not available to this openai key" | `desk.py doctor` lists the models the key can use; set SALES_PROPOSAL_MODEL in ~/.sales-desk/env | Aziz |
+| "Fathom refused the key" or FATHOM_API_KEY not set | New FATHOM_API_KEY in /opt/data/bibi/api-keys.env | Aziz |
+| A proposal failed with "The draft did not pass the checks: ..." | The draft broke a rule the validator enforces (a figure never said on the call, an em dash, the fee band, a sheet overflowing A4). Open the saved version, then draft again | The closer |
+| Proposals say "The PDF was skipped" | Playwright or its Chrome is missing on the VPS (`doctor`'s playwright and render lines). The HTML is complete meanwhile | Aziz |
+| Every proposal's notes say "No reference deal on this machine" | Put a finished proposal per variant in ~/.sales-desk/reference with extract_reference.py (README) | Aziz |
+| A request stays "running" for over half an hour | The run died. It goes back in the queue by itself and is parked as failed, with the reason, after four tries | nobody |
+| The cockpit's payment choices differ from offer.json | `python3 desk.py offer-sync` (requests does it every run) | Aziz |
+
 ## What never needs a person
 
 - Rate limits: every Google, ClickUp and Meta call waits and retries.

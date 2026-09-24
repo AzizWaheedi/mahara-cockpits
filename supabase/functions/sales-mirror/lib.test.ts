@@ -2,6 +2,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   dialsSql,
+  ghlContactRow,
   ghlEventRow,
   inboxRow,
   leadClass,
@@ -134,4 +135,30 @@ test("a conversation becomes an inbox row with times from milliseconds", () => {
   expect(r?.last_body).toBe("hello there");
   expect(r?.unread).toBe(2);
   expect(inboxRow({}, "t")).toBeNull();
+});
+
+test("a fresh HighLevel contact becomes a lead row with its answers and class", () => {
+  const r = ghlContactRow(
+    {
+      id: "c9",
+      firstName: "Faisal",
+      lastName: "Test",
+      phone: "+966551234567",
+      country: "SA",
+      tags: ["roas-qualified"],
+      dnd: false,
+      dateAdded: "2026-09-24T09:00:00.000Z",
+      customFields: [
+        { id: "IvdTSSuctezX9DTHo42K", value: "$100K - $250k" },
+        { id: "oNCqOSC5QOhkzEbP1BrZ", value: "120245" },
+      ],
+    },
+    "t",
+  );
+  expect(r?.name).toBe("Faisal Test");
+  expect(r?.phone8).toBe("51234567");
+  expect(r?.lead_class).toBe("qualified");
+  expect(r?.revenue).toBe("$100K - $250k");
+  expect(r?.ad_id).toBe("120245");
+  expect(r?.lead_created_at).toBe("2026-09-24T09:00:00.000Z");
 });
