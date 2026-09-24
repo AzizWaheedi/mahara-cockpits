@@ -147,18 +147,35 @@ for app in apps:
         all_builds_ok = False
 
 # 6. Run Core Automated Test Suites
-print("\n--- 5. Automated Unit & Access Test Suites ---")
+print("\n--- 5. Automated Unit, Access & Shared Files Test Suites ---")
 import subprocess
+
+# Verify shared files
+proc_shared = subprocess.run(["bash", "scripts/check-shared.sh"], cwd=str(REPO_ROOT), capture_output=True, text=True, shell=True)
+if proc_shared.returncode == 0:
+    print("  [PASS] Shared components and pages are in sync across cockpits")
+    shared_ok = True
+else:
+    print(f"  [FAIL] Shared components drifted:\n{proc_shared.stdout}\n{proc_shared.stderr}")
+    shared_ok = False
+
 test_files = [
     "apps/media-buyer-cockpit/scripts/supabase-access.test.ts",
     "apps/media-buyer-cockpit/scripts/supabase-actions.test.ts",
-    "apps/sales-cockpit/src/lib/pay.test.ts"
+    "apps/media-buyer-cockpit/scripts/frameio-webhook.test.ts",
+    "apps/media-buyer-cockpit/scripts/billing.test.ts",
+    "apps/media-buyer-cockpit/scripts/webinar.test.ts",
+    "apps/creative-director-cockpit/scripts/social.test.ts",
+    "apps/sales-cockpit/src/lib/pay.test.ts",
+    "apps/sales-cockpit/src/lib/goals.test.ts",
+    "apps/sales-cockpit/src/lib/env.test.ts",
+    "apps/sales-cockpit/src/components/Prose.test.tsx"
 ]
 test_cmd = ["bun", "test"] + test_files
 proc = subprocess.run(test_cmd, cwd=str(REPO_ROOT), capture_output=True, text=True, shell=True)
-all_tests_ok = (proc.returncode == 0)
+all_tests_ok = (proc.returncode == 0) and shared_ok
 if all_tests_ok:
-    print(f"  [PASS] Bun test suites passed ({len(test_files)} test files)")
+    print(f"  [PASS] Bun test suites passed ({len(test_files)} test files, all tests green)")
 else:
     print(f"  [FAIL] Bun test suites failed:\n{proc.stderr}\n{proc.stdout}")
 
