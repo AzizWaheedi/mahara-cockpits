@@ -1183,6 +1183,23 @@ async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean) {
       409,
     );
   }
+  // The conversation may have moved on since the draft was made: a rep wrote
+  // in HighLevel or from the cockpit, or the lead wrote again. Either way the
+  // draft answers an older conversation; the agent writes a fresh one.
+  const madeAt = String(f.created_at);
+  const [inbox, ours] = await Promise.all([
+    svc(`cockpit_sales_inbox?contact_id=eq.${enc(String(f.contact_id))}&last_message_at=gt.${enc(madeAt)}&select=last_message_at&limit=1`),
+    svc(`cockpit_sales_messages?contact_id=eq.${enc(String(f.contact_id))}&created_at=gt.${enc(madeAt)}&state=neq.failed&select=created_at&limit=1`),
+  ]);
+  const since = inbox[0]?.last_message_at ?? ours[0]?.created_at;
+  if (since) {
+    await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}&status=eq.draft`, {
+      method: "PATCH",
+      body: { status: "expired", decided_at: new Date().toISOString(), error: `The conversation moved on at ${String(since)}, after this draft was made.` },
+      prefer: "return=minimal",
+    });
+    throw new Refusal("The conversation has moved on since this draft was made, so it was not sent. Read it first; the agent writes a fresh draft if one is still due.", 409);
+  }
   const body = String(b.body ?? f.body).replace(/\r\n/g, "\n").trim();
   const subject = f.channel === "email" ? cleanText(b.subject ?? f.subject, 300) : null;
   const claimed = await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}&status=eq.draft`, {
