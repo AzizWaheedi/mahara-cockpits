@@ -31,7 +31,7 @@ const bookings = [
   { campaignName, date: "2026-09-22", status: "booked", adId: "100" },
 ];
 
-function ctx() {
+function ctx(dailyRows = daily, bookingRows = bookings) {
   return {
     db: {
       query(table: string) {
@@ -60,7 +60,9 @@ function ctx() {
             apply(q);
             return {
               async collect() {
-                return (table === "dailyStats" ? daily : bookings).filter(
+                return (
+                  table === "dailyStats" ? dailyRows : bookingRows
+                ).filter(
                   r =>
                     r.campaignName === bounds.campaign &&
                     (!bounds.start || r.date >= bounds.start) &&
@@ -99,5 +101,24 @@ describe("ad-level booking attribution across spend windows", () => {
     const oldAd = result.ads.find((ad: any) => ad.adIds.includes("200"));
     expect(oldAd.bookings).toBe(1);
     expect(oldAd.costPerBooking).toBe(100);
+  });
+
+  test("does not credit an older ad's booking to a different current ad with the same name", async () => {
+    const sameNameRows = daily.map(r => ({ ...r, adName: "same name" }));
+    const result = await rangeInternal._handler(
+      ctx(sameNameRows, [bookings[0]]),
+      {
+        campaignName,
+        start: "2026-09-17",
+        end: "2026-09-23",
+      },
+    );
+    const quiet = result.ads.find((a: any) => a.adIds.includes("200"));
+    const active = result.ads.find((a: any) => a.adIds.includes("100"));
+    expect(quiet).toBeDefined();
+    expect(quiet).not.toBe(active);
+    expect(quiet.bookings).toBe(1);
+    expect(quiet.costPerBooking).toBeUndefined();
+    expect(active.bookings).toBe(0);
   });
 });

@@ -21,6 +21,23 @@ test("does not label a no-spend week as free, or invent a 30-day cost", () => {
   ).toEqual({ label: "n/a" });
 });
 
+test("does not assign a name-aggregated 30-day cost to a single quiet ad", () => {
+  expect(
+    bookingCostCell(
+      { key: "same name [300]", adIds: ["300"], spend: 0, bookings: 1 },
+      [
+        {
+          key: "same name",
+          adIds: ["100", "300"],
+          spend: 250,
+          bookings: 2,
+          costPerBooking: 125,
+        },
+      ],
+    ),
+  ).toEqual({ label: "n/a" });
+});
+
 test("prefers the selected range's own cost when that ad spent and booked", () => {
   expect(
     bookingCostCell(

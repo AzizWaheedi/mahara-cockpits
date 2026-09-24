@@ -166,13 +166,20 @@ async function computeRange(
         if (!r.metaAdId || !missingIds.has(r.metaAdId)) continue;
         const setName = r.adSetName ?? "unnamed ad set";
         const s = bySet.get(setName) ?? empty(setName);
-        const a = byAd.get(r.adName) ?? empty(r.adName);
+        // A quiet ad may share its display name with one that spent this
+        // week. Give it a distinct row keyed by its Meta ID, or its booking
+        // would be charged against the other ad's spend.
+        const adKey =
+          byAd.has(r.adName) && !byAd.get(r.adName)?.adIds.includes(r.metaAdId)
+            ? `${r.adName} [${r.metaAdId}]`
+            : r.adName;
+        const a = byAd.get(adKey) ?? empty(adKey);
         setOfAd.set(r.metaAdId, setName);
-        adNameOfId.set(r.metaAdId, r.adName);
+        adNameOfId.set(r.metaAdId, adKey);
         if (!s.adIds.includes(r.metaAdId)) s.adIds.push(r.metaAdId);
         if (!a.adIds.includes(r.metaAdId)) a.adIds.push(r.metaAdId);
         bySet.set(setName, s);
-        byAd.set(r.adName, a);
+        byAd.set(adKey, a);
         missingIds.delete(r.metaAdId);
       }
     }
