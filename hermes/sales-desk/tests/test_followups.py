@@ -82,6 +82,22 @@ class NurturePace(unittest.TestCase):
         self.assertEqual(out, [("r", "reply")])
 
 
+class Eligible(unittest.TestCase):
+    def test_only_sales_leads_and_never_clients(self):
+        lead = {"contact_id": "a", "pipeline_name": "Sales Pipeline (2-Call)", "stage_name": "Hot Leads",
+                "opp_status": "open", "contact_type": "lead", "lead_class": "qualified"}
+        self.assertIsNone(fu.eligible(lead, set()))
+        self.assertEqual(fu.eligible({**lead, "contact_type": "customer"}, set()), "a client")
+        self.assertEqual(fu.eligible({**lead, "stage_name": "🎉Closed"}, set()), "a client")
+        self.assertEqual(fu.eligible(lead, {"a"}), "a client")
+        self.assertEqual(fu.eligible({**lead, "opp_status": "lost"}, set()), "no longer in the pipeline")
+        # A contact in no pipeline and with no lead tag is not a sales lead
+        # (the client whose contract email reached the sales inbox).
+        self.assertIn("not a sales lead",
+                      fu.eligible({"contact_id": "w", "contact_type": "lead", "pipeline_name": None, "lead_class": None}, set()))
+        self.assertEqual(fu.eligible(None, set()), "not in the cockpit's lead copy")
+
+
 class Rules(unittest.TestCase):
     def test_quiet_hours_are_kuwait_time(self):
         self.assertFalse(fu.quiet(NOW, {"from": 21, "to": 9}))

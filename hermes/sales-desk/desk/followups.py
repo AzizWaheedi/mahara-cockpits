@@ -114,6 +114,26 @@ def channel_for(lead: dict[str, Any], last_inbound_wa: Optional[datetime], now: 
     return None
 
 
+def eligible(lead: Optional[dict[str, Any]], dealt: set[str]) -> Optional[str]:
+    """Why this contact is not the follow-up agent's to write to, or None.
+
+    Only sales leads: in a sales pipeline or carrying a lead tag, and not a
+    client. Found 2026-09-24: an existing client's contract email sat in the
+    sales inbox and was drafted a sales pitch."""
+    if not lead:
+        return "not in the cockpit's lead copy"
+    c = str(lead.get("contact_id") or "")
+    if str(lead.get("contact_type") or "").lower() == "customer" or c in dealt:
+        return "a client"
+    if "closed" in str(lead.get("stage_name") or "").lower():
+        return "a client"
+    if str(lead.get("opp_status") or "").lower() in ("won", "lost", "abandoned"):
+        return "no longer in the pipeline"
+    if not lead.get("pipeline_name") and not lead.get("lead_class"):
+        return "not a sales lead (no pipeline, no lead tag)"
+    return None
+
+
 def pick(now: datetime, *, inbox: list[dict[str, Any]], calendar: list[dict[str, Any]], leads: list[dict[str, Any]],
          sends: list[dict[str, Any]], open_drafts: set[str], deals: set[str], nurture_every_days: int = 7,
          recent_dials: set[str] = frozenset(), nurture_room: int = 1_000_000) -> list[tuple[str, str]]:
@@ -340,12 +360,15 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
     reps = sb.select("cockpit_sales_reps", "select=ghl_user_id,display_name&limit=200")
     rep_name_of = {str(r["ghl_user_id"]): str(r.get("display_name") or "") for r in reps if r.get("ghl_user_id")}
 
-    written = no_channel = failed = sent_auto = 0
+    dealt = {str(d["contact_id"]) for d in sb.select("cockpit_sales_deals", "select=contact_id&limit=2000")
+             if d.get("contact_id")}
+    written = no_channel = failed = sent_auto = not_leads = 0
     for contact, segment in picked:
         if written >= room:
             break
         lead = by_id.get(contact) or next(iter(sb.select("cockpit_sales_leads", f"select=*&contact_id=eq.{_q(contact)}&limit=1")), None)
-        if not lead or lead.get("dnd"):
+        if eligible(lead, dealt) or not lead or lead.get("dnd"):
+            not_leads += 1
             continue
         try:
             ctx = context_for(sb, lead, ghl_token, now, rep_name_of.get(str(lead.get("assigned_to") or "")))
@@ -399,4 +422,4 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
             failed += 1
             log(f"followups: {contact} failed: {http.scrub(str(e))[:200]}")
     return {"picked": len(picked), "written": written, "sent_by_itself": sent_auto,
-            "no_open_channel": no_channel, "failed": failed, "room": room}
+            "no_open_channel": no_channel, "not_sales_leads": not_leads, "failed": failed, "room": room}

@@ -430,6 +430,7 @@ def cmd_followups(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
         detail = (f"{out['written']} drafts written of {out['picked']} leads due"
                   + (f", {out['sent_by_itself']} sent by themselves" if out.get("sent_by_itself") else "")
                   + (f", {out['no_open_channel']} with no open channel" if out["no_open_channel"] else "")
+                  + (f", {out['not_sales_leads']} not sales leads (clients, or no pipeline)" if out.get("not_sales_leads") else "")
                   + (f", {out['failed']} failed" if out["failed"] else ""))
     _status(cfg, log, "followups", not out.get("failed"), detail)
     if out.get("written") or out.get("failed") or args.json:
