@@ -1,7 +1,6 @@
-import { useAuthActions } from "@convex-dev/auth/react";
-import { useQuery } from "convex/react";
 import { ChevronRight, Loader2, Moon, Palette, Sun, User } from "lucide-react";
 import { useState } from "react";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { portalUrl } from "@/components/PortalAutoSignIn";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -18,14 +17,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useTheme } from "@/contexts/ThemeContext";
-import { getEmailPasswordSignInAvailable } from "@/lib/viktor-spaces-access/config";
-import { api } from "../../convex/_generated/api";
 
 export function SettingsPage() {
-  const user = useQuery(api.auth.currentUser);
+  const auth = useCockpitAuth();
   const { theme, toggleTheme, switchable } = useTheme();
-  const { signIn } = useAuthActions();
-  const emailPasswordAvailable = getEmailPasswordSignInAvailable();
+  const emailPasswordAvailable = true;
+  const user = { name: auth.name, email: auth.email };
 
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -40,13 +37,12 @@ export function SettingsPage() {
     setError("");
     setLoading(true);
 
-    const formData = new FormData();
-    formData.append("email", user?.email || "");
-    formData.append("flow", "reset");
-
     try {
-      await signIn("password", formData);
-      setPasswordStep("verify");
+      if (auth.client && auth.email) {
+        const { error: resetErr } = await auth.client.auth.resetPasswordForEmail(auth.email);
+        if (resetErr) throw resetErr;
+        setSuccess("Password reset email sent!");
+      }
     } catch {
       setError("Could not send reset code. Please try again.");
     } finally {
@@ -60,17 +56,19 @@ export function SettingsPage() {
     setLoading(true);
 
     const formData = new FormData(e.currentTarget);
-    formData.append("email", user?.email || "");
-    formData.append("flow", "reset-verification");
+    const newPassword = (formData.get("newPassword") as string) || "";
 
     try {
-      await signIn("password", formData);
-      setSuccess("Password changed successfully!");
-      setTimeout(() => {
-        setChangePasswordOpen(false);
-        setPasswordStep("request");
-        setSuccess("");
-      }, 1500);
+      if (auth.client) {
+        const { error: updateErr } = await auth.client.auth.updateUser({ password: newPassword });
+        if (updateErr) throw updateErr;
+        setSuccess("Password changed successfully!");
+        setTimeout(() => {
+          setChangePasswordOpen(false);
+          setPasswordStep("request");
+          setSuccess("");
+        }, 1500);
+      }
     } catch {
       setError("Invalid code or password. Please try again.");
     } finally {

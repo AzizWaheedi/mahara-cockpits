@@ -1,5 +1,5 @@
-import { useConvexAuth } from "convex/react";
 import { Navigate, Outlet, useSearchParams } from "react-router";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { BackendWait } from "./BackendWait";
 import {
   Card,
@@ -43,10 +43,10 @@ function AuthFormSkeleton() {
 }
 
 export function PublicOnlyRoute() {
-  const { isAuthenticated, isLoading } = useConvexAuth();
+  const { isAuthenticated, ready } = useCockpitAuth();
   const [params] = useSearchParams();
 
-  if (isLoading) {
+  if (!ready) {
     return (
       <BackendWait>
         <AuthFormSkeleton />

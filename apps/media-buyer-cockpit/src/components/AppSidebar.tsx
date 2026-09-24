@@ -1,5 +1,3 @@
-import { useAuthActions } from "@convex-dev/auth/react";
-import { useQuery } from "convex/react";
 import { motion } from "framer-motion";
 import {
   ArrowRightLeft,
@@ -22,6 +20,7 @@ import {
   UsersRound,
 } from "lucide-react";
 import { Link, useLocation, useSearchParams } from "react-router";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { STATUS_COLOR } from "@/components/ceo/StatusChip";
 import { useCeo } from "@/components/ceo/useCeo";
 import { Wordmark } from "@/components/Wordmark";
@@ -29,7 +28,6 @@ import { useTheme } from "@/contexts/ThemeContext";
 import { ceoBadges } from "@/pages/CeoPage";
 import { CEO_NAV } from "@/pages/ceo/nav";
 import type { CeoTabKey } from "@/pages/ceo/types";
-import { api } from "../../convex/_generated/api";
 import { Avatar, AvatarFallback } from "./ui/avatar";
 import {
   DropdownMenu,
@@ -154,8 +152,8 @@ function NavLink({
 function CeoRail() {
   const [params] = useSearchParams();
   const active = (params.get("tab") ?? "today") as CeoTabKey;
-  const me = useQuery(api.roles.me, {});
-  const { sections } = useCeo(me?.isCeo === true);
+  const auth = useCockpitAuth();
+  const { sections } = useCeo(auth.isCeo);
   const badges = ceoBadges(sections);
   const { setOpenMobile } = useSidebar();
   // The way out: Admin and the media buyer's own cockpit. The other cockpits
@@ -163,10 +161,10 @@ function CeoRail() {
   // a laptop.
   const elsewhere = [
     { key: "team", label: "Team meetings", href: "/team", icon: UsersRound },
-    ...(me?.isAdmin
+    ...(auth.isAdmin
       ? [{ key: "admin", label: "Admin", href: "/admin", icon: ShieldCheck }]
       : []),
-    ...((me?.roles ?? []).includes("media_buyer")
+    ...(auth.roles.includes("media_buyer")
       ? [
           {
             key: "media_buyer",
@@ -262,16 +260,16 @@ function CeoRail() {
 
 function SidebarNav() {
   const location = useLocation();
-  const me = useQuery(api.roles.me, {});
-  const allowed = me?.roles ?? [];
-  if (location.pathname.startsWith("/ceo") && me?.isCeo) return <CeoRail />;
+  const auth = useCockpitAuth();
+  const allowed = auth.roles;
+  if (location.pathname.startsWith("/ceo") && auth.isCeo) return <CeoRail />;
   // Admin no longer drags the media buyer's working screens in with it. Being
   // an administrator is a job about people and access, not about running ads,
   // and mixing the two put "Start of day" above "CEO" for the one person who
   // holds both.
   const items = navItems.filter(item => allowed.includes(item.role));
   // Other cockpits this person may open, so switching is one click.
-  const cockpits: string[] = me?.cockpits ?? [];
+  const cockpits: string[] = auth.cockpits;
   const others = [
     { key: "csm", label: "Client success", href: "/go/csm" },
     { key: "creative", label: "Creative director", href: "/go/creative" },
@@ -284,7 +282,7 @@ function SidebarNav() {
       <SidebarGroup>
         <SidebarGroupContent>
           <SidebarMenu>
-            {me?.isCeo ? (
+            {auth.isCeo ? (
               <NavLink
                 href="/ceo"
                 label="CEO"
@@ -292,7 +290,7 @@ function SidebarNav() {
                 isActive={location.pathname.startsWith("/ceo")}
               />
             ) : null}
-            {me?.isAdmin ? (
+            {auth.isAdmin ? (
               <NavLink
                 href="/admin"
                 label="Admin"
@@ -301,7 +299,7 @@ function SidebarNav() {
               />
             ) : null}
             {/* Everybody's: the team's meetings and their agendas. */}
-            {me ? (
+            {auth.isAuthenticated ? (
               <NavLink
                 href="/team"
                 label="Team meetings"
@@ -360,18 +358,15 @@ const OTHER_COCKPITS = [
 ];
 
 function SidebarUserMenu() {
-  const user = useQuery(api.auth.currentUser);
-  const me = useQuery(api.roles.me, {});
+  const auth = useCockpitAuth();
   const location = useLocation();
-  const inCeo = location.pathname.startsWith("/ceo") && me?.isCeo === true;
-  const cockpits: string[] = me?.cockpits ?? [];
+  const inCeo = location.pathname.startsWith("/ceo") && auth.isCeo;
+  const cockpits: string[] = auth.cockpits;
   const switches = inCeo
     ? OTHER_COCKPITS.filter(c => cockpits.includes(c.key))
     : [];
   // The name the admin typed in the portal, else the email's first part.
-  const shownName =
-    user?.name || me?.name || user?.email?.split("@")[0] || "User";
-  const { signOut } = useAuthActions();
+  const shownName = auth.name || auth.email?.split("@")[0] || "User";
   const { theme, toggleTheme, switchable } = useTheme();
   const { setOpenMobile } = useSidebar();
 
@@ -392,7 +387,7 @@ function SidebarUserMenu() {
                     {shownName}
                   </span>
                   <span className="text-xs text-muted-foreground truncate">
-                    {user?.email}
+                    {auth.email}
                   </span>
                 </div>
               </SidebarMenuButton>
@@ -429,7 +424,9 @@ function SidebarUserMenu() {
               )}
               <DropdownMenuSeparator />
               <DropdownMenuItem
-                onClick={() => signOut()}
+                onClick={() => {
+                  void auth.signOut();
+                }}
                 className="text-destructive focus:text-destructive focus:bg-destructive/10"
               >
                 <LogOut className="size-4" />

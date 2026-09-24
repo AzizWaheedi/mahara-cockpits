@@ -1,13 +1,12 @@
-import { useMutation } from "convex/react";
 import {
   AnimatePresence,
   MotionConfig,
   motion,
   useReducedMotion,
 } from "framer-motion";
-import { useLayoutEffect, useRef } from "react";
+import { useCallback, useLayoutEffect, useRef } from "react";
 import { useLocation, useOutlet } from "react-router";
-import { api } from "../../convex/_generated/api";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { AppSidebar } from "./AppSidebar";
 import { HermesChat } from "./HermesChat";
 import { RouteErrorBoundary } from "./RouteErrorBoundary";
@@ -30,13 +29,31 @@ export function AppLayout() {
 }
 
 function LayoutContent() {
-  const queue = useMutation(api.clients.queueAction);
+  const { client } = useCockpitAuth();
   const outlet = useOutlet();
   const location = useLocation();
   const reduced = useReducedMotion();
   const { open, isMobile } = useSidebar();
   const inset = useRef<HTMLDivElement>(null);
   const previousOpen = useRef(open);
+
+  const handleReport = useCallback(
+    // biome-ignore lint/suspicious/noExplicitAny: error boundary param
+    async (r: any) => {
+      if (!client) return;
+      try {
+        await client.rpc("cockpit_report_issue", {
+          p_app: "creative",
+          p_page: location.pathname,
+          p_text: typeof r === "string" ? r : r?.message ?? "App error",
+          p_role: "creative",
+        });
+      } catch (err) {
+        console.error("Failed to report issue:", err);
+      }
+    },
+    [client, location.pathname],
+  );
   useLayoutEffect(() => {
     if (previousOpen.current === open) return;
     previousOpen.current = open;
@@ -69,9 +86,7 @@ function LayoutContent() {
           </header>
         </div>
         <main className="flex-1 p-4 lg:p-6">
-          <RouteErrorBoundary
-            report={r => queue({ kind: "issue", payload: r })}
-          >
+          <RouteErrorBoundary report={handleReport}>
             <AnimatePresence initial={false} mode="wait">
               <motion.div
                 key={location.pathname}

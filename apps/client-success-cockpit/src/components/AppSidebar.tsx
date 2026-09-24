@@ -1,5 +1,3 @@
-import { useAuthActions } from "@convex-dev/auth/react";
-import { useQuery } from "convex/react";
 import {
   ArrowRightLeft,
   BarChart3,
@@ -22,10 +20,10 @@ import {
   UsersRound,
 } from "lucide-react";
 import { Link, useLocation } from "react-router";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { portalUrl } from "@/components/PortalAutoSignIn";
 import { Wordmark } from "@/components/Wordmark";
 import { useTheme } from "@/contexts/ThemeContext";
-import { api } from "../../convex/_generated/api";
 import { Avatar, AvatarFallback } from "./ui/avatar";
 import {
   DropdownMenu,
@@ -115,10 +113,10 @@ function NavLink({
 
 /** The portal's other doors: the admin view and the cockpits this person also has. */
 function PortalGroup() {
-  const me = useQuery(api.roles.me, {});
+  const auth = useCockpitAuth();
   const portal = portalUrl();
-  const roles: string[] = me?.portalRoles ?? [];
-  const isAdmin = Boolean(me?.isAdmin);
+  const roles: string[] = auth.roles ?? [];
+  const isAdmin = Boolean(auth.isAdmin);
   const doors = [
     { key: "admin", label: "Admin", href: `${portal}/admin`, show: isAdmin },
     {
@@ -229,10 +227,10 @@ function SidebarNav() {
 }
 
 function SidebarUserMenu() {
-  const user = useQuery(api.auth.currentUser);
-  const { signOut } = useAuthActions();
+  const auth = useCockpitAuth();
   const { theme, toggleTheme, switchable } = useTheme();
   const { setOpenMobile } = useSidebar();
+  const name = auth.name || auth.email?.split("@")[0] || "User";
 
   return (
     <SidebarFooter className="border-t border-sidebar-border">
@@ -243,15 +241,15 @@ function SidebarUserMenu() {
               <SidebarMenuButton size="lg">
                 <Avatar className="size-8">
                   <AvatarFallback className="bg-primary text-primary-foreground text-sm font-medium">
-                    {user?.name?.charAt(0).toUpperCase() || "U"}
+                    {name.charAt(0).toUpperCase()}
                   </AvatarFallback>
                 </Avatar>
                 <div className="flex flex-col items-start text-left">
                   <span className="text-sm font-medium truncate">
-                    {user?.name || "User"}
+                    {name}
                   </span>
                   <span className="text-xs text-muted-foreground truncate">
-                    {user?.email}
+                    {auth.email}
                   </span>
                 </div>
               </SidebarMenuButton>
@@ -286,7 +284,9 @@ function SidebarUserMenu() {
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
-                onClick={() => signOut()}
+                onClick={() => {
+                  void auth.signOut();
+                }}
                 className="text-destructive focus:text-destructive focus:bg-destructive/10"
               >
                 <LogOut className="size-4" />
