@@ -88,6 +88,25 @@ export function useQuery<T>(
   return { data, error, loading, reload };
 }
 
+/**
+ * Every row of a read, a thousand at a time. The API answers at most 1,000
+ * rows per request, so a larger read without this comes back short and
+ * says nothing. `make` builds the query for one range.
+ */
+export async function readAll<T>(
+  make: (from: number, to: number) => Result<T[]>,
+  cap = 20_000,
+): Promise<{ data: T[] | null; error: { message: string } | null }> {
+  const out: T[] = [];
+  for (let from = 0; from < cap; from += 1000) {
+    const { data, error } = await make(from, from + 999);
+    if (error) return { data: null, error };
+    out.push(...(data ?? []));
+    if (!data || data.length < 1000) break;
+  }
+  return { data: out, error: null };
+}
+
 const none = <T>(): Result<T> => Promise.resolve({ data: null, error: null });
 
 /** The current minute, ticking, for anything drawn against "now". */
@@ -119,17 +138,19 @@ export function useCalendar(
   everyMs = 60_000,
 ): Loaded<CalendarRow[]> {
   return useQuery<CalendarRow[]>(
-    () => {
-      let q = supabase
-        .from("cockpit_sales_calendar")
-        .select("*")
-        .gte("start_at", fromIso)
-        .lt("start_at", toIso)
-        .order("start_at", { ascending: true })
-        .limit(1000);
-      if (ghlUserId) q = q.eq("assigned_user_id", ghlUserId);
-      return q;
-    },
+    () =>
+      readAll<CalendarRow>((from, to) => {
+        let q = supabase
+          .from("cockpit_sales_calendar")
+          .select("*")
+          .gte("start_at", fromIso)
+          .lt("start_at", toIso)
+          .order("start_at", { ascending: true })
+          .order("appointment_id", { ascending: true })
+          .range(from, to);
+        if (ghlUserId) q = q.eq("assigned_user_id", ghlUserId);
+        return q;
+      }, 5000),
     [fromIso, toIso, ghlUserId],
     everyMs,
   );
@@ -234,15 +255,20 @@ export function useStages(): Loaded<
 > {
   return useQuery(
     () =>
-      supabase
-        .from("cockpit_sales_leads")
-        .select("stage_id,stage_name")
-        .not("stage_id", "is", null)
-        .gte(
-          "lead_created_at",
-          new Date(Date.now() - 365 * 86_400_000).toISOString(),
-        )
-        .limit(5000),
+      readAll<{ stage_id: string; stage_name: string }>(
+        (from, to) =>
+          supabase
+            .from("cockpit_sales_leads")
+            .select("stage_id,stage_name")
+            .not("stage_id", "is", null)
+            .gte(
+              "lead_created_at",
+              new Date(Date.now() - 365 * 86_400_000).toISOString(),
+            )
+            .order("contact_id", { ascending: true })
+            .range(from, to),
+        10_000,
+      ),
     [],
   );
 }
@@ -394,17 +420,22 @@ export function useDials(
   toIso: string,
   agentEmail: string | null,
 ): Loaded<Dial[]> {
-  return useQuery<Dial[]>(() => {
-    let q = supabase
-      .from("cockpit_sales_dials")
-      .select("*")
-      .gte("occurred_at", fromIso)
-      .lt("occurred_at", toIso)
-      .order("occurred_at", { ascending: false })
-      .limit(5000);
-    if (agentEmail) q = q.eq("agent_email", agentEmail);
-    return q;
-  }, [fromIso, toIso, agentEmail]);
+  return useQuery<Dial[]>(
+    () =>
+      readAll<Dial>((from, to) => {
+        let q = supabase
+          .from("cockpit_sales_dials")
+          .select("*")
+          .gte("occurred_at", fromIso)
+          .lt("occurred_at", toIso)
+          .order("occurred_at", { ascending: false })
+          .order("call_id", { ascending: true })
+          .range(from, to);
+        if (agentEmail) q = q.eq("agent_email", agentEmail);
+        return q;
+      }, 5000),
+    [fromIso, toIso, agentEmail],
+  );
 }
 
 // ---------------------------------------------------------------------------

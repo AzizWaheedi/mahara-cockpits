@@ -81,6 +81,22 @@ async function svc(
   return Array.isArray(out) ? out : [out];
 }
 
+/**
+ * Every row of a read, a thousand at a time: the API answers at most 1,000
+ * rows per request (max_rows), and a queue built on a silently short read
+ * would skip leads without saying so.
+ */
+async function svcAll(path: string, cap = 50_000): Promise<Row[]> {
+  const out: Row[] = [];
+  const sep = path.includes("?") ? "&" : "?";
+  for (let offset = 0; offset < cap; offset += 1000) {
+    const page = await svc(`${path}${sep}limit=1000&offset=${offset}`);
+    out.push(...page);
+    if (page.length < 1000) break;
+  }
+  return out;
+}
+
 async function whoami(jwt: string): Promise<Who> {
   const res = await fetch(`${env("SUPABASE_URL")}/rest/v1/rpc/cockpit_sales_whoami`, {
     method: "POST",
@@ -700,7 +716,7 @@ async function candidates(now: number): Promise<{
   const since30 = new Date(now - 30 * 86_400_000).toISOString();
   const since60 = new Date(now - 60 * 86_400_000).toISOString();
   const [states, inbox, attempts] = await Promise.all([
-    svc("cockpit_sales_queue_state?select=*"),
+    svcAll("cockpit_sales_queue_state?select=*&order=contact_id"),
     svc(`cockpit_sales_inbox?select=contact_id,last_message_at,last_direction&last_direction=eq.inbound&last_message_at=gte.${enc(new Date(now - 86_400_000).toISOString())}`),
     svc("cockpit_sales_attempts?select=contact_id,rep_email&state=in.(dialing,placed)"),
   ]);
@@ -708,8 +724,8 @@ async function candidates(now: number): Promise<{
     ...states.filter(s => !s.closed || s.callback_at).map(s => String(s.contact_id)),
     ...inbox.map(i => String(i.contact_id ?? "")).filter(Boolean),
   ]);
-  const leads = await svc(
-    `cockpit_sales_leads?select=contact_id,name,phone,phone8,lead_created_at,stage_name,lead_class,dnd&lead_created_at=gte.${enc(since30)}`,
+  const leads = await svcAll(
+    `cockpit_sales_leads?select=contact_id,name,phone,phone8,lead_created_at,stage_name,lead_class,dnd&lead_created_at=gte.${enc(since30)}&order=contact_id`,
   );
   const have = new Set(leads.map(l => String(l.contact_id)));
   const missing = [...extra].filter(id => !have.has(id)).slice(0, 150);
@@ -720,9 +736,9 @@ async function candidates(now: number): Promise<{
       )),
     );
   const [appts, dials, deals] = await Promise.all([
-    svc(`cockpit_sales_calendar?select=contact_id,call_type,start_at,status,assigned_user_id&start_at=gte.${enc(since60)}`),
-    svc(`cockpit_sales_dials?select=lead_phone8,occurred_at,state,direction&direction=eq.outbound&occurred_at=gte.${enc(since60)}`),
-    svc("cockpit_sales_deals?select=contact_id&voided=eq.false"),
+    svcAll(`cockpit_sales_calendar?select=contact_id,call_type,start_at,status,assigned_user_id&start_at=gte.${enc(since60)}&order=appointment_id`),
+    svcAll(`cockpit_sales_dials?select=lead_phone8,occurred_at,state,direction&direction=eq.outbound&occurred_at=gte.${enc(since60)}&order=call_id`),
+    svcAll("cockpit_sales_deals?select=contact_id&voided=eq.false&order=response_id"),
   ]);
   const stateBy = new Map(states.map(s => [String(s.contact_id), s]));
   const inboxBy = new Map<string, number>();
