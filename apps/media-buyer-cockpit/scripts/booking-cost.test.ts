@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bookingCostCell } from "../src/lib/booking-cost";
+import { bookingCostCell, bookingCostTone } from "../src/lib/booking-cost";
 
 test("shows 30-day cost clearly when this week's booking came from an older ad", () => {
   expect(
@@ -36,6 +36,24 @@ test("does not assign a name-aggregated 30-day cost to a single quiet ad", () =>
       ],
     ),
   ).toEqual({ label: "n/a" });
+});
+
+test("colors the displayed 30-day cost against the same gate as selected-range cost", () => {
+  const cell = bookingCostCell(
+    { key: "AD-2", adIds: ["200"], spend: 0, bookings: 1 },
+    [
+      {
+        key: "AD-2",
+        adIds: ["200"],
+        spend: 200,
+        bookings: 1,
+        costPerBooking: 200,
+      },
+    ],
+  );
+  expect(bookingCostTone(cell.value, 100)).toBe("txt-bad");
+  expect(bookingCostTone(80, 100)).toBe("txt-good");
+  expect(bookingCostTone(undefined, 100)).toBe("");
 });
 
 test("prefers the selected range's own cost when that ad spent and booked", () => {

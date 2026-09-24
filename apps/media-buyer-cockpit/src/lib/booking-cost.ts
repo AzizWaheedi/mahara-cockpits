@@ -6,6 +6,13 @@ type AdCost = {
   costPerBooking?: number;
 };
 
+export function bookingCostTone(
+  value: number | undefined,
+  gate: number,
+): string {
+  return value === undefined ? "" : value > gate ? "txt-bad" : "txt-good";
+}
+
 /** Never divide a zero-spend week into a booking bought in a prior week. */
 export function bookingCostCell(
   row: AdCost,

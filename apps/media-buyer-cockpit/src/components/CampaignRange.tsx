@@ -1,6 +1,6 @@
 import { useQuery } from "convex/react";
 import type { ReactNode } from "react";
-import { bookingCostCell } from "@/lib/booking-cost";
+import { bookingCostCell, bookingCostTone } from "@/lib/booking-cost";
 import { CPB_GATE, CPL_GATE } from "@/lib/kpi";
 import type { Range } from "@/lib/range";
 import { rangeDays } from "@/lib/range";
@@ -397,13 +397,7 @@ function Table({
                     )}
                   </td>
                   <td
-                    className={`tabular-nums ${
-                      r.costPerBooking === undefined
-                        ? ""
-                        : r.costPerBooking > CPB_GATE
-                          ? "txt-bad"
-                          : "txt-good"
-                    }`}
+                    className={`tabular-nums ${bookingCostTone(cost(r).value, CPB_GATE)}`}
                   >
                     {r.bookingsAttributed ? (
                       <>

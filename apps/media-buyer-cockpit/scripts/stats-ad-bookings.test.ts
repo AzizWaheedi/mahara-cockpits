@@ -37,8 +37,12 @@ function ctx(dailyRows = daily, bookingRows = bookings) {
       query(table: string) {
         return {
           withIndex(_name: string, apply: (q: any) => any) {
-            const bounds: { campaign?: string; start?: string; end?: string } =
-              {};
+            const bounds: {
+              campaign?: string;
+              start?: string;
+              end?: string;
+              endExclusive?: string;
+            } = {};
             const q = {
               eq(_field: string, value: string) {
                 bounds.campaign = value;
@@ -53,7 +57,7 @@ function ctx(dailyRows = daily, bookingRows = bookings) {
                 return q;
               },
               lt(_field: string, value: string) {
-                bounds.end = value;
+                bounds.endExclusive = value;
                 return q;
               },
             };
@@ -66,7 +70,8 @@ function ctx(dailyRows = daily, bookingRows = bookings) {
                   r =>
                     r.campaignName === bounds.campaign &&
                     (!bounds.start || r.date >= bounds.start) &&
-                    (!bounds.end || r.date <= bounds.end),
+                    (!bounds.end || r.date <= bounds.end) &&
+                    (!bounds.endExclusive || r.date < bounds.endExclusive),
                 );
               },
             };
