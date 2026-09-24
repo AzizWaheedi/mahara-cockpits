@@ -631,8 +631,6 @@ def _client_from_name(name: str) -> str | None:
 
 def _kind(name: str) -> str:
     low = name.lower()
-    if low.startswith("creative batch "):
-        return "creativeBatch"
     if "brand dna" in low:
         return "brandDNA"
     if "script request" in low:
@@ -987,15 +985,6 @@ async def drain_creative_outbox() -> None:
         return
 
     for item in items:
-        # Claim before any external write. A second sync may have read the
-        # same pending row, but only one may create the ClickUp task.
-        try:
-            if not convex("clients:outboxClaim", {"id": item["id"]},
-                          app=CREATIVE_APP):
-                continue
-        except Exception as exc:  # noqa: BLE001
-            print(f"creative outbox claim FAILED: {exc}")
-            continue
         kind, task_id = item["kind"], item.get("taskId")
         data = item.get("payload") or {}
         ok, result = False, ""
@@ -1059,36 +1048,6 @@ async def drain_creative_outbox() -> None:
                 ))
                 new_id = (created or {}).get("id")
                 ok, result = bool(new_id), f"script task {new_id}"
-            elif kind == "planCreativeBatch":
-                # The Convex outbox has a unique client/fortnight key. Search
-                # the board again before a retry, because a task may have been
-                # created even if the outbox settlement failed. Never message
-                # the client or change a live ad from this planning action.
-                title = str(data.get("title") or "")
-                if not title.startswith("Creative batch ") or not data.get("client"):
-                    raise ValueError("invalid creative batch")
-                existing = next(
-                    (task for task in (await clickup(
-                        f"list/{CREATIVE_LIST}/task?include_closed=true&subtasks=true"
-                    ) or {}).get("tasks", []) if task.get("name") == title),
-                    None,
-                )
-                if existing:
-                    ok, result = True, f"existing creative batch {existing['id']}"
-                else:
-                    body = {
-                        "name": title,
-                        "description": data.get("brief", ""),
-                        "tags": [str(data["client"]).lower()],
-                        "due_date": _epoch_ms(data["due"]),
-                        "due_date_time": False,
-                    }
-                    created = unwrap(await pd_clickup_proxy_post(
-                        url=f"https://api.clickup.com/api/v2/list/{CREATIVE_LIST}/task",
-                        json_body=body,
-                    ))
-                    new_id = (created or {}).get("id")
-                    ok, result = bool(new_id), f"creative batch {new_id}"
             elif kind == "schedule" and task_id:
                 # Moving a card on the calendar writes the due date back.
                 unwrap(await pd_clickup_proxy_put(

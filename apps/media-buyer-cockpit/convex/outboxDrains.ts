@@ -301,6 +301,39 @@ async function creativeItem(
     const created = await post(`list/${CREATIVE_LIST}/task`, body);
     return [Boolean(created?.id), `script task ${created?.id}`];
   }
+  if (kind === "planCreativeBatch") {
+    const title = String(data.title ?? "");
+    const client = String(data.client ?? "");
+    const due = String(data.due ?? "");
+    if (
+      !title.startsWith("Creative batch ") ||
+      !client ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(due)
+    )
+      return [false, "invalid creative batch payload"];
+    // If ClickUp accepted a create but outbox settlement failed, retrying must
+    // find that exact batch before posting another task. Read all board pages;
+    // refuse a create if the scan cannot prove the title is absent.
+    for (let page = 0; page < 20; page++) {
+      const response = await get(
+        `list/${CREATIVE_LIST}/task?include_closed=true&page=${page}`,
+      );
+      const tasks: Any[] = response?.tasks ?? [];
+      const existing = tasks.find(t => t.name === title);
+      if (existing?.id) return [true, `existing creative batch ${existing.id}`];
+      if (response?.last_page === true || tasks.length < 100) {
+        const created = await post(`list/${CREATIVE_LIST}/task`, {
+          name: title,
+          description: String(data.brief ?? ""),
+          tags: [client.toLowerCase()],
+          due_date: epochMs(due),
+          due_date_time: false,
+        });
+        return [Boolean(created?.id), `creative batch ${created?.id}`];
+      }
+    }
+    return [false, "creative board exceeds duplicate-scan limit"];
+  }
   if (kind === "schedule" && taskId) {
     await put(`task/${taskId}`, {
       due_date: epochMs(String(data.due)),

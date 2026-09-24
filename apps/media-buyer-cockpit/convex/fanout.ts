@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { ActionCtx } from "./_generated/server";
 import { internalAction, internalQuery } from "./_generated/server";
+import { collectClickUpTaskPages } from "./clickupTaskPages";
 import {
   type ClientDataRow,
   clientDataFor,
@@ -45,6 +46,15 @@ async function clickup(path: string): Promise<Any> {
     await callTool("pd_clickup_proxy_get", {
       url: `https://api.clickup.com/api/v2/${path}`,
     }),
+  );
+}
+
+/** Include new creative cards even when the Media/Creative list exceeds page 0. */
+async function creativeBoardTasks(): Promise<Any[]> {
+  return await collectClickUpTaskPages<Any>(page =>
+    clickup(
+      `list/${CREATIVE_LIST}/task?include_closed=true&subtasks=true&page=${page}`,
+    ),
   );
 }
 
@@ -534,6 +544,7 @@ function clientFromName(name: string): string | undefined {
 
 function kindOf(name: string): string {
   const low = name.toLowerCase();
+  if (low.startsWith("creative batch ")) return "creativeBatch";
   if (low.includes("brand dna")) return "brandDNA";
   // The director triages creative requests in the existing script work queue.
   if (low.includes("script request") || low.includes("creative request"))
@@ -561,14 +572,14 @@ async function gatherCreative(clients: Any[]) {
     clients.map(c => [c.name, c.clientStatus]),
   );
   const [board, video, content] = await Promise.all([
-    clickup(`list/${CREATIVE_LIST}/task?include_closed=true&subtasks=true`),
+    creativeBoardTasks(),
     clickup(`list/${VIDEO_LIST}/task?include_closed=true&subtasks=true`),
     clickup(`list/${CONTENT_LIST}/task?include_closed=true&subtasks=true`),
   ]);
   const tagNames = (t: Any) =>
     ((t.tags ?? []) as Any[]).map(x => String(x.name ?? ""));
 
-  const tasks = ((board?.tasks ?? []) as Any[]).map(t => {
+  const tasks = board.map(t => {
     const name = String(t.name ?? "");
     const f = fieldsOf(t);
     // Brand DNA rows are the one place the client lives in the title.
