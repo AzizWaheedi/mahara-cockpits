@@ -242,6 +242,16 @@ source before the next starts.
    - The CEO cockpit sections, SOURCES.md rows, the metric registry.
    - The runbook, the health checks.
 
+### Where it stands (2026-09-24)
+
+| Phase | State |
+|---|---|
+| 1. Foundation | Shipped: the app at /sales, portal sign-in and seats from the Admin page, the B2B copy every three minutes, the lead page, the calendar with marking written to HighLevel, numbers, links. |
+| 2. Calling and scripts | Shipped: the dialer (queue, Maqsam click to call by country, outcomes, retry ladder, locks) and the guided intro and demo scripts in English and Arabic with captured answers. Booking from the cockpit is next; reps book in HighLevel meanwhile. |
+| 3. The AI layer | Shipped: proposals (hermes/sales-desk, gpt-5 on the VPS key) and the per-rep Fathom index. Next: notes after each call, the setter-to-closer brief, call reviews, the weekly and 30-day digests. |
+| 4. Follow-up and pipeline | Replies waiting and callbacks are in; the drafted and approved WhatsApp and email sends, the board, assets per lead and lead research are next. |
+| 5. Goals, pay, EOD, CEO | Goals, pace and the pay estimate are in Numbers; the EOD in the cockpit and the CEO cockpit's sales feed are next. |
+
 ## 6. Fixes found on the way (outside the build, some for Muhammed)
 
 - **Fathom → B2B sync refused (403) since 12 Sep.** The scheduler still reports
