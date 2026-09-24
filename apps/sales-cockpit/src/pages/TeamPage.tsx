@@ -308,7 +308,7 @@ function HealthCard({ now }: { now: number }) {
 
   return (
     <SectionCard title="Health">
-      <h3 className="muted text-[11px] font-semibold tracking-[0.12em] uppercase">
+      <h3 className="text-xs font-semibold">
         Copy from B2B
       </h3>
       <div className="mt-2">
@@ -367,7 +367,7 @@ function HealthCard({ now }: { now: number }) {
         )}
       </div>
 
-      <h3 className="muted mt-5 text-[11px] font-semibold tracking-[0.12em] uppercase">
+      <h3 className="mt-5 text-xs font-semibold">
         Proposal worker
       </h3>
       <div className="mt-2">
