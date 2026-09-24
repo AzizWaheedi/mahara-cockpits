@@ -4,6 +4,7 @@
     python3 desk.py doctor [--offline]      every key by name, each service, each blocker in a sentence
     python3 desk.py requests [--limit N]    draft (or rebuild) the proposals the cockpit asked for
     python3 desk.py recordings [--days N]   index Fathom's sales calls and match them to leads
+    python3 desk.py calls-vault [--dry]     copy every sales call in the Obsidian vault in, transcripts too
     python3 desk.py status                  the queue, the last proposals, the last runs
     python3 desk.py offer-sync              offer.json into the cockpit's proposal form (requests does it too)
 
@@ -30,6 +31,7 @@ from typing import Any, Callable, Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from desk import build as build_mod  # noqa: E402
+from desk import calls_vault as calls_vault_mod  # noqa: E402
 from desk import engine as engine_mod  # noqa: E402
 from desk import fathom as fathom_mod  # noqa: E402
 from desk import http  # noqa: E402
@@ -283,6 +285,33 @@ def cmd_recordings(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     return 0
 
 
+def cmd_calls_vault(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    """Copy every sales call in the Obsidian vault into the cockpit."""
+    sb = _sb(cfg)
+    vault = Path(args.vault or key("SALES_VAULT", "/opt/data/obsidian-sync-vault")).expanduser()
+    try:
+        out = calls_vault_mod.run(
+            sb, vault, log.info, dry=args.dry,
+            upload=lambda path, blob: sb.upload_to(calls_vault_mod.TRANSCRIPT_BUCKET, path, blob,
+                                                   "text/markdown; charset=utf-8"),
+        )
+    except FileNotFoundError as e:
+        _status(cfg, log, "calls-vault", False, str(e))
+        log.error(str(e))
+        return 1
+    if not out.get("notes"):
+        detail = "the vault has no sales notes"
+    else:
+        detail = (f"{out['rows']} sales calls from the vault ({out['first'] or '?'}"
+                  f" to {out['last'] or '?'}), {out['by_email']} matched by email, "
+                  f"{out['by_appointment']} by appointment, {out['unmatched']} unmatched, "
+                  f"{out['transcripts_uploaded']} transcripts uploaded")
+    if not args.dry:
+        _status(cfg, log, "calls-vault", bool(out.get("notes")), detail)
+    _print(out if args.json else detail, args.json)
+    return 0
+
+
 def cmd_status(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     sb = _sb(cfg)
     queue = sb.select("cockpit_sales_requests", "select=id,kind,contact_id,params,status,requested_by,requested_at,"
@@ -403,6 +432,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     d = sub.add_parser("doctor"); d.add_argument("--offline", action="store_true")
     rq = sub.add_parser("requests"); rq.add_argument("--limit", type=int)
     rc = sub.add_parser("recordings"); rc.add_argument("--days", type=int)
+    cv = sub.add_parser("calls-vault"); cv.add_argument("--vault"); cv.add_argument("--dry", action="store_true")
     sub.add_parser("status")
     sub.add_parser("offer-sync")
     v = sub.add_parser("validate"); v.add_argument("deal"); v.add_argument("--transcript")
@@ -423,13 +453,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     log = Logger(quiet=args.quiet)
     handlers: dict[str, Callable[[Config, argparse.Namespace, Logger], int]] = {
         "doctor": cmd_doctor, "requests": cmd_requests, "recordings": cmd_recordings, "status": cmd_status,
+        "calls-vault": cmd_calls_vault,
         "validate": cmd_validate, "build": cmd_build, "draft": cmd_draft, "offer-sync": cmd_offer_sync,
     }
     try:
         return handlers[args.cmd](cfg, args, log)
     except (SupabaseError, http.HttpError, NotNow, Refused) as e:
         log.error(http.scrub(str(e))[:400])
-        if args.cmd in ("requests", "recordings", "status", "offer-sync"):
+        if args.cmd in ("requests", "recordings", "status", "offer-sync", "calls-vault"):
             _status(cfg, log, args.cmd, False, http.scrub(str(e))[:400])
         return 1
     except KeyboardInterrupt:

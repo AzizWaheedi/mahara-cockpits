@@ -29,6 +29,8 @@ PK = {
     "cockpit_sales_appointments": ("appointment_id",),
     "cockpit_sales_people": ("email",),
     "cockpit_sales_settings": ("key",),
+    "cockpit_sales_reps": ("id",),
+    "cockpit_sales_reviews": ("source_ref",),
 }
 
 
@@ -79,7 +81,10 @@ class FakePostgrest:
     def __init__(self) -> None:
         self.tables: dict[str, dict[tuple, dict[str, Any]]] = {t: {} for t in PK}
         self.objects: dict[str, tuple[str, bytes]] = {}
-        self.buckets = {"sales-proposals": {"id": "sales-proposals", "public": False}}
+        self.buckets = {
+            "sales-proposals": {"id": "sales-proposals", "public": False},
+            "sales-calls": {"id": "sales-calls", "public": False},
+        }
         self.calls: list[tuple[str, str]] = []
 
     # ---- seeding and reading ----
@@ -139,7 +144,7 @@ class FakePostgrest:
 
     def _match(self, row: dict[str, Any], params: list[tuple[str, str]]) -> bool:
         for k, v in params:
-            if k in ("select", "order", "limit", "on_conflict"):
+            if k in ("select", "order", "limit", "offset", "on_conflict"):
                 continue
             if k == "or":
                 parts = _split_top(v.strip()[1:-1])
@@ -159,6 +164,8 @@ class FakePostgrest:
                 missing = [r for r in rows if r.get(col) is None]
                 present.sort(key=lambda r: _cmp(r.get(col), str(r.get(col)))[0], reverse=direction.startswith("desc"))
                 rows = present + missing
+        offset = next((int(v) for k, v in params if k == "offset"), 0)
+        rows = rows[offset:]
         for k, v in params:
             if k == "limit":
                 rows = rows[: int(v)]

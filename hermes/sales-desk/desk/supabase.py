@@ -128,6 +128,15 @@ class Supabase:
         )
         return path
 
+    def upload_to(self, bucket: str, path: str, blob: bytes, content_type: str) -> str:
+        """Into another private bucket (the call transcripts), overwriting."""
+        headers = self._headers(extra={"Content-Type": content_type, "x-upsert": "true"})
+        http.request(
+            "POST", f"{self.url}/storage/v1/object/{bucket}/{path}",
+            headers=headers, data=blob, timeout=max(self.timeout, 120), retries=2, ok_statuses=(200, 201),
+        )
+        return path
+
     def bucket_info(self) -> dict[str, Any]:
         _, _, body = http.request(
             "GET", f"{self.url}/storage/v1/bucket/{self.bucket}",
