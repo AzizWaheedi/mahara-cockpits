@@ -39,10 +39,11 @@ export function batchBrief(
     `Two-week ad creative batch for ${clientName}.`,
     `Briefing date: ${cycle}. Client approval target: ${approvalTarget}. Intended first launch window: ${launch}.`,
     "1. Check current winner, qualified results and the approved reserve. Choose a new objection, proof, offer or visual angle; a crop is not a new concept.",
-    "2. Brief one materially new video concept and two distinct still-image concepts. Use approved Brand DNA, offer and real project proof.",
-    "3. Assign production, review the assets internally, then request client approval through the existing client process. Record each asset link and explicit approval.",
-    "4. Hand an approved challenger to the media buyer for the planned launch. Keep a performing winner live while testing it.",
-    "5. Review delivery and qualified outcomes with the media buyer before replacing anything. If approvals are late, escalate the blocker; never count an unapproved edit as reserve.",
+    "2. Brief one materially new video concept and two distinct still-image concepts using the approved Brand DNA, offer and real project proof. Reuse an open creative request rather than opening a duplicate.",
+    "3. For a filmed video, link the exact ClickUp script task and final script or document. Review the offer, hook, CTA and dialect; record the client's script approval before filming. A completed script-request card alone is not proof of a finished or approved script.",
+    "4. Link the production tasks and preview URLs for the video and both stills here. Review internally first. In the Video Pipeline, internal review, internal approved, client review and client approved are distinct stages. Record who approved each asset, when and where; a preview sent to the client is not approval.",
+    "5. Hand only client-approved assets to the media buyer for the planned launch. Keep a performing winner live while testing the challenger. The buyer records the launch and qualified results in the existing Changes & Results flow.",
+    "6. Review delivery and qualified outcomes with the media buyer before replacing anything. If approval is late, flag the blocker and move the launch window; never count an unapproved edit as reserve. This card tracks the batch and does not replace script, production or approval tasks.",
     `Cadence key: ${key}`,
   ].join("\n\n");
 }
