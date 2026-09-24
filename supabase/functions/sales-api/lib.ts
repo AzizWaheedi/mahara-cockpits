@@ -31,7 +31,11 @@ export interface Who {
   name?: string | null;
   role?: string | null;
   ghl_user_id?: string | null;
+  b2b_rep_id?: string | null;
   maqsam_email?: string | null;
+  /** "seat" when the seat names it, "b2b" when it comes from the rep directory. */
+  maqsam_from?: "seat" | "b2b" | null;
+  fathom_email?: string | null;
 }
 
 export interface Appointment {
@@ -294,4 +298,285 @@ export function applyFills(
     changed.push(path);
   }
   return { ok: true, deal: copy, changed };
+}
+
+// ---------------------------------------------------------------------------
+// Conversations: reading a lead's thread and sending on it
+// ---------------------------------------------------------------------------
+
+export type Channel = "whatsapp" | "sms" | "email";
+
+export interface ThreadMessage {
+  id: string;
+  conversation_id: string;
+  direction: "inbound" | "outbound" | null;
+  channel: Channel | "call" | "other";
+  type: string | null;
+  status: string | null;
+  at: string | null;
+  body: string | null;
+  subject: string | null;
+  attachments: string[];
+  error: string | null;
+  source: string | null;
+}
+
+/** HighLevel's messageType as the channel a rep would name. */
+export function channelOf(messageType: unknown): ThreadMessage["channel"] {
+  const t = String(messageType ?? "").toUpperCase();
+  if (t.includes("WHATSAPP")) return "whatsapp";
+  if (t.includes("EMAIL")) return "email";
+  if (t.includes("CALL") || t.includes("VOICEMAIL")) return "call";
+  if (t.includes("SMS")) return "sms";
+  return "other";
+}
+
+/** A failure's reason, wherever HighLevel put it on this message. */
+function errorOf(m: Record<string, unknown>): string | null {
+  const meta = (m.meta ?? {}) as Record<string, unknown>;
+  for (const v of [m.error, m.errorMessage, meta.error, meta.errorMessage, meta.failedReason, m.statusReason]) {
+    if (!v) continue;
+    const s = typeof v === "string" ? v : JSON.stringify(v);
+    if (s && s !== "{}") return cleanText(s, 300);
+  }
+  return null;
+}
+
+/** One conversation's messages in the cockpit's shape; only https attachments. */
+export function toThread(list: unknown, conversationId: string): ThreadMessage[] {
+  const arr = Array.isArray(list) ? list : [];
+  return arr.flatMap(x => {
+    const m = (x ?? {}) as Record<string, unknown>;
+    if (!m.id) return [];
+    const meta = (m.meta ?? {}) as Record<string, unknown>;
+    const email = (meta.email ?? {}) as Record<string, unknown>;
+    const direction = m.direction === "inbound" || m.direction === "outbound" ? m.direction : null;
+    return [{
+      id: String(m.id),
+      conversation_id: String(m.conversationId ?? conversationId),
+      direction,
+      channel: channelOf(m.messageType ?? m.type),
+      type: m.messageType ? String(m.messageType) : null,
+      status: m.status ? String(m.status) : null,
+      at: m.dateAdded ? String(m.dateAdded) : null,
+      body: cleanText(m.body, 4000) || null,
+      subject: cleanText(email.subject ?? m.subject, 300) || null,
+      attachments: (Array.isArray(m.attachments) ? m.attachments : [])
+        .map(a => String(a ?? ""))
+        .filter(a => /^https:\/\//.test(a))
+        .slice(0, 5),
+      error: m.status === "failed" || m.status === "undelivered" ? errorOf(m) : null,
+      source: m.source ? String(m.source) : null,
+    }];
+  });
+}
+
+/** Several conversations as one thread, newest first, each message once. */
+export function mergeThreads(lists: ThreadMessage[][], limit = 80): ThreadMessage[] {
+  const seen = new Set<string>();
+  const all: ThreadMessage[] = [];
+  for (const l of lists)
+    for (const m of l)
+      if (!seen.has(m.id)) {
+        seen.add(m.id);
+        all.push(m);
+      }
+  const t = (m: ThreadMessage) => (m.at ? Date.parse(m.at) : 0);
+  return all.sort((a, b) => t(b) - t(a)).slice(0, limit);
+}
+
+/**
+ * WhatsApp takes a free message only within 24 hours of the lead's last
+ * message to us; after that, only an approved template (through a
+ * HighLevel workflow, not this API).
+ */
+export function whatsappWindow(lastInboundAt: string | null | undefined, now: number): {
+  open: boolean;
+  closes_at: string | null;
+  last_inbound_at: string | null;
+} {
+  const t = lastInboundAt ? Date.parse(String(lastInboundAt)) : Number.NaN;
+  if (!Number.isFinite(t)) return { open: false, closes_at: null, last_inbound_at: null };
+  const closes = t + 24 * 3_600_000;
+  return { open: now < closes, closes_at: new Date(closes).toISOString(), last_inbound_at: new Date(t).toISOString() };
+}
+
+/** Do-not-disturb for one channel, as HighLevel records it on the contact. */
+export function dndFor(contact: Record<string, unknown>, channel: Channel): boolean {
+  if (contact.dnd === true) return true;
+  const key = channel === "whatsapp" ? "WhatsApp" : channel === "email" ? "Email" : "SMS";
+  const s = ((contact.dndSettings ?? {}) as Record<string, Record<string, unknown>>)[key];
+  return String(s?.status ?? "").toLowerCase() === "active";
+}
+
+/** A plain-text email as simple, escaped HTML: paragraphs and line breaks. */
+export function emailHtml(text: string): string {
+  const esc = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return text
+    .trim()
+    .split(/\n{2,}/)
+    .map(p => `<p dir="auto">${esc(p).replace(/\n/g, "<br>")}</p>`)
+    .join("\n");
+}
+
+/** The body HighLevel's POST /conversations/messages takes for one send. */
+export function sendBody(channel: Channel, contactId: string, text: string, subject?: string | null) {
+  if (channel === "email")
+    return { type: "Email", contactId, subject: String(subject ?? "").trim(), html: emailHtml(text), message: text };
+  return { type: channel === "whatsapp" ? "WhatsApp" : "SMS", contactId, message: text };
+}
+
+/** HighLevel's message status as the cockpit's send state. */
+export function stateOf(status: unknown): "sending" | "sent" | "delivered" | "read" | "failed" {
+  const s = String(status ?? "").toLowerCase();
+  if (["failed", "undelivered", "opt_out"].includes(s)) return "failed";
+  if (s === "read" || s === "opened" || s === "clicked") return "read";
+  if (s === "delivered") return "delivered";
+  if (["sent", "connected"].includes(s)) return "sent";
+  return "sending";
+}
+
+// ---------------------------------------------------------------------------
+// End of day: the same questions as the Typeforms, in the sheet's own order
+// ---------------------------------------------------------------------------
+
+export type EodRole = "setter" | "closer";
+export type EodKind = "count" | "money" | "minutes" | "text";
+
+export interface EodField {
+  key: string;
+  /** The question as the Typeform asked it, and the sheet's column. */
+  label: string;
+  column: string;
+  kind: EodKind;
+  required?: boolean;
+}
+
+export const EOD_FIELDS: Record<EodRole, EodField[]> = {
+  setter: [
+    { key: "dials", label: "Dials", column: "Dials", kind: "count", required: true },
+    { key: "contact_made", label: "Contact made", column: "Contact Made", kind: "count", required: true },
+    { key: "conversations", label: "Conversations", column: "Conversations", kind: "count", required: true },
+    { key: "quality_conversations", label: "Quality conversations", column: "Quality Conversations", kind: "count", required: true },
+    // The Typeform took a range ("13-25"), so it stays words; the cockpit's
+    // own total from Maqsam is shown beside it for reference.
+    { key: "talk_time", label: "Talk time", column: "Talk Time", kind: "text", required: true },
+    { key: "intros_scheduled", label: "Intro calls scheduled", column: "Intro Calls Scheduled", kind: "count", required: true },
+    { key: "intros_booked", label: "Intros booked", column: "Intro Booked", kind: "count", required: true },
+    { key: "intro_shows", label: "Intro shows", column: "Intro Shows", kind: "count", required: true },
+    { key: "demos_booked", label: "Demos booked", column: "Booked Demos", kind: "count", required: true },
+    { key: "calls_confirmed", label: "Calls confirmed", column: "Calls Confirmed", kind: "count" },
+    { key: "deals_closed", label: "Deals closed on your sets", column: "Deals Closed", kind: "count" },
+    { key: "cash", label: "Cash collected on your sets ($)", column: "Cash Collected (Sets) $", kind: "money" },
+    { key: "contracted", label: "Contracted revenue on your sets ($)", column: "Contracted Revenue (Sets) $", kind: "money" },
+    { key: "objections", label: "Objections you heard", column: "Objections", kind: "text", required: true },
+    { key: "summary", label: "How the day went", column: "Day Summary", kind: "text", required: true },
+  ],
+  closer: [
+    { key: "slots", label: "Slots available", column: "Slots Available", kind: "count", required: true },
+    { key: "demos_scheduled", label: "Demos scheduled", column: "Demos Scheduled", kind: "count", required: true },
+    { key: "demos_showed", label: "Demos showed", column: "Demos Showed", kind: "count", required: true },
+    { key: "no_shows", label: "No-shows", column: "No Shows", kind: "count", required: true },
+    { key: "cancels", label: "Cancels", column: "Cancels", kind: "count", required: true },
+    { key: "rescheduled", label: "Rescheduled", column: "Rescheduled", kind: "count", required: true },
+    { key: "offers", label: "Offers given", column: "Offers Given", kind: "count", required: true },
+    { key: "deposits", label: "Deposits", column: "Deposits", kind: "count", required: true },
+    { key: "closed", label: "Clients closed", column: "Clients Closed", kind: "count", required: true },
+    { key: "cash", label: "Cash collected ($)", column: "Cash Collected", kind: "money", required: true },
+    { key: "contracted", label: "Contracted revenue ($)", column: "Contracted Revenue ($)", kind: "money", required: true },
+    { key: "objections", label: "Objections you heard", column: "Objections", kind: "text", required: true },
+    { key: "summary", label: "How the day went", column: "Day Summary", kind: "text", required: true },
+  ],
+};
+
+/** The sheet tab each role's EOD goes to, and its first columns. */
+export const EOD_TAB: Record<EodRole, string> = { setter: "Setter", closer: "Sales Rep" };
+
+const KUWAIT = 3 * 3_600_000;
+
+/**
+ * The working day an EOD is for, in Kuwait: before 04:00 it is still
+ * yesterday's (a rep who files at 00:37 is closing the day before, as the
+ * sheet's own rows show), and Friday is not a working day, so an EOD filed
+ * then is Thursday's.
+ */
+export function eodDay(nowMs: number): string {
+  let d = new Date(nowMs + KUWAIT);
+  if (d.getUTCHours() < 4) d = new Date(d.getTime() - 86_400_000);
+  if (d.getUTCDay() === 5) d = new Date(d.getTime() - 86_400_000);
+  return d.toISOString().slice(0, 10);
+}
+
+/** "2026-09-05 19:44:57": Kuwait time, the hour unpadded, as the sheet has it. */
+export function sheetStamp(ms: number): string {
+  const d = new Date(ms + KUWAIT);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.toISOString().slice(0, 10)} ${d.getUTCHours()}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
+}
+
+/** An answer as the rep typed it: a count, dollars, minutes or words. */
+export function eodValue(kind: EodKind, raw: unknown): { ok: true; value: number | string | null } | { ok: false } {
+  if (raw === null || raw === undefined || String(raw).trim() === "") return { ok: true, value: null };
+  if (kind === "text") return { ok: true, value: cleanText(raw, 3000) };
+  const n = Number(String(raw).replace(/[$,\s]/g, "").replace(/min(ute)?s?$/i, ""));
+  if (!Number.isFinite(n) || n < 0 || n > 10_000_000) return { ok: false };
+  if (kind === "count" && !Number.isInteger(n)) return { ok: false };
+  return { ok: true, value: kind === "money" ? Math.round(n * 100) / 100 : n };
+}
+
+function shown(kind: EodKind, v: unknown): string {
+  if (v === null || v === undefined || v === "") return "--";
+  if (kind === "money") return `$${Number(v).toLocaleString("en-US")}`;
+  if (kind === "minutes") return `${v} min`;
+  return String(v);
+}
+
+/**
+ * The Slack message, as text: EOD Radar reads `message.text` and credits a
+ * person by the name line and the "Submitted by: <@id>" line, so both are
+ * always there (a missing Slack id is said in words instead).
+ */
+export function eodMessage(role: EodRole, name: string, slackId: string | null, day: string,
+                           answers: Record<string, unknown>): string {
+  const fields = EOD_FIELDS[role];
+  const numbers = fields.filter(f => f.kind !== "text");
+  return [
+    role === "setter" ? "*SETTER EOD*" : "*SALES REP EOD*",
+    `*Date - ${day}*`,
+    "",
+    `*Name - ${name}*`,
+    slackId ? `Submitted by: <@${slackId}>` : `Submitted by: ${name} (no Slack id on their cockpit seat)`,
+    "",
+    "*Today's Numbers*",
+    ...numbers.map(f => `${f.label} - ${shown(f.kind, answers[f.key])}`),
+    "",
+    "*Objections*",
+    String(answers.objections ?? "--"),
+    "",
+    "*Day Summary*",
+    String(answers.summary ?? "--"),
+    "",
+    "_Filed in the sales cockpit._",
+  ].join("\n");
+}
+
+/**
+ * The sheet row as named columns. The worker on the VPS reads the tab's
+ * header and puts each value under its column, so a reordered sheet never
+ * shifts a number into the wrong column.
+ */
+export function eodColumns(role: EodRole, name: string, day: string, submittedMs: number,
+                           responseId: string, answers: Record<string, unknown>): Record<string, string | number> {
+  const out: Record<string, string | number> = {
+    "Submitted At": sheetStamp(submittedMs),
+    Name: name,
+    "Response ID": responseId,
+    "Date For": day,
+  };
+  for (const f of EOD_FIELDS[role]) {
+    const v = answers[f.key];
+    out[f.column] = v === null || v === undefined ? "" : f.kind === "minutes" ? `${v} min` : (v as string | number);
+  }
+  return out;
 }

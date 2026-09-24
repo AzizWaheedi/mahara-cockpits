@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { GoalRow } from "./goals";
 import { supabase } from "./supabase";
 import type {
   BoardRow,
@@ -14,6 +15,7 @@ import type {
   Proposal,
   Recording,
   Rep,
+  Review,
   SalesLink,
   ScoreRow,
   TeamMember,
@@ -251,15 +253,19 @@ export function useLeads(f: LeadFilter): Loaded<Lead[]> {
 
 /** The pipeline's stages, from the leads that sit in them. */
 export function useStages(): Loaded<
-  { stage_id: string; stage_name: string }[]
+  { stage_id: string; stage_name: string; pipeline_name: string | null }[]
 > {
   return useQuery(
     () =>
-      readAll<{ stage_id: string; stage_name: string }>(
+      readAll<{
+        stage_id: string;
+        stage_name: string;
+        pipeline_name: string | null;
+      }>(
         (from, to) =>
           supabase
             .from("cockpit_sales_leads")
-            .select("stage_id,stage_name")
+            .select("stage_id,stage_name,pipeline_name")
             .not("stage_id", "is", null)
             .gte(
               "lead_created_at",
@@ -397,6 +403,172 @@ export function useScoreRows(windowKey: WindowKey): Loaded<ScoreRow[]> {
         .select("*")
         .eq("window_key", windowKey),
     [windowKey],
+    120_000,
+  );
+}
+
+/**
+ * B2B's scorecard by Kuwait month (window keys "m2026-09" and back a year),
+ * for one rep or, for a manager, everyone. Voided deals are already out.
+ */
+export function useMonthCards(
+  rep: string | null,
+  month?: string,
+): Loaded<ScoreRow[]> {
+  return useQuery<ScoreRow[]>(
+    () => {
+      let q = supabase
+        .from("cockpit_sales_scorecards")
+        .select("*")
+        .like("window_key", month ? `m${month}` : "m2%");
+      if (rep) q = q.eq("person_key", rep);
+      return q.order("window_key", { ascending: false }).limit(1000);
+    },
+    [rep, month],
+    300_000,
+  );
+}
+
+/** Monthly goals and forecasts from `fromMonth` on: one rep's, or all a manager may read. */
+export function useGoalRows(
+  rep: string | null,
+  fromMonth: string,
+  toMonth?: string,
+): Loaded<GoalRow[]> {
+  return useQuery<GoalRow[]>(() => {
+    let q = supabase
+      .from("cockpit_sales_goals")
+      .select("*")
+      .gte("month", `${fromMonth}-01`);
+    if (toMonth) q = q.lte("month", `${toMonth}-01`);
+    if (rep) q = q.eq("person_key", rep);
+    return q.order("month", { ascending: false }).limit(1000);
+  }, [rep, fromMonth, toMonth]);
+}
+
+export interface DialMonth {
+  agent_email: string;
+  month: string;
+  outbound: number;
+  connected: number;
+}
+
+/** Outbound Maqsam dials per address per month: one address, or everyone's for one month. */
+export function useDialMonths(
+  email: string | null,
+  month?: string,
+): Loaded<DialMonth[]> {
+  return useQuery<DialMonth[]>(
+    () => {
+      if (!email && !month) return none<DialMonth[]>();
+      let q = supabase.from("cockpit_sales_dials_monthly").select("*");
+      if (email) q = q.eq("agent_email", email.toLowerCase());
+      if (month) q = q.eq("month", month);
+      return q.limit(1000);
+    },
+    [email, month],
+    300_000,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Recorded calls and Vince's reviews
+// ---------------------------------------------------------------------------
+
+/** The list columns: no summary or invitees, which only one call's page needs. */
+const RECORDING_LIST =
+  "recording_id,title,recorded_by,started_at,duration_s,share_url,contact_id,matched_by,source,language,transcript_path,transcript_chars,indexed_at,appointment_id";
+
+export interface RecordingFilter {
+  q: string;
+  /** A rep's Fathom address, or "" for everyone. */
+  by: string;
+  page: number;
+}
+
+export function useRecordings(f: RecordingFilter): Loaded<Recording[]> {
+  return useQuery<Recording[]>(() => {
+    let q = supabase
+      .from("cockpit_sales_recordings")
+      .select(RECORDING_LIST)
+      .order("started_at", { ascending: false, nullsFirst: false })
+      .order("recording_id", { ascending: true })
+      .range(f.page * PAGE, f.page * PAGE + PAGE - 1);
+    if (f.by) q = q.eq("recorded_by", f.by);
+    const text = f.q
+      .trim()
+      .replace(/[,()*]/g, " ")
+      .trim();
+    if (text) q = q.ilike("title", `%${text}%`);
+    return q as unknown as Result<Recording[]>;
+  }, [f.q, f.by, f.page]);
+}
+
+export function useRecording(id: string): Loaded<Recording> {
+  return useQuery<Recording>(
+    () =>
+      id
+        ? supabase
+            .from("cockpit_sales_recordings")
+            .select("*")
+            .eq("recording_id", id)
+            .maybeSingle()
+        : none<Recording>(),
+    [id],
+  );
+}
+
+/** Reviews of these calls, or of this lead's calls, or by this rep; newest first. */
+export function useReviews(by: {
+  recordingIds?: string[];
+  contactId?: string;
+  repKey?: string;
+  all?: boolean;
+  limit?: number;
+}): Loaded<Review[]> {
+  const ids = (by.recordingIds ?? []).slice(0, 100);
+  const key = `${ids.join(",")}|${by.contactId ?? ""}|${by.repKey ?? ""}|${by.all ? 1 : 0}|${by.limit ?? 50}`;
+  return useQuery<Review[]>(() => {
+    if (!ids.length && !by.contactId && !by.repKey && !by.all)
+      return none<Review[]>();
+    let q = supabase
+      .from("cockpit_sales_reviews")
+      .select("*")
+      .order("call_at", { ascending: false, nullsFirst: false })
+      .limit(by.limit ?? 50);
+    if (ids.length) q = q.in("recording_id", ids);
+    if (by.contactId) q = q.eq("contact_id", by.contactId);
+    if (by.repKey) q = q.eq("rep_key", by.repKey);
+    return q;
+  }, [key]);
+}
+
+/** A call's transcript from the private bucket. */
+export async function loadTranscript(path: string): Promise<string> {
+  const { data, error } = await supabase.storage
+    .from("sales-calls")
+    .download(path);
+  if (error || !data)
+    throw new Error(error?.message ?? "the transcript file came back empty");
+  return await data.text();
+}
+
+/** Follow-up drafts waiting for this person, for the sidebar's count. */
+export function useFollowupsWaiting(
+  email: string | null,
+): Loaded<{ id: string }[]> {
+  return useQuery<{ id: string }[]>(
+    () =>
+      email
+        ? supabase
+            .from("cockpit_sales_followups")
+            .select("id")
+            .eq("status", "draft")
+            .eq("owner_email", email)
+            .gt("expires_at", new Date().toISOString())
+            .limit(100)
+        : none<{ id: string }[]>(),
+    [email],
     120_000,
   );
 }

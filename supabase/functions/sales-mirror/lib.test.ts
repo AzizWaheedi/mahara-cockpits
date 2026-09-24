@@ -7,7 +7,9 @@ import {
   inboxRow,
   leadClass,
   leadRow,
+  applyVoids,
   leadsSql,
+  monthWindows,
   phone8,
   redact,
   scorecardRows,
@@ -161,4 +163,78 @@ test("a fresh HighLevel contact becomes a lead row with its answers and class", 
   expect(r?.revenue).toBe("$100K - $250k");
   expect(r?.ad_id).toBe("120245");
   expect(r?.lead_created_at).toBe("2026-09-24T09:00:00.000Z");
+});
+
+describe("month windows (goals history)", () => {
+  test("the running month to today, then whole months back", () => {
+    const w = monthWindows(Date.parse("2026-09-24T09:00:00Z"), 3);
+    expect(w.map(x => x.key)).toEqual(["m2026-09", "m2026-08", "m2026-07", "m2026-06"]);
+    expect(w[0]).toEqual({ key: "m2026-09", from: "2026-09-01", to: "2026-09-24", current: true });
+    expect(w[1]).toEqual({ key: "m2026-08", from: "2026-08-01", to: "2026-08-31", current: false });
+    expect(w[3].to).toBe("2026-06-30");
+  });
+  test("a year back crosses into the year before, February included", () => {
+    const w = monthWindows(Date.parse("2026-03-10T09:00:00Z"), 13);
+    expect(w.find(x => x.key === "m2026-02")?.to).toBe("2026-02-28");
+    expect(w.at(-1)?.key).toBe("m2025-02");
+  });
+  test("just after midnight in Kuwait on the first is the new month", () => {
+    const w = monthWindows(Date.parse("2026-09-30T21:30:00Z"), 1);
+    expect(w[0]).toEqual({ key: "m2026-10", from: "2026-10-01", to: "2026-10-01", current: true });
+    expect(w[1].key).toBe("m2026-09");
+  });
+});
+
+describe("voided deals come out of B2B's scorecard", () => {
+  const reps = [
+    { id: "ahmed", closer_aliases: ["Ahmed Abushaiba", "Ahmed"] },
+    { id: "samer", closer_aliases: ["Samer"] },
+  ];
+  const w = { from: "2026-08-01", to: "2026-08-31" };
+  const card = {
+    person_key: "ahmed",
+    closes: 6,
+    revenue: 12000,
+    cash_collected: 4000,
+    new_mrr: 0,
+    demos_qualified: 10,
+    close_rate: 60,
+    avg_deal: 2000,
+  };
+  const voidDeal = (over: Record<string, unknown>) => ({
+    response_id: "r",
+    closer: " ahmed ",
+    submitted_at: "2026-08-10T10:00:00Z",
+    contracted_revenue: 3000,
+    cash_collected: 1500,
+    new_mrr: 0,
+    ...over,
+  });
+
+  test("a void in the window comes off its closer, B2B's figures kept beside it", () => {
+    const [r] = applyVoids([card], [voidDeal({})], reps, w);
+    expect(r.closes).toBe(5);
+    expect(r.cash_collected).toBe(2500);
+    expect(r.revenue).toBe(9000);
+    expect(r.close_rate).toBe(50);
+    expect(r.avg_deal).toBe(1800);
+    expect((r.b2b as Record<string, unknown>).closes).toBe(6);
+    expect((r.voided as Record<string, unknown>).cash_collected).toBe(1500);
+  });
+  test("the window is the Riyadh day the form came in", () => {
+    // 21:30 UTC on 31 August is 1 September in Riyadh: outside August.
+    const [r] = applyVoids([card], [voidDeal({ submitted_at: "2026-08-31T21:30:00Z" })], reps, w);
+    expect(r.closes).toBe(6);
+    expect("voided" in r).toBe(false);
+  });
+  test("a closer no alias knows is B2B's 'unattributed', not anyone's", () => {
+    const rows = [card, { person_key: "unattributed", closes: 1, cash_collected: 500 }];
+    const out = applyVoids(rows, [voidDeal({ closer: "Someone New", cash_collected: 500 })], reps, w);
+    expect(out[0].closes).toBe(6);
+    expect(out[1].closes).toBe(0);
+    expect(out[1].cash_collected).toBe(0);
+  });
+  test("nothing voided leaves the rows as they were", () => {
+    expect(applyVoids([card], [], reps, w)).toEqual([card]);
+  });
 });

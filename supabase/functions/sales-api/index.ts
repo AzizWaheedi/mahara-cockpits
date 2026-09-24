@@ -25,6 +25,21 @@ import {
   redact,
   refuseMark,
   trimMessages,
+  type Channel,
+  dndFor,
+  mergeThreads,
+  sendBody,
+  stateOf,
+  type ThreadMessage,
+  toThread,
+  whatsappWindow,
+  EOD_FIELDS,
+  EOD_TAB,
+  type EodRole,
+  eodColumns,
+  eodDay,
+  eodMessage,
+  eodValue,
   type Who,
 } from "./lib.ts";
 import {
@@ -167,7 +182,9 @@ async function ghl(
     let msg = text;
     try {
       const j = JSON.parse(text);
-      msg = String(j.message ?? j.msg ?? j.error ?? text);
+      // HighLevel's message is sometimes an object: {error, status}.
+      const m = j.message ?? j.msg ?? j.error ?? text;
+      msg = typeof m === "string" ? m : String((m as Row)?.error ?? (m as Row)?.message ?? JSON.stringify(m));
     } catch {
       // not JSON
     }
@@ -638,6 +655,709 @@ async function settingSave(who: Who, b: Row) {
 }
 
 // ---------------------------------------------------------------------------
+// Talking to a lead: HighLevel conversations on the sales sub-account
+// ---------------------------------------------------------------------------
+
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+const MAX_CHARS: Record<Channel, number> = { whatsapp: 4096, sms: 1600, email: 10000 };
+const CHANNEL_WORD: Record<Channel, string> = { whatsapp: "WhatsApp", sms: "SMS", email: "email" };
+
+function agoWords(iso: string | null): string {
+  if (!iso) return "never";
+  const h = (Date.now() - Date.parse(iso)) / 3_600_000;
+  if (h < 48) return `${Math.max(1, Math.round(h))} hours ago`;
+  return `${Math.round(h / 24)} days ago`;
+}
+
+/** The newest inbound WhatsApp message across the lead's conversations. */
+function lastWhatsappIn(convs: Row[], thread: ThreadMessage[]): string | null {
+  const times = [
+    ...convs.map(c => c.lastInboundWhatsappMessageDate ?? c.lastInboundWhatsAppMessageDate),
+    ...thread.filter(m => m.direction === "inbound" && m.channel === "whatsapp").map(m => m.at),
+  ]
+    .map(v => (v ? Date.parse(String(typeof v === "number" ? new Date(v).toISOString() : v)) : Number.NaN))
+    .filter(Number.isFinite);
+  return times.length ? new Date(Math.max(...times)).toISOString() : null;
+}
+
+async function messagingSwitch(): Promise<Record<Channel, boolean>> {
+  const v = (await setting<Row>("messaging")) ?? {};
+  return { whatsapp: v.whatsapp !== false, email: v.email !== false, sms: v.sms === true };
+}
+
+/**
+ * A lead's conversation as one thread: every HighLevel conversation the
+ * contact has, merged, newest first, 40 at a time each (`older` with the
+ * cursors reads further back), with what each channel allows right now.
+ */
+async function convoRead(_who: Who, b: Row) {
+  const id = cleanText(b.contact_id, 80);
+  if (!id) throw new Refusal("Which lead?");
+  const now = Date.now();
+  const [contactOut, convsOut, sends, switches] = await Promise.all([
+    ghl("GET", `/contacts/${enc(id)}`, undefined, "2021-07-28"),
+    ghl("GET", `/conversations/search?locationId=${LOCATION}&contactId=${enc(id)}&limit=20`),
+    svc(
+      `cockpit_sales_messages?contact_id=eq.${enc(id)}&select=id,request_id,channel,state,sent_by,source,ghl_message_id,error,created_at&order=created_at.desc&limit=50`,
+    ),
+    messagingSwitch(),
+  ]);
+  const c = ((contactOut as Row).contact ?? {}) as Row;
+  const convs = (((convsOut as Row).conversations ?? []) as Row[]).slice(0, 6);
+  const older = Boolean(b.older);
+  const cursors = (b.cursors ?? {}) as Record<string, string>;
+  const pages = await Promise.all(
+    convs.map(async cv => {
+      const cid = String(cv.id);
+      if (older && !cursors[cid]) return { cid, list: [] as ThreadMessage[], next: null as string | null };
+      const q = `limit=40${older && cursors[cid] ? `&lastMessageId=${enc(cursors[cid])}` : ""}`;
+      const m = await ghl("GET", `/conversations/${enc(cid)}/messages?${q}`);
+      const inner = ((m as Row).messages ?? {}) as Row;
+      const list = toThread(Array.isArray(inner.messages) ? inner.messages : (m as Row).messages, cid);
+      const next = inner.nextPage ? String(inner.lastMessageId ?? list.at(-1)?.id ?? "") || null : null;
+      return { cid, list, next };
+    }),
+  );
+  const thread = mergeThreads(pages.map(p => p.list), 160);
+  const window = whatsappWindow(lastWhatsappIn(convs, thread), now);
+  return {
+    contact: {
+      name: [c.firstName, c.lastName].filter(Boolean).join(" ") || c.contactName || null,
+      email: c.email ?? null,
+      phone: c.phone ?? null,
+      tags: c.tags ?? [],
+      dnd: c.dnd ?? null,
+      assigned_to: c.assignedTo ?? null,
+      source: c.source ?? null,
+    },
+    channels: {
+      whatsapp: { on: switches.whatsapp, dnd: dndFor(c, "whatsapp"), reachable: Boolean(c.phone), window },
+      email: { on: switches.email, dnd: dndFor(c, "email"), reachable: Boolean(c.email) },
+      sms: { on: switches.sms, dnd: dndFor(c, "sms"), reachable: Boolean(c.phone) },
+    },
+    thread,
+    cursors: Object.fromEntries(pages.filter(p => p.next).map(p => [p.cid, p.next])),
+    sends,
+    read_at: new Date(now).toISOString(),
+  };
+}
+
+/**
+ * Send one message to a lead now. Written first (request_id is unique, so a
+ * retry returns the first send and never sends twice), then sent, then read
+ * back from HighLevel for up to ten seconds, because a WhatsApp send
+ * HighLevel accepts can still fail at Meta.
+ */
+async function convoSend(who: Who, b: Row) {
+  const contactId = cleanText(b.contact_id, 80);
+  const channel = String(b.channel ?? "") as Channel;
+  const requestId = String(b.request_id ?? "");
+  const text = String(b.body ?? "").replace(/\r\n/g, "\n").trim();
+  if (!contactId) throw new Refusal("Which lead?");
+  if (!(channel in MAX_CHARS)) throw new Refusal("Send on WhatsApp or by email.");
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestId))
+    throw new Refusal("Reload the page and send again.");
+  if (!text) throw new Refusal("Write the message first.");
+  if (text.length > MAX_CHARS[channel])
+    throw new Refusal(`That is too long for ${CHANNEL_WORD[channel]} (${MAX_CHARS[channel]} characters at most).`);
+  const subject = channel === "email" ? cleanText(b.subject, 300) : null;
+  if (channel === "email" && !subject) throw new Refusal("An email needs a subject.");
+  const followupId = b.followup_id ? cleanText(b.followup_id, 40) : null;
+
+  const already = (await svc(`cockpit_sales_messages?request_id=eq.${enc(requestId)}&select=*`))[0];
+  if (already) {
+    if (already.contact_id === contactId && already.body === text && already.channel === channel)
+      return { message: already, repeated: true };
+    throw new Refusal("That send was already used for another message. Reload and send again.", 409);
+  }
+  if (!(await messagingSwitch())[channel])
+    throw new Refusal(`Sending by ${CHANNEL_WORD[channel]} is switched off in the cockpit.`, 409);
+  const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contactId)}&select=contact_id,name`))[0];
+  if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
+
+  const contact = (((await ghl("GET", `/contacts/${enc(contactId)}`, undefined, "2021-07-28")) as Row).contact ??
+    {}) as Row;
+  if (dndFor(contact, channel))
+    throw new Refusal(`This lead asked not to be contacted by ${CHANNEL_WORD[channel]} (do not disturb is on in HighLevel).`, 409);
+  if (channel === "email" && !contact.email) throw new Refusal("This lead has no email address in HighLevel.", 409);
+  if (channel !== "email" && !contact.phone) throw new Refusal("This lead has no phone number in HighLevel.", 409);
+  if (channel === "whatsapp") {
+    const convs = (((await ghl("GET", `/conversations/search?locationId=${LOCATION}&contactId=${enc(contactId)}&limit=20`)) as Row)
+      .conversations ?? []) as Row[];
+    const w = whatsappWindow(lastWhatsappIn(convs, []), Date.now());
+    if (!w.open)
+      throw new Refusal(
+        `WhatsApp only takes a free message within 24 hours of the lead's own last message; they last wrote ${agoWords(w.last_inbound_at)}. Email them instead, or wait for them to write.`,
+        409,
+      );
+  }
+
+  let row: Row;
+  try {
+    row = (await svc("cockpit_sales_messages", {
+      method: "POST",
+      body: {
+        request_id: requestId,
+        contact_id: contactId,
+        channel,
+        subject,
+        body: text,
+        source: followupId ? "followup" : "rep",
+        followup_id: followupId,
+        sent_by: who.email,
+        state: "sending",
+      },
+      prefer: "return=representation",
+    }))[0];
+  } catch (e) {
+    if (/23505|duplicate/.test(String((e as Error).message ?? e))) {
+      const twin = (await svc(`cockpit_sales_messages?request_id=eq.${enc(requestId)}&select=*`))[0];
+      return { message: twin, repeated: true };
+    }
+    throw e;
+  }
+
+  let out: Row;
+  try {
+    out = await ghl("POST", "/conversations/messages", sendBody(channel, contactId, text, subject));
+  } catch (e) {
+    const err = redact(String((e as Error).message ?? e));
+    await svc(`cockpit_sales_messages?id=eq.${row.id}`, {
+      method: "PATCH",
+      body: { state: "failed", error: err, updated_at: new Date().toISOString() },
+      prefer: "return=minimal",
+    });
+    await audit(who, "convo.send", "cockpit_sales_messages", String(row.id), null, { channel, state: "failed", error: err });
+    throw new Refusal(`HighLevel did not send it: ${err}`, 502);
+  }
+  const messageId = String(out.messageId ?? "");
+  let status = String(out.status ?? "pending");
+  let error: string | null = null;
+  // Read it back: HighLevel answers "pending" and Meta decides afterwards.
+  for (let i = 0; i < 5 && messageId; i++) {
+    await sleep(2000);
+    try {
+      const m = (await ghl("GET", `/conversations/messages/${enc(messageId)}`)) as Row;
+      const one = (m.message ?? m) as Row;
+      status = String(one.status ?? status);
+      const [shaped] = toThread([{ ...one, id: one.id ?? messageId }], String(out.conversationId ?? ""));
+      error = shaped?.error ?? null;
+      if (["delivered", "read", "failed", "undelivered", "opened"].includes(status)) break;
+    } catch {
+      break; // an email's id is not always readable this way; keep what we have
+    }
+  }
+  const state = stateOf(status === "pending" && !error ? "sent" : status);
+  const saved = (await svc(`cockpit_sales_messages?id=eq.${row.id}`, {
+    method: "PATCH",
+    body: {
+      state,
+      provider_status: status,
+      error: state === "failed" ? (error ?? "HighLevel marked it failed without a reason") : null,
+      ghl_message_id: messageId || null,
+      ghl_conversation_id: out.conversationId ?? null,
+      updated_at: new Date().toISOString(),
+    },
+    prefer: "return=representation",
+  }))[0];
+  await audit(who, "convo.send", "cockpit_sales_messages", String(row.id), null,
+    { channel, state, provider_status: status, followup_id: followupId }, { lead: lead.name ?? null });
+  return { message: saved };
+}
+
+// ---------------------------------------------------------------------------
+// End of day
+// ---------------------------------------------------------------------------
+
+/** #eods-salesreps, where the Typeform EODs were posted (Make scenarios 9327584/9327485). */
+const EOD_CHANNEL = "C0AF5PJEAUX";
+const HOUR = 3_600_000;
+
+function eodRoleFor(who: Who, asked: unknown): EodRole {
+  const role = String(who.role ?? "");
+  if (role === "setter") return "setter";
+  if (role === "closer") return "closer";
+  return asked === "closer" ? "closer" : "setter";
+}
+
+function eodDayOk(day: unknown): string {
+  const today = eodDay(Date.now());
+  const d = String(day ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return today;
+  const back = (Date.parse(`${today}T00:00:00Z`) - Date.parse(`${d}T00:00:00Z`)) / 86_400_000;
+  if (back < 0) throw new Refusal("An end of day cannot be filed ahead of the day.");
+  if (back > 7) throw new Refusal("An end of day can be filed for the last seven days only.");
+  return d;
+}
+
+interface EodCounted {
+  values: Record<string, number | null>;
+  /** Where each number came from and what it leaves out, shown beside it. */
+  notes: Record<string, string>;
+  /** Numbers that mean what the question means, so the form starts with them. */
+  prefill: string[];
+}
+
+/**
+ * What the cockpit already knows about this rep's day. Checked against the
+ * Typeform EODs (Tahrir, 30 Aug and 5 Sept): Maqsam's outbound calls include
+ * the intro calls and miss calls made outside Maqsam (17 against the 9 she
+ * reported; 5 against 8), so a setter's call counts are shown as reference
+ * beside the question, never typed in for her. A closer's calendar and
+ * deals mean what the questions mean, so those start filled in.
+ */
+async function eodCount(who: Who, role: EodRole, day: string): Promise<EodCounted> {
+  const notes: Record<string, string> = {};
+  const prefill: string[] = [];
+  const from = new Date(Date.parse(`${day}T00:00:00Z`) - 3 * HOUR).toISOString();
+  const to = new Date(Date.parse(`${day}T00:00:00Z`) + 21 * HOUR).toISOString();
+  const between = (col: string) => `${col}=gte.${enc(from)}&${col}=lt.${enc(to)}`;
+  const ghlUser = String(who.ghl_user_id ?? "");
+  const out: Record<string, number | null> = {};
+  const person = (await svc(`cockpit_sales_people?email=eq.${enc(String(who.email))}&select=b2b_rep_id,name`))[0];
+  const rep = person?.b2b_rep_id
+    ? (await svc(`cockpit_sales_reps?id=eq.${enc(String(person.b2b_rep_id))}&select=display_name,closer_aliases`))[0]
+    : null;
+  const names = [rep?.display_name, ...((rep?.closer_aliases as string[] | null) ?? [])]
+    .map(x => String(x ?? "").trim().toLowerCase())
+    .filter(Boolean);
+  const deals = names.length
+    ? (await svc(`cockpit_sales_deals?${between("submitted_at")}&select=closer,setter,cash_collected,contracted_revenue,voided`))
+        .filter(d => !d.voided)
+    : [];
+  const sum = (rows: Row[], k: string) => rows.reduce((a, r) => a + Number(r[k] ?? 0), 0);
+  // The show rule used everywhere: showed, or confirmed or invalid once past.
+  const shown = (r: Row) =>
+    r.status === "showed" || ((r.status === "confirmed" || r.status === "invalid") && Date.parse(String(r.start_at)) < Date.now());
+
+  if (role === "setter") {
+    const maqsam = String(who.maqsam_email ?? "").toLowerCase();
+    if (maqsam) {
+      const dials = await svc(
+        `cockpit_sales_dials?agent_email=eq.${enc(maqsam)}&direction=eq.outbound&${between("occurred_at")}&select=state,duration_s&limit=2000`,
+      );
+      const done = dials.filter(d => d.state === "completed");
+      out.dials = dials.length;
+      out.contact_made = done.length;
+      out.conversations = done.filter(d => Number(d.duration_s ?? 0) >= 60).length;
+      out.quality_conversations = done.filter(d => Number(d.duration_s ?? 0) >= 180).length;
+      const minutes = Math.round(sum(done, "duration_s") / 60);
+      out.talk_time = minutes;
+      notes.dials = "Outbound calls from your Maqsam line, intro calls included; calls made outside Maqsam are not counted.";
+      notes.contact_made = "Of those, the ones someone answered.";
+      notes.conversations = "Answered, and a minute or longer.";
+      notes.quality_conversations = "Answered, and three minutes or longer.";
+      notes.talk_time = done.length
+        ? `${minutes} min in all over ${done.length} answered calls, about ${Math.round(minutes / done.length)} min each.`
+        : "No answered calls from your Maqsam line.";
+    } else {
+      notes.dials = "Your seat has no Maqsam address, so the cockpit cannot count your calls.";
+    }
+    if (ghlUser) {
+      const held = await svc(
+        `cockpit_sales_calendar?call_type=eq.intro&assigned_user_id=eq.${enc(ghlUser)}&${between("start_at")}&select=status,start_at`,
+      );
+      out.intros_scheduled = held.length;
+      out.intro_shows = held.filter(shown).length;
+      out.intros_booked = (await svc(
+        `cockpit_sales_calendar?call_type=eq.intro&assigned_user_id=eq.${enc(ghlUser)}&${between("booked_at")}&select=appointment_id`,
+      )).length;
+      // Demos booked today for leads whose intro was theirs in the last 60 days.
+      const demos = await svc(`cockpit_sales_calendar?call_type=eq.demo&${between("booked_at")}&select=contact_id`);
+      const ids = [...new Set(demos.map(d => String(d.contact_id ?? "")).filter(Boolean))];
+      if (ids.length) {
+        const since = new Date(Date.parse(from) - 60 * 24 * HOUR).toISOString();
+        const mine = await svc(
+          `cockpit_sales_calendar?call_type=eq.intro&assigned_user_id=eq.${enc(ghlUser)}&start_at=gte.${enc(since)}&contact_id=in.(${ids.map(i => `"${i}"`).join(",")})&select=contact_id`,
+        );
+        const theirs = new Set(mine.map(m => String(m.contact_id)));
+        out.demos_booked = demos.filter(d => theirs.has(String(d.contact_id))).length;
+      } else out.demos_booked = 0;
+      notes.intros_scheduled = "Intro calls on your calendar that day.";
+      notes.intros_booked = "Intro calls booked that day onto your calendar.";
+      notes.intro_shows = "Intros that day marked showed (a confirmed call that has passed counts as shown).";
+      notes.demos_booked = "Demos booked that day for leads whose intro was yours in the last 60 days.";
+    }
+    const sets = deals.filter(d => names.includes(String(d.setter ?? "").trim().toLowerCase()));
+    out.deals_closed = sets.length;
+    out.cash = sum(sets, "cash_collected");
+    out.contracted = sum(sets, "contracted_revenue");
+    for (const k of ["deals_closed", "cash", "contracted"])
+      notes[k] = "New Client Forms that day naming you as the setter (the form asks since 24 September), voided ones out.";
+    prefill.push("deals_closed", "cash", "contracted");
+  } else {
+    if (ghlUser) {
+      const demos = await svc(
+        `cockpit_sales_calendar?call_type=eq.demo&assigned_user_id=eq.${enc(ghlUser)}&${between("start_at")}&select=status,start_at`,
+      );
+      out.demos_scheduled = demos.length;
+      out.demos_showed = demos.filter(shown).length;
+      out.no_shows = demos.filter(d => d.status === "noshow").length;
+      out.cancels = demos.filter(d => d.status === "cancelled").length;
+      notes.demos_scheduled = "Demos on your calendar that day.";
+      notes.demos_showed = "Of those, marked showed (a confirmed call that has passed counts as shown).";
+      notes.no_shows = "Of those, marked no-show.";
+      notes.cancels = "Of those, cancelled.";
+      prefill.push("demos_scheduled", "demos_showed", "no_shows", "cancels");
+    }
+    const closed = deals.filter(d => names.includes(String(d.closer ?? "").trim().toLowerCase()));
+    out.closed = closed.length;
+    out.cash = sum(closed, "cash_collected");
+    out.contracted = sum(closed, "contracted_revenue");
+    for (const k of ["closed", "cash", "contracted"]) notes[k] = "New Client Forms that day naming you as the closer, voided ones out.";
+    prefill.push("closed", "cash", "contracted");
+  }
+  return { values: out, notes, prefill };
+}
+
+async function eodPrefill(who: Who, b: Row) {
+  const role = eodRoleFor(who, b.role);
+  const day = eodDayOk(b.day);
+  const [counted, saved, person] = await Promise.all([
+    eodCount(who, role, day),
+    svc(`cockpit_sales_eods?email=eq.${enc(String(who.email))}&day=eq.${day}&role=eq.${role}&select=*`),
+    svc(`cockpit_sales_people?email=eq.${enc(String(who.email))}&select=name,slack_user_id`),
+  ]);
+  const eod = saved[0] ?? null;
+  const outbox = eod?.outbox_id
+    ? (await svc(`eod_outbox?id=eq.${eod.outbox_id}&select=status,slack_ts,sent_at,sheet_at,error,sheet_error,attempts`))[0] ?? null
+    : null;
+  const role_choice = ["setter", "closer"].includes(String(who.role)) ? [String(who.role)] : ["setter", "closer"];
+  return {
+    day,
+    today: eodDay(Date.now()),
+    role,
+    roles: role_choice,
+    name: person[0]?.name ?? who.name ?? String(who.email).split("@")[0],
+    has_slack_id: Boolean(person[0]?.slack_user_id),
+    has_maqsam: Boolean(who.maqsam_email),
+    has_ghl: Boolean(who.ghl_user_id),
+    fields: EOD_FIELDS[role],
+    computed: counted.values,
+    notes: counted.notes,
+    prefill: counted.prefill,
+    eod,
+    outbox,
+  };
+}
+
+async function eodSubmit(who: Who, b: Row) {
+  const role = eodRoleFor(who, b.role);
+  const day = eodDayOk(b.day);
+  const raw = (b.answers ?? {}) as Row;
+  const answers: Record<string, number | string | null> = {};
+  const missing: string[] = [];
+  for (const f of EOD_FIELDS[role]) {
+    const v = eodValue(f.kind, raw[f.key]);
+    if (!v.ok) throw new Refusal(`"${f.label}" has to be ${f.kind === "count" ? "a whole number" : "a number"} of 0 or more.`);
+    answers[f.key] = v.value;
+    if (f.required && (v.value === null || v.value === "")) missing.push(f.label);
+  }
+  if (missing.length) throw new Refusal(`Fill in ${missing.slice(0, 3).join(", ")}${missing.length > 3 ? " and the rest" : ""} first.`);
+
+  const email = String(who.email);
+  const existing = (await svc(`cockpit_sales_eods?email=eq.${enc(email)}&day=eq.${day}&role=eq.${role}&select=*`))[0];
+  if (existing?.submitted_at)
+    throw new Refusal("This day's end of day is already in. If a number was wrong, tell your manager.", 409);
+  const person = (await svc(`cockpit_sales_people?email=eq.${enc(email)}&select=name,slack_user_id`))[0];
+  const name = String(person?.name ?? who.name ?? email.split("@")[0]);
+  const slackId = person?.slack_user_id ? String(person.slack_user_id) : null;
+  const computed = (await eodCount(who, role, day)).values;
+  const now = Date.now();
+  const responseId = `cockpit-${crypto.randomUUID().slice(0, 8)}`;
+
+  let outbox: Row;
+  try {
+    outbox = (await svc("eod_outbox", {
+      method: "POST",
+      body: {
+        role: `sales_${role}`,
+        day,
+        person: name,
+        slack_id: slackId,
+        channel: EOD_CHANNEL,
+        tab: EOD_TAB[role],
+        body: eodMessage(role, name, slackId, day, answers),
+        row_values: eodColumns(role, name, day, now, responseId, answers),
+      },
+      prefer: "return=representation",
+    }))[0];
+  } catch (e) {
+    if (/23505|duplicate/.test(String((e as Error).message ?? e)))
+      throw new Refusal("An end of day for this day and name is already on its way out.", 409);
+    throw e;
+  }
+  const saved = (await svc("cockpit_sales_eods?on_conflict=email,day,role", {
+    method: "POST",
+    body: {
+      email,
+      name,
+      role,
+      day,
+      answers,
+      computed,
+      submitted_at: new Date(now).toISOString(),
+      outbox_id: outbox.id,
+      updated_at: new Date(now).toISOString(),
+    },
+    prefer: "resolution=merge-duplicates,return=representation",
+  }))[0];
+  await audit(who, "eod.submit", "cockpit_sales_eods", String(saved.id), existing ?? null, { role, day, outbox_id: outbox.id });
+  return { eod: saved, outbox: { status: outbox.status } };
+}
+
+/** Put a stalled EOD back in the queue (the bot was invited after it gave up, say). */
+async function eodRetry(who: Who, b: Row) {
+  const id = cleanText(b.id, 40);
+  const eod = (await svc(`cockpit_sales_eods?id=eq.${enc(id)}&select=*`))[0];
+  if (!eod) throw new Refusal("That end of day is not here.", 404);
+  if (!who.manager && eod.email !== who.email) throw new Refusal("That is someone else's end of day.", 403);
+  if (!eod.outbox_id) throw new Refusal("That end of day was never sent.", 409);
+  const out = (await svc(`eod_outbox?id=eq.${eod.outbox_id}&select=status`))[0];
+  if (out?.status === "sent") return { status: "sent" };
+  await svc(`eod_outbox?id=eq.${eod.outbox_id}`, {
+    method: "PATCH",
+    body: { status: "queued", attempts: 0, error: null },
+    prefer: "return=minimal",
+  });
+  await audit(who, "eod.retry", "eod_outbox", String(eod.outbox_id), out ?? null, { status: "queued" });
+  return { status: "queued" };
+}
+
+// ---------------------------------------------------------------------------
+// The agents: research briefs and follow-up drafts
+// ---------------------------------------------------------------------------
+
+/** Ask the desk to research a lead: once at a time, and not again within six hours unless a manager asks. */
+async function researchRequest(who: Who, b: Row) {
+  const contact = cleanText(b.contact_id, 80);
+  const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contact)}&select=contact_id,name`))[0];
+  if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
+  const open = await svc(`cockpit_sales_research?contact_id=eq.${enc(contact)}&status=in.(queued,running)&select=id`);
+  if (open.length) throw new Refusal("This lead is already being researched. It takes a minute or two.", 409);
+  const since = new Date(Date.now() - 6 * 3_600_000).toISOString();
+  const fresh = await svc(
+    `cockpit_sales_research?contact_id=eq.${enc(contact)}&status=eq.ready&requested_at=gte.${enc(since)}&select=id`,
+  );
+  if (fresh.length && !who.manager)
+    throw new Refusal("This lead was researched in the last six hours; the brief is below.", 409);
+  const req = (await svc("cockpit_sales_requests", {
+    method: "POST",
+    body: { kind: "research", contact_id: contact, params: { contact_id: contact }, requested_by: who.email },
+    prefer: "return=representation",
+  }))[0];
+  const row = (await svc("cockpit_sales_research", {
+    method: "POST",
+    body: { request_id: req.id, contact_id: contact, status: "queued", requested_by: who.email },
+    prefer: "return=representation",
+  }))[0];
+  await audit(who, "research.request", "cockpit_sales_research", String(row.id), null, { contact_id: contact });
+  return { research: row };
+}
+
+async function followupRow(id: string): Promise<Row> {
+  const f = (await svc(`cockpit_sales_followups?id=eq.${enc(id)}&select=*`))[0];
+  if (!f) throw new Refusal("That draft is not here any more.", 404);
+  return f;
+}
+
+/**
+ * Send a follow-up draft, as written or as the rep edited it. The draft is
+ * claimed first (draft -> sending), so two taps or two reps cannot both
+ * send it, and its own id is the send's request id, so a retry returns the
+ * first send. The words go out through convo.send's checks: do-not-disturb,
+ * the WhatsApp window, the read-back.
+ */
+async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean) {
+  if (f.status !== "draft") throw new Refusal(`This draft was already ${f.status}.`, 409);
+  if (f.expires_at && Date.parse(String(f.expires_at)) < Date.now()) {
+    await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}&status=eq.draft`, {
+      method: "PATCH",
+      body: { status: "expired", decided_at: new Date().toISOString() },
+      prefer: "return=minimal",
+    });
+    throw new Refusal(
+      f.channel === "whatsapp"
+        ? "This draft went stale: the lead's WhatsApp window has closed. The agent writes a new one if it is still due."
+        : "This draft went stale. The agent writes a new one if it is still due.",
+      409,
+    );
+  }
+  const body = String(b.body ?? f.body).replace(/\r\n/g, "\n").trim();
+  const subject = f.channel === "email" ? cleanText(b.subject ?? f.subject, 300) : null;
+  const claimed = await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}&status=eq.draft`, {
+    method: "PATCH",
+    body: { status: "sending", decided_by: who.email, decided_at: new Date().toISOString() },
+    prefer: "return=representation",
+  });
+  if (!claimed.length) throw new Refusal("Someone else has just dealt with this draft.", 409);
+  const edited = body !== String(f.body).trim() || (f.channel === "email" && subject !== (f.subject ?? null));
+  try {
+    const out = await convoSend(who, {
+      contact_id: f.contact_id,
+      channel: f.channel,
+      body,
+      subject,
+      request_id: f.id,
+      followup_id: f.id,
+    });
+    const m = out.message as Row;
+    const saved = (await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}`, {
+      method: "PATCH",
+      body: {
+        status: m.state === "failed" ? "failed" : "sent",
+        final_body: body,
+        final_subject: subject,
+        edited,
+        message_id: m.id ?? null,
+        error: m.state === "failed" ? (m.error ?? "HighLevel marked it failed") : null,
+        auto,
+      },
+      prefer: "return=representation",
+    }))[0];
+    await audit(who, auto ? "followup.autosend" : "followup.approve", "cockpit_sales_followups", String(f.id), f,
+      { status: saved.status, edited, segment: f.segment, channel: f.channel });
+    return { followup: saved, message: m };
+  } catch (e) {
+    const err = e instanceof Refusal ? e.message : redact(String((e as Error).message ?? e));
+    await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}`, {
+      method: "PATCH",
+      body: { status: "failed", error: err, final_body: body, final_subject: subject, edited },
+      prefer: "return=minimal",
+    });
+    await audit(who, auto ? "followup.autosend" : "followup.approve", "cockpit_sales_followups", String(f.id), f,
+      { status: "failed", error: err });
+    throw e;
+  }
+}
+
+async function followupApprove(who: Who, b: Row) {
+  const f = await followupRow(cleanText(b.id, 40));
+  if (!who.manager && f.owner_email !== who.email) throw new Refusal("That is another rep's lead.", 403);
+  return await sendFollowup(who, f, b, false);
+}
+
+/** The desk sends a draft by itself, only for a kind of message a manager trusts. */
+async function followupAutosend(who: Who, b: Row) {
+  const f = await followupRow(cleanText(b.id, 40));
+  const settings = (await setting<Row>("followups")) ?? {};
+  const auto = ((settings.autosend ?? {}) as Row)[String(f.segment)] === true;
+  if (!auto) throw new Refusal(`${String(f.segment)} drafts wait for a person; a manager has not switched them to send by themselves.`, 403);
+  return await sendFollowup(who, f, {}, true);
+}
+
+async function followupSkip(who: Who, b: Row) {
+  const f = await followupRow(cleanText(b.id, 40));
+  if (!who.manager && f.owner_email !== who.email) throw new Refusal("That is another rep's lead.", 403);
+  if (f.status !== "draft") throw new Refusal(`This draft was already ${f.status}.`, 409);
+  const reason = cleanText(b.reason, 200) || null;
+  const saved = (await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}&status=eq.draft`, {
+    method: "PATCH",
+    body: { status: "skipped", skip_reason: reason, decided_by: who.email, decided_at: new Date().toISOString() },
+    prefer: "return=representation",
+  }))[0];
+  if (!saved) throw new Refusal("Someone else has just dealt with this draft.", 409);
+  await audit(who, "followup.skip", "cockpit_sales_followups", String(f.id), f, { reason, segment: f.segment });
+  return { followup: saved };
+}
+
+const FOLLOWUP_SEGMENTS = ["reply", "no_show", "new", "after_call", "nurture"] as const;
+
+async function followupSettings(who: Who, b: Row) {
+  needManager(who);
+  const v = (b.value ?? {}) as Row;
+  const auto = (v.autosend ?? {}) as Row;
+  const int = (x: unknown, lo: number, hi: number, name: string) => {
+    const n = Number(x);
+    if (!Number.isInteger(n) || n < lo || n > hi) throw new Refusal(`${name} has to be a whole number from ${lo} to ${hi}.`);
+    return n;
+  };
+  const quietFrom = int((v.quiet as Row | undefined)?.from ?? 21, 0, 23, "The quiet hours' start");
+  const quietTo = int((v.quiet as Row | undefined)?.to ?? 9, 0, 23, "The quiet hours' end");
+  const value = {
+    enabled: v.enabled !== false,
+    autosend: Object.fromEntries(FOLLOWUP_SEGMENTS.map(s => [s, auto[s] === true])),
+    per_run: int(v.per_run ?? 12, 1, 50, "Drafts per run"),
+    per_day: int(v.per_day ?? 60, 1, 400, "Drafts per day"),
+    quiet: { from: quietFrom, to: quietTo },
+    nurture_every_days: int(v.nurture_every_days ?? 7, 2, 60, "Days between nurture messages"),
+  };
+  const before = await setting<Row>("followups");
+  await svc("cockpit_sales_settings?on_conflict=key", {
+    method: "POST",
+    body: { key: "followups", value, updated_by: who.email, updated_at: new Date().toISOString() },
+    prefer: "resolution=merge-duplicates,return=minimal",
+  });
+  await audit(who, "followup.settings", "cockpit_sales_settings", "followups", before, value);
+  return { setting: { key: "followups", value } };
+}
+
+// ---------------------------------------------------------------------------
+// Goals by the month
+// ---------------------------------------------------------------------------
+
+const GOAL_METRICS = ["booked", "shown", "closes", "cash", "dials"] as const;
+
+/**
+ * One month's goal or forecast for one measure, for one B2B rep (the same
+ * person_key the scorecards use, so goals can be set before a rep has a
+ * seat). A manager sets goals; the rep themself, or a manager, puts the
+ * forecast beside it. A blank value clears it, and a row left with neither
+ * is removed.
+ */
+async function goalSet(who: Who, b: Row) {
+  const rep = cleanText(b.rep, 60);
+  const month = String(b.month ?? "");
+  const metric = String(b.metric ?? "");
+  const field = String(b.field ?? "");
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new Refusal("Which month? Give it as 2026-09.");
+  if (!(GOAL_METRICS as readonly string[]).includes(metric)) throw new Refusal("That measure has no goal.");
+  if (field !== "goal" && field !== "forecast") throw new Refusal("Set a goal or a forecast.");
+  if (field === "goal") needManager(who);
+  else if (!who.manager && rep !== String(who.b2b_rep_id ?? ""))
+    throw new Refusal("You can put a forecast for yourself only.", 403);
+  const first = `${month}-01`;
+  const t = Date.parse(`${first}T00:00:00Z`);
+  const now = Date.now();
+  if (t < now - 740 * 86_400_000 || t > now + 100 * 86_400_000)
+    throw new Refusal("Goals go from two years back to three months ahead.");
+  if (!/^[0-9a-f-]{36}$/.test(rep)) throw new Refusal("Whose goal?");
+  const known = (await svc(`cockpit_sales_reps?id=eq.${enc(rep)}&select=id,display_name`))[0];
+  if (!known) throw new Refusal("That rep is not in B2B's rep list.", 404);
+
+  let value: number | null = null;
+  const raw = b.value;
+  if (raw !== null && raw !== undefined && String(raw).trim() !== "") {
+    value = Number(String(raw).replace(/,/g, "").trim());
+    if (!Number.isFinite(value) || value < 0 || value > 10_000_000) throw new Refusal("Type a number of 0 or more.");
+    if (metric !== "cash" && !Number.isInteger(value)) throw new Refusal("Counts are whole numbers.");
+  }
+
+  const key = `person_key=eq.${enc(rep)}&month=eq.${first}&metric=eq.${metric}`;
+  const before = (await svc(`cockpit_sales_goals?${key}&select=*`))[0] ?? null;
+  const at = new Date().toISOString();
+  const patch =
+    field === "goal"
+      ? { goal: value, goal_by: who.email, goal_at: at }
+      : { forecast: value, forecast_by: who.email, forecast_at: at };
+  // PostgREST updates only the columns sent, so the other field is kept.
+  let row: Row | null = (await svc("cockpit_sales_goals?on_conflict=person_key,month,metric", {
+    method: "POST",
+    body: { person_key: rep, month: first, metric, ...patch },
+    prefer: "resolution=merge-duplicates,return=representation",
+  }))[0] ?? null;
+  if (row && row.goal === null && row.forecast === null) {
+    await svc(`cockpit_sales_goals?${key}`, { method: "DELETE", prefer: "return=minimal" });
+    row = null;
+  }
+  await audit(who, "goal.set", "cockpit_sales_goals", `${rep}|${month}|${metric}`, before, row, {
+    field,
+    rep_name: known.display_name ?? null,
+  });
+  return { goal: row };
+}
+
+// ---------------------------------------------------------------------------
 // Live reads from HighLevel
 // ---------------------------------------------------------------------------
 
@@ -732,22 +1452,41 @@ async function maqsam(path: string, method = "GET", values: Record<string, strin
   return d;
 }
 
-/** The rep's Maqsam seat, which must be free to take an outgoing call. */
-async function maqsamReady(email: string): Promise<void> {
+/** The Maqsam agent with this address, or null when Maqsam has none. */
+async function findAgent(email: string): Promise<Row | null> {
   for (let page = 1; page <= 5; page++) {
     const d = await maqsam(`/v1/agents/page/${page}`);
     const list = (Array.isArray(d.message) ? d.message : []) as Row[];
     const a = list.find(x => String(x.email ?? "").toLowerCase() === email.toLowerCase());
-    if (a) {
-      if (!a.active || !a.outgoingEnabled)
-        throw new Refusal("Your Maqsam seat is switched off or cannot call out. Ask Aziz to turn it on.", 409);
-      if (a.state !== "available")
-        throw new Refusal("Open the Maqsam softphone and set yourself Available, then call again.", 409);
-      return;
-    }
+    if (a) return a;
     if (!list.length) break;
   }
-  throw new Refusal(`No Maqsam seat has the address ${email}. Ask Aziz to add it on the Team page or in Maqsam.`, 409);
+  return null;
+}
+
+/** The rep's Maqsam seat, which must be free to take an outgoing call. */
+async function maqsamReady(email: string): Promise<void> {
+  const a = await findAgent(email);
+  if (!a)
+    throw new Refusal(`No Maqsam seat has the address ${email}. Ask Aziz to add it on the Team page or in Maqsam.`, 409);
+  if (!a.active || !a.outgoingEnabled)
+    throw new Refusal("Your Maqsam seat is switched off or cannot call out. Ask Aziz to turn it on.", 409);
+  if (a.state !== "available")
+    throw new Refusal("Open the Maqsam softphone and set yourself Available, then call again.", 409);
+}
+
+/**
+ * The caller's Maqsam seat as the dialer shows it before anyone presses
+ * Call. Read-only; a state that stops calls is an answer, not an error.
+ */
+async function dialAgent(who: Who) {
+  const email = String(who.maqsam_email ?? "").trim();
+  if (!email) return { email: null, from: null, ready: false, state: "no_address" };
+  const a = await findAgent(email);
+  const from = who.maqsam_from ?? null;
+  if (!a) return { email, from, ready: false, state: "not_found" };
+  const state = !a.active ? "switched_off" : !a.outgoingEnabled ? "no_outgoing" : String(a.state ?? "unknown");
+  return { email, from, ready: state === "available", state };
 }
 
 const ms = (v: unknown) => {
@@ -1069,10 +1808,26 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   "setting.save": settingSave,
   "lead.live": leadLive,
   "ghl.users": ghlUsers,
+  "research.request": researchRequest,
+  "followup.approve": followupApprove,
+  "followup.skip": followupSkip,
+  "followup.settings": followupSettings,
+  "eod.prefill": eodPrefill,
+  "eod.submit": eodSubmit,
+  "eod.retry": eodRetry,
+  "convo.read": convoRead,
+  "convo.send": convoSend,
+  "goal.set": goalSet,
+  "dial.agent": dialAgent,
   "dial.queue": dialQueue,
   "dial.call": dialCall,
   "dial.save": dialSave,
   "dial.release": dialRelease,
+};
+
+/** What the desk's service key may do: nothing but a trusted follow-up. */
+const DESK_ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
+  "followup.autosend": followupAutosend,
 };
 
 Deno.serve(async (req: Request) => {
@@ -1095,7 +1850,23 @@ Deno.serve(async (req: Request) => {
     return reply({ ok: false, error: "Send a JSON body." }, 400);
   }
   const handler = ACTIONS[String(body?.action ?? "")];
-  if (!handler) return reply({ ok: false, error: "Unknown action." }, 400);
+  if (!handler && !DESK_ACTIONS[String(body?.action ?? "")])
+    return reply({ ok: false, error: "Unknown action." }, 400);
+
+  // The sales desk on the VPS calls with the service key, for the one thing
+  // it may do by itself: send a follow-up a manager trusts to go alone.
+  const service = env("SUPABASE_SERVICE_ROLE_KEY");
+  if (service && jwt === service) {
+    const deskHandler = DESK_ACTIONS[String(body?.action ?? "")];
+    if (!deskHandler) return reply({ ok: false, error: "Not an action the desk may take." }, 403);
+    const desk: Who = { signed_in: true, seat: true, manager: false, email: "sales-desk", name: "Sales desk" };
+    try {
+      return reply({ ok: true, ...(await deskHandler(desk, body)) });
+    } catch (e) {
+      if (e instanceof Refusal) return reply({ ok: false, error: e.message }, e.status);
+      return reply({ ok: false, error: `That did not work: ${redact(String((e as Error).message ?? e))}` }, 500);
+    }
+  }
 
   let who: Who;
   try {
@@ -1107,6 +1878,8 @@ Deno.serve(async (req: Request) => {
   if (!who.seat)
     return reply({ ok: false, error: "The sales cockpit is not on your access. Ask Aziz." }, 403);
 
+  // The desk's own action is not a person's to take.
+  if (!handler) return reply({ ok: false, error: "Unknown action." }, 400);
   try {
     return reply({ ok: true, ...(await handler(who, body)) });
   } catch (e) {

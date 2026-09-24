@@ -29,6 +29,16 @@ PK = {
     "cockpit_sales_appointments": ("appointment_id",),
     "cockpit_sales_people": ("email",),
     "cockpit_sales_settings": ("key",),
+    "cockpit_sales_reps": ("id",),
+    "cockpit_sales_reviews": ("source_ref",),
+    "cockpit_sales_dials": ("call_id",),
+    "cockpit_sales_followups": ("id",),
+    "cockpit_sales_messages": ("id",),
+    "cockpit_sales_inbox": ("conversation_id",),
+    "cockpit_sales_calendar": ("appointment_id",),
+    "cockpit_sales_notes": ("id",),
+    "cockpit_sales_research": ("id",),
+    "cockpit_sales_deals": ("response_id",),
 }
 
 
@@ -79,7 +89,10 @@ class FakePostgrest:
     def __init__(self) -> None:
         self.tables: dict[str, dict[tuple, dict[str, Any]]] = {t: {} for t in PK}
         self.objects: dict[str, tuple[str, bytes]] = {}
-        self.buckets = {"sales-proposals": {"id": "sales-proposals", "public": False}}
+        self.buckets = {
+            "sales-proposals": {"id": "sales-proposals", "public": False},
+            "sales-calls": {"id": "sales-calls", "public": False},
+        }
         self.calls: list[tuple[str, str]] = []
 
     # ---- seeding and reading ----
@@ -113,6 +126,8 @@ class FakePostgrest:
         if negate:
             expr = expr[4:]
         op, _, operand = expr.partition(".")
+        if op != "in":
+            operand = _unquote(operand)
         v = self._value(row, column)
         if op == "eq":
             ok = v is not None and (str(v).lower() if isinstance(v, bool) else str(v)) == operand
@@ -139,7 +154,7 @@ class FakePostgrest:
 
     def _match(self, row: dict[str, Any], params: list[tuple[str, str]]) -> bool:
         for k, v in params:
-            if k in ("select", "order", "limit", "on_conflict"):
+            if k in ("select", "order", "limit", "offset", "on_conflict"):
                 continue
             if k == "or":
                 parts = _split_top(v.strip()[1:-1])
@@ -159,6 +174,8 @@ class FakePostgrest:
                 missing = [r for r in rows if r.get(col) is None]
                 present.sort(key=lambda r: _cmp(r.get(col), str(r.get(col)))[0], reverse=direction.startswith("desc"))
                 rows = present + missing
+        offset = next((int(v) for k, v in params if k == "offset"), 0)
+        rows = rows[offset:]
         for k, v in params:
             if k == "limit":
                 rows = rows[: int(v)]
@@ -177,6 +194,10 @@ class FakePostgrest:
             bucket = key.split("/", 1)[0]
             if bucket not in self.buckets:
                 raise HttpError(404, '{"error":"Bucket not found"}', b"", url)
+            if method == "GET":
+                if key not in self.objects:
+                    raise HttpError(404, '{"error":"Object not found"}', b"", url)
+                return 200, {}, self.objects[key][1]
             self.objects[key] = (headers.get("Content-Type", ""), data or b"")
             return 200, {}, json.dumps({"Key": key}).encode()
         if path.startswith("/storage/v1/bucket/"):
@@ -194,9 +215,15 @@ class FakePostgrest:
         if method == "GET":
             return 200, {}, json.dumps(self._select(table, params), default=str).encode()
         if method == "POST":
+            made = []
             for row in body if isinstance(body, list) else [body]:
+                if "id" in PK[table] and "id" not in row:
+                    row = {"id": f"gen-{len(self.tables[table]) + 1}", **row}
                 key = tuple(str(row[k]) for k in PK[table])
                 self.tables[table].setdefault(key, {}).update(row)
+                made.append(self.tables[table][key])
+            if "representation" in prefer:
+                return 201, {}, json.dumps(made, default=str).encode()
             return 201, {}, b""
         if method == "PATCH":
             hit = [r for r in self.rows(table) if self._match(r, params)]

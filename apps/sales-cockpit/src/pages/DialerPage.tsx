@@ -1,6 +1,7 @@
 import { PhoneCall, PhoneOff, ScrollText, SkipForward } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { Link } from "react-router";
+import { Conversation, useConversation } from "../components/Conversation";
 import {
   button,
   buttonPrimary,
@@ -69,6 +70,131 @@ const OUTCOMES: { key: string; label: string; needsNote: boolean }[] = [
   { key: "handled", label: "Handled", needsNote: true },
 ];
 
+interface Agent {
+  email: string | null;
+  from: "seat" | "b2b" | null;
+  ready: boolean;
+  state: string;
+}
+
+/** The rep's Maqsam seat, asked every 30 seconds while the page is open. */
+function useAgent() {
+  const [agent, setAgent] = useState<Agent | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const check = useCallback(async () => {
+    try {
+      setAgent(await api<Agent>("dial.agent", {}));
+      setError(null);
+    } catch (e) {
+      setError(String((e as Error).message ?? e));
+    }
+  }, []);
+  useEffect(() => {
+    void check();
+    const t = window.setInterval(() => {
+      if (document.visibilityState === "visible") void check();
+    }, 30_000);
+    return () => window.clearInterval(t);
+  }, [check]);
+  return { agent, error, check };
+}
+
+const AGENT_WORDS: Record<string, { tone: Tone; chip: string; text: string }> =
+  {
+    available: {
+      tone: "good",
+      chip: "Maqsam ready",
+      text: "A call rings you in the Maqsam softphone first, then dials the lead.",
+    },
+    absent: {
+      tone: "warning",
+      chip: "Away in Maqsam",
+      text: "Open the Maqsam softphone and set yourself Available, then call.",
+    },
+    busy: {
+      tone: "neutral",
+      chip: "On a call in Maqsam",
+      text: "Maqsam shows you on a call. The next call goes once that one ends.",
+    },
+    switched_off: {
+      tone: "critical",
+      chip: "Maqsam seat off",
+      text: "Your Maqsam seat is switched off. Ask Aziz to turn it on in Maqsam.",
+    },
+    no_outgoing: {
+      tone: "critical",
+      chip: "Cannot call out",
+      text: "Your Maqsam seat cannot make outgoing calls. Ask Aziz to allow it in Maqsam.",
+    },
+  };
+
+function MaqsamLine({
+  agent,
+  error,
+  onCheck,
+}: {
+  agent: Agent | null;
+  error: string | null;
+  onCheck: () => void;
+}) {
+  if (error)
+    return (
+      <p className="callout-warn rounded-[var(--radius-md)] border px-3 py-2 text-sm">
+        Maqsam could not be asked about your seat: {error}{" "}
+        <button type="button" onClick={onCheck} className="underline">
+          Ask again
+        </button>
+      </p>
+    );
+  if (!agent) return null;
+  if (agent.state === "no_address")
+    return (
+      <p className="callout-warn rounded-[var(--radius-md)] border px-3 py-2 text-sm">
+        Your seat has no Maqsam address, so the dialer cannot place calls for
+        you. Ask Aziz to add it on the Team page. You can still work the list
+        and call from the softphone.
+      </p>
+    );
+  if (agent.state === "not_found")
+    return (
+      <p className="callout-bad rounded-[var(--radius-md)] border px-3 py-2 text-sm">
+        Maqsam has no seat with the address {agent.email}. Ask Aziz to fix it on
+        the Team page or in Maqsam.
+      </p>
+    );
+  const w = AGENT_WORDS[agent.state] ?? {
+    tone: "neutral" as Tone,
+    chip: `Maqsam: ${agent.state}`,
+    text: "Set yourself Available in the Maqsam softphone to take calls.",
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-sm">
+      <StatusChip tone={w.tone} label={w.chip} size="md" />
+      <span className="muted">
+        {w.text} Calls go out as {agent.email}
+        {agent.from === "b2b" ? " (from B2B's rep list)" : ""}.
+      </span>
+      <button
+        type="button"
+        onClick={onCheck}
+        className="muted text-xs underline underline-offset-2"
+      >
+        Check again
+      </button>
+    </div>
+  );
+}
+
+/** The lead's conversation beside the call, so the rep can write while dialing. */
+function TalkToThem({ contactId }: { contactId: string }) {
+  const convo = useConversation(contactId);
+  return (
+    <SectionCard title="Talk to them">
+      <Conversation contactId={contactId} convo={convo} compact />
+    </SectionCard>
+  );
+}
+
 function mmss(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
@@ -83,6 +209,7 @@ export default function DialerPage({ me }: { me: Me }) {
   const [error, setError] = useState<string | null>(null);
   const [skipped, setSkipped] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const maqsam = useAgent();
 
   const load = useCallback(async () => {
     try {
@@ -121,12 +248,14 @@ export default function DialerPage({ me }: { me: Me }) {
       setQ(prev => (prev ? { ...prev, open: out.attempt } : prev));
     } catch (e) {
       toast.error(String((e as Error).message ?? e));
+      void maqsam.check();
     } finally {
       setBusy(false);
     }
   }
 
   const counts = q?.counts ?? [0, 0, 0, 0];
+  const current = open?.contact_id ?? next?.contact_id ?? null;
 
   return (
     <main className="mx-auto w-full max-w-5xl space-y-5 px-4 py-6 md:px-6">
@@ -172,29 +301,35 @@ export default function DialerPage({ me }: { me: Me }) {
         </div>
       ) : null}
 
-      {!me.maqsam_email ? (
-        <div className="callout-warn rounded-[var(--radius-md)] border px-3 py-2 text-sm">
-          Your seat has no Maqsam address yet, so the dialer cannot place calls
-          for you. Ask Aziz to add it on the Team page. You can still work the
-          list and call from the softphone.
-        </div>
-      ) : null}
+      <MaqsamLine
+        agent={maqsam.agent}
+        error={maqsam.error}
+        onCheck={() => void maqsam.check()}
+      />
 
-      {open ? (
-        <OnCall
-          attempt={open}
-          onSaved={() => {
-            setQ(prev => (prev ? { ...prev, open: null } : prev));
-            void load();
-          }}
-        />
-      ) : next ? (
-        <NextUp
-          item={next}
-          busy={busy}
-          onCall={() => call(next.contact_id)}
-          onSkip={() => setSkipped(s => [...s, next.contact_id])}
-        />
+      {open || next ? (
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,24rem)]">
+          <div className="min-w-0">
+            {open ? (
+              <OnCall
+                attempt={open}
+                onSaved={() => {
+                  setQ(prev => (prev ? { ...prev, open: null } : prev));
+                  void load();
+                  void maqsam.check();
+                }}
+              />
+            ) : next ? (
+              <NextUp
+                item={next}
+                busy={busy}
+                onCall={() => call(next.contact_id)}
+                onSkip={() => setSkipped(s => [...s, next.contact_id])}
+              />
+            ) : null}
+          </div>
+          {current ? <TalkToThem key={current} contactId={current} /> : null}
+        </div>
       ) : q ? (
         <SectionCard title="Next up">
           <EmptyState

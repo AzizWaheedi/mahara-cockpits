@@ -28,7 +28,7 @@ import { EmptyState, SectionCard, StatusChip } from "./kit";
 const HATCH =
   "repeating-linear-gradient(135deg, color-mix(in oklch, var(--primary) 50%, transparent) 0 3px, color-mix(in oklch, var(--primary) 14%, transparent) 3px 6px)";
 
-function PaceRail({
+export function PaceRail({
   actual,
   goal,
   projected,

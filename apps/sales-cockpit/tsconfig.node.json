@@ -17,6 +17,7 @@
     ]
   },
   "include": [
-    "vite.config.ts"
+    "vite.config.ts",
+    "src/lib/env.ts"
   ]
 }

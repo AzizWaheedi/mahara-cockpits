@@ -20,6 +20,51 @@
         }
       })();
     </script>
+    <script>
+      // If the app cannot start, the page says so and offers a reload
+      // instead of staying empty (2026-09-24: a build that carried
+      // ciphertext for the Supabase address opened on a blank page). Once
+      // React has drawn the cockpit, PageBoundary answers errors and this
+      // stays quiet. Registered here, before the bundle's own script tag.
+      (function () {
+        function fail(why) {
+          var root = document.getElementById("root");
+          if (!root || root.getAttribute("data-failed")) return;
+          var first = root.firstElementChild;
+          if (first && first.id !== "boot") return;
+          root.setAttribute("data-failed", "1");
+          root.innerHTML =
+            '<div class="mx-auto max-w-md px-4 py-20 text-center" role="alert">' +
+            '<h1 class="text-lg font-semibold">The sales cockpit did not start</h1>' +
+            '<p class="muted mt-2 text-sm">Reload the page. If it stays like this, send a screenshot of it to your manager.</p>' +
+            '<p class="why muted mt-3 rounded-[var(--radius-md)] bg-[color:var(--muted)] px-3 py-2 font-mono text-xs break-words"></p>' +
+            '<button type="button" class="mt-6 inline-flex h-8 items-center justify-center rounded-[var(--radius-md)] bg-[color:var(--primary)] px-3 text-sm font-semibold text-[color:var(--primary-foreground)]">Reload</button>' +
+            "</div>";
+          root.querySelector(".why").textContent = why;
+          root.querySelector("button").onclick = function () {
+            location.reload();
+          };
+        }
+        window.addEventListener(
+          "error",
+          function (e) {
+            var t = e.target;
+            if (t && t !== window) {
+              // A file failed to load. Only the scripts stop the app.
+              if (t.tagName === "SCRIPT" || (t.tagName === "LINK" && t.rel === "modulepreload"))
+                fail("A file the page needs did not load: " + (t.src || t.href));
+              return;
+            }
+            fail(String((e.error && e.error.message) || e.message || "an unknown error"));
+          },
+          true,
+        );
+        window.addEventListener("unhandledrejection", function (e) {
+          var r = e.reason;
+          fail(String((r && r.message) || r || "an unknown error"));
+        });
+      })();
+    </script>
     <meta name="robots" content="noindex, nofollow" />
     <title>Sales · Mahara</title>
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
@@ -31,7 +76,11 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="boot" class="flex min-h-[60vh] items-center justify-center p-6 text-center">
+        <p class="muted text-sm">Opening the sales cockpit…</p>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

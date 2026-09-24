@@ -1,6 +1,7 @@
 import { CalendarDays, Menu, PhoneCall, Sun, UserSearch } from "lucide-react";
 import { lazy, type ReactNode, Suspense, useEffect, useState } from "react";
 import { Navigate, NavLink, Route, Routes, useLocation } from "react-router";
+import { PageBoundary } from "./components/PageBoundary";
 import {
   PortalAutoSignIn,
   portalSignInPending,
@@ -8,7 +9,7 @@ import {
 import Sidebar from "./components/Sidebar";
 import { Wordmark } from "./components/Wordmark";
 import { SessionProvider, useWho } from "./lib/auth";
-import { useMe, useOwed, useProposals } from "./lib/data";
+import { useFollowupsWaiting, useMe, useOwed, useProposals } from "./lib/data";
 import { portalUrl } from "./lib/portal";
 import { Toaster } from "./lib/toast";
 import type { Me } from "./lib/types";
@@ -23,6 +24,14 @@ const DialerPage = lazy(() => import("./pages/DialerPage"));
 const ProposalsPage = lazy(() => import("./pages/ProposalsPage"));
 const ProposalPage = lazy(() => import("./pages/ProposalPage"));
 const NumbersPage = lazy(() => import("./pages/NumbersPage"));
+const GoalsPage = lazy(() => import("./pages/GoalsPage"));
+const EodPage = lazy(() => import("./pages/EodPage"));
+const FollowupsPage = lazy(() => import("./pages/FollowupsPage"));
+const RecordingsPage = lazy(() => import("./pages/RecordingsPage"));
+const RecordingPage = lazy(() => import("./pages/RecordingPage"));
+const ReviewOnlyPage = lazy(() =>
+  import("./pages/RecordingPage").then(m => ({ default: m.ReviewOnlyPage })),
+);
 const LinksPage = lazy(() => import("./pages/LinksPage"));
 const TeamPage = lazy(() => import("./pages/TeamPage"));
 
@@ -66,7 +75,7 @@ function Shell() {
     />
   );
 
-  if (!ready) return null;
+  if (!ready) return <Waiting text="Opening the sales cockpit…" />;
 
   if (!session)
     return (
@@ -171,13 +180,16 @@ export function Seated({
   const mine = me.manager ? null : (me.ghl_user_id ?? "__none__");
   const owed = useOwed(mine, 30, 120_000);
   const proposals = useProposals(me.manager ? null : (me.email ?? null));
+  const followups = useFollowupsWaiting(me.email ?? null);
   const counts = {
+    followups: (followups.data ?? []).length,
     owed: (owed.data ?? []).length,
     proposals: (proposals.data ?? []).filter(
       p => p.status === "needs_input" || p.status === "ready",
     ).length,
   };
   const role = ROLE_WORDS[String(me.role)] ?? "Sales";
+  const { pathname } = useLocation();
   const sidebar = (onNavigate?: () => void) => (
     <Sidebar
       name={name}
@@ -216,36 +228,49 @@ export function Seated({
           <span className="muted text-sm">Sales</span>
         </header>
 
-        <Suspense fallback={<Waiting text="Loading…" />}>
-          <Routes>
-            <Route path="/" element={<TodayPage me={me} />} />
-            {/* The portal's door lands on /dashboard in every cockpit. */}
-            <Route path="/dashboard" element={<Navigate to="/" replace />} />
-            <Route path="/calendar" element={<CalendarPage me={me} />} />
-            <Route path="/leads" element={<LeadsPage />} />
-            <Route path="/lead/:contactId" element={<LeadPage me={me} />} />
-            <Route path="/call/:contactId" element={<CallPage me={me} />} />
-            <Route path="/dialer" element={<DialerPage me={me} />} />
-            <Route path="/proposals" element={<ProposalsPage me={me} />} />
-            <Route path="/proposal/:id" element={<ProposalPage me={me} />} />
-            <Route path="/numbers" element={<NumbersPage me={me} />} />
-            <Route path="/links" element={<LinksPage me={me} />} />
-            <Route
-              path="/team"
-              element={
-                me.manager ? <TeamPage me={me} /> : <Navigate to="/" replace />
-              }
-            />
-            <Route
-              path="*"
-              element={
-                <p className="muted p-10 text-center text-sm">
-                  That page does not exist.
-                </p>
-              }
-            />
-          </Routes>
-        </Suspense>
+        {/* Keyed by the address, so moving to another page clears an error. */}
+        <PageBoundary key={pathname}>
+          <Suspense fallback={<Waiting text="Loading…" />}>
+            <Routes>
+              <Route path="/" element={<TodayPage me={me} />} />
+              {/* The portal's door lands on /dashboard in every cockpit. */}
+              <Route path="/dashboard" element={<Navigate to="/" replace />} />
+              <Route path="/calendar" element={<CalendarPage me={me} />} />
+              <Route path="/leads" element={<LeadsPage />} />
+              <Route path="/lead/:contactId" element={<LeadPage me={me} />} />
+              <Route path="/call/:contactId" element={<CallPage me={me} />} />
+              <Route path="/dialer" element={<DialerPage me={me} />} />
+              <Route path="/proposals" element={<ProposalsPage me={me} />} />
+              <Route path="/proposal/:id" element={<ProposalPage me={me} />} />
+              <Route path="/numbers" element={<NumbersPage me={me} />} />
+              <Route path="/goals" element={<GoalsPage me={me} />} />
+              <Route path="/eod" element={<EodPage me={me} />} />
+              <Route path="/followups" element={<FollowupsPage me={me} />} />
+              <Route path="/recordings" element={<RecordingsPage me={me} />} />
+              <Route path="/recording/:id" element={<RecordingPage />} />
+              <Route path="/review/:id" element={<ReviewOnlyPage />} />
+              <Route path="/links" element={<LinksPage me={me} />} />
+              <Route
+                path="/team"
+                element={
+                  me.manager ? (
+                    <TeamPage me={me} />
+                  ) : (
+                    <Navigate to="/" replace />
+                  )
+                }
+              />
+              <Route
+                path="*"
+                element={
+                  <p className="muted p-10 text-center text-sm">
+                    That page does not exist.
+                  </p>
+                }
+              />
+            </Routes>
+          </Suspense>
+        </PageBoundary>
       </div>
 
       <TabBar owed={counts.owed} onMore={() => setDrawer(true)} />

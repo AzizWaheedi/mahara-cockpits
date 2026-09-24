@@ -136,16 +136,29 @@ export default function LeadsPage() {
     return () => window.clearTimeout(t);
   }, [text, update]);
 
-  const stageOptions = useMemo(() => {
-    const seen = new Map<string, string>();
+  // The 1-Call and 2-Call pipelines share stage names ("Closed" twice), so
+  // the stages are grouped under their pipeline.
+  const stageGroups = useMemo(() => {
+    const seen = new Map<string, { id: string; label: string; pipe: string }>();
     for (const s of stages.data ?? [])
       if (s.stage_id && !seen.has(s.stage_id))
-        seen.set(s.stage_id, plainStage(s.stage_name) || "Unnamed stage");
-    const list = [...seen].map(([id, label]) => ({ id, label }));
-    list.sort((a, b) => a.label.localeCompare(b.label));
-    return list;
+        seen.set(s.stage_id, {
+          id: s.stage_id,
+          label: plainStage(s.stage_name) || "Unnamed stage",
+          pipe: s.pipeline_name?.trim() || "Other stages",
+        });
+    const groups = new Map<string, { id: string; label: string }[]>();
+    for (const o of seen.values())
+      groups.set(o.pipe, [...(groups.get(o.pipe) ?? []), o]);
+    return [...groups]
+      .map(([pipe, list]) => ({
+        pipe,
+        list: list.sort((a, b) => a.label.localeCompare(b.label)),
+      }))
+      .sort((a, b) => a.pipe.localeCompare(b.pipe));
   }, [stages.data]);
-  const stageKnown = !f.stage || stageOptions.some(o => o.id === f.stage);
+  const stageKnown =
+    !f.stage || stageGroups.some(g => g.list.some(o => o.id === f.stage));
 
   const rows = leads.data ?? [];
   const filtered = Boolean(
@@ -331,11 +344,21 @@ export default function LeadsPage() {
                     : "A stage with no recent leads"}
                 </option>
               )}
-              {stageOptions.map(o => (
-                <option key={o.id} value={o.id}>
-                  {o.label}
-                </option>
-              ))}
+              {stageGroups.length > 1
+                ? stageGroups.map(g => (
+                    <optgroup key={g.pipe} label={g.pipe}>
+                      {g.list.map(o => (
+                        <option key={o.id} value={o.id}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))
+                : stageGroups[0]?.list.map(o => (
+                    <option key={o.id} value={o.id}>
+                      {o.label}
+                    </option>
+                  ))}
             </select>
             <select
               aria-label="Created"
