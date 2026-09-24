@@ -31,6 +31,8 @@ import { WhatsAppDesk } from "@/components/WhatsAppDesk";
 import { useContentTransition } from "@/hooks/use-content-transition";
 import { CPB_GATE, CPL_GATE, LEARNING_DAYS } from "@/lib/kpi";
 import { defaultRange, type Range } from "@/lib/range";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { useMediaBuyerSnapshot } from "@/lib/useMediaBuyerSnapshot";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { CampaignChangesResults } from "../components/CampaignChangesResults";
@@ -789,17 +791,20 @@ const TITLES: Record<View, { title: string; sub: string }> = {
 
 function Cockpit({ view }: { view: View }) {
   const adsTransition = useContentTransition();
-  const snap = useQuery(api.cockpit.snapshot, {});
-  const toggleCheck = useMutation(api.cockpit.toggleCheck);
-  const decide = useMutation(api.cockpit.decide);
+  const auth = useCockpitAuth();
+  const sb = useMediaBuyerSnapshot(auth.client, auth.clients);
+  const convexSnap = useQuery(api.cockpit.snapshot, {});
+  const snap = sb.snap ?? convexSnap;
+  const toggleCheck = auth.client ? (sb.toggleCheck as any) : useMutation(api.cockpit.toggleCheck);
+  const decide = auth.client ? (sb.decide as any) : useMutation(api.cockpit.decide);
   const run = useAction(api.execute.runAction);
-  const addPlanItems = useMutation(api.cockpit.addPlanItems);
+  const addPlanItems = auth.client ? (sb.addPlanItems as any) : useMutation(api.cockpit.addPlanItems);
   const askForDetail = useMutation(api.cockpit.askForDetail);
   const setClientLanguage = useMutation(api.cockpit.setClientLanguage);
-  const removeDecision = useMutation(api.cockpit.removeDecision);
-  const saveEod = useMutation(api.cockpit.saveEod);
-  const resubmitEod = useMutation(api.cockpit.resubmitEod);
-  const sendFeedback = useMutation(api.cockpit.sendFeedback);
+  const removeDecision = auth.client ? (sb.removeDecision as any) : useMutation(api.cockpit.removeDecision);
+  const saveEod = auth.client ? (sb.saveEod as any) : useMutation(api.cockpit.saveEod);
+  const resubmitEod = auth.client ? (sb.saveEod as any) : useMutation(api.cockpit.resubmitEod);
+  const sendFeedback = auth.client ? (sb.sendFeedback as any) : useMutation(api.cockpit.sendFeedback);
   /** Today's EOD row, if one was saved: the submitted state lives here, not in the tab. */
   const eodRow = (snap?.eod ?? null) as {
     submittedAt?: number;

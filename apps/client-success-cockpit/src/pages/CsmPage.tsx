@@ -32,6 +32,8 @@ import {
   serviceModel,
 } from "@/lib/csmTemplates";
 import { publishOpenClient } from "@/lib/openClient";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { useCsmSnapshot } from "@/lib/useCsmSnapshot";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 
@@ -207,7 +209,21 @@ function Stat({
 export function AiHelper({ page }: { page: string; clientName?: string }) {
   // Questions now go to the Hermes chat (bottom right). This box is only for
   // reporting a wrong screen, so the fix lands as a task. [aziz, 2026-09-10]
-  const report = useMutation(api.csm.reportIssue);
+  const auth = useCockpitAuth();
+  const convexReport = useMutation(api.csm.reportIssue);
+  const report = async (args: { page: string; text: string }) => {
+    if (auth.client) {
+      await auth.client.rpc("cockpit_submit_issue_report", {
+        p_role: "csm",
+        p_title: `Screen report: ${args.page}`,
+        p_description: args.text,
+        p_category: "screen_issue",
+        p_metadata: { page: args.page },
+      });
+      return;
+    }
+    return convexReport(args);
+  };
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
   return (
@@ -1024,11 +1040,14 @@ function HotSheet({
 }
 
 export function CsmPage({ section }: { section: Section }) {
-  const snap = useQuery(api.csm.snapshot, {});
-  const toggleCheck = useMutation(api.csm.toggleCheck);
-  const act = useMutation(api.csm.act);
-  const addPlanItems = useMutation(api.csm.addPlanItems);
-  const submitEod = useMutation(api.csm.submitEod);
+  const auth = useCockpitAuth();
+  const sb = useCsmSnapshot(auth.client, auth.clients);
+  const convexSnap = useQuery(api.csm.snapshot, {});
+  const snap = sb.snap ?? convexSnap;
+  const toggleCheck = auth.client ? (sb.toggleCheck as any) : useMutation(api.csm.toggleCheck);
+  const act = auth.client ? (sb.act as any) : useMutation(api.csm.act);
+  const addPlanItems = auth.client ? (sb.addPlanItems as any) : useMutation(api.csm.addPlanItems);
+  const submitEod = auth.client ? (sb.submitEod as any) : useMutation(api.csm.submitEod);
   const setClientLanguage = useMutation(api.csm.setClientLanguage);
   const saveHotRow = useMutation(api.csm.saveHotRow);
   const clearLooseEnds = useMutation(api.csm.clearLooseEnds);

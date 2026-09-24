@@ -27,6 +27,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { WhatsAppDesk } from "@/components/WhatsAppDesk";
 import { CopyButton } from "@/components/WinningAds";
 import { fill, TEMPLATES } from "@/lib/creativeTemplates";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { useCreativeSnapshot } from "@/lib/useCreativeSnapshot";
 import { api } from "../../convex/_generated/api";
 import { ScriptingCalendar } from "./CalendarPage";
 
@@ -153,7 +155,10 @@ function SyncHealth() {
 }
 
 function Creative({ view }: { view: View }) {
-  const snap = useQuery(api.creative.snapshot, {}) as Any;
+  const auth = useCockpitAuth();
+  const sb = useCreativeSnapshot(auth.client, auth.clients);
+  const convexSnap = useQuery(api.creative.snapshot, {}) as Any;
+  const snap = sb.snap ?? convexSnap;
   const [showAllBrand, setShowAllBrand] = useState(false);
 
   if (snap === undefined) {
@@ -206,6 +211,7 @@ function Creative({ view }: { view: View }) {
         <Checklist
           phase={view === "sod" ? "sod" : "mid"}
           checks={snap.checks}
+          onToggle={auth.client ? (sb.toggleCheck as any) : undefined}
         />
       )}
       {view === "touch" && (
@@ -232,12 +238,22 @@ function Creative({ view }: { view: View }) {
               Open the client communication SOP
             </a>
           </Section>
-          <Touchpoints rows={snap.touchpoints} />
+          <Touchpoints
+            rows={snap.touchpoints}
+            onLogTouch={auth.client ? (sb.logTouch as any) : undefined}
+          />
           <AllTemplates roster={snap.clients} />
         </>
       )}
       {view === "clients" && <ClientProfiles rows={snap.clients} />}
-      {view === "eod" && <EndOfDay snap={snap} />}
+      {view === "eod" && (
+        <EndOfDay
+          snap={snap}
+          onSave={auth.client ? (sb.saveEod as any) : undefined}
+          onAddItem={auth.client ? (sb.addPlanItem as any) : undefined}
+          onRemoveItem={auth.client ? (sb.removePlanItem as any) : undefined}
+        />
+      )}
 
       {/* 1. What is late right now. */}
       {view === "sod" && (
@@ -594,12 +610,15 @@ function Creative({ view }: { view: View }) {
 function Checklist({
   phase,
   checks,
+  onToggle,
 }: {
   phase: "sod" | "mid";
   // biome-ignore lint/suspicious/noExplicitAny: snapshot rows are untyped
   checks: any[];
+  onToggle?: (args: { key: string; done: boolean }) => Promise<void>;
 }) {
-  const toggle = useMutation(api.creative.toggleCheck);
+  const convexToggle = useMutation(api.creative.toggleCheck);
+  const toggle = onToggle ?? convexToggle;
   const rows = checks.filter((c: Any) => c.phase === phase);
   const done = rows.filter((c: Any) => c.done).length;
 
@@ -650,11 +669,14 @@ function Checklist({
  */
 function Touchpoints({
   rows,
+  onLogTouch,
 }: {
   // biome-ignore lint/suspicious/noExplicitAny: snapshot rows are untyped
   rows: any[];
+  onLogTouch?: (args: any) => Promise<void>;
 }) {
-  const log = useMutation(api.creative.logTouch);
+  const convexLog = useMutation(api.creative.logTouch);
+  const log: any = onLogTouch ?? convexLog;
 
   if (!rows.length) {
     return (
@@ -1194,13 +1216,22 @@ function Stat({
  */
 function EndOfDay({
   snap,
+  onSave,
+  onAddItem,
+  onRemoveItem,
 }: {
   // biome-ignore lint/suspicious/noExplicitAny: snapshot is untyped
   snap: any;
+  onSave?: (args: any) => Promise<void>;
+  onAddItem?: (args: any) => Promise<void>;
+  onRemoveItem?: (args: any) => Promise<void>;
 }) {
-  const save = useMutation(api.creative.saveEod);
-  const addItem = useMutation(api.creative.addPlanItem);
-  const removeItem = useMutation(api.creative.removePlanItem);
+  const convexSave = useMutation(api.creative.saveEod);
+  const convexAddItem = useMutation(api.creative.addPlanItem);
+  const convexRemoveItem = useMutation(api.creative.removePlanItem);
+  const save = onSave ?? convexSave;
+  const addItem = onAddItem ?? convexAddItem;
+  const removeItem = onRemoveItem ?? convexRemoveItem;
   const [line, setLine] = useState("");
   const [answers, setAnswers] = useState<Record<string, string>>(
     snap.eod?.answers ?? {},
