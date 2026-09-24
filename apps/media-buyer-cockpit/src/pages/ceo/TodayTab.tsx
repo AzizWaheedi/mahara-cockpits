@@ -204,16 +204,6 @@ function gateChip(
   );
 }
 
-/** A later step only converts from the one before when it cannot be bigger. */
-function conversion(
-  value: number | null | undefined,
-  previous: number | null | undefined,
-): Pick<FunnelStep, "skipRate"> {
-  return f.isNum(value) && f.isNum(previous) && value > previous
-    ? { skipRate: true }
-    : {};
-}
-
 function daysBetween(from: string, to: string): number | null {
   const a = Date.parse(`${from.slice(0, 10)}T00:00:00Z`);
   const b = Date.parse(`${to.slice(0, 10)}T00:00:00Z`);
@@ -520,7 +510,7 @@ function KpiRow({
         />
         <StatTile
           variant="plain"
-          label="Client bookings yesterday"
+          label="Client appointments yesterday"
           value={d ? f.count(d.yesterday.bookings) : null}
           naHint={pendingD}
           delta={
@@ -566,10 +556,10 @@ function KpiRow({
           label="Speed to lead, 7 days"
           hint={
             s && s.sample > 0
-              ? `Median time from a new lead to its first call, over ${f.plural(s.sample, "lead")}${s.since && sinceDays !== null && sinceDays < 7 ? ` since ${f.date(s.since)}` : ""}.`
-              : "Median time from a new lead to its first call."
+              ? `Median working time from a new lead to its first actual call, over ${f.plural(s.sample, "lead")}${s.since && sinceDays !== null && sinceDays < 7 ? ` since ${f.date(s.since)}` : ""}.`
+              : "Median working time from a new lead to its first actual call."
           }
-          value={s ? f.minutes(s.medianMinutes7d) : null}
+          value={s ? f.minutes(s.workingMedianMinutes7d) : null}
           naHint={
             pendingC ??
             (s?.sample === 0
@@ -577,8 +567,8 @@ function KpiRow({
               : undefined)
           }
           sub={
-            s && f.isNum(s.within5minShare7d)
-              ? `${f.pct(s.within5minShare7d)} called within 5 min`
+            s && f.isNum(s.withinTwoMinutesRate7d)
+              ? `${f.pct(s.withinTwoMinutesRate7d)} of new leads within 2 working min`
               : undefined
           }
         />
@@ -612,12 +602,17 @@ function DeliveryFunnelCard({
         const steps: FunnelStep[] = [
           { label: "Leads", value: d.last7.leads },
           // Several dials per lead is normal, so leads to dials is not a conversion.
-          { label: "Dials", value: c?.dials ?? null, skipRate: true },
+          {
+            label: "Actual calls",
+            value: c?.providerDials ?? null,
+            skipRate: true,
+          },
           { label: "Connected", value: c?.connected ?? null },
           {
             label: "Bookings",
             value: d.last7.bookings,
-            ...conversion(d.last7.bookings, c?.connected),
+            // Delivery uses appointment date, so this is not a call conversion.
+            skipRate: true,
           },
         ];
         return (
@@ -642,8 +637,9 @@ function DeliveryFunnelCard({
             />
             {c ? (
               <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
-                Dials and connected count every call centre call in the last 7
-                days, so they are not tied to these exact leads.
+                Actual calls and connections use the shared call center report.
+                Delivery bookings use appointment date, so these steps are
+                separate activity counts rather than a lead conversion funnel.
               </p>
             ) : null}
           </>

@@ -1,865 +1,538 @@
-import { type ReactNode, useMemo } from "react";
-import { ColumnChart } from "@/components/ceo/ColumnChart";
+import { useAction } from "convex/react";
+import { useEffect, useRef, useState } from "react";
 import { type Column, DataTable } from "@/components/ceo/DataTable";
-import { Delta } from "@/components/ceo/Delta";
 import {
-  change,
   count,
   date,
   dateTime,
   decimal,
-  diff,
-  hour,
-  isNum,
   kuwaitDay,
-  minutes,
   pct,
-  plural,
-  relative,
   seconds,
 } from "@/components/ceo/format";
-import { Hint } from "@/components/ceo/Hint";
-import { Na, Value } from "@/components/ceo/Na";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
-import { gateTone, StatusChip } from "@/components/ceo/StatusChip";
-import { TimeSeriesChart } from "@/components/ceo/TimeSeriesChart";
 import { cn } from "@/lib/utils";
-import type {
-  CallsPayload,
-  CallWindow,
-  Note,
-} from "../../../convex/ceo/payloads";
-import { daysLabel } from "../../../convex/ceo/workingHours";
-import { CallsSettingsCard } from "./callsSettings";
-import { CallsTimeframeCard } from "./timeframeCards";
+import { api } from "../../../convex/_generated/api";
+import {
+  type CallCenterMetrics,
+  type CallCenterReport,
+  callCenterRange,
+  parseCallCenterReport,
+} from "../../../convex/ceo/callCenterContract";
 import type { CeoTabProps } from "./types";
 
-type AgentRow = CallsPayload["byAgent"][number];
-type ClientRow = CallsPayload["perClient7d"][number];
-
-/** The first call should reach a new lead within this many minutes. */
-const SPEED_TARGET_MIN = 5;
-/** An agent with a call this recent reads as on shift. */
-const ACTIVE_MS = 30 * 60_000;
-/** The hours the by-hour chart always shows, widened by any calls outside them. */
-const DAY_FRAME = { from: 9, to: 21 };
-
-/** Talk time reads in hours past an hour; format.minutes turns 48 hours into days, which is wrong for talk. */
-function talk(v: number | null | undefined): string {
-  if (!isNum(v)) return minutes(v);
-  if (v === 0) return "0 min";
-  if (v < 60) return minutes(v);
-  const h = Math.floor(v / 60);
-  const m = Math.round(v % 60);
-  if (h >= 10) return `${count(Math.round(v / 60))} h`;
-  return m ? `${h} h ${m} min` : `${h} h`;
-}
-
-/** Shifts a "YYYY-MM-DD" day by whole days. */
-function shiftDay(day: string, days: number): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
-  if (!m) return day;
-  return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3] + days))
+const FIELD =
+  "h-9 rounded-md border bg-background px-2 text-sm text-foreground tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+const BUTTON =
+  "rounded-md border px-3 py-2 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-wait disabled:opacity-50";
+type View = "overall" | "callers" | "clients" | "daily";
+type Focus = "calling" | "outcomes";
+type TableRow = CallCenterMetrics & { key: string; label: string };
+const before = (day: string, days: number) =>
+  new Date(Date.parse(`${day}T00:00:00Z`) - days * 86_400_000)
     .toISOString()
     .slice(0, 10);
-}
+const valueText = (values: CallCenterMetrics["values"]) =>
+  values.length
+    ? values
+        .map(
+          v => `${v.currency ?? "Unspecified currency"} ${decimal(v.value, 3)}`,
+        )
+        .join(" · ")
+    : "n/a";
 
-const LEAD_NOTE =
-  /per-client|speed to lead|lead sync|lead phone|client table|no call yet/i;
-const AGENT_NOTE = /maqsam accounts|receives inbound/i;
-const HISTORY_NOTE = /one-off import|history to/i;
-
-/** Dials, connects, agents, hours, per-client calls and speed to lead. */
-export function CallsTab({ sections, now, day }: CeoTabProps) {
-  const section = sections.calls;
-  const payload = section?.payload ?? null;
+/** One date window and source for the company, callers and client comparison. */
+export function CallsTab({ sections, now, day, goTab }: CeoTabProps) {
+  const stored = sections.calls?.payload?.report;
   const today = day ?? kuwaitDay(now);
-  const computedDay = section?.computedAt
-    ? kuwaitDay(section.computedAt)
-    : today;
-  const behind = computedDay !== today;
-  const yesterdayLabel = behind ? date(shiftDay(computedDay, -1)) : "Yesterday";
+  const [from, setFrom] = useState(stored?.from ?? before(today, 29));
+  const [to, setTo] = useState(stored?.to ?? today);
+  const [custom, setCustom] = useState<CallCenterReport | null>(null);
+  const [view, setView] = useState<View>("overall");
+  const [focus, setFocus] = useState<Focus>("calling");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const request = useRef(0);
+  const load = useAction(api.ceo.queries.callCenterReport);
+  const report = custom ?? stored;
+  const stale = !custom && sections.calls && !sections.calls.ok;
+  useEffect(
+    () => () => {
+      request.current += 1;
+    },
+    [],
+  );
 
-  // Each note shows once, on the card whose numbers it qualifies.
-  const notes = useMemo(() => {
-    const out = {
-      top: [] as Note[],
-      daily: [] as Note[],
-      agents: [] as Note[],
-      leads: [] as Note[],
-    };
-    for (const n of payload?.notes ?? []) {
-      if (LEAD_NOTE.test(n.text)) out.leads.push(n);
-      else if (AGENT_NOTE.test(n.text)) out.agents.push(n);
-      else if (HISTORY_NOTE.test(n.text)) out.daily.push(n);
-      else out.top.push(n);
+  async function read(start = from, end = to) {
+    const id = ++request.current;
+    setError(null);
+    try {
+      callCenterRange(start, end);
+      setBusy(true);
+      const result = await load({ from: start, to: end });
+      if (id === request.current)
+        setCustom(parseCallCenterReport(result, start, end));
+    } catch {
+      if (id === request.current)
+        setError(
+          "The report could not be refreshed. Check the dates (up to 93 days), then retry. Any report below still shows its original dates and timestamp.",
+        );
+    } finally {
+      if (id === request.current) setBusy(false);
     }
-    return out;
-  }, [payload]);
-
-  const topNotes: Note[] = behind
-    ? [
-        {
-          level: "warn",
-          text: `These numbers were computed on ${date(computedDay)} and have not refreshed since, so today means ${date(computedDay)}.`,
-        },
-        ...notes.top,
-      ]
-    : notes.top;
-
-  const lastCall = payload?.lastCallAt ?? null;
-
-  // With nothing to show, one card says so instead of six identical empty states.
-  if (!payload)
-    return (
-      <div className="grid min-w-0">
-        <SectionCard title="Calls" section={section}>
-          {() => null}
-        </SectionCard>
-      </div>
-    );
+  }
+  function preset(days: number) {
+    const start = before(today, days - 1);
+    setFrom(start);
+    setTo(today);
+    void read(start, today);
+  }
+  const rows: TableRow[] = !report
+    ? []
+    : view === "callers"
+      ? report.callers.map(r => ({
+          ...r,
+          key: r.email ?? "unassigned",
+          label: r.name || r.email || "Unassigned",
+        }))
+      : view === "clients"
+        ? report.clients.map(r => ({
+            ...r,
+            key: r.id ?? "unassigned",
+            label: r.name || "Unassigned client",
+          }))
+        : report.daily.map(r => ({ ...r, key: r.day, label: r.day }));
 
   return (
     <div className="@container grid min-w-0 gap-4 lg:gap-6">
       <SectionCard
-        kicker={behind ? date(computedDay) : "Today so far"}
-        title="Call centre"
-        section={section}
-        notes={topNotes}
+        title="Call center scorecard"
+        kicker="Shared with the power dialer"
         order={0}
-        actions={
-          payload ? (
-            <Hint content={isNum(lastCall) ? relative(lastCall, now) : null}>
-              <button
-                type="button"
-                className="cursor-default rounded-sm text-xs text-muted-foreground tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                Last call {isNum(lastCall) ? dateTime(lastCall, now) : "n/a"}
-              </button>
-            </Hint>
-          ) : null
-        }
       >
-        {d => <Headline d={d} yesterdayLabel={yesterdayLabel} />}
-      </SectionCard>
-
-      <div className="grid min-w-0 gap-4 lg:gap-6 @4xl:grid-cols-12">
-        <CallsTimeframeCard
-          section={section}
-          rows={payload?.daily ?? []}
-          now={now}
-          day={day}
-          order={1}
-          className="@4xl:col-span-12"
-        />
-
-        <SectionCard
-          kicker="Last 7 days"
-          title="Gap between calls"
-          section={section}
-          order={2}
-          className="@4xl:col-span-12"
-        >
-          {d => <GapBody d={d} />}
-        </SectionCard>
-
-        <SectionCard
-          kicker="Last 30 days"
-          title="Dials and connected per day"
-          section={section}
-          notes={notes.daily}
-          order={1}
-          className="@4xl:col-span-7"
-        >
-          {d => <DailyChart d={d} computedDay={computedDay} />}
-        </SectionCard>
-        <SectionCard
-          kicker={behind ? date(computedDay) : "Today"}
-          title="Dials and connected by hour"
-          section={section}
-          order={2}
-          className="@4xl:col-span-5"
-        >
-          {d => (
-            <HourChart
-              d={d}
-              when={behind ? `on ${date(computedDay)}` : "today"}
-            />
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="grid gap-1 text-xs text-muted-foreground">
+              From
+              <input
+                type="date"
+                className={FIELD}
+                value={from}
+                max={today}
+                onChange={e => setFrom(e.target.value)}
+              />
+            </label>
+            <label className="grid gap-1 text-xs text-muted-foreground">
+              To
+              <input
+                type="date"
+                className={FIELD}
+                value={to}
+                max={today}
+                onChange={e => setTo(e.target.value)}
+              />
+            </label>
+            <button
+              type="button"
+              className={cn(BUTTON, "bg-primary text-primary-foreground")}
+              disabled={busy}
+              onClick={() => void read()}
+            >
+              {busy ? "Loading…" : "Apply / refresh"}
+            </button>
+            <div
+              className="flex flex-wrap gap-1"
+              role="group"
+              aria-label="Date presets"
+            >
+              {[
+                [1, "Today"],
+                [7, "7 days"],
+                [30, "30 days"],
+              ].map(([days, label]) => (
+                <button
+                  type="button"
+                  key={days}
+                  className={BUTTON}
+                  disabled={busy}
+                  onClick={() => preset(Number(days))}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {stale ? (
+            <p role="status" className="text-sm text-destructive">
+              The latest scheduled report failed to refresh. The last good
+              report remains below with its original dates. Use Apply / refresh
+              to retry.
+            </p>
+          ) : null}
+          {error ? (
+            <p role="alert" className="text-sm text-destructive">
+              {error}
+            </p>
+          ) : null}
+          {report ? (
+            <p className="text-sm text-muted-foreground">
+              Showing{" "}
+              <strong className="font-medium text-foreground">
+                {date(report.from)} to {date(report.to)}
+              </strong>
+              , Kuwait dates. Calculated{" "}
+              {dateTime(Date.parse(report.generatedAt), now)}. Import coverage
+              is listed below.
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Load the shared report to see the same call center figures as the
+              dialer. Previous independent call-center calculations have been
+              retired.
+            </p>
           )}
-        </SectionCard>
-      </div>
-
-      <SectionCard
-        kicker={
-          behind
-            ? `${date(computedDay)} and last 7 days`
-            : "Today and last 7 days"
-        }
-        title="Agents"
-        section={section}
-        notes={notes.agents}
-        order={3}
-      >
-        {d => <AgentsTable d={d} now={now} behind={behind} />}
-      </SectionCard>
-
-      <div className="grid min-w-0 items-start gap-4 lg:gap-6 @5xl:grid-cols-12">
-        <SectionCard
-          kicker="Last 7 days"
-          title="Calls per client"
-          section={section}
-          order={4}
-          className="@5xl:col-span-8"
-        >
-          {d => <ClientsTable d={d} />}
-        </SectionCard>
-        <div className="grid min-w-0 gap-4 lg:gap-6 @5xl:col-span-4">
-          <SectionCard
-            kicker="Last 7 days"
-            title="Speed to lead"
-            section={section}
-            notes={notes.leads}
-            order={5}
+          <div
+            className="flex flex-wrap gap-1 border-t pt-3"
+            role="group"
+            aria-label="Scorecard view"
           >
-            {d => <SpeedToLead d={d} />}
-          </SectionCard>
-          <CallsSettingsCard inForce={payload.workingHours} order={6} />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// --- Headline -----------------------------------------------------------------
-
-/**
- * Five tiles in one hairline-divided block. Phones get two columns with the
- * first tile across the top, mid widths a 2 over 3 split, wide cards one row,
- * so five tiles never leave an empty cell.
- */
-const TILE_SPANS = [
-  "col-span-2 @xl:col-span-3 @4xl:col-span-1",
-  "@xl:col-span-3 @4xl:col-span-1",
-  "@xl:col-span-2 @4xl:col-span-1",
-  "@xl:col-span-2 @4xl:col-span-1",
-  "@xl:col-span-2 @4xl:col-span-1",
-];
-
-/** Yesterday and the last 7 days under a tile's value, with the 7-day change below them. */
-function WindowLines({
-  yesterdayLabel,
-  yesterday,
-  last7,
-  delta,
-}: {
-  yesterdayLabel: string;
-  yesterday: string;
-  last7: string;
-  delta: ReactNode;
-}) {
-  return (
-    <div className="border-t border-[color:var(--ceo-grid)] pt-2 text-xs leading-5 text-muted-foreground">
-      <dl className="space-y-0.5">
-        <div className="flex min-w-0 items-baseline justify-between gap-2">
-          <dt className="min-w-0 truncate">{yesterdayLabel}</dt>
-          <dd className="shrink-0 font-medium tabular-nums text-foreground">
-            <Value value={yesterday} />
-          </dd>
-        </div>
-        <div className="flex min-w-0 items-baseline justify-between gap-2">
-          <dt className="min-w-0 truncate">Last 7 days</dt>
-          <dd className="shrink-0 font-medium tabular-nums text-foreground">
-            <Value value={last7} />
-          </dd>
-        </div>
-      </dl>
-      <div className="flex min-w-0 justify-end text-right [&>span]:justify-end">
-        {delta}
-      </div>
-    </div>
-  );
-}
-
-type TileSpec = {
-  key: string;
-  label: string;
-  format: (v: number | null | undefined) => string;
-  pick: (c: CallWindow) => number | null;
-  delta: ReactNode;
-  hint?: string;
-  naHint?: string;
-};
-
-function Headline({
-  d,
-  yesterdayLabel,
-}: {
-  d: CallsPayload;
-  yesterdayLabel: string;
-}) {
-  const { today: t, yesterday: y, last7: w, prevLast7: p } = d;
-  const vs = "vs prior 7 days";
-
-  const tiles: TileSpec[] = [
-    {
-      key: "dials",
-      label: "Dials",
-      format: count,
-      pick: c => c.dials,
-      delta: <Delta value={change(w.dials, p.dials)} vs={vs} />,
-      hint: "Outbound calls with one agent.",
-    },
-    {
-      key: "connected",
-      label: "Connected",
-      format: count,
-      pick: c => c.connected,
-      delta: <Delta value={change(w.connected, p.connected)} vs={vs} />,
-      hint: "Outbound calls answered with some talk time. Can include voicemail.",
-    },
-    {
-      key: "rate",
-      label: "Connect rate",
-      format: pct,
-      pick: c => c.connectRate,
-      delta: (
-        <Delta
-          value={diff(w.connectRate, p.connectRate)}
-          kind="points"
-          vs={vs}
-        />
-      ),
-      hint: "Connected calls as a share of dials.",
-      naHint: "No dials yet, so there is no connect rate.",
-    },
-    {
-      key: "talk",
-      label: "Talk time",
-      format: talk,
-      pick: c => c.talkMinutes,
-      delta: <Delta value={change(w.talkMinutes, p.talkMinutes)} vs={vs} />,
-      hint: isNum(t.avgTalkSec)
-        ? `Time on connected outbound calls. Today averages ${seconds(t.avgTalkSec)} per connected call.`
-        : "Time on connected outbound calls.",
-    },
-    {
-      key: "conversations",
-      // A no-break space keeps "90 s" together when the label wraps.
-      label: "Conversations over 90\u00a0s",
-      format: count,
-      pick: c => c.conversations90s,
-      delta: (
-        <Delta value={change(w.conversations90s, p.conversations90s)} vs={vs} />
-      ),
-      hint: "Connected calls that lasted 90 seconds or more. The Backend tab calls the same number conversations today.",
-    },
-  ];
-
-  return (
-    <div className="grid min-w-0 grid-cols-2 gap-px overflow-hidden rounded-lg border bg-[var(--ceo-grid)] @xl:grid-cols-6 @4xl:grid-cols-5">
-      {tiles.map((s, i) => (
-        <div
-          key={s.key}
-          className={cn("flex min-w-0 flex-col bg-card p-4", TILE_SPANS[i])}
-        >
-          <StatTile
-            variant="plain"
-            label={s.label}
-            value={s.format(s.pick(t))}
-            hint={s.hint}
-            naHint={s.naHint}
-          />
-          {/* On the cell floor, so the lines align across a row whatever the label wraps to. */}
-          <div className="mt-auto pt-3">
-            <WindowLines
-              yesterdayLabel={yesterdayLabel}
-              yesterday={s.format(s.pick(y))}
-              last7={s.format(s.pick(w))}
-              delta={s.delta}
-            />
+            {(["overall", "callers", "clients", "daily"] as const).map(key => (
+              <button
+                key={key}
+                type="button"
+                className={cn(
+                  BUTTON,
+                  view === key
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-transparent text-muted-foreground",
+                )}
+                aria-pressed={view === key}
+                onClick={() => setView(key)}
+              >
+                {key === "overall"
+                  ? "Overall"
+                  : key === "callers"
+                    ? "Per caller"
+                    : key === "clients"
+                      ? "Per client"
+                      : "Day by day"}
+              </button>
+            ))}
           </div>
         </div>
-      ))}
-    </div>
-  );
-}
+      </SectionCard>
 
-/**
- * How long agents are off the phone between their own calls, counted in
- * working minutes only (Aziz, 2026-09-22). Talk time says how long they were
- * on; this says how long they were not, during hours somebody is meant to be
- * dialling. An overnight or a weekend is never idle time, so the number is
- * about the shift and not about the calendar.
- *
- * The median leads because one long break drags a mean. The count over half an
- * hour is the part worth acting on: a median of three minutes with nineteen
- * half-hour holes is a different week from a steady eight.
- */
-function GapBody({ d }: { d: CallsPayload }) {
-  const h = d.workingHours;
-  const hoursLine = h
-    ? `${h.start} to ${h.end}, ${daysLabel(h.days)}`
-    : "the hours set on this tab";
-  const g = d.gap;
-  if (!g || (!g.last7 && !g.today))
-    return (
-      <p className="text-sm text-muted-foreground">
-        No gap to measure yet. It needs two calls by the same agent on the same
-        working day.
-      </p>
-    );
-  const w = g.last7;
-  const t = g.today;
-  return (
-    <div className="grid min-w-0 gap-5">
-      <div className="grid min-w-0 grid-cols-2 gap-x-6 gap-y-5 @xl:grid-cols-4">
-        <StatTile
-          variant="plain"
-          label="Median gap, 7 days"
-          value={<Value value={minutes(w?.medianMin)} />}
-          hint="The middle gap between one call ending and the next starting, working minutes only."
-        />
-        <StatTile
-          variant="plain"
-          label="Gaps over 30 minutes"
-          value={<Value value={count(w?.over30)} />}
-          hint="Over the last 7 days. This is the number worth asking about."
-        />
-        <StatTile
-          variant="plain"
-          label="Longest gap"
-          value={<Value value={minutes(w?.longestMin)} />}
-          hint="The single longest stretch inside working hours in the last 7 days."
-        />
-        <StatTile
-          variant="plain"
-          label="Median gap today"
-          value={<Value value={minutes(t?.medianMin)} />}
-          hint={
-            t
-              ? `Across ${t.gaps} gap${t.gaps === 1 ? "" : "s"} so far today.`
-              : "Nothing to measure yet today."
+      {report && view === "overall" ? (
+        <Overview metrics={report.overall} />
+      ) : null}
+      {report && view !== "overall" ? (
+        <SectionCard
+          title={
+            view === "callers"
+              ? "Caller comparison"
+              : view === "clients"
+                ? "Client comparison"
+                : "Daily results"
           }
-        />
-      </div>
-      <p className="ceo-facts">
-        {w
-          ? `${count(w.gaps)} gaps measured over 7 days, mean ${minutes(w.meanMin)}. `
-          : ""}
-        Counted on the working clock, {hoursLine}. A gap longer than a full
-        working day is left out: that is a day off, not somebody sitting still.
-      </p>
+          kicker={`${date(report.from)} to ${date(report.to)}`}
+          order={1}
+          actions={
+            <div
+              role="group"
+              aria-label="Metric columns"
+              className="flex gap-1"
+            >
+              {(["calling", "outcomes"] as const).map(key => (
+                <button
+                  type="button"
+                  key={key}
+                  className={cn(
+                    BUTTON,
+                    focus === key && "border-primary text-primary",
+                  )}
+                  aria-pressed={focus === key}
+                  onClick={() => setFocus(key)}
+                >
+                  {key === "calling"
+                    ? "Calling & response"
+                    : "Bookings & outcomes"}
+                </button>
+              ))}
+            </div>
+          }
+        >
+          <DataTable
+            key={`${view}:${focus}`}
+            rows={rows}
+            columns={columns(focus, view)}
+            rowKey={r => r.key}
+            initialSort={{
+              key: view === "daily" ? "label" : "dials",
+              dir: "desc",
+            }}
+            stickyFirst
+            search={
+              view === "daily"
+                ? undefined
+                : {
+                    placeholder:
+                      view === "clients" ? "Find a client" : "Find a caller",
+                    text: r => r.label,
+                  }
+            }
+            caption={`${view} call center metrics, ${report.from} to ${report.to}`}
+            emptyText="No matching activity is recorded in this range."
+          />
+        </SectionCard>
+      ) : null}
+
+      {report ? (
+        <SectionCard
+          title="How to read these numbers"
+          order={2}
+          notes={report.warnings.map(text => ({ level: "info", text }))}
+        >
+          <div className="grid gap-4 text-sm leading-relaxed text-muted-foreground lg:grid-cols-2">
+            <p>
+              <strong className="font-medium text-foreground">
+                Calls and leads.
+              </strong>{" "}
+              Dials are saved dispositions with a note. Actual calls,
+              connections and response time use Maqsam evidence. New leads,
+              dialed leads and contacted leads use leads created in the selected
+              dates; contacted means a completed call with talk time and may
+              include voicemail. A missing or ambiguous call link stays
+              unverified.
+            </p>
+            <p>
+              <strong className="font-medium text-foreground">
+                Working time.
+              </strong>{" "}
+              Speed starts when the lead arrives and stops at its first actual
+              dial, counting only the first caller’s working hours. The 2-minute
+              share includes all new leads in the selected cohort, including
+              those with no verified dial. Missing schedules have no invented
+              response time. Average call gap removes ringing and talk time.
+            </p>
+            <p>
+              <strong className="font-medium text-foreground">Bookings.</strong>{" "}
+              Confirmed means the main or online booking calendar. Provisional
+              is shown separately. New appointments count by booking creation
+              date; reschedules are not a second booking. Unknown calendar
+              classifications are shown separately. Delivery retains its
+              separate appointment-date view.
+            </p>
+            <p>
+              <strong className="font-medium text-foreground">
+                Outcomes and ownership.
+              </strong>{" "}
+              Show rate is shows ÷ (shows + no-shows); close rate is closed
+              projects ÷ shown appointments. Client sheet outcomes remain
+              authoritative. Leads belong to the first verified caller,
+              otherwise Unassigned; caller rows do not invent who should have
+              called an untouched lead. Project values retain their recorded
+              currencies.
+            </p>
+          </div>
+          <button
+            type="button"
+            className={cn(BUTTON, "mt-4 text-primary")}
+            onClick={() => goTab("team")}
+          >
+            Manage hours in Team & Payroll
+          </button>
+          <p className="mt-3 text-xs text-muted-foreground">
+            Supabase shared report v{report.version}. Current roster schedules
+            and date exceptions apply to history; recorded breaks and
+            effective-dated schedule history are not available. Mahara’s own
+            sales funnel remains separate.
+          </p>
+          <details className="mt-4 text-xs text-muted-foreground">
+            <summary className="cursor-pointer">Source coverage</summary>
+            <dl className="mt-3 grid gap-2 sm:grid-cols-2">
+              {Object.entries(report.coverage)
+                .filter(
+                  ([, value]) =>
+                    value === null ||
+                    ["string", "number", "boolean"].includes(typeof value),
+                )
+                .map(([key, value]) => (
+                  <div key={key}>
+                    <dt className="font-medium text-foreground">
+                      {key
+                        .replace(/([a-z])([A-Z])/g, "$1 $2")
+                        .replaceAll("_", " ")}
+                    </dt>
+                    <dd>{value === null ? "Unavailable" : String(value)}</dd>
+                  </div>
+                ))}
+            </dl>
+          </details>
+        </SectionCard>
+      ) : null}
     </div>
   );
 }
 
-// --- Charts ---------------------------------------------------------------------
-
-function DailyChart({
-  d,
-  computedDay,
-}: {
-  d: CallsPayload;
-  computedDay: string;
-}) {
-  // The day the numbers were computed is still in progress; its dip would read as a drop.
-  const rows = d.daily.filter(r => r.date < computedDay);
-  const dials = rows.reduce((s, r) => s + r.dials, 0);
-  const connected = rows.reduce((s, r) => s + r.connected, 0);
-  const first = rows[0]?.date;
-  const last = rows.at(-1)?.date;
+function Overview({ metrics: m }: { metrics: CallCenterMetrics }) {
   return (
-    <TimeSeriesChart
-      data={rows}
-      series={[
-        { key: "dials", label: "Dials" },
-        { key: "connected", label: "Connected" },
-      ]}
-      unit="count"
-      summary="Full days only"
-      height={240}
-      ariaLabel={`Dials and connected calls per day from ${date(first)} to ${date(last)}: ${count(dials)} dials and ${count(connected)} connected, a ${pct(dials ? connected / dials : null)} connect rate.`}
-      emptyText="No full days of calls yet."
-    />
-  );
-}
-
-/** `when` is "today", or "on Mon 14 Sep" when the numbers are from an earlier day. */
-function HourChart({ d, when }: { d: CallsPayload; when: string }) {
-  const { rows, busiest } = useMemo(() => {
-    const active = d.byHourToday.filter(h => h.dials > 0 || h.connected > 0);
-    const from = Math.min(DAY_FRAME.from, ...active.map(h => h.hour));
-    const to = Math.max(DAY_FRAME.to, ...active.map(h => h.hour));
-    const byHour = new Map(d.byHourToday.map(h => [h.hour, h]));
-    const framed = [];
-    for (let h = from; h <= to; h++) {
-      const row = byHour.get(h);
-      framed.push({
-        hour: h,
-        dials: row?.dials ?? 0,
-        connected: row?.connected ?? 0,
-      });
-    }
-    const top = active.reduce<(typeof active)[number] | null>(
-      (best, h) => (!best || h.dials > best.dials ? h : best),
-      null,
-    );
-    return { rows: active.length ? framed : [], busiest: top };
-  }, [d.byHourToday]);
-
-  return (
-    <ColumnChart
-      data={rows}
-      x="hour"
-      series={[
-        { key: "dials", label: "Dials" },
-        { key: "connected", label: "Connected" },
-      ]}
-      unit="count"
-      formatX={h => String(Number(h))}
-      formatXLong={h => {
-        const n = Number(h);
-        return `${hour(n)} to ${n >= 23 ? "24:00" : hour(n + 1)}`;
-      }}
-      xHeader="Hour"
-      capLabel="max"
-      height={240}
-      summary={busiest ? `Busiest ${hour(busiest.hour)}` : undefined}
-      ariaLabel={
-        busiest
-          ? `Dials and connected calls by Kuwait hour ${when}. Busiest hour ${hour(busiest.hour)} with ${plural(busiest.dials, "dial")} and ${count(busiest.connected)} connected.`
-          : `Dials and connected calls by Kuwait hour ${when}. No calls yet.`
-      }
-      emptyText={when === "today" ? "No calls yet today." : `No calls ${when}.`}
-    />
-  );
-}
-
-// --- Agents -----------------------------------------------------------------------
-
-function AgentsTable({
-  d,
-  now,
-  behind,
-}: {
-  d: CallsPayload;
-  now: number;
-  /** The numbers are from an earlier day, so "today" would be wrong. */
-  behind: boolean;
-}) {
-  const columns: Column<AgentRow>[] = [
-    {
-      key: "agent",
-      header: "Agent",
-      cell: r => {
-        const active = isNum(r.lastCallAt) && now - r.lastCallAt <= ACTIVE_MS;
-        return (
-          <span className="inline-flex min-w-0 items-center gap-2">
-            <span
-              aria-hidden
-              className="size-1.5 shrink-0 rounded-full"
-              style={{
-                backgroundColor: active ? "var(--ceo-good)" : "transparent",
-              }}
-            />
-            <span className="max-w-48 truncate font-medium text-foreground">
-              {r.agent}
-            </span>
-            {active ? (
-              <span className="sr-only">, called in the last 30 minutes</span>
-            ) : null}
-          </span>
-        );
-      },
-      sortValue: r => r.agent,
-    },
-    {
-      key: "todayDials",
-      header: behind ? "Dials" : "Dials today",
-      numeric: true,
-      cell: r => count(r.today.dials),
-      sortValue: r => r.today.dials,
-    },
-    {
-      key: "todayConnected",
-      header: "Connected",
-      numeric: true,
-      cell: r => count(r.today.connected),
-      sortValue: r => r.today.connected,
-    },
-    {
-      key: "todayRate",
-      header: "Connect rate",
-      numeric: true,
-      cell: r => <Value value={pct(r.today.connectRate)} />,
-      sortValue: r => r.today.connectRate,
-    },
-    {
-      key: "todayTalk",
-      header: "Talk time",
-      numeric: true,
-      cell: r => talk(r.today.talkMinutes),
-      sortValue: r => r.today.talkMinutes,
-    },
-    {
-      key: "gap",
-      header: "Gap, 7 days",
-      numeric: true,
-      // The median, because one long break drags a mean. Beside it, how many
-      // of this agent's gaps ran past half an hour, which is the part to ask
-      // about.
-      cell: r => (
-        <span className="inline-flex min-w-0 items-baseline gap-1.5">
-          <Value value={minutes(r.gap7d?.medianMin)} />
-          {r.gap7d?.over30 ? (
-            <span className="text-xs text-muted-foreground">
-              {count(r.gap7d.over30)} over 30
-            </span>
-          ) : null}
-        </span>
-      ),
-      sortValue: r => r.gap7d?.medianMin ?? null,
-    },
-    {
-      key: "weekDials",
-      header: "7-day dials",
-      numeric: true,
-      cell: r => count(r.last7.dials),
-      sortValue: r => r.last7.dials,
-    },
-    {
-      key: "weekRate",
-      header: "7-day rate",
-      numeric: true,
-      cell: r => <Value value={pct(r.last7.connectRate)} />,
-      sortValue: r => r.last7.connectRate,
-    },
-    {
-      key: "weekTalk",
-      header: "7-day talk",
-      numeric: true,
-      cell: r => talk(r.last7.talkMinutes),
-      sortValue: r => r.last7.talkMinutes,
-      hideBelow: "lg",
-    },
-    {
-      key: "lastCall",
-      header: "Last call",
-      numeric: true,
-      cell: r =>
-        isNum(r.lastCallAt) ? (
-          <span className="text-muted-foreground">
-            {dateTime(r.lastCallAt, now)}
-          </span>
-        ) : (
-          <Na />
-        ),
-      sortValue: r => r.lastCallAt,
-    },
-  ];
-
-  return (
-    <DataTable
-      rows={d.byAgent}
-      columns={columns}
-      rowKey={r => r.agent}
-      initialSort={{ key: "todayDials", dir: "desc" }}
-      caption="Call centre agents, today and the last 7 days"
-      emptyText="No agent has dialed in the last 30 days."
-      stickyFirst
-    />
-  );
-}
-
-// --- Lead-linked numbers ---------------------------------------------------------
-
-function ClientsTable({ d }: { d: CallsPayload }) {
-  const columns: Column<ClientRow>[] = [
-    {
-      key: "client",
-      header: "Client",
-      cell: r => (
-        <span
-          title={r.client}
-          className="block max-w-36 truncate font-medium text-foreground sm:max-w-56"
-        >
-          {r.client}
-        </span>
-      ),
-      sortValue: r => r.client,
-    },
-    {
-      key: "dials",
-      header: "Dials",
-      numeric: true,
-      cell: r => count(r.dials),
-      sortValue: r => r.dials,
-    },
-    {
-      key: "connected",
-      header: "Connected",
-      numeric: true,
-      cell: r => count(r.connected),
-      sortValue: r => r.connected,
-    },
-    {
-      key: "rate",
-      header: "Connect rate",
-      numeric: true,
-      cell: r => <Value value={pct(r.dials ? r.connected / r.dials : null)} />,
-      sortValue: r => (r.dials ? r.connected / r.dials : null),
-    },
-    {
-      key: "leads",
-      header: "Leads called",
-      numeric: true,
-      cell: r => count(r.leadsCalled),
-      sortValue: r => r.leadsCalled,
-    },
-    {
-      key: "perLead",
-      header: "Calls per lead",
-      numeric: true,
-      cell: r => <Value value={decimal(r.callsPerLead)} />,
-      sortValue: r => r.callsPerLead,
-    },
-  ];
-
-  return (
-    <DataTable
-      rows={d.perClient7d}
-      columns={columns}
-      rowKey={r => r.clickupTaskId ?? r.client}
-      initialSort={{ key: "dials", dir: "desc" }}
-      search={
-        d.perClient7d.length > 8
-          ? { placeholder: "Search clients", text: r => r.client }
-          : undefined
-      }
-      limit={10}
-      caption="Dials per client over the last 7 days"
-      emptyText="No dials matched to client leads yet."
-      stickyFirst
-    />
-  );
-}
-
-function SpeedToLead({ d }: { d: CallsPayload }) {
-  const s = d.speedToLead;
-  // Older payloads carry no working clock; then the plain clock is the figure.
-  const hasWorking = s.workingMedianMinutes7d !== undefined;
-  const working = s.workingMedianMinutes7d ?? null;
-  const plain = s.medianMinutes7d;
-  const main = hasWorking ? working : plain;
-  const share = hasWorking
-    ? (s.workingWithin5minShare7d ?? null)
-    : s.within5minShare7d;
-  const tone = gateTone(main, SPEED_TARGET_MIN);
-  const noSample =
-    s.sample === 0
-      ? "No new lead has been called in this window yet."
-      : undefined;
-  const hours = d.workingHours;
-  const hoursText = hours
-    ? `${hours.start} to ${hours.end}, ${daysLabel(hours.days)}`
-    : null;
-
-  return (
-    <div className="min-w-0 space-y-5">
-      <StatTile
-        variant="plain"
-        label="Median time to first call"
-        value={
-          isNum(main) ? (
-            <span className="inline-flex min-w-0 flex-wrap items-baseline gap-x-2">
-              <span>{minutes(main)}</span>
-              {hasWorking ? (
-                <span className="text-sm font-normal tracking-normal text-muted-foreground">
-                  {minutes(plain)} on the plain clock
-                </span>
-              ) : null}
-            </span>
-          ) : (
-            minutes(main)
-          )
-        }
-        naHint={noSample}
-        status={
-          isNum(main) ? (
-            <StatusChip
-              tone={tone}
-              label={
-                tone === "good"
-                  ? `Within ${SPEED_TARGET_MIN} min`
-                  : `Over ${SPEED_TARGET_MIN} min`
-              }
-            />
-          ) : null
-        }
-        sub={
-          <>
-            {hasWorking ? (
-              <span className="block">
-                Working minutes only
-                {hoursText ? `, ${hoursText}` : ""}
-              </span>
-            ) : null}
-            {s.sample > 0 ? (
-              <span className="block">
-                Across {plural(s.sample, "called lead")}
-                {s.since ? ` since ${date(s.since)}` : ""}
-              </span>
-            ) : null}
-          </>
-        }
-        hint={
-          hasWorking
-            ? "From the moment a Done For You lead lands to the first outbound call to that phone, on the working clock: it starts at the later of the lead's creation and the next working window, and only working minutes count. The plain clock counts every minute. Leads not called yet are left out of both."
-            : "From the moment a Done For You lead lands to the first outbound call to that phone. Leads not called yet are left out. The working clock fills in after the next refresh."
-        }
-      />
-
-      <div className="min-w-0 border-t border-[color:var(--ceo-grid)] pt-4">
-        <div className="flex items-baseline justify-between gap-3">
-          <p className="text-[13px] text-muted-foreground">
-            Called within {SPEED_TARGET_MIN}
-            {hasWorking ? " working" : ""} minutes
-          </p>
-          <p className="text-lg font-semibold tracking-tight text-foreground">
-            <Value value={pct(share)} hint={noSample} />
-          </p>
+    <>
+      <SectionCard title="Lead response" order={1}>
+        <div className="grid grid-cols-2 gap-x-6 gap-y-5 @2xl:grid-cols-4">
+          <StatTile
+            variant="plain"
+            label="New leads"
+            value={count(m.leads)}
+            sub={`${count(m.noVerifiedDial)} with no verified dial`}
+          />
+          <StatTile
+            variant="plain"
+            label="Leads dialed"
+            value={count(m.leadsDialed)}
+            sub={`${count(m.leadsContacted)} contacted`}
+          />
+          <StatTile
+            variant="plain"
+            label="Average speed to lead"
+            value={seconds(m.avgSpeedSeconds)}
+            sub={`Median ${seconds(m.medianSpeedSeconds)} · ${count(m.speedSamples)} timed leads`}
+            hint="Working time from creation to first actual dial; untimed leads are excluded from the average and median."
+          />
+          <StatTile
+            variant="plain"
+            label="Within 2 working minutes"
+            value={pct(m.withinTwoMinutesRate)}
+            sub={`${count(m.withinTwoMinutes)} of ${count(m.leads)} new leads`}
+          />
         </div>
-        <div
-          className="mt-2 h-2 w-full overflow-hidden rounded-full bg-[var(--ceo-emphasis-track)]"
-          aria-hidden
-        >
-          {isNum(share) ? (
-            <div
-              className="h-full rounded-full"
-              style={{
-                width: `${(Math.min(1, Math.max(0, share)) * 100).toFixed(2)}%`,
-                minWidth: share > 0 ? 4 : 0,
-                backgroundColor: "var(--ceo-emphasis)",
-              }}
-            />
-          ) : null}
+      </SectionCard>
+      <SectionCard title="Calling activity" order={2}>
+        <div className="grid grid-cols-2 gap-x-6 gap-y-5 @2xl:grid-cols-4">
+          <StatTile
+            variant="plain"
+            label="Dials"
+            value={count(m.dials)}
+            sub="Saved dispositions with notes"
+          />
+          <StatTile
+            variant="plain"
+            label="Actual calls"
+            value={count(m.providerDials)}
+            sub={`${count(m.connections)} connected · ${pct(m.connectionRate)}`}
+          />
+          <StatTile
+            variant="plain"
+            label="Talk time"
+            value={`${decimal(m.talkSeconds / 60)} min`}
+          />
+          <StatTile
+            variant="plain"
+            label="Average call gap"
+            value={seconds(m.avgCallGapSeconds)}
+            sub={`${count(m.callGapSamples)} measured gaps`}
+          />
         </div>
-        {hasWorking ? (
-          <p className="mt-2 text-xs text-muted-foreground">
-            On the plain clock:{" "}
-            <span className="font-medium text-foreground tabular-nums">
-              <Value value={pct(s.within5minShare7d)} hint={noSample} />
-            </span>
-            . A call before the clock starts counts as 0 minutes.
+      </SectionCard>
+      <SectionCard title="Bookings and client outcomes" order={3}>
+        <div className="grid grid-cols-2 gap-5 @2xl:grid-cols-4">
+          <div className="rounded-lg border border-primary/25 bg-primary/5 p-4">
+            <StatTile
+              variant="plain"
+              label="Confirmed bookings"
+              value={count(m.confirmedBookings)}
+              sub="Main + online calendar"
+            />
+          </div>
+          <div className="rounded-lg border p-4">
+            <StatTile
+              variant="plain"
+              label="Provisional bookings"
+              value={count(m.provisionalBookings)}
+              sub="Not confirmed appointments"
+            />
+          </div>
+          <StatTile
+            variant="plain"
+            label="Show rate"
+            value={pct(m.showRate)}
+            sub={`${count(m.shows)} shows · ${count(m.noShow)} no-shows`}
+          />
+          <StatTile
+            variant="plain"
+            label="Close rate"
+            value={pct(m.closeRate)}
+            sub={`${count(m.closed)} projects · ${valueText(m.values)}`}
+          />
+        </div>
+        {m.unclassifiedBookings > 0 ? (
+          <p className="mt-4 text-sm text-muted-foreground">
+            {count(m.unclassifiedBookings)} bookings have an unclassified
+            calendar and are outside the two booking totals.
           </p>
         ) : null}
-        <p className="mt-2 text-xs text-muted-foreground">
-          {s.since
-            ? `Counting starts ${date(s.since)}, the first day calls carry the lead phone.`
-            : "Counting starts on the first day calls carry the lead phone."}
-        </p>
-      </div>
-    </div>
+      </SectionCard>
+    </>
   );
+}
+
+function columns(focus: Focus, view: View): Column<TableRow>[] {
+  const identity: Column<TableRow> = {
+    key: "label",
+    header:
+      view === "callers" ? "Caller" : view === "clients" ? "Client" : "Day",
+    cell: r => (
+      <span className="block min-w-32 max-w-56 whitespace-normal font-medium">
+        {view === "daily" ? date(r.label) : r.label}
+      </span>
+    ),
+    sortValue: r => r.label,
+  };
+  const metric = (
+    key: keyof CallCenterMetrics,
+    header: string,
+    format = count,
+  ): Column<TableRow> => ({
+    key,
+    header,
+    numeric: true,
+    cell: r => format(r[key] as number | null),
+    sortValue: r => r[key] as number | null,
+  });
+  return [
+    identity,
+    metric("dials", "Dials"),
+    ...(focus === "calling"
+      ? [
+          metric("providerDials", "Actual calls"),
+          metric("connections", "Connected"),
+          metric("connectionRate", "Connect rate", pct),
+          metric("leads", "New leads"),
+          metric("leadsDialed", "Leads dialed"),
+          metric("leadsContacted", "Contacted"),
+          metric("noVerifiedDial", "No verified dial"),
+          metric("avgSpeedSeconds", "Avg speed", seconds),
+          metric("medianSpeedSeconds", "Median speed", seconds),
+          metric("speedSamples", "Timed leads"),
+          metric("withinTwoMinutesRate", "Within 2 min", pct),
+          metric("avgCallGapSeconds", "Avg call gap", seconds),
+          metric("callGapSamples", "Gap samples"),
+        ]
+      : [
+          metric("confirmedBookings", "Confirmed"),
+          metric("provisionalBookings", "Provisional"),
+          metric("unclassifiedBookings", "Unclassified"),
+          metric("shows", "Shows"),
+          metric("noShow", "No-shows"),
+          metric("showRate", "Show rate", pct),
+          metric("closed", "Closed projects"),
+          metric("closeRate", "Close rate", pct),
+          {
+            key: "values",
+            header: "Project value",
+            numeric: true,
+            cell: (r: TableRow) => valueText(r.values),
+          },
+        ]),
+  ];
 }

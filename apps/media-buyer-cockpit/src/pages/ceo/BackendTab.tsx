@@ -13,7 +13,6 @@ import {
   change,
   count,
   date,
-  dateTime,
   diff,
   isNum,
   kuwaitDay,
@@ -54,7 +53,7 @@ type GoTab = CeoTabProps["goTab"];
  * the cockpit's own target, not one Aziz has set, so anything it colours says
  * so on screen.
  */
-const SPEED_TARGET_MIN = 5;
+const SPEED_TARGET_MIN = 2;
 
 // --- Notes ----------------------------------------------------------------
 
@@ -481,7 +480,6 @@ function MediaBuyingBody({ d }: { d: DeliveryPayload }) {
 
 function CallCentreCard({
   section,
-  now,
   today,
   goTab,
 }: {
@@ -506,7 +504,7 @@ function CallCentreCard({
       : []),
     ...keepNotes(c?.notes, CALL_NOTE),
   ];
-  const median = c?.speedToLead.medianMinutes7d ?? null;
+  const median = c?.speedToLead.workingMedianMinutes7d ?? null;
   const speedTone = gateTone(median, SPEED_TARGET_MIN);
 
   return (
@@ -525,7 +523,7 @@ function CallCentreCard({
                   ? `First call within ${SPEED_TARGET_MIN} min`
                   : `First call over ${SPEED_TARGET_MIN} min`
               }
-              hint={`Median time from a new lead to its first call over the last 7 days, against a ${SPEED_TARGET_MIN} minute target. The target is a cockpit default until Aziz sets the official one.`}
+              hint={`Median time from a new lead to its first call over the last 7 days, against a ${SPEED_TARGET_MIN} minute target. Working hours come from Team & Payroll.`}
             />
           ) : null}
           <TabLink tab="calls" label="Calls" goTab={goTab} />
@@ -534,12 +532,12 @@ function CallCentreCard({
       order={1}
       bodyClassName="@container"
     >
-      {p => <CallCentreBody c={p} now={now} />}
+      {p => <CallCentreBody c={p} />}
     </SectionCard>
   );
 }
 
-function CallCentreBody({ c, now }: { c: CallsPayload; now: number }) {
+function CallCentreBody({ c }: { c: CallsPayload }) {
   const s = c.speedToLead;
   const noDials = c.today.dials === 0 ? "No dial today yet" : undefined;
   const noSample =
@@ -594,15 +592,15 @@ function CallCentreBody({ c, now }: { c: CallsPayload; now: number }) {
         />
         <StatTile
           variant="plain"
-          label="Conversations today"
-          value={count(c.today.conversations90s)}
-          hint="Connected calls that lasted 90 seconds or more. The Calls tab shows the same number as conversations over 90 s."
-          sub={`${count(c.last7.conversations90s)} in the last 7 days`}
+          label="Confirmed bookings, 7 days"
+          value={count(c.report7d?.overall.confirmedBookings)}
+          hint="New main and online calendar bookings, by booking creation date."
+          sub={`${count(c.report7d?.overall.provisionalBookings)} provisional bookings separately`}
         />
         <StatTile
           variant="plain"
           label="Median time to first call"
-          value={minutes(s.medianMinutes7d)}
+          value={minutes(s.workingMedianMinutes7d)}
           naHint={noSample}
           hint={
             s.sample > 0
@@ -610,41 +608,26 @@ function CallCentreBody({ c, now }: { c: CallsPayload; now: number }) {
               : "From a new lead landing to the first outbound call to that phone."
           }
           sub={
-            isNum(s.within5minShare7d)
-              ? `${pct(s.within5minShare7d)} called within ${SPEED_TARGET_MIN} min`
+            isNum(s.withinTwoMinutesRate7d)
+              ? `${pct(s.withinTwoMinutesRate7d)} of new leads dialed within ${SPEED_TARGET_MIN} working min`
               : undefined
           }
         />
       </TileRow>
 
       <p className="border-t pt-4 text-xs leading-relaxed text-muted-foreground">
-        {speedSentences(s, c.lastCallAt, now).join(" ")}
+        {speedSentences(s).join(" ")}
       </p>
     </div>
   );
 }
 
-/** The sentences under the call tiles: what speed to lead covers, and how fresh the store is. */
-function speedSentences(
-  s: CallsPayload["speedToLead"],
-  lastCallAt: number | null,
-  now: number,
-): string[] {
-  const out: string[] = [
-    s.sample > 0
-      ? `Speed to lead covers ${plural(s.sample, "lead")} that were actually called over the last 7 days, so a lead nobody has called never lengthens the median.`
-      : "Speed to lead counts only leads that were actually called, so a lead nobody has called never lengthens the median.",
+/** Call center response uses the shared Team & Payroll working clock. */
+function speedSentences(s: CallsPayload["speedToLead"]): string[] {
+  return [
+    `Speed to lead uses ${count(s.sample)} verified timed leads in the last 7 days. Its median excludes untimed leads; the 2-minute share includes all new leads in the cohort.`,
+    "Hours come from Team & Payroll. Dials count saved dispositions with notes; actual calls and connection rate use Maqsam evidence. Bookings use creation date. Delivery's bookings use appointment date.",
   ];
-  if (s.since)
-    out.push(
-      `Counting starts ${date(s.since)}, the first day calls carry the lead phone.`,
-    );
-  out.push(
-    lastCallAt
-      ? `Newest call in the store: ${dateTime(lastCallAt, now)}.`
-      : "No call has reached the store yet.",
-  );
-  return out;
 }
 
 // --- 3. Client success ----------------------------------------------------
