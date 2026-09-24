@@ -251,15 +251,19 @@ export function useLeads(f: LeadFilter): Loaded<Lead[]> {
 
 /** The pipeline's stages, from the leads that sit in them. */
 export function useStages(): Loaded<
-  { stage_id: string; stage_name: string }[]
+  { stage_id: string; stage_name: string; pipeline_name: string | null }[]
 > {
   return useQuery(
     () =>
-      readAll<{ stage_id: string; stage_name: string }>(
+      readAll<{
+        stage_id: string;
+        stage_name: string;
+        pipeline_name: string | null;
+      }>(
         (from, to) =>
           supabase
             .from("cockpit_sales_leads")
-            .select("stage_id,stage_name")
+            .select("stage_id,stage_name,pipeline_name")
             .not("stage_id", "is", null)
             .gte(
               "lead_created_at",
