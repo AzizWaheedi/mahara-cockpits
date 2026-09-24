@@ -213,8 +213,11 @@ def run(call: Call, *, lang: str, resolved: dict[str, Any], offer: dict[str, Any
     beat()
 
     # Overflow is the one fault the drafter cannot see, so it is measured here
-    # and handed back, repeatedly, while it is helping. The stop condition is
-    # a round that does not improve, not a round counter.
+    # and handed back. Each round asks for a larger cut than the one before
+    # (prompt.tighten_user); a round that does not help is set aside and the
+    # next, harder round starts again from the best draft so far. Tested on a
+    # real demo on 2026-09-24: one gentle round left sheet 5 a few lines long
+    # and the old rule (stop at the first round that does not help) gave up.
     best = deal
     best_html = workdir / "draft-1.html"
     best_over, best_dom = overflowing(best, best_html, renderer)
@@ -232,7 +235,7 @@ def run(call: Call, *, lang: str, resolved: dict[str, Any], offer: dict[str, Any
         still: Optional[list[int]] = None
         try:
             tighter, _r = model_mod.call_json(
-                p, system, prompt_mod.tighten_user(best, best_over), temperature=0.2, attempts=1,
+                p, system, prompt_mod.tighten_user(best, best_over, round_no), temperature=0.2, attempts=1,
                 timeout=cfg.model_timeout, expect=prompt_mod.is_deal, log=log, what="tighten", beat=beat)
             stamp(tighter, variant=variant, resolved=resolved, lang=lang)
             html_path = workdir / f"draft-{round_no + 1}.html"
@@ -243,11 +246,12 @@ def run(call: Call, *, lang: str, resolved: dict[str, Any], offer: dict[str, Any
             log(f"    tightening failed ({e}); keeping the best draft so far")
         beat()
         if still is None or (still and len(still) >= len(best_over)):
-            # No better, and possibly worse. Keep what we had: a draft written
-            # under fewer instructions is the more faithful to the call.
+            # No better, and possibly worse. Keep what we had (a draft written
+            # under fewer instructions is the more faithful to the call) and
+            # let the next, harder round try from it.
             if still:
                 log("    tighter draft still overflows %s; keeping the best" % ", ".join(str(n) for n in still))
-            break
+            continue
         best, best_over, best_dom, best_html = tighter, still, dom, html_path
         log("    better: now only sheet(s) %s overflow" % ", ".join(str(n) for n in still) if still else "    fits now")
 

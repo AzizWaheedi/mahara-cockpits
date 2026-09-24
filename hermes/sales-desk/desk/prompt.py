@@ -284,12 +284,26 @@ def draft_user(known: dict[str, Any], transcript_text: str, lang: str, variant: 
     )
 
 
-def tighten_user(deal: dict[str, Any], over: list[int]) -> str:
+# How hard each tightening round cuts. A first round that trims a sentence
+# here and there often leaves the sheet a line too long, so later rounds ask
+# for a set share of the named sheet's words to go.
+_CUT = {
+    1: "",
+    2: "The last shorter version still did not fit. Cut about a third of the words on "
+       "the named sheet this time. ",
+    3: "Two shorter versions still did not fit. Cut about half of the words on the named "
+       "sheet, keeping only the sentences the argument needs, and drop whole list items "
+       "that repeat a point made elsewhere. ",
+}
+
+
+def tighten_user(deal: dict[str, Any], over: list[int], round_no: int = 1) -> str:
     """Ask for a shorter version of the pages that did not fit, named by sheet
     and by block rather than by character count, because the count was never
-    the thing that decided it."""
+    the thing that decided it. Later rounds ask for a larger cut."""
     blocks = sorted({b for n in over for b in SHEET_BLOCKS.get(n, ())})
     one = len(over) == 1
+    harder = _CUT.get(max(1, min(3, round_no)), "")
     return (
         "This draft is correct and one thing is wrong with it: "
         + ("sheet " if one else "sheets ")
@@ -301,7 +315,8 @@ def tighten_user(deal: dict[str, Any], over: list[int]) -> str:
         + " is shorter. The blocks on "
         + ("it" if one else "them")
         + " are: " + ", ".join(blocks) + ".\n\n"
-        "Shorten by removing whole sentences and whole clauses, not by "
+        + harder
+        + "Shorten by removing whole sentences and whole clauses, not by "
         "abbreviating words or dropping articles. Cut the least load bearing "
         "sentence in each long field rather than shaving every field. Do not "
         "change any figure, any quote, any date or anything on a sheet that "

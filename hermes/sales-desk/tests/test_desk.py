@@ -597,11 +597,26 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(out.result.status(), "ready")
 
     def test_a_round_that_does_not_help_keeps_the_best_draft(self):
-        out, _ = self.run_engine([triage_answer(), specific_deal(), specific_deal(subhead="Worse.")], over=[[4], [4, 5]])
-        self.assertEqual(out.rounds, 1)
+        # Every round is tried (each harder than the last); none helps, so the
+        # first draft stands and the render check says why.
+        out, _ = self.run_engine(
+            [triage_answer(), specific_deal(), specific_deal(subhead="Worse."), specific_deal(subhead="Worse."), specific_deal(subhead="Worse.")],
+            over=[[4], [4, 5], [4, 5], [4, 5]],
+        )
+        self.assertEqual(out.rounds, 3)
         self.assertNotEqual(out.deal["subhead"], "Worse.")
         self.assertEqual(out.overflow_last, [4])
         self.assertTrue(failing(out.result, "render"))
+
+    def test_a_harder_second_round_can_fit_what_the_first_did_not(self):
+        out, p = self.run_engine(
+            [triage_answer(), specific_deal(), specific_deal(subhead="Still long."), specific_deal(subhead="Short.")],
+            over=[[4], [4], []],
+        )
+        self.assertEqual((out.rounds, out.overflow_last), (2, []))
+        self.assertEqual(out.deal["subhead"], "Short.")
+        self.assertIn("about a third", p.calls[3]["user"])
+        self.assertEqual(out.result.status(), "ready")
 
     def test_rounds_continue_while_each_one_helps(self):
         out, _ = self.run_engine([triage_answer(), specific_deal(), specific_deal(), specific_deal()],
