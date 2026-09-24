@@ -101,7 +101,7 @@ const TITLES: Record<View, { title: string; sub: string }> = {
   },
   works: {
     title: "What works",
-    sub: "What to make more of, and what is burning out",
+    sub: "What to make more of, and what to investigate",
   },
   eod: {
     title: "End of day",
@@ -567,7 +567,7 @@ function Creative({ view }: { view: View }) {
                     <div
                       key={i}
                       className={`rounded-lg border p-2 text-[13px] ${
-                        f.burning ? "callout-bad" : ""
+                        f.burning ? "callout-warn" : ""
                       }`}
                     >
                       <div className="flex justify-between">

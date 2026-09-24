@@ -23,7 +23,7 @@ const DAY = 86_400_000;
 
 /** How long a script request can sit before it is a problem, in days. */
 const SCRIPT_STALE_DAYS = 3;
-/** Frequency at which a creative is burning out and needs a replacement. */
+/** Exposure level that prompts a performance review, never a verdict. */
 const FATIGUE_FREQUENCY = 2.5;
 /** A winning ad worth cloning for other clients. */
 const WINNER_CPL = 15;
@@ -761,8 +761,7 @@ export async function buildSnapshot(
         c.brandDnaOldestDays +
         c.scriptsStale * 5 +
         c.videosOverdue * 5 +
-        c.postsLate * 2 +
-        c.burningAds * 3,
+        c.postsLate * 2,
     }))
     .sort((a, b) => b.heat - a.heat);
 
@@ -777,11 +776,6 @@ export async function buildSnapshot(
   const touchpoints = clients
     .flatMap(c => {
       const reasons: string[] = [];
-      if (c.burningAds > 0) {
-        reasons.push(
-          `${c.burningAds} live creative${c.burningAds > 1 ? "s have" : " has"} high frequency — review response and approved replacements before promising a refresh.`,
-        );
-      }
       if (c.postsLate > 0) {
         reasons.push(
           `${c.postsLate} post${c.postsLate > 1 ? "s are" : " is"} past its publish date.`,
@@ -838,13 +832,11 @@ export async function buildSnapshot(
       const templateId =
         inClientReview > 0
           ? "ads-approval"
-          : c.burningAds > 0
-            ? "scripts-ready"
-            : c.postsLate > 0
-              ? "content-folder"
-              : c.brandDnaOpen > 0
-                ? "filming-guidance"
-                : "idea-you-saw";
+          : c.postsLate > 0
+            ? "content-folder"
+            : c.brandDnaOpen > 0
+              ? "filming-guidance"
+              : "idea-you-saw";
       return [
         {
           client: c.client,
