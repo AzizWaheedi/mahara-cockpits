@@ -47,6 +47,11 @@ class Parse(unittest.TestCase):
         self.assertTrue(p["body"].startswith("# DEMO Call Coaching Log"))
         self.assertNotIn("React to this message", p["body"])
 
+    def test_the_templates_own_title_is_not_kept(self):
+        p = reviews.parse(demo_log(preamble=False).replace(
+            "# DEMO Call Coaching Log", "# DEMO Call Coaching Log — Reference Template"), "x")
+        self.assertTrue(p["body"].startswith("# DEMO Call Coaching Log\n"))
+
     def test_an_intro_names_its_maqsam_call(self):
         text = "# INTRO Call Coaching Log\n\n*Frame Set Execution — 4/10*\n*Booking The Demo — 6/10*\n\n*Grade: 45/100*\n"
         p = reviews.parse(text, "miriam_intro_2026-06-08_abc-123_review.md")

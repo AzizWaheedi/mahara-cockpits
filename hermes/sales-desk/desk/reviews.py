@@ -60,6 +60,8 @@ def parse(text: str, name: str = "") -> dict[str, Any]:
     if head:
         body = body[head.start():]
     body = FOOTER.sub("", body).strip()
+    # A model sometimes copies the template's own title along with it.
+    body = re.sub(r"^(#\s+[^\n]*?Coaching Log)\s*[—–-]\s*Reference Template", r"\1", body, count=1, flags=re.I)
 
     fields: dict[str, str] = {}
     for line in body.splitlines()[:40]:
