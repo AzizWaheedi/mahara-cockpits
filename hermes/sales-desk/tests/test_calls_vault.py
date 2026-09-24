@@ -30,7 +30,7 @@ def note(*, rid: str, kind: str = "sales", date: str = "2026-08-10", time: str =
         "---\n\n"
         f"# {title}\n\n## Summary \n\n### Meeting Purpose\nTo show the offer.\n\n"
         "## Action items\n\n- Send the deck\n\n"
-        f"## Transcript \n\n{transcript}\n"
+        f"## Transcript (2 segments)\n\n{transcript}\n"
     )
 
 

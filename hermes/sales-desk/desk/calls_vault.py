@@ -70,7 +70,8 @@ def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
 
 def sections(body: str) -> tuple[str, dict[str, str]]:
     """The note's title (its `# ` line) and each `## ` section's text, keyed by
-    the heading in lower case. `### ` headings stay inside their section."""
+    the heading in lower case without a trailing "(...)" count. `### `
+    headings stay inside their section."""
     title = ""
     out: dict[str, str] = {}
     current: Optional[str] = None
@@ -82,7 +83,8 @@ def sections(body: str) -> tuple[str, dict[str, str]]:
         if line.startswith("## "):
             if current is not None:
                 out[current] = "\n".join(buf).strip()
-            current, buf = line[3:].strip().lower(), []
+            # "## Transcript (525 segments)" is the transcript section.
+            current, buf = re.sub(r"\s*\([^)]*\)\s*$", "", line[3:].strip()).lower(), []
             continue
         if current is not None:
             buf.append(line)
