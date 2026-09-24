@@ -305,7 +305,8 @@ def cmd_calls_vault(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
         detail = (f"{out['rows']} sales calls from the vault ({out['first'] or '?'}"
                   f" to {out['last'] or '?'}), {out['by_email']} matched by email, "
                   f"{out['by_appointment']} by appointment, {out['unmatched']} unmatched, "
-                  f"{out['transcripts_uploaded']} transcripts uploaded")
+                  f"{out['transcripts_uploaded']} transcripts uploaded, "
+                  f"{out.get('filled_fathom_rows', 0)} of the Fathom step's calls filled in")
     if not args.dry:
         _status(cfg, log, "calls-vault", bool(out.get("notes")), detail)
     _print(out if args.json else detail, args.json)

@@ -28,7 +28,8 @@ def note(*, rid: str, kind: str = "sales", date: str = "2026-08-10", time: str =
         f"duration: 1 h 5 min\nrecording_id: {rid}\nurl: https://fathom.video/calls/{rid}\n"
         f"language: en\npeople: {people}\ntags: [\"call\"]\n"
         "---\n\n"
-        f"# {title}\n\n## Summary \n\n### Meeting Purpose\nTo show the offer.\n\n"
+        f"# {title}\n\n## Summary \n\n## Meeting Purpose\n\nTo show the offer.\n\n"
+        "## Topics\n\n### Price\n\n- Monthly or in full\n\n"
         "## Action items\n\n- Send the deck\n\n"
         f"## Transcript (2 segments)\n\n{transcript}\n"
     )
@@ -41,7 +42,11 @@ class Parsing(unittest.TestCase):
         self.assertEqual(meta["people"][1], "Lina Lead (lina@example.com)")
         title, secs = calls_vault.sections(body)
         self.assertEqual(title, "Demo with Lina")
-        self.assertIn("### Meeting Purpose", secs["summary"])
+        summary = calls_vault.summary_of(body)
+        # Fathom's parts are kept, a level down, and the summary stops at the action items.
+        self.assertIn("### Meeting Purpose", summary)
+        self.assertIn("#### Price", summary)
+        self.assertNotIn("Send the deck", summary)
         self.assertEqual(secs["action items"], "- Send the deck")
         self.assertTrue(secs["transcript"].startswith("**Rami Rep**"))
 
@@ -123,6 +128,19 @@ class Run(unittest.TestCase):
         self.write("a2.md", note(rid="11", transcript="**A** (00:00:01): a much longer transcript line"))
         self.run_it()
         self.assertIn(b"much longer", self.pg.objects["sales-calls/11.md"][1])
+
+    def test_a_call_the_fathom_step_holds_gets_the_vaults_summary_whatever_its_kind(self):
+        self.pg.put("cockpit_sales_recordings", {
+            "recording_id": "55", "share_url": "https://fathom.video/share/x", "contact_id": "c-lina",
+            "matched_by": "email", "summary": None})
+        self.write("e.md", note(rid="55", kind="external"))
+        self.write("f.md", note(rid="66", kind="external"))  # the desk never saw it: not a new row
+        out = self.run_it()
+        row = self.pg.one("cockpit_sales_recordings", recording_id="55")
+        self.assertIn("Meeting Purpose", row["summary"])
+        self.assertEqual((row["transcript_path"], row["contact_id"]), ("55.md", "c-lina"))
+        self.assertIsNone(self.pg.one("cockpit_sales_recordings", recording_id="66"))
+        self.assertEqual(out["filled_fathom_rows"], 1)
 
     def test_dry_run_writes_nothing(self):
         self.write("a.md", note(rid="11"))

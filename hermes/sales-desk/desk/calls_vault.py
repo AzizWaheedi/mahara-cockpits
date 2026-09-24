@@ -93,6 +93,28 @@ def sections(body: str) -> tuple[str, dict[str, str]]:
     return title, out
 
 
+def summary_of(body: str) -> str:
+    """Fathom's summary: everything from `## Summary` to the action items or
+    the transcript. Fathom writes its parts (Meeting Purpose, Key Takeaways,
+    Topics, Next Steps) as `##` headings of their own under an empty
+    `## Summary`, so the parts are kept, one level down."""
+    out: list[str] = []
+    inside = False
+    for line in body.splitlines():
+        if line.startswith("## "):
+            head = re.sub(r"\s*\([^)]*\)\s*$", "", line[3:].strip()).lower()
+            if head == "summary":
+                inside = True
+                continue
+            if head in ("action items", "transcript"):
+                if inside:
+                    break
+                continue
+        if inside:
+            out.append("#" + line if line.startswith("#") else line)
+    return "\n".join(out).strip()
+
+
 def people_of(values: Any) -> list[dict[str, str]]:
     """Invitees from "Name (email)", "email" or "Name" strings."""
     out: list[dict[str, str]] = []
@@ -132,15 +154,16 @@ def started_at(meta: dict[str, Any]) -> Optional[datetime]:
     return datetime.fromisoformat(f"{day}T{hm}:00+00:00")
 
 
-def read_note(path: Path, root: Path) -> Optional[dict[str, Any]]:
-    """One sales note as the fields the cockpit keeps, or None when it is not
-    a sales call with a recording id."""
+def read_note(path: Path, root: Path, *, any_kind: bool = False) -> Optional[dict[str, Any]]:
+    """One note as the fields the cockpit keeps, or None when it is not a
+    sales call (any call, with `any_kind`) with a recording id."""
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return None
     meta, body = parse_frontmatter(text)
-    if str(meta.get("kind") or "").lower() != "sales":
+    kind = str(meta.get("kind") or "").lower()
+    if kind != "sales" and not any_kind:
         return None
     rid = str(meta.get("recording_id") or "").strip()
     if not rid:
@@ -151,6 +174,7 @@ def read_note(path: Path, root: Path) -> Optional[dict[str, Any]]:
     ours = [p for p in people if p["email"].endswith("@" + OUR_DOMAIN)]
     return {
         "recording_id": rid,
+        "kind": kind or None,
         "title": (title or path.stem)[:300],
         "started": started_at(meta),
         "duration_s": duration_seconds(meta.get("duration")),
@@ -158,22 +182,23 @@ def read_note(path: Path, root: Path) -> Optional[dict[str, Any]]:
         "language": str(meta.get("language") or "") or None,
         "people": people,
         "rep_email": ours[0]["email"] if ours else None,
-        "summary": secs.get("summary", "")[:MAX_SUMMARY] or None,
+        "summary": summary_of(body)[:MAX_SUMMARY] or None,
         "action_items": secs.get("action items", "")[:MAX_ACTIONS] or None,
         "transcript": transcript,
         "note_path": str(path.relative_to(root)),
     }
 
 
-def scan(vault: Path) -> list[dict[str, Any]]:
-    """Every sales note under Calls/, one per recording. Where the vault wrote
-    a call twice, the note with the longer transcript wins."""
+def scan(vault: Path, *, any_kind: bool = False) -> list[dict[str, Any]]:
+    """Every sales note under Calls/ (every call note, with `any_kind`), one
+    per recording. Where the vault wrote a call twice, the note with the
+    longer transcript wins."""
     best: dict[str, dict[str, Any]] = {}
     root = vault
     for path in sorted((vault / "Calls").rglob("*.md")):
         if path.name.startswith("_"):
             continue
-        note = read_note(path, root)
+        note = read_note(path, root, any_kind=any_kind)
         if not note:
             continue
         have = best.get(note["recording_id"])
@@ -222,10 +247,15 @@ def run(sb: Any, vault: Path, log: Callable[[str], None], *, upload: Optional[Ca
     transcript in the sales-calls bucket; `dry` reads and matches only."""
     if not (vault / "Calls").is_dir():
         raise FileNotFoundError(f"No Calls folder in the vault at {vault}")
-    notes = scan(vault)
-    if not notes:
-        log("calls-vault: the vault has no sales notes")
+    every = scan(vault, any_kind=True)
+    notes = [n for n in every if n["kind"] == "sales"]
+    if not every:
+        log("calls-vault: the vault has no call notes")
         return {"notes": 0}
+    # A call the desk's own Fathom step indexed as sales that the vault files
+    # under another kind (external, team, training) still gets its summary
+    # and transcript from the vault; it never becomes a new row that way.
+    others = {n["recording_id"]: n for n in every if n["kind"] != "sales"}
 
     starts = [n["started"] for n in notes if n["started"]]
     appointments = _all(
@@ -235,7 +265,7 @@ def run(sb: Any, vault: Path, log: Callable[[str], None], *, upload: Optional[Ca
         f"&start_at=lte.{http.quote(iso(max(starts) + WINDOW))}"
         "&call_type=in.(intro,demo)&order=start_at.asc,appointment_id.asc",
     ) if starts else []
-    leads = sb.leads_by_email({e for n in notes for e in external_emails(meeting_of(n))})
+    leads = sb.leads_by_email({e for n in notes for e in external_emails(meeting_of(n))}) if notes else {}
     reps: dict[str, str] = {}
     for r in _all(sb, "cockpit_sales_reps", "select=ghl_user_id,fathom_email,maqsam_email&order=id"):
         for k in ("fathom_email", "maqsam_email"):
@@ -249,6 +279,21 @@ def run(sb: Any, vault: Path, log: Callable[[str], None], *, upload: Optional[Ca
                            "select=recording_id,share_url,source,transcript_sha,transcript_path"
                            f"&recording_id=in.({ids})"):
             have[str(r["recording_id"])] = r
+
+    enriched = 0
+    fill: list[dict[str, Any]] = []
+    fathom_rows = _all(sb, "cockpit_sales_recordings",
+                       "select=recording_id,transcript_sha,transcript_path&summary=is.null&order=recording_id")
+    for r in fathom_rows:
+        n = others.get(str(r["recording_id"]))
+        if not n:
+            continue
+        have.setdefault(n["recording_id"], r)
+        fill.append({"recording_id": n["recording_id"], "language": n["language"], "people": n["people"],
+                     "summary": n["summary"], "action_items": n["action_items"], "note_path": n["note_path"],
+                     "transcript_chars": len(n["transcript"]) or None})
+    note_of = {n["recording_id"]: n for n in notes}
+    note_of.update({r["recording_id"]: others[r["recording_id"]] for r in fill})
 
     rows: list[dict[str, Any]] = []
     team = 0
@@ -285,8 +330,7 @@ def run(sb: Any, vault: Path, log: Callable[[str], None], *, upload: Optional[Ca
 
     kept = _keep_earlier_matches(sb, rows)
     uploaded = 0
-    note_of = {n["recording_id"]: n for n in notes}
-    for r in rows:
+    for r in rows + fill:
         text = note_of[r["recording_id"]]["transcript"]
         if not text:
             continue
@@ -311,13 +355,17 @@ def run(sb: Any, vault: Path, log: Callable[[str], None], *, upload: Optional[Ca
         for group in by_shape.values():
             for chunk in _chunks(group, 100):
                 stored += sb.upsert("cockpit_sales_recordings", chunk, "recording_id")
+        for r in fill:
+            rid = r.pop("recording_id")
+            sb.patch("cockpit_sales_recordings", f"recording_id=eq.{http.quote(rid)}", r)
+            enriched += 1
 
     by: dict[str, int] = {}
     for r in rows:
         by[r["matched_by"]] = by.get(r["matched_by"], 0) + 1
     summary = {
-        "notes": len(notes), "team": team, "rows": len(rows), "stored": stored,
-        "transcripts_uploaded": uploaded, "kept_earlier_match": kept,
+        "notes": len(notes), "other_notes": len(others), "team": team, "rows": len(rows), "stored": stored,
+        "transcripts_uploaded": uploaded, "kept_earlier_match": kept, "filled_fathom_rows": enriched if not dry else len(fill),
         "by_email": by.get("email", 0), "by_appointment": by.get("appointment", 0),
         "unmatched": by.get("none", 0), "dry": dry,
         "first": min((r["started_at"] for r in rows if r["started_at"]), default=None),
