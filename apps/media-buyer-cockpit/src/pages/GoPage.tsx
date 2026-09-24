@@ -1,33 +1,68 @@
-import { useAction } from "convex/react";
 import { useEffect, useRef, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { Wordmark } from "@/components/Wordmark";
-import { api } from "../../convex/_generated/api";
+
+const COCKPIT_PATHS: Record<string, string> = {
+  csm: "/client-success",
+  creative: "/creative",
+  editor: "/editor",
+  sales: "/sales",
+  media_buyer: "",
+};
 
 /**
- * The door into a cockpit that lives on another deployment. Mints a
- * two-minute pass from the portal and hands it to the cockpit, which opens
- * its own session and drops the pass from the address bar.
+ * Inter-cockpit redirector and access gate.
+ * Validates permission against verified Supabase identity, then routes
+ * directly to the requested cockpit with session preservation.
  */
 export function GoPage() {
   const { cockpit = "" } = useParams();
   const [params] = useSearchParams();
-  const mint = useAction(api.portal.mintToken);
+  const navigate = useNavigate();
+  const { access, ready, isAuthenticated, session } = useCockpitAuth();
   const [error, setError] = useState<string | null>(null);
   const started = useRef(false);
 
   useEffect(() => {
-    if (started.current) return;
+    if (!ready || started.current) return;
+
+    if (!isAuthenticated) {
+      const wanted = window.location.pathname + window.location.search;
+      navigate(`/login?next=${encodeURIComponent(wanted)}`, { replace: true });
+      return;
+    }
+
+    const path = COCKPIT_PATHS[cockpit];
+    if (path === undefined) {
+      setError("That cockpit does not exist.");
+      return;
+    }
+
+    const isAllowed =
+      access?.isAdmin ||
+      access?.isCeo ||
+      access?.cockpits.includes(cockpit) ||
+      (cockpit === "media_buyer" && access?.roles.includes("media_buyer"));
+
+    if (!isAllowed) {
+      setError("That cockpit is not on your access. Ask Aziz.");
+      return;
+    }
+
     started.current = true;
-    mint({ cockpit })
-      .then(({ token, path }) => {
-        const next = params.get("next") ?? "/dashboard";
-        const q = new URLSearchParams({ portal_token: token, next });
-        // A real route, not the bare root, so the proxy rule always matches.
-        window.location.replace(`${path}/dashboard?${q}`);
-      })
-      .catch(e => setError(String((e as Error).message ?? e)));
-  }, [mint, cockpit, params]);
+    const next = params.get("next") ?? "/dashboard";
+    const cleanNext = next.startsWith("/") ? next : `/${next}`;
+    const targetPath = `${path}${cleanNext === "/dashboard" && path ? "/dashboard" : cleanNext}`;
+
+    // Pass hash tokens if available so standalone or cross-origin environments detect the session
+    const hash =
+      session?.access_token && session?.refresh_token
+        ? `#access_token=${session.access_token}&refresh_token=${session.refresh_token}&token_type=bearer`
+        : "";
+
+    window.location.replace(`${targetPath}${hash}`);
+  }, [ready, isAuthenticated, access, cockpit, params, navigate, session]);
 
   return (
     <div className="flex flex-1 items-center justify-center p-6">
@@ -50,3 +85,4 @@ export function GoPage() {
     </div>
   );
 }
+
