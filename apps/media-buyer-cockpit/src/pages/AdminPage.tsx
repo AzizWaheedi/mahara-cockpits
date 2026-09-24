@@ -77,7 +77,33 @@ const ROLE_META: { key: string; label: string; hint: string }[] = [
     label: "Editor desk",
     hint: "Video jobs, footage, brand rules, cuts.",
   },
+  {
+    key: "sales",
+    label: "Sales",
+    hint: "Calls, leads, scripts, follow-ups, pay.",
+  },
 ];
+
+type SalesRole = "setter" | "closer" | "both" | "manager";
+
+/**
+ * What a person with the Sales seat does there, chosen in the same form as
+ * the seat (Aziz, 2026-09-24: "Just let me add them like the main cockpit
+ * easily"). The portal pushes it to the sales cockpit's seat list.
+ */
+const SALES_ROLE_META: { key: SalesRole; label: string; hint: string }[] = [
+  { key: "setter", label: "Setter", hint: "Calls new leads and books intros." },
+  { key: "closer", label: "Closer", hint: "Runs demos and closes deals." },
+  { key: "both", label: "Both", hint: "Books intros and closes deals." },
+  {
+    key: "manager",
+    label: "Manager",
+    hint: "Sees every rep's numbers and edits seats, links and settings.",
+  },
+];
+
+const salesRoleLabel = (role: unknown) =>
+  SALES_ROLE_META.find(s => s.key === role)?.label;
 
 /** Cockpit key → the app name its smoke check reports under. */
 const APP_KEY: Record<string, string> = {
@@ -85,6 +111,7 @@ const APP_KEY: Record<string, string> = {
   csm: "client-success",
   creative: "creative",
   editor: "video-editor",
+  sales: "sales",
 };
 
 const agoAt = (now: number, ms?: number | null) => {
@@ -106,7 +133,9 @@ function RoleChip({ role }: { role: string }) {
           ? "bg-teal-100 text-teal-900 dark:bg-teal-900/40 dark:text-teal-100"
           : role === "editor"
             ? "bg-rose-100 text-rose-900 dark:bg-rose-900/40 dark:text-rose-100"
-            : "bg-violet-100 text-violet-900 dark:bg-violet-900/40 dark:text-violet-100";
+            : role === "sales"
+              ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-100"
+              : "bg-violet-100 text-violet-900 dark:bg-violet-900/40 dark:text-violet-100";
   return (
     <span
       className={`rounded-md px-1.5 py-0.5 text-[11px] font-semibold ${tone}`}
@@ -366,9 +395,19 @@ export function AdminPage() {
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-1">
-                        {m.roles.map((r: string) => (
-                          <RoleChip key={r} role={r} />
-                        ))}
+                        {m.roles.map((r: string) =>
+                          r === "sales" && salesRoleLabel(m.salesRole) ? (
+                            // Kept together, so the role never wraps away from its seat.
+                            <span key={r} className="inline-flex gap-1">
+                              <RoleChip role={r} />
+                              <span className="rounded-md border border-emerald-200 px-1.5 py-0.5 text-[11px] font-medium text-emerald-800 dark:border-emerald-900 dark:text-emerald-200">
+                                {salesRoleLabel(m.salesRole)}
+                              </span>
+                            </span>
+                          ) : (
+                            <RoleChip key={r} role={r} />
+                          ),
+                        )}
                       </div>
                     </TableCell>
                     <TableCell className="text-sm">
@@ -702,6 +741,15 @@ function MemberDialog({
   const [name, setName] = useState<string>(member?.name ?? "");
   const [note, setNote] = useState<string>(member?.note ?? "");
   const [roles, setRoles] = useState<string[]>(member?.roles ?? []);
+  // An admin given the Sales seat is most likely running the team, so the
+  // choice starts at Manager for them and at Setter for everyone else.
+  const [salesRole, setSalesRole] = useState<SalesRole>(
+    salesRoleLabel(member?.salesRole)
+      ? member.salesRole
+      : member?.roles?.includes("admin")
+        ? "manager"
+        : "setter",
+  );
   const [allClients, setAllClients] = useState<boolean>(
     !member || member.clients.length === 0,
   );
@@ -777,6 +825,31 @@ function MemberDialog({
                 </button>
               ))}
             </div>
+            {roles.includes("sales") ? (
+              <div className="space-y-2 rounded-md border p-2.5">
+                <Label id="m-sales-role">Sales role</Label>
+                <div
+                  role="group"
+                  aria-labelledby="m-sales-role"
+                  className="grid grid-cols-2 gap-1.5 sm:grid-cols-4"
+                >
+                  {SALES_ROLE_META.map(s => (
+                    <button
+                      type="button"
+                      key={s.key}
+                      aria-pressed={salesRole === s.key}
+                      onClick={() => setSalesRole(s.key)}
+                      className={`cursor-pointer rounded-md border px-2 py-1.5 text-sm ${salesRole === s.key ? "border-primary bg-primary/5 font-medium" : "text-muted-foreground"}`}
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {SALES_ROLE_META.find(s => s.key === salesRole)?.hint}
+                </p>
+              </div>
+            ) : null}
           </div>
           <div className="space-y-2">
             <div className="flex items-center justify-between">
@@ -862,6 +935,7 @@ function MemberDialog({
                   roles,
                   clients: allClients ? [] : clients,
                   note: note || undefined,
+                  salesRole: roles.includes("sales") ? salesRole : undefined,
                 });
                 onClose();
               } catch (e) {

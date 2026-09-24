@@ -35,6 +35,12 @@ export const COCKPIT_META: Record<
     to: "/go/editor",
     external: true,
   },
+  sales: {
+    label: "Sales",
+    blurb: "Calls, leads, scripts, follow-ups, pay.",
+    to: "/go/sales",
+    external: true,
+  },
 };
 
 /**

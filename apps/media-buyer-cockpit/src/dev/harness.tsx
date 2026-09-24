@@ -42,7 +42,7 @@ async function main() {
       isCeo: true,
       isAdmin: true,
       roles: ["media_buyer"],
-      cockpits: ["csm", "creative", "editor"],
+      cockpits: ["csm", "creative", "editor", "sales"],
       name: "Aziz",
     },
     "auth:currentUser": { name: "Aziz Waheedi", email: "aziz@maharamedia.com" },

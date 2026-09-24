@@ -146,7 +146,7 @@ One sheet in both cockpits (`components/billing/BillingSheet.tsx`, rules in
 
 | Number | Where it comes from | What it leaves out |
 |---|---|---|
-| **End of days** | Today: the B2B database's `eod_reports` and `team_eod_reports` (the Typeforms) plus this app's own EOD form. **Aziz's rule: the EOD Reports sheet on Google Sheets is the source of truth.** | The sheet (`1K10In9fyYa_hN7X4z_HGcCuoxGBRZoF4q7Z0r2SalZE`) is not yet shared with the cockpit's service account; the read is built and waiting. |
+| **End of days** | Today: the B2B database's `eod_reports` and `team_eod_reports` (the Typeforms) plus this app's own EOD form. **Aziz's rule: the EOD Reports sheet on Google Sheets is the source of truth.** | The sheet is `1EhPp7x0jZfV8dNjUvmuWv_alNvduMGpe_COjUAB13bw` (the first workbook, `1K10In9f…`, was deleted on 3-4 August and rebuilt under this id; corrected 2026-09-24). The read works once the cockpit's service account can open it. |
 | **Payroll a month** | `cockpit_people`: monthly cost × the fixed currency table, over active people. | A floor while anyone is uncosted; those are named. |
 | **Commission** | A rule per person: what it is paid on, then the rate. | No payout is computed yet: nothing links the roster to the CRM's sales reps. |
 | **Working hours per person** | `cockpit_people.schedule`: days and times per weekday plus per-day exceptions, edited on the row. | Shown and stored only; nothing is computed from it yet. |
@@ -193,7 +193,7 @@ The one funnel Mahara runs on repeat, for five roles. Built 2026-09-22.
 ## Two things only Aziz can settle (from the first pass)
 
 1. **The rest of the cash.** Add two fields to the kickoff form (collected at kickoff: yes/no, and the amount) and have Make write them somewhere structured. The cleanest landing is a row in the B2B `transfers` table linked to the deal, because the cockpit already counts that ledger as confirmed cash.
-2. **The EOD sheet.** Share `1K10In9fyYa_hN7X4z_HGcCuoxGBRZoF4q7Z0r2SalZE` with `claude@studied-handler-508106-m5.iam.gserviceaccount.com` (viewer), and confirm it is the sheet that pulls in everyone's end of day. The read is built; the Team tab switches to it once it can see the tabs.
+2. **The EOD sheet.** Share `1EhPp7x0jZfV8dNjUvmuWv_alNvduMGpe_COjUAB13bw` with `claude@studied-handler-508106-m5.iam.gserviceaccount.com` (viewer), and confirm it is the sheet that pulls in everyone's end of day. The read is built; the Team tab switches to it once it can see the tabs.
 
 ## Changed on 2026-09-21, third pass (the twenty-point batch)
 

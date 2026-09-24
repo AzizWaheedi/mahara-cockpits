@@ -8,7 +8,10 @@ import { googleAccessToken } from "../tools";
  * spreadsheet that we have on Google Sheets"). Read with the service
  * account, which needs the sheet shared with it.
  */
-export const EOD_SHEET_ID = "1K10In9fyYa_hN7X4z_HGcCuoxGBRZoF4q7Z0r2SalZE";
+// The "EOD Reports" workbook the EOD forms' Make scenarios write to. The
+// first one (1K10In9f…) was deleted on 3-4 August and rebuilt as this one,
+// which is why the old id answered 404 (checked 2026-09-24).
+export const EOD_SHEET_ID = "1EhPp7x0jZfV8dNjUvmuWv_alNvduMGpe_COjUAB13bw";
 
 async function sheetsGet(path: string): Promise<Record<string, unknown>> {
   const token = await googleAccessToken();

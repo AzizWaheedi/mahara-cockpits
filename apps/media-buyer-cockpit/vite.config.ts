@@ -51,6 +51,7 @@ export default defineConfig({
           /^\/client-success/,
           /^\/creative/,
           /^\/editor/,
+          /^\/sales/,
           /^\/__viktor_meta\.json/,
         ],
         cleanupOutdatedCaches: true,

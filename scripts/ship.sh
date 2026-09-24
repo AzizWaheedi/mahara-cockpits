@@ -3,7 +3,7 @@
 # build and deploy the site, then run the smoke check. Stops at the first
 # failure so a broken build never replaces a working one.
 #
-#   scripts/ship.sh media-buyer | client-success | creative | video-editor | all
+#   scripts/ship.sh media-buyer | client-success | creative | video-editor | sales | all
 #
 # Order matters when a bridge payload gains a field: ship the receiving app
 # (client-success, creative) before the media buyer that sends it. "all" does.
@@ -51,6 +51,8 @@ ship() {
     # The fourth cockpit has no Convex: it reads Supabase straight from the
     # browser, so there is no backend to deploy, only a site.
     video-editor)    dir=apps/video-editor-cockpit;      url=; SITE=https://cockpit.maharamedia.com/editor ;;
+    # The fifth is built the same way: Supabase from the browser, no Convex.
+    sales)           dir=apps/sales-cockpit;             url=; SITE=https://cockpit.maharamedia.com/sales ;;
     *) echo "unknown app: $app"; exit 2 ;;
   esac
   # The CLI upload stamps local HEAD and does not check GitHub. Refuse a
@@ -143,7 +145,7 @@ ship() {
 }
 
 case "${1:-all}" in
-  all) ship client-success; ship creative; ship media-buyer; ship video-editor ;;
+  all) ship client-success; ship creative; ship media-buyer; ship video-editor; ship sales ;;
   *)   ship "$1" ;;
 esac
 

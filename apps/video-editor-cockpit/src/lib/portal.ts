@@ -4,7 +4,7 @@ import { supabase } from "./supabase";
  * Sign-in through the portal.
  *
  * Everyone signs in once at the media buyer app, which is the identity
- * provider for all four cockpits. It sends people here with a two-minute
+ * provider for every cockpit. It sends people here with a two-minute
  * `portal_token` in the address. The other cockpits swap that for a Convex
  * session inside their own backend; this one has no backend, so it posts the
  * pass to the portal, which verifies the signature it made and returns a
@@ -152,6 +152,12 @@ export function otherCockpits(cockpits: string[], isAdmin: boolean) {
       label: "Creative director",
       href: `${portal}/go/creative`,
       show: isAdmin || cockpits.includes("creative"),
+    },
+    {
+      key: "sales",
+      label: "Sales",
+      href: `${portal}/go/sales`,
+      show: isAdmin || cockpits.includes("sales"),
     },
   ].filter(d => d.show);
 }

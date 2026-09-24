@@ -9,13 +9,14 @@ const FOUNDER_EMAILS = new Set([
   "aziz@maharamedia.com",
   "awaheedi2008@gmail.com",
 ]);
-const COCKPITS = ["media_buyer", "csm", "creative", "editor"] as const;
+const COCKPITS = ["media_buyer", "csm", "creative", "editor", "sales"] as const;
 const HOME: Record<string, string> = {
   admin: "/admin",
   media_buyer: "/dashboard",
   csm: "/go/csm",
   creative: "/go/creative",
   editor: "/go/editor",
+  sales: "/go/sales",
 };
 
 export interface SupabaseMember {

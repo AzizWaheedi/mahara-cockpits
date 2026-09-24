@@ -197,6 +197,171 @@ http.route({
   }),
 });
 
+/**
+ * The sales cockpit's door, built the same way as the editor's: a browser
+ * app with no backend of its own swaps the portal's pass here for a Supabase
+ * sign-in token (salesPortal.ts). Only the cockpit's own origins may ask, and
+ * the pass itself is what proves who the caller is.
+ */
+const SALES_ORIGINS = [
+  "https://cockpit.maharamedia.com",
+  "https://mahara-sales.vercel.app",
+  "http://localhost:5190",
+  "http://127.0.0.1:5190",
+];
+
+function salesCors(request: Request): Record<string, string> {
+  const origin = request.headers.get("origin") ?? "";
+  return {
+    "Access-Control-Allow-Origin": SALES_ORIGINS.includes(origin)
+      ? origin
+      : "null",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Max-Age": "86400",
+    Vary: "Origin",
+  };
+}
+
+http.route({
+  path: "/portal/sales-session",
+  method: "OPTIONS",
+  handler: httpAction(async (_ctx, request) => {
+    return new Response(null, { status: 204, headers: salesCors(request) });
+  }),
+});
+
+http.route({
+  path: "/portal/sales-session",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const headers = salesCors(request);
+    if (headers["Access-Control-Allow-Origin"] === "null")
+      return Response.json(
+        { ok: false, error: "not an allowed origin" },
+        { status: 403, headers },
+      );
+    let token = "";
+    try {
+      const body = (await request.json()) as { token?: string };
+      token = String(body?.token ?? "");
+    } catch {
+      return Response.json(
+        { ok: false, error: "send a JSON body" },
+        { status: 400, headers },
+      );
+    }
+    if (!token)
+      return Response.json(
+        { ok: false, error: "no pass in the request" },
+        { status: 400, headers },
+      );
+    try {
+      const out = await ctx.runAction(internal.salesPortal.exchangeToken, {
+        token,
+      });
+      return Response.json({ ok: true, ...out }, { headers });
+    } catch (e) {
+      // Say what a person can act on, as the editor's door does.
+      const raw = String((e as Error).message ?? e);
+      const plain = /different cockpit/.test(raw)
+        ? "That pass is for a different cockpit."
+        : /not on your access/.test(raw)
+          ? "The sales cockpit is not on your access. Ask Aziz."
+          : /"exp"|expired/i.test(raw)
+            ? "That pass has expired. Open the sales cockpit from the portal again."
+            : /JWS|JWT|signature|Compact/i.test(raw)
+              ? "That pass was not signed by the portal."
+              : /no address/.test(raw)
+                ? "That pass carries no address."
+                : "That pass was not accepted. Open the sales cockpit from the portal again.";
+      return Response.json(
+        { ok: false, error: plain },
+        { status: 401, headers },
+      );
+    }
+  }),
+});
+
+http.route({
+  path: "/portal/sales-preview",
+  method: "OPTIONS",
+  handler: httpAction(async (_ctx, request) => {
+    const h = salesCors(request);
+    return new Response(null, {
+      status: 204,
+      headers: {
+        ...h,
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/portal/sales-preview",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const cors = salesCors(request);
+    const allowed = cors["Access-Control-Allow-Origin"] !== "null";
+    const headers: Record<string, string> = {
+      ...cors,
+      "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      "Cache-Control": "no-store",
+    };
+    if (!allowed)
+      return Response.json(
+        { ok: false, error: "not an allowed origin" },
+        { status: 403, headers },
+      );
+    const auth = request.headers.get("authorization") ?? "";
+    const token = auth.toLowerCase().startsWith("bearer ")
+      ? auth.slice(7).trim()
+      : "";
+    let adId = "";
+    let format: string | undefined;
+    try {
+      const body = (await request.json()) as {
+        adId?: unknown;
+        format?: unknown;
+      };
+      adId = String(body?.adId ?? "");
+      format = body?.format ? String(body.format) : undefined;
+    } catch {
+      return Response.json(
+        { ok: false, error: "send a JSON body" },
+        { status: 400, headers },
+      );
+    }
+    if (!token || !adId)
+      return Response.json(
+        { ok: false, error: "a session and an ad are both needed" },
+        { status: 400, headers },
+      );
+    try {
+      const out = await ctx.runAction(internal.salesPortal.previewForSales, {
+        token,
+        adId,
+        format,
+      });
+      return Response.json({ ok: true, ...out }, { headers });
+    } catch (e) {
+      const raw = String((e as Error).message ?? e);
+      const plain = /not on your access/.test(raw)
+        ? "The sales cockpit is not on your access. Ask Aziz."
+        : /no address/.test(raw)
+          ? "That session carries no address."
+          : /JWS|JWT|signature|Compact|exp/i.test(raw)
+            ? "That session is not valid any more. Sign in again."
+            : "The preview could not be fetched.";
+      return Response.json(
+        { ok: false, error: plain },
+        { status: 401, headers },
+      );
+    }
+  }),
+});
+
 http.route({
   path: "/askai/pending",
   method: "GET",

@@ -298,7 +298,7 @@ test("failures, third-failure fix jobs and recovery alerts survive coalescing", 
 test("portal metadata is public but SSO token minting rejects anonymous calls", async () => {
   const result = await app.measure(api.portal.info, {});
   expect(result.result).toEqual({
-    cockpits: ["media_buyer", "csm", "creative"],
+    cockpits: ["media_buyer", "csm", "creative", "editor", "sales"],
     audience: "mahara-portal",
   });
   expect(result.delta.docsRead).toBe(0);

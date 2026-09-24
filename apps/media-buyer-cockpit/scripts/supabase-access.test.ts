@@ -49,7 +49,7 @@ describe("Supabase cockpit access", () => {
     expect(access?.isAdmin).toBe(true);
     expect(access?.isCeo).toBe(false);
     expect(access?.home).toBe("/admin");
-    expect(access?.cockpits).toHaveLength(4);
+    expect(access?.cockpits).toHaveLength(5);
   });
 
   test("a linked founder gets CEO access without a delegated CEO role", () => {

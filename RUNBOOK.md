@@ -175,6 +175,25 @@ names what is wrong.
 | No objection categories though registrants had sales calls | The call's invitee email is not the registrant's, or the title reads like a client call (launch, check-in, onboarding). `python3 pull.py objections` prints what it matched | Aziz |
 | Landing page numbers stop moving | `webinar.maharamedia.com` must still load `/mm-track.js` (sites/webinar); the Edge Function `webinar-events` must be ACTIVE in Creative Triage | Aziz |
 
+## Sales cockpit
+
+cockpit.maharamedia.com/sales/, for the setters and closers (plan:
+`SALES_COCKPIT_PLAN.md`). Three moving parts: the copy of B2B (the Edge
+Function `sales-mirror`, every three minutes), the server that makes every
+change (`sales-api`), and the proposal writer on the VPS (`hermes/sales-desk`).
+Today shows when the CRM copy was last read; the Team page shows the last
+copy run and the writer's status.
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| Today says "The CRM copy is late" or the last read had a problem | Read the newest row of `cockpit_sales_mirror_runs` (its `error` names the step). `B2B 401`: the function secret `SALES_B2B_MGMT_TOKEN` (a Supabase management token) was revoked; set a new one. `HighLevel 401`: set `SALES_GHL_TOKEN`. Nothing at all: the pg_cron job `mahara-sales-mirror` is gone or the vault secret `cockpit_sync_secret` changed | Aziz or Hermes |
+| Numbers look a day behind the CRM | B2B itself syncs HighLevel every 15 minutes; if B2B's own sync stopped, its `b2b_sync_health` says so. That is Muhammed's | Muhammed |
+| A mark says "HighLevel refused it" | The row shows HighLevel's own words. A `401` means `SALES_GHL_TOKEN` changed; anything else, press Send again on the call. The mark is kept in the cockpit either way | Aziz |
+| "Your seat is not linked to your HighLevel user yet" | A manager picks the rep's HighLevel user on the Team page (it also links their B2B numbers) | Aziz |
+| Someone cannot open the cockpit | Give them the Sales seat on the portal's Admin page, with Setter, Closer, Both or Manager | Aziz |
+| A proposal sits on "Drafting" for more than 20 minutes | On the VPS as `hermes`: `tail ~/.sales-desk.log`, then `python3 desk.py doctor` in `hermes/sales-desk`. A request that failed four times says why on the proposal page, with Try again | Hermes or Aziz |
+| A proposal failed with "No Fathom recording" | The demo was not recorded or not shared with the team in Fathom. Share it, then Try again | The closer |
+
 ## What never needs a person
 
 - Rate limits: every Google, ClickUp and Meta call waits and retries.

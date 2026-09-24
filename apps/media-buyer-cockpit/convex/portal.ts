@@ -15,6 +15,7 @@ import { authenticatedMutation, authenticatedQuery } from "./functions";
 import { flush, jobRows, sourceRows } from "./health";
 import { readJobCounts } from "./migrations";
 import { accessFor, assertAdmin, COCKPITS, staticRoles } from "./roles";
+import schema from "./schema";
 
 /**
  * The portal: one sign-in for every employee, one directory of who opens
@@ -69,6 +70,8 @@ export const upsertMember = authenticatedMutation({
     roles: v.array(v.string()),
     clients: v.array(v.string()),
     note: v.optional(v.string()),
+    /** Setter, closer, both or manager: the schema's own validator. */
+    salesRole: schema.tables.members.validator.fields.salesRole,
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -89,6 +92,11 @@ export const upsertMember = authenticatedMutation({
       name: args.name?.trim() || undefined,
       roles,
       clients: [...new Set(args.clients.map(c => c.trim()).filter(Boolean))],
+      // Only a Sales seat carries a sales role. Taking the seat away clears
+      // it (undefined removes the field), so it never comes back unasked.
+      salesRole: roles.includes("sales")
+        ? (args.salesRole ?? existing?.salesRole)
+        : undefined,
       note: args.note?.trim() || undefined,
       updatedAt: Date.now(),
     };
@@ -154,6 +162,15 @@ export const pushMember = internalAction({
     out.editor = JSON.stringify(
       await ctx.runAction(internal.editorPortal.pushOne, { email: m.email }),
     );
+    // The sales cockpit is built the same way. Its push never stops the
+    // others: a failure is written into the answer and nothing more.
+    try {
+      out.sales = JSON.stringify(
+        await ctx.runAction(internal.salesPortal.pushOne, { email: m.email }),
+      );
+    } catch (e) {
+      out.sales = `FAILED ${String(e).slice(0, 120)}`;
+    }
     await flush(ctx);
     return out;
   },
@@ -178,6 +195,11 @@ export const pushMembers = internalAction({
     } catch (e) {
       out.editor = `FAILED ${String(e).slice(0, 120)}`;
     }
+    try {
+      out.sales = await ctx.runAction(internal.salesPortal.syncPeople, {});
+    } catch (e) {
+      out.sales = `FAILED ${String(e).slice(0, 120)}`;
+    }
     return out;
   },
 });
@@ -198,6 +220,7 @@ export const removeMember = authenticatedMutation({
     const gone = {
       roles: [] as string[],
       clients: [] as string[],
+      salesRole: undefined,
       note: `removed by ${admin.email}`,
       updatedAt: Date.now(),
     };
@@ -234,6 +257,14 @@ export const revoke = internalAction({
     out.editor = JSON.stringify(
       await ctx.runAction(internal.editorPortal.pushOne, { email }),
     );
+    // And off in cockpit_sales_people, for the sales cockpit's policies.
+    try {
+      out.sales = JSON.stringify(
+        await ctx.runAction(internal.salesPortal.pushOne, { email }),
+      );
+    } catch (e) {
+      out.sales = `FAILED ${String(e).slice(0, 120)}`;
+    }
     return out;
   },
 });
@@ -622,7 +653,9 @@ export const mintToken = action({
         ? "/client-success"
         : cockpit === "editor"
           ? "/editor"
-          : "/creative";
+          : cockpit === "sales"
+            ? "/sales"
+            : "/creative";
     return { token, path };
   },
 });

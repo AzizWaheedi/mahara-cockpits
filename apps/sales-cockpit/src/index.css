@@ -1,0 +1,319 @@
+/* Geist for everything, Geist Mono for numbers and labels (brand guidelines §3).
+   Geist has no Arabic, and half of what a lead writes is Arabic, so IBM Plex
+   Sans Arabic (the brand's Arabic face) sits behind it in the stack: the
+   browser takes each Arabic letter from Plex and every Latin one from Geist. */
+@import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&family=IBM+Plex+Sans+Arabic:wght@400;500;600&display=swap");
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * The same palette as the other three cockpits. This app has no shadcn layer,
+ * so it keeps the brand's token names and adds a handful of plain utilities on
+ * top of them; nothing here invents a second set of colours.
+ */
+@theme inline {
+  --font-sans: "Geist", "IBM Plex Sans Arabic", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --color-mahara-teal: var(--mahara-teal);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+  --color-destructive: var(--destructive);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-owed: var(--owed);
+  --color-won: var(--won);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+:root {
+  --mahara-teal: #00cfc8;
+  --deep-space: #091333;
+  --royal-blue: #2e5bd6;
+
+  --primary: var(--mahara-teal);
+  --primary-foreground: var(--deep-space);
+
+  --success: oklch(0.6 0.13 158);
+  --warning: oklch(0.7 0.17 55);
+
+  /* The sales cockpit names three of those for what they mean on a rep's day:
+     a call that is owed a mark, a call or deal that went well, and now. */
+  --owed: var(--warning);
+  --won: var(--success);
+  --now: var(--mahara-teal);
+
+  /* Corner radius md = 12px (brand §4). */
+  --radius: 0.75rem;
+  --background: oklch(0.985 0.003 250);
+  --foreground: oklch(0.2 0.045 270);
+  --card: oklch(1 0 0);
+  --secondary: oklch(0.96 0.008 250);
+  --muted: oklch(0.96 0.008 250);
+  --muted-foreground: oklch(0.48 0.02 265);
+  --destructive: oklch(0.55 0.22 25);
+  --border: oklch(0.91 0.008 250);
+  --ring: var(--mahara-teal);
+}
+
+.dark {
+  --primary: var(--mahara-teal);
+  --primary-foreground: var(--deep-space);
+
+  --success: oklch(0.72 0.15 158);
+  --warning: oklch(0.78 0.15 60);
+
+  --owed: var(--warning);
+  --won: var(--success);
+  --now: var(--mahara-teal);
+
+  /* Deep Space #091333 is the canvas; cards sit one step lighter. */
+  --background: #091333;
+  --foreground: oklch(0.95 0.008 250);
+  --card: #0f1b45;
+  --secondary: oklch(1 0 0 / 8%);
+  --muted: oklch(1 0 0 / 7%);
+  --muted-foreground: oklch(0.68 0.015 250);
+  --destructive: oklch(0.65 0.2 25);
+  --border: oklch(1 0 0 / 10%);
+  --ring: var(--mahara-teal);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  /* No base font-size. The other three cockpits inherit the browser's 16px
+     and setting 14px here made every inherited size a step smaller than
+     theirs, which is what "the fonts look a bit different" was. */
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "ss01", "cv11";
+}
+
+h1,
+h2,
+h3 {
+  letter-spacing: -0.015em;
+}
+
+/* A bare `border` means the theme's border, not currentColor. The other
+   three cockpits get this from shadcn's base layer; the ideation page is
+   the same file in all four, so this one needs it too. */
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+}
+
+/* Callout panels, the same recipe as the other cockpits: a tinted strip that
+   survives dark mode. */
+.callout-warn {
+  background-color: color-mix(in oklch, var(--warning) 12%, transparent);
+  border-color: color-mix(in oklch, var(--warning) 45%, transparent);
+  color: color-mix(in oklch, var(--warning) 80%, var(--foreground));
+}
+
+.callout-bad {
+  background-color: color-mix(in oklch, var(--destructive) 12%, transparent);
+  border-color: color-mix(in oklch, var(--destructive) 45%, transparent);
+  color: color-mix(in oklch, var(--destructive) 80%, var(--foreground));
+}
+
+.callout-good {
+  background-color: color-mix(in oklch, var(--success) 12%, transparent);
+  border-color: color-mix(in oklch, var(--success) 45%, transparent);
+  color: color-mix(in oklch, var(--success) 80%, var(--foreground));
+}
+
+/* One place for the surfaces, so a panel is a panel everywhere. */
+@utility panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 0.25rem);
+}
+
+@utility raised {
+  background: var(--secondary);
+}
+
+@utility hairline {
+  border-color: var(--border);
+}
+
+@utility muted {
+  color: var(--muted-foreground);
+}
+
+@utility dim {
+  color: color-mix(in oklch, var(--foreground) 82%, transparent);
+}
+
+:where(button, a, input, textarea, select):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-md);
+}
+
+::selection {
+  background: color-mix(in oklch, var(--mahara-teal) 35%, transparent);
+}
+
+/* Arabic scripts need more line height than Latin to stay legible at 14px. */
+.rtl-safe {
+  line-height: 1.9;
+  word-break: break-word;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* The phone rules shared with the media buyer cockpit (2026-09-20): the page
+   never scrolls sideways, fields are 16px on touch screens so iOS does not
+   zoom, and the installed app keeps clear of the notch and the home bar. */
+@layer base {
+  html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+  body { overflow-x: clip; min-width: 0; }
+  #root { min-width: 0; }
+  img, video, canvas, svg { max-width: 100%; }
+  .pt-safe { padding-top: env(safe-area-inset-top, 0px); }
+  .pb-safe { padding-bottom: env(safe-area-inset-bottom, 0px); }
+}
+/* Outside every layer so the text-sm and h-8 utilities do not win; touch screens only. */
+@media (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]), select, textarea { font-size: max(16px, 1em); min-height: 2.5rem; }
+  main :is(button, [role="button"]):not([role="switch"]):not(.no-touch) { min-height: 2.5rem; touch-action: manipulation; }
+}
+
+
+/* ------------------------------------------------------------------------
+   The day line: a rep's day in Kuwait time, one band, every call a block.
+   Owed calls (past, not marked) are hatched in the warning colour so they
+   read as unfinished at a glance; the current minute is a teal hairline.
+   ------------------------------------------------------------------------ */
+.dayline {
+  position: relative;
+  height: 4.5rem;
+  border-radius: var(--radius-lg);
+  background:
+    repeating-linear-gradient(
+      to right,
+      transparent 0,
+      transparent calc(100% / var(--hours) - 1px),
+      color-mix(in oklch, var(--foreground) 7%, transparent) calc(100% / var(--hours) - 1px),
+      color-mix(in oklch, var(--foreground) 7%, transparent) calc(100% / var(--hours))
+    ),
+    var(--secondary);
+  overflow: hidden;
+}
+.dayline-past {
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  background: color-mix(in oklch, var(--foreground) 4%, transparent);
+  pointer-events: none;
+}
+.dayline-now {
+  position: absolute;
+  inset-block: 0;
+  width: 2px;
+  background: var(--now);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--now) 18%, transparent);
+  pointer-events: none;
+}
+.dayline-call {
+  position: absolute;
+  top: 0.75rem;
+  bottom: 0.75rem;
+  min-width: 0.6rem;
+  border-radius: calc(var(--radius) - 6px);
+  border: 1px solid transparent;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  padding: 0 0.35rem;
+  font-size: 11px;
+  line-height: 1.25;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  text-align: left;
+  color: var(--foreground);
+}
+.dayline-call[data-state="coming"] {
+  background: color-mix(in oklch, var(--now) 20%, var(--card));
+  border-color: color-mix(in oklch, var(--now) 55%, transparent);
+}
+.dayline-call[data-state="owed"] {
+  background:
+    repeating-linear-gradient(135deg, color-mix(in oklch, var(--owed) 30%, transparent) 0 5px, transparent 5px 10px),
+    color-mix(in oklch, var(--owed) 12%, var(--card));
+  border-color: color-mix(in oklch, var(--owed) 70%, transparent);
+}
+.dayline-call[data-state="done"] {
+  background: color-mix(in oklch, var(--won) 16%, var(--card));
+  border-color: color-mix(in oklch, var(--won) 45%, transparent);
+}
+.dayline-call[data-state="missed"] {
+  background: color-mix(in oklch, var(--destructive) 12%, var(--card));
+  border-color: color-mix(in oklch, var(--destructive) 40%, transparent);
+  color: color-mix(in oklch, var(--foreground) 70%, transparent);
+}
+.dayline-call[data-state="past"] {
+  background: color-mix(in oklch, var(--foreground) 6%, var(--card));
+  border-color: var(--border);
+  color: color-mix(in oklch, var(--foreground) 70%, transparent);
+}
+.dayline-hours {
+  display: grid;
+  grid-template-columns: repeat(var(--hours), minmax(0, 1fr));
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted-foreground);
+  margin-top: 0.35rem;
+}
+
+/* The undo strip on a mark: it drains over the seconds before the mark is
+   sent, so the rep can see how long they have to take it back. */
+@keyframes drain {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
+.drain {
+  transform-origin: left;
+  animation: drain var(--undo-ms, 5000ms) linear forwards;
+}
+
+[dir="rtl"], .ar {
+  font-family: "IBM Plex Sans Arabic", var(--font-sans);
+}

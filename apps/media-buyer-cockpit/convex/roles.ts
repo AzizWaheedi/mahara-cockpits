@@ -18,6 +18,7 @@ const STATIC: Record<string, string[]> = {
     "csm",
     "creative",
     "editor",
+    "sales",
   ],
   "awaheedi2008@gmail.com": [
     "ceo",
@@ -26,6 +27,7 @@ const STATIC: Record<string, string[]> = {
     "csm",
     "creative",
     "editor",
+    "sales",
   ],
   "nada@maharamedia.com": ["media_buyer"],
   "abdulelah@maharamedia.com": ["csm"],
@@ -34,9 +36,15 @@ const STATIC: Record<string, string[]> = {
   "karim@maharamedia.com": ["editor"],
 };
 
-export const COCKPITS = ["media_buyer", "csm", "creative", "editor"] as const;
+export const COCKPITS = [
+  "media_buyer",
+  "csm",
+  "creative",
+  "editor",
+  "sales",
+] as const;
 
-/** Where each role lands. The portal routes the other three to their own apps. */
+/** Where each role lands. The portal routes the other four to their own apps. */
 const HOME: Record<string, string> = {
   ceo: "/ceo",
   admin: "/admin",
@@ -44,6 +52,7 @@ const HOME: Record<string, string> = {
   csm: "/go/csm",
   creative: "/go/creative",
   editor: "/go/editor",
+  sales: "/go/sales",
 };
 
 /** The fallback directory as rows, for the pushes that leave this deployment. */
