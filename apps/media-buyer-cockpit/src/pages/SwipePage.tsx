@@ -1,4 +1,3 @@
-import { useAction } from "convex/react";
 import {
   ChevronRight,
   ExternalLink,
@@ -14,7 +13,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { api } from "../../convex/_generated/api";
 import { BoardStrip, ForeplayLinks } from "../components/Foreplay";
 import {
   clock,
@@ -22,6 +20,7 @@ import {
   type ForeplayBoard,
   type SwipeAd,
 } from "../lib/foreplay";
+import { api, useAction } from "../lib/swipe";
 
 /**
  * The swipe file: what the team saved in Foreplay.
