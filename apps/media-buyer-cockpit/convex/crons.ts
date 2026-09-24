@@ -1,5 +1,6 @@
 import { cronJobs } from "convex/server";
 import { internal } from "./_generated/api";
+import { JOB_SCHEDULES } from "./cronFreshness";
 
 /**
  * The cockpit refreshes itself before she opens it.
@@ -21,13 +22,13 @@ const crons = cronJobs();
  */
 crons.cron(
   "refresh every 10 minutes through the working day",
-  "*/10 3-18 * * *",
+  JOB_SCHEDULES.sync.cron[0],
   internal.health.runJob,
   { job: "sync" },
 );
 crons.cron(
   "refresh hourly overnight",
-  "0 19-23,0-2 * * *",
+  JOB_SCHEDULES.sync.cron[1],
   internal.health.runJob,
   { job: "sync" },
 );
@@ -38,7 +39,7 @@ crons.cron(
  */
 crons.cron(
   "collect market plays for the playbook",
-  "0 2 * * 5",
+  JOB_SCHEDULES["market plays"].cron[0],
   internal.health.runJob,
   { job: "market plays" },
 );
@@ -46,7 +47,7 @@ crons.cron(
 /** Anything queued for the assistant that the instant wake-up missed. */
 crons.interval(
   "drain the assist queue",
-  { minutes: 10 },
+  JOB_SCHEDULES["assist queue"].interval,
   internal.health.runJob,
   { job: "assist queue" },
 );
@@ -62,7 +63,7 @@ crons.interval(
   "drain the other cockpits' outboxes",
   // Every minute since 2026-09-12: WhatsApp replies sent from the cockpits
   // should leave within a minute, not five.
-  { minutes: 1 },
+  JOB_SCHEDULES["outbox drains"].interval,
   internal.health.runJob,
   { job: "outbox drains" },
 );
@@ -74,20 +75,25 @@ crons.interval(
  */
 crons.cron(
   "write the board's KPI columns",
-  "5 3-18 * * *",
+  JOB_SCHEDULES["board KPI columns"].cron[0],
   internal.health.runJob,
   { job: "board KPI columns" },
 );
 
 /** Tracking audit (url_tags, lead forms) once a day; it had no schedule. */
-crons.cron("audit ad tracking", "30 2 * * *", internal.health.runJob, {
-  job: "tracking audit",
-});
+crons.cron(
+  "audit ad tracking",
+  JOB_SCHEDULES["tracking audit"].cron[0],
+  internal.health.runJob,
+  {
+    job: "tracking audit",
+  },
+);
 
 /** The three cockpits' main screens, checked like a browser would, every 15 minutes. */
 crons.cron(
   "smoke-check every screen",
-  "7,22,37,52 * * * *",
+  JOB_SCHEDULES["smoke check"].cron[0],
   internal.health.runJob,
   { job: "smoke check" },
 );
@@ -95,7 +101,7 @@ crons.cron(
 /** Client reports the CSM asked for become Google Docs within a few minutes. */
 crons.interval(
   "write requested client reports",
-  { minutes: 3 },
+  JOB_SCHEDULES["report docs"].interval,
   internal.health.runJob,
   { job: "report docs" },
 );
@@ -103,7 +109,7 @@ crons.interval(
 /** The chat with Hermes in every cockpit: questions out, answers back, every 20 seconds. */
 crons.interval(
   "relay the Hermes chat",
-  { seconds: 20 },
+  JOB_SCHEDULES["hermes relay"].interval,
   internal.health.runJob,
   { job: "hermes relay" },
 );
@@ -115,7 +121,7 @@ crons.interval(
  */
 crons.interval(
   "read new client card comments",
-  { minutes: 15 },
+  JOB_SCHEDULES["client comment watch"].interval,
   internal.health.runJob,
   { job: "client comment watch" },
 );
@@ -130,7 +136,7 @@ crons.interval(
  */
 crons.interval(
   "pull job applications",
-  { minutes: 30 },
+  JOB_SCHEDULES["hiring intake"].interval,
   internal.health.runJob,
   {
     job: "hiring intake",
@@ -138,7 +144,7 @@ crons.interval(
 );
 crons.interval(
   "mirror the hiring board",
-  { minutes: 10 },
+  JOB_SCHEDULES["hiring board"].interval,
   internal.health.runJob,
   {
     job: "hiring board",
@@ -146,7 +152,7 @@ crons.interval(
 );
 crons.interval(
   "run the hiring engine",
-  { minutes: 10 },
+  JOB_SCHEDULES["hiring engine"].interval,
   internal.health.runJob,
   {
     job: "hiring engine",
@@ -156,7 +162,7 @@ crons.interval(
 /** The CEO cockpit's prepared sections: every 15 minutes, all sources. [Aziz, 2026-09-15] */
 crons.interval(
   "refresh the CEO cockpit",
-  { minutes: 15 },
+  JOB_SCHEDULES["ceo refresh"].interval,
   internal.health.runJob,
   { job: "ceo refresh" },
 );

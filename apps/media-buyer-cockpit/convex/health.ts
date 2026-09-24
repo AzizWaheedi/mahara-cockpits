@@ -6,7 +6,7 @@ import {
   internalMutation,
   internalQuery,
 } from "./_generated/server";
-import { overdueCronRows } from "./cronFreshness";
+import { JOB_SCHEDULES, overdueCronRows } from "./cronFreshness";
 
 /**
  * The health ledger: one row per outside system the cockpits depend on.
@@ -313,29 +313,34 @@ export const sources = internalQuery({
  * on the third failure, and an alert when it has not run at all. Before this
  * a crashing cron only showed in the Convex logs, which nobody reads.
  */
-// biome-ignore lint/suspicious/noExplicitAny: function references of mixed shapes
-const JOBS: Record<string, { ref: any; everyMin: number }> = {
-  sync: { ref: internal.sync.runSync, everyMin: 10 },
-  "market plays": {
-    ref: internal.marketCollect.collectPlays,
-    everyMin: 7 * 24 * 60,
-  },
-  "assist queue": { ref: internal.assistWorker.run, everyMin: 10 },
-  "outbox drains": { ref: internal.outboxDrains.drainAll, everyMin: 1 },
-  "board KPI columns": { ref: internal.writeback.pushMetrics, everyMin: 60 },
-  "tracking audit": { ref: internal.tracking.audit, everyMin: 24 * 60 },
-  "smoke check": { ref: internal.smoke.check, everyMin: 15 },
-  "report docs": { ref: internal.reportDocs.drain, everyMin: 3 },
-  "hermes relay": { ref: internal.hermesDrain.run, everyMin: 1 },
-  "client comment watch": { ref: internal.commentWatch.scan, everyMin: 15 },
-  "ceo refresh": { ref: internal.ceo.refresh.refreshAll, everyMin: 15 },
+const JOB_REFS: Record<keyof typeof JOB_SCHEDULES, Any> = {
+  sync: internal.sync.runSync,
+  "market plays": internal.marketCollect.collectPlays,
+  "assist queue": internal.assistWorker.run,
+  "outbox drains": internal.outboxDrains.drainAll,
+  "board KPI columns": internal.writeback.pushMetrics,
+  "tracking audit": internal.tracking.audit,
+  "smoke check": internal.smoke.check,
+  "report docs": internal.reportDocs.drain,
+  "hermes relay": internal.hermesDrain.run,
+  "client comment watch": internal.commentWatch.scan,
+  "ceo refresh": internal.ceo.refresh.refreshAll,
   // Hiring: applications in from the careers forms, the board mirrored, then
   // whatever the moves ask for. One job, so a failure at any step shows up in
   // one place. [Aziz, 2026-09-22]
-  "hiring intake": { ref: internal.hiring.intake.run, everyMin: 30 },
-  "hiring board": { ref: internal.hiring.sync.pull, everyMin: 10 },
-  "hiring engine": { ref: internal.hiring.engine.run, everyMin: 10 },
+  "hiring intake": internal.hiring.intake.run,
+  "hiring board": internal.hiring.sync.pull,
+  "hiring engine": internal.hiring.engine.run,
 };
+const JOBS: Record<string, { ref: Any; everyMin: number }> = Object.fromEntries(
+  Object.entries(JOB_SCHEDULES).map(([name, schedule]) => [
+    name,
+    {
+      ref: JOB_REFS[name as keyof typeof JOB_REFS],
+      everyMin: schedule.everyMin,
+    },
+  ]),
+);
 
 export const runJob = internalAction({
   args: { job: v.string() },
@@ -429,8 +434,8 @@ export const staleJobs = internalQuery({
     return overdueCronRows(rows, Date.now(), new Set(Object.keys(JOBS))).map(
       r => ({
         job: r.job,
-        at: r.at,
-        minutes: r.minutes,
+        ...(r.at === undefined ? {} : { at: r.at }),
+        ...(r.minutes === undefined ? {} : { minutes: r.minutes }),
       }),
     );
   },

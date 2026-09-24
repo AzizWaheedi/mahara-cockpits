@@ -265,7 +265,7 @@ export const machine: Adapter = {
     if ((stale as Any[]).length)
       notes.push({
         level: "warn",
-        text: `Cockpit jobs overdue: ${(stale as Any[]).map(j => `${j.job} (${j.minutes} min)`).join(", ")}.`,
+        text: `Cockpit jobs overdue: ${(stale as Any[]).map(j => (j.minutes === undefined ? `${j.job} (never ran)` : `${j.job} (${j.minutes} min)`)).join(", ")}.`,
       });
     if (badSources.length)
       notes.push({
