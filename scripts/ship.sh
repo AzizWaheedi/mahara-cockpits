@@ -142,6 +142,18 @@ ship() {
   else
     echo "  live bundle: $live (was $was)"
   fi
+
+  # A Supabase-only app opens on a blank page without its project address
+  # in the bundle, and nothing above notices (2026-09-24: the sales app
+  # went out with Vercel ciphertext in both variables). Read the bundle.
+  if [ -n "$live" ] && grep -q '^VITE_SUPABASE_URL=' "$dir/.env.example" 2>/dev/null; then
+    if curl -fsS -m 30 "$SITE/assets/$live" 2>/dev/null | grep -q 'https://[a-z0-9]\{20\}\.supabase\.co'; then
+      echo "  the live bundle carries its Supabase address"
+    else
+      echo "the live bundle for $app has no Supabase address, so the page opens blank: check VITE_SUPABASE_URL on its Vercel project"
+      exit 1
+    fi
+  fi
 }
 
 case "${1:-all}" in

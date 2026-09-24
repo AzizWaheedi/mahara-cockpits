@@ -1,6 +1,7 @@
 import { CalendarDays, Menu, PhoneCall, Sun, UserSearch } from "lucide-react";
 import { lazy, type ReactNode, Suspense, useEffect, useState } from "react";
 import { Navigate, NavLink, Route, Routes, useLocation } from "react-router";
+import { PageBoundary } from "./components/PageBoundary";
 import {
   PortalAutoSignIn,
   portalSignInPending,
@@ -66,7 +67,7 @@ function Shell() {
     />
   );
 
-  if (!ready) return null;
+  if (!ready) return <Waiting text="Opening the sales cockpit…" />;
 
   if (!session)
     return (
@@ -178,6 +179,7 @@ export function Seated({
     ).length,
   };
   const role = ROLE_WORDS[String(me.role)] ?? "Sales";
+  const { pathname } = useLocation();
   const sidebar = (onNavigate?: () => void) => (
     <Sidebar
       name={name}
@@ -216,36 +218,43 @@ export function Seated({
           <span className="muted text-sm">Sales</span>
         </header>
 
-        <Suspense fallback={<Waiting text="Loading…" />}>
-          <Routes>
-            <Route path="/" element={<TodayPage me={me} />} />
-            {/* The portal's door lands on /dashboard in every cockpit. */}
-            <Route path="/dashboard" element={<Navigate to="/" replace />} />
-            <Route path="/calendar" element={<CalendarPage me={me} />} />
-            <Route path="/leads" element={<LeadsPage />} />
-            <Route path="/lead/:contactId" element={<LeadPage me={me} />} />
-            <Route path="/call/:contactId" element={<CallPage me={me} />} />
-            <Route path="/dialer" element={<DialerPage me={me} />} />
-            <Route path="/proposals" element={<ProposalsPage me={me} />} />
-            <Route path="/proposal/:id" element={<ProposalPage me={me} />} />
-            <Route path="/numbers" element={<NumbersPage me={me} />} />
-            <Route path="/links" element={<LinksPage me={me} />} />
-            <Route
-              path="/team"
-              element={
-                me.manager ? <TeamPage me={me} /> : <Navigate to="/" replace />
-              }
-            />
-            <Route
-              path="*"
-              element={
-                <p className="muted p-10 text-center text-sm">
-                  That page does not exist.
-                </p>
-              }
-            />
-          </Routes>
-        </Suspense>
+        {/* Keyed by the address, so moving to another page clears an error. */}
+        <PageBoundary key={pathname}>
+          <Suspense fallback={<Waiting text="Loading…" />}>
+            <Routes>
+              <Route path="/" element={<TodayPage me={me} />} />
+              {/* The portal's door lands on /dashboard in every cockpit. */}
+              <Route path="/dashboard" element={<Navigate to="/" replace />} />
+              <Route path="/calendar" element={<CalendarPage me={me} />} />
+              <Route path="/leads" element={<LeadsPage />} />
+              <Route path="/lead/:contactId" element={<LeadPage me={me} />} />
+              <Route path="/call/:contactId" element={<CallPage me={me} />} />
+              <Route path="/dialer" element={<DialerPage me={me} />} />
+              <Route path="/proposals" element={<ProposalsPage me={me} />} />
+              <Route path="/proposal/:id" element={<ProposalPage me={me} />} />
+              <Route path="/numbers" element={<NumbersPage me={me} />} />
+              <Route path="/links" element={<LinksPage me={me} />} />
+              <Route
+                path="/team"
+                element={
+                  me.manager ? (
+                    <TeamPage me={me} />
+                  ) : (
+                    <Navigate to="/" replace />
+                  )
+                }
+              />
+              <Route
+                path="*"
+                element={
+                  <p className="muted p-10 text-center text-sm">
+                    That page does not exist.
+                  </p>
+                }
+              />
+            </Routes>
+          </Suspense>
+        </PageBoundary>
       </div>
 
       <TabBar owed={counts.owed} onMore={() => setDrawer(true)} />
