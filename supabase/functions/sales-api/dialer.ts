@@ -86,12 +86,18 @@ export const OUTCOME_WORDS: Record<Outcome, string> = {
   handled: "Handled",
 };
 
-/** What an outcome does to the lead's place in the queue. */
+/**
+ * What an outcome does to the lead's place in the queue. Handled (dealt with
+ * another way, a message or a talk already had) keeps a call-back or retry
+ * that is still ahead, as the call centre's HANDLED does, and otherwise takes
+ * the lead out until something new happens (a reply opens them up again).
+ */
 export function afterOutcome(
   outcome: Outcome,
   step: number,
   now: number,
   callbackAt: number | null,
+  prior: { due: number | null; callback: number | null } = { due: null, callback: null },
 ): { step: number; due: number | null; closed: string | null; callback: number | null } {
   if (outcome === "no_answer") {
     const n = nextTry(step, now);
@@ -99,7 +105,12 @@ export function afterOutcome(
   }
   if (outcome === "callback") return { step, due: callbackAt, closed: null, callback: callbackAt };
   if (outcome === "booked") return { step: 0, due: null, closed: "booked", callback: null };
-  if (outcome === "handled") return { step: 0, due: null, closed: null, callback: null };
+  if (outcome === "handled") {
+    if (prior.callback !== null && prior.callback > now)
+      return { step, due: prior.callback, closed: null, callback: prior.callback };
+    if (prior.due !== null && prior.due > now) return { step, due: prior.due, closed: null, callback: null };
+    return { step, due: null, closed: "handled", callback: null };
+  }
   return { step, due: null, closed: outcome, callback: null };
 }
 
@@ -233,4 +244,202 @@ export function rankForCloser(items: (Candidate & CloserFacts)[], me: string, no
 export function speedToLead(createdAt: number | null, firstDialAt: number | null): number | null {
   if (createdAt === null || firstDialAt === null || firstDialAt < createdAt) return null;
   return Math.round((firstDialAt - createdAt) / 60_000);
+}
+
+// ---------------------------------------------------------------------------
+// Maqsam's record of a call, matched to the dialer's attempt
+// (mahara-power-dialer src/domain.mjs matchCall and isNoAnswer, v0.7.22)
+// ---------------------------------------------------------------------------
+
+/** One call as Maqsam's history (GET /v3/calls) returns it. */
+export interface MaqsamCall {
+  id?: string | number;
+  referenceId?: string | null;
+  type?: string;
+  state?: string;
+  duration?: number | string | null;
+  /** Seconds (or milliseconds) since the epoch. */
+  timestamp?: number | string;
+  calleeNumber?: string | null;
+  callee?: string | null;
+  agents?: (string | { email?: string | null; identifier?: string | null; id?: string | number | null })[];
+}
+
+export interface OpenAttempt {
+  phone: string;
+  started_at: number;
+  maqsam_email: string;
+  maqsam_ref?: string | null;
+  maqsam_call_id?: string | null;
+}
+
+const digits = (v: unknown) => String(v ?? "").replace(/\D/g, "");
+
+/**
+ * The one Maqsam call that is this attempt: the same number, the rep's seat,
+ * placed from five seconds before the attempt to two minutes after, and the
+ * same reference or call id once either is known. Two candidates is no match:
+ * an outcome is never guessed.
+ */
+export function matchCall(a: OpenAttempt, calls: MaqsamCall[]): MaqsamCall | null {
+  const phone = digits(a.phone);
+  const email = a.maqsam_email.toLowerCase();
+  const found = calls.filter(c => {
+    const when = Number(c.timestamp) < 1e12 ? Number(c.timestamp) * 1000 : Number(c.timestamp);
+    const seat = (c.agents ?? []).some(x =>
+      typeof x === "string" ? x.toLowerCase() === email : String(x?.email ?? "").toLowerCase() === email,
+    );
+    return (
+      digits(c.calleeNumber ?? c.callee) === phone &&
+      seat &&
+      Number.isFinite(when) &&
+      when >= a.started_at - 5_000 &&
+      when <= a.started_at + 120_000 &&
+      (!a.maqsam_call_id || String(c.id) === String(a.maqsam_call_id)) &&
+      (!a.maqsam_ref || !c.referenceId || String(c.referenceId) === String(a.maqsam_ref))
+    );
+  });
+  return found.length === 1 ? found[0] : null;
+}
+
+/** Maqsam says nobody answered, and no second was spoken. */
+export function isNoAnswer(c: MaqsamCall | null): boolean {
+  // A completed zero-second call may be an error, voicemail or an incomplete record.
+  return !!c && ["no-answer", "no_answer", "unanswered"].includes(String(c.state ?? "").toLowerCase()) && Number(c.duration) === 0;
+}
+
+const FINAL = new Set(["completed", "serviced", "no_answer", "no-answer", "unanswered", "busy", "failed", "blocked", "abandoned"]);
+
+/** How the call went, in the words the dialer shows, once Maqsam has it. */
+export function callSummary(c: MaqsamCall | null): {
+  final: boolean;
+  answered: boolean;
+  seconds: number;
+  words: string;
+} | null {
+  if (!c) return null;
+  const state = String(c.state ?? "").toLowerCase();
+  const seconds = Math.max(0, Math.round(Number(c.duration) || 0));
+  const answered = (state === "completed" || state === "serviced") && seconds > 0;
+  const words = answered
+    ? "Answered"
+    : state === "busy"
+      ? "Busy"
+      : state === "no_answer" || state === "no-answer" || state === "unanswered"
+        ? "No answer"
+        : state === "failed" || state === "blocked"
+          ? "Did not connect"
+          : state === "abandoned"
+            ? "Hung up before it connected"
+            : state === "completed" || state === "serviced"
+              ? "Connected, no talk time"
+              : "In progress";
+  return { final: FINAL.has(state), answered, seconds, words };
+}
+
+// ---------------------------------------------------------------------------
+// Booking from the dialer
+// ---------------------------------------------------------------------------
+
+/**
+ * The calendars a call is booked on (HighLevel, read 2026-09-25): the intro
+ * on the page the lead's class belongs to (15 minutes, Tahrir and Aziz, two
+ * hours' notice, three days out); the demo on "Demo" (45 minutes, Ahmed and
+ * Aziz, an hour's notice, three days out). "Demo 2" is a copy of it and was
+ * last booked on 8 September; "Demo" on 21 September.
+ */
+export const BOOKING_CALENDARS = {
+  intro_qualified: "dsqmJ393Dwl9fDSbIVOI",
+  intro_unqualified: "cFeDl0FY8iaXll61lus8",
+  demo: "jQqXS1YuFnmGZKLkrE62",
+} as const;
+
+export type BookingKind = "intro" | "demo";
+
+export function calendarFor(kind: BookingKind, leadClass: string | null): string {
+  if (kind === "demo") return BOOKING_CALENDARS.demo;
+  return leadClass === "qualified" ? BOOKING_CALENDARS.intro_qualified : BOOKING_CALENDARS.intro_unqualified;
+}
+
+/**
+ * HighLevel's free slots ({"2026-09-26": {slots: [...]}, traceId}) as days in
+ * order, each slot an ISO time still ahead of `now`.
+ */
+export function parseSlots(d: Record<string, unknown>, now: number): { day: string; slots: string[] }[] {
+  const out: { day: string; slots: string[] }[] = [];
+  for (const [day, v] of Object.entries(d ?? {})) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
+    const list = ((v as { slots?: unknown })?.slots ?? []) as unknown[];
+    const slots = list
+      .map(s => String(s))
+      .filter(s => Number.isFinite(Date.parse(s)) && Date.parse(s) > now)
+      .sort((a, b) => Date.parse(a) - Date.parse(b));
+    if (slots.length) out.push({ day, slots });
+  }
+  return out.sort((a, b) => a.day.localeCompare(b.day));
+}
+
+/** A start time that is exactly one of the offered slots (same instant). */
+export function slotOffered(start: string, days: { slots: string[] }[]): boolean {
+  const t = Date.parse(start);
+  return Number.isFinite(t) && days.some(d => d.slots.some(s => Date.parse(s) === t));
+}
+
+/** "Sat 26 Sep, 10:20" in Kuwait time, for notes and toasts. */
+export function kuwaitWords(ms: number): string {
+  const d = new Date(ms + KUWAIT);
+  const day = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getUTCDay()];
+  const mon = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][d.getUTCMonth()];
+  return `${day} ${d.getUTCDate()} ${mon}, ${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+}
+
+// ---------------------------------------------------------------------------
+// The rep's day, as the stats row shows it
+// ---------------------------------------------------------------------------
+
+export interface DayStats {
+  /** Outcomes saved today, with or without a call through the dialer. */
+  saved: number;
+  /** Calls Maqsam took from the dialer today. */
+  calls: number;
+  /** Of those, the ones Maqsam's record shows answered. */
+  answered: number;
+  /** Of those, the ones whose record Maqsam has not returned yet. */
+  unmatched: number;
+  talk_s: number;
+  booked: number;
+  auto_no_answer: number;
+}
+
+/** Today's numbers from the dialer's own attempts (Kuwait day from `dayStart`). */
+export function dayStats(attempts: Record<string, unknown>[], dayStart: number): DayStats {
+  const since = (v: unknown) => {
+    const t = v ? Date.parse(String(v)) : Number.NaN;
+    return Number.isFinite(t) && t >= dayStart;
+  };
+  const saved = attempts.filter(a => a.state === "saved" && since(a.saved_at));
+  const calls = attempts.filter(a => !a.manual && since(a.started_at) && a.state !== "failed" && a.state !== "dialing");
+  const answered = calls.filter(a => ["completed", "serviced"].includes(String(a.call_state ?? "")) && Number(a.call_duration_s ?? 0) > 0);
+  return {
+    saved: saved.length,
+    calls: calls.length,
+    answered: answered.length,
+    unmatched: calls.filter(a => !a.maqsam_call_id).length,
+    talk_s: answered.reduce((s, a) => s + Number(a.call_duration_s ?? 0), 0),
+    booked: saved.filter(a => a.outcome === "booked").length,
+    auto_no_answer: saved.filter(a => a.auto_saved).length,
+  };
+}
+
+/**
+ * A HighLevel time as epoch ms. The contact's appointment list writes the
+ * sub-account's wall time with no zone ("2026-09-24 16:00:00", Kuwait); the
+ * calendar endpoints write an offset. Read both the same way.
+ */
+export function ghlTime(v: unknown): number {
+  const s = String(v ?? "").trim();
+  if (!s) return Number.NaN;
+  if (/(?:[zZ]|[+-]\d{2}:?\d{2})$/.test(s)) return Date.parse(s);
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2})?)/);
+  return m ? Date.parse(`${m[1]}T${m[2]}+03:00`) : Number.NaN;
 }

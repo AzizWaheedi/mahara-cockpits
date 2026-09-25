@@ -10,6 +10,7 @@ import {
   StatusChip,
   type Tone,
 } from "../components/kit";
+import { Answers } from "../components/LeadAnswers";
 import { LeadRecordings } from "../components/LeadRecordings";
 import { LeadTimeline, type LiveMessage } from "../components/LeadTimeline";
 import { CrmLine, MarkControls } from "../components/MarkControls";
@@ -21,7 +22,6 @@ import {
   ago,
   callType,
   classLabel,
-  day,
   isArabic,
   plainStage,
   statusLabel,
@@ -343,59 +343,6 @@ function Page({ children }: { children: ReactNode }) {
     <main className="mx-auto w-full max-w-7xl space-y-5 px-4 py-6 md:px-6">
       {children}
     </main>
-  );
-}
-
-const ANSWERS: [keyof Lead, string][] = [
-  ["revenue", "Yearly revenue"],
-  ["revenue_goal", "Revenue goal"],
-  ["readiness", "Ready to invest"],
-  ["decision_maker", "Decision maker"],
-  ["challenge", "Biggest challenge"],
-  ["grade", "Appointment grade"],
-  ["setter_name", "Setter"],
-];
-
-function Answers({ lead }: { lead: Lead }) {
-  const rows = ANSWERS.map(([k, label]) => [label, lead[k]] as const).filter(
-    ([, v]) => v !== null && v !== undefined && String(v).trim() !== "",
-  );
-  const services =
-    lead.services && lead.services.trim() !== "Yes" ? lead.services : null;
-  if (!rows.length && !services)
-    return (
-      <p className="muted text-sm">
-        No form answers on this contact. They may have booked without the
-        qualification form.
-      </p>
-    );
-  return (
-    <dl className="space-y-2.5">
-      {rows.map(([label, v]) => (
-        <div key={label}>
-          <dt className="muted text-xs">{label}</dt>
-          <dd
-            className={`text-sm ${isArabic(String(v)) ? "ar" : ""}`}
-            dir="auto"
-          >
-            {String(v)}
-          </dd>
-        </div>
-      ))}
-      {services ? (
-        <div>
-          <dt className="muted text-xs">What they do</dt>
-          <dd className="text-sm" dir="auto">
-            {services}
-          </dd>
-        </div>
-      ) : null}
-      {lead.lead_created_at ? (
-        <p className="muted pt-1 text-xs">
-          Answered when they came in, {day(lead.lead_created_at)}.
-        </p>
-      ) : null}
-    </dl>
   );
 }
 

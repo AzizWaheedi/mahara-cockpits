@@ -251,6 +251,30 @@ export function useLeads(f: LeadFilter): Loaded<Lead[]> {
   }, [f.q, f.leadClass, f.stage, f.days, f.page]);
 }
 
+/**
+ * Leads matching a name, email, company or the last digits of a phone, for
+ * the dialer's search. Nothing is read under two characters.
+ */
+export function useLeadSearch(term: string): Loaded<Lead[]> {
+  const t = safeTerm(term);
+  return useQuery<Lead[]>(() => {
+    if (t.length < 2) return none<Lead[]>();
+    const digits = t.replace(/\D/g, "");
+    const parts = [
+      `name.ilike.*${t}*`,
+      `email.ilike.*${t}*`,
+      `company.ilike.*${t}*`,
+    ];
+    if (digits.length >= 4) parts.push(`phone8.like.*${digits.slice(-8)}*`);
+    return supabase
+      .from("cockpit_sales_leads")
+      .select("*")
+      .or(parts.join(","))
+      .order("lead_created_at", { ascending: false, nullsFirst: false })
+      .limit(20);
+  }, [t]);
+}
+
 /** The pipeline's stages, from the leads that sit in them. */
 export function useStages(): Loaded<
   { stage_id: string; stage_name: string; pipeline_name: string | null }[]

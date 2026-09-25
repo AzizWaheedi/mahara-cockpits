@@ -1,6 +1,25 @@
 // bun test supabase/functions/sales-api
 import { describe, expect, test } from "bun:test";
-import { afterOutcome, type Candidate, kuwaitAt, nextTry, rankForCloser, rankForSetter, routePhone, speedToLead } from "./dialer.ts";
+import {
+  afterOutcome,
+  BOOKING_CALENDARS,
+  type Candidate,
+  calendarFor,
+  callSummary,
+  dayStats,
+  ghlTime,
+  isNoAnswer,
+  kuwaitAt,
+  kuwaitWords,
+  matchCall,
+  nextTry,
+  parseSlots,
+  rankForCloser,
+  rankForSetter,
+  routePhone,
+  slotOffered,
+  speedToLead,
+} from "./dialer.ts";
 
 describe("phone routing", () => {
   test("each GCC line gets its own caller ID", () => {
@@ -44,6 +63,13 @@ describe("the retry ladder", () => {
     expect(afterOutcome("booked", 2, morning, null).closed).toBe("booked");
     const cb = morning + 3_600_000;
     expect(afterOutcome("callback", 0, morning, cb)).toEqual({ step: 0, due: cb, closed: null, callback: cb });
+  });
+  test("handled keeps a call-back or retry still ahead, and otherwise takes the lead out", () => {
+    const cb = morning + 3_600_000;
+    expect(afterOutcome("handled", 1, morning, null, { due: null, callback: cb })).toEqual({ step: 1, due: cb, closed: null, callback: cb });
+    expect(afterOutcome("handled", 2, morning, null, { due: cb, callback: null })).toEqual({ step: 2, due: cb, closed: null, callback: null });
+    expect(afterOutcome("handled", 0, morning, null, { due: morning - 1, callback: null }).closed).toBe("handled");
+    expect(afterOutcome("handled", 0, morning, null).closed).toBe("handled");
   });
 });
 
@@ -146,5 +172,108 @@ describe("the closer's queue", () => {
   test("a missed demo from last week comes back to be rebooked", () => {
     const q = rankForCloser([{ ...lead({ contact_id: "m" }), ...facts, demo_at: NOW - 3 * 86_400_000, demo_status: "noshow" }], "me", NOW);
     expect(q[0]?.tier).toBe(2);
+  });
+});
+
+describe("Maqsam's record of a call", () => {
+  const start = Date.parse("2026-09-25T07:00:00Z");
+  const a = { phone: "96550012345", started_at: start, maqsam_email: "tahreer@maharamedia.com", maqsam_ref: "ref-1" };
+  const call = (over: Record<string, unknown> = {}) => ({
+    id: 901,
+    referenceId: "ref-1",
+    type: "outbound",
+    state: "no_answer",
+    duration: 0,
+    timestamp: Math.floor((start + 3_000) / 1000),
+    calleeNumber: "+965 5001 2345",
+    agents: [{ email: "Tahreer@maharamedia.com" }],
+    ...over,
+  });
+  test("the same number, seat and moment is the call", () => {
+    expect(matchCall(a, [call()])?.id).toBe(901);
+  });
+  test("another seat, another number, or a call from before the attempt is not", () => {
+    expect(matchCall(a, [call({ agents: [{ email: "aziz@maharamedia.com" }] })])).toBeNull();
+    expect(matchCall(a, [call({ calleeNumber: "96550099999" })])).toBeNull();
+    expect(matchCall(a, [call({ timestamp: Math.floor((start - 60_000) / 1000) })])).toBeNull();
+    expect(matchCall(a, [call({ referenceId: "ref-2" })])).toBeNull();
+  });
+  test("two calls that could both be it are no match: the outcome is never guessed", () => {
+    expect(matchCall({ ...a, maqsam_ref: null }, [call({ id: 1, referenceId: null }), call({ id: 2, referenceId: null })])).toBeNull();
+  });
+  test("once the call id is known only that call matches", () => {
+    expect(matchCall({ ...a, maqsam_call_id: "902" }, [call(), call({ id: 902 })])?.id).toBe(902);
+  });
+  test("only an explicit no answer with no seconds saves itself", () => {
+    expect(isNoAnswer(call())).toBe(true);
+    expect(isNoAnswer(call({ duration: 4 }))).toBe(false);
+    expect(isNoAnswer(call({ state: "completed", duration: 0 }))).toBe(false);
+    expect(isNoAnswer(call({ state: "busy" }))).toBe(false);
+    expect(isNoAnswer(null)).toBe(false);
+  });
+  test("the words the dialer shows", () => {
+    expect(callSummary(call({ state: "completed", duration: 131 }))).toEqual({ final: true, answered: true, seconds: 131, words: "Answered" });
+    expect(callSummary(call({ state: "busy" }))?.words).toBe("Busy");
+    expect(callSummary(call({ state: "in_progress" }))?.final).toBe(false);
+    expect(callSummary(null)).toBeNull();
+  });
+});
+
+describe("booking from the dialer", () => {
+  test("the intro goes on the page of the lead's class; the demo on Demo", () => {
+    expect(calendarFor("intro", "qualified")).toBe(BOOKING_CALENDARS.intro_qualified);
+    expect(calendarFor("intro", "unqualified")).toBe(BOOKING_CALENDARS.intro_unqualified);
+    expect(calendarFor("intro", null)).toBe(BOOKING_CALENDARS.intro_unqualified);
+    expect(calendarFor("demo", "qualified")).toBe(BOOKING_CALENDARS.demo);
+  });
+  test("free slots come back as days in order, past slots dropped", () => {
+    const now = Date.parse("2026-09-26T07:10:00Z"); // 10:10 Kuwait
+    const days = parseSlots(
+      {
+        "2026-09-27": { slots: ["2026-09-27T10:00:00+03:00"] },
+        "2026-09-26": { slots: ["2026-09-26T10:20:00+03:00", "2026-09-26T10:00:00+03:00"] },
+        traceId: "x",
+      },
+      now,
+    );
+    expect(days).toEqual([
+      { day: "2026-09-26", slots: ["2026-09-26T10:20:00+03:00"] },
+      { day: "2026-09-27", slots: ["2026-09-27T10:00:00+03:00"] },
+    ]);
+    expect(slotOffered("2026-09-26T07:20:00.000Z", days)).toBe(true);
+    expect(slotOffered("2026-09-26T07:30:00.000Z", days)).toBe(false);
+    expect(slotOffered("not a time", days)).toBe(false);
+  });
+  test("a time in Kuwait words", () => {
+    expect(kuwaitWords(Date.parse("2026-09-26T07:20:00Z"))).toBe("Sat 26 Sep, 10:20");
+  });
+});
+
+describe("the rep's day", () => {
+  const dayStart = Date.parse("2026-09-24T21:00:00Z"); // midnight Kuwait, 25 Sept
+  const at = (h: number) => new Date(dayStart + h * 3_600_000).toISOString();
+  test("saved outcomes, calls, answered and talk time, from today only", () => {
+    const s = dayStats(
+      [
+        { state: "saved", saved_at: at(10), started_at: at(10), outcome: "no_answer", auto_saved: true, call_state: "no_answer", call_duration_s: 0, maqsam_call_id: "1" },
+        { state: "saved", saved_at: at(11), started_at: at(11), outcome: "booked", call_state: "completed", call_duration_s: 300, maqsam_call_id: "2" },
+        { state: "saved", saved_at: at(12), started_at: at(12), outcome: "callback", manual: true },
+        { state: "placed", started_at: at(13) },
+        { state: "failed", started_at: at(13) },
+        { state: "saved", saved_at: at(-2), started_at: at(-2), outcome: "booked", call_state: "completed", call_duration_s: 90, maqsam_call_id: "0" },
+      ],
+      dayStart,
+    );
+    expect(s).toEqual({ saved: 3, calls: 3, answered: 1, unmatched: 1, talk_s: 300, booked: 1, auto_no_answer: 1 });
+  });
+});
+
+describe("HighLevel's times", () => {
+  test("a wall time with no zone is Kuwait time; an offset is kept", () => {
+    expect(ghlTime("2026-09-24 16:00:00")).toBe(Date.parse("2026-09-24T13:00:00Z"));
+    expect(ghlTime("2026-09-24T16:00:00+03:00")).toBe(Date.parse("2026-09-24T13:00:00Z"));
+    expect(ghlTime("2026-09-24T13:00:00.000Z")).toBe(Date.parse("2026-09-24T13:00:00Z"));
+    expect(Number.isNaN(ghlTime(""))).toBe(true);
+    expect(Number.isNaN(ghlTime("soon"))).toBe(true);
   });
 });
