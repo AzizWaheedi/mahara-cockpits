@@ -56,11 +56,34 @@ test("colors the displayed 30-day cost against the same gate as selected-range c
   expect(bookingCostTone(undefined, 100)).toBe("");
 });
 
-test("prefers the selected range's own cost when that ad spent and booked", () => {
+test("Atlantis: older spend makes the 30-day ad cost primary, with selected cost disclosed", () => {
   expect(
     bookingCostCell(
       {
-        key: "ad-1",
+        key: "ad-SC3",
+        adIds: ["52514606132916"],
+        spend: 3.15,
+        bookings: 1,
+        costPerBooking: 3.15,
+      },
+      [
+        {
+          key: "ad-SC3",
+          adIds: ["52514606132916"],
+          spend: 157.35,
+          bookings: 1,
+          costPerBooking: 157.35,
+        },
+      ],
+    ),
+  ).toEqual({ value: 157.35, label: "30d", selectedValue: 3.15 });
+});
+
+test("uses selected cost when there is no older spend", () => {
+  expect(
+    bookingCostCell(
+      {
+        key: "new",
         adIds: ["100"],
         spend: 80,
         bookings: 2,
@@ -68,13 +91,36 @@ test("prefers the selected range's own cost when that ad spent and booked", () =
       },
       [
         {
-          key: "ad-1",
+          key: "new",
           adIds: ["100"],
-          spend: 300,
-          bookings: 3,
-          costPerBooking: 100,
+          spend: 80,
+          bookings: 2,
+          costPerBooking: 40,
         },
       ],
     ),
   ).toEqual({ value: 40 });
+});
+
+test("does not mix different IDs even if old and current ads share a name", () => {
+  expect(
+    bookingCostCell(
+      {
+        key: "same name [300]",
+        adIds: ["300"],
+        spend: 3.15,
+        bookings: 1,
+        costPerBooking: 3.15,
+      },
+      [
+        {
+          key: "same name",
+          adIds: ["100", "300"],
+          spend: 250,
+          bookings: 2,
+          costPerBooking: 125,
+        },
+      ],
+    ),
+  ).toEqual({ value: 3.15 });
 });
