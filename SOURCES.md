@@ -181,3 +181,7 @@ Aziz, 2026-09-13: "there should always be a fallback source for these types of t
 | Footage, transcripts, shot maps, storyboards | Google Drive, ElevenLabs Scribe, ffmpeg | Supabase `editor_assets`, bucket `editor-stills` | video editor cockpit |
 | What the cockpit asked the worker to do | the cockpit | Supabase `editor_requests` | `hermes/editor-desk` every 3 minutes |
 | Who may open the cockpit | Aziz | Supabase `editor_people` | every `editor_*` row policy |
+
+## Webinar correction checkpoint, 25 September 2026
+
+See [the verified checkpoint](docs/WEBINAR-METRICS-2026-09-25.md). Date-only CRM values use the existing 20:00 Kuwait schedule consistently in `webinarSql.ts` and `pull.py`; explicit timestamps preserve their time. The launch checklist flags a conflicting live schedule. Round tags sort by calendar month/year. Acquisition visitors exclude live/pitch-only traffic and accept only the production domain and its production alias. Webinar retargeting leaves the call funnel's retargeting totals as well as daily figures; lead-gen cost denominators are preserved. Survey years/work distributions count matched responses for the selected round. `webinarMetrics.ts` projects 27 round-scoped metrics directly from the screen payload; unavailable values remain null. Repeat registrations are still latest-round attribution, not reconstructed historical occurrences. Readiness uses recent allowlisted provider evidence and does not prove delivery or a completed journey.

@@ -862,7 +862,10 @@ class DeepSeek:
     @classmethod
     def from_env(cls) -> Optional["DeepSeek"]:
         key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
-        return cls(key) if key else None
+        # SALES_COCKPIT_PLAN.md: no lead data to DeepSeek. Explicit webinar
+        # approval is required before this transcript-only route can resume.
+        approved = os.environ.get("WEBINAR_DEEPSEEK_TRANSCRIPTS_APPROVED") == "true"
+        return cls(key) if key and approved else None
 
     def json(self, system: str, user: str) -> dict:
         # deepseek-flash is a reasoning model: reasoning tokens are spent
@@ -928,18 +931,38 @@ NOT_SALES = re.compile(r"launch|check.?in|onboarding|kick.?off|renewal|review|wr
                        r"whole team|fulfil|call cent", re.I)
 
 
+# Shared policy with convex/ceo/webinarSql.ts; readiness reports a mismatch.
+SESSION_HOUR_KUWAIT = 20
+KUWAIT = dt.timezone(dt.timedelta(hours=3))
+
+
+def session_value(value: Any) -> Optional[dt.datetime]:
+    """DATE/midnight epochs use the training schedule; explicit ISO retains time."""
+    v = str(value if value is not None else "").strip()
+    try:
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
+            day = dt.date.fromisoformat(v)
+        elif re.fullmatch(r"\d{10}(\d{3})?", v):
+            epoch = dt.datetime.fromtimestamp(int(v) / (1000 if len(v) == 13 else 1), dt.timezone.utc)
+            if epoch.time() == dt.time(0):
+                day = epoch.date()
+            elif epoch.astimezone(KUWAIT).time() == dt.time(0):
+                day = epoch.astimezone(KUWAIT).date()
+            else:
+                return epoch
+        elif re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}.*(Z|[+-]\d{2}:\d{2})", v):
+            return parse_ts(v)
+        else:
+            return None
+        return dt.datetime.combine(day, dt.time(SESSION_HOUR_KUWAIT), KUWAIT).astimezone(dt.timezone.utc)
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
 def session_of(contact: dict) -> Optional[dt.datetime]:
-    """The contact's Webinar Datetime: epoch ms, epoch s or YYYY-MM-DD."""
     for cf in contact.get("customFields") or []:
-        if not isinstance(cf, dict) or cf.get("id") != SESSION_FIELD:
-            continue
-        v = str(cf.get("value") if cf.get("value") is not None else cf.get("fieldValue") or "").strip()
-        if re.fullmatch(r"\d{13}", v):
-            return dt.datetime.fromtimestamp(int(v) / 1000, dt.timezone.utc)
-        if re.fullmatch(r"\d{10}", v):
-            return dt.datetime.fromtimestamp(int(v), dt.timezone.utc)
-        if re.match(r"^\d{4}-\d{2}-\d{2}", v):
-            return parse_ts(v if "T" in v else v[:10] + "T00:00:00+00:00")
+        if isinstance(cf, dict) and cf.get("id") == SESSION_FIELD:
+            return session_value(cf.get("value") if cf.get("value") is not None else cf.get("fieldValue"))
     return None
 
 
@@ -1101,6 +1124,65 @@ def join_link_ok() -> Optional[bool]:
         return None
 
 
+WEBBY_API_HEALTH = "https://webby-live-training.vercel.app/api/health"
+WEBBY_PAGE = "https://webinar.maharamedia.com/"
+WORKFLOW_STEPS = ("W1", "W2", "W4a", "W4b", "W5", "W6")
+
+
+def workflow_states(rows: Any) -> dict:
+    """Only the six WEBBY workflow states; no bodies, contacts or credentials."""
+    if not isinstance(rows, list):
+        return {}
+    result = {}
+    for step in WORKFLOW_STEPS:
+        found = [w for w in rows if isinstance(w, dict)
+                 and re.search(r"\bWEBBY\b", str(w.get("name") or ""), re.I)
+                 and re.search(r"\b" + step + r"\b", str(w.get("name") or ""), re.I)]
+        # Duplicate names are ambiguous, never a successful check.
+        result[step] = (str(found[0].get("status") or "").lower()
+                        if len(found) == 1 else "missing" if not found else "ambiguous")
+    return result
+
+
+def launch_snapshot(meeting: dict, join_ok: Optional[bool]) -> dict:
+    """Read-only setup evidence. Store only allowlisted booleans/dates/states.
+    A failed check cannot stop collection or expose its provider error body.
+    """
+    settings = meeting.get("settings") or {}
+    start = parse_ts(meeting.get("start_time"))
+    snapshot = {"checked_at": iso(utcnow()), "join_link_ok": join_ok,
+                "zoom": {"start": iso(start) if start else None,
+                         "registration": settings.get("approval_type") in (0, 1) if "approval_type" in settings else None,
+                         "cloud_recording": settings.get("auto_recording") == "cloud" if "auto_recording" in settings else None},
+                "api": {}, "page": {}, "workflows": {}}
+    try:
+        status, _h, body = call("GET", WEBBY_API_HEALTH, {"User-Agent": BROWSER_UA}, timeout=20)
+        if status == 200:
+            health = json.loads(body)
+            at = parse_ts(health.get("webinarStart"))
+            token = health.get("ghlTokenSet")
+            snapshot["api"] = {"start": iso(at) if at else None,
+                               "ghl_token_set": token if isinstance(token, bool) else None}
+    except (Failure, ValueError, TypeError, AttributeError):
+        pass
+    try:
+        status, _h, body = call("GET", WEBBY_PAGE, {"User-Agent": BROWSER_UA}, timeout=20)
+        if status == 200:
+            match = re.search(r"COUNTDOWN_ISO\s*=\s*['\"]([^'\"]+)['\"]", body.decode("utf-8", "replace"))
+            at = parse_ts(match[1]) if match else None
+            snapshot["page"] = {"start": iso(at) if at else None}
+    except (Failure, ValueError, TypeError):
+        pass
+    try:
+        ghl = GHL.from_env()
+        if ghl:
+            data = ghl.req("GET", "/workflows/", params={"locationId": ghl.location})
+            snapshot["workflows"] = workflow_states(data.get("workflows"))
+    except (Failure, ValueError, TypeError, AttributeError):
+        pass
+    return snapshot
+
+
 def pull_zoom(sb: Supabase, zoom: Zoom, again: bool = False) -> dict:
     pulled = iso(utcnow())
     try:
@@ -1132,6 +1214,7 @@ def pull_zoom(sb: Supabase, zoom: Zoom, again: bool = False) -> dict:
     counts = {"sessions": 0, "attendance_rows": 0, "chat_rows": 0, "poll_rows": 0, "qa_rows": 0,
               "registration": registration, "join_link_ok": join_link_ok(), "live": live,
               "polls_readable": bool(zoom.app and zoom.app.can("meeting:read:list_poll_results"))}
+    counts["launch"] = launch_snapshot(meeting, counts["join_link_ok"])
     problems: list[str] = []
     newest = max((parse_ts(s["start"]) for s in found.values() if parse_ts(s["start"])), default=None)
     for uuid, s in sorted(found.items(), key=lambda kv: str(kv[1].get("start") or "")):
@@ -1420,8 +1503,8 @@ def doctor() -> int:
     else:
         warnings.append("FATHOM_API_KEY is not set: no objection tags")
         line(None, "FATHOM_API_KEY not set", "no objection tags")
-    line(True if DeepSeek.from_env() else None, f"DeepSeek key for {OBJECTIONS_MODEL}",
-         "set" if DeepSeek.from_env() else "DEEPSEEK_API_KEY not set: no objection tags")
+    line(True if DeepSeek.from_env() else None, f"Objection provider {OBJECTIONS_MODEL}",
+         "explicitly enabled" if DeepSeek.from_env() else "paused: requires an approved transcript provider; a configured key alone does not permit sending lead data")
 
     print("join link")
     ok = join_link_ok()
@@ -1442,7 +1525,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     global QUIET
     ap = argparse.ArgumentParser(description="The live training's Zoom sessions and survey, into Creative Triage.")
     ap.add_argument("command", nargs="?", default="pull",
-                    choices=("pull", "zoom", "survey", "reminders", "objections", "doctor"))
+                    choices=("pull", "zoom", "survey", "reminders", "objections", "doctor", "readiness"))
     ap.add_argument("--again", action="store_true", help="read finished sessions again")
     ap.add_argument("--dry-run", action="store_true", help="read everything, write nothing")
     ap.add_argument("--quiet", action="store_true")
@@ -1450,6 +1533,16 @@ def main(argv: Optional[list[str]] = None) -> int:
     QUIET = a.quiet
     if a.command == "doctor":
         return doctor()
+
+    if a.command == "readiness":
+        key = os.environ.get("COMPOSIO_API_KEY", "").strip()
+        zoom = Zoom(Composio(key) if key else None, ZoomApp.from_env())
+        try:
+            meeting = zoom.meeting()
+        except Failure:
+            meeting = {}
+        print(json.dumps(launch_snapshot(meeting, join_link_ok()), sort_keys=True))
+        return 0
 
     try:
         sb = Supabase.from_env(dry=a.dry_run)
@@ -1503,6 +1596,11 @@ def main(argv: Optional[list[str]] = None) -> int:
                     note(f"reminders: {e}")
                     sb.finish(run, False, "highlevel", str(e), {})
         fathom, model = Fathom.from_env(), DeepSeek.from_env()
+        if a.command in ("pull", "objections") and not model:
+            run = sb.begin("objections")
+            sb.finish(run, False, "policy", "Objection tagging paused: approve a transcript provider before sending lead data.", {"provider_approved": False})
+            if a.command == "objections":
+                failed = True
         if a.command in ("pull", "objections") and fathom and model:
             run = sb.begin("objections")
             try:

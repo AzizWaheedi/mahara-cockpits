@@ -1,4 +1,5 @@
 import type { CallCenterReport } from "./callCenterContract";
+import type { WebinarReadiness } from "./webinarReadiness";
 /**
  * The exact shape of every CEO section payload. Adapters on the backend fill
  * these; the /ceo screens read them. Change a shape here first.
@@ -2075,6 +2076,9 @@ export type WebinarRound = {
     costPerQualified: number | null;
     /** The survey's profit bands among this round's registrants, lowest first. */
     bands: { label: string; min: number; n: number }[];
+    /** Optional for cached payloads computed before survey breakdowns shipped. */
+    years?: { label: string; n: number }[];
+    work?: { label: string; n: number }[];
     threshold: number;
   };
   /** Stage 4: registrants whose booking came through a pitch link (utm_content=pitch1 or pitch2). */
@@ -2110,6 +2114,8 @@ export type WebinarRound = {
 };
 
 export type WebinarPayload = {
+  /** Read-only configuration checks, separate from a successful data pull. */
+  readiness?: WebinarReadiness;
   today: string;
   /** Newest session first. */
   rounds: WebinarRound[];

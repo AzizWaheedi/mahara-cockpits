@@ -35,6 +35,7 @@ import type {
   WebinarPayload,
   WebinarRound,
 } from "../../../convex/ceo/payloads";
+import { webinarReadiness } from "../../../convex/ceo/webinarReadiness";
 import type { Room } from "../../../convex/ceo/webinarRoom";
 
 /**
@@ -669,6 +670,7 @@ export function WebinarFunnel({
 
   return (
     <div className="grid gap-5 lg:gap-7">
+      {p ? <LaunchReadiness p={p} section={section} /> : null}
       <SectionCard
         title="Webinar funnel"
         kicker={round ? roundName(round) : "Live training"}
@@ -680,7 +682,7 @@ export function WebinarFunnel({
           !round ? (
             <EmptyState
               title="The webinar has not started"
-              text="No registrant carries a webby tag and no webinar campaign has spent yet. Everything below fills in by itself once the Webinar Opt In form takes its first registration."
+              text="No webinar registrations or campaign spend have been recorded yet. Complete the checks above, then verify one registration through the full funnel. Unavailable metrics stay empty until their source provides evidence."
             />
           ) : (
             <div className="grid gap-5">
@@ -754,6 +756,123 @@ export function WebinarFunnel({
 
       {p ? <Tracking p={p} section={section} /> : null}
     </div>
+  );
+}
+
+function LaunchReadiness({
+  p,
+  section,
+}: {
+  p: WebinarPayload;
+  section: CeoSection<"webinar"> | null;
+}) {
+  const now = Date.now();
+  const cached = p.readiness;
+  const stillFresh =
+    cached?.checkedAt != null &&
+    now - cached.checkedAt >= 0 &&
+    now - cached.checkedAt <= 3 * 3600_000;
+  const readiness = stillFresh
+    ? cached
+    : { ...webinarReadiness(null, now), checkedAt: cached?.checkedAt ?? null };
+  const blocked = readiness.checks.filter(c => c.status === "blocked").length;
+  const unknown = readiness.checks.filter(c => c.status === "unknown").length;
+  const ready = readiness.checks.filter(c => c.status === "ready").length;
+  return (
+    <SectionCard
+      title="Before the next training"
+      kicker="Launch readiness"
+      section={section}
+      hideAsOf
+      order={0}
+    >
+      {() => (
+        <div className="grid gap-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="max-w-2xl space-y-1">
+              <p className="text-sm text-muted-foreground">
+                A healthy data sync does not mean registration and reminders are
+                ready. These checks read the live setup without changing it.
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {readiness.checkedAt
+                  ? `Last checked ${dateTime(readiness.checkedAt)}${readiness.fresh ? "" : " · verification expired"}.`
+                  : "The worker has not supplied a readiness check yet."}
+              </p>
+            </div>
+            <StatusChip
+              size="md"
+              tone={blocked ? "serious" : unknown ? "warning" : "good"}
+              label={
+                blocked
+                  ? `${blocked} to fix · ${unknown} to verify`
+                  : unknown
+                    ? `${unknown} to verify`
+                    : "Automated checks passed"
+              }
+            />
+          </div>
+          <div
+            className="h-1 overflow-hidden rounded-full bg-muted"
+            aria-label={`${ready} of ${readiness.checks.length} setup checks passed`}
+            role="img"
+          >
+            <div
+              className="h-full rounded-full bg-[var(--mahara-teal)]"
+              style={{ width: `${(ready / readiness.checks.length) * 100}%` }}
+            />
+          </div>
+          <details open={!p.rounds.length}>
+            <summary className="cursor-pointer text-sm font-medium">
+              Review setup checks
+            </summary>
+            <ul className="mt-3 grid gap-x-6 md:grid-cols-2">
+              {readiness.checks.map(check => (
+                <li
+                  key={check.key}
+                  className="grid content-start gap-2 border-t py-4"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="text-sm font-medium">{check.label}</h3>
+                    <StatusChip
+                      tone={
+                        check.status === "ready"
+                          ? "good"
+                          : check.status === "blocked"
+                            ? "serious"
+                            : "neutral"
+                      }
+                      label={
+                        check.status === "ready"
+                          ? "Checked"
+                          : check.status === "blocked"
+                            ? "Needs action"
+                            : "Not verified"
+                      }
+                    />
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    {check.detail}
+                  </p>
+                  {check.status !== "ready" ? (
+                    <p className="text-xs leading-relaxed text-foreground">
+                      {check.action}
+                    </p>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+            <p className="border-t pt-4 text-xs leading-relaxed text-muted-foreground">
+              Before buying traffic: verify one registration, the scheduled
+              reminders, a mobile join, pitch booking and attendance match. Meta
+              delivery, Kit email engagement and WhatsApp group links also need
+              a live check. These configuration checks cannot prove message
+              delivery or a completed customer journey.
+            </p>
+          </details>
+        </div>
+      )}
+    </SectionCard>
   );
 }
 
@@ -1107,20 +1226,46 @@ function bandLabel(label: string, min: number): string {
 /** The survey's yearly profit bands among the round's registrants. */
 function ProfitBands({ q }: { q: WebinarRound["qualification"] }) {
   return (
-    <div className="grid max-w-xl gap-2">
-      <p className="text-xs text-muted-foreground">
-        Yearly net profit, as {count(q.surveyAnswered)} registrants answered the
-        survey
-      </p>
-      <BarList
-        ariaLabel="Registrants by yearly net profit band"
-        items={q.bands.map(b => ({
-          key: b.label,
-          label: bandLabel(b.label, b.min),
-          value: b.n,
-          sub: b.min >= q.threshold ? "Qualified" : undefined,
-        }))}
-      />
+    <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid content-start gap-2">
+        <p className="text-xs text-muted-foreground">
+          Yearly net profit, as {count(q.surveyAnswered)} registrants answered
+          the survey
+        </p>
+        <BarList
+          ariaLabel="Registrants by yearly net profit band"
+          items={q.bands.map(b => ({
+            key: b.label,
+            label: bandLabel(b.label, b.min),
+            value: b.n,
+            sub: b.min >= q.threshold ? "Qualified" : undefined,
+          }))}
+        />
+      </div>
+      {(
+        [
+          ["Years in business", q.years],
+          ["Type of work", q.work],
+        ] as const
+      ).map(([label, items]) => (
+        <div className="grid content-start gap-2" key={label}>
+          <p className="text-xs text-muted-foreground">{label}</p>
+          {items?.length ? (
+            <BarList
+              ariaLabel={`Registrants by ${label.toLowerCase()}`}
+              items={items.map(b => ({
+                key: b.label,
+                label: b.label,
+                value: b.n,
+              }))}
+            />
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              No matched answers yet.
+            </p>
+          )}
+        </div>
+      ))}
     </div>
   );
 }

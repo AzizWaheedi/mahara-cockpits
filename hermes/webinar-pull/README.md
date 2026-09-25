@@ -1,5 +1,9 @@
 # Webinar pull
 
+> 25 September correction: read [the tested checkpoint](../../docs/WEBINAR-METRICS-2026-09-25.md). `python3 pull.py readiness` is a read-only launch-settings check. Data collection health does not prove launch readiness. New code is not installed on the VPS until its separate release step.
+
+> Objection transcripts are held by default under the current no-lead-data-to-DeepSeek decision. `WEBINAR_DEEPSEEK_TRANSCRIPTS_APPROVED=true` is only for a later explicit exception approved by Aziz; do not set it merely because a key exists. Historical tests described below predate that decision. `--dry-run` prevents database writes but can still call the model when explicitly enabled.
+
 Reads the live training's Zoom sessions and the gift survey into Creative
 Triage, hourly. The CEO cockpit's webinar funnel (Frontend tab, Webinar
 funnel) computes every number from these rows on read.
@@ -11,7 +15,8 @@ source of truth for who showed and for how long, and Typeform for the
 post-event form.
 
 ```bash
-python3 pull.py doctor        # every key by name, each door, the join link
+python3 pull.py doctor        # collector connections, not end-to-end readiness
+python3 pull.py readiness     # read-only settings; no DB writes or transcripts
 python3 pull.py               # Zoom and the survey (what cron runs)
 python3 pull.py zoom --again  # read finished sessions again
 python3 pull.py survey
@@ -95,8 +100,8 @@ joins with a display name and nothing else: attendance, watch time and the
 retention curve are exact, but most attendees cannot be tied to a
 registrant. The cockpit shows how many were and leaves per-person rates
 (attendee to booked, show rate by lead time and by ad) empty rather than
-guessing. Turning Zoom registration on, and sending each registrant their
-own join link, fixes it; once registrants exist, this worker reads them and
+guessing. A candidate fix is Zoom registration plus unique join links; verify the full
+registration-to-attendee match before treating it as solved; once registrants exist, this worker reads them and
 carries each registrant's email (and a custom question whose title holds
 "contact", the HighLevel contact id) onto the attendance rows.
 

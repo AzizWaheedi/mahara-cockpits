@@ -21,6 +21,7 @@ import {
   type PitchClick,
   pageStats,
 } from "../webinarPage";
+import { webinarReadiness } from "../webinarReadiness";
 import {
   phoneKey,
   QUALIFIED_PROFIT,
@@ -31,7 +32,9 @@ import {
 } from "../webinarRoom";
 import {
   fieldValue,
+  latestRoundTag,
   ROUND_FIELD,
+  ROUND_TAG_PATTERN,
   sessionAt,
   webbyCampaign,
   webbyFrom,
@@ -110,8 +113,8 @@ const JOURNEY_SQL = `select
   l.lead_created_at as created_at,
   ${webbyFrom("l")} as registered_at,
   ${sessionAt("l")} as session_at,
-  (select t from unnest(l.tags) t where t ~ '^webby-[a-z]{3}-[0-9]{4}$' order by t desc limit 1) as round_tag,
-  (select count(*) from unnest(l.tags) t where t ~ '^webby-[a-z]{3}-[0-9]{4}$') as round_tags,
+  ${latestRoundTag("l")} as round_tag,
+  (select count(*) from unnest(l.tags) t where t ~ '${ROUND_TAG_PATTERN}') as round_tags,
   ${fieldValue("l", ROUND_FIELD)} as round_field,
   'webby-attended' = any(l.tags) as attended,
   'webby-noshow' = any(l.tags) as noshow,
@@ -181,7 +184,7 @@ const COLLECTED_SQL = `select
       coalesce(payload ? 'to', false) as private
     from public.cockpit_webinar_engagement where session_uuid is not null) x) as engagement,
   (select coalesce(json_agg(x order by x.submitted_at), '[]'::json) from (
-    select response_id, submitted_at, email, phone, contact_id, profit_band, profit_min
+    select response_id, submitted_at, email, phone, contact_id, profit_band, profit_min, years_band, work_type
     from public.cockpit_webinar_forms) x) as survey,
   (select coalesce(json_agg(x), '[]'::json) from (
     select distinct on (p.source) p.source, p.started_at, p.finished_at, p.ok, p.via, p.detail, p.counts,
@@ -214,18 +217,18 @@ const COLLECTED_SQL = `select
       bool_or(e.has_fbclid) as fbclid,
       (array_agg(e.device order by e.at))[1] as device
     from public.cockpit_webinar_page_events e
-    where e.origin_host = 'webinar.maharamedia.com' and e.page <> 'live'
+    where e.origin_host in ('webinar.maharamedia.com', 'mahara-webinar.vercel.app') and e.page in ('landing', 'thank_you')
       and e.at > now() - interval '180 days'
     group by e.visitor_id) x) as visitors,
   (select coalesce(json_agg(x), '[]'::json) from (
     select e.visitor_id, e.at
     from public.cockpit_webinar_page_events e
-    where e.origin_host = 'webinar.maharamedia.com' and e.event = 'join_click'
+    where e.origin_host in ('webinar.maharamedia.com', 'mahara-webinar.vercel.app') and e.event = 'join_click'
       and e.at > now() - interval '180 days') x) as joins,
   (select coalesce(json_agg(x), '[]'::json) from (
     select e.visitor_id, e.at, e.label
     from public.cockpit_webinar_page_events e
-    where e.origin_host = 'webinar.maharamedia.com' and e.event = 'pitch_click'
+    where e.origin_host in ('webinar.maharamedia.com', 'mahara-webinar.vercel.app') and e.event = 'pitch_click'
       and e.label in ('pitch1', 'pitch2')
       and e.at > now() - interval '180 days') x) as pitches,
   (select coalesce(json_agg(x), '[]'::json) from (
@@ -243,6 +246,8 @@ type SurveyRow = {
   contactId: string | null;
   band: string | null;
   profitMin: number | null;
+  years: string | null;
+  work: string | null;
 };
 
 function runOf(r: Any): WebinarCollectorRun {
@@ -492,6 +497,8 @@ export const webinar: Adapter = {
       phone: r.phone ? String(r.phone) : null,
       contactId: r.contact_id ? String(r.contact_id) : null,
       band: r.profit_band ? String(r.profit_band) : null,
+      years: typeof r.years_band === "string" ? r.years_band : null,
+      work: typeof r.work_type === "string" ? r.work_type : null,
       profitMin:
         r.profit_min === null || r.profit_min === undefined
           ? null
@@ -857,6 +864,16 @@ export const webinar: Adapter = {
         bands.set(sv.band, b);
       }
 
+      const distribution = (field: "years" | "work") => {
+        const counts = new Map<string, number>();
+        for (const j of answered) {
+          const label = surveyOf.get(j.contactId)?.[field]?.trim();
+          if (label) counts.set(label, (counts.get(label) ?? 0) + 1);
+        }
+        return [...counts]
+          .map(([label, n]) => ({ label, n }))
+          .sort((a, b) => b.n - a.n || a.label.localeCompare(b.label));
+      };
       built.push({
         key: r.key,
         label: r.label,
@@ -973,6 +990,8 @@ export const webinar: Adapter = {
           unknown: registrations - qualifiedN - notQualifiedN,
           costPerQualified: per(totalSpend, qualifiedN),
           bands: [...bands.values()].sort((a, b) => a.min - b.min),
+          years: distribution("years"),
+          work: distribution("work"),
           threshold: QUALIFIED_PROFIT,
         },
         pitchBookings: {
@@ -1238,7 +1257,7 @@ export const webinar: Adapter = {
             ? "waiting"
             : "missing",
         note: anyReminder
-          ? "Every WhatsApp, SMS and email HighLevel sent a registrant after they registered, with its status; WhatsApp's read receipt is the open. Clicks are the join-link clicks. Email opens and clicks sit in Kit, whose API key in HighLevel is still a placeholder."
+          ? "Every WhatsApp, SMS and email HighLevel sent a registrant after they registered, with its status; WhatsApp's read receipt is the open. Clicks are the join-link clicks. Kit email opens and clicks are not connected to this report."
           : remindersRun?.lastOkAt != null
             ? "Connected. Waiting for the first registrant's messages."
             : "Not connected yet: hermes/webinar-pull has not read HighLevel's messages.",
@@ -1332,7 +1351,7 @@ export const webinar: Adapter = {
         metric: "Post-event survey completions",
         source:
           "Typeform P1xP4r24 (hermes/webinar-pull), and the webby-survey-done tag",
-        status: formReads ? "live" : "missing",
+        status: formReads ? (surveyResponses ? "live" : "waiting") : "missing",
         note: formReads
           ? `${surveyResponses ?? 0} responses stored; ${surveyOf.size} tied to a registrant.`
           : "Not connected yet: hermes/webinar-pull has not read the survey.",
@@ -1356,28 +1375,40 @@ export const webinar: Adapter = {
         metric: "Objection category",
         source:
           "Fathom transcripts, tagged by deepseek-flash (hermes/webinar-pull)",
-        status: anyObjection
-          ? "live"
-          : objectionsRun?.lastOkAt != null
-            ? "waiting"
-            : "missing",
-        note: anyObjection
-          ? "Each registrant's sales calls, tagged once from the transcript into fixed categories with the prospect's own words, never from the closer's notes. Client-service calls (launch, check-in, onboarding) are left out."
-          : objectionsRun?.lastOkAt != null
-            ? "Connected. Waiting for the first sales call with a registrant."
-            : "Not connected yet: hermes/webinar-pull has not read Fathom.",
+        status:
+          objectionsRun?.ok === false
+            ? "missing"
+            : anyObjection
+              ? "live"
+              : objectionsRun?.lastOkAt != null
+                ? "waiting"
+                : "missing",
+        note:
+          objectionsRun?.ok === false
+            ? (objectionsRun.detail ??
+              "The last objection read failed; see collector status.")
+            : anyObjection
+              ? "Each registrant's sales calls, tagged once from the transcript into fixed categories with the prospect's own words, never from the closer's notes. Client-service calls (launch, check-in, onboarding) are left out."
+              : objectionsRun?.lastOkAt != null
+                ? "Connected. Waiting for the first sales call with a registrant."
+                : "Not connected yet: hermes/webinar-pull has not read Fathom.",
       },
     ];
 
     if (!anyRegistrant && !anySpend && !built.length)
       notes.push({
         level: "info",
-        text: "The webinar has not started: no registrant carries a webby tag and no webinar campaign has spent. Every number here fills in on its own once it does.",
+        text: "The webinar has not started: no registrant carries a webby tag and no webinar campaign has spent. Check launch readiness before opening registration; source connections alone do not prove the funnel works.",
       });
 
     const payload: WebinarPayload = {
       today,
       rounds: built,
+      readiness: webinarReadiness(
+        jsonArray(collected?.pulls).find(r => r.source === "zoom")?.counts
+          ?.launch,
+        now,
+      ),
       ads,
       tracking,
       targets: WEBINAR_TARGETS,

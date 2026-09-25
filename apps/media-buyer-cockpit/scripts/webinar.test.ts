@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { withoutWebinar } from "../convex/ceo/adapters/growth";
+import { DEFINITIONS, extract } from "../convex/ceo/metricRegistry";
 import { objectionStats, reminderStats } from "../convex/ceo/webinarFollowUp";
 import { type PageVisitor, pageStats } from "../convex/ceo/webinarPage";
+import { webinarReadiness } from "../convex/ceo/webinarReadiness";
 import {
   merge,
   onesBurst,
@@ -10,6 +13,7 @@ import {
   type ZoomEngagement,
   type ZoomSession,
 } from "../convex/ceo/webinarRoom";
+import { webinarRoundFixture } from "./fixtures/webinarRound";
 
 // The webinar room (convex/ceo/webinarRoom.ts): what Zoom's join and leave
 // rows become on the Frontend tab. Wrong here is a pitch that looks like it
@@ -488,5 +492,129 @@ describe("objections", () => {
       ["proof", 1, 1, 0],
     ]);
     expect(s?.categories[0].label).toBe("Price or budget");
+  });
+});
+
+describe("launch readiness is separate from data collection", () => {
+  const now = Date.parse("2026-09-25T12:00:00Z");
+  const at = "2026-09-30T17:00:00Z";
+  const snapshot = () => ({
+    checked_at: new Date(now).toISOString(),
+    api: { start: at, ghl_token_set: true },
+    page: { start: at },
+    zoom: { start: at, registration: false, cloud_recording: true },
+    join_link_ok: true,
+    workflows: Object.fromEntries(
+      ["W1", "W2", "W4a", "W4b", "W5", "W6"].map(k => [k, "published"]),
+    ),
+  });
+  test("old workers and missing evidence never pass", () => {
+    for (const s of [null, {}, { checked_at: "bad" }, []]) {
+      const r = webinarReadiness(s, now);
+      expect(r.status).toBe("unknown");
+      expect(r.checks.every(c => c.status === "unknown")).toBe(true);
+    }
+  });
+  test("fresh dates agree, but identity without registration is blocked", () => {
+    const r = webinarReadiness(snapshot(), now);
+    expect(r.checks.find(c => c.key === "schedule")?.status).toBe("ready");
+    expect(r.checks.find(c => c.key === "identity")?.status).toBe("blocked");
+  });
+  test("registration on is not proof of matched people", () => {
+    const s = snapshot();
+    s.zoom.registration = true;
+    expect(
+      webinarReadiness(s, now).checks.find(c => c.key === "identity")?.status,
+    ).toBe("unknown");
+  });
+  test("draft workflows and absent registration credential block", () => {
+    const s = snapshot();
+    s.workflows.W1 = "draft";
+    s.api.ghl_token_set = false;
+    const r = webinarReadiness(s, now);
+    expect(
+      r.checks.filter(c => c.status === "blocked").map(c => c.key),
+    ).toEqual(["registration", "workflows", "identity"]);
+  });
+  test("disagreeing, expired, or nonstandard session times block", () => {
+    const mismatch = snapshot();
+    mismatch.api.start = "2026-09-29T17:00:00Z";
+    const otherHour = snapshot();
+    otherHour.api.start =
+      otherHour.page.start =
+      otherHour.zoom.start =
+        "2026-09-30T18:00:00Z";
+    for (const s of [mismatch, otherHour])
+      expect(webinarReadiness(s, now).checks[0].status).toBe("blocked");
+    const past = snapshot();
+    past.api.start = past.page.start = past.zoom.start = "2026-09-20T17:00:00Z";
+    expect(webinarReadiness(past, now).checks[0].status).toBe("blocked");
+  });
+  test("stale and future-dated evidence is unknown", () => {
+    for (const offset of [-4 * 3600_000, 60_000]) {
+      const s = snapshot();
+      s.checked_at = new Date(now + offset).toISOString();
+      expect(
+        webinarReadiness(s, now).checks.every(c => c.status === "unknown"),
+      ).toBe(true);
+    }
+  });
+  test("partial or duplicate workflow evidence cannot pass", () => {
+    const s = snapshot();
+    s.workflows.W2 = "ambiguous";
+    expect(
+      webinarReadiness(s, now).checks.find(c => c.key === "workflows")?.status,
+    ).toBe("unknown");
+  });
+});
+
+// The shared metrics table must agree with the CEO screen, including unknowns.
+describe("webinar metrics projection", () => {
+  test("each round has its own scope and missing identity stays null", () => {
+    const rows = extract("webinar", { rounds: [webinarRoundFixture] });
+    expect(rows.length).toBe(27);
+    expect(
+      rows.every(
+        r => r.scope === "webinar:synthetic-sep-2026" && r.window === "round",
+      ),
+    ).toBe(true);
+    expect(rows.find(r => r.metric === "webinar.spend")?.value).toBe(2000);
+    expect(
+      rows.find(r => r.metric === "webinar.attendee_to_booked")?.value,
+    ).toBeNull();
+    expect(rows.find(r => r.metric === "webinar.cash_confirmed")?.value).toBe(
+      3500,
+    );
+    expect(rows.find(r => r.metric === "webinar.cash")?.value).toBe(5000);
+    expect(rows.every(r => DEFINITIONS.some(d => d.metric === r.metric))).toBe(
+      true,
+    );
+  });
+  test("no rounds means no invented zero-valued metrics", () => {
+    expect(extract("webinar", { rounds: [] })).toEqual([]);
+  });
+  test("attendance is unavailable until there is evidence", () => {
+    const r = {
+      ...webinarRoundFixture,
+      showUp: {
+        ...webinarRoundFixture.showUp,
+        attendanceRecorded: false,
+        attended: 0,
+        showRate: null,
+      },
+    };
+    const rows = extract("webinar", { rounds: [r] });
+    expect(rows.find(v => v.metric === "webinar.attended")?.value).toBeNull();
+    expect(rows.find(v => v.metric === "webinar.show_rate")?.value).toBeNull();
+  });
+  test("lead-gen and retargeting leave the call funnel separately", () => {
+    const r = withoutWebinar(
+      { spend: 1000, spend_leadgen: 1000, spend_retargeting: 400 },
+      { spend: 200, spend_retargeting: 100 },
+    );
+    expect(r.spend).toBe(800);
+    expect(r.spend_leadgen).toBe(800);
+    expect(r.spend_retargeting).toBe(300);
+    expect(r.retargeting_share).toBe(27.3);
   });
 });

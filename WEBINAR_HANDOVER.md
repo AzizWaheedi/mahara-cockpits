@@ -1,3 +1,5 @@
+> Follow-up implementation, 25 September: [metrics and readiness checkpoint](docs/WEBINAR-METRICS-2026-09-25.md). It records tested changes, fresh provider evidence and remaining launch gates. The inventory below is preserved as the original handover.
+
 # Handover: Mahara's webinar funnel metrics
 
 Written 2026-09-25 for the agent taking over. Unless a line says otherwise, everything here was checked read-only between 08:30 and 09:00 UTC on 2026-09-25 against:

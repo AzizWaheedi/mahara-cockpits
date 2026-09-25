@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import datetime as dt
 import unittest
+from unittest.mock import patch
 
 import pull
 
@@ -253,6 +254,63 @@ class Zoom(unittest.TestCase):
         body = b'event: message\ndata: {"jsonrpc":"2.0","id":2,"result":{"content":[]}}\n\n'
         self.assertEqual(pull.Composio.sse(body)["id"], 2)
 
+
+class SessionTime(unittest.TestCase):
+    def test_date_and_midnight_epochs_agree(self):
+        expected = dt.datetime(2026, 9, 30, 17, tzinfo=dt.timezone.utc)
+        midnight = dt.datetime(2026, 9, 30, tzinfo=dt.timezone.utc).timestamp()
+        local_midnight = dt.datetime(2026, 9, 30, tzinfo=pull.KUWAIT).timestamp()
+        for value in ["2026-09-30", int(midnight), int(midnight * 1000), int(local_midnight * 1000)]:
+            with self.subTest(value=value):
+                self.assertEqual(pull.session_value(value), expected)
+
+    def test_explicit_time_is_not_replaced(self):
+        expected = dt.datetime(2026, 9, 30, 18, 30, tzinfo=dt.timezone.utc)
+        for value in ["2026-09-30T21:30:00+03:00", int(expected.timestamp() * 1000)]:
+            self.assertEqual(pull.session_value(value), expected)
+
+    def test_invalid_dates_and_ambiguous_times_are_unknown(self):
+        for value in ["2026-02-30", "2026-13-01", "2026-09-30T20:00:00", None, "tomorrow", {}, "2026-09-30oops"]:
+            with self.subTest(value=value):
+                self.assertIsNone(pull.session_value(value))
+
+    def test_registration_window_tracks_real_start(self):
+        old = {"dateAdded": "2026-01-01T00:00:00Z", "customFields": [{"id": pull.SESSION_FIELD, "value": "2026-09-30"}]}
+        self.assertEqual(pull.registered_from(old), dt.datetime(2026, 9, 9, 17, tzinfo=dt.timezone.utc))
+
+class ProviderPolicy(unittest.TestCase):
+    def test_key_alone_does_not_allow_lead_transcripts(self):
+        with patch.dict(pull.os.environ, {"DEEPSEEK_API_KEY": "synthetic", "WEBINAR_DEEPSEEK_TRANSCRIPTS_APPROVED": "false"}):
+            self.assertIsNone(pull.DeepSeek.from_env())
+
+
+class LaunchReadiness(unittest.TestCase):
+    def test_exact_workflows_and_duplicates(self):
+        rows = [{"name": "WEBBY W1 Registration", "status": "published"},
+                {"name": "WEBBY W10 Other", "status": "published"},
+                {"name": "WEBBY W4a Attended", "status": "draft"}]
+        self.assertEqual(pull.workflow_states(rows)["W1"], "published")
+        self.assertEqual(pull.workflow_states(rows)["W4a"], "draft")
+        self.assertEqual(pull.workflow_states(rows)["W4b"], "missing")
+        self.assertEqual(pull.workflow_states(rows + [rows[0]])["W1"], "ambiguous")
+        self.assertEqual(pull.workflow_states({}), {})
+
+    def test_failed_reads_are_unknown_and_do_not_echo_secrets(self):
+        with patch.object(pull, "call", side_effect=pull.Failure("private provider response")), patch.object(pull.GHL, "from_env", return_value=None):
+            result = pull.launch_snapshot({}, None)
+        self.assertEqual(result["api"], {})
+        self.assertIsNone(result["zoom"]["registration"])
+        self.assertNotIn("private", str(result))
+
+    def test_snapshot_is_allowlisted(self):
+        responses = [(200, {}, b'{"ghlTokenSet": false, "webinarStart": "2026-09-30T20:00:00+03:00", "secret": "never-store"}'),
+                     (200, {}, b"var COUNTDOWN_ISO = '2026-09-30T20:00:00+03:00';")]
+        with patch.object(pull, "call", side_effect=responses), patch.object(pull.GHL, "from_env", return_value=None):
+            result = pull.launch_snapshot({"start_time": "2026-09-30T17:00:00Z", "host_email": "private", "settings": {"approval_type": 2}}, True)
+        self.assertFalse(result["api"]["ghl_token_set"])
+        self.assertEqual(result["page"]["start"], result["zoom"]["start"])
+        self.assertNotIn("never-store", str(result))
+        self.assertNotIn("private", str(result))
 
 if __name__ == "__main__":
     unittest.main()
