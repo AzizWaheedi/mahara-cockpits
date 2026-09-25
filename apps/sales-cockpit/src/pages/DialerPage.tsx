@@ -682,7 +682,7 @@ function Stats({ q }: { q: Queue | null }) {
   return (
     <>
       {/* On a phone the day fits one line, so Call stays near the top. */}
-      <p className="muted text-sm tabular-nums sm:hidden">
+      <p className="muted text-sm sm:hidden">
         {t && ready !== null
           ? `Today: ${t.saved} saved · ${t.answered} of ${t.calls} answered · ${t.booked} booked · ${ready} ready`
           : "Reading today's numbers…"}
@@ -839,6 +839,11 @@ function QueuePane({
     tier === "all" ? items : items.filter(i => String(i.tier) === tier);
   const total = counts.reduce((a, b) => a + b, 0);
   const lockedTitle = "Save or skip the call that is open first";
+  // On a phone the list folds away once a lead is picked, so Call is in view.
+  const pick = (id: string) => {
+    setOpenOnPhone(false);
+    onPick(id);
+  };
 
   return (
     <section
@@ -921,7 +926,7 @@ function QueuePane({
             </div>
           ) : null}
         </div>
-        <ul className="min-h-0 flex-1 divide-y hairline overflow-y-auto">
+        <ul className="max-h-[55vh] min-h-0 flex-1 divide-y hairline overflow-y-auto lg:max-h-none">
           {searching ? (
             found.loading && !found.data ? (
               <li className="muted px-3 py-3 text-xs">Searching…</li>
@@ -937,7 +942,7 @@ function QueuePane({
                     disabled={locked && l.contact_id !== currentId}
                     title={locked ? lockedTitle : undefined}
                     aria-current={l.contact_id === currentId}
-                    onClick={() => onPick(l.contact_id)}
+                    onClick={() => pick(l.contact_id)}
                     className="flex w-full min-w-0 flex-col px-3 py-2 text-left hover:bg-[color:var(--secondary)] disabled:opacity-60 aria-[current=true]:bg-[color:var(--secondary)]"
                   >
                     <span
@@ -975,7 +980,7 @@ function QueuePane({
                   disabled={locked && i.contact_id !== currentId}
                   title={locked ? lockedTitle : undefined}
                   aria-current={i.contact_id === currentId}
-                  onClick={() => onPick(i.contact_id)}
+                  onClick={() => pick(i.contact_id)}
                   className="flex w-full min-w-0 items-start gap-2 px-3 py-2 text-left hover:bg-[color:var(--secondary)] disabled:opacity-60 aria-[current=true]:bg-[color:var(--secondary)]"
                 >
                   <span
