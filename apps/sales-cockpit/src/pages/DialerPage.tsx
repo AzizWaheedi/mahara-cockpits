@@ -678,53 +678,62 @@ export default function DialerPage({ me }: { me: Me }) {
 function Stats({ q }: { q: Queue | null }) {
   const t = q?.today ?? null;
   const line = t?.line ?? null;
+  const ready = q ? q.counts.reduce((a, b) => a + b, 0) : null;
   return (
-    <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-      <StatTile
-        label="Saved today"
-        value={t ? String(t.saved) : null}
-        sub={
-          t
-            ? t.auto_no_answer
-              ? `${t.auto_no_answer} no-answer${t.auto_no_answer === 1 ? "" : "s"} saved from Maqsam's record`
-              : "Outcomes saved in the dialer"
-            : undefined
-        }
-        hint="Every outcome saved in the dialer today (Kuwait time), with or without a call through it."
-      />
-      <StatTile
-        label="Answered"
-        value={t ? `${t.answered} of ${t.calls}` : null}
-        sub={
-          t ? (
-            <>
-              {t.calls
-                ? `${Math.round((t.answered / t.calls) * 100)}% connect rate · ${duration(t.talk_s)} talking`
-                : "No calls through the dialer yet today"}
-              {line ? (
-                <span className="block">
-                  Your Maqsam line: {line.calls} call
-                  {line.calls === 1 ? "" : "s"}, softphone included
-                </span>
-              ) : null}
-            </>
-          ) : undefined
-        }
-        hint="Calls placed through the dialer today and what Maqsam's record says of each; a call whose record has not come back yet is not counted as answered. The line figure is every outbound call on your Maqsam seat as B2B copies it, a few minutes behind."
-      />
-      <StatTile
-        label="Booked today"
-        value={t ? String(t.booked) : null}
-        sub="Intros and demos booked from the dialer"
-      />
-      <StatTile
-        label="Ready in queue"
-        value={q ? String(q.counts.reduce((a, b) => a + b, 0)) : null}
-        sub={
-          q ? `${q.counts[0]} to call now · ${q.counts[1]} today` : undefined
-        }
-      />
-    </div>
+    <>
+      {/* On a phone the day fits one line, so Call stays near the top. */}
+      <p className="muted text-sm tabular-nums sm:hidden">
+        {t && ready !== null
+          ? `Today: ${t.saved} saved · ${t.answered} of ${t.calls} answered · ${t.booked} booked · ${ready} ready`
+          : "Reading today's numbers…"}
+      </p>
+      <div className="hidden grid-cols-2 gap-3 sm:grid lg:grid-cols-4">
+        <StatTile
+          label="Saved today"
+          value={t ? String(t.saved) : null}
+          sub={
+            t
+              ? t.auto_no_answer
+                ? `${t.auto_no_answer} no-answer${t.auto_no_answer === 1 ? "" : "s"} saved from Maqsam's record`
+                : "Outcomes saved in the dialer"
+              : undefined
+          }
+          hint="Every outcome saved in the dialer today (Kuwait time), with or without a call through it."
+        />
+        <StatTile
+          label="Answered"
+          value={t ? `${t.answered} of ${t.calls}` : null}
+          sub={
+            t ? (
+              <>
+                {t.calls
+                  ? `${Math.round((t.answered / t.calls) * 100)}% connect rate · ${duration(t.talk_s)} talking`
+                  : "No calls through the dialer yet today"}
+                {line ? (
+                  <span className="block">
+                    Your Maqsam line: {line.calls} call
+                    {line.calls === 1 ? "" : "s"}, softphone included
+                  </span>
+                ) : null}
+              </>
+            ) : undefined
+          }
+          hint="Calls placed through the dialer today and what Maqsam's record says of each; a call whose record has not come back yet is not counted as answered. The line figure is every outbound call on your Maqsam seat as B2B copies it, a few minutes behind."
+        />
+        <StatTile
+          label="Booked today"
+          value={t ? String(t.booked) : null}
+          sub="Intros and demos booked from the dialer"
+        />
+        <StatTile
+          label="Ready in queue"
+          value={ready === null ? null : String(ready)}
+          sub={
+            q ? `${q.counts[0]} to call now · ${q.counts[1]} today` : undefined
+          }
+        />
+      </div>
+    </>
   );
 }
 
@@ -1605,7 +1614,7 @@ function BookForm({
           ]}
           onChange={v => setKind(v as "intro" | "demo")}
         />
-        {slots?.on_team ? (
+        {slots?.on_team && !slots.fallback ? (
           <Segmented
             label="With whom"
             value={withWho}
