@@ -224,7 +224,7 @@ export function Conversation({
   compact?: boolean;
 }) {
   const { data, error, thread } = convo;
-  const endRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const channels = data?.channels;
   const usable = (c: Channel) => {
     const s = channels?.[c];
@@ -279,9 +279,12 @@ export function Conversation({
   }, [draft]);
 
   const count = thread.length;
+  // Show the newest message by scrolling the list itself, never the page
+  // around it (scrollIntoView moved the whole dialer down to the thread).
   // biome-ignore lint/correctness/useExhaustiveDependencies: scroll when the thread grows
   useEffect(() => {
-    endRef.current?.scrollIntoView({ block: "nearest" });
+    const el = listRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [count]);
 
   const [busy, setBusy] = useState(false);
@@ -360,6 +363,7 @@ export function Conversation({
       ) : null}
 
       <div
+        ref={listRef}
         className={`space-y-2 overflow-y-auto pe-1 ${compact ? "max-h-72" : "max-h-[28rem]"}`}
       >
         {convo.canLoadOlder ? (
@@ -380,7 +384,6 @@ export function Conversation({
         {thread.map(m => (
           <Bubble key={m.id} m={m} sentBy={byId.get(m.id)?.sent_by ?? null} />
         ))}
-        <div ref={endRef} />
       </div>
 
       <form onSubmit={send} className="space-y-2 border-t hairline pt-3">
