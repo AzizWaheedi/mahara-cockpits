@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { hasThreadReadingState } from "../src/lib/relay-routing";
 import { internal } from "./_generated/api";
 import {
   internalAction,
@@ -302,7 +303,9 @@ export const run = internalAction({
         // Claimed but not answered yet: the panel shows "typing".
         if (job.claimedAt && !r.readingAt) {
           try {
-            await markReading(ctx, app, r.messageId);
+            // WhatsApp draft/fix relays have composite IDs, not chat document IDs.
+            if (hasThreadReadingState(app))
+              await markReading(ctx, app, r.messageId);
             await ctx.runMutation(internal.hermesDrain.markRelayReading, {
               id: r._id,
             });
