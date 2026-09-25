@@ -540,7 +540,9 @@ function shown(kind: EodKind, v: unknown): string {
 export function eodMessage(role: EodRole, name: string, slackId: string | null, day: string,
                            answers: Record<string, unknown>): string {
   const fields = EOD_FIELDS[role];
-  const numbers = fields.filter(f => f.kind !== "text");
+  // Talk time is words (the Typeform took a range) but belongs with the
+  // numbers, where the Typeform's message had it.
+  const numbers = fields.filter(f => f.key !== "objections" && f.key !== "summary");
   return [
     role === "setter" ? "*SETTER EOD*" : "*SALES REP EOD*",
     `*Date - ${day}*`,
