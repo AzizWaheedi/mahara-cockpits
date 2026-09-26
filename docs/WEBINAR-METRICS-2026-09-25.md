@@ -1,6 +1,8 @@
 # CEO webinar metrics checkpoint, 25 September 2026
 
 Implementation checkpoint, not a launch or production-deployment claim.
+
+26 September update: [editable targets and data-reliability audit](WEBINAR-DATA-RELIABILITY-2026-09-26.md), including a verified shared-database access issue.
 Code is in the existing `apps/media-buyer-cockpit` and `hermes/webinar-pull`.
 The original `WEBINAR_HANDOVER.md` remains the source inventory and launch brief.
 

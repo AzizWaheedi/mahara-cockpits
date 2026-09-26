@@ -37,6 +37,8 @@ import type {
 } from "../../../convex/ceo/payloads";
 import { webinarReadiness } from "../../../convex/ceo/webinarReadiness";
 import type { Room } from "../../../convex/ceo/webinarRoom";
+import type { TargetSelection } from "../../../convex/ceo/webinarTargetsModel";
+import { WebinarTargetsEditor } from "./WebinarTargetsEditor";
 
 /**
  * The webinar funnel, beside the call funnel on the Frontend tab (Aziz,
@@ -185,7 +187,7 @@ type StageDef = {
 };
 
 function stages(p: WebinarPayload, r: WebinarRound): StageDef[] {
-  const t = p.targets;
+  const t = r.targetSelection?.values ?? p.targets;
   const reg = r.registration.registrations;
   const pctf = (x: number) => pct(x);
   const moneyf = (x: number) => money(x);
@@ -662,14 +664,38 @@ export function WebinarFunnel({
   section: CeoSection<"webinar"> | null;
 }) {
   const p = section?.payload ?? null;
+  const [savedTargets, setSavedTargets] = useState<
+    Record<string, TargetSelection>
+  >({});
   const [picked, setPicked] = useState<string | null>(null);
   const round = useMemo(() => {
     if (!p?.rounds.length) return null;
-    return p.rounds.find(r => r.key === picked) ?? p.rounds[0];
-  }, [p, picked]);
+    const r = p.rounds.find(r => r.key === picked) ?? p.rounds[0];
+    const saved = savedTargets[`round:${r.key}`];
+    return saved && saved.revision >= (r.targetSelection?.revision ?? 0)
+      ? { ...r, targetSelection: saved }
+      : r;
+  }, [p, picked, savedTargets]);
 
   return (
     <div className="grid gap-5 lg:gap-7">
+      {p && (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs text-muted-foreground">
+            {p.targetStore === "unavailable"
+              ? "Saved targets unavailable · showing original plan"
+              : round?.targetSelection?.basis === "round"
+                ? "Targets saved for this round"
+                : "Targets inherited from the plan"}
+          </p>
+          <WebinarTargetsEditor
+            round={round}
+            onSaved={(scope, selection) =>
+              setSavedTargets(prev => ({ ...prev, [scope]: selection }))
+            }
+          />
+        </div>
+      )}
       {p ? <LaunchReadiness p={p} section={section} /> : null}
       <SectionCard
         title="Webinar funnel"
@@ -877,7 +903,7 @@ function LaunchReadiness({
 }
 
 function Headline({ p, r }: { p: WebinarPayload; r: WebinarRound }) {
-  const t = p.targets;
+  const t = r.targetSelection?.values ?? p.targets;
   const cpr = r.registration.costPerRegistration;
   const kill =
     cpr !== null &&

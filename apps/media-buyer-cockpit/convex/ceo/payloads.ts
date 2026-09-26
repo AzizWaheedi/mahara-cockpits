@@ -1,5 +1,6 @@
 import type { CallCenterReport } from "./callCenterContract";
 import type { WebinarReadiness } from "./webinarReadiness";
+import type { TargetSelection, WebinarTargets } from "./webinarTargetsModel";
 /**
  * The exact shape of every CEO section payload. Adapters on the backend fill
  * these; the /ceo screens read them. Change a shape here first.
@@ -1984,6 +1985,7 @@ export type WebinarCollectorRun = {
 
 /** One webinar round (a session and the registrants and spend that led to it). */
 export type WebinarRound = {
+  targetSelection?: TargetSelection;
   /** The round tag (webby-oct-2026), `round:<field>`, `untagged`, or `next`. */
   key: string;
   label: string;
@@ -2150,19 +2152,8 @@ export type WebinarPayload = {
     status: "live" | "waiting" | "missing";
     note: string;
   }[];
-  /** The brief's targets for a $2,000 four-day flight. */
-  targets: {
-    plannedSpend: number;
-    costPerRegistration: { low: number; high: number; plan: number };
-    registrations: { low: number; high: number; plan: number };
-    pageConversion: { low: number; high: number; floor: number };
-    showRate: { low: number; high: number };
-    retentionAtPitch1: number;
-    attendeeToBooked: { low: number; high: number };
-    bookedToHeld: number;
-    closeRate: number;
-    killRule: { spendAfter: number; costPerRegistrationAbove: number };
-  };
+  targets: WebinarTargets;
+  targetStore?: "ready" | "unavailable";
   /** Gift survey responses stored so far; null when they cannot be read. */
   surveyResponses: number | null;
   /** Survey responses tied to a registrant, and the ones that match nobody. */

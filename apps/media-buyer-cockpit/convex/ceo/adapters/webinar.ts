@@ -40,6 +40,11 @@ import {
   webbyFrom,
   webbyLead,
 } from "../webinarSql";
+import {
+  roundTargetStart,
+  selectTargets,
+  type TargetVersion,
+} from "../webinarTargetsModel";
 import { BY_SALES_REP, CALL_IS_WITH_LEAD, DEPOSIT_CONFIRMED } from "./growth";
 
 /**
@@ -73,19 +78,7 @@ import { BY_SALES_REP, CALL_IS_WITH_LEAD, DEPOSIT_CONFIRMED } from "./growth";
 // biome-ignore lint/suspicious/noExplicitAny: SQL and Graph rows
 type Any = any;
 
-/** The brief's targets for a $2,000, four-day flight (section 6). */
-export const WEBINAR_TARGETS: WebinarPayload["targets"] = {
-  plannedSpend: 2000,
-  costPerRegistration: { low: 6, high: 10, plan: 8 },
-  registrations: { low: 200, high: 330, plan: 250 },
-  pageConversion: { low: 0.15, high: 0.25, floor: 0.1 },
-  showRate: { low: 0.3, high: 0.4 },
-  retentionAtPitch1: 0.5,
-  attendeeToBooked: { low: 0.1, high: 0.15 },
-  bookedToHeld: 0.6,
-  closeRate: 0.2,
-  killRule: { spendAfter: 500, costPerRegistrationAbove: 15 },
-};
+export { WEBINAR_TARGETS } from "../webinarTargetsModel";
 
 const MONTHS: Record<string, string> = {
   jan: "January",
@@ -1401,6 +1394,27 @@ export const webinar: Adapter = {
         text: "The webinar has not started: no registrant carries a webby tag and no webinar campaign has spent. Check launch readiness before opening registration; source connections alone do not prove the funnel works.",
       });
 
+    let targetVersions: TargetVersion[] | null = null;
+    try {
+      targetVersions = await sql<TargetVersion>(
+        TRIAGE,
+        "select scope_key, revision, values, changed_at, changed_by from public.cockpit_webinar_target_versions order by changed_at",
+      );
+    } catch {
+      /* During rollout: original targets remain explicitly labelled. */
+    }
+    if (!targetVersions)
+      notes.push({
+        level: "warn",
+        text: "Saved targets could not be loaded. Showing the original planning targets; refresh before judging performance against them.",
+      });
+    for (const round of built)
+      round.targetSelection = selectTargets(
+        targetVersions ?? [],
+        `round:${round.key}`,
+        roundTargetStart(round),
+      );
+
     const payload: WebinarPayload = {
       today,
       rounds: built,
@@ -1411,7 +1425,8 @@ export const webinar: Adapter = {
       ),
       ads,
       tracking,
-      targets: WEBINAR_TARGETS,
+      targets: selectTargets(targetVersions ?? [], "defaults", null).values,
+      targetStore: targetVersions ? "ready" : "unavailable",
       surveyResponses,
       survey: { matched: surveyOf.size, unmatched: surveyUnmatched },
       collector: {

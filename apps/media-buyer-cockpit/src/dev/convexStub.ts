@@ -23,11 +23,16 @@ export function setFixtures(next: Fixtures) {
   fixtures = next;
 }
 
-function answer(ref: FunctionReference<"query" | "mutation" | "action">) {
+function answer(
+  ref: FunctionReference<"query" | "mutation" | "action">,
+  args?: unknown,
+) {
   const name = getFunctionName(ref);
   if (!(name in fixtures)) return EMPTY;
   const hit = fixtures[name];
-  return typeof hit === "function" ? (hit as () => unknown)() : hit;
+  return typeof hit === "function"
+    ? (hit as (args?: unknown) => unknown)(args)
+    : hit;
 }
 
 /** One stable function per Convex function name, the way the real hooks behave. */
@@ -35,7 +40,8 @@ function stable(ref: FunctionReference<"mutation" | "action">): Stub {
   const name = getFunctionName(ref);
   let fn = fns.get(name);
   if (!fn) {
-    const made = (() => Promise.resolve(answer(ref))) as Stub;
+    const made = ((args?: unknown) =>
+      Promise.resolve(answer(ref, args))) as Stub;
     // Real mutations carry this; the screens that call it get the same stub back.
     made.withOptimisticUpdate = () => made;
     fn = made;
