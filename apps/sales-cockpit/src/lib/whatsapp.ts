@@ -88,9 +88,21 @@ const EN_DAYS = [
   "Saturday",
 ];
 
-/** Kuwait's wall clock for an instant (UTC+3, no daylight saving). */
-function kuwait(ms: number) {
-  const d = new Date(ms + 3 * 3_600_000);
+/**
+ * The lead's clock: the UAE and Oman keep UTC+4; Kuwait, Saudi Arabia, Qatar
+ * and Bahrain UTC+3 (and so does anyone whose country is unknown).
+ */
+export function leadOffsetHours(country: string | null | undefined): number {
+  return /emirates|\buae\b|u\.a\.e|dubai|abu dhabi|sharjah|ajman|\boman\b|muscat|الإمارات|الامارات|دبي|أبوظبي|ابوظبي|الشارقة|مسقط/i.test(
+    String(country ?? ""),
+  )
+    ? 4
+    : 3;
+}
+
+/** The wall clock at an offset from UTC, for an instant (the Gulf keeps no daylight saving). */
+function kuwait(ms: number, offsetHours = 3) {
+  const d = new Date(ms + offsetHours * 3_600_000);
   return {
     y: d.getUTCFullYear(),
     m: d.getUTCMonth(),
@@ -102,16 +114,17 @@ function kuwait(ms: number) {
 }
 
 /**
- * A booked call's day and time the way a rep would write them: "باجر" and
- * "٣ العصر", or "tomorrow" and "3 pm", in Kuwait time.
+ * A booked call's day and time the way a rep would write them to the lead:
+ * "باجر" and "٣ العصر", or "tomorrow" and "3 pm", on the lead's own clock.
  */
 export function callWords(
   startIso: string,
   lang: "ar" | "en",
   now = Date.now(),
+  offsetHours = 3,
 ): { day: string; time: string } {
-  const at = kuwait(Date.parse(startIso));
-  const today = kuwait(now);
+  const at = kuwait(Date.parse(startIso), offsetHours);
+  const today = kuwait(now, offsetHours);
   const dayNo = (k: ReturnType<typeof kuwait>) =>
     Date.UTC(k.y, k.m, k.date) / 86_400_000;
   const diff = dayNo(at) - dayNo(today);

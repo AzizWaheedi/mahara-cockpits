@@ -17,6 +17,7 @@ import {
   fillSnippet,
   firstWord,
   leadLanguage,
+  leadOffsetHours,
   type Moment,
   snippetLine,
 } from "../lib/whatsapp";
@@ -235,6 +236,7 @@ export function Conversation({
   compact = false,
   rep,
   callAt,
+  country,
   prefill,
 }: {
   contactId: string;
@@ -244,6 +246,8 @@ export function Conversation({
   rep?: string | null;
   /** The lead's booked call, for {day} and {time}. */
   callAt?: string | null;
+  /** The lead's country, so {time} is on their own clock (the UAE and Oman are an hour ahead). */
+  country?: string | null;
   /**
    * Words to put in the box from outside: a ready-made message for a moment
    * (the dialer after a missed call), or a sales asset's message.
@@ -261,7 +265,9 @@ export function Conversation({
   const language = leadLanguage(
     thread.filter(m => m.direction === "inbound").map(m => m.body),
   );
-  const call = callAt ? callWords(callAt, language) : null;
+  const call = callAt
+    ? callWords(callAt, language, Date.now(), leadOffsetHours(country))
+    : null;
   const values = {
     name: firstWord(data?.contact.name) || null,
     rep: firstWord(rep) || null,

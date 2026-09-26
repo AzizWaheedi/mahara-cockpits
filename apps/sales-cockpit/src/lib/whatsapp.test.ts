@@ -4,6 +4,7 @@ import {
   callWords,
   fillSnippet,
   leadLanguage,
+  leadOffsetHours,
   renderTemplate,
   snippetLine,
 } from "./whatsapp";
@@ -31,6 +32,16 @@ describe("a booked call in a rep's words", () => {
     expect(callWords("2026-09-27T17:00:00Z", "en", NOW)).toEqual({
       day: "Sunday",
       time: "8 pm",
+    });
+  });
+  test("on the lead's own clock: an hour later in the UAE and Oman", () => {
+    expect(leadOffsetHours("United Arab Emirates")).toBe(4);
+    expect(leadOffsetHours("Oman")).toBe(4);
+    expect(leadOffsetHours("Saudi Arabia")).toBe(3);
+    expect(leadOffsetHours(null)).toBe(3);
+    expect(callWords("2026-09-25T12:00:00Z", "en", NOW, 4)).toEqual({
+      day: "tomorrow",
+      time: "4 pm",
     });
   });
   test("digits are Arabic-Indic in Arabic", () => {

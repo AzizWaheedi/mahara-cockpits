@@ -72,6 +72,17 @@ CADENCE = {"new": [0.5, 24, 48, 96, 168], "no_show": [0.25, 24, 72, 144], "cance
 GAP = timedelta(hours=20)
 GULF = ("kuwait", "saudi", "ksa", "emirates", "uae", "qatar", "bahrain", "oman", "الكويت", "السعودية", "الإمارات",
         "قطر", "البحرين", "عمان")
+# The UAE and Oman keep UTC+4; Kuwait, Saudi Arabia, Qatar and Bahrain UTC+3.
+# A call's time goes to the lead in their own clock.
+PLUS_FOUR = re.compile(r"emirates|\buae\b|u\.a\.e|dubai|abu dhabi|sharjah|ajman|\boman\b|muscat|الإمارات|الامارات|دبي|أبوظبي|ابوظبي|الشارقة|مسقط", re.I)
+# A lead who asked to be left alone gets nothing from the agent: messaging
+# them anyway is how a number gets reported to Meta, and then limited.
+OPT_OUT = re.compile(
+    r"\b(stop|unsubscribe|remove me|opt out|don'?t (contact|message|text|call|whatsapp) me|do not (contact|message|text|call)"
+    r"|leave me alone|not interested|no longer interested)\b"
+    r"|لا ?(تراسل|ترسل|تتواصل|تتصل|تكلم)|لا عاد (تراسل|ترسل|تتواصل|تتصل)|وقف(وا)? (الرسائل|الرسايل|المراسلة)"
+    r"|(احذف|احذفوا|امسح|امسحوا|شيل|شيلوا) رقمي|لا تزعج|مو مهتم|مش مهتم|غير مهتم|ما عاد مهتم",
+    re.I)
 
 VOICE = """How Mahara writes to a lead:
 - Answer in the language the lead uses with us. If they write Arabic, write spoken Gulf Arabic
@@ -530,6 +541,13 @@ def ghl_thread(token: str, contact_id: str, limit: int = 20) -> list[dict[str, A
     return msgs[-limit:]
 
 
+def ghl_probe(token: str) -> int:
+    """One read of the sales sub-account's conversations, for the doctor: the agent's key still works."""
+    _, _, raw = http.request("GET", f"{GHL}/conversations/search?locationId={LOCATION}&limit=1",
+                             headers=_ghl_headers(token), timeout=30, retries=1)
+    return len(json.loads(raw.decode("utf-8") or "{}").get("conversations") or [])
+
+
 def ghl_contact(token: str, contact_id: str) -> dict[str, Any]:
     """The contact as HighLevel holds it: the first name a template greets."""
     if not token:
@@ -539,11 +557,25 @@ def ghl_contact(token: str, contact_id: str) -> dict[str, Any]:
     return json.loads(raw.decode("utf-8") or "{}").get("contact") or {}
 
 
-def call_words(start: datetime, now: datetime) -> dict[str, str]:
-    """A booked call's day and time in Kuwait, as the message may name them."""
-    k, today = start + KUWAIT, kuwait_now(now).date()
+def lead_offset(country: Any) -> timedelta:
+    """The lead's clock: UTC+4 in the UAE and Oman, UTC+3 elsewhere in the Gulf (and when unknown)."""
+    return timedelta(hours=4) if PLUS_FOUR.search(str(country or "")) else KUWAIT
+
+
+def call_words(start: datetime, now: datetime, country: Any = None) -> dict[str, str]:
+    """A booked call's day and time on the lead's own clock, as the message may name them."""
+    off = lead_offset(country)
+    k, today = start + off, (now + off).date()
     rel = "today" if k.date() == today else "tomorrow" if k.date() == today + timedelta(days=1) else k.strftime("%A")
-    return {"day": k.strftime("%A %d %B"), "relative": rel, "time_24h": k.strftime("%H:%M"), "zone": "Kuwait time"}
+    return {"day": k.strftime("%A %d %B"), "relative": rel, "time_24h": k.strftime("%H:%M"),
+            "zone": "their own time (UTC+4)" if off == timedelta(hours=4) else "their own time (UTC+3, as Kuwait)"}
+
+
+def asked_to_stop(thread: list[dict[str, Any]]) -> bool:
+    """The lead's own latest message says stop or not interested (a later
+    "actually, tell me more" opens them up again)."""
+    theirs = [str(m.get("text") or "") for m in thread if m.get("from") == "lead" and m.get("text")]
+    return bool(theirs) and bool(OPT_OUT.search(theirs[-1]))
 
 
 def context_for(sb: Any, lead: dict[str, Any], ghl_token: str, now: datetime,
@@ -564,10 +596,13 @@ def context_for(sb: Any, lead: dict[str, Any], ghl_token: str, now: datetime,
                            f"select=call_type,call_at,notes&contact_id=eq.{_q(c)}&order=call_at.desc&limit=2")
     research = sb.select("cockpit_sales_research",
                          f"select=brief&contact_id=eq.{_q(c)}&status=eq.ready&order=requested_at.desc&limit=1")
+    # A conversation that cannot be read is not an empty one: without it the
+    # agent cannot see an automation's message, the lead's stop, or their
+    # window, so the lead waits for the next run instead.
     try:
-        thread = ghl_thread(ghl_token, c)
-    except Exception:  # noqa: BLE001 - the rest of the story still helps
-        thread = []
+        thread, thread_ok = ghl_thread(ghl_token, c), True
+    except Exception:  # noqa: BLE001 - said in the run's counts
+        thread, thread_ok = [], False
     brief = (research[0].get("brief") if research else None) or {}
     ctx = {
         "lead": {k: lead.get(k) for k in ("name", "company", "country", "lead_class", "stage_name", "revenue",
@@ -594,10 +629,11 @@ def context_for(sb: Any, lead: dict[str, Any], ghl_token: str, now: datetime,
     }
     if due and due.get("start_at") and due.get("segment") in ("confirm", "no_show", "cancelled"):
         a = next((x for x in appts if _ts(x.get("start_at")) == _ts(due["start_at"])), {})
-        ctx["the_call"] = {"type": a.get("call_type"), **call_words(_ts(due["start_at"]), now)}
+        ctx["the_call"] = {"type": a.get("call_type"), **call_words(_ts(due["start_at"]), now, lead.get("country"))}
     if due and due.get("segment") in ANGLES:
         ctx["message_number"] = f"{due.get('touch', 1)} of {due.get('of') or len(ANGLES[due['segment']])}"
     ctx["_thread"] = thread
+    ctx["_thread_ok"] = thread_ok
     return ctx
 
 
@@ -812,7 +848,7 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
 
     dealt = {str(d["contact_id"]) for d in sb.select("cockpit_sales_deals", "select=contact_id&limit=2000")
              if d.get("contact_id")}
-    written = no_channel = failed = sent_auto = not_leads = held = talking = 0
+    written = no_channel = failed = sent_auto = not_leads = held = talking = unread = stopped = 0
     by_channel: dict[str, int] = {}
     for due in picked:
         if written >= room:
@@ -826,6 +862,14 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
             owner = str(lead.get("assigned_to") or "")
             ctx = context_for(sb, lead, ghl_token, now, rep_name_of.get(owner), due, arabic_name_of.get(owner))
             thread = ctx.pop("_thread")
+            if not ctx.pop("_thread_ok", True):
+                unread += 1
+                log(f"followups: {contact} waits: HighLevel's conversation could not be read")
+                continue
+            if asked_to_stop(thread):
+                stopped += 1
+                log(f"followups: {contact} asked not to be messaged; nothing written")
+                continue
             # A HighLevel automation messaged them lately: wait, so nobody gets
             # both. A confirmation waits less, since the reminders are generic.
             auto_at = automation_message(thread, ours_by_contact.get(contact, set()))
@@ -909,6 +953,7 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
             failed += 1
             log(f"followups: {contact} failed: {http.scrub(str(e))[:200]}")
     return {"picked": len(picked), "written": written, "by_channel": by_channel, "sent_by_itself": sent_auto,
-            "held_for_automation": held, "in_a_conversation": talking, "no_open_channel": no_channel, "not_sales_leads": not_leads,
+            "held_for_automation": held, "in_a_conversation": talking, "asked_to_stop": stopped,
+            "conversation_unreadable": unread, "no_open_channel": no_channel, "not_sales_leads": not_leads,
             "failed": failed, "room": room, "replies_marked": replied, "went_stale": stale,
             "templates": reconciled}

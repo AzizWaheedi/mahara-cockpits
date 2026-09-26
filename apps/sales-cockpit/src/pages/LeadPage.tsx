@@ -265,6 +265,7 @@ export default function LeadPage({ me }: { me: Me }) {
                 convo={convo}
                 rep={me.name}
                 callAt={nextAppt?.start_at ?? null}
+                country={l.country}
                 prefill={convoPrefill}
               />
             </SectionCard>

@@ -2245,6 +2245,7 @@ function LeadPane({
               compact
               rep={me.name}
               callAt={item?.appointment?.start_at ?? null}
+              country={l?.country ?? null}
               prefill={prefill}
             />
             <div className="border-t hairline pt-4">

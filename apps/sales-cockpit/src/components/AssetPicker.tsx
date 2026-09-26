@@ -1,6 +1,7 @@
 import { Check, Copy, ExternalLink, FileVideo, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link } from "react-router";
+import { api } from "../lib/api";
 import {
   type Asset,
   assetMessage,
@@ -12,6 +13,7 @@ import {
   useAssetSends,
   useAssets,
   useAssetVocab,
+  useSetting,
 } from "../lib/data";
 import { ago } from "../lib/format";
 import { toast } from "../lib/toast";
@@ -57,6 +59,14 @@ function CopyButton({ text, label }: { text: string; label: string }) {
   );
 }
 
+/** Assets a manager has stopped offering (their claims no longer match what Mahara says). */
+function useHidden() {
+  const s = useSetting<{
+    hidden?: Record<string, { by: string; at: string; why: string | null }>;
+  }>("assets");
+  return { hidden: s.data?.hidden ?? {}, reload: s.reload };
+}
+
 /** The proof that answers this lead: their objections, their stage, their language. */
 export function ProofToSend({
   contactId,
@@ -75,9 +85,15 @@ export function ProofToSend({
   const assets = useAssets();
   const vocab = useAssetVocab();
   const sends = useAssetSends(contactId);
+  const { hidden } = useHidden();
   const picks = useMemo(
-    () => shortlist(assets.data ?? [], { objections, stage, language }, 3),
-    [assets.data, objections, stage, language],
+    () =>
+      shortlist(
+        (assets.data ?? []).filter(a => !hidden[a.slug]),
+        { objections, stage, language },
+        3,
+      ),
+    [assets.data, objections, stage, language, hidden],
   );
   const sentAt = useMemo(() => {
     const m = new Map<string, string>();
@@ -175,8 +191,29 @@ export function ProofToSend({
 }
 
 /** The whole library, for Links: filter by stage, objection, kind and language. */
-export function AssetLibrary() {
+export function AssetLibrary({ manager = false }: { manager?: boolean }) {
   const assets = useAssets();
+  const { hidden, reload: reloadHidden } = useHidden();
+  const [showHidden, setShowHidden] = useState(false);
+  const [busySlug, setBusySlug] = useState<string | null>(null);
+  async function offer(slug: string, hide: boolean) {
+    const why = hide
+      ? window.prompt(
+          "Why stop offering it? (for example: its claims are ones Aziz retired)",
+        )
+      : null;
+    if (hide && why === null) return;
+    setBusySlug(slug);
+    try {
+      await api("asset.hide", { slug, hidden: hide, why });
+      toast.success(hide ? "Not offered any more." : "Offered again.");
+      reloadHidden();
+    } catch (e) {
+      toast.error(String((e as Error).message ?? e));
+    } finally {
+      setBusySlug(null);
+    }
+  }
   const vocab = useAssetVocab();
   const [stage, setStage] = useState("");
   const [objection, setObjection] = useState("");
@@ -194,6 +231,7 @@ export function AssetLibrary() {
     return (assets.data ?? [])
       .filter(
         a =>
+          (showHidden ? Boolean(hidden[a.slug]) : !hidden[a.slug]) &&
           (copies || a.is_canonical) &&
           (!stage || a.stages.includes(stage)) &&
           (!objection || a.objections.includes(objection)) &&
@@ -209,7 +247,17 @@ export function AssetLibrary() {
           (b.send_count ?? 0) - (a.send_count ?? 0) ||
           a.title.localeCompare(b.title),
       );
-  }, [assets.data, stage, objection, kind, language, term, copies]);
+  }, [
+    assets.data,
+    stage,
+    objection,
+    kind,
+    language,
+    term,
+    copies,
+    hidden,
+    showHidden,
+  ]);
 
   const select = (
     value: string,
@@ -280,6 +328,16 @@ export function AssetLibrary() {
           />
           Show other cuts of the same asset
         </label>
+        {Object.keys(hidden).length ? (
+          <label className="muted inline-flex items-center gap-1.5 text-xs">
+            <input
+              type="checkbox"
+              checked={showHidden}
+              onChange={e => setShowHidden(e.target.checked)}
+            />
+            Only the {Object.keys(hidden).length} not offered
+          </label>
+        ) : null}
       </div>
       {assets.error ? (
         <Failed what="The library" error={assets.error} retry={assets.reload} />
@@ -332,11 +390,27 @@ export function AssetLibrary() {
                   ? ` · answers ${a.objections.map(o => labelOf(words, "objection", o)).join(", ")}`
                   : ""}
               </p>
+              {hidden[a.slug] ? (
+                <p className="text-xs">
+                  Not offered: {hidden[a.slug].why ?? "no reason given"} (
+                  {hidden[a.slug].by.split("@")[0]}, {ago(hidden[a.slug].at)})
+                </p>
+              ) : null}
               <div className="flex flex-wrap items-center gap-3">
                 <CopyButton
                   text={assetMessage(a, language)}
                   label="Copy the message"
                 />
+                {manager ? (
+                  <button
+                    type="button"
+                    disabled={busySlug === a.slug}
+                    onClick={() => void offer(a.slug, !hidden[a.slug])}
+                    className="muted text-xs hover:underline"
+                  >
+                    {hidden[a.slug] ? "Offer it again" : "Don't offer this"}
+                  </button>
+                ) : null}
                 {a.url ? <CopyButton text={a.url} label="Copy link" /> : null}
                 {a.url ? (
                   <a

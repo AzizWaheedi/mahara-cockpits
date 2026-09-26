@@ -251,6 +251,19 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
         except (maqsam_mod.MaqsamError, http.HttpError, SupabaseError) as e:
             add("maqsam", None, f"phone calls cannot be copied: {http.scrub(str(e))[:200]}")
 
+        ghl_token = key("GHL_B2B_API_KEY") or key("SALES_GHL_TOKEN")
+        if ghl_token:
+            try:
+                followups_mod.ghl_probe(ghl_token)
+                add("highlevel", True, "answers: the sales sub-account's conversations can be read, as the follow-up "
+                                       "agent and the template check need", True)
+            except http.HttpError as e:
+                add("highlevel", False, f"HighLevel refused the desk's key ({e.status}): set GHL_B2B_API_KEY in "
+                                        "/opt/data/bibi/api-keys.env. Until then follow-ups wait", True)
+        else:
+            add("highlevel", False, "GHL_B2B_API_KEY is not set, so the follow-up agent cannot read a conversation "
+                                    "and writes nothing", True)
+
         if engine == "playwright":
             with tempfile.TemporaryDirectory() as tmp:
                 page = Path(tmp) / "probe.html"
@@ -555,6 +568,9 @@ def cmd_followups(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
                   + (f", {out['held_for_automation']} waiting while a HighLevel automation messages them"
                      if out.get("held_for_automation") else "")
                   + (f", {out['in_a_conversation']} already talking with a rep" if out.get("in_a_conversation") else "")
+                  + (f", {out['asked_to_stop']} asked not to be messaged" if out.get("asked_to_stop") else "")
+                  + (f", {out['conversation_unreadable']} waiting because HighLevel's conversation could not be read"
+                     if out.get("conversation_unreadable") else "")
                   + (f", {out['no_open_channel']} with no open channel" if out["no_open_channel"] else "")
                   + (f", {out['not_sales_leads']} not sales leads (clients, or no pipeline)" if out.get("not_sales_leads") else "")
                   + (f", {out['replies_marked']} replies to earlier messages" if out.get("replies_marked") else "")

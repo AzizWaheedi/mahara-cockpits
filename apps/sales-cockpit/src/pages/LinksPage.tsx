@@ -264,7 +264,7 @@ export default function LinksPage({ me }: { me: Me }) {
       ) : null}
 
       <SectionCard id="assets" title="Sales assets: proof to send">
-        <AssetLibrary />
+        <AssetLibrary manager={Boolean(manager)} />
       </SectionCard>
 
       {manager ? (

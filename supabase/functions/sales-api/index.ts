@@ -927,15 +927,65 @@ async function convoSend(who: Who, b: Row) {
 // WhatsApp templates: the only way to reach a lead whose window is closed
 // ---------------------------------------------------------------------------
 
+/** Kuwait's midnight (UTC+3, no daylight saving) that begins the day of `ms`, as an instant. */
+function kuwaitMidnightIso(ms: number): string {
+  const k = new Date(ms + 3 * 3_600_000);
+  return new Date(Date.UTC(k.getUTCFullYear(), k.getUTCMonth(), k.getUTCDate()) - 3 * 3_600_000).toISOString();
+}
+
+interface WhatsappGuard {
+  templates_per_day: number;
+  /** Automatic sends pause when this share of the last day's WhatsApp sends failed. */
+  pause_fail_share: number;
+  /** ...counted only once at least this many were sent. */
+  pause_min_sends: number;
+}
+
+async function whatsappGuard(): Promise<WhatsappGuard> {
+  const v = ((await setting<Row>("whatsapp_guard")) ?? {}) as Row;
+  const n = (x: unknown, d: number) => (Number.isFinite(Number(x)) && Number(x) > 0 ? Number(x) : d);
+  return {
+    templates_per_day: Math.round(n(v.templates_per_day, 250)),
+    pause_fail_share: Math.min(1, n(v.pause_fail_share, 0.3)),
+    pause_min_sends: Math.round(n(v.pause_min_sends, 5)),
+  };
+}
+
+/**
+ * Whether WhatsApp is healthy enough to send without a person: the share of
+ * the last day's WhatsApp sends that failed (Meta's spam and engagement
+ * limits, an empty wallet, a paused template). While it is high, drafts wait
+ * for a person, who sees the reasons on the Follow-ups page.
+ */
+async function whatsappHealth(): Promise<{ paused: boolean; why: string; sent: number; failed: number }> {
+  const guard = await whatsappGuard();
+  const rows = await svc(
+    `cockpit_sales_messages?channel=eq.whatsapp&state=in.(sent,delivered,read,failed)&created_at=gte.${enc(new Date(Date.now() - 86_400_000).toISOString())}&select=state,error&limit=2000`,
+  );
+  const failed = rows.filter(r => r.state === "failed");
+  const paused = rows.length >= guard.pause_min_sends && failed.length / rows.length >= guard.pause_fail_share;
+  const reason = failed.map(r => String(r.error ?? "")).find(Boolean) ?? "no reason given";
+  return {
+    paused,
+    sent: rows.length,
+    failed: failed.length,
+    why: paused
+      ? `Automatic WhatsApp sends are paused: ${failed.length} of the last day's ${rows.length} failed (${redact(reason).slice(0, 160)}). A person sends until that clears.`
+      : "",
+  };
+}
+
 /** The sales asset a message carries, if it names one the cockpit has. */
 async function assetFor(v: unknown): Promise<string | null> {
   const id = cleanText(v, 40);
   if (!id) return null;
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))
     throw new Refusal("That is not one of the sales assets.");
-  const a = (await svc(`cockpit_sales_assets?id=eq.${enc(id)}&select=id,sendable`))[0];
+  const a = (await svc(`cockpit_sales_assets?id=eq.${enc(id)}&select=id,slug,sendable`))[0];
   if (!a) throw new Refusal("That asset is not in the library any more.", 404);
   if (!a.sendable) throw new Refusal("That asset may not be sent (its link, its claims or its age).", 409);
+  const hidden = (((await setting<Row>("assets")) ?? {}).hidden ?? {}) as Record<string, unknown>;
+  if (a.slug && hidden[String(a.slug)]) throw new Refusal("A manager stopped offering that asset.", 409);
   return id;
 }
 
@@ -1025,6 +1075,23 @@ async function sendTemplate(
   if (!(await messagingSwitch()).whatsapp) throw new Refusal("Sending by WhatsApp is switched off in the cockpit.", 409);
   const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(o.contactId)}&select=contact_id,name`))[0];
   if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
+  // The line rides in a contact field until the workflow reads it: a second
+  // template within two minutes could overwrite the first one's line.
+  const recent = await svc(
+    `cockpit_sales_messages?contact_id=eq.${enc(o.contactId)}&via=eq.workflow&state=neq.failed&created_at=gte.${enc(new Date(Date.now() - 120_000).toISOString())}&select=id&limit=1`,
+  );
+  if (recent.length) throw new Refusal("A template went to this lead a moment ago. Wait two minutes before sending another.", 409);
+  // A daily ceiling on templates: too many at once, or too many ignored, and
+  // Meta lowers the number's quality and then limits it.
+  const guard = await whatsappGuard();
+  const sentToday = await svc(
+    `cockpit_sales_messages?via=eq.workflow&state=neq.failed&created_at=gte.${enc(kuwaitMidnightIso(Date.now()))}&select=id&limit=${guard.templates_per_day + 1}`,
+  );
+  if (sentToday.length >= guard.templates_per_day)
+    throw new Refusal(
+      `Today's ${guard.templates_per_day} WhatsApp templates have gone out. The ceiling protects the number's standing with Meta; more tomorrow, or a manager raises it under Follow-ups, How it works.`,
+      409,
+    );
   const contact = (((await ghl("GET", `/contacts/${enc(o.contactId)}`, undefined, "2021-07-28")) as Row).contact ?? {}) as Row;
   if (dndFor(contact, "whatsapp"))
     throw new Refusal("This lead asked not to be contacted on WhatsApp (do not disturb is on in HighLevel).", 409);
@@ -1172,6 +1239,32 @@ async function ghlWorkflows(who: Who) {
   return { workflows: await workflowsList() };
 }
 
+/**
+ * Stop, or start again, offering an asset in Proof to send: for an asset
+ * whose claims no longer match what Mahara says (the library is Muhammed's,
+ * in B2B, and stays as it is there).
+ */
+async function assetHide(who: Who, b: Row) {
+  needManager(who);
+  const slug = cleanText(b.slug, 160).toLowerCase();
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(slug)) throw new Refusal("Which asset?");
+  const known = (await svc(`cockpit_sales_assets?slug=eq.${enc(slug)}&select=slug`))[0];
+  if (!known) throw new Refusal("That asset is not in the library any more.", 404);
+  const before = ((await setting<Row>("assets")) ?? {}) as Row;
+  const hidden = { ...((before.hidden ?? {}) as Record<string, Row>) };
+  if (b.hidden === true)
+    hidden[slug] = { by: who.email, at: new Date().toISOString(), why: cleanText(b.why, 300) || null };
+  else delete hidden[slug];
+  const value = { ...before, hidden };
+  await svc("cockpit_sales_settings?on_conflict=key", {
+    method: "POST",
+    body: { key: "assets", value, updated_by: who.email, updated_at: new Date().toISOString() },
+    prefer: "resolution=merge-duplicates,return=minimal",
+  });
+  await audit(who, "asset.hide", "cockpit_sales_settings", "assets", before, value, { slug, hidden: b.hidden === true });
+  return { setting: { key: "assets", value } };
+}
+
 async function snippetSave(who: Who, b: Row) {
   needManager(who);
   const c = checkSnippet(b);
@@ -1286,6 +1379,26 @@ async function referenceAnswer(who: Who, b: Row) {
     });
   await audit(who, "reference.answer", "cockpit_sales_reference_asks", id, before, out[0]);
   return { ask: out[0] };
+}
+
+/** A manager sets the WhatsApp ceilings. */
+async function whatsappGuardSave(who: Who, b: Row) {
+  needManager(who);
+  const v = (b.value ?? {}) as Row;
+  const perDay = Number(v.templates_per_day);
+  if (!Number.isInteger(perDay) || perDay < 1 || perDay > 5000)
+    throw new Refusal("Templates a day is a whole number from 1 to 5,000.");
+  const share = Number(v.pause_fail_share ?? 0.3);
+  if (!Number.isFinite(share) || share <= 0 || share > 1) throw new Refusal("The pause share is between 0 and 1.");
+  const before = await setting<Row>("whatsapp_guard");
+  const value = { templates_per_day: perDay, pause_fail_share: share, pause_min_sends: Math.max(1, Math.round(Number(v.pause_min_sends ?? 5))) };
+  await svc("cockpit_sales_settings?on_conflict=key", {
+    method: "POST",
+    body: { key: "whatsapp_guard", value, updated_by: who.email, updated_at: new Date().toISOString() },
+    prefer: "resolution=merge-duplicates,return=minimal",
+  });
+  await audit(who, "whatsapp.guard", "cockpit_sales_settings", "whatsapp_guard", before, value);
+  return { setting: { key: "whatsapp_guard", value } };
 }
 
 /**
@@ -1742,7 +1855,7 @@ async function confirmationSent(who: Who, f: Row) {
 
 async function followupApprove(who: Who, b: Row) {
   const f = await followupRow(cleanText(b.id, 40));
-  if (!who.manager && f.owner_email !== who.email) throw new Refusal("That is another rep's lead.", 403);
+  if (!who.manager && f.owner_email && f.owner_email !== who.email) throw new Refusal("That is another rep's lead.", 403);
   return await sendFollowup(who, f, b, false);
 }
 
@@ -1752,12 +1865,16 @@ async function followupAutosend(who: Who, b: Row) {
   const settings = (await setting<Row>("followups")) ?? {};
   const auto = ((settings.autosend ?? {}) as Row)[String(f.segment)] === true;
   if (!auto) throw new Refusal(`${String(f.segment)} drafts wait for a person; a manager has not switched them to send by themselves.`, 403);
+  if (f.channel !== "email") {
+    const health = await whatsappHealth();
+    if (health.paused) throw new Refusal(health.why, 409);
+  }
   return await sendFollowup(who, f, {}, true);
 }
 
 async function followupSkip(who: Who, b: Row) {
   const f = await followupRow(cleanText(b.id, 40));
-  if (!who.manager && f.owner_email !== who.email) throw new Refusal("That is another rep's lead.", 403);
+  if (!who.manager && f.owner_email && f.owner_email !== who.email) throw new Refusal("That is another rep's lead.", 403);
   if (f.status !== "draft") throw new Refusal(`This draft was already ${f.status}.`, 409);
   const reason = cleanText(b.reason, 200) || null;
   const saved = (await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}&status=eq.draft`, {
@@ -3569,6 +3686,8 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   "ghl.workflows": ghlWorkflows,
   "snippet.save": snippetSave,
   "snippet.delete": snippetDelete,
+  "asset.hide": assetHide,
+  "whatsapp.guard": whatsappGuardSave,
   "reference.save": referenceSave,
   "reference.ask": referenceAsk,
   "reference.answer": referenceAnswer,

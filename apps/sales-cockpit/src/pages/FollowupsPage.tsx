@@ -1,6 +1,7 @@
 import { ChevronDown, ChevronRight, Flame, Send, Sparkles } from "lucide-react";
 import { type FormEvent, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
+import { DeskStatus } from "../components/DeskStatus";
 import {
   button,
   buttonPrimary,
@@ -164,7 +165,9 @@ export default function FollowupsPage({ me }: { me: Me }) {
         .gte("created_at", since)
         .order("created_at", { ascending: false })
         .limit(1000);
-      if (!everyone) q = q.eq("owner_email", me.email ?? "");
+      // A rep's own leads, and the leads nobody owns yet (anyone may send those).
+      if (!everyone)
+        q = q.or(`owner_email.eq."${me.email ?? ""}",owner_email.is.null`);
       return q;
     },
     [everyone, me.email, since],
@@ -199,9 +202,10 @@ export default function FollowupsPage({ me }: { me: Me }) {
           <h1 className="text-2xl font-semibold tracking-tight">Follow-ups</h1>
           <p className="muted mt-1 text-sm">
             Written by the follow-up agent for{" "}
-            {everyone ? "the team's" : "your"} leads, hottest first, on WhatsApp
-            wherever it can go. Nothing goes to a lead until a person approves
-            it, except the kinds a manager has trusted to send by themselves.
+            {everyone ? "the team's" : "your"} leads and the ones nobody owns
+            yet, hottest first, on WhatsApp wherever it can go. Nothing goes to
+            a lead until a person approves it, except the kinds a manager has
+            trusted to send by themselves.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -234,6 +238,11 @@ export default function FollowupsPage({ me }: { me: Me }) {
           />
         </div>
       </header>
+
+      <DeskStatus
+        jobs={[{ job: "followups", what: "The follow-up agent", staleMin: 75 }]}
+      />
+      <WhatsappHealth />
 
       {tab === "library" ? (
         <WhatsAppLibrary manager={Boolean(me.manager)} />
@@ -389,9 +398,11 @@ function DraftCard({
               {f.expires_at
                 ? ` · good until ${day(f.expires_at)} ${clock(f.expires_at)}`
                 : ""}
-              {showOwner
-                ? ` · ${f.owner_email?.split("@")[0] ?? "no rep on the lead"}`
-                : ""}
+              {!f.owner_email
+                ? " · nobody's lead yet: anyone can send it"
+                : showOwner
+                  ? ` · ${f.owner_email.split("@")[0]}`
+                  : ""}
             </span>
           </div>
           {reasons.length ? (
@@ -830,7 +841,142 @@ function Learning({
         </div>
       </SectionCard>
       {manager && s ? <SettingsForm s={s} busy={busy} onSave={save} /> : null}
+      {manager ? <GuardForm /> : null}
     </div>
+  );
+}
+
+/**
+ * WhatsApp's health over the last day: templates sent today against the
+ * ceiling, and what failed at Meta. Automatic sends pause by themselves
+ * when too many fail (sales-api whatsappHealth); this says so.
+ */
+function WhatsappHealth() {
+  const since = useMemo(
+    () => new Date(Date.now() - 86_400_000).toISOString(),
+    [],
+  );
+  const guard = useSetting<Guard>("whatsapp_guard");
+  const sends = useQuery<
+    { state: string; error: string | null; via: string; created_at: string }[]
+  >(
+    () =>
+      supabase
+        .from("cockpit_sales_messages")
+        .select("state,error,via,created_at")
+        .eq("channel", "whatsapp")
+        .gte("created_at", since)
+        .limit(2000),
+    [since],
+    120_000,
+  );
+  if (sends.error)
+    return (
+      <p className="muted text-xs">
+        WhatsApp's last day could not be read: {sends.error}.
+      </p>
+    );
+  const rows = sends.data ?? [];
+  const settled = rows.filter(r =>
+    ["sent", "delivered", "read", "failed"].includes(r.state),
+  );
+  const failed = settled.filter(r => r.state === "failed");
+  // Kuwait's midnight (UTC+3) that began today.
+  const k = new Date(Date.now() + 3 * 3_600_000);
+  const midnight =
+    Date.UTC(k.getUTCFullYear(), k.getUTCMonth(), k.getUTCDate()) -
+    3 * 3_600_000;
+  const templatesToday = rows.filter(
+    r =>
+      r.via === "workflow" &&
+      r.state !== "failed" &&
+      Date.parse(r.created_at) >= midnight,
+  ).length;
+  const g = guard.data;
+  const paused = Boolean(
+    g &&
+      settled.length >= g.pause_min_sends &&
+      failed.length / settled.length >= g.pause_fail_share,
+  );
+  if (!settled.length && !templatesToday) return null;
+  const reasons = [...new Set(failed.map(r => r.error).filter(Boolean))].slice(
+    0,
+    2,
+  );
+  return (
+    <p
+      className={`text-xs ${paused ? "callout-bad rounded-[var(--radius-md)] border px-2 py-1" : "muted"}`}
+    >
+      WhatsApp, last day: {settled.length} sent, {failed.length} failed
+      {reasons.length ? ` (${reasons.join("; ")})` : ""}.{" "}
+      {g
+        ? `${templatesToday} of today's ${g.templates_per_day} templates.`
+        : ""}
+      {paused
+        ? " Automatic sends are paused until fewer fail; people can still send."
+        : ""}
+    </p>
+  );
+}
+
+interface Guard {
+  templates_per_day: number;
+  pause_fail_share: number;
+  pause_min_sends: number;
+}
+
+function GuardForm() {
+  const guard = useSetting<Guard>("whatsapp_guard");
+  const [perDay, setPerDay] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const g = guard.data;
+  if (!g) return null;
+  const value = perDay ?? String(g.templates_per_day);
+  return (
+    <SectionCard title="WhatsApp ceilings">
+      <form
+        className="flex flex-wrap items-end gap-3"
+        onSubmit={async e => {
+          e.preventDefault();
+          setBusy(true);
+          try {
+            await api("whatsapp.guard", {
+              value: { ...g, templates_per_day: Number(value) },
+            });
+            toast.success("Saved.");
+            setPerDay(null);
+            guard.reload();
+          } catch (err) {
+            toast.error(String((err as Error).message ?? err));
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <label className="block space-y-1 text-sm">
+          <span className="muted block text-xs">
+            WhatsApp templates a day, at most
+          </span>
+          <input
+            value={value}
+            onChange={e => setPerDay(e.target.value)}
+            inputMode="numeric"
+            className={`${field} w-32`}
+          />
+        </label>
+        <button type="submit" disabled={busy} className={buttonPrimary}>
+          {busy ? "Saving…" : "Save"}
+        </button>
+        <p className="muted w-full text-xs">
+          Meta limits how many conversations a number may start in a day and
+          marks it down when too many messages are ignored or reported. Past
+          this ceiling templates wait for tomorrow. Automatic sends also pause
+          by themselves when {Math.round(g.pause_fail_share * 100)}% or more of
+          the last day's WhatsApp sends failed (once {g.pause_min_sends} have
+          gone out).
+        </p>
+      </form>
+    </SectionCard>
   );
 }
 

@@ -2,6 +2,7 @@ import { FileText, Mic, Phone, Plus, Search, Video } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { CoachReviewForm, CoachReviewList } from "../components/CoachReviews";
+import { DeskStatus } from "../components/DeskStatus";
 import {
   button,
   EmptyState,
@@ -71,6 +72,22 @@ export default function RecordingsPage({ me }: { me: Me }) {
         />
       </header>
 
+      {tab === "calls" ? (
+        <DeskStatus
+          jobs={[
+            {
+              job: "maqsam-calls",
+              what: "Phone calls from Maqsam",
+              staleMin: 75,
+            },
+            {
+              job: "calls-vault",
+              what: "Video calls from the vault",
+              staleMin: 75,
+            },
+          ]}
+        />
+      ) : null}
       {tab === "calls" ? (
         <Calls params={params} set={set} reps={reps.data ?? []} />
       ) : tab === "reviews" ? (

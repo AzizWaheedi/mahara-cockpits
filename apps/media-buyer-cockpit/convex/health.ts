@@ -328,6 +328,9 @@ const JOBS: Record<string, { ref: any; everyMin: number }> = {
   "hermes relay": { ref: internal.hermesDrain.run, everyMin: 1 },
   "client comment watch": { ref: internal.commentWatch.scan, everyMin: 15 },
   "ceo refresh": { ref: internal.ceo.refresh.refreshAll, everyMin: 15 },
+  // The sales cockpit's desk (VPS) and mirror (Supabase) run outside Convex;
+  // this watches their last runs so a stopped one alerts. [Aziz, 2026-09-26]
+  "sales watch": { ref: internal.salesWatch.check, everyMin: 15 },
   // Hiring: applications in from the careers forms, the board mirrored, then
   // whatever the moves ask for. One job, so a failure at any step shows up in
   // one place. [Aziz, 2026-09-22]

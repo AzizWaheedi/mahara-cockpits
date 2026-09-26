@@ -241,6 +241,26 @@ class Rules(unittest.TestCase):
         self.assertEqual(fu.automation_message(thread, {"m2"}), NOW - timedelta(hours=30))
 
 
+class Safety(unittest.TestCase):
+    def test_a_lead_who_said_stop_is_left_alone(self):
+        said = lambda text: [{"from": "us", "text": "هلا"}, {"from": "lead", "text": text}]
+        for text in ("STOP", "please don't message me again", "Not interested, thanks", "لا تراسلني", "مو مهتم",
+                     "احذف رقمي لو سمحت", "وقفوا الرسايل"):
+            self.assertTrue(fu.asked_to_stop(said(text)), text)
+        for text in ("متى الاجتماع؟", "Interested, when can we talk?", "send me the details", "شكراً"):
+            self.assertFalse(fu.asked_to_stop(said(text)), text)
+        # A later message opens them up again.
+        self.assertFalse(fu.asked_to_stop([{"from": "lead", "text": "not interested"},
+                                           {"from": "lead", "text": "actually, tell me more"}]))
+
+    def test_a_call_time_goes_on_the_leads_own_clock(self):
+        start = datetime(2026, 9, 25, 12, 0, tzinfo=timezone.utc)  # 15:00 in Kuwait
+        self.assertEqual(fu.call_words(start, NOW, "Kuwait")["time_24h"], "15:00")
+        self.assertEqual(fu.call_words(start, NOW, "United Arab Emirates")["time_24h"], "16:00")
+        self.assertEqual(fu.call_words(start, NOW, "Oman")["time_24h"], "16:00")
+        self.assertEqual(fu.call_words(start, NOW, None)["time_24h"], "15:00")
+
+
 class FakeGhl:
     """HighLevel's contact and conversations for one invented lead, the rest to the fake database."""
 
@@ -333,6 +353,27 @@ class Run(unittest.TestCase):
             out = fu.run(Supabase("https://example.supabase.co", "k"), FakeProvider([]), lambda _m: None,
                          settings={"enabled": True}, ghl_token="t", now=NOW)
         self.assertEqual((out["written"], out["in_a_conversation"]), (0, 1))
+
+    def test_an_unreadable_conversation_waits_and_a_stop_is_respected(self):
+        pg = FakePostgrest()
+        self.seed_new_lead(pg)
+
+        class Broken(FakeGhl):
+            def __call__(self, method, url, **kw):
+                if "/conversations/" in url:
+                    raise http.HttpError(502, "bad gateway", b"", url)
+                return super().__call__(method, url, **kw)
+
+        with mock.patch.object(http, "request", Broken(pg)):
+            out = fu.run(Supabase("https://example.supabase.co", "k"), FakeProvider([]), lambda _m: None,
+                         settings={"enabled": True}, ghl_token="t", now=NOW)
+        self.assertEqual((out["written"], out["conversation_unreadable"]), (0, 1))
+        thread = [{"id": "m1", "direction": "inbound", "messageType": "TYPE_WHATSAPP", "source": None,
+                   "dateAdded": ago(hours=30), "body": "لا تراسلني"}]
+        with mock.patch.object(http, "request", FakeGhl(pg, thread=thread)):
+            out = fu.run(Supabase("https://example.supabase.co", "k"), FakeProvider([]), lambda _m: None,
+                         settings={"enabled": True}, ghl_token="t", now=NOW)
+        self.assertEqual((out["written"], out["asked_to_stop"]), (0, 1))
 
     def test_no_email_when_the_kind_does_not_allow_it(self):
         pg = FakePostgrest()
