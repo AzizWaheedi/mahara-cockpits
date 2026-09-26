@@ -12,7 +12,7 @@ from unittest import mock
 
 os.environ["SALES_NO_KEY_FILES"] = "1"
 
-from desk import followups as fu, http, model as model_mod  # noqa: E402
+from desk import followups as fu, http, model as model_mod, research  # noqa: E402
 from desk.errors import NotNow  # noqa: E402
 from desk.model import Reply  # noqa: E402
 from desk.supabase import Supabase  # noqa: E402
@@ -56,18 +56,50 @@ class Meter(unittest.TestCase):
         self.assertEqual(inner.calls, 1)
         self.assertTrue(issubclass(model_mod.BudgetSpent, NotNow))
 
-    def test_an_unreadable_day_counts_only_this_process_and_a_failed_log_costs_nothing(self):
-        def broken():
-            raise RuntimeError("database down")
+    def test_an_unreadable_day_asks_no_model_and_a_failed_log_is_warned_about(self):
+        state = {"down": True}
+
+        def today():
+            if state["down"]:
+                raise RuntimeError("database down")
+            return 0
 
         def refuse(_row):
             raise RuntimeError("insert refused")
 
-        m = model_mod.Meter(job="followups", cap=1_000, used_today=broken, record=refuse)
-        p = model_mod.Metered(Counting(), m)
-        p.complete("s", "u")
-        with self.assertRaises(model_mod.BudgetSpent):
+        warned = []
+        inner = Counting()
+        m = model_mod.Meter(job="followups", cap=10_000, used_today=today, record=refuse, warn=warned.append)
+        p = model_mod.Metered(inner, m)
+        with self.assertRaises(model_mod.SpendUnknown) as e:
             p.complete("s", "u")
+        self.assertEqual(inner.calls, 0)
+        self.assertIn("an unknown spend is not zero", str(e.exception))
+        self.assertTrue(issubclass(model_mod.SpendUnknown, NotNow))
+        # Once the day can be read, the call goes; a usage row that is refused costs nothing but a warning.
+        state["down"] = False
+        self.assertEqual(p.complete("s", "u").model, "fake-model-1")
+        self.assertEqual((inner.calls, m.spent), (1, 1000))
+        self.assertIn("was not written", warned[0])
+
+    def test_the_researcher_is_metered_too(self):
+        rows = []
+        answer = {"model": "gpt-5", "usage": {"input_tokens": 9000, "output_tokens": 700, "total_tokens": 9700,
+                                              "output_tokens_details": {"reasoning_tokens": 300}},
+                  "output": [{"type": "message", "content": [{"type": "output_text", "text": json.dumps({
+                      "identified": False, "person": {}, "company": {}, "not_found": ["nothing"]})}]}]}
+        model_mod.meter(model_mod.Meter(job="research", cap=10_000, used_today=lambda: 0, record=rows.append))
+        try:
+            with mock.patch.object(http, "request", return_value=(200, {}, json.dumps(answer).encode())):
+                research.research({"name": "Omar Haddad", "company": "Haddad Interiors"}, openai_key="k", apify_key="")
+            self.assertEqual(rows, [{"job": "research", "model": "gpt-5", "input_tokens": 9000, "output_tokens": 700,
+                                     "reasoning_tokens": 300, "total_tokens": 9700}])
+            model_mod.current_meter().base = 10_000
+            with mock.patch.object(http, "request", side_effect=AssertionError("asked past the ceiling")), \
+                    self.assertRaises(model_mod.BudgetSpent):
+                research.research({"name": "Omar Haddad", "company": "Haddad Interiors"}, openai_key="k", apify_key="")
+        finally:
+            model_mod.meter(None)
 
     def test_the_follow_up_run_stops_instead_of_failing_every_lead(self):
         pg = FakePostgrest()

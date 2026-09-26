@@ -116,6 +116,19 @@ class Copy(unittest.TestCase):
         out = self.run_it(limit=1)
         self.assertEqual((out["to_copy"], out["rows"]), (1, 1))
 
+    def test_a_copy_marks_a_meeting_recorded_twice_once_and_a_dry_run_never(self):
+        asked = []
+        self.pg.rpcs["cockpit_sales_mark_recordings"] = lambda body: asked.append(body) or 1
+        self.assertEqual((self.run_it(dry=True)["marked"], asked), (None, []))
+        self.assertEqual((self.run_it()["marked"], asked), (1, [{}]))
+        # A marking that fails costs the copy nothing: it is said, and the calls are in.
+        del self.pg.rpcs["cockpit_sales_mark_recordings"]
+        said: list[str] = []
+        with mock.patch.object(http, "request", self.pg):
+            out = b2b_fathom.run(self.sb, self.b2b, said.append, emails=[REP], vault=self.vault, limit=1)
+        self.assertIsNone(out["marked"])
+        self.assertTrue(any(s.startswith("calls-b2b-fathom: recordings stored, but") for s in said))
+
     def test_the_drafter_reads_a_b2b_call_from_the_cockpit_not_from_fathom(self):
         self.run_it()
         self.pg.one("cockpit_sales_recordings", recording_id="11")["started_at"] = "2099-01-01T00:00:00Z"

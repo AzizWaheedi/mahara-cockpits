@@ -13,7 +13,14 @@ problems, and expectations ... for the last week or last 30 days", which
 - `run_digest` reads the notes of the last 7 or 30 days (not the
   transcripts again) and writes the digest (cockpit_sales_digests). A window
   with no calls writes an empty digest, so the page says so instead of
-  showing last month's.
+  showing last month's. A digest read from only some of the window's calls
+  says so: from X of Y calls, marked partial, with the calls whose time has
+  passed that nobody has marked yet counted beside it.
+
+A call that failed twice within a day is set aside until the day has passed
+(cockpit_sales_desk_failures), so it cannot hold the front of the queue and
+cost two model calls every run; a recording hidden as a duplicate or a
+carrier's message never gets notes.
 
 The model is the desk's own on the VPS key; lead data never goes to DeepSeek.
 """
@@ -25,8 +32,13 @@ from typing import Any, Callable, Optional
 from . import http
 from .errors import NotNow
 from . import model as model_mod
+from .supabase import set_aside
 
 KUWAIT = timedelta(hours=3)
+JOB = "notes"
+# The notes one digest is written from, newest first: enough for a month of
+# calls, and a prompt the model reads whole.
+DIGEST_NOTES = 400
 
 NOTES_SYSTEM = """You take notes on one sales call for Mahara Media, a Gulf growth agency that wins its clients (mostly B2B companies: contracting, construction, design, real estate, services) qualified projects and meetings through ads and a sales system. A setter runs a 15-minute intro call; a closer runs a 45-minute demo.
 
@@ -148,27 +160,42 @@ def kind_of(rec: dict[str, Any], appointment_type: Optional[str]) -> str:
     return "intro" if ("intro" in title or "تعريفية" in title) else "demo"
 
 
-def due(sb: Any, *, since: datetime, min_chars: int, limit: int) -> list[dict[str, Any]]:
-    """Recorded sales calls since `since` with a transcript and no notes yet, newest first."""
+def due(sb: Any, *, since: datetime, min_chars: int, limit: int,
+        skip: frozenset = frozenset()) -> tuple[list[dict[str, Any]], int]:
+    """Recorded sales calls since `since` with a transcript and no notes yet,
+    newest first, and how many of them are set aside (`skip`): those are left
+    out before the limit, so they never hold the front of the queue. A
+    recording hidden as a duplicate of a longer one, or as a phone
+    "transcript" that is only the carrier's message, is not a call to note."""
     rows = sb.select(
         "cockpit_sales_recordings",
         "select=recording_id,title,recorded_by,started_at,contact_id,appointment_id,transcript_path,"
         f"transcript_chars,source&started_at=gte.{http.quote(since.isoformat())}&transcript_path=not.is.null"
-        f"&transcript_chars=gte.{min_chars}&order=started_at.desc&limit=300",
+        f"&transcript_chars=gte.{min_chars}&hidden_reason=is.null&order=started_at.desc&limit=300",
     )
     if not rows:
-        return []
+        return [], 0
     ids = ",".join('"' + str(r["recording_id"]) + '"' for r in rows)
     done = {str(r["recording_id"]) for r in sb.select(
         "cockpit_sales_call_notes", f"select=recording_id&recording_id=in.({http.quote(ids)})")}
-    return [r for r in rows if str(r["recording_id"]) not in done][:limit]
+    open_ = [r for r in rows if str(r["recording_id"]) not in done]
+    todo = [r for r in open_ if str(r["recording_id"]) not in skip]
+    return todo[:limit], len(open_) - len(todo)
 
 
 def run_notes(sb: Any, p: Any, log: Callable[[str], None], *, since: datetime, limit: int, min_chars: int,
-              attempts: int = 2, timeout: float = 600) -> dict[str, Any]:
-    todo = due(sb, since=since, min_chars=min_chars, limit=limit)
+              attempts: int = 2, timeout: float = 600, now: Optional[datetime] = None,
+              warn: Optional[Callable[[str], None]] = None) -> dict[str, Any]:
+    now = now or datetime.now(timezone.utc)
+    warn = warn or log
+    try:
+        failing = sb.failures(JOB)
+    except Exception as e:  # noqa: BLE001 - without the memory every call is tried, as before it
+        warn(f"notes: the calls that failed before could not be read, so none is set aside: {http.scrub(str(e))[:160]}")
+        failing = {}
+    todo, aside = due(sb, since=since, min_chars=min_chars, limit=limit, skip=frozenset(set_aside(failing, now)))
     if not todo:
-        return {"due": 0, "written": 0, "failed": 0, "errors": []}
+        return {"due": 0, "written": 0, "failed": 0, "set_aside": aside, "errors": []}
     reps = sb.select("cockpit_sales_reps", "select=id,display_name,fathom_email,maqsam_email&limit=500")
     rep_of = {str(r.get(k) or "").lower(): r for r in reps for k in ("fathom_email", "maqsam_email") if r.get(k)}
     written = failed = 0
@@ -211,13 +238,32 @@ def run_notes(sb: Any, p: Any, log: Callable[[str], None], *, since: datetime, l
             }], "recording_id")
             written += 1
             log(f"notes: {kind} {rid}: {notes['verdict']}")
+            if rid in failing:
+                _forget(sb, rid, warn)
         except NotNow:
             raise
         except Exception as e:  # noqa: BLE001 - one call is not worth the rest
             failed += 1
             errors.append(f"{rid}: {http.scrub(str(e))[:160]}")
-            log(f"notes: {rid} failed: {http.scrub(str(e))[:200]}")
-    return {"due": len(todo), "written": written, "failed": failed, "errors": errors[:5]}
+            warn(f"notes: {rid} failed: {http.scrub(str(e))[:200]}")
+            _remember(sb, rid, str(e), failing.get(rid), now, warn)
+    return {"due": len(todo), "written": written, "failed": failed, "set_aside": aside, "errors": errors[:5]}
+
+
+def _remember(sb: Any, rid: str, error: str, known: Optional[dict[str, Any]], now: datetime,
+              warn: Callable[[str], None]) -> None:
+    """A failure kept, so a call that fails twice in a day is set aside; never the reason a run fails."""
+    try:
+        sb.record_failure(JOB, rid, error, known=known, now=now)
+    except Exception as e:  # noqa: BLE001 - the warning is the record then
+        warn(f"notes: {rid}'s failure could not be kept: {http.scrub(str(e))[:160]}")
+
+
+def _forget(sb: Any, rid: str, warn: Callable[[str], None]) -> None:
+    try:
+        sb.clear_failure(JOB, rid)
+    except Exception as e:  # noqa: BLE001 - a stale row only sets the call aside for a day
+        warn(f"notes: {rid}'s old failures could not be cleared: {http.scrub(str(e))[:160]}")
 
 
 def notes_lines(rows: list[dict[str, Any]]) -> str:
@@ -256,21 +302,46 @@ def clean_digest(d: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def coverage(sb: Any, *, start: datetime, now: datetime, min_chars: int) -> dict[str, Any]:
+    """What a digest window holds besides its notes: every recorded call
+    that could have notes (a transcript long enough, not hidden), with the
+    noted ones among them, and the intro and demo calls whose time has passed
+    that nobody has marked yet (each counts as held until it is marked, and
+    may have happened with no recording)."""
+    since, until = http.quote(start.isoformat()), http.quote(now.isoformat())
+    noted = {str(r["recording_id"]) for r in sb.select_all(
+        "cockpit_sales_call_notes", f"select=recording_id&call_at=gte.{since}", order="recording_id")}
+    recorded = {str(r["recording_id"]) for r in sb.select_all(
+        "cockpit_sales_recordings", f"select=recording_id&started_at=gte.{since}&started_at=lte.{until}"
+                                    f"&transcript_path=not.is.null&transcript_chars=gte.{int(min_chars)}"
+                                    "&hidden_reason=is.null", order="recording_id")}
+    unmarked = sb.select_all("cockpit_sales_calendar", f"select=appointment_id&needs_mark=is.true"
+                                                       f"&start_at=gte.{since}&start_at=lt.{until}", order="appointment_id")
+    return {"noted": len(noted), "calls": len(recorded | noted), "unmarked": len(unmarked)}
+
+
 def run_digest(sb: Any, p: Any, log: Callable[[str], None], *, days: int, now: Optional[datetime] = None,
-               attempts: int = 2, timeout: float = 600) -> dict[str, Any]:
+               attempts: int = 2, timeout: float = 600, min_chars: int = 0) -> dict[str, Any]:
     now = now or datetime.now(timezone.utc)
     start = now - timedelta(days=days)
     rows = sb.select("cockpit_sales_call_notes",
                      f"select=recording_id,call_type,call_at,verdict,notes&call_at=gte.{http.quote(start.isoformat())}"
-                     "&order=call_at.desc&limit=400")
+                     f"&order=call_at.desc&limit={DIGEST_NOTES}")
+    # Read from every call in the window, or only some: a digest from 3 of
+    # 69 calls said "from 3 calls" on 2026-09-26 while notes were catching up.
+    held = coverage(sb, start=start, now=now, min_chars=min_chars)
+    total = max(held["calls"], len(rows))
+    partial = len(rows) < total
     empty = {"questions": [], "objections": [], "problems": [], "expectations": [], "marketing": []}
-    digest, model = empty, None
+    digest, model = dict(empty), None
     if rows:
         value, _reply = model_mod.call_json(
             p, DIGEST_SYSTEM, f"The notes of {len(rows)} calls from the last {days} days:\n\n{notes_lines(rows)}",
             temperature=None, attempts=attempts, timeout=timeout,
             expect=lambda d: isinstance(d, dict) and any(k in d for k in empty), log=log, what=f"digest {days}d")
         digest, model = clean_digest(value), getattr(p, "model", None)
+    # The table has one count (calls_used); the rest rides in the digest itself.
+    digest.update({"calls_total": total, "partial": partial, "calls_unmarked": held["unmarked"]})
     sb.upsert("cockpit_sales_digests", [{
         "days": days,
         "from_at": start.isoformat(),
@@ -280,5 +351,7 @@ def run_digest(sb: Any, p: Any, log: Callable[[str], None], *, days: int, now: O
         "model": model,
         "written_at": now.isoformat(),
     }], "id")
-    log(f"digest: {days} days from {len(rows)} calls")
-    return {"days": days, "calls": len(rows)}
+    words = f"{len(rows)} of {total}" if partial else f"{len(rows)}"
+    log(f"digest: {days} days from {words} calls" + (" (partial)" if partial else "")
+        + (f"; {held['unmarked']} past calls nobody has marked yet" if held["unmarked"] else ""))
+    return {"days": days, "calls": len(rows), "of": total, "partial": partial, "unmarked": held["unmarked"]}

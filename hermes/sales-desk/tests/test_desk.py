@@ -214,6 +214,45 @@ class ProviderTests(unittest.TestCase):
         with self.assertRaises(model.ModelUnreachable):
             model.provider(c)
 
+    def test_only_the_allowed_models_are_ever_sent_anything(self):
+        for name in ("gpt-5", "gpt-5-mini", "gpt-4.1", "o3", "o4-mini", "claude-opus-5", "openai/gpt-5",
+                     "anthropic/claude-sonnet-4-6"):
+            self.assertTrue(model.model_allowed(name), name)
+        for name in ("openrouter/auto", "meta-llama/llama-3-70b", "deepseek-chat", "deepseek/deepseek-r1", "qwen-max", ""):
+            self.assertFalse(model.model_allowed(name), name)
+        with mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "or-test"}), self.assertRaises(model.ModelUnreachable) as e:
+            model.provider(self.cfg("openrouter", "openrouter/auto"))
+        self.assertIn("is not a model the desk may send", str(e.exception))
+        # Every provider refuses one, however it is made.
+        with self.assertRaises(model.ModelUnreachable):
+            model.OpenAIShaped("openai", model.OPENAI_URL, "sk-test-000000", "deepseek-chat")
+        with self.assertRaises(model.ModelUnreachable):
+            model.AnthropicProvider("sk-ant-test", "mistral-large")
+        # DeepSeek only for a job that carries no lead data, and none does today.
+        self.assertTrue(model.model_allowed("deepseek-chat", lead_data=False))
+        model.OpenAIShaped("openrouter", model.OPENROUTER_URL, "or-test", "deepseek/deepseek-chat", lead_data=False)
+
+    def test_a_job_model_setting_is_checked_by_its_own_name(self):
+        cli = load_cli()
+        with mock.patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test-000000", "SALES_REVIEW_MODEL": "deepseek-chat",
+                                          "SALES_NOTES_MODEL": "openrouter/auto"}):
+            with self.assertRaises(model.ModelUnreachable) as e:
+                cli.review_provider(self.cfg(), None)
+            self.assertIn("SALES_REVIEW_MODEL", str(e.exception))
+            with self.assertRaises(model.ModelUnreachable) as e:
+                cli.notes_provider(self.cfg(), None)
+            self.assertIn("SALES_NOTES_MODEL", str(e.exception))
+
+    def test_vinces_provider_is_metered(self):
+        cli = load_cli()
+        model.meter(model.Meter(job="reviews", cap=10, used_today=lambda: 0, record=lambda _r: None))
+        try:
+            with mock.patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test-000000"}):
+                p = cli.review_provider(self.cfg(), fakes_logger())
+            self.assertIsInstance(p, model.Metered)
+        finally:
+            model.meter(None)
+
     def test_an_unverified_org_is_asked_again_without_streaming(self):
         p = model.OpenAIShaped("openai", model.OPENAI_URL, "sk-test-000000", "gpt-5")
         refused = http.HttpError(400, "stream", b'{"error":{"message":"Your organization must be verified to stream this model.","param":"stream"}}')
@@ -1035,6 +1074,11 @@ class QueueTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+def fakes_logger():
+    from desk.log import Logger
+    return Logger(quiet=True)
+
+
 def load_cli():
     spec = importlib.util.spec_from_file_location("desk_cli", ROOT / "desk.py")
     mod = importlib.util.module_from_spec(spec)
@@ -1081,6 +1125,29 @@ class CliTests(unittest.TestCase):
         self.assertIn("run it with --once", err.getvalue())
         self.assertIn("SALES_B2B_MGMT_TOKEN is not set", err.getvalue())
         self.assertEqual(pg.writes(), [])
+
+    def test_followups_refuse_in_one_sentence_without_the_highlevel_key(self):
+        cli = load_cli()
+        pg = FakePostgrest()
+        env = {"SALES_DESK_HOME": tempfile.mkdtemp(), "DESK_SUPABASE_URL": "https://example.supabase.co",
+               "DESK_SUPABASE_KEY": "service-test", "OPENAI_API_KEY": "sk-test-000000"}
+        err = io.StringIO()
+        with mock.patch.dict(os.environ, env), mock.patch.object(http, "request", pg), \
+                contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            for name in ("GHL_B2B_API_KEY", "SALES_GHL_TOKEN"):
+                os.environ.pop(name, None)
+            self.assertEqual(cli.main(["--quiet", "followups"]), 1)
+        self.assertIn("GHL_B2B_API_KEY is not set, so the follow-up agent cannot read a conversation", err.getvalue())
+        row = pg.one("cockpit_sales_worker_status", worker="sales-desk", job="followups")
+        self.assertEqual(row["ok"], False)
+        self.assertEqual(pg.rows("cockpit_sales_followups"), [])
+
+    def test_a_digest_says_how_much_of_its_window_it_read(self):
+        cli = load_cli()
+        self.assertEqual(cli.digest_words({"days": 30, "calls": 3, "of": 69, "partial": True, "unmarked": 35}),
+                         "30 days from 3 of 69 calls (partial), 35 past calls nobody has marked yet")
+        self.assertEqual(cli.digest_words({"days": 7, "calls": 4, "of": 4, "partial": False, "unmarked": 0}),
+                         "7 days from 4 calls")
 
     def test_validate_by_hand(self):
         cli = load_cli()

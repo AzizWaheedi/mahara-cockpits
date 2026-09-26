@@ -8,15 +8,15 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
 os.environ["SALES_NO_KEY_FILES"] = "1"
 
-from desk import calls_vault, http  # noqa: E402
+from desk import calls_vault, http, recordings  # noqa: E402
 from desk.supabase import Supabase  # noqa: E402
-from tests.fakes import FakePostgrest  # noqa: E402
+from tests.fakes import FakeFathom, FakePostgrest, meeting  # noqa: E402
 
 
 def note(*, rid: str, kind: str = "sales", date: str = "2026-08-10", time: str = "09:00",
@@ -236,6 +236,29 @@ class LeadOnTheInvite(VaultCase):
         self.write("b.md", note(rid="82", kind="team"))
         self.write("_index.md", "not a call")
         self.assertEqual(calls_vault.vault_ids(self.vault), {"81", "82"})
+
+
+class Marking(VaultCase):
+    """Once an import has written, one meeting recorded twice and the phone
+    calls that are only the carrier's message are marked, once a run."""
+
+    def test_the_vault_import_marks_once_and_says_how_many_and_a_dry_run_never(self):
+        asked = []
+        self.pg.rpcs["cockpit_sales_mark_recordings"] = lambda body: asked.append(body) or 3
+        self.write("a.md", note(rid="11"))
+        self.assertEqual((self.run_it(dry=True)["marked"], asked), (None, []))
+        self.assertEqual((self.run_it()["marked"], asked), (3, [{}]))
+
+    def test_the_fathom_index_marks_too_and_a_refusal_is_said_not_raised(self):
+        said: list[str] = []
+        start = (datetime.now(timezone.utc) - timedelta(hours=5)).replace(microsecond=0).isoformat()
+        f = FakeFathom(meetings={None: [meeting("7", start=start, invitees=[
+            {"email": "lina@example.com", "is_external": True}])]})
+        with mock.patch.object(http, "request", self.pg):  # nobody stood the function up: a 404
+            out = recordings.index(self.sb, f, said.append, days=14)
+        self.assertEqual((out["indexed"], out["by_email"], out["marked"]), (1, 1, None))
+        self.assertTrue(any("recordings stored, but duplicates and stubs were not marked" in s for s in said))
+        self.assertEqual(self.pg.one("cockpit_sales_recordings", recording_id="7")["contact_id"], "c-lina")
 
 
 if __name__ == "__main__":

@@ -5,6 +5,9 @@ FakePostgrest stands where the HTTP layer would be: it answers the same URLs
 the desk calls, reading the query strings the way PostgREST does (eq, lt,
 in, is, ilike, or, a JSON arrow, order, limit, on_conflict, Prefer), so a
 test of the queue exercises the real filters rather than a stand-in for them.
+Like the real project it answers at most 1,000 rows a request (max-rows),
+whatever the limit asks, so a read that does not page fails a test. A
+database function answers only when a test stands it up (`rpcs`).
 """
 from __future__ import annotations
 
@@ -45,6 +48,8 @@ PK = {
     "cockpit_sales_wa_templates": ("key",),
     "cockpit_sales_confirmations": ("id",),
     "cockpit_sales_hot": ("contact_id",),
+    "cockpit_sales_desk_failures": ("job", "item_id"),
+    "cockpit_sales_dial_checks": ("day", "agent_email"),
 }
 
 
@@ -100,6 +105,11 @@ class FakePostgrest:
             "sales-calls": {"id": "sales-calls", "public": False},
         }
         self.calls: list[tuple[str, str]] = []
+        # PostgREST's max-rows on Creative Triage.
+        self.max_rows = 1000
+        # Database functions a test stands up, by name: body -> result
+        # (POST rpc/<name>). One nobody stood up answers 404, as PostgREST does.
+        self.rpcs: dict[str, Any] = {}
 
     # ---- seeding and reading ----
     def put(self, table: str, row: dict[str, Any]) -> dict[str, Any]:
@@ -185,7 +195,7 @@ class FakePostgrest:
         for k, v in params:
             if k == "limit":
                 rows = rows[: int(v)]
-        return rows
+        return rows[: self.max_rows]
 
     # ---- the HTTP layer ----
     def __call__(self, method: str, url: str, *, headers: Optional[dict[str, str]] = None, data: Optional[bytes] = None,
@@ -213,6 +223,11 @@ class FakePostgrest:
             return 200, {}, json.dumps(b).encode()
         assert path.startswith("/rest/v1/"), path
         table = path[len("/rest/v1/"):]
+        if table.startswith("rpc/"):
+            fn = self.rpcs.get(table[4:])
+            if fn is None or method != "POST":
+                raise HttpError(404, f'{{"message":"Could not find the function public.{table[4:]}"}}', b"", url)
+            return 200, {}, json.dumps(fn(json.loads(data.decode("utf-8")) if data else json_body), default=str).encode()
         if table not in self.tables:
             raise HttpError(404, f'{{"message":"relation {table} does not exist"}}', b"", url)
         params = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
@@ -226,6 +241,8 @@ class FakePostgrest:
                 if "id" in PK[table] and "id" not in row:
                     row = {"id": f"gen-{len(self.tables[table]) + 1}", **row}
                 key = tuple(str(row[k]) for k in PK[table])
+                if "ignore-duplicates" in prefer and key in self.tables[table]:
+                    continue  # ON CONFLICT DO NOTHING: the row stays as it was and is not returned
                 self.tables[table].setdefault(key, {}).update(row)
                 made.append(self.tables[table][key])
             if "representation" in prefer:
@@ -237,6 +254,11 @@ class FakePostgrest:
                 r.update(body)
             if "representation" in prefer:
                 return 200, {}, json.dumps(hit, default=str).encode()
+            return 204, {}, b""
+        if method == "DELETE":
+            gone = [k for k, r in self.tables[table].items() if self._match(r, params)]
+            for k in gone:
+                del self.tables[table][k]
             return 204, {}, b""
         raise AssertionError(f"{method} not modelled")
 

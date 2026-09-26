@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -223,6 +223,69 @@ class NewReviews(unittest.TestCase):
         self.assertEqual(out["due"], 0)
         self.assertEqual(reviews.kind_of({"source": "maqsam"}, "demo"), "intro")
         self.assertEqual(reviews.kind_of({"source": "vault", "title": "Demo"}, None), "demo")
+
+
+    def test_an_ask_another_run_claimed_first_is_left_to_it(self):
+        class Raced(FakePostgrest):
+            """Another run claims the ask between our read and our claim."""
+            def __call__(self, method, url, **kw):
+                if method == "PATCH" and "cockpit_sales_review_asks" in url and "state=eq.queued" in url:
+                    self.one("cockpit_sales_review_asks", id="q1")["state"] = "reviewing"
+                return super().__call__(method, url, **kw)
+
+        raced = Raced()
+        raced.tables = self.pg.tables
+        raced.objects = self.pg.objects
+        self.pg = raced
+        out, p = self.ask([])
+        self.assertEqual((out["asked"], out["reviewed"], len(p.calls)), (0, 0, 0))
+        self.assertEqual(self.pg.one("cockpit_sales_review_asks", id="q1")["state"], "reviewing")
+
+    def test_an_ask_a_stopped_run_left_half_done_is_freed_and_reviewed(self):
+        long_ago = (datetime.now(timezone.utc) - timedelta(minutes=45)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        out, _ = self.ask([demo_log(preamble=False)], state="reviewing",
+                          error=f"Vince began this review at {long_ago}.")
+        self.assertEqual((out["freed"], out["reviewed"]), (1, 1))
+        self.assertEqual(self.pg.one("cockpit_sales_review_asks", id="q1")["state"], "done")
+        self.assertIsNone(self.pg.one("cockpit_sales_desk_failures", job="reviews", item_id="11"))
+        # One a live run began ten minutes ago is left alone.
+        recent = (datetime.now(timezone.utc) - timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        out, p = self.ask([], state="reviewing", error=f"Vince began this review at {recent}.")
+        self.assertEqual((out["freed"], len(p.calls)), (0, 0))
+        self.assertEqual(self.pg.one("cockpit_sales_review_asks", id="q1")["state"], "reviewing")
+
+    def test_a_call_that_stopped_a_run_before_today_fails_instead_of_looping(self):
+        self.pg.put("cockpit_sales_desk_failures", {"job": "reviews", "item_id": "11", "failures": 1,
+                                                    "first_at": datetime.now(timezone.utc).isoformat()})
+        out, p = self.ask([], state="reviewing", requested_at="2026-09-01T08:00:00+00:00", error=None)
+        self.assertEqual((out["freed"], len(p.calls)), (1, 0))
+        row = self.pg.one("cockpit_sales_review_asks", id="q1")
+        self.assertEqual(row["state"], "failed")
+        self.assertIn("stopped twice today", row["error"])
+        self.assertEqual(self.pg.one("cockpit_sales_desk_failures", job="reviews", item_id="11")["failures"], 2)
+
+    def test_a_hidden_recording_is_never_reviewed(self):
+        self.pg.one("cockpit_sales_recordings", recording_id="11")["hidden_reason"] = "duplicate"
+        out, p = self.run_it([])
+        self.assertEqual((out["due"], len(p.calls)), (0, 0))
+        out, p = self.ask([])
+        self.assertEqual((out["failed"], len(p.calls)), (1, 0))
+        self.assertIn("second recording of a meeting", self.pg.one("cockpit_sales_review_asks", id="q1")["error"])
+
+    def test_a_call_that_failed_twice_today_is_set_aside_and_a_success_forgets_its_failures(self):
+        self.pg.put("cockpit_sales_desk_failures", {"job": "reviews", "item_id": "11", "failures": 2,
+                                                    "first_at": datetime.now(timezone.utc).isoformat()})
+        out, p = self.run_it([])
+        self.assertEqual((out["due"], out["set_aside"], len(p.calls)), (0, 1, 0))
+        self.pg.one("cockpit_sales_desk_failures", job="reviews", item_id="11")["failures"] = 1
+        out, _ = self.run_it([demo_log(preamble=False)])
+        self.assertEqual(out["reviewed"], 1)
+        self.assertIsNone(self.pg.one("cockpit_sales_desk_failures", job="reviews", item_id="11"))
+        # A failure is kept for the next run to see.
+        self.pg.tables["cockpit_sales_reviews"].clear()
+        out, _ = self.run_it(["no scores", "still none"])
+        self.assertEqual(out["failed"], 1)
+        self.assertEqual(self.pg.one("cockpit_sales_desk_failures", job="reviews", item_id="11")["failures"], 1)
 
 
 if __name__ == "__main__":

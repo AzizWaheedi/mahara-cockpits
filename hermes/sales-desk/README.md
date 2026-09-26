@@ -197,14 +197,29 @@ Client-service titles stay out, as always.
 B2B keeps the setters' calls only, and its call ids do not open a call in v3.
 Each answered call with a transcript becomes the row `maqsam:<v3 id>`
 (source `maqsam`, kind `phone`, title "Phone call, outbound" or "inbound",
-Maqsam's English summary), matched to the lead whose phone ends in the same
-eight digits (the newest such lead, as the dialer's calls are linked), with
-the transcript at `maqsam/<id>.md` in `sales-calls`, one "[mm:ss] Rep: ..."
-or "[mm:ss] Lead: ..." line per turn. A run reads from the last successful
-run less seven days (Maqsam writes a transcript minutes after the call); the
-mark is the setting `maqsam_calls`, written only when every seat was read. The
-first run starts on 2026-01-01: 1,256 calls from eight seats on 2026-09-26,
-the five setters' counts identical to B2B's `maqsam_calls`.
+Maqsam's English summary), matched to a lead by the rule
+`cockpit_sales_link_dials` links the dialer's calls by: when both numbers have
+nine digits or more they must agree on the last nine; among leads with the
+same number, the one that existed at the call wins (an hour's grace); eight
+digits alone match only when one lead could be meant, and an ambiguous call
+stays unmatched. The transcript goes to `maqsam/<id>.md` in `sales-calls`, one
+"[mm:ss] Rep: ..." or "[mm:ss] Lead: ..." line per turn. A run reads from the
+last successful run less seven days (Maqsam writes a transcript minutes after
+the call); the mark is the setting `maqsam_calls`, written only when every
+seat was read. The first run starts on 2026-01-01: 1,256 calls from eight
+seats on 2026-09-26, the five setters' counts identical to B2B's
+`maqsam_calls`.
+
+The same read fills the dial log for the calls B2B does not keep (the
+closers', B2B role `rep`): every call, answered or not, goes into
+`cockpit_sales_dials` with `origin` `maqsam` under Maqsam's `referenceId`,
+insert-only, never for an agent B2B copies itself (its setters and "both"),
+and sales-mirror drops a twin once B2B copies the call too
+(`cockpit_sales_dedupe_dials`: same second, same agent or number). For the
+last seven Kuwait days it writes Maqsam's count against the log's per agent
+and day into `cockpit_sales_dial_checks` (the Team page shows it). After every
+import `cockpit_sales_mark_recordings()` hides a meeting recorded twice and a
+phone call whose transcript is only the network's message.
 
 A phone call is never drafted from and never reviewed on its own: a rep asks
 for its review, and it is scored on the intro card (a setter's call). An asked

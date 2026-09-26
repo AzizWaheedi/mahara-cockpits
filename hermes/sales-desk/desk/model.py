@@ -5,7 +5,8 @@ Muhammed's account. That proxy is not ours, so the desk talks to a provider
 directly with a key already on the VPS (Aziz, 2026-09-24: "the VPS" pays;
 OpenAI by default, Anthropic or OpenRouter switched in by
 SALES_MODEL_PROVIDER). Lead data never goes to DeepSeek: there is no DeepSeek
-provider, and a DeepSeek model named through OpenRouter is refused.
+provider, and every provider refuses a model outside the allowlist below, so
+no setting can name DeepSeek, another vendor or a router's alias.
 
 Every call streams. Not for progress: streaming makes the socket timeout a
 limit on silence between chunks rather than a budget for the whole answer,
@@ -43,6 +44,34 @@ ANTHROPIC_FALLBACK_BETA = "server-side-fallback-2026-07-01"
 ANTHROPIC_MAX_TOKENS = 64000
 
 KEY_NAMES = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY", "openrouter": "OPENROUTER_API_KEY"}
+
+# The models the desk may send anything to, by prefix: the frontier models it
+# works on today (gpt-5 by default, gpt-4.1 the fallback the README names,
+# OpenAI's o3 and o4, Claude), directly or through OpenRouter. Anything else
+# is refused, so no setting can route a lead's words to another vendor, or to
+# a router alias such as openrouter/auto that picks one by itself.
+FRONTIER = ("gpt-5", "gpt-4.1", "o3", "o4", "claude-",
+            "openai/gpt-5", "openai/gpt-4.1", "openai/o3", "openai/o4", "anthropic/claude-")
+# DeepSeek only for a job that never carries lead data (Kuwaiti and Saudi data
+# law). Every job that asks a model today does: proposals, reviews and notes
+# read call transcripts, the digest what prospects said, follow-ups a lead's
+# messages and answers, research their name and company. So none may name it.
+NO_LEAD_DATA_ONLY = ("deepseek-", "deepseek/deepseek-")
+
+
+def model_allowed(model: str, *, lead_data: bool = True) -> bool:
+    m = str(model or "").strip().lower()
+    return m.startswith(FRONTIER) or (not lead_data and m.startswith(NO_LEAD_DATA_ONLY))
+
+
+def check_model(model: str, *, lead_data: bool = True, setting: str = "the job's model setting") -> None:
+    """A model outside the allowlist refused in one plain sentence, before anything is sent."""
+    if model_allowed(model, lead_data=lead_data):
+        return
+    if "deepseek" in str(model or "").lower():
+        raise ModelUnreachable(f"Lead data never goes to DeepSeek. Set {setting} to a model that is not DeepSeek's.")
+    raise ModelUnreachable(f"{model or 'No model'} is not a model the desk may send a lead's words to. Set {setting} "
+                           "to gpt-5, gpt-4.1, o3, o4 or a claude- model (openai/ or anthropic/ ones through OpenRouter).")
 
 
 class ModelUnreachable(NotNow):
@@ -312,7 +341,8 @@ class OpenAIShaped:
 
     def __init__(self, name: str, base: str, key: str, model: str, *, max_tokens: Optional[int] = None,
                  reasoning_effort: str = "", json_mode: bool = True, extra_headers: Optional[dict[str, str]] = None,
-                 log: Optional[Callable[[str], None]] = None):
+                 log: Optional[Callable[[str], None]] = None, lead_data: bool = True):
+        check_model(model, lead_data=lead_data)
         self.name = name
         self.base = base.rstrip("/")
         self.key = key
@@ -427,7 +457,8 @@ class AnthropicProvider:
     name = "anthropic"
 
     def __init__(self, key: str, model: str, *, max_tokens: Optional[int] = None,
-                 log: Optional[Callable[[str], None]] = None):
+                 log: Optional[Callable[[str], None]] = None, lead_data: bool = True):
+        check_model(model, lead_data=lead_data)
         self.key = key
         self.model = model
         self.max_tokens = max_tokens or ANTHROPIC_MAX_TOKENS
@@ -495,19 +526,52 @@ class BudgetSpent(NotNow):
     """Today's AI ceiling is reached: the job stops and its items wait for tomorrow, untouched."""
 
 
+class SpendUnknown(NotNow):
+    """Today's spend could not be read: no model is asked until it can be, because an unknown spend is not zero."""
+
+
 @dataclass
 class Meter:
     """What this process's model calls spend, against the desk's daily ceiling.
 
     `used_today` reads the tokens already spent today (all jobs, from the
-    database) once; `record` writes one row per call. A write that fails
-    never fails the job: the ceiling still counts what this process spent."""
+    database) before the first call; while it cannot be read, no model is
+    asked, since a ceiling counted from zero is no ceiling. `record` writes
+    one row per call. A write that fails is warned about and never fails the
+    job: the ceiling still counts what this process spent."""
     job: str
     cap: int
     used_today: Callable[[], int]
     record: Callable[[dict[str, Any]], None]
     spent: int = 0
     base: Optional[int] = None
+    warn: Optional[Callable[[str], None]] = None
+
+    def check(self) -> None:
+        """Before a call: refused past the day's ceiling, or when today's spend cannot be read."""
+        if self.base is None:
+            try:
+                self.base = int(self.used_today())
+            except Exception as e:  # noqa: BLE001 - said in the refusal
+                raise SpendUnknown(f"Today's AI spend could not be read ({http.scrub(str(e))[:160]}), so the "
+                                   f"{self.job} job asks no model until it can: an unknown spend is not zero. It "
+                                   "tries again on its next run.") from None
+        if self.cap and self.base + self.spent >= self.cap:
+            raise BudgetSpent(f"today's AI ceiling of {self.cap:,} tokens is reached ({self.base + self.spent:,} spent); "
+                              "the desk's model calls start again after midnight Kuwait. If today is expected to need "
+                              "more, raise SALES_AI_DAILY_TOKENS in ~/.sales-desk/env")
+
+    def add(self, model: Optional[str], usage: dict[str, Any]) -> None:
+        """After a call: its tokens counted, and its row written."""
+        i, o, r, t = usage_tokens(usage or {})
+        self.spent += t
+        try:
+            self.record({"job": self.job, "model": model, "input_tokens": i, "output_tokens": o,
+                         "reasoning_tokens": r, "total_tokens": t})
+        except Exception as e:  # noqa: BLE001 - a missing usage row never costs the answer
+            if self.warn:
+                self.warn(f"{self.job}: the usage of a model call ({t:,} tokens) was not written, so the cockpit's "
+                          f"AI counts miss it: {http.scrub(str(e))[:200]}")
 
 
 _METER: Optional[Meter] = None
@@ -517,6 +581,16 @@ def meter(m: Optional[Meter]) -> None:
     """Meter every provider this process makes from now on (desk.py sets it per command)."""
     global _METER
     _METER = m
+
+
+def current_meter() -> Optional[Meter]:
+    """The meter desk.py set for this command, for a job that calls a model without a provider (research)."""
+    return _METER
+
+
+def metered(p: Any) -> Any:
+    """A provider counted against the day's ceiling when desk.py has set a meter."""
+    return Metered(p, _METER) if _METER is not None else p
 
 
 def usage_tokens(usage: dict[str, Any]) -> tuple[int, int, int, int]:
@@ -538,31 +612,15 @@ class Metered:
         return getattr(self.inner, name)
 
     def complete(self, system: str, user: str, *, temperature: Optional[float] = None, timeout: float = 900) -> Reply:
-        m = self.m
-        if m.base is None:
-            try:
-                m.base = int(m.used_today())
-            except Exception:  # noqa: BLE001 - unknown is not zero: count only this process
-                m.base = 0
-        if m.cap and m.base + m.spent >= m.cap:
-            raise BudgetSpent(f"today's AI ceiling of {m.cap:,} tokens is reached ({m.base + m.spent:,} spent); the "
-                              "desk's model calls start again after midnight Kuwait. If today is expected to need more, "
-                              "raise SALES_AI_DAILY_TOKENS in ~/.sales-desk/env")
+        self.m.check()
         reply = self.inner.complete(system, user, temperature=temperature, timeout=timeout)
-        i, o, r, t = usage_tokens(reply.usage or {})
-        m.spent += t
-        try:
-            m.record({"job": m.job, "model": reply.model or getattr(self.inner, "model", None), "input_tokens": i,
-                      "output_tokens": o, "reasoning_tokens": r, "total_tokens": t})
-        except Exception:  # noqa: BLE001 - a missing usage row never costs the answer
-            pass
+        self.m.add(reply.model or getattr(self.inner, "model", None), reply.usage or {})
         return reply
 
 
 def provider(cfg: Config, log: Optional[Callable[[str], None]] = None) -> Any:
     """The configured provider, metered when desk.py has set a meter, or ModelUnreachable in one plain sentence."""
-    p = _provider(cfg, log)
-    return Metered(p, _METER) if _METER is not None else p
+    return metered(_provider(cfg, log))
 
 
 def _provider(cfg: Config, log: Optional[Callable[[str], None]] = None) -> Any:
@@ -572,6 +630,7 @@ def _provider(cfg: Config, log: Optional[Callable[[str], None]] = None) -> Any:
     if "deepseek" in name or "deepseek" in model.lower():
         raise ModelUnreachable("Lead data never goes to DeepSeek. Set SALES_MODEL_PROVIDER to openai, anthropic "
                                "or openrouter, and SALES_PROPOSAL_MODEL to a model that is not DeepSeek's.")
+    check_model(model, setting="SALES_PROPOSAL_MODEL (or the job's own model setting)")
     if name not in PROVIDERS:
         raise ModelUnreachable(f"SALES_MODEL_PROVIDER is {name!r}; it has to be openai, anthropic or openrouter.")
     key = {"openai": cfg.openai_key, "anthropic": cfg.anthropic_key, "openrouter": cfg.openrouter_key}[name]

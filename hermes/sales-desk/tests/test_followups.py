@@ -10,6 +10,7 @@ import json
 import os
 import unittest
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 from unittest import mock
 
 os.environ["SALES_NO_KEY_FILES"] = "1"
@@ -108,13 +109,13 @@ class Pick(unittest.TestCase):
     def test_new_leads_who_never_booked_and_nobody_reached(self):
         leads = [{"contact_id": "n1", "lead_created_at": ago(hours=3), "lead_class": "qualified"},
                  {"contact_id": "n2", "lead_created_at": ago(hours=3), "lead_class": "qualified"},
-                 {"contact_id": "n3", "lead_created_at": ago(days=8), "lead_class": "qualified"},
+                 {"contact_id": "n3", "lead_created_at": ago(days=9), "lead_class": "qualified"},
                  {"contact_id": "n4", "lead_created_at": ago(hours=3), "lead_class": None},
                  {"contact_id": "n5", "lead_created_at": ago(hours=3), "lead_class": None, "pipeline_id": "p"},
                  {"contact_id": "n6", "lead_created_at": ago(minutes=10), "lead_class": "qualified"}]
         cal = [{"appointment_id": "b2", "contact_id": "n2", "call_type": "intro", "status": "confirmed", "start_at": ahead(days=2)}]
         out = self.base(leads=leads, calendar=cal)
-        # n2 booked, n3 is older than a week, n4 is no lead, n6 came in ten minutes ago (due at half an hour).
+        # n2 booked, n3 is older than the eight days, n4 is no lead, n6 came in ten minutes ago (due at half an hour).
         self.assertEqual(sorted(who(out)), [("n1", "new"), ("n5", "new")])
         self.assertEqual(self.base(leads=leads[:1], reached={"n1"}), [])
 
@@ -268,20 +269,27 @@ class Safety(unittest.TestCase):
 
 
 class FakeGhl:
-    """HighLevel's contact and conversations for one invented lead, the rest to the fake database."""
+    """HighLevel's contact and conversations for one invented lead, the rest to the fake database.
+    `contact` adds to the contact (its do-not-disturb), `statuses` are messages' statuses by id."""
 
-    def __init__(self, pg: FakePostgrest, first: str = "Omar", thread: list[dict] | None = None):
+    def __init__(self, pg: FakePostgrest, first: str = "Omar", thread: Optional[list] = None,
+                 contact: Optional[dict] = None, statuses: Optional[dict] = None):
         self.pg, self.first, self.thread = pg, first, thread or []
+        self.contact, self.statuses, self.asked = contact or {}, statuses or {}, []
 
     def __call__(self, method, url, **kw):
         if "leadconnectorhq" not in url:
             return self.pg(method, url, **kw)
+        self.asked.append(url)
         if "/conversations/search" in url:
             return 200, {}, json.dumps({"conversations": [{"id": "cv1"}] if self.thread else []}).encode()
         if "/conversations/cv1/messages" in url:
             return 200, {}, json.dumps({"messages": {"messages": self.thread}}).encode()
+        if "/conversations/messages/" in url:
+            mid = url.rsplit("/", 1)[-1]
+            return 200, {}, json.dumps({"message": {"id": mid, "status": self.statuses[mid]}}).encode()
         if "/contacts/" in url:
-            return 200, {}, json.dumps({"contact": {"firstName": self.first}}).encode()
+            return 200, {}, json.dumps({"contact": {"firstName": self.first, **self.contact}}).encode()
         raise AssertionError(url)
 
 
@@ -463,6 +471,315 @@ class Run(unittest.TestCase):
                              {"skipped": "quiet hours"})
             self.assertEqual(fu.run(sb, FakeProvider([]), lambda _m: None, settings={"enabled": False}, ghl_token="", now=NOW),
                              {"skipped": "the follow-up agent is switched off"})
+
+
+
+class Sequences(unittest.TestCase):
+    """A sequence ends once the lead books again, and each window is long enough for its last step."""
+
+    def test_a_no_show_ends_once_they_book_again_even_when_that_call_is_held(self):
+        missed = {"appointment_id": "p1", "contact_id": "b", "call_type": "intro", "status": "noshow",
+                  "start_at": ago(days=3), "booked_at": ago(days=5)}
+        held = {"appointment_id": "p2", "contact_id": "b", "call_type": "demo", "status": "showed",
+                "start_at": ago(days=1, hours=1), "booked_at": ago(days=2)}
+        first = [{"contact_id": "b", "segment": "no_show", "status": "sent", "decided_at": ago(days=3)}]
+        self.assertEqual(who(fu.pick(NOW, inbox=[], calendar=[missed], leads=[], followups=first)), [("b", "no_show")])
+        # They booked again and showed: the after-demo message, never "do you still want the call?".
+        self.assertEqual(who(fu.pick(NOW, inbox=[], calendar=[missed, held], leads=[], followups=first)),
+                         [("b", "after_call")])
+        # A later call they missed too, or one they cancelled, is no booking kept.
+        for status in ("noshow", "cancelled", "invalid"):
+            self.assertFalse(fu.booked_again(missed, [missed, {**held, "status": status}], NOW), status)
+
+    def test_a_cancellation_ends_when_they_rebook_even_an_earlier_time(self):
+        cancelled = {"appointment_id": "x1", "contact_id": "k", "call_type": "demo", "status": "cancelled",
+                     "start_at": ahead(days=3), "booked_at": ago(days=5)}
+        sooner = {"appointment_id": "x2", "contact_id": "k", "call_type": "demo", "status": "showed",
+                  "start_at": ago(hours=20), "booked_at": ago(days=2)}
+        self.assertEqual(who(fu.pick(NOW, inbox=[], calendar=[cancelled], leads=[])), [("k", "cancelled")])
+        self.assertEqual(fu.pick(NOW, inbox=[], calendar=[cancelled, sooner], leads=[], deals={"k"}), [])
+        # A call booked before the cancelled one and already over is not a new booking.
+        earlier = {**sooner, "booked_at": ago(days=9), "start_at": ago(days=8)}
+        self.assertFalse(fu.booked_again(cancelled, [cancelled, earlier], NOW))
+
+    def test_every_window_is_long_enough_for_its_last_step(self):
+        for seg, steps in fu.CADENCE.items():
+            self.assertGreaterEqual(fu.WINDOW_DAYS[seg] * 24, max(steps) + 24, seg)
+        # The fifth new-lead message, due on day seven, still goes.
+        lead = [{"contact_id": "n", "lead_created_at": ago(days=7, hours=2), "lead_class": "qualified"}]
+        done = [{"contact_id": "n", "segment": "new", "status": "sent", "decided_at": ago(days=7, hours=1, minutes=-d * 60)}
+                for d in (0, 24, 48, 96)]
+        out = fu.pick(NOW, inbox=[], calendar=[], leads=lead, followups=done)
+        self.assertEqual((who(out), out[0]["touch"]), ([("n", "new")], 5))
+        # The third message after a call cancelled on the day, five days after the first.
+        call = [{"appointment_id": "x", "contact_id": "k", "call_type": "demo", "status": "cancelled",
+                 "start_at": ago(days=5, hours=2), "booked_at": ago(days=6)}]
+        steps = [{"contact_id": "k", "segment": "cancelled", "status": "sent", "decided_at": ago(days=5, hours=1, minutes=-d * 60)}
+                 for d in (0, 48)]
+        out = fu.pick(NOW, inbox=[], calendar=call, leads=[], followups=steps)
+        self.assertEqual((who(out), out[0]["touch"]), ([("k", "cancelled")], 3))
+
+
+class Channels(unittest.TestCase):
+    def test_do_not_disturb_closes_only_its_own_channel(self):
+        lead = {"email": "a@b.co", "phone": "+96550000000"}
+        self.assertEqual(fu.blocked_channels({"dndSettings": {"WhatsApp": {"status": "active"},
+                                                              "Email": {"status": "inactive"}}}), {"whatsapp"})
+        self.assertEqual(fu.blocked_channels({"dnd": True}), {"whatsapp", "email"})
+        self.assertEqual(fu.blocked_channels({"dndSettings": {"SMS": {"status": "active"}}}), set())
+        self.assertEqual(fu.channel_for(lead, NOW - timedelta(hours=3), NOW, blocked={"whatsapp"}), "email")
+        self.assertEqual(fu.channel_for(lead, NOW - timedelta(hours=30), NOW, template=True, blocked={"whatsapp"}), "email")
+        self.assertEqual(fu.channel_for(lead, NOW - timedelta(hours=3), NOW, blocked={"email"}), "whatsapp")
+        self.assertIsNone(fu.channel_for(lead, None, NOW, blocked={"email"}))
+
+    def test_the_latest_message_decides_the_language(self):
+        said = lambda *texts: [{"from": "lead", "text": t} for t in texts]
+        self.assertEqual(fu.language_for({"country": "KW"}, said("مرحبا، أبغى أعرف أكثر", "Can we speak English please?")), "en")
+        self.assertEqual(fu.language_for({"country": "GB"}, said("Hi", "تمام")), "ar")
+        # A message without words (a thumbs up) leaves it to the one before.
+        self.assertEqual(fu.language_for({"country": "KW"}, said("Hello there", "\U0001F44D")), "en")
+        self.assertEqual(fu.language_for({"country": "KW"}, [{"from": "us", "text": "Hello"}]), "ar")
+
+    def test_a_name_that_is_not_a_persons_is_never_greeted(self):
+        self.assertEqual(fu.person_name("Omar Haddad"), "Omar")
+        self.assertEqual(fu.person_name("عمر"), "عمر")
+        self.assertEqual(fu.person_name("Omar 2"), "Omar")
+        for name in ("Ahmed123", "٧٧٧ محمد", "Al Noor Trading Est", "Blue Group", "Haddad L.L.C", "مؤسسة النور",
+                     "شركة البناء للمقاولات", "النور للتجارة", "", None):
+            self.assertIsNone(fu.person_name(name), name)
+
+
+def settings_on(**over):
+    return {"enabled": True, "per_run": 5, "per_day": 60, **over}
+
+
+def run_it(pg, transport=None, provider=None, **kw):
+    """One run at NOW through the fake database (and HighLevel when given)."""
+    out_warn: list = []
+    kw.setdefault("settings", settings_on())
+    kw.setdefault("ghl_token", "t" if transport else "")
+    with mock.patch.object(http, "request", transport or pg):
+        out = fu.run(Supabase("https://example.supabase.co", "k"), provider or FakeProvider([]), lambda _m: None,
+                     now=NOW, warn=out_warn.append, **kw)
+    return out, out_warn
+
+
+DRAFT_EN = json.dumps({"body": "Hi, thanks for reaching out. When suits you for a short call?", "subject": "Your enquiry",
+                       "why": "New lead."})
+
+
+class RunGuards(unittest.TestCase):
+    seed_new_lead = Run.seed_new_lead
+
+    def test_after_an_automation_a_kind_that_takes_over_waits_three_hours_not_twenty(self):
+        pg = FakePostgrest()
+        self.seed_new_lead(pg)
+        thread = [{"id": "w1", "direction": "outbound", "messageType": "TYPE_WHATSAPP", "source": "workflow",
+                   "dateAdded": ago(hours=5), "body": "اهلا عمر، تواصلت معنا"}]
+        out, _ = run_it(pg, FakeGhl(pg, thread=thread))
+        self.assertEqual((out["written"], out["held_for_automation"]), (0, 1))
+        out, _ = run_it(pg, FakeGhl(pg, thread=thread), FakeProvider([DRAFT_EN]),
+                        settings=settings_on(takeover={"new": True}))
+        self.assertEqual((out["written"], out["held_for_automation"]), (1, 0))
+        # Still not straight after the automation's message.
+        pg.tables["cockpit_sales_followups"].clear()
+        soon = [{**thread[0], "dateAdded": ago(hours=2)}]
+        out, _ = run_it(pg, FakeGhl(pg, thread=soon), settings=settings_on(takeover={"new": True}))
+        self.assertEqual((out["written"], out["held_for_automation"]), (0, 1))
+
+    def test_a_channel_closed_by_do_not_disturb_is_skipped_and_only_that_one(self):
+        pg = FakePostgrest()
+        self.seed_new_lead(pg)
+        pg.put("cockpit_sales_wa_templates", LINE_AR)
+        closed = {"dndSettings": {"WhatsApp": {"status": "active"}}}
+        out, _ = run_it(pg, FakeGhl(pg, contact=closed), FakeProvider([DRAFT_EN]))
+        self.assertEqual(out["by_channel"], {"email": 1})
+        pg.tables["cockpit_sales_followups"].clear()
+        out, _ = run_it(pg, FakeGhl(pg, contact={"dndSettings": {"WhatsApp": {"status": "active"},
+                                                                 "Email": {"status": "permanent"}}}))
+        self.assertEqual((out["written"], out["no_open_channel"]), (0, 1))
+
+    def test_a_reply_is_not_drafted_when_someone_answered_after_they_wrote(self):
+        pg = FakePostgrest()
+        self.seed_new_lead(pg, lead_created_at=ago(days=10))
+        pg.put("cockpit_sales_inbox", {"conversation_id": "cv1", "contact_id": "a", "last_direction": "inbound",
+                                       "last_message_at": ago(hours=2), "inbound_whatsapp_at": ago(hours=2)})
+        thread = [{"id": "m1", "direction": "inbound", "messageType": "TYPE_WHATSAPP", "dateAdded": ago(hours=2),
+                   "body": "What does it cost?"},
+                  {"id": "m2", "direction": "outbound", "messageType": "TYPE_WHATSAPP", "source": "app",
+                   "dateAdded": ago(minutes=20), "body": "Hi Omar, the rep will call you in ten minutes."}]
+        out, _ = run_it(pg, FakeGhl(pg, thread=thread))
+        self.assertEqual((out["picked"], out["written"], out["already_answered"]), (1, 0, 1))
+
+    def test_a_company_name_is_greeted_without_a_name_and_gets_no_named_template(self):
+        pg = FakePostgrest()
+        self.seed_new_lead(pg, name="Al Noor Trading Est")
+        pg.put("cockpit_sales_wa_templates", LINE_AR)
+        provider = FakeProvider([DRAFT_EN])
+        out, _ = run_it(pg, FakeGhl(pg, first="Al Noor"), provider)
+        self.assertEqual(out["by_channel"], {"email": 1})
+        self.assertIn("Greet them without a name", provider.calls[0]["user"])
+        self.assertIn('"name": null', provider.calls[0]["user"])
+        self.assertNotIn("Al Noor Trading", provider.calls[0]["user"])
+
+    def test_an_older_leads_heat_is_read_for_a_no_show(self):
+        pg = FakePostgrest()
+        self.seed_new_lead(pg, lead_created_at=ago(days=40), stage_name="Intro Booked", revenue="$1M- $2.5M")
+        pg.put("cockpit_sales_calendar", {"appointment_id": "p1", "contact_id": "a", "call_type": "intro",
+                                          "status": "noshow", "start_at": ago(hours=2), "booked_at": ago(days=3)})
+        out, _ = run_it(pg, provider=FakeProvider([DRAFT_EN]))
+        self.assertEqual(out["written"], 1)
+        d = pg.rows("cockpit_sales_followups")[0]
+        self.assertEqual((d["segment"], d["context"]["heat"]), ("no_show", ["Qualified", "$1M+ a year"]))
+        self.assertGreater(d["heat"], 0)
+
+    def test_a_lead_that_failed_twice_today_is_set_aside_and_a_failed_draft_is_kept(self):
+        pg = FakePostgrest()
+        self.seed_new_lead(pg)
+        out, warned = run_it(pg, provider=FakeProvider(["no json", "still none"]))
+        self.assertEqual((out["written"], out["failed"]), (0, 1))
+        self.assertIn("a failed: the model did not return a usable draft", warned[-1])
+        kept = pg.rows("cockpit_sales_followups")[0]
+        self.assertEqual((kept["status"], kept["segment"], kept["channel"]), ("failed", "new", "email"))
+        kept["created_at"] = NOW.isoformat()  # the database's default
+        pg.put("cockpit_sales_followups", {**kept, "id": "f-older", "created_at": ago(hours=20), "decided_at": ago(hours=20)})
+        out, _ = run_it(pg)  # the model is never asked
+        self.assertEqual((out["written"], out["set_aside"]), (0, 1))
+        # A day after the first failure the lead is tried again.
+        pg.one("cockpit_sales_followups", id="f-older")["decided_at"] = ago(hours=25)
+        out, _ = run_it(pg, provider=FakeProvider([DRAFT_EN]))
+        self.assertEqual((out["written"], out["set_aside"]), (1, 0))
+
+    def test_reads_past_a_thousand_rows_see_every_lead_and_every_step(self):
+        pg = FakePostgrest()
+        for i in range(1000):
+            pg.put("cockpit_sales_leads", {"contact_id": f"filler-{i:04d}", "lead_created_at": ago(days=2),
+                                           "lead_class": None})
+            pg.put("cockpit_sales_followups", {"id": f"old-{i:04d}", "contact_id": f"filler-{i:04d}", "segment": "new",
+                                               "status": "expired", "created_at": ago(days=2), "decided_at": ago(days=1)})
+        self.seed_new_lead(pg, contact_id="zz-new")
+        pg.put("cockpit_sales_leads", {"contact_id": "zz-missed", "name": "Sara", "email": "s@x.co", "lead_class": "qualified",
+                                       "lead_created_at": ago(days=20), "pipeline_name": "Sales Pipeline (2-Call)"})
+        pg.put("cockpit_sales_calendar", {"appointment_id": "p1", "contact_id": "zz-missed", "call_type": "intro",
+                                          "status": "noshow", "start_at": ago(hours=22), "booked_at": ago(days=3)})
+        # Its first no-show message went 21 hours ago: the second is not due yet.
+        pg.put("cockpit_sales_followups", {"id": "zz-step", "contact_id": "zz-missed", "segment": "no_show", "status": "sent",
+                                           "created_at": ago(hours=21, minutes=10), "decided_at": ago(hours=21)})
+        out, _ = run_it(pg, provider=FakeProvider([DRAFT_EN]))
+        self.assertEqual((out["picked"], out["written"]), (1, 1))
+        self.assertEqual({d["contact_id"] for d in pg.rows("cockpit_sales_followups") if d["status"] == "draft"},
+                         {"zz-new"})
+        # The fake answers no more than the real API does.
+        self.assertEqual(len(pg._select("cockpit_sales_leads", [("limit", "3000")])), 1000)
+
+    def test_failures_for_one_lead_reach_the_log_as_warnings(self):
+        pg = FakePostgrest()
+        self.seed_new_lead(pg)
+        pg.put("cockpit_sales_inbox", {"conversation_id": "cv1", "contact_id": "a", "last_direction": "inbound",
+                                       "last_message_at": ago(hours=1), "inbound_whatsapp_at": ago(hours=1)})
+        draft = json.dumps({"body": "Hi Omar, here is the link.", "subject": None, "why": "He asked."})
+        out, warned = run_it(pg, provider=FakeProvider([draft]), settings=settings_on(autosend={"reply": True}),
+                             autosend=lambda _i: {"ok": False, "error": "It is night where the lead is."})
+        self.assertEqual((out["written"], out["sent_by_itself"]), (1, 0))
+        self.assertEqual(warned, ["followups: a kept for a person: It is night where the lead is."])
+
+
+class Closing(unittest.TestCase):
+    """Drafts whose reason has gone, sends that stopped halfway, and sends that settle later."""
+
+    def draft(self, pg, fid, contact, segment, **over):
+        pg.put("cockpit_sales_followups", {"id": fid, "contact_id": contact, "segment": segment, "status": "draft",
+                                           "channel": "whatsapp", "created_at": ago(hours=3), **over})
+
+    def test_a_draft_whose_reason_is_gone_is_closed_with_the_reason(self):
+        pg = FakePostgrest()
+        cal = [("p1", "b", "noshow", ago(hours=5)), ("p2", "b", "confirmed", ahead(days=1)),
+               ("c1", "q", "cancelled", ahead(hours=20)), ("c2", "m", "confirmed", ahead(hours=26)),
+               ("c3", "k", "confirmed", ahead(hours=20)), ("p9", "n", "noshow", ago(hours=5))]
+        for aid, contact, status, start in cal:
+            pg.put("cockpit_sales_calendar", {"appointment_id": aid, "contact_id": contact, "call_type": "intro",
+                                              "status": status, "start_at": start, "booked_at": ago(days=3)})
+        self.draft(pg, "d-rebooked", "b", "no_show", appointment_id="p1")
+        self.draft(pg, "d-still", "n", "no_show", appointment_id="p9")
+        self.draft(pg, "d-cancelled", "q", "confirm", appointment_id="c1", context={"start_at": ahead(hours=20)})
+        self.draft(pg, "d-moved", "m", "confirm", appointment_id="c2", context={"start_at": ahead(hours=20)})
+        self.draft(pg, "d-due", "k", "confirm", appointment_id="c3", context={"start_at": ahead(hours=20)})
+        self.draft(pg, "d-answered", "r", "reply")
+        self.draft(pg, "d-waiting", "w", "reply")
+        pg.put("cockpit_sales_inbox", {"conversation_id": "cv-r", "contact_id": "r", "last_direction": "outbound",
+                                       "last_message_at": ago(hours=1)})
+        pg.put("cockpit_sales_inbox", {"conversation_id": "cv-w", "contact_id": "w", "last_direction": "inbound",
+                                       "last_message_at": ago(hours=4)})
+        with mock.patch.object(http, "request", pg):
+            self.assertEqual(fu.close_gone(Supabase("https://example.supabase.co", "k"), NOW), 4)
+        status = {r["id"]: (r["status"], r.get("error")) for r in pg.rows("cockpit_sales_followups")}
+        self.assertEqual(status["d-rebooked"], ("expired", "The lead booked another call, so this message is not needed."))
+        self.assertIn("cancelled", status["d-cancelled"][1])
+        self.assertIn("moved", status["d-moved"][1])
+        self.assertIn("older conversation", status["d-answered"][1])
+        self.assertEqual({k: v[0] for k, v in status.items() if v[0] == "draft"}, {"d-still": "draft", "d-due": "draft",
+                                                                                    "d-waiting": "draft"})
+        # A call already under way, or gone from the calendar, needs no confirmation either.
+        held = {"appointment_id": "c3", "call_type": "intro", "status": "showed", "start_at": ago(minutes=20)}
+        confirm = {"segment": "confirm", "appointment_id": "c3", "created_at": ago(hours=3)}
+        self.assertIn("already started", fu.gone_reason(confirm, [held], [], [], NOW))
+        self.assertIn("no longer on the calendar", fu.gone_reason(confirm, [], [], [], NOW))
+
+    def test_a_send_that_stopped_halfway_is_freed_by_what_its_message_says(self):
+        pg = FakePostgrest()
+        for fid, mins in (("s-went", 40), ("s-failed", 40), ("s-maybe", 40), ("s-none", 40), ("s-live", 10)):
+            pg.put("cockpit_sales_followups", {"id": fid, "contact_id": fid, "segment": "new", "status": "sending",
+                                               "channel": "whatsapp", "body": "Hi", "decided_at": ago(minutes=mins)})
+        pg.put("cockpit_sales_messages", {"id": "m1", "followup_id": "s-went", "state": "sent", "ghl_message_id": "g1",
+                                          "body": "Hi there"})
+        pg.put("cockpit_sales_messages", {"id": "m2", "followup_id": "s-failed", "state": "failed", "error": "Meta refused it"})
+        pg.put("cockpit_sales_messages", {"id": "m3", "followup_id": "s-maybe", "state": "sending"})
+        settled = []
+        with mock.patch.object(http, "request", pg):
+            n = fu.free_stuck(Supabase("https://example.supabase.co", "k"), NOW, settle=lambda i: settled.append(i) or {})
+        self.assertEqual((n, settled), (4, ["s-went"]))
+        row = {r["id"]: r for r in pg.rows("cockpit_sales_followups")}
+        self.assertEqual((row["s-went"]["status"], row["s-went"]["message_id"]), ("sent", "m1"))
+        self.assertEqual((row["s-failed"]["status"], row["s-failed"]["error"]), ("failed", "Meta refused it"))
+        self.assertIn("may not have gone out", row["s-maybe"]["error"])
+        self.assertEqual((row["s-none"]["status"], row["s-none"]["decided_at"]), ("draft", None))
+        self.assertEqual(row["s-live"]["status"], "sending")
+
+    def test_a_send_not_seen_at_once_is_read_again_and_settled(self):
+        pg = FakePostgrest()
+        for fid, mid in (("f1", "m1"), ("f2", "m2"), ("f3", "m3")):
+            pg.put("cockpit_sales_followups", {"id": fid, "contact_id": fid, "segment": "no_show", "status": "sent",
+                                               "message_id": mid, "decided_at": ago(hours=1)})
+        pg.put("cockpit_sales_messages", {"id": "m1", "state": "sent", "provider_status": "pending", "ghl_message_id": "g1"})
+        pg.put("cockpit_sales_messages", {"id": "m2", "state": "sent", "provider_status": "pending", "ghl_message_id": "g2"})
+        pg.put("cockpit_sales_messages", {"id": "m3", "state": "delivered", "provider_status": "delivered", "ghl_message_id": "g3"})
+        ghl = FakeGhl(pg, statuses={"g1": "delivered", "g2": "failed"})
+        settled = []
+        with mock.patch.object(http, "request", ghl):
+            out = fu.settle_sends(Supabase("https://example.supabase.co", "k"), "t", NOW,
+                                  settle=lambda i: settled.append(i) or {})
+        self.assertEqual(out, {"read": 2, "gone": 1, "failed": 1})
+        self.assertEqual(sorted(settled), ["f1", "f2"])
+        self.assertEqual((pg.one("cockpit_sales_messages", id="m1")["state"],
+                          pg.one("cockpit_sales_messages", id="m2")["state"]), ("delivered", "failed"))
+        self.assertFalse(any("g3" in u for u in ghl.asked))
+
+    def test_a_template_that_never_went_settles_its_follow_up(self):
+        pg = FakePostgrest()
+        pg.put("cockpit_sales_messages", {"id": "m1", "contact_id": "a", "via": "workflow", "provider_status": "enrolled",
+                                          "followup_id": "f1", "created_at": ago(minutes=40)})
+        settled = []
+        with mock.patch.object(http, "request", FakeGhl(pg)):
+            out = fu.reconcile_templates(Supabase("https://example.supabase.co", "k"), "t", NOW,
+                                         settle=lambda i: settled.append(i) or {})
+        self.assertEqual((out, settled), ({"found": 0, "never_sent": 1}, ["f1"]))
+        # A settle the cockpit refuses is said in the log.
+        pg.one("cockpit_sales_messages", id="m1")["provider_status"] = "enrolled"
+        warned = []
+        with mock.patch.object(http, "request", FakeGhl(pg)):
+            fu.reconcile_templates(Supabase("https://example.supabase.co", "k"), "t", NOW,
+                                   settle=lambda _i: {"error": "That draft is not here any more."}, warn=warned.append)
+        self.assertEqual(warned, ["followups: f1 could not be settled in the cockpit: That draft is not here any more."])
 
 
 if __name__ == "__main__":

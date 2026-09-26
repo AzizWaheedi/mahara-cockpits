@@ -21,6 +21,13 @@ This module
   AI"). A phone call is a setter's call, so it is scored on the intro card.
   The automatic run leaves phone calls out: there are over a thousand, and
   a rep picks the ones worth a review.
+
+A recording hidden as a second copy of a meeting, or as a phone
+"transcript" that is only the carrier's message, is never reviewed. A call
+that failed twice within a day is set aside by the automatic run until the
+day has passed (cockpit_sales_desk_failures). An ask is claimed with an
+update that only succeeds while it is still queued, so two runs never review
+the same call, and one a run left half-done for half an hour is freed.
 """
 from __future__ import annotations
 
@@ -33,12 +40,23 @@ from typing import Any, Callable, Optional
 from . import http
 from .errors import NotNow
 from .recordings import is_phone
+from .supabase import FAILURE_WINDOW, iso, set_aside
 
+JOB = "reviews"
 # Under this, a transcript is a greeting and a callback time, not a call a
 # reviewer can score part by part.
 MIN_ASKED_CHARS = 1500
 TOO_SHORT_TO_REVIEW = ("the call's transcript is {n:,} characters, under the 1,500 a review needs, "
                        "so there is not enough of the call to score")
+HIDDEN = {
+    "duplicate": "this is a second recording of a meeting already in the cockpit; ask for a review of the longer one",
+    "too short": "this call's transcript is only the phone network's message, so there is nothing to review",
+}
+# An ask has no column for when it was claimed, so the claim writes its time
+# into the ask's note (shown to nobody while it is reviewed), renews it before
+# each try, and a claim older than this is a run that died.
+STARTED = "Vince began this review at {at}."
+STUCK = timedelta(minutes=30)
 
 ITEM = re.compile(r"^\*?\s*(?:\d+\.\s*)?(?P<name>[^*\n]+?)\s+[—–-]\s+(?P<score>\d+(?:\.\d+)?)\s*/\s*(?P<max>\d+)\s*\*?\s*$")
 GRADE = re.compile(r"\bGrade\s*:?\s*\*?\s*(?P<score>\d+(?:\.\d+)?)\s*/\s*(?P<max>\d+)", re.I)
@@ -349,24 +367,29 @@ def build_prompt(kind: str, knowledge: Path, *, name: str, rep: str, day: str, l
     return system, user
 
 
-def due(sb: Any, *, since: datetime, min_chars: int, limit: int) -> list[dict[str, Any]]:
+def due(sb: Any, *, since: datetime, min_chars: int, limit: int,
+        skip: frozenset = frozenset()) -> tuple[list[dict[str, Any]], int]:
     """Demo calls since `since` with a transcript long enough and no review
-    yet. Phone calls are left out: they are reviewed when a rep asks. (A null
-    source is a row the Fathom step wrote.)"""
+    yet, and how many of them are set aside (`skip`): those are left out
+    before the limit, so they never hold the front of the queue. Phone calls
+    are left out: they are reviewed when a rep asks. So are hidden
+    recordings. (A null source is a row the Fathom step wrote.)"""
     rows = sb.select(
         "cockpit_sales_recordings",
         "select=recording_id,title,recorded_by,started_at,share_url,contact_id,appointment_id,transcript_path,"
         f"transcript_chars,source,kind&started_at=gte.{http.quote(since.isoformat())}&transcript_path=not.is.null"
-        f"&transcript_chars=gte.{min_chars}&or=(source.is.null,source.neq.maqsam)"
+        f"&transcript_chars=gte.{min_chars}&or=(source.is.null,source.neq.maqsam)&hidden_reason=is.null"
         "&order=started_at.desc&limit=200",
     )
     rows = [r for r in rows if not is_phone(r)]
     if not rows:
-        return []
+        return [], 0
     ids = ",".join('"' + str(r["recording_id"]) + '"' for r in rows)
     done = {str(r["recording_id"]) for r in sb.select(
         "cockpit_sales_reviews", f"select=recording_id&recording_id=in.({http.quote(ids)})")}
-    return [r for r in rows if str(r["recording_id"]) not in done][:limit]
+    open_ = [r for r in rows if str(r["recording_id"]) not in done]
+    todo = [r for r in open_ if str(r["recording_id"]) not in skip]
+    return todo[:limit], len(open_) - len(todo)
 
 
 def kind_of(rec: dict[str, Any], appointment_type: Optional[str]) -> str:
@@ -382,9 +405,11 @@ def kind_of(rec: dict[str, Any], appointment_type: Optional[str]) -> str:
 
 
 def review_one(sb: Any, p: Any, rec: dict[str, Any], rep_of: dict[str, dict[str, Any]], *,
-               knowledge: Path, timeout: float = 900, min_chars: int = 0) -> dict[str, Any]:
+               knowledge: Path, timeout: float = 900, min_chars: int = 0,
+               beat: Optional[Callable[[], None]] = None) -> dict[str, Any]:
     """Review one call with Vince's template and framework; the row saved.
-    A transcript under `min_chars` is refused before the model is asked."""
+    A transcript under `min_chars` is refused before the model is asked.
+    `beat` is called before each try, a sign of life for a claimed ask."""
     rid = str(rec["recording_id"])
     appt_type = None
     if rec.get("appointment_id"):
@@ -406,6 +431,8 @@ def review_one(sb: Any, p: Any, rec: dict[str, Any], rep_of: dict[str, dict[str,
     want = 10 if kind == "intro" else 15
     out = None
     for attempt in range(2):
+        if beat is not None:
+            beat()
         reply = p.complete(system, user if attempt == 0 else user + (
             f"\n\nYour last answer did not score all {want} parts, one per line as "
             f"'*<number>. <Part> — <score>/10*', with a '*Grade: <total>/{want * 10}*' line. Write the whole log again."),
@@ -448,60 +475,149 @@ def _rep_index(sb: Any) -> dict[str, dict[str, Any]]:
 
 
 REC_COLS = ("select=recording_id,title,recorded_by,started_at,share_url,contact_id,appointment_id,"
-            "transcript_path,transcript_chars,source,kind")
+            "transcript_path,transcript_chars,source,kind,hidden_reason")
+
+
+def _when(v: Any) -> Optional[datetime]:
+    try:
+        t = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
+def _started(note: Any) -> Optional[datetime]:
+    m = re.search(r"began this review at (\S+)\.$", str(note or ""))
+    return _when(m.group(1)) if m else None
+
+
+def _failing(sb: Any, warn: Callable[[str], None]) -> dict[str, dict[str, Any]]:
+    try:
+        return sb.failures(JOB)
+    except Exception as e:  # noqa: BLE001 - without the memory every call is tried, as before it
+        warn(f"reviews: the calls that failed before could not be read, so none is set aside: {http.scrub(str(e))[:160]}")
+        return {}
+
+
+def _remember(sb: Any, rid: str, error: str, known: Optional[dict[str, Any]], now: datetime,
+              warn: Callable[[str], None]) -> None:
+    """A failure kept, so a call that fails twice in a day is set aside; never the reason a run fails."""
+    try:
+        sb.record_failure(JOB, rid, error, known=known, now=now)
+    except Exception as e:  # noqa: BLE001 - the warning is the record then
+        warn(f"reviews: {rid}'s failure could not be kept: {http.scrub(str(e))[:160]}")
+
+
+def _forget(sb: Any, rid: str, warn: Callable[[str], None]) -> None:
+    try:
+        sb.clear_failure(JOB, rid)
+    except Exception as e:  # noqa: BLE001 - a stale row only sets the call aside for a day
+        warn(f"reviews: {rid}'s old failures could not be cleared: {http.scrub(str(e))[:160]}")
+
+
+def free_stuck(sb: Any, now: datetime, failing: dict[str, dict[str, Any]], warn: Callable[[str], None]) -> int:
+    """Asks a run claimed (reviewing) and left for half an hour without a
+    sign of life: the run died (a reboot, a crash), and the open ask blocked
+    any new one for that call. Back in the queue; failed instead, saying so,
+    when the call has already failed once today, so a call that kills the
+    run is not tried forever. Each move is conditional on the claim read."""
+    rows = sb.select("cockpit_sales_review_asks", "select=id,recording_id,requested_at,error&state=eq.reviewing"
+                                                  "&order=requested_at.asc&limit=50")
+    freed = 0
+    for a in rows:
+        since = _started(a.get("error")) or _when(a.get("requested_at"))
+        if since and now - since < STUCK:
+            continue
+        aid, rid = str(a["id"]), str(a["recording_id"])
+        known = failing.get(rid)
+        again = bool(known) and (_when(known.get("first_at")) or now) > now - FAILURE_WINDOW
+        where = f"id=eq.{http.quote(aid)}&state=eq.reviewing&" + (
+            f"error=eq.{http.quote(str(a['error']))}" if a.get("error") else "error=is.null")
+        body = ({"state": "failed", "finished_at": now.isoformat(),
+                 "error": "Vince stopped twice today before finishing this review. Ask again tomorrow."} if again else
+                {"state": "queued", "error": "Vince stopped before finishing this review; it is reviewed again."})
+        if sb.patch_returning("cockpit_sales_review_asks", where, body):
+            freed += 1
+            warn(f"reviews: asked {rid} was left half-done by a run that stopped; "
+                 + ("failed, as it stopped once before today" if again else "back in the queue"))
+            _remember(sb, rid, "the run reviewing it stopped before finishing", known, now, warn)
+    return freed
 
 
 def review_asked(sb: Any, p: Any, log: Callable[[str], None], *, knowledge: Path, limit: int,
-                 timeout: float = 900) -> dict[str, Any]:
+                 timeout: float = 900, warn: Optional[Callable[[str], None]] = None) -> dict[str, Any]:
     """The calls reps asked about, oldest ask first. A call already reviewed
-    closes the ask without a second review; one that fails says why."""
+    closes the ask without a second review; one that fails says why. Asks a
+    run left half-done are freed first."""
+    warn = warn or log
+    now = lambda: datetime.now(timezone.utc)  # noqa: E731
+    failing = _failing(sb, warn)
+    freed = free_stuck(sb, now(), failing, warn)
+    if freed:
+        failing = _failing(sb, warn)  # with the stops just kept, so a review that now works forgets them
     asks = sb.select("cockpit_sales_review_asks",
                      f"select=id,recording_id,requested_by&state=eq.queued&order=requested_at.asc&limit={limit}")
     if not asks:
-        return {"asked": 0, "reviewed": 0, "failed": 0, "errors": []}
+        return {"asked": 0, "reviewed": 0, "failed": 0, "freed": freed, "errors": []}
     rep_of = _rep_index(sb)
-    reviewed = failed = 0
+    reviewed = failed = taken = 0
     errors: list[str] = []
-    now = lambda: datetime.now(timezone.utc).isoformat()  # noqa: E731
     for ask in asks:
         aid, rid = str(ask["id"]), str(ask["recording_id"])
-        sb.patch("cockpit_sales_review_asks", f"id=eq.{http.quote(aid)}&state=eq.queued", {"state": "reviewing"})
+        mine = f"id=eq.{http.quote(aid)}&state=eq.reviewing"
+        # Only the run whose update still sees the ask queued gets it back.
+        if not sb.patch_returning("cockpit_sales_review_asks", f"id=eq.{http.quote(aid)}&state=eq.queued",
+                                  {"state": "reviewing", "error": STARTED.format(at=iso(now()))}):
+            taken += 1
+            continue
         try:
             have = sb.select("cockpit_sales_reviews", f"select=id&recording_id=eq.{http.quote(rid)}&limit=1")
             if not have:
                 recs = sb.select("cockpit_sales_recordings", f"{REC_COLS}&recording_id=eq.{http.quote(rid)}&limit=1")
                 if not recs or not recs[0].get("transcript_path"):
                     raise ValueError("the call has no transcript in the cockpit")
+                if recs[0].get("hidden_reason"):
+                    raise ValueError(HIDDEN.get(str(recs[0]["hidden_reason"]), "this recording is hidden"))
                 chars = recs[0].get("transcript_chars")
                 if chars is not None and int(chars) < MIN_ASKED_CHARS:
                     raise ValueError(TOO_SHORT_TO_REVIEW.format(n=int(chars)))
                 row = review_one(sb, p, recs[0], rep_of, knowledge=knowledge, timeout=timeout,
-                                 min_chars=MIN_ASKED_CHARS)
+                                 min_chars=MIN_ASKED_CHARS,
+                                 beat=lambda: sb.patch("cockpit_sales_review_asks", mine,
+                                                       {"error": STARTED.format(at=iso(now()))}))
                 reviewed += 1
                 log(f"reviews: asked {rid} scored {row['score']:.0f}/{row['score_max']:.0f}")
+                if rid in failing:
+                    _forget(sb, rid, warn)
             sb.patch("cockpit_sales_review_asks", f"id=eq.{http.quote(aid)}",
-                      {"state": "done", "finished_at": now(), "error": None})
+                      {"state": "done", "finished_at": now().isoformat(), "error": None})
         except NotNow:
             # The model is not reachable now (or today's ceiling is spent): the
             # ask goes back in the queue untouched and the run stops.
-            sb.patch("cockpit_sales_review_asks", f"id=eq.{http.quote(aid)}", {"state": "queued"})
+            sb.patch("cockpit_sales_review_asks", mine, {"state": "queued", "error": None})
             raise
         except Exception as e:  # noqa: BLE001 - one call is not worth the rest
             failed += 1
             msg = http.scrub(str(e))[:300]
             errors.append(f"{rid}: {msg[:160]}")
             sb.patch("cockpit_sales_review_asks", f"id=eq.{http.quote(aid)}",
-                      {"state": "failed", "finished_at": now(), "error": msg})
-            log(f"reviews: asked {rid} failed: {msg[:200]}")
-    return {"asked": len(asks), "reviewed": reviewed, "failed": failed, "errors": errors[:5]}
+                      {"state": "failed", "finished_at": now().isoformat(), "error": msg})
+            warn(f"reviews: asked {rid} failed: {msg[:200]}")
+            _remember(sb, rid, msg, failing.get(rid), now(), warn)
+    return {"asked": len(asks) - taken, "reviewed": reviewed, "failed": failed, "freed": freed, "errors": errors[:5]}
 
 
 def review_new(sb: Any, p: Any, log: Callable[[str], None], *, knowledge: Path, since: datetime,
-               limit: int, min_chars: int, timeout: float = 900) -> dict[str, Any]:
-    """Review the newest unreviewed calls with Vince's template and framework."""
-    todo = due(sb, since=since, min_chars=min_chars, limit=limit)
+               limit: int, min_chars: int, timeout: float = 900, now: Optional[datetime] = None,
+               warn: Optional[Callable[[str], None]] = None) -> dict[str, Any]:
+    """Review the newest unreviewed calls with Vince's template and framework.
+    A call that failed twice within a day is set aside until the day has passed."""
+    now = now or datetime.now(timezone.utc)
+    warn = warn or log
+    failing = _failing(sb, warn)
+    todo, aside = due(sb, since=since, min_chars=min_chars, limit=limit, skip=frozenset(set_aside(failing, now)))
     if not todo:
-        return {"due": 0, "reviewed": 0, "failed": 0}
+        return {"due": 0, "reviewed": 0, "failed": 0, "set_aside": aside, "errors": []}
     rep_of = _rep_index(sb)
     reviewed = failed = 0
     errors: list[str] = []
@@ -511,10 +627,13 @@ def review_new(sb: Any, p: Any, log: Callable[[str], None], *, knowledge: Path, 
             row = review_one(sb, p, rec, rep_of, knowledge=knowledge, timeout=timeout)
             reviewed += 1
             log(f"reviews: {row['call_type']} {rid} scored {row['score']:.0f}/{row['score_max']:.0f}")
+            if rid in failing:
+                _forget(sb, rid, warn)
         except NotNow:
             raise
         except Exception as e:  # noqa: BLE001 - one call is not worth the rest
             failed += 1
             errors.append(f"{rid}: {http.scrub(str(e))[:160]}")
-            log(f"reviews: {rid} failed: {http.scrub(str(e))[:200]}")
-    return {"due": len(todo), "reviewed": reviewed, "failed": failed, "errors": errors[:5]}
+            warn(f"reviews: {rid} failed: {http.scrub(str(e))[:200]}")
+            _remember(sb, rid, str(e), failing.get(rid), now, warn)
+    return {"due": len(todo), "reviewed": reviewed, "failed": failed, "set_aside": aside, "errors": errors[:5]}

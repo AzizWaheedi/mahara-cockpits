@@ -15,7 +15,9 @@ This step, for every sales note:
 - matches the call to a lead exactly as the Fathom step does
   (recordings.match: an outside invitee's email, else the one lead with an
   intro or demo within 30 minutes), and keeps an earlier match or one made by
-  hand (recordings._keep_earlier_matches).
+  hand (recordings._keep_earlier_matches);
+- once the rows are in, hides a meeting the vault and Fathom both hold as
+  two recordings (recordings.mark_recordings).
 
 Two more kinds of note are sales calls too (Aziz, 2026-09-26: "Every single
 one of them should pull in"):
@@ -49,7 +51,7 @@ from typing import Any, Callable, Iterable, Optional
 
 from . import http
 from .fathom import NOT_SALES
-from .recordings import OUR_DOMAIN, WINDOW, _keep_earlier_matches, external_emails, match
+from .recordings import OUR_DOMAIN, WINDOW, _keep_earlier_matches, external_emails, mark_recordings, match
 from .supabase import CALLS_BUCKET, iso
 
 TRANSCRIPT_BUCKET = CALLS_BUCKET
@@ -464,6 +466,7 @@ def run(sb: Any, vault: Path, log: Callable[[str], None], *, upload: Optional[Ca
             rid = r.pop("recording_id")
             sb.patch("cockpit_sales_recordings", f"recording_id=eq.{http.quote(rid)}", r)
             enriched += 1
+    marked = None if dry else mark_recordings(sb, log, "calls-vault")
 
     by: dict[str, int] = {}
     for r in rows:
@@ -477,7 +480,7 @@ def run(sb: Any, vault: Path, log: Callable[[str], None], *, upload: Optional[Ca
         "stored": stored, "transcripts_uploaded": uploaded, "transcripts_new": new_transcripts,
         "kept_earlier_match": kept, "filled_fathom_rows": enriched if not dry else len(fill),
         "by_email": by.get("email", 0), "by_appointment": by.get("appointment", 0),
-        "unmatched": by.get("none", 0), "dry": dry,
+        "unmatched": by.get("none", 0), "dry": dry, "marked": marked,
         "first": min((r["started_at"] for r in rows if r["started_at"]), default=None),
         "last": max((r["started_at"] for r in rows if r["started_at"]), default=None),
     }
