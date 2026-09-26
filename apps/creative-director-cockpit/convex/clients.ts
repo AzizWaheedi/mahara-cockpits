@@ -147,9 +147,13 @@ export async function buildRoster(
         openVideos: vids.length,
         /** Stages where the ball is his, not an editor's. */
         hisMove: vids.filter(x =>
-          ["client review", "internal review", "update required"].includes(
-            (x.status || "").toLowerCase(),
-          ),
+          [
+            "internal review",
+            "internal approved",
+            "client review",
+            "client approved",
+            "update required",
+          ].includes((x.status || "").toLowerCase()),
         ).length,
         liveCampaigns: camps.length,
       };
@@ -417,6 +421,13 @@ export async function buildDetail(
       editedLink: v2.editedLink,
       rawLink: v2.rawLink,
       open: isOpen(v2.status),
+      hisMove: [
+        "internal review",
+        "internal approved",
+        "client review",
+        "client approved",
+        "update required",
+      ].includes(v2.status.toLowerCase()),
     })),
     posts: posts.filter(p => isOpen(p.status)).length,
     /** Everything we have ever made for them, closed rows included. */

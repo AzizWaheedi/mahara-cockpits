@@ -29,6 +29,7 @@ import { Textarea } from "@/components/ui/textarea";
 
 const KIND_LABEL: Record<string, string> = {
   script: "Script",
+  creativeBatch: "Creative batch",
   video: "Video",
   post: "Post",
   brandDNA: "Brand DNA",
@@ -37,7 +38,7 @@ const KIND_LABEL: Record<string, string> = {
 
 function KindPill({ kind }: { kind: string }) {
   const tone =
-    kind === "script"
+    kind === "script" || kind === "creativeBatch"
       ? "tone-good"
       : kind === "video"
         ? "tone-neutral"
@@ -215,6 +216,169 @@ function ScriptQueue({
   );
 }
 
+type BatchClient = {
+  taskId: string;
+  name: string;
+  hasCampaign: boolean;
+  autoPlan: boolean;
+  state: string;
+  taskUrl: string | null;
+  error: string | null;
+};
+
+/** One real ClickUp card per client and fortnight; automatic creation is opt-in. */
+function CreativeBatchPlanner() {
+  const preview = useQuery(api.creativeCadence.preview, {}) as
+    | {
+        cycle: string;
+        approvalTarget: string;
+        launch: string;
+        clients: BatchClient[];
+      }
+    | undefined;
+  const planNextBatch = useMutation(api.creativeCadence.planNextBatch);
+  const setAutoPlan = useMutation(api.creativeCadence.setAutoPlan);
+  const [clientTaskId, setClientTaskId] = useState("");
+  const [working, setWorking] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  if (!preview) return null;
+  const selected = preview.clients.find(c => c.taskId === clientTaskId);
+  const mapped = preview.clients.filter(c => c.hasCampaign);
+  const missing = mapped.filter(c => c.state === "not planned");
+
+  async function plan(clientId?: string) {
+    setWorking(true);
+    try {
+      const result = await planNextBatch(
+        clientId ? { clientTaskId: clientId } : {},
+      );
+      setMessage(
+        `${result.queued} batch${result.queued === 1 ? "" : "es"} queued for ${result.cycle}; ${result.skipped} already planned. ClickUp and this calendar update at the next sync.`,
+      );
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "Could not plan batches.",
+      );
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function toggleAuto(client: BatchClient) {
+    setWorking(true);
+    try {
+      const enabled = await setAutoPlan({
+        clientTaskId: client.taskId,
+        enabled: !client.autoPlan,
+      });
+      setMessage(
+        `${client.name}: automatic fortnightly planning ${enabled ? "on" : "off"}.`,
+      );
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Could not change auto-planning.",
+      );
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  return (
+    <section className="rounded-lg border p-3">
+      <div className="flex items-center gap-2">
+        <Sparkles className="h-4 w-4" />
+        <h2 className="text-[14px] font-bold">Next creative batch</h2>
+        <span className="text-[12px] text-muted-foreground">
+          {preview.cycle}
+        </span>
+      </div>
+      <p className="mt-1 text-[12px] text-muted-foreground">
+        One video and two image concepts per client. Brief together, get client
+        approval ahead of launch, and keep a winning ad live. The card is a
+        ClickUp task you can move in this calendar.
+      </p>
+      <p className="mt-1 text-[12px] font-medium">
+        Brief {preview.cycle} · Approval target {preview.approvalTarget} · First
+        launch window {preview.launch}
+      </p>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <AnimatedSelect
+          value={clientTaskId}
+          onChange={event => setClientTaskId(event.target.value)}
+          className="min-w-[190px] rounded border bg-transparent px-2 py-1 text-[13px]"
+        >
+          <option value="">Choose an active client</option>
+          {preview.clients.map(client => (
+            <option key={client.taskId} value={client.taskId}>
+              {client.name}
+            </option>
+          ))}
+        </AnimatedSelect>
+        <Button
+          size="sm"
+          disabled={selected?.state !== "not planned" || working}
+          onClick={() => selected && plan(selected.taskId)}
+        >
+          Schedule this client
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={missing.length === 0 || working}
+          onClick={() => plan()}
+        >
+          Fill {missing.length} mapped client{missing.length === 1 ? "" : "s"}
+        </Button>
+        {selected?.hasCampaign && (
+          <button
+            type="button"
+            disabled={working}
+            className="text-[12px] underline underline-offset-2 disabled:opacity-50"
+            onClick={() => toggleAuto(selected)}
+          >
+            Auto-plan {selected.autoPlan ? "on" : "off"}
+          </button>
+        )}
+      </div>
+      <p className="mt-1 text-[11px] text-muted-foreground">
+        Auto-plan is off until enabled for a mapped client. It prepares their
+        next batch each Thursday morning. No ad is published and no client is
+        messaged.
+      </p>
+      {selected && (
+        <p className="mt-2 text-[12px]">
+          {selected.name}: <strong>{selected.state}</strong>
+          {selected.taskUrl && (
+            <a
+              href={selected.taskUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="ml-2 underline underline-offset-2"
+            >
+              open task
+            </a>
+          )}
+          {selected.error && (
+            <span className="txt-bad ml-2">{selected.error}</span>
+          )}
+          {!selected.hasCampaign && (
+            <span className="ml-2 text-muted-foreground">
+              No exact ad mapping; manual planning only.
+            </span>
+          )}
+        </p>
+      )}
+      {message && (
+        <p className="mt-2 text-[12px]" role="status">
+          {message}
+        </p>
+      )}
+    </section>
+  );
+}
+
 export function ScriptingCalendar({ compact = false }: { compact?: boolean }) {
   const cal = useQuery(api.creative.calendar, {});
   const queueAction = useMutation(api.clients.queueAction);
@@ -290,6 +454,8 @@ export function ScriptingCalendar({ compact = false }: { compact?: boolean }) {
       {note && (
         <div className="callout-warn rounded p-2 text-[13px]">{note}</div>
       )}
+
+      <CreativeBatchPlanner />
 
       {/* Plan proactively ---------------------------------------------------- */}
       <section className="rounded-lg border p-3">

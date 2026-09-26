@@ -3,11 +3,11 @@ import { authenticatedQuery } from "./functions";
 import { allowedClients, assertRole, rowInScope } from "./roles";
 
 /**
- * Scripts we made: every script task the creative board marks finished, with
- * its text (the ClickUp description, synced by the media buyer every 15
- * minutes into `creativeTasks.script`). Read only; the page edits a copy and
- * sends it to the editors through the outbox (`clients.queueAction`,
- * kind videoRequest), never back to ClickUp.
+ * Completed script-request cards and their ClickUp descriptions, synced by
+ * the media buyer every 15 minutes into `creativeTasks.script`. Descriptions
+ * may be requests rather than final scripts. The page requires deliberate
+ * entry and approval confirmation before sending a copy to the editors via
+ * `clients.queueAction` (kind videoRequest), never back to ClickUp.
  *
  * Aziz, 2026-09-18: no AI scripting studio, he writes with his own LLM; the
  * cockpit's job is to keep what was made and make the hand-off one click.

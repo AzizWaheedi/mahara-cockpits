@@ -101,7 +101,7 @@ const TITLES: Record<View, { title: string; sub: string }> = {
   },
   works: {
     title: "What works",
-    sub: "What to make more of, and what is burning out",
+    sub: "What to make more of, and what to investigate",
   },
   eod: {
     title: "End of day",
@@ -557,10 +557,9 @@ function Creative({ view }: { view: View }) {
                 </h3>
                 {!snap.anyBurning && (
                   <p className="mb-1.5 text-[13px] text-muted-foreground">
-                    Nothing is fatiguing — the highest frequency in the accounts
-                    is {snap.fatiguing[0]?.frequency.toFixed(1) ?? "—"}, well
-                    under the {snap.fatigueGate} gate. No replacements needed
-                    today.
+                    No live ad crossed the {snap.fatigueGate} frequency review
+                    cue. Keep the next approved creative batch moving; frequency
+                    alone does not decide when to replace an ad.
                   </p>
                 )}
                 <div className="space-y-1.5">
@@ -568,7 +567,7 @@ function Creative({ view }: { view: View }) {
                     <div
                       key={i}
                       className={`rounded-lg border p-2 text-[13px] ${
-                        f.burning ? "callout-bad" : ""
+                        f.burning ? "callout-warn" : ""
                       }`}
                     >
                       <div className="flex justify-between">
@@ -1399,9 +1398,9 @@ const EOD_QUESTIONS: { key: string; label: string; choices?: string[] }[] = [
 /**
  * The pipeline as stages, not a flat list.
  *
- * The point is the handoff: anything in "client review" is yours to send to the
- * client, and once they pass it you move it on and tell the media buyer.
- * Those are highlighted because they are where work silently stops.
+ * The point is the handoff: internal approval, client review and client
+ * approval are separate states. The director moves approved work onward and
+ * tells the media buyer; these stages are highlighted because work stalls here.
  */
 function VideoPipeline({
   snap,
@@ -1460,10 +1459,21 @@ function VideoPipeline({
               >
                 <span>
                   <strong>{j.stage}</strong> · {j.client ?? j.name}
+                  {j.stage === "internal approved" && (
+                    <span className="block text-muted-foreground">
+                      Ready for client review. Send the approved preview through
+                      the existing client process.
+                    </span>
+                  )}
                   {j.stage === "client review" && (
                     <span className="block text-muted-foreground">
-                      Send it to the client. When they pass it, move the stage
-                      and tell the media buyer.
+                      Await explicit client feedback. Sending a preview does not
+                      mean it is approved.
+                    </span>
+                  )}
+                  {j.stage === "client approved" && (
+                    <span className="block text-muted-foreground">
+                      Record the approval and hand the asset to the media buyer.
                     </span>
                   )}
                 </span>

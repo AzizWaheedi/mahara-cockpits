@@ -739,13 +739,7 @@ function WorkInFlight({ d, name }: { d: any; name: string }) {
                   </a>
                 </span>
                 <span className="flex shrink-0 items-center gap-2">
-                  <Pill
-                    tone={
-                      (v2.status || "").toLowerCase() === "client review"
-                        ? "warn"
-                        : "neutral"
-                    }
-                  >
+                  <Pill tone={v2.hisMove ? "warn" : "neutral"}>
                     {v2.status}
                   </Pill>
                   <span className="text-muted-foreground">
