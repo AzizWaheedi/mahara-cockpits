@@ -56,6 +56,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
 from . import http
+from .errors import NotNow
 
 KUWAIT = timedelta(hours=3)
 GHL = "https://services.leadconnectorhq.com"
@@ -949,6 +950,8 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
                         log(f"followups: {contact} kept for a person: {str(out.get('error'))[:160]}")
                 except Exception as e:  # noqa: BLE001 - the draft is still there for a person
                     log(f"followups: {contact} kept for a person: {http.scrub(str(e))[:160]}")
+        except NotNow:
+            raise
         except Exception as e:  # noqa: BLE001 - one lead is not worth the rest
             failed += 1
             log(f"followups: {contact} failed: {http.scrub(str(e))[:200]}")

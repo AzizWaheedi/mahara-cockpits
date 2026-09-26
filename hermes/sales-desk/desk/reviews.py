@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from . import http
+from .errors import NotNow
 from .recordings import is_phone
 
 # Under this, a transcript is a greeting and a callback time, not a call a
@@ -480,6 +481,11 @@ def review_asked(sb: Any, p: Any, log: Callable[[str], None], *, knowledge: Path
                 log(f"reviews: asked {rid} scored {row['score']:.0f}/{row['score_max']:.0f}")
             sb.patch("cockpit_sales_review_asks", f"id=eq.{http.quote(aid)}",
                       {"state": "done", "finished_at": now(), "error": None})
+        except NotNow:
+            # The model is not reachable now (or today's ceiling is spent): the
+            # ask goes back in the queue untouched and the run stops.
+            sb.patch("cockpit_sales_review_asks", f"id=eq.{http.quote(aid)}", {"state": "queued"})
+            raise
         except Exception as e:  # noqa: BLE001 - one call is not worth the rest
             failed += 1
             msg = http.scrub(str(e))[:300]
@@ -505,6 +511,8 @@ def review_new(sb: Any, p: Any, log: Callable[[str], None], *, knowledge: Path, 
             row = review_one(sb, p, rec, rep_of, knowledge=knowledge, timeout=timeout)
             reviewed += 1
             log(f"reviews: {row['call_type']} {rid} scored {row['score']:.0f}/{row['score_max']:.0f}")
+        except NotNow:
+            raise
         except Exception as e:  # noqa: BLE001 - one call is not worth the rest
             failed += 1
             errors.append(f"{rid}: {http.scrub(str(e))[:160]}")

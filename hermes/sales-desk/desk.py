@@ -88,6 +88,33 @@ def _status(cfg: Config, log: Logger, job: str, ok: bool, detail: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+# The commands that call a model, each metered against the day's ceiling.
+METERED = ("requests", "draft", "reviews", "followups", "notes", "digest")
+DAILY_TOKENS = 15_000_000
+
+
+def _meter(cfg: Config, job: str) -> None:
+    """Count and log every model call this run makes (cockpit_sales_ai_usage),
+    and stop them past SALES_AI_DAILY_TOKENS for the Kuwait day."""
+    sb = _sb(cfg)
+    try:
+        cap = int(key("SALES_AI_DAILY_TOKENS", str(DAILY_TOKENS)).replace(",", "").strip() or DAILY_TOKENS)
+    except ValueError:
+        cap = DAILY_TOKENS
+    now = datetime.now(timezone.utc)
+    k = now + timedelta(hours=3)
+    midnight = (k.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(hours=3)).isoformat()
+
+    def used_today() -> int:
+        out = sb.rest("POST", "rpc/cockpit_sales_ai_tokens_since", json_body={"p_since": midnight})
+        return int(out or 0)
+
+    def record(row: dict[str, Any]) -> None:
+        sb.rest("POST", "cockpit_sales_ai_usage", json_body=[row], prefer="return=minimal", retries=0)
+
+    model_mod.meter(model_mod.Meter(job=job, cap=cap, used_today=used_today, record=record))
+
+
 def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     rows: list[dict[str, Any]] = []
 
@@ -800,12 +827,14 @@ def main(argv: Optional[list[str]] = None) -> int:
         "research": cmd_research, "followups": cmd_followups, "notes": cmd_notes, "digest": cmd_digest,
         "validate": cmd_validate, "build": cmd_build, "draft": cmd_draft, "offer-sync": cmd_offer_sync,
     }
+    if args.cmd in METERED and cfg.supabase_configured:
+        _meter(cfg, args.cmd)
     try:
         return handlers[args.cmd](cfg, args, log)
     except (SupabaseError, http.HttpError, NotNow, Refused) as e:
         log.error(http.scrub(str(e))[:400])
         if args.cmd in ("requests", "recordings", "status", "offer-sync", "calls-vault", "reviews", "research",
-                        "followups", "maqsam-calls") and not getattr(args, "dry", False):
+                        "followups", "maqsam-calls", "notes", "digest") and not getattr(args, "dry", False):
             _status(cfg, log, args.cmd, False, http.scrub(str(e))[:400])
         return 1
     except KeyboardInterrupt:

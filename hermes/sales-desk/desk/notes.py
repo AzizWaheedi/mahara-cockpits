@@ -23,6 +23,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
 from . import http
+from .errors import NotNow
 from . import model as model_mod
 
 KUWAIT = timedelta(hours=3)
@@ -210,6 +211,8 @@ def run_notes(sb: Any, p: Any, log: Callable[[str], None], *, since: datetime, l
             }], "recording_id")
             written += 1
             log(f"notes: {kind} {rid}: {notes['verdict']}")
+        except NotNow:
+            raise
         except Exception as e:  # noqa: BLE001 - one call is not worth the rest
             failed += 1
             errors.append(f"{rid}: {http.scrub(str(e))[:160]}")

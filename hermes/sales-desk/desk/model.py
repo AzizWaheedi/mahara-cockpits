@@ -491,7 +491,81 @@ class AnthropicProvider:
         return sorted(str(m.get("id")) for m in (data or {}).get("data") or [] if isinstance(m, dict) and m.get("id"))
 
 
+class BudgetSpent(NotNow):
+    """Today's AI ceiling is reached: the job stops and its items wait for tomorrow, untouched."""
+
+
+@dataclass
+class Meter:
+    """What this process's model calls spend, against the desk's daily ceiling.
+
+    `used_today` reads the tokens already spent today (all jobs, from the
+    database) once; `record` writes one row per call. A write that fails
+    never fails the job: the ceiling still counts what this process spent."""
+    job: str
+    cap: int
+    used_today: Callable[[], int]
+    record: Callable[[dict[str, Any]], None]
+    spent: int = 0
+    base: Optional[int] = None
+
+
+_METER: Optional[Meter] = None
+
+
+def meter(m: Optional[Meter]) -> None:
+    """Meter every provider this process makes from now on (desk.py sets it per command)."""
+    global _METER
+    _METER = m
+
+
+def usage_tokens(usage: dict[str, Any]) -> tuple[int, int, int, int]:
+    """(input, output, reasoning, total) from OpenAI's or Anthropic's usage shape."""
+    i = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
+    o = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
+    details = usage.get("completion_tokens_details") or usage.get("output_tokens_details") or {}
+    r = int((details or {}).get("reasoning_tokens") or 0)
+    return i, o, r, int(usage.get("total_tokens") or (i + o))
+
+
+class Metered:
+    """A provider whose every call is counted and logged, and refused past the day's ceiling."""
+
+    def __init__(self, inner: Any, m: Meter):
+        self.inner, self.m = inner, m
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.inner, name)
+
+    def complete(self, system: str, user: str, *, temperature: Optional[float] = None, timeout: float = 900) -> Reply:
+        m = self.m
+        if m.base is None:
+            try:
+                m.base = int(m.used_today())
+            except Exception:  # noqa: BLE001 - unknown is not zero: count only this process
+                m.base = 0
+        if m.cap and m.base + m.spent >= m.cap:
+            raise BudgetSpent(f"today's AI ceiling of {m.cap:,} tokens is reached ({m.base + m.spent:,} spent); the "
+                              "desk's model calls start again after midnight Kuwait. If today is expected to need more, "
+                              "raise SALES_AI_DAILY_TOKENS in ~/.sales-desk/env")
+        reply = self.inner.complete(system, user, temperature=temperature, timeout=timeout)
+        i, o, r, t = usage_tokens(reply.usage or {})
+        m.spent += t
+        try:
+            m.record({"job": m.job, "model": reply.model or getattr(self.inner, "model", None), "input_tokens": i,
+                      "output_tokens": o, "reasoning_tokens": r, "total_tokens": t})
+        except Exception:  # noqa: BLE001 - a missing usage row never costs the answer
+            pass
+        return reply
+
+
 def provider(cfg: Config, log: Optional[Callable[[str], None]] = None) -> Any:
+    """The configured provider, metered when desk.py has set a meter, or ModelUnreachable in one plain sentence."""
+    p = _provider(cfg, log)
+    return Metered(p, _METER) if _METER is not None else p
+
+
+def _provider(cfg: Config, log: Optional[Callable[[str], None]] = None) -> Any:
     """The configured provider, or ModelUnreachable in one plain sentence."""
     name = (cfg.provider or "openai").strip().lower()
     model = (cfg.model or "").strip() or DEFAULT_MODELS.get(name, "")
