@@ -510,8 +510,10 @@ const RECORDING_LIST =
 
 export interface RecordingFilter {
   q: string;
-  /** A rep's Fathom address, or "" for everyone. */
-  by: string;
+  /** A rep's addresses (Fathom and Maqsam), or none for everyone. */
+  by: string[];
+  /** Video calls (Fathom), phone calls (Maqsam), or both. */
+  kind: "" | "video" | "phone";
   page: number;
 }
 
@@ -523,14 +525,16 @@ export function useRecordings(f: RecordingFilter): Loaded<Recording[]> {
       .order("started_at", { ascending: false, nullsFirst: false })
       .order("recording_id", { ascending: true })
       .range(f.page * PAGE, f.page * PAGE + PAGE - 1);
-    if (f.by) q = q.eq("recorded_by", f.by);
+    if (f.by.length) q = q.in("recorded_by", f.by);
+    if (f.kind === "phone") q = q.eq("source", "maqsam");
+    if (f.kind === "video") q = q.or("source.is.null,source.neq.maqsam");
     const text = f.q
       .trim()
       .replace(/[,()*]/g, " ")
       .trim();
     if (text) q = q.ilike("title", `%${text}%`);
     return q as unknown as Result<Recording[]>;
-  }, [f.q, f.by, f.page]);
+  }, [f.q, f.by.join(","), f.kind, f.page]);
 }
 
 export function useRecording(id: string): Loaded<Recording> {
