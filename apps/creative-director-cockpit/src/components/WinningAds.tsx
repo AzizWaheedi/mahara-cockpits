@@ -9,6 +9,7 @@ import {
   useLocalStills,
 } from "@/components/CreativePreview";
 import { AnimatedSelect } from "@/components/ui/animated-select";
+import { Button } from "@/components/ui/button";
 import { api } from "../../convex/_generated/api";
 
 /**
@@ -108,7 +109,8 @@ export function WinnerFilter({
     { key: "auto", label: "Found by the weekly check" },
   ];
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
+    // One row that scrolls sideways on a phone rather than wrapping.
+    <div className="-mx-4 flex flex-nowrap items-center gap-1.5 overflow-x-auto px-4 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:px-0 [&::-webkit-scrollbar]:hidden">
       {chips.map(c => (
         <button
           key={c.key}
@@ -118,10 +120,11 @@ export function WinnerFilter({
             if (c.key === "auto") onSavedBy("");
           }}
           aria-pressed={origin === c.key}
-          className={`rounded-full border px-2.5 py-0.5 text-[12px] font-semibold ${
+          // 32px to the eye, a 40px target to a finger.
+          className={`no-touch relative h-8 shrink-0 whitespace-nowrap rounded-full px-3 text-xs font-medium transition-colors after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] ${
             origin === c.key
-              ? "bg-foreground text-background"
-              : "text-muted-foreground hover:bg-muted"
+              ? "bg-primary/15 text-foreground ring-1 ring-inset ring-primary/40"
+              : "text-muted-foreground hover:bg-muted hover:text-foreground"
           }`}
         >
           {c.label}
@@ -132,7 +135,7 @@ export function WinnerFilter({
           value={savedBy}
           onChange={e => onSavedBy(e.target.value)}
           aria-label="Saved by"
-          className="ml-1 h-7 rounded-md border bg-background px-2 text-[12px]"
+          className="ml-1 h-8 shrink-0 rounded-full border bg-background px-3 text-xs"
         >
           <option value="">Saved by anyone</option>
           {names.map(([email, name]) => (
@@ -166,31 +169,39 @@ export function WinningAds({
   const stills = local ?? own;
 
   if (!rows) {
-    return <p className="text-[13px] text-muted-foreground">Loading…</p>;
+    return <p className="text-sm text-muted-foreground">Loading…</p>;
   }
   if (rows.length === 0) {
     return (
-      <p className="text-[13px] text-muted-foreground">
+      <p className="text-sm text-muted-foreground">
         {empty ??
           "Nothing in this service line has cleared the winner bar yet. Widen the filter and read the closest thing to it."}
       </p>
     );
   }
 
+  const about =
+    sub ??
+    "Click one to read its hook, its copy and, for video, what is actually said and shown on screen.";
   return (
     <div>
-      {title && <h3 className="text-[14px] font-bold">{title}</h3>}
-      <p className="mb-2 text-[12px] text-muted-foreground">
-        {sub ??
-          "Click one to read its hook, its copy and, for video, what is actually said and shown on screen."}
-      </p>
-      <div className="divide-y rounded-lg border">
+      {title && <h3 className="text-[15px] font-semibold">{title}</h3>}
+      {/* A long explanation folds away; a short one stays in view. */}
+      {about.length > 120 ? (
+        <details className="mb-3 text-xs text-muted-foreground">
+          <summary className="w-fit">About this list</summary>
+          <p className="mt-1">{about}</p>
+        </details>
+      ) : (
+        <p className="mb-3 text-xs text-muted-foreground">{about}</p>
+      )}
+      <div className="divide-y rounded-xl border">
         {rows.map(r => {
           const isOpen = open === r.adId;
           const numbersWhenSaved = r.isSaved ? savedNumbers(r) : null;
           return (
             <div key={r.adId}>
-              <div className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-muted/50">
+              <div className="flex items-start gap-3 px-3 py-3 hover:bg-muted/40 sm:items-center">
                 <CreativePreview
                   name={r.adName}
                   metaAdId={r.adId}
@@ -199,87 +210,104 @@ export function WinningAds({
                   thumbUrl={r.thumbUrl ?? undefined}
                   {...stillPropsFor(r, stills)}
                 />
-                <span className="w-14 shrink-0 text-right text-[13px] font-bold tabular-nums">
-                  {typeof r.cpl === "number" ? `$${r.cpl.toFixed(2)}` : "n/a"}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    <span className="truncate text-[13px] font-medium">
-                      {r.client}
+                {/* The numbers drop under the words on a phone rather than
+                    squeezing the client and the hook to nothing. */}
+                <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-3 gap-y-1">
+                  {/* The cost per lead leads the row from the small tablet
+                      size up; on a phone it opens the numbers line below,
+                      so the client and the hook get the width. */}
+                  <span className="hidden w-14 shrink-0 text-sm font-semibold tabular-nums sm:block">
+                    {typeof r.cpl === "number" ? `$${r.cpl.toFixed(2)}` : "n/a"}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="min-w-0 truncate text-sm font-medium">
+                        {r.client}
+                      </span>
+                      {r.isSaved && (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium"
+                          title={
+                            r.savedAt
+                              ? `Saved to What works by ${saverName(r)} on ${fmtDate(r.savedAt)}`
+                              : undefined
+                          }
+                        >
+                          <Star className="size-3 fill-current text-primary" />
+                          Saved by {saverName(r)}
+                        </span>
+                      )}
+                      {r.isSaved && r.isAuto && (
+                        <span
+                          className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs text-muted-foreground"
+                          title="The weekly check also picked this ad"
+                        >
+                          Weekly check
+                        </span>
+                      )}
                     </span>
-                    {r.isSaved && (
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {r.hook || r.headline || r.adName}
+                    </span>
+                    {r.isSaved && r.savedNote && (
                       <span
-                        className="flex shrink-0 items-center gap-0.5 rounded border px-1 text-[10px] font-semibold"
-                        title={
-                          r.savedAt
-                            ? `Saved to What works by ${saverName(r)} on ${fmtDate(r.savedAt)}`
-                            : undefined
-                        }
+                        className="block whitespace-pre-wrap text-xs"
+                        dir="auto"
                       >
-                        <Star className="h-2.5 w-2.5 fill-current" />
-                        Saved by {saverName(r)}
+                        <span className="font-semibold">Why it works: </span>
+                        {r.savedNote}
                       </span>
                     )}
-                    {r.isSaved && r.isAuto && (
-                      <span
-                        className="shrink-0 rounded border px-1 text-[10px] text-muted-foreground"
-                        title="The weekly check also picked this ad"
-                      >
-                        Weekly check
+                    {numbersWhenSaved && (
+                      <span className="block text-xs text-muted-foreground">
+                        {numbersWhenSaved}
                       </span>
                     )}
                   </span>
-                  <span className="block truncate text-[12px] text-muted-foreground">
-                    {r.hook || r.headline || r.adName}
-                  </span>
-                  {r.isSaved && r.savedNote && (
-                    <span
-                      className="block whitespace-pre-wrap text-[12px]"
-                      dir="auto"
-                    >
-                      <span className="font-semibold">Why it works: </span>
-                      {r.savedNote}
+                  <span className="basis-full text-xs text-muted-foreground sm:basis-auto sm:text-right">
+                    <span className="font-semibold tabular-nums text-foreground sm:hidden">
+                      {typeof r.cpl === "number"
+                        ? `$${r.cpl.toFixed(2)} a lead`
+                        : "n/a"}
+                      {" · "}
                     </span>
-                  )}
-                  {numbersWhenSaved && (
-                    <span className="block text-[11px] text-muted-foreground">
-                      {numbersWhenSaved}
+                    {r.leads} leads · ${r.spend} · {r.city ?? "Unknown"}
+                    <span className="block">
+                      {r.wonFrom
+                        ? `won ${fmtDay(r.wonFrom)}${r.wonTo && r.wonTo !== r.wonFrom ? ` to ${fmtDay(r.wonTo)}` : ""}`
+                        : ""}
+                      {r.stillLive === false ? (
+                        <span
+                          className="ml-1.5 font-mono text-[11px] uppercase tracking-[0.08em]"
+                          title={
+                            r.retiredOn
+                              ? `Off since ${r.retiredOn}`
+                              : "Not running"
+                          }
+                        >
+                          Retired
+                        </span>
+                      ) : r.stillLive ? (
+                        <span className="txt-good ml-1.5 font-mono text-[11px] uppercase tracking-[0.08em]">
+                          Live
+                        </span>
+                      ) : null}
                     </span>
-                  )}
-                </span>
-                <span className="shrink-0 text-right text-[11px] text-muted-foreground">
-                  {r.leads} leads · ${r.spend} · {r.city ?? "Unknown"}
-                  <span className="block">
-                    {r.wonFrom
-                      ? `won ${fmtDay(r.wonFrom)}${r.wonTo && r.wonTo !== r.wonFrom ? ` to ${fmtDay(r.wonTo)}` : ""}`
-                      : ""}
-                    {r.stillLive === false ? (
-                      <span
-                        className="ml-1 rounded bg-muted px-1 font-semibold uppercase"
-                        title={
-                          r.retiredOn
-                            ? `Off since ${r.retiredOn}`
-                            : "Not running"
-                        }
-                      >
-                        retired
-                      </span>
-                    ) : r.stillLive ? (
-                      <span className="ml-1 font-semibold txt-good">live</span>
-                    ) : null}
                   </span>
-                </span>
-                <button
-                  type="button"
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="shrink-0"
+                  aria-expanded={isOpen}
                   onClick={() => setOpen(isOpen ? null : r.adId)}
-                  className="shrink-0 rounded border px-2 py-0.5 text-[12px] font-semibold text-muted-foreground hover:bg-muted"
                 >
                   {isOpen ? "Hide" : "Read it"}
-                </button>
+                </Button>
               </div>
               {isOpen && (
-                <div className="space-y-3 border-t bg-muted/30 px-3 py-3 text-[13px]">
-                  <div className="flex flex-wrap gap-1.5 text-[11px]">
+                <div className="space-y-3 border-t bg-muted/30 px-3 py-3 text-sm">
+                  <div className="flex flex-wrap gap-1.5 text-xs">
                     {[
                       r.serviceLine,
                       r.format,
@@ -292,7 +320,7 @@ export function WinningAds({
                       .map((t: string) => (
                         <span
                           key={t}
-                          className="rounded border px-1.5 py-0.5 text-muted-foreground"
+                          className="rounded-full border px-2 py-0.5 text-muted-foreground"
                         >
                           {t}
                         </span>
@@ -360,10 +388,10 @@ function Field({
 }) {
   return (
     <div>
-      <div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+      <div className="font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
         {label}
       </div>
-      <div>{children}</div>
+      <div className="mt-1">{children}</div>
     </div>
   );
 }
@@ -373,8 +401,9 @@ export function SaveToIdeation({ adId }: { adId: string }) {
   const save = useAction(api.ideation.saveFromWinner);
   const [state, setState] = useState<"idle" | "busy" | "done">("idle");
   return (
-    <button
-      type="button"
+    <Button
+      size="sm"
+      variant="outline"
       disabled={state !== "idle"}
       onClick={() => {
         setState("busy");
@@ -389,16 +418,15 @@ export function SaveToIdeation({ adId }: { adId: string }) {
             toast.error(String((e as Error)?.message ?? e).split("\n")[0]);
           });
       }}
-      className="rounded border px-2 py-0.5 text-[12px] font-semibold text-muted-foreground hover:bg-muted disabled:opacity-60"
       title="Save this ad to the Ideation board"
     >
-      <Lightbulb className="mr-1 inline h-3 w-3" />
+      <Lightbulb />
       {state === "busy"
         ? "Saving…"
         : state === "done"
           ? "Saved"
           : "Save to Ideation"}
-    </button>
+    </Button>
   );
 }
 
@@ -413,17 +441,17 @@ export function CopyButton({
   const [done, setDone] = useState(false);
   if (!text) return null;
   return (
-    <button
-      type="button"
+    <Button
+      size="sm"
+      variant="outline"
       onClick={() => {
         void navigator.clipboard.writeText(text).then(() => {
           setDone(true);
           setTimeout(() => setDone(false), 1800);
         });
       }}
-      className="rounded border px-2 py-0.5 text-[12px] font-semibold text-muted-foreground hover:bg-muted"
     >
       {done ? "Copied" : label}
-    </button>
+    </Button>
   );
 }

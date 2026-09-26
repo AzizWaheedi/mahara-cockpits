@@ -233,7 +233,7 @@ export function Strip({
           )}
           <span className="absolute inset-x-1 bottom-1 h-1 overflow-hidden rounded-full bg-black/30">
             <span
-              className="block h-full bg-white transition-[width]"
+              className="block h-full bg-primary transition-[width]"
               style={{ width: `${Math.round(p.share * 100)}%` }}
             />
           </span>
@@ -254,7 +254,7 @@ export function Strip({
         <>
           <label
             style={fixed}
-            className={`${tile} flex cursor-pointer flex-col items-center justify-center gap-1 border-dashed bg-transparent text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground focus-within:ring-2 focus-within:ring-ring`}
+            className={`${tile} flex cursor-pointer flex-col items-center justify-center gap-1 border-dashed bg-transparent text-xs text-muted-foreground hover:bg-muted hover:text-foreground focus-within:ring-2 focus-within:ring-ring`}
           >
             <Upload className="h-4 w-4" />
             Upload
@@ -275,7 +275,7 @@ export function Strip({
               type="button"
               onClick={onDraw}
               style={fixed}
-              className={`${tile} flex flex-col items-center justify-center gap-1 border-dashed bg-transparent text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground`}
+              className={`${tile} flex flex-col items-center justify-center gap-1 border-dashed bg-transparent text-xs text-muted-foreground hover:bg-muted hover:text-foreground`}
             >
               <Sparkles className="h-4 w-4" />
               Draw
@@ -365,7 +365,7 @@ function WordsPanel({
       .filter(Boolean)
       .join(" · ");
     return (
-      <p className="px-5 pb-2 pt-1 text-[12px] text-muted-foreground">
+      <p className="px-5 pb-2 pt-1 text-xs text-muted-foreground">
         Made to move from the picture; the words stay still on top.
         {shot ? ` ${shot}` : ""}
       </p>
@@ -411,7 +411,7 @@ function WordsPanel({
               setSaving(false);
             }
           }}
-          className="inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-[12px] font-medium hover:bg-muted disabled:opacity-50"
+          className="inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium hover:bg-muted disabled:opacity-50"
         >
           {busy === "words" ? (
             <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
@@ -428,15 +428,15 @@ function WordsPanel({
   return (
     <div className="mx-5 mb-2 mt-1 rounded-lg border px-3 py-3">
       <div className="mb-2 flex items-center justify-between gap-2">
-        <span className="text-[13px] font-medium">Words on the picture</span>
-        <span className="text-[11px] text-muted-foreground">
+        <span className="text-sm font-medium">Words on the picture</span>
+        <span className="text-xs text-muted-foreground">
           {kind === "bold"
             ? "Drawn into the picture"
             : "Set in type, fixable in seconds"}
         </span>
       </div>
       {rb?.ok === false ? (
-        <p className="mb-2 flex gap-1.5 rounded-md bg-destructive/10 px-2.5 py-2 text-[12px] text-destructive">
+        <p className="tone-bad mb-2 flex gap-1.5 rounded-lg px-2.5 py-2 text-xs">
           <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <span>
             The letters may be wrong on this picture:{" "}
@@ -456,14 +456,14 @@ function WordsPanel({
           </span>
         </p>
       ) : rb?.ok === null ? (
-        <p className="mb-2 text-[12px] text-muted-foreground">
+        <p className="mb-2 text-xs text-muted-foreground">
           The words were not read back{rb.error ? `: ${rb.error}` : ""}. Check
           them by eye.
         </p>
       ) : rb?.ok === true && kind === "bold" ? (
         // Tested 2026-09-24: the reader finds a missing or wrong word, but
         // no model tried saw a doubled letter's missing dots.
-        <p className="mb-2 text-[12px] text-muted-foreground">
+        <p className="mb-2 text-xs text-muted-foreground">
           Every word read back. A single missing dot can still get past the
           check, so look at the letters before sending.
         </p>
@@ -471,7 +471,7 @@ function WordsPanel({
       <div className="space-y-2">
         {FIELDS[kind].map(f => (
           <label key={f.key} className="block">
-            <span className="mb-1 block text-[12px] text-muted-foreground">
+            <span className="mb-1 block text-xs text-muted-foreground">
               {f.label}
             </span>
             <input
@@ -479,7 +479,7 @@ function WordsPanel({
               value={draft[f.key] ?? ""}
               placeholder={f.hint}
               onChange={e => setDraft({ ...draft, [f.key]: e.target.value })}
-              className="h-9 w-full rounded-lg border bg-background px-3 text-[14px]"
+              className="h-9 w-full rounded-lg border bg-background px-3 text-sm"
             />
           </label>
         ))}
@@ -489,7 +489,7 @@ function WordsPanel({
           <button
             type="button"
             onClick={() => setDraft(item.words ?? {})}
-            className="h-8 rounded-md px-2.5 text-[12px] text-muted-foreground hover:bg-muted"
+            className="h-8 rounded-lg px-2.5 text-xs text-muted-foreground hover:bg-muted"
           >
             Undo
           </button>
@@ -497,7 +497,7 @@ function WordsPanel({
             type="button"
             disabled={saving || Boolean(busy)}
             onClick={() => void save()}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-[12px] font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
           >
             {saving ? (
               <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
@@ -506,7 +506,7 @@ function WordsPanel({
           </button>
         </div>
       ) : busy === "words" ? (
-        <p className="mt-2 flex items-center gap-1.5 text-[12px] text-muted-foreground">
+        <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
           <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> Setting the
           words
         </p>
@@ -633,12 +633,12 @@ export function MediaEditor({
           drawing ? (
             <>
               <LoaderCircle className="h-5 w-5 animate-spin text-muted-foreground" />
-              <p className="text-[13px] text-muted-foreground">
+              <p className="text-sm text-muted-foreground">
                 The pictures are being drawn. It takes a couple of minutes.
               </p>
             </>
           ) : (
-            <p className="text-[13px] text-muted-foreground">
+            <p className="text-sm text-muted-foreground">
               Nothing on this post yet. Upload photos or a video, or draw one
               with AI.
             </p>
@@ -678,7 +678,7 @@ export function MediaEditor({
                   "Drawing this one again. It takes a couple of minutes.",
                 )
               }
-              className="inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-[12px] font-medium hover:bg-muted disabled:opacity-50"
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium hover:bg-muted disabled:opacity-50"
             >
               <Sparkles className="h-3.5 w-3.5" />
               {busy === "draw" ? "Drawing again" : "Draw again"}
@@ -699,7 +699,7 @@ export function MediaEditor({
                   "Making it move. It takes two or three minutes.",
                 )
               }
-              className="inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-[12px] font-medium hover:bg-muted disabled:opacity-50"
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium hover:bg-muted disabled:opacity-50"
             >
               {busy === "motion" ? (
                 <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
@@ -720,7 +720,7 @@ export function MediaEditor({
                     "Making the cover from the video. It takes a couple of minutes.",
                   )
                 }
-                className="inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-[12px] font-medium hover:bg-muted disabled:opacity-50"
+                className="inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium hover:bg-muted disabled:opacity-50"
               >
                 {busy === "cover" ? (
                   <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
@@ -733,7 +733,7 @@ export function MediaEditor({
                     ? "Make another cover"
                     : "Make a cover"}
               </button>
-              <label className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border px-2.5 text-[12px] font-medium hover:bg-muted focus-within:ring-2 focus-within:ring-ring">
+              <label className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium hover:bg-muted focus-within:ring-2 focus-within:ring-ring">
                 <ImageUp className="h-3.5 w-3.5" />
                 Upload a cover
                 <input
@@ -896,15 +896,15 @@ export function DraftMedia({
           empty={
             <>
               <LoaderCircle className="h-5 w-5 animate-spin text-muted-foreground" />
-              <p className="text-[13px] text-muted-foreground">Uploading</p>
+              <p className="text-sm text-muted-foreground">Uploading</p>
             </>
           }
         />
       ) : (
         <label className="flex aspect-[4/5] max-h-[50vh] w-full cursor-pointer flex-col items-center justify-center gap-2 bg-muted/40 px-8 text-center hover:bg-muted focus-within:ring-2 focus-within:ring-inset focus-within:ring-ring">
           <Upload className="h-5 w-5 text-muted-foreground" />
-          <span className="text-[14px] font-medium">Add photos or a video</span>
-          <span className="text-[12px] text-muted-foreground">
+          <span className="text-sm font-medium">Add photos or a video</span>
+          <span className="text-xs text-muted-foreground">
             One photo is a post, one video is a Reel, several make a carousel.
             Up to ten.
           </span>

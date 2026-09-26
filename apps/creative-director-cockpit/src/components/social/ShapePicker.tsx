@@ -34,10 +34,10 @@ export function ShapePicker({
               disabled={disabled}
               title={`${a.label}, ${a.size}`}
               onClick={() => onChange(a.key)}
-              className={`inline-flex h-9 items-center gap-2 rounded-lg border px-2.5 text-[12px] disabled:opacity-50 ${
+              className={`inline-flex h-9 items-center gap-2 rounded-lg border px-2.5 text-xs disabled:opacity-50 ${
                 on
-                  ? "border-foreground text-foreground"
-                  : "text-muted-foreground hover:text-foreground"
+                  ? "border-primary bg-primary/10 text-foreground"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
               }`}
             >
               <span
@@ -52,7 +52,7 @@ export function ShapePicker({
           );
         })}
       </div>
-      <p className="mt-1.5 text-[12px] text-muted-foreground">
+      <p className="mt-1.5 text-xs text-muted-foreground">
         {note ??
           `${ASPECTS.find(a => a.key === value)?.label}, ${ASPECTS.find(a => a.key === value)?.size}. Every picture in the post takes this shape.`}
       </p>

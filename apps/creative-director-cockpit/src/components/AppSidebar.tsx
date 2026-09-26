@@ -23,6 +23,7 @@ import {
   Sunrise,
   Trophy,
   Users,
+  X,
 } from "lucide-react";
 import { Link, useLocation } from "react-router";
 import { portalUrl } from "@/components/PortalAutoSignIn";
@@ -220,7 +221,10 @@ function SidebarNav() {
                   href={item.href}
                   label={item.label}
                   icon={item.icon}
-                  isActive={location.pathname === item.href}
+                  isActive={
+                    location.pathname === item.href ||
+                    location.pathname.startsWith(`${item.href}/`)
+                  }
                 />
               ))}
             </SidebarMenu>
@@ -311,22 +315,35 @@ function SidebarHeaderContent() {
     <SidebarHeader className="border-b border-sidebar-border flex-row items-center justify-between">
       {(open || isMobile) && (
         <Link
-          to="/"
+          to="/dashboard"
           onClick={() => setOpenMobile(false)}
           className="flex items-center px-2 py-2"
         >
           <Wordmark size="sm" />
         </Link>
       )}
-      <button
-        type="button"
-        onClick={toggleSidebar}
-        className="rounded-lg border p-2 hover:bg-sidebar-accent"
-        aria-label={open ? "Collapse sidebar" : "Expand sidebar"}
-        aria-expanded={open}
-      >
-        {open ? <PanelLeftClose size={16} /> : <PanelLeft size={16} />}
-      </button>
+      {/* Below 1024px the rail is a sheet with no close button of its own,
+          so this is how it closes: an X with a full 40px target. */}
+      {isMobile ? (
+        <button
+          type="button"
+          onClick={() => setOpenMobile(false)}
+          className="inline-flex size-10 items-center justify-center rounded-lg text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+          aria-label="Close menu"
+        >
+          <X className="size-5" />
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={toggleSidebar}
+          className="rounded-lg border p-2 hover:bg-sidebar-accent"
+          aria-label={open ? "Collapse sidebar" : "Expand sidebar"}
+          aria-expanded={open}
+        >
+          {open ? <PanelLeftClose size={16} /> : <PanelLeft size={16} />}
+        </button>
+      )}
     </SidebarHeader>
   );
 }

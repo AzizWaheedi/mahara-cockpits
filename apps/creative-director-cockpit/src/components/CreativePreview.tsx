@@ -699,7 +699,7 @@ function PreviewBody({
           <button
             type="button"
             onClick={() => setStillChosen(true)}
-            className="text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+            className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
           >
             Blank, or says expired? Show the saved picture
           </button>

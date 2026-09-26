@@ -3,6 +3,7 @@ import { Facebook, Instagram, LoaderCircle, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "../../../convex/_generated/api";
+import { useConfirm } from "./Confirm";
 import { PLATFORMS, type Platform } from "./media";
 
 /**
@@ -51,6 +52,7 @@ export function Captions({
   });
   const [saved, setSaved] = useState<"idle" | "saving" | "saved">("idle");
   const lastId = useRef(post.id);
+  const [confirm, confirmDialog] = useConfirm();
 
   // A different post, or new words arriving from the AI: show them --
   // but never over words somebody is in the middle of typing.
@@ -99,9 +101,11 @@ export function Captions({
     const hasWords = Boolean(server.instagram || server.facebook);
     if (
       hasWords &&
-      !window.confirm(
-        "Write both captions again? This replaces what is there now.",
-      )
+      !(await confirm({
+        title: "Write both captions again?",
+        body: "This replaces what is there now.",
+        action: "Write them again",
+      }))
     )
       return;
     try {
@@ -120,10 +124,13 @@ export function Captions({
 
   return (
     <div>
-      <div className="mb-1.5 flex items-center gap-1">
-        <span className="mr-1 text-[13px] font-medium">Caption</span>
+      <div className="mb-1.5 flex flex-wrap items-center gap-1">
+        <span className="mr-1 text-sm font-medium">Caption</span>
         {shown.length > 1 ? (
-          <div role="tablist" className="inline-flex rounded-lg border p-0.5">
+          <div
+            role="tablist"
+            className="inline-flex gap-0.5 rounded-lg border p-0.5"
+          >
             {shown.map(p => {
               const Icon = ICON[p.key];
               return (
@@ -133,10 +140,10 @@ export function Captions({
                   role="tab"
                   aria-selected={tab === p.key}
                   onClick={() => setTab(p.key)}
-                  className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] ${
+                  className={`inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium ${
                     tab === p.key
-                      ? "bg-foreground text-background"
-                      : "text-muted-foreground hover:text-foreground"
+                      ? "bg-primary/15 text-foreground ring-1 ring-inset ring-primary/40"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
                   }`}
                 >
                   <Icon className="h-3.5 w-3.5" />
@@ -146,18 +153,18 @@ export function Captions({
             })}
           </div>
         ) : (
-          <span className="text-[12px] text-muted-foreground">
+          <span className="text-xs text-muted-foreground">
             {shown[0]?.label}
           </span>
         )}
-        <span className="ml-auto text-[12px] text-muted-foreground">
+        <span className="ml-auto text-xs text-muted-foreground">
           {saved === "saving" ? "Saving" : saved === "saved" ? "Saved" : ""}
         </span>
         <button
           type="button"
           disabled={writing}
           onClick={() => void writeAgain()}
-          className="ml-1 inline-flex h-7 items-center gap-1 rounded-md px-2 text-[12px] font-medium text-primary hover:bg-muted disabled:opacity-50"
+          className="ml-1 inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium text-primary hover:bg-muted disabled:opacity-50"
         >
           {writing ? (
             <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
@@ -169,7 +176,7 @@ export function Captions({
       </div>
 
       {empty && writing ? (
-        <p className="rounded-lg border border-dashed p-3 text-[13px] text-muted-foreground">
+        <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
           The captions are being written, from the brief and from what is said
           in any video.
         </p>
@@ -192,12 +199,12 @@ export function Captions({
                 ? "Empty, so Facebook gets the Instagram caption."
                 : "Type the caption, or let the AI write it."
             }
-            className={`w-full rounded-lg border bg-background p-3 text-[14px] leading-relaxed focus:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+            className={`w-full rounded-lg border bg-background p-3 text-sm leading-relaxed focus:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
               writing ? "opacity-60" : ""
             }`}
           />
           <p
-            className={`mt-1 text-right text-[11px] tabular-nums ${
+            className={`mt-1 text-right text-xs tabular-nums ${
               value.length > limit
                 ? "text-destructive"
                 : "text-muted-foreground"
@@ -208,6 +215,7 @@ export function Captions({
           </p>
         </>
       )}
+      {confirmDialog}
     </div>
   );
 }

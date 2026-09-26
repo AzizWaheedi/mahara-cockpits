@@ -1,5 +1,9 @@
-/* Geist for everything, Geist Mono for numbers and labels (brand guidelines §3). */
-@import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap");
+/* Geist for everything, Geist Mono for numbers and labels (brand guidelines §3).
+   IBM Plex Sans Arabic carries Arabic (briefs, captions, client names):
+   Geist has no Arabic glyphs, so the browser falls through to it for Arabic
+   only and Latin stays Geist. It sits before the system fonts, because a
+   family listed after the generic sans-serif is never reached. */
+@import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&family=IBM+Plex+Sans+Arabic:wght@400;500;600&display=swap");
 @import "tailwindcss";
 @import "./components/ui/animated-select.css";
 @import "tw-animate-css";
@@ -7,7 +11,7 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-sans: "Geist", "IBM Plex Sans Arabic", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   /* Brand palette (brand guidelines §2). Teal is an accent, never a large fill. */
   --color-mahara-teal: var(--mahara-teal);

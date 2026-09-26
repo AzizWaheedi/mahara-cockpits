@@ -1,5 +1,7 @@
 import { useAction } from "convex/react";
 import {
+  ArrowUpRight,
+  Check,
   ChevronLeft,
   ChevronRight,
   Facebook,
@@ -13,17 +15,24 @@ import {
   SlidersHorizontal,
   Sparkles,
   Trash2,
+  TriangleAlert,
   Upload,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AnimatedSelect } from "@/components/ui/animated-select";
+import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { api } from "../../convex/_generated/api";
-import { pillarColor } from "../components/SocialMonth";
 import { AccountsPicker } from "../components/social/Accounts";
 import { Captions } from "../components/social/Captions";
+import { useConfirm } from "../components/social/Confirm";
 import {
   ASPECTS,
   type Aspect,
@@ -181,19 +190,66 @@ function stateOf(p: Post): State {
   return "drafting";
 }
 
-const STATE: Record<State, { label: string; dot: string }> = {
-  posted: { label: "Posted", dot: "var(--success)" },
-  approved: { label: "Client approved", dot: "var(--success)" },
-  client: { label: "With the client", dot: "var(--info)" },
-  changes: { label: "Client asked for a change", dot: "var(--warning)" },
-  changed: {
-    label: "Changed after the client approved it",
+/**
+ * Each state's dot, its full name (the post sheet) and a short one (the
+ * legend over the calendar and the day's list). The order is the
+ * legend's: what needs a hand first, what is out last.
+ */
+const STATE: Record<State, { label: string; short: string; dot: string }> = {
+  attention: {
+    label: "Needs attention",
+    short: "Needs attention",
+    dot: "var(--destructive)",
+  },
+  changes: {
+    label: "Client asked for a change",
+    short: "Change asked",
     dot: "var(--warning)",
   },
-  attention: { label: "Needs attention", dot: "var(--destructive)" },
-  ready: { label: "Ready", dot: "var(--primary)" },
-  drafting: { label: "Drafting", dot: "var(--muted-foreground)" },
+  changed: {
+    label: "Changed after the client approved it",
+    short: "Changed since approval",
+    dot: "var(--warning)",
+  },
+  drafting: {
+    label: "Drafting",
+    short: "Drafting",
+    dot: "var(--muted-foreground)",
+  },
+  ready: { label: "Ready", short: "Ready", dot: "var(--primary)" },
+  client: {
+    label: "With the client",
+    short: "With the client",
+    dot: "var(--info)",
+  },
+  approved: {
+    label: "Client approved",
+    short: "Approved",
+    dot: "var(--success)",
+  },
+  posted: { label: "Posted", short: "Posted", dot: "var(--success)" },
 };
+
+const LEGEND = Object.keys(STATE) as State[];
+
+/** A picked option (a pillar, a platform, a look): teal, never white. */
+const CHOSEN = "border-primary bg-primary/10 text-foreground";
+
+/** The picked segment of a two- or three-way switch. */
+const SEGMENT_ON =
+  "bg-primary/15 text-foreground ring-1 ring-inset ring-primary/40";
+const SEGMENT_OFF =
+  "text-muted-foreground hover:bg-muted hover:text-foreground";
+
+/** The cover a post shows at a glance: a picture, or a video's cover. */
+function stillOf(p: Post): { still: string | null; frame: string | null } {
+  const lead = itemsOf(p)[0];
+  if (!lead) return { still: null, frame: null };
+  if (lead.kind === "image") return { still: lead.url, frame: null };
+  return lead.cover
+    ? { still: lead.cover, frame: null }
+    : { still: null, frame: lead.url };
+}
 
 /** Finished enough to show the client: pictures and words, not yet out. */
 function showable(p: Post): boolean {
@@ -235,6 +291,11 @@ export function SocialCalendarPage() {
   const [filling, setFilling] = useState(0);
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState<string | null>(null);
+  // The day a phone lists under the calendar, the way the iPhone's own
+  // Calendar does. Nothing here on a tablet or a laptop, where the cells
+  // are big enough to show the posts themselves.
+  const [picked, setPicked] = useState<string | null>(null);
+  const agenda = useRef<HTMLElement>(null);
 
   const loadClients = useCallback(async () => {
     const out = (await roster({})) as { clients: Client[] };
@@ -304,26 +365,13 @@ export function SocialCalendarPage() {
     return m;
   }, [posts]);
 
-  const counts = useMemo(() => {
-    const c = {
-      ready: 0,
-      drafting: 0,
-      attention: 0,
-      total: 0,
-      withClient: 0,
-      approved: 0,
-      changes: 0,
-    };
-    for (const p of posts ?? []) {
-      const s = stateOf(p);
-      c.total++;
-      if (s !== "drafting" && s !== "attention") c.ready++;
-      if (s === "drafting") c.drafting++;
-      if (s === "attention") c.attention++;
-      if (s === "client") c.withClient++;
-      if (s === "approved") c.approved++;
-      if (s === "changes" || s === "changed") c.changes++;
-    }
+  // How many posts sit in each state: the legend over the calendar.
+  const byState = useMemo(() => {
+    const c = Object.fromEntries(LEGEND.map(s => [s, 0])) as Record<
+      State,
+      number
+    >;
+    for (const p of posts ?? []) c[stateOf(p)]++;
     return c;
   }, [posts]);
 
@@ -374,7 +422,7 @@ export function SocialCalendarPage() {
 
   if (clients === null)
     return (
-      <div className="flex items-center gap-2 p-8 text-[13px] text-muted-foreground">
+      <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
         <LoaderCircle className="h-4 w-4 animate-spin" />
         Loading the calendar
       </div>
@@ -383,187 +431,218 @@ export function SocialCalendarPage() {
   const active = clients.filter(c => c.active);
   const others = clients.filter(c => !c.active);
 
+  // The day listed under the calendar on a phone: the one tapped, else
+  // today when it is in this month, else the month's first post, else
+  // the 1st.
+  const inMonth = (d: string | null): d is string =>
+    Boolean(d?.startsWith(`${month}-`));
+  const firstPostDay = [...byDay.keys()].filter(inMonth).sort()[0] ?? null;
+  const focusDay = inMonth(picked)
+    ? picked
+    : inMonth(today())
+      ? today()
+      : (firstPostDay ?? `${month}-01`);
+  const anyShowable = (posts ?? []).some(showable);
+
   return (
-    <div className="p-5 md:p-8">
-      <div className="mx-auto max-w-[1180px]">
-        <header className="mb-5 flex flex-wrap items-end gap-x-4 gap-y-3">
-          <div className="min-w-0">
-            {/* biome-ignore lint/a11y/noLabelWithoutControl: The custom control renders a button inside this label. */}
-            <label className="relative inline-flex items-center">
-              <span className="sr-only">Client</span>
-              <AnimatedSelect
-                value={clientId}
-                onChange={async e => {
-                  const id = e.target.value;
-                  const c = clients.find(x => x.taskId === id);
-                  // Picking a client who is not on the package yet puts
-                  // them on it: that is the only reason to pick them here.
-                  if (c && !c.active) {
-                    try {
-                      await activate({ clientTaskId: id, active: true });
-                      await loadClients();
-                    } catch (err) {
-                      toast.error(message(err));
-                      return;
-                    }
+    <div className="mx-auto w-full max-w-[1180px]">
+      <header className="mb-4 flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
+          {/* biome-ignore lint/a11y/noLabelWithoutControl: The custom control renders a button inside this label. */}
+          <label className="relative inline-flex max-w-full items-center">
+            <span className="sr-only">Client</span>
+            <AnimatedSelect
+              value={clientId}
+              onChange={async e => {
+                const id = e.target.value;
+                const c = clients.find(x => x.taskId === id);
+                // Picking a client who is not on the package yet puts
+                // them on it: that is the only reason to pick them here.
+                if (c && !c.active) {
+                  try {
+                    await activate({ clientTaskId: id, active: true });
+                    await loadClients();
+                  } catch (err) {
+                    toast.error(message(err));
+                    return;
                   }
-                  setClientId(id);
-                  setSheet(null);
-                }}
-                className="text-[15px] font-medium"
+                }
+                setClientId(id);
+                setSheet(null);
+              }}
+              className="text-[15px] font-medium"
+            >
+              {!active.length ? <option value="">Pick a client</option> : null}
+              {active.map(c => (
+                <option key={c.taskId} value={c.taskId}>
+                  {c.name}
+                </option>
+              ))}
+              {others.length ? (
+                <optgroup label="Add a client">
+                  {others.map(c => (
+                    <option key={c.taskId} value={c.taskId}>
+                      {c.name}
+                    </option>
+                  ))}
+                </optgroup>
+              ) : null}
+            </AnimatedSelect>
+          </label>
+          <div className="mt-2 flex items-center gap-1">
+            <h1 className="mr-1 text-2xl font-semibold tracking-tight sm:text-[28px] sm:leading-9">
+              {monthLabel(month)}
+            </h1>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Previous month"
+              onClick={() => setMonth(shift(month, -1))}
+              className="size-9 text-muted-foreground"
+            >
+              <ChevronLeft />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Next month"
+              onClick={() => setMonth(shift(month, 1))}
+              className="size-9 text-muted-foreground"
+            >
+              <ChevronRight />
+            </Button>
+            {month !== monthOf(new Date()) ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setMonth(monthOf(new Date()))}
+                className="text-muted-foreground"
               >
-                {!active.length ? (
-                  <option value="">Pick a client</option>
-                ) : null}
-                {active.map(c => (
-                  <option key={c.taskId} value={c.taskId}>
-                    {c.name}
-                  </option>
-                ))}
-                {others.length ? (
-                  <optgroup label="Add a client">
-                    {others.map(c => (
-                      <option key={c.taskId} value={c.taskId}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </optgroup>
-                ) : null}
-              </AnimatedSelect>
-            </label>
-            <div className="mt-1 flex items-center gap-2">
-              <h1 className="text-[30px] font-semibold leading-none tracking-tight md:text-[36px]">
-                {monthLabel(month)}
-              </h1>
-              <div className="ml-1 flex items-center">
-                <button
-                  type="button"
-                  aria-label="Previous month"
-                  onClick={() => setMonth(shift(month, -1))}
-                  className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-                >
-                  <ChevronLeft className="h-5 w-5" />
-                </button>
-                <button
-                  type="button"
-                  aria-label="Next month"
-                  onClick={() => setMonth(shift(month, 1))}
-                  className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-                >
-                  <ChevronRight className="h-5 w-5" />
-                </button>
-                {month !== monthOf(new Date()) ? (
-                  <button
-                    type="button"
-                    onClick={() => setMonth(monthOf(new Date()))}
-                    className="ml-1 rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
-                  >
-                    Today
-                  </button>
-                ) : null}
-              </div>
-            </div>
-            {client && posts ? (
-              <p className="mt-2 text-[13px] text-muted-foreground">
-                {counts.total === 0
-                  ? `Nothing planned yet. ${client.name} gets ${want} posts a month.`
-                  : `${counts.ready} of ${counts.total} ready` +
-                    (counts.withClient
-                      ? `, ${counts.withClient} with the client`
-                      : "") +
-                    (counts.approved
-                      ? `, ${counts.approved} approved by the client`
-                      : "") +
-                    (counts.changes
-                      ? `, ${counts.changes} to send again`
-                      : "") +
-                    (counts.drafting
-                      ? `, ${counts.drafting} being written`
-                      : "") +
-                    (counts.attention
-                      ? `, ${counts.attention} ${counts.attention === 1 ? "needs" : "need"} attention`
-                      : "") +
-                    "." +
-                    (open ? ` ${open} still to plan.` : "")}
-              </p>
+                Today
+              </Button>
             ) : null}
-            {health.map(h => (
-              <p key={h.check} className="mt-1 text-[12px] text-destructive">
-                {h.detail}
-              </p>
-            ))}
-            {client && !client.page ? (
-              <p className="mt-1 text-[12px] text-warning">
+          </div>
+        </div>
+
+        {client ? (
+          <div className="flex flex-wrap items-center gap-2">
+            {!client.autoApprove ? (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!anyShowable}
+                title={
+                  anyShowable
+                    ? undefined
+                    : "Nothing is finished yet: a post needs its pictures and a caption"
+                }
+                onClick={() => setSheet({ mode: "signoff" })}
+                className="disabled:pointer-events-auto"
+              >
+                <Send />
+                Send to the client
+              </Button>
+            ) : null}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setSheet({ mode: "settings" })}
+            >
+              <SlidersHorizontal />
+              Client setup
+            </Button>
+            <Button
+              size="sm"
+              disabled={busy || open === 0}
+              onClick={() => void fillMonth()}
+              title={
+                open === 0
+                  ? "The month already has every post it needs"
+                  : undefined
+              }
+              className="disabled:pointer-events-auto"
+            >
+              {busy ? <LoaderCircle className="animate-spin" /> : <Sparkles />}
+              Fill the month
+            </Button>
+          </div>
+        ) : null}
+      </header>
+
+      {client && posts ? (
+        <div className="mb-4 space-y-2">
+          {posts.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Nothing planned yet. {client.name} gets {want} posts a month.
+            </p>
+          ) : (
+            // What each dot on the calendar means, with how many posts
+            // are in that state. States with nothing in them stay out.
+            <ul
+              aria-label="Where this month's posts stand"
+              className="flex flex-wrap gap-1.5"
+            >
+              {LEGEND.filter(s => byState[s] > 0).map(s => (
+                <li
+                  key={s}
+                  className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium"
+                >
+                  <span
+                    aria-hidden
+                    className="size-1.5 rounded-full"
+                    style={{ background: STATE[s].dot }}
+                  />
+                  {STATE[s].short}
+                  <span className="tabular-nums text-muted-foreground">
+                    {byState[s]}
+                  </span>
+                </li>
+              ))}
+              {open ? (
+                <li className="inline-flex items-center rounded-full border border-dashed px-2 py-0.5 text-xs text-muted-foreground">
+                  {open} still to plan
+                </li>
+              ) : null}
+            </ul>
+          )}
+          {health.map(h => (
+            <p
+              key={h.check}
+              className="txt-bad flex items-start gap-1.5 text-xs"
+            >
+              <TriangleAlert className="mt-px size-3.5 shrink-0" />
+              {h.detail}
+            </p>
+          ))}
+          {!client.page ? (
+            <p className="txt-warn flex items-start gap-1.5 text-xs">
+              <TriangleAlert className="mt-px size-3.5 shrink-0" />
+              <span>
                 Not linked to its Instagram and Facebook yet.{" "}
                 <button
                   type="button"
                   onClick={() => setSheet({ mode: "settings" })}
-                  className="font-medium underline underline-offset-2"
+                  className="no-touch relative font-medium underline underline-offset-2 after:absolute after:-inset-2 after:content-['']"
                 >
-                  Link it in Settings
+                  Link it in Client setup
                 </button>
-              </p>
-            ) : null}
-          </div>
-
-          {client ? (
-            <div className="ml-auto flex flex-wrap items-center gap-2">
-              {!client.autoApprove ? (
-                <button
-                  type="button"
-                  disabled={!(posts ?? []).some(showable)}
-                  title={
-                    (posts ?? []).some(showable)
-                      ? undefined
-                      : "Nothing is finished yet: a post needs its pictures and a caption"
-                  }
-                  onClick={() => setSheet({ mode: "signoff" })}
-                  className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-[13px] font-medium hover:bg-muted disabled:opacity-50"
-                >
-                  <Send className="h-4 w-4" />
-                  Send to the client
-                </button>
-              ) : null}
-              <button
-                type="button"
-                onClick={() => setSheet({ mode: "settings" })}
-                className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-[13px] font-medium hover:bg-muted"
-              >
-                <SlidersHorizontal className="h-4 w-4" />
-                Settings
-              </button>
-              <button
-                type="button"
-                disabled={busy || open === 0}
-                onClick={() => void fillMonth()}
-                title={
-                  open === 0
-                    ? "The month already has every post it needs"
-                    : undefined
-                }
-                className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-3.5 text-[13px] font-semibold text-primary-foreground disabled:opacity-50"
-              >
-                {busy ? (
-                  <LoaderCircle className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Sparkles className="h-4 w-4" />
-                )}
-                Fill the month
-              </button>
-            </div>
+              </span>
+            </p>
           ) : null}
-        </header>
+        </div>
+      ) : null}
 
-        {!client ? (
-          <div className="rounded-xl border border-dashed p-10 text-center text-[13px] text-muted-foreground">
-            Pick a client above to open their month.
-          </div>
-        ) : (
-          <div className="grid grid-cols-7 gap-1.5 md:gap-2">
+      {!client ? (
+        <div className="rounded-2xl border border-dashed p-10 text-center text-sm text-muted-foreground">
+          Pick a client above to open their month.
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-7 gap-1 sm:gap-1.5 md:gap-2">
             {WEEK.map(d => (
               <div
                 key={d}
-                className="pb-1 text-[12px] font-medium text-muted-foreground"
+                className="pb-1 text-center text-xs font-medium text-muted-foreground sm:text-left"
               >
                 {d}
               </div>
@@ -571,31 +650,57 @@ export function SocialCalendarPage() {
             {Array.from({ length: lead(month) }, (_, i) => (
               <div key={`b${i}`} />
             ))}
-            {days(month).map(({ day, n }) => {
-              const here = byDay.get(day) ?? [];
-              const past = day < today();
-              const isToday = day === today();
-              return (
-                <DayCell
-                  key={day}
-                  day={day}
-                  n={n}
-                  posts={here}
-                  past={past}
-                  isToday={isToday}
-                  pillars={client.pillars}
-                  dragging={dragging}
-                  loading={posts === null}
-                  onOpen={id => setSheet({ mode: "post", id })}
-                  onAdd={() => setSheet({ mode: "new", day })}
-                  onDragStart={setDragging}
-                  onDrop={() => void drop(day)}
-                />
-              );
-            })}
+            {days(month).map(({ day, n }) => (
+              <DayCell
+                key={day}
+                day={day}
+                n={n}
+                posts={byDay.get(day) ?? []}
+                past={day < today()}
+                isToday={day === today()}
+                selected={day === focusDay}
+                dragging={dragging}
+                loading={posts === null}
+                onOpen={id => setSheet({ mode: "post", id })}
+                onAdd={() => setSheet({ mode: "new", day })}
+                onSelect={() => {
+                  setPicked(day);
+                  // The list under the calendar can sit just below the
+                  // fold on a phone: bring it up by as little as it takes.
+                  window.requestAnimationFrame(() => {
+                    const el = agenda.current;
+                    if (!el || el.offsetParent === null) return;
+                    if (
+                      el.getBoundingClientRect().top <
+                      window.innerHeight - 96
+                    )
+                      return;
+                    el.scrollIntoView({
+                      block: "nearest",
+                      behavior: window.matchMedia(
+                        "(prefers-reduced-motion: reduce)",
+                      ).matches
+                        ? "auto"
+                        : "smooth",
+                    });
+                  });
+                }}
+                onDragStart={setDragging}
+                onDrop={() => void drop(day)}
+              />
+            ))}
           </div>
-        )}
-      </div>
+
+          <DayAgenda
+            ref={agenda}
+            day={focusDay}
+            posts={byDay.get(focusDay) ?? []}
+            loading={posts === null}
+            onOpen={id => setSheet({ mode: "post", id })}
+            onAdd={() => setSheet({ mode: "new", day: focusDay })}
+          />
+        </>
+      )}
 
       {sheet && client ? (
         <SheetFrame onClose={() => setSheet(null)}>
@@ -639,17 +744,27 @@ export function SocialCalendarPage() {
   );
 }
 
+/**
+ * One day of the month.
+ *
+ * A phone shows the date and a dot per post, and a tap picks the day so
+ * its posts are listed under the calendar: at 390px a day is 48px wide,
+ * too small for a picture and words. From the small tablet size up the
+ * cell is the post's picture, as before: a tap opens the post, and a day
+ * with more than one post lists them all from its "+N".
+ */
 function DayCell({
   day,
   n,
   posts,
   past,
   isToday,
-  pillars,
+  selected,
   dragging,
   loading,
   onOpen,
   onAdd,
+  onSelect,
   onDragStart,
   onDrop,
 }: {
@@ -658,29 +773,43 @@ function DayCell({
   posts: Post[];
   past: boolean;
   isToday: boolean;
-  pillars: string[];
+  /** The day listed under the calendar on a phone. */
+  selected: boolean;
   dragging: string | null;
   loading: boolean;
   onOpen: (id: string) => void;
   onAdd: () => void;
+  onSelect: () => void;
   onDragStart: (id: string | null) => void;
   onDrop: () => void;
 }) {
   const [over, setOver] = useState(false);
+  const [listing, setListing] = useState(false);
   const first = posts[0];
   const items = first ? itemsOf(first) : [];
   const lead = items[0];
-  // A video shows its cover, or its own frame until it has one.
-  const cover = lead
-    ? lead.kind === "image"
-      ? lead.url
-      : (lead.cover ?? null)
-    : null;
-  const frame = lead?.kind === "video" && !lead.cover ? lead.url : null;
+  const { still: cover, frame } = first
+    ? stillOf(first)
+    : { still: null, frame: null };
   const visual = Boolean(cover || frame);
 
+  // Today is a teal disc behind the date, on the picture or off it.
+  const date = (onPicture: boolean) => (
+    <span
+      className={`inline-flex size-6 items-center justify-center rounded-full text-xs font-medium tabular-nums ${
+        isToday
+          ? "bg-primary text-primary-foreground"
+          : onPicture
+            ? "text-white drop-shadow"
+            : "text-muted-foreground"
+      }`}
+    >
+      {n}
+    </span>
+  );
+
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: dropping here is a pointer shortcut; the keyboard path is the date field in the post sheet
+    // biome-ignore lint/a11y/noStaticElementInteractions: dropping here is a pointer shortcut; the keyboard path is the date button in the post sheet
     <div
       onDragOver={e => {
         if (!dragging || past) return;
@@ -693,115 +822,294 @@ function DayCell({
         setOver(false);
         onDrop();
       }}
-      className={`group relative aspect-[4/5] overflow-hidden rounded-xl border transition ${
+      className={`group relative aspect-square overflow-hidden rounded-lg border bg-card transition sm:aspect-[4/5] sm:rounded-xl ${
         past && !first ? "opacity-45" : ""
       } ${over ? "ring-2 ring-primary ring-offset-2 ring-offset-background" : ""} ${
-        isToday ? "border-foreground/60" : ""
-      } ${first ? "" : "bg-card"}`}
+        selected ? "max-sm:border-primary max-sm:bg-primary/10" : ""
+      }`}
     >
-      {first ? (
-        <button
-          type="button"
-          draggable={!past}
-          onDragStart={() => onDragStart(first.id)}
-          onDragEnd={() => onDragStart(null)}
-          onClick={() => onOpen(first.id)}
-          className="absolute inset-0 block text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          aria-label={first.topic ?? "Post"}
-        >
-          {cover ? (
-            <img
-              src={cover}
-              alt=""
-              loading="lazy"
-              draggable={false}
-              className="h-full w-full object-cover"
-            />
-          ) : frame ? (
-            <video
-              src={`${frame}#t=0.5`}
-              muted
-              playsInline
-              preload="metadata"
-              className="pointer-events-none h-full w-full object-cover"
-            />
-          ) : (
-            <span className="flex h-full w-full flex-col justify-end bg-muted/60 p-2">
-              <span className="line-clamp-4 text-[11px] leading-snug text-foreground/80">
-                {first.topic}
-              </span>
-            </span>
-          )}
-          <span
-            className="absolute inset-y-0 left-0 w-[3px]"
-            style={{ background: pillarColor(first.pillar, pillars) }}
-          />
-          {visual ? (
-            <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 via-black/25 to-transparent px-2 pb-1.5 pt-6">
-              <span className="line-clamp-2 text-[11px] font-medium leading-snug text-white">
-                {first.topic}
-              </span>
-            </span>
-          ) : null}
-          <StateDot post={first} className="absolute right-1.5 top-1.5" />
-          {(items.length || first.slides) > 1 ? (
-            <Images
-              className={`absolute right-5 top-1 h-3.5 w-3.5 ${visual ? "text-white drop-shadow" : "text-muted-foreground"}`}
-            />
-          ) : lead?.kind === "video" ? (
-            <Play
-              className={`absolute right-5 top-1 h-3.5 w-3.5 ${visual ? "fill-white text-white drop-shadow" : "text-muted-foreground"}`}
-            />
-          ) : null}
-        </button>
-      ) : loading ? (
-        <span className="absolute inset-0 animate-pulse bg-muted/40" />
-      ) : !past ? (
-        <button
-          type="button"
-          onClick={onAdd}
-          aria-label={`Add a post on the ${n}`}
-          className="absolute inset-0 flex items-center justify-center text-muted-foreground opacity-0 transition hover:bg-muted/50 hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none"
-        >
-          <Plus className="h-5 w-5" />
-        </button>
-      ) : null}
-
-      <span
-        className={`pointer-events-none absolute left-2 top-1.5 text-[12px] font-medium tabular-nums ${
-          visual ? "text-white drop-shadow" : "text-muted-foreground"
-        } ${isToday && !visual ? "text-foreground" : ""}`}
+      {/* A phone: the date and a dot per post. */}
+      <button
+        type="button"
+        onClick={onSelect}
+        aria-pressed={selected}
+        aria-label={`${dayLabel(day)}: ${
+          posts.length
+            ? `${posts.length} ${posts.length === 1 ? "post" : "posts"}`
+            : "nothing planned"
+        }`}
+        className="absolute inset-0 flex flex-col items-center gap-1 pt-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:hidden"
       >
-        {n}
-      </span>
-      {posts.length > 1 ? (
-        <button
-          type="button"
-          onClick={() => onOpen(posts[1].id)}
-          className="absolute bottom-1.5 right-1.5 rounded-full bg-background/90 px-1.5 text-[11px] font-medium shadow-sm"
-        >
-          +{posts.length - 1}
-        </button>
+        {date(false)}
+        {posts.length ? (
+          <span className="flex max-w-full flex-wrap justify-center gap-0.5 px-1">
+            {posts.map(p => (
+              <StateDot key={p.id} post={p} className="size-1.5" />
+            ))}
+          </span>
+        ) : null}
+      </button>
+
+      {/* A tablet or a laptop: the post's picture. */}
+      <div className="absolute inset-0 hidden sm:block">
+        {first ? (
+          <button
+            type="button"
+            draggable={!past}
+            onDragStart={() => onDragStart(first.id)}
+            onDragEnd={() => onDragStart(null)}
+            onClick={() => onOpen(first.id)}
+            className="absolute inset-0 block text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            aria-label={first.topic ?? "Post"}
+          >
+            {cover ? (
+              <img
+                src={cover}
+                alt=""
+                loading="lazy"
+                draggable={false}
+                className="h-full w-full object-cover"
+              />
+            ) : frame ? (
+              <video
+                src={`${frame}#t=0.5`}
+                muted
+                playsInline
+                preload="metadata"
+                className="pointer-events-none h-full w-full object-cover"
+              />
+            ) : (
+              <span
+                className={`flex h-full w-full flex-col justify-end bg-muted/60 px-2 pt-2 ${
+                  posts.length > 1 ? "pb-8" : "pb-2"
+                }`}
+              >
+                <span
+                  className="line-clamp-4 text-xs leading-snug text-foreground/80"
+                  dir="auto"
+                >
+                  {first.topic}
+                </span>
+              </span>
+            )}
+            {/* A post, whatever its pillar: grey, so it never reads as a state. */}
+            <span className="absolute inset-y-0 left-0 w-[3px] bg-muted-foreground/60" />
+            {visual ? (
+              <span
+                className={`absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 via-black/25 to-transparent pb-1.5 pl-2 pt-6 ${
+                  posts.length > 1 ? "pr-9" : "pr-2"
+                }`}
+              >
+                <span
+                  className="line-clamp-2 text-xs font-medium leading-snug text-white"
+                  dir="auto"
+                >
+                  {first.topic}
+                </span>
+              </span>
+            ) : null}
+            <span className="absolute right-1.5 top-1.5 flex items-center gap-1">
+              {(items.length || first.slides) > 1 ? (
+                <Images
+                  className={`size-3.5 ${visual ? "text-white drop-shadow" : "text-muted-foreground"}`}
+                />
+              ) : lead?.kind === "video" ? (
+                <Play
+                  className={`size-3.5 ${visual ? "fill-white text-white drop-shadow" : "text-muted-foreground"}`}
+                />
+              ) : null}
+              <StateDot post={first} halo />
+            </span>
+          </button>
+        ) : !past && !loading ? (
+          <button
+            type="button"
+            onClick={onAdd}
+            aria-label={`Add a post on the ${n}`}
+            className="absolute inset-0 flex items-center justify-center text-muted-foreground opacity-0 transition hover:bg-muted/50 hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none [@media(hover:none)]:opacity-40"
+          >
+            <Plus className="h-5 w-5" />
+          </button>
+        ) : null}
+
+        <span className="pointer-events-none absolute left-1.5 top-1.5">
+          {date(visual)}
+        </span>
+
+        {posts.length > 1 ? (
+          <Popover open={listing} onOpenChange={setListing}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                aria-label={`All ${posts.length} posts on the ${n}`}
+                className="no-touch absolute bottom-1.5 right-1.5 rounded-full border bg-background/90 px-1.5 py-px text-xs font-medium tabular-nums after:absolute after:-inset-2 after:content-[''] hover:bg-background"
+              >
+                +{posts.length - 1}
+              </button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="end"
+              className="w-72 overflow-hidden rounded-xl p-0 dark:shadow-none"
+            >
+              <p className="border-b px-3 py-2 text-xs font-medium text-muted-foreground">
+                {dayLabel(day)}
+              </p>
+              <DayPosts
+                posts={posts}
+                onOpen={id => {
+                  setListing(false);
+                  onOpen(id);
+                }}
+              />
+            </PopoverContent>
+          </Popover>
+        ) : null}
+      </div>
+
+      {loading && !first ? (
+        <span className="pointer-events-none absolute inset-0 animate-pulse bg-muted/40" />
       ) : null}
       <span className="sr-only">{day}</span>
     </div>
   );
 }
 
+/** A day's posts as rows: the picture, the topic, where it stands. */
+function DayPosts({
+  posts,
+  onOpen,
+}: {
+  posts: Post[];
+  onOpen: (id: string) => void;
+}) {
+  return (
+    <ul className="divide-y">
+      {posts.map(p => {
+        const { still, frame } = stillOf(p);
+        const s = stateOf(p);
+        const format = formatOf(itemsOf(p));
+        return (
+          <li key={p.id}>
+            <button
+              type="button"
+              onClick={() => onOpen(p.id)}
+              className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none"
+            >
+              <span className="h-12 w-[38px] shrink-0 overflow-hidden rounded-md bg-muted">
+                {still ? (
+                  <img
+                    src={still}
+                    alt=""
+                    loading="lazy"
+                    className="h-full w-full object-cover"
+                  />
+                ) : frame ? (
+                  <video
+                    src={`${frame}#t=0.5`}
+                    muted
+                    playsInline
+                    preload="metadata"
+                    className="pointer-events-none h-full w-full object-cover"
+                  />
+                ) : null}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span
+                  className="line-clamp-2 text-sm font-medium leading-snug"
+                  dir="auto"
+                >
+                  {p.topic ?? "Post"}
+                </span>
+                <span className="mt-1 flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
+                  <StateDot post={p} />
+                  <span>{STATE[s].short}</span>
+                  <span aria-hidden>·</span>
+                  <span className="capitalize">{p.pillar}</span>
+                  {format ? (
+                    <>
+                      <span aria-hidden>·</span>
+                      <span>{format}</span>
+                    </>
+                  ) : null}
+                </span>
+              </span>
+              <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** Under the calendar on a phone: the tapped day and its posts. */
+function DayAgenda({
+  ref,
+  day,
+  posts,
+  loading,
+  onOpen,
+  onAdd,
+}: {
+  ref?: React.Ref<HTMLElement>;
+  day: string;
+  posts: Post[];
+  loading: boolean;
+  onOpen: (id: string) => void;
+  onAdd: () => void;
+}) {
+  const past = day < today();
+  return (
+    <section ref={ref} aria-live="polite" className="mt-5 sm:hidden">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <h2 className="text-[15px] font-semibold">{dayLabel(day)}</h2>
+        {!past ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onAdd}
+            className="text-primary"
+          >
+            <Plus />
+            Add a post
+          </Button>
+        ) : null}
+      </div>
+      {loading ? (
+        <p className="flex items-center gap-2 text-sm text-muted-foreground">
+          <LoaderCircle className="size-4 animate-spin" />
+          Loading the month
+        </p>
+      ) : posts.length ? (
+        <div className="overflow-hidden rounded-2xl border bg-card">
+          <DayPosts posts={posts} onOpen={onOpen} />
+        </div>
+      ) : (
+        <p className="rounded-2xl border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
+          {past ? "Nothing on this day." : "Nothing planned on this day yet."}
+        </p>
+      )}
+    </section>
+  );
+}
+
 function StateDot({
   post,
+  halo = false,
   className = "",
 }: {
   post: Post;
+  /** A ring that keeps the dot readable on top of a picture. */
+  halo?: boolean;
   className?: string;
 }) {
   const s = stateOf(post);
   return (
     <span
       title={STATE[s].label}
-      className={`block h-2 w-2 rounded-full ring-2 ring-background/80 ${
-        s === "drafting" ? "motion-safe:animate-pulse" : ""
-      } ${className}`}
+      className={`block shrink-0 rounded-full ${className || "size-2"} ${
+        halo ? "ring-2 ring-background/80" : ""
+      } ${s === "drafting" ? "motion-safe:animate-pulse" : ""}`}
       style={{ background: STATE[s].dot }}
     />
   );
@@ -816,7 +1124,9 @@ function SheetFrame({
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      // A dialog or a date picker open on top of the sheet takes the
+      // Escape itself (and marks it handled); the sheet stays.
+      if (e.key === "Escape" && !e.defaultPrevented) onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -827,29 +1137,47 @@ function SheetFrame({
         type="button"
         aria-label="Close"
         onClick={onClose}
-        className="fixed inset-0 z-40 bg-black/20 sm:bg-black/10"
+        className="fixed inset-0 z-40 bg-black/30"
       />
-      <aside className="fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l bg-background shadow-2xl motion-safe:animate-in motion-safe:slide-in-from-right sm:w-[480px]">
+      {/* Clear of the status bar and the home bar in the installed app. */}
+      <aside className="fixed inset-y-0 right-0 z-50 flex w-full flex-col overscroll-contain border-l bg-background pt-safe pb-safe motion-safe:animate-in motion-safe:slide-in-from-right sm:w-[480px]">
         {children}
       </aside>
     </>
   );
 }
 
-function SheetHead({ title, onClose }: { title: string; onClose: () => void }) {
+function SheetHead({
+  title,
+  sub,
+  extra,
+  onClose,
+}: {
+  title: string;
+  /** A muted line under the title. */
+  sub?: string;
+  /** A control beside the title, before the close button. */
+  extra?: React.ReactNode;
+  onClose: () => void;
+}) {
   return (
-    <div className="flex items-center gap-2 border-b px-5 py-3.5">
-      <h2 className="min-w-0 flex-1 truncate text-[15px] font-semibold">
-        {title}
-      </h2>
-      <button
-        type="button"
+    <div className="flex items-center gap-2 border-b px-5 py-3">
+      <div className="min-w-0 flex-1">
+        <h2 className="truncate text-[15px] font-semibold">{title}</h2>
+        {sub ? (
+          <p className="truncate text-xs text-muted-foreground">{sub}</p>
+        ) : null}
+      </div>
+      {extra}
+      <Button
+        variant="ghost"
+        size="icon"
         onClick={onClose}
         aria-label="Close"
-        className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+        className="-mr-2 size-9 text-muted-foreground"
       >
-        <X className="h-4 w-4" />
-      </button>
+        <X />
+      </Button>
     </div>
   );
 }
@@ -874,7 +1202,7 @@ function PillarPicker({
 }) {
   return (
     <div>
-      <span className="mb-1.5 block text-[13px] font-medium">Pillar</span>
+      <span className="mb-1.5 block text-sm font-medium">Pillar</span>
       <div className="flex flex-wrap gap-1.5">
         {choices.map(p => (
           <button
@@ -882,16 +1210,12 @@ function PillarPicker({
             type="button"
             aria-pressed={value === p}
             onClick={() => onChange(p)}
-            className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[13px] capitalize ${
+            className={`inline-flex h-8 items-center rounded-full border px-3 text-sm capitalize ${
               value === p
-                ? "border-foreground"
-                : "text-muted-foreground hover:text-foreground"
+                ? CHOSEN
+                : "text-muted-foreground hover:bg-muted hover:text-foreground"
             }`}
           >
-            <span
-              className="h-2 w-2 rounded-full"
-              style={{ background: pillarColor(p, choices) }}
-            />
             {p}
           </button>
         ))}
@@ -969,11 +1293,11 @@ function NewPost({
 
   return (
     <>
-      <SheetHead title={dayLabel(day)} onClose={onClose} />
-      <div className="flex-1 space-y-5 overflow-y-auto px-5 py-5">
+      <SheetHead title={dayLabel(day)} sub="New post" onClose={onClose} />
+      <div className="flex-1 space-y-5 overflow-y-auto overscroll-contain px-5 py-5">
         <div
           role="tablist"
-          className="grid grid-cols-2 rounded-lg border p-0.5"
+          className="grid grid-cols-2 gap-0.5 rounded-lg border p-0.5"
         >
           {(
             [
@@ -987,10 +1311,8 @@ function NewPost({
               role="tab"
               aria-selected={mode === key}
               onClick={() => setMode(key)}
-              className={`inline-flex items-center justify-center gap-1.5 rounded-md py-1.5 text-[13px] font-medium ${
-                mode === key
-                  ? "bg-foreground text-background"
-                  : "text-muted-foreground hover:text-foreground"
+              className={`inline-flex h-8 items-center justify-center gap-1.5 rounded-md text-sm font-medium ${
+                mode === key ? SEGMENT_ON : SEGMENT_OFF
               }`}
             >
               <Icon className="h-3.5 w-3.5" />
@@ -1010,7 +1332,7 @@ function NewPost({
         ) : null}
 
         <label className="block">
-          <span className="mb-1.5 block text-[13px] font-medium">
+          <span className="mb-1.5 block text-sm font-medium">
             What is this post about?
           </span>
           <textarea
@@ -1025,57 +1347,62 @@ function NewPost({
                 ? "The corner joint on a window frame, close enough to see the finish"
                 : "A line is enough. The captions are written from it, and from what is said in any video."
             }
-            className="w-full rounded-lg border bg-background p-3 text-[14px] leading-relaxed focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="w-full rounded-lg border bg-background p-3 text-sm leading-relaxed focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         </label>
 
         {mode === "ai" ? (
           <div>
-            <span className="mb-1.5 block text-[13px] font-medium">Format</span>
-            <div className="inline-flex rounded-lg border p-0.5">
-              {[
-                [1, "Single image"],
-                [3, "Carousel"],
-              ].map(([n, label]) => (
-                <button
-                  key={label}
-                  type="button"
-                  onClick={() => setSlides(Number(n))}
-                  className={`rounded-md px-3 py-1.5 text-[13px] ${
-                    (slides > 1) === (Number(n) > 1)
-                      ? "bg-foreground text-background"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
+            <span className="mb-1.5 block text-sm font-medium">Format</span>
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="inline-flex gap-0.5 rounded-lg border p-0.5">
+                {[
+                  [1, "Single image"],
+                  [3, "Carousel"],
+                ].map(([n, label]) => (
+                  <button
+                    key={label}
+                    type="button"
+                    aria-pressed={slides > 1 === Number(n) > 1}
+                    onClick={() => setSlides(Number(n))}
+                    className={`h-8 rounded-md px-3 text-sm ${
+                      (slides > 1) === (Number(n) > 1)
+                        ? SEGMENT_ON
+                        : SEGMENT_OFF
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {slides > 1 ? (
+                <label className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+                  <input
+                    type="number"
+                    min={2}
+                    max={10}
+                    value={slides}
+                    onChange={e =>
+                      setSlides(
+                        Math.max(2, Math.min(10, Number(e.target.value))),
+                      )
+                    }
+                    className="h-8 w-16 rounded-md border bg-background px-2 text-sm text-foreground"
+                  />
+                  slides
+                </label>
+              ) : null}
             </div>
-            {slides > 1 ? (
-              <label className="ml-3 inline-flex items-center gap-2 text-[13px] text-muted-foreground">
-                <input
-                  type="number"
-                  min={2}
-                  max={10}
-                  value={slides}
-                  onChange={e =>
-                    setSlides(Math.max(2, Math.min(10, Number(e.target.value))))
-                  }
-                  className="h-8 w-14 rounded-md border bg-background px-2 text-[13px] text-foreground"
-                />
-                slides
-              </label>
-            ) : null}
           </div>
         ) : null}
 
         {mode === "ai" || !reel ? (
           <div>
-            <span className="mb-1.5 block text-[13px] font-medium">Shape</span>
+            <span className="mb-1.5 block text-sm font-medium">Shape</span>
             <ShapePicker value={aspect} onChange={setAspect} />
           </div>
         ) : (
-          <p className="text-[12px] text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             A lone video goes out as a {REEL.label}, {REEL.size}.
           </p>
         )}
@@ -1087,22 +1414,21 @@ function NewPost({
         ) : null}
       </div>
       <div className="border-t px-5 py-4">
-        <button
-          type="button"
+        <Button
           disabled={!ready}
           onClick={() => void create()}
-          className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-primary text-[14px] font-semibold text-primary-foreground disabled:opacity-50"
+          className="h-10 w-full rounded-lg font-semibold"
         >
           {busy ? (
-            <LoaderCircle className="h-4 w-4 animate-spin" />
+            <LoaderCircle className="animate-spin" />
           ) : mode === "ai" ? (
-            <Sparkles className="h-4 w-4" />
+            <Sparkles />
           ) : (
-            <Plus className="h-4 w-4" />
+            <Plus />
           )}
           Create the post
-        </button>
-        <p className="mt-2 text-center text-[12px] text-muted-foreground">
+        </Button>
+        <p className="mt-2 text-center text-xs text-muted-foreground">
           {mode === "ai"
             ? "The captions come back in a few seconds, the pictures in a couple of minutes."
             : uploading
@@ -1133,7 +1459,7 @@ function PlatformPicker({
   const shown = PLATFORMS.filter(p => allowed.includes(p.key));
   return (
     <div>
-      <span className="mb-1.5 block text-[13px] font-medium">Goes to</span>
+      <span className="mb-1.5 block text-sm font-medium">Goes to</span>
       <div className="flex flex-wrap gap-1.5">
         {shown.map(p => {
           const on = value.includes(p.key);
@@ -1154,10 +1480,10 @@ function PlatformPicker({
                   );
                 onChange(next);
               }}
-              className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[13px] disabled:cursor-default ${
+              className={`inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-sm disabled:cursor-default ${
                 on
-                  ? "border-foreground text-foreground"
-                  : "text-muted-foreground line-through decoration-muted-foreground/60 hover:text-foreground"
+                  ? CHOSEN
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
               }`}
             >
               <Icon className="h-3.5 w-3.5" />
@@ -1166,7 +1492,7 @@ function PlatformPicker({
           );
         })}
         {shown.length === 1 ? (
-          <span className="self-center text-[12px] text-muted-foreground">
+          <span className="self-center text-xs text-muted-foreground">
             This client only posts to {shown[0].label}.
           </span>
         ) : null}
@@ -1194,12 +1520,13 @@ function PostSheet({
   const move = useAction(api.social.schedulePost);
   const saveRefs = useAction(api.social.setRefs);
   const [busy, setBusy] = useState(false);
+  const [confirm, confirmDialog] = useConfirm();
 
   if (!post)
     return (
       <>
         <SheetHead title="Post" onClose={onClose} />
-        <p className="p-5 text-[13px] text-muted-foreground">
+        <p className="p-5 text-sm text-muted-foreground">
           That post is no longer here.
         </p>
       </>
@@ -1236,8 +1563,31 @@ function PostSheet({
 
   return (
     <>
-      <SheetHead title={day ? dayLabel(day) : "Post"} onClose={onClose} />
-      <div className="flex-1 overflow-y-auto">
+      {/* The day is said once, as the title; the calendar button beside it
+          moves the post, and is the keyboard's way to do what dragging a
+          post to another day does. */}
+      <SheetHead
+        title={day ? dayLabel(day) : "Post"}
+        extra={
+          <DateInput
+            value={day}
+            min={today()}
+            aria-label="Move to another day"
+            title="Move to another day"
+            onChange={e => {
+              const d = e.target.value;
+              if (d)
+                void act(
+                  () => move({ postId: post.id, when: `${d}T07:00:00Z` }),
+                  "Moved.",
+                );
+            }}
+            className="size-9! min-w-0! justify-center! rounded-lg! p-0! [&>span]:sr-only"
+          />
+        }
+        onClose={onClose}
+      />
+      <div className="flex-1 overflow-y-auto overscroll-contain">
         <MediaEditor
           post={post}
           clientId={client.taskId}
@@ -1248,7 +1598,7 @@ function PostSheet({
 
         <div className="space-y-5 px-5 pb-6 pt-3">
           {items.length === 1 && items[0].kind === "video" ? (
-            <p className="text-[12px] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               A lone video goes out as a {REEL.label}, {REEL.size}.
             </p>
           ) : (
@@ -1266,25 +1616,29 @@ function PostSheet({
             />
           )}
           {post.error ? (
-            <p className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-[13px] text-destructive">
+            <p className="callout-bad rounded-lg border p-3 text-sm">
               {post.error}
             </p>
           ) : null}
 
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px]">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
             <span className="inline-flex items-center gap-2">
               <StateDot post={post} />
               <span className="font-medium">{STATE[s].label}</span>
             </span>
-            <span className="inline-flex items-center text-muted-foreground">
-              <span
-                className="mr-1.5 inline-block h-2 w-2 rounded-full"
-                style={{ background: pillarColor(post.pillar, client.pillars) }}
-              />
-              <span className="capitalize">{post.pillar}</span>
+            <span aria-hidden className="text-muted-foreground">
+              ·
+            </span>
+            <span className="capitalize text-muted-foreground">
+              {post.pillar}
             </span>
             {format ? (
-              <span className="text-muted-foreground">{format}</span>
+              <>
+                <span aria-hidden className="text-muted-foreground">
+                  ·
+                </span>
+                <span className="text-muted-foreground">{format}</span>
+              </>
             ) : null}
           </div>
 
@@ -1292,7 +1646,7 @@ function PostSheet({
           <PostedSide post={post} />
 
           {post.topic ? (
-            <p className="text-[14px] font-medium leading-snug" dir="auto">
+            <p className="text-sm font-medium leading-snug" dir="auto">
               {post.topic}
             </p>
           ) : null}
@@ -1331,33 +1685,13 @@ function PostSheet({
               }}
             />
           ) : null}
-
-          {/* biome-ignore lint/a11y/noLabelWithoutControl: The custom control renders a button inside this label. */}
-          <label className="block">
-            <span className="mb-1.5 block text-[13px] font-medium">
-              Goes out on
-            </span>
-            <DateInput
-              value={day}
-              min={today()}
-              onChange={e => {
-                const d = e.target.value;
-                if (d)
-                  void act(
-                    () => move({ postId: post.id, when: `${d}T07:00:00Z` }),
-                    "Moved.",
-                  );
-              }}
-              className="h-9 rounded-lg border bg-background px-3 text-[13px]"
-            />
-          </label>
         </div>
       </div>
 
       <div className="flex gap-2 border-t px-5 py-4">
         {(drawn || !items.length) && post.status !== "published" ? (
-          <button
-            type="button"
+          <Button
+            variant="outline"
             disabled={busy || drawingAll}
             onClick={() =>
               void act(
@@ -1367,38 +1701,47 @@ function PostSheet({
                   : "Drawing the pictures. It takes a couple of minutes.",
               )
             }
-            className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-lg border text-[13px] font-medium hover:bg-muted disabled:opacity-50"
+            className="h-10 flex-1 rounded-lg"
           >
             {drawingAll ? (
-              <LoaderCircle className="h-4 w-4 animate-spin" />
+              <LoaderCircle className="animate-spin" />
             ) : (
-              <RefreshCw className="h-4 w-4" />
+              <RefreshCw />
             )}
             {drawingAll
               ? "Drawing"
               : drawn
                 ? "Draw them all again"
                 : "Draw the pictures"}
-          </button>
+          </Button>
         ) : (
           <span className="flex-1" />
         )}
-        <button
-          type="button"
+        <Button
+          variant="outline"
+          size="icon"
           disabled={busy}
-          onClick={() => {
-            if (!window.confirm("Remove this post from the month?")) return;
-            void act(async () => {
-              await remove({ postId: post.id });
-              onClose();
-            }, "Removed.");
-          }}
+          onClick={() =>
+            void (async () => {
+              const ok = await confirm({
+                title: "Remove this post from the month?",
+                action: "Remove the post",
+                destructive: true,
+              });
+              if (!ok) return;
+              void act(async () => {
+                await remove({ postId: post.id });
+                onClose();
+              }, "Removed.");
+            })()
+          }
           aria-label="Remove the post"
-          className="inline-flex h-10 w-10 items-center justify-center rounded-lg border text-muted-foreground hover:bg-muted hover:text-destructive disabled:opacity-50"
+          className="size-10 rounded-lg text-muted-foreground hover:text-destructive"
         >
-          <Trash2 className="h-4 w-4" />
-        </button>
+          <Trash2 />
+        </Button>
       </div>
+      {confirmDialog}
     </>
   );
 }
@@ -1427,12 +1770,12 @@ function PhotoLibrary({ clientId }: { clientId: string }) {
 
   return (
     <div>
-      <span className="mb-1 block text-[13px] font-medium">Photo library</span>
-      <span className="mb-2 block text-[12px] text-muted-foreground">
+      <span className="mb-1 block text-sm font-medium">Photo library</span>
+      <span className="mb-2 block text-xs text-muted-foreground">
         The client's own photos: projects, team, products. Pick them as
         references when the AI draws, so the pictures look like their work.
       </span>
-      <div className="grid grid-cols-5 gap-1.5">
+      <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-5">
         {(photos ?? []).map(ph => (
           <span
             key={ph.id}
@@ -1444,6 +1787,8 @@ function PhotoLibrary({ clientId }: { clientId: string }) {
               loading="lazy"
               className="h-full w-full object-cover"
             />
+            {/* Shown on hover with a mouse; always shown on a touch screen,
+                where a hidden button would still take a stray tap. */}
             <button
               type="button"
               aria-label="Take this photo out of the library"
@@ -1457,9 +1802,9 @@ function PhotoLibrary({ clientId }: { clientId: string }) {
                   }
                 })()
               }
-              className="absolute right-0.5 top-0.5 rounded-full bg-black/60 p-0.5 text-white opacity-0 transition group-hover:opacity-100 focus-visible:opacity-100"
+              className="no-touch absolute right-1 top-1 flex size-7 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition after:absolute after:-inset-1 after:content-[''] group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
             >
-              <X className="h-3 w-3" />
+              <X className="size-3.5" />
             </button>
           </span>
         ))}
@@ -1476,7 +1821,7 @@ function PhotoLibrary({ clientId }: { clientId: string }) {
             <LoaderCircle className="relative h-4 w-4 animate-spin" />
           </span>
         ))}
-        <label className="flex aspect-[4/5] cursor-pointer flex-col items-center justify-center gap-1 rounded-md border border-dashed text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground focus-within:ring-2 focus-within:ring-ring">
+        <label className="flex aspect-[4/5] cursor-pointer flex-col items-center justify-center gap-1 rounded-md border border-dashed text-xs text-muted-foreground hover:bg-muted hover:text-foreground focus-within:ring-2 focus-within:ring-ring">
           <Upload className="h-4 w-4" />
           Add
           <input
@@ -1493,7 +1838,7 @@ function PhotoLibrary({ clientId }: { clientId: string }) {
         </label>
       </div>
       {photos === null ? (
-        <p className="mt-2 flex items-center gap-2 text-[12px] text-muted-foreground">
+        <p className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
           <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
           Opening the library
         </p>
@@ -1527,6 +1872,7 @@ function SettingsSheet({
   const [look, setLook] = useState<Look>(client.look ?? "bold");
   const [adding, setAdding] = useState("");
   const [busy, setBusy] = useState(false);
+  const [confirm, confirmDialog] = useConfirm();
 
   async function save() {
     setBusy(true);
@@ -1552,216 +1898,238 @@ function SettingsSheet({
 
   return (
     <>
-      <SheetHead title={`${client.name} settings`} onClose={onClose} />
-      <div className="flex-1 space-y-6 overflow-y-auto px-5 py-5">
-        <label className="block">
-          <span className="mb-1.5 block text-[13px] font-medium">
-            Posts a month
-          </span>
-          <input
-            type="number"
-            min={1}
-            max={60}
-            value={perMonth}
-            onChange={e => setPerMonth(e.target.value)}
-            className="h-9 w-24 rounded-lg border bg-background px-3 text-[14px]"
-          />
-          <span className="mt-1.5 block text-[12px] text-muted-foreground">
-            What "Fill the month" plans up to.
-          </span>
-        </label>
+      <SheetHead title="Client setup" sub={client.name} onClose={onClose} />
+      <div className="flex-1 space-y-6 overflow-y-auto overscroll-contain px-5 py-5">
+        <SettingsGroup title="Plan">
+          <label className="block">
+            <span className="mb-1.5 block text-sm font-medium">
+              Posts a month
+            </span>
+            <input
+              type="number"
+              min={1}
+              max={60}
+              value={perMonth}
+              onChange={e => setPerMonth(e.target.value)}
+              className="h-9 w-24 rounded-lg border bg-background px-3 text-sm"
+            />
+            <span className="mt-1.5 block text-xs text-muted-foreground">
+              What "Fill the month" plans up to.
+            </span>
+          </label>
 
-        <div>
-          <span className="mb-1.5 block text-[13px] font-medium">
-            Posts go to
-          </span>
-          <div className="flex flex-wrap gap-1.5">
-            {PLATFORMS.map(p => {
-              const on = platforms.includes(p.key);
-              const Icon = PLATFORM_ICON[p.key];
-              return (
-                <button
-                  key={p.key}
-                  type="button"
-                  aria-pressed={on}
-                  onClick={() => {
-                    const next = on
-                      ? platforms.filter(x => x !== p.key)
-                      : [...platforms, p.key];
-                    if (!next.length)
-                      return void toast.error(
-                        "A client posts to at least one platform.",
-                      );
-                    setPlatforms(next);
-                  }}
-                  className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[13px] ${
-                    on
-                      ? "border-foreground"
-                      : "text-muted-foreground line-through decoration-muted-foreground/60 hover:text-foreground"
+          <div>
+            <span className="mb-1.5 block text-sm font-medium">Pillars</span>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {pillars.map(p => (
+                <span
+                  key={p}
+                  className="inline-flex h-8 items-center gap-1 rounded-full border pl-3 pr-1 text-sm capitalize"
+                >
+                  {p}
+                  <button
+                    type="button"
+                    aria-label={`Remove ${p}`}
+                    onClick={() => setPillars(pillars.filter(x => x !== p))}
+                    className="no-touch relative flex size-6 items-center justify-center rounded-full text-muted-foreground after:absolute after:-inset-1.5 after:content-[''] hover:bg-muted hover:text-foreground"
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                </span>
+              ))}
+              <input
+                value={adding}
+                onChange={e => setAdding(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key !== "Enter") return;
+                  const name = adding.trim().toLowerCase();
+                  if (name && !pillars.includes(name))
+                    setPillars([...pillars, name]);
+                  setAdding("");
+                }}
+                placeholder="Add one"
+                className="h-8 w-28 rounded-full border bg-background px-3 text-sm"
+              />
+            </div>
+            <span className="mt-1.5 block text-xs text-muted-foreground">
+              The kinds of post this client gets. A filled month takes them in
+              turn.
+            </span>
+          </div>
+        </SettingsGroup>
+
+        <SettingsGroup title="Look">
+          <fieldset>
+            <legend className="mb-1.5 block text-sm font-medium">
+              Words on the pictures
+            </legend>
+            <div className="space-y-1.5">
+              {LOOKS.map(l => (
+                <label
+                  key={l.key}
+                  className={`flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 ${
+                    look === l.key ? CHOSEN : "hover:bg-muted/50"
                   }`}
                 >
-                  <Icon className="h-3.5 w-3.5" />
-                  {p.label}
-                </button>
-              );
-            })}
-          </div>
-          <span className="mt-1.5 block text-[12px] text-muted-foreground">
-            Take Facebook off for a client who only has Instagram.
-          </span>
-        </div>
-
-        <fieldset>
-          <legend className="mb-1.5 block text-[13px] font-medium">
-            Words on the pictures
-          </legend>
-          <div className="space-y-1.5">
-            {LOOKS.map(l => (
-              <label
-                key={l.key}
-                className={`flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 ${
-                  look === l.key ? "border-foreground" : "hover:bg-muted/50"
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="look"
-                  checked={look === l.key}
-                  onChange={() => setLook(l.key)}
-                  className="mt-0.5 h-4 w-4 accent-[var(--primary)]"
-                />
-                <span>
-                  <span className="block text-[13px] font-medium">
-                    {l.label}
+                  <input
+                    type="radio"
+                    name="look"
+                    checked={look === l.key}
+                    onChange={() => setLook(l.key)}
+                    className="mt-0.5 h-4 w-4 accent-[var(--mahara-teal)]"
+                  />
+                  <span>
+                    <span className="block text-sm font-medium">{l.label}</span>
+                    <span className="mt-0.5 block text-xs text-muted-foreground">
+                      {l.note}
+                    </span>
                   </span>
-                  <span className="mt-0.5 block text-[12px] text-muted-foreground">
-                    {l.note}
-                  </span>
-                </span>
-              </label>
-            ))}
-          </div>
-          <span className="mt-1.5 block text-[12px] text-muted-foreground">
-            New pictures follow it. Pictures already drawn keep their words
-            until they are drawn again.
-          </span>
-        </fieldset>
-
-        <AccountsPicker
-          clientId={client.taskId}
-          wantsInstagram={platforms.includes("instagram")}
-          onChanged={onChanged}
-        />
-
-        <ReadyToPost client={client} onChanged={onChanged} />
-
-        <label className="flex items-start gap-3">
-          <input
-            type="checkbox"
-            checked={autoApprove}
-            onChange={e => setAutoApprove(e.target.checked)}
-            className="mt-0.5 h-4 w-4 accent-[var(--primary)]"
-          />
-          <span>
-            <span className="block text-[13px] font-medium">
-              Goes out without the client's sign-off
+                </label>
+              ))}
+            </div>
+            <span className="mt-1.5 block text-xs text-muted-foreground">
+              New pictures follow it. Pictures already drawn keep their words
+              until they are drawn again.
             </span>
-            <span className="mt-0.5 block text-[12px] text-muted-foreground">
-              Nothing is posted yet. Once posting is switched on, this client's
-              ready posts go out on their day without waiting for them to
-              approve.
-            </span>
-          </span>
-        </label>
+          </fieldset>
 
-        <div>
-          <span className="mb-1.5 block text-[13px] font-medium">Pillars</span>
-          <div className="flex flex-wrap items-center gap-1.5">
-            {pillars.map(p => (
-              <span
-                key={p}
-                className="inline-flex items-center gap-1.5 rounded-full border py-1 pl-2.5 pr-1 text-[13px] capitalize"
-              >
-                <span
-                  className="h-2 w-2 rounded-full"
-                  style={{ background: pillarColor(p, pillars) }}
-                />
-                {p}
-                <button
-                  type="button"
-                  aria-label={`Remove ${p}`}
-                  onClick={() => setPillars(pillars.filter(x => x !== p))}
-                  className="rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </span>
-            ))}
+          <label className="block">
+            <span className="mb-1.5 block text-sm font-medium">
+              Caption dialect
+            </span>
             <input
-              value={adding}
-              onChange={e => setAdding(e.target.value)}
-              onKeyDown={e => {
-                if (e.key !== "Enter") return;
-                const name = adding.trim().toLowerCase();
-                if (name && !pillars.includes(name))
-                  setPillars([...pillars, name]);
-                setAdding("");
-              }}
-              placeholder="Add one"
-              className="h-8 w-28 rounded-full border bg-background px-3 text-[13px]"
+              value={dialect}
+              onChange={e => setDialect(e.target.value)}
+              placeholder="Saudi (Najdi)"
+              className="h-9 w-full rounded-lg border bg-background px-3 text-sm"
             />
+            <span className="mt-1.5 block text-xs text-muted-foreground">
+              The client's own voice. Brand, offer and do's and don'ts come from
+              their ClickUp card.
+            </span>
+          </label>
+
+          <PhotoLibrary clientId={client.taskId} />
+        </SettingsGroup>
+
+        <SettingsGroup title="Publishing">
+          <div>
+            <span className="mb-1.5 block text-sm font-medium">
+              Posts go to
+            </span>
+            <div className="flex flex-wrap gap-1.5">
+              {PLATFORMS.map(p => {
+                const on = platforms.includes(p.key);
+                const Icon = PLATFORM_ICON[p.key];
+                return (
+                  <button
+                    key={p.key}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => {
+                      const next = on
+                        ? platforms.filter(x => x !== p.key)
+                        : [...platforms, p.key];
+                      if (!next.length)
+                        return void toast.error(
+                          "A client posts to at least one platform.",
+                        );
+                      setPlatforms(next);
+                    }}
+                    className={`inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-sm ${
+                      on
+                        ? CHOSEN
+                        : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                    }`}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    {p.label}
+                  </button>
+                );
+              })}
+            </div>
+            <span className="mt-1.5 block text-xs text-muted-foreground">
+              Take Facebook off for a client who only has Instagram.
+            </span>
           </div>
-          <span className="mt-1.5 block text-[12px] text-muted-foreground">
-            The kinds of post this client gets. A filled month takes them in
-            turn.
-          </span>
-        </div>
 
-        <label className="block">
-          <span className="mb-1.5 block text-[13px] font-medium">
-            Caption dialect
-          </span>
-          <input
-            value={dialect}
-            onChange={e => setDialect(e.target.value)}
-            placeholder="Saudi (Najdi)"
-            className="h-9 w-full rounded-lg border bg-background px-3 text-[14px]"
+          <AccountsPicker
+            clientId={client.taskId}
+            wantsInstagram={platforms.includes("instagram")}
+            onChanged={onChanged}
           />
-          <span className="mt-1.5 block text-[12px] text-muted-foreground">
-            The client's own voice. Brand, offer and do's and don'ts come from
-            their ClickUp card.
-          </span>
-        </label>
 
-        <PhotoLibrary clientId={client.taskId} />
+          <ReadyToPost client={client} onChanged={onChanged} />
+
+          <label className="flex items-start gap-3">
+            <input
+              type="checkbox"
+              checked={autoApprove}
+              onChange={e => setAutoApprove(e.target.checked)}
+              className="mt-0.5 h-4 w-4 accent-[var(--mahara-teal)]"
+            />
+            <span>
+              <span className="block text-sm font-medium">
+                Goes out without the client's sign-off
+              </span>
+              <span className="mt-0.5 block text-xs text-muted-foreground">
+                Nothing is posted yet. Once posting is switched on, this
+                client's ready posts go out on their day without waiting for
+                them to approve.
+              </span>
+            </span>
+          </label>
+        </SettingsGroup>
       </div>
       <div className="flex items-center gap-2 border-t px-5 py-4">
-        <button
-          type="button"
+        <Button
+          variant="ghost"
           disabled={busy}
           onClick={() =>
             void (async () => {
-              if (!window.confirm(`Take ${client.name} off social media?`))
-                return;
+              const ok = await confirm({
+                title: `Take ${client.name} off social media?`,
+                action: "Take off the package",
+                destructive: true,
+              });
+              if (!ok) return;
               await setActive({ clientTaskId: client.taskId, active: false });
               await onChanged();
               onClose();
             })()
           }
-          className="h-10 rounded-lg px-3 text-[13px] text-muted-foreground hover:bg-muted hover:text-destructive"
+          className="h-10 rounded-lg px-3 text-muted-foreground hover:bg-muted hover:text-destructive"
         >
           Take off the package
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
           disabled={busy}
           onClick={() => void save()}
-          className="ml-auto h-10 rounded-lg bg-primary px-5 text-[14px] font-semibold text-primary-foreground disabled:opacity-50"
+          className="ml-auto h-10 rounded-lg px-5 font-semibold"
         >
           Save
-        </button>
+        </Button>
       </div>
+      {confirmDialog}
     </>
+  );
+}
+
+/** One of the setup sheet's three parts, under a small heading. */
+function SettingsGroup({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="space-y-6 border-t pt-5 first:border-t-0 first:pt-0">
+      <h3 className="font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
+        {title}
+      </h3>
+      {children}
+    </section>
   );
 }
 
@@ -1779,13 +2147,13 @@ function ClientSide({ post, client }: { post: Post; client: Client }) {
   const who = post.client_reviewer || "The client";
   if (post.client_status === "approved")
     return (
-      <p className="rounded-lg border border-success/30 bg-success/5 p-3 text-[13px]">
+      <p className="callout-good rounded-lg border p-3 text-sm">
         {who} approved it on {shortDate(post.client_decided_at)}.
       </p>
     );
   if (post.client_status === "changes")
     return (
-      <div className="rounded-lg border border-warning/40 bg-warning/5 p-3 text-[13px]">
+      <div className="callout-warn rounded-lg border p-3 text-sm">
         <p className="font-medium">{who} asked for a change</p>
         {post.client_note ? (
           <p
@@ -1795,7 +2163,7 @@ function ClientSide({ post, client }: { post: Post; client: Client }) {
             {post.client_note}
           </p>
         ) : null}
-        <p className="mt-2 text-[12px] text-muted-foreground">
+        <p className="mt-2 text-xs text-muted-foreground">
           Fix it, then send it again. They can also approve it on the link they
           already have.
         </p>
@@ -1803,23 +2171,21 @@ function ClientSide({ post, client }: { post: Post; client: Client }) {
     );
   if (post.client_status === "changed")
     return (
-      <p className="rounded-lg border border-warning/40 bg-warning/5 p-3 text-[13px]">
+      <p className="callout-warn rounded-lg border p-3 text-sm">
         Changed after {who.toLowerCase() === "the client" ? "the client" : who}{" "}
         approved it. Send it again so they see what will go out.
       </p>
     );
   if (post.client_status === "sent")
     return (
-      <p className="text-[13px] text-muted-foreground">
+      <p className="text-sm text-muted-foreground">
         With the client since {shortDate(post.client_sent_at)}. Their answer
         lands here.
       </p>
     );
   if (client.autoApprove || post.status === "published") return null;
   return (
-    <p className="text-[13px] text-muted-foreground">
-      Not sent to the client yet.
-    </p>
+    <p className="text-sm text-muted-foreground">Not sent to the client yet.</p>
   );
 }
 
@@ -1878,8 +2244,8 @@ function SignoffSheet({
     return (
       <>
         <SheetHead title="Send to the client" onClose={onClose} />
-        <div className="flex-1 space-y-4 overflow-y-auto px-5 py-5">
-          <p className="text-[14px] font-medium">
+        <div className="flex-1 space-y-4 overflow-y-auto overscroll-contain px-5 py-5">
+          <p className="text-sm font-medium">
             The link is ready: {made.sent} {made.sent === 1 ? "post" : "posts"}
             {made.skipped
               ? `, ${made.skipped} left out because ${made.skipped === 1 ? "it is" : "they are"} not finished`
@@ -1892,34 +2258,33 @@ function SignoffSheet({
               value={made.url}
               onFocus={e => e.target.select()}
               aria-label="The link for the client"
-              className="h-10 min-w-0 flex-1 rounded-lg border bg-muted/40 px-3 text-[13px]"
+              className="h-10 min-w-0 flex-1 rounded-lg border bg-muted/40 px-3 text-sm"
             />
-            <button
-              type="button"
+            <Button
               onClick={() =>
                 void navigator.clipboard
                   ?.writeText(made.url)
                   .then(() => toast.success("Copied."))
               }
-              className="h-10 rounded-lg bg-primary px-4 text-[13px] font-semibold text-primary-foreground"
+              className="h-10 rounded-lg px-4 font-semibold"
             >
               Copy the link
-            </button>
+            </Button>
           </div>
-          <p className="text-[13px] text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             Send it to {client.name} on WhatsApp. They see each post as it will
             go out, approve it or ask for a change, and their answer lands on
             the post here.
           </p>
         </div>
         <div className="border-t px-5 py-4">
-          <button
-            type="button"
+          <Button
+            variant="outline"
             onClick={onClose}
-            className="h-10 w-full rounded-lg border text-[13px] font-medium hover:bg-muted"
+            className="h-10 w-full rounded-lg"
           >
             Done
-          </button>
+          </Button>
         </div>
       </>
     );
@@ -1927,14 +2292,14 @@ function SignoffSheet({
   return (
     <>
       <SheetHead title="Send to the client" onClose={onClose} />
-      <div className="flex-1 space-y-5 overflow-y-auto px-5 py-5">
-        <p className="text-[13px] text-muted-foreground">
+      <div className="flex-1 space-y-5 overflow-y-auto overscroll-contain px-5 py-5">
+        <p className="text-sm text-muted-foreground">
           {client.name} sees each post on a Mahara page, as it will go out, and
           approves it or asks for a change. Their answers land on the posts
           here.
         </p>
 
-        <ul className="divide-y rounded-lg border">
+        <ul className="divide-y rounded-xl border">
           {list.map(p => {
             const ok = showable(p);
             const items = itemsOf(p);
@@ -1960,7 +2325,7 @@ function SignoffSheet({
                       else next.delete(p.id);
                       setPicked(next);
                     }}
-                    className="h-4 w-4 accent-[var(--primary)]"
+                    className="h-4 w-4 accent-[var(--mahara-teal)]"
                   />
                   <span className="h-10 w-8 shrink-0 overflow-hidden rounded bg-muted">
                     {still ? (
@@ -1981,10 +2346,10 @@ function SignoffSheet({
                     ) : null}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[13px]" dir="auto">
+                    <span className="block truncate text-sm" dir="auto">
                       {p.topic ?? "Post"}
                     </span>
-                    <span className="block text-[12px] text-muted-foreground">
+                    <span className="block text-xs text-muted-foreground">
                       {p.scheduled_at
                         ? dayLabel(p.scheduled_at.slice(0, 10))
                         : "No day yet"}
@@ -1999,7 +2364,7 @@ function SignoffSheet({
         </ul>
 
         <label className="block">
-          <span className="mb-1.5 block text-[13px] font-medium">
+          <span className="mb-1.5 block text-sm font-medium">
             A line for the client
           </span>
           <textarea
@@ -2008,27 +2373,22 @@ function SignoffSheet({
             rows={3}
             dir="auto"
             placeholder="Here are your posts for the month. Approve the ones you like and tell us what to change."
-            className="w-full rounded-lg border bg-background p-3 text-[14px] leading-relaxed focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="w-full rounded-lg border bg-background p-3 text-sm leading-relaxed focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
-          <span className="mt-1 block text-[12px] text-muted-foreground">
+          <span className="mt-1 block text-xs text-muted-foreground">
             Optional. It shows under each post on their page.
           </span>
         </label>
       </div>
       <div className="border-t px-5 py-4">
-        <button
-          type="button"
+        <Button
           disabled={busy || picked.size === 0}
           onClick={() => void make()}
-          className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-primary text-[14px] font-semibold text-primary-foreground disabled:opacity-50"
+          className="h-10 w-full rounded-lg font-semibold"
         >
-          {busy ? (
-            <LoaderCircle className="h-4 w-4 animate-spin" />
-          ) : (
-            <Send className="h-4 w-4" />
-          )}
+          {busy ? <LoaderCircle className="animate-spin" /> : <Send />}
           Make the link for {picked.size} {picked.size === 1 ? "post" : "posts"}
-        </button>
+        </Button>
       </div>
     </>
   );
@@ -2052,33 +2412,29 @@ function PostedSide({ post }: { post: Post }) {
   return (
     <div className="space-y-2">
       {ig || fb ? (
-        <p className="text-[13px]">
+        <p className="text-sm">
           Posted
-          {ig ? (
-            <>
-              {" "}
-              on Instagram
-              {ig.permalink ? (
-                <>
-                  {" "}
-                  <a
-                    href={ig.permalink}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="font-medium text-primary underline underline-offset-2"
-                  >
-                    see it
-                  </a>
-                </>
-              ) : null}
-            </>
-          ) : null}
+          {ig ? " on Instagram" : ""}
           {ig && fb ? " and" : ""}
           {fb ? " on Facebook" : ""} on {shortDate(ig?.at ?? fb?.at ?? null)}.
+          {ig?.permalink ? (
+            <>
+              {" "}
+              <a
+                href={ig.permalink}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-0.5 font-medium text-primary hover:underline"
+              >
+                See it on Instagram
+                <ArrowUpRight className="size-3.5" />
+              </a>
+            </>
+          ) : null}
         </p>
       ) : null}
       {res ? (
-        <p className="flex flex-wrap gap-x-3 text-[12px] text-muted-foreground">
+        <p className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">
           {NUMBERS.filter(([k]) => typeof res[k] === "number").map(
             ([k, label]) => (
               <span key={k}>
@@ -2092,7 +2448,7 @@ function PostedSide({ post }: { post: Post }) {
         </p>
       ) : null}
       {post.publish_error ? (
-        <p className="rounded-lg border border-warning/40 bg-warning/5 p-3 text-[13px]">
+        <p className="callout-warn rounded-lg border p-3 text-sm">
           {post.publish_error}
         </p>
       ) : null}
@@ -2114,6 +2470,7 @@ function ReadyToPost({
 }) {
   const configure = useAction(api.social.configure);
   const [busy, setBusy] = useState(false);
+  const [confirm, confirmDialog] = useConfirm();
   const wantsIg = client.platforms.includes("instagram");
   const steps: [boolean, string][] = [
     [Boolean(client.page), "Linked to the client's Facebook Page"],
@@ -2130,9 +2487,11 @@ function ReadyToPost({
   async function flip(on: boolean) {
     if (
       on &&
-      !window.confirm(
-        `From now on, ${client.name}'s ${client.autoApprove ? "finished" : "approved"} posts go out on their day by themselves. Posts that were due before now never go out on their own. Turn it on?`,
-      )
+      !(await confirm({
+        title: "Post automatically on their day?",
+        body: `From now on, ${client.name}'s ${client.autoApprove ? "finished" : "approved"} posts go out on their day by themselves. Posts that were due before now never go out on their own.`,
+        action: "Turn it on",
+      }))
     )
       return;
     setBusy(true);
@@ -2149,26 +2508,25 @@ function ReadyToPost({
 
   return (
     <div>
-      <span className="mb-1.5 block text-[13px] font-medium">
-        Ready to post
-      </span>
+      <span className="mb-1.5 block text-sm font-medium">Ready to post</span>
       <ul className="space-y-1">
         {steps.map(([ok, label]) => (
-          <li key={label} className="flex items-center gap-2 text-[13px]">
+          <li key={label} className="flex items-center gap-2 text-sm">
             <span
               aria-hidden
-              className={`inline-flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-bold ${
+              className={`inline-flex size-4 shrink-0 items-center justify-center rounded-full ${
                 ok
-                  ? "bg-success/15 text-success"
-                  : "bg-muted text-muted-foreground"
+                  ? "tone-good"
+                  : "border border-dashed border-muted-foreground/60"
               }`}
             >
-              {ok ? "✓" : ""}
+              {ok ? <Check className="size-3" strokeWidth={3} /> : null}
             </span>
             <span className={ok ? "" : "text-muted-foreground"}>{label}</span>
+            <span className="sr-only">{ok ? "done" : "not done yet"}</span>
           </li>
         ))}
-        <li className="flex items-center gap-2 text-[13px] text-muted-foreground">
+        <li className="flex items-center gap-2 text-sm text-muted-foreground">
           <span className="h-4 w-4" aria-hidden />
           {client.autoApprove
             ? "Posts go out without the client's sign-off"
@@ -2177,7 +2535,7 @@ function ReadyToPost({
       </ul>
       <label
         className={`mt-3 flex items-start gap-3 rounded-lg border p-3 ${
-          client.publishing ? "border-success/40 bg-success/5" : ""
+          client.publishing ? "callout-good" : ""
         }`}
       >
         <input
@@ -2185,13 +2543,13 @@ function ReadyToPost({
           checked={client.publishing}
           disabled={busy || (!client.publishing && !ready)}
           onChange={e => void flip(e.target.checked)}
-          className="mt-0.5 h-4 w-4 accent-[var(--primary)]"
+          className="mt-0.5 h-4 w-4 accent-[var(--mahara-teal)]"
         />
         <span>
-          <span className="block text-[13px] font-medium">
+          <span className="block text-sm font-medium text-foreground">
             Post automatically on their day
           </span>
-          <span className="mt-0.5 block text-[12px] text-muted-foreground">
+          <span className="mt-0.5 block text-xs text-muted-foreground">
             {client.publishing
               ? `On since ${shortDate(client.publishingSince)}. A post that cannot go out says why on the post.`
               : ready
@@ -2200,6 +2558,7 @@ function ReadyToPost({
           </span>
         </span>
       </label>
+      {confirmDialog}
     </div>
   );
 }

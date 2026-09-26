@@ -1,10 +1,13 @@
 import { useMutation, useQuery } from "convex/react";
-import { ExternalLink, FileText, Film, Search } from "lucide-react";
+import { ArrowUpRight, ChevronRight, Film, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { PageHeader } from "@/components/PageHeader";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { api } from "../../convex/_generated/api";
 
 /**
@@ -67,31 +70,32 @@ export function ScriptsPage() {
   const clients: string[] = data?.clients ?? [];
 
   return (
-    <div className="mx-auto w-full max-w-5xl">
-      <div className="mb-1 flex flex-wrap items-center gap-2">
-        <FileText className="h-4 w-4 text-muted-foreground" />
-        <h2 className="text-[15px] font-bold tracking-tight">
-          Scripts we made
-        </h2>
-        <span className="text-[13px] text-muted-foreground">
-          {data
+    <div className="mx-auto w-full max-w-6xl">
+      <PageHeader
+        title="Scripts we made"
+        sub={
+          data
             ? `${data.rows.length} completed on the creative board`
-            : "Loading…"}
-        </span>
-      </div>
-      <p className="mb-3 text-[13px] text-muted-foreground">
-        Every script marked complete in ClickUp, word for word. Open one, change
-        what you want, and send it to the editors: the video request is filled
-        from the client record. The text here refreshes from ClickUp every 15
-        minutes; editing here changes the brief you send, not the ClickUp task.
-      </p>
+            : "Loading…"
+        }
+      />
+      <details className="-mt-3 mb-6 text-xs text-muted-foreground">
+        <summary className="w-fit">How this works</summary>
+        <p className="mt-1 max-w-prose">
+          Every script marked complete in ClickUp, word for word. Open one,
+          change what you want, and send it to the editors: the video request is
+          filled from the client record. The text here refreshes from ClickUp
+          every 15 minutes; editing here changes the brief you send, not the
+          ClickUp task.
+        </p>
+      </details>
 
-      <div className="mb-3 flex flex-wrap items-center gap-2">
+      <div className="mb-4 flex flex-wrap items-center gap-2">
         <AnimatedSelect
           value={client}
           onChange={e => setClient(e.target.value)}
           aria-label="Client"
-          className="h-7 rounded-md border bg-background px-2 text-[12px]"
+          className="h-8 rounded-md border bg-background px-3 text-xs"
         >
           <option value="">Every client</option>
           {clients.map(c => (
@@ -100,65 +104,67 @@ export function ScriptsPage() {
             </option>
           ))}
         </AnimatedSelect>
-        <div className="ml-auto flex items-center gap-1.5 rounded-md border px-2 py-1">
-          <Search className="h-3.5 w-3.5 text-muted-foreground" />
+        <label className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md border px-3 sm:ml-auto sm:max-w-80">
+          <Search className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="sr-only">Search</span>
           <input
             value={q}
             onChange={e => setQ(e.target.value)}
             placeholder="Search titles, clients and script text"
-            className="w-64 bg-transparent text-[13px] outline-none"
+            className="min-w-0 flex-1 bg-transparent text-sm outline-none"
           />
-        </div>
+        </label>
       </div>
 
       {data === undefined ? (
-        <p className="text-[13px] text-muted-foreground">Loading…</p>
+        <p className="text-sm text-muted-foreground">Loading…</p>
       ) : rows.length === 0 ? (
-        <p className="text-[13px] text-muted-foreground">
+        <p className="text-sm text-muted-foreground">
           {q.trim() || client
             ? "No completed script matches."
             : "No script is marked complete on the creative board yet. When one is, it shows here with its text."}
         </p>
       ) : (
-        <div className="divide-y rounded-lg border">
+        <div className="divide-y rounded-xl border">
           {rows.map((r: Row) => (
             <ScriptRow key={r.taskId} r={r} />
           ))}
         </div>
       )}
 
-      <section className="mt-6 rounded-lg border p-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <Film className="h-4 w-4" />
-          <h3 className="text-[14px] font-bold">
+      <section className="mt-8 rounded-2xl border bg-card p-4 sm:p-6">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <Film className="size-4 shrink-0 text-muted-foreground" />
+          <h2 className="text-[15px] font-semibold">
             The ClickUp video request form
-          </h3>
-          <span className="text-[12px] text-muted-foreground">
-            the same form the editors read, right here
+          </h2>
+          <span className="text-xs text-muted-foreground">
+            The same form the editors read
           </span>
-          <button
-            type="button"
-            onClick={() => setShowForm(v => !v)}
-            aria-expanded={showForm}
-            className="ml-auto rounded border px-2 py-0.5 text-[12px] font-semibold text-muted-foreground hover:bg-muted"
-          >
-            {showForm ? "Hide" : "Open the form"}
-          </button>
           <a
             href={FORM_URL}
             target="_blank"
             rel="noreferrer"
-            className="rounded border px-2 py-0.5 text-[12px] font-semibold text-muted-foreground hover:bg-muted"
+            className="ml-auto inline-flex items-center gap-1 text-sm text-primary hover:underline"
           >
-            <ExternalLink className="mr-1 inline h-3 w-3" />
-            In ClickUp
+            Open the form
+            <ArrowUpRight className="size-3.5" />
           </a>
         </div>
+        {/* Heavy on a phone, so the embedded copy only loads when asked. */}
+        <button
+          type="button"
+          onClick={() => setShowForm(v => !v)}
+          aria-expanded={showForm}
+          className="mt-3 text-xs text-muted-foreground hover:text-foreground hover:underline"
+        >
+          {showForm ? "Hide the form" : "Show the form here"}
+        </button>
         {showForm ? (
           <iframe
             title="ClickUp video request form"
             src={FORM_URL}
-            className="mt-2 h-[900px] w-full rounded border bg-white"
+            className="mt-3 h-[900px] w-full rounded-xl border bg-card"
             loading="lazy"
           />
         ) : null}
@@ -170,6 +176,8 @@ export function ScriptsPage() {
 function ScriptRow({ r }: { r: Row }) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState<string>(String(r.script ?? ""));
+  // The value is ClickUp's own option name, emoji and all; only the label
+  // on screen is plain.
   const [type, setType] = useState("New Video Request 🎥");
   const [due, setDue] = useState("");
   const [footage, setFootage] = useState<string>(String(r.drive ?? ""));
@@ -209,27 +217,39 @@ function ScriptRow({ r }: { r: Row }) {
 
   return (
     <div>
-      <div className="flex items-start gap-3 px-3 py-2 hover:bg-muted/50">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-1.5 text-[13px]">
-            <span className="font-semibold" dir="auto">
+      {/* The row itself opens the script: one action per row. */}
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen(o => !o)}
+        className="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-muted/40"
+      >
+        <ChevronRight
+          aria-hidden
+          className={`mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform ${
+            open ? "rotate-90" : ""
+          }`}
+        />
+        <span className="min-w-0 flex-1">
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+            <span className="min-w-0 font-medium" dir="auto">
               {r.name}
             </span>
             {r.client ? (
-              <span className="rounded-full border px-2 py-0.5 text-[11px] font-medium">
-                {r.client}
+              <span className="inline-flex max-w-full items-center rounded-full border px-2 py-0.5 text-xs font-medium">
+                <span className="truncate">{r.client}</span>
               </span>
             ) : null}
             {Array.isArray(r.otherClients) && r.otherClients.length ? (
-              <span className="text-[11px] text-muted-foreground">
+              <span className="text-xs text-muted-foreground">
                 also {r.otherClients.join(", ")}
               </span>
             ) : null}
-            <span className="rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground">
+            <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
               {r.status}
             </span>
-          </div>
-          <div className="text-[12px] text-muted-foreground">
+          </span>
+          <span className="mt-0.5 block text-xs text-muted-foreground">
             {r.updatedAt ? `completed ${fmtDay(r.updatedAt)}` : ""}
             {Array.isArray(r.assignees) && r.assignees.length
               ? ` · ${r.assignees.join(", ")}`
@@ -237,97 +257,87 @@ function ScriptRow({ r }: { r: Row }) {
             {typeof r.script === "string" && r.script
               ? ` · ${r.script.length.toLocaleString("en-US")} characters`
               : " · no text on the task"}
-          </div>
-        </div>
-        <div className="flex shrink-0 flex-wrap justify-end gap-1">
-          {r.url ? (
-            <a
-              href={r.url}
-              target="_blank"
-              rel="noreferrer"
-              className="rounded border px-2 py-0.5 text-[12px] font-semibold text-muted-foreground hover:bg-muted"
-            >
-              <ExternalLink className="mr-1 inline h-3 w-3" />
-              ClickUp
-            </a>
-          ) : null}
-          <button
-            type="button"
-            onClick={() => setOpen(o => !o)}
-            className="rounded border px-2 py-0.5 text-[12px] font-semibold text-muted-foreground hover:bg-muted"
-          >
-            {open ? "Hide" : "Open"}
-          </button>
-        </div>
-      </div>
+          </span>
+        </span>
+      </button>
       {open ? (
-        <div className="space-y-3 border-t bg-muted/30 px-3 py-3 text-[13px]">
+        <div className="space-y-4 border-t bg-muted/30 px-4 py-4 text-sm">
           {!r.script ? (
             <p className="text-muted-foreground">
               This task has no text in ClickUp. Paste the script below, or open
               the task and add it there so it syncs.
             </p>
           ) : null}
-          <textarea
+          <Textarea
             value={text}
             onChange={e => setText(e.target.value)}
             dir="auto"
             rows={Math.min(28, Math.max(8, text.split("\n").length + 2))}
-            className="w-full rounded border bg-background px-2 py-1.5 font-mono text-[13px] leading-relaxed"
+            className="bg-background font-sans text-sm leading-relaxed"
             placeholder="The script"
           />
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
+            <Button
+              size="sm"
+              variant="outline"
               onClick={() => {
                 void navigator.clipboard.writeText(text).then(() => {
                   setCopied(true);
                   setTimeout(() => setCopied(false), 1800);
                 });
               }}
-              className="rounded border px-2 py-0.5 text-[12px] font-semibold text-muted-foreground hover:bg-muted"
             >
               {copied ? "Copied" : "Copy the script"}
-            </button>
+            </Button>
             {text !== String(r.script ?? "") ? (
-              <button
-                type="button"
+              <Button
+                size="sm"
+                variant="ghost"
                 onClick={() => setText(String(r.script ?? ""))}
-                className="rounded border px-2 py-0.5 text-[12px] font-semibold text-muted-foreground hover:bg-muted"
               >
                 Back to the ClickUp text
-              </button>
+              </Button>
+            ) : null}
+            {r.url ? (
+              <a
+                href={r.url}
+                target="_blank"
+                rel="noreferrer"
+                className="ml-auto inline-flex items-center gap-1 text-sm text-primary hover:underline"
+              >
+                Open in ClickUp
+                <ArrowUpRight className="size-3.5" />
+              </a>
             ) : null}
           </div>
-          <div className="space-y-2 rounded-lg border bg-background p-2.5">
-            <h4 className="font-semibold">
-              <Film className="mr-1.5 inline h-3.5 w-3.5" />
+          <div className="space-y-3 rounded-xl bg-background/60 p-4">
+            <h3 className="flex items-center gap-2 text-[15px] font-semibold">
+              <Film className="size-4 text-muted-foreground" />
               Send to the editors{r.client ? ` for ${r.client}` : ""}
-            </h4>
+            </h3>
             <div className="grid gap-2 sm:grid-cols-2">
               <AnimatedSelect
                 value={type}
                 onChange={e => setType(e.target.value)}
-                className="rounded border bg-transparent px-2 py-1.5 text-[13px]"
+                aria-label="Kind of request"
+                className="h-9 rounded-md border bg-transparent px-3 text-sm"
               >
-                <option>New Video Request 🎥</option>
-                <option>Edit Video Request 🎥</option>
+                <option value="New Video Request 🎥">New video</option>
+                <option value="Edit Video Request 🎥">Edit video</option>
               </AnimatedSelect>
               <DateInput
                 value={due}
                 onChange={e => setDue(e.target.value)}
-                className="rounded border bg-transparent px-2 py-1.5 text-[13px]"
+                className="h-9 rounded-md border bg-transparent px-3 text-sm"
               />
             </div>
-            <input
+            <Input
               value={footage}
               onChange={e => setFootage(e.target.value)}
               placeholder="Raw footage folder link"
-              className="w-full rounded border bg-transparent px-2 py-1.5 text-[13px]"
             />
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-3">
               <Button
-                size="sm"
                 disabled={busy || sent || !text.trim() || !r.client}
                 onClick={() => void send()}
               >
@@ -338,12 +348,12 @@ function ScriptRow({ r }: { r: Row }) {
                     : "Send to the editors"}
               </Button>
               {!r.client ? (
-                <span className="text-[12px] text-muted-foreground">
+                <span className="min-w-0 flex-1 text-xs text-muted-foreground">
                   This task has no client tag in ClickUp, so the request cannot
                   be tagged. Add the tag there, or use the form below.
                 </span>
               ) : (
-                <span className="text-[12px] text-muted-foreground">
+                <span className="min-w-0 flex-1 text-xs text-muted-foreground">
                   The script above becomes the brief; the footage folder comes
                   from the client record. A tagged task lands on the Video
                   Pipeline within 15 minutes.

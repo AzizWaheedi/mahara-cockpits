@@ -1,11 +1,6 @@
 import { useMutation } from "convex/react";
-import {
-  AnimatePresence,
-  MotionConfig,
-  motion,
-  useReducedMotion,
-} from "framer-motion";
-import { useLayoutEffect, useRef } from "react";
+import { MotionConfig, motion, useReducedMotion } from "framer-motion";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { useLocation, useOutlet } from "react-router";
 import { api } from "../../convex/_generated/api";
 import { AppSidebar } from "./AppSidebar";
@@ -37,6 +32,11 @@ function LayoutContent() {
   const { open, isMobile } = useSidebar();
   const inset = useRef<HTMLDivElement>(null);
   const previousOpen = useRef(open);
+  // The first screen appears as it is; only a change of page fades in.
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+  }, []);
   useLayoutEffect(() => {
     if (previousOpen.current === open) return;
     previousOpen.current = open;
@@ -72,30 +72,26 @@ function LayoutContent() {
             </span>
           </div>
         </header>
-        <main className="flex-1 px-4 pt-4 pb-24 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8 lg:pb-12">
+        {/* A div, not a second <main>: SidebarInset is the page's <main>,
+            so the touch-size rule in index.css still reaches every button.
+            The new page fades straight in; nothing waits for the old one
+            to fade out, so there is no blank moment between pages. Opacity
+            only: a transform here would pin the Social sheet (position:
+            fixed) to this wrapper instead of the screen. */}
+        <div className="flex-1 px-4 pt-4 pb-24 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8 lg:pb-12">
           <RouteErrorBoundary
             report={r => queue({ kind: "issue", payload: r })}
           >
-            <AnimatePresence initial={false} mode="wait">
-              <motion.div
-                key={location.pathname}
-                initial={{ opacity: 0, y: reduced ? 0 : 4 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{
-                  opacity: 0,
-                  y: reduced ? 0 : -2,
-                  pointerEvents: "none",
-                }}
-                transition={{
-                  duration: reduced ? 0 : 0.16,
-                  ease: [0.2, 0.8, 0.2, 1],
-                }}
-              >
-                {outlet}
-              </motion.div>
-            </AnimatePresence>
+            <motion.div
+              key={location.pathname}
+              initial={mounted.current && !reduced ? { opacity: 0 } : false}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.14, ease: [0.2, 0.8, 0.2, 1] }}
+            >
+              {outlet}
+            </motion.div>
           </RouteErrorBoundary>
-        </main>
+        </div>
         <HermesChat />
       </SidebarInset>
     </>

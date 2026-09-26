@@ -174,7 +174,7 @@ export function HermesChat() {
       </button>
       {open ? (
         <section
-          className="fixed right-4 bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] z-40 flex h-[min(70vh,640px)] w-[min(92vw,420px)] flex-col overflow-hidden rounded-xl border bg-background shadow-2xl lg:right-6 lg:bottom-20"
+          className="fixed right-4 bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] z-40 flex h-[min(70vh,640px)] w-[min(92vw,420px)] flex-col overflow-hidden rounded-xl border bg-popover glow-teal lg:right-6 lg:bottom-20"
           aria-label="Hermes chat"
         >
           <header className="flex items-center justify-between border-b px-3 py-2">
@@ -213,9 +213,11 @@ export function HermesChat() {
             {(thread ?? []).map(m =>
               m.role === "user" ? (
                 <div key={m._id} className="flex justify-end">
-                  <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-primary px-3 py-2 text-primary-foreground">
-                    <p className="whitespace-pre-wrap">{m.text}</p>
-                    <p className="mt-1 text-[11px] text-primary-foreground/70">
+                  <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-primary/15 px-3 py-2 text-foreground">
+                    <p className="whitespace-pre-wrap" dir="auto">
+                      {m.text}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
                       {m.status === "failed"
                         ? `Failed: ${m.error ?? "no answer"}`
                         : ago(m.at)}
@@ -235,7 +237,7 @@ export function HermesChat() {
                         }
                       }}
                     />
-                    <p className="mt-1 text-[11px] text-muted-foreground">
+                    <p className="mt-1 text-xs text-muted-foreground">
                       Hermes · {ago(m.at)}
                     </p>
                   </div>

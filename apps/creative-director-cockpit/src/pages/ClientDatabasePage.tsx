@@ -1,7 +1,8 @@
 import { useQuery } from "convex/react";
-import { Search, Sparkles, Users } from "lucide-react";
+import { ChevronRight, Search } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
+import { PageHeader } from "@/components/PageHeader";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import {
   WinnerFilter,
@@ -21,6 +22,7 @@ import { api } from "../../convex/_generated/api";
  * never pretends a ClickUp write already landed.
  */
 
+/** A status chip: the words stay plain, a dot carries the colour. */
 function Pill({
   children,
   tone = "neutral",
@@ -28,12 +30,49 @@ function Pill({
   children: React.ReactNode;
   tone?: "good" | "warn" | "bad" | "neutral";
 }) {
+  const dot =
+    tone === "good"
+      ? "var(--success)"
+      : tone === "warn"
+        ? "var(--warning)"
+        : tone === "bad"
+          ? "var(--destructive)"
+          : null;
   return (
-    <span
-      className={`tone-${tone} rounded-full px-2 py-0.5 text-[11px] font-medium`}
-    >
-      {children}
+    <span className="inline-flex max-w-full shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium">
+      {dot ? (
+        <span
+          aria-hidden
+          className="size-1.5 shrink-0 rounded-full"
+          style={{ background: dot }}
+        />
+      ) : null}
+      <span className="truncate">{children}</span>
     </span>
+  );
+}
+
+/** The search box both pages use. */
+function SearchBox({
+  value,
+  onChange,
+  placeholder,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  placeholder: string;
+}) {
+  return (
+    <label className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md border px-3 sm:max-w-80">
+      <Search className="size-3.5 shrink-0 text-muted-foreground" />
+      <span className="sr-only">Search</span>
+      <input
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="min-w-0 flex-1 bg-transparent text-sm outline-none"
+      />
+    </label>
   );
 }
 
@@ -51,52 +90,58 @@ export function ClientDatabasePage() {
   }, [data, q]);
 
   if (data === undefined) {
-    return <p className="p-4 text-[14px] text-muted-foreground">Loading…</p>;
+    return (
+      <p className="mx-auto w-full max-w-6xl text-sm text-muted-foreground">
+        Loading…
+      </p>
+    );
   }
 
   return (
-    <div>
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <Users className="h-4 w-4 text-muted-foreground" />
-        <h2 className="text-[15px] font-bold tracking-tight">Clients</h2>
-        <span className="text-[13px] text-muted-foreground">
-          {data.counts.live} live · {data.counts.toContact} waiting on you
-        </span>
-        <div className="ml-auto flex items-center gap-1.5 rounded-md border px-2 py-1">
-          <Search className="h-3.5 w-3.5 text-muted-foreground" />
-          <input
-            value={q}
-            onChange={e => setQ(e.target.value)}
-            placeholder="Find a client"
-            className="w-40 bg-transparent text-[13px] outline-none"
-          />
-        </div>
-      </div>
+    <div className="mx-auto w-full max-w-6xl">
+      <PageHeader
+        title="Clients"
+        sub={`${data.counts.live} live · ${data.counts.toContact} waiting on you`}
+        actions={
+          <SearchBox value={q} onChange={setQ} placeholder="Find a client" />
+        }
+      />
 
-      <div className="space-y-1.5">
+      <div className="divide-y overflow-hidden rounded-xl border">
         {rows.map(r => (
-          <div key={r.taskId} className="rounded-lg border">
-            <Link
-              to={`/clients/${encodeURIComponent(r.name)}`}
-              className="flex w-full items-center justify-between gap-2 p-2.5 text-left text-[13px] hover:bg-muted/50"
-            >
+          <Link
+            key={r.taskId}
+            to={`/clients/${encodeURIComponent(r.name)}`}
+            className="flex items-center gap-3 px-4 py-3 text-sm hover:bg-muted/40"
+          >
+            {/* The flags drop to their own line on a phone rather than
+                squeezing the client's name to nothing. */}
+            <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
               <span className="flex min-w-0 items-center gap-2">
-                <strong className="truncate">{r.name}</strong>
+                <strong className="min-w-0 truncate font-medium" dir="auto">
+                  {r.name}
+                </strong>
                 <Pill tone={r.prelaunch ? "warn" : "neutral"}>
                   {r.clientStatus}
                 </Pill>
               </span>
-              <span className="flex shrink-0 items-center gap-2 text-[12px] text-muted-foreground">
+              <span className="flex basis-full flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground sm:ml-auto sm:basis-auto">
                 {r.hisMove > 0 && (
                   <span className="txt-bad">{r.hisMove} on you</span>
                 )}
                 {r.openScripts > 0 && <span>{r.openScripts} scripts</span>}
                 {r.openVideos > 0 && <span>{r.openVideos} videos</span>}
-                {!r.docsReady && <span className="txt-bad">docs missing</span>}
+                {!r.docsReady && <span className="txt-bad">Docs missing</span>}
               </span>
-            </Link>
-          </div>
+            </span>
+            <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+          </Link>
         ))}
+        {rows.length === 0 && (
+          <p className="px-4 py-3 text-sm text-muted-foreground">
+            {q.trim() ? "No client matches that." : "No live clients yet."}
+          </p>
+        )}
       </div>
     </div>
   );
@@ -143,22 +188,20 @@ export function ScriptDatabasePage() {
   }, [data, q]);
 
   if (data === undefined) {
-    return <p className="p-4 text-[14px] text-muted-foreground">Loading…</p>;
+    return (
+      <p className="mx-auto w-full max-w-6xl text-sm text-muted-foreground">
+        Loading…
+      </p>
+    );
   }
 
   return (
-    <div>
-      <div className="mb-1 flex flex-wrap items-center gap-2">
-        <Sparkles className="h-4 w-4 text-muted-foreground" />
-        <h2 className="text-[15px] font-bold tracking-tight">
-          Scripting database
-        </h2>
-        <span className="text-[13px] text-muted-foreground">
-          {data.total} proven ads, {data.live} still running
-          {data.saved ? `, ${data.saved} saved by the team` : ""}
-        </span>
-      </div>
-      <p className="mb-3 text-[13px] text-muted-foreground">
+    <div className="mx-auto w-full max-w-6xl">
+      <PageHeader
+        title="Scripting database"
+        sub={`${data.total} proven ads, ${data.live} still running${data.saved ? `, ${data.saved} saved by the team` : ""}`}
+      />
+      <p className="-mt-3 mb-6 text-xs text-muted-foreground">
         Before you write anything, read what already worked in the same service
         line. Search the actual copy and transcripts, not just the ad names.
       </p>
@@ -167,7 +210,8 @@ export function ScriptDatabasePage() {
         <AnimatedSelect
           value={service}
           onChange={e => setService(e.target.value)}
-          className="rounded border bg-transparent px-2 py-1 text-[13px]"
+          aria-label="Service line"
+          className="h-8 rounded-md border bg-transparent px-3 text-xs"
         >
           <option value="">Every service line</option>
           {/* biome-ignore lint/suspicious/noExplicitAny: query rows are untyped */}
@@ -177,26 +221,25 @@ export function ScriptDatabasePage() {
             </option>
           ))}
         </AnimatedSelect>
-        <label className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
+        <label className="flex h-8 items-center gap-2 text-sm text-muted-foreground">
           <input
             type="checkbox"
             checked={liveOnly}
             onChange={e => setLiveOnly(e.target.checked)}
+            className="size-4 accent-[var(--mahara-teal)]"
           />
           Only ads still live
         </label>
-        <div className="ml-auto flex items-center gap-1.5 rounded-md border px-2 py-1">
-          <Search className="h-3.5 w-3.5 text-muted-foreground" />
-          <input
+        <div className="flex basis-full sm:ml-auto sm:basis-80">
+          <SearchBox
             value={q}
-            onChange={e => setQ(e.target.value)}
+            onChange={setQ}
             placeholder="Search hooks, copy, transcripts"
-            className="w-52 bg-transparent text-[13px] outline-none"
           />
         </div>
       </div>
 
-      <div className="mb-2">
+      <div className="mb-3">
         <WinnerFilter
           rows={data.rows}
           origin={origin}
@@ -220,28 +263,26 @@ export function ScriptDatabasePage() {
       />
 
       {roster?.clients?.length ? (
-        <div className="mt-6">
-          <h3 className="mb-1.5 text-[14px] font-bold">
-            Or start from a client
-          </h3>
-          <p className="mb-2 text-[12px] text-muted-foreground">
+        <section className="mt-8">
+          <h2 className="text-[15px] font-semibold">Or start from a client</h2>
+          <p className="mt-1 mb-3 text-xs text-muted-foreground">
             Opens their full screen: brand direction, offer, everything we have
             made and what is live on their account right now.
           </p>
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap gap-2">
             {/* biome-ignore lint/suspicious/noExplicitAny: query rows are untyped */}
             {(roster.clients as any[]).map(c => (
               <Link
                 key={c.taskId}
                 to={`/clients/${encodeURIComponent(c.name)}`}
-                className="rounded-full border px-2.5 py-1 text-[12px] hover:bg-muted"
+                className="inline-flex h-8 items-center rounded-full border px-3 text-xs font-medium hover:bg-muted"
                 dir="auto"
               >
                 {c.name}
               </Link>
             ))}
           </div>
-        </div>
+        </section>
       ) : null}
     </div>
   );
