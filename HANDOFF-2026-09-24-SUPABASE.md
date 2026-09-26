@@ -1,6 +1,6 @@
 # Mahara cockpit migration: current checkpoint
 
-Updated 2026-09-26. Continue in this same chat; do not suggest another chat just to reduce context.
+Updated 2026-09-27. Continue in this same chat; do not suggest another chat just to reduce context.
 
 ## Objective and authorization
 
@@ -11,10 +11,10 @@ Muhammed initially chose Codex planning/supervision with Gemini execution. Gemin
 ## Assembled source
 
 - Migration worktree: `C:/Users/20106/.codex/worktrees/cockpits-supabase-migration`.
-- Branch: `codex/supabase-cockpits-migration`; tested code HEAD `9d72d7a`.
+- Branch: `codex/supabase-cockpits-migration`; tested code HEAD `e997ca60c7a88c8647a86b0342891017e2827d0c`.
 - Incoming main `4b90d9f` is an ancestor. All 39 previously missing main commits were retained, including Sales, webinar target versions and release-project guards.
 - Merge commit `77b4aad` was constructed from reviewed resolution of the five conflicts; temporary conflict snapshot `d1cece6` is not in the migration branch history.
-- Helpers remain attached for reuse: `cockpit-migration-verification/mahara-cockpits`, `cockpit-migration-actions/mahara-cockpits`, and `cockpit-webinar-targets/mahara-cockpits`, under `C:/Users/20106/.codex/worktrees/`. No workers are running.
+- Helpers remain attached for reuse: `cockpit-migration-verification/mahara-cockpits`, `cockpit-migration-actions/mahara-cockpits`, and `cockpit-webinar-targets/mahara-cockpits`, under `C:/Users/20106/.codex/worktrees/`. Gemini Ask AI packet is running in the actions checkout; do not edit its files concurrently.
 
 ## Verified local work
 
@@ -25,22 +25,21 @@ Muhammed initially chose Codex planning/supervision with Gemini execution. Gemin
 5. CEO Goals now implements board, savePlan, saveTargets, removeTarget, startFrom and catalogue using the real plan/target tables (`20260926l_cockpit_ceo_goals_access.sql`). Batch edits are transactional; partial edits preserve notes; clones bind to an unchanged source fingerprint, retain prior actual/baseline values and clear new-period manual actuals. Pacing uses server Kuwait date and existing pure scoreboard logic. All operations are founder-gated and audited. The five actively referenced goal endpoints no longer fall through to fake success.
 6. Pure social scheduling and webinar attribution calculations were separated from legacy backend registrations so offline tests do not require generated Convex files. Bodies preserved; canonical pure webinar model/room/readiness exports prevent copied-type drift.
 7. Fixed ship.sh public-variable invocation (`env` plus properly quoted array). Three offline shell probes pass, including failed-build propagation. Shipping has NOT run. Predeployment acceptance sequencing remains part of release work.
+8. CSM scoped persistence is integrated (`aa7b380`, verifier suite registration `e997ca6`): separate language preferences, manual hot rows/private drafts, loose-end dismissals, per-user/month money goals, recursive conservative profile edits, field-level UI patches and truthful snapshot errors/freshness. SQL `20260926m_cockpit_csm_state.sql` has RLS, grants, server scope and audits; finance-related loose ends remain visible. Eight new SQL/client tests cover 98 assertions.
 
 ## Evidence
 
-- All five fresh builds, ten app/node typechecks and **215 Bun tests in 18 suites** passed on clean `9d72d7a`.
+- All five fresh builds, ten app/node typechecks and **223 Bun tests in 19 suites** passed on clean `e997ca6`.
 - Additional incoming-main checks: 190 Sales worker tests, 47 webinar worker tests, 118 Sales API/mirror tests, 11 schedule tests and 3 project guards passed.
 - 27 release infrastructure regressions passed; separate in-memory decision, canonical identity and full client-to-SQL webinar/Goals tests passed. Claims are local SQL/fixture verification, not actual deployed staff sessions.
-- Report: `docs/verification/cutover-local-20260926-continuation.json`. Full logs under `C:/Users/20106/AppData/Local/Temp/cockpit-migration-review-20260926/`.
+- Latest report: `C:/Users/20106/AppData/Local/Temp/cockpit-migration-review-20260926/csm-assembled-release-check.json`. Older 215-test report: `docs/verification/cutover-local-20260926-continuation.json`. Full logs remain in that temporary directory.
 - Release verifier exits 1 solely because production acceptance evidence is absent. New SQL migrations are NOT applied live.
 
-## Next: CSM state and profile writes
+## Next: Ask AI lifecycle and EOD
 
-Read `apps/client-success-cockpit/convex/csm.ts`, `src/lib/useCsmSnapshot.ts` and `src/pages/CsmPage.tsx`. Live catalog/source checks found no existing dedicated CSM preferences/hot-list/dismissals/income-goal tables.
+User says Gemini quota is ready; resumed High worker for dedicated Ask AI jobs, authenticated submit/read, service-only atomic claim/lease/finish, safe dry-run worker, offline SQL/client/Python tests and runbook. Review output independently. Existing worker incorrectly uses creative-request statuses/result fields that the creative table does not support. No live model call or deployment authorized by this packet.
 
-Implement separately owned state rather than writing into refreshed profile JSON: client language, manual hot-list rows, loose-end dismissal records and per-user/month income goals. Preserve the original UI semantics: hot-list Add row creates a blank private draft, named rows are scoped by client; hidden rows remain tombstones; freeform manual names are allowed to unrestricted CSMs. Finance-related loose ends (invoice/payment/past due/billing/pause/refund/card) cannot be dismissed. Income counts merge changed keys, and explicit zero is preserved. The CSM UI currently submits full stale rows/counts; change to field-level patches. Surface snapshot errors instead of endless loading.
-
-Also repair `cockpit_update_client_profile`: existing INSERT/ON CONFLICT coalesces defaults and can erase omitted notes/KPI/overview. Preserve omitted human fields, enforce existing client scope and audit writes. Current profile RLS already scopes CSM/MB by member clients; admins are global. Do not incorrectly claim it has no client scope. An empty client list currently means unrestricted.
+EOD ownership question remains pending: legacy storage is one report per role/day while outbox is role/day/person. Ask whether to separate reports per person before rekeying. Existing sender `hermes/eod-out/out.py` has no dry-run and reads queued rows without an atomic claim. Do not execute it. Draft/submission/delivery semantics, trusted roster routing and safe retries need migration work.
 
 ## Still incomplete
 
