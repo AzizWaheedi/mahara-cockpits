@@ -50,18 +50,26 @@ export function kuwaitAt(ms: number, hour: number, minute = 0, dayOffset = 0): n
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + dayOffset, hour, minute) - KUWAIT;
 }
 
+/** 09:00 on the next working morning in Kuwait (Friday is the day off). */
+export function nextWorkingNine(now: number): number {
+  let due = kuwaitAt(now, 9, 0, 1);
+  if (new Date(due + KUWAIT).getUTCDay() === 5) due = kuwaitAt(due, 9, 0, 1);
+  return due;
+}
+
 /**
- * The retry ladder for a lead who did not answer: the same day at 17:00,
- * then the next two days at 09:00, then the lead is left as unreachable.
- * `step` is how many unanswered tries there have been.
+ * The retry ladder for a lead who did not answer: the same day at 17:00
+ * (when that is at least an hour away), otherwise the next working morning
+ * at 09:00; then the next two working mornings at 09:00; then the lead is
+ * left as unreachable. `step` is how many unanswered tries there have been.
  */
 export function nextTry(step: number, now: number): { step: number; due: number | null; unreachable: boolean } {
   if (step >= 3) return { step, due: null, unreachable: true };
   const next = step + 1;
-  let due = next === 1 ? kuwaitAt(now, 17) : kuwaitAt(now, 9, 0, 1);
-  if (due <= now) due = next === 1 ? kuwaitAt(now, 17, 0, 1) : kuwaitAt(now, 9, 0, 1);
-  // A first retry must be at least an hour away, or it is just a redial.
-  if (next === 1 && due - now < HOUR) due = kuwaitAt(now, 9, 0, 1);
+  const five = kuwaitAt(now, 17);
+  // A first retry must be at least an hour away, or it is just a redial; an
+  // evening miss goes to the next working morning, not the next evening.
+  const due = next === 1 && five - now >= HOUR ? five : nextWorkingNine(now);
   return { step: next, due, unreachable: false };
 }
 
@@ -575,12 +583,6 @@ export function rankForCloser(
     }
   }
   return order(out);
-}
-
-/** Speed to lead in minutes: lead created to the first outbound call, or null if never called. */
-export function speedToLead(createdAt: number | null, firstDialAt: number | null): number | null {
-  if (createdAt === null || firstDialAt === null || firstDialAt < createdAt) return null;
-  return Math.round((firstDialAt - createdAt) / 60_000);
 }
 
 // ---------------------------------------------------------------------------

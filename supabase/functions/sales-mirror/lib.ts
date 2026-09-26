@@ -151,8 +151,20 @@ where c.start_at >= ${ts(fromIso)} and c.start_at < ${ts(toIso)}
   and c.ghl_appointment_id is not null`;
 }
 
-/** Maqsam calls B2B stored after the watermark. */
-export function dialsSql(since: string, limit: number): string {
+/**
+ * Maqsam calls B2B stored after the watermark, in (synced_at, call id)
+ * order. `after` is the last row of the page before, so a page never repeats
+ * or skips a call, however many B2B stamped with one sync time. `after.at`
+ * is B2B's own text for the time, microseconds kept.
+ */
+export function dialsSql(opts: {
+  since: string;
+  after?: { at: string; id: string } | null;
+  limit: number;
+}): string {
+  const where = opts.after
+    ? `(m.synced_at, m.maqsam_call_id) > (${ts(opts.after.at)}, ${lit(opts.after.id)})`
+    : `m.synced_at > ${ts(opts.since)}`;
   return `select
   m.maqsam_call_id as call_id,
   m.occurred_at,
@@ -165,6 +177,7 @@ export function dialsSql(since: string, limit: number): string {
   m.ringing_time as ringing_s,
   m.handling_time as handling_s,
   nullif(${PHONE8_SQL("m.lead_phone")}, '') as lead_phone8,
+  nullif(regexp_replace(coalesce(m.lead_phone, ''), '\\D', '', 'g'), '') as lead_digits,
   m.sentiment,
   m.summary_en,
   m.summary_ar,
@@ -172,9 +185,32 @@ export function dialsSql(since: string, limit: number): string {
   coalesce(m.call_tags, '{}') || coalesce(m.auto_tags, '{}') as tags,
   m.synced_at
 from public.maqsam_calls as m
-where m.synced_at > ${ts(since)}
+where ${where}
 order by m.synced_at, m.maqsam_call_id
-limit ${Math.max(1, Math.min(5000, Math.floor(limit)))}`;
+limit ${Math.max(1, Math.min(5000, Math.floor(opts.limit)))}`;
+}
+
+/**
+ * Whether rows about to be dropped look like B2B answering oddly rather than
+ * rows B2B really deleted: nothing read, or more gone than a fifth of what
+ * was read (at least five). A real clear-out that size waits for a person.
+ */
+export function dropLooksWrong(read: number, gone: number): boolean {
+  return read <= 0 || gone > Math.max(5, Math.ceil(read * 0.2));
+}
+
+/**
+ * When B2B last read each of its own sources, and whether that worked
+ * (Fathom has failed since 12 September, Wistia since 9 August), so the
+ * cockpit can say a recording is missing because B2B stopped reading, not
+ * because the call never happened. The account-level rows are the live ones.
+ */
+export function sourcesSql(): string {
+  return `select source, last_synced_at, last_sync_status,
+  left(last_error, 300) as last_error
+from public.sync_state
+where account_id is not null
+order by source`;
 }
 
 /** Every signed deal, with B2B's own void flag. */

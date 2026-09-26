@@ -239,13 +239,14 @@ function needManager(who: Who) {
 // Marking calls
 // ---------------------------------------------------------------------------
 
-async function writeMarkToCrm(id: number, appointmentId: string, status: string) {
-  let crm = "written";
+async function writeMarkToCrm(id: number, appointmentId: string, status: string, notify = true) {
+  // Quiet: the status changes in HighLevel and none of its automations run.
+  let crm = notify ? "written" : "quiet";
   let crmError: string | null = null;
   try {
     await ghl("PUT", `/calendars/events/appointments/${enc(appointmentId)}`, {
       appointmentStatus: status,
-      toNotify: true,
+      toNotify: notify,
     });
   } catch (e) {
     crm = "failed";
@@ -297,6 +298,17 @@ async function markAppointment(
   const current = (await svc(
     `cockpit_sales_dispositions?appointment_id=eq.${enc(id)}&superseded_at=is.null&select=*`,
   ))[0];
+  // The same mark again (a second tap, a retry after a dropped connection)
+  // is not sent to HighLevel twice: only a new note is kept.
+  if (current && current.status === status && current.crm !== "failed") {
+    if (opts.note && opts.note !== current.note)
+      await svc(`cockpit_sales_dispositions?id=eq.${current.id}`, {
+        method: "PATCH",
+        body: { note: opts.note },
+        prefer: "return=minimal",
+      });
+    return { ...current, note: opts.note ?? current.note, repeated: true };
+  }
   if (current)
     await svc(`cockpit_sales_dispositions?id=eq.${current.id}`, {
       method: "PATCH",
@@ -314,13 +326,13 @@ async function markAppointment(
       reason: opts.reason ?? null,
       note: opts.note ?? null,
       marked_by: who.email,
-      crm: decision === "write" ? "pending" : decision,
+      crm: decision === "write" || decision === "quiet" ? "pending" : decision,
     },
     prefer: "return=representation",
   }))[0];
   let result: Row = { ...row };
-  if (decision === "write")
-    result = { ...result, ...(await writeMarkToCrm(Number(row.id), id, status)) };
+  if (decision === "write" || decision === "quiet")
+    result = { ...result, ...(await writeMarkToCrm(Number(row.id), id, status, decision === "write")) };
   await audit(who, "mark", "cockpit_sales_dispositions", id, current ?? null, result, {
     crm_status_before: appt.status,
     ...(opts.anyRep ? { by_other_rep: true } : {}),
@@ -338,7 +350,22 @@ async function markRetry(who: Who, b: Row) {
     throw new Refusal("That mark is not waiting to be sent to HighLevel.");
   if (!who.manager && current.marked_by !== who.email)
     throw new Refusal("Only the rep who marked it or a manager can send it again.", 403);
-  const out = await writeMarkToCrm(Number(current.id), id, String(current.status));
+  // The same rules as the first send: writes switched off since, or a call
+  // that has aged past the backlog days, go quietly or stay here.
+  const appt = (await svc(`cockpit_sales_appointments?appointment_id=eq.${enc(id)}&select=*`))[0] as unknown as
+    | Appointment
+    | undefined;
+  const decision = appt ? crmDecision(await setting<CrmSettings>("crm_writes"), appt, Date.now()) : "skipped";
+  if (decision === "off" || decision === "skipped") {
+    await svc(`cockpit_sales_dispositions?id=eq.${current.id}`, {
+      method: "PATCH",
+      body: { crm: decision, crm_error: null, crm_at: new Date().toISOString() },
+      prefer: "return=minimal",
+    });
+    await audit(who, "mark.retry", "cockpit_sales_dispositions", id, current, { crm: decision });
+    return { mark: { ...current, crm: decision, crm_error: null } };
+  }
+  const out = await writeMarkToCrm(Number(current.id), id, String(current.status), decision === "write");
   await audit(who, "mark.retry", "cockpit_sales_dispositions", id, current, out);
   return { mark: { ...current, ...out } };
 }
@@ -346,6 +373,13 @@ async function markRetry(who: Who, b: Row) {
 // ---------------------------------------------------------------------------
 // Notes
 // ---------------------------------------------------------------------------
+
+/** The cockpit's own lead, or a refusal: HighLevel holds contacts that are not sales leads. */
+async function cockpitLead(contactId: string): Promise<Row> {
+  const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contactId)}&select=contact_id,name`))[0];
+  if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
+  return lead;
+}
 
 async function noteAdd(who: Who, b: Row) {
   const contact = cleanText(b.contact_id, 80);
@@ -357,6 +391,8 @@ async function noteAdd(who: Who, b: Row) {
     : "note";
   const fields =
     b.fields && typeof b.fields === "object" && !Array.isArray(b.fields) ? b.fields : {};
+  if (JSON.stringify(fields).length > 20_000) throw new Refusal("Those notes are too long to save in one go.");
+  await cockpitLead(contact);
   const row = (await svc("cockpit_sales_notes", {
     method: "POST",
     body: {
@@ -412,6 +448,13 @@ async function proposalDraft(who: Who, b: Row) {
   const proposalId = crypto.randomUUID();
   const recording = cleanText(b.recording_id, 40) || null;
   const appointment = cleanText(b.appointment_id, 80) || null;
+  // One prospect's call must never become another's proposal.
+  if (recording) {
+    const rec = (await svc(`cockpit_sales_recordings?recording_id=eq.${enc(recording)}&select=contact_id`))[0];
+    if (!rec) throw new Refusal("That recording is not in the cockpit.", 404);
+    if (rec.contact_id && String(rec.contact_id) !== contact)
+      throw new Refusal("That recording is another lead's call. Pick one of this lead's.", 409);
+  }
   await svc("cockpit_sales_requests", {
     method: "POST",
     body: {
@@ -750,6 +793,7 @@ async function messagingSwitch(): Promise<Record<Channel, boolean>> {
 async function convoRead(_who: Who, b: Row) {
   const id = cleanText(b.contact_id, 80);
   if (!id) throw new Refusal("Which lead?");
+  await cockpitLead(id);
   const now = Date.now();
   const [contactOut, convsOut, sends, switches] = await Promise.all([
     ghl("GET", `/contacts/${enc(id)}`, undefined, "2021-07-28"),
@@ -815,6 +859,8 @@ async function convoSend(who: Who, b: Row) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestId))
     throw new Refusal("Reload the page and send again.");
   if (!text) throw new Refusal("Write the message first.");
+  const blank = /\{(name|rep|day|time)\}/.exec(`${text} ${String(b.subject ?? "")}`);
+  if (blank) throw new Refusal(`Fill in ${blank[0]} before sending: the cockpit did not know it.`);
   if (text.length > MAX_CHARS[channel])
     throw new Refusal(`That is too long for ${CHANNEL_WORD[channel]} (${MAX_CHARS[channel]} characters at most).`);
   const subject = channel === "email" ? cleanText(b.subject, 300) : null;
@@ -1081,6 +1127,8 @@ async function sendTemplate(
   const needsLine = route.variables.includes("line");
   const line = needsLine ? templateLine(o.line) : "";
   if (needsLine && line.length < 2) throw new Refusal("Write the line that goes in the message.");
+  const blank = /\{(name|rep|day|time)\}/.exec(line);
+  if (blank) throw new Refusal(`Fill in ${blank[0]} before sending: the cockpit did not know it.`);
 
   const already = (await svc(`cockpit_sales_messages?request_id=eq.${enc(o.requestId)}&select=*`))[0];
   if (already) {
@@ -1750,8 +1798,23 @@ async function followupRow(id: string): Promise<Row> {
  * first send. The words go out through convo.send's checks: do-not-disturb,
  * the WhatsApp window, the read-back.
  */
+/** The lead's clock: UTC+4 in the UAE and Oman (the lead copy holds ISO codes), UTC+3 elsewhere in the Gulf. */
+function leadHour(country: unknown, now = Date.now()): number {
+  const c = String(country ?? "").trim();
+  const off = /^(ae|om)$/i.test(c) || /emirates|\buae\b|dubai|oman|muscat/i.test(c) ? 4 : 3;
+  return new Date(now + off * 3_600_000).getUTCHours();
+}
+
 async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean) {
   if (f.status !== "draft") throw new Refusal(`This draft was already ${f.status}.`, 409);
+  // A follow-up does not arrive at night: an answer to a lead who just wrote
+  // may, anything else waits for 09:00 on the lead's own clock.
+  if (f.segment !== "reply") {
+    const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(String(f.contact_id))}&select=country`))[0];
+    const h = leadHour(lead?.country);
+    if (h < 9 || h >= 21)
+      throw new Refusal("It is night where the lead is. Send it after 9 in the morning, their time.", 409);
+  }
   if (f.expires_at && Date.parse(String(f.expires_at)) < Date.now()) {
     await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}&status=eq.draft`, {
       method: "PATCH",
@@ -1830,20 +1893,59 @@ async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean) {
       // A confirmation message counts as a try: the dialer's confirmation
       // call waits for the lead to answer it first.
       if (f.segment === "confirm" && f.appointment_id) await confirmationSent(who, f);
-      saved.took_over = await takeOver(who, f).catch(e => ({ error: redact(String((e as Error).message ?? e)) }));
+      // The lead leaves the old automation only once the message is seen to
+      // have gone; a send not seen yet is settled by the desk (followup.settle).
+      if (sendSettled(m))
+        saved.took_over = await takeOver(who, f).catch(e => ({ error: redact(String((e as Error).message ?? e)) }));
     }
     return { followup: saved, message: m };
   } catch (e) {
     const err = e instanceof Refusal ? e.message : redact(String((e as Error).message ?? e));
+    // Refused before anything went out (a closed window, the day's ceiling,
+    // too many sends, a blank to fill): the draft waits again, with the
+    // reason. Only a send HighLevel tried and failed ends the draft.
+    const fixable = e instanceof Refusal && e.status !== 502;
     await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}`, {
       method: "PATCH",
-      body: { status: "failed", error: err, final_body: body, final_subject: subject, edited },
+      body: fixable
+        ? { status: "draft", error: err, decided_by: null, decided_at: null }
+        : { status: "failed", error: err, final_body: body, final_subject: subject, edited },
       prefer: "return=minimal",
     });
     await audit(who, auto ? "followup.autosend" : "followup.approve", "cockpit_sales_followups", String(f.id), f,
-      { status: "failed", error: err });
+      { status: fixable ? "draft" : "failed", error: err });
     throw e;
   }
+}
+
+/** A send HighLevel reports as gone (not merely taken): email, or WhatsApp sent, delivered or read. */
+function sendSettled(m: Row): boolean {
+  if (m.state === "failed") return false;
+  if (m.channel === "email") return true;
+  return ["sent", "delivered", "read"].includes(String(m.provider_status ?? "").toLowerCase());
+}
+
+/**
+ * The desk's word on a follow-up whose send was not seen at once: when its
+ * message is now seen to have gone, the lead leaves the old automation (if
+ * that kind takes over); when it never went, the follow-up says it failed.
+ */
+async function followupSettle(who: Who, b: Row) {
+  const f = await followupRow(cleanText(b.id, 40));
+  if (f.status !== "sent" || !f.message_id) return { followup: f };
+  const m = (await svc(`cockpit_sales_messages?id=eq.${enc(String(f.message_id))}&select=*`))[0];
+  if (!m) return { followup: f };
+  if (m.state === "failed") {
+    const saved = (await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}`, {
+      method: "PATCH",
+      body: { status: "failed", error: String(m.error ?? "HighLevel marked it failed") },
+      prefer: "return=representation",
+    }))[0];
+    await audit(who, "followup.settle", "cockpit_sales_followups", String(f.id), f, { status: "failed" });
+    return { followup: saved };
+  }
+  if (sendSettled(m) && !f.took_over) return { followup: f, took_over: await takeOver(who, f) };
+  return { followup: f };
 }
 
 /** A confirmation message went out for this call: recorded the way the dialer records a try. */
@@ -1908,7 +2010,10 @@ async function followupSkip(who: Who, b: Row) {
 async function followupSettings(who: Who, b: Row) {
   needManager(who);
   const v = (b.value ?? {}) as Row;
-  const auto = (v.autosend ?? {}) as Row;
+  const before = await setting<Row>("followups");
+  // A field the form did not send keeps its value: a form opened before a
+  // switch was flipped must not flip it back.
+  const auto = (v.autosend ?? before?.autosend ?? {}) as Row;
   const int = (x: unknown, lo: number, hi: number, name: string) => {
     const n = Number(x);
     if (!Number.isInteger(n) || n < lo || n > hi) throw new Refusal(`${name} has to be a whole number from ${lo} to ${hi}.`);
@@ -1916,9 +2021,8 @@ async function followupSettings(who: Who, b: Row) {
   };
   const quietFrom = int((v.quiet as Row | undefined)?.from ?? 21, 0, 23, "The quiet hours' start");
   const quietTo = int((v.quiet as Row | undefined)?.to ?? 9, 0, 23, "The quiet hours' end");
-  const before = await setting<Row>("followups");
-  const takeover = (v.takeover ?? {}) as Row;
-  const fallback = (v.email_fallback ?? {}) as Row;
+  const takeover = (v.takeover ?? before?.takeover ?? {}) as Row;
+  const fallback = (v.email_fallback ?? before?.email_fallback ?? {}) as Row;
   const replaces = ((before?.replaces ?? {}) as Row);
   const value = {
     enabled: v.enabled !== false,
@@ -2020,6 +2124,7 @@ async function goalSet(who: Who, b: Row) {
 async function leadLive(_who: Who, b: Row) {
   const id = cleanText(b.contact_id, 80);
   if (!id) throw new Refusal("Which lead?");
+  await cockpitLead(id);
   const [contact, convs] = await Promise.all([
     ghl("GET", `/contacts/${enc(id)}`, undefined, "2021-07-28").catch(e => ({ error: String(e.message) })),
     ghl("GET", `/conversations/search?locationId=${LOCATION}&contactId=${enc(id)}&limit=5`).catch(
@@ -2162,6 +2267,14 @@ const HEAVY_FOR = 20_000;
 const LEAD_COLS =
   "contact_id,name,phone,phone8,lead_created_at,stage_id,stage_name,pipeline_id,lead_class,dnd,contact_type,revenue,readiness";
 
+type DialFacts = { last: number; reached: boolean; tries: number[] };
+
+function mergeDials(a: DialFacts | undefined, b: DialFacts | undefined): DialFacts | null {
+  if (!a) return b ?? null;
+  if (!b) return a;
+  return { last: Math.max(a.last, b.last), reached: a.reached || b.reached, tries: [...a.tries, ...b.tries] };
+}
+
 async function heavyReads(now: number) {
   if (heavy && now - heavy.at < HEAVY_FOR) return heavy;
   const since30 = new Date(now - 30 * 86_400_000).toISOString();
@@ -2171,7 +2284,9 @@ async function heavyReads(now: number) {
     svcAll(
       `cockpit_sales_calendar?select=appointment_id,contact_id,call_type,start_at,booked_at,status,assigned_user_id&start_at=gte.${enc(since60)}&order=appointment_id`,
     ),
-    svcAll(`cockpit_sales_dials?select=lead_phone8,occurred_at,state,direction&direction=eq.outbound&occurred_at=gte.${enc(since60)}&order=call_id`),
+    svcAll(
+      `cockpit_sales_dials?select=contact_id,lead_phone8,occurred_at,state,direction&direction=eq.outbound&occurred_at=gte.${enc(since60)}&order=call_id`,
+    ),
     svcAll("cockpit_sales_deals?select=contact_id&voided=eq.false&order=response_id"),
   ]);
   heavy = { at: now, leads, appts, dials, deals };
@@ -2193,21 +2308,38 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
   const [states, inbox, attempts, h, confirmations, hotRows, roles] = await Promise.all([
     svcAll("cockpit_sales_queue_state?select=*&order=contact_id"),
     svc(`cockpit_sales_inbox?select=contact_id,last_message_at,last_direction&last_direction=eq.inbound&last_message_at=gte.${enc(new Date(now - 86_400_000).toISOString())}`),
-    svc("cockpit_sales_attempts?select=contact_id,rep_email&state=in.(dialing,placed)"),
+    svc("cockpit_sales_attempts?select=contact_id,rep_email,started_at,call_checked_at&state=in.(dialing,placed)"),
     heavyReads(now),
     svc(`cockpit_sales_confirmations?select=appointment_id,result,at&start_at=gte.${soon}&order=at.desc&limit=2000`),
     svc("cockpit_sales_hot?select=contact_id,owner_email,next_at&removed_at=is.null&limit=2000"),
     stageRoles(),
   ]);
   const leads = [...h.leads];
-  const extra = new Set<string>([
-    ...states.filter(s => !s.closed || s.callback_at).map(s => String(s.contact_id)),
-    ...inbox.map(i => String(i.contact_id ?? "")).filter(Boolean),
-  ]);
+  // Beyond the last 30 days' leads: anyone with a call coming up (their
+  // confirmation and the intro itself), on the hot list, who wrote in the
+  // last day, or with a call-back or retry due. None is dropped for room.
+  const upcoming = h.appts
+    .filter(
+      a =>
+        (a.call_type === "intro" || a.call_type === "demo") &&
+        (ms(a.start_at) ?? 0) >= now - 20 * 60_000 &&
+        !["cancelled", "noshow", "invalid", "showed"].includes(String(a.status ?? "")),
+    )
+    .map(a => String(a.contact_id ?? ""));
+  const extra = new Set<string>(
+    [
+      ...upcoming,
+      ...hotRows.map(r => String(r.contact_id ?? "")),
+      ...inbox.map(i => String(i.contact_id ?? "")),
+      ...states.filter(s => s.callback_at || (!s.closed && s.due_at)).map(s => String(s.contact_id)),
+    ].filter(Boolean),
+  );
   const have = new Set(leads.map(l => String(l.contact_id)));
-  const missing = [...extra].filter(id => !have.has(id)).slice(0, 150);
-  if (missing.length)
-    leads.push(...(await svc(`cockpit_sales_leads?select=${LEAD_COLS}&contact_id=in.(${missing.map(enc).join(",")})`)));
+  const missing = [...extra].filter(id => !have.has(id));
+  for (let i = 0; i < missing.length; i += 150) {
+    const ids = missing.slice(i, i + 150);
+    leads.push(...(await svc(`cockpit_sales_leads?select=${LEAD_COLS}&contact_id=in.(${ids.map(enc).join(",")})`)));
+  }
   const stateBy = new Map(states.map(s => [String(s.contact_id), s]));
   const inboxBy = new Map<string, number>();
   for (const i of inbox) {
@@ -2215,7 +2347,8 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
     const k = String(i.contact_id ?? "");
     if (k && t && (!inboxBy.has(k) || (inboxBy.get(k) ?? 0) < t)) inboxBy.set(k, t);
   }
-  const claimBy = new Map(attempts.map(a => [String(a.contact_id), String(a.rep_email)]));
+  // A call nobody has looked at for ten minutes holds its lead no longer.
+  const claimBy = new Map(attempts.filter(a => !staleCall(a, now)).map(a => [String(a.contact_id), String(a.rep_email)]));
   const signed = new Set(h.deals.map(d => String(d.contact_id ?? "")).filter(Boolean));
   const apptBy = new Map<string, Row[]>();
   for (const a of h.appts) {
@@ -2223,9 +2356,12 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
     if (!k) continue;
     apptBy.set(k, [...(apptBy.get(k) ?? []), a]);
   }
-  const dialBy = new Map<string, { last: number; reached: boolean; tries: number[] }>();
+  // A call counts for the lead it was linked to (by the whole number); one
+  // not linked yet, for the lead with its last eight digits. Keyed apart, so
+  // two leads sharing eight digits never share each other's calls.
+  const dialBy = new Map<string, DialFacts>();
   for (const d of h.dials) {
-    const k = String(d.lead_phone8 ?? "");
+    const k = d.contact_id ? `c:${d.contact_id}` : d.lead_phone8 ? `p:${d.lead_phone8}` : "";
     const t = ms(d.occurred_at);
     if (!k || !t) continue;
     const cur = dialBy.get(k) ?? { last: 0, reached: false, tries: [] };
@@ -2269,7 +2405,7 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
           !["cancelled", "noshow", "invalid", "showed"].includes(String(a.status ?? "")),
       )
       .sort((a, b) => (ms(a.start_at) ?? 0) - (ms(b.start_at) ?? 0))[0];
-    const dial = dialBy.get(String(l.phone8 ?? "")) ?? null;
+    const dial = mergeDials(dialBy.get(`c:${id}`), l.phone8 ? dialBy.get(`p:${l.phone8}`) : undefined);
     const created = ms(l.lead_created_at);
     const misses = dial ? dial.tries.filter(t => created === null || t >= created).length : 0;
     const hot = hotBy.get(id);
@@ -2277,8 +2413,12 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
     const client = l.contact_type === "customer" || signed.has(id);
     const inboundAt = inboxBy.get(id) ?? null;
     const closedAt = ms(st.closed_at);
-    // A reply after the lead was closed opens them up again.
-    const closed = st.closed && !(inboundAt && closedAt && inboundAt > closedAt) ? String(st.closed) : null;
+    // A reply after the lead was closed opens them up again, and "booked"
+    // lasts only while the booked call is still ahead: after it, the lead
+    // comes back (a no-show to rebook, a demo that did not close).
+    const reopened = Boolean(inboundAt && closedAt && inboundAt > closedAt);
+    const bookedPast = st.closed === "booked" && !future;
+    const closed = st.closed && !reopened && !bookedPast ? String(st.closed) : null;
     // The dialer's own outcomes count as calls before Maqsam's copy arrives.
     const lastOutcomeAt = ms(st.last_outcome_at);
     const lastDial = Math.max(dial?.last ?? 0, lastOutcomeAt ?? 0) || null;
@@ -2441,6 +2581,31 @@ async function dialQueue(who: Who, b: Row) {
   };
 }
 
+/**
+ * A call nobody has looked at for ten minutes was abandoned (the page was
+ * closed mid-call): the dialer checks an open call every few seconds while
+ * its page is open. Such a call stops holding its lead, so the lead is not
+ * lost to every other rep until its owner happens to dial again.
+ */
+const STALE_CALL_MS = 10 * 60_000;
+
+function staleCall(a: Row, now = Date.now()): boolean {
+  const seen = ms(a.call_checked_at) ?? ms(a.started_at) ?? 0;
+  return now - seen > STALE_CALL_MS;
+}
+
+async function releaseStale(filter: string) {
+  const t = enc(new Date(Date.now() - STALE_CALL_MS).toISOString());
+  await svc(
+    `cockpit_sales_attempts?state=in.(dialing,placed)&${filter}&or=(call_checked_at.lt.${t},and(call_checked_at.is.null,started_at.lt.${t}))`,
+    {
+      method: "PATCH",
+      body: { state: "released", error: "Let go: nobody looked at the call for ten minutes (the page was closed)." },
+      prefer: "return=minimal",
+    },
+  );
+}
+
 async function dialCall(who: Who, b: Row) {
   const me = String(who.email);
   const maqsamEmail = String(who.maqsam_email ?? "").trim();
@@ -2453,11 +2618,20 @@ async function dialCall(who: Who, b: Row) {
   const r = routePhone(lead.phone);
   if (!r.ok) throw new Refusal(r.error, 409);
 
-  // A call left open for more than 15 minutes was never saved: let it go.
-  await svc(
-    `cockpit_sales_attempts?rep_email=eq.${enc(me)}&state=in.(dialing,placed)&started_at=lt.${enc(new Date(Date.now() - 15 * 60_000).toISOString())}`,
-    { method: "PATCH", body: { state: "released" }, prefer: "return=minimal" },
-  );
+  // Calls abandoned mid-way (this rep's, or anyone's on this lead) let go.
+  await releaseStale(`rep_email=eq.${enc(me)}`);
+  await releaseStale(`contact_id=eq.${enc(contact)}`);
+  // What the call is for: a confirmation or an intro is saved against its
+  // appointment, so an unanswered one counts as a try and not a lead's miss.
+  const itemKind = ["intro", "confirm"].includes(String(b.item_kind)) ? String(b.item_kind) : "lead";
+  let appointmentId: string | null = null;
+  if (itemKind !== "lead") {
+    appointmentId = cleanText(b.appointment_id, 80) || null;
+    const appt = appointmentId
+      ? (await svc(`cockpit_sales_appointments?appointment_id=eq.${enc(appointmentId)}&select=contact_id`))[0]
+      : null;
+    if (!appt || String(appt.contact_id) !== contact) throw new Refusal("That appointment is not this lead's.", 409);
+  }
   const recent = (await svc(
     `cockpit_sales_attempts?rep_email=eq.${enc(me)}&manual=eq.false&select=started_at&order=started_at.desc&limit=1`,
   ))[0];
@@ -2477,6 +2651,8 @@ async function dialCall(who: Who, b: Row) {
         phone: r.route.digits,
         caller: r.route.caller,
         as_role: b.as === "closer" ? "closer" : "setter",
+        item_kind: itemKind,
+        appointment_id: appointmentId,
       },
       prefer: "return=representation",
     }))[0];
@@ -2551,6 +2727,8 @@ async function saveOutcome(
     reason?: string | null;
     asRole?: string | null;
     kind?: ItemKind;
+    /** A manual save's own id, so saving it again after a dropped connection is the same save. */
+    requestId?: string | null;
   } = {},
 ): Promise<{ attempt: Row; state: Row; stage_move?: Row | null } | null> {
   const now = Date.now();
@@ -2563,13 +2741,21 @@ async function saveOutcome(
     : null;
   if (extra.appointmentId && (!appt || String(appt.contact_id) !== contactId))
     throw new Refusal("That appointment is not this lead's.", 409);
-  // The mark goes first: if it is refused, nothing is saved.
+  // The mark goes first: if it is refused, nothing is saved. A rep may
+  // cancel a call booked with someone else (the lead asked them to), but
+  // only one that has not started and that nobody has marked: never over a
+  // closer's showed, which is their show rate and their pay.
   let marked: Row | null = null;
-  if (effect.mark && appt)
-    marked = await markAppointment(who, String(appt.appointment_id), effect.mark, {
-      note: note || null,
-      anyRep: effect.mark === "cancelled",
-    });
+  if (effect.mark && appt) {
+    let anyRep = false;
+    if (effect.mark === "cancelled" && (ms(appt.start_at) ?? 0) > now) {
+      const current = (await svc(
+        `cockpit_sales_dispositions?appointment_id=eq.${enc(String(appt.appointment_id))}&superseded_at=is.null&select=status`,
+      ))[0];
+      anyRep = !current || !["showed", "noshow", "invalid"].includes(String(current.status));
+    }
+    marked = await markAppointment(who, String(appt.appointment_id), effect.mark, { note: note || null, anyRep });
+  }
   const st = (await svc(`cockpit_sales_queue_state?contact_id=eq.${enc(contactId)}&select=*`))[0];
   const next = effect.ladder
     ? afterOutcome(outcome as Outcome, Number(st?.step ?? 0), now, callbackAt, {
@@ -2590,7 +2776,7 @@ async function saveOutcome(
   };
   let saved: Row | undefined;
   if (a) {
-    saved = (await svc(`cockpit_sales_attempts?id=eq.${enc(String(a.id))}&state=in.(dialing,placed,failed)`, {
+    saved = (await svc(`cockpit_sales_attempts?id=eq.${enc(String(a.id))}&state=in.(dialing,placed,failed,released)&saved_at=is.null`, {
       method: "PATCH",
       body: fields,
       prefer: "return=representation",
@@ -2611,6 +2797,7 @@ async function saveOutcome(
         manual: true,
         as_role: extra.asRole === "closer" ? "closer" : extra.asRole === "setter" ? "setter" : null,
         started_at: new Date(now).toISOString(),
+        request_id: extra.requestId ?? null,
         ...fields,
       },
       prefer: "return=representation",
@@ -2747,7 +2934,12 @@ async function dialSave(who: Who, b: Row) {
     a = (await svc(`cockpit_sales_attempts?id=eq.${enc(cleanText(b.attempt_id, 40))}&select=*`))[0] ?? null;
     if (!a) throw new Refusal("That call is not there any more.", 404);
     if (!who.manager && a.rep_email !== who.email) throw new Refusal("That is another rep's call.", 403);
-    if (!["dialing", "placed", "failed"].includes(String(a.state))) throw new Refusal("This call was already saved.", 409);
+    // A retry of a save that already landed (a dropped connection) returns it.
+    if (a.state === "saved" && a.outcome === outcome) return { attempt: a, repeated: true };
+    // A call let go while its page was closed can still be saved by its rep.
+    const released = a.state === "released" && !a.saved_at && a.rep_email === who.email;
+    if (!["dialing", "placed", "failed"].includes(String(a.state)) && !released)
+      throw new Refusal("This call was already saved.", 409);
     contactId = String(a.contact_id);
   } else {
     // Saved without a call through the dialer: the lead must be free, and
@@ -2755,6 +2947,13 @@ async function dialSave(who: Who, b: Row) {
     if (!contactId) throw new Refusal("Which lead?");
     const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contactId)}&select=contact_id`))[0];
     if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
+    // A save made again after a dropped connection is the same save.
+    const requestId = String(b.request_id ?? "");
+    if (/^[0-9a-f-]{36}$/i.test(requestId)) {
+      const twin = (await svc(`cockpit_sales_attempts?request_id=eq.${enc(requestId)}&select=*`))[0];
+      if (twin) return { attempt: twin, repeated: true };
+    }
+    await releaseStale(`contact_id=eq.${enc(contactId)}`);
     const open = await svc(
       `cockpit_sales_attempts?select=*&state=in.(dialing,placed)&or=${enc(`(contact_id.eq."${contactId}",rep_email.eq."${String(who.email)}")`)}`,
     );
@@ -2771,14 +2970,27 @@ async function dialSave(who: Who, b: Row) {
     if (!intro && !demo)
       throw new Refusal("Nothing is booked for this lead in HighLevel yet. Use Book a time, so the call goes on the calendar.", 409);
   }
-  const kind = (["intro", "confirm"].includes(String(b.item_kind)) ? String(b.item_kind) : "lead") as ItemKind;
-  const out = await saveOutcome(who, a, contactId, outcome, note, callbackAt, {
-    reason: cleanText(b.reason, 200) || null,
-    asRole: cleanText(b.as, 10) || null,
-    kind,
-    appointmentId: cleanText(b.appointment_id, 80) || null,
-  });
-  return out ?? {};
+  // The call's own record of what it was for wins over what the page sends.
+  const kindAsked = a?.item_kind && a.item_kind !== "lead" ? String(a.item_kind) : String(b.item_kind);
+  const kind = (["intro", "confirm"].includes(kindAsked) ? kindAsked : "lead") as ItemKind;
+  const requestId = /^[0-9a-f-]{36}$/i.test(String(b.request_id ?? "")) ? String(b.request_id) : null;
+  try {
+    const out = await saveOutcome(who, a, contactId, outcome, note, callbackAt, {
+      reason: cleanText(b.reason, 200) || null,
+      asRole: cleanText(b.as, 10) || null,
+      kind,
+      appointmentId: cleanText(b.appointment_id, 80) || ((a?.appointment_id as string) ?? null),
+      requestId,
+    });
+    return out ?? {};
+  } catch (e) {
+    // Two copies of one manual save arriving together: the second finds the first.
+    if (!a && requestId && /23505|duplicate/.test(String((e as Error).message ?? e))) {
+      const twin = (await svc(`cockpit_sales_attempts?request_id=eq.${enc(requestId)}&select=*`))[0];
+      if (twin) return { attempt: twin, repeated: true };
+    }
+    throw e;
+  }
 }
 
 /**
@@ -2824,6 +3036,7 @@ async function dialStatus(who: Who, b: Row) {
     prefer: "return=representation",
   }))[0] ?? a;
   if (c && isNoAnswer(c)) {
+    const kind = (["intro", "confirm"].includes(String(a.item_kind)) ? String(a.item_kind) : "lead") as ItemKind;
     const out = await saveOutcome(
       who,
       a,
@@ -2831,7 +3044,7 @@ async function dialStatus(who: Who, b: Row) {
       "no_answer",
       `No answer: Maqsam's record of the call (${String(c.id)}) shows nobody picked up.`,
       null,
-      { auto: true },
+      { auto: true, kind, appointmentId: kind === "lead" ? null : ((a.appointment_id as string) ?? null) },
     );
     if (out) return { attempt: out.attempt, state: out.state, call: callSummary(c), auto_saved: true };
   }
@@ -2942,6 +3155,12 @@ async function movePlan(b: Row) {
   if (!appt) throw new Refusal("That appointment is not in the cockpit. It may have been deleted in HighLevel.", 404);
   if (["cancelled", "noshow", "showed", "invalid"].includes(String(appt.status ?? "")))
     throw new Refusal("This call is already over or cancelled. Book a new one instead.", 409);
+  // The cockpit's own mark counts before HighLevel's copy catches up.
+  const marked = (await svc(
+    `cockpit_sales_dispositions?appointment_id=eq.${enc(id)}&superseded_at=is.null&select=status`,
+  ))[0];
+  if (marked && ["cancelled", "noshow", "showed", "invalid"].includes(String(marked.status)))
+    throw new Refusal("This call is already marked as over or cancelled. Book a new one instead.", 409);
   const calendarId = String(appt.calendar_id ?? "");
   if (!calendarId) throw new Refusal("This appointment has no calendar in the cockpit.", 409);
   const cal = await calendarInfo(calendarId);
@@ -3009,9 +3228,27 @@ async function bookCreate(who: Who, b: Row) {
       attempt = null;
   }
   if (!attempt) {
+    await releaseStale(`contact_id=eq.${enc(p.contact)}`);
     const open = await svc(`cockpit_sales_attempts?select=*&state=in.(dialing,placed)&contact_id=eq.${enc(p.contact)}`);
     if (open.some(o => o.rep_email !== who.email)) throw new Refusal("Someone else is calling this lead right now.", 409);
     attempt = open[0] ?? null;
+  }
+  // A booking that never finished (the function stopped half way) must not
+  // block this lead for good: after two minutes it is marked for a person to
+  // check, and the rep checks HighLevel before booking again.
+  const stuck = (await svc(
+    `cockpit_sales_bookings?contact_id=eq.${enc(p.contact)}&state=eq.creating&created_at=lt.${enc(new Date(Date.now() - 120_000).toISOString())}&select=id`,
+  ))[0];
+  if (stuck) {
+    await svc(`cockpit_sales_bookings?id=eq.${enc(String(stuck.id))}&state=eq.creating`, {
+      method: "PATCH",
+      body: { state: "unverified", error: "The booking did not finish.", finished_at: new Date().toISOString() },
+      prefer: "return=minimal",
+    });
+    throw new Refusal(
+      "An earlier booking for this lead did not finish. Check their calendar in HighLevel; if nothing is there, book again.",
+      409,
+    );
   }
 
   const existing = await upcoming(p.contact, p.kind);
@@ -3128,8 +3365,10 @@ async function bookCreate(who: Who, b: Row) {
   }
   heavy = null;
   const words = `${p.kind === "intro" ? "Intro" : "Demo"} booked for ${kuwaitWords(start)} (Kuwait time)`;
+  // A booking HighLevel took but that did not read back is not in the
+  // cockpit's copy yet: the lead is saved as booked without naming it.
   const out = await saveOutcome(who, attempt, p.contact, "booked", `${words}. ${note}`, null, {
-    appointmentId: apptId,
+    appointmentId: verified ? apptId : null,
     asRole: cleanText(b.as, 10) || null,
   });
   const moved = await autoMove(who, p.contact, () => targetRoles("lead", "booked", "booked", p.kind), {
@@ -3206,6 +3445,7 @@ async function bookMove(who: Who, b: Row) {
   let attempt: Row | null = null;
   if (b.attempt_id) {
     attempt = (await svc(`cockpit_sales_attempts?id=eq.${enc(cleanText(b.attempt_id, 40))}&select=*`))[0] ?? null;
+    if (attempt && !who.manager && attempt.rep_email !== who.email) attempt = null; // another rep's call stays theirs
     if (attempt && (attempt.contact_id !== contact || !["dialing", "placed", "failed"].includes(String(attempt.state))))
       attempt = null;
   }
@@ -3596,9 +3836,13 @@ async function hotRemove(who: Who, b: Row) {
 async function reviewAsk(who: Who, b: Row) {
   const id = cleanText(b.recording_id, 200);
   const rec = (await svc(
-    `cockpit_sales_recordings?recording_id=eq.${enc(id)}&select=recording_id,title,transcript_path,transcript_chars`,
+    `cockpit_sales_recordings?recording_id=eq.${enc(id)}&select=recording_id,title,transcript_path,transcript_chars,hidden_reason,duplicate_of`,
   ))[0];
   if (!rec) throw new Refusal("That call is not in the cockpit.", 404);
+  if (rec.hidden_reason === "duplicate")
+    throw new Refusal("This is a second recording of a meeting already in the cockpit. Ask for a review of the longer one.", 409);
+  if (rec.hidden_reason === "too short")
+    throw new Refusal("This call's transcript is only the phone network's message, so there is nothing to review.", 409);
   if (!rec.transcript_path)
     throw new Refusal("This call has no transcript yet, so there is nothing to review.", 409);
   const done = await svc(`cockpit_sales_reviews?recording_id=eq.${enc(id)}&select=id&limit=1`);
@@ -3684,7 +3928,8 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   "eod.submit": eodSubmit,
   "eod.retry": eodRetry,
   "convo.read": convoRead,
-  "convo.send": convoSend,
+  // A follow-up send is only ever made by followup.approve / autosend.
+  "convo.send": (who, b) => convoSend(who, { ...b, followup_id: undefined }),
   "goal.set": goalSet,
   "dial.agent": dialAgent,
   "dial.queue": dialQueue,
@@ -3718,6 +3963,7 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
 /** What the desk's service key may do: nothing but a trusted follow-up. */
 const DESK_ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   "followup.autosend": followupAutosend,
+  "followup.settle": followupSettle,
 };
 
 /** The role claim of a token the gateway has already verified. */

@@ -70,7 +70,9 @@ describe("whether a mark goes to HighLevel (Aziz: yes for today's calls)", () =>
   });
   test("an old call stays in the cockpit, so no old lead gets a no-show message", () => {
     const old = appt({ start_at: "2026-09-10T07:00:00Z" });
-    expect(crmDecision({ dispositions: true, backlog_days: 7 }, old, NOW)).toBe("skipped");
+    // An older call goes quietly (no automations), unless that is switched off.
+    expect(crmDecision({ dispositions: true, backlog_days: 7 }, old, NOW)).toBe("quiet");
+    expect(crmDecision({ dispositions: true, backlog_days: 7, quiet_backlog: false }, old, NOW)).toBe("skipped");
   });
 });
 

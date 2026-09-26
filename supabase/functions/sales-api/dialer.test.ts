@@ -25,11 +25,11 @@ import {
   revenueOf,
   routePhone,
   slotOffered,
-  speedToLead,
   stageRole,
   tagsFor,
   targetRoles,
   whenWords,
+  nextWorkingNine,
 } from "./dialer.ts";
 
 describe("phone routing", () => {
@@ -61,12 +61,12 @@ describe("the retry ladder", () => {
     expect(n.step).toBe(1);
     expect(n.due).toBe(kuwaitAt(morning, 17));
   });
-  test("first miss after 16:00: tomorrow at 09:00", () => {
-    const late = Date.parse("2026-09-24T13:30:00Z"); // 16:30 Kuwait
-    expect(nextTry(0, late).due).toBe(kuwaitAt(late, 9, 0, 1));
+  test("first miss after 16:00: the next working morning at 09:00 (Thursday: Saturday)", () => {
+    const late = Date.parse("2026-09-24T13:30:00Z"); // Thursday 16:30 Kuwait
+    expect(nextTry(0, late).due).toBe(kuwaitAt(late, 9, 0, 2));
   });
-  test("second and third misses: next day at 09:00; the fourth leaves the lead unreachable", () => {
-    expect(nextTry(1, morning).due).toBe(kuwaitAt(morning, 9, 0, 1));
+  test("second and third misses: the next working morning at 09:00; the fourth leaves the lead unreachable", () => {
+    expect(nextTry(1, morning).due).toBe(kuwaitAt(morning, 9, 0, 2)); // Thursday: Saturday
     expect(nextTry(3, morning)).toEqual({ step: 3, due: null, unreachable: true });
     expect(afterOutcome("no_answer", 3, morning, null).closed).toBe("unreachable");
   });
@@ -198,12 +198,6 @@ describe("the queue order", () => {
     const q = rankForSetter([lead({ contact_id: "ns", reached: true, last_dial_at: NOW - 2 * 86_400_000, last_call_type: "intro", last_call_status: "noshow", last_call_at: NOW - 86_400_000 })], "me", NOW);
     expect(q[0].tier).toBe(2);
   });
-});
-
-test("speed to lead is minutes to the first outbound call", () => {
-  expect(speedToLead(NOW, NOW + 150_000)).toBe(3);
-  expect(speedToLead(NOW, null)).toBeNull();
-  expect(speedToLead(NOW, NOW - 1)).toBeNull();
 });
 
 describe("the closer's queue", () => {
@@ -458,5 +452,19 @@ describe("where an outcome moves the lead in the pipeline", () => {
     expect(targetRoles("lead", "callback", null)).toEqual([]);
     expect(tagsFor("wrong_number")).toEqual(["wrong-number"]);
     expect(tagsFor("callback")).toEqual([]);
+  });
+});
+
+describe("the retry ladder's times (Kuwait)", () => {
+  const at = (iso: string) => Date.parse(iso);
+  test("a morning miss comes back at 17:00, an afternoon or evening miss the next working morning", () => {
+    expect(nextTry(0, at("2026-09-24T07:00:00Z")).due).toBe(at("2026-09-24T14:00:00Z")); // 10:00 -> 17:00
+    expect(nextTry(0, at("2026-09-24T13:30:00Z")).due).toBe(at("2026-09-26T06:00:00Z")); // Thu 16:30 -> Sat 09:00
+    expect(nextTry(0, at("2026-09-23T15:30:00Z")).due).toBe(at("2026-09-24T06:00:00Z")); // Wed 18:30 -> Thu 09:00
+  });
+  test("later tries skip Friday, and the fourth leaves the lead unreachable", () => {
+    expect(nextTry(1, at("2026-09-24T14:00:00Z")).due).toBe(at("2026-09-26T06:00:00Z")); // Thu -> Sat
+    expect(nextTry(3, at("2026-09-24T07:00:00Z")).unreachable).toBe(true);
+    expect(nextWorkingNine(at("2026-09-26T07:00:00Z"))).toBe(at("2026-09-27T06:00:00Z")); // Sat -> Sun
   });
 });

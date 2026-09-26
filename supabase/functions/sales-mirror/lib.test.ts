@@ -2,6 +2,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   dialsSql,
+  dropLooksWrong,
   ghlContactRow,
   ghlEventRow,
   inboxRow,
@@ -53,7 +54,7 @@ describe("SQL values", () => {
   });
   test("limits are clamped", () => {
     expect(leadsSql({ limit: 99999 })).toContain("limit 2000");
-    expect(dialsSql("2026-09-01T00:00:00Z", 0)).toContain("limit 1");
+    expect(dialsSql({ since: "2026-09-01T00:00:00Z", limit: 0 })).toContain("limit 1");
   });
 });
 
@@ -236,5 +237,48 @@ describe("voided deals come out of B2B's scorecard", () => {
   });
   test("nothing voided leaves the rows as they were", () => {
     expect(applyVoids([card], [], reps, w)).toEqual([card]);
+  });
+});
+
+describe("calls page by (synced_at, call id)", () => {
+  test("the first page reads after the watermark", () => {
+    const sql = dialsSql({ since: "2026-09-20T16:00:00.000Z", limit: 5000 });
+    expect(sql).toContain("m.synced_at > '2026-09-20T16:00:00.000Z'::timestamptz");
+    expect(sql).toContain("order by m.synced_at, m.maqsam_call_id");
+  });
+  test("the next page carries on from the last row, B2B's microseconds kept", () => {
+    const sql = dialsSql({
+      since: "2026-09-20T16:00:00.000Z",
+      after: { at: "2026-09-20 16:02:16.108334+00", id: "338314280" },
+      limit: 5000,
+    });
+    expect(sql).toContain(
+      "(m.synced_at, m.maqsam_call_id) > ('2026-09-20 16:02:16.108334+00'::timestamptz, '338314280')",
+    );
+  });
+  test("the whole number is read beside the last eight digits", () => {
+    expect(dialsSql({ since: "2026-09-20T16:00:00Z", limit: 1 })).toContain(
+      "nullif(regexp_replace(coalesce(m.lead_phone, ''), '\\D', '', 'g'), '') as lead_digits",
+    );
+  });
+  test("a call id cannot break out of the query", () => {
+    expect(
+      dialsSql({ since: "2026-09-20T16:00:00Z", after: { at: "2026-09-20T16:00:00Z", id: "1'; drop table x; --" }, limit: 1 }),
+    ).toContain("'1''; drop table x; --'");
+  });
+});
+
+describe("drops wait for a person when they look wrong", () => {
+  test("nothing read never drops anything", () => {
+    expect(dropLooksWrong(0, 0)).toBe(true);
+  });
+  test("a few rows B2B deleted are dropped", () => {
+    expect(dropLooksWrong(50, 2)).toBe(false);
+    expect(dropLooksWrong(4940, 300)).toBe(false);
+    expect(dropLooksWrong(9, 5)).toBe(false);
+  });
+  test("more than a fifth gone is B2B answering oddly", () => {
+    expect(dropLooksWrong(50, 11)).toBe(true);
+    expect(dropLooksWrong(4940, 1000)).toBe(true);
   });
 });

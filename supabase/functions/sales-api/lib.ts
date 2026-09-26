@@ -75,23 +75,27 @@ export function refuseMark(
 export interface CrmSettings {
   dispositions?: boolean;
   backlog_days?: number;
+  /** Older calls are written to HighLevel without its automations (false: kept in the cockpit only). */
+  quiet_backlog?: boolean;
 }
 
 /**
  * Whether a mark goes to HighLevel. Aziz, 2026-09-24: yes for today's
- * calls, running HighLevel's usual automations; old appointments are marked
- * in the cockpit only, so an old lead is never sent a no-show message.
+ * calls, running HighLevel's usual automations; an old lead is never sent a
+ * no-show message. Since 2026-09-26 an older call's mark goes too, quietly
+ * (toNotify false: the status changes, no automation runs), so HighLevel,
+ * B2B and the CEO cockpit read the truth without anyone being messaged.
  */
 export function crmDecision(
   s: CrmSettings | null | undefined,
   appt: Appointment,
   nowMs: number,
-): "write" | "off" | "skipped" {
+): "write" | "quiet" | "off" | "skipped" {
   if (!s?.dispositions) return "off";
   const days = Number.isFinite(Number(s.backlog_days)) ? Number(s.backlog_days) : 7;
   const start = appt.start_at ? Date.parse(appt.start_at) : Number.NaN;
   if (!Number.isFinite(start)) return "skipped";
-  if (nowMs - start > days * 86_400_000) return "skipped";
+  if (nowMs - start > days * 86_400_000) return s.quiet_backlog === false ? "skipped" : "quiet";
   return "write";
 }
 
