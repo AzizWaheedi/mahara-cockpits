@@ -1,6 +1,7 @@
 // bun test supabase/functions/sales-api
 import { describe, expect, test } from "bun:test";
 import {
+  dndFor,
   redact,
   type Appointment,
   applyFills,
@@ -260,5 +261,16 @@ describe("redact", () => {
     expect(redact("GET /x?api_key=abc123&page=2 -> 500")).toBe("GET /x?api_key=[key]&page=2 -> 500");
     expect(redact("Authorization: Bearer sk-live.abc_DEF")).toBe("Authorization: Bearer [key]");
     expect(redact("pit-1234-abcd refused")).toBe("[key] refused");
+  });
+});
+
+describe("do-not-disturb by channel", () => {
+  test("active and permanent both close the channel; inactive leaves it open", () => {
+    const c = (status: string) => ({ dndSettings: { WhatsApp: { status } } });
+    expect(dndFor(c("active"), "whatsapp")).toBe(true);
+    expect(dndFor(c("permanent"), "whatsapp")).toBe(true);
+    expect(dndFor(c("inactive"), "whatsapp")).toBe(false);
+    expect(dndFor(c("permanent"), "email")).toBe(false);
+    expect(dndFor({ dnd: true }, "email")).toBe(true);
   });
 });

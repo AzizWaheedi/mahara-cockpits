@@ -407,12 +407,16 @@ export function whatsappWindow(lastInboundAt: string | null | undefined, now: nu
   return { open: now < closes, closes_at: new Date(closes).toISOString(), last_inbound_at: new Date(t).toISOString() };
 }
 
-/** Do-not-disturb for one channel, as HighLevel records it on the contact. */
+/**
+ * Do-not-disturb for one channel, as HighLevel records it on the contact:
+ * "active", and "permanent" (a contact who must never be messaged there),
+ * the same two the sales desk honours.
+ */
 export function dndFor(contact: Record<string, unknown>, channel: Channel): boolean {
   if (contact.dnd === true) return true;
   const key = channel === "whatsapp" ? "WhatsApp" : channel === "email" ? "Email" : "SMS";
   const s = ((contact.dndSettings ?? {}) as Record<string, Record<string, unknown>>)[key];
-  return String(s?.status ?? "").toLowerCase() === "active";
+  return ["active", "permanent"].includes(String(s?.status ?? "").toLowerCase());
 }
 
 /** A plain-text email as simple, escaped HTML: paragraphs and line breaks. */
