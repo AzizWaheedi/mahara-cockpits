@@ -1,4 +1,6 @@
 import type { CallCenterReport } from "./callCenterContract";
+import type { WebinarReadiness } from "./webinarReadiness";
+import type { TargetSelection, WebinarTargets } from "./webinarTargetsModel";
 /**
  * The exact shape of every CEO section payload. Adapters on the backend fill
  * these; the /ceo screens read them. Change a shape here first.
@@ -1983,6 +1985,7 @@ export type WebinarCollectorRun = {
 
 /** One webinar round (a session and the registrants and spend that led to it). */
 export type WebinarRound = {
+  targetSelection?: TargetSelection;
   /** The round tag (webby-oct-2026), `round:<field>`, `untagged`, or `next`. */
   key: string;
   label: string;
@@ -2075,6 +2078,9 @@ export type WebinarRound = {
     costPerQualified: number | null;
     /** The survey's profit bands among this round's registrants, lowest first. */
     bands: { label: string; min: number; n: number }[];
+    /** Optional for cached payloads computed before survey breakdowns shipped. */
+    years?: { label: string; n: number }[];
+    work?: { label: string; n: number }[];
     threshold: number;
   };
   /** Stage 4: registrants whose booking came through a pitch link (utm_content=pitch1 or pitch2). */
@@ -2110,6 +2116,8 @@ export type WebinarRound = {
 };
 
 export type WebinarPayload = {
+  /** Read-only configuration checks, separate from a successful data pull. */
+  readiness?: WebinarReadiness;
   today: string;
   /** Newest session first. */
   rounds: WebinarRound[];
@@ -2144,19 +2152,8 @@ export type WebinarPayload = {
     status: "live" | "waiting" | "missing";
     note: string;
   }[];
-  /** The brief's targets for a $2,000 four-day flight. */
-  targets: {
-    plannedSpend: number;
-    costPerRegistration: { low: number; high: number; plan: number };
-    registrations: { low: number; high: number; plan: number };
-    pageConversion: { low: number; high: number; floor: number };
-    showRate: { low: number; high: number };
-    retentionAtPitch1: number;
-    attendeeToBooked: { low: number; high: number };
-    bookedToHeld: number;
-    closeRate: number;
-    killRule: { spendAfter: number; costPerRegistrationAbove: number };
-  };
+  targets: WebinarTargets;
+  targetStore?: "ready" | "unavailable";
   /** Gift survey responses stored so far; null when they cannot be read. */
   surveyResponses: number | null;
   /** Survey responses tied to a registrant, and the ones that match nobody. */
