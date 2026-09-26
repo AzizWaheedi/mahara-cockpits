@@ -15,7 +15,12 @@ This module
   the Fathom link in it, or for an intro by the Maqsam call id in its name;
 - reviews new demo calls (`review_new`) with Vince's own template and
   framework, on the desk's model (the VPS keys; Vince used a proxy on another
-  account, which the cockpit does not).
+  account, which the cockpit does not);
+- reviews any call a rep asks about (`review_asked`), phone calls included
+  (Aziz, 2026-09-26: "they can pick the ones they also want reviewed by the
+  AI"). A phone call is a setter's call, so it is scored on the intro card.
+  The automatic run leaves phone calls out: there are over a thousand, and
+  a rep picks the ones worth a review.
 """
 from __future__ import annotations
 
@@ -26,6 +31,13 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from . import http
+from .recordings import is_phone
+
+# Under this, a transcript is a greeting and a callback time, not a call a
+# reviewer can score part by part.
+MIN_ASKED_CHARS = 1500
+TOO_SHORT_TO_REVIEW = ("the call's transcript is {n:,} characters, under the 1,500 a review needs, "
+                       "so there is not enough of the call to score")
 
 ITEM = re.compile(r"^\*?\s*(?:\d+\.\s*)?(?P<name>[^*\n]+?)\s+[—–-]\s+(?P<score>\d+(?:\.\d+)?)\s*/\s*(?P<max>\d+)\s*\*?\s*$")
 GRADE = re.compile(r"\bGrade\s*:?\s*\*?\s*(?P<score>\d+(?:\.\d+)?)\s*/\s*(?P<max>\d+)", re.I)
@@ -337,13 +349,17 @@ def build_prompt(kind: str, knowledge: Path, *, name: str, rep: str, day: str, l
 
 
 def due(sb: Any, *, since: datetime, min_chars: int, limit: int) -> list[dict[str, Any]]:
-    """Demo calls since `since` with a transcript long enough and no review yet."""
+    """Demo calls since `since` with a transcript long enough and no review
+    yet. Phone calls are left out: they are reviewed when a rep asks. (A null
+    source is a row the Fathom step wrote.)"""
     rows = sb.select(
         "cockpit_sales_recordings",
         "select=recording_id,title,recorded_by,started_at,share_url,contact_id,appointment_id,transcript_path,"
-        f"transcript_chars&started_at=gte.{http.quote(since.isoformat())}&transcript_path=not.is.null"
-        f"&transcript_chars=gte.{min_chars}&order=started_at.desc&limit=200",
+        f"transcript_chars,source,kind&started_at=gte.{http.quote(since.isoformat())}&transcript_path=not.is.null"
+        f"&transcript_chars=gte.{min_chars}&or=(source.is.null,source.neq.maqsam)"
+        "&order=started_at.desc&limit=200",
     )
+    rows = [r for r in rows if not is_phone(r)]
     if not rows:
         return []
     ids = ",".join('"' + str(r["recording_id"]) + '"' for r in rows)
@@ -353,8 +369,11 @@ def due(sb: Any, *, since: datetime, min_chars: int, limit: int) -> list[dict[st
 
 
 def kind_of(rec: dict[str, Any], appointment_type: Optional[str]) -> str:
-    """intro or demo: the matched appointment says; else the title does
-    ("مكالمة تعريفية" is the intro call); else it is a demo."""
+    """intro or demo. A phone call is a setter's call, so the intro card;
+    else the matched appointment says; else the title does ("مكالمة تعريفية"
+    is the intro call); else it is a demo."""
+    if is_phone(rec):
+        return "intro"
     if appointment_type in ("intro", "demo"):
         return appointment_type
     title = str(rec.get("title") or "").lower()
@@ -362,8 +381,9 @@ def kind_of(rec: dict[str, Any], appointment_type: Optional[str]) -> str:
 
 
 def review_one(sb: Any, p: Any, rec: dict[str, Any], rep_of: dict[str, dict[str, Any]], *,
-               knowledge: Path, timeout: float = 900) -> dict[str, Any]:
-    """Review one call with Vince's template and framework; the row saved."""
+               knowledge: Path, timeout: float = 900, min_chars: int = 0) -> dict[str, Any]:
+    """Review one call with Vince's template and framework; the row saved.
+    A transcript under `min_chars` is refused before the model is asked."""
     rid = str(rec["recording_id"])
     appt_type = None
     if rec.get("appointment_id"):
@@ -374,6 +394,8 @@ def review_one(sb: Any, p: Any, rec: dict[str, Any], rep_of: dict[str, dict[str,
     lead = sb.lead(str(rec.get("contact_id") or "")) if rec.get("contact_id") else None
     rep = rep_of.get(str(rec.get("recorded_by") or "").lower())
     transcript = sb.download_from("sales-calls", str(rec["transcript_path"])).decode("utf-8", "replace")
+    if len(transcript.strip()) < min_chars:
+        raise ValueError(TOO_SHORT_TO_REVIEW.format(n=len(transcript.strip())))
     started = str(rec.get("started_at") or "")
     day = (datetime.fromisoformat(started.replace("Z", "+00:00")) + timedelta(hours=3)).date().isoformat() \
         if started else ""
@@ -394,9 +416,11 @@ def review_one(sb: Any, p: Any, rec: dict[str, Any], rep_of: dict[str, dict[str,
     if out is None:
         raise ValueError(f"the model did not return a scored log for {rid}")
     row = {
+        # "desk:maqsam:<call id>" for a phone call, as the table's comment has it.
         "source_ref": f"desk:{rid}",
         "source": "desk",
         "recording_id": rid,
+        "maqsam_call_id": rid.split(":", 1)[1] if is_phone(rec) and rid.startswith("maqsam:") else None,
         "contact_id": rec.get("contact_id"),
         "call_type": kind,
         "rep_name": (rep or {}).get("display_name") or rec.get("recorded_by"),
@@ -423,7 +447,7 @@ def _rep_index(sb: Any) -> dict[str, dict[str, Any]]:
 
 
 REC_COLS = ("select=recording_id,title,recorded_by,started_at,share_url,contact_id,appointment_id,"
-            "transcript_path,transcript_chars")
+            "transcript_path,transcript_chars,source,kind")
 
 
 def review_asked(sb: Any, p: Any, log: Callable[[str], None], *, knowledge: Path, limit: int,
@@ -447,7 +471,11 @@ def review_asked(sb: Any, p: Any, log: Callable[[str], None], *, knowledge: Path
                 recs = sb.select("cockpit_sales_recordings", f"{REC_COLS}&recording_id=eq.{http.quote(rid)}&limit=1")
                 if not recs or not recs[0].get("transcript_path"):
                     raise ValueError("the call has no transcript in the cockpit")
-                row = review_one(sb, p, recs[0], rep_of, knowledge=knowledge, timeout=timeout)
+                chars = recs[0].get("transcript_chars")
+                if chars is not None and int(chars) < MIN_ASKED_CHARS:
+                    raise ValueError(TOO_SHORT_TO_REVIEW.format(n=int(chars)))
+                row = review_one(sb, p, recs[0], rep_of, knowledge=knowledge, timeout=timeout,
+                                 min_chars=MIN_ASKED_CHARS)
                 reviewed += 1
                 log(f"reviews: asked {rid} scored {row['score']:.0f}/{row['score_max']:.0f}")
             sb.patch("cockpit_sales_review_asks", f"id=eq.{http.quote(aid)}",

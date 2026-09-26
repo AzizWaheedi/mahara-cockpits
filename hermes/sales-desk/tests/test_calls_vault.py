@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -62,7 +63,9 @@ class Parsing(unittest.TestCase):
         self.assertEqual(t.isoformat(), "2026-08-10T09:05:00+00:00")
 
 
-class Run(unittest.TestCase):
+class VaultCase(unittest.TestCase):
+    """A synthetic vault and cockpit; the tests are in the classes below."""
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.vault = Path(self.tmp.name)
@@ -89,6 +92,8 @@ class Run(unittest.TestCase):
                 self.sb, self.vault, lambda _m: None,
                 upload=lambda path, blob: self.sb.upload_to("sales-calls", path, blob, "text/markdown"), **kw)
 
+
+class Run(VaultCase):
     def test_calls_land_matched_with_their_transcripts(self):
         self.write("a.md", note(rid="11"))
         # The lead joined from the link: nobody from outside on the invite, but
@@ -133,8 +138,10 @@ class Run(unittest.TestCase):
         self.pg.put("cockpit_sales_recordings", {
             "recording_id": "55", "share_url": "https://fathom.video/share/x", "contact_id": "c-lina",
             "matched_by": "email", "summary": None})
-        self.write("e.md", note(rid="55", kind="external"))
-        self.write("f.md", note(rid="66", kind="external"))  # the desk never saw it: not a new row
+        # Someone from outside who is not a lead: the vault could not place them.
+        partner = '["Rami Rep (rami@maharamedia.com)", "Pat Partner (pat@partner.example)"]'
+        self.write("e.md", note(rid="55", kind="external", people=partner))
+        self.write("f.md", note(rid="66", kind="external", people=partner))  # the desk never saw it: not a new row
         out = self.run_it()
         row = self.pg.one("cockpit_sales_recordings", recording_id="55")
         self.assertIn("Meeting Purpose", row["summary"])
@@ -148,6 +155,87 @@ class Run(unittest.TestCase):
         self.assertEqual(out["rows"], 1)
         self.assertIsNone(self.pg.one("cockpit_sales_recordings", recording_id="11"))
         self.assertEqual(self.pg.objects, {})
+
+
+class OutsiderJoined(VaultCase):
+    """A lead who joined from the link is on no invite. The call is a sales
+    call all the same when someone from outside was on it."""
+
+    ONLY_US = '["Rami Rep (rami@maharamedia.com)"]'
+    NOW = datetime(2026, 8, 20, tzinfo=timezone.utc)
+
+    def test_the_note_the_cockpit_and_fathom_each_show_an_outsider_joined(self):
+        # The vault files an impromptu meeting as sales only when Fathom saw an outsider on it.
+        self.write("a.md", note(rid="71", title="Impromptu Zoom Meeting", people=self.ONLY_US, date="2026-08-12"))
+        # A booking-page title: the note cannot say. Fathom is asked, once.
+        self.write("b.md", note(rid="72", title="مكالمة حصول المشاريع", people=self.ONLY_US, date="2026-08-14"))
+        self.write("c.md", note(rid="73", title="مكالمة حصول المشاريع", people=self.ONLY_US, date="2026-08-15"))
+        # Already a cockpit call (the Fathom step kept it): it stays one.
+        self.pg.put("cockpit_sales_recordings", {"recording_id": "74", "matched_by": "none", "source": None})
+        self.write("d.md", note(rid="74", title="Demo", people=self.ONLY_US, date="2026-08-16"))
+        # Older than the days Fathom is asked about: a team meeting, as before.
+        self.write("e.md", note(rid="75", title="Demo practice", people=self.ONLY_US, date="2026-06-01"))
+        asked = []
+
+        def fathom(since):
+            asked.append(since)
+            return {"72", "999"}
+
+        out = self.run_it(fathom_outsiders=fathom, fathom_days=14, now=self.NOW)
+        self.assertEqual(asked, [datetime(2026, 8, 13, 9, 0, tzinfo=timezone.utc)])
+        self.assertEqual(out["outsider_by"], {"note": 1, "cockpit": 1, "fathom": 1})
+        self.assertEqual((out["team"], out["rows"], out["unmatched"]), (2, 3, 3))
+        self.assertIn("asked about 2, 1 had someone from outside", out["fathom"])
+        for rid in ("71", "72", "74"):
+            row = self.pg.one("cockpit_sales_recordings", recording_id=rid)
+            self.assertEqual((row["matched_by"], row["contact_id"], row["kind"]), ("none", None, "sales"))
+            self.assertEqual(row["transcript_path"], f"{rid}.md")
+        for rid in ("73", "75"):
+            self.assertIsNone(self.pg.one("cockpit_sales_recordings", recording_id=rid))
+
+    def test_an_impromptu_title_with_a_sales_word_proves_nothing(self):
+        self.assertTrue(calls_vault.outsider_in_note({"kind": "sales", "title": "Impromptu Google Meet Meeting"}))
+        self.assertFalse(calls_vault.outsider_in_note({"kind": "sales", "title": "Impromptu demo"}))
+        self.assertFalse(calls_vault.outsider_in_note({"kind": "team", "title": "Impromptu Zoom Meeting"}))
+
+    def test_fathom_is_not_asked_when_nothing_is_in_doubt_and_a_refusal_costs_nothing_else(self):
+        self.write("a.md", note(rid="71", title="Impromptu Zoom Meeting", people=self.ONLY_US, date="2026-08-12"))
+        out = self.run_it(fathom_outsiders=lambda _s: self.fail("Fathom asked for nothing"), now=self.NOW)
+        self.assertEqual((out["rows"], out["fathom"]), (1, "not needed"))
+        self.write("b.md", note(rid="72", title="مكالمة حصول المشاريع", people=self.ONLY_US, date="2026-08-14"))
+
+        def refused(_since):
+            raise RuntimeError("Fathom answered 401")
+
+        out = self.run_it(fathom_outsiders=refused, now=self.NOW)
+        self.assertEqual((out["rows"], out["team"]), (1, 1))
+        self.assertTrue(out["fathom"].startswith("could not be asked"))
+
+
+class LeadOnTheInvite(VaultCase):
+    """The vault files as `external` anyone outside it cannot place. A lead on
+    the invite places them: that note is a sales call."""
+
+    def test_an_external_note_whose_invitee_is_a_lead_comes_in_matched_by_email(self):
+        self.write("a.md", note(rid="81", kind="external", title="Lina and Rami"))
+        self.write("b.md", note(rid="82", kind="external", title="Rami and a partner",
+                                people='["Rami Rep (rami@maharamedia.com)", "Pat (pat@partner.example)"]'))
+        self.write("c.md", note(rid="83", kind="external", title="Launch call"))  # client service
+        self.write("d.md", note(rid="84", kind="client", title="Onboarding"))
+        out = self.run_it()
+        self.assertEqual((out["lead_calls"], out["new_lead_calls"], out["rows"]), (1, 1, 1))
+        row = self.pg.one("cockpit_sales_recordings", recording_id="81")
+        self.assertEqual((row["contact_id"], row["matched_by"], row["kind"], row["source"]),
+                         ("c-lina", "email", "sales", "vault"))
+        self.assertIn("sales-calls/81.md", self.pg.objects)
+        for rid in ("82", "83", "84"):
+            self.assertIsNone(self.pg.one("cockpit_sales_recordings", recording_id=rid))
+
+    def test_the_vault_lists_every_recording_it_holds(self):
+        self.write("a.md", note(rid="81", kind="external"))
+        self.write("b.md", note(rid="82", kind="team"))
+        self.write("_index.md", "not a call")
+        self.assertEqual(calls_vault.vault_ids(self.vault), {"81", "82"})
 
 
 if __name__ == "__main__":

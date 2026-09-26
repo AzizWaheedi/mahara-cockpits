@@ -29,6 +29,8 @@ PEOPLE = "cockpit_sales_people"
 STATUS = "cockpit_sales_worker_status"
 SETTINGS = "cockpit_sales_settings"
 TABLES = (REQUESTS, PROPOSALS, LEADS, RECORDINGS, APPOINTMENTS, PEOPLE, STATUS, SETTINGS)
+# The private bucket every call's transcript is kept in (20260924m).
+CALLS_BUCKET = "sales-calls"
 
 RECORDING_COLUMNS = (
     "recording_id", "title", "recorded_by", "started_at", "duration_s", "share_url",
@@ -262,7 +264,12 @@ class Supabase:
 
     # ---- recordings ------------------------------------------------------
     def recordings_of(self, contact_id: str) -> list[dict[str, Any]]:
+        """The lead's recorded calls a proposal can be drafted from, newest first.
+        Phone calls are left out: a phone call is never the demo, and a lead
+        a setter rang twenty times would otherwise push the demo off the list.
+        (A null source is a row the Fathom step wrote.)"""
         return self.select(RECORDINGS, f"select=*&contact_id=eq.{http.quote(contact_id)}"
+                                       "&or=(source.is.null,source.neq.maqsam)"
                                        "&order=started_at.desc&limit=20")
 
     def recording(self, recording_id: str) -> Optional[dict[str, Any]]:

@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 os.environ["SALES_NO_KEY_FILES"] = "1"
@@ -17,6 +18,10 @@ os.environ["SALES_NO_KEY_FILES"] = "1"
 from desk import http, reviews  # noqa: E402
 from desk.supabase import Supabase  # noqa: E402
 from tests.fakes import FakePostgrest, FakeProvider  # noqa: E402
+
+# A stored call long enough to review (an asked review needs 1,500 characters).
+CALL_TEXT = ("**Rami** (00:00:01): Hello\n"
+             + "**Lina** (00:00:05): We sign two villas a month and want more.\n" * 40).encode("utf-8")
 
 PARTS = ["Frame Set Execution", "Finding The Pain", "Understanding Current State", "Exhausting Past Attempts",
          "Cost Of Inaction", "Find The Goal", "Transitioning To The Pitch", "Pitching Your Product",
@@ -32,6 +37,16 @@ def demo_log(*, link: str = "https://fathom.video/share/AbC123", closer: str = "
             f"{items}\n\n---\n\n*Grade: 82/150*\n\n---\n\n*Pros:*\n\n- You asked for the budget early.\n\n---\n\n"
             "*Feedback:*\n\n*Frame Set — too long*\nScript to use: *\"Let us start with you.\"*\n\n---\n\n"
             "> React to this message with a ✅ to confirm you have read the feedback.\n")
+
+
+INTRO_PARTS = ["Frame Set Execution", "Rapport", "Finding The Pain", "Current State", "Budget", "Timeline",
+               "Decision Maker", "Booking The Demo", "Confidence", "Tonality"]
+
+
+def intro_log() -> str:
+    items = "\n".join(f"*{i}. {p} — 6/10*" for i, p in enumerate(INTRO_PARTS, 1))
+    return (f"# INTRO Call Coaching Log\n\n*Setter Name:*Rami Rep\n\n---\n\n{items}\n\n*Grade: 60/100*\n\n"
+            "*Pros:*\n\n- You booked the demo.\n\n*Feedback:*\n\n- Ask the budget earlier.\n")
 
 
 class Parse(unittest.TestCase):
@@ -111,7 +126,7 @@ class NewReviews(unittest.TestCase):
             "recording_id": "11", "title": "Demo", "recorded_by": "rami@maharamedia.com",
             "started_at": "2026-09-01T09:00:00+00:00", "share_url": "https://fathom.video/share/x",
             "contact_id": "c-lina", "appointment_id": None, "transcript_path": "11.md", "transcript_chars": 9000})
-        self.pg.objects["sales-calls/11.md"] = ("text/markdown", b"**Rami** (00:00:01): Hello")
+        self.pg.objects["sales-calls/11.md"] = ("text/markdown", CALL_TEXT)
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -169,6 +184,45 @@ class NewReviews(unittest.TestCase):
         row = self.pg.one("cockpit_sales_review_asks", id="q1")
         self.assertEqual(row["state"], "failed")
         self.assertIn("no transcript", row["error"])
+
+    def phone_call(self, text: bytes = CALL_TEXT, chars: Any = None) -> None:
+        self.pg.put("cockpit_sales_recordings", {
+            "recording_id": "maqsam:77", "title": "Phone call, outbound", "recorded_by": "rami@maharamedia.com",
+            "started_at": "2026-09-20T09:00:00+00:00", "share_url": None, "contact_id": "c-lina",
+            "appointment_id": None, "transcript_path": "maqsam/77.md",
+            "transcript_chars": len(text) if chars is None else chars, "source": "maqsam", "kind": "phone"})
+        self.pg.objects["sales-calls/maqsam/77.md"] = ("text/markdown", text)
+
+    def test_a_phone_call_a_rep_asks_about_is_scored_on_the_intro_card(self):
+        self.phone_call()
+        out, p = self.ask([intro_log()], recording_id="maqsam:77")
+        self.assertEqual((out["reviewed"], out["failed"]), (1, 0))
+        self.assertIn("intro-coaching-log-template.md", p.calls[0]["system"])
+        self.assertNotIn("# coaching-log-template.md", p.calls[0]["system"])
+        row = self.pg.one("cockpit_sales_reviews", source_ref="desk:maqsam:77")
+        self.assertEqual((row["call_type"], row["maqsam_call_id"], row["score_max"]), ("intro", "77", 100.0))
+
+    def test_an_asked_review_needs_fifteen_hundred_characters_and_says_so(self):
+        self.phone_call(text=b"[00:01] Rep: Hello\n[00:03] Lead: Call me tomorrow.")
+        out, p = self.ask([], recording_id="maqsam:77")
+        self.assertEqual((out["reviewed"], out["failed"], len(p.calls)), (0, 1, 0))
+        row = self.pg.one("cockpit_sales_review_asks", id="q1")
+        self.assertEqual(row["state"], "failed")
+        self.assertIn("under the 1,500 a review needs", row["error"])
+        # A stored count that is missing still meets the same rule, on the words themselves.
+        self.pg.put("cockpit_sales_review_asks", {"id": "q1", "recording_id": "maqsam:77", "state": "queued"})
+        self.phone_call(text=b"[00:01] Rep: Hello", chars=None)
+        self.pg.one("cockpit_sales_recordings", recording_id="maqsam:77")["transcript_chars"] = None
+        out, p = self.ask([], recording_id="maqsam:77")
+        self.assertEqual((out["failed"], len(p.calls)), (1, 0))
+
+    def test_the_automatic_run_leaves_phone_calls_to_the_reps(self):
+        self.phone_call(text=CALL_TEXT * 3)
+        self.pg.one("cockpit_sales_recordings", recording_id="11")["started_at"] = "2026-08-01T00:00:00+00:00"
+        out, _ = self.run_it([])
+        self.assertEqual(out["due"], 0)
+        self.assertEqual(reviews.kind_of({"source": "maqsam"}, "demo"), "intro")
+        self.assertEqual(reviews.kind_of({"source": "vault", "title": "Demo"}, None), "demo")
 
 
 if __name__ == "__main__":
