@@ -37,7 +37,9 @@ export default function Lightbox({
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    // Clear of the status bar and the home bar in the installed app, so the
+    // title and the close button are never under the clock.
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]">
       <button
         type="button"
         aria-label="Close"
@@ -51,19 +53,22 @@ export default function Lightbox({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="panel relative flex max-h-full w-full max-w-lg flex-col overflow-hidden"
+        className="relative flex max-h-full w-full max-w-lg flex-col overflow-hidden rounded-2xl border bg-card"
       >
-        <header className="flex items-center gap-3 border-b hairline px-4 py-2.5">
-          <h2 className="min-w-0 flex-1 truncate text-sm font-medium">
+        <header className="flex items-center gap-2 border-b py-1 pr-1 pl-4">
+          <h2
+            dir="auto"
+            className="min-w-0 flex-1 truncate text-sm font-medium"
+          >
             {title}
           </h2>
           <button
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="muted"
+            className="grid size-10 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
-            <X className="size-4" strokeWidth={2} />
+            <X aria-hidden className="size-4" strokeWidth={2} />
           </button>
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>

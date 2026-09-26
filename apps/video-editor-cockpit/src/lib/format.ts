@@ -2,9 +2,12 @@
 
 const KUWAIT = "Asia/Kuwait";
 
+/** What an empty value reads as, in words rather than dashes. */
+const NOT_SET = "Not set";
+
 export function clock(seconds: number | null | undefined): string {
   if (seconds === null || seconds === undefined || Number.isNaN(seconds))
-    return "--:--";
+    return NOT_SET;
   const s = Math.max(0, Math.floor(seconds));
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
@@ -20,9 +23,9 @@ export function minutes(seconds: number | null | undefined): string {
 }
 
 export function day(iso: string | null | undefined): string {
-  if (!iso) return "--";
+  if (!iso) return NOT_SET;
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "--";
+  if (Number.isNaN(d.getTime())) return NOT_SET;
   return d.toLocaleDateString("en-GB", {
     timeZone: KUWAIT,
     day: "numeric",
@@ -31,9 +34,9 @@ export function day(iso: string | null | undefined): string {
 }
 
 export function moment(iso: string | null | undefined): string {
-  if (!iso) return "--";
+  if (!iso) return NOT_SET;
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "--";
+  if (Number.isNaN(d.getTime())) return NOT_SET;
   return d.toLocaleString("en-GB", {
     timeZone: KUWAIT,
     day: "numeric",

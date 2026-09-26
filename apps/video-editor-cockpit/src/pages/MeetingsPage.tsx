@@ -1,6 +1,15 @@
-import { CalendarDays, ExternalLink } from "lucide-react";
-import { useMemo } from "react";
-import { Empty, Fold, Problem, Prose, Spinner } from "../components/bits";
+import { useMemo, useState } from "react";
+import {
+  Empty,
+  Fold,
+  Out,
+  Page,
+  PageHeader,
+  Problem,
+  Prose,
+  Spinner,
+} from "../components/bits";
+import { Button } from "../components/ui/button";
 import { useMeetings } from "../lib/data";
 import { moment } from "../lib/format";
 
@@ -11,7 +20,12 @@ import { moment } from "../lib/format";
  * here: an internal call can carry pay, performance or a disagreement about
  * somebody, so being on the editor list is not a reason to read a meeting
  * you were not in. Admins see all of them.
+ *
+ * The last two weeks first; older ones are one tap away, not sixty cards
+ * down the page.
  */
+const RECENT_DAYS = 14;
+
 function minutesBetween(a: string | null, b: string | null): string {
   if (!a || !b) return "";
   const ms = new Date(b).getTime() - new Date(a).getTime();
@@ -21,25 +35,36 @@ function minutesBetween(a: string | null, b: string | null): string {
 
 export default function MeetingsPage() {
   const meetings = useMeetings();
+  const [showOlder, setShowOlder] = useState(false);
 
   const mine = useMemo(() => meetings.data ?? [], [meetings.data]);
+  const cutoff = useMemo(() => Date.now() - RECENT_DAYS * 86_400_000, []);
+  const recent = useMemo(
+    () =>
+      mine.filter(
+        m => m.started_at && new Date(m.started_at).getTime() >= cutoff,
+      ),
+    [mine, cutoff],
+  );
+  const shown = showOlder ? mine : recent;
+  const older = mine.length - recent.length;
+
+  // What came out of the meetings on screen, so the list and the actions
+  // above it cover the same stretch of time.
   const actions = useMemo(
     () =>
-      mine.flatMap(m =>
+      shown.flatMap(m =>
         (m.action_items ?? []).map(a => ({ ...a, from: m.title })),
       ),
-    [mine],
+    [shown],
   );
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-8">
-      <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Meetings</h1>
-        <p className="muted mt-1 text-sm">
-          The team meetings you were on, recorded by Fathom. Client calls are
-          not here.
-        </p>
-      </header>
+    <Page>
+      <PageHeader
+        title="Meetings"
+        sub="The team meetings you were on, recorded by Fathom. Client calls are not here."
+      />
 
       {meetings.error && (
         <Problem>These could not be read: {meetings.error}</Problem>
@@ -49,85 +74,85 @@ export default function MeetingsPage() {
         <Empty>No team meetings you were on in the last few weeks.</Empty>
       )}
 
-      {actions.length ? (
-        <section className="panel mb-5 overflow-hidden">
-          <header className="border-b hairline px-4 py-2.5">
-            <h2 className="text-sm font-semibold tracking-tight">
+      <div className="space-y-4 sm:space-y-6">
+        {actions.length ? (
+          <section className="overflow-hidden rounded-2xl border bg-card">
+            <h2 className="border-b px-4 py-3 text-[15px] font-semibold tracking-tight sm:px-6">
               What came out of them
             </h2>
-          </header>
-          <ul className="divide-y divide-[color:var(--border)]">
-            {actions.slice(0, 12).map(a => (
-              <li
-                key={`${a.from}-${a.text}`}
-                className="flex gap-3 px-4 py-2.5 text-sm"
-              >
-                <span
-                  aria-hidden
-                  className="mt-1.5 size-1.5 shrink-0 rounded-full"
-                  style={{ background: "var(--primary)" }}
-                />
-                <span dir="auto" className="rtl-safe min-w-0 flex-1">
-                  {a.text}
-                </span>
-                {a.for ? (
-                  <span className="muted shrink-0 text-xs">{a.for}</span>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-
-      <ul className="space-y-3">
-        {mine.map(m => (
-          <li key={m.recording_id} className="panel overflow-hidden">
-            <div className="flex flex-wrap items-start gap-3 px-4 py-3">
-              <CalendarDays
-                className="mt-0.5 size-4 shrink-0"
-                strokeWidth={1.75}
-                style={{ color: "var(--primary)" }}
-              />
-              <div className="min-w-0 flex-1">
-                <p dir="auto" className="text-sm font-medium">
-                  {m.title || "Untitled meeting"}
-                </p>
-                <p className="muted mt-0.5 text-xs">
-                  {moment(m.started_at)}
-                  {minutesBetween(m.started_at, m.ended_at)
-                    ? ` · ${minutesBetween(m.started_at, m.ended_at)}`
-                    : ""}
-                  {m.host ? ` · recorded by ${m.host}` : ""}
-                </p>
-                {m.invitees?.length ? (
-                  <p className="muted mt-1 truncate text-xs">
-                    {m.invitees.map(i => i.name || i.email).join(", ")}
-                  </p>
-                ) : null}
-              </div>
-              {m.share_url || m.url ? (
-                <a
-                  href={m.share_url ?? m.url ?? ""}
-                  target="_blank"
-                  rel="noreferrer noopener"
-                  className="flex shrink-0 items-center gap-1 text-xs text-[color:var(--primary)] underline underline-offset-2"
+            <ul className="divide-y">
+              {actions.slice(0, 12).map(a => (
+                <li
+                  key={`${a.from}-${a.text}`}
+                  className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-3 text-sm sm:px-6"
                 >
-                  Watch
-                  <ExternalLink className="size-3" strokeWidth={2} />
-                </a>
-              ) : null}
-            </div>
+                  <span dir="auto" className="rtl-safe min-w-0 flex-1">
+                    {a.text}
+                  </span>
+                  {a.for ? (
+                    <span className="basis-full text-xs text-muted-foreground sm:basis-auto">
+                      {a.for}
+                    </span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
 
-            {m.summary_md ? (
-              <div className="px-4 pb-1">
-                <Fold title="Summary">
-                  <Prose text={m.summary_md} />
-                </Fold>
-              </div>
-            ) : null}
-          </li>
-        ))}
-      </ul>
-    </div>
+        {!meetings.loading && mine.length && !shown.length ? (
+          <Empty>No team meetings in the last {RECENT_DAYS} days.</Empty>
+        ) : null}
+
+        {shown.length ? (
+          <ul className="divide-y overflow-hidden rounded-2xl border bg-card">
+            {shown.map(m => {
+              const length = minutesBetween(m.started_at, m.ended_at);
+              return (
+                <li key={m.recording_id} className="px-4 py-3 sm:px-6">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <p
+                      dir="auto"
+                      className="min-w-0 flex-1 text-sm font-medium"
+                    >
+                      {m.title || "Untitled meeting"}
+                    </p>
+                    {m.share_url || m.url ? (
+                      <span className="text-xs font-medium">
+                        <Out href={m.share_url ?? m.url}>Watch</Out>
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {moment(m.started_at)}
+                    {length ? ` · ${length}` : ""}
+                    {m.host ? ` · recorded by ${m.host}` : ""}
+                  </p>
+                  {m.summary_md ? (
+                    <div className="mt-1">
+                      <Fold title="Summary">
+                        <Prose text={m.summary_md} />
+                      </Fold>
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        ) : null}
+
+        {older > 0 ? (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowOlder(o => !o)}
+          >
+            {showOlder
+              ? `Only the last ${RECENT_DAYS} days`
+              : `Show older (${older})`}
+          </Button>
+        ) : null}
+      </div>
+    </Page>
   );
 }

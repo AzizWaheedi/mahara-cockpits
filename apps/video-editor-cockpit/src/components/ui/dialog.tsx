@@ -68,7 +68,7 @@ export function Dialog({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]">
       <button
         type="button"
         aria-label="Close"
@@ -94,7 +94,7 @@ export function DialogContent({
     <div
       role="dialog"
       aria-modal="true"
-      className={`panel w-full p-5 shadow-2xl ${className}`}
+      className={`w-full rounded-2xl border bg-card p-4 sm:p-6 ${className}`}
     >
       {children}
     </div>
@@ -131,7 +131,9 @@ export function DialogDescription({
   className?: string;
   children: ReactNode;
 }) {
-  return <p className={`muted text-sm ${className}`}>{children}</p>;
+  return (
+    <p className={`text-sm text-muted-foreground ${className}`}>{children}</p>
+  );
 }
 
 export function DialogFooter({ children }: { children: ReactNode }) {
@@ -147,9 +149,9 @@ export function DialogClose({ onClick }: { onClick?: () => void }) {
       type="button"
       onClick={onClick}
       aria-label="Close"
-      className="muted absolute right-3 top-3"
+      className="absolute top-2 right-2 grid size-10 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
     >
-      <X className="size-4" />
+      <X aria-hidden className="size-4" />
     </button>
   );
 }

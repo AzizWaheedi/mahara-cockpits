@@ -86,6 +86,42 @@ function Check() {
   );
 }
 
+function Chevron({ back = false }: { back?: boolean }) {
+  return (
+    <svg viewBox="0 0 12 12" aria-hidden="true">
+      <path
+        d={back ? "M7.5 2.5 4 6l3.5 3.5" : "M4.5 2.5 8 6 4.5 9.5"}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** A change asked, on a frame in the reel: a drawn mark, not a typed "!". */
+function Bang() {
+  return (
+    <svg viewBox="0 0 12 12" aria-hidden="true">
+      <path
+        d="M6 2.75v4"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+      <circle cx="6" cy="9.1" r="1" fill="currentColor" />
+    </svg>
+  );
+}
+
+/**
+ * Only a decision gets a pill. Before one is made the two buttons under
+ * the title already say it is waiting, so a "Waiting for you" pill said it
+ * twice.
+ */
 function Status({ decision }: { decision: Item["decision"] }) {
   if (decision === "approved")
     return (
@@ -96,12 +132,7 @@ function Status({ decision }: { decision: Item["decision"] }) {
     );
   if (decision === "changes")
     return <span className="pill change mono">Change asked</span>;
-  return (
-    <span className="pill wait mono">
-      <i aria-hidden="true" />
-      Waiting for you
-    </span>
-  );
+  return null;
 }
 
 /** A frame for the reel: the poster, the still itself, or the film's own
@@ -180,7 +211,8 @@ function PostStage({
           className="post"
           style={{
             aspectRatio: String(ratio),
-            width: `min(calc(100vw - 26px), calc(64dvh * ${ratio}), 1200px)`,
+            // The stage's own gutter each side, and the 1px ring.
+            width: `min(calc(100vw - 2 * var(--gutter, 16px) - 2px), calc(64dvh * ${ratio}), 1200px)`,
           }}
         >
           <div
@@ -210,11 +242,10 @@ function PostStage({
               </div>
             ))}
           </div>
+          {/* No "2 / 5" counter: the dots under the post already say where
+              you are. */}
           {media.length > 1 ? (
             <>
-              <span className="slideCount mono">
-                {slide + 1} / {media.length}
-              </span>
               <button
                 type="button"
                 className="slideNav prev"
@@ -222,7 +253,7 @@ function PostStage({
                 disabled={slide === 0}
                 onClick={() => go(slide - 1)}
               >
-                ‹
+                <Chevron back />
               </button>
               <button
                 type="button"
@@ -231,7 +262,7 @@ function PostStage({
                 disabled={slide >= media.length - 1}
                 onClick={() => go(slide + 1)}
               >
-                ›
+                <Chevron />
               </button>
             </>
           ) : null}
@@ -322,6 +353,8 @@ export default function ReviewPage() {
   const [name, setName] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  /** Said under the buttons when a decision did not save, never in a pop-up. */
+  const [problem, setProblem] = useState<string | null>(null);
   const [slide, setSlide] = useState(0);
   const video = useRef<HTMLVideoElement>(null);
 
@@ -416,6 +449,7 @@ export default function ReviewPage() {
   async function decide(decision: "approved" | "changes" | null) {
     if (!item) return;
     setBusy(true);
+    setProblem(null);
     try {
       const { data } = await supabase.rpc("review_decide", {
         p_token: token,
@@ -436,7 +470,7 @@ export default function ReviewPage() {
         p_name: name.trim() || null,
       });
       if (!(data as { ok?: boolean } | null)?.ok) {
-        window.alert("That did not save. Refresh the page and try once more.");
+        setProblem("That did not save. Refresh the page and try once more.");
         return;
       }
       setNote("");
@@ -517,20 +551,23 @@ export default function ReviewPage() {
                 ? "We will send you the changes shortly."
                 : "You will have the next cut shortly."}
           </p>
-          <div className="stats">
-            <div className="stat">
-              <b>{approvedCount}</b>
-              <span className="mono">Approved</span>
-            </div>
-            {changeCount ? (
+          {/* With one item the sentence above already is the tally. */}
+          {items.length > 1 ? (
+            <div className="stats">
               <div className="stat">
-                <b>{changeCount}</b>
-                <span className="mono">
-                  {changeCount === 1 ? "Change asked" : "Changes asked"}
-                </span>
+                <b>{approvedCount}</b>
+                <span className="mono">Approved</span>
               </div>
-            ) : null}
-          </div>
+              {changeCount ? (
+                <div className="stat">
+                  <b>{changeCount}</b>
+                  <span className="mono">
+                    {changeCount === 1 ? "Change asked" : "Changes asked"}
+                  </span>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </section>
       ) : null}
 
@@ -658,6 +695,7 @@ export default function ReviewPage() {
                     className="btn link"
                     onClick={() => {
                       video.current?.pause();
+                      setProblem(null);
                       setAsking(true);
                     }}
                   >
@@ -723,7 +761,10 @@ export default function ReviewPage() {
                   <button
                     type="button"
                     className="btn quiet"
-                    onClick={() => setAsking(false)}
+                    onClick={() => {
+                      setProblem(null);
+                      setAsking(false);
+                    }}
                   >
                     Cancel
                   </button>
@@ -750,6 +791,7 @@ export default function ReviewPage() {
                   disabled={busy}
                   onClick={() => {
                     video.current?.pause();
+                    setProblem(null);
                     setAsking(true);
                   }}
                 >
@@ -757,6 +799,11 @@ export default function ReviewPage() {
                 </button>
               </div>
             )}
+            {problem ? (
+              <p className="alert" role="alert">
+                {problem}
+              </p>
+            ) : null}
           </section>
         </>
       ) : null}
@@ -797,6 +844,7 @@ export default function ReviewPage() {
                 onClick={() => {
                   setOpenIndex(i);
                   setAsking(false);
+                  setProblem(null);
                   setSlide(0);
                   setReopened(true);
                 }}
@@ -809,7 +857,7 @@ export default function ReviewPage() {
                   <span className="num mono">{two(i + 1)}</span>
                   {x.decision ? (
                     <span className={`mini ${x.decision}`} aria-hidden="true">
-                      {x.decision === "approved" ? <Check /> : "!"}
+                      {x.decision === "approved" ? <Check /> : <Bang />}
                     </span>
                   ) : null}
                 </span>

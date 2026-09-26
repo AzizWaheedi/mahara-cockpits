@@ -59,28 +59,38 @@ export function Toaster() {
       style={{ bottom: "calc(1rem + env(safe-area-inset-bottom, 0px))" }}
     >
       {shown.map(n => (
+        // A solid card, so the sentence stays readable over whatever is
+        // behind it; the colour sits on the icon, and a border, no shadow.
         <output
           key={n.id}
           aria-live={n.kind === "error" ? "assertive" : "polite"}
-          className={`panel pointer-events-auto flex w-full max-w-md items-start gap-2 px-3 py-2 text-[13px] shadow-lg ${
-            n.kind === "error" ? "callout-bad" : "callout-good"
+          className={`pointer-events-auto flex w-full max-w-md items-center gap-2 rounded-xl border bg-card py-1 pr-1 pl-3 text-sm ${
+            n.kind === "error" ? "border-destructive/40" : ""
           }`}
         >
           {n.kind === "error" ? (
-            <CircleAlert className="mt-0.5 size-4 shrink-0" strokeWidth={2} />
+            <CircleAlert
+              aria-hidden
+              className="txt-bad size-4 shrink-0"
+              strokeWidth={2}
+            />
           ) : (
-            <CircleCheck className="mt-0.5 size-4 shrink-0" strokeWidth={2} />
+            <CircleCheck
+              aria-hidden
+              className="txt-good size-4 shrink-0"
+              strokeWidth={2}
+            />
           )}
-          <span className="min-w-0 flex-1" dir="auto">
+          <span className="min-w-0 flex-1 py-1.5" dir="auto">
             {n.text}
           </span>
           <button
             type="button"
             onClick={() => drop(n.id)}
             aria-label="Dismiss"
-            className="shrink-0 opacity-70 hover:opacity-100"
+            className="grid size-10 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
-            <X className="size-3.5" strokeWidth={2.5} />
+            <X aria-hidden className="size-4" strokeWidth={2} />
           </button>
         </output>
       ))}

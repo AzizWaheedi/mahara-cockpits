@@ -1,11 +1,20 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router";
-import { Empty, Problem, Spinner } from "../components/bits";
+import {
+  chip,
+  Empty,
+  Page,
+  PageHeader,
+  Problem,
+  Spinner,
+} from "../components/bits";
+import { AnimatedSelect } from "../components/ui/animated-select";
 import { useAllAssets, useJobs, useStills } from "../lib/data";
 import { clock, minutes, shape } from "../lib/format";
 
 /**
- * Every clip the desk has read, in one wall.
+ * Every clip the desk has read, in one wall. Called Footage, as in the
+ * menu and on a job's own page.
  *
  * An editor cutting for one client wants to remember what exists for the
  * others: the drone pass shot last month, the interview nobody used. The job
@@ -21,7 +30,7 @@ export default function VideosPage() {
   const clientOf = useMemo(() => {
     const map = new Map<string, string>();
     for (const j of jobs.data ?? [])
-      map.set(j.task_id, j.client ?? "no client tag");
+      map.set(j.task_id, j.client ?? "No client tag");
     return map;
   }, [jobs.data]);
 
@@ -37,7 +46,7 @@ export default function VideosPage() {
     const counts = new Map<string, number>();
     for (const a of assets.data ?? []) {
       if (a.error) continue;
-      const name = clientOf.get(a.task_id) ?? "no client tag";
+      const name = clientOf.get(a.task_id) ?? "No client tag";
       counts.set(name, (counts.get(name) ?? 0) + 1);
     }
     return [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0]));
@@ -47,52 +56,38 @@ export default function VideosPage() {
   const totalSeconds = shown.reduce((n, a) => n + (a.seconds ?? 0), 0);
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-4 py-8">
-      <header className="mb-5">
-        <h1 className="text-2xl font-semibold tracking-tight">Videos</h1>
-        <p className="muted mt-1 text-sm">
-          Every clip the desk has read, across all jobs. {shown.length} files ·{" "}
-          {minutes(totalSeconds)}.
-        </p>
-      </header>
+    <Page wide>
+      <PageHeader
+        title="Footage"
+        sub={
+          <>
+            Every clip the desk has read, across all jobs.{" "}
+            <span className="tabular-nums">
+              {shown.length} {shown.length === 1 ? "file" : "files"} ·{" "}
+              {minutes(totalSeconds)}
+            </span>
+          </>
+        }
+      />
 
-      <div className="mb-5 flex flex-wrap items-center gap-1.5">
-        <button
-          type="button"
-          onClick={() => setClient("")}
-          aria-pressed={client === ""}
-          className={`rounded-full px-3 py-1.5 text-xs font-medium ${
-            client === ""
-              ? "bg-[color:var(--primary)] text-[color:var(--primary-foreground)]"
-              : "raised muted"
-          }`}
+      <div className="mb-6 flex flex-wrap items-center gap-2">
+        <AnimatedSelect
+          aria-label="Client"
+          value={client}
+          onChange={e => setClient(e.target.value)}
         >
-          Everyone
-        </button>
-        {clients.map(([name, n]) => (
-          <button
-            key={name}
-            type="button"
-            onClick={() => setClient(name)}
-            aria-pressed={client === name}
-            className={`rounded-full px-3 py-1.5 text-xs font-medium ${
-              client === name
-                ? "bg-[color:var(--primary)] text-[color:var(--primary-foreground)]"
-                : "raised muted"
-            }`}
-          >
-            {name} <span className="tabular-nums opacity-70">{n}</span>
-          </button>
-        ))}
+          <option value="">All clients</option>
+          {clients.map(([name, n]) => (
+            <option key={name} value={name}>
+              {name} ({n})
+            </option>
+          ))}
+        </AnimatedSelect>
         <button
           type="button"
           onClick={() => setOnlyWithSpeech(v => !v)}
           aria-pressed={onlyWithSpeech}
-          className={`ml-auto rounded-full px-3 py-1.5 text-xs font-medium ${
-            onlyWithSpeech
-              ? "bg-[color:var(--primary)] text-[color:var(--primary-foreground)]"
-              : "raised muted"
-          }`}
+          className={`${chip(onlyWithSpeech)} sm:h-9`}
         >
           Someone speaks
         </button>
@@ -112,16 +107,17 @@ export default function VideosPage() {
         </Empty>
       )}
 
-      <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+      <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 xl:grid-cols-5">
         {shown.map(a => {
           const still = a.still_path ? stills[a.still_path] : undefined;
+          const who = clientOf.get(a.task_id);
           return (
             <li key={a.id}>
               <Link
                 to={`/job/${a.task_id}`}
-                className="block overflow-hidden rounded-[var(--radius-md)] border hairline transition-colors hover:border-[color:var(--primary)]"
+                className="block overflow-hidden rounded-xl border bg-card transition-colors hover:border-primary"
               >
-                <div className="raised relative aspect-video w-full overflow-hidden">
+                <div className="relative aspect-video w-full overflow-hidden bg-muted">
                   {still ? (
                     <img
                       src={still}
@@ -130,27 +126,31 @@ export default function VideosPage() {
                       loading="lazy"
                     />
                   ) : (
-                    <span className="muted absolute inset-0 grid place-items-center text-xs">
-                      no frame
+                    <span className="absolute inset-0 grid place-items-center text-xs text-muted-foreground">
+                      No frame
                     </span>
                   )}
                   {a.seconds ? (
-                    <span className="absolute right-1 bottom-1 rounded bg-black/70 px-1.5 py-0.5 font-mono text-[10px] text-white">
+                    <span className="absolute right-1.5 bottom-1.5 rounded bg-black/70 px-1.5 py-0.5 font-mono text-xs text-white">
                       {clock(a.seconds)}
                     </span>
                   ) : null}
                 </div>
-                <div className="px-2 py-1.5">
-                  <p className="truncate text-xs font-medium">
-                    {clientOf.get(a.task_id) ?? "—"}
+                <div className="px-3 py-2">
+                  <p dir="auto" className="truncate text-xs font-medium">
+                    {who ?? (
+                      <span className="text-muted-foreground">Not set</span>
+                    )}
                   </p>
-                  <p className="muted truncate text-[11px]">{a.name}</p>
-                  <p className="muted mt-0.5 flex flex-wrap gap-x-2 text-[11px]">
+                  <p className="truncate text-xs text-muted-foreground">
+                    {a.name}
+                  </p>
+                  <p className="mt-0.5 flex flex-wrap gap-x-2 text-xs text-muted-foreground">
                     {shape(a.width, a.height) && (
                       <span>{shape(a.width, a.height)}</span>
                     )}
-                    {a.has_audio === false ? <span>silent</span> : null}
-                    {a.transcript ? <span>speech</span> : null}
+                    {a.has_audio === false ? <span>Silent</span> : null}
+                    {a.transcript ? <span>Speech</span> : null}
                     {a.scenes?.length ? (
                       <span>{a.scenes.length} shots</span>
                     ) : null}
@@ -161,6 +161,6 @@ export default function VideosPage() {
           );
         })}
       </ul>
-    </div>
+    </Page>
   );
 }
