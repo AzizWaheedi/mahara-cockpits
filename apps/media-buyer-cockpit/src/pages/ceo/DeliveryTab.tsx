@@ -1042,7 +1042,7 @@ function ClientNoOutcome({ c }: { c: ClientRow }) {
   return (
     <li className="min-w-0">
       <details className="group min-w-0">
-        <summary className="flex min-w-0 cursor-pointer select-none list-none items-center gap-2.5 rounded-sm py-2.5 text-[13px] hover:bg-[var(--ceo-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+        <summary className="no-marker flex min-w-0 cursor-pointer select-none list-none items-center gap-2.5 rounded-sm py-2.5 text-[13px] hover:bg-[var(--ceo-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
           <ChevronRight
             className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90"
             aria-hidden

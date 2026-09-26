@@ -7,6 +7,7 @@ import {
   Megaphone,
   Menu,
   MessageSquare,
+  MousePointerClick,
   ShieldCheck,
   Sun,
   Truck,
@@ -29,7 +30,7 @@ type Item = {
  * The bar at the foot of a phone screen: the four places a thumb goes most,
  * and "More" for the rest of the rail. Which four depends on where you are:
  * the CEO cockpit's own sections on /ceo, the media buyer's day otherwise.
- * Hidden from the tablet size up, where the rail is on the left.
+ * Hidden from 1024px up, where the rail is on the left.
  */
 export function MobileTabBar() {
   const { setOpenMobile, isMobile } = useSidebar();
@@ -60,7 +61,7 @@ export function MobileTabBar() {
         {
           key: "ads",
           label: "Ads",
-          icon: Megaphone,
+          icon: MousePointerClick,
           to: "/ceo?tab=ads",
           active: tab === "ads",
         },
@@ -132,7 +133,7 @@ export function MobileTabBar() {
   return (
     <nav
       aria-label="Main"
-      className="fixed inset-x-0 bottom-0 z-40 border-t border-sidebar-border bg-sidebar/95 pb-safe text-sidebar-foreground backdrop-blur md:hidden"
+      className="fixed inset-x-0 bottom-0 z-40 border-t border-sidebar-border bg-sidebar/95 pb-safe text-sidebar-foreground backdrop-blur lg:hidden"
     >
       <ul className="grid auto-cols-fr grid-flow-col">
         {items.map(it => (

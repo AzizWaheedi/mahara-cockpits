@@ -13,13 +13,7 @@ import { HermesChat } from "./HermesChat";
 import { MobileTabBar } from "./MobileTabBar";
 import { OfflineBanner } from "./OfflineBanner";
 import { RouteErrorBoundary } from "./RouteErrorBoundary";
-import { ThemeToggle } from "./ThemeToggle";
-import {
-  SidebarInset,
-  SidebarProvider,
-  SidebarTrigger,
-  useSidebar,
-} from "./ui/sidebar";
+import { SidebarInset, SidebarProvider, useSidebar } from "./ui/sidebar";
 
 export function AppLayout() {
   return (
@@ -62,17 +56,13 @@ function LayoutContent() {
     <>
       <AppSidebar />
       <SidebarInset ref={inset}>
-        <div className="sticky top-2.5 z-40 px-3 md:px-4 pt-safe">
-          <header className="flex h-11 items-center justify-between rounded-full border border-border/60 bg-card/80 px-3.5 shadow-xs backdrop-blur-md transition-all">
-            <SidebarTrigger className="md:hidden" />
-            <div className="ml-auto flex items-center gap-2">
-              <ThemeToggle />
-            </div>
-          </header>
-        </div>
-        <OfflineBanner />
-        {/* On a phone the tab bar takes the foot of the screen; the page keeps clear of it. */}
-        <main className="flex-1 p-4 pb-24 md:pb-4 lg:p-6 lg:pb-6">
+        {/* No top bar: the rail holds the navigation, the theme and the
+            account, and below 1024px the tab bar's More opens the same rail,
+            so the page starts at the top of the screen. The top padding keeps
+            it clear of the status bar in the installed app; the bottom keeps
+            it clear of the tab bar. */}
+        <main className="flex-1 px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-28 sm:px-6 sm:pt-[max(1.5rem,env(safe-area-inset-top))] lg:px-8 lg:pt-8 lg:pb-12">
+          <OfflineBanner />
           <RouteErrorBoundary report={r => report(r)}>
             <AnimatePresence initial={false} mode="wait">
               <motion.div

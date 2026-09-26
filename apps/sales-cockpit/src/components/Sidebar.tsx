@@ -88,12 +88,10 @@ function ThemeToggle() {
       const stored = localStorage.getItem("theme");
       if (stored === "light" || stored === "dark") return stored === "dark";
     } catch {
-      // A private window forbids this; fall through to the system setting.
+      // A private window forbids this; fall through to the default.
     }
-    return (
-      typeof window !== "undefined" &&
-      window.matchMedia("(prefers-color-scheme: dark)").matches
-    );
+    // Dark unless someone chose light: the brand's web default.
+    return true;
   });
 
   useEffect(() => {

@@ -1,7 +1,7 @@
 import { useAuthActions } from "@convex-dev/auth/react";
 import { useQuery } from "convex/react";
+import { motion } from "framer-motion";
 import {
-  ArrowRightLeft,
   BarChart3,
   CalendarClock,
   CalendarDays,
@@ -16,15 +16,14 @@ import {
   Moon,
   MoonStar,
   Settings,
-  ShieldCheck,
   Sun,
   Sunrise,
-  UsersRound,
 } from "lucide-react";
 import { Link, useLocation } from "react-router";
 import { portalUrl } from "@/components/PortalAutoSignIn";
 import { Wordmark } from "@/components/Wordmark";
 import { useTheme } from "@/contexts/ThemeContext";
+import { COCKPIT_ICON } from "@/lib/cockpits";
 import { api } from "../../convex/_generated/api";
 import { Avatar, AvatarFallback } from "./ui/avatar";
 import {
@@ -103,8 +102,25 @@ function NavLink({
 
   return (
     <SidebarMenuItem>
-      <SidebarMenuButton asChild isActive={isActive}>
-        <Link to={href} onClick={() => setOpenMobile(false)}>
+      <SidebarMenuButton
+        asChild
+        isActive={isActive}
+        tooltip={label}
+        className="cockpit-nav-link"
+      >
+        <Link
+          to={href}
+          aria-current={isActive ? "page" : undefined}
+          onClick={() => setOpenMobile(false)}
+        >
+          {/* The same teal lamp as the other cockpits' rails. */}
+          {isActive && (
+            <motion.span
+              layoutId="cockpit-nav-lamp"
+              className="cockpit-nav-lamp"
+              transition={{ type: "spring", stiffness: 320, damping: 30 }}
+            />
+          )}
           <Icon />
           <span>{label}</span>
         </Link>
@@ -152,21 +168,23 @@ function PortalGroup() {
       show: isAdmin || roles.includes("sales"),
     },
   ].filter(d => d.show);
-  if (doors.length === 0) return null;
+  // Team meetings are everybody's, so they sit with the doors at the foot.
+  const rows = [
+    { key: "team", label: "Team meetings", href: `${portal}/team` },
+    ...doors,
+  ];
   return (
-    <SidebarGroup>
-      <SidebarGroupLabel>Switch cockpit</SidebarGroupLabel>
+    <SidebarGroup className="mt-auto border-t border-sidebar-border">
       <SidebarGroupContent>
         <SidebarMenu>
-          {doors.map(d => (
+          {rows.map(d => (
             <SidebarMenuItem key={d.key}>
               <SidebarMenuButton asChild>
                 <a href={d.href}>
-                  {d.key === "admin" ? (
-                    <ShieldCheck className="size-4" />
-                  ) : (
-                    <ArrowRightLeft className="size-4" />
-                  )}
+                  {(() => {
+                    const Icon = COCKPIT_ICON[d.key];
+                    return Icon ? <Icon className="size-4" /> : null;
+                  })()}
                   <span>{d.label}</span>
                 </a>
               </SidebarMenuButton>
@@ -178,34 +196,11 @@ function PortalGroup() {
   );
 }
 
-/** The team's meetings and agendas, in the portal, for everyone. */
-function TeamGroup() {
-  return (
-    <SidebarGroup>
-      <SidebarGroupLabel>Team</SidebarGroupLabel>
-      <SidebarGroupContent>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton asChild>
-              <a href={`${portalUrl()}/team`}>
-                <UsersRound className="size-4" />
-                <span>Team meetings</span>
-              </a>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarGroupContent>
-    </SidebarGroup>
-  );
-}
-
 function SidebarNav() {
   const location = useLocation();
 
   return (
     <SidebarContent>
-      <PortalGroup />
-      <TeamGroup />
       {navGroups.map(group => (
         <SidebarGroup key={group.label}>
           <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
@@ -224,6 +219,7 @@ function SidebarNav() {
           </SidebarGroupContent>
         </SidebarGroup>
       ))}
+      <PortalGroup />
     </SidebarContent>
   );
 }

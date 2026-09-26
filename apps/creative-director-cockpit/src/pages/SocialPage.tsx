@@ -615,7 +615,7 @@ function ClientPanel({
 
       <div className="space-y-4 p-3">
         <details className="group rounded-lg border bg-muted/20">
-          <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-[12px] font-medium">
+          <summary className="no-marker flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-[12px] font-medium">
             <SlidersHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
             Settings
             <span className="text-[11px] font-normal text-muted-foreground">

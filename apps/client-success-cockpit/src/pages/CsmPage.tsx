@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from "convex/react";
+import { Check, ChevronRight } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
@@ -1861,11 +1862,20 @@ export function CsmPage({ section }: { section: Section }) {
               <details
                 key={block}
                 open={!allDone}
-                className={`rounded-lg border ${isSprint ? "border-teal-300 bg-teal-50/40 dark:border-teal-800 dark:bg-teal-950/30" : ""} ${allDone ? "opacity-70" : ""}`}
+                className={`group rounded-lg border ${isSprint ? "border-teal-300 bg-teal-50/40 dark:border-teal-800 dark:bg-teal-950/30" : ""} ${allDone ? "opacity-70" : ""}`}
               >
-                <summary className="flex cursor-pointer flex-wrap items-baseline justify-between gap-2 px-4 py-2">
-                  <span className="text-sm font-semibold">
-                    {allDone ? "✓ " : ""}
+                <summary className="no-marker flex cursor-pointer flex-wrap items-center justify-between gap-2 px-4 py-2">
+                  <span className="inline-flex items-center gap-1.5 text-sm font-semibold">
+                    <ChevronRight
+                      aria-hidden
+                      className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90"
+                    />
+                    {allDone ? (
+                      <Check
+                        aria-hidden
+                        className="size-3.5 text-[color:var(--success)]"
+                      />
+                    ) : null}
                     {title}
                   </span>
                   <span className="text-xs text-muted-foreground">

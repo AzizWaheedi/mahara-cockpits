@@ -63,6 +63,7 @@ export function SectionCard<K extends SectionKey>({
   bodyClassName,
 }: SectionCardProps<K>) {
   const reduce = useReducedMotion();
+  const now = useNow();
   const tracked = section !== undefined;
   const all = [
     ...(tracked ? [section] : []),
@@ -73,6 +74,13 @@ export function SectionCard<K extends SectionKey>({
   const asOf = present.length
     ? Math.min(...present.map(s => s.computedAt || Number.POSITIVE_INFINITY))
     : null;
+  // The page header already says when the numbers were computed, so a card
+  // only speaks up when its own numbers are old enough to read with care.
+  const showAsOf =
+    asOf !== null &&
+    Number.isFinite(asOf) &&
+    !hideAsOf &&
+    now - asOf > STALE_AFTER_MS;
 
   let body: ReactNode;
   if (tracked && section === null) {
@@ -123,27 +131,25 @@ export function SectionCard<K extends SectionKey>({
         delay: reduce ? 0 : Math.min(order, 8) * 0.04,
       }}
       className={cn(
-        "ceo-card min-w-0 rounded-xl border bg-card p-5 text-card-foreground sm:p-6",
+        "ceo-card min-w-0 rounded-2xl border bg-card p-4 text-card-foreground sm:p-6",
         className,
       )}
     >
       <header className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
         <div className="min-w-0">
           {kicker ? (
-            <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            <p className="mb-1.5 font-mono text-[11px] uppercase leading-4 tracking-[0.08em] text-muted-foreground">
               {kicker}
             </p>
           ) : null}
           {/* h2: the page title is the h1, so card titles are the next level down. */}
-          <h2 className="text-sm font-semibold leading-5 text-foreground">
+          <h2 className="text-[15px] font-semibold leading-5 text-foreground">
             {title}
           </h2>
         </div>
-        {(asOf !== null && Number.isFinite(asOf) && !hideAsOf) || actions ? (
+        {showAsOf || actions ? (
           <div className="flex min-w-0 flex-wrap items-center gap-2">
-            {asOf !== null && Number.isFinite(asOf) && !hideAsOf ? (
-              <AsOf at={asOf} />
-            ) : null}
+            {showAsOf && asOf !== null ? <AsOf at={asOf} /> : null}
             {actions}
           </div>
         ) : null}

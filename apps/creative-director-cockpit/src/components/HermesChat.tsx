@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from "convex/react";
+import { MessageCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router";
 import { api } from "../../convex/_generated/api";
@@ -152,25 +153,28 @@ export function HermesChat() {
         .hermes-caret { animation: hermes-blink 1s steps(1) infinite; margin-left: 1px }
         @media (prefers-reduced-motion: reduce) { .hermes-dot, .hermes-caret { animation: none } }
       `}</style>
+      {/* A round button on a phone so it covers as little of the page as
+          possible; the label comes back from the small tablet size up. */}
       <button
         type="button"
         onClick={() => setOpen(v => !v)}
-        className="fixed bottom-5 right-5 z-40 flex items-center gap-2 rounded-full border bg-background px-4 py-2 text-[13px] font-semibold shadow-lg hover:bg-muted"
+        className="glow-teal fixed right-4 bottom-[calc(1rem+env(safe-area-inset-bottom,0px))] z-40 flex h-11 items-center gap-2 rounded-full border bg-card/95 px-3.5 text-[13px] font-semibold text-foreground backdrop-blur hover:bg-muted sm:px-4 lg:right-6 lg:bottom-6"
         aria-label="Ask Hermes"
       >
+        <MessageCircle className="size-4 sm:hidden" aria-hidden />
         <span
-          className={`inline-block h-2 w-2 rounded-full ${live ? "bg-amber-500" : "bg-emerald-500"}`}
+          className={`inline-block size-2 rounded-full bg-[color:var(--mahara-teal)] ${live ? "animate-pulse" : ""}`}
         />
-        Ask Hermes
+        <span className="hidden sm:inline">Ask Hermes</span>
         {live && !open ? (
-          <span className="text-muted-foreground">
+          <span className="hidden text-muted-foreground sm:inline">
             · {live.status === "reading" ? "typing" : "thinking"} <Dots />
           </span>
         ) : null}
       </button>
       {open ? (
         <section
-          className="fixed bottom-20 right-5 z-40 flex h-[min(70vh,640px)] w-[min(92vw,420px)] flex-col overflow-hidden rounded-xl border bg-background shadow-2xl"
+          className="fixed right-4 bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] z-40 flex h-[min(70vh,640px)] w-[min(92vw,420px)] flex-col overflow-hidden rounded-xl border bg-background shadow-2xl lg:right-6 lg:bottom-20"
           aria-label="Hermes chat"
         >
           <header className="flex items-center justify-between border-b px-3 py-2">

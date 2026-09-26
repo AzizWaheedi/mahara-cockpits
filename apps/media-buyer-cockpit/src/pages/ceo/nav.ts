@@ -1,15 +1,16 @@
 import type { LucideIcon } from "lucide-react";
 import {
   CalendarClock,
-  Clapperboard,
   Cpu,
   Film,
   Handshake,
   HeartHandshake,
   Lightbulb,
   Megaphone,
+  MousePointerClick,
   Phone,
   ReceiptText,
+  Send,
   Server,
   Sun,
   Target,
@@ -46,7 +47,7 @@ export const CEO_NAV: { title: string | null; items: CeoNavItem[] }[] = [
     items: [
       { key: "frontend", label: "Frontend", icon: TrendingUp },
       { key: "marketing", label: "Marketing", icon: Megaphone },
-      { key: "ads", label: "Ads", icon: Megaphone },
+      { key: "ads", label: "Ads", icon: MousePointerClick },
       { key: "sales", label: "Sales", icon: Handshake },
     ],
   },
@@ -55,7 +56,7 @@ export const CEO_NAV: { title: string | null; items: CeoNavItem[] }[] = [
     items: [
       { key: "organic", label: "Content", icon: Film },
       { key: "ideation", label: "Ideation", icon: Lightbulb },
-      { key: "posting", label: "Posting", icon: Clapperboard },
+      { key: "posting", label: "Posting", icon: Send },
     ],
   },
   {

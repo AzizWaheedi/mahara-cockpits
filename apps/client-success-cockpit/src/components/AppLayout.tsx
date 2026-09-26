@@ -5,8 +5,8 @@ import { AppSidebar } from "./AppSidebar";
 import { HermesChat } from "./HermesChat";
 import { RouteErrorBoundary } from "./RouteErrorBoundary";
 import { SyncStrip } from "./SyncStrip";
-import { ThemeToggle } from "./ThemeToggle";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "./ui/sidebar";
+import { Wordmark } from "./Wordmark";
 
 export function AppLayout() {
   const report = useMutation(api.csm.reportIssue);
@@ -14,16 +14,20 @@ export function AppLayout() {
     <SidebarProvider>
       <AppSidebar />
       <SidebarInset>
-        {/* pt-safe keeps the menu button below the phone's status bar in the installed app (Aziz, 2026-09-21). */}
-        <div className="pt-safe">
-          <header className="flex h-12 items-center justify-between px-4">
-            <SidebarTrigger className="md:hidden" />
-            <div className="ml-auto">
-              <ThemeToggle />
-            </div>
-          </header>
-        </div>
-        <main className="flex-1 p-4 lg:p-6">
+        {/* Below 1024px a slim bar holds the menu, clear of the phone's
+            status bar in the installed app (pt-safe, Aziz 2026-09-21). From
+            1024px up the rail is always there, so there is no bar at all;
+            the theme lives in the account menu at the foot of the rail. */}
+        <header className="sticky top-0 z-30 border-b border-border/60 bg-background/85 px-2 pt-safe backdrop-blur lg:hidden">
+          <div className="flex h-14 items-center gap-2">
+            <SidebarTrigger className="size-10" />
+            <Wordmark size="sm" />
+            <span className="text-sm text-muted-foreground">
+              Client success
+            </span>
+          </div>
+        </header>
+        <main className="flex-1 px-4 pt-4 pb-24 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8 lg:pb-12">
           <SyncStrip />
           <RouteErrorBoundary
             report={r =>

@@ -2,9 +2,7 @@ import { useAuthActions } from "@convex-dev/auth/react";
 import { useQuery } from "convex/react";
 import { motion } from "framer-motion";
 import {
-  ArrowRightLeft,
   Bookmark,
-  Gauge,
   LayoutDashboard,
   Lightbulb,
   ListChecks,
@@ -16,16 +14,15 @@ import {
   PanelLeft,
   PanelLeftClose,
   Settings,
-  ShieldCheck,
   Sun,
   Trophy,
-  UsersRound,
 } from "lucide-react";
 import { Link, useLocation, useSearchParams } from "react-router";
 import { STATUS_COLOR } from "@/components/ceo/StatusChip";
 import { useCeo } from "@/components/ceo/useCeo";
 import { Wordmark } from "@/components/Wordmark";
 import { useTheme } from "@/contexts/ThemeContext";
+import { COCKPIT_ICON } from "@/lib/cockpits";
 import { ceoBadges } from "@/pages/CeoPage";
 import { CEO_NAV } from "@/pages/ceo/nav";
 import type { CeoTabKey } from "@/pages/ceo/types";
@@ -162,9 +159,21 @@ function CeoRail() {
   // are one click away in the user menu, so the rail stays short enough for
   // a laptop.
   const elsewhere = [
-    { key: "team", label: "Team meetings", href: "/team", icon: UsersRound },
+    {
+      key: "team",
+      label: "Team meetings",
+      href: "/team",
+      icon: COCKPIT_ICON.team,
+    },
     ...(me?.isAdmin
-      ? [{ key: "admin", label: "Admin", href: "/admin", icon: ShieldCheck }]
+      ? [
+          {
+            key: "admin",
+            label: "Admin",
+            href: "/admin",
+            icon: COCKPIT_ICON.admin,
+          },
+        ]
       : []),
     ...((me?.roles ?? []).includes("media_buyer")
       ? [
@@ -172,7 +181,7 @@ function CeoRail() {
             key: "media_buyer",
             label: "Media buyer cockpit",
             href: "/dashboard",
-            icon: Megaphone,
+            icon: COCKPIT_ICON.media_buyer,
           },
         ]
       : []),
@@ -288,7 +297,7 @@ function SidebarNav() {
               <NavLink
                 href="/ceo"
                 label="CEO"
-                icon={Gauge}
+                icon={COCKPIT_ICON.ceo}
                 isActive={location.pathname.startsWith("/ceo")}
               />
             ) : null}
@@ -296,7 +305,7 @@ function SidebarNav() {
               <NavLink
                 href="/admin"
                 label="Admin"
-                icon={ShieldCheck}
+                icon={COCKPIT_ICON.admin}
                 isActive={location.pathname === "/admin"}
               />
             ) : null}
@@ -305,7 +314,7 @@ function SidebarNav() {
               <NavLink
                 href="/team"
                 label="Team meetings"
-                icon={UsersRound}
+                icon={COCKPIT_ICON.team}
                 isActive={location.pathname.startsWith("/team")}
               />
             ) : null}
@@ -340,7 +349,7 @@ function SidebarNav() {
                   key={c.key}
                   href={c.href}
                   label={c.label}
-                  icon={ArrowRightLeft}
+                  icon={COCKPIT_ICON[c.key]}
                   isActive={false}
                 />
               ))}
@@ -405,7 +414,10 @@ function SidebarUserMenu() {
               {switches.map(c => (
                 <DropdownMenuItem key={c.key} asChild>
                   <Link to={c.href} onClick={() => setOpenMobile(false)}>
-                    <ArrowRightLeft className="size-4" />
+                    {(() => {
+                      const Icon = COCKPIT_ICON[c.key];
+                      return <Icon className="size-4" />;
+                    })()}
                     {c.label}
                   </Link>
                 </DropdownMenuItem>

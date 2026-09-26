@@ -105,34 +105,39 @@ export function CeoPage() {
 
   return (
     <div className="ceo-root mx-auto w-full min-w-0 max-w-[1440px]">
-      <div className="flex flex-col gap-3 pb-5 pt-1 md:flex-row md:items-end md:justify-between">
-        <div className="min-w-0">
-          <p className="text-sm text-muted-foreground">
-            {longDate(day ?? kuwaitDay(now))}
-          </p>
-          <h1 className="mt-0.5 text-2xl font-semibold tracking-tight text-foreground">
-            {CEO_LABELS[tab]}
-          </h1>
-          <p className="mt-1 min-h-5 text-sm text-muted-foreground">
+      {/* One header for every tab: the day, the tab, one status pill and
+          Refresh. The business in one sentence belongs to Today only; on the
+          other tabs it repeated the same line above every page. */}
+      <header className="pb-6">
+        <div className="flex items-end justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs text-muted-foreground sm:text-sm">
+              {longDate(day ?? kuwaitDay(now))}
+            </p>
+            <h1 className="mt-0.5 truncate text-2xl font-semibold tracking-tight text-foreground sm:text-[28px] sm:leading-9">
+              {CEO_LABELS[tab]}
+            </h1>
+          </div>
+          <div className="flex min-w-0 shrink-0 items-center gap-2 pb-0.5">
+            {ready ? (
+              <TrustPills
+                asOf={trust.asOf}
+                now={now}
+                stale={trust.stale}
+                missing={trust.missing.length}
+                hermes={trust.hermes}
+                onOpenMachine={() => setTab("machine")}
+              />
+            ) : null}
+            {isCeo ? <RefreshButton compact /> : null}
+          </div>
+        </div>
+        {tab === "today" ? (
+          <p className="mt-2 min-h-5 max-w-3xl text-sm text-muted-foreground sm:text-[15px]">
             {ready ? sentence : "Loading the numbers."}
           </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 md:justify-end">
-          {ready ? (
-            <TrustPills
-              // contents: the pills and the Refresh button wrap as one row on a phone.
-              className="contents"
-              asOf={trust.asOf}
-              now={now}
-              stale={trust.stale}
-              missing={trust.missing.length}
-              hermes={trust.hermes}
-              onOpenMachine={() => setTab("machine")}
-            />
-          ) : null}
-          {isCeo ? <RefreshButton /> : null}
-        </div>
-      </div>
+        ) : null}
+      </header>
 
       <div
         role="tabpanel"

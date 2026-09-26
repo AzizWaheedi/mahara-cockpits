@@ -6,7 +6,7 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 function App() {
   return (
     <ErrorBoundary>
-      <ThemeProvider defaultTheme="system" switchable>
+      <ThemeProvider defaultTheme="dark" switchable>
         <Toaster />
         <AuthStrategyRoutes />
       </ThemeProvider>

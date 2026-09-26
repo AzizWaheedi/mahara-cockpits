@@ -1,6 +1,5 @@
 import { useAction } from "convex/react";
 import {
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Facebook,
@@ -411,7 +410,7 @@ export function SocialCalendarPage() {
                   setClientId(id);
                   setSheet(null);
                 }}
-                className="cursor-pointer appearance-none bg-transparent pr-6 text-[15px] font-medium focus:outline-none focus-visible:underline"
+                className="text-[15px] font-medium"
               >
                 {!active.length ? (
                   <option value="">Pick a client</option>
@@ -431,7 +430,6 @@ export function SocialCalendarPage() {
                   </optgroup>
                 ) : null}
               </AnimatedSelect>
-              <ChevronDown className="pointer-events-none absolute right-0 h-4 w-4 text-muted-foreground" />
             </label>
             <div className="mt-1 flex items-center gap-2">
               <h1 className="text-[30px] font-semibold leading-none tracking-tight md:text-[36px]">

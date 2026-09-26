@@ -10,9 +10,8 @@
       (function () {
         try {
           var s = localStorage.getItem("theme");
-          var dark =
-            s === "dark" ||
-            (s !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+          // Dark unless someone chose light: the brand's web default.
+          var dark = s !== "light";
           document.documentElement.classList.toggle("dark", dark);
           document.documentElement.style.colorScheme = dark ? "dark" : "light";
         } catch (e) {
@@ -39,7 +38,7 @@
     <meta property="og:image:height" content="630" />
     <meta property="og:image:alt" content="Mahara Media" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="theme-color" content="#0b142b" />
+    <meta name="theme-color" content="#091333" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />

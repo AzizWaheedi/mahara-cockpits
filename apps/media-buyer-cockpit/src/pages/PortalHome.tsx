@@ -1,9 +1,8 @@
 import { useConvexAuth, useQuery } from "convex/react";
-import { ArrowRight } from "lucide-react";
 import { Link, Navigate } from "react-router";
 import { BackendWait } from "@/components/BackendWait";
-import { Button } from "@/components/ui/button";
 import { Wordmark } from "@/components/Wordmark";
+import { COCKPIT_ICON } from "@/lib/cockpits";
 import { api } from "../../convex/_generated/api";
 import { LoginPage } from "./LoginPage";
 
@@ -69,6 +68,8 @@ function Chooser() {
         Checking your access…
       </div>
     );
+  // The founder opens on his own cockpit's Today; other admins on the admin view.
+  if (me.isCeo) return <Navigate to="/ceo" replace />;
   if (me.isAdmin) return <Navigate to="/admin" replace />;
   const cockpits: string[] = me.cockpits ?? [];
   if (cockpits.length === 1)
@@ -101,15 +102,18 @@ function Chooser() {
           </p>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
-          {cockpits.map(c => (
-            <Button
-              key={c}
-              variant="outline"
-              className="h-auto justify-between px-4 py-4"
-              asChild
-            >
-              <Link to={COCKPIT_META[c].to}>
-                <span className="text-left">
+          {cockpits.map(c => {
+            const Icon = COCKPIT_ICON[c];
+            return (
+              <Link
+                key={c}
+                to={COCKPIT_META[c].to}
+                className="group flex items-center gap-4 rounded-2xl border bg-card p-4 transition-colors hover:border-[color:var(--mahara-teal)]/50 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-accent text-[color:var(--mahara-teal)]">
+                  {Icon ? <Icon className="size-5" aria-hidden /> : null}
+                </span>
+                <span className="min-w-0 text-left">
                   <span className="block font-semibold">
                     {COCKPIT_META[c].label}
                   </span>
@@ -117,10 +121,9 @@ function Chooser() {
                     {COCKPIT_META[c].blurb}
                   </span>
                 </span>
-                <ArrowRight className="size-4" />
               </Link>
-            </Button>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>
