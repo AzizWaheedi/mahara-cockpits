@@ -252,9 +252,9 @@ export function ResearchPanel({
               ))}
             </div>
           ) : null}
-          <p className="muted text-[11px]">
-            {r?.sources?.pages?.length ?? 0} pages consulted · written by{" "}
-            {r?.model ?? "the desk's model"}
+          <p className="muted text-xs">
+            {r?.sources?.pages?.length ?? 0} pages consulted · drafted by the
+            assistant
           </p>
         </div>
       ) : null}

@@ -438,9 +438,12 @@ export function Conversation({
           disabled={!can.ok}
         />
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="muted text-[11px]">
-            Goes out from the official line through HighLevel. Ctrl or ⌘ and
-            Enter sends.
+          <p className="muted text-xs">
+            Goes out from the official line through HighLevel.
+            <span className="hidden md:pointer-fine:inline">
+              {" "}
+              Ctrl or ⌘ and Enter sends.
+            </span>
           </p>
           <button
             type="submit"

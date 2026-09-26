@@ -7,6 +7,8 @@ import {
   EmptyState,
   Failed,
   field,
+  page,
+  Segmented,
   SourceNote,
   StatusChip,
 } from "../components/kit";
@@ -48,38 +50,25 @@ export default function RecordingsPage({ me }: { me: Me }) {
   };
 
   return (
-    <main className="mx-auto w-full max-w-5xl space-y-5 px-4 py-6 md:px-6">
+    <main className={page}>
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Recordings</h1>
-          <p className="muted text-sm">
+          <h1 className="text-2xl font-semibold tracking-tight">Recordings</h1>
+          <p className="muted mt-1 text-sm">
             Every recorded sales call, newest first. Open any call to ask Vince
             to review it.
           </p>
         </div>
-        <div
-          className="raised inline-flex rounded-[var(--radius-md)] p-0.5 text-sm"
-          role="group"
-          aria-label="Show"
-        >
-          {(
-            [
-              ["calls", "Calls"],
-              ["reviews", "Vince's reviews"],
-              ["aziz", "Aziz's reviews"],
-            ] as const
-          ).map(([k, label]) => (
-            <button
-              key={k}
-              type="button"
-              aria-pressed={tab === k}
-              onClick={() => set({ tab: k === "calls" ? null : k, page: null })}
-              className={`rounded-[calc(var(--radius-md)-2px)] px-3 py-1 ${tab === k ? "bg-[color:var(--card)] font-medium shadow-sm" : "muted"}`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <Segmented
+          label="Show"
+          value={tab}
+          options={[
+            ["calls", "Calls"],
+            ["reviews", "Vince's reviews"],
+            ["aziz", "Aziz's reviews"],
+          ]}
+          onChange={k => set({ tab: k === "calls" ? null : k, page: null })}
+        />
       </header>
 
       {tab === "calls" ? (
@@ -90,13 +79,12 @@ export default function RecordingsPage({ me }: { me: Me }) {
         <AzizReviews me={me} />
       )}
 
-      <SourceNote>
-        Calls come from Fathom: the Obsidian vault's copy of every recorded
-        sales call, and the desk's own look at the last 14 days. A call belongs
-        to a lead when an invitee's email is the lead's, or when that lead's
-        intro or demo began within 30 minutes of it. Reviews are Vince's: his
-        121 from before he stopped in August, and the ones the desk has written
-        since with his template and framework.
+      <SourceNote label="Where these calls come from">
+        Every recorded sales call comes from Fathom. A call belongs to a lead
+        when an invitee's email is the lead's, or when that lead's intro or demo
+        began within 30 minutes of it. Reviews are Vince's: the ones he wrote
+        before he stopped in August, and the ones drafted since with his
+        template and framework.
       </SourceNote>
     </main>
   );
@@ -187,15 +175,17 @@ function Calls({
       ) : calls.loading && !rows.length ? (
         <p className="muted text-sm">Reading the calls…</p>
       ) : !rows.length ? (
-        <EmptyState
-          icon={Mic}
-          title="No calls here"
-          text={
-            by || params.get("q")
-              ? "Nothing matches. Clear the search or pick everyone's calls."
-              : "Recorded sales calls appear here within half an hour of Fathom having them."
-          }
-        />
+        <section className="panel">
+          <EmptyState
+            icon={Mic}
+            title="No calls here"
+            text={
+              by || params.get("q")
+                ? "Nothing matches. Clear the search or pick everyone's calls."
+                : "Recorded sales calls appear here within half an hour of Fathom having them."
+            }
+          />
+        </section>
       ) : (
         <ul className="panel divide-y hairline overflow-hidden">
           {rows.map(r => (
@@ -330,11 +320,13 @@ function Reviews({
       ) : reviews.loading && !rows.length ? (
         <p className="muted text-sm">Reading the reviews…</p>
       ) : !rows.length ? (
-        <EmptyState
-          icon={Mic}
-          title="No reviews yet"
-          text="Vince reviews each new recorded call within the hour of it reaching the cockpit."
-        />
+        <section className="panel">
+          <EmptyState
+            icon={Mic}
+            title="No reviews yet"
+            text="Vince reviews each new recorded call within the hour of it reaching the cockpit."
+          />
+        </section>
       ) : (
         <ul className="panel divide-y hairline overflow-hidden">
           {rows.map(r => (
@@ -410,7 +402,7 @@ function AzizReviews({ me }: { me: Me }) {
   const reviews = useCoachReviews({ all: true });
   const [adding, setAdding] = useState(false);
   return (
-    <section className="panel space-y-4 p-4">
+    <section className="panel space-y-4 p-4 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="muted text-sm">
           Aziz's own reviews of calls, the ones on Skool and any written here.

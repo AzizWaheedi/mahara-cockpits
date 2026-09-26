@@ -1,4 +1,4 @@
-import { ChevronDown, ExternalLink, Link2, Plus } from "lucide-react";
+import { ArrowUpRight, ChevronDown, Link2, Plus } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
 import {
   button,
@@ -6,6 +6,7 @@ import {
   EmptyState,
   Failed,
   field,
+  page,
   SectionCard,
 } from "../components/kit";
 import { api } from "../lib/api";
@@ -161,7 +162,7 @@ export default function LinksPage({ me }: { me: Me }) {
     body = <p className="muted text-sm">Reading the links…</p>;
   else if (groups.length)
     body = (
-      <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-2">
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2 lg:gap-6">
         {groups.map(g => (
           <SectionCard key={g.kind} title={g.heading} flush>
             <ul className="divide-y hairline">
@@ -214,13 +215,12 @@ export default function LinksPage({ me }: { me: Me }) {
     );
 
   return (
-    <main className="mx-auto w-full max-w-6xl space-y-5 px-4 py-6 md:px-6">
+    <main className={page}>
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-xl font-semibold tracking-tight">Links</h1>
-          <p className="muted text-sm">
-            The deck, forms and calculators for your calls. Each one opens in a
-            new tab.
+          <h1 className="text-2xl font-semibold tracking-tight">Links</h1>
+          <p className="muted mt-1 text-sm">
+            The deck, forms and calculators for your calls.
           </p>
         </div>
         {manager && !adding ? addButton : null}
@@ -278,7 +278,7 @@ function LinkRow({
           <span className="truncate" dir="auto">
             {l.label}
           </span>
-          <ExternalLink className="muted size-3.5 shrink-0" aria-hidden />
+          <ArrowUpRight className="muted size-3.5 shrink-0" aria-hidden />
           <span className="sr-only"> (opens in a new tab)</span>
         </span>
         {l.note ? (
@@ -289,7 +289,7 @@ function LinkRow({
             {l.note}
           </span>
         ) : null}
-        <span className="muted truncate text-[11px]">{host(l.url)}</span>
+        <span className="muted truncate text-xs">{host(l.url)}</span>
       </a>
       {manager ? (
         <div className="flex shrink-0 items-center gap-1.5 pr-4">
@@ -336,7 +336,7 @@ function HiddenLinks({
           aria-expanded={open}
           aria-controls={id}
           onClick={() => setOpen(o => !o)}
-          className="flex w-full items-center justify-between gap-2 px-4 py-2.5 text-left text-sm font-semibold tracking-tight hover:bg-[color:var(--secondary)]"
+          className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left text-[15px] font-semibold tracking-tight hover:bg-[color:var(--secondary)]"
         >
           <span>
             Hidden links{" "}

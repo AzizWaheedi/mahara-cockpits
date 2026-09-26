@@ -1,6 +1,6 @@
 import {
-  ArrowRight,
   CalendarCheck2,
+  ChevronRight,
   MessageCircleReply,
   PhoneIncoming,
   TriangleAlert,
@@ -12,6 +12,7 @@ import {
   EmptyState,
   Failed,
   Parts,
+  page,
   SectionCard,
   StatTile,
   StatusChip,
@@ -82,10 +83,10 @@ export default function TodayPage({ me }: { me: Me }) {
   });
 
   return (
-    <main className="mx-auto w-full max-w-6xl space-y-5 px-4 py-6 md:px-6">
+    <main className={page}>
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-xl font-semibold tracking-tight">{dateLine}</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">{dateLine}</h1>
           <MirrorLine run={mirror.data} error={mirror.error} now={now} />
         </div>
         {ScopeSwitch}
@@ -99,7 +100,7 @@ export default function TodayPage({ me }: { me: Me }) {
         </div>
       ) : null}
 
-      <section aria-label="Your day" className="panel p-4">
+      <section aria-label="Your day" className="panel p-4 sm:p-6">
         {todays.error ? (
           <Failed
             what="Today's calls"
@@ -110,15 +111,15 @@ export default function TodayPage({ me }: { me: Me }) {
           <DayLine rows={todays.data ?? []} now={now} />
         )}
         {!todays.loading && !todays.error && !(todays.data ?? []).length ? (
-          <p className="muted mt-3 text-sm">
+          <p className="muted mt-4 text-sm">
             No calls on the calendar today
             {view.kind === "team" ? "" : ` for ${view.label}`}.
           </p>
         ) : null}
       </section>
 
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-12">
-        <div className="min-w-0 space-y-5 lg:col-span-7">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:gap-6">
+        <div className="min-w-0 space-y-4 lg:col-span-7 lg:space-y-6">
           <OwedCard
             rows={owed.data}
             error={owed.error}
@@ -127,10 +128,10 @@ export default function TodayPage({ me }: { me: Me }) {
           />
           <WeekCard me={me} view={view} />
         </div>
-        <div className="min-w-0 space-y-5 lg:col-span-5">
+        <div className="min-w-0 space-y-4 lg:col-span-5 lg:space-y-6">
           <SectionCard
             title="Coming up"
-            side={<span className="muted text-xs">next 36 hours</span>}
+            side={<span className="muted text-xs">Next 36 hours</span>}
             flush
           >
             {coming.error ? (
@@ -188,18 +189,20 @@ function MirrorLine({
 }) {
   if (error)
     return (
-      <p className="muted text-sm">
+      <p className="muted mt-1 text-sm">
         Could not tell when the calls were last read: {error}
       </p>
     );
   if (!run?.finished_at)
     return (
-      <p className="muted text-sm">Waiting for the first read of the CRM.</p>
+      <p className="muted mt-1 text-sm">
+        Waiting for the first read of the CRM.
+      </p>
     );
   const age = now - Date.parse(run.finished_at);
   const stale = age > 20 * 60_000;
   return (
-    <p className="muted flex flex-wrap items-center gap-2 text-sm">
+    <p className="muted mt-1 flex flex-wrap items-center gap-2 text-sm">
       Calls and leads as of {ago(run.finished_at, now)}
       {run.ok === false || stale ? (
         <StatusChip
@@ -231,8 +234,11 @@ function OwedCard({
           Mark these calls
           {list.length ? (
             <span
-              className="rounded-full px-1.5 text-[11px] font-semibold tabular-nums"
-              style={{ background: "var(--owed)", color: "#1b1300" }}
+              className="rounded-full px-1.5 text-xs font-semibold tabular-nums"
+              style={{
+                background: "var(--owed)",
+                color: "var(--warning-foreground)",
+              }}
             >
               {list.length}
             </span>
@@ -244,7 +250,7 @@ function OwedCard({
           to="/calendar?view=owed"
           className="muted inline-flex items-center gap-1 text-xs hover:underline"
         >
-          All owed <ArrowRight className="size-3" aria-hidden />
+          All owed <ChevronRight className="size-3.5" aria-hidden />
         </Link>
       }
       flush
@@ -322,7 +328,7 @@ function UpcomingRow({
           <p className="tabular-nums text-sm font-semibold">
             {clock(r.start_at)}
           </p>
-          <p className="muted text-[11px]">{dayLabel(r.start_at)}</p>
+          <p className="muted text-xs">{dayLabel(r.start_at)}</p>
         </div>
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium" dir="auto">
@@ -357,7 +363,7 @@ function NewLeadsCard({
   return (
     <SectionCard
       title="New leads"
-      side={<span className="muted text-xs">last 48 hours</span>}
+      side={<span className="muted text-xs">Last 48 hours</span>}
       flush
     >
       {error ? (
@@ -451,33 +457,39 @@ function WeekCard({ me, view }: { me: Me; view: ScopeView }) {
           to="/numbers"
           className="muted inline-flex items-center gap-1 text-xs hover:underline"
         >
-          Numbers <ArrowRight className="size-3" aria-hidden />
+          Numbers <ChevronRight className="size-3.5" aria-hidden />
         </Link>
       }
     >
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatTile
-          label="Booked"
-          value={count(sum("calls_scheduled"))}
-          status={pace(sum("calls_scheduled"), goals?.booked)}
-        />
-        <StatTile
-          label="Shown"
-          value={count(sum("calls_shown"))}
-          status={pace(sum("calls_shown"), goals?.shown)}
-        />
-        <StatTile
-          label="Closes"
-          value={count(sum("closes"))}
-          status={pace(sum("closes"), goals?.closes)}
-        />
-        <StatTile
-          label="Cash collected"
-          value={money(sum("cash_collected"))}
-          status={pace(sum("cash_collected"), goals?.cash)}
-        />
+      <div className="@container">
+        <div className="grid grid-cols-2 gap-4 @lg:grid-cols-4">
+          <StatTile
+            variant="plain"
+            label="Booked"
+            value={count(sum("calls_scheduled"))}
+            status={pace(sum("calls_scheduled"), goals?.booked)}
+          />
+          <StatTile
+            variant="plain"
+            label="Shown"
+            value={count(sum("calls_shown"))}
+            status={pace(sum("calls_shown"), goals?.shown)}
+          />
+          <StatTile
+            variant="plain"
+            label="Closes"
+            value={count(sum("closes"))}
+            status={pace(sum("closes"), goals?.closes)}
+          />
+          <StatTile
+            variant="plain"
+            label="Cash collected"
+            value={money(sum("cash_collected"))}
+            status={pace(sum("cash_collected"), goals?.cash)}
+          />
+        </div>
       </div>
-      <p className="muted mt-3 text-xs">
+      <p className="muted mt-4 text-xs">
         Saturday to today, from the same rep scorecard the CEO cockpit reads. A
         call nobody marked counts as shown until it is marked.
       </p>
@@ -507,7 +519,7 @@ function RepliesCard({
   return (
     <SectionCard
       title="Replies waiting"
-      side={<span className="muted text-xs">last 48 hours</span>}
+      side={<span className="muted text-xs">Last 48 hours</span>}
       flush
     >
       {error ? (

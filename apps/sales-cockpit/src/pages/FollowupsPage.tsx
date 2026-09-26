@@ -7,9 +7,12 @@ import {
   EmptyState,
   Failed,
   field,
+  page,
   SectionCard,
+  Segmented,
   SourceNote,
   StatusChip,
+  select,
   type Tone,
 } from "../components/kit";
 import { api } from "../lib/api";
@@ -131,11 +134,11 @@ export default function FollowupsPage({ me }: { me: Me }) {
   );
 
   return (
-    <main className="mx-auto w-full max-w-4xl space-y-5 px-4 py-6 md:px-6">
+    <main className={page}>
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Follow-ups</h1>
-          <p className="muted text-sm">
+          <h1 className="text-2xl font-semibold tracking-tight">Follow-ups</h1>
+          <p className="muted mt-1 text-sm">
             Written by the follow-up agent for{" "}
             {everyone ? "the team's" : "your"} leads. Nothing goes to a lead
             until a person approves it.
@@ -149,38 +152,25 @@ export default function FollowupsPage({ me }: { me: Me }) {
               onChange={e =>
                 set("whose", e.target.value === "mine" ? "mine" : null)
               }
-              className="h-8 rounded-[var(--radius-md)] border hairline bg-[color:var(--card)] px-2 text-sm"
+              className={select}
             >
               <option value="team">The whole team</option>
               <option value="mine">Mine</option>
             </select>
           ) : null}
-          <div
-            className="raised inline-flex rounded-[var(--radius-md)] p-0.5 text-sm"
-            role="group"
-            aria-label="Show"
-          >
-            {(
+          <Segmented
+            label="Show"
+            value={tab}
+            options={[
               [
-                [
-                  "waiting",
-                  `Waiting${waiting.length ? ` (${waiting.length})` : ""}`,
-                ],
-                ["sent", "Sent"],
-                ["learning", "How it is learning"],
-              ] as const
-            ).map(([k, label]) => (
-              <button
-                key={k}
-                type="button"
-                aria-pressed={tab === k}
-                onClick={() => set("tab", k === "waiting" ? null : k)}
-                className={`rounded-[calc(var(--radius-md)-2px)] px-3 py-1 ${tab === k ? "bg-[color:var(--card)] font-medium shadow-sm" : "muted"}`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+                "waiting",
+                `Waiting${waiting.length ? ` (${waiting.length})` : ""}`,
+              ],
+              ["sent", "Sent"],
+              ["learning", "How it is learning"],
+            ]}
+            onChange={k => set("tab", k === "waiting" ? null : k)}
+          />
         </div>
       </header>
 
@@ -202,11 +192,13 @@ export default function FollowupsPage({ me }: { me: Me }) {
             ))}
           </div>
         ) : (
-          <EmptyState
-            icon={Sparkles}
-            title="Nothing waiting"
-            text="The agent looks every half hour, from 9 in the morning to 9 at night, for leads who wrote, missed a call, just came in, had a demo, or have gone quiet."
-          />
+          <section className="panel">
+            <EmptyState
+              icon={Sparkles}
+              title="Nothing waiting"
+              text="The agent looks every half hour, from 9 in the morning to 9 at night, for leads who wrote, missed a call, just came in, had a demo, or have gone quiet."
+            />
+          </section>
         )
       ) : tab === "sent" ? (
         <SentList rows={done} nameOf={nameOf} />
@@ -214,9 +206,8 @@ export default function FollowupsPage({ me }: { me: Me }) {
         <Learning rows={all} manager={Boolean(me.manager)} />
       )}
 
-      <SourceNote>
-        The agent runs on the sales desk with the VPS keys (lead data never goes
-        to DeepSeek). It reads what the cockpit knows about the lead: their
+      <SourceNote label="How the drafts are written">
+        The assistant reads what the cockpit knows about the lead: their
         answers, the calendar, the calls and their summaries, the notes, the
         conversation in HighLevel and any research. It writes WhatsApp only
         while the lead's 24-hour window is open, otherwise email. When a rep
@@ -289,7 +280,7 @@ function DraftCard({
   }
 
   return (
-    <form onSubmit={approve} className="panel space-y-3 p-4">
+    <form onSubmit={approve} className="panel space-y-4 p-4 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -313,7 +304,7 @@ function DraftCard({
           </div>
           <p className="muted mt-1 text-sm">{f.why}</p>
         </div>
-        <p className="muted text-[11px]">written {ago(f.created_at)}</p>
+        <p className="muted text-xs">Written {ago(f.created_at)}</p>
       </div>
       {f.channel === "email" ? (
         <input
@@ -420,7 +411,7 @@ function ContextView({ f }: { f: Followup }) {
           ))}
         </div>
       ) : null}
-      <p>Written by {f.model ?? "the desk's model"}.</p>
+      <p>Drafted by the assistant.</p>
     </div>
   );
 }
@@ -434,11 +425,13 @@ function SentList({
 }) {
   if (!rows.length)
     return (
-      <EmptyState
-        icon={Send}
-        title="Nothing sent yet"
-        text="Approved follow-ups and skipped ones show here for 30 days."
-      />
+      <section className="panel">
+        <EmptyState
+          icon={Send}
+          title="Nothing sent yet"
+          text="Approved follow-ups and skipped ones show here for 30 days."
+        />
+      </section>
     );
   return (
     <SectionCard title="The last 30 days" flush>
@@ -489,7 +482,7 @@ function SentList({
                           : "Sending"
                 }
               />
-              <span className="muted text-[11px]">
+              <span className="muted text-xs">
                 {f.decided_by ? `${f.decided_by.split("@")[0]} · ` : ""}
                 {ago(f.decided_at ?? f.created_at)}
               </span>
@@ -534,7 +527,7 @@ function Learning({ rows, manager }: { rows: Followup[]; manager: boolean }) {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <SectionCard title="The last 30 days, by kind of message" flush>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[560px] text-sm">

@@ -7,6 +7,7 @@ import {
   EmptyState,
   Failed,
   field,
+  page,
   SectionCard,
 } from "../components/kit";
 import { ProposalChip } from "../components/ProposalPanel";
@@ -40,11 +41,111 @@ function fillPaths(
   return out;
 }
 
+/** The draft's keys as a closer would name them. */
+const FILL_WORDS: Record<string, string> = {
+  client_company: "Client's company",
+  client_contact: "Client's name",
+  client_role: "Client's role",
+  city: "City",
+  prepared_by: "Prepared by",
+  prepared_by_role: "Your role",
+  date: "Date",
+  valid_until: "Valid until",
+  kicker: "Kicker",
+  headline: "Headline",
+  subhead: "Subheading",
+  gap_title: "The gap, title",
+  gap_close: "The gap, closing line",
+  gap_points: "The gap",
+  funnel: "The funnel",
+  pattern: "The pattern",
+  pattern_note: "The pattern, note",
+  tree: "The growth tree",
+  tree_title: "The growth tree, title",
+  tree_intro: "The growth tree, introduction",
+  tree_close: "The growth tree, closing line",
+  goal_label: "goal label",
+  goal_note: "goal note",
+  cost: "The cost",
+  local_currency: "currency",
+  arithmetic: "The arithmetic",
+  project_values: "project value",
+  table_title: "table title",
+  solution_title: "The solution, title",
+  solution_close: "The solution, closing line",
+  solution: "The solution",
+  solution_targets: "Targets",
+  program: "The programme",
+  proof: "Proof",
+  investment_title: "Investment, title",
+  investment_close: "Investment, closing line",
+  investment: "Investment",
+  total_label: "total label",
+  total_amount: "total",
+  terms: "Terms",
+  roi: "Return on investment",
+  usd_rate: "dollar rate",
+  fee_usd: "fee in dollars",
+  ad_monthly_usd: "monthly ad spend in dollars",
+  avg_project_value: "average project value",
+  margin_pct: "margin",
+  project_note: "project note",
+  margin_note: "margin note",
+  target_projects_month: "projects a month",
+  start_title: "Getting started, title",
+  deposit_label: "Deposit, label",
+  deposit_amount: "Deposit",
+  start_steps: "Getting started",
+  start_note: "Getting started, note",
+  cta: "The ask",
+  verdict_label: "verdict label",
+  v: "figure",
+  k: "what it is",
+  src: "source",
+};
+
+/** What one item of a list is called, by the list's key. */
+const FILL_ITEM: Record<string, string> = {
+  rows: "line",
+  stages: "stage",
+  layers: "layer",
+  branches: "branch",
+  subs: "sub-branch",
+  gap_points: "point",
+  terms: "line",
+  solution_targets: "target",
+  start_steps: "step",
+  program: "part",
+  solution: "part",
+  pattern: "part",
+  proof: "item",
+  project_values: "value",
+  margins: "margin",
+};
+
+/** Lists whose own name adds nothing once the item is named ("line 1"). */
+const FILL_CONTAINER = new Set([
+  "rows",
+  "stages",
+  "layers",
+  "branches",
+  "subs",
+]);
+
+/** "investment.rows.0.amount" as "Investment, line 1, amount". */
 function pathWords(path: string): string {
-  return path
-    .split(".")
-    .map(p => (/^\d+$/.test(p) ? `#${Number(p) + 1}` : p.replace(/_/g, " ")))
-    .join(" › ");
+  const parts = path.split(".");
+  const words: string[] = [];
+  parts.forEach((p, i) => {
+    if (/^\d+$/.test(p)) {
+      words.push(`${FILL_ITEM[parts[i - 1] ?? ""] ?? "item"} ${Number(p) + 1}`);
+      return;
+    }
+    if (FILL_CONTAINER.has(p) && /^\d+$/.test(parts[i + 1] ?? "")) return;
+    words.push(FILL_WORDS[p] ?? p.replace(/_/g, " "));
+  });
+  const line = words.join(", ");
+  return line.charAt(0).toUpperCase() + line.slice(1);
 }
 
 function list(v: unknown): string[] {
@@ -141,7 +242,7 @@ export default function ProposalPage({ me }: { me: Me }) {
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-xl font-semibold tracking-tight" dir="auto">
+            <h1 className="text-2xl font-semibold tracking-tight" dir="auto">
               Proposal for {leadName}
             </h1>
             <ProposalChip p={p} />
@@ -149,7 +250,7 @@ export default function ProposalPage({ me }: { me: Me }) {
           <p className="muted text-sm">
             {p.lang === "ar" ? "Arabic" : "English"} · asked by{" "}
             {p.created_by.split("@")[0]} {ago(p.created_at)}
-            {p.model ? ` · written by ${p.model}` : ""}
+            {p.model ? " · drafted by the assistant" : ""}
             {p.sent_at ? ` · sent ${ago(p.sent_at)}` : ""}
           </p>
           {p.variant ? (
@@ -160,16 +261,16 @@ export default function ProposalPage({ me }: { me: Me }) {
         </div>
         {mine ? (
           <div className="flex flex-wrap gap-2">
+            {/* One download: the PDF, or the page itself when no PDF was built. */}
             {p.pdf_path ? (
               <button
                 type="button"
                 className={button}
                 onClick={() => download(String(p.pdf_path), `${fileBase}.pdf`)}
               >
-                <Download className="size-3.5" aria-hidden /> PDF
+                <Download className="size-3.5" aria-hidden /> Download PDF
               </button>
-            ) : null}
-            {p.html_path ? (
+            ) : p.html_path ? (
               <button
                 type="button"
                 className={button}
@@ -177,7 +278,7 @@ export default function ProposalPage({ me }: { me: Me }) {
                   download(String(p.html_path), `${fileBase}.html`)
                 }
               >
-                <Download className="size-3.5" aria-hidden /> HTML
+                <Download className="size-3.5" aria-hidden /> Download
               </button>
             ) : null}
             {p.status === "ready" ? (
@@ -334,7 +435,7 @@ function Fills({ p, onDone }: { p: Proposal; onDone: () => void }) {
 
   return (
     <SectionCard title={`Fill in the blanks (${blanks.length})`}>
-      <p className="muted mb-3 text-sm">
+      <p className="muted mb-4 text-sm">
         The writer only uses figures the client said on the call. Where they did
         not say one it left FILL. Type the real figure or words; anything you
         leave still says FILL and the proposal cannot be marked sent.
@@ -372,9 +473,5 @@ function Fills({ p, onDone }: { p: Proposal; onDone: () => void }) {
 }
 
 function Shell({ children }: { children: ReactNode }) {
-  return (
-    <main className="mx-auto w-full max-w-5xl space-y-5 px-4 py-6 md:px-6">
-      {children}
-    </main>
-  );
+  return <main className={page}>{children}</main>;
 }

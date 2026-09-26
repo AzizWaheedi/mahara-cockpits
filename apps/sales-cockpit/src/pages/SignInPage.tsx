@@ -4,8 +4,8 @@ import { portalUrl } from "../lib/portal";
 import { supabase } from "../lib/supabase";
 
 /**
- * The same front door as the other three cockpits: the wordmark, the teal
- * glow behind it, one card, one heading.
+ * The same front door as the other cockpits: the wordmark, one card, one
+ * heading, on the plain canvas.
  *
  * Almost nobody should reach this. The portal signs people in and sends them
  * straight here, so this is the way in on a day the portal is down. A
@@ -63,20 +63,8 @@ export default function SignInPage() {
     "h-11 w-full rounded-[var(--radius-md)] border hairline bg-[color:var(--background)] px-3 text-sm placeholder:text-[color:var(--muted-foreground)]";
 
   return (
-    <div className="relative flex min-h-full flex-col">
-      <header className="border-b hairline px-4 py-3">
-        <div className="mx-auto flex max-w-5xl items-center gap-3">
-          <Wordmark size="sm" />
-          <span className="muted text-sm">Sales</span>
-        </div>
-      </header>
-
-      <div className="relative flex flex-1 items-center justify-center p-4">
-        <div className="absolute inset-0 -z-10 overflow-hidden">
-          <div className="absolute top-0 left-1/4 size-96 rounded-full bg-[color:var(--primary)]/10 blur-3xl" />
-          <div className="absolute right-1/4 bottom-0 size-96 rounded-full bg-[color:var(--primary)]/5 blur-3xl" />
-        </div>
-
+    <div className="pt-safe pb-safe flex min-h-full flex-col">
+      <div className="flex flex-1 items-center justify-center p-4">
         <div className="w-full max-w-sm space-y-6">
           <div className="space-y-2 text-center">
             <div className="mb-6 flex justify-center">
@@ -91,10 +79,7 @@ export default function SignInPage() {
             </p>
           </div>
 
-          <form
-            onSubmit={go}
-            className="space-y-4 rounded-[calc(var(--radius)+0.25rem)] border-0 bg-gradient-to-br from-[color:var(--card)] to-[color:var(--muted)] p-6 shadow-lg"
-          >
+          <form onSubmit={go} className="panel space-y-4 p-6">
             <div className="space-y-2">
               <label
                 htmlFor="signin-email"

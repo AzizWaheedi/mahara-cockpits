@@ -1,7 +1,15 @@
 import { ChartNoAxesColumn, Link2Off } from "lucide-react";
 import { useMemo } from "react";
 import { useSearchParams } from "react-router";
-import { EmptyState, Failed, SourceNote, StatusChip } from "../components/kit";
+import {
+  EmptyState,
+  Failed,
+  page,
+  Segmented,
+  SourceNote,
+  StatusChip,
+  select,
+} from "../components/kit";
 import { NumbersBoard } from "../components/NumbersBoard";
 import { DIALS_CAP, NumbersDials } from "../components/NumbersDials";
 import { NumbersGoals } from "../components/NumbersGoals";
@@ -189,13 +197,13 @@ export default function NumbersPage({ me }: { me: Me }) {
   const noSeat = manager && !team && seatRead && !seat;
 
   return (
-    <main className="mx-auto w-full max-w-6xl space-y-5 px-4 py-6 md:px-6">
+    <main className={page}>
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-xl font-semibold tracking-tight">
+          <h1 className="text-2xl font-semibold tracking-tight">
             {manager ? "Numbers" : "Your numbers"}
           </h1>
-          <p className="muted text-sm">
+          <p className="muted mt-1 text-sm">
             {rangeWords(days.from, days.to)}
             {computedAt ? ` · scorecard as of ${ago(computedAt, now)}` : ""}
           </p>
@@ -206,7 +214,7 @@ export default function NumbersPage({ me }: { me: Me }) {
             <select
               value={team ? TEAM : (key ?? TEAM)}
               onChange={e => setParam("who", e.target.value)}
-              className="h-9 min-w-0 max-w-[16rem] rounded-[var(--radius-md)] border hairline bg-[color:var(--background)] px-2 text-sm"
+              className={select}
             >
               <option value={TEAM}>Team total</option>
               {options.map(o => (
@@ -219,27 +227,12 @@ export default function NumbersPage({ me }: { me: Me }) {
         ) : null}
       </header>
 
-      <div
-        role="group"
-        aria-label="Window"
-        className="raised grid grid-cols-3 gap-0.5 rounded-[var(--radius-md)] p-0.5 text-sm lg:inline-flex"
-      >
-        {WINDOWS.map(x => (
-          <button
-            key={x.key}
-            type="button"
-            aria-pressed={w === x.key}
-            onClick={() => setParam("w", x.key)}
-            className={`whitespace-nowrap rounded-[calc(var(--radius-md)-2px)] px-2 py-1 sm:px-3 ${
-              w === x.key
-                ? "bg-[color:var(--card)] font-medium shadow-sm"
-                : "muted"
-            }`}
-          >
-            {x.label}
-          </button>
-        ))}
-      </div>
+      <Segmented
+        label="Window"
+        value={w}
+        options={WINDOWS.map(x => [x.key, x.label] as [string, string])}
+        onChange={v => setParam("w", v)}
+      />
 
       {people.error ? (
         <Failed what="The seats" error={people.error} retry={people.reload} />
@@ -282,11 +275,7 @@ export default function NumbersPage({ me }: { me: Me }) {
                   tone="neutral"
                   label={`No calls or closes for ${self ? "you" : name}`}
                 />
-              ) : (
-                <span className="muted text-xs">
-                  {team ? "Team total" : name}
-                </span>
-              )
+              ) : undefined
             }
           />
           <NumbersClosing card={card} />
@@ -312,7 +301,7 @@ export default function NumbersPage({ me }: { me: Me }) {
             self={!manager || self}
           />
           <div
-            className={`grid grid-cols-1 gap-5 ${team ? "" : "lg:grid-cols-2"}`}
+            className={`grid grid-cols-1 gap-4 lg:gap-6 ${team ? "" : "lg:grid-cols-2"}`}
           >
             <NumbersGoals
               windowKey={w}

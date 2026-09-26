@@ -1,6 +1,4 @@
 import {
-  ArrowDownLeft,
-  ArrowUpRight,
   CalendarPlus,
   FileText,
   Handshake,
@@ -11,6 +9,7 @@ import {
 import { useMemo, useState } from "react";
 import { callType, duration, money, statusLabel, when } from "../lib/format";
 import type { CalendarRow, Deal, Dial, Proposal } from "../lib/types";
+import { FilterChip } from "./kit";
 
 /** A message as the server trims it from HighLevel's conversation. */
 export interface LiveMessage {
@@ -180,24 +179,14 @@ export function LeadTimeline({
   return (
     <div>
       <div
-        className="mb-3 flex flex-wrap gap-1.5"
+        className="no-scrollbar mb-4 flex flex-nowrap gap-2 overflow-x-auto"
         role="group"
         aria-label="Show"
       >
         {filters.map(([k, label]) => (
-          <button
-            key={k}
-            type="button"
-            aria-pressed={only === k}
-            onClick={() => setOnly(k)}
-            className={`rounded-full border px-2.5 py-0.5 text-xs ${
-              only === k
-                ? "border-[color:var(--primary)] font-medium"
-                : "hairline muted"
-            }`}
-          >
+          <FilterChip key={k} on={only === k} onClick={() => setOnly(k)}>
             {label}
-          </button>
+          </FilterChip>
         ))}
       </div>
       {shown.length ? (
@@ -216,8 +205,6 @@ export function LeadTimeline({
 function TimelineRow({ i }: { i: Item }) {
   const [ar, setAr] = useState(false);
   const Icon = i.icon;
-  const Dir =
-    i.tone === "in" ? ArrowDownLeft : i.tone === "out" ? ArrowUpRight : null;
   const body = ar && i.bodyAr ? i.bodyAr : (i.body ?? i.bodyAr);
   return (
     <li className="relative">
@@ -228,12 +215,7 @@ function TimelineRow({ i }: { i: Item }) {
         <Icon className="size-3" />
       </span>
       <div className="flex flex-wrap items-baseline gap-x-2">
-        <p className="text-sm font-medium">
-          {Dir ? (
-            <Dir className="muted mr-1 inline size-3.5" aria-hidden />
-          ) : null}
-          {i.title}
-        </p>
+        <p className="text-sm font-medium">{i.title}</p>
         <p className="muted text-xs tabular-nums">{when(i.at)}</p>
       </div>
       {i.meta ? <p className="muted text-xs">{i.meta}</p> : null}

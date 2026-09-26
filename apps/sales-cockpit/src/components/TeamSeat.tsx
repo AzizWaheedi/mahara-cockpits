@@ -402,17 +402,16 @@ function LinksForm({
           />
         </TeamField>
       </div>
-      <div className="flex flex-wrap items-center gap-3">
-        <button
-          type="submit"
-          disabled={
-            busy || !changed.length || Boolean(bad.maqsam || bad.fathom)
-          }
-          className={buttonPrimary}
-        >
-          {busy ? "Saving…" : "Save links"}
-        </button>
-        {changed.length ? (
+      {/* Save shows once something has changed, not as a dimmed button on every seat. */}
+      {changed.length ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="submit"
+            disabled={busy || Boolean(bad.maqsam || bad.fathom)}
+            className={buttonPrimary}
+          >
+            {busy ? "Saving…" : "Save links"}
+          </button>
           <button
             type="button"
             onClick={() => setF(initial)}
@@ -420,8 +419,8 @@ function LinksForm({
           >
             Undo changes
           </button>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
     </form>
   );
 }

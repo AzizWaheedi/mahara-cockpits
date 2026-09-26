@@ -1,4 +1,4 @@
-import { ArrowLeft, Copy, ExternalLink, Phone, ScrollText } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Copy, Phone, ScrollText } from "lucide-react";
 import { type ReactNode, useEffect, useMemo } from "react";
 import { Link, useParams } from "react-router";
 import { AdOrigin } from "../components/AdOrigin";
@@ -6,8 +6,11 @@ import { CallNotesList, useCallNotes } from "../components/CallNotes";
 import { Conversation, useConversation } from "../components/Conversation";
 import { HotControl } from "../components/HotList";
 import {
+  button,
+  buttonPrimary,
   EmptyState,
   Failed,
+  pageWide,
   SectionCard,
   StatusChip,
   type Tone,
@@ -164,6 +167,9 @@ export default function LeadPage({ me }: { me: Me }) {
             l.country,
             `came in ${ago(l.lead_created_at)}`,
             ownerName ? `owner ${ownerName}` : "no owner",
+            nextAppt
+              ? `${callType(nextAppt.call_type)} booked ${when(nextAppt.start_at)}`
+              : null,
           ]
             .filter(Boolean)
             .join(" · ")}
@@ -172,7 +178,7 @@ export default function LeadPage({ me }: { me: Me }) {
         <div className="flex flex-wrap gap-2">
           <Link
             to={`/call/${l.contact_id}?script=${callScript(me, appointments)}`}
-            className="inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-md)] bg-[color:var(--primary)] px-3 text-[13px] font-semibold text-[color:var(--primary-foreground)] hover:opacity-90"
+            className={buttonPrimary}
           >
             <ScrollText className="size-3.5" aria-hidden />
             {callScript(me, appointments) === "demo"
@@ -188,19 +194,19 @@ export default function LeadPage({ me }: { me: Me }) {
               href={newClientFormUrl(l, appointments, me)}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-md)] border hairline px-2.5 text-[13px] hover:bg-[color:var(--secondary)]"
+              className={button}
               title="Opens the New Client Form with this lead, the closer and the setter already filled in, so the signed client links back to this call."
             >
-              New client form <ExternalLink className="size-3.5" aria-hidden />
+              New client form <ArrowUpRight className="size-3.5" aria-hidden />
             </a>
           ) : null}
           <a
             href={`https://app.gohighlevel.com/v2/location/${GHL_LOCATION}/contacts/detail/${l.contact_id}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-md)] border hairline px-2.5 text-[13px] hover:bg-[color:var(--secondary)]"
+            className={button}
           >
-            Open in HighLevel <ExternalLink className="size-3.5" aria-hidden />
+            Open in HighLevel <ArrowUpRight className="size-3.5" aria-hidden />
           </a>
         </div>
       </header>
@@ -226,8 +232,8 @@ export default function LeadPage({ me }: { me: Me }) {
         </SectionCard>
       ) : null}
 
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-12">
-        <div className="min-w-0 space-y-5 xl:col-span-4">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-12 xl:gap-6">
+        <div className="min-w-0 space-y-4 xl:col-span-4 xl:space-y-6">
           <SectionCard title="What they told us">
             <Answers lead={l} />
           </SectionCard>
@@ -239,7 +245,7 @@ export default function LeadPage({ me }: { me: Me }) {
           </SectionCard>
         </div>
 
-        <div className="min-w-0 space-y-5 xl:col-span-5">
+        <div className="min-w-0 space-y-4 xl:col-span-5 xl:space-y-6">
           <SectionCard title="Conversation">
             <Conversation contactId={l.contact_id} convo={convo} />
           </SectionCard>
@@ -268,18 +274,7 @@ export default function LeadPage({ me }: { me: Me }) {
           </SectionCard>
         </div>
 
-        <div className="min-w-0 space-y-5 xl:col-span-3">
-          {nextAppt ? (
-            <SectionCard title="Next call">
-              <p className="text-sm font-medium">
-                {callType(nextAppt.call_type)} · {when(nextAppt.start_at)}
-              </p>
-              <p className="muted text-xs">
-                {nextAppt.assigned_user_name ?? "No rep assigned"} ·{" "}
-                {statusLabel(nextAppt.status)}
-              </p>
-            </SectionCard>
-          ) : null}
+        <div className="min-w-0 space-y-4 xl:col-span-3 xl:space-y-6">
           <SectionCard title="What the calls told us">
             {callNotes.error ? (
               <Failed
@@ -354,11 +349,7 @@ function callScript(me: Me, appointments: CalendarRow[]): "intro" | "demo" {
 }
 
 function Page({ children }: { children: ReactNode }) {
-  return (
-    <main className="mx-auto w-full max-w-7xl space-y-5 px-4 py-6 md:px-6">
-      {children}
-    </main>
-  );
+  return <main className={pageWide}>{children}</main>;
 }
 
 function Appointments({
@@ -412,7 +403,6 @@ function Appointments({
 function CopyChip({
   text,
   label,
-  icon: Icon,
 }: {
   text: string;
   label: string;
@@ -429,14 +419,14 @@ function CopyChip({
           toast.error("The browser would not copy. Select the text instead.");
         }
       }}
-      className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-[var(--radius-md)] border hairline px-2.5 text-[13px] hover:bg-[color:var(--secondary)]"
+      className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-[var(--radius-md)] border hairline px-3 text-sm hover:bg-[color:var(--secondary)]"
       title={label}
+      aria-label={`${label}: ${text}`}
     >
-      {Icon ? <Icon className="size-3.5 shrink-0" aria-hidden /> : null}
+      <Copy className="muted size-3.5 shrink-0" aria-hidden />
       <span className="truncate tabular-nums" dir="ltr">
         {text}
       </span>
-      <Copy className="muted size-3 shrink-0" aria-hidden />
     </button>
   );
 }

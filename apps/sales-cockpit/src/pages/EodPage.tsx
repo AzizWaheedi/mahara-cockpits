@@ -7,9 +7,12 @@ import {
   EmptyState,
   Failed,
   field,
+  page,
   SectionCard,
+  Segmented,
   SourceNote,
   StatusChip,
+  select,
 } from "../components/kit";
 import { api } from "../lib/api";
 import { useQuery } from "../lib/data";
@@ -132,11 +135,11 @@ export default function EodPage({ me }: { me: Me }) {
   };
 
   return (
-    <main className="mx-auto w-full max-w-4xl space-y-5 px-4 py-6 md:px-6">
+    <main className={page}>
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">End of day</h1>
-          <p className="muted text-sm">
+          <h1 className="text-2xl font-semibold tracking-tight">End of day</h1>
+          <p className="muted mt-1 text-sm">
             {data
               ? `${dayWords(data.day)} · goes to #eods-salesreps and the EOD Reports sheet`
               : "Counting your day…"}
@@ -144,23 +147,15 @@ export default function EodPage({ me }: { me: Me }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {data && data.roles.length > 1 ? (
-            <div
-              className="raised inline-flex rounded-[var(--radius-md)] p-0.5 text-sm"
-              role="group"
-              aria-label="Which end of day"
-            >
-              {data.roles.map(r => (
-                <button
-                  key={r}
-                  type="button"
-                  aria-pressed={data.role === r}
-                  onClick={() => set("role", r)}
-                  className={`rounded-[calc(var(--radius-md)-2px)] px-3 py-1 ${data.role === r ? "bg-[color:var(--card)] font-medium shadow-sm" : "muted"}`}
-                >
-                  {r === "setter" ? "Setter" : "Closer"}
-                </button>
-              ))}
-            </div>
+            <Segmented
+              label="Which end of day"
+              value={data.role}
+              options={data.roles.map(r => [
+                r,
+                r === "setter" ? "Setter" : "Closer",
+              ])}
+              onChange={r => set("role", r)}
+            />
           ) : null}
           {data ? (
             <select
@@ -172,7 +167,7 @@ export default function EodPage({ me }: { me: Me }) {
                   e.target.value === data.today ? null : e.target.value,
                 )
               }
-              className="h-8 rounded-[var(--radius-md)] border hairline bg-[color:var(--card)] px-2 text-sm"
+              className={select}
             >
               {lastDays(data.today).map(d => (
                 <option key={d} value={d}>
@@ -196,7 +191,7 @@ export default function EodPage({ me }: { me: Me }) {
 
       {me.manager && data ? <TeamToday day={data.day} /> : null}
 
-      <SourceNote>
+      <SourceNote label="Where your end of day goes">
         The same questions as the Typeform EODs, filed to the "Setter" or "Sales
         Rep" tab of the EOD Reports sheet and posted to #eods-salesreps, where
         EOD Radar reads it. Beside each number is what the cockpit counted and
@@ -266,7 +261,7 @@ function EodForm({ data, onSent }: { data: Prefill; onSent: () => void }) {
     f => f.kind === "text" && f.key !== "talk_time",
   );
   return (
-    <form onSubmit={send} className="space-y-5">
+    <form onSubmit={send} className="space-y-6">
       {!data.has_slack_id ? (
         <p className="callout-warn rounded-[var(--radius-md)] border px-3 py-2 text-sm">
           Your seat has no Slack id, so EOD Radar cannot credit this to you by
@@ -361,7 +356,7 @@ function NumberQuestion({
         className={field}
       />
       {note ? (
-        <span className="muted flex flex-wrap items-center gap-x-2 text-[11px] leading-snug">
+        <span className="muted flex flex-wrap items-center gap-x-2 text-xs leading-snug">
           {shown !== null ? (
             <strong className="text-[color:var(--foreground)]">
               Cockpit: {shown}
@@ -435,7 +430,7 @@ function Filed({ data, onRetry }: { data: Prefill; onRetry: () => void }) {
           <p className="callout-bad rounded-[var(--radius-md)] border px-3 py-2">
             Slack said: {o?.error}.{" "}
             {/not_in_channel|channel_not_found/.test(String(o?.error))
-              ? "The cockpit's Slack bot is not in #eods-salesreps. Invite @abdulazizs_second_ass to the channel, then post again."
+              ? "The cockpit's Slack bot is not in #eods-salesreps. Ask Aziz to add the bot to the channel, then post again."
               : "Post again once that is sorted."}
           </p>
         ) : null}
@@ -455,19 +450,34 @@ function Filed({ data, onRetry }: { data: Prefill; onRetry: () => void }) {
           </button>
         ) : null}
         <dl className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
-          {data.fields.map(f => (
-            <div
-              key={f.key}
-              className="flex justify-between gap-3 border-b hairline py-1"
-            >
-              <dt className="muted">{f.label}</dt>
-              <dd className="text-right tabular-nums" dir="auto">
-                {e.answers[f.key] === null || e.answers[f.key] === undefined
-                  ? "--"
-                  : String(e.answers[f.key])}
-              </dd>
-            </div>
-          ))}
+          {data.fields.map(f => {
+            const v = e.answers[f.key];
+            // A number reads down its column; words read as a sentence,
+            // under their question, across the card.
+            const words = f.kind === "text" && f.key !== "talk_time";
+            return (
+              <div
+                key={f.key}
+                className={`border-b hairline py-1 ${
+                  words ? "sm:col-span-2" : "flex justify-between gap-3"
+                }`}
+              >
+                <dt className="muted">{f.label}</dt>
+                <dd
+                  className={
+                    v === null || v === undefined
+                      ? "muted"
+                      : words
+                        ? "mt-0.5 whitespace-pre-wrap"
+                        : "text-right font-mono tabular-nums"
+                  }
+                  dir="auto"
+                >
+                  {v === null || v === undefined ? "n/a" : String(v)}
+                </dd>
+              </div>
+            );
+          })}
         </dl>
       </div>
     </SectionCard>

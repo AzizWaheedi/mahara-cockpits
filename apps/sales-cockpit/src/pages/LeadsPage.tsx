@@ -19,7 +19,9 @@ import {
   button,
   EmptyState,
   Failed,
+  FilterChip,
   field,
+  page,
   StatusChip,
   type Tone,
 } from "../components/kit";
@@ -66,11 +68,6 @@ const CLASS_TONE: Record<string, Tone> = {
 /** The table's columns: four from sm, all six once there is room for them. */
 const GRID =
   "gap-3 sm:grid-cols-[minmax(0,1.4fr)_6.5rem_7.5rem_minmax(0,1fr)] lg:grid-cols-[minmax(0,1.6fr)_6.5rem_7.5rem_minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,0.7fr)]";
-
-const CHIP_ON = {
-  background: "color-mix(in oklch, var(--primary) 14%, transparent)",
-  borderColor: "color-mix(in oklch, var(--primary) 55%, transparent)",
-};
 
 function readFilter(p: URLSearchParams): LeadFilter {
   const cls = p.get("class") ?? "";
@@ -262,7 +259,7 @@ export default function LeadsPage() {
         <EmptyState
           icon={SearchX}
           title="No leads match"
-          text="Nothing in the sales sub-account matches this search and these filters. Clear them, or widen when the lead was created."
+          text="No lead matches this search and these filters. Clear them, or widen when the lead was created."
           action={
             <button type="button" className={button} onClick={clear}>
               Clear search and filters
@@ -292,15 +289,11 @@ export default function LeadsPage() {
     );
 
   return (
-    <main
-      ref={top}
-      className="mx-auto w-full max-w-6xl scroll-mt-14 space-y-5 px-4 py-6 md:scroll-mt-0 md:px-6"
-    >
+    <main ref={top} className={`${page} scroll-mt-14 md:scroll-mt-0`}>
       <header className="min-w-0">
-        <h1 className="text-xl font-semibold tracking-tight">Leads</h1>
-        <p className="muted text-sm">
-          {shownLine}Leads are HighLevel contacts in the sales sub-account,
-          copied from B2B every three minutes.
+        <h1 className="text-2xl font-semibold tracking-tight">Leads</h1>
+        <p className="muted mt-1 text-sm">
+          {shownLine}Every lead in HighLevel, updated every few minutes.
         </p>
       </header>
 
@@ -380,29 +373,19 @@ export default function LeadsPage() {
           </div>
         </div>
         <div
-          className="flex flex-wrap gap-1.5"
+          className="no-scrollbar flex flex-nowrap gap-2 overflow-x-auto"
           role="group"
           aria-label="Lead class"
         >
-          {CLASSES.map(c => {
-            const on = f.leadClass === c.key;
-            return (
-              <button
-                key={c.key || "all"}
-                type="button"
-                aria-pressed={on}
-                onClick={() => update({ class: c.key || null })}
-                className={`inline-flex h-7 items-center rounded-full border px-2.5 text-xs ${
-                  on
-                    ? "font-medium"
-                    : "muted hairline hover:bg-[color:var(--secondary)]"
-                }`}
-                style={on ? CHIP_ON : undefined}
-              >
-                {c.label}
-              </button>
-            );
-          })}
+          {CLASSES.map(c => (
+            <FilterChip
+              key={c.key || "all"}
+              on={f.leadClass === c.key}
+              onClick={() => update({ class: c.key || null })}
+            >
+              {c.label}
+            </FilterChip>
+          ))}
         </div>
       </div>
 
@@ -426,13 +409,13 @@ function LeadRow({ lead: l, now }: { lead: Lead; now: number }) {
   const company = l.company?.trim() || "";
   const revenue = l.revenue?.trim() || "";
   const country = l.country?.trim() || "";
-  const created = l.lead_created_at ? ago(l.lead_created_at, now) : "--";
+  const created = l.lead_created_at ? ago(l.lead_created_at, now) : "n/a";
   const when = day(l.lead_created_at);
   // No stage id means the lead sits in no stage; an id the copy could not
-  // name is not known, which is a dash rather than "No stage".
+  // name is not known, which is "n/a" rather than "No stage".
   const named = plainStage(l.stage_name);
-  const stage = named || (l.stage_id ? "--" : "No stage");
-  const dash = <span className="muted">--</span>;
+  const stage = named || (l.stage_id ? "n/a" : "No stage");
+  const dash = <span className="muted">n/a</span>;
   return (
     <li>
       {/* Phones: one stacked row. */}

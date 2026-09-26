@@ -6,7 +6,11 @@ import {
   buttonPrimary,
   EmptyState,
   Failed,
+  FilterChip,
   field,
+  Segmented as KitSegmented,
+  page,
+  pageWide,
   SectionCard,
 } from "../components/kit";
 import {
@@ -177,12 +181,12 @@ export default function CallPage({ me }: { me: Me }) {
             title={
               !lead.data
                 ? "This lead is not in the cockpit"
-                : "This script has not been imported yet"
+                : "This script is not ready yet"
             }
             text={
               !lead.data
                 ? "Open it again from the Leads list."
-                : "Run the script import in hermes/sales-desk."
+                : "Ask your manager."
             }
           />
         )}
@@ -257,7 +261,7 @@ export default function CallPage({ me }: { me: Me }) {
   const leadName = lead.data.name ?? "the lead";
 
   return (
-    <main className="mx-auto w-full max-w-7xl space-y-4 px-4 py-5 md:px-6">
+    <main className={pageWide}>
       <header className="flex flex-wrap items-center gap-3">
         <Link
           to={`/lead/${contactId}`}
@@ -302,7 +306,7 @@ export default function CallPage({ me }: { me: Me }) {
             onChange={v => setPref({ mode: v as Mode })}
           />
           <span
-            className="inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-md)] border hairline px-2.5 text-[13px] tabular-nums"
+            className="inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-md)] border hairline px-2.5 font-mono text-sm tabular-nums"
             title={`About ${totalMinutes} minutes in all`}
           >
             <Timer className="size-3.5" aria-hidden /> {mmss(now - startedAt)}
@@ -319,27 +323,17 @@ export default function CallPage({ me }: { me: Me }) {
         </div>
       </header>
 
-      <div
-        className="raised grid grid-cols-3 rounded-[var(--radius-md)] p-0.5 text-sm lg:hidden"
-        role="tablist"
-      >
-        {(["script", "capture", "objections"] as const).map(t => (
-          <button
-            key={t}
-            type="button"
-            role="tab"
-            aria-selected={tab === t}
-            onClick={() => setTab(t)}
-            className={`rounded-[calc(var(--radius-md)-2px)] py-1.5 ${tab === t ? "bg-[color:var(--card)] font-medium shadow-sm" : "muted"}`}
-          >
-            {t === "script"
-              ? "Script"
-              : t === "capture"
-                ? "Answers"
-                : "Objections"}
-          </button>
-        ))}
-      </div>
+      <KitSegmented
+        label="Show"
+        value={tab}
+        options={[
+          ["script", "Script"],
+          ["capture", "Answers"],
+          ["objections", "Objections"],
+        ]}
+        onChange={v => setTab(v as "script" | "capture" | "objections")}
+        className="lg:hidden"
+      />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
         <aside className="hidden min-w-0 space-y-4 lg:col-span-3 lg:block">
@@ -398,14 +392,14 @@ export default function CallPage({ me }: { me: Me }) {
         <section
           className={`min-w-0 space-y-4 lg:col-span-6 ${tab === "script" ? "" : "hidden lg:block"}`}
         >
-          <div className="panel p-4 md:p-5">
+          <div className="panel p-4 sm:p-6">
             <div className="muted flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
               <span>
                 Stage {stageIdx + 1} of {stages.length}
               </span>
               {stage.minutes ? (
                 <span
-                  className="tabular-nums"
+                  className="font-mono tabular-nums"
                   style={overStage ? { color: "var(--warning)" } : undefined}
                 >
                   {mmss(now - stageStart)} of {stage.minutes}:00
@@ -528,11 +522,7 @@ export default function CallPage({ me }: { me: Me }) {
 }
 
 function Wrap({ children }: { children: ReactNode }) {
-  return (
-    <main className="mx-auto w-full max-w-5xl space-y-5 px-4 py-6 md:px-6">
-      {children}
-    </main>
-  );
+  return <main className={page}>{children}</main>;
 }
 
 function Captures({
@@ -577,21 +567,15 @@ function Captures({
                 aria-labelledby={`cap-${c.key}`}
               >
                 {(c.options ?? []).map(o => (
-                  <button
+                  <FilterChip
                     key={o}
-                    type="button"
-                    aria-pressed={values[c.key] === o}
+                    on={values[c.key] === o}
                     onClick={() =>
                       onChange(c.key, values[c.key] === o ? "" : o)
                     }
-                    className={`rounded-full border px-2.5 py-0.5 text-xs ${
-                      values[c.key] === o
-                        ? "border-[color:var(--primary)] font-medium"
-                        : "hairline"
-                    }`}
                   >
                     {o}
-                  </button>
+                  </FilterChip>
                 ))}
               </div>
             ) : (

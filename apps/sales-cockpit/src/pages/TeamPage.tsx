@@ -4,6 +4,7 @@ import {
   buttonPrimary,
   EmptyState,
   Failed,
+  page,
   SectionCard,
   StatusChip,
 } from "../components/kit";
@@ -82,9 +83,9 @@ export default function TeamPage({ me }: { me: Me }) {
   const paused = seats.filter(p => !p.active).length;
 
   return (
-    <main className="mx-auto w-full max-w-6xl space-y-5 px-4 py-6 md:px-6">
+    <main className={page}>
       <header className="min-w-0">
-        <h1 className="text-xl font-semibold tracking-tight">Team</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Team</h1>
         <p className="muted mt-1 max-w-2xl text-sm">
           Add someone on the{" "}
           <a
@@ -98,10 +99,10 @@ export default function TeamPage({ me }: { me: Me }) {
         </p>
       </header>
 
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-12">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:gap-6">
         <div className="min-w-0 space-y-4 lg:col-span-8">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <h2 className="text-sm font-semibold tracking-tight">Seats</h2>
+            <h2 className="text-[15px] font-semibold tracking-tight">Seats</h2>
             {people.data ? (
               <span className="muted text-xs">
                 {seats.length} {seats.length === 1 ? "seat" : "seats"}
@@ -143,7 +144,7 @@ export default function TeamPage({ me }: { me: Me }) {
           ) : null}
         </div>
 
-        <div className="min-w-0 space-y-5 lg:col-span-4">
+        <div className="min-w-0 space-y-4 lg:col-span-4 lg:space-y-6">
           <CrmWritesCard />
           <HealthCard now={now} />
         </div>
@@ -274,7 +275,7 @@ function CrmWritesCard() {
 function countText(v: unknown): string {
   if (typeof v === "number") return v.toLocaleString("en-US");
   if (typeof v === "string") return v;
-  if (v === null || v === undefined) return "--";
+  if (v === null || v === undefined) return "n/a";
   // A step that reports more than a count ({n, full, dropped}, or a note
   // that it was skipped) is shown as its count and the one thing worth
   // knowing about it.
@@ -291,7 +292,7 @@ function countText(v: unknown): string {
       return `${o.n.toLocaleString("en-US")}${extra.length ? ` (${extra.join(", ")})` : ""}`;
     }
   }
-  return "--";
+  return "n/a";
 }
 
 /** The last copy from B2B and the worker's own reports. */
@@ -400,7 +401,7 @@ function HealthCard({ now }: { now: number }) {
                     {w.detail}
                   </p>
                 ) : null}
-                <p className="muted mt-0.5 text-[11px]">
+                <p className="muted mt-0.5 text-xs">
                   {w.worker} · {ago(w.at, now)}
                 </p>
               </li>

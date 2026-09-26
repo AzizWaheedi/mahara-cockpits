@@ -5,9 +5,11 @@ import {
   button,
   EmptyState,
   Failed,
+  page,
   SectionCard,
   SourceNote,
   StatusChip,
+  select,
 } from "../components/kit";
 import { PaceRail } from "../components/NumbersGoals";
 import { api } from "../lib/api";
@@ -48,7 +50,7 @@ import type { Me, Rep, ScoreRow } from "../lib/types";
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 function fmt(metric: GoalMetric, v: number | null): string {
-  if (v === null) return "--";
+  if (v === null) return "n/a";
   return metric === "cash" ? money(v) : count(Math.round(v));
 }
 
@@ -120,11 +122,11 @@ export default function GoalsPage({ me }: { me: Me }) {
         : "Not started yet";
 
   return (
-    <main className="mx-auto w-full max-w-5xl space-y-5 px-4 py-6 md:px-6">
+    <main className={page}>
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-xl font-semibold tracking-tight">Goals</h1>
-          <p className="muted text-sm">
+          <h1 className="text-2xl font-semibold tracking-tight">Goals</h1>
+          <p className="muted mt-1 text-sm">
             {monthWords(month)} · {when}
           </p>
         </div>
@@ -137,7 +139,7 @@ export default function GoalsPage({ me }: { me: Me }) {
                 onChange={e =>
                   set("rep", e.target.value === "team" ? null : e.target.value)
                 }
-                className="h-8 rounded-[var(--radius-md)] border hairline bg-[color:var(--card)] px-2 text-sm"
+                className={select}
               >
                 <option value="team">The whole team</option>
                 {active.map(r => (
@@ -165,7 +167,7 @@ export default function GoalsPage({ me }: { me: Me }) {
             <button
               type="button"
               onClick={() => set("month", null)}
-              className="min-w-32 px-2 py-1 font-medium tabular-nums"
+              className="min-w-32 px-2 py-1 font-medium"
               title="Back to this month"
             >
               {monthWords(month)}
@@ -314,7 +316,7 @@ function RepGoals({
         side={
           card ? (
             <span className="muted text-xs">
-              scorecard as of {ago(card.computed_at)}
+              Scorecard as of {ago(card.computed_at)}
             </span>
           ) : undefined
         }
@@ -379,11 +381,11 @@ function RepGoals({
                         </span>
                         {l.goal !== null && l.actual !== null ? (
                           <span
-                            className="block text-[11px]"
+                            className="block text-xs"
                             style={{
                               color:
                                 l.actual >= l.goal
-                                  ? "var(--good, var(--primary))"
+                                  ? "var(--success)"
                                   : "var(--muted-foreground)",
                             }}
                           >
@@ -399,7 +401,7 @@ function RepGoals({
           </table>
         </div>
         <p className="muted border-t hairline px-4 py-2 text-xs">
-          "--" is a month with nothing recorded for them
+          "n/a" is a month with nothing recorded for them
           {firstDeal
             ? `; closes and cash start in ${monthWords(firstDeal)}, when deals were first recorded`
             : ""}
@@ -437,13 +439,13 @@ function GoalLine({
     <li className="grid grid-cols-1 gap-3 py-3 sm:grid-cols-[9rem_1fr_auto] sm:items-center">
       <div>
         <p className="text-sm font-medium">{label}</p>
-        <p className="text-2xl font-semibold tabular-nums tracking-tight">
-          {noDials ? (
-            <span className="muted text-sm font-normal">no Maqsam address</span>
-          ) : (
-            fmt(line.metric, line.actual)
-          )}
-        </p>
+        {noDials ? (
+          <p className="muted mt-1 text-sm">No Maqsam address</p>
+        ) : (
+          <p className="text-2xl font-semibold tabular-nums tracking-tight">
+            {fmt(line.metric, line.actual)}
+          </p>
+        )}
       </div>
       <div className="min-w-0 space-y-1.5">
         {line.goal !== null ? (
@@ -559,23 +561,29 @@ function NumberField({
   if (!editable)
     return (
       <div className="w-24 text-right">
-        <p className="muted text-[11px]">{label}</p>
+        <p className="muted text-xs">{label}</p>
         <p className="text-sm tabular-nums">
-          {value === null ? "--" : isMoney ? money(value) : count(value)}
+          {value === null ? (
+            <span className="muted">Not set</span>
+          ) : isMoney ? (
+            money(value)
+          ) : (
+            count(value)
+          )}
         </p>
       </div>
     );
   return (
     <form onSubmit={save} className="w-24">
       <label className="block">
-        <span className="muted block text-right text-[11px]">{label}</span>
+        <span className="muted block text-right text-xs">{label}</span>
         <input
           inputMode="decimal"
           value={text}
           aria-busy={busy}
           onChange={e => setText(e.target.value)}
           onBlur={() => void save()}
-          placeholder="--"
+          placeholder="Not set"
           className="h-8 w-full rounded-[var(--radius-md)] border hairline bg-[color:var(--background)] px-2 text-right text-sm tabular-nums"
         />
       </label>
@@ -721,7 +729,7 @@ function TeamGoals({
                     >
                       {r.display_name}
                     </button>
-                    <span className="muted block text-[11px]">
+                    <span className="muted block text-xs">
                       {r.role === "setter"
                         ? "Setter"
                         : r.role === "both"
@@ -738,7 +746,7 @@ function TeamGoals({
                         {fmt(l.metric, l.actual)}
                       </span>
                       {l.goal !== null ? (
-                        <span className="muted block text-[11px]">
+                        <span className="muted block text-xs">
                           of {fmt(l.metric, l.goal)}
                         </span>
                       ) : null}

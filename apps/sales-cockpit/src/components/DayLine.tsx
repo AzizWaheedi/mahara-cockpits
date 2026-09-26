@@ -128,7 +128,7 @@ export function DayLine({ rows, now }: { rows: CalendarRow[]; now: number }) {
                   key={r.appointment_id}
                   type="button"
                   data-state={state}
-                  className="dayline-call"
+                  className="dayline-call no-touch"
                   onClick={() =>
                     r.contact_id && navigate(`/lead/${r.contact_id}`)
                   }

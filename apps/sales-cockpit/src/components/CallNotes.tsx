@@ -100,8 +100,8 @@ export function CallNotesList({
   if (!notes.length)
     return (
       <p className="muted text-sm">
-        No notes from a recorded call yet. The desk writes them within an hour
-        of a call's transcript arriving.
+        No notes from a recorded call yet. They appear within an hour of a
+        call's transcript arriving.
       </p>
     );
   return (
@@ -179,10 +179,9 @@ export function CallNotesList({
           </article>
         );
       })}
-      <p className="muted text-[11px]">
-        Written by the desk from the call's transcript
-        {notes[0]?.model ? ` (${notes[0].model})` : ""}. Only what was said on
-        the call.
+      <p className="muted text-xs">
+        Drafted by the assistant from the call's transcript. Only what was said
+        on the call.
       </p>
     </div>
   );

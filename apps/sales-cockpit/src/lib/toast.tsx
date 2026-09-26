@@ -43,6 +43,17 @@ export const toast = {
   error: (text: unknown) => push("error", text),
 };
 
+const TONE: Record<Kind, { background: string; borderColor: string }> = {
+  success: {
+    background: "color-mix(in oklch, var(--success) 12%, var(--card))",
+    borderColor: "color-mix(in oklch, var(--success) 45%, transparent)",
+  },
+  error: {
+    background: "color-mix(in oklch, var(--destructive) 12%, var(--card))",
+    borderColor: "color-mix(in oklch, var(--destructive) 45%, transparent)",
+  },
+};
+
 export function Toaster() {
   const [shown, setShown] = useState<Note[]>(notes);
 
@@ -53,23 +64,29 @@ export function Toaster() {
     };
   }, []);
 
+  // Above the phone's tab bar and the home bar; opaque, so the page under a
+  // toast never shows through it, and flat, as every surface is on dark.
   return (
-    <div
-      className="pointer-events-none fixed inset-x-0 z-[60] flex flex-col items-center gap-2 px-4"
-      style={{ bottom: "calc(1rem + env(safe-area-inset-bottom, 0px))" }}
-    >
+    <div className="pointer-events-none fixed inset-x-0 bottom-[calc(5rem+env(safe-area-inset-bottom,0px))] z-[60] flex flex-col items-center gap-2 px-4 lg:bottom-4">
       {shown.map(n => (
         <output
           key={n.id}
           aria-live={n.kind === "error" ? "assertive" : "polite"}
-          className={`panel pointer-events-auto flex w-full max-w-md items-start gap-2 px-3 py-2 text-[13px] shadow-lg ${
-            n.kind === "error" ? "callout-bad" : "callout-good"
-          }`}
+          className="pointer-events-auto flex w-full max-w-md items-start gap-2 rounded-[var(--radius-lg)] border px-3 py-2 text-sm"
+          style={TONE[n.kind]}
         >
           {n.kind === "error" ? (
-            <CircleAlert className="mt-0.5 size-4 shrink-0" strokeWidth={2} />
+            <CircleAlert
+              className="mt-0.5 size-4 shrink-0"
+              strokeWidth={2}
+              style={{ color: "var(--destructive)" }}
+            />
           ) : (
-            <CircleCheck className="mt-0.5 size-4 shrink-0" strokeWidth={2} />
+            <CircleCheck
+              className="mt-0.5 size-4 shrink-0"
+              strokeWidth={2}
+              style={{ color: "var(--success)" }}
+            />
           )}
           <span className="min-w-0 flex-1" dir="auto">
             {n.text}

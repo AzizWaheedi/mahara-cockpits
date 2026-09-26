@@ -1,4 +1,4 @@
-import { ArrowLeft, ExternalLink, Plus, Search } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Plus, Search } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
 import { CoachReviewForm, CoachReviewList } from "../components/CoachReviews";
@@ -7,6 +7,7 @@ import {
   EmptyState,
   Failed,
   field,
+  page,
   SectionCard,
 } from "../components/kit";
 import { Prose } from "../components/Prose";
@@ -69,10 +70,10 @@ export default function RecordingPage({ me }: { me: Me }) {
       </Link>
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-xl font-semibold tracking-tight" dir="auto">
+          <h1 className="text-2xl font-semibold tracking-tight" dir="auto">
             {r.title ?? "Untitled call"}
           </h1>
-          <p className="muted text-sm">
+          <p className="muted mt-1 text-sm">
             {[
               `${day(r.started_at)} ${clock(r.started_at)}`,
               duration(r.duration_s),
@@ -83,23 +84,17 @@ export default function RecordingPage({ me }: { me: Me }) {
               .join(" · ")}
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {r.share_url ? (
-            <a
-              href={r.share_url}
-              target="_blank"
-              rel="noreferrer noopener"
-              className={button}
-            >
-              <ExternalLink className="size-3.5" aria-hidden /> Watch in Fathom
-            </a>
-          ) : null}
-          {r.contact_id ? (
-            <Link to={`/lead/${r.contact_id}`} className={button}>
-              Open the lead
-            </Link>
-          ) : null}
-        </div>
+        {/* The way back to the lead is the link above the title. */}
+        {r.share_url ? (
+          <a
+            href={r.share_url}
+            target="_blank"
+            rel="noreferrer noopener"
+            className={button}
+          >
+            Watch in Fathom <ArrowUpRight className="size-3.5" aria-hidden />
+          </a>
+        ) : null}
       </header>
 
       <SectionCard title="Vince's review">
@@ -175,7 +170,7 @@ export default function RecordingPage({ me }: { me: Me }) {
         </SectionCard>
       ) : null}
 
-      <div className="grid gap-5 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-2 lg:gap-6">
         <SectionCard title="Fathom's summary">
           {r.summary ? (
             <Prose text={r.summary} />
@@ -243,7 +238,7 @@ export function ReviewOnlyPage() {
         </p>
       ) : (
         <>
-          <h1 className="text-xl font-semibold tracking-tight" dir="auto">
+          <h1 className="text-2xl font-semibold tracking-tight" dir="auto">
             {r.lead_name ?? "A lead"}
           </h1>
           <p className="muted text-sm">
@@ -371,9 +366,5 @@ function Transcript({ r }: { r: Recording }) {
 }
 
 function Shell({ children }: { children: ReactNode }) {
-  return (
-    <main className="mx-auto w-full max-w-5xl space-y-5 px-4 py-6 md:px-6">
-      {children}
-    </main>
-  );
+  return <main className={page}>{children}</main>;
 }

@@ -51,7 +51,7 @@ export function StatusChip({
     <span
       title={title}
       className={`inline-flex max-w-full shrink-0 items-center gap-1 whitespace-nowrap rounded-full border hairline font-medium ${
-        size === "sm" ? "h-5 px-1.5 text-[11px]" : "h-6 px-2 text-xs"
+        size === "sm" ? "h-5 px-2 text-xs" : "h-6 px-2 text-xs"
       }`}
       style={{
         background: "color-mix(in oklch, var(--background) 60%, transparent)",
@@ -83,13 +83,22 @@ export function SectionCard({
   id?: string;
   className?: string;
 }) {
+  // A divider under the title only when the body is a list or table that
+  // runs edge to edge; otherwise the card is one padded surface.
   return (
-    <section id={id} className={`panel min-w-0 overflow-hidden ${className}`}>
-      <header className="flex flex-wrap items-center justify-between gap-2 border-b hairline px-4 py-2.5">
-        <h2 className="text-sm font-semibold tracking-tight">{title}</h2>
+    <section
+      id={id}
+      className={`panel min-w-0 overflow-hidden ${flush ? "" : "p-4 sm:p-6"} ${className}`}
+    >
+      <header
+        className={`flex flex-wrap items-center justify-between gap-x-3 gap-y-1 ${
+          flush ? "border-b hairline px-4 py-3" : ""
+        }`}
+      >
+        <h2 className="text-[15px] font-semibold tracking-tight">{title}</h2>
         {side}
       </header>
-      <div className={flush ? "" : "p-4"}>{children}</div>
+      <div className={flush ? "" : "mt-4"}>{children}</div>
     </section>
   );
 }
@@ -110,36 +119,58 @@ export function StatTile({
   status,
   hint,
   onClick,
+  variant = "panel",
   className = "",
 }: {
   label: string;
-  /** Formatted already; "--" or null shows n/a. */
+  /** Formatted already; "n/a", "--" or null shows n/a. */
   value: ReactNode;
   sub?: ReactNode;
   status?: ReactNode;
   hint?: string;
   onClick?: () => void;
+  /** "plain" for a tile inside a card: a quiet fill, no second border. */
+  variant?: "panel" | "plain";
   className?: string;
 }) {
+  const [why, setWhy] = useState(false);
   const shown =
-    value === null || value === undefined || value === "--" ? (
+    value === null ||
+    value === undefined ||
+    value === "--" ||
+    value === "n/a" ? (
       <Na why={hint} />
     ) : (
       value
     );
   const body = (
     <>
-      <div className="muted flex min-w-0 items-start gap-1 text-[13px] leading-5">
+      <div className="muted flex min-w-0 items-start gap-1 text-xs leading-5">
         <span className="line-clamp-2 min-w-0">{label}</span>
-        {hint ? (
+        {hint && !onClick ? (
+          // A tap opens the explanation under the label: a hover title
+          // never shows on a phone or an iPad.
+          <button
+            type="button"
+            aria-expanded={why}
+            aria-label={why ? "Hide what this counts" : "What this counts"}
+            onClick={() => setWhy(w => !w)}
+            className="no-touch relative mt-[3px] inline-flex shrink-0 cursor-help opacity-70 after:absolute after:-inset-2 after:content-[''] hover:opacity-100"
+          >
+            <Info className="size-3.5" aria-hidden />
+          </button>
+        ) : hint ? (
           <span
             title={hint}
-            className="mt-[3px] inline-flex shrink-0 cursor-help opacity-70"
+            className="mt-[3px] inline-flex shrink-0 opacity-70"
           >
             <Info className="size-3.5" aria-label={hint} />
           </span>
         ) : null}
       </div>
+      {why && hint ? (
+        <p className="muted mt-1 text-xs leading-relaxed">{hint}</p>
+      ) : null}
       <div className="mt-1.5 flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1">
         <div className="text-2xl font-semibold leading-8 tracking-tight [overflow-wrap:anywhere] tabular-nums">
           {shown}
@@ -149,7 +180,11 @@ export function StatTile({
       {sub ? <div className="muted mt-1 text-xs leading-5">{sub}</div> : null}
     </>
   );
-  const cls = `panel min-w-0 p-4 text-left ${className}`;
+  const cls = `${
+    variant === "plain"
+      ? "rounded-[var(--radius-lg)] bg-[color:var(--secondary)]"
+      : "panel"
+  } min-w-0 p-4 text-left ${className}`;
   return onClick ? (
     <button
       type="button"
@@ -220,8 +255,17 @@ export function Failed({
   );
 }
 
-/** "Where these numbers come from", folded under a card, as in the CEO cockpit. */
-export function SourceNote({ children }: { children: ReactNode }) {
+/**
+ * "Where these numbers come from", folded under a card, as in the CEO
+ * cockpit. A note that is not about numbers names itself with `label`.
+ */
+export function SourceNote({
+  children,
+  label = "Where these numbers come from",
+}: {
+  children: ReactNode;
+  label?: string;
+}) {
   const [open, setOpen] = useState(false);
   const id = useId();
   return (
@@ -234,8 +278,8 @@ export function SourceNote({ children }: { children: ReactNode }) {
         className="muted text-xs underline-offset-2 hover:underline"
       >
         {open
-          ? "Hide where these numbers come from"
-          : "Where these numbers come from"}
+          ? `Hide ${label.charAt(0).toLowerCase()}${label.slice(1)}`
+          : label}
       </button>
       {open ? (
         <div id={id} className="muted mt-2 space-y-1.5 text-xs leading-relaxed">
@@ -280,6 +324,91 @@ export const buttonPrimary =
   "inline-flex h-8 items-center justify-center gap-1.5 rounded-[var(--radius-md)] bg-[color:var(--primary)] px-3 text-sm font-semibold text-[color:var(--primary-foreground)] hover:opacity-90 disabled:opacity-50";
 export const field =
   "h-9 w-full rounded-[var(--radius-md)] border hairline bg-[color:var(--background)] px-3 text-sm placeholder:text-[color:var(--muted-foreground)]";
+/** A choice in a page header or toolbar ("Whose calls"); form selects use `field`. */
+export const select =
+  "h-8 min-w-0 max-w-[16rem] rounded-[var(--radius-md)] border hairline bg-[color:var(--card)] px-2.5 text-sm";
+
+/**
+ * The page frame: one width and one rhythm for every page. The shell does
+ * not pad, so the frame does (16px on a phone, 24px from a tablet up).
+ */
+export const page = "mx-auto w-full max-w-6xl space-y-6 px-4 py-6 md:px-6";
+/** The same frame for the wide working screens (a lead, a call). */
+export const pageWide =
+  "mx-auto w-full max-w-[1440px] space-y-6 px-4 py-6 md:px-6";
+
+/** A filter or view pill: teal when on, quiet when off. */
+const PILL =
+  "inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-3 text-xs font-medium transition-colors";
+const PILL_ON =
+  "bg-[color:color-mix(in_oklch,var(--primary)_15%,transparent)] text-[color:var(--foreground)] ring-1 ring-[color:color-mix(in_oklch,var(--primary)_40%,transparent)] ring-inset";
+const PILL_OFF =
+  "muted hover:bg-[color:var(--muted)] hover:text-[color:var(--foreground)]";
+
+/**
+ * One choice of a few (a view, a window, a role): pills in a quiet track,
+ * the chosen one teal. A row too long for a phone scrolls sideways.
+ */
+export function Segmented({
+  label,
+  value,
+  options,
+  onChange,
+  className = "",
+}: {
+  label: string;
+  value: string;
+  options: [string, ReactNode][];
+  onChange: (v: string) => void;
+  className?: string;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label={label}
+      className={`no-scrollbar inline-flex max-w-full items-center gap-0.5 overflow-x-auto rounded-full bg-[color:var(--muted)] p-0.5 ${className}`}
+    >
+      {options.map(([v, text]) => (
+        <button
+          key={v}
+          type="button"
+          aria-pressed={value === v}
+          onClick={() => onChange(v)}
+          className={`${PILL} h-7 ${value === v ? PILL_ON : PILL_OFF}`}
+        >
+          {text}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** A filter chip, with how many it holds when that is known. */
+export function FilterChip({
+  on,
+  onClick,
+  count,
+  children,
+}: {
+  on: boolean;
+  onClick: () => void;
+  count?: number | null;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={on}
+      onClick={onClick}
+      className={`${PILL} h-8 border ${on ? `border-transparent ${PILL_ON}` : `hairline ${PILL_OFF}`}`}
+    >
+      {children}
+      {count === null || count === undefined ? null : (
+        <span className="tabular-nums opacity-70">{count}</span>
+      )}
+    </button>
+  );
+}
 
 /**
  * Short facts in a row, "a · b · c", each set in its own text direction, so

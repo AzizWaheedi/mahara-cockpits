@@ -1,4 +1,5 @@
 import {
+  ArrowLeft,
   Bell,
   BellRing,
   CalendarClock,
@@ -11,7 +12,6 @@ import {
   PhoneOff,
   Search,
   SkipForward,
-  X,
 } from "lucide-react";
 import {
   type FormEvent,
@@ -33,6 +33,7 @@ import {
   buttonPrimary,
   EmptyState,
   Failed,
+  FilterChip,
   field,
   StatTile,
   StatusChip,
@@ -639,14 +640,14 @@ export default function DialerPage({ me }: { me: Me }) {
     <main className="mx-auto w-full max-w-[1800px] space-y-4 px-4 py-5 md:px-6">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Dialer</h1>
-          <p className="muted text-sm">
-            {q
-              ? ready
-                ? `${counts[0] + counts[1]} to call now or today · ${counts[2]} due · ${counts[3]} never called`
-                : "Nobody waiting. New leads, replies and call-backs come in by themselves."
-              : "Working out who to call…"}
-          </p>
+          <h1 className="text-2xl font-semibold tracking-tight">Dialer</h1>
+          {q && ready ? null : (
+            <p className="muted mt-1 text-sm">
+              {q
+                ? "Nobody waiting. New leads, replies and call-backs come in by themselves."
+                : "Working out who to call…"}
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {canBoth ? (
@@ -699,7 +700,7 @@ export default function DialerPage({ me }: { me: Me }) {
         onPick={id => setPicked(id)}
       />
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[16rem_minmax(0,1fr)] lg:[grid-template-areas:'queue_call'_'queue_lead'] 2xl:grid-cols-[17rem_minmax(0,1fr)_23rem] 2xl:[grid-template-areas:'queue_lead_call']">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[16rem_minmax(0,1fr)] lg:[grid-template-areas:'queue_call'_'queue_lead'] xl:grid-cols-[15rem_minmax(0,1fr)_21rem] xl:[grid-template-areas:'queue_lead_call']">
         <QueuePane
           className="lg:[grid-area:queue]"
           loaded={Boolean(q)}
@@ -719,7 +720,9 @@ export default function DialerPage({ me }: { me: Me }) {
           <>
             <CallPane
               key={`call-${currentId}`}
-              className="lg:[grid-area:call] 2xl:sticky 2xl:top-4 2xl:self-start"
+              className={`lg:[grid-area:call] xl:sticky xl:top-4 xl:self-start ${
+                open?.contact_id === currentId ? "glow-teal" : ""
+              }`}
               me={me}
               as={as}
               contactId={currentId}
@@ -742,7 +745,7 @@ export default function DialerPage({ me }: { me: Me }) {
             />
           </>
         ) : q ? (
-          <div className="panel lg:[grid-area:call] 2xl:[grid-area:lead/lead/call/call]">
+          <div className="panel lg:[grid-area:call] xl:[grid-area:lead/lead/call/call]">
             <EmptyState
               icon={PhoneCall}
               title="Nobody to call right now"
@@ -765,13 +768,13 @@ function Stats({ q }: { q: Queue | null }) {
   const ready = q ? q.counts.reduce((a, b) => a + b, 0) : null;
   return (
     <>
-      {/* On a phone the day fits one line, so Call stays near the top. */}
-      <p className="muted text-sm sm:hidden">
+      {/* The day in one line until the tiles fit beside the three columns, so Call stays near the top. */}
+      <p className="muted text-sm 2xl:hidden">
         {t && ready !== null
           ? `Today: ${t.saved} saved · ${t.answered} of ${t.calls} answered · ${t.booked} booked · ${ready} ready`
           : "Reading today's numbers…"}
       </p>
-      <div className="hidden grid-cols-2 gap-3 sm:grid lg:grid-cols-4">
+      <div className="hidden grid-cols-2 gap-3 lg:grid-cols-4 2xl:grid">
         <StatTile
           label="Saved today"
           value={t ? String(t.saved) : null}
@@ -992,21 +995,21 @@ function QueuePane({
                   ["2", "Due", counts[2]],
                   ["3", "Never", counts[3]],
                 ] as [TierFilter, string, number][]
-              ).map(([k, label, n]) => (
-                <button
-                  key={k}
-                  type="button"
-                  aria-pressed={tier === k}
-                  onClick={() => setTier(k)}
-                  className={`rounded-full border px-2 py-0.5 text-[11px] tabular-nums ${
-                    tier === k
-                      ? "border-[color:var(--primary)] font-semibold"
-                      : "hairline muted"
-                  }`}
-                >
-                  {label} {n}
-                </button>
-              ))}
+              )
+                .filter(
+                  ([k, , n]) =>
+                    n > 0 || (k === "all" ? tier !== "all" : tier === k),
+                )
+                .map(([k, label, n]) => (
+                  <FilterChip
+                    key={k}
+                    on={tier === k}
+                    onClick={() => setTier(k)}
+                    count={n}
+                  >
+                    {label}
+                  </FilterChip>
+                ))}
             </div>
           ) : null}
         </div>
@@ -1482,7 +1485,7 @@ function CallPane({
                     : "Save what happened"}
             </p>
             <div
-              className="grid grid-cols-2 gap-1.5 sm:grid-cols-3"
+              className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 xl:grid-cols-2"
               role="group"
               aria-label="Outcome"
             >
@@ -1556,8 +1559,9 @@ function CallPane({
             <label className="block space-y-1">
               <span className="muted block text-xs">
                 {chosen?.needsNote
-                  ? "What happened (goes on the lead in HighLevel too) · Alt+N"
-                  : "Notes (optional) · Alt+N"}
+                  ? "What happened (goes on the lead in HighLevel too)"
+                  : "Notes (optional)"}
+                <span className="hidden md:pointer-fine:inline"> · Alt+N</span>
               </span>
               <textarea
                 id="dial-note"
@@ -1866,7 +1870,7 @@ function BookForm({
           className="muted inline-flex items-center gap-1 text-xs hover:underline"
           title="Esc"
         >
-          <X className="size-3.5" aria-hidden /> Back to outcomes
+          <ArrowLeft className="size-3.5" aria-hidden /> Back to outcomes
         </button>
       </div>
       {moving ? (
@@ -1944,7 +1948,7 @@ function BookForm({
             ))}
           </div>
           <div
-            className="grid grid-cols-4 gap-1 sm:grid-cols-6 2xl:grid-cols-4"
+            className="grid grid-cols-4 gap-1 sm:grid-cols-6 xl:grid-cols-4"
             role="group"
             aria-label="Time"
           >

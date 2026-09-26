@@ -1,5 +1,4 @@
 import {
-  ArrowRightLeft,
   CalendarDays,
   ChartNoAxesColumn,
   ClipboardCheck,
@@ -7,26 +6,28 @@ import {
   KanbanSquare,
   Lightbulb,
   Link2,
+  LogOut,
   type LucideIcon,
   MessageSquareText,
   Mic,
+  Moon,
   PhoneCall,
-  ShieldCheck,
   Sun,
   Target,
+  UserCog,
   UserSearch,
-  UsersRound,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { NavLink } from "react-router";
 import { useWho } from "../lib/auth";
+import { COCKPIT_ICON } from "../lib/cockpits";
 import { otherCockpits, portalUrl } from "../lib/portal";
 import { Wordmark } from "./Wordmark";
 
 /**
- * The same shape as the other cockpits: an icon and a label per row, grouped
- * down the left, the portal's other doors underneath, the person at the
- * bottom.
+ * The same shape as the other cockpits: an icon and a label per row, in
+ * three groups down the left; team meetings and the portal's other doors at
+ * the foot, each with its cockpit's own mark; the person at the bottom.
  *
  * A count beside a row is only drawn when it is something to act on: calls
  * owed a mark, proposals waiting on figures. A badge that is always there
@@ -75,16 +76,21 @@ export const GROUPS: { label: string; items: Item[] }[] = [
     ],
   },
   {
-    label: "Kit",
-    items: [{ to: "/links", label: "Links", icon: Link2 }],
-  },
-  {
-    label: "Manage",
+    label: "More",
     items: [
-      { to: "/team", label: "Team", icon: UsersRound, managerOnly: true },
+      { to: "/links", label: "Links", icon: Link2 },
+      { to: "/team", label: "Team", icon: UserCog, managerOnly: true },
     ],
   },
 ];
+
+/** One row of the rail: 40px to a thumb in the menu sheet, 32px on the rail. */
+const ROW =
+  "flex items-center gap-2.5 rounded-[var(--radius-md)] py-2.5 pr-2 pl-3 text-sm transition-colors lg:py-1.5";
+const ROW_IDLE =
+  "muted hover:bg-[color:var(--secondary)] hover:text-[color:var(--foreground)]";
+const GROUP_LABEL =
+  "muted mb-1 px-3 font-mono text-[11px] tracking-[0.08em] uppercase";
 
 function ThemeToggle() {
   const [dark, setDark] = useState(() => {
@@ -108,13 +114,15 @@ function ThemeToggle() {
     }
   }, [dark]);
 
+  const Icon = dark ? Sun : Moon;
   return (
     <button
       type="button"
       onClick={() => setDark(d => !d)}
-      className="muted text-xs"
+      className={`${ROW} w-full ${ROW_IDLE}`}
     >
-      {dark ? "Light" : "Dark"}
+      <Icon className="size-4 shrink-0" strokeWidth={1.75} aria-hidden />
+      {dark ? "Light mode" : "Dark mode"}
     </button>
   );
 }
@@ -122,10 +130,11 @@ function ThemeToggle() {
 function Badge({ n, tone }: { n: number; tone?: "urgent" }) {
   return (
     <span
-      className="ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums"
+      className="ml-auto rounded-full px-1.5 text-xs font-semibold tabular-nums"
       style={
         tone === "urgent"
-          ? { background: "var(--destructive)", color: "#fff" }
+          ? // Calls owed a mark: the warning colour, as on the phone's tab bar.
+            { background: "var(--owed)", color: "var(--warning-foreground)" }
           : {
               background:
                 "color-mix(in oklch, var(--primary) 22%, transparent)",
@@ -154,15 +163,19 @@ export default function Sidebar({
   onNavigate?: () => void;
 }) {
   const { cockpits, signOut } = useWho();
-  const doors = otherCockpits(cockpits, isAdmin);
+  // Team meetings are everybody's, so they sit with the doors at the foot.
+  const doors = [
+    { key: "team", label: "Team meetings", href: `${portalUrl()}/team` },
+    ...otherCockpits(cockpits, isAdmin),
+  ];
 
   return (
     <div className="flex h-full flex-col gap-6 overflow-y-auto px-3 py-4">
-      <a href={`${portalUrl()}/`} className="px-2">
+      <a href={`${portalUrl()}/`} className="px-3">
         <Wordmark size="md" />
       </a>
 
-      <nav className="flex flex-col gap-5">
+      <nav className="flex flex-col gap-6" aria-label="Sales cockpit">
         {GROUPS.map(g => ({
           ...g,
           items: g.items.filter(i => !i.managerOnly || isManager),
@@ -170,9 +183,7 @@ export default function Sidebar({
           .filter(g => g.items.length)
           .map(g => (
             <div key={g.label}>
-              <p className="muted mb-1 px-2 text-[10px] font-semibold tracking-[0.12em] uppercase">
-                {g.label}
-              </p>
+              <p className={GROUP_LABEL}>{g.label}</p>
               <ul className="space-y-0.5">
                 {g.items.map(({ to, label, icon: Icon, badge }) => {
                   const n = badge ? (counts[badge] ?? 0) : 0;
@@ -183,25 +194,20 @@ export default function Sidebar({
                         end={to === "/"}
                         onClick={onNavigate}
                         className={({ isActive }) =>
-                          `relative flex items-center gap-2.5 rounded-[var(--radius-md)] py-1.5 pr-2 pl-3 text-sm transition-colors ${
-                            isActive
-                              ? "bg-[color:var(--secondary)] font-medium"
-                              : "muted hover:bg-[color:var(--secondary)] hover:text-[color:var(--foreground)]"
+                          `cockpit-nav-link ${ROW} ${
+                            isActive ? "font-medium" : ROW_IDLE
                           }`
                         }
                       >
                         {({ isActive }) => (
                           <>
                             {isActive ? (
-                              <span
-                                aria-hidden
-                                className="absolute top-1.5 bottom-1.5 left-0 w-0.5 rounded-full"
-                                style={{ background: "var(--primary)" }}
-                              />
+                              <span aria-hidden className="cockpit-nav-lamp" />
                             ) : null}
                             <Icon
                               className="size-4 shrink-0"
                               strokeWidth={1.75}
+                              aria-hidden
                             />
                             <span className="truncate">{label}</span>
                             {n > 0 ? (
@@ -219,64 +225,49 @@ export default function Sidebar({
               </ul>
             </div>
           ))}
-
-        <div>
-          <p className="muted mb-1 px-2 text-[10px] font-semibold tracking-[0.12em] uppercase">
-            Team
-          </p>
-          <ul className="space-y-0.5">
-            <li>
-              <a
-                href={`${portalUrl()}/team`}
-                className="muted flex items-center gap-2.5 rounded-[var(--radius-md)] py-1.5 pr-2 pl-3 text-sm transition-colors hover:bg-[color:var(--secondary)] hover:text-[color:var(--foreground)]"
-              >
-                <UsersRound className="size-4 shrink-0" strokeWidth={1.75} />
-                <span className="truncate">Team meetings</span>
-              </a>
-            </li>
-          </ul>
-        </div>
-
-        {doors.length ? (
-          <div>
-            <p className="muted mb-1 px-2 text-[10px] font-semibold tracking-[0.12em] uppercase">
-              Switch cockpit
-            </p>
-            <ul className="space-y-0.5">
-              {doors.map(d => (
-                <li key={d.key}>
-                  <a
-                    href={d.href}
-                    className="muted flex items-center gap-2.5 rounded-[var(--radius-md)] py-1.5 pr-2 pl-3 text-sm transition-colors hover:bg-[color:var(--secondary)] hover:text-[color:var(--foreground)]"
-                  >
-                    {d.key === "admin" ? (
-                      <ShieldCheck
-                        className="size-4 shrink-0"
-                        strokeWidth={1.75}
-                      />
-                    ) : (
-                      <ArrowRightLeft
-                        className="size-4 shrink-0"
-                        strokeWidth={1.75}
-                      />
-                    )}
-                    <span className="truncate">{d.label}</span>
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
       </nav>
 
-      <div className="mt-auto border-t hairline px-2 pt-3">
-        <p className="truncate text-sm font-medium">{name}</p>
-        <p className="muted truncate text-xs">{role}</p>
-        <div className="mt-1 flex items-center gap-3">
-          <ThemeToggle />
-          <button type="button" onClick={signOut} className="muted text-xs">
-            Sign out
-          </button>
+      <div className="mt-auto space-y-4">
+        <ul className="space-y-0.5 border-t hairline pt-3" aria-label="Portal">
+          {doors.map(d => {
+            const Icon = COCKPIT_ICON[d.key];
+            return (
+              <li key={d.key}>
+                <a href={d.href} className={`${ROW} ${ROW_IDLE}`}>
+                  {Icon ? (
+                    <Icon
+                      className="size-4 shrink-0"
+                      strokeWidth={1.75}
+                      aria-hidden
+                    />
+                  ) : null}
+                  <span className="truncate">{d.label}</span>
+                </a>
+              </li>
+            );
+          })}
+        </ul>
+
+        <div className="border-t hairline pt-3">
+          <div className="px-3">
+            <p className="truncate text-sm font-medium">{name}</p>
+            <p className="muted truncate text-xs">{role}</p>
+          </div>
+          <div className="mt-2 space-y-0.5">
+            <ThemeToggle />
+            <button
+              type="button"
+              onClick={signOut}
+              className={`${ROW} w-full ${ROW_IDLE}`}
+            >
+              <LogOut
+                className="size-4 shrink-0"
+                strokeWidth={1.75}
+                aria-hidden
+              />
+              Sign out
+            </button>
+          </div>
         </div>
       </div>
     </div>

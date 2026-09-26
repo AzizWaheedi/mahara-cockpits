@@ -10,7 +10,7 @@ import {
   type ScriptRow,
 } from "../lib/script";
 import { supabase } from "../lib/supabase";
-import { field, SectionCard } from "./kit";
+import { field, Segmented as KitSegmented, SectionCard } from "./kit";
 
 /**
  * The call scripts as the cockpit draws them, shared by the guided call
@@ -78,6 +78,7 @@ export function countryName(
   return c ? (lang === "ar" ? c[1] : c[0]) : null;
 }
 
+/** The kit's segmented control (teal when chosen), under its old name here. */
 export function Segmented({
   label,
   value,
@@ -90,27 +91,12 @@ export function Segmented({
   onChange: (v: string) => void;
 }) {
   return (
-    <div
-      className="raised inline-flex rounded-[var(--radius-md)] p-0.5 text-[13px]"
-      role="group"
-      aria-label={label}
-    >
-      {options.map(([v, text]) => (
-        <button
-          key={v}
-          type="button"
-          aria-pressed={value === v}
-          onClick={() => onChange(v)}
-          className={`rounded-[calc(var(--radius-md)-2px)] px-2.5 py-1 ${
-            value === v
-              ? "bg-[color:var(--card)] font-medium shadow-sm"
-              : "muted"
-          }`}
-        >
-          {text}
-        </button>
-      ))}
-    </div>
+    <KitSegmented
+      label={label}
+      value={value}
+      options={options}
+      onChange={onChange}
+    />
   );
 }
 
@@ -132,14 +118,10 @@ export function Blocks({
             <p
               key={i}
               dir="auto"
-              className={`rounded-e-[var(--radius-md)] border-s-2 py-1 ps-3 leading-relaxed ${
+              className={`border-s-2 py-1 ps-3 leading-relaxed ${
                 mode === "bullets" ? "text-[15px]" : "text-[17px]"
               }`}
-              style={{
-                borderColor: "var(--primary)",
-                background:
-                  "color-mix(in oklch, var(--primary) 7%, transparent)",
-              }}
+              style={{ borderColor: "var(--primary)" }}
             >
               {mode === "bullets" ? firstSentence(text) : text}
             </p>
