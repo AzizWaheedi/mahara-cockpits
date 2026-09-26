@@ -125,10 +125,14 @@ def create_mock_repo(base_dir: Path) -> Path:
     (hermes_dir / "test_desk.py").write_text('#: Kept identical to IDEA_FIELDS\n    IDEA_FIELDS = ["a"]', encoding="utf-8")
 
     # Relevant test files
+    for app in (mb, cs, cd):
+        adapter = app / "src/lib/askAiClient.ts"
+        adapter.parent.mkdir(parents=True, exist_ok=True)
+        adapter.write_text("export const fixture = true;", encoding="utf-8")
     for tf in vcr.RELEVANT_TEST_FILES:
         t_path = repo / tf
         t_path.parent.mkdir(parents=True, exist_ok=True)
-        t_path.write_text("// test placeholder", encoding="utf-8")
+        t_path.write_text("# test placeholder" if t_path.suffix == ".py" else "// test placeholder", encoding="utf-8")
 
     return repo
 
@@ -346,6 +350,15 @@ class TestCutoverReadinessRevision(unittest.TestCase):
                 tf,
                 "supabase-actions.test.ts must not be in local tests (makes dummy key network calls)",
             )
+
+    def test_worker_discovery_uses_python_and_cannot_pass_with_zero_tests(self):
+        worker = "hermes/eod-out/test_out.py"
+        with patch.object(vcr, "RELEVANT_TEST_FILES", [worker]):
+            with patch.object(vcr, "run_command", return_value=(0, "", "Ran 0 tests", {})):
+                self.assertFalse(vcr.run_relevant_tests(self.repo, bun_exe="fixture-tool")[0])
+            with patch.object(vcr, "run_command", return_value=(0, "", "Ran 13 tests\nOK", {})) as run:
+                self.assertTrue(vcr.run_relevant_tests(self.repo, bun_exe="fixture-tool")[0])
+                self.assertEqual(run.call_args.args[0][1:4], ["-m", "unittest", "discover"])
 
     def test_missing_installed_dependencies_fails_cleanly(self):
         # Remove installed tsc from apps/media-buyer-cockpit

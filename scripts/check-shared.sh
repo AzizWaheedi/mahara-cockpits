@@ -64,6 +64,8 @@ same convex/foreplay.ts "$CD/convex/foreplay.ts" "$MB/convex/foreplay.ts"
 # and the client success cockpit. The two differ only in how each app's
 # actions are wired to the screen (ceo/BillingTab.tsx, pages/BillingPage.tsx).
 CS=apps/client-success-cockpit
+same askAiClient.ts "$MB/src/lib/askAiClient.ts" "$CS/src/lib/askAiClient.ts"
+same askAiClient.ts "$MB/src/lib/askAiClient.ts" "$CD/src/lib/askAiClient.ts"
 same convex/billingCore.ts "$MB/convex/billingCore.ts" "$CS/convex/billingCore.ts"
 same BillingSheet.tsx "$MB/src/components/billing/BillingSheet.tsx" \
   "$CS/src/components/billing/BillingSheet.tsx"

@@ -45,6 +45,10 @@ RELEVANT_TEST_FILES = [
     "apps/media-buyer-cockpit/scripts/cockpit-dispatch-auth.test.ts",
     "apps/media-buyer-cockpit/scripts/ceo-goals-supabase.test.ts",
     "apps/media-buyer-cockpit/scripts/csm-state-supabase.test.ts",
+    "apps/media-buyer-cockpit/scripts/supabase-ask-ai.test.ts",
+    "apps/media-buyer-cockpit/scripts/eod-delivery-supabase.test.ts",
+    "hermes/cockpit-ask-ai/scripts/test_askai.py",
+    "hermes/eod-out/test_out.py",
     "apps/media-buyer-cockpit/scripts/cockpit-test-db.test.ts",
     "apps/media-buyer-cockpit/scripts/webinar-supabase-targets.test.ts",
     "apps/media-buyer-cockpit/scripts/webinar-target-access.test.ts",
@@ -375,6 +379,8 @@ def check_shared_files(repo_root: Path) -> Tuple[bool, List[str]]:
     compare_files("adAsIdea (CD vs ED)", cd / "convex" / "adAsIdea.ts", ed / "src" / "lib" / "adAsIdea.ts")
     compare_files("convex/foreplay.ts", cd / "convex" / "foreplay.ts", mb / "convex" / "foreplay.ts")
     compare_files("convex/billingCore.ts", mb / "convex" / "billingCore.ts", cs / "convex" / "billingCore.ts")
+    compare_files("askAiClient (MB vs CSM)", mb / "src/lib/askAiClient.ts", cs / "src/lib/askAiClient.ts")
+    compare_files("askAiClient (MB vs Creative)", mb / "src/lib/askAiClient.ts", cd / "src/lib/askAiClient.ts")
     compare_files(
         "BillingSheet.tsx",
         mb / "src" / "components" / "billing" / "BillingSheet.tsx",
@@ -602,11 +608,16 @@ def run_relevant_tests(
             details[test_rel] = {"status": "fail", "error": "file missing"}
             continue
 
-        cmd = [bun_bin, "test", test_rel]
+        is_python = test_path.suffix == ".py"
+        cmd = ([sys.executable, "-m", "unittest", "discover", "-s", str(test_path.parent), "-p", test_path.name]
+               if is_python else [bun_bin, "test", test_rel])
         rc, stdout, stderr, log_entry = run_command(cmd, cwd=repo_root, timeout=timeout)
         if command_logs is not None:
             command_logs.append(log_entry)
 
+        if rc == 0 and is_python and not re.search(r"Ran [1-9][0-9]* tests?\b", stdout + stderr):
+            rc = 1
+            stderr = "Python discovery did not confirm that any tests ran. " + stderr
         if rc != 0:
             err_msg = stderr.strip() or stdout.strip() or f"exit code {rc}"
             failures.append(f"Test suite failed ({test_rel}): {err_msg[:250]}")
