@@ -13,6 +13,7 @@
 import {
   type Appointment,
   applyFills,
+  checkCoachReview,
   checkEmail,
   checkGoals,
   checkLink,
@@ -44,19 +45,30 @@ import {
 } from "./lib.ts";
 import {
   afterOutcome,
+  ANY_OUTCOME_WORDS,
+  type AnyOutcome,
+  APPOINTMENT_OUTCOMES,
+  appointmentEffect,
   type BookingKind,
+  type Appt,
   type Candidate,
   type CloserFacts,
+  type StageRole,
+  stageRole,
+  tagsFor,
+  targetRoles,
   calendarFor,
   callSummary,
   dayStats,
   ghlTime,
+  heat,
   isNoAnswer,
   kuwaitAt,
   kuwaitWords,
+  type ItemKind,
   type MaqsamCall,
   matchCall,
-  OUTCOME_WORDS,
+  nextMorning,
   OUTCOMES,
   type Outcome,
   parseSlots,
@@ -240,8 +252,26 @@ async function writeMarkToCrm(id: number, appointmentId: string, status: string)
 
 async function mark(who: Who, b: Row) {
   const id = cleanText(b.appointment_id, 80);
-  const status = cleanText(b.status, 20);
   if (!id) throw new Refusal("Which appointment?");
+  const result = await markAppointment(who, id, cleanText(b.status, 20), {
+    reason: cleanText(b.reason, 300) || null,
+    note: cleanText(b.note, 4000) || null,
+  });
+  return { mark: result };
+}
+
+/**
+ * Mark an appointment showed, no-show, cancelled or disqualified: in the
+ * cockpit, and in HighLevel when the crm_writes setting and the call's age
+ * allow. `anyRep` lets the rep who just spoke to the lead cancel a call
+ * booked with someone else (a lead asking a setter to cancel their demo).
+ */
+async function markAppointment(
+  who: Who,
+  id: string,
+  status: string,
+  opts: { reason?: string | null; note?: string | null; anyRep?: boolean } = {},
+): Promise<Row> {
   const appt = (await svc(
     `cockpit_sales_appointments?appointment_id=eq.${enc(id)}&select=*`,
   ))[0] as unknown as Appointment | undefined;
@@ -251,7 +281,7 @@ async function mark(who: Who, b: Row) {
       404,
     );
   const now = Date.now();
-  const no = refuseMark(who, appt, status, now);
+  const no = refuseMark(opts.anyRep ? { ...who, manager: true } : who, appt, status, now);
   if (no) throw new Refusal(no, 403);
 
   const decision = crmDecision(await setting<CrmSettings>("crm_writes"), appt, now);
@@ -272,8 +302,8 @@ async function mark(who: Who, b: Row) {
       call_type: appt.call_type,
       start_at: appt.start_at,
       status,
-      reason: cleanText(b.reason, 300) || null,
-      note: cleanText(b.note, 4000) || null,
+      reason: opts.reason ?? null,
+      note: opts.note ?? null,
       marked_by: who.email,
       crm: decision === "write" ? "pending" : decision,
     },
@@ -284,8 +314,9 @@ async function mark(who: Who, b: Row) {
     result = { ...result, ...(await writeMarkToCrm(Number(row.id), id, status)) };
   await audit(who, "mark", "cockpit_sales_dispositions", id, current ?? null, result, {
     crm_status_before: appt.status,
+    ...(opts.anyRep ? { by_other_rep: true } : {}),
   });
-  return { mark: result };
+  return result;
 }
 
 async function markRetry(who: Who, b: Row) {
@@ -1533,7 +1564,8 @@ const ms = (v: unknown) => {
  */
 let heavy: { at: number; leads: Row[]; appts: Row[]; dials: Row[]; deals: Row[] } | null = null;
 const HEAVY_FOR = 20_000;
-const LEAD_COLS = "contact_id,name,phone,phone8,lead_created_at,stage_name,lead_class,dnd";
+const LEAD_COLS =
+  "contact_id,name,phone,phone8,lead_created_at,stage_id,stage_name,pipeline_id,lead_class,dnd,contact_type,revenue,readiness";
 
 async function heavyReads(now: number) {
   if (heavy && now - heavy.at < HEAVY_FOR) return heavy;
@@ -1541,7 +1573,9 @@ async function heavyReads(now: number) {
   const since60 = new Date(now - 60 * 86_400_000).toISOString();
   const [leads, appts, dials, deals] = await Promise.all([
     svcAll(`cockpit_sales_leads?select=${LEAD_COLS}&lead_created_at=gte.${enc(since30)}&order=contact_id`),
-    svcAll(`cockpit_sales_calendar?select=contact_id,call_type,start_at,status,assigned_user_id&start_at=gte.${enc(since60)}&order=appointment_id`),
+    svcAll(
+      `cockpit_sales_calendar?select=appointment_id,contact_id,call_type,start_at,booked_at,status,assigned_user_id&start_at=gte.${enc(since60)}&order=appointment_id`,
+    ),
     svcAll(`cockpit_sales_dials?select=lead_phone8,occurred_at,state,direction&direction=eq.outbound&occurred_at=gte.${enc(since60)}&order=call_id`),
     svcAll("cockpit_sales_deals?select=contact_id&voided=eq.false&order=response_id"),
   ]);
@@ -1549,15 +1583,26 @@ async function heavyReads(now: number) {
   return heavy;
 }
 
+/** Stage id → what it means to the dialer: the settings' word first, else the stage's name. */
+async function stageRoles(): Promise<Record<string, StageRole>> {
+  const v = await setting<{ roles?: Record<string, StageRole> }>("pipeline");
+  return v?.roles ?? {};
+}
+
+type QueueCandidate = Candidate &
+  CloserFacts & { demo_rep: string | null; phone8: string | null; step: number; last_outcome: string | null };
+
 /** Everything the queue needs, read in a handful of queries, no huge id lists. */
-async function candidates(now: number): Promise<{
-  list: (Candidate & CloserFacts & { demo_rep: string | null; phone8: string | null; step: number; last_outcome: string | null })[];
-}> {
-  const [states, inbox, attempts, h] = await Promise.all([
+async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
+  const soon = enc(new Date(now - 3_600_000).toISOString());
+  const [states, inbox, attempts, h, confirmations, hotRows, roles] = await Promise.all([
     svcAll("cockpit_sales_queue_state?select=*&order=contact_id"),
     svc(`cockpit_sales_inbox?select=contact_id,last_message_at,last_direction&last_direction=eq.inbound&last_message_at=gte.${enc(new Date(now - 86_400_000).toISOString())}`),
     svc("cockpit_sales_attempts?select=contact_id,rep_email&state=in.(dialing,placed)"),
     heavyReads(now),
+    svc(`cockpit_sales_confirmations?select=appointment_id,result,at&start_at=gte.${soon}&order=at.desc&limit=2000`),
+    svc("cockpit_sales_hot?select=contact_id,owner_email,next_at&removed_at=is.null&limit=2000"),
+    stageRoles(),
   ]);
   const leads = [...h.leads];
   const extra = new Set<string>([
@@ -1583,14 +1628,29 @@ async function candidates(now: number): Promise<{
     if (!k) continue;
     apptBy.set(k, [...(apptBy.get(k) ?? []), a]);
   }
-  const dialBy = new Map<string, { last: number; reached: boolean }>();
+  const dialBy = new Map<string, { last: number; reached: boolean; tries: number[] }>();
   for (const d of h.dials) {
     const k = String(d.lead_phone8 ?? "");
     const t = ms(d.occurred_at);
     if (!k || !t) continue;
-    const cur = dialBy.get(k) ?? { last: 0, reached: false };
-    dialBy.set(k, { last: Math.max(cur.last, t), reached: cur.reached || d.state === "completed" });
+    const cur = dialBy.get(k) ?? { last: 0, reached: false, tries: [] };
+    const answered = d.state === "completed";
+    dialBy.set(k, {
+      last: Math.max(cur.last, t),
+      reached: cur.reached || answered,
+      tries: answered ? cur.tries : [...cur.tries, t],
+    });
   }
+  // A lead's own confirmation, and the last try that reached no one, per appointment.
+  const confirmedAppt = new Set<string>();
+  const lastTry = new Map<string, number>();
+  for (const c of confirmations) {
+    const id = String(c.appointment_id);
+    if (c.result === "confirmed" || c.result === "reschedule") confirmedAppt.add(id);
+    const t = ms(c.at);
+    if (c.result === "no_answer" && t && (lastTry.get(id) ?? 0) < t) lastTry.set(id, t);
+  }
+  const hotBy = new Map(hotRows.map(r => [String(r.contact_id), r]));
   const list = leads.map(l => {
     const id = String(l.contact_id);
     const st = stateBy.get(id) ?? {};
@@ -1604,7 +1664,22 @@ async function candidates(now: number): Promise<{
     const demo = mine
       .filter(a => a.call_type === "demo")
       .sort((a, b) => (ms(b.start_at) ?? 0) - (ms(a.start_at) ?? 0))[0];
+    // The appointment the dialer works: the next intro or demo, from twenty
+    // minutes ago on (an intro that just started is still the setter's call).
+    const current = mine
+      .filter(
+        a =>
+          (a.call_type === "intro" || a.call_type === "demo") &&
+          (ms(a.start_at) ?? 0) >= now - 20 * 60_000 &&
+          !["cancelled", "noshow", "invalid", "showed"].includes(String(a.status ?? "")),
+      )
+      .sort((a, b) => (ms(a.start_at) ?? 0) - (ms(b.start_at) ?? 0))[0];
     const dial = dialBy.get(String(l.phone8 ?? "")) ?? null;
+    const created = ms(l.lead_created_at);
+    const misses = dial ? dial.tries.filter(t => created === null || t >= created).length : 0;
+    const hot = hotBy.get(id);
+    const role = (roles[String(l.stage_id ?? "")] as StageRole | undefined) ?? stageRole(l.stage_name as string | null);
+    const client = l.contact_type === "customer" || signed.has(id);
     const inboundAt = inboxBy.get(id) ?? null;
     const closedAt = ms(st.closed_at);
     // A reply after the lead was closed opens them up again.
@@ -1638,6 +1713,26 @@ async function candidates(now: number): Promise<{
       signed: signed.has(id),
       step: Number(st.step ?? 0),
       last_outcome: (st.last_outcome as string) ?? null,
+      sales_lead: !client && (Boolean(l.pipeline_id) || Boolean(l.lead_class)),
+      stage_role: role,
+      revenue: (l.revenue as string) ?? null,
+      readiness: (l.readiness as string) ?? null,
+      misses,
+      hot: Boolean(hot),
+      hot_owner: hot ? String(hot.owner_email ?? "") || null : null,
+      hot_next_at: hot ? ms(hot.next_at) : null,
+      appt: current
+        ? {
+            id: String(current.appointment_id),
+            type: (current.call_type === "demo" ? "demo" : "intro") as Appt["type"],
+            start: ms(current.start_at) ?? 0,
+            booked: ms(current.booked_at),
+            status: (current.status as string) ?? null,
+            assigned: (current.assigned_user_id as string) ?? null,
+            confirmed: confirmedAppt.has(String(current.appointment_id)),
+            last_try: lastTry.get(String(current.appointment_id)) ?? null,
+          }
+        : null,
     };
   });
   return { list };
@@ -1687,14 +1782,23 @@ async function dialQueue(who: Who, b: Row) {
     today(who, now),
     svc(`cockpit_sales_attempts?select=*&rep_email=eq.${enc(me)}&state=in.(dialing,placed)&order=started_at.desc&limit=1`),
   ]);
+  const meGhl = (who.ghl_user_id as string) || null;
   const ranked =
     as === "closer"
       ? rankForCloser(
-          list.filter(c => (who.manager && !who.ghl_user_id ? true : c.demo_rep === who.ghl_user_id)),
+          list.filter(
+            c =>
+              (who.manager && !who.ghl_user_id) ||
+              c.demo_rep === who.ghl_user_id ||
+              c.appt?.assigned === who.ghl_user_id ||
+              c.hot_owner === me,
+          ),
           me,
           now,
+          meGhl,
+          Boolean(who.manager),
         )
-      : rankForSetter(list, me, now);
+      : rankForSetter(list, me, now, meGhl, Boolean(who.manager));
   const counts = [0, 1, 2, 3].map(t => ranked.filter(r => r.tier === t).length);
   const iso = (v: number | null) => (v ? new Date(v).toISOString() : null);
   return {
@@ -1721,6 +1825,22 @@ async function dialQueue(who: Who, b: Row) {
         demo_at: iso(c.demo_at ?? null),
         step: c.step,
         last_outcome: c.last_outcome,
+        kind: r.kind,
+        heat: r.heat,
+        hot_reasons: r.hot_reasons,
+        hot: r.hot,
+        misses: r.misses,
+        stage_role: r.stage_role,
+        appointment: r.appt
+          ? {
+              id: r.appt.id,
+              type: r.appt.type,
+              start_at: iso(r.appt.start),
+              booked_at: iso(r.appt.booked),
+              assigned_user_id: r.appt.assigned,
+              confirmed: r.appt.confirmed,
+            }
+          : null,
       };
     }),
   };
@@ -1827,17 +1947,41 @@ async function saveOutcome(
   who: Who,
   a: Row | null,
   contactId: string,
-  outcome: Outcome,
+  outcome: AnyOutcome,
   note: string,
   callbackAt: number | null,
-  extra: { auto?: boolean; appointmentId?: string | null; reason?: string | null; asRole?: string | null } = {},
-): Promise<{ attempt: Row; state: Row } | null> {
+  extra: {
+    auto?: boolean;
+    appointmentId?: string | null;
+    reason?: string | null;
+    asRole?: string | null;
+    kind?: ItemKind;
+  } = {},
+): Promise<{ attempt: Row; state: Row; stage_move?: Row | null } | null> {
   const now = Date.now();
+  const kind: ItemKind = extra.kind ?? "lead";
+  const effect = appointmentEffect(kind, outcome);
+  if (!effect) throw new Refusal("That outcome does not fit this call.");
+  if ((effect.mark || effect.confirmation) && !extra.appointmentId) throw new Refusal("Which appointment?");
+  const appt = extra.appointmentId
+    ? ((await svc(`cockpit_sales_appointments?appointment_id=eq.${enc(extra.appointmentId)}&select=*`))[0] ?? null)
+    : null;
+  if (extra.appointmentId && (!appt || String(appt.contact_id) !== contactId))
+    throw new Refusal("That appointment is not this lead's.", 409);
+  // The mark goes first: if it is refused, nothing is saved.
+  let marked: Row | null = null;
+  if (effect.mark && appt)
+    marked = await markAppointment(who, String(appt.appointment_id), effect.mark, {
+      note: note || null,
+      anyRep: effect.mark === "cancelled",
+    });
   const st = (await svc(`cockpit_sales_queue_state?contact_id=eq.${enc(contactId)}&select=*`))[0];
-  const next = afterOutcome(outcome, Number(st?.step ?? 0), now, callbackAt, {
-    due: ms(st?.due_at),
-    callback: ms(st?.callback_at),
-  });
+  const next = effect.ladder
+    ? afterOutcome(outcome as Outcome, Number(st?.step ?? 0), now, callbackAt, {
+        due: ms(st?.due_at),
+        callback: ms(st?.callback_at),
+      })
+    : null;
   const fields = {
     state: "saved",
     outcome,
@@ -1847,6 +1991,7 @@ async function saveOutcome(
     saved_at: new Date(now).toISOString(),
     auto_saved: Boolean(extra.auto),
     appointment_id: extra.appointmentId ?? null,
+    item_kind: kind,
   };
   let saved: Row | undefined;
   if (a) {
@@ -1877,24 +2022,64 @@ async function saveOutcome(
     }))[0];
   }
   const id = String(saved.id);
-  const state = {
-    contact_id: contactId,
-    step: next.step,
-    due_at: next.due ? new Date(next.due).toISOString() : null,
-    callback_at: next.callback ? new Date(next.callback).toISOString() : null,
-    callback_by: next.callback ? who.email : null,
-    closed: next.closed,
-    closed_at: next.closed ? new Date(now).toISOString() : null,
-    last_outcome: outcome,
-    last_outcome_at: new Date(now).toISOString(),
-    last_rep: who.email,
-    updated_at: new Date(now).toISOString(),
-  };
+  const stamp = new Date(now).toISOString();
+  // Appointment work leaves the lead's ladder where it was; a cancelled call
+  // comes back the next working morning to be rebooked.
+  const state: Row = next
+    ? {
+        contact_id: contactId,
+        step: next.step,
+        due_at: next.due ? new Date(next.due).toISOString() : null,
+        callback_at: next.callback ? new Date(next.callback).toISOString() : null,
+        callback_by: next.callback ? who.email : null,
+        closed: next.closed,
+        closed_at: next.closed ? stamp : null,
+        last_outcome: outcome,
+        last_outcome_at: stamp,
+        last_rep: who.email,
+        updated_at: stamp,
+      }
+    : {
+        contact_id: contactId,
+        last_outcome: outcome,
+        last_outcome_at: stamp,
+        last_rep: who.email,
+        updated_at: stamp,
+        ...(effect.rebook ? { due_at: new Date(nextMorning(now)).toISOString(), closed: null, closed_at: null } : {}),
+      };
+  if (effect.confirmation && appt)
+    await svc("cockpit_sales_confirmations", {
+      method: "POST",
+      body: {
+        appointment_id: String(appt.appointment_id),
+        contact_id: contactId,
+        call_type: appt.call_type === "demo" ? "demo" : "intro",
+        start_at: appt.start_at,
+        result: effect.confirmation,
+        via: a && !a.manual ? "call" : "cockpit",
+        note: note || null,
+        by_email: who.email,
+        attempt_id: id,
+      },
+      prefer: "return=minimal",
+    });
   await svc("cockpit_sales_queue_state?on_conflict=contact_id", {
     method: "POST",
     body: state,
     prefer: "resolution=merge-duplicates,return=minimal",
   });
+  // The pipeline follows the outcome (a booking moves when book.create saves it).
+  const call = appt ? (appt.call_type === "demo" ? "demo" : "intro") : null;
+  const moved =
+    extra.auto || outcome === "booked"
+      ? null
+      : await autoMove(
+          who,
+          contactId,
+          current => targetRoles(kind, outcome, next?.closed ?? null, null, call, current),
+          { source: "dialer", outcome, attemptId: String(saved.id) },
+        );
+  const tagged = extra.auto ? null : await tagOutcome(contactId, outcome);
   // The dialer's rule: every outcome a person saves leaves a note in the CRM.
   // An unanswered call with nothing written does not. Best effort.
   let crmNote = "skipped";
@@ -1904,9 +2089,11 @@ async function saveOutcome(
         "POST",
         `/contacts/${enc(contactId)}/notes`,
         {
-          body: `${OUTCOME_WORDS[outcome]} (${a ? "call" : "saved"} from the sales cockpit by ${String(who.name ?? who.email)})${
-            note ? `: ${note}` : ""
-          }${callbackAt ? `\nCall back ${kuwaitWords(callbackAt)} (Kuwait time)` : ""}`,
+          body: `${ANY_OUTCOME_WORDS[outcome]}${
+            appt ? ` (the ${appt.call_type === "demo" ? "demo" : "intro"} on ${kuwaitWords(Date.parse(String(appt.start_at)))})` : ""
+          } (${a ? "call" : "saved"} from the sales cockpit by ${String(who.name ?? who.email)})${note ? `: ${note}` : ""}${
+            callbackAt ? `\nCall back ${kuwaitWords(callbackAt)} (Kuwait time)` : ""
+          }`,
           ...(who.ghl_user_id ? { userId: who.ghl_user_id } : {}),
         },
         "2021-07-28",
@@ -1928,16 +2115,25 @@ async function saveOutcome(
     id,
     a,
     { ...saved, crm_note: crmNote },
-    { state },
+    {
+      state,
+      kind,
+      ...(marked ? { mark: marked.status, mark_crm: marked.crm } : {}),
+      ...(moved ? { stage_move: moved.state } : {}),
+      ...(tagged ? { tags: tagged } : {}),
+    },
   );
-  return { attempt: { ...saved, crm_note: crmNote }, state };
+  return { attempt: { ...saved, crm_note: crmNote }, state, stage_move: moved };
 }
 
-function outcomeInput(b: Row): { outcome: Outcome; note: string; callbackAt: number | null } {
-  const outcome = String(b.outcome) as Outcome;
-  if (!(OUTCOMES as readonly string[]).includes(outcome)) throw new Refusal("Choose how the call went.");
+/** Outcomes whose story the next person needs in a line of notes. */
+const NEEDS_NOTE: readonly string[] = ["callback", "not_interested", "disqualified", "wrong_number", "handled", "showed", "cancelled", "booked"];
+
+function outcomeInput(b: Row): { outcome: AnyOutcome; note: string; callbackAt: number | null } {
+  const outcome = String(b.outcome) as AnyOutcome;
+  if (![...OUTCOMES, ...APPOINTMENT_OUTCOMES].includes(outcome as never)) throw new Refusal("Choose how the call went.");
   const note = cleanText(b.note, 4000);
-  if (outcome !== "no_answer" && note.length < 3)
+  if (NEEDS_NOTE.includes(outcome) && note.length < 3)
     throw new Refusal("Write a line on what happened, so the next person knows.");
   let callbackAt: number | null = null;
   if (outcome === "callback") {
@@ -1975,14 +2171,17 @@ async function dialSave(who: Who, b: Row) {
   }
   // Booked means on the calendar: through Book a time, or already there
   // (the lead booked from the page, or someone booked in HighLevel).
-  if (outcome === "booked") {
+  if (outcome === "booked" && String(b.item_kind ?? "lead") === "lead") {
     const [intro, demo] = await Promise.all([upcoming(contactId, "intro"), upcoming(contactId, "demo")]);
     if (!intro && !demo)
       throw new Refusal("Nothing is booked for this lead in HighLevel yet. Use Book a time, so the call goes on the calendar.", 409);
   }
+  const kind = (["intro", "confirm"].includes(String(b.item_kind)) ? String(b.item_kind) : "lead") as ItemKind;
   const out = await saveOutcome(who, a, contactId, outcome, note, callbackAt, {
     reason: cleanText(b.reason, 200) || null,
     asRole: cleanText(b.as, 10) || null,
+    kind,
+    appointmentId: cleanText(b.appointment_id, 80) || null,
   });
   return out ?? {};
 }
@@ -2141,7 +2340,39 @@ async function upcoming(contactId: string, kind: BookingKind): Promise<{ id: str
   return events[0] ?? null;
 }
 
+/** The plan for moving an existing appointment: its own calendar, and the person it is with. */
+async function movePlan(b: Row) {
+  const id = cleanText(b.appointment_id, 80);
+  const appt = (await svc(`cockpit_sales_appointments?appointment_id=eq.${enc(id)}&select=*`))[0];
+  if (!appt) throw new Refusal("That appointment is not in the cockpit. It may have been deleted in HighLevel.", 404);
+  if (["cancelled", "noshow", "showed", "invalid"].includes(String(appt.status ?? "")))
+    throw new Refusal("This call is already over or cancelled. Book a new one instead.", 409);
+  const calendarId = String(appt.calendar_id ?? "");
+  if (!calendarId) throw new Refusal("This appointment has no calendar in the cockpit.", 409);
+  const cal = await calendarInfo(calendarId);
+  const kind: BookingKind = appt.call_type === "demo" ? "demo" : "intro";
+  return { appt, calendarId, cal, kind, minutes: slotMinutes(cal), userId: (appt.assigned_user_id as string) || null };
+}
+
 async function bookSlots(who: Who, b: Row) {
+  if (b.appointment_id) {
+    const m = await movePlan(b);
+    const now = Date.now();
+    const days = await freeSlots(m.calendarId, now, now + 4 * 86_400_000, m.userId);
+    return {
+      kind: m.kind,
+      calendar_id: m.calendarId,
+      calendar: String(m.cal.name ?? ""),
+      minutes: m.minutes,
+      with: m.userId ? "me" : "anyone",
+      fallback: false,
+      on_team: false,
+      moving: { id: String(m.appt.appointment_id), start: m.appt.start_at, words: kuwaitWords(Date.parse(String(m.appt.start_at))) },
+      notice: noticeWords(m.kind, m.cal),
+      existing: null,
+      days,
+    };
+  }
   const p = await bookingPlan(who, b);
   const now = Date.now();
   const [mine, existing] = await Promise.all([
@@ -2306,8 +2537,533 @@ async function bookCreate(who: Who, b: Row) {
     appointmentId: apptId,
     asRole: cleanText(b.as, 10) || null,
   });
-  await audit(who, "book.create", "cockpit_sales_bookings", String(booking.id), null, row, { verified });
-  return { booking: row, verified, words, ...(out ?? {}) };
+  const moved = await autoMove(who, p.contact, () => targetRoles("lead", "booked", "booked", p.kind), {
+    source: "booking",
+    outcome: "booked",
+    attemptId: out?.attempt ? String(out.attempt.id) : null,
+  });
+  await audit(who, "book.create", "cockpit_sales_bookings", String(booking.id), null, row, {
+    verified,
+    stage_move: moved?.state ?? null,
+  });
+  return { booking: row, verified, words, stage_move: moved, ...(out ?? {}) };
+}
+
+/**
+ * Move an intro or demo to another free time with the same person: checked
+ * against HighLevel's free slots, moved, read back. The lead agreed the new
+ * time with the rep, so it counts as their confirmation.
+ */
+async function bookMove(who: Who, b: Row) {
+  const m = await movePlan(b);
+  const contact = String(m.appt.contact_id ?? "");
+  const start = Date.parse(String(b.start ?? ""));
+  if (!Number.isFinite(start)) throw new Refusal("Pick a time from the list.");
+  if (start <= Date.now()) throw new Refusal("That time has passed. Pick another.");
+  const note = cleanText(b.note, 4000);
+  if (note.length < 3) throw new Refusal("Write a line on why it moved, so whoever takes it knows.");
+  const dayStart = kuwaitAt(start, 0);
+  const days = await freeSlots(m.calendarId, Math.max(Date.now(), dayStart), dayStart + 86_400_000, m.userId);
+  if (!slotOffered(new Date(start).toISOString(), days)) throw new Refusal("That time was just taken. Pick another.", 409);
+  const end = start + m.minutes * 60_000;
+  const before = m.appt;
+  try {
+    await ghl("PUT", `/calendars/events/appointments/${enc(String(m.appt.appointment_id))}`, {
+      calendarId: m.calendarId,
+      startTime: new Date(start).toISOString(),
+      endTime: new Date(end).toISOString(),
+      ...(m.userId ? { assignedUserId: m.userId } : {}),
+      ignoreFreeSlotValidation: false,
+      toNotify: true,
+    });
+  } catch (e) {
+    throw new Refusal(`HighLevel did not move it: ${redact(String((e as Error).message ?? e))}`, 502);
+  }
+  let back: Row | null = null;
+  try {
+    const r = await ghl("GET", `/calendars/events/appointments/${enc(String(m.appt.appointment_id))}`);
+    back = ((r.appointment ?? r.event ?? r) as Row) ?? null;
+  } catch {
+    back = null;
+  }
+  const verified = Boolean(back && ghlTime(back.startTime) === start);
+  if (verified)
+    await svc(`cockpit_sales_appointments?appointment_id=eq.${enc(String(m.appt.appointment_id))}`, {
+      method: "PATCH",
+      body: { start_at: new Date(start).toISOString(), mirrored_at: new Date().toISOString() },
+      prefer: "return=minimal",
+    });
+  const words = `${m.kind === "intro" ? "Intro" : "Demo"} moved to ${kuwaitWords(start)} (Kuwait time)`;
+  await svc("cockpit_sales_confirmations", {
+    method: "POST",
+    body: {
+      appointment_id: String(m.appt.appointment_id),
+      contact_id: contact,
+      call_type: m.kind,
+      start_at: new Date(start).toISOString(),
+      result: "reschedule",
+      via: "call",
+      note,
+      by_email: who.email,
+    },
+    prefer: "return=minimal",
+  });
+  let attempt: Row | null = null;
+  if (b.attempt_id) {
+    attempt = (await svc(`cockpit_sales_attempts?id=eq.${enc(cleanText(b.attempt_id, 40))}&select=*`))[0] ?? null;
+    if (attempt && (attempt.contact_id !== contact || !["dialing", "placed", "failed"].includes(String(attempt.state))))
+      attempt = null;
+  }
+  const kind = (["intro", "confirm"].includes(String(b.item_kind)) ? String(b.item_kind) : "confirm") as ItemKind;
+  const out = await saveOutcome(who, attempt, contact, "rescheduled", `${words}. ${note}`, null, {
+    kind,
+    appointmentId: String(m.appt.appointment_id),
+    asRole: cleanText(b.as, 10) || null,
+  });
+  await audit(who, "book.move", "cockpit_sales_appointments", String(m.appt.appointment_id), before, {
+    start_at: new Date(start).toISOString(),
+    verified,
+  });
+  return { verified, words, ...(out ?? {}) };
+}
+
+// ---------------------------------------------------------------------------
+// The pipeline: stages from HighLevel, moves by the board and the dialer
+// ---------------------------------------------------------------------------
+
+interface PipeStage {
+  id: string;
+  name: string;
+  position: number;
+  role: StageRole | null;
+}
+interface Pipe {
+  id: string;
+  name: string;
+  stages: PipeStage[];
+}
+
+let pipeCache: { at: number; pipes: Pipe[] } | null = null;
+
+/** The sub-account's pipelines and stages in order, each stage with its role (ten minutes cached). */
+async function pipelines(fresh = false): Promise<Pipe[]> {
+  if (!fresh && pipeCache && Date.now() - pipeCache.at < 10 * 60_000) return pipeCache.pipes;
+  const [d, roles] = await Promise.all([
+    ghl("GET", `/opportunities/pipelines?locationId=${LOCATION}`, undefined, "2021-07-28"),
+    stageRoles(),
+  ]);
+  const pipes = ((d.pipelines ?? []) as Row[]).map(p => ({
+    id: String(p.id),
+    name: String(p.name ?? ""),
+    stages: ((p.stages ?? []) as Row[])
+      .map(st => ({
+        id: String(st.id),
+        name: String(st.name ?? ""),
+        position: Number(st.position ?? 0),
+        role: (roles[String(st.id)] as StageRole | undefined) ?? stageRole(String(st.name ?? "")),
+      }))
+      .sort((a, b) => a.position - b.position),
+  }));
+  pipeCache = { at: Date.now(), pipes };
+  return pipes;
+}
+
+async function pipelineStages(_who: Who, b: Row) {
+  return { pipelines: await pipelines(Boolean(b.fresh)) };
+}
+
+/**
+ * Move a lead's opportunity to a stage in HighLevel: written down first,
+ * carried out, and the cockpit's copy of the lead updated when HighLevel
+ * takes it. A lead with no opportunity gets one in the pipeline asked for.
+ */
+async function moveStage(
+  who: Who,
+  contactId: string,
+  target: { stageId?: string; roles?: StageRole[]; pipelineId?: string },
+  ctx: { source: "board" | "dialer" | "booking"; outcome?: string | null; attemptId?: string | null },
+): Promise<Row> {
+  const lead = (await svc(
+    `cockpit_sales_leads?contact_id=eq.${enc(contactId)}&select=contact_id,name,opportunity_id,pipeline_id,stage_id`,
+  ))[0];
+  if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
+  const pipes = await pipelines();
+  const pipe =
+    pipes.find(p => p.id === (target.pipelineId ?? lead.pipeline_id)) ??
+    pipes.find(p => p.stages.some(st => st.id === target.stageId)) ??
+    pipes.find(p => /2.?call/i.test(p.name)) ??
+    pipes[0];
+  const stage = target.stageId
+    ? pipe?.stages.find(st => st.id === target.stageId)
+    : (target.roles ?? []).map(r => pipe?.stages.find(st => st.role === r)).find(Boolean);
+  const base = {
+    contact_id: contactId,
+    opportunity_id: (lead.opportunity_id as string) ?? null,
+    pipeline_id: pipe?.id ?? null,
+    from_stage_id: (lead.stage_id as string) ?? null,
+    source: ctx.source,
+    outcome: ctx.outcome ?? null,
+    by_email: who.email,
+    attempt_id: ctx.attemptId ?? null,
+  };
+  if (!pipe || !stage) {
+    if (target.stageId) throw new Refusal("That stage is not in the sales pipelines any more. Reload the board.", 409);
+    return { state: "skipped", why: "no stage for this outcome in the lead's pipeline" };
+  }
+  if (lead.stage_id === stage.id && lead.opportunity_id)
+    return { state: "skipped", why: "already in that stage", to_stage_id: stage.id };
+  const row = (await svc("cockpit_sales_stage_moves", {
+    method: "POST",
+    body: { ...base, to_stage_id: stage.id },
+    prefer: "return=representation",
+  }))[0];
+  let opp = (lead.opportunity_id as string) || "";
+  try {
+    if (opp) {
+      await ghl(
+        "PUT",
+        `/opportunities/${enc(opp)}`,
+        { pipelineId: pipe.id, pipelineStageId: stage.id, status: "open" },
+        "2021-07-28",
+      );
+    } else {
+      const d = await ghl(
+        "POST",
+        "/opportunities/",
+        {
+          pipelineId: pipe.id,
+          locationId: LOCATION,
+          pipelineStageId: stage.id,
+          contactId,
+          name: String(lead.name ?? "Sales lead").slice(0, 120),
+          status: "open",
+        },
+        "2021-07-28",
+      );
+      opp = String(((d.opportunity ?? d) as Row).id ?? "");
+    }
+    await svc(`cockpit_sales_leads?contact_id=eq.${enc(contactId)}`, {
+      method: "PATCH",
+      body: {
+        opportunity_id: opp || null,
+        pipeline_id: pipe.id,
+        pipeline_name: pipe.name,
+        stage_id: stage.id,
+        stage_name: stage.name,
+        opp_status: "open",
+      },
+      prefer: "return=minimal",
+    });
+    const done = (await svc(`cockpit_sales_stage_moves?id=eq.${enc(String(row.id))}`, {
+      method: "PATCH",
+      body: { state: "done", opportunity_id: opp || null },
+      prefer: "return=representation",
+    }))[0];
+    await audit(who, "pipeline.move", "cockpit_sales_stage_moves", String(row.id), { stage_id: lead.stage_id }, done);
+    return { ...done, to_stage_name: stage.name };
+  } catch (e) {
+    const err = redact(String((e as Error).message ?? e));
+    const failed = (await svc(`cockpit_sales_stage_moves?id=eq.${enc(String(row.id))}`, {
+      method: "PATCH",
+      body: { state: "failed", error: err },
+      prefer: "return=representation",
+    }))[0];
+    await audit(who, "pipeline.move", "cockpit_sales_stage_moves", String(row.id), { stage_id: lead.stage_id }, failed);
+    if (ctx.source === "board") throw new Refusal(`HighLevel did not move it: ${err}`, 502);
+    return failed;
+  }
+}
+
+/**
+ * The board: one pipeline's stages in order, and a card per open lead in it
+ * (plus the sales leads that have no opportunity yet), each with its heat
+ * and reasons, when it was last touched, its next step and its owner. A lead
+ * with nothing in the last 60 days, no next step and not on the hot list is
+ * quiet: counted per stage, and shown only when asked for.
+ */
+async function pipelineBoard(who: Who, b: Row) {
+  const pipes = await pipelines();
+  const pipe =
+    pipes.find(p => p.id === cleanText(b.pipeline_id, 80)) ?? pipes.find(p => /2.?call/i.test(p.name)) ?? pipes[0];
+  if (!pipe) throw new Refusal("HighLevel has no sales pipeline to show.", 404);
+  const now = Date.now();
+  const since = now - 60 * 86_400_000;
+  const cols =
+    "contact_id,name,lead_class,stage_id,stage_name,opp_status,pipeline_id,assigned_to,revenue,readiness,lead_created_at,opp_updated_at,dnd";
+  const [inPipe, loose, inbox, hotRows, states, appts, people] = await Promise.all([
+    svcAll(`cockpit_sales_leads?pipeline_id=eq.${enc(pipe.id)}&select=${cols}&order=contact_id`),
+    svc(
+      `cockpit_sales_leads?pipeline_id=is.null&lead_class=not.is.null&lead_created_at=gte.${enc(new Date(since).toISOString())}&select=${cols}&limit=1000`,
+    ),
+    svcAll("cockpit_sales_inbox?select=contact_id,last_message_at,last_direction&order=conversation_id"),
+    svc("cockpit_sales_hot?removed_at=is.null&select=*&limit=2000"),
+    svcAll("cockpit_sales_queue_state?select=contact_id,callback_at,due_at,last_outcome,last_outcome_at,closed&order=contact_id"),
+    svc(
+      `cockpit_sales_calendar?select=contact_id,call_type,start_at,status&start_at=gte.${enc(new Date(now).toISOString())}&order=start_at&limit=2000`,
+    ),
+    svc("cockpit_sales_people?select=email,name,ghl_user_id"),
+  ]);
+  const inboundBy = new Map<string, number>();
+  for (const i of inbox)
+    if (i.last_direction === "inbound") inboundBy.set(String(i.contact_id), ms(i.last_message_at) ?? 0);
+  const hotBy = new Map(hotRows.map(r => [String(r.contact_id), r]));
+  const stateBy = new Map(states.map(r => [String(r.contact_id), r]));
+  const apptBy = new Map<string, Row>();
+  for (const a of appts)
+    if (!["cancelled", "noshow", "invalid"].includes(String(a.status ?? "")) && !apptBy.has(String(a.contact_id)))
+      apptBy.set(String(a.contact_id), a);
+  const ownerOf = new Map(people.filter(p => p.ghl_user_id).map(p => [String(p.ghl_user_id), String(p.name ?? p.email)]));
+  const mineOnly = b.scope === "mine";
+  const showAll = Boolean(b.all);
+  const quiet: Record<string, number> = {};
+  const cards: Row[] = [];
+  for (const l of [...inPipe, ...loose]) {
+    if (l.opp_status && l.opp_status !== "open") continue;
+    const id = String(l.contact_id);
+    const hot = hotBy.get(id);
+    const st = stateBy.get(id);
+    const appt = apptBy.get(id);
+    if (mineOnly && l.assigned_to !== who.ghl_user_id && hot?.owner_email !== who.email) continue;
+    const inbound = inboundBy.get(id) ?? null;
+    const touches = [inbound, ms(l.opp_updated_at), ms(st?.last_outcome_at), ms(l.lead_created_at)].filter(
+      (x): x is number => x !== null && x > 0,
+    );
+    const lastTouch = touches.length ? Math.max(...touches) : null;
+    const next = [
+      hot?.next_at ? { at: ms(hot.next_at), what: "Hot follow-up" } : null,
+      st?.callback_at ? { at: ms(st.callback_at), what: "Call back" } : null,
+      appt ? { at: ms(appt.start_at), what: appt.call_type === "demo" ? "Demo" : "Intro" } : null,
+      st?.due_at && !st?.closed ? { at: ms(st.due_at), what: "Next try" } : null,
+    ]
+      .filter((x): x is { at: number; what: string } => Boolean(x && x.at))
+      .sort((x, y) => x.at - y.at)[0];
+    const stageKey = String(l.stage_id ?? "none");
+    const active = Boolean(hot) || Boolean(next) || (lastTouch !== null && lastTouch >= since);
+    if (!active && !showAll) {
+      quiet[stageKey] = (quiet[stageKey] ?? 0) + 1;
+      continue;
+    }
+    const role = stageRole(String(l.stage_name ?? ""));
+    const h = heat(
+      {
+        lead_class: (l.lead_class as string) ?? null,
+        revenue: (l.revenue as string) ?? null,
+        readiness: (l.readiness as string) ?? null,
+        inbound_at: inbound,
+        created_at: ms(l.lead_created_at),
+        stage_role: role,
+        misses: 0,
+        hot: Boolean(hot),
+      } as Candidate,
+      now,
+    );
+    cards.push({
+      contact_id: id,
+      name: l.name ?? null,
+      lead_class: l.lead_class ?? null,
+      stage_id: l.stage_id ?? null,
+      heat: h.score,
+      reasons: h.reasons,
+      hot: Boolean(hot),
+      last_objection: hot?.last_objection ?? null,
+      last_touch_at: lastTouch ? new Date(lastTouch).toISOString() : null,
+      wrote_at: inbound ? new Date(inbound).toISOString() : null,
+      next_at: next ? new Date(next.at).toISOString() : null,
+      next_what: next?.what ?? null,
+      owner: l.assigned_to ? (ownerOf.get(String(l.assigned_to)) ?? null) : null,
+      dnd: Boolean(l.dnd),
+      quiet: !active,
+    });
+  }
+  return {
+    pipeline: pipe,
+    pipelines: pipes.map(p => ({ id: p.id, name: p.name })),
+    cards,
+    quiet,
+    loose: loose.length,
+  };
+}
+
+/** A rep moves a lead on the board. */
+async function pipelineMove(who: Who, b: Row) {
+  const contact = cleanText(b.contact_id, 80);
+  const stageId = cleanText(b.stage_id, 80);
+  if (!contact || !stageId) throw new Refusal("Which lead, and which stage?");
+  const out = await moveStage(who, contact, { stageId, pipelineId: cleanText(b.pipeline_id, 80) || undefined }, {
+    source: "board",
+  });
+  return { move: out };
+}
+
+/**
+ * The dialer's own move after an outcome, when the settings allow (on unless
+ * a manager turned it off). `rolesFor` gets the lead's current stage role, so
+ * a rule can depend on where the lead sits now.
+ */
+async function autoMove(
+  who: Who,
+  contactId: string,
+  rolesFor: (current: StageRole | null) => StageRole[],
+  ctx: { source: "dialer" | "booking"; outcome: string; attemptId: string | null },
+): Promise<Row | null> {
+  const v = await setting<{ auto_moves?: boolean; roles?: Record<string, StageRole> }>("pipeline");
+  const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contactId)}&select=stage_id,stage_name`))[0];
+  const current = lead
+    ? ((v?.roles?.[String(lead.stage_id ?? "")] as StageRole | undefined) ?? stageRole(lead.stage_name as string | null))
+    : null;
+  const roles = rolesFor(current);
+  if (!roles.length) return null;
+  if (v?.auto_moves === false) return { state: "skipped", why: "automatic moves are off" };
+  try {
+    return await moveStage(who, contactId, { roles }, ctx);
+  } catch (e) {
+    return { state: "failed", error: redact(String((e as Error).message ?? e)) };
+  }
+}
+
+/** The sub-account's own tags for an outcome (best effort; the outcome stands either way). */
+async function tagOutcome(contactId: string, outcome: AnyOutcome): Promise<string | null> {
+  const tags = tagsFor(outcome);
+  if (!tags.length) return null;
+  try {
+    await ghl("POST", `/contacts/${enc(contactId)}/tags`, { tags }, "2021-07-28");
+    return "tagged";
+  } catch {
+    return "failed";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The hot list
+// ---------------------------------------------------------------------------
+
+const HOW = ["call", "whatsapp", "email", "meeting"] as const;
+
+/** Put a lead on the hot list, or change when and how to follow up. */
+async function hotSave(who: Who, b: Row) {
+  const contact = cleanText(b.contact_id, 80);
+  const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contact)}&select=contact_id`))[0];
+  if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
+  const before = (await svc(`cockpit_sales_hot?contact_id=eq.${enc(contact)}&select=*`))[0] ?? null;
+  if (before && !before.removed_at && !who.manager && before.owner_email !== who.email)
+    throw new Refusal(`This lead is on ${String(before.owner_email).split("@")[0]}'s hot list. Ask them or a manager.`, 403);
+  let nextAt: string | null = null;
+  if (b.next_at) {
+    const t = Date.parse(String(b.next_at));
+    if (!Number.isFinite(t) || t < Date.now() - 86_400_000 || t > Date.now() + 90 * 86_400_000)
+      throw new Refusal("Pick when to follow up, within the next 90 days.");
+    nextAt = new Date(t).toISOString();
+  }
+  const how = cleanText(b.next_how, 10);
+  if (how && !(HOW as readonly string[]).includes(how)) throw new Refusal("Follow up by call, WhatsApp, email or a meeting.");
+  const owner = who.manager && b.owner_email ? cleanText(b.owner_email, 200).toLowerCase() : String(who.email);
+  const row = {
+    contact_id: contact,
+    owner_email: owner,
+    next_at: nextAt,
+    next_how: how || null,
+    last_objection: cleanText(b.last_objection, 500) || null,
+    note: cleanText(b.note, 4000) || null,
+    updated_at: new Date().toISOString(),
+    removed_at: null,
+    removed_why: null,
+    ...(before && !before.removed_at ? {} : { added_by: who.email, added_at: new Date().toISOString() }),
+  };
+  const out = (await svc("cockpit_sales_hot?on_conflict=contact_id", {
+    method: "POST",
+    body: row,
+    prefer: "resolution=merge-duplicates,return=representation",
+  }))[0];
+  await audit(who, "hot.save", "cockpit_sales_hot", contact, before, out);
+  return { hot: out };
+}
+
+async function hotRemove(who: Who, b: Row) {
+  const contact = cleanText(b.contact_id, 80);
+  const before = (await svc(`cockpit_sales_hot?contact_id=eq.${enc(contact)}&removed_at=is.null&select=*`))[0];
+  if (!before) throw new Refusal("This lead is not on the hot list.", 404);
+  if (!who.manager && before.owner_email !== who.email)
+    throw new Refusal("Only its owner or a manager can take it off the hot list.", 403);
+  await svc(`cockpit_sales_hot?contact_id=eq.${enc(contact)}`, {
+    method: "PATCH",
+    body: { removed_at: new Date().toISOString(), removed_why: cleanText(b.why, 200) || null },
+    prefer: "return=minimal",
+  });
+  await audit(who, "hot.remove", "cockpit_sales_hot", contact, before, null);
+  return {};
+}
+
+// ---------------------------------------------------------------------------
+// Reviews a rep asks for, and Aziz's own reviews
+// ---------------------------------------------------------------------------
+
+/** Ask the AI reviewer for a review of one call. The desk picks it up within minutes. */
+async function reviewAsk(who: Who, b: Row) {
+  const id = cleanText(b.recording_id, 200);
+  const rec = (await svc(
+    `cockpit_sales_recordings?recording_id=eq.${enc(id)}&select=recording_id,title,transcript_path,transcript_chars`,
+  ))[0];
+  if (!rec) throw new Refusal("That call is not in the cockpit.", 404);
+  if (!rec.transcript_path)
+    throw new Refusal("This call has no transcript yet, so there is nothing to review.", 409);
+  const done = await svc(`cockpit_sales_reviews?recording_id=eq.${enc(id)}&select=id&limit=1`);
+  if (done.length && !who.manager) throw new Refusal("This call is already reviewed; the review is on the call's page.", 409);
+  let ask: Row;
+  try {
+    ask = (await svc("cockpit_sales_review_asks", {
+      method: "POST",
+      body: { recording_id: id, requested_by: who.email },
+      prefer: "return=representation",
+    }))[0];
+  } catch (e) {
+    if (/23505|duplicate/.test(String((e as Error).message ?? e)))
+      throw new Refusal("A review of this call is already on its way; it takes a few minutes.", 409);
+    throw e;
+  }
+  await audit(who, "review.ask", "cockpit_sales_review_asks", String(ask.id), null, ask);
+  return { ask };
+}
+
+/** Save one of Aziz's reviews (Skool or elsewhere) for the team. Managers only. */
+async function coachSave(who: Who, b: Row) {
+  needManager(who);
+  const c = checkCoachReview(b);
+  if (!c.ok) throw new Refusal(c.error);
+  const id = cleanText(b.id, 40);
+  const row = { ...c.row, updated_at: new Date().toISOString() };
+  let out: Row[];
+  let before: Row | null = null;
+  if (id) {
+    before = (await svc(`cockpit_sales_coach_reviews?id=eq.${enc(id)}&deleted_at=is.null&select=*`))[0] ?? null;
+    if (!before) throw new Refusal("That review is not there any more.", 404);
+    out = await svc(`cockpit_sales_coach_reviews?id=eq.${enc(id)}`, {
+      method: "PATCH",
+      body: row,
+      prefer: "return=representation",
+    });
+  } else {
+    out = await svc("cockpit_sales_coach_reviews", {
+      method: "POST",
+      body: { ...row, created_by: who.email },
+      prefer: "return=representation",
+    });
+  }
+  await audit(who, "coach.save", "cockpit_sales_coach_reviews", String(out[0]?.id ?? id), before, out[0]);
+  return { review: out[0] };
+}
+
+async function coachDelete(who: Who, b: Row) {
+  needManager(who);
+  const id = cleanText(b.id, 40);
+  const before = (await svc(`cockpit_sales_coach_reviews?id=eq.${enc(id)}&deleted_at=is.null&select=*`))[0];
+  if (!before) throw new Refusal("That review is not there any more.", 404);
+  await svc(`cockpit_sales_coach_reviews?id=eq.${enc(id)}`, {
+    method: "PATCH",
+    body: { deleted_at: new Date().toISOString() },
+    prefer: "return=minimal",
+  });
+  await audit(who, "coach.delete", "cockpit_sales_coach_reviews", id, before, null);
+  return {};
 }
 
 const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
@@ -2343,6 +3099,15 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   "dial.release": dialRelease,
   "book.slots": bookSlots,
   "book.create": bookCreate,
+  "book.move": bookMove,
+  "pipeline.stages": pipelineStages,
+  "pipeline.board": pipelineBoard,
+  "pipeline.move": pipelineMove,
+  "hot.save": hotSave,
+  "hot.remove": hotRemove,
+  "review.ask": reviewAsk,
+  "coach.save": coachSave,
+  "coach.delete": coachDelete,
 };
 
 /** What the desk's service key may do: nothing but a trusted follow-up. */

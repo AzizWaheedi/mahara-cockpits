@@ -1,9 +1,11 @@
 import {
   Bell,
   BellRing,
+  CalendarClock,
   CalendarPlus,
   Copy,
   ExternalLink,
+  Flame,
   ListOrdered,
   PhoneCall,
   PhoneOff,
@@ -14,6 +16,7 @@ import {
 import {
   type FormEvent,
   type MutableRefObject,
+  type ReactNode,
   useCallback,
   useEffect,
   useMemo,
@@ -22,7 +25,9 @@ import {
 } from "react";
 import { Link } from "react-router";
 import { AdOrigin } from "../components/AdOrigin";
+import { CallNotesList, useCallNotes } from "../components/CallNotes";
 import { Conversation, useConversation } from "../components/Conversation";
+import { HotControl } from "../components/HotList";
 import {
   button,
   buttonPrimary,
@@ -147,6 +152,8 @@ interface Slots {
   on_team: boolean;
   notice: string;
   existing: { id: string; start: string; words: string } | null;
+  /** When moving a booked call: the call as it stands. */
+  moving?: { id: string; start: string; words: string } | null;
   days: { day: string; slots: string[] }[];
 }
 
@@ -167,12 +174,16 @@ const TIER_DOT: Record<number, string> = {
   3: "var(--muted-foreground)",
 };
 
-const OUTCOMES: {
+interface OutcomeDef {
   key: string;
   label: string;
   needsNote: boolean;
   hint: string;
-}[] = [
+}
+
+type ItemKind = "lead" | "intro" | "confirm";
+
+const LEAD_OUTCOMES: OutcomeDef[] = [
   {
     key: "no_answer",
     label: "No answer",
@@ -216,6 +227,75 @@ const OUTCOMES: {
     hint: "Dealt with another way. A call-back already set stays; otherwise out of the queue.",
   },
 ];
+
+/** What each kind of dialer item can end in (sales-api dialer.ts appointmentEffect). */
+const OUTCOMES: Record<ItemKind, OutcomeDef[]> = {
+  lead: LEAD_OUTCOMES,
+  intro: [
+    {
+      key: "showed",
+      label: "Held it",
+      needsNote: true,
+      hint: "Marks the intro showed (in HighLevel too). Then book the demo or set a call-back.",
+    },
+    {
+      key: "disqualified",
+      label: "Not a fit",
+      needsNote: true,
+      hint: "Marks the intro disqualified and closes the lead.",
+    },
+    {
+      key: "no_answer",
+      label: "No answer",
+      needsNote: false,
+      hint: "Nothing is marked yet: try again inside the intro's twenty minutes.",
+    },
+    {
+      key: "noshow",
+      label: "No-show",
+      needsNote: false,
+      hint: "Marks the intro a no-show; the lead comes back to be rebooked.",
+    },
+    {
+      key: "rescheduled",
+      label: "Reschedule",
+      needsNote: true,
+      hint: "Move the intro to another free time with you.",
+    },
+  ],
+  confirm: [
+    {
+      key: "confirmed",
+      label: "Confirmed",
+      needsNote: false,
+      hint: "They will be there. Kept in the cockpit; the call stays as booked.",
+    },
+    {
+      key: "no_answer",
+      label: "No answer",
+      needsNote: false,
+      hint: "Tries again in two hours (half an hour near the call). Message them too.",
+    },
+    {
+      key: "rescheduled",
+      label: "Reschedule",
+      needsNote: true,
+      hint: "Move the call to a time that suits them; that counts as confirmed.",
+    },
+    {
+      key: "cancelled",
+      label: "Cancelled",
+      needsNote: true,
+      hint: "Marks the call cancelled (in HighLevel too); they come back tomorrow morning to rebook.",
+    },
+    {
+      key: "not_interested",
+      label: "Not coming",
+      needsNote: true,
+      hint: "Cancels the call and closes the lead.",
+    },
+  ],
+};
 
 const msg = (e: unknown) => String((e as Error)?.message ?? e);
 
@@ -372,6 +452,8 @@ export default function DialerPage({ me }: { me: Me }) {
   const [tier, setTier] = useState<TierFilter>("all");
   const [term, setTerm] = useState("");
   const [alertsOn, setAlertsOn] = useState(alertsWanted);
+  // Bumped to open the lead's conversation from the call pane ("Write to them").
+  const [talk, setTalk] = useState(0);
   const maqsam = useAgent();
 
   // One read at a time; a read asked for meanwhile runs right after.
@@ -647,6 +729,7 @@ export default function DialerPage({ me }: { me: Me }) {
               callRef={callRef}
               onCalled={a => setQ(prev => (prev ? { ...prev, open: a } : prev))}
               onFinished={finished}
+              onTalk={() => setTalk(n => n + 1)}
             />
             <LeadPane
               key={`lead-${currentId}`}
@@ -655,6 +738,7 @@ export default function DialerPage({ me }: { me: Me }) {
               as={as}
               contactId={currentId}
               item={current}
+              talk={talk}
             />
           </>
         ) : q ? (
@@ -996,11 +1080,33 @@ function QueuePane({
                       {i.name ?? "Unnamed lead"}
                     </span>
                     <span className="muted block truncate text-xs">
+                      {i.kind === "intro" || i.kind === "confirm" ? (
+                        <CalendarClock
+                          className="me-1 inline size-3 align-[-2px]"
+                          aria-hidden
+                        />
+                      ) : null}
                       {i.why}
                     </span>
+                    {i.hot_reasons?.length ? (
+                      <span
+                        className="block truncate text-[11px]"
+                        style={{ color: "var(--primary)" }}
+                      >
+                        {i.hot ? (
+                          <Flame
+                            className="me-0.5 inline size-3 align-[-2px]"
+                            aria-hidden
+                          />
+                        ) : null}
+                        {i.hot_reasons.join(" · ")}
+                      </span>
+                    ) : null}
                   </span>
                   <span className="muted shrink-0 pt-0.5 text-[11px] tabular-nums">
-                    {shortAgo(i.inbound_at ?? i.created_at, now)}
+                    {i.kind === "intro" || i.kind === "confirm"
+                      ? clock(i.appointment?.start_at ?? null)
+                      : shortAgo(i.inbound_at ?? i.created_at, now)}
                   </span>
                 </button>
               </li>
@@ -1083,6 +1189,7 @@ function CallPane({
   callRef,
   onCalled,
   onFinished,
+  onTalk,
 }: {
   className: string;
   me: Me;
@@ -1098,16 +1205,26 @@ function CallPane({
     how: "saved" | "skipped",
     words?: string,
   ) => void;
+  onTalk: () => void;
 }) {
   const lead = useLead(contactId);
   const l = lead.data;
   const [draft, setDraftState] = useState<Draft>(() => readDraft(contactId));
   const [busy, setBusy] = useState<null | "call" | "save" | "skip">(null);
-  const [booking, setBooking] = useState(false);
+  // What the form is showing: the outcomes, a booking, a move, or what comes
+  // after an outcome that has a next step.
+  const [mode, setMode] = useState<
+    "outcomes" | "book" | "move" | "held" | "unanswered"
+  >("outcomes");
+  const [bookKind, setBookKind] = useState<"intro" | "demo" | null>(null);
+  // Once the intro is marked held, what follows is ordinary lead work.
+  const [kind, setKind] = useState<ItemKind>(item?.kind ?? "lead");
+  const appt = item?.appointment ?? null;
   const status = useCallStatus(open, words =>
     onFinished(contactId, "saved", words),
   );
-  const chosen = OUTCOMES.find(o => o.key === draft.outcome) ?? null;
+  const outcomes = OUTCOMES[kind];
+  const chosen = outcomes.find(o => o.key === draft.outcome) ?? null;
   const dnd = Boolean(l?.dnd);
 
   function setDraft(d: Partial<Draft>) {
@@ -1151,7 +1268,12 @@ function CallPane({
     e?.preventDefault();
     if (!draft.outcome || busy) return;
     if (draft.outcome === "booked") {
-      setBooking(true);
+      setBookKind(null);
+      setMode("book");
+      return;
+    }
+    if (draft.outcome === "rescheduled") {
+      setMode("move");
       return;
     }
     setBusy("save");
@@ -1161,12 +1283,26 @@ function CallPane({
         outcome: draft.outcome,
         note: draft.note,
         as,
+        item_kind: kind,
+        appointment_id: kind === "lead" ? null : (appt?.id ?? null),
         callback_at:
           draft.outcome === "callback" && draft.callback
             ? new Date(draft.callback).toISOString()
             : null,
       });
       clearDraft(contactId);
+      // Two outcomes have a next step before the next lead.
+      if (kind === "intro" && draft.outcome === "showed") {
+        setKind("lead");
+        setDraftState({ outcome: null, note: "", callback: "" });
+        setMode("held");
+        toast.success("Marked held. Book the demo, or set a call-back.");
+        return;
+      }
+      if (kind === "confirm" && draft.outcome === "no_answer") {
+        setMode("unanswered");
+        return;
+      }
       onFinished(
         contactId,
         "saved",
@@ -1263,15 +1399,72 @@ function CallPane({
           onCheck={() => void agent.check()}
         />
 
-        {booking ? (
+        {mode === "held" ? (
+          <NextStep
+            title="The intro is marked held. What next?"
+            text="Book the demo while they are warm, or set when to call them back."
+          >
+            <button
+              type="button"
+              onClick={() => {
+                setBookKind("demo");
+                setMode("book");
+              }}
+              className={buttonPrimary}
+            >
+              <CalendarPlus className="size-3.5" aria-hidden /> Book the demo
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setDraft({ outcome: "callback" });
+                setMode("outcomes");
+              }}
+              className={button}
+            >
+              Set a call-back
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                onFinished(contactId, "saved", "Saved. Next lead is up.")
+              }
+              className={button}
+            >
+              Next lead
+            </button>
+          </NextStep>
+        ) : mode === "unanswered" ? (
+          <NextStep
+            title="No answer. Send them a message too?"
+            text="A short WhatsApp asking them to confirm often gets the answer a call did not. The dialer tries the call again in two hours."
+          >
+            <button type="button" onClick={onTalk} className={buttonPrimary}>
+              Write to them
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                onFinished(contactId, "saved", "Saved. Next lead is up.")
+              }
+              className={button}
+            >
+              Next lead
+            </button>
+          </NextStep>
+        ) : mode === "book" || mode === "move" ? (
           <BookForm
             me={me}
             as={as}
             contactId={contactId}
             attemptId={open?.id ?? null}
+            kindFirst={bookKind}
+            moving={
+              mode === "move" && appt ? { id: appt.id, itemKind: kind } : null
+            }
             note={draft.note}
             onNote={note => setDraft({ note })}
-            onClose={() => setBooking(false)}
+            onClose={() => setMode("outcomes")}
             onBooked={words => {
               clearDraft(contactId);
               onFinished(contactId, "saved", `${words}. Next lead is up.`);
@@ -1280,14 +1473,20 @@ function CallPane({
         ) : (
           <form onSubmit={save} className="space-y-3 border-t hairline pt-4">
             <p className="text-sm font-medium">
-              {open ? "How did it go?" : "Save what happened"}
+              {kind === "intro"
+                ? "How did the intro go?"
+                : kind === "confirm"
+                  ? "Are they coming?"
+                  : open
+                    ? "How did it go?"
+                    : "Save what happened"}
             </p>
             <div
               className="grid grid-cols-2 gap-1.5 sm:grid-cols-3"
               role="group"
               aria-label="Outcome"
             >
-              {OUTCOMES.map(o => (
+              {outcomes.map(o => (
                 <button
                   key={o.key}
                   type="button"
@@ -1295,7 +1494,11 @@ function CallPane({
                   title={o.hint}
                   onClick={() => {
                     setDraft({ outcome: o.key });
-                    if (o.key === "booked") setBooking(true);
+                    if (o.key === "booked") {
+                      setBookKind(null);
+                      setMode("book");
+                    }
+                    if (o.key === "rescheduled") setMode("move");
                   }}
                   className={`rounded-[var(--radius-md)] border px-2.5 py-1.5 text-sm ${
                     draft.outcome === o.key
@@ -1384,11 +1587,15 @@ function CallPane({
               >
                 {busy === "save"
                   ? "Saving…"
-                  : draft.outcome === "booked"
+                  : draft.outcome === "booked" ||
+                      draft.outcome === "rescheduled"
                     ? "Pick a time"
                     : "Save and next"}
               </button>
-              {!open && draft.outcome && draft.outcome !== "booked" ? (
+              {!open &&
+              draft.outcome &&
+              draft.outcome !== "booked" &&
+              draft.outcome !== "rescheduled" ? (
                 <span className="muted text-xs">
                   No call through the dialer: saved as a call made elsewhere.
                 </span>
@@ -1398,6 +1605,24 @@ function CallPane({
         )}
       </div>
     </section>
+  );
+}
+
+function NextStep({
+  title,
+  text,
+  children,
+}: {
+  title: string;
+  text: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="space-y-2 border-t hairline pt-4">
+      <p className="text-sm font-medium">{title}</p>
+      <p className="muted text-xs">{text}</p>
+      <div className="flex flex-wrap gap-2">{children}</div>
+    </div>
   );
 }
 
@@ -1459,8 +1684,21 @@ function CallBand({
   } else if (urgent) {
     const late = urgent.deadline <= now;
     color = late ? "var(--destructive)" : "var(--warning)";
-    title = urgent.title;
+    title =
+      item?.kind === "confirm" || item?.kind === "intro"
+        ? item.why
+        : urgent.title;
     big = countdown(urgent, now);
+    detail =
+      item?.kind === "intro"
+        ? "Intros are phone calls: call them at the booked time, then say how it went."
+        : item?.kind === "confirm"
+          ? `Booked ${ago(item.appointment?.booked_at ?? null, now)}; not confirmed yet.`
+          : null;
+  } else if (item?.kind === "confirm") {
+    color = "var(--primary)";
+    title = item.why;
+    detail = `Booked ${ago(item.appointment?.booked_at ?? null, now)}; not confirmed yet. Call, or message them on WhatsApp.`;
   } else {
     title = "Ready to call";
     detail = item
@@ -1513,6 +1751,8 @@ function BookForm({
   as,
   contactId,
   attemptId,
+  kindFirst,
+  moving,
   note,
   onNote,
   onClose,
@@ -1522,13 +1762,17 @@ function BookForm({
   as: As;
   contactId: string;
   attemptId: string | null;
+  /** Which call to book first (the demo, right after an intro was held). */
+  kindFirst?: "intro" | "demo" | null;
+  /** Move this booked call instead of booking a new one. */
+  moving?: { id: string; itemKind: ItemKind } | null;
   note: string;
   onNote: (note: string) => void;
   onClose: () => void;
   onBooked: (words: string) => void;
 }) {
   const [kind, setKind] = useState<"intro" | "demo">(
-    as === "closer" ? "demo" : "intro",
+    kindFirst ?? (as === "closer" ? "demo" : "intro"),
   );
   const [withWho, setWithWho] = useState<"me" | "anyone">("me");
   const [slots, setSlots] = useState<Slots | null>(null);
@@ -1544,7 +1788,12 @@ function BookForm({
     setSlots(null);
     setError(null);
     setStart(null);
-    api<Slots>("book.slots", { contact_id: contactId, kind, with: withWho })
+    api<Slots>(
+      "book.slots",
+      moving
+        ? { appointment_id: moving.id }
+        : { contact_id: contactId, kind, with: withWho },
+    )
       .then(s => {
         if (!alive) return;
         setSlots(s);
@@ -1554,7 +1803,7 @@ function BookForm({
     return () => {
       alive = false;
     };
-  }, [contactId, kind, withWho, tick]);
+  }, [contactId, kind, withWho, tick, moving?.id]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -1570,16 +1819,25 @@ function BookForm({
     setBusy(true);
     try {
       const out = await api<{ verified: boolean; words: string }>(
-        "book.create",
-        {
-          contact_id: contactId,
-          kind,
-          with: slots?.with ?? withWho,
-          start,
-          note,
-          as,
-          attempt_id: attemptId,
-        },
+        moving ? "book.move" : "book.create",
+        moving
+          ? {
+              appointment_id: moving.id,
+              start,
+              note,
+              as,
+              attempt_id: attemptId,
+              item_kind: moving.itemKind,
+            }
+          : {
+              contact_id: contactId,
+              kind,
+              with: slots?.with ?? withWho,
+              start,
+              note,
+              as,
+              attempt_id: attemptId,
+            },
       );
       if (!out.verified)
         toast.error(
@@ -1599,7 +1857,9 @@ function BookForm({
   return (
     <form onSubmit={book} className="space-y-3 border-t hairline pt-4">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-sm font-medium">Book a time</p>
+        <p className="text-sm font-medium">
+          {moving ? "Move the call" : "Book a time"}
+        </p>
         <button
           type="button"
           onClick={onClose}
@@ -1609,7 +1869,16 @@ function BookForm({
           <X className="size-3.5" aria-hidden /> Back to outcomes
         </button>
       </div>
-      <div className="flex flex-wrap items-center gap-2">
+      {moving ? (
+        <p className="muted text-sm">
+          {slots?.moving
+            ? `Now: ${slots.moving.words} (Kuwait time), with the same person. Pick the new time.`
+            : "Reading the call…"}
+        </p>
+      ) : null}
+      <div
+        className={`flex flex-wrap items-center gap-2 ${moving ? "hidden" : ""}`}
+      >
         <Segmented
           label="Which call"
           value={kind}
@@ -1731,9 +2000,11 @@ function BookForm({
       >
         <CalendarPlus className="size-3.5" aria-hidden />
         {busy
-          ? "Booking…"
+          ? moving
+            ? "Moving…"
+            : "Booking…"
           : start
-            ? `Book ${dayLabel(start)} ${clock(start)}`
+            ? `${moving ? "Move to" : "Book"} ${dayLabel(start)} ${clock(start)}`
             : "Pick a time"}
       </button>
     </form>
@@ -1752,17 +2023,35 @@ function LeadPane({
   as,
   contactId,
   item,
+  talk,
 }: {
   className: string;
   me: Me;
   as: As;
   contactId: string;
   item: QueueItem | null;
+  /** Changes when the call pane asks for the conversation. */
+  talk: number;
 }) {
   const lead = useLead(contactId);
   const activity = useLeadActivity(contactId, lead.data?.phone8 ?? null);
   const convo = useConversation(contactId);
+  const callNotes = useCallNotes(contactId);
   const [tab, setTab] = useState<LeadTab>("talk");
+  const paneRef = useRef<HTMLElement>(null);
+  // "Write to them": open the conversation and put the cursor in the box.
+  const lastTalk = useRef(talk);
+  useEffect(() => {
+    if (talk === lastTalk.current) return;
+    lastTalk.current = talk;
+    setTab("talk");
+    window.setTimeout(() => {
+      paneRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+      paneRef.current
+        ?.querySelector<HTMLTextAreaElement>("form textarea")
+        ?.focus();
+    }, 50);
+  }, [talk]);
   const l = lead.data;
   const messages: LiveMessage[] = useMemo(
     () =>
@@ -1810,6 +2099,7 @@ function LeadPane({
 
   return (
     <section
+      ref={paneRef}
       aria-label="The lead"
       className={`panel min-w-0 overflow-hidden ${className}`}
     >
@@ -1859,6 +2149,7 @@ function LeadPane({
             .filter(Boolean)
             .join(" · ")}
         </p>
+        <HotControl me={me} contactId={contactId} />
         <div className="flex flex-wrap gap-3 text-xs">
           <Link
             to={`/lead/${contactId}`}
@@ -1917,6 +2208,14 @@ function LeadPane({
           />
         ) : tab === "lead" ? (
           <div className="grid gap-5 xl:grid-cols-2">
+            {(callNotes.data ?? []).length ? (
+              <div className="space-y-2 xl:col-span-2">
+                <p className="text-sm font-semibold">
+                  What the last call told us
+                </p>
+                <CallNotesList notes={callNotes.data ?? []} compact />
+              </div>
+            ) : null}
             <div className="space-y-2">
               <p className="text-sm font-semibold">What they told us</p>
               <Answers lead={l} />

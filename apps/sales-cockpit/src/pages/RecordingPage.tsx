@@ -1,6 +1,7 @@
-import { ArrowLeft, ExternalLink, Search } from "lucide-react";
+import { ArrowLeft, ExternalLink, Plus, Search } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
+import { CoachReviewForm, CoachReviewList } from "../components/CoachReviews";
 import {
   button,
   EmptyState,
@@ -9,9 +10,11 @@ import {
   SectionCard,
 } from "../components/kit";
 import { Prose } from "../components/Prose";
+import { ReviewAsk } from "../components/ReviewAsk";
 import { ReviewCard } from "../components/ReviewCard";
 import {
   loadTranscript,
+  useCoachReviews,
   useLead,
   useQuery,
   useRecording,
@@ -19,13 +22,18 @@ import {
 } from "../lib/data";
 import { clock, day, duration } from "../lib/format";
 import { supabase } from "../lib/supabase";
-import type { Recording, Review } from "../lib/types";
+import type { Me, Recording, Review } from "../lib/types";
 
-/** One recorded call: Vince's review, Fathom's summary, and the transcript. */
-export default function RecordingPage() {
+/**
+ * One recorded call: Vince's review (or the button to ask for one), Aziz's
+ * own review when he has written one, the summary and the transcript.
+ */
+export default function RecordingPage({ me }: { me: Me }) {
   const { id = "" } = useParams();
   const rec = useRecording(id);
   const reviews = useReviews({ recordingIds: id ? [id] : [] });
+  const coach = useCoachReviews({ recordingId: id });
+  const [adding, setAdding] = useState(false);
   const r = rec.data;
   const lead = useLead(r?.contact_id ?? "");
 
@@ -101,16 +109,71 @@ export default function RecordingPage() {
             error={reviews.error}
             retry={reviews.reload}
           />
-        ) : review ? (
-          <ReviewCard r={review} />
         ) : (
-          <p className="muted text-sm">
-            {r.transcript_path
-              ? "Not reviewed yet. Vince reviews new calls every half hour, two at a time."
-              : "No transcript came with this call, so Vince cannot review it."}
-          </p>
+          <div className="space-y-4">
+            {review ? <ReviewCard r={review} /> : null}
+            {!review && r.transcript_path ? (
+              <p className="muted text-sm">
+                Not reviewed yet. Vince reviews new calls on his own; ask for
+                this one and it is done within a few minutes.
+              </p>
+            ) : null}
+            <ReviewAsk
+              me={me}
+              recordingId={r.recording_id}
+              hasTranscript={Boolean(r.transcript_path)}
+              reviewed={Boolean(review)}
+              onReviewed={reviews.reload}
+            />
+          </div>
         )}
       </SectionCard>
+
+      {(coach.data ?? []).length || me.manager ? (
+        <SectionCard
+          title="Aziz's review"
+          side={
+            me.manager && !adding ? (
+              <button
+                type="button"
+                onClick={() => setAdding(true)}
+                className="muted inline-flex items-center gap-1 text-xs hover:underline"
+              >
+                <Plus className="size-3" aria-hidden /> Add your review
+              </button>
+            ) : null
+          }
+        >
+          <div className="space-y-4">
+            {adding ? (
+              <CoachReviewForm
+                me={me}
+                recordingId={r.recording_id}
+                contactId={r.contact_id}
+                onDone={() => {
+                  setAdding(false);
+                  coach.reload();
+                }}
+                onCancel={() => setAdding(false)}
+              />
+            ) : null}
+            {coach.error ? (
+              <Failed
+                what="Aziz's reviews"
+                error={coach.error}
+                retry={coach.reload}
+              />
+            ) : (
+              <CoachReviewList
+                me={me}
+                reviews={coach.data ?? []}
+                onChange={coach.reload}
+                showCall={false}
+              />
+            )}
+          </div>
+        </SectionCard>
+      ) : null}
 
       <div className="grid gap-5 lg:grid-cols-2">
         <SectionCard title="Fathom's summary">

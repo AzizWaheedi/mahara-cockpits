@@ -1,26 +1,42 @@
-import { FileText, Mic, Search } from "lucide-react";
+import { FileText, Mic, Plus, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
-import { EmptyState, Failed, field, SourceNote } from "../components/kit";
+import { CoachReviewForm, CoachReviewList } from "../components/CoachReviews";
+import {
+  button,
+  EmptyState,
+  Failed,
+  field,
+  SourceNote,
+  StatusChip,
+} from "../components/kit";
 import { GradeChip } from "../components/ReviewCard";
 import {
   PAGE,
+  useCoachReviews,
   useLeadsById,
   useRecordings,
   useReps,
+  useReviewAsks,
   useReviews,
 } from "../lib/data";
 import { day, duration } from "../lib/format";
-import type { Me, Recording, Review } from "../lib/types";
+import type { Me, Recording, Review, ReviewAsk } from "../lib/types";
 
 /**
- * Every recorded sales call, newest first, and Vince's reviews of them. The
- * team reads each other's calls, as they read each other's reviews in
- * Slack; a rep opens on their own.
+ * Every recorded sales call, newest first, Vince's reviews of them, and
+ * Aziz's own reviews. Everyone reads everyone's calls (Aziz, 2026-09-26:
+ * "They should be allowed to pick all the recordings") and can ask Vince to
+ * review any of them.
  */
 export default function RecordingsPage({ me }: { me: Me }) {
   const [params, setParams] = useSearchParams();
-  const tab = params.get("tab") === "reviews" ? "reviews" : "calls";
+  const tab =
+    params.get("tab") === "reviews"
+      ? "reviews"
+      : params.get("tab") === "aziz"
+        ? "aziz"
+        : "calls";
   const reps = useReps();
   const set = (patch: Record<string, string | null>) => {
     const next = new URLSearchParams(params);
@@ -37,7 +53,8 @@ export default function RecordingsPage({ me }: { me: Me }) {
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Recordings</h1>
           <p className="muted text-sm">
-            Every recorded sales call, newest first. Vince reviews each new one.
+            Every recorded sales call, newest first. Open any call to ask Vince
+            to review it.
           </p>
         </div>
         <div
@@ -49,6 +66,7 @@ export default function RecordingsPage({ me }: { me: Me }) {
             [
               ["calls", "Calls"],
               ["reviews", "Vince's reviews"],
+              ["aziz", "Aziz's reviews"],
             ] as const
           ).map(([k, label]) => (
             <button
@@ -65,9 +83,11 @@ export default function RecordingsPage({ me }: { me: Me }) {
       </header>
 
       {tab === "calls" ? (
-        <Calls me={me} params={params} set={set} reps={reps.data ?? []} />
-      ) : (
+        <Calls params={params} set={set} reps={reps.data ?? []} />
+      ) : tab === "reviews" ? (
         <Reviews me={me} params={params} set={set} reps={reps.data ?? []} />
+      ) : (
+        <AzizReviews me={me} />
       )}
 
       <SourceNote>
@@ -85,18 +105,15 @@ export default function RecordingsPage({ me }: { me: Me }) {
 type RepList = NonNullable<ReturnType<typeof useReps>["data"]>;
 
 function Calls({
-  me,
   params,
   set,
   reps,
 }: {
-  me: Me;
   params: URLSearchParams;
   set: (p: Record<string, string | null>) => void;
   reps: RepList;
 }) {
-  const mine = (me.fathom_email ?? "").toLowerCase();
-  const by = params.get("by") ?? (me.manager ? "" : mine);
+  const by = params.get("by") ?? "";
   const page = Math.max(0, Number(params.get("page") ?? 1) - 1) || 0;
   const [text, setText] = useState(params.get("q") ?? "");
   useEffect(() => {
@@ -110,6 +127,13 @@ function Calls({
   const calls = useRecordings({ q: params.get("q") ?? "", by, page });
   const rows = calls.data ?? [];
   const reviews = useReviews({ recordingIds: rows.map(r => r.recording_id) });
+  const asks = useReviewAsks(rows.map(r => r.recording_id));
+  const askOf = useMemo(() => {
+    const m = new Map<string, ReviewAsk>();
+    for (const a of asks.data ?? [])
+      if (!m.has(a.recording_id)) m.set(a.recording_id, a);
+    return m;
+  }, [asks.data]);
   const reviewOf = useMemo(
     () =>
       new Map(
@@ -179,6 +203,7 @@ function Calls({
               key={r.recording_id}
               r={r}
               review={reviewOf.get(r.recording_id)}
+              ask={askOf.get(r.recording_id)}
               lead={r.contact_id ? leadName.get(r.contact_id) : undefined}
             />
           ))}
@@ -197,12 +222,15 @@ function Calls({
 function CallRow({
   r,
   review,
+  ask,
   lead,
 }: {
   r: Recording;
   review?: Review;
+  ask?: ReviewAsk;
   lead?: string | null;
 }) {
+  const asked = ask && (ask.state === "queued" || ask.state === "reviewing");
   return (
     <li>
       <Link
@@ -237,7 +265,11 @@ function CallRow({
               aria-label="Has a transcript"
             />
           ) : null}
-          {review ? <GradeChip r={review} /> : null}
+          {review ? (
+            <GradeChip r={review} />
+          ) : asked ? (
+            <StatusChip tone="neutral" label="Review asked" />
+          ) : null}
         </div>
       </Link>
     </li>
@@ -370,5 +402,59 @@ function Pager({
         Older
       </button>
     </div>
+  );
+}
+
+/** Aziz's own call reviews, from Skool or written here, for the whole team. */
+function AzizReviews({ me }: { me: Me }) {
+  const reviews = useCoachReviews({ all: true });
+  const [adding, setAdding] = useState(false);
+  return (
+    <section className="panel space-y-4 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="muted text-sm">
+          Aziz's own reviews of calls, the ones on Skool and any written here.
+          Read the ones meant for you first.
+        </p>
+        {me.manager && !adding ? (
+          <button
+            type="button"
+            onClick={() => setAdding(true)}
+            className={button}
+          >
+            <Plus className="size-3.5" aria-hidden /> Add a review
+          </button>
+        ) : null}
+      </div>
+      {adding ? (
+        <CoachReviewForm
+          me={me}
+          onDone={() => {
+            setAdding(false);
+            reviews.reload();
+          }}
+          onCancel={() => setAdding(false)}
+        />
+      ) : null}
+      {reviews.error ? (
+        <Failed
+          what="Aziz's reviews"
+          error={reviews.error}
+          retry={reviews.reload}
+        />
+      ) : reviews.loading && !reviews.data ? (
+        <p className="muted text-sm">Reading the reviews…</p>
+      ) : (
+        <CoachReviewList
+          me={me}
+          reviews={[...(reviews.data ?? [])].sort(
+            (a, b) =>
+              Number(b.for_email === me.email) -
+              Number(a.for_email === me.email),
+          )}
+          onChange={reviews.reload}
+        />
+      )}
+    </section>
   );
 }

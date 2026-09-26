@@ -2,7 +2,9 @@ import { ArrowLeft, Copy, ExternalLink, Phone, ScrollText } from "lucide-react";
 import { type ReactNode, useEffect, useMemo } from "react";
 import { Link, useParams } from "react-router";
 import { AdOrigin } from "../components/AdOrigin";
+import { CallNotesList, useCallNotes } from "../components/CallNotes";
 import { Conversation, useConversation } from "../components/Conversation";
+import { HotControl } from "../components/HotList";
 import {
   EmptyState,
   Failed,
@@ -47,6 +49,7 @@ export default function LeadPage({ me }: { me: Me }) {
   // One read of HighLevel feeds the conversation, the timeline's messages,
   // the owner and the do-not-disturb flag.
   const convo = useConversation(contactId);
+  const callNotes = useCallNotes(contactId);
   const live = convo.data;
   const timelineMessages: LiveMessage[] = useMemo(
     () =>
@@ -165,6 +168,7 @@ export default function LeadPage({ me }: { me: Me }) {
             .filter(Boolean)
             .join(" · ")}
         </p>
+        <HotControl me={me} contactId={l.contact_id} />
         <div className="flex flex-wrap gap-2">
           <Link
             to={`/call/${l.contact_id}?script=${callScript(me, appointments)}`}
@@ -276,6 +280,17 @@ export default function LeadPage({ me }: { me: Me }) {
               </p>
             </SectionCard>
           ) : null}
+          <SectionCard title="What the calls told us">
+            {callNotes.error ? (
+              <Failed
+                what="The call notes"
+                error={callNotes.error}
+                retry={callNotes.reload}
+              />
+            ) : (
+              <CallNotesList notes={callNotes.data ?? []} />
+            )}
+          </SectionCard>
           <SectionCard title="Research">
             <ResearchPanel contactId={l.contact_id} me={me} />
           </SectionCard>

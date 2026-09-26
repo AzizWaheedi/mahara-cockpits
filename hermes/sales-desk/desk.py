@@ -41,6 +41,7 @@ from desk import engine as engine_mod  # noqa: E402
 from desk import fathom as fathom_mod  # noqa: E402
 from desk import http  # noqa: E402
 from desk import model as model_mod  # noqa: E402
+from desk import notes as notes_mod  # noqa: E402
 from desk import offer as offer_mod  # noqa: E402
 from desk import prompt as prompt_mod  # noqa: E402
 from desk import queue as queue_mod  # noqa: E402
@@ -365,22 +366,35 @@ def cmd_reviews(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     since_text = key("SALES_REVIEW_SINCE", "2026-08-24").strip()
     since = datetime.fromisoformat(since_text).replace(tzinfo=timezone.utc) if args.days is None else (
         datetime.now(timezone.utc) - timedelta(days=args.days))
+    # What reps asked for goes first, every run; with --asked, only that
+    # (the two-minute cron), so an ask is answered in minutes.
     try:
         p = review_provider(cfg, log)
-        out = reviews_mod.review_new(sb, p, log.info, knowledge=knowledge, since=since,
-                                     limit=args.limit or 2, min_chars=cfg.min_transcript_chars,
-                                     timeout=cfg.model_timeout)
+        asked = reviews_mod.review_asked(sb, p, log.info, knowledge=knowledge, limit=args.limit or 3,
+                                         timeout=cfg.model_timeout)
+        out = {"due": 0, "reviewed": 0, "failed": 0, "errors": []} if args.asked else reviews_mod.review_new(
+            sb, p, log.info, knowledge=knowledge, since=since, limit=args.limit or 2,
+            min_chars=cfg.min_transcript_chars, timeout=cfg.model_timeout)
     except model_mod.ModelUnreachable as e:
         _status(cfg, log, "reviews", False, str(e))
         log.error(str(e))
         return 1
-    detail = ("nothing to review" if not out["due"] else
-              f"{out['reviewed']} reviewed, {out['failed']} failed of {out['due']} due"
-              + (f": {out['errors'][0]}" if out["errors"] else ""))
-    _status(cfg, log, "reviews", not out["failed"], detail)
-    if out["due"] or args.json:
-        _print(out if args.json else detail, args.json)
-    return 1 if out["failed"] and not out["reviewed"] else 0
+    parts = []
+    if asked["asked"]:
+        parts.append(f"{asked['reviewed']} asked-for reviewed, {asked['failed']} failed of {asked['asked']} asked"
+                     + (f": {asked['errors'][0]}" if asked["errors"] else ""))
+    if out["due"]:
+        parts.append(f"{out['reviewed']} reviewed, {out['failed']} failed of {out['due']} due"
+                     + (f": {out['errors'][0]}" if out["errors"] else ""))
+    detail = "; ".join(parts) or "nothing to review"
+    failed, done = asked["failed"] + out["failed"], asked["reviewed"] + out["reviewed"]
+    # The two-minute run reports only when it had work, so the half-hourly
+    # line is not overwritten by "nothing" every two minutes.
+    if not args.asked or asked["asked"]:
+        _status(cfg, log, "reviews", not failed, detail)
+    if asked["asked"] or out["due"] or args.json:
+        _print({"asked": asked, "new": out} if args.json else detail, args.json)
+    return 1 if failed and not done else 0
 
 
 def cmd_research(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
@@ -435,6 +449,59 @@ def cmd_followups(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     _status(cfg, log, "followups", not out.get("failed"), detail)
     if out.get("written") or out.get("failed") or args.json:
         _print(out if args.json else detail, args.json)
+    return 0
+
+
+def notes_provider(cfg: Config, log: Logger) -> Any:
+    """The model the call notes and digests are written with: the desk's own
+    provider on the VPS key, SALES_NOTES_MODEL when set; never DeepSeek."""
+    model = key("SALES_NOTES_MODEL", "").strip()
+    if model:
+        if "deepseek" in model.lower():
+            raise model_mod.ModelUnreachable("Lead data never goes to DeepSeek; set SALES_NOTES_MODEL to another model.")
+        cfg.model = model
+    return model_mod.provider(cfg, log.info)
+
+
+def cmd_notes(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    """Notes after every recorded sales call: what was said, the objections, what the closer needs, a verdict."""
+    sb = _sb(cfg)
+    since = datetime.now(timezone.utc) - timedelta(days=args.days or 60)
+    try:
+        p = notes_provider(cfg, log)
+        out = notes_mod.run_notes(sb, p, log.info, since=since, limit=args.limit or 4,
+                                  min_chars=cfg.min_transcript_chars, timeout=cfg.model_timeout)
+    except model_mod.ModelUnreachable as e:
+        _status(cfg, log, "notes", False, str(e))
+        log.error(str(e))
+        return 1
+    detail = ("every call has its notes" if not out["due"] else
+              f"{out['written']} written, {out['failed']} failed of {out['due']} due"
+              + (f": {out['errors'][0]}" if out["errors"] else ""))
+    _status(cfg, log, "notes", not out["failed"], detail)
+    if out["due"] or args.json:
+        _print(out if args.json else detail, args.json)
+    return 1 if out["failed"] and not out["written"] else 0
+
+
+def cmd_digest(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    """What prospects keep saying over the last 7 and 30 days, from the call notes."""
+    sb = _sb(cfg)
+    try:
+        p = notes_provider(cfg, log)
+        outs = [notes_mod.run_digest(sb, p, log.info, days=d, timeout=cfg.model_timeout)
+                for d in ([args.days] if args.days else [7, 30])]
+    except model_mod.ModelUnreachable as e:
+        _status(cfg, log, "digest", False, str(e))
+        log.error(str(e))
+        return 1
+    except model_mod.ModelError as e:
+        _status(cfg, log, "digest", False, str(e))
+        log.error(str(e))
+        return 1
+    detail = "; ".join(f"{o['days']} days from {o['calls']} calls" for o in outs)
+    _status(cfg, log, "digest", True, detail)
+    _print(outs if args.json else detail, args.json)
     return 0
 
 
@@ -561,8 +628,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     cv = sub.add_parser("calls-vault"); cv.add_argument("--vault"); cv.add_argument("--dry", action="store_true")
     ri = sub.add_parser("reviews-import"); ri.add_argument("--folder"); ri.add_argument("--dry", action="store_true")
     rv = sub.add_parser("reviews"); rv.add_argument("--limit", type=int); rv.add_argument("--days", type=int)
+    rv.add_argument("--asked", action="store_true", help="only the calls reps asked to have reviewed")
     rs = sub.add_parser("research"); rs.add_argument("--limit", type=int)
     sub.add_parser("followups")
+    nt = sub.add_parser("notes"); nt.add_argument("--limit", type=int); nt.add_argument("--days", type=int)
+    dg = sub.add_parser("digest"); dg.add_argument("--days", type=int, choices=(7, 30))
     sub.add_parser("status")
     sub.add_parser("offer-sync")
     v = sub.add_parser("validate"); v.add_argument("deal"); v.add_argument("--transcript")
@@ -584,7 +654,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     handlers: dict[str, Callable[[Config, argparse.Namespace, Logger], int]] = {
         "doctor": cmd_doctor, "requests": cmd_requests, "recordings": cmd_recordings, "status": cmd_status,
         "calls-vault": cmd_calls_vault, "reviews-import": cmd_reviews_import, "reviews": cmd_reviews,
-        "research": cmd_research, "followups": cmd_followups,
+        "research": cmd_research, "followups": cmd_followups, "notes": cmd_notes, "digest": cmd_digest,
         "validate": cmd_validate, "build": cmd_build, "draft": cmd_draft, "offer-sync": cmd_offer_sync,
     }
     try:

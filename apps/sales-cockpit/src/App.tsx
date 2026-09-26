@@ -33,6 +33,8 @@ const ReviewOnlyPage = lazy(() =>
   import("./pages/RecordingPage").then(m => ({ default: m.ReviewOnlyPage })),
 );
 const LinksPage = lazy(() => import("./pages/LinksPage"));
+const PipelinePage = lazy(() => import("./pages/PipelinePage"));
+const IntelligencePage = lazy(() => import("./pages/IntelligencePage"));
 const TeamPage = lazy(() => import("./pages/TeamPage"));
 
 const ROLE_WORDS: Record<string, string> = {
@@ -240,6 +242,8 @@ export function Seated({
               <Route path="/lead/:contactId" element={<LeadPage me={me} />} />
               <Route path="/call/:contactId" element={<CallPage me={me} />} />
               <Route path="/dialer" element={<DialerPage me={me} />} />
+              <Route path="/pipeline" element={<PipelinePage me={me} />} />
+              <Route path="/intelligence" element={<IntelligencePage />} />
               <Route path="/proposals" element={<ProposalsPage me={me} />} />
               <Route path="/proposal/:id" element={<ProposalPage me={me} />} />
               <Route path="/numbers" element={<NumbersPage me={me} />} />
@@ -247,7 +251,10 @@ export function Seated({
               <Route path="/eod" element={<EodPage me={me} />} />
               <Route path="/followups" element={<FollowupsPage me={me} />} />
               <Route path="/recordings" element={<RecordingsPage me={me} />} />
-              <Route path="/recording/:id" element={<RecordingPage />} />
+              <Route
+                path="/recording/:id"
+                element={<RecordingPage me={me} />}
+              />
               <Route path="/review/:id" element={<ReviewOnlyPage />} />
               <Route path="/links" element={<LinksPage me={me} />} />
               <Route

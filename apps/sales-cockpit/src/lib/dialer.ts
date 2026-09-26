@@ -21,6 +21,21 @@ export interface QueueItem {
   demo_at: string | null;
   step: number;
   last_outcome: string | null;
+  /** lead: a lead to call; intro: the intro call itself; confirm: a confirmation. */
+  kind?: "lead" | "intro" | "confirm";
+  heat?: number;
+  hot_reasons?: string[];
+  hot?: boolean;
+  misses?: number;
+  stage_role?: string | null;
+  appointment?: {
+    id: string;
+    type: "intro" | "demo";
+    start_at: string | null;
+    booked_at: string | null;
+    assigned_user_id: string | null;
+    confirmed: boolean;
+  } | null;
 }
 
 export interface UrgentEvent {
@@ -47,6 +62,23 @@ export function urgentEvents(items: QueueItem[], now: number): UrgentEvent[] {
   const out: UrgentEvent[] = [];
   for (const i of items) {
     if (i.tier !== 0) continue;
+    const start = t(i.appointment?.start_at ?? null);
+    if ((i.kind === "intro" || i.kind === "confirm") && start !== null) {
+      const intro = i.kind === "intro";
+      out.push({
+        key: `${i.contact_id}:${i.kind}:${start}`,
+        contact_id: i.contact_id,
+        name: i.name,
+        title: intro
+          ? "Intro call"
+          : `Confirm the ${i.appointment?.type ?? "call"}`,
+        at: start,
+        // An intro is due at its start; a confirmation half an hour before it.
+        deadline: intro ? start : start - 30 * 60_000,
+        callback: true,
+      });
+      continue;
+    }
     const callback = t(i.callback_at);
     if (callback !== null && callback <= now + 5 * 60_000) {
       out.push({

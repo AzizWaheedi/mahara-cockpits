@@ -4,6 +4,7 @@ import {
   type Appointment,
   applyFills,
   fillPaths,
+  checkCoachReview,
   checkGoals,
   checkLink,
   checkOffer,
@@ -155,5 +156,20 @@ describe("filling the blanks a draft left", () => {
   });
   test("a fill that still says FILL is refused", () => {
     expect(applyFills(deal, { headline: "Your next FILL" }).ok).toBe(false);
+  });
+});
+
+describe("Aziz's call reviews", () => {
+  test("a link or a line of lessons is enough, cleaned", () => {
+    const r = checkCoachReview({ title: " Handling 'too expensive' ", url: "https://www.skool.com/mahara/post-1", tags: "Price, objections, price" });
+    expect(r.ok && r.row).toMatchObject({ title: "Handling 'too expensive'", url: "https://www.skool.com/mahara/post-1", tags: ["price", "objections"], score: null });
+  });
+  test("what cannot be saved says why", () => {
+    expect(checkCoachReview({ title: "x" }).ok).toBe(false);
+    expect(checkCoachReview({ title: "No link" }).ok).toBe(false);
+    expect(checkCoachReview({ title: "Bad link", url: "skool.com/x" }).ok).toBe(false);
+    expect(checkCoachReview({ title: "Bad type", url: "https://a.b", call_type: "webinar" }).ok).toBe(false);
+    expect(checkCoachReview({ title: "Bad score", url: "https://a.b", score: 140 }).ok).toBe(false);
+    expect(checkCoachReview({ title: "For one rep", lessons: "Slow down at the price", for_email: "Tahreer@maharamedia.com" }).ok).toBe(true);
   });
 });
