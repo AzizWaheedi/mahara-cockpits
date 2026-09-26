@@ -1,11 +1,12 @@
-// Thin GHL v2 client. All config from environment variables (set in Vercel → Settings → Environment Variables).
+// Credentials stay in Vercel. The generated repository schedule owns event settings.
+import { schedule } from "./schedule.js";
 export const CFG = {
   token: process.env.GHL_TOKEN,                                   // Private Integration token (Settings → Private Integrations)
-  locationId: process.env.GHL_LOCATION_ID || "7NI8yyJtwsh2OOWA5Icr",
-  calendarId: process.env.WEBBY_CALENDAR_ID || "jRmgyFgUvWoiqQ83bPJj", // WEBBY · Live Training (internal)
-  webinarStart: process.env.WEBINAR_START || "2026-09-24T20:00:00+03:00",  // ISO with offset — the ONE place the round's date lives
-  webinarMinutes: Number(process.env.WEBINAR_MINUTES || 90),
-  round: process.env.WEBINAR_ROUND || "sep-2026",
+  locationId: schedule.providers.ghl_location_id,
+  calendarId: schedule.providers.ghl_calendar_id,
+  webinarStart: schedule.starts_at,
+  webinarMinutes: schedule.duration_minutes,
+  round: schedule.legacy_round,
   thanksUrl: process.env.THANKS_URL || "/thanks.html",
   fields: {
     webinarDatetime: "x7aG8iLqmTzQEr6SGCaH",

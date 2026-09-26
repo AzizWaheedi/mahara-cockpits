@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "event_key": "mahara-live-training-next-001",
+  "revision": 1,
+  "status": "draft",
+  "starts_at": null,
+  "timezone": "Asia/Kuwait",
+  "duration_minutes": 90,
+  "title": {
+    "ar": "التدريب المباشر المجاني · مهارة ميديا",
+    "en": "Mahara Media Free Live Training"
+  },
+  "providers": {
+    "zoom_meeting_id": "88628953097",
+    "ghl_location_id": "7NI8yyJtwsh2OOWA5Icr",
+    "ghl_calendar_id": "jRmgyFgUvWoiqQ83bPJj"
+  }
+}

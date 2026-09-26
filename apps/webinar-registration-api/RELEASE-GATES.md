@@ -1,9 +1,10 @@
 # Recovered registration API: release gates
 
 Recovered from the currently deployed Vercel source on 26 September. The nine
-files listed in RECOVERY.json are byte-identical to that deployment, verified
-against Vercel's source-file hashes. No credentials or environment files were
-recovered. This recovery itself does not deploy or connect Git to Vercel.
+files listed in RECOVERY.json were byte-identical at recovery commit `7c735cd`,
+verified against Vercel's source-file hashes. Later changes are reviewed Git
+diffs from that baseline. No credentials or environment files were recovered.
+This recovery itself does not deploy or connect Git to Vercel.
 
 This application is NOT part of `scripts/ship.sh media-buyer`. Do not deploy it
 just because the dashboard release is ready.
@@ -11,7 +12,8 @@ just because the dashboard release is ready.
 Before replacing the current API:
 
 1. Use a stable event UUID and schedule revisions from the new occurrence ledger.
-   Decide the authoritative schedule editor and propagate that same version to
+   The authoritative schedule is now `config/webinar/current.json`, per Aziz.
+   Propagate that same version to
    the public page/calendar, registration handler, Zoom and reminder enrollment.
    A reschedule retains the event; a new training gets a new event. Month tags
    alone cannot distinguish them.
@@ -33,5 +35,8 @@ Before replacing the current API:
    pitch booking and source-count reconciliation; do not activate client
    workflows or overwrite the public date as part of an unscoped smoke test.
 
-The current source defaults to a past September date. The user has not selected
-the next date. Do not infer approval to roll out from the existence of this copy.
+The generated source now starts in draft and refuses registrations until the
+schedule is ready. Old conflicting environment settings also fail closed. The
+deployed API still has its historical defaults until a separately verified
+cutover. The next date is undecided. Follow `config/webinar/README.md`; do not
+infer approval to roll out from the existence of this copy.

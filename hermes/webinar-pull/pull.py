@@ -1210,7 +1210,11 @@ def launch_snapshot(meeting: dict, join_ok: Optional[bool]) -> dict:
     try:
         status, _h, body = call("GET", WEBBY_PAGE, {"User-Agent": BROWSER_UA}, timeout=20)
         if status == 200:
-            match = re.search(r"COUNTDOWN_ISO\s*=\s*['\"]([^'\"]+)['\"]", body.decode("utf-8", "replace"))
+            page = body.decode("utf-8", "replace")
+            match = re.search(r'<meta name="webinar-start" content="([^"]*)">', page)
+            # Preserve pre-cutover pages while accepting the repository-owned schedule.
+            if match is None:
+                match = re.search(r"COUNTDOWN_ISO\s*=\s*['\"]([^'\"]+)['\"]", page)
             at = parse_ts(match[1]) if match else None
             snapshot["page"] = {"start": iso(at) if at else None}
     except (Failure, ValueError, TypeError):

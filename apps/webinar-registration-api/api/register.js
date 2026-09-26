@@ -4,6 +4,7 @@
 // 2. Book the contact on the WEBBY · Live Training calendar at WEBINAR_START → fires WEBBY - W2
 // 3. Reply JSON {ok:true, redirect} (fetch) or 303-redirect to the thank-you page (plain form post)
 import { CFG, ghl, normalizePhone, readBody, isEmail } from "../lib/ghl.js";
+import { scheduleIssues } from "../lib/schedule.js";
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -11,6 +12,7 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   if (req.method === "OPTIONS") return res.status(204).end();
   if (req.method !== "POST") return res.status(405).json({ ok: false, error: "POST only" });
+  if (scheduleIssues().length) return res.status(503).json({ ok: false, error: "Training registration is not open. Please check back when the date is confirmed." });
 
   const b = readBody(req);
   const firstName = String(b.first_name || b.firstName || b.name || "").trim();
