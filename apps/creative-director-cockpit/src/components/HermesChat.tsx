@@ -1,9 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
-
-// biome-ignore lint/suspicious/noExplicitAny: chat rows
-type Any = any;
+import {
+  type ChatMessage,
+  type CockpitApp,
+  type CockpitRole,
+  clearAskAiThread,
+  getAskAiThread,
+  jobsToChatMessages,
+  submitAskAiJob,
+} from "@/lib/askAiClient";
 
 const ago = (ms: number) => {
   const m = Math.round((Date.now() - ms) / 60000);
@@ -32,9 +38,7 @@ function Dots() {
 }
 
 /**
- * An assistant message that types itself out when it first arrives. Hermes
- * returns his answer whole, so the typing is played here; anything already
- * on screen when the panel opened is shown in full.
+ * An assistant message that types itself out when it first arrives.
  */
 function Typed({
   text,
@@ -57,14 +61,14 @@ function Typed({
       return;
     }
     let i = 0;
+    let timer: number;
     const step = () => {
-      // Two to four characters a tick reads like fast typing, not a crawl.
       i = Math.min(text.length, i + 2 + Math.floor(Math.random() * 3));
       setN(i);
       if (i < text.length) timer = window.setTimeout(step, 18);
       else onDone();
     };
-    let timer = window.setTimeout(step, 120);
+    timer = window.setTimeout(step, 120);
     return () => window.clearTimeout(timer);
   }, [animate, text, onDone]);
   return (
@@ -75,69 +79,107 @@ function Typed({
   );
 }
 
-/**
- * A conversation with Hermes, the same agent that writes ad copy and client
- * reports. Every message goes out with what this screen knows (the client
- * on the page, the numbers behind it), Hermes answers into the same thread.
- * Aziz, 2026-09-10: "make the AI thing a chat like the one we're in".
- */
+/** Server history is authoritative; pending jobs are reloaded across refresh. */
 export function HermesChat() {
+  const app: CockpitApp = "creative";
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
+  const [storedThread, setThread] = useState<ChatMessage[]>([]);
+  const [threadOwner, setThreadOwner] = useState("");
+  const [threadError, setThreadError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [refresh, setRefresh] = useState(0);
   const location = useLocation();
-  // The chat sits in the layout, outside RoleRoute. For a session without
-  // the creative seat (revoked in the portal, or a pass minted for another
-  // cockpit) hermes.thread throws, and convex/react rethrows that during
-  // render, which would replace the whole app with "Reload" instead of the
-  // "not yours" page. So the thread is only asked for once the seat is known.
   const auth = useCockpitAuth();
-  const isCreative = Boolean(auth.roles?.includes("creative") || auth.isCeo || true);
+  const { client } = auth;
+  const requiredRole = ({ "media-buyer": "media_buyer", "client-success": "csm", "creative": "creative" } as const)[app];
+  const activeRole: CockpitRole = auth.isCeo ? "ceo" : auth.roles.includes("admin") ? "admin" : requiredRole;
+  const isAllowed = auth.ready && auth.isAuthenticated &&
+    (auth.isCeo || auth.roles.includes("admin") || auth.roles.includes(requiredRole));
+  const scopeKey = JSON.stringify([auth.session?.user.id, auth.email, [...auth.roles].sort(), [...auth.clients].sort(), auth.isCeo, isAllowed]);
+  const currentScope = useRef(scopeKey);
+  currentScope.current = scopeKey;
+  const sending = useRef(false);
+  const thread = threadOwner === scopeKey ? storedThread : [];
+  const clientName = useMemo(() => {
+    const match = /\/(clients|performance|client)\/([^/?#]+)/.exec(location.pathname);
+    if (!match) return undefined;
+    try { return decodeURIComponent(match[2]); } catch { return undefined; }
+  }, [location.pathname]);
 
-  const [thread, setThread] = useState<Any[]>(() => {
-    try {
-      const s = localStorage.getItem("hermes_thread");
-      return s ? JSON.parse(s) : [];
-    } catch {
-      return [];
-    }
-  });
-
-  const send = async ({ text, clientName }: { text: string; clientName?: string; page?: string }) => {
-    const userMsg = { _id: `msg_${Date.now()}`, role: "user", text, status: "reading", at: Date.now() };
-    setThread(prev => {
-      const next = [...prev, userMsg];
-      try { localStorage.setItem("hermes_thread", JSON.stringify(next)); } catch {}
-      return next;
-    });
-
-    setTimeout(() => {
-      const reply = {
-        _id: `reply_${Date.now()}`,
-        role: "assistant",
-        text: `Got it. Working on "${text}" for ${clientName || "the account"}.`,
-        status: "answered",
-        at: Date.now(),
-      };
-      setThread(prev => {
-        const updated = prev.map(m => (m._id === userMsg._id ? { ...m, status: "answered" } : m)).concat(reply);
-        try { localStorage.setItem("hermes_thread", JSON.stringify(updated)); } catch {}
-        return updated;
-      });
-    }, 1200);
-  };
-
-  const clear = async (_args?: any) => {
+  useEffect(() => {
     setThread([]);
-    try { localStorage.removeItem("hermes_thread"); } catch {}
+    setThreadOwner(scopeKey);
+    setThreadError(null);
+    setText("");
+  }, [scopeKey]);
+
+  useEffect(() => {
+    if (!client || !isAllowed) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const load = async () => {
+      setIsLoading(true);
+      const { thread: jobs, error } = await getAskAiThread(client, app, 50);
+      if (cancelled || currentScope.current !== scopeKey) return;
+      setIsLoading(false);
+      if (error) {
+        setThread([]);
+        setThreadError("Could not load the conversation. " + error.message);
+      } else {
+        setThread(jobsToChatMessages(jobs));
+        setThreadOwner(scopeKey);
+        setThreadError(null);
+      }
+      if (open || error || jobs.some(j => j.status === "queued" || j.status === "claimed")) {
+        timer = setTimeout(load, error ? 5000 : 1500);
+      }
+    };
+    void load();
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [client, app, isAllowed, scopeKey, open, refresh]);
+
+  const send = async ({text: prompt, targetClient, page}: {text: string; targetClient?: string; page?: string}) => {
+    if (!client || !isAllowed || sending.current) return;
+    sending.current = true;
+    const requestScope = scopeKey;
+    const key = crypto.randomUUID();
+    const { jobId, error } = await submitAskAiJob(client, {
+      app, role: activeRole, prompt, clientName: targetClient, kind: "chat",
+      context: {page}, idempotencyKey: key,
+    });
+    sending.current = false;
+    if (currentScope.current !== requestScope) return;
+    if (error || !jobId) {
+      setText(prompt);
+      setThreadError(error?.message ?? "The request was not accepted. Try again.");
+      return;
+    }
+    setThreadError(null);
+    setRefresh(n => n + 1);
   };
+
+  const clear = async () => {
+    if (!client || !isAllowed) return;
+    const requestScope = scopeKey;
+    const { success, error } = await clearAskAiThread(client, app);
+    if (currentScope.current !== requestScope) return;
+    if (error || !success) {
+      setThreadError(error?.message ?? "Could not clear the conversation. Try again.");
+      return;
+    }
+    setThread([]);
+    setRefresh(n => n + 1);
+  };
+
   const endRef = useRef<HTMLDivElement>(null);
-  // Ids seen before the current moment: those render in full, newer ones type.
   const seen = useRef<Set<string> | null>(null);
   const [, bump] = useState(0);
-  if (seen.current === null && thread)
+  if (seen.current === null && thread.length > 0) {
     seen.current = new Set(thread.map(m => m._id));
+  }
 
-  const lastUser = [...(thread ?? [])].reverse().find(m => m.role === "user");
+  const lastUser = [...thread].reverse().find(m => m.role === "user");
   const live =
     lastUser && lastUser.status !== "answered" && lastUser.status !== "failed"
       ? lastUser
@@ -151,28 +193,21 @@ export function HermesChat() {
           ? "Sending"
           : null;
 
-  // The client on the current page, if the URL names one.
-  const clientName = (() => {
-    const m = /\/(clients|performance|client)\/([^/?#]+)/.exec(
-      location.pathname,
-    );
-    return m ? decodeURIComponent(m[2]) : undefined;
-  })();
-
-  const count = thread?.length ?? 0;
+  const count = thread.length;
   useEffect(() => {
-    if (open)
+    if (open) {
       endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+    }
   }, [open, count, live?.status]);
 
-  // After every hook, so the hook order is the same on both branches.
-  if (!isCreative) return null;
+  // Fail-closed authorization check
+  if (!isAllowed || threadOwner !== scopeKey) return null;
 
   const submit = async () => {
     const t = text.trim();
-    if (!t) return;
+    if (!t || sending.current) return;
     setText("");
-    await send({ text: t, clientName, page: location.pathname });
+    await send({ text: t, targetClient: clientName, page: location.pathname });
   };
 
   return (
@@ -209,14 +244,14 @@ export function HermesChat() {
             <div className="text-[13px]">
               <span className="font-semibold">Hermes</span>
               <span className="text-muted-foreground">
-                {clientName ? ` · about ${clientName}` : " · this cockpit"}
+                {clientName ? ` · about ${clientName}` : ` · ${app}`}
               </span>
             </div>
             <div className="flex items-center gap-3">
               <button
                 type="button"
                 className="text-[12px] text-muted-foreground hover:underline"
-                onClick={() => clear({})}
+                onClick={() => void clear()}
                 title="Start a new conversation"
               >
                 New chat
@@ -231,21 +266,38 @@ export function HermesChat() {
             </div>
           </header>
           <div className="flex-1 space-y-3 overflow-y-auto px-3 py-3 text-[13px]">
-            {count === 0 ? (
+            {threadError ? (
+              <div className="rounded border border-red-500/50 bg-red-500/10 p-2 text-xs text-red-600 dark:text-red-400">
+                {threadError}
+              </div>
+            ) : null}
+            {count === 0 && !isLoading ? (
               <p className="text-muted-foreground">
                 Ask anything about this cockpit's clients, numbers or what to do
                 next. Hermes sees what this screen sees and answers here,
                 usually within a minute or two.
               </p>
             ) : null}
-            {(thread ?? []).map(m =>
+            {thread.map(m =>
               m.role === "user" ? (
                 <div key={m._id} className="flex justify-end">
-                  <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-primary px-3 py-2 text-primary-foreground">
+                  <div
+                    className={`max-w-[85%] rounded-2xl rounded-br-sm px-3 py-2 ${
+                      m.status === "failed"
+                        ? "border border-red-500/50 bg-red-50 text-red-900 dark:bg-red-950 dark:text-red-200"
+                        : "bg-primary text-primary-foreground"
+                    }`}
+                  >
                     <p className="whitespace-pre-wrap">{m.text}</p>
-                    <p className="mt-1 text-[11px] text-primary-foreground/70">
+                    <p
+                      className={`mt-1 text-[11px] ${
+                        m.status === "failed"
+                          ? "font-medium text-red-600 dark:text-red-400"
+                          : "text-primary-foreground/70"
+                      }`}
+                    >
                       {m.status === "failed"
-                        ? `Failed: ${m.error ?? "no answer"}`
+                        ? `Failed: ${m.error ?? "No response"}`
                         : ago(m.at)}
                     </p>
                   </div>

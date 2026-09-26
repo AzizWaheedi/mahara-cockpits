@@ -33,7 +33,7 @@ last error and this fix next to it.
 | Fathom | `401` | New API key, set `FATHOM_API_KEY` | Aziz |
 | Slack | `channel_not_found` | `ALERT_SLACK_TO` must be Aziz's user id (U…), not a D… channel | Aziz |
 | Client success or creative cockpit (bridge) | `HTTP 5xx` or schema error | Redeploy: `scripts/ship.sh client-success` (or `creative`). If 401, `CSM_BRIDGE_TOKEN` / `CREATIVE_BRIDGE_TOKEN` differ from that deployment's `BRIDGE_TOKEN` | Hermes or Aziz |
-| Hermes | "jobs waiting, last poll N min ago" | Restart the Hermes poller on its host. Chat answers, reply drafts, call briefs and report narratives resume by themselves | Aziz |
+| Hermes / Ask AI (`hermes/cockpit-ask-ai`) | "jobs waiting" or worker error | Run `python3 scripts/askai.py doctor` on the host to check config without revealing secrets. Ask AI jobs live in `cockpit_ask_ai_jobs` (never creative requests); the worker defaults to DRY_RUN=true (use `--apply` to execute). Claims use atomic leases and bounded retries. | Aziz |
 | Resend | sign-up or reset emails not arriving | Set `RESEND_API_KEY` and `AUTH_EMAIL_FROM` on all three deployments; verify the domain in Resend | Aziz |
 
 Set a variable: `cd apps/<app> && bunx convex env set --prod NAME value`.
@@ -244,8 +244,7 @@ The worker on the VPS (`hermes/sales-desk`) that drafts the sales cockpit's prop
   sent twice: a drain claims a row before acting on it.
 - A refresh never wipes what a person added: Hermes drafts and replies in
   flight survive the WhatsApp refresh; an empty read never empties a table.
-- A Hermes job that was taken but not answered goes back in the queue after
-  20 minutes and fails, with a message to the person, after four tries.
+- An Ask AI job (in cockpit_ask_ai_jobs) is leased atomically with a token; an uncompleted lease expires after its window and is reclaimed, failing after bounded retries (3). Stale worker finishes are rejected.
 - A calendar that was not shared yet is retried every minute until it is.
 - A removed team member loses every cockpit within a minute, sessions
   included.
