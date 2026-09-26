@@ -23,6 +23,7 @@ import {
   checkSnippet,
   checkTemplateRoute,
   cleanText,
+  needsPerson,
   FOLLOWUP_SEGMENTS,
   REFERENCE_ASK_STATES,
   renderTemplate,
@@ -1884,6 +1885,8 @@ async function followupAutosend(who: Who, b: Row) {
     const health = await whatsappHealth();
     if (health.paused) throw new Refusal(health.why, 409);
   }
+  const why = needsPerson(String(f.body ?? ""), f.subject as string | null);
+  if (why) throw new Refusal(`This draft waits for a person: ${why}.`, 409);
   return await sendFollowup(who, f, {}, true);
 }
 
@@ -1926,6 +1929,10 @@ async function followupSettings(who: Who, b: Row) {
     email_fallback: Object.fromEntries(FOLLOWUP_SEGMENTS.map(s => [s, fallback[s] !== false])),
     cadence: before?.cadence ?? {},
     automation_gap_hours: int(v.automation_gap_hours ?? 20, 0, 72, "Hours to wait after an automation's message"),
+    // Days on which only replies and confirmations are written (the Gulf's day off).
+    quiet_days: (Array.isArray(v.quiet_days) ? v.quiet_days : ["friday"])
+      .map(d => String(d).toLowerCase())
+      .filter(d => ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"].includes(d)),
     per_run: int(v.per_run ?? 12, 1, 50, "Drafts per run"),
     per_day: int(v.per_day ?? 60, 1, 400, "Drafts per day"),
     quiet: { from: quietFrom, to: quietTo },

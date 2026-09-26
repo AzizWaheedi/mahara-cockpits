@@ -435,6 +435,25 @@ class Run(unittest.TestCase):
         self.assertEqual((out["went_stale"], out["written"]), (1, 1))
         self.assertEqual(pg.one("cockpit_sales_followups", id="old")["status"], "expired")
 
+    def test_on_the_day_off_only_replies_and_confirmations(self):
+        pg = FakePostgrest()
+        self.seed_new_lead(pg)
+        friday = datetime(2026, 9, 25, 11, 0, tzinfo=timezone.utc)  # 14:00 Kuwait, a Friday
+        pg.put("cockpit_sales_leads", {"contact_id": "a", "name": "Omar", "email": "o@x.co", "phone": "+96550000000",
+                                       "lead_created_at": (friday - timedelta(hours=3)).isoformat(),
+                                       "lead_class": "qualified", "dnd": False, "country": "KW",
+                                       "pipeline_name": "Sales Pipeline (2-Call)"})
+        with mock.patch.object(http, "request", pg):
+            out = fu.run(Supabase("https://example.supabase.co", "k"), FakeProvider([]), lambda _m: None,
+                         settings={"enabled": True}, ghl_token="", now=friday)
+        self.assertEqual((out["picked"], out["written"]), (0, 0))
+        # A manager can let the agent write on Fridays too.
+        draft = json.dumps({"body": "Hi Omar, thanks for reaching out.", "subject": "Your enquiry", "why": "New lead."})
+        with mock.patch.object(http, "request", pg):
+            out = fu.run(Supabase("https://example.supabase.co", "k"), FakeProvider([draft]), lambda _m: None,
+                         settings={"enabled": True, "quiet_days": []}, ghl_token="", now=friday)
+        self.assertEqual(out["written"], 1)
+
     def test_quiet_hours_and_the_switch_write_nothing(self):
         pg = FakePostgrest()
         with mock.patch.object(http, "request", pg):

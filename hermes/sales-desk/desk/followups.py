@@ -839,6 +839,11 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
                   open_drafts=open_drafts, deals=deals, reached=reached, confirmations=confirmations, hot=hot,
                   cadence=settings.get("cadence"), nurture_every_days=int(settings.get("nurture_every_days", 7)),
                   nurture_room=nurture_room)
+    # The Gulf's day off: only answers to leads who wrote, and confirmations
+    # of calls coming up, are written on it.
+    days_off = [str(d).lower() for d in settings.get("quiet_days", ["friday"])]
+    if kuwait_now(now).strftime("%A").lower() in days_off:
+        picked = [d for d in picked if d["segment"] in ("reply", "confirm")]
     by_id = {str(l["contact_id"]): l for l in leads}
     people = sb.select("cockpit_sales_people", "select=email,ghl_user_id,name_ar,active&active=eq.true&limit=200")
     seat_of = {str(p["ghl_user_id"]): str(p["email"]) for p in people if p.get("ghl_user_id")}

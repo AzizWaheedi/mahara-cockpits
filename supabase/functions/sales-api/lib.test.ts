@@ -16,6 +16,7 @@ import {
   crmDecision,
   fillSnippet,
   greetingName,
+  needsPerson,
   refuseMark,
   renderTemplate,
   templateLine,
@@ -234,5 +235,19 @@ describe("client references", () => {
     expect(checkReference({ client_name: "X" }).ok).toBe(false);
     expect(checkReference({ client_name: "Example", consent: "maybe" }).ok).toBe(false);
     expect(checkReference({ client_name: "Example", asset_slugs: ["https://x.com"] }).ok).toBe(false);
+  });
+});
+
+describe("what a draft sent without a person may not carry", () => {
+  test("money, promises, percentages and links wait for a person", () => {
+    expect(needsPerson("هلا عمر، نقدر نعطيك خصم ٢٠٪ إذا بديت هالشهر")).not.toBeNull();
+    expect(needsPerson("Hi Omar, it is only $500 to start")).toBe("it mentions money");
+    expect(needsPerson("We guarantee results in 30 days")).toBe("it mentions a price, a discount or a promise");
+    expect(needsPerson("Watch this: https://example.com/x")).toBe("it mentions a link");
+    expect(needsPerson("Hi Omar, 50% of firms see this")).toBe("it mentions a percentage");
+  });
+  test("an ordinary follow-up may go", () => {
+    expect(needsPerson("هلا عمر، شكله صار عندك شي وقت المكالمة. تبيني أرسل لك أوقات ثانية؟")).toBeNull();
+    expect(needsPerson("Hi Omar, did something come up? Shall I send a couple of new times?")).toBeNull();
   });
 });

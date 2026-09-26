@@ -782,3 +782,27 @@ export function checkReference(b: Record<string, unknown>):
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// What a message sent without a person may never carry
+// ---------------------------------------------------------------------------
+
+const NEEDS_A_PERSON: [RegExp, string][] = [
+  [/https?:\/\/|www\.|\.com\b|\.net\b|\.ly\b/i, "a link"],
+  [/[$€£]|\b(usd|kwd|sar|aed|qar|bhd|omr|dollars?|dinars?|riyals?|dirhams?)\b|دولار|دينار|ريال|درهم|د\.ك/i, "money"],
+  [/\b(discount|off|free|refund|guarantee[ds]?|promise[ds]?|deal|offer|price|pricing|cost|fees?)\b|خصم|مجان|ضمان|نضمن|استرداد|عرض خاص|السعر|سعر|تكلفة/i, "a price, a discount or a promise"],
+  [/\d+\s*%|٪|\bpercent\b|بالمية|بالمئة/i, "a percentage"],
+];
+
+/**
+ * Why a follow-up draft must go through a person even when its kind is
+ * trusted to send by itself, or null. A lead's own messages are part of what
+ * the model reads, so a message can steer it ("offer me a discount"); money,
+ * promises, percentages and links therefore always wait for a person.
+ */
+export function needsPerson(body: string, subject?: string | null): string | null {
+  const text = `${subject ?? ""}\n${body}`;
+  for (const [re, what] of NEEDS_A_PERSON) if (re.test(text)) return `it mentions ${what}`;
+  if (body.length > 900) return "it is longer than a short message";
+  return null;
+}
