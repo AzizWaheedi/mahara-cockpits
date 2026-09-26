@@ -1,5 +1,7 @@
 # Webinar data reliability and editable targets, 26 September 2026
 
+> Later verified state: [internal production release and acceptance](WEBINAR-RELEASE-2026-09-26.md). Preserve this earlier audit as history; use the release record for current deployment, target acceptance and recovery evidence.
+
 Implementation and production database hardening, not full production acceptance. Supersedes the target-settings portion of the 25 September checkpoint. PR #21 remains open; no application ship, VPS replacement, workflow activation or messages in this checkpoint.
 
 ## Live hardening checkpoint
