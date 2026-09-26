@@ -206,6 +206,8 @@ interface Draft {
   subject: string;
   /** The send's request id, kept until it goes, so a retry never doubles it. */
   id: string;
+  /** The words the id was last sent with: other words need a new id. */
+  tried?: string;
   /** A sales asset put in the box, logged with the send while its link is still in it. */
   assetId?: string | null;
   assetUrl?: string | null;
@@ -222,6 +224,7 @@ function readDraft(contactId: string, channel: Channel): Draft {
         body: String(d.body ?? ""),
         subject: String(d.subject ?? ""),
         id: String(d.id ?? crypto.randomUUID()),
+        tried: typeof d.tried === "string" ? d.tried : undefined,
       };
     }
   } catch {
@@ -353,14 +356,15 @@ export function Conversation({
     }
   }, [draft]);
 
-  const count = thread.length;
+  const newest = thread.length ? thread[thread.length - 1].id : null;
   // Show the newest message by scrolling the list itself, never the page
   // around it (scrollIntoView moved the whole dialer down to the thread).
-  // biome-ignore lint/correctness/useExhaustiveDependencies: scroll when the thread grows
+  // Only a newer message scrolls: earlier ones read in stay where the rep is.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scroll when a newer message arrives
   useEffect(() => {
     const el = listRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [count]);
+  }, [newest]);
 
   const [busy, setBusy] = useState(false);
   const can = usable(channel);
@@ -431,6 +435,26 @@ export function Conversation({
   async function send(e?: FormEvent) {
     e?.preventDefault();
     if (busy || !can.ok || !draft.body.trim()) return;
+    const blank = /\{(name|rep|day|time)\}/.exec(
+      `${draft.body} ${channel === "email" ? draft.subject : ""}`,
+    );
+    if (blank) {
+      toast.error(
+        `Fill in ${blank[0]} first: the cockpit did not know it for this lead.`,
+      );
+      return;
+    }
+    // The same words retried keep their id (a dropped connection is not
+    // sent twice); changed words are a new send.
+    const words = JSON.stringify([
+      channel === "email" ? draft.subject : "",
+      draft.body,
+    ]);
+    const id =
+      draft.tried !== undefined && draft.tried !== words
+        ? crypto.randomUUID()
+        : draft.id;
+    setDraft(d => ({ ...d, id, tried: words }));
     setBusy(true);
     try {
       const out = await api<{ message: SendRow; repeated?: boolean }>(
@@ -440,7 +464,7 @@ export function Conversation({
           channel,
           body: draft.body,
           subject: channel === "email" ? draft.subject : undefined,
-          request_id: draft.id,
+          request_id: id,
           asset_id:
             draft.assetId &&
             (!draft.assetUrl || draft.body.includes(draft.assetUrl))
@@ -448,26 +472,33 @@ export function Conversation({
               : undefined,
         },
       );
-      if (out.message.state === "failed")
+      if (out.message.state === "failed") {
         toast.error(
-          `${CHANNEL_WORD[channel]} did not deliver it: ${out.message.error ?? "no reason given"}.`,
+          `${CHANNEL_WORD[channel]} did not deliver it: ${out.message.error ?? "no reason given"}. The words are still in the box to send again.`,
         );
-      else
+        // Kept, with a new id, so sending again is a new try.
+        setDraft(d => ({ ...d, id: crypto.randomUUID(), tried: undefined }));
+      } else {
         toast.success(
           out.repeated
             ? "That message was already sent."
             : `Sent by ${CHANNEL_WORD[channel]}.`,
         );
-      setDraft({
-        contactId,
-        channel,
-        body: "",
-        subject: "",
-        id: crypto.randomUUID(),
-      });
+        setDraft({
+          contactId,
+          channel,
+          body: "",
+          subject: "",
+          id: crypto.randomUUID(),
+        });
+      }
       void convo.reload();
     } catch (err) {
-      toast.error(String((err as Error).message ?? err));
+      const msg = String((err as Error).message ?? err);
+      // An id already spent on other words: the next press is a new send.
+      if (/already used/.test(msg))
+        setDraft(d => ({ ...d, id: crypto.randomUUID(), tried: undefined }));
+      toast.error(msg);
     } finally {
       setBusy(false);
     }
@@ -568,6 +599,7 @@ export function Conversation({
                 onChange={e =>
                   setDraft(d => ({ ...d, subject: e.target.value }))
                 }
+                aria-label="Email subject"
                 placeholder="Subject"
                 className={field}
                 dir="auto"
@@ -579,6 +611,9 @@ export function Conversation({
               onChange={e => setDraft(d => ({ ...d, body: e.target.value }))}
               onKeyDown={onKey}
               rows={compact ? 3 : 4}
+              aria-label={
+                channel === "whatsapp" ? "Message on WhatsApp" : "Email message"
+              }
               placeholder={
                 can.ok
                   ? channel === "whatsapp"

@@ -282,3 +282,11 @@ describe("drops wait for a person when they look wrong", () => {
     expect(dropLooksWrong(4940, 1000)).toBe(true);
   });
 });
+
+describe("redact", () => {
+  test("a key in a query string or a bearer header never reaches a row", () => {
+    expect(redact("GET /x?api_key=abc123&page=2 -> 500")).toBe("GET /x?api_key=[key]&page=2 -> 500");
+    expect(redact("token=zz9 failed")).toBe("token=[key] failed");
+    expect(redact("Authorization: Bearer sk-live.abc_DEF")).toBe("Authorization: Bearer [key]");
+  });
+});

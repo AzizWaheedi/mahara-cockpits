@@ -124,13 +124,13 @@ export function NumbersDials({
                     team
                       ? `${speed.called} of ${speed.leads} leads called · ${speed.never} never called`
                       : `${speed.called} leads you called first`,
-                    `${speed.within5} within 5 min`,
+                    `${speed.within5} within 5 min (${speed.within5Working} within 5 working minutes)`,
                   ]
                     .filter(Boolean)
                     .join(" · ")
                 : undefined
             }
-            hint="The CEO cockpit's rule: from a lead coming in (the ROAS-tagged leads of this window) to the first Maqsam call with them by a sales rep, either direction, matched on the phone. Median on the clock and in working hours (10:00 to 18:00, Saturday to Thursday). The leads never called are counted beside it, not inside it. For one rep, the leads whose first call was theirs."
+            hint="Aziz's rule, as on the CEO cockpit: from a lead coming in (the ROAS-tagged leads of this window) to the first Maqsam call with them by a sales rep, either direction and whatever its outcome, read up to now. A call counts for the lead its whole number belongs to. Median on the clock and in working hours (10:00 to 18:00, Saturday to Thursday). The leads never called are counted beside it, not inside it. For one rep, the leads whose first call was theirs."
           />
           <StatTile
             variant="plain"

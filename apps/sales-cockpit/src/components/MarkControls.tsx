@@ -52,6 +52,8 @@ export interface MarkResult {
 function said(r: MarkResult): string {
   const what = `Marked ${statusLabel(r.status).toLowerCase()}`;
   if (r.crm === "written") return `${what}. HighLevel is updated.`;
+  if (r.crm === "quiet")
+    return `${what}. HighLevel is updated without its automations, because the call is more than a week old.`;
   if (r.crm === "skipped")
     return `${what} here. The call is more than a week old, so HighLevel was left as it was.`;
   if (r.crm === "off")
@@ -263,6 +265,11 @@ export function CrmLine({
       row.crm_status === row.marked_status
         ? "in HighLevel"
         : "sent to HighLevel, the numbers catch up within 20 minutes";
+  else if (row.mark_crm === "quiet")
+    text =
+      row.crm_status === row.marked_status
+        ? "in HighLevel, without its automations"
+        : "sent to HighLevel without its automations";
   else if (row.mark_crm === "skipped") text = "kept here, older than a week";
   else if (row.mark_crm === "off") text = "kept here";
   else if (row.mark_crm === "pending") text = "sending to HighLevel";

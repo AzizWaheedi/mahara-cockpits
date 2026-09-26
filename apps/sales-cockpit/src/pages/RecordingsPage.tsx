@@ -7,6 +7,7 @@ import {
   button,
   EmptyState,
   Failed,
+  FilterChip,
   field,
   page,
   Segmented,
@@ -122,6 +123,7 @@ function Calls({
 }) {
   const by = params.get("by") ?? "";
   const kind = (params.get("kind") ?? "") as "" | "video" | "phone";
+  const hidden = params.get("hidden") === "1";
   const rep = reps.find(r => r.id === by) ?? null;
   const addresses = rep
     ? [rep.fathom_email, rep.maqsam_email]
@@ -142,6 +144,7 @@ function Calls({
     q: params.get("q") ?? "",
     by: addresses,
     kind,
+    hidden,
     page,
   });
   const rows = calls.data ?? [];
@@ -209,6 +212,18 @@ function Calls({
           <option value="video">Video calls</option>
           <option value="phone">Phone calls</option>
         </select>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <FilterChip
+          on={hidden}
+          onClick={() => set({ hidden: hidden ? null : "1", page: null })}
+        >
+          Show hidden recordings
+        </FilterChip>
+        <p className="muted text-xs">
+          Hidden: a second recording of a meeting that is already here, and
+          phone calls whose transcript is only the network's message.
+        </p>
       </div>
 
       {calls.error ? (
@@ -301,7 +316,16 @@ function CallRow({
               aria-label="Has a transcript"
             />
           ) : null}
-          {review ? (
+          {r.hidden_reason ? (
+            <StatusChip
+              tone="neutral"
+              label={
+                r.hidden_reason === "duplicate"
+                  ? "Second recording"
+                  : "Network message"
+              }
+            />
+          ) : review ? (
             <GradeChip r={review} />
           ) : asked ? (
             <StatusChip tone="neutral" label="Review asked" />

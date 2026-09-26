@@ -5,10 +5,11 @@
  *
  * - Speed to lead: for each lead (the ROAS-tagged contacts created in the
  *   window), the time from creation to the first Maqsam call with them by a
- *   sales rep, in either direction and whatever its outcome, matched on the
- *   phone's last eight digits. The median on the plain clock and in working
- *   minutes, the share within five minutes, and the leads never called
- *   counted beside it, never inside it.
+ *   sales rep, in either direction and whatever its outcome. A call counts
+ *   for the lead it is linked to (by the whole number); a call not linked
+ *   yet, for the lead with its last eight digits. The median on the plain
+ *   clock and in working minutes, how many within five minutes on each, and
+ *   the leads never called counted beside it, never inside it.
  * - Gap between calls: from the end of one outbound call (ringing and talk)
  *   to the start of the same rep's next one, never below zero, inside the
  *   working window of the same day; any other call in between (an inbound
@@ -33,6 +34,8 @@ export interface CallRow {
   duration_s: number | null;
   ringing_s: number | null;
   lead_phone8: string | null;
+  /** The lead the call is linked to by its whole number, when linked. */
+  contact_id?: string | null;
   sales_rep_id?: string | null;
 }
 
@@ -67,6 +70,8 @@ export interface SpeedToLead {
   medianWorkingMin: number | null;
   /** Called within five minutes of coming in. */
   within5: number;
+  /** Called within five working minutes (a lead in at night counts from 10:00). */
+  within5Working: number;
 }
 
 /** Minutes of working time between two moments (Kuwait's working window). */
@@ -95,11 +100,16 @@ export function speedToLead(
   calls: CallRow[],
   firstBy?: string | null,
 ): SpeedToLead {
+  // Keyed apart, so two leads sharing eight digits never share each other's calls.
   const byPhone = new Map<string, { at: number; agent: string }[]>();
   for (const c of calls) {
     if (c.sales_rep_id === null) continue; // a call-centre agent's call never counts
     const at = t(c.occurred_at);
-    const k = String(c.lead_phone8 ?? "");
+    const k = c.contact_id
+      ? `c:${c.contact_id}`
+      : c.lead_phone8
+        ? `p:${c.lead_phone8}`
+        : "";
     if (!k || at === null) continue;
     byPhone.set(k, [
       ...(byPhone.get(k) ?? []),
@@ -113,7 +123,10 @@ export function speedToLead(
   for (const l of leads) {
     const created = t(l.lead_created_at);
     if (created === null) continue;
-    const first = (byPhone.get(String(l.phone8 ?? "")) ?? [])
+    const first = [
+      ...(byPhone.get(`c:${l.contact_id}`) ?? []),
+      ...(l.phone8 ? (byPhone.get(`p:${l.phone8}`) ?? []) : []),
+    ]
       .filter(c => c.at >= created)
       .sort((a, b) => a.at - b.at)[0];
     if (!first) {
@@ -135,6 +148,7 @@ export function speedToLead(
     medianMin: median(mins),
     medianWorkingMin: median(working),
     within5: mins.filter(m => m <= 5).length,
+    within5Working: working.filter(m => m <= 5).length,
   };
 }
 

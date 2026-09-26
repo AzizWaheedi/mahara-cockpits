@@ -44,6 +44,31 @@ function fail(e: unknown) {
   toast.error(String((e as Error)?.message ?? e));
 }
 
+/**
+ * What a seat still lacks before its first day, in the order it is set on
+ * this card: each one is something a rep hits (calls not dialled from their
+ * line, marks and pay not theirs, messages signed with no name).
+ */
+function seatMissing(person: Person, reps: Rep[], hasPay: boolean): string[] {
+  const rep = reps.find(r => r.id === person.b2b_rep_id) ?? null;
+  const goals = [
+    ...Object.values(person.goals?.weekly ?? {}),
+    ...Object.values(person.goals?.monthly ?? {}),
+  ].some(v => Number(v) > 0);
+  return [
+    person.ghl_user_id ? null : "their HighLevel user",
+    rep ? null : "their name in B2B's rep list",
+    person.maqsam_email || rep?.maqsam_email ? null : "their Maqsam line",
+    person.role !== "setter" && !(person.fathom_email || rep?.fathom_email)
+      ? "their Fathom email"
+      : null,
+    person.slack_user_id ? null : "their Slack id",
+    person.name_ar ? null : "their name in Arabic",
+    hasPay ? null : "a pay rule",
+    goals ? null : "goals",
+  ].filter((x): x is string => Boolean(x));
+}
+
 export function TeamSeat({
   person,
   me,
@@ -93,6 +118,7 @@ export function TeamSeat({
   const payLine = words
     ? `${words.charAt(0).toUpperCase()}${words.slice(1)}.`
     : "No pay rule set yet";
+  const missing = seatMissing(person, reps, Boolean(words));
 
   return (
     <section className="panel min-w-0 overflow-hidden" aria-label={who}>
@@ -119,6 +145,14 @@ export function TeamSeat({
           No longer has the Sales cockpit on the portal
         </p>
       )}
+      {person.active &&
+      person.via_portal &&
+      person.role !== "manager" &&
+      missing.length ? (
+        <p className="border-b hairline px-4 py-2 text-xs">
+          Not ready for a first day yet. Still to set: {missing.join(", ")}.
+        </p>
+      ) : null}
 
       <div className="space-y-4 p-4">
         <LinksForm

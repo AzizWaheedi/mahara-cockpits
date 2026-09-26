@@ -1,6 +1,13 @@
 import { CalendarDays, Menu, PhoneCall, Sun, UserSearch } from "lucide-react";
 import { lazy, type ReactNode, Suspense, useEffect, useState } from "react";
-import { Navigate, NavLink, Route, Routes, useLocation } from "react-router";
+import {
+  Navigate,
+  NavLink,
+  Route,
+  Routes,
+  useLocation,
+  useParams,
+} from "react-router";
 import { PageBoundary } from "./components/PageBoundary";
 import {
   PortalAutoSignIn,
@@ -19,6 +26,15 @@ import TodayPage from "./pages/TodayPage";
 const CalendarPage = lazy(() => import("./pages/CalendarPage"));
 const LeadsPage = lazy(() => import("./pages/LeadsPage"));
 const LeadPage = lazy(() => import("./pages/LeadPage"));
+
+/**
+ * One lead's page, started fresh for each lead: a draft, a picked recording
+ * or a half-written note never carries over to the next lead opened.
+ */
+function KeyedLead({ me }: { me: Me }) {
+  const { contactId = "" } = useParams();
+  return <LeadPage key={contactId} me={me} />;
+}
 const CallPage = lazy(() => import("./pages/CallPage"));
 const DialerPage = lazy(() => import("./pages/DialerPage"));
 const ProposalsPage = lazy(() => import("./pages/ProposalsPage"));
@@ -241,7 +257,7 @@ export function Seated({
               <Route path="/dashboard" element={<Navigate to="/" replace />} />
               <Route path="/calendar" element={<CalendarPage me={me} />} />
               <Route path="/leads" element={<LeadsPage />} />
-              <Route path="/lead/:contactId" element={<LeadPage me={me} />} />
+              <Route path="/lead/:contactId" element={<KeyedLead me={me} />} />
               <Route path="/call/:contactId" element={<CallPage me={me} />} />
               <Route path="/dialer" element={<DialerPage me={me} />} />
               <Route path="/pipeline" element={<PipelinePage me={me} />} />

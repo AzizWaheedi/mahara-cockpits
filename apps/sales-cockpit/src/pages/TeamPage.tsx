@@ -1,5 +1,6 @@
 import { UsersRound } from "lucide-react";
 import { useEffect, useState } from "react";
+import { Link } from "react-router";
 import {
   buttonPrimary,
   EmptyState,
@@ -223,7 +224,9 @@ function CrmWritesCard() {
               </p>
               <p className="muted mt-0.5 text-xs">
                 A mark on a recent call runs HighLevel's usual automations (the
-                no-show message, for example).
+                no-show message, for example). An older call's mark changes the
+                status in HighLevel without running them, so nobody is messaged
+                about a call from weeks ago.
               </p>
             </div>
           </div>
@@ -251,7 +254,7 @@ function CrmWritesCard() {
               onChange={e => setDays(e.target.value)}
               className="h-8 w-16 rounded-[var(--radius-md)] border hairline bg-[color:var(--background)] px-2 text-sm tabular-nums"
             />
-            <span>days stay in the cockpit only.</span>
+            <span>days go to HighLevel quietly, with no automations.</span>
             {changed ? (
               <button type="submit" disabled={busy} className={buttonPrimary}>
                 {busy ? "Saving…" : "Save"}
@@ -329,6 +332,219 @@ function useAiToday() {
   }, []);
 }
 
+/** B2B's own sources in plain words; anything not listed keeps its name. */
+const SOURCE_WORDS: Record<string, string> = {
+  fathom_calls: "Fathom's video calls",
+  maqsam_calls: "Maqsam's phone calls",
+  ghl_calls: "HighLevel's calendar",
+  leads: "HighLevel's leads",
+  meta: "Meta's ads",
+  typeform: "The New Client Form",
+  typeform_eod: "The end-of-day forms",
+  whop_payments: "Whop's payments",
+  assets_web: "The asset library (web)",
+  assets_wistia: "The asset library (Wistia)",
+  assets_social_youtube_mahara: "The asset library (YouTube)",
+  assets_social_ig_mahara: "The asset library (Instagram)",
+};
+
+interface B2bSources {
+  read_at: string;
+  sources: {
+    source: string;
+    last_synced_at: string | null;
+    last_sync_status: string | null;
+    last_error: string | null;
+  }[];
+}
+
+/**
+ * When B2B last read each of its own sources. The copy from B2B can be fresh
+ * while what B2B holds is old: a recording missing because B2B stopped
+ * reading Fathom is not a call that never happened.
+ */
+function SourcesPart({ now }: { now: number }) {
+  const s = useSetting<B2bSources>("b2b_sources");
+  const list = s.data?.sources ?? [];
+  const failing = list.filter(x => x.last_sync_status === "error");
+  return (
+    <>
+      <h3 className="mt-5 text-xs font-semibold">What B2B reads</h3>
+      <div className="mt-2">
+        {s.error ? (
+          <Failed what="B2B's sources" error={s.error} retry={s.reload} />
+        ) : !s.data ? (
+          <p className="muted text-sm">
+            {s.loading
+              ? "Reading…"
+              : "Not copied yet; the next copy brings it."}
+          </p>
+        ) : (
+          <>
+            <ul className="space-y-1 text-xs">
+              {[
+                ...failing,
+                ...list.filter(x => x.last_sync_status !== "error"),
+              ].map(x => (
+                <li
+                  key={x.source}
+                  className="flex min-w-0 justify-between gap-2"
+                >
+                  <span className="truncate">
+                    {SOURCE_WORDS[x.source] ?? x.source}
+                  </span>
+                  <span
+                    className="shrink-0 tabular-nums"
+                    style={
+                      x.last_sync_status === "error"
+                        ? { color: "var(--destructive)" }
+                        : undefined
+                    }
+                    title={x.last_error ?? undefined}
+                  >
+                    {x.last_sync_status === "error"
+                      ? `failing, last read ${ago(x.last_synced_at, now)}`
+                      : `read ${ago(x.last_synced_at, now)}`}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            {failing.length ? (
+              <p className="muted mt-1 text-xs">
+                B2B is Muhammed's: a failing source is fixed there, and what it
+                should have brought is missing here until then.
+              </p>
+            ) : null}
+          </>
+        )}
+      </div>
+    </>
+  );
+}
+
+/** Past calls nobody marked: each counts as shown until it is (the show-rate rule). */
+function UnmarkedPart() {
+  const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  const q = useQuery<{ start_at: string }[]>(
+    () =>
+      supabase
+        .from("cockpit_sales_calendar")
+        .select("start_at")
+        .eq("needs_mark", true)
+        .gte("start_at", since)
+        .order("start_at", { ascending: true })
+        .limit(1000),
+    [],
+    300_000,
+  );
+  const n = q.data?.length ?? 0;
+  return (
+    <>
+      <h3 className="mt-5 text-xs font-semibold">Calls waiting on a mark</h3>
+      <div className="mt-1 text-xs">
+        {q.error ? (
+          <Failed what="The unmarked calls" error={q.error} retry={q.reload} />
+        ) : !q.data ? (
+          <p className="muted">Reading…</p>
+        ) : !n ? (
+          <p className="muted">Every call of the last 30 days is marked.</p>
+        ) : (
+          <p>
+            {n} past {n === 1 ? "call" : "calls"} of the last 30 days{" "}
+            {n === 1 ? "is" : "are"} not marked, the oldest from{" "}
+            {ago(q.data[0].start_at)}. Until marked, each counts as shown.{" "}
+            <Link to="/calendar" className="underline underline-offset-2">
+              Mark them on the Calendar
+            </Link>
+            .
+          </p>
+        )}
+      </div>
+    </>
+  );
+}
+
+interface DialCheck {
+  day: string;
+  agent_email: string;
+  maqsam_calls: number;
+  copied_calls: number;
+  checked_at: string;
+}
+
+/**
+ * The second source for every dial count: per agent, the last seven days'
+ * calls in Maqsam against the calls the cockpit holds (written by the sales
+ * desk, which reads Maqsam itself). Managers only.
+ */
+function DialChecksPart() {
+  const q = useQuery<DialCheck[]>(
+    () =>
+      supabase
+        .from("cockpit_sales_dial_checks")
+        .select("*")
+        .order("day", { ascending: false })
+        .limit(500),
+    [],
+    300_000,
+  );
+  const byAgent = new Map<
+    string,
+    { maqsam: number; copied: number; at: string }
+  >();
+  for (const c of q.data ?? []) {
+    const cur = byAgent.get(c.agent_email) ?? {
+      maqsam: 0,
+      copied: 0,
+      at: c.checked_at,
+    };
+    byAgent.set(c.agent_email, {
+      maqsam: cur.maqsam + c.maqsam_calls,
+      copied: cur.copied + c.copied_calls,
+      at: cur.at > c.checked_at ? cur.at : c.checked_at,
+    });
+  }
+  const rows = [...byAgent.entries()].sort((a, b) => b[1].maqsam - a[1].maqsam);
+  return (
+    <>
+      <h3 className="mt-5 text-xs font-semibold">
+        Calls in Maqsam against the cockpit, 7 days
+      </h3>
+      <div className="mt-1 text-xs">
+        {q.error ? (
+          <Failed what="The call check" error={q.error} retry={q.reload} />
+        ) : !q.data ? (
+          <p className="muted">Reading…</p>
+        ) : !rows.length ? (
+          <p className="muted">
+            Not checked yet. The sales desk compares them each time it reads
+            Maqsam, twice an hour.
+          </p>
+        ) : (
+          <ul className="space-y-1">
+            {rows.map(([agent, v]) => (
+              <li key={agent} className="flex min-w-0 justify-between gap-2">
+                <span className="truncate">{agent.split("@")[0]}</span>
+                <span
+                  className="shrink-0 tabular-nums"
+                  style={
+                    v.copied < v.maqsam
+                      ? { color: "var(--destructive)" }
+                      : undefined
+                  }
+                >
+                  {v.copied} of {v.maqsam}
+                  {v.copied < v.maqsam ? " (some missing)" : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </>
+  );
+}
+
 /** The last copy from B2B and the desk's own reports. */
 function HealthCard({ now }: { now: number }) {
   const mirror = useMirrorRun();
@@ -400,6 +616,10 @@ function HealthCard({ now }: { now: number }) {
           </>
         )}
       </div>
+
+      <SourcesPart now={now} />
+      <UnmarkedPart />
+      <DialChecksPart />
 
       <h3 className="mt-5 text-xs font-semibold">The sales desk</h3>
       <p className="muted mt-1 text-xs">

@@ -95,7 +95,14 @@ export interface CalendarRow {
   mark_note: string | null;
   marked_by: string | null;
   marked_at: string | null;
-  mark_crm: "off" | "pending" | "written" | "skipped" | "failed" | null;
+  mark_crm:
+    | "off"
+    | "pending"
+    | "written"
+    | "quiet"
+    | "skipped"
+    | "failed"
+    | null;
   mark_crm_error: string | null;
   /** The mark when there is one, else HighLevel's status. */
   status: string | null;
@@ -147,6 +154,8 @@ export interface Deal {
   lead_source: string | null;
   ad_id: string | null;
   voided: boolean;
+  /** Another closer's deal: the lead signed, and its amounts are theirs to see. */
+  money_hidden?: boolean;
 }
 
 export interface Note {
@@ -229,6 +238,10 @@ export interface Recording {
   /** In the private bucket sales-calls. */
   transcript_path?: string | null;
   transcript_chars?: number | null;
+  /** duplicate: a second recording of a meeting kept elsewhere; too short: only the phone network's message. */
+  hidden_reason?: "duplicate" | "too short" | null;
+  /** The recording kept for the same meeting. */
+  duplicate_of?: string | null;
 }
 
 /** One of Vince's reviews: his archive, or one the desk wrote since. */
@@ -366,6 +379,8 @@ export interface Scorecard {
   new_mrr: number | null;
   close_rate: number | null;
   avg_deal: number | null;
+  /** Deals B2B voided that the copy took out of this row (B2B's own scorecard still counts them). */
+  voided?: { closes: number; revenue: number; cash_collected: number } | null;
 }
 
 export type WindowKey =

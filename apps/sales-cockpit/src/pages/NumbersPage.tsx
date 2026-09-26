@@ -23,9 +23,10 @@ import {
   usePeople,
   useReps,
   useScoreRows,
+  useSetting,
   useSpeedToLead,
 } from "../lib/data";
-import { ago, kuwaitDay, kuwaitMidnight } from "../lib/format";
+import { ago, kuwaitDay, kuwaitMidnight, money } from "../lib/format";
 import {
   addDays,
   dialStats,
@@ -113,8 +114,24 @@ export default function NumbersPage({ me }: { me: Me }) {
     .sort()
     .at(-1);
   // Whether B2B's scorecard has been read for this window at all: then a
-  // person with no row had no calls and no closes, which is a real zero.
-  const scored = rowList.length > 0 || boardList.length > 0;
+  // person with no row had no calls and no closes, which is a real zero. A
+  // quiet window has no rows, so the copy's own read time says it was read.
+  const mirror = useSetting<{ scorecards_at?: string | null }>("mirror_state");
+  const readAt = mirror.data?.scorecards_at
+    ? Date.parse(mirror.data.scorecards_at)
+    : null;
+  const scored =
+    rowList.length > 0 ||
+    boardList.length > 0 ||
+    (readAt !== null && now - readAt < 30 * 60_000);
+  // Voided deals the copy took out of this window, all rows together.
+  const voided = rowList.reduce(
+    (t, r) => ({
+      closes: t.closes + Number(r.row.voided?.closes ?? 0),
+      cash: t.cash + Number(r.row.voided?.cash_collected ?? 0),
+    }),
+    { closes: 0, cash: 0 },
+  );
 
   // Whose numbers.
   const team = who === TEAM;
@@ -343,8 +360,17 @@ export default function NumbersPage({ me }: { me: Me }) {
       <SourceNote>
         <p>
           Calls and closes are B2B's rep scorecard, the one the CEO cockpit
-          reads. B2B copies HighLevel every 15 minutes; the cockpit copies B2B
-          every 3 minutes and reads the scorecard again every 15.
+          reads, with one difference: a deal B2B voided is taken out here, and
+          B2B's scorecard (and so the CEO cockpit, for now) still counts it.
+          {voided.closes
+            ? ` In this window that is ${voided.closes} voided ${voided.closes === 1 ? "deal" : "deals"}, ${money(voided.cash)} of cash.`
+            : " This window has none."}{" "}
+          B2B copies HighLevel every 15 minutes; the cockpit copies B2B every 3
+          minutes and reads the scorecard again every 15
+          {readAt
+            ? `, last at ${ago(mirror.data?.scorecards_at ?? null, now)}`
+            : ""}
+          .
         </p>
         <p>
           Booked: calls whose time falls in the window. Due: booked calls whose

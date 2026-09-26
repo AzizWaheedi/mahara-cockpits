@@ -1,6 +1,7 @@
 // bun test supabase/functions/sales-api
 import { describe, expect, test } from "bun:test";
 import {
+  redact,
   type Appointment,
   applyFills,
   fillPaths,
@@ -251,5 +252,13 @@ describe("what a draft sent without a person may not carry", () => {
   test("an ordinary follow-up may go", () => {
     expect(needsPerson("هلا عمر، شكله صار عندك شي وقت المكالمة. تبيني أرسل لك أوقات ثانية؟")).toBeNull();
     expect(needsPerson("Hi Omar, did something come up? Shall I send a couple of new times?")).toBeNull();
+  });
+});
+
+describe("redact", () => {
+  test("keys in query strings and bearer headers are cut out", () => {
+    expect(redact("GET /x?api_key=abc123&page=2 -> 500")).toBe("GET /x?api_key=[key]&page=2 -> 500");
+    expect(redact("Authorization: Bearer sk-live.abc_DEF")).toBe("Authorization: Bearer [key]");
+    expect(redact("pit-1234-abcd refused")).toBe("[key] refused");
   });
 });

@@ -513,6 +513,8 @@ export function redact(s: string): string {
     .replace(/sbp_[A-Za-z0-9]+/g, "[key]")
     .replace(/pit-[A-Za-z0-9-]+/g, "[key]")
     .replace(/eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, "[jwt]")
+    .replace(/((?:api_?key|access_token|token|secret)=)[^&\s"']+/gi, "$1[key]")
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/g, "Bearer [key]")
     .slice(0, 400);
 }
 

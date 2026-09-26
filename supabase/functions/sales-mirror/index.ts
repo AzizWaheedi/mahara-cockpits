@@ -543,7 +543,11 @@ async function mirrorAssets(state: State, at: string, now: number): Promise<numb
 
 /** When B2B last read each of its sources, for the pages that depend on them. */
 async function mirrorSources(at: string): Promise<number> {
-  const rows = await b2b(sourcesSql());
+  // Every seat can read settings, so an error text never carries a key.
+  const rows = (await b2b(sourcesSql())).map(r => ({
+    ...r,
+    last_error: r.last_error ? redact(String(r.last_error)) : null,
+  }));
   await upsert("cockpit_sales_settings", "key", [
     { key: "b2b_sources", value: { read_at: at, sources: rows }, updated_by: "sales-mirror", updated_at: at },
   ]);

@@ -28,10 +28,10 @@ export type Moment =
 
 export const MOMENTS: [Moment, string][] = [
   ["first_touch", "First message"],
-  ["missed_call", "After a missed call"],
+  ["missed_call", "We called, no answer"],
   ["confirm", "Confirm the call"],
   ["booked", "Just booked"],
-  ["no_show", "Missed the call"],
+  ["no_show", "Missed their booked call"],
   ["cancelled", "Cancelled"],
   ["after_intro", "After the intro"],
   ["after_demo", "After the demo"],

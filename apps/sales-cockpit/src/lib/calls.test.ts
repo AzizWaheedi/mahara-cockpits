@@ -73,7 +73,57 @@ describe("speed to lead", () => {
       medianMin: 10,
       medianWorkingMin: 10,
       within5: 1,
+      within5Working: 1,
     });
+  });
+  test("a call linked to one lead never counts for another with the same eight digits", () => {
+    const twins = [
+      {
+        contact_id: "e",
+        phone8: "55555555",
+        lead_created_at: "2026-09-26T07:00:00Z",
+      },
+      {
+        contact_id: "f",
+        phone8: "55555555",
+        lead_created_at: "2026-09-26T07:00:00Z",
+      },
+    ];
+    const out = speedToLead(twins, [
+      call({
+        lead_phone8: "55555555",
+        contact_id: "e",
+        occurred_at: "2026-09-26T07:02:00Z",
+      }),
+    ]);
+    expect(out).toMatchObject({ leads: 2, called: 1, never: 1, medianMin: 2 });
+  });
+  test("a call not linked yet counts for the lead with its eight digits", () => {
+    const out = speedToLead(
+      [
+        {
+          contact_id: "g",
+          phone8: "66666666",
+          lead_created_at: "2026-09-26T07:00:00Z",
+        },
+      ],
+      [call({ lead_phone8: "66666666", occurred_at: "2026-09-26T07:04:00Z" })],
+    );
+    expect(out).toMatchObject({ called: 1, medianMin: 4, within5: 1 });
+  });
+  test("a lead in at night counts its five working minutes from 10:00", () => {
+    // In at 02:00 Kuwait (23:00Z the night before), called at 10:03.
+    const out = speedToLead(
+      [
+        {
+          contact_id: "h",
+          phone8: "77777777",
+          lead_created_at: "2026-09-25T23:00:00Z",
+        },
+      ],
+      [call({ lead_phone8: "77777777", occurred_at: "2026-09-26T07:03:00Z" })],
+    );
+    expect(out).toMatchObject({ within5: 0, within5Working: 1 });
   });
   test("a rep's own first calls only", () => {
     expect(speedToLead(leads, calls, "Tahreer@maharamedia.com")).toMatchObject({

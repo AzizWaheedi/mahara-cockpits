@@ -109,9 +109,15 @@ export async function readAll<T>(
     const { data, error } = await make(from, from + 999);
     if (error) return { data: null, error };
     out.push(...(data ?? []));
-    if (!data || data.length < 1000) break;
+    if (!data || data.length < 1000) return { data: out, error: null };
   }
-  return { data: out, error: null };
+  // Stopping here would make every total short without a word: say so.
+  return {
+    data: null,
+    error: {
+      message: `more than ${cap.toLocaleString("en-US")} rows to read; pick a shorter window`,
+    },
+  };
 }
 
 const none = <T>(): Result<T> => Promise.resolve({ data: null, error: null });
@@ -330,6 +336,23 @@ export interface LeadActivity {
   recordings: Recording[];
 }
 
+/** The deals a seat may read, plus the others' signings without their money. */
+function withSigned(own: Deal[], all: Deal[]): Deal[] {
+  const have = new Set(own.map(d => d.response_id));
+  const others = all
+    .filter(d => !have.has(d.response_id))
+    .map(d => ({
+      ...d,
+      cash_collected: null,
+      contracted_revenue: null,
+      new_mrr: null,
+      money_hidden: true,
+    }));
+  return [...own, ...others].sort((a, b) =>
+    String(b.submitted_at ?? "").localeCompare(String(a.submitted_at ?? "")),
+  );
+}
+
 /** Everything that happened with one lead, read in one go. */
 export function useLeadActivity(
   contactId: string,
@@ -341,48 +364,65 @@ export function useLeadActivity(
       .select("*")
       .order("occurred_at", { ascending: false })
       .limit(200);
-    const [appointments, dials, deals, notes, proposals, requests, recordings] =
-      await Promise.all([
-        supabase
-          .from("cockpit_sales_calendar")
-          .select("*")
-          .eq("contact_id", contactId)
-          .order("start_at", { ascending: false }),
-        phone8
-          ? dialsQ.or(`contact_id.eq.${contactId},lead_phone8.eq.${phone8}`)
-          : dialsQ.eq("contact_id", contactId),
-        supabase
-          .from("cockpit_sales_deals")
-          .select("*")
-          .eq("contact_id", contactId)
-          .order("submitted_at", { ascending: false }),
-        supabase
-          .from("cockpit_sales_notes")
-          .select("*")
-          .eq("contact_id", contactId)
-          .is("deleted_at", null)
-          .order("created_at", { ascending: false }),
-        supabase
-          .from("cockpit_sales_proposals")
-          .select("*")
-          .eq("contact_id", contactId)
-          .order("created_at", { ascending: false }),
-        supabase
-          .from("cockpit_sales_requests")
-          .select("*")
-          .eq("contact_id", contactId)
-          .order("requested_at", { ascending: false })
-          .limit(20),
-        supabase
-          .from("cockpit_sales_recordings")
-          .select("*")
-          .eq("contact_id", contactId)
-          .order("started_at", { ascending: false }),
-      ]);
+    const [
+      appointments,
+      dials,
+      deals,
+      signed,
+      notes,
+      proposals,
+      requests,
+      recordings,
+    ] = await Promise.all([
+      supabase
+        .from("cockpit_sales_calendar")
+        .select("*")
+        .eq("contact_id", contactId)
+        .order("start_at", { ascending: false }),
+      // The lead's own calls, and ones on their last eight digits that no
+      // lead is linked to yet; never another lead's with the same digits.
+      phone8
+        ? dialsQ.or(
+            `contact_id.eq.${contactId},and(contact_id.is.null,lead_phone8.eq.${phone8})`,
+          )
+        : dialsQ.eq("contact_id", contactId),
+      supabase
+        .from("cockpit_sales_deals")
+        .select("*")
+        .eq("contact_id", contactId)
+        .order("submitted_at", { ascending: false }),
+      // That the lead signed, for every seat, without the money.
+      supabase.rpc("cockpit_sales_lead_deals", { p_contact_id: contactId }),
+      supabase
+        .from("cockpit_sales_notes")
+        .select("*")
+        .eq("contact_id", contactId)
+        .is("deleted_at", null)
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("cockpit_sales_proposals")
+        .select("*")
+        .eq("contact_id", contactId)
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("cockpit_sales_requests")
+        .select("*")
+        .eq("contact_id", contactId)
+        .order("requested_at", { ascending: false })
+        .limit(20),
+      // Not a second recording of one meeting, nor a carrier's message.
+      supabase
+        .from("cockpit_sales_recordings")
+        .select("*")
+        .eq("contact_id", contactId)
+        .is("hidden_reason", null)
+        .order("started_at", { ascending: false }),
+    ]);
     const failed = [
       appointments,
       dials,
       deals,
+      signed,
       notes,
       proposals,
       requests,
@@ -393,7 +433,10 @@ export function useLeadActivity(
       data: {
         appointments: (appointments.data ?? []) as CalendarRow[],
         dials: (dials.data ?? []) as Dial[],
-        deals: (deals.data ?? []) as Deal[],
+        deals: withSigned(
+          (deals.data ?? []) as Deal[],
+          (signed.data ?? []) as Deal[],
+        ),
         notes: (notes.data ?? []) as Note[],
         proposals: (proposals.data ?? []) as Proposal[],
         requests: (requests.data ?? []) as WorkRequest[],
@@ -506,7 +549,7 @@ export function useDialMonths(
 
 /** The list columns: no summary or invitees, which only one call's page needs. */
 const RECORDING_LIST =
-  "recording_id,title,recorded_by,started_at,duration_s,share_url,contact_id,matched_by,source,language,transcript_path,transcript_chars,indexed_at,appointment_id";
+  "recording_id,title,recorded_by,started_at,duration_s,share_url,contact_id,matched_by,source,language,transcript_path,transcript_chars,indexed_at,appointment_id,hidden_reason,duplicate_of";
 
 export interface RecordingFilter {
   q: string;
@@ -514,6 +557,8 @@ export interface RecordingFilter {
   by: string[];
   /** Video calls (Fathom), phone calls (Maqsam), or both. */
   kind: "" | "video" | "phone";
+  /** Also the second recordings of a meeting and the carrier's messages. */
+  hidden?: boolean;
   page: number;
 }
 
@@ -528,13 +573,14 @@ export function useRecordings(f: RecordingFilter): Loaded<Recording[]> {
     if (f.by.length) q = q.in("recorded_by", f.by);
     if (f.kind === "phone") q = q.eq("source", "maqsam");
     if (f.kind === "video") q = q.or("source.is.null,source.neq.maqsam");
+    if (!f.hidden) q = q.is("hidden_reason", null);
     const text = f.q
       .trim()
       .replace(/[,()*]/g, " ")
       .trim();
     if (text) q = q.ilike("title", `%${text}%`);
     return q as unknown as Result<Recording[]>;
-  }, [f.q, f.by.join(","), f.kind, f.page]);
+  }, [f.q, f.by.join(","), f.kind, f.hidden ? 1 : 0, f.page]);
 }
 
 export function useRecording(id: string): Loaded<Recording> {
@@ -617,17 +663,15 @@ export function useCoachReviews(by: {
 
 /**
  * Speed to lead's inputs: the ROAS-tagged leads created in the window and
- * every outbound call a sales rep made from the window's start to a week
- * after its end (a lead's first call can come after the window closes).
+ * every call with a sales rep, either direction, from the window's start to
+ * now (a lead's first call can come any time after the window closes; Aziz,
+ * 2026-09-21: "lead created, then to the first call with that lead").
  */
 export function useSpeedToLead(
   fromIso: string,
   toIso: string,
 ): Loaded<{ leads: LeadRow[]; calls: CallRow[] }> {
   return useQuery<{ leads: LeadRow[]; calls: CallRow[] }>(async () => {
-    const until = new Date(
-      Math.min(Date.parse(toIso) + 7 * 86_400_000, Date.now() + 60_000),
-    ).toISOString();
     const [leads, calls] = await Promise.all([
       readAll<LeadRow>((from, to) =>
         supabase
@@ -643,12 +687,10 @@ export function useSpeedToLead(
         supabase
           .from("cockpit_sales_dials")
           .select(
-            "occurred_at,agent_email,direction,state,duration_s,ringing_s,lead_phone8,sales_rep_id",
+            "occurred_at,agent_email,direction,state,duration_s,ringing_s,lead_phone8,contact_id,sales_rep_id",
           )
-          .eq("direction", "outbound")
           .not("sales_rep_id", "is", null)
           .gte("occurred_at", fromIso)
-          .lt("occurred_at", until)
           .order("call_id")
           .range(from, to),
       ),
@@ -673,8 +715,9 @@ export async function loadTranscript(path: string): Promise<string> {
 }
 
 /**
- * Follow-up drafts waiting for this person, for the sidebar's count. A
- * manager also answers for drafts on leads whose rep has no seat yet.
+ * Follow-up drafts waiting for this person, for the sidebar's count: their
+ * own, and the ones on leads nobody owns yet, which anyone may send (the
+ * Follow-ups page lists both).
  */
 export function useFollowupsWaiting(
   email: string | null,
@@ -689,9 +732,7 @@ export function useFollowupsWaiting(
         .eq("status", "draft")
         .gt("expires_at", new Date().toISOString())
         .limit(100);
-      return manager
-        ? q.or(`owner_email.eq.${email},owner_email.is.null`)
-        : q.eq("owner_email", email);
+      return q.or(`owner_email.eq."${email}",owner_email.is.null`);
     },
     [email, manager],
     120_000,

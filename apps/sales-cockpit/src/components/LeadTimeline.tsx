@@ -164,11 +164,14 @@ export function LeadTimeline({
         kind: "deal",
         icon: Handshake,
         title: d.voided ? "Signed, then voided" : "Signed",
-        meta: [
-          `${money(d.contracted_revenue)} contract`,
-          `${money(d.cash_collected)} collected`,
-          d.closer ? `closed by ${d.closer}` : null,
-        ],
+        // Another closer's deal: that it signed, never what it is worth.
+        meta: d.money_hidden
+          ? [d.closer ? `closed by ${d.closer}` : null]
+          : [
+              `${money(d.contracted_revenue)} contract`,
+              `${money(d.cash_collected)} collected`,
+              d.closer ? `closed by ${d.closer}` : null,
+            ],
       });
     }
     for (const p of proposals) {

@@ -63,13 +63,10 @@ function fmt(metric: GoalMetric, v: number | null): string {
  */
 function useFirstDealMonth() {
   return useQuery<{ month: string | null }>(async () => {
-    const { data, error } = await supabase
-      .from("cockpit_sales_deals")
-      .select("submitted_at")
-      .order("submitted_at", { ascending: true })
-      .limit(1);
+    // The team's first deal for every seat, though a rep reads only their own deals.
+    const { data, error } = await supabase.rpc("cockpit_sales_first_deal_at");
     if (error) return { data: null, error };
-    const at = data?.[0]?.submitted_at as string | undefined;
+    const at = (data as string | null) ?? undefined;
     return {
       data: { month: at ? kuwaitToday(Date.parse(at)).slice(0, 7) : null },
       error: null,

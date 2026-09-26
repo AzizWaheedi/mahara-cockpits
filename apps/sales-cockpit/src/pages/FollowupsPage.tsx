@@ -140,6 +140,15 @@ const REPLACES_WORDS: Partial<Record<Segment, string>> = {
   nurture: "1.3 Long Term Nurture",
 };
 
+/** 9 → "9 in the morning", 21 → "9 at night". */
+function hourWords(h: number): string {
+  const n = ((h % 24) + 24) % 24;
+  if (n === 0) return "midnight";
+  if (n === 12) return "noon";
+  const twelve = n % 12;
+  return `${twelve} ${n < 12 ? "in the morning" : n < 18 ? "in the afternoon" : n < 21 ? "in the evening" : "at night"}`;
+}
+
 const SKIPS = [
   "Already handled",
   "Wrong message for them",
@@ -181,6 +190,9 @@ export default function FollowupsPage({ me }: { me: Me }) {
     60_000,
   );
   const settings = useSetting<Settings>("followups");
+  // Read once for every card: a template draft needs to know whether its
+  // template is live, and "not live" must never be said while reading.
+  const templates = useTemplates();
   const all = rows.data ?? [];
   // The most urgent kind first, and within a kind the hottest lead first.
   const waiting = all
@@ -267,6 +279,7 @@ export default function FollowupsPage({ me }: { me: Me }) {
                 lead={nameOf.get(f.contact_id) ?? null}
                 showOwner={Boolean(everyone)}
                 steps={settings.data?.cadence?.[f.segment]?.length ?? null}
+                templates={templates}
                 onDone={rows.reload}
               />
             ))}
@@ -276,7 +289,15 @@ export default function FollowupsPage({ me }: { me: Me }) {
             <EmptyState
               icon={Sparkles}
               title="Nothing waiting"
-              text="The agent looks every half hour, from 9 in the morning to 9 at night, for leads who wrote, have a call to confirm, missed or cancelled a call, just came in, had a demo, or have gone quiet."
+              text={
+                settings.data?.enabled === false
+                  ? "The follow-up agent is switched off, so it writes nothing. A manager switches it on under How it works."
+                  : `The agent looks every half hour${
+                      settings.data?.quiet
+                        ? `, from ${hourWords(settings.data.quiet.to)} to ${hourWords(settings.data.quiet.from)} Kuwait time`
+                        : ""
+                    }, for leads who wrote, have a call to confirm, missed or cancelled a call, just came in, had a demo, or have gone quiet.`
+              }
             />
           </section>
         )
@@ -310,20 +331,23 @@ function DraftCard({
   lead,
   showOwner,
   steps,
+  templates,
   onDone,
 }: {
   f: Followup;
   lead: string | null;
   showOwner: boolean;
   steps: number | null;
+  templates: ReturnType<typeof useTemplates>;
   onDone: () => void;
 }) {
   const [body, setBody] = useState(f.body);
   const [subject, setSubject] = useState(f.subject ?? "");
   const [busy, setBusy] = useState(false);
+  // Sent or skipped: the card stays until the list reads again, its buttons off.
+  const [settled, setSettled] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [skipping, setSkipping] = useState(false);
-  const templates = useTemplates();
   const seg = SEGMENT[f.segment];
   const template =
     f.channel === "whatsapp_template"
@@ -348,16 +372,19 @@ function DraftCard({
         body,
         subject: f.channel === "email" ? subject : undefined,
       });
-      if (out.followup.status === "failed")
+      if (out.followup.status === "failed") {
         toast.error(
           `It did not deliver: ${out.message.error ?? out.followup.error ?? "no reason given"}.`,
         );
-      else
+        setSettled("It did not deliver.");
+      } else {
         toast.success(
           out.message.provider_status === "enrolled"
             ? "HighLevel is sending the template now."
             : `Sent by ${CHANNEL[f.channel]}.`,
         );
+        setSettled("Sent.");
+      }
       onDone();
     } catch (err) {
       toast.error(String((err as Error).message ?? err));
@@ -372,6 +399,7 @@ function DraftCard({
     try {
       await api("followup.skip", { id: f.id, reason });
       toast.success("Skipped.");
+      setSettled("Skipped.");
       onDone();
     } catch (err) {
       toast.error(String((err as Error).message ?? err));
@@ -413,9 +441,10 @@ function DraftCard({
             </span>
           </div>
           {reasons.length ? (
-            <p className="mt-1 text-xs" style={{ color: "var(--primary)" }}>
+            <p className="mt-1 text-xs">
               <Flame
                 className="me-0.5 inline size-3 align-[-2px]"
+                style={{ color: "var(--primary)" }}
                 aria-hidden
               />
               {reasons.join(" · ")}
@@ -457,7 +486,14 @@ function DraftCard({
         }
       />
       {f.channel === "whatsapp_template" ? (
-        template ? (
+        templates.error ? (
+          <p className="text-xs">
+            The WhatsApp templates could not be read, so this draft cannot be
+            checked. Read the page again.
+          </p>
+        ) : !templates.data ? (
+          <p className="muted text-xs">Reading the templates…</p>
+        ) : template ? (
           <div>
             <p className="muted mb-1 text-xs">
               What they read ({"{{2}}"} is signed with the lead's rep, else the
@@ -490,6 +526,7 @@ function DraftCard({
           type="submit"
           disabled={
             busy ||
+            Boolean(settled) ||
             !body.trim() ||
             (f.channel === "whatsapp_template" &&
               !(template?.active && template.workflow_id))
@@ -497,11 +534,13 @@ function DraftCard({
           className={buttonPrimary}
         >
           <Send className="size-3.5" aria-hidden />
-          {busy
-            ? "Sending…"
-            : body.trim() !== f.body.trim()
-              ? "Send my version"
-              : "Approve and send"}
+          {settled
+            ? settled
+            : busy
+              ? "Sending…"
+              : body.trim() !== f.body.trim()
+                ? "Send my version"
+                : "Approve and send"}
         </button>
         {skipping ? (
           <span className="flex flex-wrap items-center gap-1.5">
@@ -509,7 +548,7 @@ function DraftCard({
               <button
                 key={r}
                 type="button"
-                disabled={busy}
+                disabled={busy || Boolean(settled)}
                 onClick={() => skip(r)}
                 className={button}
               >
@@ -521,6 +560,7 @@ function DraftCard({
           <button
             type="button"
             onClick={() => setSkipping(true)}
+            disabled={busy || Boolean(settled)}
             className={button}
           >
             Skip
@@ -711,7 +751,8 @@ function Learning({
   });
   const [busy, setBusy] = useState(false);
 
-  async function save(next: Settings) {
+  // Only what changed is sent; the server keeps every other field as it is.
+  async function save(next: Partial<Settings>) {
     setBusy(true);
     try {
       await api("followup.settings", { value: next });
@@ -726,7 +767,7 @@ function Learning({
 
   const toggle = (key: "autosend" | "takeover", seg: Segment, on: boolean) => {
     if (!s) return;
-    void save({ ...s, [key]: { ...(s[key] ?? {}), [seg]: on } });
+    void save({ [key]: { [seg]: on } });
   };
 
   return (
@@ -839,11 +880,13 @@ function Learning({
             the same checks as a rep's send.
           </p>
           <p>
-            Replaces HighLevel's: on, a lead the cockpit messages is taken out
-            of that automation at the send, so they never get both. While it is
-            off, the agent waits 20 hours after an automation's message before
-            writing. To retire an automation for everyone, switch it off in
-            HighLevel once the cockpit's messages do better.
+            Replaces HighLevel's: on, the agent writes to these leads 3 hours
+            after an automation's message, and a lead the cockpit messages is
+            taken out of that automation once the message is seen to have gone,
+            so they never get both. Off, the agent leaves the automation to it
+            and waits {s?.automation_gap_hours ?? 20} hours after its message
+            before writing. To retire an automation for everyone, switch it off
+            in HighLevel once the cockpit's messages do better.
           </p>
         </div>
       </SectionCard>
@@ -1029,7 +1072,7 @@ function SettingsForm({
 }: {
   s: Settings;
   busy: boolean;
-  onSave: (v: Settings) => void;
+  onSave: (v: Partial<Settings>) => void;
 }) {
   const [v, setV] = useState(s);
   return (
@@ -1037,7 +1080,18 @@ function SettingsForm({
       <form
         onSubmit={e => {
           e.preventDefault();
-          onSave(v);
+          // The form's own fields only: the switches in the table above save
+          // themselves, and a stale copy of them here must not undo them.
+          onSave({
+            enabled: v.enabled,
+            per_run: v.per_run,
+            per_day: v.per_day,
+            nurture_every_days: v.nurture_every_days,
+            nurture_per_day: v.nurture_per_day,
+            automation_gap_hours: v.automation_gap_hours,
+            quiet: v.quiet,
+            email_fallback: v.email_fallback,
+          });
         }}
         className="grid gap-3 sm:grid-cols-2"
       >

@@ -1,5 +1,5 @@
 import { ChevronDown, MessageSquareText, Send } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { useSnippets } from "../lib/data";
 import { toast } from "../lib/toast";
@@ -163,6 +163,8 @@ export function TemplateComposer({
   const t = live.find(x => x.key === key) ?? null;
   const [line, setLine] = useState("");
   const [requestId, setRequestId] = useState(() => crypto.randomUUID());
+  // The template and line the id was last sent with: other words need a new id.
+  const tried = useRef<string | null>(null);
   const [busy, setBusy] = useState(false);
   const takesLine = Boolean(t?.variables.includes("line"));
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new request (nonce) with the same words fills the box again
@@ -183,6 +185,22 @@ export function TemplateComposer({
 
   async function send() {
     if (!t || busy || (takesLine && line.trim().length < 2)) return;
+    const blank = /\{(name|rep|day|time)\}/.exec(line);
+    if (blank) {
+      toast.error(
+        `Fill in ${blank[0]} first: the cockpit did not know it for this lead.`,
+      );
+      return;
+    }
+    // The same words retried keep their id (a dropped connection is not
+    // sent twice); changed words are a new send.
+    const words = `${t.key}|${line}`;
+    let id = requestId;
+    if (tried.current !== null && tried.current !== words) {
+      id = crypto.randomUUID();
+      setRequestId(id);
+    }
+    tried.current = words;
     setBusy(true);
     try {
       const out = await api<{
@@ -196,18 +214,21 @@ export function TemplateComposer({
         contact_id: contactId,
         template_key: t.key,
         line,
-        request_id: requestId,
+        request_id: id,
         asset_id:
           prefill?.asset &&
           (!prefill.asset.url || line.includes(prefill.asset.url))
             ? prefill.asset.id
             : undefined,
       });
-      if (out.message.state === "failed")
+      if (out.message.state === "failed") {
         toast.error(
-          `WhatsApp did not deliver it: ${out.message.error ?? "no reason given"}.`,
+          `WhatsApp did not deliver it: ${out.message.error ?? "no reason given"}. The line is still in the box to send again.`,
         );
-      else
+        // Kept, with a new id, so sending again is a new try.
+        setRequestId(crypto.randomUUID());
+        tried.current = null;
+      } else {
         toast.success(
           out.repeated
             ? "That template was already sent."
@@ -215,11 +236,19 @@ export function TemplateComposer({
               ? "HighLevel is sending the template; it shows in the thread in a moment."
               : "Sent by WhatsApp template.",
         );
-      setLine("");
-      setRequestId(crypto.randomUUID());
+        setLine("");
+        setRequestId(crypto.randomUUID());
+        tried.current = null;
+      }
       onSent();
     } catch (e) {
-      toast.error(String((e as Error).message ?? e));
+      const msg = String((e as Error).message ?? e);
+      // An id already spent on other words: the next press is a new send.
+      if (/already used/.test(msg)) {
+        setRequestId(crypto.randomUUID());
+        tried.current = null;
+      }
+      toast.error(msg);
     } finally {
       setBusy(false);
     }

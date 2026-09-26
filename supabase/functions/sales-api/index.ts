@@ -872,7 +872,7 @@ async function convoSend(who: Who, b: Row) {
   if (already) {
     if (already.contact_id === contactId && already.body === text && already.channel === channel)
       return { message: already, repeated: true };
-    throw new Refusal("That send was already used for another message. Reload and send again.", 409);
+    throw new Refusal("That send was already used for other words. Press Send again.", 409);
   }
   if (!(await messagingSwitch())[channel])
     throw new Refusal(`Sending by ${CHANNEL_WORD[channel]} is switched off in the cockpit.`, 409);
@@ -1133,7 +1133,7 @@ async function sendTemplate(
   const already = (await svc(`cockpit_sales_messages?request_id=eq.${enc(o.requestId)}&select=*`))[0];
   if (already) {
     if (already.contact_id === o.contactId && already.template_key === o.key) return { message: already, repeated: true };
-    throw new Refusal("That send was already used for another message. Reload and send again.", 409);
+    throw new Refusal("That send was already used for other words. Press Send again.", 409);
   }
   if (!(await messagingSwitch()).whatsapp) throw new Refusal("Sending by WhatsApp is switched off in the cockpit.", 409);
   await senderCeiling(who);
@@ -2010,38 +2010,43 @@ async function followupSkip(who: Who, b: Row) {
 async function followupSettings(who: Who, b: Row) {
   needManager(who);
   const v = (b.value ?? {}) as Row;
-  const before = await setting<Row>("followups");
-  // A field the form did not send keeps its value: a form opened before a
-  // switch was flipped must not flip it back.
-  const auto = (v.autosend ?? before?.autosend ?? {}) as Row;
+  const before = (await setting<Row>("followups")) ?? {};
+  // Only what was sent changes: a switch flipped on the page, or the form's
+  // own fields. Everything else keeps its value, so a form opened before a
+  // switch was flipped can never flip it back (or switch the agent on).
+  const given = (k: string) => (v[k] !== undefined ? v[k] : before[k]);
+  const map = (k: string) => ({ ...((before[k] ?? {}) as Row), ...((v[k] ?? {}) as Row) });
   const int = (x: unknown, lo: number, hi: number, name: string) => {
     const n = Number(x);
     if (!Number.isInteger(n) || n < lo || n > hi) throw new Refusal(`${name} has to be a whole number from ${lo} to ${hi}.`);
     return n;
   };
-  const quietFrom = int((v.quiet as Row | undefined)?.from ?? 21, 0, 23, "The quiet hours' start");
-  const quietTo = int((v.quiet as Row | undefined)?.to ?? 9, 0, 23, "The quiet hours' end");
-  const takeover = (v.takeover ?? before?.takeover ?? {}) as Row;
-  const fallback = (v.email_fallback ?? before?.email_fallback ?? {}) as Row;
-  const replaces = ((before?.replaces ?? {}) as Row);
+  const quiet = (given("quiet") ?? {}) as Row;
+  const quietFrom = int(quiet.from ?? 21, 0, 23, "The quiet hours' start");
+  const quietTo = int(quiet.to ?? 9, 0, 23, "The quiet hours' end");
+  const auto = map("autosend");
+  const takeover = map("takeover");
+  const fallback = map("email_fallback");
+  const replaces = (before.replaces ?? {}) as Row;
+  const days = given("quiet_days");
   const value = {
-    enabled: v.enabled !== false,
+    enabled: given("enabled") !== false,
     autosend: Object.fromEntries(FOLLOWUP_SEGMENTS.map(s => [s, auto[s] === true])),
     // Only kinds that replace a HighLevel automation can take a lead out of it.
     takeover: Object.fromEntries(Object.keys(replaces).map(s => [s, takeover[s] === true])),
     replaces,
     email_fallback: Object.fromEntries(FOLLOWUP_SEGMENTS.map(s => [s, fallback[s] !== false])),
-    cadence: before?.cadence ?? {},
-    automation_gap_hours: int(v.automation_gap_hours ?? 20, 0, 72, "Hours to wait after an automation's message"),
+    cadence: before.cadence ?? {},
+    automation_gap_hours: int(given("automation_gap_hours") ?? 20, 0, 72, "Hours to wait after an automation's message"),
     // Days on which only replies and confirmations are written (the Gulf's day off).
-    quiet_days: (Array.isArray(v.quiet_days) ? v.quiet_days : ["friday"])
+    quiet_days: (Array.isArray(days) ? days : ["friday"])
       .map(d => String(d).toLowerCase())
       .filter(d => ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"].includes(d)),
-    per_run: int(v.per_run ?? 12, 1, 50, "Drafts per run"),
-    per_day: int(v.per_day ?? 60, 1, 400, "Drafts per day"),
+    per_run: int(given("per_run") ?? 12, 1, 50, "Drafts per run"),
+    per_day: int(given("per_day") ?? 60, 1, 400, "Drafts per day"),
     quiet: { from: quietFrom, to: quietTo },
-    nurture_every_days: int(v.nurture_every_days ?? 7, 2, 60, "Days between nurture messages"),
-    nurture_per_day: int(v.nurture_per_day ?? 20, 0, 200, "Long-term messages a day"),
+    nurture_every_days: int(given("nurture_every_days") ?? 7, 2, 60, "Days between nurture messages"),
+    nurture_per_day: int(given("nurture_per_day") ?? 20, 0, 200, "Long-term messages a day"),
   };
   await svc("cockpit_sales_settings?on_conflict=key", {
     method: "POST",
@@ -2289,6 +2294,15 @@ async function heavyReads(now: number) {
     ),
     svcAll("cockpit_sales_deals?select=contact_id&voided=eq.false&order=response_id"),
   ]);
+  // Leads older than 30 days with a call in the last 60 or ahead: their
+  // confirmation, a no-show to rebook, a demo that did not close, a call-back
+  // booked on HighLevel's calendar. Without them the dialer never sees these.
+  const have = new Set(leads.map(l => String(l.contact_id)));
+  const older = [...new Set(appts.map(a => String(a.contact_id ?? "")))].filter(id => id && !have.has(id));
+  for (let i = 0; i < older.length; i += 150) {
+    const ids = older.slice(i, i + 150);
+    leads.push(...(await svc(`cockpit_sales_leads?select=${LEAD_COLS}&contact_id=in.(${ids.map(enc).join(",")})`)));
+  }
   heavy = { at: now, leads, appts, dials, deals };
   return heavy;
 }
@@ -2315,20 +2329,11 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
     stageRoles(),
   ]);
   const leads = [...h.leads];
-  // Beyond the last 30 days' leads: anyone with a call coming up (their
-  // confirmation and the intro itself), on the hot list, who wrote in the
-  // last day, or with a call-back or retry due. None is dropped for room.
-  const upcoming = h.appts
-    .filter(
-      a =>
-        (a.call_type === "intro" || a.call_type === "demo") &&
-        (ms(a.start_at) ?? 0) >= now - 20 * 60_000 &&
-        !["cancelled", "noshow", "invalid", "showed"].includes(String(a.status ?? "")),
-    )
-    .map(a => String(a.contact_id ?? ""));
+  // Beyond the last 30 days' leads and anyone with a call in the window
+  // (heavyReads): on the hot list, who wrote in the last day, or with a
+  // call-back or retry due. None is dropped for room.
   const extra = new Set<string>(
     [
-      ...upcoming,
       ...hotRows.map(r => String(r.contact_id ?? "")),
       ...inbox.map(i => String(i.contact_id ?? "")),
       ...states.filter(s => s.callback_at || (!s.closed && s.due_at)).map(s => String(s.contact_id)),
@@ -2416,11 +2421,26 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
     // A reply after the lead was closed opens them up again, and "booked"
     // lasts only while the booked call is still ahead: after it, the lead
     // comes back (a no-show to rebook, a demo that did not close).
-    const reopened = Boolean(inboundAt && closedAt && inboundAt > closedAt);
-    const bookedPast = st.closed === "booked" && !future;
-    const closed = st.closed && !reopened && !bookedPast ? String(st.closed) : null;
     // The dialer's own outcomes count as calls before Maqsam's copy arrives.
     const lastOutcomeAt = ms(st.last_outcome_at);
+    // A call-back booked on HighLevel's Callback or Follow Up calendar is a
+    // call-back like one set in the dialer, until an outcome is saved after it.
+    const bookedBack =
+      mine
+        .filter(
+          a =>
+            (a.call_type === "callback" || a.call_type === "follow_up") &&
+            !["cancelled", "invalid", "showed", "noshow"].includes(String(a.status ?? "")) &&
+            (ms(a.start_at) ?? 0) >= now - 86_400_000 &&
+            (ms(a.start_at) ?? 0) > (lastOutcomeAt ?? 0),
+        )
+        .map(a => ms(a.start_at) ?? 0)
+        .sort((x, y) => x - y)[0] ?? null;
+    const callbackAt = [ms(st.callback_at), bookedBack].filter((x): x is number => x !== null).sort((x, y) => x - y)[0] ?? null;
+    const reopened =
+      Boolean(inboundAt && closedAt && inboundAt > closedAt) || Boolean(bookedBack && closedAt && bookedBack > closedAt);
+    const bookedPast = st.closed === "booked" && !future;
+    const closed = st.closed && !reopened && !bookedPast ? String(st.closed) : null;
     const lastDial = Math.max(dial?.last ?? 0, lastOutcomeAt ?? 0) || null;
     return {
       contact_id: id,
@@ -2439,7 +2459,7 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
       last_call_type: past ? String(past.call_type ?? "") : null,
       last_call_at: past ? ms(past.start_at) : null,
       due_at: ms(st.due_at),
-      callback_at: ms(st.callback_at),
+      callback_at: callbackAt,
       closed,
       claimed_by: claimBy.get(id) ?? null,
       demo_at: demo ? ms(demo.start_at) : null,
@@ -2536,9 +2556,18 @@ async function dialQueue(who: Who, b: Row) {
       : rankForSetter(list, me, now, meGhl, Boolean(who.manager));
   const counts = [0, 1, 2, 3].map(t => ranked.filter(r => r.tier === t).length);
   const iso = (v: number | null) => (v ? new Date(v).toISOString() : null);
+  // Recent open leads the dialer cannot call, said instead of silently left out.
+  const undialable = { no_phone: 0, other: 0 };
+  for (const c of list) {
+    if (!c.sales_lead || c.closed || c.dnd || c.created_at === null || now - c.created_at > 30 * 86_400_000) continue;
+    if (routePhone(c.phone).ok) continue;
+    if (String(c.phone ?? "").trim()) undialable.other += 1;
+    else undialable.no_phone += 1;
+  }
   return {
     as,
     counts,
+    undialable,
     open: open[0] ?? null,
     today: day,
     queue: ranked.slice(0, Math.min(80, Number(b.limit ?? 25))).map(r => {
