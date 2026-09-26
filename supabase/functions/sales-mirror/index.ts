@@ -637,6 +637,11 @@ async function run(): Promise<Response> {
   await step("ghl_calendars", () => mirrorGhlCalendars(calendars, at, now));
   await step("inbox", () => mirrorInbox(at));
   await step("dials", () => mirrorDials(state, at, now));
+  // A call the desk read from Maqsam that B2B has now copied too: B2B's stays.
+  await step("deduped_dials", async () => {
+    const out = await rest("rpc/cockpit_sales_dedupe_dials", { method: "POST", body: {} });
+    return JSON.parse(out || "0");
+  });
   await step("linked_dials", async () => {
     const out = await rest("rpc/cockpit_sales_link_dials", { method: "POST", body: {} });
     return JSON.parse(out || "0");
