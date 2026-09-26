@@ -13,6 +13,7 @@ import {
   Failed,
   Parts,
   page,
+  Reading,
   SectionCard,
   StatTile,
   StatusChip,
@@ -87,7 +88,12 @@ export default function TodayPage({ me }: { me: Me }) {
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
           <h1 className="text-2xl font-semibold tracking-tight">{dateLine}</h1>
-          <MirrorLine run={mirror.data} error={mirror.error} now={now} />
+          <MirrorLine
+            run={mirror.data}
+            error={mirror.error}
+            reading={mirror.loading && !mirror.data}
+            now={now}
+          />
         </div>
         {ScopeSwitch}
       </header>
@@ -110,6 +116,9 @@ export default function TodayPage({ me }: { me: Me }) {
         ) : (
           <DayLine rows={todays.data ?? []} now={now} />
         )}
+        {!todays.error && !todays.data ? (
+          <Reading what="today's calls" className="mt-4 text-sm" />
+        ) : null}
         {!todays.loading && !todays.error && !(todays.data ?? []).length ? (
           <p className="muted mt-4 text-sm">
             No calls on the calendar today
@@ -142,6 +151,8 @@ export default function TodayPage({ me }: { me: Me }) {
                   retry={coming.reload}
                 />
               </div>
+            ) : !coming.data ? (
+              <Reading what="the calendar" className="px-4 py-3 text-sm" />
             ) : upcoming.length ? (
               <ul className="divide-y hairline">
                 {upcoming.map(r => (
@@ -162,10 +173,16 @@ export default function TodayPage({ me }: { me: Me }) {
               />
             )}
           </SectionCard>
-          <RepliesCard rows={replies.data} error={replies.error} now={now} />
+          <RepliesCard
+            rows={replies.data}
+            error={replies.error}
+            reload={replies.reload}
+            now={now}
+          />
           <NewLeadsCard
             leads={newLeads.data}
             error={newLeads.error}
+            reload={newLeads.reload}
             now={now}
           />
         </div>
@@ -177,6 +194,7 @@ export default function TodayPage({ me }: { me: Me }) {
 function MirrorLine({
   run,
   error,
+  reading,
   now,
 }: {
   run: {
@@ -185,6 +203,8 @@ function MirrorLine({
     error: string | null;
   } | null;
   error: string | null;
+  /** The last copy's time has not been read yet (null `run` means none yet). */
+  reading: boolean;
   now: number;
 }) {
   if (error)
@@ -192,6 +212,13 @@ function MirrorLine({
       <p className="muted mt-1 text-sm">
         Could not tell when the calls were last read: {error}
       </p>
+    );
+  if (reading)
+    return (
+      <Reading
+        what="when calls and leads were last copied"
+        className="mt-1 text-sm"
+      />
     );
   if (!run?.finished_at)
     return (
@@ -259,6 +286,8 @@ function OwedCard({
         <div className="p-4">
           <Failed what="The calls to mark" error={error} retry={reload} />
         </div>
+      ) : rows === null ? (
+        <Reading what="the calls to mark" className="px-4 py-3 text-sm" />
       ) : list.length ? (
         <>
           <p className="muted border-b hairline px-4 py-2 text-xs">
@@ -280,10 +309,13 @@ function OwedCard({
                     {r.contact_name ?? "A lead"}
                   </Link>
                   <p className="muted text-xs">
-                    {callType(r.call_type)} · {when(r.start_at)}
-                    {team && r.assigned_user_name
-                      ? ` · ${r.assigned_user_name}`
-                      : ""}
+                    <Parts
+                      items={[
+                        callType(r.call_type),
+                        when(r.start_at),
+                        team ? r.assigned_user_name : null,
+                      ]}
+                    />
                   </p>
                 </div>
                 <MarkControls row={r} onDone={() => reload()} compact />
@@ -335,9 +367,13 @@ function UpcomingRow({
             {r.contact_name ?? "A lead"}
           </p>
           <p className="muted text-xs">
-            {callType(r.call_type)}
-            {lead?.lead_class ? ` · ${classLabel(lead.lead_class)}` : ""}
-            {team && r.assigned_user_name ? ` · ${r.assigned_user_name}` : ""}
+            <Parts
+              items={[
+                callType(r.call_type),
+                lead?.lead_class ? classLabel(lead.lead_class) : null,
+                team ? r.assigned_user_name : null,
+              ]}
+            />
           </p>
           {brief.some(Boolean) ? (
             <p className="muted mt-0.5 line-clamp-2 text-xs">
@@ -353,10 +389,12 @@ function UpcomingRow({
 function NewLeadsCard({
   leads,
   error,
+  reload,
   now,
 }: {
   leads: Lead[] | null;
   error: string | null;
+  reload: () => void;
   now: number;
 }) {
   const list = (leads ?? []).filter(l => l.is_lead !== false);
@@ -368,8 +406,10 @@ function NewLeadsCard({
     >
       {error ? (
         <div className="p-4">
-          <Failed what="New leads" error={error} />
+          <Failed what="New leads" error={error} retry={reload} />
         </div>
+      ) : leads === null ? (
+        <Reading what="the new leads" className="px-4 py-3 text-sm" />
       ) : list.length ? (
         <ul className="divide-y hairline">
           {list.slice(0, 10).map(l => (
@@ -395,7 +435,7 @@ function NewLeadsCard({
         <EmptyState
           compact
           title="No new leads in the last two days"
-          text="Leads land here within a few minutes of filling the form. The ads have been paused since 9 September."
+          text="Leads land here within a few minutes of filling the form."
         />
       )}
     </SectionCard>
@@ -438,6 +478,8 @@ function WeekCard({ me, view }: { me: Me; view: ScopeView }) {
         />
       </SectionCard>
     );
+  // The scorecard knows a rep by B2B's rep list, which the seat reaches
+  // through its HighLevel user: say which of the two links is missing.
   if (view.kind === "mine" && !me.b2b_rep_id)
     return (
       <SectionCard title="This week">
@@ -445,8 +487,20 @@ function WeekCard({ me, view }: { me: Me; view: ScopeView }) {
           compact
           icon={TriangleAlert}
           title="Your numbers are not linked yet"
-          text="Once Aziz links your seat to your HighLevel user, your calls and closes show here."
+          text={
+            me.ghl_user_id
+              ? "B2B's rep list has no rep with your HighLevel user yet, so the scorecard cannot tell which numbers are yours. Ask Aziz to add you to it; your calls and closes show here from then on."
+              : "Once Aziz links your seat to your HighLevel user, your calls and closes show here."
+          }
         />
+      </SectionCard>
+    );
+  // Until the scorecard is in, the tiles would read n/a, as if there were
+  // nothing to count.
+  if (!week.data)
+    return (
+      <SectionCard title="This week">
+        <Reading what="this week's numbers" />
       </SectionCard>
     );
   return (
@@ -509,10 +563,12 @@ const CHANNEL_WORDS: [RegExp, string][] = [
 function RepliesCard({
   rows,
   error,
+  reload,
   now,
 }: {
   rows: InboxRow[] | null;
   error: string | null;
+  reload: () => void;
   now: number;
 }) {
   const list = rows ?? [];
@@ -524,8 +580,10 @@ function RepliesCard({
     >
       {error ? (
         <div className="p-4">
-          <Failed what="Replies" error={error} />
+          <Failed what="Replies" error={error} retry={reload} />
         </div>
+      ) : rows === null ? (
+        <Reading what="the replies" className="px-4 py-3 text-sm" />
       ) : list.length ? (
         <ul className="divide-y hairline">
           {list.slice(0, 8).map(r => (

@@ -17,6 +17,10 @@ import type { CalendarRow, MarkStatus } from "../lib/types";
  *
  * Disqualified asks for a reason first, because "why" is what marketing
  * needs from a disqualified call.
+ *
+ * Once sent, the row keeps saying what it was marked, with no buttons, until
+ * the list's next read carries the mark: shown the buttons again in between,
+ * a second tap would mark the call twice and write to HighLevel twice.
  */
 
 const UNDO_MS = 5000;
@@ -38,6 +42,8 @@ const REASONS = [
 ];
 
 export interface MarkResult {
+  /** The mark's own id (the row the calendar then shows as mark_id). */
+  id?: number;
   crm: string;
   crm_error: string | null;
   status: string;
@@ -68,6 +74,12 @@ export function MarkControls({
     reason: string | null;
   } | null>(null);
   const [sending, setSending] = useState(false);
+  // The mark the server took, held until the row as read again carries it.
+  const [sent, setSent] = useState<{
+    status: MarkStatus;
+    reason: string | null;
+    id: number | null;
+  } | null>(null);
   const timer = useRef<number | null>(null);
   const toSend = useRef<{ status: MarkStatus; reason: string | null } | null>(
     null,
@@ -91,8 +103,12 @@ export function MarkControls({
           }. Use Send again on the call.`,
         );
       else toast.success(said(out.mark));
-      // Sent: the row is no longer waiting on an undo; the list reload that
-      // follows shows the mark as it now stands.
+      // Sent: the row is no longer waiting on an undo. It says what it was
+      // marked until the list's reload that follows shows the mark.
+      setSent({
+        ...p,
+        id: typeof out.mark.id === "number" ? out.mark.id : null,
+      });
       setPending(null);
       done.current(out.mark);
     } catch (e) {
@@ -165,6 +181,23 @@ export function MarkControls({
             Undo
           </button>
         ) : null}
+      </div>
+    );
+
+  // The row as read again carries this mark (or a later one) once its
+  // mark_id reaches the one the server gave it.
+  const landed =
+    sent !== null &&
+    (sent.id !== null
+      ? row.mark_id !== null && Number(row.mark_id) >= sent.id
+      : row.marked_status === sent.status);
+  if (sent && !landed)
+    return (
+      <div className="flex min-w-0 items-center gap-2 rounded-[var(--radius-md)] border hairline px-2.5 py-1.5 text-sm">
+        <span className="min-w-0 flex-1 truncate">
+          Marked {statusLabel(sent.status).toLowerCase()}
+          {sent.reason ? <span className="muted"> · {sent.reason}</span> : null}
+        </span>
       </div>
     );
 

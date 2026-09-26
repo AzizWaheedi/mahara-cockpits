@@ -7,10 +7,16 @@ import {
   useState,
 } from "react";
 import { Link, useNavigate } from "react-router";
-import { EmptyState, Failed, StatusChip, type Tone } from "../components/kit";
+import {
+  EmptyState,
+  Failed,
+  Parts,
+  StatusChip,
+  type Tone,
+} from "../components/kit";
 import { Segmented } from "../components/ScriptParts";
 import { api } from "../lib/api";
-import { useNow, useQuery } from "../lib/data";
+import { useLatest, useNow, useQuery } from "../lib/data";
 import { ago, classLabel, isArabic, plainStage, when } from "../lib/format";
 import { supabase } from "../lib/supabase";
 import { toast } from "../lib/toast";
@@ -88,10 +94,15 @@ export default function PipelinePage({ me }: { me: Me }) {
   const [view, setView] = useState<"board" | "hot">("board");
   const [all, setAll] = useState(false);
   const [board, setBoard] = useState<Board | null>(null);
+  // Which choice (pipeline, whose, quiet or not) the board on screen was read for.
+  const [boardFor, setBoardFor] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const choice = `${pipelineId}|${scope}|${all}`;
+  const chosen = useLatest(choice);
 
   const load = useCallback(async () => {
+    const asked = `${pipelineId}|${scope}|${all}`;
     setBusy(true);
     try {
       const out = await api<Board>("pipeline.board", {
@@ -99,15 +110,21 @@ export default function PipelinePage({ me }: { me: Me }) {
         scope,
         all,
       });
+      // A slow read for a choice no longer on screen (the team's board
+      // landing after "Mine" was picked) is dropped, not drawn.
+      if (chosen.current !== asked) return;
       setBoard(out);
+      // With no pipeline picked yet, the server's pick becomes the choice.
+      setBoardFor(pipelineId ? asked : `${out.pipeline.id}|${scope}|${all}`);
       setError(null);
       if (!pipelineId) setPipelineId(out.pipeline.id);
     } catch (e) {
+      if (chosen.current !== asked) return;
       setError(String((e as Error).message ?? e));
     } finally {
-      setBusy(false);
+      if (chosen.current === asked) setBusy(false);
     }
-  }, [pipelineId, scope, all]);
+  }, [pipelineId, scope, all, chosen]);
 
   useEffect(() => {
     void load();
@@ -119,25 +136,43 @@ export default function PipelinePage({ me }: { me: Me }) {
 
   async function move(contactId: string, stageId: string) {
     if (!board || stageId === NO_STAGE) return;
-    const before = board;
-    setBoard({
-      ...board,
-      cards: board.cards.map(c =>
-        c.contact_id === contactId ? { ...c, stage_id: stageId } : c,
-      ),
-    });
+    const card = board.cards.find(c => c.contact_id === contactId);
+    // Dropped back on its own column: nothing to move.
+    if (!card || card.stage_id === stageId) return;
+    const from = card.stage_id;
+    const put = (at: string | null, only?: string | null) =>
+      setBoard(b =>
+        b
+          ? {
+              ...b,
+              cards: b.cards.map(c =>
+                c.contact_id === contactId &&
+                (only === undefined || c.stage_id === only)
+                  ? { ...c, stage_id: at }
+                  : c,
+              ),
+            }
+          : b,
+      );
+    put(stageId);
+    const to = plainStage(
+      board.pipeline.stages.find(s => s.id === stageId)?.name,
+    );
     try {
-      await api("pipeline.move", {
+      const out = await api<{ move?: { state?: string } }>("pipeline.move", {
         contact_id: contactId,
         stage_id: stageId,
         pipeline_id: board.pipeline.id,
       });
-      const to = board.pipeline.stages.find(s => s.id === stageId);
       toast.success(
-        `Moved to ${plainStage(to?.name) || "the stage"} in HighLevel.`,
+        out.move?.state === "skipped"
+          ? `Already in ${to || "that stage"} in HighLevel, so nothing moved.`
+          : `Moved to ${to || "the stage"} in HighLevel.`,
       );
     } catch (e) {
-      setBoard(before);
+      // Only this card goes back, and only if nothing has moved it since;
+      // other moves made meanwhile stay.
+      put(from, stageId);
       toast.error(String((e as Error).message ?? e));
     }
   }
@@ -179,6 +214,12 @@ export default function PipelinePage({ me }: { me: Me }) {
     (a, b) => a + b,
     0,
   );
+  // The board on screen was read for what is picked now. Until then its
+  // counts and its "no leads" belong to the previous choice, so they wait
+  // (the header says it is reading), and after a failed read it goes.
+  const fresh = boardFor === choice;
+  const empty = !board?.cards.length && !quietTotal;
+  const hidden = !board || (!fresh && (Boolean(error) || empty));
 
   return (
     <main className="mx-auto w-full max-w-[1800px] space-y-4 px-4 py-5 md:px-6">
@@ -186,11 +227,13 @@ export default function PipelinePage({ me }: { me: Me }) {
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Pipeline</h1>
           <p className="muted text-sm">
-            {board
+            {board && fresh
               ? `${board.cards.length} ${all ? "" : "active "}lead${board.cards.length === 1 ? "" : "s"}${
                   !all && quietTotal ? ` · ${quietTotal} quiet for 60 days` : ""
                 }. Drag a card to move it in HighLevel.`
-              : "Reading the pipeline…"}
+              : error
+                ? null
+                : "Reading the pipeline…"}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -255,7 +298,7 @@ export default function PipelinePage({ me }: { me: Me }) {
 
       {view === "hot" ? (
         <HotList me={me} scope={scope} />
-      ) : !board ? null : !board.cards.length && !quietTotal ? (
+      ) : hidden || !board ? null : empty ? (
         <div className="panel">
           <EmptyState
             icon={KanbanSquare}
@@ -396,13 +439,13 @@ function CardItem({
           ) : null}
         </span>
         <span className="muted mt-0.5 block truncate text-xs">
-          {[
-            classLabel(c.lead_class),
-            c.reasons.find(r => r !== "Qualified"),
-            c.wrote_at ? `wrote ${ago(c.wrote_at, now)}` : null,
-          ]
-            .filter(Boolean)
-            .join(" · ")}
+          <Parts
+            items={[
+              classLabel(c.lead_class),
+              c.reasons.find(r => r !== "Qualified"),
+              c.wrote_at ? `wrote ${ago(c.wrote_at, now)}` : null,
+            ]}
+          />
         </span>
         {c.next_at ? (
           <span className="mt-1 block truncate text-xs">
@@ -520,14 +563,18 @@ function HotList({ me, scope }: { me: Me; scope: "mine" | "team" }) {
                 : "No follow-up set"}
               {h.next_how ? ` · ${h.next_how}` : ""}
             </span>
-            <span className="muted w-full text-xs" dir="auto">
-              {[
-                h.last_objection ? `Objection: ${h.last_objection}` : null,
-                h.note,
-                scope === "team" ? h.owner_email.split("@")[0] : null,
-              ]
-                .filter(Boolean)
-                .join(" · ") || "No notes"}
+            <span className="muted w-full text-xs">
+              {h.last_objection || h.note?.trim() || scope === "team" ? (
+                <Parts
+                  items={[
+                    h.last_objection ? `Objection: ${h.last_objection}` : null,
+                    h.note,
+                    scope === "team" ? h.owner_email.split("@")[0] : null,
+                  ]}
+                />
+              ) : (
+                "No notes"
+              )}
             </span>
           </li>
         );

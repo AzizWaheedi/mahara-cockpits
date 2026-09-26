@@ -6,7 +6,7 @@ import { ago } from "../lib/format";
 import { supabase } from "../lib/supabase";
 import { toast } from "../lib/toast";
 import type { Me } from "../lib/types";
-import { button } from "./kit";
+import { button, Failed, Parts, Reading } from "./kit";
 
 /**
  * Who this lead is, from the web, on a rep's request. Every claim carries the
@@ -157,6 +157,20 @@ export function ResearchPanel({
   const b = r?.status === "ready" ? r.brief : null;
   const stale =
     r?.finished_at && Date.now() - Date.parse(r.finished_at) > 6 * 3_600_000;
+  const pages = r?.sources?.pages;
+
+  // Until the read is in, nobody is said not to have looked, and no
+  // "Research this lead" is offered on top of one already running.
+  if (research.error)
+    return (
+      <Failed
+        what="The research"
+        error={research.error}
+        retry={research.reload}
+      />
+    );
+  if (!research.data) return <Reading what="the research" />;
+
   return (
     <div className="space-y-3">
       {!r ? (
@@ -180,13 +194,13 @@ export function ResearchPanel({
           <p className="muted text-xs">
             {b.identified === false
               ? "Could not tell for sure who this is"
-              : `Identified, ${b.confidence ?? "unknown"} confidence`}{" "}
-            · researched {ago(r?.finished_at)}
+              : `Identified, ${b.confidence ?? "unknown"} confidence`}
+            {r?.finished_at ? ` · researched ${ago(r.finished_at)}` : ""}
           </p>
           {b.person?.summary || b.person?.facts?.length ? (
             <div className="space-y-1">
               <p className="text-sm font-semibold">
-                The person{b.person?.role ? ` · ${b.person.role}` : ""}
+                <Parts items={["The person", b.person?.role]} />
               </p>
               {b.person?.summary ? (
                 <p className="text-sm" dir="auto">
@@ -209,9 +223,7 @@ export function ResearchPanel({
               ) : null}
               {b.company?.size || b.company?.locations ? (
                 <p className="muted text-xs">
-                  {[b.company?.size, b.company?.locations]
-                    .filter(Boolean)
-                    .join(" · ")}
+                  <Parts items={[b.company?.size, b.company?.locations]} />
                 </p>
               ) : null}
               <Facts facts={b.company?.facts} />
@@ -253,8 +265,9 @@ export function ResearchPanel({
             </div>
           ) : null}
           <p className="muted text-xs">
-            {r?.sources?.pages?.length ?? 0} pages consulted · drafted by the
-            assistant
+            {Array.isArray(pages)
+              ? `${pages.length} ${pages.length === 1 ? "page" : "pages"} consulted · drafted by the assistant`
+              : "Drafted by the assistant"}
           </p>
         </div>
       ) : null}

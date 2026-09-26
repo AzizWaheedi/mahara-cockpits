@@ -8,6 +8,7 @@ import {
   Failed,
   field,
   page,
+  Reading,
   SectionCard,
   Segmented,
   SourceNote,
@@ -500,6 +501,8 @@ function TeamToday({ day }: { day: string }) {
     <SectionCard title={`Who has filed for ${dayWords(day)}`}>
       {eods.error ? (
         <Failed what="The team's EODs" error={eods.error} retry={eods.reload} />
+      ) : !eods.data ? (
+        <Reading what="who has filed" />
       ) : !rows.length ? (
         <EmptyState
           compact
@@ -515,7 +518,7 @@ function TeamToday({ day }: { day: string }) {
               className="flex items-center justify-between gap-3 py-2"
             >
               <span>
-                {r.name}
+                <bdi>{r.name}</bdi>
                 <span className="muted">
                   {" "}
                   · {r.role === "setter" ? "Setter" : "Closer"}

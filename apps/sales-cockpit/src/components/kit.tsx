@@ -256,6 +256,21 @@ export function Failed({
 }
 
 /**
+ * A read still on its way, said as such: never "none" and never a zero
+ * while the rows are not in yet. `what` names it ("the calls to mark");
+ * `className` replaces the text size and adds spacing.
+ */
+export function Reading({
+  what,
+  className = "text-sm",
+}: {
+  what: string;
+  className?: string;
+}) {
+  return <p className={`muted ${className}`}>Reading {what}…</p>;
+}
+
+/**
  * "Where these numbers come from", folded under a card, as in the CEO
  * cockpit. A note that is not about numbers names itself with `label`.
  */
@@ -426,4 +441,15 @@ export function Parts({ items }: { items: (string | null | undefined)[] }) {
       ))}
     </>
   );
+}
+
+/**
+ * `Parts` as plain text, for where an element cannot go (an <option>):
+ * each part is wrapped in Unicode isolates, so it keeps its own direction.
+ */
+export function partsText(items: (string | null | undefined)[]): string {
+  return items
+    .filter((x): x is string => Boolean(x?.trim()))
+    .map(x => `\u2068${x}\u2069`)
+    .join(" · ");
 }

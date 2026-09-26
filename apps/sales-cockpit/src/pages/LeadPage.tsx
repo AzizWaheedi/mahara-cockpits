@@ -11,7 +11,9 @@ import {
   buttonPrimary,
   EmptyState,
   Failed,
+  Parts,
   pageWide,
+  Reading,
   SectionCard,
   StatusChip,
   type Tone,
@@ -91,11 +93,16 @@ export default function LeadPage({ me }: { me: Me }) {
     return () => window.clearInterval(t);
   }, [drafting, activity.reload]);
 
-  const ownerName = useMemo(() => {
+  // Who owns the lead, in words. A lead with an owner is never "no owner"
+  // because the team list is still on its way, failed, or lacks that user.
+  const owner = useMemo(() => {
     const id = live?.contact.assigned_to ?? lead.data?.assigned_to;
-    if (!id) return null;
-    return (team.data ?? []).find(t => t.ghl_user_id === id)?.name ?? null;
-  }, [team.data, live, lead.data]);
+    if (!id) return "no owner";
+    if (team.error) return "owner's name could not be read";
+    if (!team.data) return null;
+    const name = team.data.find(t => t.ghl_user_id === id)?.name;
+    return name ? `owner ${name}` : "owner has no seat in the cockpit";
+  }, [team.data, team.error, live, lead.data]);
 
   if (lead.error)
     return (
@@ -121,6 +128,8 @@ export default function LeadPage({ me }: { me: Me }) {
 
   const l = lead.data;
   const a = activity.data;
+  // The lead's calls, notes, recordings and proposals have not come back yet.
+  const reading = !a && !activity.error;
   const appointments = a?.appointments ?? [];
   const nextAppt = [...appointments]
     .filter(
@@ -174,17 +183,19 @@ export default function LeadPage({ me }: { me: Me }) {
           ) : null}
         </div>
         <p className="muted text-sm">
-          {[
-            l.company,
-            l.country,
-            `came in ${ago(l.lead_created_at)}`,
-            ownerName ? `owner ${ownerName}` : "no owner",
-            nextAppt
-              ? `${callType(nextAppt.call_type)} booked ${when(nextAppt.start_at)}`
-              : null,
-          ]
-            .filter(Boolean)
-            .join(" · ")}
+          <Parts
+            items={[
+              l.company,
+              l.country,
+              l.lead_created_at
+                ? `came in ${ago(l.lead_created_at)}`
+                : "not known when it came in",
+              owner,
+              nextAppt
+                ? `${callType(nextAppt.call_type)} booked ${when(nextAppt.start_at)}`
+                : null,
+            ]}
+          />
         </p>
         <HotControl me={me} contactId={l.contact_id} />
         <div className="flex flex-wrap gap-2">
@@ -234,7 +245,10 @@ export default function LeadPage({ me }: { me: Me }) {
                 <p className="min-w-0 flex-1 text-sm">
                   {callType(r.call_type)} · {when(r.start_at)}
                   {r.assigned_user_name ? (
-                    <span className="muted"> · {r.assigned_user_name}</span>
+                    <span className="muted">
+                      {" · "}
+                      <bdi>{r.assigned_user_name}</bdi>
+                    </span>
                   ) : null}
                 </p>
                 <MarkControls row={r} onDone={() => activity.reload()} />
@@ -253,7 +267,11 @@ export default function LeadPage({ me }: { me: Me }) {
             <AdOrigin lead={l} />
           </SectionCard>
           <SectionCard title="Calls on the calendar" flush>
-            <Appointments rows={appointments} reload={activity.reload} />
+            <Appointments
+              rows={a ? appointments : null}
+              error={activity.error}
+              reload={activity.reload}
+            />
           </SectionCard>
         </div>
 
@@ -284,6 +302,12 @@ export default function LeadPage({ me }: { me: Me }) {
                 deals={a?.deals ?? []}
                 proposals={a?.proposals ?? []}
                 messages={timelineMessages}
+                loading={reading}
+                // The conversation card says when a later read fails; the
+                // history says so only when it has none of the messages.
+                messagesLoading={!convo.data && !convo.error}
+                messagesError={convo.data ? null : convo.error}
+                messagesRetry={() => void convo.reload()}
               />
             )}
           </SectionCard>
@@ -291,6 +315,9 @@ export default function LeadPage({ me }: { me: Me }) {
             <LeadRecordings
               contactId={l.contact_id}
               recordings={a?.recordings ?? []}
+              loading={reading}
+              error={activity.error}
+              retry={activity.reload}
             />
           </SectionCard>
         </div>
@@ -336,7 +363,10 @@ export default function LeadPage({ me }: { me: Me }) {
                 retry={callNotes.reload}
               />
             ) : (
-              <CallNotesList notes={callNotes.data ?? []} />
+              <CallNotesList
+                notes={callNotes.data ?? []}
+                loading={!callNotes.data}
+              />
             )}
           </SectionCard>
           <SectionCard title="Research">
@@ -348,6 +378,9 @@ export default function LeadPage({ me }: { me: Me }) {
               contactId={l.contact_id}
               notes={a?.notes ?? []}
               onChange={activity.reload}
+              loading={reading}
+              error={activity.error}
+              retry={activity.reload}
             />
           </SectionCard>
           <SectionCard title="Proposal">
@@ -359,6 +392,9 @@ export default function LeadPage({ me }: { me: Me }) {
               recordings={a?.recordings ?? []}
               requests={a?.requests ?? []}
               onChange={activity.reload}
+              loading={reading}
+              error={activity.error}
+              retry={activity.reload}
             />
           </SectionCard>
         </div>
@@ -407,11 +443,21 @@ function Page({ children }: { children: ReactNode }) {
 
 function Appointments({
   rows,
+  error,
   reload,
 }: {
-  rows: CalendarRow[];
+  /** Null until the lead's calls have been read. */
+  rows: CalendarRow[] | null;
+  error: string | null;
   reload: () => void;
 }) {
+  if (error)
+    return (
+      <div className="p-4">
+        <Failed what="This lead's calls" error={error} retry={reload} />
+      </div>
+    );
+  if (!rows) return <Reading what="the calls" className="px-4 py-3 text-sm" />;
   if (!rows.length)
     return (
       <p className="muted px-4 py-3 text-sm">

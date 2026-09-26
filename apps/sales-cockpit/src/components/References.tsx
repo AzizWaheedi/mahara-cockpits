@@ -12,6 +12,9 @@ import {
   EmptyState,
   Failed,
   field,
+  Parts,
+  partsText,
+  Reading,
   StatusChip,
   type Tone,
 } from "./kit";
@@ -92,10 +95,9 @@ const ASK_STATE: Record<ReferenceAsk["state"], { label: string; tone: Tone }> =
     declined: { label: "Not possible", tone: "critical" },
   };
 
-function where(r: Reference) {
-  return [r.trade, [r.city, r.country].filter(Boolean).join(", ")]
-    .filter(Boolean)
-    .join(" · ");
+/** Where a client is, as parts: the trade, then the city and country. */
+function where(r: Reference): (string | null)[] {
+  return [r.trade, [r.city, r.country].filter(Boolean).join(", ") || null];
 }
 
 /** The references, for Links. Managers edit them. */
@@ -183,7 +185,11 @@ export function ReferenceList({ manager }: { manager: boolean }) {
                     </button>
                   ) : null}
                 </div>
-                {where(r) ? <p className="muted text-xs">{where(r)}</p> : null}
+                {where(r).some(Boolean) ? (
+                  <p className="muted text-xs">
+                    <Parts items={where(r)} />
+                  </p>
+                ) : null}
                 {r.result_line ? (
                   <p className="text-sm" dir="auto">
                     {r.result_line}
@@ -219,7 +225,9 @@ export function ReferenceList({ manager }: { manager: boolean }) {
                 <p className="muted text-[11px]">
                   {r.route ? `Arranged ${r.route}. ` : ""}
                   {r.consent !== "unknown" && r.consent_by
-                    ? `Consent recorded by ${r.consent_by.split("@")[0]} ${ago(r.consent_at)}. `
+                    ? `Consent recorded by ${r.consent_by.split("@")[0]}${
+                        r.consent_at ? ` ${ago(r.consent_at)}` : ""
+                      }. `
                     : ""}
                   {r.last_used_at
                     ? `Last reference call ${ago(r.last_used_at)}.`
@@ -365,7 +373,8 @@ export function ReferenceAsks() {
   }
   if (asks.error)
     return <Failed what="The asks" error={asks.error} retry={asks.reload} />;
-  const list = asks.data ?? [];
+  if (!asks.data) return <Reading what="the asks" />;
+  const list = asks.data;
   if (!list.length)
     return (
       <p className="muted text-sm">No reference call has been asked for yet.</p>
@@ -386,12 +395,16 @@ export function ReferenceAsks() {
                 {nameOf.get(a.contact_id) ?? "A lead"}
               </Link>
               <span className="muted">
-                {" "}
-                ·{" "}
-                {a.reference_id
-                  ? (refOf.get(a.reference_id)?.client_name ?? "a reference")
-                  : "any reference"}{" "}
-                · asked by {a.asked_by.split("@")[0]} {ago(a.asked_at)}
+                {" · "}
+                <Parts
+                  items={[
+                    a.reference_id
+                      ? (refOf.get(a.reference_id)?.client_name ??
+                        "a reference")
+                      : "any reference",
+                    `asked by ${a.asked_by.split("@")[0]} ${ago(a.asked_at)}`,
+                  ]}
+                />
               </span>
             </p>
             {a.note ? (
@@ -469,6 +482,24 @@ export function AskReference({ contactId }: { contactId: string }) {
       setBusy(false);
     }
   }
+  // Until this lead's asks are read, an open ask cannot be seen, so the
+  // button to ask again waits for the read.
+  if (asks.error)
+    return (
+      <div className="border-t hairline pt-3">
+        <Failed
+          what="This lead's reference calls"
+          error={asks.error}
+          retry={asks.reload}
+        />
+      </div>
+    );
+  if (!asks.data)
+    return (
+      <div className="border-t hairline pt-3">
+        <Reading what="the reference calls" className="text-xs" />
+      </div>
+    );
   return (
     <div className="space-y-2 border-t hairline pt-3">
       {latest ? (
@@ -479,8 +510,7 @@ export function AskReference({ contactId }: { contactId: string }) {
             label={ASK_STATE[latest.state].label}
           />{" "}
           <span className="muted">
-            asked {ago(latest.asked_at)}
-            {latest.answer ? ` · ${latest.answer}` : ""}
+            <Parts items={[`asked ${ago(latest.asked_at)}`, latest.answer]} />
           </span>
         </p>
       ) : null}
@@ -495,9 +525,9 @@ export function AskReference({ contactId }: { contactId: string }) {
             <option value="">Whoever fits best (the manager picks)</option>
             {usable.map(r => (
               <option key={r.id} value={r.id}>
-                {r.client_name}
+                {partsText([r.client_name])}
                 {r.consent === "yes" ? "" : " (not asked yet)"}
-                {where(r) ? ` · ${where(r)}` : ""}
+                {where(r).some(Boolean) ? ` · ${partsText(where(r))}` : ""}
               </option>
             ))}
           </select>

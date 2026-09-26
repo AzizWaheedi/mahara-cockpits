@@ -12,7 +12,15 @@ import type {
   Recording,
   WorkRequest,
 } from "../lib/types";
-import { buttonPrimary, field, StatusChip, type Tone } from "./kit";
+import {
+  buttonPrimary,
+  Failed,
+  field,
+  partsText,
+  Reading,
+  StatusChip,
+  type Tone,
+} from "./kit";
 
 /**
  * The AI sales proposal, drafted from the demo call by our own worker (the
@@ -56,6 +64,19 @@ export function ProposalChip({ p }: { p: Proposal }) {
   return <StatusChip tone={s.tone} label={label} />;
 }
 
+/**
+ * A phone call from Maqsam, not a video call. The writer drafts from the
+ * demo's video and refuses a phone call (hermes/sales-desk recordings.py).
+ */
+function isPhoneCall(r: Recording): boolean {
+  return r.source === "maqsam" || r.recording_id.startsWith("maqsam:");
+}
+
+/**
+ * The parent owns the read of the lead's proposals, requests and
+ * recordings: until it is in, nothing here offers a draft or says a
+ * recording is missing, and a failed read says so with Try again.
+ */
 export function ProposalPanel({
   me,
   contactId,
@@ -64,6 +85,9 @@ export function ProposalPanel({
   recordings,
   requests,
   onChange,
+  loading = false,
+  error = null,
+  retry,
 }: {
   me: Me;
   contactId: string;
@@ -72,6 +96,11 @@ export function ProposalPanel({
   recordings: Recording[];
   requests: WorkRequest[];
   onChange: () => void;
+  /** The proposals, requests and recordings have not been read yet. */
+  loading?: boolean;
+  /** Why they could not be read. */
+  error?: string | null;
+  retry?: () => void;
 }) {
   const offer = useSetting<OfferSetting>("offer");
   const payments = offer.data?.payments?.length
@@ -90,6 +119,7 @@ export function ProposalPanel({
       (r.status === "queued" || r.status === "running"),
   );
   const visible = proposals.filter(p => p.status !== "archived");
+  const videos = recordings.filter(r => !isPhoneCall(r));
 
   async function draft(e: FormEvent) {
     e.preventDefault();
@@ -112,6 +142,10 @@ export function ProposalPanel({
       setBusy(false);
     }
   }
+
+  if (error)
+    return <Failed what="This lead's proposals" error={error} retry={retry} />;
+  if (loading) return <Reading what="the proposals" />;
 
   return (
     <div className="space-y-4">
@@ -199,20 +233,24 @@ export function ProposalPanel({
                 className={field}
               >
                 <option value="">The newest recorded demo</option>
-                {recordings.map(r => (
+                {videos.map(r => (
                   <option key={r.recording_id} value={r.recording_id}>
-                    {when(r.started_at)} · {r.title ?? "Recording"} ·{" "}
-                    {duration(r.duration_s)}
+                    {partsText([
+                      when(r.started_at),
+                      r.title ?? "Recording",
+                      duration(r.duration_s),
+                    ])}
                   </option>
                 ))}
               </select>
             </label>
           </div>
-          {!recordings.length ? (
+          {!videos.length ? (
             <p className="muted text-xs">
-              No Fathom recording is linked to this lead yet. The writer will
-              look for the newest demo shared with the team; if there is none it
-              will say so.
+              No video recording of the demo is linked to this lead yet. The
+              writer looks in Fathom again for the newest demo shared with the
+              team, and says so if there is none; it never drafts from a phone
+              call.
             </p>
           ) : null}
           <button type="submit" disabled={busy} className={buttonPrimary}>

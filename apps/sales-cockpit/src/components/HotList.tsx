@@ -7,7 +7,7 @@ import { when } from "../lib/format";
 import { supabase } from "../lib/supabase";
 import { toast } from "../lib/toast";
 import type { Me } from "../lib/types";
-import { button, buttonPrimary, field } from "./kit";
+import { button, buttonPrimary, Failed, field, Parts } from "./kit";
 
 /**
  * The hot list on one lead: when to follow up next and how, the last
@@ -48,9 +48,22 @@ export function useHot(contactId: string) {
   );
 }
 
+/**
+ * "Put on the hot list" is offered only once the read has come back and
+ * found no row: offered while the read is on its way or after it failed,
+ * its blank form would overwrite a hot lead's objection and notes.
+ */
 export function HotControl({ me, contactId }: { me: Me; contactId: string }) {
   const hot = useHot(contactId);
-  const row = hot.data ?? null;
+  // The server's answer to this control's last save or removal, which stands
+  // until a read made after it lands (`over` is the read it answered), so
+  // the old state never offers its buttons again in between.
+  const [answer, setAnswer] = useState<{
+    row: HotRow | null;
+    over: HotRow | null;
+  } | null>(null);
+  const fresh = answer && answer.over === hot.data ? answer : null;
+  const row = fresh ? fresh.row : (hot.data ?? null);
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const mine = !row || me.manager || row.owner_email === me.email;
@@ -63,6 +76,7 @@ export function HotControl({ me, contactId }: { me: Me; contactId: string }) {
         why: "Taken off in the cockpit",
       });
       toast.success("Off the hot list.");
+      setAnswer({ row: null, over: hot.data });
       hot.reload();
     } catch (e) {
       toast.error(String((e as Error).message ?? e));
@@ -76,12 +90,21 @@ export function HotControl({ me, contactId }: { me: Me; contactId: string }) {
       <HotForm
         contactId={contactId}
         row={row}
-        onDone={() => {
+        onDone={saved => {
           setEditing(false);
+          if (saved) setAnswer({ row: saved, over: hot.data });
           hot.reload();
         }}
         onCancel={() => setEditing(false)}
       />
+    );
+  if (hot.error && !fresh)
+    return <Failed what="The hot list" error={hot.error} retry={hot.reload} />;
+  if (hot.loading && !fresh)
+    return (
+      <p className="muted inline-flex h-8 items-center text-xs">
+        Reading the hot list…
+      </p>
     );
   if (!row)
     return (
@@ -104,18 +127,18 @@ export function HotControl({ me, contactId }: { me: Me; contactId: string }) {
       />
       <span className="font-medium">Hot</span>
       <span className="muted">
-        {[
-          row.next_at ? `next ${when(row.next_at)}` : "no follow-up set",
-          row.next_how
-            ? `by ${HOW.find(([k]) => k === row.next_how)?.[1] ?? row.next_how}`
-            : null,
-          row.last_objection ? `last objection: ${row.last_objection}` : null,
-          row.owner_email !== me.email
-            ? `${row.owner_email.split("@")[0]}'s`
-            : null,
-        ]
-          .filter(Boolean)
-          .join(" · ")}
+        <Parts
+          items={[
+            row.next_at ? `next ${when(row.next_at)}` : "no follow-up set",
+            row.next_how
+              ? `by ${HOW.find(([k]) => k === row.next_how)?.[1] ?? row.next_how}`
+              : null,
+            row.last_objection ? `last objection: ${row.last_objection}` : null,
+            row.owner_email !== me.email
+              ? `${row.owner_email.split("@")[0]}'s`
+              : null,
+          ]}
+        />
       </span>
       {mine ? (
         <>
@@ -148,7 +171,8 @@ function HotForm({
 }: {
   contactId: string;
   row: HotRow | null;
-  onDone: () => void;
+  /** Called with the row as the server saved it. */
+  onDone: (saved: HotRow | null) => void;
   onCancel: () => void;
 }) {
   const [nextAt, setNextAt] = useState(
@@ -163,7 +187,7 @@ function HotForm({
     e.preventDefault();
     setBusy(true);
     try {
-      await api("hot.save", {
+      const out = await api<{ hot?: HotRow }>("hot.save", {
         contact_id: contactId,
         next_at: nextAt ? new Date(nextAt).toISOString() : null,
         next_how: how,
@@ -175,7 +199,7 @@ function HotForm({
           ? "Saved."
           : "On the hot list. The dialer brings them up at the follow-up time.",
       );
-      onDone();
+      onDone(out.hot ?? null);
     } catch (err) {
       toast.error(String((err as Error).message ?? err));
     } finally {

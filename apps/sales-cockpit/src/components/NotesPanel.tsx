@@ -4,7 +4,7 @@ import { api } from "../lib/api";
 import { ago } from "../lib/format";
 import { toast } from "../lib/toast";
 import type { Me, Note } from "../lib/types";
-import { buttonPrimary } from "./kit";
+import { buttonPrimary, Failed, Reading } from "./kit";
 
 const KIND_WORDS: Record<string, string> = {
   note: "Note",
@@ -18,18 +18,27 @@ const KIND_WORDS: Record<string, string> = {
  * Notes on a lead. A setter's handover is the one the closer reads before
  * the demo, so it can be marked as such; everything else is a plain note.
  * Notes stay in the cockpit (and in the audit log); nothing here is posted
- * to HighLevel.
+ * to HighLevel. The parent owns the notes' read and says when it is still
+ * on its way or failed, so the list never says "no notes" until it knows.
  */
 export function NotesPanel({
   me,
   contactId,
   notes,
   onChange,
+  loading = false,
+  error = null,
+  retry,
 }: {
   me: Me;
   contactId: string;
   notes: Note[];
   onChange: () => void;
+  /** The notes have not been read yet. */
+  loading?: boolean;
+  /** Why the notes could not be read. */
+  error?: string | null;
+  retry?: () => void;
 }) {
   const [body, setBody] = useState("");
   const [handoff, setHandoff] = useState(false);
@@ -108,7 +117,11 @@ export function NotesPanel({
           </button>
         </div>
       </form>
-      {notes.length ? (
+      {error ? (
+        <Failed what="This lead's notes" error={error} retry={retry} />
+      ) : loading ? (
+        <Reading what="the notes" />
+      ) : notes.length ? (
         <ul className="space-y-2">
           {notes.map(n => (
             <li

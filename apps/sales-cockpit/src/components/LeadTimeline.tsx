@@ -9,7 +9,7 @@ import {
 import { useMemo, useState } from "react";
 import { callType, duration, money, statusLabel, when } from "../lib/format";
 import type { CalendarRow, Deal, Dial, Proposal } from "../lib/types";
-import { FilterChip } from "./kit";
+import { Failed, FilterChip, Parts, Reading } from "./kit";
 
 /** A message as the server trims it from HighLevel's conversation. */
 export interface LiveMessage {
@@ -31,7 +31,8 @@ interface Item {
   kind: Kind;
   icon: LucideIcon;
   title: string;
-  meta?: string;
+  /** Short facts, each kept in its own text direction. */
+  meta?: (string | null | undefined)[];
   body?: string | null;
   bodyAr?: string | null;
   tone?: "in" | "out";
@@ -66,6 +67,11 @@ const STATE_WORDS: Record<string, string> = {
  * Everything that happened with the lead, newest first, in one list: calls
  * from Maqsam (with Maqsam's own summary), messages from HighLevel,
  * bookings, the signed deal and proposals. Notes have their own panel.
+ *
+ * The calls, bookings and deals come from one read and the messages from
+ * HighLevel in another; "Nothing here yet" waits for both, and a list whose
+ * messages could not be read says so. The flags are optional: a caller
+ * that leaves them out gets the list as it stands.
  */
 export function LeadTimeline({
   appointments,
@@ -73,12 +79,23 @@ export function LeadTimeline({
   deals,
   proposals,
   messages,
+  loading = false,
+  messagesLoading = false,
+  messagesError = null,
+  messagesRetry,
 }: {
   appointments: CalendarRow[];
   dials: Dial[];
   deals: Deal[];
   proposals: Proposal[];
   messages: LiveMessage[];
+  /** The calls, bookings, deals and proposals have not been read yet. */
+  loading?: boolean;
+  /** HighLevel's messages have not been read yet. */
+  messagesLoading?: boolean;
+  /** Why HighLevel's messages could not be read. */
+  messagesError?: string | null;
+  messagesRetry?: () => void;
 }) {
   const [only, setOnly] = useState<"all" | Kind>("all");
   const items = useMemo(() => {
@@ -95,9 +112,11 @@ export function LeadTimeline({
         title: `${d.direction === "inbound" ? "Call from the lead" : "Call"}${
           d.agent_name ? ` · ${d.agent_name}` : ""
         }`,
-        meta: `${STATE_WORDS[String(d.state)] ?? d.state ?? ""}${
-          answered && d.duration_s ? ` · ${duration(d.duration_s)}` : ""
-        }${d.sentiment ? ` · ${d.sentiment}` : ""}`,
+        meta: [
+          STATE_WORDS[String(d.state)] ?? d.state,
+          answered && d.duration_s ? duration(d.duration_s) : null,
+          d.sentiment,
+        ],
         body: d.summary_en,
         bodyAr: d.summary_ar,
       });
@@ -111,9 +130,7 @@ export function LeadTimeline({
         icon: MessageCircle,
         tone: m.direction === "inbound" ? "in" : "out",
         title: `${channel(m.type)} ${m.direction === "inbound" ? "from the lead" : "to the lead"}`,
-        meta: [m.status, m.has_attachments ? "with an attachment" : null]
-          .filter(Boolean)
-          .join(" · "),
+        meta: [m.status, m.has_attachments ? "with an attachment" : null],
         body: m.body,
       });
     }
@@ -124,10 +141,10 @@ export function LeadTimeline({
           at: a.booked_at,
           kind: "appointment",
           icon: CalendarPlus,
-          title: `${callType(a.call_type)} booked for ${when(a.start_at)}`,
-          meta: a.assigned_user_name
-            ? `with ${a.assigned_user_name}`
-            : undefined,
+          title: a.start_at
+            ? `${callType(a.call_type)} booked for ${when(a.start_at)}`
+            : `${callType(a.call_type)} booked, time not known`,
+          meta: [a.assigned_user_name ? `with ${a.assigned_user_name}` : null],
         });
       if (a.start_at && Date.parse(a.start_at) <= Date.now())
         out.push({
@@ -136,9 +153,7 @@ export function LeadTimeline({
           kind: "appointment",
           icon: CalendarPlus,
           title: `${callType(a.call_type)}: ${a.needs_mark ? "not marked yet" : statusLabel(a.status)}`,
-          meta: a.marked_by
-            ? `marked by ${a.marked_by.split("@")[0]}`
-            : undefined,
+          meta: [a.marked_by ? `marked by ${a.marked_by.split("@")[0]}` : null],
         });
     }
     for (const d of deals) {
@@ -149,9 +164,11 @@ export function LeadTimeline({
         kind: "deal",
         icon: Handshake,
         title: d.voided ? "Signed, then voided" : "Signed",
-        meta: `${money(d.contracted_revenue)} contract · ${money(d.cash_collected)} collected${
-          d.closer ? ` · closed by ${d.closer}` : ""
-        }`,
+        meta: [
+          `${money(d.contracted_revenue)} contract`,
+          `${money(d.cash_collected)} collected`,
+          d.closer ? `closed by ${d.closer}` : null,
+        ],
       });
     }
     for (const p of proposals) {
@@ -161,13 +178,20 @@ export function LeadTimeline({
         kind: "proposal",
         icon: FileText,
         title: p.sent_at ? "Proposal sent" : "Proposal drafted",
-        meta: `${p.lang === "ar" ? "Arabic" : "English"} · ${p.created_by.split("@")[0]}`,
+        meta: [
+          p.lang === "ar" ? "Arabic" : "English",
+          p.created_by.split("@")[0],
+        ],
       });
     }
     return out.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
   }, [appointments, dials, deals, proposals, messages]);
 
   const shown = only === "all" ? items : items.filter(i => i.kind === only);
+  // Whether the chosen view holds messages, which HighLevel is read for apart.
+  const withMessages = only === "all" || only === "message";
+  const messagesOut =
+    withMessages && (messagesLoading || Boolean(messagesError));
   const filters: ["all" | Kind, string][] = [
     ["all", "All"],
     ["call", "Calls"],
@@ -189,14 +213,29 @@ export function LeadTimeline({
           </FilterChip>
         ))}
       </div>
-      {shown.length ? (
-        <ol className="relative space-y-3 border-l hairline pl-5">
-          {shown.map(i => (
-            <TimelineRow key={i.key} i={i} />
-          ))}
-        </ol>
+      {loading ? (
+        <Reading what="this lead's history" />
       ) : (
-        <p className="muted text-sm">Nothing here yet.</p>
+        <div className="space-y-3">
+          {withMessages && messagesError ? (
+            <Failed
+              what="The messages from HighLevel"
+              error={messagesError}
+              retry={messagesRetry}
+            />
+          ) : withMessages && messagesLoading ? (
+            <Reading what="the messages from HighLevel" />
+          ) : null}
+          {shown.length ? (
+            <ol className="relative space-y-3 border-l hairline pl-5">
+              {shown.map(i => (
+                <TimelineRow key={i.key} i={i} />
+              ))}
+            </ol>
+          ) : messagesOut ? null : (
+            <p className="muted text-sm">Nothing here yet.</p>
+          )}
+        </div>
       )}
     </div>
   );
@@ -218,7 +257,11 @@ function TimelineRow({ i }: { i: Item }) {
         <p className="text-sm font-medium">{i.title}</p>
         <p className="muted text-xs tabular-nums">{when(i.at)}</p>
       </div>
-      {i.meta ? <p className="muted text-xs">{i.meta}</p> : null}
+      {i.meta?.some(x => x?.trim()) ? (
+        <p className="muted text-xs">
+          <Parts items={i.meta} />
+        </p>
+      ) : null}
       {body ? (
         <p className="mt-1 line-clamp-6 whitespace-pre-wrap text-sm" dir="auto">
           {body}
