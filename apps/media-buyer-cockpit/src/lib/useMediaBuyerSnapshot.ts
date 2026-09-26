@@ -13,17 +13,30 @@ export interface UseMediaBuyerSnapshotResult {
   loading: boolean;
   error: Error | null;
   refetch: () => Promise<void>;
-  toggleCheck: (args: { id: string | number; done: boolean; expectedCurrent?: boolean }) => Promise<void>;
+  toggleCheck: (args: {
+    id: string | number;
+    done: boolean;
+    expectedCurrent?: boolean;
+    [key: string]: any;
+  }) => Promise<void>;
   decide: (args: {
     subject: string;
     action: string;
     evidence?: string;
     kind?: string;
+    reason?: string;
+    metricAtDecision?: number;
     reroutedTo?: string;
     amount?: number;
+    metadata?: Record<string, any>;
+    [key: string]: any;
   }) => Promise<void>;
   removeDecision: (args: { id: string | number }) => Promise<void>;
-  saveEod: (args: { energy?: string; answers?: Any; computed?: Any }) => Promise<void>;
+  saveEod: (args: {
+    energy?: string;
+    answers?: Any;
+    computed?: Any;
+  }) => Promise<void>;
   addPlanItems: (args: {
     items: Array<{
       text: string;
@@ -33,7 +46,257 @@ export interface UseMediaBuyerSnapshotResult {
       dueDate?: string;
     }>;
   }) => Promise<void>;
-  sendFeedback: (args: { title: string; description: string; category?: string }) => Promise<void>;
+  sendFeedback: (args: {
+    title: string;
+    description: string;
+    category?: string;
+  }) => Promise<void>;
+}
+
+export async function fetchDailyChecksRpc(
+  client: SupabaseClient | null,
+  role: "media_buyer" | "csm",
+  day: string,
+) {
+  if (!client) {
+    throw new Error("Supabase client is required");
+  }
+  const { data, error } = await client.rpc("cockpit_get_daily_checks", {
+    p_role: role,
+    p_day: day,
+  });
+  if (error) {
+    throw error;
+  }
+  return data;
+}
+
+export function normalizeChecks(checkRows: Any[] | null | undefined) {
+  return (checkRows ?? []).map(ch => ({
+    _id: String(ch.id),
+    id: ch.id,
+    key: ch.check_key,
+    label: ch.label,
+    detail: ch.detail,
+    phase: ch.phase,
+    block: ch.block,
+    displayOrder: ch.display_order,
+    href: ch.href,
+    done: Boolean(ch.done),
+    doneAt: ch.done_at,
+  }));
+}
+
+export function normalizeDecisions(decisionRows: Any[] | null | undefined) {
+  return (decisionRows ?? []).map(d => {
+    const hasMeta =
+      d.metadata !== undefined &&
+      d.metadata !== null &&
+      typeof d.metadata === "object";
+    const meta = hasMeta ? (d.metadata as Record<string, any>) : null;
+
+    // Reason: prefer persisted column d.reason, then meta.reason
+    const reason =
+      d.reason !== undefined && d.reason !== null && d.reason !== ""
+        ? d.reason
+        : meta?.reason !== undefined &&
+            meta?.reason !== null &&
+            meta?.reason !== ""
+          ? meta.reason
+          : undefined;
+
+    // ReroutedTo: prefer meta.reroutedTo / meta.rerouted_to, then legacy provenance d.rerouted_to / d.reroutedTo
+    // Never invent a rerouting destination from unrelated department
+    const metaRerouted =
+      meta?.reroutedTo !== undefined &&
+      meta?.reroutedTo !== null &&
+      String(meta.reroutedTo).trim() !== ""
+        ? String(meta.reroutedTo).trim()
+        : meta?.rerouted_to !== undefined &&
+            meta?.rerouted_to !== null &&
+            String(meta.rerouted_to).trim() !== ""
+          ? String(meta.rerouted_to).trim()
+          : undefined;
+
+    const legacyRerouted =
+      d.rerouted_to !== undefined &&
+      d.rerouted_to !== null &&
+      String(d.rerouted_to).trim() !== ""
+        ? String(d.rerouted_to).trim()
+        : d.reroutedTo !== undefined &&
+            d.reroutedTo !== null &&
+            String(d.reroutedTo).trim() !== ""
+          ? String(d.reroutedTo).trim()
+          : undefined;
+
+    const reroutedTo = metaRerouted ?? legacyRerouted;
+
+    // Amount: preserve zero!
+    // Genuine absent/null metadata cannot overwrite legacy provenance
+    const metaAmount =
+      meta?.amount !== undefined &&
+      meta?.amount !== null &&
+      meta?.amount !== "" &&
+      !Number.isNaN(Number(meta.amount))
+        ? Number(meta.amount)
+        : undefined;
+
+    const legacyAmount =
+      d.amount !== undefined &&
+      d.amount !== null &&
+      d.amount !== "" &&
+      !Number.isNaN(Number(d.amount))
+        ? Number(d.amount)
+        : undefined;
+
+    const amount = metaAmount !== undefined ? metaAmount : legacyAmount;
+
+    // Metric at decision: preserve numeric including 0
+    const rawMetric =
+      d.metric_at_decision !== undefined &&
+      d.metric_at_decision !== null &&
+      !Number.isNaN(Number(d.metric_at_decision))
+        ? Number(d.metric_at_decision)
+        : d.metricAtDecision !== undefined &&
+            d.metricAtDecision !== null &&
+            !Number.isNaN(Number(d.metricAtDecision))
+          ? Number(d.metricAtDecision)
+          : meta?.metricAtDecision !== undefined &&
+              meta?.metricAtDecision !== null &&
+              !Number.isNaN(Number(meta.metricAtDecision))
+            ? Number(meta.metricAtDecision)
+            : undefined;
+
+    return {
+      _id: String(d.id),
+      id: d.id,
+      subject: d.subject,
+      action: d.action,
+      evidence: d.evidence,
+      kind: d.kind,
+      reason,
+      reroutedTo,
+      amount,
+      metricAtDecision: rawMetric,
+      day: d.day,
+    };
+  });
+}
+
+export async function executeToggleCheck(
+  client: SupabaseClient | null,
+  args: {
+    id: string | number;
+    done: boolean;
+    expectedCurrent?: boolean;
+    [key: string]: any;
+  },
+) {
+  if (!client) {
+    throw new Error("Supabase client is required");
+  }
+  if (!args || args.id === undefined || args.id === null) {
+    throw new Error("Missing checklist item id");
+  }
+  const numId = typeof args.id === "number" ? args.id : Number(args.id);
+  if (!Number.isInteger(numId) || numId <= 0) {
+    throw new Error("Invalid checklist item id");
+  }
+  if (typeof args.done !== "boolean") {
+    throw new Error("Missing or invalid 'done' boolean");
+  }
+  if (
+    args.expectedCurrent !== undefined &&
+    typeof args.expectedCurrent !== "boolean"
+  ) {
+    throw new Error("Invalid 'expectedCurrent' boolean");
+  }
+
+  const expectedDone =
+    typeof args.expectedCurrent === "boolean"
+      ? args.expectedCurrent
+      : !args.done;
+
+  const { error: rpcErr } = await client.rpc("cockpit_set_daily_check", {
+    p_id: numId,
+    p_expected_done: expectedDone,
+    p_done: args.done,
+  });
+  if (rpcErr) {
+    throw rpcErr;
+  }
+}
+
+export async function executeDecide(
+  client: SupabaseClient | null,
+  args: {
+    subject: string;
+    action: string;
+    evidence?: string;
+    kind?: string;
+    reason?: string;
+    metricAtDecision?: number;
+    reroutedTo?: string;
+    amount?: number;
+    metadata?: Record<string, any>;
+    [key: string]: any;
+  },
+) {
+  if (!client) {
+    throw new Error("Supabase client is required");
+  }
+  if (!args || !args.subject?.trim() || !args.action?.trim()) {
+    throw new Error("Subject and action cannot be empty");
+  }
+  const day = kuwaitToday();
+  const metadata: Record<string, any> = {
+    ...(args.metadata ?? {}),
+  };
+  if (args.reroutedTo !== undefined && args.reroutedTo !== null) {
+    metadata.reroutedTo = args.reroutedTo;
+  }
+  if (args.amount !== undefined && args.amount !== null) {
+    metadata.amount = Number(args.amount);
+  }
+  for (const [key, val] of Object.entries(args)) {
+    if (
+      ![
+        "subject",
+        "action",
+        "evidence",
+        "kind",
+        "reason",
+        "metricAtDecision",
+        "reroutedTo",
+        "amount",
+        "metadata",
+      ].includes(key) &&
+      val !== undefined
+    ) {
+      metadata[key] = val;
+    }
+  }
+
+  const { data, error: rpcErr } = await client.rpc("cockpit_log_decision", {
+    p_role: "media_buyer",
+    p_day: day,
+    p_subject: args.subject.trim(),
+    p_action: args.action.trim(),
+    p_kind: args.kind ?? "decision",
+    p_evidence: args.evidence ?? null,
+    p_reason: args.reason ?? null,
+    p_metric_at_decision:
+      args.metricAtDecision !== undefined &&
+      args.metricAtDecision !== null &&
+      !Number.isNaN(Number(args.metricAtDecision))
+        ? Number(args.metricAtDecision)
+        : null,
+    p_metadata: metadata,
+  });
+  if (rpcErr) {
+    throw rpcErr;
+  }
+  return data;
 }
 
 export function useMediaBuyerSnapshot(
@@ -67,14 +330,7 @@ export function useMediaBuyerSnapshot(
       if (aErr) throw aErr;
 
       // 3. Fetch daily checks
-      const { data: checkRows, error: chErr } = await client
-        .from("cockpit_daily_checks")
-        .select("*")
-        .eq("role", "media_buyer")
-        .eq("day", day)
-        .eq("source_deleted", false)
-        .order("display_order", { ascending: true });
-      if (chErr) throw chErr;
+      const checkRows = await fetchDailyChecksRpc(client, "media_buyer", day);
 
       // 4. Fetch decisions
       const { data: decisionRows, error: dErr } = await client
@@ -144,7 +400,10 @@ export function useMediaBuyerSnapshot(
             linkCtr: Number(c.link_ctr ?? raw.linkCtr ?? 0),
             optInRate: Number(c.opt_in_rate ?? raw.optInRate ?? 0),
             bookings7d: Number(raw.bookings7d ?? 0),
-            costPerBooking: raw.costPerBooking != null ? Number(raw.costPerBooking) : undefined,
+            costPerBooking:
+              raw.costPerBooking != null
+                ? Number(raw.costPerBooking)
+                : undefined,
             daysLive: Number(raw.daysLive ?? 0),
             dayRate: Number(raw.dayRate ?? 0),
             daysSinceTouch: Number(raw.daysSinceTouch ?? 0),
@@ -176,32 +435,10 @@ export function useMediaBuyerSnapshot(
         .filter(a => !scopeSet || campaignNames.has(a.campaignName));
 
       // Normalize checks
-      const checks = (checkRows ?? []).map(ch => ({
-        _id: String(ch.id),
-        id: ch.id,
-        key: ch.check_key,
-        label: ch.label,
-        detail: ch.detail,
-        phase: ch.phase,
-        block: ch.block,
-        displayOrder: ch.display_order,
-        href: ch.href,
-        done: Boolean(ch.done),
-        doneAt: ch.done_at,
-      }));
+      const checks = normalizeChecks(checkRows);
 
       // Normalize decisions
-      const decisions = (decisionRows ?? []).map(d => ({
-        _id: String(d.id),
-        id: d.id,
-        subject: d.subject,
-        action: d.action,
-        evidence: d.evidence,
-        kind: d.kind,
-        reroutedTo: d.rerouted_to,
-        amount: d.amount ? Number(d.amount) : undefined,
-        day: d.day,
-      }));
+      const decisions = normalizeDecisions(decisionRows);
 
       // Normalize plan items
       const plan = (planRows ?? []).map(p => ({
@@ -217,8 +454,14 @@ export function useMediaBuyerSnapshot(
       // Calculate totals
       const spend7d = campaigns.reduce((sum, c) => sum + (c.spend7d || 0), 0);
       const leads7d = campaigns.reduce((sum, c) => sum + (c.leads7d || 0), 0);
-      const spendToday = campaigns.reduce((sum, c) => sum + (c.spendToday || 0), 0);
-      const leadsToday = campaigns.reduce((sum, c) => sum + (c.leadsToday || 0), 0);
+      const spendToday = campaigns.reduce(
+        (sum, c) => sum + (c.spendToday || 0),
+        0,
+      );
+      const leadsToday = campaigns.reduce(
+        (sum, c) => sum + (c.leadsToday || 0),
+        0,
+      );
       const cpl = leads7d > 0 ? spend7d / leads7d : 0;
       const cplToday = leadsToday > 0 ? spendToday / leadsToday : 0;
 
@@ -261,16 +504,13 @@ export function useMediaBuyerSnapshot(
   }, [fetchSnapshot]);
 
   const toggleCheck = useCallback(
-    async (args: { id: string | number; done?: boolean; expectedCurrent?: boolean; [key: string]: any }) => {
-      if (!client) return;
-      const numId = Number(args.id);
-      const done = args.done ?? true;
-      const { error: rpcErr } = await client.rpc("cockpit_set_daily_check", {
-        p_id: numId,
-        p_expected_done: args.expectedCurrent ?? !done,
-        p_done: done,
-      });
-      if (rpcErr) throw rpcErr;
+    async (args: {
+      id: string | number;
+      done: boolean;
+      expectedCurrent?: boolean;
+      [key: string]: any;
+    }) => {
+      await executeToggleCheck(client, args);
       await fetchSnapshot();
     },
     [client, fetchSnapshot],
@@ -282,24 +522,14 @@ export function useMediaBuyerSnapshot(
       action: string;
       evidence?: string;
       kind?: string;
+      reason?: string;
+      metricAtDecision?: number;
       reroutedTo?: string;
       amount?: number;
+      metadata?: Record<string, any>;
       [key: string]: any;
     }) => {
-      if (!client) return;
-      const day = kuwaitToday();
-      const { error: rpcErr } = await client.rpc("cockpit_log_decision", {
-        p_role: "media_buyer",
-        p_day: day,
-        p_subject: args.subject,
-        p_action: args.action,
-        p_evidence: args.evidence ?? null,
-        p_kind: args.kind ?? null,
-        p_rerouted_to: args.reroutedTo ?? null,
-        p_amount: args.amount ?? null,
-        p_metadata: {},
-      });
-      if (rpcErr) throw rpcErr;
+      await executeDecide(client, args);
       await fetchSnapshot();
     },
     [client, fetchSnapshot],
@@ -307,8 +537,13 @@ export function useMediaBuyerSnapshot(
 
   const removeDecision = useCallback(
     async (args: { id: string | number }) => {
-      if (!client) return;
+      if (!client) {
+        throw new Error("Supabase client is required");
+      }
       const numId = Number(args.id);
+      if (Number.isNaN(numId) || numId <= 0) {
+        throw new Error("Invalid decision id");
+      }
       const { error: rpcErr } = await client.rpc("cockpit_remove_decision", {
         p_id: numId,
       });
@@ -319,8 +554,16 @@ export function useMediaBuyerSnapshot(
   );
 
   const saveEod = useCallback(
-    async (args: { energy?: string; answers?: Any; computed?: Any; body?: string; [key: string]: any }) => {
-      if (!client) return;
+    async (args: {
+      energy?: string;
+      answers?: Any;
+      computed?: Any;
+      body?: string;
+      [key: string]: any;
+    }) => {
+      if (!client) {
+        throw new Error("Supabase client is required");
+      }
       const day = kuwaitToday();
       const { error: rpcErr } = await client.rpc("cockpit_save_eod", {
         p_role: "media_buyer",
@@ -345,7 +588,9 @@ export function useMediaBuyerSnapshot(
         dueDate?: string;
       }>;
     }) => {
-      if (!client) return;
+      if (!client) {
+        throw new Error("Supabase client is required");
+      }
       const day = kuwaitToday();
       for (const item of args.items) {
         const { error: rpcErr } = await client.rpc("cockpit_add_plan_item", {
@@ -365,15 +610,26 @@ export function useMediaBuyerSnapshot(
   );
 
   const sendFeedback = useCallback(
-    async (args: { title?: string; description?: string; message?: string; category?: string; [key: string]: any }) => {
-      if (!client) return;
-      const { error: rpcErr } = await client.rpc("cockpit_submit_issue_report", {
-        p_role: "media_buyer",
-        p_title: args.title || "Feedback",
-        p_description: args.description || args.message || "",
-        p_category: args.category ?? "feedback",
-        p_metadata: {},
-      });
+    async (args: {
+      title?: string;
+      description?: string;
+      message?: string;
+      category?: string;
+      [key: string]: any;
+    }) => {
+      if (!client) {
+        throw new Error("Supabase client is required");
+      }
+      const { error: rpcErr } = await client.rpc(
+        "cockpit_submit_issue_report",
+        {
+          p_role: "media_buyer",
+          p_title: args.title || "Feedback",
+          p_description: args.description || args.message || "",
+          p_category: args.category ?? "feedback",
+          p_metadata: {},
+        },
+      );
       if (rpcErr) throw rpcErr;
     },
     [client],

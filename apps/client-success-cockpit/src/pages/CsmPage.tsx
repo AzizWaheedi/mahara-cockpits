@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { SendForReview } from "@/components/SendForReview";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
@@ -31,7 +32,6 @@ import {
   serviceModel,
 } from "@/lib/csmTemplates";
 import { publishOpenClient } from "@/lib/openClient";
-import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { useCsmSnapshot } from "@/lib/useCsmSnapshot";
 
 /** Tickets the CSM raises. Picking the request picks the board — she never picks a team. */
@@ -1890,7 +1890,13 @@ export function CsmPage({ section }: { section: Section }) {
                       key={c._id}
                       type="button"
                       className="flex w-full items-start gap-3 px-4 py-2 text-left text-sm"
-                      onClick={() => toggleCheck({ id: c._id })}
+                      onClick={() =>
+                        toggleCheck({
+                          id: c._id,
+                          expectedCurrent: Boolean(c.done),
+                          done: !c.done,
+                        })
+                      }
                     >
                       <span
                         className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[11px] ${c.done ? "bg-emerald-600 text-white" : ""}`}

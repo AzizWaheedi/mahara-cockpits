@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { AccountView } from "@/components/AccountView";
 import { BuildPanel } from "@/components/BuildPanel";
 import { CampaignRange } from "@/components/CampaignRange";
@@ -28,11 +29,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { ViktorStatus } from "@/components/ViktorStatus";
 import { WhatsAppDesk } from "@/components/WhatsAppDesk";
 import { useContentTransition } from "@/hooks/use-content-transition";
+import { api, useAction } from "@/lib/board";
 import { CPB_GATE, CPL_GATE, LEARNING_DAYS } from "@/lib/kpi";
 import { defaultRange, type Range } from "@/lib/range";
-import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { useMediaBuyerSnapshot } from "@/lib/useMediaBuyerSnapshot";
-import { api, useAction } from "@/lib/board";
 import { CampaignChangesResults } from "../components/CampaignChangesResults";
 import { CampaignChat } from "../components/CampaignChat";
 import { RequestCreativeButton } from "../components/RequestCreativeButton";
@@ -1419,7 +1419,13 @@ function Cockpit({ view }: { view: View }) {
                 <button
                   key={c._id}
                   type="button"
-                  onClick={() => toggleCheck({ id: c._id })}
+                  onClick={() =>
+                    toggleCheck({
+                      id: c._id,
+                      expectedCurrent: Boolean(c.done),
+                      done: !c.done,
+                    })
+                  }
                   className="flex items-start gap-2 py-1 text-left"
                 >
                   <span
@@ -2787,7 +2793,13 @@ function Cockpit({ view }: { view: View }) {
                   >
                     <button
                       type="button"
-                      onClick={() => toggleCheck({ id: c._id })}
+                      onClick={() =>
+                        toggleCheck({
+                          id: c._id,
+                          expectedCurrent: Boolean(c.done),
+                          done: !c.done,
+                        })
+                      }
                       className={`mt-0.5 grid h-5 w-5 flex-none place-items-center rounded-full border text-[12px] font-bold ${c.done ? "border-[var(--chart-1)] bg-[var(--chart-1)] text-background" : "border-muted-foreground/30 text-muted-foreground"}`}
                     >
                       {c.done ? "✓" : idx + 1}
