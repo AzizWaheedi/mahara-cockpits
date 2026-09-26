@@ -1,6 +1,14 @@
 import { useEffect, useState } from "react";
 import { useCockpitAuth } from "../auth/SupabaseAuthProvider";
 import { loadSupabaseAccess } from "../auth/supabaseAccess";
+import {
+  copyGoalPlan,
+  goalCatalogue,
+  readGoalsBoard,
+  removeGoalTarget,
+  saveGoalPlan,
+  saveGoalTargets,
+} from "./ceoGoalsClient";
 import { supabase } from "./supabase";
 
 export class ConvexError extends Error {
@@ -189,14 +197,22 @@ async function handleApiCall(endpoint: string, args: any = {}): Promise<any> {
   // 6. CEO Features
   if (domain === "ceo") {
     if (sub === "goals") {
-      if (rest[0] === "board") {
-        const { data } = await supabase
-          .from("cockpit_goals")
-          .select("*")
-          .order("month", { ascending: false });
-        return { rows: data || [] };
+      switch (rest.join(".")) {
+        case "board":
+          return readGoalsBoard(supabase, args);
+        case "savePlan":
+          return saveGoalPlan(supabase, args);
+        case "saveTargets":
+          return saveGoalTargets(supabase, args);
+        case "removeTarget":
+          return removeGoalTarget(supabase, args);
+        case "startFrom":
+          return copyGoalPlan(supabase, args);
+        case "catalogue":
+          return goalCatalogue(supabase);
+        default:
+          throw new Error(`Unknown goals operation: ${rest.join(".")}`);
       }
-      return { ok: true };
     }
     if (sub === "people") {
       if (rest[0] === "list") {

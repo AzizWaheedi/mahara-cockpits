@@ -55,7 +55,11 @@ export type Board = {
     blurb: string;
     targets: TargetRow[];
   }[];
-  behind?: TargetRow[];
+  behind?: {
+    label: string;
+    actual: number | null;
+    pacedTarget: number | null;
+  }[];
   behindPace?: TargetRow[];
   catalogue?: any[];
   [key: string]: any;
