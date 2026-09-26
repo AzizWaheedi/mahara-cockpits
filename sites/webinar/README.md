@@ -19,6 +19,12 @@ of what is live; edit here and deploy from here.
 
 ## Deploy
 
+**26 September source change, not yet deployed:** the next date is managed by
+[`config/webinar/current.json`](../../config/webinar/current.json). Follow its
+[LLM runbook](../../config/webinar/README.md). Current config is draft until Aziz
+provides the date. Do not independently edit page dates or the Vercel environment.
+The release script requires fresh Zoom/GHL read-back before deploying this site.
+
 From a commit that is on GitHub main:
 
 ```bash
@@ -60,7 +66,7 @@ the page's own `form_submit` and thank-you views are the second source.
 
 ## Before a round
 
-- The countdown date (`COUNTDOWN_ISO` in `index.html`) and the date lines on
-  both pages.
+- Set the canonical schedule, generate, test and verify all four sources using
+  the runbook. Both date lines and the calendar link are generated together.
 - The thank-you page's WhatsApp group link is still `[WHATSAPP_LINK]`.
 - Every ad's URL carries `utm_content={{ad.id}}`.

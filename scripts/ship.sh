@@ -38,11 +38,14 @@ fi
 # The webinar room: attendance, the retention curve, the pitches. Wrong is a
 # pitch that looks like it lost the room, or a show rate that counts the team.
 if [ -f apps/media-buyer-cockpit/scripts/webinar.test.ts ]; then
-  (cd apps/media-buyer-cockpit && bun test scripts/webinar.test.ts >/dev/null 2>&1) \
+  (cd apps/media-buyer-cockpit && bun test scripts/webinar.test.ts scripts/webinar-targets.test.ts scripts/webinar-target-actions.test.ts scripts/webinar-ingestion.test.ts scripts/reporting-view-access.test.ts >/dev/null 2>&1) \
     || { echo "the webinar room tests fail"; exit 1; }
 fi
 DEPLOYED_CONVEX=0
 
+node scripts/webinar-schedule.mjs check
+node --test scripts/webinar-schedule.test.mjs >/dev/null \
+  || { echo "the webinar schedule tests fail"; exit 1; }
 ship() {
   local app="$1"
   local SITE dir url
@@ -103,7 +106,7 @@ ship() {
     local -a sup_env=()
     [ -n "${VITE_SUPABASE_URL:-}" ] && sup_env+=(VITE_SUPABASE_URL="$VITE_SUPABASE_URL")
     [ -n "${VITE_SUPABASE_ANON_KEY:-}" ] && sup_env+=(VITE_SUPABASE_ANON_KEY="$VITE_SUPABASE_ANON_KEY")
-    (cd "$dir" && VITE_CONVEX_URL="" ${sup_env[@]+"${sup_env[@]}"} bun run build)
+    (cd "$dir" && env VITE_CONVEX_URL="" ${sup_env[@]+"${sup_env[@]}"} bun run build)
   fi
   # The Vercel CLI prints JSON when not on a terminal and can exit 0 without a
   # production deployment (seen 2026-09-18: the creative site kept the old

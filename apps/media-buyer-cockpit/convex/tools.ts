@@ -1096,3 +1096,42 @@ export async function graphPost<T = any>(
   }
   return json as T;
 }
+
+/** CEO webinar targets. Narrow service-only endpoint; records failures without provider bodies. */
+export async function webinarTargetRest<T>(
+  path: string,
+  body?: unknown,
+): Promise<T> {
+  if (
+    !/^(cockpit_webinar_target_versions\?|cockpit_sections\?|rpc\/cockpit_save_webinar_targets$)/.test(
+      path,
+    )
+  )
+    throw new Error("Unsupported target operation.");
+  const base = (process.env.SUPABASE_URL ?? "").replace(/\/+$/, "");
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  try {
+    if (base !== "https://bldgtotkfmhoxmlzowdx.supabase.co" || !key)
+      throw new Error("Targets are not connected to the cockpit database yet.");
+    const res = await fetch(`${base}/rest/v1/${path}`, {
+      method: body === undefined ? "GET" : "POST",
+      headers: {
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok)
+      throw new Error(
+        `Target store HTTP ${res.status}. Reload targets before trying again.`,
+      );
+    const result = (await res.json()) as T;
+    note("supabase", true);
+    return result;
+  } catch (e) {
+    note("supabase", false, "Webinar target store unavailable");
+    throw e;
+  }
+}

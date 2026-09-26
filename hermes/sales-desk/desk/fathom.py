@@ -114,8 +114,12 @@ class Fathom:
                 raise FathomError(0, f"Fathom sent something that is not JSON on {path}: {e}")
         raise FathomError(0, f"Fathom did not answer on {path}")
 
-    def meetings(self, *, since: datetime, recorded_by: Optional[str] = None, max_pages: int = 60) -> list[dict[str, Any]]:
-        """Meetings created since a time, ten a page, without transcripts."""
+    def meetings(self, *, since: datetime, recorded_by: Optional[str] = None, max_pages: int = 60,
+                 domains_type: Optional[str] = None) -> list[dict[str, Any]]:
+        """Meetings created since a time, ten a page, without transcripts.
+        `domains_type` is Fathom's own filter: "one_or_more_external" lists only
+        the meetings someone from outside the company was on (checked
+        2026-09-26: every meeting it returned carried that flag)."""
         out: list[dict[str, Any]] = []
         cursor = ""
         after = since.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -123,6 +127,8 @@ class Fathom:
             params = [("created_after", after), ("cursor", cursor)]
             if recorded_by:
                 params.append(("recorded_by[]", recorded_by))
+            if domains_type:
+                params.append(("calendar_invitees_domains_type", domains_type))
             data = self.get("/meetings", params)
             out.extend(m for m in (data.get("items") or []) if isinstance(m, dict))
             cursor = str(data.get("next_cursor") or "")

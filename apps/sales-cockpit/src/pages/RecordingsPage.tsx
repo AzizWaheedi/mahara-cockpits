@@ -1,26 +1,42 @@
-import { FileText, Mic, Search } from "lucide-react";
+import { FileText, Mic, Phone, Plus, Search, Video } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
-import { EmptyState, Failed, field, SourceNote } from "../components/kit";
+import { CoachReviewForm, CoachReviewList } from "../components/CoachReviews";
+import {
+  button,
+  EmptyState,
+  Failed,
+  field,
+  SourceNote,
+  StatusChip,
+} from "../components/kit";
 import { GradeChip } from "../components/ReviewCard";
 import {
   PAGE,
+  useCoachReviews,
   useLeadsById,
   useRecordings,
   useReps,
+  useReviewAsks,
   useReviews,
 } from "../lib/data";
 import { day, duration } from "../lib/format";
-import type { Me, Recording, Review } from "../lib/types";
+import type { Me, Recording, Review, ReviewAsk } from "../lib/types";
 
 /**
- * Every recorded sales call, newest first, and Vince's reviews of them. The
- * team reads each other's calls, as they read each other's reviews in
- * Slack; a rep opens on their own.
+ * Every recorded sales call, newest first, Vince's reviews of them, and
+ * Aziz's own reviews. Everyone reads everyone's calls (Aziz, 2026-09-26:
+ * "They should be allowed to pick all the recordings") and can ask Vince to
+ * review any of them.
  */
 export default function RecordingsPage({ me }: { me: Me }) {
   const [params, setParams] = useSearchParams();
-  const tab = params.get("tab") === "reviews" ? "reviews" : "calls";
+  const tab =
+    params.get("tab") === "reviews"
+      ? "reviews"
+      : params.get("tab") === "aziz"
+        ? "aziz"
+        : "calls";
   const reps = useReps();
   const set = (patch: Record<string, string | null>) => {
     const next = new URLSearchParams(params);
@@ -37,7 +53,8 @@ export default function RecordingsPage({ me }: { me: Me }) {
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Recordings</h1>
           <p className="muted text-sm">
-            Every recorded sales call, newest first. Vince reviews each new one.
+            Every recorded sales call, video and phone, newest first. Open any
+            call to ask Vince to review it.
           </p>
         </div>
         <div
@@ -49,6 +66,7 @@ export default function RecordingsPage({ me }: { me: Me }) {
             [
               ["calls", "Calls"],
               ["reviews", "Vince's reviews"],
+              ["aziz", "Aziz's reviews"],
             ] as const
           ).map(([k, label]) => (
             <button
@@ -65,18 +83,24 @@ export default function RecordingsPage({ me }: { me: Me }) {
       </header>
 
       {tab === "calls" ? (
-        <Calls me={me} params={params} set={set} reps={reps.data ?? []} />
-      ) : (
+        <Calls params={params} set={set} reps={reps.data ?? []} />
+      ) : tab === "reviews" ? (
         <Reviews me={me} params={params} set={set} reps={reps.data ?? []} />
+      ) : (
+        <AzizReviews me={me} />
       )}
 
       <SourceNote>
-        Calls come from Fathom: the Obsidian vault's copy of every recorded
-        sales call, and the desk's own look at the last 14 days. A call belongs
-        to a lead when an invitee's email is the lead's, or when that lead's
-        intro or demo began within 30 minutes of it. Reviews are Vince's: his
-        121 from before he stopped in August, and the ones the desk has written
-        since with his template and framework.
+        Video calls come from Fathom: the Obsidian vault's copy of every
+        recorded sales call (a call someone outside joined counts, invited or
+        not), the desk's own look at the last 14 days, and Ahmed's calls that
+        only B2B held. A video call belongs to a lead when an invitee's email is
+        the lead's, or when that lead's intro or demo began within 30 minutes of
+        it. Phone calls come from Maqsam, every answered call with a transcript
+        since January, setters and closers, and belong to the lead whose phone
+        number matches. Reviews are Vince's: his 121 from before he stopped in
+        August, and the ones the desk has written since with his template and
+        framework (a phone call on the intro card).
       </SourceNote>
     </main>
   );
@@ -85,18 +109,22 @@ export default function RecordingsPage({ me }: { me: Me }) {
 type RepList = NonNullable<ReturnType<typeof useReps>["data"]>;
 
 function Calls({
-  me,
   params,
   set,
   reps,
 }: {
-  me: Me;
   params: URLSearchParams;
   set: (p: Record<string, string | null>) => void;
   reps: RepList;
 }) {
-  const mine = (me.fathom_email ?? "").toLowerCase();
-  const by = params.get("by") ?? (me.manager ? "" : mine);
+  const by = params.get("by") ?? "";
+  const kind = (params.get("kind") ?? "") as "" | "video" | "phone";
+  const rep = reps.find(r => r.id === by) ?? null;
+  const addresses = rep
+    ? [rep.fathom_email, rep.maqsam_email]
+        .filter((x): x is string => Boolean(x))
+        .map(x => x.toLowerCase())
+    : [];
   const page = Math.max(0, Number(params.get("page") ?? 1) - 1) || 0;
   const [text, setText] = useState(params.get("q") ?? "");
   useEffect(() => {
@@ -107,9 +135,21 @@ function Calls({
     return () => window.clearTimeout(t);
   }, [text, params, set]);
 
-  const calls = useRecordings({ q: params.get("q") ?? "", by, page });
+  const calls = useRecordings({
+    q: params.get("q") ?? "",
+    by: addresses,
+    kind,
+    page,
+  });
   const rows = calls.data ?? [];
   const reviews = useReviews({ recordingIds: rows.map(r => r.recording_id) });
+  const asks = useReviewAsks(rows.map(r => r.recording_id));
+  const askOf = useMemo(() => {
+    const m = new Map<string, ReviewAsk>();
+    for (const a of asks.data ?? [])
+      if (!m.has(a.recording_id)) m.set(a.recording_id, a);
+    return m;
+  }, [asks.data]);
   const reviewOf = useMemo(
     () =>
       new Map(
@@ -124,7 +164,7 @@ function Calls({
     () => new Map((leads.data ?? []).map(l => [l.contact_id, l.name] as const)),
     [leads.data],
   );
-  const recorders = reps.filter(r => r.fathom_email);
+  const recorders = reps.filter(r => r.fathom_email || r.maqsam_email);
 
   return (
     <>
@@ -151,10 +191,20 @@ function Calls({
         >
           <option value="">Everyone's calls</option>
           {recorders.map(r => (
-            <option key={r.id} value={String(r.fathom_email).toLowerCase()}>
+            <option key={r.id} value={r.id}>
               {r.display_name}
             </option>
           ))}
+        </select>
+        <select
+          aria-label="Video or phone"
+          value={kind}
+          onChange={e => set({ kind: e.target.value || null, page: null })}
+          className={`${field} sm:w-40`}
+        >
+          <option value="">Video and phone</option>
+          <option value="video">Video calls</option>
+          <option value="phone">Phone calls</option>
         </select>
       </div>
 
@@ -167,9 +217,9 @@ function Calls({
           icon={Mic}
           title="No calls here"
           text={
-            by || params.get("q")
+            by || kind || params.get("q")
               ? "Nothing matches. Clear the search or pick everyone's calls."
-              : "Recorded sales calls appear here within half an hour of Fathom having them."
+              : "Recorded sales calls appear here within half an hour of Fathom or Maqsam having them."
           }
         />
       ) : (
@@ -179,6 +229,7 @@ function Calls({
               key={r.recording_id}
               r={r}
               review={reviewOf.get(r.recording_id)}
+              ask={askOf.get(r.recording_id)}
               lead={r.contact_id ? leadName.get(r.contact_id) : undefined}
             />
           ))}
@@ -197,12 +248,15 @@ function Calls({
 function CallRow({
   r,
   review,
+  ask,
   lead,
 }: {
   r: Recording;
   review?: Review;
+  ask?: ReviewAsk;
   lead?: string | null;
 }) {
+  const asked = ask && (ask.state === "queued" || ask.state === "reviewing");
   return (
     <li>
       <Link
@@ -213,6 +267,11 @@ function CallRow({
           <p>{day(r.started_at)}</p>
           <p className="muted">{duration(r.duration_s)}</p>
         </div>
+        {r.source === "maqsam" ? (
+          <Phone className="muted size-3.5 shrink-0" aria-label="Phone call" />
+        ) : (
+          <Video className="muted size-3.5 shrink-0" aria-label="Video call" />
+        )}
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium" dir="auto">
             {r.title ?? "Untitled call"}
@@ -237,7 +296,11 @@ function CallRow({
               aria-label="Has a transcript"
             />
           ) : null}
-          {review ? <GradeChip r={review} /> : null}
+          {review ? (
+            <GradeChip r={review} />
+          ) : asked ? (
+            <StatusChip tone="neutral" label="Review asked" />
+          ) : null}
         </div>
       </Link>
     </li>
@@ -370,5 +433,59 @@ function Pager({
         Older
       </button>
     </div>
+  );
+}
+
+/** Aziz's own call reviews, from Skool or written here, for the whole team. */
+function AzizReviews({ me }: { me: Me }) {
+  const reviews = useCoachReviews({ all: true });
+  const [adding, setAdding] = useState(false);
+  return (
+    <section className="panel space-y-4 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="muted text-sm">
+          Aziz's own reviews of calls, the ones on Skool and any written here.
+          Read the ones meant for you first.
+        </p>
+        {me.manager && !adding ? (
+          <button
+            type="button"
+            onClick={() => setAdding(true)}
+            className={button}
+          >
+            <Plus className="size-3.5" aria-hidden /> Add a review
+          </button>
+        ) : null}
+      </div>
+      {adding ? (
+        <CoachReviewForm
+          me={me}
+          onDone={() => {
+            setAdding(false);
+            reviews.reload();
+          }}
+          onCancel={() => setAdding(false)}
+        />
+      ) : null}
+      {reviews.error ? (
+        <Failed
+          what="Aziz's reviews"
+          error={reviews.error}
+          retry={reviews.reload}
+        />
+      ) : reviews.loading && !reviews.data ? (
+        <p className="muted text-sm">Reading the reviews…</p>
+      ) : (
+        <CoachReviewList
+          me={me}
+          reviews={[...(reviews.data ?? [])].sort(
+            (a, b) =>
+              Number(b.for_email === me.email) -
+              Number(a.for_email === me.email),
+          )}
+          onChange={reviews.reload}
+        />
+      )}
+    </section>
   );
 }

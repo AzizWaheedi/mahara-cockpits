@@ -35,16 +35,41 @@ export function fieldValue(a: string, id: string): string {
   return `(select cf->>'value' from jsonb_array_elements(case when jsonb_typeof(${a}.raw_contact->'customFields') = 'array' then ${a}.raw_contact->'customFields' else '[]'::jsonb end) cf where cf->>'id' = '${id}' limit 1)`;
 }
 
-/**
- * The contact's webinar session as a timestamp: GoHighLevel sends a DATE
- * field as epoch milliseconds or as YYYY-MM-DD; anything else is unknown.
+/** DATE fields contain no time. The existing training schedule is 20:00 Kuwait.
+ * Keep this fallback in step with pull.py SESSION_HOUR_KUWAIT. Explicit ISO
+ * timestamps retain their actual time. Readiness blocks launch if the live
+ * schedule differs from this fallback. PostgreSQL 17 validates before casting.
  */
+export const SESSION_HOUR_KUWAIT = 20;
+export function sessionValueSql(value: string): string {
+  return `(select case
+    when v ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' and pg_input_is_valid(v, 'date')
+      then (v::date + time '${SESSION_HOUR_KUWAIT}:00') at time zone 'Asia/Kuwait'
+    when v ~ '^[0-9]{10}([0-9]{3})?$' then
+      case when (epoch_at at time zone 'UTC')::time = time '00:00'
+        then ((epoch_at at time zone 'UTC')::date + time '${SESSION_HOUR_KUWAIT}:00') at time zone 'Asia/Kuwait'
+        when (epoch_at at time zone 'Asia/Kuwait')::time = time '00:00'
+        then ((epoch_at at time zone 'Asia/Kuwait')::date + time '${SESSION_HOUR_KUWAIT}:00') at time zone 'Asia/Kuwait'
+        else epoch_at end
+    when v ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}.*(Z|[+-][0-9]{2}:[0-9]{2})$'
+      and pg_input_is_valid(v, 'timestamptz') then v::timestamptz
+    else null end
+    from (select v, case when v ~ '^[0-9]{10}([0-9]{3})?$'
+      then to_timestamp(v::numeric / case when length(v) = 13 then 1000 else 1 end)
+      else null end as epoch_at from (select btrim(${value}) as v) val) parsed)`;
+}
+
 export function sessionAt(a: string): string {
-  const v = fieldValue(a, SESSION_FIELD);
-  return `(case when ${v} ~ '^[0-9]{13}$' then to_timestamp((${v})::numeric / 1000)
-    when ${v} ~ '^[0-9]{10}$' then to_timestamp((${v})::numeric)
-    when ${v} ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' then (${v})::timestamptz
-    else null end)`;
+  return sessionValueSql(fieldValue(a, SESSION_FIELD));
+}
+
+/** Only real month tags count; September must not sort after November. */
+export const ROUND_TAG_PATTERN =
+  "^webby-(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)-[0-9]{4}$";
+export function latestRoundTag(a: string): string {
+  return `(select t from unnest(${a}.tags) t where t ~ '${ROUND_TAG_PATTERN}'
+    order by substring(t from 11 for 4)::int desc,
+      array_position(array['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'], substring(t from 7 for 3)) desc limit 1)`;
 }
 
 /**

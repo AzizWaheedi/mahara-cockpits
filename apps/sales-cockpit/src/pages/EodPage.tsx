@@ -258,8 +258,13 @@ function EodForm({ data, onSent }: { data: Prefill; onSent: () => void }) {
     }
   }
 
-  const numbers = data.fields.filter(f => f.kind !== "text");
-  const words = data.fields.filter(f => f.kind === "text");
+  // Talk time is typed as a range ("13-25 min") but is one of the day's numbers.
+  const numbers = data.fields.filter(
+    f => f.kind !== "text" || f.key === "talk_time",
+  );
+  const words = data.fields.filter(
+    f => f.kind === "text" && f.key !== "talk_time",
+  );
   return (
     <form onSubmit={send} className="space-y-5">
       {!data.has_slack_id ? (
@@ -276,7 +281,9 @@ function EodForm({ data, onSent }: { data: Prefill; onSent: () => void }) {
               key={f.key}
               f={f}
               value={answers[f.key] ?? ""}
-              counted={data.computed[f.key] ?? null}
+              counted={
+                f.key === "talk_time" ? null : (data.computed[f.key] ?? null)
+              }
               note={data.notes[f.key]}
               onChange={v => setAnswers(a => ({ ...a, [f.key]: v }))}
             />
@@ -285,35 +292,24 @@ function EodForm({ data, onSent }: { data: Prefill; onSent: () => void }) {
       </SectionCard>
       <SectionCard title="In words">
         <div className="space-y-4">
-          {words.map(f =>
-            f.key === "talk_time" ? (
-              <NumberQuestion
-                key={f.key}
-                f={f}
+          {words.map(f => (
+            <label key={f.key} className="block space-y-1">
+              <span className="text-sm font-medium">
+                {f.label}
+                {f.required ? "" : " (if any)"}
+              </span>
+              <textarea
                 value={answers[f.key] ?? ""}
-                counted={null}
-                note={data.notes[f.key]}
-                onChange={v => setAnswers(a => ({ ...a, [f.key]: v }))}
+                onChange={e =>
+                  setAnswers(a => ({ ...a, [f.key]: e.target.value }))
+                }
+                rows={3}
+                dir="auto"
+                required={f.required}
+                className={`${field} h-auto py-2 leading-relaxed`}
               />
-            ) : (
-              <label key={f.key} className="block space-y-1">
-                <span className="text-sm font-medium">
-                  {f.label}
-                  {f.required ? "" : " (if any)"}
-                </span>
-                <textarea
-                  value={answers[f.key] ?? ""}
-                  onChange={e =>
-                    setAnswers(a => ({ ...a, [f.key]: e.target.value }))
-                  }
-                  rows={3}
-                  dir="auto"
-                  required={f.required}
-                  className={`${field} h-auto py-2 leading-relaxed`}
-                />
-              </label>
-            ),
-          )}
+            </label>
+          ))}
         </div>
       </SectionCard>
       <div className="flex flex-wrap items-center gap-3">

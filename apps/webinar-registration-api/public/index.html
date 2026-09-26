@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>التدريب المباشر المجاني — التسجيل</title>
+<meta name="robots" content="noindex">
+<style>
+  :root{--ink:#091333;--muted:#5a6178;--teal:#0aa39d;--bg:#f6f7fb}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,"Segoe UI",Tahoma,Arial,sans-serif;background:var(--bg);color:var(--ink);line-height:1.8}
+  main{max-width:520px;margin:6vh auto;padding:0 20px}
+  .card{background:#fff;border-radius:16px;padding:28px;box-shadow:0 8px 30px rgba(9,19,51,.08)}
+  h1{font-size:24px;margin:0 0 8px}
+  p{margin:0 0 18px;color:var(--muted)}
+  label{display:block;font-weight:600;margin:14px 0 6px}
+  input{width:100%;padding:12px 14px;border:1px solid #d6d9e3;border-radius:10px;font-size:16px;font-family:inherit}
+  input:focus{outline:2px solid var(--teal);border-color:var(--teal)}
+  button{width:100%;margin-top:22px;padding:14px;border:0;border-radius:10px;background:var(--teal);color:#fff;font-size:17px;font-weight:700;cursor:pointer;font-family:inherit}
+  button[disabled]{opacity:.6;cursor:wait}
+  .note{font-size:13px;color:var(--muted);margin-top:14px}
+  .err{background:#fff1f0;color:#a8071a;padding:10px 12px;border-radius:8px;margin-top:14px;display:none}
+  .dev{font-size:12px;color:#999;text-align:center;margin-top:24px}
+</style>
+</head>
+<body>
+<main>
+  <div class="card">
+    <h1>سجّل بالتدريب المباشر</h1>
+    <p>نفس النظام اللي ياب لعملائنا فوق ٧٦ مليون دولار مشاريع يديدة. لايف، مو مسجل، وما راح نعيده.</p>
+    <form id="f" method="post" action="/api/register" novalidate>
+      <label for="first_name">اسمك الأول</label>
+      <input id="first_name" name="first_name" required autocomplete="given-name" placeholder="مثال: محمد">
+      <label for="phone">رقم الواتساب</label>
+      <input id="phone" name="phone" type="tel" required autocomplete="tel" inputmode="tel" placeholder="+965 5xxx xxxx" dir="ltr" style="text-align:right">
+      <label for="email">الإيميل</label>
+      <input id="email" name="email" type="email" required autocomplete="email" placeholder="name@company.com" dir="ltr" style="text-align:right">
+      <button id="btn" type="submit">احجز مقعدي</button>
+      <div class="err" id="err"></div>
+      <div class="note">بيوصلك رابط الدخول على الإيميل والواتساب.</div>
+    </form>
+  </div>
+  <div class="dev">placeholder registration page — replace with the designed landing page; the form posts to /api/register</div>
+</main>
+<script>
+  const f=document.getElementById('f'),btn=document.getElementById('btn'),err=document.getElementById('err');
+  f.addEventListener('submit',async(e)=>{e.preventDefault();err.style.display='none';btn.disabled=true;btn.textContent='ثواني…';
+    const body=Object.fromEntries(new FormData(f).entries());
+    try{const r=await fetch('/api/register',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(body)});
+      const j=await r.json();
+      if(j.ok){location.href=j.redirect||'/thanks.html';return;}
+      throw new Error(j.error||'failed');
+    }catch(ex){err.textContent='ما قدرنا نسجلك: '+ex.message;err.style.display='block';btn.disabled=false;btn.textContent='احجز مقعدي';}
+  });
+</script>
+</body>
+</html>

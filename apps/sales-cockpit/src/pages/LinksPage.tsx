@@ -1,5 +1,6 @@
 import { ChevronDown, ExternalLink, Link2, Plus } from "lucide-react";
-import { type ReactNode, useId, useState } from "react";
+import { type ReactNode, useEffect, useId, useState } from "react";
+import { AssetLibrary } from "../components/AssetPicker";
 import {
   button,
   buttonPrimary,
@@ -8,6 +9,7 @@ import {
   field,
   SectionCard,
 } from "../components/kit";
+import { ReferenceAsks, ReferenceList } from "../components/References";
 import { api } from "../lib/api";
 import { useLinks } from "../lib/data";
 import { toast } from "../lib/toast";
@@ -97,6 +99,16 @@ function draftOf(l: SalesLink): Draft {
 }
 
 export default function LinksPage({ me }: { me: Me }) {
+  // "The whole library" from a lead lands here on the assets.
+  useEffect(() => {
+    if (window.location.hash !== "#assets") return;
+    const t = window.setTimeout(
+      () =>
+        document.getElementById("assets")?.scrollIntoView({ block: "start" }),
+      300,
+    );
+    return () => window.clearTimeout(t);
+  }, []);
   const links = useLinks();
   const manager = Boolean(me.manager);
   const [adding, setAdding] = useState(false);
@@ -219,8 +231,8 @@ export default function LinksPage({ me }: { me: Me }) {
         <div className="min-w-0">
           <h1 className="text-xl font-semibold tracking-tight">Links</h1>
           <p className="muted text-sm">
-            The deck, forms and calculators for your calls. Each one opens in a
-            new tab.
+            The deck, forms and calculators for your calls, and the proof to
+            send after them. Each one opens in a new tab.
           </p>
         </div>
         {manager && !adding ? addButton : null}
@@ -249,6 +261,20 @@ export default function LinksPage({ me }: { me: Me }) {
           onShow={l => setActive(l, true)}
         />
       ) : null}
+
+      <SectionCard id="assets" title="Sales assets: proof to send">
+        <AssetLibrary />
+      </SectionCard>
+
+      {manager ? (
+        <SectionCard id="reference-asks" title="Reference calls asked for">
+          <ReferenceAsks />
+        </SectionCard>
+      ) : null}
+
+      <SectionCard id="references" title="Client references">
+        <ReferenceList manager={Boolean(manager)} />
+      </SectionCard>
     </main>
   );
 }

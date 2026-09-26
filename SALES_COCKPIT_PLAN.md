@@ -242,15 +242,23 @@ source before the next starts.
    - The CEO cockpit sections, SOURCES.md rows, the metric registry.
    - The runbook, the health checks.
 
-### Where it stands (2026-09-24)
+### Where it stands (2026-09-24, evening)
 
 | Phase | State |
 |---|---|
-| 1. Foundation | Shipped: the app at /sales, portal sign-in and seats from the Admin page, the B2B copy every three minutes, the lead page, the calendar with marking written to HighLevel, numbers, links. |
-| 2. Calling and scripts | Shipped: the dialer (queue, Maqsam click to call by country, outcomes, retry ladder, locks) and the guided intro and demo scripts in English and Arabic with captured answers. Booking from the cockpit is next; reps book in HighLevel meanwhile. |
-| 3. The AI layer | Shipped: proposals (hermes/sales-desk, gpt-5 on the VPS key) and the per-rep Fathom index. Next: notes after each call, the setter-to-closer brief, call reviews, the weekly and 30-day digests. |
-| 4. Follow-up and pipeline | Replies waiting and callbacks are in; the drafted and approved WhatsApp and email sends, the board, assets per lead and lead research are next. |
-| 5. Goals, pay, EOD, CEO | Goals, pace and the pay estimate are in Numbers; the EOD in the cockpit and the CEO cockpit's sales feed are next. |
+| 1. Foundation | Shipped: the app at /sales, portal sign-in and seats from the Admin page, the B2B copy every three minutes, the lead page, the calendar with marking written to HighLevel, numbers, links. Today and the Calendar open on the person's own calls; a manager can look through the team or one rep. |
+| 2. Calling and scripts | Shipped: the dialer (queue, Maqsam click to call by country, outcomes, retry ladder, locks), the rep's Maqsam seat state before every call, "Talk to them" beside the lead, and the guided intro and demo scripts in English and Arabic. A seat takes its Maqsam and Fathom addresses from B2B's rep list. Booking from the cockpit is next; reps book in HighLevel meanwhile. |
+| 3. The AI layer | Shipped: proposals; Recordings (every Fathom sales call from the Obsidian vault, 448, with summaries and transcripts); Vince's reviews (his 121 imported, new ones on the desk's key, two a half hour); the lead researcher (Google through Apify plus the model's web search, every claim with its page). Next: notes after each call, the setter-to-closer brief, the weekly and 30-day digests. |
+| 4. Follow-up and pipeline | Shipped: talking to a lead on WhatsApp (inside the 24-hour window) and email through HighLevel, from the lead page and the dialer, every send logged and read back; the follow-up agent's drafts with approval, the manager's view and the switch per kind of message. Next: the board, assets per lead, WhatsApp templates through a HighLevel workflow for leads outside the window. |
+| 5. Goals, pay, EOD, CEO | Shipped: Goals by the month (goal, forecast, pace, the year behind; voided deals out of every number), the pay estimate, and the EOD in the cockpit (to #eods-salesreps and the EOD sheet). Next: the CEO cockpit's sales feed, reading the cockpit's EODs beside B2B's. |
+
+**One change from the brief:** follow-up emails go through HighLevel, not Kit.
+Kit cannot send one email to one person: the only route is a broadcast to a
+tag, which makes every lead a newsletter subscriber (the Creator plan stops at
+1,000; the mirror holds about 4,900 leads), sends replies nowhere near the
+rep, and mails the whole list if the filter is ever missing. HighLevel
+already sends Mahara's email from its own domain and brings replies back into
+the lead's conversation. Kit keeps its tag-triggered sequences.
 
 ## 6. Fixes found on the way (outside the build, some for Muhammed)
 

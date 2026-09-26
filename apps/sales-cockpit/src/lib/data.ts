@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { Asset } from "./assets";
+import type { CallRow, LeadRow } from "./calls";
 import type { GoalRow } from "./goals";
 import { supabase } from "./supabase";
 import type {
   BoardRow,
   CalendarRow,
+  CoachReview,
   Deal,
   Dial,
   InboxRow,
@@ -16,6 +19,7 @@ import type {
   Recording,
   Rep,
   Review,
+  ReviewAsk,
   SalesLink,
   ScoreRow,
   TeamMember,
@@ -23,6 +27,7 @@ import type {
   WorkerStatus,
   WorkRequest,
 } from "./types";
+import type { Snippet, TemplateRoute } from "./whatsapp";
 
 /** One shape for every read: what came back, whether it is still loading,
  * and why it failed. A screen that cannot say "this failed" lies quietly. */
@@ -249,6 +254,30 @@ export function useLeads(f: LeadFilter): Loaded<Lead[]> {
       );
     return q;
   }, [f.q, f.leadClass, f.stage, f.days, f.page]);
+}
+
+/**
+ * Leads matching a name, email, company or the last digits of a phone, for
+ * the dialer's search. Nothing is read under two characters.
+ */
+export function useLeadSearch(term: string): Loaded<Lead[]> {
+  const t = safeTerm(term);
+  return useQuery<Lead[]>(() => {
+    if (t.length < 2) return none<Lead[]>();
+    const digits = t.replace(/\D/g, "");
+    const parts = [
+      `name.ilike.*${t}*`,
+      `email.ilike.*${t}*`,
+      `company.ilike.*${t}*`,
+    ];
+    if (digits.length >= 4) parts.push(`phone8.like.*${digits.slice(-8)}*`);
+    return supabase
+      .from("cockpit_sales_leads")
+      .select("*")
+      .or(parts.join(","))
+      .order("lead_created_at", { ascending: false, nullsFirst: false })
+      .limit(20);
+  }, [t]);
 }
 
 /** The pipeline's stages, from the leads that sit in them. */
@@ -481,8 +510,10 @@ const RECORDING_LIST =
 
 export interface RecordingFilter {
   q: string;
-  /** A rep's Fathom address, or "" for everyone. */
-  by: string;
+  /** A rep's addresses (Fathom and Maqsam), or none for everyone. */
+  by: string[];
+  /** Video calls (Fathom), phone calls (Maqsam), or both. */
+  kind: "" | "video" | "phone";
   page: number;
 }
 
@@ -494,14 +525,16 @@ export function useRecordings(f: RecordingFilter): Loaded<Recording[]> {
       .order("started_at", { ascending: false, nullsFirst: false })
       .order("recording_id", { ascending: true })
       .range(f.page * PAGE, f.page * PAGE + PAGE - 1);
-    if (f.by) q = q.eq("recorded_by", f.by);
+    if (f.by.length) q = q.in("recorded_by", f.by);
+    if (f.kind === "phone") q = q.eq("source", "maqsam");
+    if (f.kind === "video") q = q.or("source.is.null,source.neq.maqsam");
     const text = f.q
       .trim()
       .replace(/[,()*]/g, " ")
       .trim();
     if (text) q = q.ilike("title", `%${text}%`);
     return q as unknown as Result<Recording[]>;
-  }, [f.q, f.by, f.page]);
+  }, [f.q, f.by.join(","), f.kind, f.page]);
 }
 
 export function useRecording(id: string): Loaded<Recording> {
@@ -543,6 +576,92 @@ export function useReviews(by: {
   }, [key]);
 }
 
+/** Open and recent asks for AI reviews of these calls. */
+export function useReviewAsks(
+  recordingIds: string[],
+  everyMs = 0,
+): Loaded<ReviewAsk[]> {
+  const ids = recordingIds.slice(0, 100);
+  return useQuery<ReviewAsk[]>(
+    () =>
+      ids.length
+        ? supabase
+            .from("cockpit_sales_review_asks")
+            .select("*")
+            .in("recording_id", ids)
+            .order("requested_at", { ascending: false })
+            .limit(200)
+        : none<ReviewAsk[]>(),
+    [ids.join(",")],
+    everyMs,
+  );
+}
+
+/** Aziz's reviews: of one call, or all of them, newest first. */
+export function useCoachReviews(by: {
+  recordingId?: string;
+  all?: boolean;
+}): Loaded<CoachReview[]> {
+  return useQuery<CoachReview[]>(() => {
+    if (!by.recordingId && !by.all) return none<CoachReview[]>();
+    let q = supabase
+      .from("cockpit_sales_coach_reviews")
+      .select("*")
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (by.recordingId) q = q.eq("recording_id", by.recordingId);
+    return q;
+  }, [by.recordingId ?? "", by.all ? 1 : 0]);
+}
+
+/**
+ * Speed to lead's inputs: the ROAS-tagged leads created in the window and
+ * every outbound call a sales rep made from the window's start to a week
+ * after its end (a lead's first call can come after the window closes).
+ */
+export function useSpeedToLead(
+  fromIso: string,
+  toIso: string,
+): Loaded<{ leads: LeadRow[]; calls: CallRow[] }> {
+  return useQuery<{ leads: LeadRow[]; calls: CallRow[] }>(async () => {
+    const until = new Date(
+      Math.min(Date.parse(toIso) + 7 * 86_400_000, Date.now() + 60_000),
+    ).toISOString();
+    const [leads, calls] = await Promise.all([
+      readAll<LeadRow>((from, to) =>
+        supabase
+          .from("cockpit_sales_leads")
+          .select("contact_id,phone8,lead_created_at")
+          .gte("lead_created_at", fromIso)
+          .lt("lead_created_at", toIso)
+          .in("lead_class", ["qualified", "unqualified"])
+          .order("contact_id")
+          .range(from, to),
+      ),
+      readAll<CallRow>((from, to) =>
+        supabase
+          .from("cockpit_sales_dials")
+          .select(
+            "occurred_at,agent_email,direction,state,duration_s,ringing_s,lead_phone8,sales_rep_id",
+          )
+          .eq("direction", "outbound")
+          .not("sales_rep_id", "is", null)
+          .gte("occurred_at", fromIso)
+          .lt("occurred_at", until)
+          .order("call_id")
+          .range(from, to),
+      ),
+    ]);
+    if (leads.error || calls.error)
+      return { data: null, error: leads.error ?? calls.error };
+    return {
+      data: { leads: leads.data ?? [], calls: calls.data ?? [] },
+      error: null,
+    };
+  }, [fromIso, toIso]);
+}
+
 /** A call's transcript from the private bucket. */
 export async function loadTranscript(path: string): Promise<string> {
   const { data, error } = await supabase.storage
@@ -553,22 +672,28 @@ export async function loadTranscript(path: string): Promise<string> {
   return await data.text();
 }
 
-/** Follow-up drafts waiting for this person, for the sidebar's count. */
+/**
+ * Follow-up drafts waiting for this person, for the sidebar's count. A
+ * manager also answers for drafts on leads whose rep has no seat yet.
+ */
 export function useFollowupsWaiting(
   email: string | null,
+  manager = false,
 ): Loaded<{ id: string }[]> {
   return useQuery<{ id: string }[]>(
-    () =>
-      email
-        ? supabase
-            .from("cockpit_sales_followups")
-            .select("id")
-            .eq("status", "draft")
-            .eq("owner_email", email)
-            .gt("expires_at", new Date().toISOString())
-            .limit(100)
-        : none<{ id: string }[]>(),
-    [email],
+    () => {
+      if (!email) return none<{ id: string }[]>();
+      const q = supabase
+        .from("cockpit_sales_followups")
+        .select("id")
+        .eq("status", "draft")
+        .gt("expires_at", new Date().toISOString())
+        .limit(100);
+      return manager
+        ? q.or(`owner_email.eq.${email},owner_email.is.null`)
+        : q.eq("owner_email", email);
+    },
+    [email, manager],
     120_000,
   );
 }
@@ -747,5 +872,79 @@ export function useReplies(hours = 48, everyMs = 60_000): Loaded<InboxRow[]> {
         .limit(50),
     [hours],
     everyMs,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// WhatsApp: the ready-made messages and the template routes (lib/whatsapp.ts)
+// ---------------------------------------------------------------------------
+
+export function useSnippets() {
+  return useQuery<Snippet[]>(
+    () =>
+      supabase
+        .from("cockpit_sales_snippets")
+        .select("id,moment,language,body,sort")
+        .is("deleted_at", null)
+        .order("moment")
+        .order("sort"),
+    [],
+  );
+}
+
+export function useTemplates() {
+  return useQuery<TemplateRoute[]>(
+    () => supabase.from("cockpit_sales_wa_templates").select("*").order("sort"),
+    [],
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sales assets: B2B's library, copied hourly (lib/assets.ts picks from it)
+// ---------------------------------------------------------------------------
+
+const ASSET_COLS =
+  "id,slug,title,asset_type,send_when,stages,objections,industries,proof_types,language,what_it_proves,paste_message_ar,paste_message_en,does_not_cover,url,duration_seconds,published_at,is_canonical,sendable,send_count";
+
+export function useAssets() {
+  return useQuery<Asset[]>(
+    () =>
+      supabase
+        .from("cockpit_sales_assets")
+        .select(ASSET_COLS)
+        .eq("sendable", true)
+        .order("title"),
+    [],
+  );
+}
+
+export interface AssetWord {
+  facet: string;
+  value: string;
+  label: string | null;
+  sort_order: number | null;
+}
+
+export function useAssetVocab() {
+  return useQuery<AssetWord[]>(
+    () =>
+      supabase
+        .from("cockpit_sales_asset_vocab")
+        .select("facet,value,label,sort_order")
+        .order("sort_order"),
+    [],
+  );
+}
+
+export function useAssetSends(contactId: string) {
+  return useQuery<{ asset_id: string; sent_at: string; sent_by: string }[]>(
+    () =>
+      supabase
+        .from("cockpit_sales_asset_sends")
+        .select("asset_id,sent_at,sent_by")
+        .eq("contact_id", contactId)
+        .order("sent_at", { ascending: false })
+        .limit(50),
+    [contactId],
   );
 }

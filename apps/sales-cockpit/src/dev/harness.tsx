@@ -24,6 +24,8 @@ const SUPABASE_URL = String(import.meta.env.VITE_SUPABASE_URL ?? "");
 
 type Row = Record<string, unknown>;
 
+let dialStartedAt = 0;
+
 async function main() {
   let scripts: Record<string, Row> = {};
   try {
@@ -126,36 +128,116 @@ async function main() {
             read_at: new Date().toISOString(),
           },
         });
+      if (body.action === "dial.agent")
+        return json({
+          ok: true,
+          email: "sara@example.com",
+          from: "seat",
+          ready: true,
+          state: "available",
+        });
+      if (body.action === "dial.status") {
+        const since = Date.now() - dialStartedAt;
+        return json({
+          ok: true,
+          attempt: {
+            id: body.attempt_id,
+            contact_id: "",
+            state: "placed",
+            started_at: new Date(dialStartedAt).toISOString(),
+            error: null,
+          },
+          call:
+            since > 9000
+              ? { final: true, answered: true, seconds: 94, words: "Answered" }
+              : null,
+          auto_saved: false,
+        });
+      }
+      if (body.action === "book.slots") {
+        const days = [1, 2, 3].map(d => {
+          const day = new Date(Date.now() + d * 86_400_000 + 3 * 3_600_000)
+            .toISOString()
+            .slice(0, 10);
+          const slots: string[] = [];
+          for (let m = 600; m <= 1060; m += 20)
+            slots.push(
+              `${day}T${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}:00+03:00`,
+            );
+          return { day, slots };
+        });
+        return json({
+          ok: true,
+          kind: body.kind,
+          calendar_id: "cal",
+          calendar: "Intro",
+          minutes: body.kind === "demo" ? 45 : 15,
+          with: body.with ?? "me",
+          on_team: true,
+          notice:
+            "An intro can be booked from 2 hours ahead, up to 3 days out, as the HighLevel calendar allows.",
+          existing: null,
+          days,
+        });
+      }
+      if (body.action === "book.create")
+        return json({
+          ok: true,
+          verified: true,
+          words: "Intro booked for Sat 26 Sep, 10:20 (Kuwait time)",
+        });
       if (body.action === "dial.queue")
         return json({
           ok: true,
           as: body.as ?? "setter",
-          counts: [1, 3, 2, 41],
+          counts: [2, 3, 2, 41],
           open: null,
-          queue: F.LEADS.slice(0, 8).map((l, i) => ({
-            contact_id: l.contact_id,
-            name: l.name,
-            phone: l.phone,
-            stage: l.stage_name,
-            lead_class: l.lead_class,
-            tier: i === 0 ? 0 : i < 4 ? 1 : i < 6 ? 2 : 3,
-            why: [
-              "New lead, call now",
-              "Wrote back today",
-              "New lead, not reached yet",
-              "New lead, never called",
-              "Next try is due",
-              "Missed the intro, rebook it",
-              "Never called",
-              "Never called",
-            ][i],
-            created_at: l.lead_created_at,
-            last_dial_at:
-              i > 3 ? new Date(Date.now() - 86_400_000).toISOString() : null,
-            due_at: null,
-          })),
+          today: {
+            saved: 23,
+            calls: 19,
+            answered: 7,
+            unmatched: 1,
+            talk_s: 1830,
+            booked: 2,
+            auto_no_answer: 6,
+            line: { calls: 24, answered: 9, talk_s: 2210, last_at: null },
+          },
+          queue: F.LEADS.slice(0, 8)
+            .map((l, i) => ({
+              contact_id: l.contact_id,
+              name: l.name,
+              phone: l.phone,
+              stage: l.stage_name,
+              lead_class: l.lead_class,
+              tier: i === 0 ? 0 : i < 4 ? 1 : i < 6 ? 2 : 3,
+              why: [
+                "New lead, call now",
+                "Wrote back today",
+                "New lead, not reached yet",
+                "New lead, never called",
+                "Next try is due",
+                "Missed the intro, rebook it",
+                "Never called",
+                "Never called",
+              ][i],
+              created_at:
+                i === 0
+                  ? new Date(Date.now() - 40_000).toISOString()
+                  : l.lead_created_at,
+              last_dial_at:
+                i > 3 ? new Date(Date.now() - 86_400_000).toISOString() : null,
+              due_at: null,
+              inbound_at:
+                i === 1 ? new Date(Date.now() - 150_000).toISOString() : null,
+              callback_at: null,
+              demo_at: null,
+              step: i > 3 ? 1 : 0,
+              last_outcome: i > 3 ? "no_answer" : null,
+            }))
+            .map((x, i) => (i === 1 ? { ...x, tier: 0 } : x)),
         });
-      if (body.action === "dial.call")
+      if (body.action === "dial.call") {
+        dialStartedAt = Date.now();
         return json({
           ok: true,
           attempt: {
@@ -167,6 +249,7 @@ async function main() {
           },
           route: { country: "Saudi Arabia", caller: "966115203895" },
         });
+      }
       if (body.action === "dial.save" || body.action === "dial.release")
         return json({ ok: true });
       if (body.action === "ghl.users")

@@ -2,6 +2,14 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
+<!-- webinar:metadata:start -->
+<meta name="webinar-event-key" content="mahara-live-training-next-001">
+<meta name="webinar-schedule-revision" content="1">
+<meta name="webinar-config-sha256" content="ebde955d74022e136f373e55f4d3614bd6e01163d8ed039f4543a5b448057d31">
+<meta name="webinar-start" content="">
+<script src="/webinar-schedule.js"></script>
+<!-- webinar:metadata:end -->
+<script src="/webinar-countdown.js" defer></script>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>تدريب مباشر مجاني · مهارة ميديا</title>
 <meta name="description" content="تدريب مباشر مجاني لأصحاب شركات التصميم والمقاولات بالخليج: الخمس خطوات من الإعلان لين توقيع العقد.">
@@ -264,8 +272,12 @@ display: flex; flex-direction: column;
 <span data-only="en">In this training, I walk you step by step through the five steps we installed for 65 design, build, and contracting companies across the GCC. The same system that brought them over $76 million in new projects. From the ad, all the way to the signed contract.</span>
 </p>
 <div class="chips">
-<span class="chip"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg><span data-only="ar">الخميس ١٧ سبتمبر</span><span data-only="en">Thursday, September 17</span></span>
-<span class="chip"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span data-only="ar">٨:٠٠ مساءً بتوقيت مكة</span><span data-only="en">8:00 PM Mecca time (GMT+3)</span></span>
+<span class="chip"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg><!-- webinar:date:start -->
+<span data-only="ar">الموعد الياي بنعلنه قريب</span><span data-only="en">Next date to be announced</span>
+<!-- webinar:date:end --></span>
+<span class="chip"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><!-- webinar:time:start -->
+<span data-only="ar"></span><span data-only="en"></span>
+<!-- webinar:time:end --></span>
 <span class="chip"><svg viewBox="0 0 24 24"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg><span data-only="ar">لايف على زوم</span><span data-only="en">Live on Zoom</span></span>
 <span class="chip"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg><span data-only="ar">مجاني ١٠٠٪</span><span data-only="en">100% Free</span></span>
 </div>
@@ -519,8 +531,11 @@ display: flex; flex-direction: column;
 </div>
 <div class="form-shell reveal">
 <div class="form-card">
+<!-- webinar:registration-note:start -->
+<p><span data-only="ar">التسجيل يفتح أول ما نأكد الموعد الياي.</span><span data-only="en">Registration opens when the next date is confirmed.</span></p>
+<!-- webinar:registration-note:end -->
 <iframe
-    src="https://link.maharamedia.com/widget/form/5wC0SkFcgCfFzbpOUBWk"
+    data-webinar-form
     style="width:100%;height:100%;border:none;border-radius:3px"
     id="inline-5wC0SkFcgCfFzbpOUBWk"
     data-layout="{'id':'INLINE'}"
@@ -579,26 +594,6 @@ applyLang(/[?&]en\b/.test(location.search) ? 'en' : 'ar');
 btn.addEventListener('click', function () {
 applyLang(body.getAttribute('data-lang') === 'ar' ? 'en' : 'ar');
 });
-
-/* ---- countdown ---- */
-/* SET BEFORE LAUNCH: ISO datetime with Kuwait offset, e.g. '2026-08-12T19:00:00+03:00' */
-var COUNTDOWN_ISO = '2026-09-17T20:00:00+03:00';
-var target = Date.parse(COUNTDOWN_ISO);
-if (isNaN(target)) { target = Date.now() + 3 * 86400000 + 7 * 3600000; } /* preview fallback until the real date is set */
-var elD = document.getElementById('cd-d'), elH = document.getElementById('cd-h'),
-    elM = document.getElementById('cd-m'), elS = document.getElementById('cd-s'),
-    box = document.getElementById('countdown'), over = document.getElementById('countOver');
-function pad(n) { return n < 10 ? '0' + n : '' + n; }
-function tick() {
-var diff = target - Date.now();
-if (diff <= 0) { box.style.display = 'none'; over.style.display = 'block'; return; }
-elD.textContent = pad(Math.floor(diff / 86400000));
-elH.textContent = pad(Math.floor(diff / 3600000) % 24);
-elM.textContent = pad(Math.floor(diff / 60000) % 60);
-elS.textContent = pad(Math.floor(diff / 1000) % 60);
-setTimeout(tick, 1000);
-}
-tick();
 
 /* ---- reveals ---- */
 var io = new IntersectionObserver(function (entries) {

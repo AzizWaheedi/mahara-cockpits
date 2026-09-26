@@ -20,6 +20,7 @@ export type ZoomSession = {
   pitch1At: number | null;
   pitch2At: number | null;
   complete: boolean;
+  coverage?: { attendance?: string; chat?: string; poll?: string; qa?: string };
 };
 
 export type ZoomAttendance = {
@@ -79,6 +80,7 @@ export type Room = {
   /** Share of attendees still in the room two minutes before the end. */
   stayToEnd: number | null;
   chat: {
+    complete?: boolean;
     messages: number;
     people: number;
     perAttendee: number | null;
@@ -88,6 +90,21 @@ export type Room = {
   /** Null when no door can read them (the Zoom app's scopes). */
   polls: { answers: number; people: number } | null;
   qa: number | null;
+  /** Missing/incomplete source evidence is displayed alongside the observed curve. */
+  quality?: {
+    warnings: string[];
+    invalidRows: number;
+    missingLeaves: number;
+    anonymousIdentities: number;
+    curveTruncated: boolean;
+  };
+  checkpoints?: {
+    minute: number;
+    present: number;
+    ofPeak: number | null;
+    initialCohortRemaining: number | null;
+  }[];
+  watchBands?: { percent: number; people: number; share: number | null }[];
   /** Lowercased emails and contact ids Zoom has for attendees. */
   emails: string[];
   contactIds: string[];
@@ -113,7 +130,9 @@ export function median(xs: number[]): number | null {
 
 /** Overlapping segments of one person (two devices, a rejoin) merged. */
 export function merge(segs: [number, number][]): [number, number][] {
-  const s = segs.filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0]);
+  const s = segs
+    .filter(([a, b]) => Number.isFinite(a) && Number.isFinite(b) && b > a)
+    .sort((x, y) => x[0] - y[0]);
   const out: [number, number][] = [];
   for (const [a, b] of s) {
     const last = out[out.length - 1];
@@ -153,15 +172,44 @@ export function roomOf(
   if (!sessions.length) return null;
   const ids = new Set(sessions.map(s => s.uuid));
   const rows = attendance.filter(r => ids.has(r.sessionUuid));
-  const internal = new Set(rows.filter(r => r.internal).map(r => r.personKey));
-  const outside = rows.filter(r => !r.internal && !internal.has(r.personKey));
+  const internal = new Set(
+    rows.filter(r => r.internal).map(r => `${r.sessionUuid}:${r.personKey}`),
+  );
+  const outside = rows.filter(
+    r => !r.internal && !internal.has(`${r.sessionUuid}:${r.personKey}`),
+  );
 
   // A false start (the host alone for a minute) must not stretch the room.
   const withPeople = new Set(outside.map(r => r.sessionUuid));
   const used = sessions.filter(s => withPeople.has(s.uuid));
   const live = used.length ? used : sessions;
   const liveIds = new Set(live.map(s => s.uuid));
-  const people = outside.filter(r => liveIds.has(r.sessionUuid));
+  const candidates = outside.filter(r => liveIds.has(r.sessionUuid));
+  const bounds = new Map(live.map(s => [s.uuid, s]));
+  const people = candidates.filter(r => {
+    const b = bounds.get(r.sessionUuid)!;
+    return (
+      Number.isFinite(r.joinAt) &&
+      r.personKey &&
+      (r.leaveAt === null ||
+        (Number.isFinite(r.leaveAt) && r.leaveAt > r.joinAt)) &&
+      (b.endedAt === null || r.joinAt < b.endedAt) &&
+      (r.leaveAt === null || r.leaveAt > b.startedAt)
+    );
+  });
+  const invalidRows = candidates.length - people.length;
+  const missingLeaves = people.filter(r => r.leaveAt === null).length;
+  const warnings: string[] = [];
+  if (live.some(s => s.endedAt === null))
+    warnings.push(
+      "The session end is not verified. Completion and retention rates are unavailable.",
+    );
+  if (invalidRows)
+    warnings.push(`${invalidRows} invalid attendance rows excluded.`);
+  if (missingLeaves)
+    warnings.push(
+      `${missingLeaves} missing leave times. Watch and retention rates are unavailable until reconciled.`,
+    );
 
   const startAt = Math.min(...live.map(s => s.startedAt));
   const lastLeave = Math.max(
@@ -171,18 +219,45 @@ export function roomOf(
   );
   const endAt = Math.max(startAt + MIN, lastLeave);
 
+  // Only verified email/contact identities can bridge Zoom instances. Guest and
+  // legacy display-name keys remain scoped to one instance.
+  const identity = (r: ZoomAttendance) =>
+    r.contactId
+      ? `contact:${r.contactId}`
+      : r.email
+        ? `email:${r.email.trim().toLowerCase()}`
+        : `${r.sessionUuid}:${r.personKey}`;
+  const observed = new Set(people.map(identity));
+  const anonymousIdentities = new Set(
+    people.filter(r => /^(name:|unknown:)/.test(r.personKey)).map(identity),
+  ).size;
+  if (anonymousIdentities)
+    warnings.push(
+      `${anonymousIdentities} identities have only a display name or an unknown guest key; unique-person totals are provisional.`,
+    );
   const byPerson = new Map<string, [number, number][]>();
   for (const r of people) {
+    if (r.leaveAt === null) continue; // A missing leave is not evidence of staying to the end.
+    const bound = bounds.get(r.sessionUuid)!;
     const seg: [number, number] = [
-      Math.max(r.joinAt, startAt),
-      Math.min(r.leaveAt ?? endAt, endAt),
+      Math.max(r.joinAt, bound.startedAt),
+      Math.min(r.leaveAt, bound.endedAt ?? endAt),
     ];
-    byPerson.set(r.personKey, [...(byPerson.get(r.personKey) ?? []), seg]);
+    const key = identity(r);
+    byPerson.set(key, [...(byPerson.get(key) ?? []), seg]);
   }
   const merged = new Map(
     [...byPerson.entries()].map(([k, v]) => [k, merge(v)] as const),
   );
-  const attendees = merged.size;
+  const attendees = observed.size;
+  const timingReliable =
+    missingLeaves === 0 &&
+    invalidRows === 0 &&
+    live.every(
+      s =>
+        (s.coverage ? s.coverage.attendance === "complete" : s.complete) &&
+        s.endedAt !== null,
+    );
   const watch = [...merged.values()].map(
     segs => segs.reduce((t, [a, b]) => t + (b - a), 0) / MIN,
   );
@@ -190,9 +265,9 @@ export function roomOf(
   const firstJoin = new Map<string, number>();
   for (const r of people)
     firstJoin.set(
-      r.personKey,
+      identity(r),
       Math.min(
-        firstJoin.get(r.personKey) ?? Number.POSITIVE_INFINITY,
+        firstJoin.get(identity(r)) ?? Number.POSITIVE_INFINITY,
         r.joinAt,
       ),
     );
@@ -222,15 +297,45 @@ export function roomOf(
   let last = full.length;
   while (last > 1 && full[last - 1] === 0) last--;
   const curve = full.slice(0, last);
-  const peak = Math.max(0, ...curve);
-  const peakMinute = Math.max(0, curve.indexOf(peak));
+  // Exact sweep, not midpoint samples: a 10-second overlap still contributes
+  // to the peak. Half-open intervals process simultaneous joins/leaves together.
+  const changes = new Map<number, number>();
+  for (const segs of merged.values())
+    for (const [a, b] of segs) {
+      changes.set(a, (changes.get(a) ?? 0) + 1);
+      changes.set(b, (changes.get(b) ?? 0) - 1);
+    }
+  let peak = 0,
+    concurrent = 0,
+    peakMinute = 0;
+  for (const [at, delta] of [...changes].sort((a, b) => a[0] - b[0])) {
+    concurrent += delta;
+    if (concurrent > peak) {
+      peak = concurrent;
+      peakMinute = Math.floor((at - startAt) / MIN);
+    }
+  }
+  const curveTruncated = (endAt - startAt) / MIN > ROOM_CAP_MIN;
+  if (curveTruncated)
+    warnings.push(
+      `The chart shows the first ${ROOM_CAP_MIN} minutes; summary calculations use the full session.`,
+    );
+  if (!live.every(s => s.complete))
+    warnings.push(
+      "Source collection is incomplete; observed counts can still change.",
+    );
+  for (const kind of ["chat", "poll", "qa"] as const)
+    if (live.some(s => s.coverage && s.coverage[kind] !== "complete"))
+      warnings.push(
+        `${kind === "qa" ? "Q&A" : kind} data is incomplete or unavailable. Missing answers are not counted as zero.`,
+      );
 
   const chat = engagement.filter(
     e =>
       e.kind === "chat" &&
       liveIds.has(e.sessionUuid) &&
       !e.private &&
-      !(e.personKey && internal.has(e.personKey)),
+      !(e.personKey && internal.has(`${e.sessionUuid}:${e.personKey}`)),
   );
   const ones = chat
     .filter(e => e.one && e.at !== null)
@@ -243,14 +348,18 @@ export function roomOf(
       people.filter(r => r.sessionUuid === b.uuid).length -
       people.filter(r => r.sessionUuid === a.uuid).length,
   )[0];
-  const minuteOf = (t: number) =>
-    Math.max(0, Math.min(curve.length - 1, Math.floor((t - startAt) / MIN)));
+  const minuteOf = (t: number) => Math.floor((t - startAt) / MIN);
   const pitchAt = (n: 1 | 2): { at: number; source: "set" | "chat" } | null => {
     const set = n === 1 ? fullest.pitch1At : fullest.pitch2At;
-    if (set) return { at: set, source: "set" };
+    if (set !== null) {
+      if (set < fullest.startedAt || set >= (fullest.endedAt ?? endAt))
+        return null;
+      return { at: set, source: "set" };
+    }
     if (n === 1) {
       const burst = onesBurst(ones);
-      if (burst) return { at: burst, source: "chat" };
+      if (burst !== null && burst >= startAt && burst < endAt)
+        return { at: burst, source: "chat" };
     }
     return null;
   };
@@ -263,8 +372,8 @@ export function roomOf(
       n,
       minute,
       source: p.source,
-      present: curve[minute] ?? 0,
-      retention: share(curve[minute] ?? 0, peak),
+      present: presentAt(p.at),
+      retention: timingReliable ? share(presentAt(p.at), peak) : null,
     });
   }
   const p1 = pitchAt(1);
@@ -283,7 +392,7 @@ export function roomOf(
 
   const endProbe = endAt - 2 * MIN;
   const stayToEnd =
-    attendees && endAt - startAt >= 5 * MIN
+    timingReliable && attendees && endAt - startAt >= 5 * MIN
       ? share(
           [...merged.values()].filter(segs =>
             segs.some(([a, b]) => a <= endProbe && endProbe < b),
@@ -293,10 +402,18 @@ export function roomOf(
       : null;
 
   const polls = engagement.filter(
-    e => e.kind === "poll" && liveIds.has(e.sessionUuid),
+    e =>
+      e.kind === "poll" &&
+      liveIds.has(e.sessionUuid) &&
+      !e.private &&
+      !(e.personKey && internal.has(`${e.sessionUuid}:${e.personKey}`)),
   );
   const qa = engagement.filter(
-    e => e.kind === "qa" && liveIds.has(e.sessionUuid),
+    e =>
+      e.kind === "qa" &&
+      liveIds.has(e.sessionUuid) &&
+      !e.private &&
+      !(e.personKey && internal.has(`${e.sessionUuid}:${e.personKey}`)),
   );
 
   return {
@@ -304,13 +421,51 @@ export function roomOf(
     sessions: live.length,
     startAt,
     endAt,
-    complete: live.every(s => s.complete),
+    complete: timingReliable && live.every(s => s.complete),
+    quality: {
+      warnings,
+      invalidRows,
+      missingLeaves,
+      anonymousIdentities,
+      curveTruncated,
+    },
+    checkpoints: [5, 15, 30, 45, 60, 90, 120]
+      .filter(m => startAt + m * MIN < endAt)
+      .map(minute => {
+        const t = startAt + minute * MIN;
+        const cohort = [...merged].filter(
+          ([key]) => (firstJoin.get(key) ?? Infinity) <= reference + ON_TIME_MS,
+        );
+        return {
+          minute,
+          present: presentAt(t),
+          ofPeak: timingReliable ? share(presentAt(t), peak) : null,
+          initialCohortRemaining: timingReliable
+            ? share(
+                cohort.filter(([, segs]) =>
+                  segs.some(([a, b]) => a <= t && t < b),
+                ).length,
+                cohort.length,
+              )
+            : null,
+        };
+      }),
+    watchBands: timingReliable
+      ? [25, 50, 75, 90].map(percent => {
+          const n = watch.filter(
+            w => w * MIN >= ((endAt - startAt) * percent) / 100,
+          ).length;
+          return { percent, people: n, share: share(n, attendees) };
+        })
+      : [],
     attendees,
     onTime,
-    watchAvgMin: watch.length
-      ? round1(watch.reduce((a, b) => a + b, 0) / watch.length)
-      : null,
-    watchMedianMin: watch.length ? round1(median(watch) ?? 0) : null,
+    watchAvgMin:
+      timingReliable && watch.length
+        ? round1(watch.reduce((a, b) => a + b, 0) / watch.length)
+        : null,
+    watchMedianMin:
+      timingReliable && watch.length ? round1(median(watch) ?? 0) : null,
     curve,
     peak,
     peakMinute,
@@ -318,19 +473,27 @@ export function roomOf(
     drops: drops.slice(0, 3),
     stayToEnd,
     chat: {
+      complete: live.every(s =>
+        s.coverage ? s.coverage.chat === "complete" : s.complete,
+      ),
       messages: chat.length,
-      people: new Set(chat.map(e => e.personKey ?? "")).size,
+      people: new Set(chat.map(e => e.personKey).filter(Boolean)).size,
       perAttendee: attendees ? round1(chat.length / attendees) : null,
       onesAtPitch1,
     },
-    polls:
-      opts.pollsReadable || polls.length
-        ? {
-            answers: polls.length,
-            people: new Set(polls.map(e => e.personKey ?? "")).size,
-          }
-        : null,
-    qa: opts.pollsReadable || qa.length ? qa.length : null,
+    polls: live.every(s =>
+      s.coverage ? s.coverage.poll === "complete" : opts.pollsReadable,
+    )
+      ? {
+          answers: polls.length,
+          people: new Set(polls.map(e => e.personKey).filter(Boolean)).size,
+        }
+      : null,
+    qa: live.every(s =>
+      s.coverage ? s.coverage.qa === "complete" : opts.pollsReadable,
+    )
+      ? qa.length
+      : null,
     emails: [
       ...new Set(
         people.map(r => r.email).filter((x): x is string => Boolean(x)),
@@ -347,8 +510,10 @@ export function roomOf(
 /** The survey's profit threshold for a qualified firm: the call funnel's target, businesses above $100K profit. */
 export const QUALIFIED_PROFIT = 100_000;
 
-/** Phone numbers compared on their last eight digits, the length of a Kuwaiti number. */
+/** Full international number only. Do not collapse different country codes or guess a country. */
 export function phoneKey(p: string | null | undefined): string | null {
-  const d = String(p ?? "").replace(/\D/g, "");
-  return d.length >= 8 ? d.slice(-8) : null;
+  const d = String(p ?? "")
+    .replace(/\D/g, "")
+    .replace(/^00/, "");
+  return /^[1-9]\d{9,14}$/.test(d) ? d : null;
 }

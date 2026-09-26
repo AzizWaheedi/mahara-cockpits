@@ -17,3 +17,6 @@ __pycache__/
 # Read-only query helpers and one-off SQL, never part of a build.
 scratchpad/
 scripts/*.json
+
+# Supabase CLI local cache
+supabase/.temp/

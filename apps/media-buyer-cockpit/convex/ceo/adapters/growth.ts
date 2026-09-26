@@ -212,13 +212,14 @@ fe as (
 -- rules, so the call funnel is the dashboard's total less the webinar.
 wb_meta as (
   select w.k,
-    coalesce(sum(s.spend), 0) as spend,
-    coalesce(sum(s.impressions), 0) as impressions,
-    coalesce(sum(s.clicks), 0) as clicks,
-    coalesce(sum(s.inline_link_clicks), 0) as link_clicks
+    coalesce(sum(s.spend) filter (where public.b2b_campaign_type(s.campaign_name) = 'lead_gen'), 0) as spend,
+    coalesce(sum(s.spend) filter (where public.b2b_campaign_type(s.campaign_name) = 'retargeting'), 0) as spend_retargeting,
+    coalesce(sum(s.impressions) filter (where public.b2b_campaign_type(s.campaign_name) = 'lead_gen'), 0) as impressions,
+    coalesce(sum(s.clicks) filter (where public.b2b_campaign_type(s.campaign_name) = 'lead_gen'), 0) as clicks,
+    coalesce(sum(s.inline_link_clicks) filter (where public.b2b_campaign_type(s.campaign_name) = 'lead_gen'), 0) as link_clicks
   from w
   join public.meta_ad_snapshots s on s.date between w.f and w.t
-    and public.b2b_campaign_type(s.campaign_name) = 'lead_gen'
+    and public.b2b_campaign_type(s.campaign_name) in ('lead_gen', 'retargeting')
     and ${webbyCampaign("s")}
   group by w.k
 ),
@@ -286,7 +287,7 @@ select w.k, w.f::text as d_from, w.t::text as d_to,
   coalesce(fe.fe_deals, 0) as fe_deals, coalesce(fe.fe_deposit, 0) as fe_deposit,
   coalesce(fe.fe_deals_confirmed, 0) as fe_deals_confirmed, coalesce(fe.fe_confirmed, 0) as fe_confirmed,
   json_build_object(
-    'spend', coalesce(wm.spend, 0), 'impressions', coalesce(wm.impressions, 0),
+    'spend', coalesce(wm.spend, 0), 'spend_retargeting', coalesce(wm.spend_retargeting, 0), 'impressions', coalesce(wm.impressions, 0),
     'clicks', coalesce(wm.clicks, 0), 'link_clicks', coalesce(wm.link_clicks, 0),
     'leads', coalesce(wl.leads, 0),
     'intros_booked', coalesce(wc.intros_booked, 0), 'intros_shown', coalesce(wc.intros_shown, 0),
@@ -332,7 +333,7 @@ function dailySql(from: string, to: string): string {
 meta as (
   select s.date as d,
     sum(s.spend) filter (where public.b2b_campaign_type(s.campaign_name) = 'lead_gen' and not ${webbyCampaign("s")}) as spend,
-    sum(s.spend) filter (where public.b2b_campaign_type(s.campaign_name) = 'retargeting') as spend_rt
+    sum(s.spend) filter (where public.b2b_campaign_type(s.campaign_name) = 'retargeting' and not ${webbyCampaign("s")}) as spend_rt
   from public.meta_ad_snapshots s
   where s.date between ${f} and ${t}
   group by 1
@@ -631,7 +632,7 @@ function partOf(r: Row): WebinarPart {
  * funnel is the dashboard's rule applied to the calls that are not the
  * webinar's. A window the webinar has nothing in is returned untouched.
  */
-function withoutWebinar(m: Row, wb: WebinarPart): Row {
+export function withoutWebinar(m: Row, wb: WebinarPart): Row {
   if (!Object.values(wb).some(x => x !== 0)) return m;
   const less = (k: string) => num(m[k]) - (wb[k] ?? 0);
   const div = (a: number, b: number, times: number, places: number) =>
@@ -663,17 +664,14 @@ function withoutWebinar(m: Row, wb: WebinarPart): Row {
   const signed = less("signed");
   const revenue = less("revenue");
   const leadgen = num(m.spend_leadgen) - (wb.spend ?? 0);
+  const retargeting = num(m.spend_retargeting) - (wb.spend_retargeting ?? 0);
   return {
     ...m,
     leads,
     spend: r2(spend),
     spend_leadgen: r2(leadgen),
-    retargeting_share: div(
-      num(m.spend_retargeting),
-      leadgen + num(m.spend_retargeting),
-      100,
-      1,
-    ),
+    spend_retargeting: r2(retargeting),
+    retargeting_share: div(retargeting, leadgen + retargeting, 100, 1),
     impressions,
     clicks,
     link_clicks: linkClicks,

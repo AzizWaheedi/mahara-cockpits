@@ -1,8 +1,11 @@
 import { ArrowLeft, Copy, ExternalLink, Phone, ScrollText } from "lucide-react";
-import { type ReactNode, useEffect, useMemo } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import { AdOrigin } from "../components/AdOrigin";
+import { ProofToSend } from "../components/AssetPicker";
+import { CallNotesList, useCallNotes } from "../components/CallNotes";
 import { Conversation, useConversation } from "../components/Conversation";
+import { HotControl } from "../components/HotList";
 import {
   EmptyState,
   Failed,
@@ -10,18 +13,20 @@ import {
   StatusChip,
   type Tone,
 } from "../components/kit";
+import { Answers } from "../components/LeadAnswers";
 import { LeadRecordings } from "../components/LeadRecordings";
 import { LeadTimeline, type LiveMessage } from "../components/LeadTimeline";
 import { CrmLine, MarkControls } from "../components/MarkControls";
 import { NotesPanel } from "../components/NotesPanel";
 import { ProposalPanel } from "../components/ProposalPanel";
+import { AskReference } from "../components/References";
 import { ResearchPanel } from "../components/ResearchPanel";
-import { useLead, useLeadActivity, useTeam } from "../lib/data";
+import { assetStage, objectionsFrom } from "../lib/assets";
+import { useLead, useLeadActivity, useSetting, useTeam } from "../lib/data";
 import {
   ago,
   callType,
   classLabel,
-  day,
   isArabic,
   plainStage,
   statusLabel,
@@ -29,6 +34,7 @@ import {
 } from "../lib/format";
 import { toast } from "../lib/toast";
 import type { CalendarRow, Lead, Me } from "../lib/types";
+import { leadLanguage } from "../lib/whatsapp";
 
 const GHL_LOCATION = "7NI8yyJtwsh2OOWA5Icr";
 
@@ -47,6 +53,15 @@ export default function LeadPage({ me }: { me: Me }) {
   // One read of HighLevel feeds the conversation, the timeline's messages,
   // the owner and the do-not-disturb flag.
   const convo = useConversation(contactId);
+  const callNotes = useCallNotes(contactId);
+  const pipeline = useSetting<{ roles?: Record<string, string> }>("pipeline");
+  // A sales asset's message, put in the conversation box from "Proof to send".
+  const [convoPrefill, setConvoPrefill] = useState<{
+    text: string;
+    asset: { id: string; url: string | null };
+    nonce: number;
+  } | null>(null);
+  const convoRef = useRef<HTMLDivElement>(null);
   const live = convo.data;
   const timelineMessages: LiveMessage[] = useMemo(
     () =>
@@ -165,6 +180,7 @@ export default function LeadPage({ me }: { me: Me }) {
             .filter(Boolean)
             .join(" · ")}
         </p>
+        <HotControl me={me} contactId={l.contact_id} />
         <div className="flex flex-wrap gap-2">
           <Link
             to={`/call/${l.contact_id}?script=${callScript(me, appointments)}`}
@@ -236,9 +252,17 @@ export default function LeadPage({ me }: { me: Me }) {
         </div>
 
         <div className="min-w-0 space-y-5 xl:col-span-5">
-          <SectionCard title="Conversation">
-            <Conversation contactId={l.contact_id} convo={convo} />
-          </SectionCard>
+          <div ref={convoRef}>
+            <SectionCard title="Conversation">
+              <Conversation
+                contactId={l.contact_id}
+                convo={convo}
+                rep={me.name}
+                callAt={nextAppt?.start_at ?? null}
+                prefill={convoPrefill}
+              />
+            </SectionCard>
+          </div>
           <SectionCard title="Everything so far">
             {activity.error ? (
               <Failed
@@ -276,6 +300,49 @@ export default function LeadPage({ me }: { me: Me }) {
               </p>
             </SectionCard>
           ) : null}
+          <SectionCard title="Proof to send">
+            <ProofToSend
+              contactId={l.contact_id}
+              language={leadLanguage(
+                convo.thread
+                  .filter(m => m.direction === "inbound")
+                  .map(m => m.body),
+              )}
+              stage={assetStage(
+                pipeline.data?.roles?.[String(l.stage_id ?? "")] ?? null,
+              )}
+              objections={objectionsFrom(
+                (callNotes.data ?? []).flatMap(n =>
+                  (n.notes.objections ?? []).map(o => o.objection),
+                ),
+              )}
+              onUse={(text, a) => {
+                setConvoPrefill({
+                  text,
+                  asset: { id: a.id, url: a.url },
+                  nonce: Date.now(),
+                });
+                convoRef.current?.scrollIntoView({
+                  block: "start",
+                  behavior: "smooth",
+                });
+              }}
+            />
+            <div className="mt-3">
+              <AskReference contactId={l.contact_id} />
+            </div>
+          </SectionCard>
+          <SectionCard title="What the calls told us">
+            {callNotes.error ? (
+              <Failed
+                what="The call notes"
+                error={callNotes.error}
+                retry={callNotes.reload}
+              />
+            ) : (
+              <CallNotesList notes={callNotes.data ?? []} />
+            )}
+          </SectionCard>
           <SectionCard title="Research">
             <ResearchPanel contactId={l.contact_id} me={me} />
           </SectionCard>
@@ -343,59 +410,6 @@ function Page({ children }: { children: ReactNode }) {
     <main className="mx-auto w-full max-w-7xl space-y-5 px-4 py-6 md:px-6">
       {children}
     </main>
-  );
-}
-
-const ANSWERS: [keyof Lead, string][] = [
-  ["revenue", "Yearly revenue"],
-  ["revenue_goal", "Revenue goal"],
-  ["readiness", "Ready to invest"],
-  ["decision_maker", "Decision maker"],
-  ["challenge", "Biggest challenge"],
-  ["grade", "Appointment grade"],
-  ["setter_name", "Setter"],
-];
-
-function Answers({ lead }: { lead: Lead }) {
-  const rows = ANSWERS.map(([k, label]) => [label, lead[k]] as const).filter(
-    ([, v]) => v !== null && v !== undefined && String(v).trim() !== "",
-  );
-  const services =
-    lead.services && lead.services.trim() !== "Yes" ? lead.services : null;
-  if (!rows.length && !services)
-    return (
-      <p className="muted text-sm">
-        No form answers on this contact. They may have booked without the
-        qualification form.
-      </p>
-    );
-  return (
-    <dl className="space-y-2.5">
-      {rows.map(([label, v]) => (
-        <div key={label}>
-          <dt className="muted text-xs">{label}</dt>
-          <dd
-            className={`text-sm ${isArabic(String(v)) ? "ar" : ""}`}
-            dir="auto"
-          >
-            {String(v)}
-          </dd>
-        </div>
-      ))}
-      {services ? (
-        <div>
-          <dt className="muted text-xs">What they do</dt>
-          <dd className="text-sm" dir="auto">
-            {services}
-          </dd>
-        </div>
-      ) : null}
-      {lead.lead_created_at ? (
-        <p className="muted pt-1 text-xs">
-          Answered when they came in, {day(lead.lead_created_at)}.
-        </p>
-      ) : null}
-    </dl>
   );
 }
 

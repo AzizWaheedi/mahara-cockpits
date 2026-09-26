@@ -16,6 +16,17 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 dir="${1:?usage: scripts/vercel-deploy-composio.sh <app dir>}"
+# These two public projects must agree with the intended provider occurrence.
+# The CEO cockpit is independent and may ship reporting while a date is undecided.
+case "$dir" in
+  sites/webinar|apps/webinar-registration-api)
+    node scripts/webinar-schedule.mjs check
+    if [ "${DRY:-}" != 1 ]; then
+      [ -n "${WEBINAR_SCHEDULE_EVIDENCE:-}" ] || { echo "Set WEBINAR_SCHEDULE_EVIDENCE to fresh Zoom/GHL read-back. See config/webinar/README.md."; exit 2; }
+      node scripts/webinar-schedule.mjs release-check --evidence "$WEBINAR_SCHEDULE_EVIDENCE"
+    fi
+    ;;
+esac
 # ship.sh has already run this. On its own, this script would otherwise
 # upload whatever is on disk and call it production.
 if [ "${GITHUB_MAIN_OK:-}" != 1 ]; then

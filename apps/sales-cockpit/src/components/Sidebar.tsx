@@ -4,6 +4,8 @@ import {
   ChartNoAxesColumn,
   ClipboardCheck,
   FileText,
+  KanbanSquare,
+  Lightbulb,
   Link2,
   type LucideIcon,
   MessageSquareText,
@@ -46,6 +48,7 @@ export const GROUPS: { label: string; items: Item[] }[] = [
       { to: "/", label: "Today", icon: Sun },
       { to: "/dialer", label: "Dialer", icon: PhoneCall },
       { to: "/calendar", label: "Calendar", icon: CalendarDays, badge: "owed" },
+      { to: "/pipeline", label: "Pipeline", icon: KanbanSquare },
       { to: "/leads", label: "Leads", icon: UserSearch },
       {
         to: "/proposals",
@@ -68,6 +71,7 @@ export const GROUPS: { label: string; items: Item[] }[] = [
       { to: "/numbers", label: "Numbers", icon: ChartNoAxesColumn },
       { to: "/goals", label: "Goals", icon: Target },
       { to: "/recordings", label: "Recordings", icon: Mic },
+      { to: "/intelligence", label: "Intelligence", icon: Lightbulb },
     ],
   },
   {

@@ -1,0 +1,6 @@
+{
+  "name": "webby-live-training",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20" }
+}

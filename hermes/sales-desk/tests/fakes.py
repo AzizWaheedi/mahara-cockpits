@@ -39,6 +39,12 @@ PK = {
     "cockpit_sales_notes": ("id",),
     "cockpit_sales_research": ("id",),
     "cockpit_sales_deals": ("response_id",),
+    "cockpit_sales_review_asks": ("id",),
+    "cockpit_sales_call_notes": ("recording_id",),
+    "cockpit_sales_digests": ("id",),
+    "cockpit_sales_wa_templates": ("key",),
+    "cockpit_sales_confirmations": ("id",),
+    "cockpit_sales_hot": ("contact_id",),
 }
 
 
@@ -245,9 +251,13 @@ class FakeFathom:
         self.asked: list[Optional[str]] = []
         self.read: list[str] = []
 
-    def meetings(self, *, since: Any, recorded_by: Optional[str] = None, max_pages: int = 60) -> list[dict[str, Any]]:
+    def meetings(self, *, since: Any, recorded_by: Optional[str] = None, max_pages: int = 60,
+                 domains_type: Optional[str] = None) -> list[dict[str, Any]]:
         self.asked.append(recorded_by)
-        return [dict(m) for m in self.by_rep.get(recorded_by, [])]
+        out = [dict(m) for m in self.by_rep.get(recorded_by, [])]
+        if domains_type:
+            out = [m for m in out if m.get("calendar_invitees_domains_type") == domains_type]
+        return out
 
     def transcript(self, recording_id: Any) -> list[dict[str, Any]]:
         self.read.append(str(recording_id))

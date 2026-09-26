@@ -306,6 +306,31 @@ export function repsSql(): string {
 from public.sales_reps`;
 }
 
+/**
+ * The published sales assets, with B2B's own rule for what may be sent
+ * worked out there (b2b_asset_shortlist's filter): link not broken, claims
+ * not expired, and asset_sendable_age (no YouTube video from before 19 July,
+ * Aziz's rule of 8 August). The page text (raw_content) stays in B2B.
+ */
+export function assetsSql(): string {
+  return `select id, slug, title, asset_type, send_when,
+  coalesce(stages, '{}') as stages, coalesce(objections, '{}') as objections,
+  coalesce(industries, '{}') as industries, coalesce(personas, '{}') as personas,
+  coalesce(proof_types, '{}') as proof_types, language, what_it_proves,
+  paste_message_ar, paste_message_en, does_not_cover, usage_notes, url, thumbnail_url,
+  duration_seconds, published_at, theme, coalesce(is_canonical, false) as is_canonical,
+  claims_expire_at, link_ok, send_count, updated_at,
+  (coalesce(link_ok, true)
+    and (claims_expire_at is null or claims_expire_at >= (now() at time zone 'Asia/Riyadh')::date)
+    and public.asset_sendable_age(asset_type, published_at)) as sendable
+from public.assets
+where status = 'published'`;
+}
+
+export function assetVocabSql(): string {
+  return `select facet, value, label, description, sort_order from public.asset_vocab where is_active`;
+}
+
 export function scorecardSql(from: string, to: string): string {
   return `select public.b2b_rep_scorecard(${day(from)}, ${day(to)}) as payload`;
 }

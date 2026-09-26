@@ -17,27 +17,53 @@ This step, for every sales note:
   intro or demo within 30 minutes), and keeps an earlier match or one made by
   hand (recordings._keep_earlier_matches).
 
-A note with nobody from outside on the invite and no appointment beside it is
-a team meeting that happens to use a sales word, and is left out, as the
-Fathom step leaves it out. A row the Fathom step wrote keeps its share link;
-the vault's link (fathom.video/calls/...) only fills an empty one.
+Two more kinds of note are sales calls too (Aziz, 2026-09-26: "Every single
+one of them should pull in"):
+- a sales note with nobody from outside on the invite and no appointment
+  beside it, when someone from outside joined all the same (the lead came in
+  from the link). The note shows it when the vault itself could only have
+  called it `sales` because Fathom flagged an outsider (an "Impromptu"
+  meeting with no sales word, below); a call already in the cockpit shows it;
+  and for the rest Fathom is asked once which of them it flagged
+  (`fathom_outsiders`, the calls of the last `fathom_days`). 111 calls had
+  been dropped as team meetings before this;
+- a note the vault files as `external` whose outside invitee is a lead, and
+  whose title is not a client-service one (launch, check-in, review...):
+  the vault calls `external` anyone outside it cannot place, and a lead on
+  the invite places them. 163 such notes, 139 of them not in the cockpit.
+
+A sales note with nobody from outside at all, on the invite or on the call,
+and no appointment beside it is a team meeting that happens to use a sales
+word, and is left out, as the Fathom step leaves it out. A row the Fathom step
+wrote keeps its share link; the vault's link (fathom.video/calls/...) only
+fills an empty one.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 
 from . import http
+from .fathom import NOT_SALES
 from .recordings import OUR_DOMAIN, WINDOW, _keep_earlier_matches, external_emails, match
-from .supabase import iso
+from .supabase import CALLS_BUCKET, iso
 
-TRANSCRIPT_BUCKET = "sales-calls"
+TRANSCRIPT_BUCKET = CALLS_BUCKET
 MAX_SUMMARY = 20_000
 MAX_ACTIONS = 8_000
+
+# The vault writer's own sales words (/opt/data/scripts/vault-fathom.py,
+# kind()). It files a note as `sales` when its title has one of them, or when
+# the title says "impromptu" and Fathom flagged someone from outside on the
+# call (calendar_invitees_domains_type, which the note does not keep). So an
+# impromptu sales note with none of these words is one Fathom saw an outsider
+# on, whoever the invite named. Keep this list in step with that script.
+VAULT_SALES_WORDS = ("حصول المشاريع", "مكالمة", "demo", "intro call", "discovery", "strategy call",
+                     "pipeline audit", "consultation")
 
 _PERSON = re.compile(r"^\s*(?P<name>.*?)\s*\((?P<email>[^()\s]+@[^()\s]+)\)\s*$")
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -189,6 +215,32 @@ def read_note(path: Path, root: Path, *, any_kind: bool = False) -> Optional[dic
     }
 
 
+def outsider_in_note(note: dict[str, Any]) -> bool:
+    """The note itself shows that someone from outside joined: the vault
+    filed an "impromptu" meeting with no sales word as `sales`, which its rule
+    does only when Fathom flagged an outsider on the call."""
+    title = str(note.get("title") or "").lower()
+    return (note.get("kind") == "sales" and "impromptu" in title
+            and not any(w in title for w in VAULT_SALES_WORDS))
+
+
+def vault_ids(vault: Path) -> set[str]:
+    """Every recording id the vault holds, whatever its kind (the calls the
+    vault step judges; b2b_fathom.py leaves them to it)."""
+    out: set[str] = set()
+    for path in (vault / "Calls").rglob("*.md"):
+        if path.name.startswith("_"):
+            continue
+        try:
+            meta, _body = parse_frontmatter(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError):
+            continue
+        rid = str(meta.get("recording_id") or "").strip()
+        if rid:
+            out.add(rid)
+    return out
+
+
 def scan(vault: Path, *, any_kind: bool = False) -> list[dict[str, Any]]:
     """Every sales note under Calls/ (every call note, with `any_kind`), one
     per recording. Where the vault wrote a call twice, the note with the
@@ -241,21 +293,64 @@ def _all(sb: Any, table: str, params: str, page: int = 1000) -> list[dict[str, A
         offset += page
 
 
+def row_of(n: dict[str, Any], was: dict[str, Any], contact: Optional[str], appt: Optional[str],
+           how: str) -> dict[str, Any]:
+    """One note as its cockpit row. A share link the Fathom step stored is kept."""
+    row: dict[str, Any] = {
+        "recording_id": n["recording_id"],
+        "title": n["title"],
+        "recorded_by": n["rep_email"],
+        "started_at": iso(n["started"]) if n["started"] else None,
+        "duration_s": n["duration_s"],
+        "contact_id": contact,
+        "appointment_id": appt,
+        "matched_by": how,
+        "source": was.get("source") or "vault",
+        "kind": "sales",
+        "language": n["language"],
+        "people": n["people"],
+        "summary": n["summary"],
+        "action_items": n["action_items"],
+        "note_path": n["note_path"],
+        "transcript_chars": len(n["transcript"]) or None,
+    }
+    if not was.get("share_url"):
+        row["share_url"] = n["url"]
+    return row
+
+
 def run(sb: Any, vault: Path, log: Callable[[str], None], *, upload: Optional[Callable[[str, bytes], str]] = None,
-        dry: bool = False) -> dict[str, Any]:
+        dry: bool = False, fathom_outsiders: Optional[Callable[[datetime], set[str]]] = None,
+        fathom_days: int = 14, now: Optional[datetime] = None) -> dict[str, Any]:
     """Copy the vault's sales calls in. `upload(path, blob)` stores a
-    transcript in the sales-calls bucket; `dry` reads and matches only."""
+    transcript in the sales-calls bucket; `dry` reads and matches only.
+
+    `fathom_outsiders(since)` gives the recording ids since then that Fathom
+    says someone from outside was on. It is asked at most once a run, and only
+    when a sales note of the last `fathom_days` has no outside invitee, no
+    appointment beside it and nothing else to show an outsider joined: a
+    handful of pages in the half-hourly run, and the whole history once with
+    a long `fathom_days`."""
     if not (vault / "Calls").is_dir():
         raise FileNotFoundError(f"No Calls folder in the vault at {vault}")
     every = scan(vault, any_kind=True)
-    notes = [n for n in every if n["kind"] == "sales"]
     if not every:
         log("calls-vault: the vault has no call notes")
         return {"notes": 0}
+    now = now or datetime.now(timezone.utc)
+    sales_notes = [n for n in every if n["kind"] == "sales"]
+    external = [n for n in every if n["kind"] == "external" and not NOT_SALES.search(n["title"] or "")]
+    leads = sb.leads_by_email({e for n in sales_notes + external for e in external_emails(meeting_of(n))})
+    # An `external` note is one the vault could not place; a lead on its
+    # invite places it. Client-service titles stay out, as everywhere.
+    lead_calls = [n for n in external if any(e in leads for e in external_emails(meeting_of(n)))]
+    notes = sales_notes + lead_calls
+    chosen = {n["recording_id"] for n in notes}
     # A call the desk's own Fathom step indexed as sales that the vault files
-    # under another kind (external, team, training) still gets its summary
-    # and transcript from the vault; it never becomes a new row that way.
-    others = {n["recording_id"]: n for n in every if n["kind"] != "sales"}
+    # under another kind (team, training, an external one with no lead)
+    # still gets its summary and transcript from the vault; it never becomes
+    # a new row that way.
+    others = {n["recording_id"]: n for n in every if n["recording_id"] not in chosen}
 
     starts = [n["started"] for n in notes if n["started"]]
     appointments = _all(
@@ -265,7 +360,6 @@ def run(sb: Any, vault: Path, log: Callable[[str], None], *, upload: Optional[Ca
         f"&start_at=lte.{http.quote(iso(max(starts) + WINDOW))}"
         "&call_type=in.(intro,demo)&order=start_at.asc,appointment_id.asc",
     ) if starts else []
-    leads = sb.leads_by_email({e for n in notes for e in external_emails(meeting_of(n))}) if notes else {}
     reps: dict[str, str] = {}
     for r in _all(sb, "cockpit_sales_reps", "select=ghl_user_id,fathom_email,maqsam_email&order=id"):
         for k in ("fathom_email", "maqsam_email"):
@@ -279,6 +373,7 @@ def run(sb: Any, vault: Path, log: Callable[[str], None], *, upload: Optional[Ca
                            "select=recording_id,share_url,source,transcript_sha,transcript_path"
                            f"&recording_id=in.({ids})"):
             have[str(r["recording_id"])] = r
+    in_cockpit = set(have)
 
     enriched = 0
     fill: list[dict[str, Any]] = []
@@ -296,40 +391,49 @@ def run(sb: Any, vault: Path, log: Callable[[str], None], *, upload: Optional[Ca
     note_of.update({r["recording_id"]: others[r["recording_id"]] for r in fill})
 
     rows: list[dict[str, Any]] = []
-    team = 0
+    joined = {"note": 0, "cockpit": 0, "fathom": 0}
+    undecided: list[dict[str, Any]] = []
     for n in notes:
         m = meeting_of(n)
         rep = reps.get(str(n["rep_email"] or ""))
         contact, appt, how = match(m, leads=leads, appointments=appointments,
                                    rep_user_ids=[rep] if rep else [])
         if how == "none" and not external_emails(m):
+            # Nobody from outside on the invite and no appointment: a sales
+            # call only if someone from outside joined all the same.
+            if outsider_in_note(n):
+                joined["note"] += 1
+            elif n["recording_id"] in in_cockpit:
+                joined["cockpit"] += 1
+            else:
+                undecided.append(n)
+                continue
+        rows.append(row_of(n, have.get(n["recording_id"], {}), contact, appt, how))
+
+    horizon = now - timedelta(days=max(0, fathom_days))
+    ask = [n for n in undecided if n["started"] and n["started"] >= horizon]
+    flagged: set[str] = set()
+    fathom_said = "not needed"
+    if ask and fathom_outsiders is not None and fathom_days > 0:
+        try:
+            flagged = {str(x) for x in fathom_outsiders(min(n["started"] for n in ask) - timedelta(days=1))}
+            fathom_said = (f"asked about {len(ask)}, "
+                           f"{sum(1 for n in ask if n['recording_id'] in flagged)} had someone from outside")
+        except Exception as e:  # noqa: BLE001 - the rest of the vault still comes in
+            fathom_said = f"could not be asked: {http.scrub(str(e))[:160]}"
+            log(f"calls-vault: Fathom {fathom_said}")
+    elif ask:
+        fathom_said = f"not asked about {len(ask)}"
+    team = 0
+    for n in undecided:
+        if n["recording_id"] in flagged:
+            joined["fathom"] += 1
+            rows.append(row_of(n, have.get(n["recording_id"], {}), None, None, "none"))
+        else:
             team += 1
-            continue
-        was = have.get(n["recording_id"], {})
-        row: dict[str, Any] = {
-            "recording_id": n["recording_id"],
-            "title": n["title"],
-            "recorded_by": n["rep_email"],
-            "started_at": iso(n["started"]) if n["started"] else None,
-            "duration_s": n["duration_s"],
-            "contact_id": contact,
-            "appointment_id": appt,
-            "matched_by": how,
-            "source": was.get("source") or "vault",
-            "kind": "sales",
-            "language": n["language"],
-            "people": n["people"],
-            "summary": n["summary"],
-            "action_items": n["action_items"],
-            "note_path": n["note_path"],
-            "transcript_chars": len(n["transcript"]) or None,
-        }
-        if not was.get("share_url"):
-            row["share_url"] = n["url"]
-        rows.append(row)
 
     kept = _keep_earlier_matches(sb, rows)
-    uploaded = 0
+    uploaded = new_transcripts = 0
     for r in rows + fill:
         text = note_of[r["recording_id"]]["transcript"]
         if not text:
@@ -340,6 +444,7 @@ def run(sb: Any, vault: Path, log: Callable[[str], None], *, upload: Optional[Ca
         if was.get("transcript_sha") == digest and was.get("transcript_path"):
             continue
         r["transcript_sha"], r["transcript_path"] = digest, path
+        new_transcripts += 1
         if not dry and upload is not None:
             upload(path, text.encode("utf-8"))
             uploaded += 1
@@ -363,9 +468,14 @@ def run(sb: Any, vault: Path, log: Callable[[str], None], *, upload: Optional[Ca
     by: dict[str, int] = {}
     for r in rows:
         by[r["matched_by"]] = by.get(r["matched_by"], 0) + 1
+    lead_ids = {n["recording_id"] for n in lead_calls}
     summary = {
-        "notes": len(notes), "other_notes": len(others), "team": team, "rows": len(rows), "stored": stored,
-        "transcripts_uploaded": uploaded, "kept_earlier_match": kept, "filled_fathom_rows": enriched if not dry else len(fill),
+        "notes": len(sales_notes), "lead_calls": len(lead_calls), "other_notes": len(others), "team": team,
+        "outsider_joined": sum(joined.values()), "outsider_by": joined, "fathom": fathom_said,
+        "rows": len(rows), "new_rows": sum(1 for r in rows if r["recording_id"] not in in_cockpit),
+        "new_lead_calls": sum(1 for r in rows if r["recording_id"] in lead_ids and r["recording_id"] not in in_cockpit),
+        "stored": stored, "transcripts_uploaded": uploaded, "transcripts_new": new_transcripts,
+        "kept_earlier_match": kept, "filled_fathom_rows": enriched if not dry else len(fill),
         "by_email": by.get("email", 0), "by_appointment": by.get("appointment", 0),
         "unmatched": by.get("none", 0), "dry": dry,
         "first": min((r["started_at"] for r in rows if r["started_at"]), default=None),
