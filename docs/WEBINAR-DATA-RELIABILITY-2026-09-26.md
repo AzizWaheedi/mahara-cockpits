@@ -1,6 +1,14 @@
 # Webinar data reliability and editable targets, 26 September 2026
 
-Implementation and read-only audit, not production acceptance. Supersedes the target-settings portion of the 25 September checkpoint. PR #21 is still open; no ship command, remote migration, VPS replacement, contact change or message was performed.
+Implementation and production database hardening, not full production acceptance. Supersedes the target-settings portion of the 25 September checkpoint. PR #21 remains open; no application ship, VPS replacement, workflow activation or messages in this checkpoint.
+
+## Live hardening checkpoint
+
+Aziz authorized the reliability work on 26 September. Applied `restrict_reporting_view_access` to Creative Triage: all six listed views deny both anonymous and authenticated direct SELECT while service-role reads remain available. Reviewed database dependencies first: token-gated `panel_data` retains owner access, backend pulse functions retain service access. In a rolled-back transaction, an actual existing panel token still returned a client projection and an invalid token returned `not found`; no token or personal rows were printed. The isolated PostgreSQL regression covers 22 access assertions.
+
+Applied `webinar_target_versions` too. Verified RLS enabled, browser SELECT denied and service INSERT granted. No target values were changed; the editor application still needs release. The descriptions below retain the original audit findings for context, superseded by this checkpoint where stated.
+
+The next training date is intentionally undecided and editable. Aziz approved his own existing email and test WhatsApp recipient for isolated acceptance; do not invent a public date or activate client messaging. External API source access, VPS connectivity and real-event acceptance remain open.
 
 ## Current evidence
 
@@ -35,7 +43,7 @@ Supabase is the sole target store; the existing Convex authentication/action pat
 - History shows the latest ten revisions with all saved values; all revisions remain in the database. Reload latest is required after a conflict. No automatic ad-budget or workflow changes.
 - The local harness uses explicit synthetic, in-memory receipts, reset on page reload. It is not proof of production persistence.
 
-Migration prepared, **not applied remotely**: `supabase/migrations/20260926074942_webinar_target_versions.sql`. Apply to Creative Triage only as part of the reviewed release, before shipping the code. B2B remains read-only. No production targets were changed.
+Migration **applied remotely on 26 September**: `supabase/migrations/20260926074942_webinar_target_versions.sql`. Installed in Creative Triage before the application release. B2B remains read-only. No production targets were changed.
 
 ## Remaining data work, in order
 
