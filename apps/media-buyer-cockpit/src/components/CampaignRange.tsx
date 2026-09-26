@@ -240,6 +240,7 @@ export function CampaignRange({
             title="Ads"
             rows={withQuietAds(data.ads as Row[], extraAds)}
             referenceRows={(trailing?.ads ?? []) as Row[]}
+            selectedWindow={`${range.start} to ${range.end}`}
             leadsOnly={leadsOnly}
             renderKey={renderAdCell}
             renderTail={renderAdCall}
@@ -254,6 +255,23 @@ export function CampaignRange({
             )}
             tailTitle="Call"
           />
+          {data.ads.some(
+            (r: Row) =>
+              r.bookings > 0 &&
+              trailing?.ads?.some(
+                (t: Row) =>
+                  t.adIds?.length === 1 &&
+                  r.adIds?.length === 1 &&
+                  t.adIds[0] === r.adIds[0] &&
+                  t.spend > r.spend + 0.001,
+              ),
+          ) && (
+            <p className="mt-1 text-[12px] text-muted-foreground">
+              Some ads earned a booking after earlier spend. Their 30d cost is
+              shown first; the selected-window quotient remains beneath it. Each
+              cost uses spend and bookings from the same window.
+            </p>
+          )}
           {data.ads.some((r: Row) => r.spend === 0 && r.bookings > 0) && (
             <p className="mt-1 text-[12px] text-muted-foreground">
               Some bookings came from ads that spent before this range. Their
@@ -290,6 +308,7 @@ function Table({
   title,
   rows,
   referenceRows,
+  selectedWindow,
   renderKey,
   renderTail,
   renderSave,
@@ -300,6 +319,7 @@ function Table({
   title: string;
   rows: Row[];
   referenceRows?: Row[];
+  selectedWindow?: string;
   leadsOnly?: boolean;
   renderKey?: (key: string, row?: Row) => ReactNode;
   renderTail?: (key: string, row?: Row) => ReactNode;
@@ -398,6 +418,11 @@ function Table({
                   </td>
                   <td
                     className={`tabular-nums ${bookingCostTone(cost(r).value, CPB_GATE)}`}
+                    title={
+                      cost(r).label === "30d"
+                        ? `30-day spend / 30-day bookings for this exact ad. Selected window: ${selectedWindow ?? "current range"}.`
+                        : `Selected-window spend / selected-window bookings: ${selectedWindow ?? "current range"}.`
+                    }
                   >
                     {r.bookingsAttributed ? (
                       <>
@@ -406,6 +431,11 @@ function Table({
                           <span className="ml-1 text-[11px] font-normal text-muted-foreground">
                             30d
                           </span>
+                        )}
+                        {cost(r).selectedValue !== undefined && (
+                          <div className="text-[11px] font-normal text-muted-foreground">
+                            {money(cost(r).selectedValue, 2)} selected
+                          </div>
                         )}
                       </>
                     ) : (
