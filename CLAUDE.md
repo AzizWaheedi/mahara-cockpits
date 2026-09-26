@@ -25,6 +25,8 @@ brand-aligned design.** Neither is optional and neither is "later".
 - Before any new screen or a reshaped one, load and follow
   `mahara-context/skills/frontend-design/SKILL.md`: a design plan first
   (tokens, type, layout, one signature element), then the code.
+- `docs/DESIGN.md` is how the cockpits look (shell, cards, controls, touch,
+  one arrow per action); every screen follows it.
 - Inside the cockpits, the brand is the cockpit's own system: Geist,
   `--mahara-teal` as primary, the CEO kit (`SectionCard`, `StatTile`,
   `StatusChip`, `EmptyState`, `format.ts`). Extend it; do not invent a second
