@@ -152,3 +152,19 @@ read failed or the last good one is over three hours old (RUNBOOK.md,
   and parsed, polls read through the Zoom app, rows written, a second run
   wrote no duplicates. Those test rows were deleted.
 - The join link check fails: `webinar.maharamedia.com/live` answers 404.
+
+### Reliability release, 26 September
+
+Install `20260926083346_webinar_atomic_snapshots.sql` before this worker version.
+It writes sessions and attendance in one transaction and retains snapshot receipts.
+A failed chat/poll/Q&A read preserves previous source rows and marks coverage
+incomplete; no failure is converted into a successful zero after a timeout.
+Recent completed Zoom instances replay for seven days; use `zoom --again` for a
+full discovered-instance replay. Use `survey --full-backfill` after a prolonged
+outage, then compare `received` with `source_total`; capped/repeated/missing pages
+fail without advancing the survey watermark. Dry run still writes nothing.
+
+Deploy under the existing flock/cron contract after comparing and backing up the
+remote worker. Keep the transcript-provider approval hold. The stable registration
+ledger migration is separate from this worker and still needs registration API
+wiring. See `docs/WEBINAR-HARDENING-2026-09-26.md` for live proof and remaining gates.

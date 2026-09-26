@@ -166,7 +166,7 @@ const LT_SQL = `select
  */
 const COLLECTED_SQL = `select
   (select coalesce(json_agg(x order by x.started_at), '[]'::json) from (
-    select uuid, started_at, ended_at, pitch1_at, pitch2_at, complete
+    select uuid, started_at, ended_at, pitch1_at, pitch2_at, complete, coverage
     from public.cockpit_webinar_sessions) x) as sessions,
   (select coalesce(json_agg(x), '[]'::json) from (
     select session_uuid, person_key, email, contact_id, internal, join_at, leave_at
@@ -461,6 +461,7 @@ export const webinar: Adapter = {
         pitch1At: ms(r.pitch1_at) ?? null,
         pitch2At: ms(r.pitch2_at) ?? null,
         complete: r.complete === true,
+        coverage: r.coverage ?? undefined,
       }))
       .filter(x => x.startedAt > 0);
     const zAttendance: ZoomAttendance[] = jsonArray(collected?.attendance)
@@ -575,16 +576,15 @@ export const webinar: Adapter = {
     // email, then the phone. Never the name (the brief's rule). The latest
     // response of a person wins.
     const byContact = new Map(journeys.map(j => [j.contactId, j]));
-    const byEmail = new Map<string, Journey>();
-    const byPhone = new Map<string, Journey>();
+    const byEmail = new Map<string, Journey | null>();
+    const byPhone = new Map<string, Journey | null>();
     for (const j of journeys) {
-      if (j.email) byEmail.set(j.email, j);
+      if (j.email) byEmail.set(j.email, byEmail.has(j.email) ? null : j);
       const pk = phoneKey(j.phone);
-      if (pk) byPhone.set(pk, j);
+      if (pk) byPhone.set(pk, byPhone.has(pk) ? null : j);
     }
     const journeyFor = (r: SurveyRow): Journey | null => {
-      if (r.contactId && byContact.has(r.contactId))
-        return byContact.get(r.contactId) ?? null;
+      if (r.contactId) return byContact.get(r.contactId) ?? null;
       if (r.email && byEmail.has(r.email)) return byEmail.get(r.email) ?? null;
       const pk = phoneKey(r.phone);
       if (pk && byPhone.has(pk)) return byPhone.get(pk) ?? null;

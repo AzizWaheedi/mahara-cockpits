@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import datetime as dt
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 import pull
 
@@ -47,26 +47,26 @@ class Chat(unittest.TestCase):
         rows = pull.chat_rows(UUID, base, lines, {}, PULLED)
         self.assertEqual(len({r["row_key"] for r in rows}), 2)
         self.assertEqual(rows[0]["at"], "2026-09-30T17:31:05+00:00")
-        self.assertEqual(rows[0]["person_key"], "name:سارة")
+        self.assertIsNone(rows[0]["person_key"])
 
     def test_private_message_keeps_who_it_was_to(self):
         lines = pull.parse_chat("00:31:09 From Nada to Khalid:\n\thi\n")
         rows = pull.chat_rows(UUID, dt.datetime(2026, 9, 30, tzinfo=dt.timezone.utc), lines, {}, PULLED)
         self.assertEqual(rows[0]["payload"], {"to": "Khalid"})
 
-    def test_chat_takes_the_strongest_key_for_a_name(self):
+    def test_chat_never_guesses_between_people_with_the_same_name(self):
         att = pull.attendance_rows(UUID, [
             participant(name="Khalid", user_email="k@firm.com"),
             participant(name="Khalid", user_id="16778241", join_time="2026-09-30T17:40:00Z"),
         ], {}, PULLED)
         keys = pull.name_keys(att)
-        self.assertEqual(keys["khalid"], "email:k@firm.com")
+        self.assertNotIn("khalid", keys)
 
 
 class Attendance(unittest.TestCase):
-    def test_a_guest_is_a_name_and_never_an_email(self):
+    def test_a_guest_has_a_session_scoped_provider_id_never_an_email(self):
         [row] = pull.attendance_rows(UUID, [participant(name="  Abu  Fahad ")], {}, PULLED)
-        self.assertEqual(row["person_key"], "name:abu fahad")
+        self.assertEqual(row["person_key"], f"guest:{UUID}:16778240")
         self.assertIsNone(row["email"])
         self.assertIsNone(row["contact_id"])
 
@@ -311,6 +311,96 @@ class LaunchReadiness(unittest.TestCase):
         self.assertEqual(result["page"]["start"], result["zoom"]["start"])
         self.assertNotIn("never-store", str(result))
         self.assertNotIn("private", str(result))
+
+
+
+
+class Reliability(unittest.TestCase):
+    def test_identical_names_with_distinct_provider_ids_stay_separate(self):
+        rows = pull.attendance_rows(UUID, [participant(user_id="1"), participant(user_id="2")], {}, PULLED)
+        self.assertEqual(len({r["person_key"] for r in rows}), 2)
+        self.assertEqual(pull.name_keys(rows), {})
+
+    def test_display_name_change_does_not_duplicate_provider_row(self):
+        a = pull.attendance_rows(UUID, [participant(name="Old")], {}, PULLED)
+        b = pull.attendance_rows(UUID, [participant(name="New")], {}, PULLED)
+        self.assertEqual(a[0]["row_key"], b[0]["row_key"])
+
+    def test_read_retries_transient_network_failure_without_echoing_credentials(self):
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.status, response.headers = 200, {}
+        response.read.return_value = b'{}'
+        with patch.object(pull.urllib.request, "urlopen", side_effect=[TimeoutError(), response]) as request, patch.object(pull.time, "sleep"):
+            self.assertEqual(pull.call("GET", "https://example.test/?token=private")[0], 200)
+            self.assertEqual(request.call_count, 2)
+
+    def test_non_idempotent_posts_are_not_retried(self):
+        with patch.object(pull.urllib.request, "urlopen", side_effect=TimeoutError()) as request:
+            with self.assertRaises(pull.Failure) as error:
+                pull.call("POST", "https://example.test/?token=private", body={})
+            self.assertEqual(request.call_count, 1)
+            self.assertNotIn("private", str(error.exception))
+
+    def test_zoom_cursor_repeat_is_a_failure(self):
+        zoom = pull.Zoom(None, None)
+        with patch.object(zoom, "_either", return_value={"participants": [], "next_page_token": "same"}):
+            with self.assertRaisesRegex(pull.Failure, "cursor repeated"):
+                zoom.participants(UUID)
+
+    def test_zoom_source_count_must_reconcile(self):
+        zoom = pull.Zoom(None, None)
+        with patch.object(zoom, "_either", return_value={"participants": [participant()], "total_records": 2}):
+            with self.assertRaisesRegex(pull.Failure, "count does not reconcile"):
+                zoom.participants(UUID)
+
+    def test_missing_page_is_not_a_successful_zero(self):
+        sb, provider = MagicMock(), MagicMock()
+        sb.req.return_value = []
+        provider.run.return_value = {}
+        with self.assertRaisesRegex(pull.Failure, "no items list"):
+            pull.pull_survey(sb, provider)
+        sb.upsert.assert_not_called()
+
+    def test_full_backfill_ignores_watermark_and_retains_response_ids(self):
+        sb, provider = MagicMock(), MagicMock()
+        sb.req.return_value = [{"submitted_at": "2026-09-25T00:00:00Z"}]
+        provider.run.return_value = {"items": [{"response_id": "receipt", "submitted_at": "2026-01-01T00:00:00Z", "answers": []}]}
+        result = pull.pull_survey(sb, provider, full=True)
+        self.assertNotIn("since", provider.run.call_args.args[1])
+        self.assertEqual(result["responses"], 1)
+        self.assertEqual(sb.upsert.call_args.args[2], "response_id")
+
+    def test_failed_later_survey_page_does_not_advance_the_watermark(self):
+        sb, provider = MagicMock(), MagicMock()
+        sb.req.return_value = []
+        items = [{"response_id": str(i), "token": str(i), "submitted_at": "2026-09-25T00:00:00Z", "answers": []} for i in range(1000)]
+        provider.run.side_effect = [{"items": items}, pull.Failure("502")]
+        with self.assertRaises(pull.Failure):
+            pull.pull_survey(sb, provider)
+        sb.upsert.assert_not_called()
+
+    def test_old_chat_error_never_turns_into_complete(self):
+        sb, zoom = MagicMock(), MagicMock()
+        sb.dry = False
+        sb.req.return_value = []
+        zoom.app = None
+        zoom.meeting.return_value = {"settings": {"approval_type": 2}}
+        zoom.recordings.return_value = [{"uuid": UUID, "start_time": "2026-09-20T17:00:00Z"}]
+        zoom.instances.return_value = []
+        zoom.details.return_value = {"start_time": "2026-09-20T17:00:00Z", "end_time": "2026-09-20T18:00:00Z"}
+        zoom.participants.return_value = [participant(join_time="2026-09-20T17:00:00Z", leave_time="2026-09-20T18:00:00Z")]
+        zoom.recording.side_effect = pull.Failure("502")
+        zoom.polls.return_value = zoom.qa.return_value = None
+        now = dt.datetime(2026, 9, 26, tzinfo=dt.timezone.utc)
+        with patch.object(pull, "utcnow", return_value=now), patch.object(pull, "join_link_ok", return_value=True), patch.object(pull, "launch_snapshot", return_value={}):
+            result = pull.pull_zoom(sb, zoom)
+        self.assertTrue(result["problems"])
+        payload = sb.req.call_args.args[2]
+        self.assertEqual(sb.req.call_args.args[1], "rpc/cockpit_ingest_webinar_snapshot")
+        self.assertEqual(payload["p_coverage"]["chat"], "error")
+        self.assertFalse(payload["p_session"]["complete"])
+        sb.upsert.assert_not_called()
 
 if __name__ == "__main__":
     unittest.main()

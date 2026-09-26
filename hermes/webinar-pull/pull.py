@@ -201,18 +201,29 @@ def parse_ts(s: Any) -> Optional[dt.datetime]:
 
 
 def call(method: str, url: str, headers: Optional[dict] = None, body: Any = None,
-         timeout: int = 90) -> tuple[int, dict, bytes]:
-    """One HTTP call. An error names the host only: URLs here can carry a token."""
+         timeout: int = 90, retry_safe: bool = False) -> tuple[int, dict, bytes]:
+    """Bounded retries for reads or explicitly idempotent operations. Never echo tokens."""
     data = body if isinstance(body, (bytes, type(None))) else json.dumps(body).encode()
     req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return r.status, dict(r.headers), r.read()
-    except urllib.error.HTTPError as e:
-        return e.code, dict(e.headers or {}), e.read() or b""
-    except (urllib.error.URLError, TimeoutError, OSError) as e:
-        host = urllib.parse.urlsplit(url).netloc
-        raise Failure(f"{host} could not be reached ({type(e).__name__})")
+    attempts = 3 if method == "GET" or retry_safe else 1
+    for attempt in range(attempts):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                result = (r.status, dict(r.headers), r.read())
+        except urllib.error.HTTPError as e:
+            result = (e.code, dict(e.headers or {}), e.read() or b"")
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            if attempt + 1 < attempts:
+                time.sleep(2 ** attempt)
+                continue
+            host = urllib.parse.urlsplit(url).netloc
+            raise Failure(f"{host} could not be reached ({type(e).__name__})")
+        if result[0] not in (429, 500, 502, 503, 504) or attempt + 1 == attempts:
+            return result
+        retry_after = next((v for k, v in result[1].items() if k.lower() == 'retry-after'), '')
+        delay = min(30, int(retry_after)) if str(retry_after).isdigit() else 2 ** attempt
+        time.sleep(delay)
+    raise Failure("HTTP retry budget exhausted")
 
 
 # --- Composio, over MCP ------------------------------------------------------
@@ -279,7 +290,7 @@ class Composio:
                 "name": "COMPOSIO_MULTI_EXECUTE_TOOL",
                 "arguments": {"tools": [{"tool_slug": slug, "arguments": args}]},
             },
-        }, timeout=180)
+        }, timeout=180, retry_safe=slug.startswith(("ZOOM_GET_", "TYPEFORM_GET_")))
         if status in (400, 404) and retry and b"session" in body.lower():
             self.session = ""  # the MCP session expired; open a new one once
             return self.run(slug, args, retry=False)
@@ -396,6 +407,7 @@ class Zoom:
         while start < end:
             stop = min(start + dt.timedelta(days=30), end)
             token = ""
+            seen_tokens: set[str] = set()
             for _ in range(20):
                 args = {"user_id": "me", "from": start.isoformat(), "to": stop.isoformat(),
                         "page_size": 300, "meeting_id": MEETING_ID}
@@ -413,6 +425,11 @@ class Zoom:
                 token = str(page.get("next_page_token") or "")
                 if not token:
                     break
+                if token in seen_tokens:
+                    raise Failure("Zoom recording cursor repeated")
+                seen_tokens.add(token)
+            else:
+                raise Failure("Zoom recording pagination limit reached")
             start = stop
         return list(out.values())
 
@@ -440,6 +457,8 @@ class Zoom:
     def participants(self, uuid: str) -> list[dict]:
         rows: list[dict] = []
         token = ""
+        seen_tokens: set[str] = set()
+        expected = None
         for _ in range(100):
             args: dict[str, Any] = {"meeting_id": uuid, "page_size": 300}
             if token:
@@ -450,11 +469,20 @@ class Zoom:
                 lambda a=args: self.app.get(
                     f"/past_meetings/{uuid_path(uuid)}/participants",
                     page_size=300, next_page_token=a.get("next_page_token")))
-            rows.extend(p for p in page.get("participants") or [] if isinstance(p, dict))
+            if expected is None and isinstance(page.get("total_records"), int):
+                expected = page["total_records"]
+            if not isinstance(page.get("participants"), list):
+                raise Failure("Zoom participant page has no list")
+            rows.extend(p for p in page["participants"] if isinstance(p, dict))
             token = str(page.get("next_page_token") or "")
             if not token:
-                break
-        return rows
+                if expected is not None and len(rows) != expected:
+                    raise Failure("Zoom participant source count does not reconcile")
+                return rows
+            if token in seen_tokens:
+                raise Failure("Zoom participant cursor repeated")
+            seen_tokens.add(token)
+        raise Failure("Zoom participant pagination limit reached")
 
     def recording(self, uuid: str) -> dict:
         """The session's recording files and a token to download them, or {}."""
@@ -496,7 +524,7 @@ class Zoom:
         try:
             return self.app.get(f"/past_meetings/{uuid_path(uuid)}/qa")
         except Failure:
-            return {}
+            raise  # Unreadable Q&A is not evidence of zero questions.
 
     def registrants(self) -> dict[str, dict]:
         """Registrant id to email and HighLevel contact id, when registration is on."""
@@ -509,7 +537,7 @@ class Zoom:
                 d = self.app.get(f"/meetings/{MEETING_ID}/registrants", status="approved",
                                  page_size=300, next_page_token=token)
             except Failure:
-                return out
+                raise
             for r in d.get("registrants") or []:
                 contact = ""
                 for q in r.get("custom_questions") or []:
@@ -521,8 +549,8 @@ class Zoom:
                 }
             token = str(d.get("next_page_token") or "")
             if not token:
-                break
-        return out
+                return out
+        raise Failure("Zoom registrant pagination limit reached")
 
 
 # --- Rows ----------------------------------------------------------------------
@@ -540,7 +568,9 @@ def person_key(p: dict) -> str:
         return f"email:{email}"
     if p.get("id"):
         return f"zoom:{p['id']}"
-    return f"name:{norm_name(p.get('name'))}"
+    if p.get("user_id"):
+        return f"guest:{p.get('_session', '')}:{p['user_id']}"
+    return f"unknown:{p.get('_session', '')}:{p.get('_row', '')}"
 
 
 def attendance_rows(uuid: str, participants: list[dict], registrants: dict[str, dict],
@@ -554,11 +584,11 @@ def attendance_rows(uuid: str, participants: list[dict], registrants: dict[str, 
         email = str(p.get("user_email") or "").strip().lower() or reg.get("email") or None
         seconds = p.get("duration")
         key_src = "|".join(str(x or "") for x in (
-            uuid, p.get("user_id"), p.get("id"), p.get("join_time"), p.get("name"), p.get("status")))
+            uuid, p.get("user_id"), p.get("id"), p.get("join_time"), "" if (p.get("user_id") or p.get("id")) else p.get("name"), p.get("status")))
         rows.append({
             "session_uuid": uuid,
             "row_key": hashlib.sha1(key_src.encode()).hexdigest()[:24],
-            "person_key": person_key({**p, "user_email": email}),
+            "person_key": person_key({**p, "user_email": email, "_session": uuid, "_row": hashlib.sha1(key_src.encode()).hexdigest()[:24]}),
             "name": (str(p.get("name")).strip() or None) if p.get("name") else None,
             "email": email,
             "registrant_id": str(p["registrant_id"]) if p.get("registrant_id") else None,
@@ -566,7 +596,7 @@ def attendance_rows(uuid: str, participants: list[dict], registrants: dict[str, 
             "zoom_user_id": str(p["user_id"]) if p.get("user_id") else None,
             "contact_id": reg.get("contact_id"),
             "status": str(p.get("status") or "in_meeting"),
-            "internal": bool(p.get("internal_user")) or bool(email and email.endswith(OUR_DOMAIN)),
+            "internal": p.get("internal_user") is True or bool(email and email.endswith(OUR_DOMAIN)),
             "join_at": iso(join),
             "leave_at": iso(parse_ts(p.get("leave_time"))),
             "seconds": int(seconds) if isinstance(seconds, (int, float)) or str(seconds or "").isdigit() else None,
@@ -610,15 +640,13 @@ def parse_chat(text: str) -> list[dict]:
 
 
 def name_keys(rows: list[dict]) -> dict[str, str]:
-    """A display name to the strongest person key the session knows for it."""
-    keys: dict[str, str] = {}
+    """Only an unambiguous name may associate chat with a known session identity."""
+    candidates: dict[str, set[str]] = {}
     for r in rows:
         n = norm_name(r.get("name"))
-        if not n:
-            continue
-        if n not in keys or keys[n].startswith("name:"):
-            keys[n] = r["person_key"]
-    return keys
+        if n:
+            candidates.setdefault(n, set()).add(r["person_key"])
+    return {n: next(iter(keys)) for n, keys in candidates.items() if len(keys) == 1}
 
 
 def chat_rows(uuid: str, base: dt.datetime, lines: list[dict], keys: dict[str, str],
@@ -636,7 +664,7 @@ def chat_rows(uuid: str, base: dt.datetime, lines: list[dict], keys: dict[str, s
             "row_key": hashlib.sha1(f"{k}|{seen[k]}".encode()).hexdigest()[:24],
             "at": iso(base + dt.timedelta(seconds=c["offset_s"])),
             "offset_s": c["offset_s"],
-            "person_key": keys.get(n, f"name:{n}"),
+            "person_key": keys.get(n),
             "name": c["name"] or None,
             "email": None,
             "contact_id": None,
@@ -666,7 +694,7 @@ def answer_rows(uuid: str, data: dict, kind: str, start: Optional[dt.datetime],
                 "row_key": hashlib.sha1(f"{k}|{seen[k]}".encode()).hexdigest()[:24],
                 "at": iso(at),
                 "offset_s": int((at - start).total_seconds()) if at and start else None,
-                "person_key": f"email:{email}" if email else f"name:{norm_name(name)}",
+                "person_key": f"email:{email}" if email else None,
                 "name": name,
                 "email": email,
                 "contact_id": None,
@@ -795,19 +823,28 @@ class GHL:
                 "locationId": self.location, "page": page, "pageLimit": 100,
                 "filters": [{"field": "tags", "operator": "contains", "value": REGISTERED_TAG}],
             })
-            batch = [c for c in d.get("contacts") or [] if isinstance(c, dict)]
+            if not isinstance(d.get("contacts"), list):
+                raise Failure("HighLevel registrant page has no contacts list")
+            batch = [c for c in d["contacts"] if isinstance(c, dict)]
             out.extend(batch)
             if len(batch) < 100:
-                break
-        return out
+                if isinstance(d.get("total"), int) and len(out) != d["total"]:
+                    raise Failure("HighLevel registrant count does not reconcile")
+                if len({r.get("id") for r in out}) != len(out):
+                    raise Failure("HighLevel repeated registrant rows")
+                return out
+        raise Failure("HighLevel registrant pagination limit reached")
 
     def messages(self, contact_id: str) -> list[dict]:
         """Every message in a contact's conversations, newest first."""
         convs = self.req("GET", "/conversations/search", version="2021-04-15",
                          params={"locationId": self.location, "contactId": contact_id, "limit": 20})
+        if len(convs.get("conversations") or []) >= 20:
+            raise Failure("HighLevel conversation search may be capped")
         out: list[dict] = []
         for c in convs.get("conversations") or []:
             last = ""
+            seen_cursors: set[str] = set()
             for _ in range(20):
                 d = self.req("GET", f"/conversations/{c['id']}/messages", version="2021-04-15",
                              params={"limit": 100, "lastMessageId": last})
@@ -815,8 +852,13 @@ class GHL:
                 page = [m for m in box.get("messages") or [] if isinstance(m, dict)]
                 out.extend(page)
                 last = str(box.get("lastMessageId") or (page[-1].get("id") if page else ""))
-                if not box.get("nextPage") or not page or not last:
+                if not box.get("nextPage"):
                     break
+                if not page or not last or last in seen_cursors:
+                    raise Failure("HighLevel message cursor is missing or repeated")
+                seen_cursors.add(last)
+            else:
+                raise Failure("HighLevel message pagination limit reached")
         return out
 
 
@@ -1071,7 +1113,7 @@ class Supabase:
                    "Content-Type": "application/json", "Accept": "application/json"}
         if prefer:
             headers["Prefer"] = prefer
-        status, _h, content = call(method, f"{self.url}/rest/v1/{path}", headers, body)
+        status, _h, content = call(method, f"{self.url}/rest/v1/{path}", headers, body, retry_safe=path == "rpc/cockpit_ingest_webinar_snapshot" or "on_conflict=" in path)
         if status >= 300:
             raise Failure(f"Supabase {status} on {path.split('?')[0]}: {content[:200].decode('utf-8', 'replace')}")
         return json.loads(content) if content.strip() else []
@@ -1208,7 +1250,7 @@ def pull_zoom(sb: Supabase, zoom: Zoom, again: bool = False) -> dict:
     for m in zoom.instances():
         found.setdefault(str(m["uuid"]), {"start": m.get("start_time")})
     for uuid, row in known.items():
-        if not row.get("complete"):
+        if again or not row.get("complete") or (parse_ts(row.get("started_at")) and parse_ts(row["started_at"]) > utcnow() - dt.timedelta(days=7)):
             found.setdefault(uuid, {"start": row.get("started_at")})
 
     counts = {"sessions": 0, "attendance_rows": 0, "chat_rows": 0, "poll_rows": 0, "qa_rows": 0,
@@ -1218,7 +1260,8 @@ def pull_zoom(sb: Supabase, zoom: Zoom, again: bool = False) -> dict:
     problems: list[str] = []
     newest = max((parse_ts(s["start"]) for s in found.values() if parse_ts(s["start"])), default=None)
     for uuid, s in sorted(found.items(), key=lambda kv: str(kv[1].get("start") or "")):
-        if known.get(uuid, {}).get("complete") and not again:
+        previous = known.get(uuid, {})
+        if previous.get("complete") and not again and (parse_ts(previous.get("started_at")) or utcnow()) < utcnow() - dt.timedelta(days=7):
             continue
         start = parse_ts(s.get("start"))
         if live and start and newest and start >= newest:
@@ -1232,9 +1275,9 @@ def pull_zoom(sb: Supabase, zoom: Zoom, again: bool = False) -> dict:
         att = attendance_rows(uuid, people, registrants, pulled)
         leaves = [parse_ts(r["leave_at"]) for r in att if r["leave_at"]]
         duration = details.get("duration") or s.get("duration")
-        ended = (parse_ts(details.get("end_time"))
-                 or (max(leaves) if leaves else None)
-                 or (start + dt.timedelta(minutes=int(duration)) if duration else None))
+        # The last guest leaving or a recording ending is not the meeting's
+        # verified end. Keep it unknown until Zoom's instance details supply it.
+        ended = parse_ts(details.get("end_time"))
 
         # Attendance is saved even when the recording, the chat or the polls
         # cannot be read this run; the session stays incomplete and is read
@@ -1243,6 +1286,7 @@ def pull_zoom(sb: Supabase, zoom: Zoom, again: bool = False) -> dict:
         files = rec.get("recording_files") or []
         chat: list[dict] = []
         rec_state = "none"
+        coverage = {"attendance": "complete", "chat": "pending", "poll": "unavailable", "qa": "unavailable"}
         try:
             full = zoom.recording(uuid)
             if full:
@@ -1254,28 +1298,31 @@ def pull_zoom(sb: Supabase, zoom: Zoom, again: bool = False) -> dict:
                     if (f.get("file_type") == "CHAT" and f.get("download_url")
                             and str(f.get("status") or "completed") == "completed"):
                         base = parse_ts(f.get("recording_start")) or start
-                        chat = chat_rows(uuid, base, parse_chat(zoom.download(str(f["download_url"]), token)),
+                        coverage["chat"] = "complete"
+                        chat += chat_rows(uuid, base, parse_chat(zoom.download(str(f["download_url"]), token)),
                                          name_keys(att), pulled)
         except Failure as e:
             rec_state = "error"
+            coverage["chat"] = "error"
             problems.append(f"chat of {start:%Y-%m-%d}: {e}")
-        poll_rows: list[dict] = []
-        qa_rows: list[dict] = []
-        try:
-            polls = zoom.polls(uuid)
-            poll_rows = answer_rows(uuid, polls, "poll", start, pulled) if polls else []
-            qa = zoom.qa(uuid)
-            qa_rows = answer_rows(uuid, qa, "qa", start, pulled) if qa else []
-        except Failure as e:
-            problems.append(f"polls of {start:%Y-%m-%d}: {e}")
-
+        channels: dict[str, list[dict]] = {"poll": [], "qa": []}
+        for kind, read in (("poll", zoom.polls), ("qa", zoom.qa)):
+            try:
+                result = read(uuid)
+                coverage[kind] = "complete" if result is not None else "unavailable"
+                channels[kind] = answer_rows(uuid, result, kind, start, pulled) if result else []
+            except Failure as e:
+                coverage[kind] = "error"
+                problems.append(f"{kind} of {start:%Y-%m-%d}: {e}")
+        poll_rows, qa_rows = channels["poll"], channels["qa"]
         age_h = (utcnow() - ended).total_seconds() / 3600 if ended else 0
-        chat_done = rec_state == "ready" or (rec_state == "none" and age_h > 6) or age_h > 48
-        if rec_state == "error":
-            chat_done = age_h > 48
-        complete = bool(ended) and age_h > 0.5 and chat_done
+        if coverage["chat"] == "pending" and age_h > 48:
+            coverage["chat"] = "unavailable"
+        if len(att) != len(people):
+            raise Failure("Zoom rows with missing join time require review; snapshot was not replaced")
+        complete = bool(ended) and age_h > 0.5 and all(v == "complete" for v in coverage.values())
 
-        sb.upsert("cockpit_webinar_sessions", [{
+        session_row = {
             "uuid": uuid,
             "meeting_id": MEETING_ID,
             "topic": s.get("topic") or meeting.get("topic"),
@@ -1289,9 +1336,11 @@ def pull_zoom(sb: Supabase, zoom: Zoom, again: bool = False) -> dict:
             "poll_rows": len(poll_rows),
             "complete": complete,
             "pulled_at": pulled,
-        }], "uuid")
-        sb.upsert("cockpit_webinar_attendance", att, "session_uuid,row_key")
-        sb.upsert("cockpit_webinar_engagement", chat + poll_rows + qa_rows, "kind,row_key")
+        }
+        if not sb.dry:
+            sb.req("POST", "rpc/cockpit_ingest_webinar_snapshot", {
+                "p_session": session_row, "p_attendance": att,
+                "p_engagement": chat + poll_rows + qa_rows, "p_coverage": coverage})
         counts["sessions"] += 1
         counts["attendance_rows"] += len(att)
         counts["chat_rows"] += len(chat)
@@ -1304,15 +1353,18 @@ def pull_zoom(sb: Supabase, zoom: Zoom, again: bool = False) -> dict:
     return counts
 
 
-def pull_survey(sb: Supabase, composio: Composio) -> dict:
+def pull_survey(sb: Supabase, composio: Composio, full: bool = False) -> dict:
     pulled = iso(utcnow())
     last = sb.req("GET", "cockpit_webinar_forms?select=submitted_at&order=submitted_at.desc&limit=1")
     since = None
-    if last:
+    if last and not full:
         t = parse_ts(last[0]["submitted_at"])
         since = iso(t - dt.timedelta(days=2)) if t else None
     rows: list[dict] = []
     before = ""
+    seen_cursors: set[str] = set()
+    expected = None
+    received = 0
     for _ in range(50):
         args: dict[str, Any] = {"form_id": SURVEY_ID, "page_size": 1000}
         if since:
@@ -1320,16 +1372,29 @@ def pull_survey(sb: Supabase, composio: Composio) -> dict:
         if before:
             args["before"] = before
         page = composio.run("TYPEFORM_GET_FORM_RESPONSES", args)
-        items = [i for i in page.get("items") or [] if isinstance(i, dict)]
+        if not isinstance(page.get("items"), list):
+            raise Failure("Typeform response page has no items list")
+        if expected is None and isinstance(page.get("total_items"), int):
+            expected = page["total_items"]
+        items = [i for i in page["items"] if isinstance(i, dict)]
+        received += len(items)
         rows.extend(r for r in (survey_row(i, pulled) for i in items) if r)
         if len(items) < 1000:
             break
         before = str(items[-1].get("token") or "")
-        if not before:
-            break
+        if not before or before in seen_cursors:
+            raise Failure("Typeform cursor is missing or repeated")
+        seen_cursors.add(before)
+    else:
+        raise Failure("Typeform pagination limit reached; no watermark advanced")
+    if expected is not None and received != expected:
+        raise Failure("Typeform source count does not reconcile; no watermark advanced")
+    if len({r["response_id"] for r in rows}) != len(rows):
+        raise Failure("Typeform returned duplicate response pages")
     sb.upsert("cockpit_webinar_forms", rows, "response_id")
     note(f"survey {SURVEY_ID}: {len(rows)} responses read{' since ' + since if since else ''}")
-    return {"responses": len(rows), "since": since}
+    return {"responses": len(rows), "received": received, "source_total": expected,
+            "since": since, "complete": True, "full_backfill": full}
 
 
 def reminders_due(sb: Supabase, registrants: list[dict]) -> bool:
@@ -1526,6 +1591,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="The live training's Zoom sessions and survey, into Creative Triage.")
     ap.add_argument("command", nargs="?", default="pull",
                     choices=("pull", "zoom", "survey", "reminders", "objections", "doctor", "readiness"))
+    ap.add_argument("--full-backfill", action="store_true", help="replay all Typeform response pages, ignoring the watermark")
     ap.add_argument("--again", action="store_true", help="read finished sessions again")
     ap.add_argument("--dry-run", action="store_true", help="read everything, write nothing")
     ap.add_argument("--quiet", action="store_true")
@@ -1557,7 +1623,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         run = sb.begin("zoom")
         try:
             counts = pull_zoom(sb, zoom, again=a.again)
-            sb.finish(run, True, "+".join(sorted(zoom.via)), "", counts)
+            ok = not counts.get("problems")
+            failed = failed or not ok
+            sb.finish(run, ok, "+".join(sorted(zoom.via)), "Partial source read" if not ok else "", counts)
         except Failure as e:
             failed = True
             note(f"zoom: {e}")
@@ -1567,7 +1635,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         try:
             if not composio:
                 raise Failure("COMPOSIO_API_KEY is not set, so the survey cannot be read")
-            counts = pull_survey(sb, composio)
+            counts = pull_survey(sb, composio, full=a.full_backfill)
             sb.finish(run, True, "composio", "", counts)
         except Failure as e:
             failed = True
@@ -1576,12 +1644,17 @@ def main(argv: Optional[list[str]] = None) -> int:
     if a.command in ("pull", "reminders", "objections"):
         ghl = GHL.from_env()
         registrants: list[dict] = []
+        registrants_ok = ghl is not None
         try:
             registrants = ghl.registrants() if ghl else []
         except Failure as e:
             failed = True
+            registrants_ok = False
             note(f"registrants: {e}")
-        if a.command in ("pull", "reminders") and ghl:
+            for source in ("reminders", "objections"):
+                if a.command in ("pull", source):
+                    sb.finish(sb.begin(source), False, "highlevel", "Registrant read failed; dependent collection skipped", {})
+        if a.command in ("pull", "reminders") and ghl and registrants_ok:
             try:
                 due = a.command == "reminders" or reminders_due(sb, registrants)
             except Failure as e:
@@ -1601,7 +1674,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             sb.finish(run, False, "policy", "Objection tagging paused: approve a transcript provider before sending lead data.", {"provider_approved": False})
             if a.command == "objections":
                 failed = True
-        if a.command in ("pull", "objections") and fathom and model:
+        if a.command in ("pull", "objections") and fathom and model and registrants_ok:
             run = sb.begin("objections")
             try:
                 sb.finish(run, True, f"fathom+{OBJECTIONS_MODEL}", "",

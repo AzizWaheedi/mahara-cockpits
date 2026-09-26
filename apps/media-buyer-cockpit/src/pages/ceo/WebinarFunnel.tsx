@@ -515,7 +515,10 @@ function stages(p: WebinarPayload, r: WebinarRound): StageDef[] {
         },
         {
           label: "Chat lines",
-          value: room ? count(room.chat.messages) : NA,
+          value:
+            room && room.chat.complete !== false
+              ? count(room.chat.messages)
+              : NA,
           source: room
             ? `From ${count(room.chat.people)} people; “drop a 1” at pitch 1: ${count(room.chat.onesAtPitch1)}`
             : "Zoom recording chat",
@@ -1311,12 +1314,69 @@ function RoomCurve({ room, target }: { room: Room; target: number }) {
     .join("")}.`;
   return (
     <div className="grid gap-3">
+      {!!room.quality?.warnings.length && (
+        <div
+          role="status"
+          className="rounded-lg border border-[var(--ceo-warning)]/30 bg-[var(--ceo-warning)]/5 p-3 text-xs leading-relaxed"
+        >
+          <p className="mb-1 font-medium">Check the attendance evidence</p>
+          {room.quality.warnings.map(w => (
+            <p key={w}>{w}</p>
+          ))}
+        </div>
+      )}
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <h4 className="text-sm font-medium">People in the room, by minute</h4>
         <span className="text-xs text-muted-foreground">
           Target at pitch 1: {pct(target)} of the peak
         </span>
       </div>
+      {!!room.checkpoints?.length && (
+        <details className="rounded-lg border p-3 text-xs">
+          <summary className="cursor-pointer font-medium focus-visible:outline-2">
+            Retention checkpoints and watch coverage
+          </summary>
+          <p className="my-3 text-muted-foreground">
+            Peak compares with the largest audience. Starting group tracks
+            people who joined within three minutes. Watch coverage adds their
+            joined intervals, excluding gaps.
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left tabular-nums [&_th]:px-2 [&_td]:px-2 [&_th:first-child]:pl-0 [&_td:first-child]:pl-0 [&_th:last-child]:pr-0 [&_td:last-child]:pr-0">
+              <thead>
+                <tr className="border-b text-muted-foreground">
+                  <th className="py-2">Minute</th>
+                  <th>Present</th>
+                  <th>Of peak</th>
+                  <th>Starting group</th>
+                </tr>
+              </thead>
+              <tbody>
+                {room.checkpoints.map(p => (
+                  <tr key={p.minute} className="border-b last:border-0">
+                    <td className="py-2">{p.minute}</td>
+                    <td>{count(p.present)}</td>
+                    <td>{pct(p.ofPeak)}</td>
+                    <td>{pct(p.initialCohortRemaining)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {!!room.watchBands?.length && (
+            <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-muted-foreground">
+              {room.watchBands.map(b => (
+                <span key={b.percent}>
+                  Watched {b.percent}%+:{" "}
+                  <strong className="text-foreground">
+                    {count(b.people)} people ({pct(b.share)})
+                  </strong>
+                </span>
+              ))}
+            </div>
+          )}
+        </details>
+      )}
       <div role="figure" aria-label={summary} className="h-44 sm:h-52">
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart

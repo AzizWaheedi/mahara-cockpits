@@ -270,9 +270,11 @@ describe("what Zoom cannot say", () => {
 });
 
 describe("phones", () => {
-  test("compared on the last eight digits", () => {
-    expect(phoneKey("+965 9999 1234")).toBe("99991234");
-    expect(phoneKey("99991234")).toBe("99991234");
+  test("requires the full country code", () => {
+    expect(phoneKey("+965 9999 1234")).toBe("96599991234");
+    expect(phoneKey("99991234")).toBeNull();
+    expect(phoneKey("00965 9999 1234")).toBe("96599991234");
+    expect(phoneKey("+96699991234")).not.toBe(phoneKey("+96599991234"));
     expect(phoneKey("1234")).toBeNull();
     expect(phoneKey(null)).toBeNull();
   });
@@ -616,5 +618,95 @@ describe("webinar metrics projection", () => {
     expect(r.spend_leadgen).toBe(800);
     expect(r.spend_retargeting).toBe(300);
     expect(r.retargeting_share).toBe(27.3);
+  });
+});
+
+describe("retention evidence boundaries", () => {
+  test("missing leaves never become full-session watches", () => {
+    const r = roomOf(
+      [session()],
+      [seg("a", 0, null), seg("b", 0, 60)],
+      [],
+      opts,
+    )!;
+    expect(r.attendees).toBe(2);
+    expect(r.complete).toBe(false);
+    expect(r.watchAvgMin).toBeNull();
+    expect(r.stayToEnd).toBeNull();
+    expect(r.quality?.missingLeaves).toBe(1);
+  });
+  test("invalid rows do not invent attendees", () => {
+    const r = roomOf(
+      [session()],
+      [seg("x", 10, 5), seg("y", 0, 60)],
+      [],
+      opts,
+    )!;
+    expect(r.attendees).toBe(1);
+    expect(r.quality?.invalidRows).toBe(1);
+  });
+  test("peak and pitch use exact seconds", () => {
+    const r = roomOf(
+      [session({ pitch1At: at(10.1) })],
+      [seg("a", 0, 60), seg("b", 10, 10.2)],
+      [],
+      opts,
+    )!;
+    expect(r.peak).toBe(2);
+    expect(r.curve[10]).toBe(1);
+    expect(r.pitches[0].present).toBe(2);
+    expect(r.pitches[0].retention).toBe(1);
+  });
+  test("invalid pitch times are not clamped into a valid minute", () => {
+    expect(
+      roomOf([session({ pitch1At: at(65) })], [seg("a", 0, 60)], [], opts)
+        ?.pitches,
+    ).toEqual([]);
+  });
+  test("unknown chat senders do not count as one known person", () => {
+    expect(
+      roomOf(
+        [session()],
+        [seg("a", 0, 60)],
+        [line("", 5, false, { personKey: null })],
+        opts,
+      )?.chat.people,
+    ).toBe(0);
+  });
+  test("cohort retention is distinct from share of peak", () => {
+    const r = roomOf(
+      [session()],
+      [seg("a", 0, 60), seg("b", 0, 20), seg("c", 10, 60)],
+      [],
+      opts,
+    )!;
+    expect(r.checkpoints?.find(p => p.minute === 30)).toEqual({
+      minute: 30,
+      present: 2,
+      ofPeak: 0.667,
+      initialCohortRemaining: 0.5,
+    });
+    expect(r.watchBands?.find(p => p.percent === 90)?.people).toBe(1);
+  });
+  test("team polls are excluded and sources have independent coverage", () => {
+    const r = roomOf(
+      [session({ coverage: { poll: "complete", qa: "unavailable" } })],
+      [seg("host", 0, 60, { internal: true }), seg("a", 0, 60)],
+      [line("host", 5, false, { kind: "poll" })],
+      opts,
+    )!;
+    expect(r.polls?.answers).toBe(0);
+    expect(r.qa).toBeNull();
+  });
+  test("long rooms flag chart limits but retain full watch totals", () => {
+    const r = roomOf(
+      [session({ endedAt: at(360) })],
+      [seg("a", 0, 360)],
+      [],
+      opts,
+    )!;
+    expect(r.curve).toHaveLength(300);
+    expect(r.watchAvgMin).toBe(360);
+    expect(r.quality?.curveTruncated).toBe(true);
   });
 });
