@@ -48,16 +48,26 @@ function AppSkeleton() {
         </SidebarFooter>
       </Sidebar>
       <SidebarInset>
-        <header className="flex h-14 items-center gap-2 border-b px-4">
-          <Skeleton className="size-7 rounded-md" />
-          <div className="flex-1" />
+        {/* The same shell as AppLayout, so nothing jumps when it swaps in:
+            a 56px menu bar below 1024px, no bar at all on the desktop rail. */}
+        <header className="sticky top-0 z-30 border-b border-border/60 bg-background/85 px-2 pt-safe backdrop-blur lg:hidden">
+          <div className="flex h-14 items-center gap-2">
+            <Skeleton className="size-10 rounded-lg" />
+            <Skeleton className="h-5 w-24" />
+          </div>
         </header>
-        <main className="flex-1 p-4 lg:p-6 space-y-6">
-          <Skeleton className="h-8 w-48" />
-          <div className="grid gap-4 md:grid-cols-3">
-            <Skeleton className="h-32 rounded-lg" />
-            <Skeleton className="h-32 rounded-lg" />
-            <Skeleton className="h-32 rounded-lg" />
+        <main className="flex-1 px-4 pt-4 pb-24 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8 lg:pb-12">
+          <div className="mx-auto w-full max-w-6xl space-y-6">
+            <div className="space-y-2">
+              <Skeleton className="h-8 w-48" />
+              <Skeleton className="h-4 w-64 max-w-full" />
+            </div>
+            <div className="grid grid-cols-3 gap-3 sm:gap-4">
+              <Skeleton className="h-24 rounded-2xl" />
+              <Skeleton className="h-24 rounded-2xl" />
+              <Skeleton className="h-24 rounded-2xl" />
+            </div>
+            <Skeleton className="h-48 rounded-2xl" />
           </div>
         </main>
       </SidebarInset>

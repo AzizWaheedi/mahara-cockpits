@@ -3,7 +3,7 @@
 import * as convexReact from "convex/react";
 import { makeFunctionReference } from "convex/server";
 import {
-  ExternalLink,
+  ArrowUpRight,
   ImageOff,
   LoaderCircle,
   Play,
@@ -535,10 +535,10 @@ function AdsManagerLink({
       href={adsManagerUrl(adId, accountId)}
       target="_blank"
       rel="noreferrer noopener"
-      className="inline-flex items-center gap-1 text-[12px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+      className="inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline pointer-coarse:min-h-10"
     >
-      <ExternalLink className="h-3 w-3" aria-hidden />
       Open in Ads Manager
+      <ArrowUpRight className="size-3.5" aria-hidden />
     </a>
   );
 }
@@ -672,7 +672,7 @@ function PreviewBody({
       {note && (
         <p
           role="status"
-          className="flex items-start gap-1.5 text-[12px] text-muted-foreground"
+          className="flex items-start gap-1.5 text-xs text-muted-foreground"
         >
           {loading && (
             <LoaderCircle
@@ -699,7 +699,7 @@ function PreviewBody({
           <button
             type="button"
             onClick={() => setStillChosen(true)}
-            className="text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+            className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground pointer-coarse:min-h-10"
           >
             Blank, or says expired? Show the saved picture
           </button>
@@ -731,7 +731,7 @@ function PreviewBody({
           <Button
             size="sm"
             variant="outline"
-            className="h-7 px-2 text-[12px]"
+            className="h-8 px-2.5 text-xs pointer-coarse:h-10"
             onClick={retry}
           >
             <RefreshCw aria-hidden />
@@ -743,7 +743,7 @@ function PreviewBody({
           <Button
             size="sm"
             variant="ghost"
-            className="h-7 px-2 text-[12px]"
+            className="h-8 px-2.5 text-xs pointer-coarse:h-10"
             onClick={onClose}
           >
             Hide the preview
@@ -797,7 +797,7 @@ export function CreativePreview(props: CreativePreviewProps) {
                   role="img"
                   aria-label={reason}
                   title={reason}
-                  className="flex min-h-[140px] w-full flex-col items-center justify-center gap-2 rounded-md border bg-muted p-3 text-center text-[12px] text-muted-foreground"
+                  className="flex min-h-[140px] w-full flex-col items-center justify-center gap-2 rounded-md border bg-muted p-3 text-center text-xs text-muted-foreground"
                 >
                   <ImageOff className="h-6 w-6" aria-hidden />
                   <span>{reason}</span>
@@ -809,7 +809,7 @@ export function CreativePreview(props: CreativePreviewProps) {
                 <Button
                   size="sm"
                   variant="secondary"
-                  className="h-7 px-2 text-[12px]"
+                  className="h-8 px-2.5 text-xs pointer-coarse:h-10"
                   onClick={() => setOpen(true)}
                 >
                   <Play aria-hidden />

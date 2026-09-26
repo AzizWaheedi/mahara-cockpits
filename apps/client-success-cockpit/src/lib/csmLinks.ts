@@ -37,7 +37,7 @@ export const LINK_GROUPS: LinkGroup[] = [
     ],
   },
   {
-    title: "Forms I have to fill",
+    title: "Forms to fill in",
     blurb: "If it is not in a form, it did not happen.",
     rows: [
       {

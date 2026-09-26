@@ -2,10 +2,10 @@ import { useAuthActions } from "@convex-dev/auth/react";
 import { useQuery } from "convex/react";
 import { ChevronRight, Loader2, Moon, Palette, Sun, User } from "lucide-react";
 import { useState } from "react";
+import { PageHeader } from "@/components/kit";
 import { portalUrl } from "@/components/PortalAutoSignIn";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -65,7 +65,7 @@ export function SettingsPage() {
 
     try {
       await signIn("password", formData);
-      setSuccess("Password changed successfully!");
+      setSuccess("Password changed.");
       setTimeout(() => {
         setChangePasswordOpen(false);
         setPasswordStep("request");
@@ -79,120 +79,117 @@ export function SettingsPage() {
   };
 
   return (
-    <div className="space-y-8 max-w-2xl mx-auto">
-      <div>
-        <h1 className="text-2xl md:text-3xl font-bold tracking-tight">
-          Settings
-        </h1>
-        <p className="text-muted-foreground mt-1">
-          Your account and how the cockpit looks
-        </p>
-      </div>
+    <div className="mx-auto w-full max-w-6xl space-y-6">
+      <PageHeader
+        title="Settings"
+        sub="Your account and how the cockpit looks"
+      />
 
-      <Card className="overflow-hidden">
-        <div className="h-20 bg-gradient-to-r from-primary/20 via-primary/10 to-transparent" />
-        <CardContent className="-mt-10 pb-6">
-          <div className="flex items-end gap-4">
-            <Avatar className="size-16 border-4 border-background shadow-lg">
-              <AvatarFallback className="text-xl bg-primary text-primary-foreground">
+      <div className="max-w-2xl space-y-6">
+        <section className="rounded-2xl border bg-card p-4 sm:p-6">
+          <div className="flex items-center gap-4">
+            <Avatar className="size-14">
+              <AvatarFallback className="bg-primary text-lg text-primary-foreground">
                 {user?.name?.charAt(0).toUpperCase() || (
                   <User className="size-6" />
                 )}
               </AvatarFallback>
             </Avatar>
-            <div className="pb-1">
-              <p className="font-semibold">{user?.name || "User"}</p>
-              <p className="text-sm text-muted-foreground">{user?.email}</p>
+            <div className="min-w-0">
+              <p className="truncate font-semibold">{user?.name || "User"}</p>
+              <p className="truncate text-sm text-muted-foreground">
+                {user?.email}
+              </p>
             </div>
           </div>
-        </CardContent>
-      </Card>
+        </section>
 
-      <Card>
-        <CardHeader className="pb-4">
-          <CardTitle className="flex items-center gap-2 text-base">
+        <section className="rounded-2xl border bg-card p-4 sm:p-6">
+          <h2 className="flex items-center gap-2 text-[15px] font-semibold">
             <Palette className="size-4 text-muted-foreground" />
             Appearance
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-1">
-          {switchable ? (
-            <div className="flex items-center justify-between rounded-lg border p-4 transition-colors hover:bg-muted/50">
-              <div className="flex items-center gap-4">
-                <div className="size-10 rounded-full bg-secondary flex items-center justify-center">
-                  {theme === "light" ? (
-                    <Moon className="size-5 text-foreground" />
-                  ) : (
-                    <Sun className="size-5 text-foreground" />
-                  )}
+          </h2>
+          <div className="mt-4">
+            {switchable ? (
+              <div className="flex items-center justify-between gap-4 rounded-xl bg-muted/40 p-4">
+                <div className="flex items-center gap-4">
+                  <div className="size-10 rounded-full bg-secondary flex items-center justify-center">
+                    {theme === "light" ? (
+                      <Moon className="size-5 text-foreground" />
+                    ) : (
+                      <Sun className="size-5 text-foreground" />
+                    )}
+                  </div>
+                  <div>
+                    <Label htmlFor="dark-mode" className="font-medium">
+                      Dark mode
+                    </Label>
+                    <p className="text-sm text-muted-foreground">
+                      Switch between light and dark
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <Label htmlFor="dark-mode" className="font-medium">
-                    Dark mode
-                  </Label>
-                  <p className="text-sm text-muted-foreground">
-                    Switch between light and dark
-                  </p>
-                </div>
+                <Switch
+                  id="dark-mode"
+                  checked={theme === "dark"}
+                  onCheckedChange={toggleTheme}
+                />
               </div>
-              <Switch
-                id="dark-mode"
-                checked={theme === "dark"}
-                onCheckedChange={toggleTheme}
-              />
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground px-4 py-2">
-              Theme follows your system preference
-            </p>
-          )}
-        </CardContent>
-      </Card>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Theme follows your system preference
+              </p>
+            )}
+          </div>
+        </section>
 
-      <Card>
-        <CardHeader className="pb-4">
-          <CardTitle className="flex items-center gap-2 text-base">
+        <section className="rounded-2xl border bg-card p-4 sm:p-6">
+          <h2 className="flex items-center gap-2 text-[15px] font-semibold">
             <User className="size-4 text-muted-foreground" />
             Account
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-1">
-          {emailPasswordAvailable && (
-            <button
-              onClick={() => setChangePasswordOpen(true)}
-              className="w-full flex items-center justify-between rounded-lg border p-4 transition-colors hover:bg-muted/50 text-left"
-            >
-              <div>
-                <p className="font-medium text-sm">Change password</p>
-                <p className="text-sm text-muted-foreground">
-                  Update your password
-                </p>
-              </div>
-              <ChevronRight className="size-4 text-muted-foreground" />
-            </button>
-          )}
-          {/* Access lives in the portal's member list, not here: deleting the
+          </h2>
+          <div className="mt-4 space-y-3">
+            {emailPasswordAvailable && (
+              <button
+                type="button"
+                onClick={() => setChangePasswordOpen(true)}
+                className="w-full flex items-center justify-between rounded-xl bg-muted/40 p-4 transition-colors hover:bg-muted text-left"
+              >
+                <div>
+                  <p className="font-medium text-sm">Change password</p>
+                  <p className="text-sm text-muted-foreground">
+                    Update your password
+                  </p>
+                </div>
+                <ChevronRight className="size-4 text-muted-foreground" />
+              </button>
+            )}
+            {/* Access lives in the portal's member list, not here: deleting the
               local user only signed the person out and the portal recreated
               it on the next visit. */}
-          <div className="rounded-lg border p-4">
-            <p className="font-medium text-sm">Your seat</p>
-            <p className="text-sm text-muted-foreground">
-              Who can open this cockpit, and which clients they see, is set in
-              the{" "}
-              <a className="underline" href={`${portalUrl()}/admin`}>
-                portal
-              </a>
-              . Ask Aziz to change or remove your access there.
-            </p>
+            <div className="rounded-xl bg-muted/40 p-4">
+              <p className="font-medium text-sm">Your seat</p>
+              <p className="text-sm text-muted-foreground">
+                Who can open this cockpit, and which clients they see, is set in
+                the{" "}
+                <a
+                  className="text-primary underline-offset-4 hover:underline"
+                  href={`${portalUrl()}/admin`}
+                >
+                  portal
+                </a>
+                . Ask Aziz to change or remove your access there.
+              </p>
+            </div>
           </div>
-        </CardContent>
-      </Card>
+        </section>
+      </div>
 
       {emailPasswordAvailable && (
         <Dialog open={changePasswordOpen} onOpenChange={setChangePasswordOpen}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Change Password</DialogTitle>
+              <DialogTitle>Change password</DialogTitle>
               <DialogDescription>
                 {passwordStep === "request"
                   ? "We'll send a verification code to your email."
@@ -225,14 +222,14 @@ export function SettingsPage() {
                   </Button>
                   <Button type="submit" disabled={loading}>
                     {loading && <Loader2 className="size-4 animate-spin" />}
-                    Send Code
+                    Send code
                   </Button>
                 </DialogFooter>
               </form>
             ) : (
               <form onSubmit={handleResetPassword} className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="code">Verification Code</Label>
+                  <Label htmlFor="code">Verification code</Label>
                   <Input
                     id="code"
                     name="code"
@@ -243,7 +240,7 @@ export function SettingsPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="newPassword">New Password</Label>
+                  <Label htmlFor="newPassword">New password</Label>
                   <Input
                     id="newPassword"
                     name="newPassword"
@@ -277,7 +274,7 @@ export function SettingsPage() {
                   </Button>
                   <Button type="submit" disabled={loading}>
                     {loading && <Loader2 className="size-4 animate-spin" />}
-                    Change Password
+                    Change password
                   </Button>
                 </DialogFooter>
               </form>

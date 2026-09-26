@@ -1,6 +1,12 @@
 import { useAction } from "convex/react";
-import { Check, Copy, ExternalLink, LoaderCircle, Plus, X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { ArrowUpRight, Check, Copy, LoaderCircle, Plus, X } from "lucide-react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { toast } from "sonner";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { api } from "../../convex/_generated/api";
@@ -36,7 +42,14 @@ function ago(iso: string | null): string {
 
 type Client = { task_id: string; name: string };
 
-export function SendForReview() {
+const files = (n?: number) => `${n ?? 0} file${n === 1 ? "" : "s"}`;
+
+/**
+ * `folded` puts the whole thing behind one closed row ("Send something for
+ * review"), for a daily screen where it is used now and then rather than
+ * all day. It opens by itself while a link is being made or is ready.
+ */
+export function SendForReview({ folded = false }: { folded?: boolean }) {
   const create = useAction(api.review.create);
   const listSent = useAction(api.review.sent);
   const listClients = useAction(api.review.clients);
@@ -54,6 +67,10 @@ export function SendForReview() {
   const [rows, setRows] = useState<Sent[] | null>(null);
   const [clients, setClients] = useState<Client[]>([]);
   const [importing, setImporting] = useState<string | null>(null);
+  const foldRef = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    if ((made || importing) && foldRef.current) foldRef.current.open = true;
+  }, [made, importing]);
 
   /**
    * An import in flight, remembered outside React.
@@ -117,7 +134,7 @@ export function SendForReview() {
           if (!st) continue;
           if (st.status === "working")
             setImporting(
-              st.found ? `Copying ${st.found} file(s)` : "Reading the folder",
+              st.found ? `Copying ${files(st.found)}` : "Reading the folder",
             );
           if (st.status === "failed")
             throw new Error(st.error ?? "That folder did not work.");
@@ -127,7 +144,7 @@ export function SendForReview() {
             setFolder("");
             setTitle("");
             setNote("");
-            toast.success(`${st.copied} file(s) ready for the client.`);
+            toast.success(`${files(st.copied)} ready for the client.`);
             await load();
             return;
           }
@@ -200,22 +217,13 @@ export function SendForReview() {
     }
   }
 
-  return (
-    <section>
-      <div className="mb-2 flex flex-wrap items-baseline gap-2">
-        <h2 className="text-[15px] font-semibold tracking-tight">
-          Send for review
-        </h2>
-        <span className="text-[12px] text-muted-foreground">
-          Videos or images, one link for the client
-        </span>
-      </div>
-
+  const body: ReactNode = (
+    <>
       {made ? (
-        <div className="mb-3 rounded-lg border bg-muted/30 p-3">
-          <p className="text-[12px] font-medium">Ready to send</p>
-          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-            <code className="min-w-0 flex-1 truncate rounded bg-background px-2 py-1 text-[12px]">
+        <div className="mb-4 rounded-xl bg-muted/40 p-3">
+          <p className="text-xs font-medium">Ready to send</p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <code className="min-w-0 flex-1 basis-48 truncate rounded-md bg-background px-2 py-1.5 text-xs">
               {made}
             </code>
             <button
@@ -225,12 +233,12 @@ export function SendForReview() {
                 setCopied(true);
                 toast.success("Copied. Send it on WhatsApp.");
               }}
-              className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-2.5 text-[12px] font-semibold text-primary-foreground"
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-xs font-semibold text-primary-foreground"
             >
               {copied ? (
-                <Check className="h-3.5 w-3.5" />
+                <Check className="size-3.5" />
               ) : (
-                <Copy className="h-3.5 w-3.5" />
+                <Copy className="size-3.5" />
               )}
               {copied ? "Copied" : "Copy"}
             </button>
@@ -238,18 +246,18 @@ export function SendForReview() {
               href={made}
               target="_blank"
               rel="noreferrer noopener"
-              className="inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-[12px] font-medium hover:bg-muted"
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium hover:bg-muted"
             >
-              <ExternalLink className="h-3.5 w-3.5" />
               See what they see
+              <ArrowUpRight className="size-3.5" />
             </a>
           </div>
         </div>
       ) : null}
 
-      <div className="grid gap-1.5 md:max-w-xl">
+      <div className="grid gap-2 md:max-w-xl">
         {links.map((l, i) => (
-          <div key={`link-${i}`} className="flex gap-1.5">
+          <div key={`link-${i}`} className="flex gap-2">
             <input
               value={l}
               onChange={e =>
@@ -258,16 +266,16 @@ export function SendForReview() {
               placeholder={
                 i === 0 ? "Link to a video or an image" : "Another one"
               }
-              className="h-9 min-w-0 flex-1 rounded-md border bg-background px-2.5 text-[13px]"
+              className="h-9 min-w-0 flex-1 rounded-lg border bg-background px-3 text-sm"
             />
             {links.length > 1 ? (
               <button
                 type="button"
                 aria-label="Remove"
                 onClick={() => setLinks(links.filter((_, j) => j !== i))}
-                className="rounded-md border px-2 text-muted-foreground hover:bg-muted"
+                className="inline-flex w-9 items-center justify-center rounded-lg border text-muted-foreground hover:bg-muted"
               >
-                <X className="h-3.5 w-3.5" />
+                <X className="size-3.5" />
               </button>
             ) : null}
           </div>
@@ -275,13 +283,13 @@ export function SendForReview() {
         <button
           type="button"
           onClick={() => setLinks([...links, ""])}
-          className="inline-flex w-fit items-center gap-1 text-[12px] text-muted-foreground hover:text-foreground"
+          className="inline-flex w-fit items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
         >
-          <Plus className="h-3 w-3" />
+          <Plus className="size-3.5" />
           Add another
         </button>
 
-        <div className="my-1 flex items-center gap-2 text-[11px] text-muted-foreground">
+        <div className="my-1 flex items-center gap-2 text-xs text-muted-foreground">
           <span className="h-px flex-1 bg-border" />
           or a whole folder
           <span className="h-px flex-1 bg-border" />
@@ -289,23 +297,23 @@ export function SendForReview() {
         <input
           value={folder}
           onChange={e => setFolder(e.target.value)}
-          placeholder="Paste a Google Drive folder — every video and image in it goes in"
-          className="h-9 rounded-md border bg-background px-2.5 text-[13px]"
+          placeholder="Paste a Google Drive folder, every video and image in it goes in"
+          className="h-9 rounded-lg border bg-background px-3 text-sm"
         />
 
-        <div className="mt-1 grid gap-1.5 sm:grid-cols-2">
+        <div className="mt-1 grid gap-2 text-sm sm:grid-cols-2">
           <input
             value={title}
             onChange={e => setTitle(e.target.value)}
             placeholder="What this is (optional)"
-            className="h-9 rounded-md border bg-background px-2.5 text-[13px]"
+            className="h-9 rounded-lg border bg-background px-3 text-sm"
           />
           {/* The clients are the ClickUp cards. Typing a name invents a
               client that matches nothing when somebody looks later. */}
           <AnimatedSelect
             value={client}
             onChange={e => setClient(e.target.value)}
-            className="h-9 rounded-md border bg-background px-2.5 text-[13px]"
+            className="h-9"
           >
             <option value="">Which client</option>
             {clients.map(c => (
@@ -319,73 +327,95 @@ export function SendForReview() {
           value={note}
           onChange={e => setNote(e.target.value)}
           placeholder="A line for them (optional)"
-          className="h-9 rounded-md border bg-background px-2.5 text-[13px]"
+          className="h-9 rounded-lg border bg-background px-3 text-sm"
         />
 
         <button
           type="button"
           disabled={busy || !ready}
           onClick={() => void (folder.trim() ? pullFolder() : send())}
-          className="mt-0.5 inline-flex h-9 w-fit items-center gap-1.5 rounded-md bg-primary px-3 text-[13px] font-semibold text-primary-foreground disabled:opacity-50"
+          className="mt-1 inline-flex h-9 w-fit items-center gap-1.5 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground disabled:opacity-50"
         >
-          {busy ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : null}
+          {busy ? <LoaderCircle className="size-3.5 animate-spin" /> : null}
           {importing ?? "Make the link"}
         </button>
         {importing ? (
-          <p className="text-[11px] text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             Copying them out of Drive so the client can actually open them.
             Leave this open.
           </p>
         ) : null}
       </div>
 
-      <h3 className="mt-5 text-[12px] font-medium text-muted-foreground">
-        Sent
-      </h3>
+      <h3 className="mt-6 text-xs font-medium text-muted-foreground">Sent</h3>
       {rows === null ? (
-        <p className="mt-1.5 text-[12px] text-muted-foreground">Loading</p>
+        <p className="mt-2 text-xs text-muted-foreground">Loading</p>
       ) : rows.length === 0 ? (
-        <p className="mt-1.5 text-[12px] text-muted-foreground">
+        <p className="mt-2 text-xs text-muted-foreground">
           Nothing sent yet. Every link you make stays here with whether the
           client has opened it and what they decided.
         </p>
       ) : (
-        <>
-          <h3 className="sr-only">Sent</h3>
-          <ul className="mt-1.5 grid gap-1">
-            {rows.slice(0, 8).map(r => (
-              <li
-                key={r.token}
-                className="flex flex-wrap items-center gap-2 text-[12px]"
+        <ul className="mt-2 divide-y">
+          {rows.slice(0, 8).map(r => (
+            <li
+              key={r.token}
+              className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-xs"
+            >
+              <span className="font-medium">{r.title}</span>
+              {r.client_name ? (
+                <span className="text-muted-foreground">{r.client_name}</span>
+              ) : null}
+              <span className="text-muted-foreground">
+                {r.opened_at ? `Opened ${ago(r.opened_at)}` : "Not opened yet"}
+              </span>
+              <span className="ml-auto tabular-nums text-muted-foreground">
+                {r.decided} of {r.items} decided
+                {r.changes ? `, ${r.changes} to change` : ""}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  void navigator.clipboard?.writeText(r.url);
+                  toast.success("Copied.");
+                }}
+                className="text-muted-foreground underline underline-offset-2 hover:text-foreground"
               >
-                <span className="font-medium">{r.title}</span>
-                {r.client_name ? (
-                  <span className="text-muted-foreground">{r.client_name}</span>
-                ) : null}
-                <span className="text-muted-foreground">
-                  {r.opened_at
-                    ? `opened ${ago(r.opened_at)}`
-                    : "not opened yet"}
-                </span>
-                <span className="ml-auto tabular-nums text-muted-foreground">
-                  {r.decided} of {r.items} decided
-                  {r.changes ? `, ${r.changes} to change` : ""}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void navigator.clipboard?.writeText(r.url);
-                    toast.success("Copied.");
-                  }}
-                  className="text-muted-foreground underline underline-offset-2 hover:text-foreground"
-                >
-                  copy
-                </button>
-              </li>
-            ))}
-          </ul>
-        </>
+                Copy
+              </button>
+            </li>
+          ))}
+        </ul>
       )}
+    </>
+  );
+
+  if (folded)
+    return (
+      <details ref={foldRef} className="rounded-2xl border bg-card">
+        <summary className="flex flex-wrap items-center gap-x-2 gap-y-1 px-4 py-3 sm:px-6 sm:py-4">
+          <span className="text-[15px] font-semibold">
+            Send something for review
+          </span>
+          <span className="text-xs text-muted-foreground">
+            Videos or images, one link for the client
+          </span>
+        </summary>
+        <div className="border-t px-4 py-4 sm:px-6 sm:py-6">{body}</div>
+      </details>
+    );
+
+  return (
+    <section>
+      <div className="mb-3 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <h2 className="text-[15px] font-semibold tracking-tight">
+          Send for review
+        </h2>
+        <span className="text-xs text-muted-foreground">
+          Videos or images, one link for the client
+        </span>
+      </div>
+      {body}
     </section>
   );
 }

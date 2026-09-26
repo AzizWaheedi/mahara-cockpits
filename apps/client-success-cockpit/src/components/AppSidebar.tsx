@@ -18,6 +18,7 @@ import {
   Settings,
   Sun,
   Sunrise,
+  X,
 } from "lucide-react";
 import { Link, useLocation } from "react-router";
 import { portalUrl } from "@/components/PortalAutoSignIn";
@@ -297,17 +298,30 @@ function SidebarUserMenu() {
 }
 
 function SidebarHeaderContent() {
-  const { setOpenMobile } = useSidebar();
+  const { setOpenMobile, isMobile } = useSidebar();
 
   return (
-    <SidebarHeader className="border-b border-sidebar-border">
+    <SidebarHeader className="flex-row items-center justify-between border-b border-sidebar-border">
+      {/* The logo opens the day, not the marketing page at "/". */}
       <Link
-        to="/"
+        to="/dashboard"
         onClick={() => setOpenMobile(false)}
         className="flex items-center px-2 py-2"
       >
         <Wordmark size="sm" />
       </Link>
+      {/* Below 1024px the rail is a sheet whose own close button is hidden,
+          so it carries one here. From 1024px up the rail is always there. */}
+      {isMobile ? (
+        <button
+          type="button"
+          onClick={() => setOpenMobile(false)}
+          aria-label="Close menu"
+          className="inline-flex size-10 items-center justify-center rounded-lg text-sidebar-foreground hover:bg-sidebar-accent"
+        >
+          <X className="size-5" aria-hidden />
+        </button>
+      ) : null}
     </SidebarHeader>
   );
 }

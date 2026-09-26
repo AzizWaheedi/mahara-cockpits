@@ -33,16 +33,26 @@ export function SyncStrip() {
         minute: "2-digit",
       })
     : null;
-  const detail = !s.ok
-    ? s.errors[0] || "one of the feeds failed"
-    : "no new data has come in";
+  // A plain reason on the strip; the feed's own error is folded under it.
+  const age = ageMin !== null ? ` (${ageMin} min ago)` : "";
+  const sentence = when
+    ? `The last full sync was at ${when} Kuwait time${age}, and ${!s.ok ? "one of the data feeds did not answer" : "nothing new has come in since"}.`
+    : `No sync has been recorded yet${!s.ok ? ", and one of the data feeds did not answer" : ""}.`;
+  const raw = !s.ok ? s.errors[0] : undefined;
 
   return (
-    <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-      <span className="font-semibold">Some data may be stale.</span>{" "}
-      {when ? `Last full sync ${when} Kuwait time` : "No sync recorded yet"}
-      {ageMin !== null ? ` (${ageMin} min ago)` : ""}. {detail}. It retries
-      every 30 minutes, so keep working, the numbers will catch up.
+    <div className="callout-warn mx-auto mb-6 w-full max-w-6xl rounded-2xl border px-4 py-3 text-sm">
+      <p>
+        <span className="font-semibold">Some numbers may be out of date.</span>{" "}
+        {sentence} It retries every 30 minutes, so keep working; the numbers
+        will catch up.
+      </p>
+      {raw ? (
+        <details className="mt-1 text-xs opacity-90">
+          <summary>What the feed said</summary>
+          <p className="mt-1 break-words font-mono">{raw}</p>
+        </details>
+      ) : null}
     </div>
   );
 }

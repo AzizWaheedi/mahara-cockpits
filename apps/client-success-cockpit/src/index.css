@@ -113,6 +113,7 @@
 
   /* Section-label teal that still passes contrast on white. */
   --color-teal-600: #0a9e98;
+  color-scheme: light;
 }
 
 .dark {
@@ -160,6 +161,8 @@
   --sidebar-ring: var(--mahara-teal);
 
   --color-teal-600: var(--mahara-teal);
+  /* Native controls (checkboxes, date fields, scrollbars) draw dark too. */
+  color-scheme: dark;
 }
 
 @layer base {
@@ -220,6 +223,34 @@
 }
 
 @layer utilities {
+  /* Tinted chips and panels that read in both themes, the same as the media
+     buyer and creative cockpits. Colour for meaning comes from here, never
+     from raw palette classes. */
+  .tone-good {
+    background-color: color-mix(in oklch, var(--success) 12%, transparent);
+    color: var(--success);
+  }
+  .tone-warn {
+    background-color: color-mix(in oklch, var(--warning) 15%, transparent);
+    color: color-mix(in oklch, var(--warning) 85%, var(--foreground));
+  }
+  .tone-bad {
+    background-color: color-mix(in oklch, var(--destructive) 12%, transparent);
+    color: var(--destructive);
+  }
+  .tone-neutral {
+    background-color: var(--muted);
+    color: var(--muted-foreground);
+  }
+  .txt-good {
+    color: var(--success);
+  }
+  .txt-bad {
+    color: var(--destructive);
+  }
+  .txt-warn {
+    color: color-mix(in oklch, var(--warning) 85%, var(--foreground));
+  }
   /* Signature elevation on dark surfaces (brand §4). Use sparingly. */
   .glow-teal {
     box-shadow:
@@ -229,6 +260,19 @@
   /* Mahara gradient: 135°, Royal Blue → Teal (brand §2). For rings and hairlines. */
   .bg-mahara-gradient {
     background-image: linear-gradient(135deg, var(--royal-blue) 0%, var(--mahara-teal) 65%, var(--mahara-teal) 100%);
+  }
+  /* Callout panel: "read this" strip that survives dark mode. */
+  .callout-warn {
+    background-color: color-mix(in oklch, var(--warning) 12%, transparent);
+    border-color: color-mix(in oklch, var(--warning) 45%, transparent);
+    color: color-mix(in oklch, var(--warning) 80%, var(--foreground));
+  }
+  /* A row of chips that scrolls sideways on a phone instead of wrapping. */
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
   }
 }
 

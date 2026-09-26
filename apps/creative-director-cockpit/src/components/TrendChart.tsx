@@ -71,16 +71,16 @@ export function TrendChart({
     return m ? `${Number(m[3])}/${Number(m[2])}` : x;
   };
   return (
-    <div className="rounded-lg border bg-card px-3 py-2">
+    <div className="min-w-0 rounded-2xl border bg-card p-4">
       <div className="flex items-baseline justify-between gap-2">
-        <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        <div className="min-w-0 truncate font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
           {title}
         </div>
-        <div className="flex items-baseline gap-2 text-sm">
+        <div className="flex shrink-0 items-baseline gap-2 text-sm">
           <span className="font-semibold tabular-nums">{fmt(last, unit)}</span>
           {d !== null ? (
             <span
-              className={`text-[11px] tabular-nums ${good ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}
+              className={`text-xs tabular-nums ${good ? "txt-good" : "txt-bad"}`}
               title="Last third of the period against the third before it"
             >
               {d > 0 ? "+" : ""}
@@ -92,7 +92,7 @@ export function TrendChart({
       {hasData ? (
         <ChartContainer
           config={{ y: { label: title } }}
-          className="mt-1 h-24 w-full aspect-auto text-teal-700 dark:text-teal-300"
+          className="mt-2 h-24 w-full aspect-auto text-[color:var(--chart-1)]"
         >
           {kind === "bar" ? (
             <BarChart
@@ -106,13 +106,13 @@ export function TrendChart({
                 tickLine={false}
                 axisLine={false}
                 minTickGap={24}
-                fontSize={10}
+                fontSize={11}
               />
               <YAxis
-                width={34}
+                width={36}
                 tickLine={false}
                 axisLine={false}
-                fontSize={10}
+                fontSize={11}
                 tickFormatter={v => fmt(Number(v), unit)}
               />
               <ChartTooltip
@@ -152,13 +152,13 @@ export function TrendChart({
                 tickLine={false}
                 axisLine={false}
                 minTickGap={24}
-                fontSize={10}
+                fontSize={11}
               />
               <YAxis
-                width={34}
+                width={36}
                 tickLine={false}
                 axisLine={false}
-                fontSize={10}
+                fontSize={11}
                 tickFormatter={v => fmt(Number(v), unit)}
               />
               <ChartTooltip
@@ -184,7 +184,7 @@ export function TrendChart({
         </p>
       )}
       {hint ? (
-        <p className="mt-1 text-[11px] text-muted-foreground">{hint}</p>
+        <p className="mt-2 text-xs text-muted-foreground">{hint}</p>
       ) : null}
     </div>
   );
@@ -202,7 +202,7 @@ function Tip({
   if (!active || !payload?.length) return null;
   const p = payload[0].payload;
   return (
-    <div className="rounded-md border bg-background px-2 py-1 text-xs shadow-sm">
+    <div className="rounded-lg border bg-popover px-2 py-1 text-xs shadow-sm dark:shadow-none">
       <div className="text-muted-foreground">{p.x}</div>
       <div className="font-semibold tabular-nums">{fmt(p.y, unit)}</div>
     </div>

@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from "convex/react";
+import { ArrowLeft, ArrowUpRight, ChevronDown } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ClientUpdates } from "@/components/ClientUpdates";
@@ -8,6 +9,16 @@ import {
   useLocalStills,
 } from "@/components/CreativePreview";
 import { DosDontsCard } from "@/components/DosDonts";
+import {
+  Chip,
+  ExtLink,
+  Kicker,
+  PageHeader,
+  Pill,
+  PillRow,
+  StatTile,
+} from "@/components/kit";
+import { ReportIssue } from "@/components/ReportIssue";
 import { bucketDays, TrendChart } from "@/components/TrendChart";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
@@ -15,9 +26,10 @@ import { DateInput } from "@/components/ui/date-input";
 import { Textarea } from "@/components/ui/textarea";
 import { type Constraint, diagnose } from "@/lib/csmDiagnosis";
 import { serviceModel } from "@/lib/csmTemplates";
+import { displayLabel, plural, shortDay } from "@/lib/format";
 import { publishOpenClient } from "@/lib/openClient";
+import { cn } from "@/lib/utils";
 import { api } from "../../convex/_generated/api";
-import { AiHelper } from "./CsmPage";
 
 /**
  * Client performance: the high-level board, then one client in full.
@@ -37,37 +49,25 @@ function Cell({ v, muted }: { v: unknown; muted?: boolean }) {
   const text = v === null || v === undefined || v === "" ? "-" : String(v);
   return (
     <td
-      className={`px-3 py-2 text-sm tabular-nums ${muted ? "text-muted-foreground" : ""}`}
+      className={`px-3 py-2 text-sm tabular-nums first:pl-4 last:pr-4 sm:first:pl-6 sm:last:pr-6 ${muted ? "text-muted-foreground" : ""}`}
     >
       {text}
     </td>
   );
 }
 
-function Stat({
-  label,
-  value,
-  hint,
-  tone,
-}: {
-  label: string;
-  value: string | number;
-  hint?: string;
-  tone?: string;
-}) {
+/** The mono column label every table on this screen uses. */
+function Th({ children }: { children: React.ReactNode }) {
   return (
-    <div className="rounded-lg border bg-card px-4 py-3">
-      <div className="text-xs uppercase tracking-wide text-muted-foreground">
-        {label}
-      </div>
-      <div className={`mt-1 text-2xl font-semibold tabular-nums ${tone ?? ""}`}>
-        {value}
-      </div>
-      {hint ? (
-        <div className="mt-0.5 text-xs text-muted-foreground">{hint}</div>
-      ) : null}
-    </div>
+    <th className="px-3 py-2 text-left font-mono text-[11px] font-normal uppercase tracking-[0.08em] whitespace-nowrap text-muted-foreground first:pl-4 last:pr-4 sm:first:pl-6 sm:last:pr-6">
+      {children}
+    </th>
   );
+}
+
+/** A section heading inside the client profile. */
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return <h3 className="text-[15px] font-semibold">{children}</h3>;
 }
 
 /** Each link's source of truth, so a missing one says where to add it. */
@@ -118,7 +118,7 @@ const LINK_LABELS: {
 
 function Links({ links }: { links: Record<string, string> }) {
   return (
-    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
       {LINK_LABELS.map(l => {
         const href = links?.[l.key];
         return href ? (
@@ -127,18 +127,28 @@ function Links({ links }: { links: Record<string, string> }) {
             href={href}
             target="_blank"
             rel="noreferrer"
-            className="rounded-lg border bg-card px-3 py-2 hover:bg-accent"
+            className="group min-w-0 rounded-2xl border bg-card px-4 py-3 transition-colors hover:border-primary/40"
           >
-            <div className="text-sm font-medium">{l.label} ↗</div>
-            <div className="text-xs text-muted-foreground">{l.hint}</div>
+            <div className="flex items-start gap-1 text-sm font-medium">
+              <span className="min-w-0">{l.label}</span>
+              <ArrowUpRight
+                aria-hidden
+                className="mt-0.5 size-3.5 shrink-0 text-muted-foreground group-hover:text-primary"
+              />
+            </div>
+            <div className="mt-0.5 text-xs text-muted-foreground">{l.hint}</div>
           </a>
         ) : (
           <div
             key={l.key}
-            className="rounded-lg border border-dashed px-3 py-2 opacity-60"
+            className="min-w-0 rounded-2xl border border-dashed px-4 py-3"
           >
-            <div className="text-sm font-medium">{l.label}</div>
-            <div className="text-xs text-muted-foreground">{l.missing}</div>
+            <div className="text-sm font-medium text-muted-foreground">
+              {l.label}
+            </div>
+            <div className="mt-0.5 text-xs text-muted-foreground">
+              {l.missing}
+            </div>
           </div>
         );
       })}
@@ -248,32 +258,39 @@ function AdTree({ ads, clientName }: { ads: Any[]; clientName: string }) {
     return (
       <p className="text-sm text-muted-foreground">
         No campaigns are synced for this client. If they are running ads, the
-        ads board is missing the client name, use the report button at the
-        bottom-right and I will fix the mapping.
+        ads board is missing the client name: say so with Report an issue at the
+        top of this page and the mapping gets fixed.
       </p>
     );
   return (
     <div className="space-y-4">
       {ads.map(c => (
-        <div key={c.campaign} className="rounded-lg border">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/40 px-3 py-2">
-            <div>
-              <div className="text-sm font-semibold">{c.campaign}</div>
+        <div
+          key={c.campaign}
+          className="overflow-hidden rounded-2xl border bg-card"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b px-4 py-3 sm:px-6">
+            <div className="min-w-0">
+              <div className="text-sm font-semibold" dir="auto">
+                {c.campaign}
+              </div>
               <div className="text-xs text-muted-foreground">
-                {c.account} · {c.status ?? "status unknown"}
+                {c.account} · {c.status ?? "Status unknown"}
               </div>
             </div>
-            <div className="flex gap-4 text-xs tabular-nums text-muted-foreground">
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs tabular-nums text-muted-foreground">
               <span>{num(c.leads7d)} leads 7d</span>
               <span>
-                {c.cpl ? `$${Number(c.cpl).toFixed(2)} per lead` : "no CPL"}
+                {c.cpl
+                  ? `$${Number(c.cpl).toFixed(2)} per lead`
+                  : "no cost per lead"}
               </span>
               <span>{num(c.bookings7d)} booked</span>
               <span>{num(c.showed7d)} showed</span>
             </div>
           </div>
           {(c.adsets ?? []).length === 0 ? (
-            <p className="px-3 py-2 text-xs text-muted-foreground">
+            <p className="px-4 py-3 text-xs text-muted-foreground sm:px-6">
               Meta did not return the ad sets for this campaign. Either Mahara's
               Meta access does not cover ad account {c.accountId ?? "(unknown)"}
               , or the campaign name on the ads board does not match Meta.
@@ -281,14 +298,17 @@ function AdTree({ ads, clientName }: { ads: Any[]; clientName: string }) {
           ) : null}
           <div className="divide-y">
             {(c.adsets ?? []).map((s: Any, si: number) => (
-              <div key={s.metaId ?? `${s.name}:${si}`} className="px-3 py-2">
-                <div className="text-sm font-medium">
+              <div
+                key={s.metaId ?? `${s.name}:${si}`}
+                className="px-4 py-3 sm:px-6"
+              >
+                <div className="text-sm font-medium" dir="auto">
                   {s.name}{" "}
                   <span className="text-xs font-normal text-muted-foreground">
                     {s.status}
                   </span>
                 </div>
-                <div className="mt-1 space-y-1">
+                <div className="mt-2 space-y-1.5">
                   {(s.ads ?? []).map((ad: Any, ai: number) => (
                     <div
                       key={ad.metaId ?? `${ad.name}:${ai}`}
@@ -336,53 +356,67 @@ function ConstraintCard({ c, first }: { c: Constraint; first?: boolean }) {
   const [done, setDone] = useState<Record<number, boolean>>({});
   const [lang, setLang] = useState<"en" | "ar">("en");
   const [open, setOpen] = useState(Boolean(first));
-  const tone =
+  const layer =
     c.layer === "macro"
-      ? "border-rose-300 bg-rose-50"
+      ? "Whole system"
       : c.layer === "admin"
-        ? "border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/40"
-        : "border-sky-300 bg-sky-50";
+        ? "Our admin"
+        : "One leak";
   return (
-    <div className={`rounded-lg border ${first ? tone : "bg-card"}`}>
+    <div
+      className={cn(
+        "rounded-2xl border bg-card",
+        first ? "border-primary/40" : "",
+      )}
+    >
       <button
         type="button"
+        aria-expanded={open}
         onClick={() => setOpen(o => !o)}
-        className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left"
+        className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left sm:px-6 sm:py-4"
       >
-        <div>
-          <div className="flex items-center gap-2">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
             {first ? (
-              <span className="rounded bg-[#091333] px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-white">
+              <span className="rounded-full bg-primary/15 px-2 py-0.5 font-mono text-[11px] uppercase tracking-[0.08em] text-foreground ring-1 ring-inset ring-primary/40">
                 Fix this first
               </span>
             ) : null}
-            <span className="rounded border px-1.5 py-0.5 text-[11px] uppercase tracking-wide text-muted-foreground">
-              {c.layer === "macro"
-                ? "whole system"
-                : c.layer === "admin"
-                  ? "our admin"
-                  : "one leak"}
-            </span>
+            <Chip
+              tone={
+                c.layer === "macro"
+                  ? "bad"
+                  : c.layer === "admin"
+                    ? "warn"
+                    : "neutral"
+              }
+            >
+              {layer}
+            </Chip>
             {c.owner ? (
-              <span className="text-[12px] text-muted-foreground">
-                owner: {c.owner}
+              <span className="text-xs text-muted-foreground">
+                Owner: {c.owner}
               </span>
             ) : null}
           </div>
-          <div className="mt-1 text-sm font-semibold">{c.title}</div>
-          <div className="text-xs text-muted-foreground">{c.evidence}</div>
+          <div className="mt-2 text-sm font-semibold">{c.title}</div>
+          <div className="mt-0.5 text-xs text-muted-foreground">
+            {c.evidence}
+          </div>
         </div>
-        <span className="text-xs text-muted-foreground">
-          {open ? "−" : "+"}
-        </span>
+        <ChevronDown
+          aria-hidden
+          className={cn(
+            "mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform",
+            open ? "rotate-180" : "",
+          )}
+        />
       </button>
       {open ? (
-        <div className="space-y-3 border-t px-4 py-3">
+        <div className="space-y-4 border-t px-4 py-4 sm:px-6">
           <p className="text-sm">{c.diagnosis}</p>
-          <div className="space-y-1">
-            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              What to do
-            </div>
+          <div className="space-y-2">
+            <Kicker>What to do</Kicker>
             {c.fixes.map((f, i) => (
               <label
                 key={f}
@@ -394,7 +428,7 @@ function ConstraintCard({ c, first }: { c: Constraint; first?: boolean }) {
                   onChange={e =>
                     setDone(d => ({ ...d, [i]: e.target.checked }))
                   }
-                  className="mt-1"
+                  className="mt-0.5 size-4 shrink-0 accent-primary"
                 />
                 <span
                   className={
@@ -408,24 +442,19 @@ function ConstraintCard({ c, first }: { c: Constraint; first?: boolean }) {
           </div>
           {c.say ? (
             <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  What to say
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Kicker>What to say</Kicker>
+                <div className="flex gap-1">
+                  {(["en", "ar"] as const).map(l => (
+                    <Pill
+                      key={l}
+                      active={lang === l}
+                      onClick={() => setLang(l)}
+                    >
+                      {l === "ar" ? "العربية" : "English"}
+                    </Pill>
+                  ))}
                 </div>
-                {(["en", "ar"] as const).map(l => (
-                  <button
-                    key={l}
-                    type="button"
-                    onClick={() => setLang(l)}
-                    className={`rounded border px-1.5 py-0.5 text-[11px] font-semibold uppercase ${
-                      lang === l
-                        ? "border-teal-400 bg-teal-50 text-teal-800 dark:bg-teal-950/40 dark:text-teal-100"
-                        : ""
-                    }`}
-                  >
-                    {l}
-                  </button>
-                ))}
               </div>
               <Textarea
                 rows={6}
@@ -486,48 +515,48 @@ function CallPrep({ p }: { p: Any }) {
   ];
   const nudge = p.reportNudge as Any;
   return (
-    <section className="space-y-3 rounded-lg border-2 border-primary/30 bg-primary/5 p-4">
+    <section className="space-y-4 rounded-2xl border border-primary/30 bg-card p-4 sm:p-6">
       {nudge?.url ? (
-        <div className="rounded border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-700 dark:bg-amber-950/40">
+        <div className="callout-warn rounded-xl p-4 text-sm">
           <p className="font-medium">
             This week's report reminder is waiting for your approval
           </p>
-          <p className="mt-0.5 text-xs text-amber-900">
-            {nudge.missing} appointment{nudge.missing === 1 ? "" : "s"} with no
-            outcome. Nothing reaches the client until you open this and press
-            send.
+          <p className="mt-1 text-xs">
+            {plural(Number(nudge.missing ?? 0), "appointment")} with no outcome.
+            Nothing reaches the client until you open this and press send.
           </p>
-          <a
-            className="mt-2 inline-block rounded bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground"
-            href={String(nudge.url)}
-            target="_blank"
-            rel="noreferrer"
-          >
-            Review and send ↗
-          </a>
+          <Button size="sm" className="mt-3" asChild>
+            <a href={String(nudge.url)} target="_blank" rel="noreferrer">
+              Review and send
+              <ArrowUpRight aria-hidden />
+            </a>
+          </Button>
         </div>
       ) : null}
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <h3 className="text-sm font-semibold uppercase tracking-wide">
-            Prep for this call
-          </h3>
-          <p className="text-xs text-muted-foreground">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1 basis-60">
+          <h3 className="text-[15px] font-semibold">Prep for this call</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
             Read this once before you dial. Lead with the constraint, offer the
             fix, then make the ask.
           </p>
         </div>
-        <Button size="sm" variant="outline" onClick={() => setOpen(v => !v)}>
-          {open ? "Hide" : "Open"}
+        <Button
+          size="sm"
+          variant="outline"
+          aria-expanded={open}
+          onClick={() => setOpen(v => !v)}
+        >
+          {open ? "Hide" : "Show"}
         </Button>
       </div>
       {open ? (
         <div className="space-y-4 text-sm">
           <div>
             <p className="font-medium">Where they stand</p>
-            <ul className="mt-1 space-y-0.5 text-muted-foreground">
+            <ul className="mt-1 ml-4 list-disc space-y-0.5 text-muted-foreground">
               {facts.map(f => (
-                <li key={f}>• {f}</li>
+                <li key={f}>{f}</li>
               ))}
             </ul>
           </div>
@@ -540,9 +569,9 @@ function CallPrep({ p }: { p: Any }) {
           {lead?.fixes?.length ? (
             <div>
               <p className="font-medium">The fix you are bringing</p>
-              <ul className="mt-1 space-y-0.5 text-muted-foreground">
+              <ul className="mt-1 ml-4 list-disc space-y-0.5 text-muted-foreground">
                 {lead.fixes.slice(0, 3).map((x: string) => (
-                  <li key={x}>• {x}</li>
+                  <li key={x}>{x}</li>
                 ))}
               </ul>
             </div>
@@ -564,16 +593,16 @@ function CallPrep({ p }: { p: Any }) {
 function DiagnosisSection({ p }: { p: Any }) {
   const d = diagnose(p);
   return (
-    <section className="space-y-3">
+    <section className="space-y-4">
       <div>
-        <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-          What is holding this client back
-        </h3>
-        <p className="text-sm">{d.headline}</p>
-        <p className="text-xs text-muted-foreground">Judged on {d.basis}.</p>
+        <SectionTitle>What is holding this client back</SectionTitle>
+        <p className="mt-1 text-sm">{d.headline}</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          Judged on {d.basis}.
+        </p>
       </div>
       {d.healthy ? null : (
-        <div className="space-y-2">
+        <div className="space-y-3">
           {d.top ? <ConstraintCard c={d.top} first /> : null}
           {d.rest.map(c => (
             <ConstraintCard key={c.id} c={c} />
@@ -626,33 +655,31 @@ function ReportSection({ p }: { p: Any }) {
   const pending = reports.find((r: Any) => !r.builtAt);
   const ready = reports.filter((r: Any) => r.builtAt);
   return (
-    <section className="space-y-3 rounded-lg border bg-card p-4">
+    <section className="space-y-4 rounded-2xl border bg-card p-4 sm:p-6">
       <div>
-        <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-          Monthly report
-        </h3>
-        <p className="text-sm text-muted-foreground">
-          I write it as a Google Doc you can edit before it goes anywhere. Same
+        <h3 className="text-[15px] font-semibold">Monthly report</h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Written as a Google Doc you can edit before it goes anywhere. Same
           template every month, so the client learns to read it.
         </p>
       </div>
-      <div className="rounded border bg-muted/40 p-3 text-sm">
+      <div className="rounded-xl bg-muted/40 p-4 text-sm">
         <p className="font-medium">Always in the report</p>
-        <ul className="mt-1 space-y-0.5 text-muted-foreground">
+        <ul className="mt-1 ml-4 list-disc space-y-0.5 text-muted-foreground">
           {REPORT_TEMPLATE.map(line => (
-            <li key={line}>• {line}</li>
+            <li key={line}>{line}</li>
           ))}
         </ul>
-        <p className="mt-3 font-medium">Want anything else in this one?</p>
-        <div className="mt-1 space-y-1">
+        <p className="mt-4 font-medium">Want anything else in this one?</p>
+        <div className="mt-2 space-y-1.5">
           {REPORT_EXTRAS.map(e => (
             <label
               key={e.key}
-              className="flex items-start gap-2 text-muted-foreground"
+              className="flex cursor-pointer items-start gap-2 text-muted-foreground"
             >
               <input
                 type="checkbox"
-                className="mt-1"
+                className="mt-0.5 size-4 shrink-0 accent-primary"
                 checked={extras.includes(e.key)}
                 onChange={() =>
                   setExtras(v =>
@@ -668,20 +695,13 @@ function ReportSection({ p }: { p: Any }) {
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        {(["en", "ar"] as const).map(l => (
-          <button
-            key={l}
-            type="button"
-            onClick={() => setLang(l)}
-            className={`rounded border px-2 py-1 text-xs font-semibold uppercase ${
-              lang === l
-                ? "border-teal-400 bg-teal-50 text-teal-800 dark:bg-teal-950/40 dark:text-teal-100"
-                : ""
-            }`}
-          >
-            {l}
-          </button>
-        ))}
+        <div className="flex gap-1">
+          {(["en", "ar"] as const).map(l => (
+            <Pill key={l} active={lang === l} onClick={() => setLang(l)}>
+              {l === "ar" ? "العربية" : "English"}
+            </Pill>
+          ))}
+        </div>
         <Button
           size="sm"
           disabled={busy}
@@ -714,29 +734,32 @@ function ReportSection({ p }: { p: Any }) {
       <Textarea
         rows={2}
         value={note}
-        placeholder="Anything I should put in it? e.g. mention the new creative, or that they paused for Ramadan"
+        placeholder="Anything to put in it? For example the new creative, or that they paused for Ramadan"
         onChange={e => setNote(e.target.value)}
       />
       {pending ? (
-        <div className="rounded border border-dashed px-3 py-2 text-sm text-muted-foreground">
+        <div className="rounded-xl bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
           Writing {pending.month} now, the link lands here on the next sync.
           {pending.error ? ` Last attempt failed: ${pending.error}` : ""}
         </div>
       ) : null}
-      {ready.map((r: Any) => (
-        <a
-          key={r._id}
-          href={r.docUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="block rounded border px-3 py-2 text-sm hover:bg-accent"
-        >
-          {r.month} report ↗{" "}
-          <span className="text-xs text-muted-foreground">
-            editable Google Doc
-          </span>
-        </a>
-      ))}
+      {ready.length ? (
+        <ul className="divide-y text-sm">
+          {ready.map((r: Any) => (
+            <li
+              key={r._id}
+              className="flex flex-wrap items-baseline gap-x-2 gap-y-1 py-2 first:pt-0 last:pb-0"
+            >
+              <ExtLink href={r.docUrl} className="font-medium">
+                {r.month} report
+              </ExtLink>
+              <span className="text-xs text-muted-foreground">
+                Editable Google Doc
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </section>
   );
 }
@@ -764,10 +787,8 @@ function ReportSection({ p }: { p: Any }) {
 function Provisional({ pv }: { pv: Any }) {
   if (!pv || (!pv.count && !pv.callbacks)) return null;
   return (
-    <section className="space-y-2">
-      <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-        Provisionally booked
-      </h3>
+    <section className="space-y-3">
+      <SectionTitle>Provisionally booked</SectionTitle>
       <p className="text-sm text-muted-foreground">
         {pv.count} appointment{pv.count === 1 ? "" : "s"} on the Not Confirmed
         calendar
@@ -777,11 +798,11 @@ function Provisional({ pv }: { pv: Any }) {
         . Not on the stat sheet until confirmed.
       </p>
       {pv.upcoming?.length ? (
-        <ul className="divide-y rounded-lg border text-sm">
+        <ul className="divide-y rounded-2xl border bg-card text-sm">
           {pv.upcoming.map((e: Any, i: number) => (
             <li
               key={`${e.at}-${i}`}
-              className="flex flex-wrap items-baseline gap-2 p-2"
+              className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-3 sm:px-6"
             >
               <span className="font-mono text-xs tabular-nums text-muted-foreground">
                 {e.at}
@@ -802,7 +823,7 @@ const TEAMS: [string, string][] = [
   ["", "Me (Client Success list)"],
   ["creative", "Media / Creative"],
   ["tech", "Operations / Tech"],
-  ["call_center", "Call Center"],
+  ["call_center", "Call centre"],
   ["media_buyer", "Media buyer (Marketing / ADs)"],
 ];
 
@@ -845,30 +866,31 @@ function AddTask({
     setOpen(false);
   };
   return (
-    <div className="space-y-2">
-      <button
-        type="button"
-        className="rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-muted"
+    <div className="space-y-3">
+      <Button
+        size="sm"
+        variant="outline"
+        aria-expanded={open}
         onClick={() => setOpen(v => !v)}
       >
         {open ? "Close" : "Add a task for this client"}
-      </button>
+      </Button>
       {open ? (
         <form
-          className="space-y-2 rounded-lg border bg-card p-3 text-sm"
+          className="space-y-3 rounded-2xl border bg-card p-4 text-sm sm:p-6"
           onSubmit={e => {
             e.preventDefault();
             void submit();
           }}
         >
           <input
-            className="w-full rounded-md border bg-background px-2 py-1.5"
+            className="h-9 w-full rounded-lg border bg-background px-3"
             placeholder="What needs doing"
             value={title}
             onChange={e => setTitle(e.target.value)}
           />
           <textarea
-            className="w-full rounded-md border bg-background px-2 py-1.5"
+            className="w-full rounded-lg border bg-background px-3 py-2"
             rows={2}
             placeholder="Detail, optional"
             value={note}
@@ -876,7 +898,6 @@ function AddTask({
           />
           <div className="flex flex-wrap items-center gap-2">
             <AnimatedSelect
-              className="rounded-md border bg-background px-2 py-1.5"
               value={team}
               onChange={e => setTeam(e.target.value)}
             >
@@ -887,17 +908,19 @@ function AddTask({
               ))}
             </AnimatedSelect>
             <DateInput
-              className="rounded-md border bg-background px-2 py-1.5"
+              className="rounded-lg border bg-background px-3 py-1.5"
               value={due}
               onChange={e => setDue(e.target.value)}
+              aria-label="Due date"
             />
-            <button
+            <Button
               type="submit"
+              size="sm"
               disabled={!title.trim()}
-              className="ml-auto rounded-md bg-primary px-3 py-1.5 font-medium text-primary-foreground disabled:opacity-50"
+              className="ml-auto"
             >
               Add task
-            </button>
+            </Button>
           </div>
           <p className="text-xs text-muted-foreground">
             Tagged "{clientName.toLowerCase()}" in ClickUp, so the board
@@ -906,30 +929,26 @@ function AddTask({
         </form>
       ) : null}
       {added?.length ? (
-        <ul className="divide-y rounded-lg border text-sm">
+        <ul className="divide-y rounded-2xl border bg-card text-sm">
           {added.map(t => (
-            <li key={t.id} className="flex flex-wrap items-baseline gap-2 p-2">
+            <li
+              key={t.id}
+              className="flex flex-wrap items-baseline gap-x-2 gap-y-1 px-4 py-3 sm:px-6"
+            >
               <span className="font-medium">{t.title}</span>
               <span className="text-xs text-muted-foreground">
                 {t.department
                   ? (TEAMS.find(x => x[0] === t.department)?.[1] ??
                     t.department)
-                  : "my list"}
+                  : "My list"}
               </span>
               <span className="ml-auto text-xs">
                 {t.url ? (
-                  <a
-                    href={t.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-primary underline"
-                  >
-                    In ClickUp
-                  </a>
+                  <ExtLink href={t.url}>In ClickUp</ExtLink>
                 ) : t.error ? (
-                  <span className="text-red-600">failed: {t.error}</span>
+                  <span className="txt-bad">Failed: {t.error}</span>
                 ) : (
-                  <span className="text-muted-foreground">queued</span>
+                  <span className="text-muted-foreground">Queued</span>
                 )}
               </span>
             </li>
@@ -954,78 +973,79 @@ function RecentCalls({ calls, brief }: { calls: Any[]; brief?: string }) {
         })
       : "";
   return (
-    <section className="space-y-2">
-      <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-        Recent calls
-      </h3>
-      <p className="text-sm text-muted-foreground">
-        Recorded calls this client came up in, with what was said about them.
-      </p>
-      {brief ? (
-        <div className="rounded-lg border bg-muted/40 p-3 text-sm">
-          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Where things stand, from the calls
-          </p>
-          <p className="whitespace-pre-wrap">{brief}</p>
-        </div>
-      ) : null}
-      <ul className="divide-y rounded-lg border">
-        {calls.map((c, i) => (
-          <li
-            key={`${c.url ?? c.title}-${i}`}
-            className="space-y-1 p-3 text-sm"
-          >
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-medium">{String(c.title)}</span>
-              {c.host ? (
-                <span className="text-xs text-muted-foreground">
-                  hosted by {String(c.host)}
+    <section className="space-y-3">
+      <div>
+        <SectionTitle>Recent calls</SectionTitle>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Recorded calls this client came up in, with what was said about them.
+        </p>
+      </div>
+      <div className="rounded-2xl border bg-card">
+        {brief ? (
+          <div className="border-b px-4 py-4 text-sm sm:px-6">
+            <Kicker className="mb-2">Where things stand</Kicker>
+            <p className="whitespace-pre-wrap" dir="auto">
+              {brief}
+            </p>
+          </div>
+        ) : null}
+        <ul className="divide-y">
+          {calls.map((c, i) => (
+            <li
+              key={`${c.url ?? c.title}-${i}`}
+              className="space-y-1.5 px-4 py-3 text-sm sm:px-6"
+            >
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span className="min-w-0 font-medium" dir="auto">
+                  {String(c.title)}
                 </span>
-              ) : null}
-              <span className="ml-auto text-xs text-muted-foreground">
-                {when(String(c.at ?? ""))}
-              </span>
-              {c.url ? (
-                <a
-                  href={String(c.url)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-xs text-primary underline"
-                >
-                  Open recording
-                </a>
-              ) : null}
-            </div>
-            {c.brief ? (
-              <p className="whitespace-pre-wrap text-sm">{String(c.brief)}</p>
-            ) : null}
-            {c.summary && !c.brief ? (
-              <>
-                <p className="whitespace-pre-line text-sm text-muted-foreground">
-                  {openUrl === (c.url ?? c.title)
-                    ? String(c.summary)
-                    : `${String(c.summary).slice(0, 280)}${String(c.summary).length > 280 ? "…" : ""}`}
-                </p>
-                {String(c.summary).length > 280 ? (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setOpenUrl(v =>
-                        v === (c.url ?? c.title) ? null : (c.url ?? c.title),
-                      )
-                    }
-                    className="text-sm text-primary underline"
-                  >
-                    {openUrl === (c.url ?? c.title)
-                      ? "Show less"
-                      : "Read the summary"}
-                  </button>
+                {c.host ? (
+                  <span className="text-xs text-muted-foreground">
+                    Hosted by {String(c.host)}
+                  </span>
                 ) : null}
-              </>
-            ) : null}
-          </li>
-        ))}
-      </ul>
+                <span className="text-xs text-muted-foreground sm:ml-auto">
+                  {when(String(c.at ?? ""))}
+                </span>
+                {c.url ? (
+                  <ExtLink href={String(c.url)} className="text-xs">
+                    Open recording
+                  </ExtLink>
+                ) : null}
+              </div>
+              {c.brief ? (
+                <p className="whitespace-pre-wrap text-sm" dir="auto">
+                  {String(c.brief)}
+                </p>
+              ) : null}
+              {c.summary && !c.brief ? (
+                <>
+                  <p className="whitespace-pre-line text-sm text-muted-foreground">
+                    {openUrl === (c.url ?? c.title)
+                      ? String(c.summary)
+                      : `${String(c.summary).slice(0, 280)}${String(c.summary).length > 280 ? "…" : ""}`}
+                  </p>
+                  {String(c.summary).length > 280 ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setOpenUrl(v =>
+                          v === (c.url ?? c.title) ? null : (c.url ?? c.title),
+                        )
+                      }
+                      className="text-sm text-primary underline-offset-4 hover:underline"
+                    >
+                      {openUrl === (c.url ?? c.title)
+                        ? "Show less"
+                        : "Read the summary"}
+                    </button>
+                  ) : null}
+                </>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      </div>
     </section>
   );
 }
@@ -1037,10 +1057,8 @@ function LostLeads({ lost }: { lost: Any }) {
   if (!reasons.length && !leads.length) return null;
   const shown = open ? leads : leads.slice(0, 6);
   return (
-    <section className="space-y-2">
-      <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-        Why leads were marked lost
-      </h3>
+    <section className="space-y-3">
+      <SectionTitle>Why leads were marked lost</SectionTitle>
       <p className="text-sm text-muted-foreground">
         {lost.total} leads sit in {lost.pipeline || "their lost pipeline"}.
         These are the {leads.length} most recent.
@@ -1058,39 +1076,39 @@ function LostLeads({ lost }: { lost: Any }) {
           </span>
         ))}
       </div>
-      <ul className="divide-y rounded-lg border">
+      <ul className="divide-y rounded-2xl border bg-card">
         {shown.map((l, i) => (
-          <li key={i} className="space-y-1 p-3 text-sm">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-medium">{String(l.name)}</span>
+          <li key={i} className="space-y-1 px-4 py-3 text-sm sm:px-6">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="font-medium" dir="auto">
+                {String(l.name)}
+              </span>
               <span className="text-xs text-muted-foreground">
                 {String(l.reason).replace(/\s*\(Write why.*\)/i, "")}
               </span>
               {l.ad ? (
-                <span className="rounded bg-muted px-1.5 py-0.5 text-xs">
+                <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
                   {String(l.ad)}
                 </span>
               ) : null}
               {l.movedAt ? (
                 <span className="ml-auto text-xs text-muted-foreground">
-                  {String(l.movedAt)}
+                  {shortDay(String(l.movedAt))}
                 </span>
               ) : null}
             </div>
             {l.note ? (
-              <p className="text-sm text-muted-foreground">{String(l.note)}</p>
+              <p className="text-sm text-muted-foreground" dir="auto">
+                {String(l.note)}
+              </p>
             ) : null}
           </li>
         ))}
       </ul>
       {leads.length > 6 ? (
-        <button
-          type="button"
-          onClick={() => setOpen(v => !v)}
-          className="text-sm text-primary underline"
-        >
+        <Button variant="ghost" size="sm" onClick={() => setOpen(v => !v)}>
           {open ? "Show fewer" : `Show the other ${leads.length - 6}`}
-        </button>
+        </Button>
       ) : null}
     </section>
   );
@@ -1109,7 +1127,7 @@ function LeadsByAd({ rows }: { rows: Any[] }) {
         .toUpperCase()
         .startsWith("Y")
     )
-      return { label: "Closed", tone: "text-emerald-600 font-medium" };
+      return { label: "Closed", tone: "txt-good font-medium" };
     if (
       String(r.show ?? "")
         .trim()
@@ -1130,28 +1148,26 @@ function LeadsByAd({ rows }: { rows: Any[] }) {
       return { label: "Appointment upcoming", tone: "text-muted-foreground" };
     if (!r.appDate)
       return { label: "No appointment booked", tone: "text-muted-foreground" };
-    return { label: "Not filled in", tone: "text-rose-600" };
+    return { label: "Not filled in", tone: "txt-bad" };
   };
   return (
-    <section className="space-y-2">
-      <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-        Every lead, and the ad it came from ({rows.length})
-      </h3>
-      <div className="flex flex-wrap gap-1.5 text-xs">
+    <section className="space-y-3">
+      <SectionTitle>
+        Every lead, and the ad it came from
+        <span className="ml-1.5 font-normal text-muted-foreground tabular-nums">
+          {rows.length}
+        </span>
+      </SectionTitle>
+      <PillRow>
         {["all", ...ads].map(a => (
-          <button
-            key={a}
-            type="button"
-            onClick={() => setAd(a)}
-            className={`rounded px-2 py-1 ${ad === a ? "bg-foreground text-background" : "bg-muted"}`}
-          >
+          <Pill key={a} active={ad === a} onClick={() => setAd(a)}>
             {a === "all" ? `All (${rows.length})` : a}
-          </button>
+          </Pill>
         ))}
-      </div>
-      <div className="max-h-96 overflow-auto rounded-lg border">
-        <table className="w-full">
-          <thead className="sticky top-0 bg-muted/80">
+      </PillRow>
+      <div className="max-h-96 overflow-auto rounded-2xl border bg-card">
+        <table className="w-full min-w-max">
+          <thead className="sticky top-0 border-b bg-card">
             <tr>
               {[
                 "Lead",
@@ -1162,12 +1178,7 @@ function LeadsByAd({ rows }: { rows: Any[] }) {
                 "Caller",
                 "Outcome",
               ].map(h => (
-                <th
-                  key={h}
-                  className="px-3 py-2 text-left text-xs uppercase tracking-wide text-muted-foreground"
-                >
-                  {h}
-                </th>
+                <Th key={h}>{h}</Th>
               ))}
             </tr>
           </thead>
@@ -1177,12 +1188,14 @@ function LeadsByAd({ rows }: { rows: Any[] }) {
               return (
                 <tr key={`${r.name}-${r.added}-${i}`}>
                   <Cell v={r.name} />
-                  <Cell v={r.added} muted />
-                  <Cell v={r.appDate} muted />
+                  <Cell v={shortDay(r.added)} muted />
+                  <Cell v={shortDay(r.appDate)} muted />
                   <Cell v={r.ad || r.source || "not tagged"} />
                   <Cell v={r.type} muted />
                   <Cell v={r.caller} muted />
-                  <td className={`px-3 py-2 text-sm ${o.tone}`}>{o.label}</td>
+                  <td className={`px-3 py-2 pr-4 text-sm sm:pr-6 ${o.tone}`}>
+                    {o.label}
+                  </td>
                 </tr>
               );
             })}
@@ -1345,7 +1358,7 @@ function ProfileTrends({ p, from, to }: { p: Any; from: string; to: string }) {
     (Date.parse(to) - Date.parse(from)) / 86400_000 > 45;
   const per = weekly ? "per week" : "per day";
   return (
-    <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+    <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 lg:gap-4">
       <TrendChart title={`Leads ${per}`} points={leads} kind="bar" />
       <TrendChart title={`Spend ${per}`} points={spend} unit="$" />
       <TrendChart
@@ -1387,7 +1400,7 @@ function BookTrends({
       </p>
     );
   return (
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 lg:gap-4">
       <TrendChart
         title={`Leads per day, ${label} clients`}
         points={trend.map((r: Any) => ({ x: r.date, y: r.leads }))}
@@ -1445,40 +1458,38 @@ function RangePicker({
     /^\d{4}-\d{2}-\d{2}$/.test(from) &&
     /^\d{4}-\d{2}-\d{2}$/.test(to) &&
     from <= to;
+  // One row that scrolls sideways on a phone: eight controls wrapped onto
+  // three lines before. The custom range opens underneath it.
   return (
-    <div className="flex flex-wrap items-center gap-1.5 text-sm">
-      {quick.map(([k, label]) => (
-        <button
-          key={k}
-          type="button"
-          onClick={() => onChange(k)}
-          className={`rounded-md border px-2.5 py-1 ${value === k ? "border-primary bg-primary text-primary-foreground" : "hover:bg-muted"}`}
-        >
-          {label}
-        </button>
-      ))}
-      <AnimatedSelect
-        className="rounded-md border bg-background px-2 py-1"
-        value={isMonth ? value : ""}
-        onChange={e => e.target.value && onChange(e.target.value)}
-      >
-        <option value="">Pick a month…</option>
-        {months.map(m => (
-          <option key={m} value={m}>
-            {rangeBounds(m)[2]}
-          </option>
+    <div className="min-w-0 space-y-2">
+      <PillRow>
+        {quick.map(([k, label]) => (
+          <Pill key={k} active={value === k} onClick={() => onChange(k)}>
+            {label}
+          </Pill>
         ))}
-      </AnimatedSelect>
-      <button
-        type="button"
-        onClick={() => setCustomOpen(o => !o)}
-        className={`rounded-md border px-2.5 py-1 ${isCustom ? "border-primary bg-primary text-primary-foreground" : "hover:bg-muted"}`}
-      >
-        {isCustom ? `${from} to ${to}` : "Custom"}
-      </button>
+        {/* The select's own CSS inherits its font, so the size sits on a wrapper. */}
+        <span className="shrink-0 text-xs">
+          <AnimatedSelect
+            value={isMonth ? value : ""}
+            onChange={e => e.target.value && onChange(e.target.value)}
+            aria-label="Pick a month"
+          >
+            <option value="">Pick a month…</option>
+            {months.map(m => (
+              <option key={m} value={m}>
+                {rangeBounds(m)[2]}
+              </option>
+            ))}
+          </AnimatedSelect>
+        </span>
+        <Pill active={isCustom} onClick={() => setCustomOpen(o => !o)}>
+          {isCustom ? `${shortDay(from)} to ${shortDay(to)}` : "Custom"}
+        </Pill>
+      </PillRow>
       {customOpen ? (
         <form
-          className="flex flex-wrap items-center gap-1.5"
+          className="flex flex-wrap items-center gap-2 text-sm"
           onSubmit={e => {
             e.preventDefault();
             if (!customOk) return;
@@ -1491,7 +1502,7 @@ function RangePicker({
             min={earliest}
             max={to}
             onChange={e => setFrom(e.target.value)}
-            className="rounded-md border bg-background px-2 py-1"
+            className="rounded-lg border bg-background px-3 py-1.5"
             aria-label="From"
           />
           <span className="text-muted-foreground">to</span>
@@ -1500,19 +1511,15 @@ function RangePicker({
             min={from}
             max={kuwaitToday()}
             onChange={e => setTo(e.target.value)}
-            className="rounded-md border bg-background px-2 py-1"
+            className="rounded-lg border bg-background px-3 py-1.5"
             aria-label="To"
           />
-          <button
-            type="submit"
-            disabled={!customOk}
-            className="rounded-md bg-primary px-2.5 py-1 font-semibold text-primary-foreground disabled:opacity-50"
-          >
+          <Button type="submit" size="sm" disabled={!customOk}>
             Apply
-          </button>
+          </Button>
           {earliest ? (
             <span className="text-xs text-muted-foreground">
-              data from {earliest}
+              Data from {shortDay(earliest)}
             </span>
           ) : null}
         </form>
@@ -1525,16 +1532,22 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
   const p = useQuery(api.csm.clientProfile, { clientName: name });
   // Hooks before any early return, so their order never changes.
   const [range, setRange] = useState<RangeKey>("month");
+  // The chase list can run past a hundred rows: first 20, the rest on a tap.
+  const [staleAll, setStaleAll] = useState(false);
   const rv = useMemo(() => rangeMetrics(p ?? {}, range), [p, range]);
   const months = useMemo(() => monthsAvailable(p ?? {}), [p]);
   if (p === undefined)
-    return (
-      <div className="p-6 text-sm text-muted-foreground">Loading {name}…</div>
-    );
+    return <div className="text-sm text-muted-foreground">Loading {name}…</div>;
   if (p === null)
     return (
-      <div className="p-6 text-sm text-muted-foreground">
-        No profile stored for {name} yet.
+      <div className="space-y-3">
+        <Button size="sm" variant="ghost" className="-ml-3" onClick={onBack}>
+          <ArrowLeft aria-hidden />
+          All clients
+        </Button>
+        <p className="text-sm text-muted-foreground">
+          No profile stored for {name} yet.
+        </p>
       </div>
     );
   const perf = p.performance ?? {};
@@ -1547,35 +1560,40 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
   const stale: Any[] = perf.stale ?? [];
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <Button size="sm" variant="ghost" onClick={onBack}>
-            ← All clients
+      <div className="space-y-3">
+        <Button size="sm" variant="ghost" className="-ml-3" onClick={onBack}>
+          <ArrowLeft aria-hidden />
+          All clients
+        </Button>
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-xl font-semibold tracking-tight" dir="auto">
+              {p.clientName}
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {[
+                displayLabel(p.stage),
+                serviceModel(p.service).label,
+                displayLabel(p.happiness),
+                p.liveDays != null ? `${p.liveDays} days live` : null,
+                p.ghlName && p.ghlName !== p.clientName
+                  ? `GHL: ${p.ghlName}`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </p>
+          </div>
+          <Button variant="outline" size="sm" onClick={() => openReport(p)}>
+            Print report
           </Button>
-          <h2 className="mt-1 text-xl font-bold">{p.clientName}</h2>
-          {p.taskId ? (
-            <div className="mt-2">
-              <AddTask
-                taskId={String(p.taskId)}
-                clientName={String(p.clientName)}
-              />
-            </div>
-          ) : null}
-          <p className="text-sm text-muted-foreground">
-            {[
-              p.stage,
-              serviceModel(p.service).label,
-              p.happiness,
-              p.liveDays != null ? `${p.liveDays} days live` : null,
-              p.ghlName && p.ghlName !== p.clientName
-                ? `GHL: ${p.ghlName}`
-                : null,
-            ]
-              .filter(Boolean)
-              .join(" · ")}
-          </p>
         </div>
-        <Button onClick={() => openReport(p)}>Download report</Button>
+        {p.taskId ? (
+          <AddTask
+            taskId={String(p.taskId)}
+            clientName={String(p.clientName)}
+          />
+        ) : null}
       </div>
 
       <Links links={(p.links ?? {}) as Record<string, string>} />
@@ -1596,13 +1614,13 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
       <DiagnosisSection p={p} />
 
       {perf.error ? (
-        <div className="space-y-1 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-700 dark:bg-amber-950/40">
+        <div className="callout-warn space-y-1 rounded-2xl border p-4 text-sm">
           <p className="font-medium">
             {/UNAUTHENTICATED|401/.test(String(perf.error))
               ? "Their numbers are not showing because our Google Sheets connection is down, not because the sheet is empty."
               : "Their sheet could not be read."}
           </p>
-          <p className="text-xs text-amber-900">
+          <p className="text-xs">
             {/UNAUTHENTICATED|401/.test(String(perf.error))
               ? "Google returned 401 invalid credentials. Reconnect Google Sheets in integrations and the numbers refill on the next sync, within 15 minutes. Nothing has been lost, and nothing here is a guess."
               : String(perf.error)}
@@ -1610,24 +1628,24 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
         </div>
       ) : null}
       {!p.links?.sheet ? (
-        <div className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
+        <div className="rounded-2xl border border-dashed p-4 text-sm text-muted-foreground">
           No performance sheet is linked on their ClickUp record, so there are
           no numbers to show. Add the Sheet Link field and this fills in on the
           next sync.
         </div>
       ) : (
         <>
-          <section className="space-y-3">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-              {perf.monthLabel ?? "This month"} · from their sheet
-            </h3>
+          <section className="space-y-4">
+            <SectionTitle>
+              {perf.monthLabel ?? "This month"}, from their sheet
+            </SectionTitle>
             {serviceModel(p.service).dwy ? (
               <>
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <Stat
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                  <StatTile
                     label="Leads"
                     value={num(m.leads)}
-                    hint={custom ? rv.label : `${num(l.leads)} last month`}
+                    sub={custom ? rv.label : `${num(l.leads)} last month`}
                   />
                 </div>
                 <p className="text-xs text-muted-foreground">
@@ -1638,8 +1656,8 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
                 </p>
               </>
             ) : (
-              <div className="space-y-2">
-                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
                   <RangePicker
                     value={range}
                     onChange={setRange}
@@ -1648,20 +1666,20 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
                   />
                   <span className="text-xs text-muted-foreground">
                     {custom
-                      ? `${rv.label} · ${rv.from} to ${rv.to}`
+                      ? `${rv.label} · ${shortDay(rv.from)} to ${shortDay(rv.to)}`
                       : (perf.monthLabel ?? "this month")}
                     {custom && rv.cpl != null
                       ? ` · $${rv.spend} spent, $${rv.cpl} per lead`
                       : ""}
                   </span>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
-                  <Stat
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+                  <StatTile
                     label={
                       perf.leadsSource === "meta" ? "Leads (from ads)" : "Leads"
                     }
                     value={num(m.leads)}
-                    hint={
+                    sub={
                       perf.leadsSource === "meta"
                         ? custom
                           ? rv.label
@@ -1671,27 +1689,27 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
                           : `${num(l.leads)} last month`
                     }
                   />
-                  <Stat
+                  <StatTile
                     label="Booked"
                     value={num(m.booked)}
-                    hint={custom ? rv.label : `${num(l.booked)} last month`}
+                    sub={custom ? rv.label : `${num(l.booked)} last month`}
                   />
-                  <Stat
+                  <StatTile
                     label="Attended"
                     value={num(m.shows)}
-                    hint={
+                    sub={
                       m.showRate != null
                         ? `${m.showRate}% of decided`
-                        : "no outcome yet"
+                        : "No outcome yet"
                     }
                   />
-                  <Stat label="No show" value={num(m.noshows)} />
-                  <Stat label="Quotes" value={num(m.quotes)} />
-                  <Stat
+                  <StatTile label="No show" value={num(m.noshows)} />
+                  <StatTile label="Quotes" value={num(m.quotes)} />
+                  <StatTile
                     label="Closed"
                     value={num(m.closes)}
-                    tone={num(m.closes) ? "text-emerald-600" : undefined}
-                    hint={
+                    tone={num(m.closes) ? "txt-good" : undefined}
+                    sub={
                       m.closeRate != null
                         ? `${m.closeRate}% of attended`
                         : undefined
@@ -1711,19 +1729,22 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
               </p>
             )}
             {perf.staleReason ? (
-              <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
-                These numbers were last read on {perf.staleAt}. Today's read
-                failed, so you are looking at the last good copy rather than a
-                partial one. Reason: {perf.staleReason}
+              <p className="callout-warn rounded-2xl border px-4 py-3 text-xs">
+                These numbers were last read on {shortDay(perf.staleAt)}.
+                Today's read failed, so you are looking at the last good copy
+                rather than a partial one. Reason: {perf.staleReason}
               </p>
             ) : null}
           </section>
           <section
-            className={`space-y-2 ${serviceModel(p.service).dwy ? "hidden" : ""}`}
+            className={`space-y-3 ${serviceModel(p.service).dwy ? "hidden" : ""}`}
           >
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-              Appointments with no outcome on the sheet ({perf.staleCount ?? 0})
-            </h3>
+            <SectionTitle>
+              Appointments with no outcome on the sheet
+              <span className="ml-1.5 font-normal text-muted-foreground tabular-nums">
+                {perf.staleCount ?? 0}
+              </span>
+            </SectionTitle>
             {stale.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 Nothing outstanding, every appointment has an outcome.
@@ -1734,9 +1755,9 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
                   Every unfilled row reads as a loss in the monthly report.
                   Chase these before the next check-in call.
                 </p>
-                <div className="overflow-x-auto rounded-lg border">
-                  <table className="w-full">
-                    <thead className="bg-muted/50">
+                <div className="overflow-x-auto rounded-2xl border bg-card">
+                  <table className="w-full min-w-max">
+                    <thead className="border-b">
                       <tr>
                         {[
                           "Name",
@@ -1746,21 +1767,16 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
                           "Missing",
                           "Days",
                         ].map(h => (
-                          <th
-                            key={h}
-                            className="px-3 py-2 text-left text-xs uppercase tracking-wide text-muted-foreground"
-                          >
-                            {h}
-                          </th>
+                          <Th key={h}>{h}</Th>
                         ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y">
-                      {stale.map(r => (
+                      {(staleAll ? stale : stale.slice(0, 20)).map(r => (
                         <tr key={`${r.name}-${r.added}-${r.appDate}`}>
                           <Cell v={r.name} />
-                          <Cell v={r.added} muted />
-                          <Cell v={r.appDate} />
+                          <Cell v={shortDay(r.added)} muted />
+                          <Cell v={shortDay(r.appDate)} />
                           <Cell v={r.caller} muted />
                           <Cell v={r.missing} />
                           <Cell v={r.appDaysAgo ?? r.ageDays} />
@@ -1769,26 +1785,39 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
                     </tbody>
                   </table>
                 </div>
+                {stale.length > 20 ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setStaleAll(v => !v)}
+                  >
+                    {staleAll
+                      ? "Show fewer"
+                      : `Show the other ${stale.length - 20}`}
+                  </Button>
+                ) : null}
               </>
             )}
           </section>
           {(perf.byAd ?? []).length ? (
-            <section className="space-y-2">
-              <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-                Which ad is producing the better leads
-              </h3>
-              <p className="text-xs text-muted-foreground">
-                Last two months, per ad. Judge an ad on what its leads did, not
-                on how many it produced. "No outcome" is the ad's rows nobody
-                filled in, so a high number there means the comparison is not
-                fair yet.
-              </p>
-              <div className="overflow-x-auto rounded-lg border">
-                <table className="w-full">
-                  <thead className="bg-muted/50">
+            <section className="space-y-3">
+              <div>
+                <SectionTitle>
+                  Which ad is producing the better leads
+                </SectionTitle>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Last two months, per ad. Judge an ad on what its leads did,
+                  not on how many it produced. "No outcome" is the ad's rows
+                  nobody filled in, so a high number there means the comparison
+                  is not fair yet.
+                </p>
+              </div>
+              <div className="overflow-x-auto rounded-2xl border bg-card">
+                <table className="w-full min-w-max">
+                  <thead className="border-b">
                     <tr>
                       {[
-                        "Ad / source",
+                        "Ad or source",
                         "Leads",
                         "Attended",
                         "Attendance",
@@ -1796,12 +1825,7 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
                         "Close rate",
                         "No outcome",
                       ].map(h => (
-                        <th
-                          key={h}
-                          className="px-3 py-2 text-left text-xs uppercase tracking-wide text-muted-foreground"
-                        >
-                          {h}
-                        </th>
+                        <Th key={h}>{h}</Th>
                       ))}
                     </tr>
                   </thead>
@@ -1817,7 +1841,7 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
                         />
                         <td className="px-3 py-2 text-sm tabular-nums">
                           {num(a.closes) ? (
-                            <span className="font-medium text-emerald-600">
+                            <span className="font-medium txt-good">
                               {a.closes}
                             </span>
                           ) : (
@@ -1851,21 +1875,20 @@ function Profile({ name, onBack }: { name: string; onBack: () => void }) {
         />
       ) : null}
 
-      <section className="space-y-2">
-        <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-          Live campaigns, ad sets and ads
-        </h3>
+      <section className="space-y-3">
+        <SectionTitle>Live campaigns, ad sets and ads</SectionTitle>
         <AdTree ads={(p.ads ?? []) as Any[]} clientName={name} />
       </section>
 
       <ReportSection p={p} />
 
       {p.profileText ? (
-        <section className="space-y-2">
-          <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-            Client profile
-          </h3>
-          <p className="whitespace-pre-wrap rounded-lg border bg-card p-3 text-sm">
+        <section className="space-y-3">
+          <SectionTitle>Client profile</SectionTitle>
+          <p
+            className="whitespace-pre-wrap rounded-2xl border bg-card p-4 text-sm sm:p-6"
+            dir="auto"
+          >
             {p.profileText}
           </p>
         </section>
@@ -1921,7 +1944,7 @@ export function ClientPerformancePage() {
 
   if (data === undefined)
     return (
-      <div className="p-10 text-sm text-muted-foreground">
+      <div className="mx-auto w-full max-w-6xl text-sm text-muted-foreground">
         Loading client performance…
       </div>
     );
@@ -1952,25 +1975,20 @@ export function ClientPerformancePage() {
   const waiting = live.filter(c => (c.reportNudge as Any)?.url);
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-6 p-4 sm:p-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">
-          Client performance
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          Every client's own numbers, straight off their performance sheet.
-          Click a client for the full picture, their drive, their CRM, their ads
-          and a report you can send.
-        </p>
-      </div>
+    <div className="mx-auto w-full max-w-6xl space-y-6">
+      <PageHeader
+        title="Client performance"
+        sub="Every client's own numbers, straight off their performance sheet. Open a client for their drive, their CRM, their ads and a report you can send."
+        actions={<ReportIssue page="performance" />}
+      />
 
       {!openClient && waiting.length ? (
-        <details className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-700 dark:bg-amber-950/40">
-          <summary className="cursor-pointer font-medium">
+        <details className="callout-warn rounded-2xl border px-4 py-3 text-sm sm:px-6">
+          <summary className="font-medium">
             {waiting.length} weekly report reminder
             {waiting.length === 1 ? "" : "s"} waiting for your approval
           </summary>
-          <p className="mt-1 text-xs text-amber-900">
+          <p className="mt-2 text-xs">
             Posted in #csm-general this week. Nothing reaches a client until you
             open it and press send.
           </p>
@@ -1978,12 +1996,13 @@ export function ClientPerformancePage() {
             {waiting.map(c => (
               <li key={c.clientName}>
                 <a
-                  className="underline"
+                  className="inline-flex items-center gap-1 font-medium text-foreground underline-offset-4 hover:underline"
                   href={String((c.reportNudge as Any).url)}
                   target="_blank"
                   rel="noreferrer"
                 >
                   {c.clientName}
+                  <ArrowUpRight aria-hidden className="size-3.5" />
                 </a>{" "}
                 <span className="text-xs text-muted-foreground">
                   {(c.reportNudge as Any).missing} with no outcome
@@ -1998,39 +2017,42 @@ export function ClientPerformancePage() {
         <Profile name={openClient} onBack={() => setOpenClient(null)} />
       ) : (
         <>
-          <div className="flex flex-wrap items-center gap-2 text-sm">
-            {GROUPS.map(g => {
-              const n = live.filter(c => groupOf(c) === g.key).length;
-              return (
-                <button
-                  key={g.key}
-                  type="button"
-                  onClick={() => setGroup(g.key)}
-                  className={`rounded px-3 py-1 ${group === g.key ? "bg-foreground text-background" : "bg-muted"}`}
-                >
-                  {g.label} ({n})
-                </button>
-              );
-            })}
-            <span className="text-xs text-muted-foreground">
-              {churned.length} churned client
-              {churned.length === 1 ? "" : "s"} hidden
-            </span>
+          <div className="space-y-2">
+            <PillRow>
+              {GROUPS.map(g => {
+                const n = live.filter(c => groupOf(c) === g.key).length;
+                return (
+                  <Pill
+                    key={g.key}
+                    active={group === g.key}
+                    onClick={() => setGroup(g.key)}
+                  >
+                    {g.label} ({n})
+                  </Pill>
+                );
+              })}
+            </PillRow>
+            <p className="text-xs text-muted-foreground">
+              {chosen.hint}
+              {churned.length
+                ? ` ${plural(churned.length, "churned client")} hidden.`
+                : ""}
+            </p>
           </div>
-          <p className="text-xs text-muted-foreground">{chosen.hint}</p>
 
-          <div className="grid gap-3 sm:grid-cols-3">
-            <Stat label="Clients" value={rows.length} />
-            <Stat
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4">
+            <StatTile label="Clients" value={rows.length} />
+            <StatTile
               label="Appointments with no outcome"
               value={totalStale}
-              tone={totalStale ? "text-rose-600" : "text-emerald-600"}
-              hint="across every sheet"
+              tone={totalStale ? "txt-bad" : "txt-good"}
+              sub="Across every sheet"
             />
-            <Stat
+            <StatTile
               label="Closed this month"
               value={rows.reduce((n, c) => n + num(c.month?.closes), 0)}
-              hint="what the client actually banked"
+              sub="What the client actually banked"
+              className="col-span-2 sm:col-span-1"
             />
           </div>
 
@@ -2042,128 +2064,132 @@ export function ClientPerformancePage() {
             label={chosen.label.toLowerCase()}
           />
 
-          <input
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            placeholder="Find a client…"
-            className="w-full max-w-sm rounded-md border bg-background px-3 py-2 text-sm"
-          />
-
-          <div className="overflow-x-auto rounded-lg border">
-            <table className="w-full">
-              <thead className="bg-muted/50">
-                <tr>
-                  {[
-                    "Client",
-                    "Stage",
-                    "Leads",
-                    "Booked",
-                    "Attended",
-                    "Closed",
-                    "No outcome",
-                    "Ads",
-                    "",
-                  ].map(h => (
-                    <th
-                      key={h}
-                      className="px-3 py-2 text-left text-xs uppercase tracking-wide text-muted-foreground"
-                    >
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {rows.map(c => (
-                  <tr key={c.clientName} className="hover:bg-accent/40">
-                    <td className="px-3 py-2 text-sm font-medium">
-                      {c.clientName}
-                      {serviceModel(c.service).dwy ? (
-                        <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600">
-                          DWY
-                        </span>
-                      ) : !c.hasSheet ? (
-                        <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
-                          no sheet linked
-                        </span>
-                      ) : null}
-                    </td>
-                    <Cell v={c.stage} muted />
-                    <Cell v={c.month?.leads ?? 0} />
-                    <Cell
-                      v={
-                        serviceModel(c.service).dwy
-                          ? "-"
-                          : (c.month?.booked ?? 0)
-                      }
-                      muted={serviceModel(c.service).dwy}
-                    />
-                    <Cell
-                      v={
-                        serviceModel(c.service).dwy
-                          ? "-"
-                          : (c.month?.shows ?? 0)
-                      }
-                      muted={serviceModel(c.service).dwy}
-                    />
-                    <Cell
-                      v={
-                        serviceModel(c.service).dwy
-                          ? "-"
-                          : (c.month?.closes ?? 0)
-                      }
-                      muted={serviceModel(c.service).dwy}
-                    />
-                    <td className="px-3 py-2 text-sm tabular-nums">
-                      {serviceModel(c.service).dwy ? (
-                        <span className="text-muted-foreground">-</span>
-                      ) : num(c.staleCount) ? (
-                        <span className="rounded bg-rose-100 px-1.5 py-0.5 font-medium text-rose-700">
-                          {c.staleCount}
-                        </span>
-                      ) : (
-                        "0"
-                      )}
-                    </td>
-                    <td className="px-3 py-2 text-sm">
-                      {!c.live || c.adsAccess === "no_access" ? (
-                        <span className="text-muted-foreground">no access</span>
-                      ) : c.adsAccess === "no_campaigns" ? (
-                        <span className="text-muted-foreground">
-                          not linked
-                        </span>
-                      ) : num(c.live.ads) === 0 ? (
-                        <span className="rounded bg-rose-100 px-1.5 py-0.5 font-medium text-rose-700">
-                          nothing live
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground">
-                          {num(c.live.ads)} live
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2">
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() => setOpenClient(c.clientName)}
-                      >
-                        Open
-                      </Button>
-                    </td>
+          <section className="rounded-2xl border bg-card">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-4 sm:px-6">
+              <div className="min-w-0">
+                <h2 className="text-[15px] font-semibold">
+                  {chosen.label} clients
+                </h2>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Biggest admin debt first: sorted by how many appointments are
+                  missing an outcome.
+                </p>
+              </div>
+              <input
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                placeholder="Find a client…"
+                aria-label="Find a client"
+                className="h-9 w-full rounded-lg border bg-background px-3 text-sm sm:w-64"
+              />
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-max">
+                <thead className="border-b">
+                  <tr>
+                    {[
+                      "Client",
+                      "Stage",
+                      "Leads",
+                      "Booked",
+                      "Attended",
+                      "Closed",
+                      "No outcome",
+                      "Ads",
+                      "",
+                    ].map(h => (
+                      <Th key={h}>{h}</Th>
+                    ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Sorted by how many appointments are missing an outcome, the biggest
-            admin debt first. Open a client for last month, their ad tree and a
-            report.
-          </p>
+                </thead>
+                <tbody className="divide-y">
+                  {rows.map(c => (
+                    <tr key={c.clientName} className="hover:bg-muted/40">
+                      <td className="px-3 py-2 pl-4 text-sm font-medium sm:pl-6">
+                        <span dir="auto">{c.clientName}</span>
+                        {serviceModel(c.service).dwy ? (
+                          <span className="ml-2 rounded-full border px-2 py-0.5 text-xs font-normal text-muted-foreground">
+                            DWY
+                          </span>
+                        ) : !c.hasSheet ? (
+                          <span className="ml-2 rounded-full border px-2 py-0.5 text-xs font-normal text-muted-foreground">
+                            No sheet linked
+                          </span>
+                        ) : null}
+                      </td>
+                      <Cell v={displayLabel(c.stage)} muted />
+                      <Cell v={c.month?.leads ?? 0} />
+                      <Cell
+                        v={
+                          serviceModel(c.service).dwy
+                            ? "-"
+                            : (c.month?.booked ?? 0)
+                        }
+                        muted={serviceModel(c.service).dwy}
+                      />
+                      <Cell
+                        v={
+                          serviceModel(c.service).dwy
+                            ? "-"
+                            : (c.month?.shows ?? 0)
+                        }
+                        muted={serviceModel(c.service).dwy}
+                      />
+                      <Cell
+                        v={
+                          serviceModel(c.service).dwy
+                            ? "-"
+                            : (c.month?.closes ?? 0)
+                        }
+                        muted={serviceModel(c.service).dwy}
+                      />
+                      <td className="px-3 py-2 text-sm tabular-nums">
+                        {serviceModel(c.service).dwy ? (
+                          <span className="text-muted-foreground">-</span>
+                        ) : num(c.staleCount) ? (
+                          <span className="tone-bad rounded-full px-2 py-0.5 font-medium">
+                            {c.staleCount}
+                          </span>
+                        ) : (
+                          "0"
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-sm">
+                        {!c.live || c.adsAccess === "no_access" ? (
+                          <span className="text-muted-foreground">
+                            No access
+                          </span>
+                        ) : c.adsAccess === "no_campaigns" ? (
+                          <span className="text-muted-foreground">
+                            Not linked
+                          </span>
+                        ) : num(c.live.ads) === 0 ? (
+                          <span className="tone-bad rounded-full px-2 py-0.5 font-medium">
+                            Nothing live
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">
+                            {num(c.live.ads)} live
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 pr-4 text-right sm:pr-6">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setOpenClient(c.clientName)}
+                        >
+                          Open
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
         </>
       )}
-      <AiHelper page="performance" clientName={openClient ?? undefined} />
     </div>
   );
 }

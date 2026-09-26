@@ -534,9 +534,12 @@ const sidebarMenuButtonVariants = cva(
         outline:
           "bg-background shadow-[0_0_0_1px_hsl(var(--sidebar-border))] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground hover:shadow-[0_0_0_1px_hsl(var(--sidebar-accent))]",
       },
+      // The rail sits outside <main>, so the 40px touch rule does not reach
+      // it: rows are 40px while it is a sheet (below 1024px), 32px on the
+      // desktop rail.
       size: {
-        default: "h-8 text-sm",
-        sm: "h-7 text-xs",
+        default: "h-10 text-sm lg:h-8",
+        sm: "h-9 text-xs lg:h-7",
         lg: "h-12 text-sm group-data-[collapsible=icon]:!p-0",
       },
     },
@@ -673,7 +676,10 @@ const SidebarMenuSkeleton = React.forwardRef<
     <div
       ref={ref}
       data-sidebar="menu-skeleton"
-      className={cn("flex h-8 items-center gap-2 rounded-md px-2", className)}
+      className={cn(
+        "flex h-10 items-center gap-2 rounded-md px-2 lg:h-8",
+        className,
+      )}
       {...props}
     >
       {showIcon && (

@@ -14,6 +14,8 @@
  * into one "last touched" number.
  */
 
+import { shortDay } from "./format";
+
 // biome-ignore lint/suspicious/noExplicitAny: snapshot rows are untyped by design
 export type Client = any;
 
@@ -554,13 +556,14 @@ export function nextPocState(
     missing,
     past,
     suggested,
+    // Display only: the ISO day above is what gets saved and compared.
     label: booked
-      ? `next call ${booked}, booked in the calendar`
+      ? `Next call ${shortDay(booked)}, booked in the calendar`
       : missing
-        ? "no next call booked"
+        ? "No next call booked"
         : past
-          ? `next call ${date} has passed, rebook it`
-          : `next call ${date}`,
+          ? `Next call ${shortDay(date)} has passed, rebook it`
+          : `Next call ${shortDay(date)}`,
   };
 }
 
@@ -595,7 +598,7 @@ export function serviceModel(service?: string | null): {
   return {
     code: null,
     dwy: false,
-    label: "service not set",
+    label: "Service not set",
     kpi: "Set DFY or DWY, otherwise we do not know which numbers we owe them.",
   };
 }

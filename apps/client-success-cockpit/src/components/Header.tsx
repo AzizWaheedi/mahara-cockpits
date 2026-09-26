@@ -1,5 +1,4 @@
 import { useConvexAuth } from "convex/react";
-import { ArrowRight } from "lucide-react";
 import { Link, useLocation } from "react-router";
 import { Wordmark } from "@/components/Wordmark";
 import { APP_NAME } from "@/lib/constants";
@@ -38,19 +37,16 @@ function HeaderView({
           <nav className="flex items-center gap-2">
             {!showAuthActions || isLoading ? null : isAuthenticated ? (
               <Button size="sm" asChild>
-                <Link to="/dashboard">
-                  Open App
-                  <ArrowRight className="size-4" />
-                </Link>
+                <Link to="/dashboard">Open the app</Link>
               </Button>
             ) : (
               !isAuthPage && (
                 <>
                   <Button variant="ghost" size="sm" asChild>
-                    <Link to="/login">Sign In</Link>
+                    <Link to="/login">Sign in</Link>
                   </Button>
                   <Button size="sm" asChild>
-                    <Link to="/signup">Get Started</Link>
+                    <Link to="/signup">Get started</Link>
                   </Button>
                 </>
               )

@@ -75,7 +75,7 @@ export function ViktorSignInSection() {
       {attemptFailed && !redirecting && (
         <p className="text-sm text-destructive bg-destructive/10 rounded-lg px-3 py-2">
           {emailPasswordAvailable
-            ? "Viktor sign-in didn't complete. You may not be a member of this app's workspace — sign in with email and password instead."
+            ? "Viktor sign-in didn't complete. You may not be a member of this app's workspace. Sign in with email and password instead."
             : "Viktor sign-in didn't complete. You may not be a member of this app's workspace."}
         </p>
       )}

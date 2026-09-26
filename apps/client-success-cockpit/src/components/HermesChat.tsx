@@ -175,20 +175,21 @@ export function HermesChat() {
       </button>
       {open ? (
         <section
-          className="fixed right-4 bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] z-40 flex h-[min(70vh,640px)] w-[min(92vw,420px)] flex-col overflow-hidden rounded-xl border bg-background shadow-2xl lg:right-6 lg:bottom-20"
+          className="fixed right-4 bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] z-40 flex h-[min(70vh,640px)] w-[min(92vw,420px)] flex-col overflow-hidden rounded-2xl border bg-background shadow-2xl dark:shadow-none lg:right-6 lg:bottom-20"
           aria-label="Hermes chat"
         >
-          <header className="flex items-center justify-between border-b px-3 py-2">
-            <div className="text-[13px]">
+          <header className="flex items-center justify-between gap-2 border-b py-1 pr-1 pl-3">
+            <div className="min-w-0 truncate text-sm">
               <span className="font-semibold">Hermes</span>
               <span className="text-muted-foreground">
                 {clientName ? ` · about ${clientName}` : " · this cockpit"}
               </span>
             </div>
-            <div className="flex items-center gap-3">
+            {/* Outside <main>, so these carry their own 40px on touch. */}
+            <div className="flex shrink-0 items-center">
               <button
                 type="button"
-                className="text-[12px] text-muted-foreground hover:underline"
+                className="inline-flex h-8 items-center rounded-lg px-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground pointer-coarse:h-10"
                 onClick={() => clear({})}
                 title="Start a new conversation"
               >
@@ -196,14 +197,14 @@ export function HermesChat() {
               </button>
               <button
                 type="button"
-                className="text-[12px] text-muted-foreground hover:underline"
+                className="inline-flex h-8 items-center rounded-lg px-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground pointer-coarse:h-10"
                 onClick={() => setOpen(false)}
               >
                 Close
               </button>
             </div>
           </header>
-          <div className="flex-1 space-y-3 overflow-y-auto px-3 py-3 text-[13px]">
+          <div className="flex-1 space-y-3 overflow-y-auto px-3 py-3 text-sm">
             {count === 0 ? (
               <p className="text-muted-foreground">
                 Ask anything about this cockpit's clients, numbers or what to do
@@ -216,7 +217,7 @@ export function HermesChat() {
                 <div key={m._id} className="flex justify-end">
                   <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-primary px-3 py-2 text-primary-foreground">
                     <p className="whitespace-pre-wrap">{m.text}</p>
-                    <p className="mt-1 text-[11px] text-primary-foreground/70">
+                    <p className="mt-1 text-xs text-primary-foreground/70">
                       {m.status === "failed"
                         ? `Failed: ${m.error ?? "no answer"}`
                         : ago(m.at)}
@@ -236,7 +237,7 @@ export function HermesChat() {
                         }
                       }}
                     />
-                    <p className="mt-1 text-[11px] text-muted-foreground">
+                    <p className="mt-1 text-xs text-muted-foreground">
                       Hermes · {ago(m.at)}
                     </p>
                   </div>
@@ -272,12 +273,12 @@ export function HermesChat() {
               placeholder={
                 clientName ? `Ask about ${clientName}…` : "Ask Hermes…"
               }
-              className="flex-1 resize-none rounded-md border bg-background px-2 py-1.5 text-[13px] outline-none focus:ring-2 focus:ring-ring"
+              className="flex-1 resize-none rounded-lg border bg-background px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
             />
             <button
               type="submit"
               disabled={!text.trim()}
-              className="rounded-md bg-primary px-3 py-2 text-[13px] font-semibold text-primary-foreground disabled:opacity-50"
+              className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50 pointer-coarse:min-h-10"
             >
               Send
             </button>

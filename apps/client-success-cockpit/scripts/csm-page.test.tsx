@@ -208,7 +208,7 @@ test("client performance renders the overview then a single client", async () =>
       buttons[0].click();
     });
     const html = host.innerHTML;
-    expect(html).toContain("Download report");
+    expect(html).toContain("Print report");
     expect(html).toContain("What is holding this client back");
     expect(html).toContain("Fix this first");
     expect(html).toContain("Write the Google Doc");

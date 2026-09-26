@@ -1,5 +1,5 @@
 import { useConvexAuth } from "convex/react";
-import { ArrowRight, Check } from "lucide-react";
+import { Check } from "lucide-react";
 import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Wordmark } from "@/components/Wordmark";
@@ -18,10 +18,6 @@ function LandingPageView({
   return (
     <div className="flex-1 flex flex-col">
       <section className="relative flex-1 flex flex-col items-center justify-center px-4 py-16 md:py-24">
-        <div className="absolute inset-0 -z-10 overflow-hidden">
-          <div className="absolute inset-0 bg-[linear-gradient(to_right,var(--border)_1px,transparent_1px),linear-gradient(to_bottom,var(--border)_1px,transparent_1px)] bg-[size:2rem_2rem] [mask-image:radial-gradient(ellipse_70%_50%_at_50%_0%,#000_60%,transparent_100%)] opacity-50" />
-        </div>
-
         <div className="max-w-2xl mx-auto text-center space-y-6">
           <div className="flex justify-center">
             <Wordmark size="lg" />
@@ -39,10 +35,7 @@ function LandingPageView({
           {showAuthActions && !isAuthenticated && !isLoading && (
             <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
               <Button size="lg" className="text-base h-11 px-6" asChild>
-                <Link to="/login">
-                  Sign in
-                  <ArrowRight className="size-4" />
-                </Link>
+                <Link to="/login">Sign in</Link>
               </Button>
               <Button
                 size="lg"
@@ -57,10 +50,7 @@ function LandingPageView({
           {showAuthActions && isAuthenticated && (
             <div className="pt-2">
               <Button size="lg" className="text-base h-11 px-6" asChild>
-                <Link to="/dashboard">
-                  Open your cockpit
-                  <ArrowRight className="size-4" />
-                </Link>
+                <Link to="/dashboard">Open your cockpit</Link>
               </Button>
             </div>
           )}
