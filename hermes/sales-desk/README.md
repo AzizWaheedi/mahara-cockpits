@@ -20,6 +20,9 @@ sent. It writes the draft, checks it and says what is left for the closer.
 | `doctor` | every key by name (never its value), the tables, the bucket, a one-token call to the model, the model list, Fathom, Playwright, the reference deals; each blocker named in one sentence |
 | `requests` | drafts, or rebuilds, the proposals the cockpit asked for; quiet when nothing is queued |
 | `recordings` | indexes Fathom's sales calls for every rep and matches each to a lead |
+| `calls-vault` | copies every sales call in the Obsidian vault in, summary and transcript too; `--fathom-days N` asks Fathom about the calls whose note cannot say whether the lead joined |
+| `maqsam-calls` | copies every answered phone call with a transcript from Maqsam, for every seat with a Maqsam address, matched to a lead by phone; `--dry-run`, `--days N`, `--limit N` |
+| `calls-b2b-fathom --once` | copies, once, Ahmed's private Fathom calls that only B2B's `fathom_calls` holds (`SALES_B2B_MGMT_TOKEN`, read only); `--dry-run`, `--limit N` |
 | `status` | the open requests, the last proposals, the last runs |
 | `offer-sync` | writes `offer.json` into the cockpit's proposal form (`requests` does it too) |
 | `validate DEAL.json` | the validator on a deal file by hand, `--transcript` for the evidence, `--send` for the send gate |
@@ -168,9 +171,53 @@ of the recording, if exactly one lead had one then, preferring the rep's own
 appointments (`appointment`). Anything less certain stays `none`. Client
 calls (launch, check-in, onboarding, review, pulse: the same title filter as
 webinar-pull) are left out, and a meeting with nobody from outside and no
-appointment beside it is a team meeting. A match found once is never
-overwritten by a later `none`, and a match somebody made by hand is never
-overwritten at all. Transcripts stay in Fathom.
+appointment beside it is a team meeting, unless Fathom says someone from
+outside was on the call (`calendar_invitees_domains_type`): a lead who joins
+from the link is on no invite. A match found once is never overwritten by a
+later `none`, and a match somebody made by hand is never overwritten at all.
+Transcripts stay in Fathom.
+
+`calls-vault` applies the same rules to the vault's notes, which carry no
+Fathom flag. A note shows an outsider joined when the vault filed an
+"Impromptu" meeting with no sales word as `sales` (its writer does that only
+for a meeting Fathom flagged; 84 of 84 checked against Fathom on 2026-09-26);
+a call already in the cockpit shows it; and for the rest Fathom is asked once
+per run, for the calls of the last `--fathom-days` (default 14), with
+Fathom's own filter. Before this, 111 sales calls had been dropped as team
+meetings; 103 of them had someone from outside on the call. A note the vault
+files as `external` (someone outside it could not place) whose invitee is a
+lead is a sales call too: 163 of them, 139 not yet in the cockpit.
+Client-service titles stay out, as always.
+
+## Phone calls
+
+`maqsam-calls` reads Maqsam's v3 API (`MAQSAM_ACCESS_KEY` and
+`MAQSAM_SECRET`, Basic auth) for every seat with a Maqsam address in
+`cockpit_sales_reps` or `cockpit_sales_people`, setters and closers alike:
+B2B keeps the setters' calls only, and its call ids do not open a call in v3.
+Each answered call with a transcript becomes the row `maqsam:<v3 id>`
+(source `maqsam`, kind `phone`, title "Phone call, outbound" or "inbound",
+Maqsam's English summary), matched to the lead whose phone ends in the same
+eight digits (the newest such lead, as the dialer's calls are linked), with
+the transcript at `maqsam/<id>.md` in `sales-calls`, one "[mm:ss] Rep: ..."
+or "[mm:ss] Lead: ..." line per turn. A run reads from the last successful
+run less seven days (Maqsam writes a transcript minutes after the call); the
+mark is the setting `maqsam_calls`, written only when every seat was read. The
+first run starts on 2026-01-01: 1,256 calls from eight seats on 2026-09-26,
+the five setters' counts identical to B2B's `maqsam_calls`.
+
+A phone call is never drafted from and never reviewed on its own: a rep asks
+for its review, and it is scored on the intro card (a setter's call). An asked
+review needs a transcript of at least 1,500 characters and says so when it is
+shorter.
+
+`calls-b2b-fathom --once` copies the calls of Ahmed's that B2B's
+`fathom_calls` holds and neither the cockpit nor the vault does (he records
+privately, so Aziz's key never sees them): 59 on 2026-09-26, in the vault
+import's shape with source `b2b_fathom` and B2B's own lead match. B2B is read
+the way `sales-mirror` reads it, through the management API with
+`read_only: true`. The drafter reads these calls from the cockpit's copy,
+since Fathom would refuse them.
 
 ## The reference deal
 
@@ -227,7 +274,12 @@ but Playwright is the path to rely on here.
 ```
 */2 * * * *  flock -n $HOME/.sales-desk/requests.lock bash -c "cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; python3 desk.py --quiet requests" >> $HOME/.sales-desk.log 2>&1
 11,41 * * * * flock -n $HOME/.sales-desk/recordings.lock bash -c "cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; python3 desk.py --quiet recordings" >> $HOME/.sales-desk.log 2>&1
+16,46 * * * * flock -n $HOME/.sales-desk/maqsam-calls.lock bash -c "cd $HOME/mahara-cockpits/hermes/sales-desk && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; . $HOME/.sales-desk/env; set +a; ulimit -v 1500000; python3 desk.py --quiet maqsam-calls" >> $HOME/.sales-desk.log 2>&1
 ```
+
+The first `maqsam-calls` (since 2026-01-01) and `calls-vault --fathom-days 700`
+(the vault's history against Fathom's flag) are run once by hand before the
+cron takes over; `calls-b2b-fathom --once` is never on cron.
 
 The queue every two minutes, so a closer is not kept waiting for the run to
 start; a draft takes longer than that, and the lock means the next run simply
@@ -255,6 +307,7 @@ editor desk's README says. Never pipe a stale copy.
 | `SALES_RECORDINGS_DAYS` | `14` |
 | `SALES_MIN_TRANSCRIPT_CHARS` | `5000` |
 | `SALES_FATHOM_PACE` | `1.1` seconds between Fathom calls |
+| `SALES_VAULT_FATHOM_DAYS` | `14`: how far back `calls-vault` asks Fathom about calls whose note cannot say whether the lead joined |
 | `SALES_DESK_HOME` | `~/.sales-desk` (working files in `out/`, references in `reference/`) |
 | `SALES_BUCKET` | `sales-proposals` |
 
@@ -272,8 +325,12 @@ In Creative Triage (`supabase/migrations/20260924a_sales_cockpit.sql` and
   finished_at, error, result. Only rows of kind `proposal` are touched.
 - `cockpit_sales_proposals`: deal, validation, fill_count, variant, model,
   html_path, pdf_path, recording_id, lang, status, error, updated_at.
-- `cockpit_sales_recordings`: one row per sales call, upserted by recording.
-- `cockpit_sales_settings`: the `offer` setting, only when it differs.
+- `cockpit_sales_recordings`: one row per sales call, upserted by recording
+  (source `vault`, `maqsam`, `b2b_fathom`, or none for the Fathom step's).
+- `cockpit_sales_settings`: the `offer` setting, only when it differs, and
+  `maqsam_calls`, the phone calls' high-water mark.
+- Storage `sales-calls` (private): each call's transcript, `<recording id>.md`
+  and `maqsam/<id>.md`.
 - `cockpit_sales_worker_status`: one row per job.
 - Storage `sales-proposals` (private): `proposals/<id>/v<n>.html` and `.pdf`.
 

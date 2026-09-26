@@ -8,11 +8,16 @@ had one then. Anything less certain stays unmatched: a proposal drafted for the
 wrong lead is worse than one the closer has to point at the right call.
 
 Client-service calls are left out by title, with the same filter webinar-pull
-uses, and a meeting with nobody from outside on the invite and no appointment
-beside it is a team meeting, not a sales call.
+uses, and a meeting with nobody from outside on the invite, no appointment
+beside it and nobody from outside joining is a team meeting, not a sales call.
+"Nobody from outside joining" is Fathom's own flag
+(calendar_invitees_domains_type): a lead who joins from the link is on no
+invite, and Fathom still counts them (Aziz, 2026-09-26: every call should
+pull in; 111 of them had been dropped as team meetings this way).
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterable, Optional
@@ -20,20 +25,30 @@ from typing import Any, Callable, Iterable, Optional
 from . import http
 from .errors import Refused
 from .fathom import NOT_SALES, Fathom, flatten, parse_ts
-from .supabase import iso
+from .supabase import CALLS_BUCKET, iso
 
 WINDOW = timedelta(minutes=30)
 OUR_DOMAIN = "maharamedia.com"
 SALES_CALLS = ("intro", "demo")
-# What this desk writes in matched_by. Anything else on a row was put there by
-# someone else (a person pointing a recording at a lead) and is left alone.
-OURS = ("email", "appointment", "none")
+# What the desk writes in matched_by: an invitee's email, an appointment beside
+# the recording, the phone number of a Maqsam call, or nothing. Anything else
+# on a row was put there by someone else (a person pointing a recording at a
+# lead) and is left alone.
+MATCHES = ("email", "appointment", "phone")
+OURS = MATCHES + ("none",)
+# Fathom's flag for a meeting someone from outside the company was on.
+OUTSIDER = "one_or_more_external"
+# Rows whose transcript Fathom cannot give the desk: Ahmed's private calls,
+# copied from B2B (b2b_fathom.py). The cockpit's own copy is read instead.
+STORED_ONLY = ("b2b_fathom",)
 
 NO_RECORDING = ("No Fathom recording of this lead's demo was found. Share the recording "
                 "with the team in Fathom, then draft again.")
 TOO_SHORT = ("The Fathom recordings of this lead are too short to draft from (under {n:,} "
              "characters of transcript). Share the demo's recording with the team in Fathom, "
              "then draft again.")
+PHONE_CALL = ("That recording is a phone call, and a proposal is drafted from the demo. Pick the "
+              "demo's recording, or leave it empty to use the lead's newest demo.")
 
 
 def title_of(meeting: dict[str, Any]) -> str:
@@ -53,6 +68,18 @@ def duration_s(meeting: dict[str, Any]) -> Optional[int]:
 def recorder(meeting: dict[str, Any]) -> dict[str, str]:
     who = meeting.get("recorded_by") if isinstance(meeting.get("recorded_by"), dict) else {}
     return {"name": str(who.get("name") or ""), "email": str(who.get("email") or "").strip().lower()}
+
+
+def outsider_joined(meeting: dict[str, Any]) -> bool:
+    """Fathom says someone from outside the company was on the call, whether
+    or not the invite named them."""
+    return meeting.get("calendar_invitees_domains_type") == OUTSIDER
+
+
+def is_phone(row: dict[str, Any]) -> bool:
+    """A Maqsam call (maqsam_calls.py), never a Fathom recording."""
+    return (str(row.get("source") or "") == "maqsam" or str(row.get("kind") or "") == "phone"
+            or str(row.get("recording_id") or "").startswith("maqsam:"))
 
 
 def external_emails(meeting: dict[str, Any]) -> list[str]:
@@ -167,7 +194,7 @@ def index(sb: Any, fathom: Fathom, log: Callable[[str], None], *, days: int) -> 
         rep_id = reps.get(recorder(m)["email"])
         contact, appt, how = match(m, leads=leads, appointments=appointments,
                                    rep_user_ids=[rep_id] if rep_id else [])
-        if how == "none" and not external_emails(m):
+        if how == "none" and not external_emails(m) and not outsider_joined(m):
             team += 1
             continue
         rows.append(row_for(m, contact, appt, how))
@@ -210,7 +237,7 @@ def _keep_earlier_matches(sb: Any, rows: list[dict[str, Any]]) -> int:
             continue
         how = str(was.get("matched_by") or "")
         by_hand = how and how not in OURS
-        lost = r["matched_by"] == "none" and how in ("email", "appointment")
+        lost = r["matched_by"] == "none" and how in MATCHES
         if by_hand or lost:
             r["contact_id"], r["appointment_id"], r["matched_by"] = (
                 was.get("contact_id"), was.get("appointment_id"), how)
@@ -224,19 +251,48 @@ class Picked:
     text: str
 
 
+# A stored transcript line, as the vault writes it: "**Name** (00:01:02): words".
+_STORED_LINE = re.compile(r"^\*\*(?P<who>[^*]+)\*\*\s*\([^)]*\):\s?(?P<text>.*)$")
+
+
+def stored_turns(text: str) -> list[dict[str, Any]]:
+    """A stored transcript back into Fathom's turns, so it flattens exactly
+    like one read from Fathom (the same speaker lines, the same filler rule)."""
+    out: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        m = _STORED_LINE.match(line.strip())
+        if m:
+            out.append({"speaker": {"display_name": m.group("who").strip()}, "text": m.group("text")})
+    return out
+
+
+def words_of(sb: Any, fathom: Fathom, row: dict[str, Any]) -> str:
+    """The call's words: Fathom's own transcript, as always, except for a call
+    Fathom cannot give the desk (a private recording copied from B2B), which
+    is read from the cockpit's copy instead of asking Fathom for a refusal."""
+    if str(row.get("source") or "") in STORED_ONLY and row.get("transcript_path"):
+        blob = sb.download_from(CALLS_BUCKET, str(row["transcript_path"]))
+        return flatten(stored_turns(blob.decode("utf-8", "replace")))
+    return flatten(fathom.transcript(row["recording_id"]))
+
+
 def pick(sb: Any, fathom: Fathom, log: Callable[[str], None], *, contact_id: str,
          recording_id: str = "", min_chars: int = 5000,
          reindex: Optional[Callable[[], Any]] = None) -> Picked:
     """The call a proposal is drafted from.
 
-    A recording the closer named is used as named. Otherwise the newest
-    recording matched to the lead whose transcript is long enough to be a
-    demo, looking in Fathom again once if the index has nothing yet: a closer
-    who asks straight after the call can be ahead of the half-hourly index.
+    A recording the closer named is used as named, unless it is a phone call.
+    Otherwise the newest recording matched to the lead whose transcript is
+    long enough to be a demo, looking in Fathom again once if the index has
+    nothing yet: a closer who asks straight after the call can be ahead of the
+    half-hourly index. Phone calls are never picked: a proposal is drafted
+    from the demo, and Fathom has never heard of a Maqsam call.
     """
     if recording_id:
         row = sb.recording(recording_id) or {"recording_id": recording_id}
-        text = flatten(fathom.transcript(recording_id))
+        if is_phone(row):
+            raise Refused(PHONE_CALL)
+        text = words_of(sb, fathom, row)
         if not text:
             raise RuntimeError("Fathom has no transcript for that recording yet. It usually appears "
                                "within minutes of the call ending; this will try again.")
@@ -249,10 +305,11 @@ def pick(sb: Any, fathom: Fathom, log: Callable[[str], None], *, contact_id: str
         log(f"no recording indexed for {contact_id} yet; reading Fathom again")
         reindex()
         rows = sb.recordings_of(contact_id)
+    rows = [r for r in rows if not is_phone(r)]
     if not rows:
         raise Refused(NO_RECORDING)
     for row in rows:
-        text = flatten(fathom.transcript(row["recording_id"]))
+        text = words_of(sb, fathom, row)
         if len(text) >= min_chars:
             return Picked(row, text)
         log(f"recording {row['recording_id']}: {len(text)} characters, too short to draft from")

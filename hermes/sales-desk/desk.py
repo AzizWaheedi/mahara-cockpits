@@ -5,6 +5,11 @@
     python3 desk.py requests [--limit N]    draft (or rebuild) the proposals the cockpit asked for
     python3 desk.py recordings [--days N]   index Fathom's sales calls and match them to leads
     python3 desk.py calls-vault [--dry]     copy every sales call in the Obsidian vault in, transcripts too
+                    [--fathom-days N]       (asks Fathom about calls whose note cannot say whether a lead joined)
+    python3 desk.py maqsam-calls [--days N] [--dry-run] [--limit N]
+                                            every answered phone call with a transcript, from Maqsam
+    python3 desk.py calls-b2b-fathom --once [--dry-run] [--limit N]
+                                            Ahmed's private Fathom calls that only B2B holds, copied once
     python3 desk.py reviews-import [--dry]  Vince's archived reviews into the cockpit
     python3 desk.py reviews [--limit N]     Vince reviews the newest unreviewed calls
     python3 desk.py research [--limit N]    research the leads a rep asked about (web search, sources kept)
@@ -35,11 +40,13 @@ from typing import Any, Callable, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from desk import b2b_fathom as b2b_fathom_mod  # noqa: E402
 from desk import build as build_mod  # noqa: E402
 from desk import calls_vault as calls_vault_mod  # noqa: E402
 from desk import engine as engine_mod  # noqa: E402
 from desk import fathom as fathom_mod  # noqa: E402
 from desk import http  # noqa: E402
+from desk import maqsam_calls as maqsam_mod  # noqa: E402
 from desk import model as model_mod  # noqa: E402
 from desk import notes as notes_mod  # noqa: E402
 from desk import offer as offer_mod  # noqa: E402
@@ -109,8 +116,12 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
 
     # By name only. A value is never printed, not even its length.
     for name in ("DESK_SUPABASE_URL", "DESK_SUPABASE_KEY", "FATHOM_API_KEY",
-                 "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY"):
+                 "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY",
+                 "MAQSAM_ACCESS_KEY", "MAQSAM_SECRET"):
         add(name, bool(key(name)) or None, "set" if key(name) else "not set")
+    # Only calls-b2b-fathom needs it, once; its absence blocks nothing else.
+    add("SALES_B2B_MGMT_TOKEN", True if key("SALES_B2B_MGMT_TOKEN") else None,
+        "set" if key("SALES_B2B_MGMT_TOKEN") else "not set: only the one-off calls-b2b-fathom needs it")
     add("model", True, f"SALES_MODEL_PROVIDER={cfg.provider}, SALES_PROPOSAL_MODEL={cfg.model}"
                        + ("" if cfg.model != DEFAULT_MODELS.get(cfg.provider) else " (the default)"))
 
@@ -222,6 +233,24 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
         else:
             add("fathom", False, "FATHOM_API_KEY is not set, so no call can be read and nothing can be drafted", True)
 
+        try:
+            # The Fathom check above imports these inside this function, which
+            # makes them local names here too; import them for this branch.
+            from datetime import datetime, timedelta, timezone
+            mq = maqsam_mod.Maqsam(key("MAQSAM_ACCESS_KEY"), key("MAQSAM_SECRET"))
+            seats = maqsam_mod.seats(_sb(cfg)) if cfg.supabase_configured else []
+            if seats:
+                end = datetime.now(timezone.utc)
+                page = mq.get("/v3/calls", {"email": seats[0], "start_time": int((end - timedelta(days=1)).timestamp()),
+                                            "end_time": int(end.timestamp()), "page": 1})
+                n = len(page.get("message") or []) if isinstance(page, dict) else 0
+                add("maqsam", True, f"answers: {n} of one seat's calls in the last day on the first page; "
+                                    f"{len(seats)} seat(s) carry a Maqsam address")
+            else:
+                add("maqsam", None, "no rep or seat carries a maqsam_email, so no phone call is copied")
+        except (maqsam_mod.MaqsamError, http.HttpError, SupabaseError) as e:
+            add("maqsam", None, f"phone calls cannot be copied: {http.scrub(str(e))[:200]}")
+
         if engine == "playwright":
             with tempfile.TemporaryDirectory() as tmp:
                 page = Path(tmp) / "probe.html"
@@ -298,9 +327,23 @@ def cmd_calls_vault(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     """Copy every sales call in the Obsidian vault into the cockpit."""
     sb = _sb(cfg)
     vault = Path(args.vault or key("SALES_VAULT", "/opt/data/obsidian-sync-vault")).expanduser()
+    fathom_days = args.fathom_days
+    if fathom_days is None:
+        try:
+            fathom_days = int(key("SALES_VAULT_FATHOM_DAYS", "14"))
+        except ValueError:
+            fathom_days = 14
+
+    def outsiders(since: datetime) -> set[str]:
+        """The recordings since then that Fathom says someone from outside was
+        on: one list read, only the meetings it flags (ten a page)."""
+        f = queue_mod.fathom_client(cfg, log.info)
+        return {str(m.get("recording_id")) for m in f.meetings(since=since, domains_type="one_or_more_external",
+                                                               max_pages=400) if m.get("recording_id") is not None}
+
     try:
         out = calls_vault_mod.run(
-            sb, vault, log.info, dry=args.dry,
+            sb, vault, log.info, dry=args.dry, fathom_outsiders=outsiders, fathom_days=max(0, fathom_days),
             upload=lambda path, blob: sb.upload_to(calls_vault_mod.TRANSCRIPT_BUCKET, path, blob,
                                                    "text/markdown; charset=utf-8"),
         )
@@ -313,11 +356,74 @@ def cmd_calls_vault(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     else:
         detail = (f"{out['rows']} sales calls from the vault ({out['first'] or '?'}"
                   f" to {out['last'] or '?'}), {out['by_email']} matched by email, "
-                  f"{out['by_appointment']} by appointment, {out['unmatched']} unmatched, "
+                  f"{out['by_appointment']} by appointment, {out['unmatched']} unmatched "
+                  f"({out['outsider_joined']} with no lead on the invite but someone from outside on the call), "
+                  f"{out['lead_calls']} from notes the vault could not place whose invitee is a lead, "
                   f"{out['transcripts_uploaded']} transcripts uploaded, "
-                  f"{out.get('filled_fathom_rows', 0)} of the Fathom step's calls filled in")
+                  f"{out.get('filled_fathom_rows', 0)} of the Fathom step's calls filled in"
+                  + (f"; Fathom {out['fathom']}" if str(out.get("fathom")).startswith("could not") else ""))
     if not args.dry:
         _status(cfg, log, "calls-vault", bool(out.get("notes")), detail)
+    _print(out if args.json else detail, args.json)
+    return 0
+
+
+def cmd_maqsam_calls(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    """Every answered phone call with a transcript, from Maqsam into the cockpit."""
+    sb = _sb(cfg)
+    try:
+        mq = maqsam_mod.Maqsam(key("MAQSAM_ACCESS_KEY"), key("MAQSAM_SECRET"))
+        out = maqsam_mod.run(
+            sb, mq, log.info, days=args.days, dry=args.dry, limit=args.limit,
+            upload=lambda path, blob: sb.upload_to(calls_vault_mod.TRANSCRIPT_BUCKET, path, blob,
+                                                   "text/markdown; charset=utf-8"),
+        )
+    except maqsam_mod.MaqsamError as e:
+        if not args.dry:
+            _status(cfg, log, "maqsam-calls", False, str(e))
+        log.error(str(e))
+        return 1
+    if not out["seats"]:
+        detail = "no rep or seat carries a Maqsam address, so no phone call was copied"
+    else:
+        detail = (f"{out['rows']} answered phone calls with a transcript "
+                  + (f"(a first try that stopped at {args.limit}) " if args.limit is not None
+                     else f"from {out['seats']} seats ")
+                  + f"({out['first'] or '?'} to {out['last'] or '?'}), {out['by_phone']} matched to a lead by phone, "
+                  f"{out['unmatched']} unmatched, {out['uploaded']} transcripts uploaded"
+                  + (f"; could not read {', '.join(out['seats_unread'])}" if out["seats_unread"] else ""))
+    if not args.dry:
+        _status(cfg, log, "maqsam-calls", bool(out["seats"]) and not out["seats_unread"], detail)
+    _print(out if args.json else detail, args.json)
+    return 1 if out["seats_unread"] and not out["rows"] else 0
+
+
+def cmd_calls_b2b_fathom(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    """Ahmed's private Fathom calls that only B2B holds, copied once."""
+    if not args.once:
+        log.error("calls-b2b-fathom copies B2B's calls once and is not a cron job; run it with --once "
+                  "(and --dry-run first)")
+        return 2
+    sb = _sb(cfg)
+    vault = Path(args.vault or key("SALES_VAULT", "/opt/data/obsidian-sync-vault")).expanduser()
+    if not (vault / "Calls").is_dir():
+        log.warn(f"no vault at {vault}: calls the vault holds cannot be told apart, so only what is in "
+                 "the cockpit is skipped")
+    try:
+        b2b = b2b_fathom_mod.B2B(key("SALES_B2B_MGMT_TOKEN"))
+        out = b2b_fathom_mod.run(
+            sb, b2b, log.info, emails=args.email or [b2b_fathom_mod.AHMED], vault=vault, dry=args.dry,
+            limit=args.limit,
+            upload=lambda path, blob: sb.upload_to(calls_vault_mod.TRANSCRIPT_BUCKET, path, blob,
+                                                   "text/markdown; charset=utf-8"),
+        )
+    except b2b_fathom_mod.B2BError as e:
+        log.error(str(e))
+        return 1
+    detail = (f"{out['rows']} of {out['in_b2b']} calls copied from B2B ({out['first'] or '?'} to "
+              f"{out['last'] or '?'}): {out['in_cockpit']} were in the cockpit, {out['in_vault']} are the "
+              f"vault's, {out['client_service']} client-service, {out['team']} team; {out['with_transcript']} "
+              f"with a transcript, {out['by_email'] + out['by_appointment'] + out['by_b2b']} matched to a lead")
     _print(out if args.json else detail, args.json)
     return 0
 
@@ -441,10 +547,18 @@ def cmd_followups(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     if "skipped" in out:
         detail = out["skipped"]
     else:
+        words = {"whatsapp": "WhatsApp", "whatsapp_template": "WhatsApp template", "email": "email"}
+        channels = ", ".join(f"{n} {words.get(k, k)}" for k, n in (out.get("by_channel") or {}).items())
         detail = (f"{out['written']} drafts written of {out['picked']} leads due"
+                  + (f" ({channels})" if channels else "")
                   + (f", {out['sent_by_itself']} sent by themselves" if out.get("sent_by_itself") else "")
+                  + (f", {out['held_for_automation']} waiting while a HighLevel automation messages them"
+                     if out.get("held_for_automation") else "")
+                  + (f", {out['in_a_conversation']} already talking with a rep" if out.get("in_a_conversation") else "")
                   + (f", {out['no_open_channel']} with no open channel" if out["no_open_channel"] else "")
                   + (f", {out['not_sales_leads']} not sales leads (clients, or no pipeline)" if out.get("not_sales_leads") else "")
+                  + (f", {out['replies_marked']} replies to earlier messages" if out.get("replies_marked") else "")
+                  + (f", {out['went_stale']} stale drafts closed" if out.get("went_stale") else "")
                   + (f", {out['failed']} failed" if out["failed"] else ""))
     _status(cfg, log, "followups", not out.get("failed"), detail)
     if out.get("written") or out.get("failed") or args.json:
@@ -625,7 +739,19 @@ def main(argv: Optional[list[str]] = None) -> int:
     d = sub.add_parser("doctor"); d.add_argument("--offline", action="store_true")
     rq = sub.add_parser("requests"); rq.add_argument("--limit", type=int)
     rc = sub.add_parser("recordings"); rc.add_argument("--days", type=int)
-    cv = sub.add_parser("calls-vault"); cv.add_argument("--vault"); cv.add_argument("--dry", action="store_true")
+    cv = sub.add_parser("calls-vault"); cv.add_argument("--vault")
+    cv.add_argument("--dry", "--dry-run", dest="dry", action="store_true")
+    cv.add_argument("--fathom-days", type=int,
+                    help="ask Fathom about the sales calls of the last N days whose note cannot say whether "
+                         "someone from outside joined (default 14 or SALES_VAULT_FATHOM_DAYS; 0: never; "
+                         "a long N once fills the history)")
+    mq = sub.add_parser("maqsam-calls"); mq.add_argument("--days", type=int)
+    mq.add_argument("--dry", "--dry-run", dest="dry", action="store_true")
+    mq.add_argument("--limit", type=int, help="stop after N calls (a first try by hand); the mark is not moved")
+    bf = sub.add_parser("calls-b2b-fathom"); bf.add_argument("--once", action="store_true")
+    bf.add_argument("--dry", "--dry-run", dest="dry", action="store_true")
+    bf.add_argument("--limit", type=int); bf.add_argument("--vault")
+    bf.add_argument("--email", action="append", help="whose calls to copy (default Ahmed's); repeatable")
     ri = sub.add_parser("reviews-import"); ri.add_argument("--folder"); ri.add_argument("--dry", action="store_true")
     rv = sub.add_parser("reviews"); rv.add_argument("--limit", type=int); rv.add_argument("--days", type=int)
     rv.add_argument("--asked", action="store_true", help="only the calls reps asked to have reviewed")
@@ -654,6 +780,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     handlers: dict[str, Callable[[Config, argparse.Namespace, Logger], int]] = {
         "doctor": cmd_doctor, "requests": cmd_requests, "recordings": cmd_recordings, "status": cmd_status,
         "calls-vault": cmd_calls_vault, "reviews-import": cmd_reviews_import, "reviews": cmd_reviews,
+        "maqsam-calls": cmd_maqsam_calls, "calls-b2b-fathom": cmd_calls_b2b_fathom,
         "research": cmd_research, "followups": cmd_followups, "notes": cmd_notes, "digest": cmd_digest,
         "validate": cmd_validate, "build": cmd_build, "draft": cmd_draft, "offer-sync": cmd_offer_sync,
     }
@@ -662,7 +789,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     except (SupabaseError, http.HttpError, NotNow, Refused) as e:
         log.error(http.scrub(str(e))[:400])
         if args.cmd in ("requests", "recordings", "status", "offer-sync", "calls-vault", "reviews", "research",
-                        "followups"):
+                        "followups", "maqsam-calls") and not getattr(args, "dry", False):
             _status(cfg, log, args.cmd, False, http.scrub(str(e))[:400])
         return 1
     except KeyboardInterrupt:

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { Asset } from "./assets";
 import type { CallRow, LeadRow } from "./calls";
 import type { GoalRow } from "./goals";
 import { supabase } from "./supabase";
@@ -26,6 +27,7 @@ import type {
   WorkerStatus,
   WorkRequest,
 } from "./types";
+import type { Snippet, TemplateRoute } from "./whatsapp";
 
 /** One shape for every read: what came back, whether it is still loading,
  * and why it failed. A screen that cannot say "this failed" lies quietly. */
@@ -508,8 +510,10 @@ const RECORDING_LIST =
 
 export interface RecordingFilter {
   q: string;
-  /** A rep's Fathom address, or "" for everyone. */
-  by: string;
+  /** A rep's addresses (Fathom and Maqsam), or none for everyone. */
+  by: string[];
+  /** Video calls (Fathom), phone calls (Maqsam), or both. */
+  kind: "" | "video" | "phone";
   page: number;
 }
 
@@ -521,14 +525,16 @@ export function useRecordings(f: RecordingFilter): Loaded<Recording[]> {
       .order("started_at", { ascending: false, nullsFirst: false })
       .order("recording_id", { ascending: true })
       .range(f.page * PAGE, f.page * PAGE + PAGE - 1);
-    if (f.by) q = q.eq("recorded_by", f.by);
+    if (f.by.length) q = q.in("recorded_by", f.by);
+    if (f.kind === "phone") q = q.eq("source", "maqsam");
+    if (f.kind === "video") q = q.or("source.is.null,source.neq.maqsam");
     const text = f.q
       .trim()
       .replace(/[,()*]/g, " ")
       .trim();
     if (text) q = q.ilike("title", `%${text}%`);
     return q as unknown as Result<Recording[]>;
-  }, [f.q, f.by, f.page]);
+  }, [f.q, f.by.join(","), f.kind, f.page]);
 }
 
 export function useRecording(id: string): Loaded<Recording> {
@@ -866,5 +872,79 @@ export function useReplies(hours = 48, everyMs = 60_000): Loaded<InboxRow[]> {
         .limit(50),
     [hours],
     everyMs,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// WhatsApp: the ready-made messages and the template routes (lib/whatsapp.ts)
+// ---------------------------------------------------------------------------
+
+export function useSnippets() {
+  return useQuery<Snippet[]>(
+    () =>
+      supabase
+        .from("cockpit_sales_snippets")
+        .select("id,moment,language,body,sort")
+        .is("deleted_at", null)
+        .order("moment")
+        .order("sort"),
+    [],
+  );
+}
+
+export function useTemplates() {
+  return useQuery<TemplateRoute[]>(
+    () => supabase.from("cockpit_sales_wa_templates").select("*").order("sort"),
+    [],
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sales assets: B2B's library, copied hourly (lib/assets.ts picks from it)
+// ---------------------------------------------------------------------------
+
+const ASSET_COLS =
+  "id,slug,title,asset_type,send_when,stages,objections,industries,proof_types,language,what_it_proves,paste_message_ar,paste_message_en,does_not_cover,url,duration_seconds,published_at,is_canonical,sendable,send_count";
+
+export function useAssets() {
+  return useQuery<Asset[]>(
+    () =>
+      supabase
+        .from("cockpit_sales_assets")
+        .select(ASSET_COLS)
+        .eq("sendable", true)
+        .order("title"),
+    [],
+  );
+}
+
+export interface AssetWord {
+  facet: string;
+  value: string;
+  label: string | null;
+  sort_order: number | null;
+}
+
+export function useAssetVocab() {
+  return useQuery<AssetWord[]>(
+    () =>
+      supabase
+        .from("cockpit_sales_asset_vocab")
+        .select("facet,value,label,sort_order")
+        .order("sort_order"),
+    [],
+  );
+}
+
+export function useAssetSends(contactId: string) {
+  return useQuery<{ asset_id: string; sent_at: string; sent_by: string }[]>(
+    () =>
+      supabase
+        .from("cockpit_sales_asset_sends")
+        .select("asset_id,sent_at,sent_by")
+        .eq("contact_id", contactId)
+        .order("sent_at", { ascending: false })
+        .limit(50),
+    [contactId],
   );
 }

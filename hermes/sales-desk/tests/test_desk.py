@@ -731,6 +731,46 @@ class RecordingTests(unittest.TestCase):
         self.assertEqual(picked.recording["recording_id"], "11")
         self.assertEqual(f.read, ["10", "11"])
 
+    def test_the_index_keeps_a_call_someone_from_outside_joined_from_the_link(self):
+        pg = FakePostgrest()
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        at = lambda h: (now - timedelta(hours=h)).isoformat().replace("+00:00", "Z")  # noqa: E731
+        joined = fakes.meeting("7", start=at(3), title="Impromptu Zoom Meeting")
+        joined["calendar_invitees_domains_type"] = "one_or_more_external"
+        alone = fakes.meeting("8", start=at(4), title="Impromptu Zoom Meeting")
+        alone["calendar_invitees_domains_type"] = "only_internal"
+        f = FakeFathom(meetings={None: [joined, alone]})
+        with mock.patch.object(http, "request", pg):
+            out = recordings.index(Supabase("https://example.supabase.co", "service-test"), f, lambda _m: None, days=14)
+        self.assertEqual((out["indexed"], out["team"], out["unmatched"]), (1, 1, 1))
+        self.assertEqual(pg.one("cockpit_sales_recordings", recording_id="7")["matched_by"], "none")
+        self.assertIsNone(pg.one("cockpit_sales_recordings", recording_id="8"))
+
+    def test_a_phone_call_is_never_drafted_from(self):
+        pg = FakePostgrest()
+        pg.put("cockpit_sales_recordings", {"recording_id": "maqsam:9", "contact_id": "c-1", "source": "maqsam",
+                                            "kind": "phone", "started_at": "2099-01-05T10:00:00Z"})
+        pg.put("cockpit_sales_recordings", {"recording_id": "11", "contact_id": "c-1", "source": None,
+                                            "started_at": "2099-01-02T10:00:00Z"})
+        f = FakeFathom(transcripts={"11": fakes.fathom_turns(transcript())})
+        sb = Supabase("https://example.supabase.co", "service-test")
+        with mock.patch.object(http, "request", pg):
+            picked = recordings.pick(sb, f, lambda _m: None, contact_id="c-1", min_chars=5000)
+            self.assertEqual((picked.recording["recording_id"], f.read), ("11", ["11"]))
+            with self.assertRaises(Refused) as e:
+                recordings.pick(sb, f, lambda _m: None, contact_id="c-1", recording_id="maqsam:9")
+        self.assertEqual(str(e.exception), recordings.PHONE_CALL)
+        self.assertEqual(f.read, ["11"])
+
+    def test_a_phone_match_is_the_desks_own_and_a_later_miss_keeps_it(self):
+        pg = FakePostgrest()
+        pg.put("cockpit_sales_recordings", {"recording_id": "maqsam:1", "contact_id": "c-1", "matched_by": "phone"})
+        rows = [{"recording_id": "maqsam:1", "contact_id": None, "appointment_id": None, "matched_by": "none"}]
+        with mock.patch.object(http, "request", pg):
+            kept = recordings._keep_earlier_matches(Supabase("https://example.supabase.co", "k"), rows)
+        self.assertEqual((kept, rows[0]["contact_id"], rows[0]["matched_by"]), (1, "c-1", "phone"))
+        self.assertIn("phone", recordings.OURS)
+
     def test_no_recording_is_one_sentence_the_closer_can_act_on(self):
         pg = FakePostgrest()
         sb = Supabase("https://example.supabase.co", "service-test")
@@ -1025,6 +1065,22 @@ class CliTests(unittest.TestCase):
         self.assertEqual((code, buf.getvalue()), (0, ""))
         row = pg.one("cockpit_sales_worker_status", worker="sales-desk", job="requests")
         self.assertEqual((row["ok"], row["detail"]), (True, "nothing queued"))
+
+    def test_the_phone_and_b2b_imports_say_what_is_missing_and_a_dry_run_writes_no_status(self):
+        cli = load_cli()
+        pg = FakePostgrest()
+        env = {"SALES_DESK_HOME": tempfile.mkdtemp(), "DESK_SUPABASE_URL": "https://example.supabase.co",
+               "DESK_SUPABASE_KEY": "service-test"}
+        err = io.StringIO()
+        with mock.patch.dict(os.environ, env), mock.patch.object(http, "request", pg), \
+                contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.main(["maqsam-calls", "--dry-run"]), 1)
+            self.assertEqual(cli.main(["calls-b2b-fathom"]), 2)
+            self.assertEqual(cli.main(["calls-b2b-fathom", "--once", "--dry-run", "--vault", env["SALES_DESK_HOME"]]), 1)
+        self.assertIn("MAQSAM_ACCESS_KEY and MAQSAM_SECRET are not set", err.getvalue())
+        self.assertIn("run it with --once", err.getvalue())
+        self.assertIn("SALES_B2B_MGMT_TOKEN is not set", err.getvalue())
+        self.assertEqual(pg.writes(), [])
 
     def test_validate_by_hand(self):
         cli = load_cli()

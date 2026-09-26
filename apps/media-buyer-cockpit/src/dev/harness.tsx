@@ -38,6 +38,7 @@ import { TeamPage } from "@/pages/team/TeamPage";
 import "@/index.css";
 import { setFixtures } from "./convexStub";
 import { portalFixtures } from "./portalFixtures";
+import { webinarTargetsFixtures } from "./webinarTargetsFixture";
 
 async function load(path: string): Promise<unknown> {
   const res = await fetch(path);
@@ -53,6 +54,7 @@ async function main() {
     load("/tmp/harness/fixtures.json").catch(() => ({})),
   ]);
   setFixtures({
+    ...webinarTargetsFixtures(),
     ...(more as Record<string, unknown>),
     ...portalFixtures(),
     "roles:me": {

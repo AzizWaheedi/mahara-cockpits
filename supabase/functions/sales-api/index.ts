@@ -19,7 +19,15 @@ import {
   checkLink,
   checkOffer,
   checkPay,
+  checkReference,
+  checkSnippet,
+  checkTemplateRoute,
   cleanText,
+  FOLLOWUP_SEGMENTS,
+  REFERENCE_ASK_STATES,
+  renderTemplate,
+  type TemplateRoute,
+  templateLine,
   cors,
   crmDecision,
   type CrmSettings,
@@ -631,6 +639,11 @@ async function personSave(who: Who, b: Row) {
     patch.b2b_rep_id = rep ? rep.id : null;
   }
   if ("name" in b) patch.name = cleanText(b.name, 120) || null;
+  if ("name_ar" in b) {
+    const v = cleanText(b.name_ar, 60);
+    if (v && !/[\u0600-\u06ff]/.test(v)) throw new Refusal("Write the name in Arabic letters, the way it reads in a message.");
+    patch.name_ar = v || null;
+  }
   if ("active" in b) patch.active = Boolean(b.active);
   if ("pay" in b) {
     const p = checkPay(b.pay);
@@ -806,6 +819,7 @@ async function convoSend(who: Who, b: Row) {
   const subject = channel === "email" ? cleanText(b.subject, 300) : null;
   if (channel === "email" && !subject) throw new Refusal("An email needs a subject.");
   const followupId = b.followup_id ? cleanText(b.followup_id, 40) : null;
+  const assetId = await assetFor(b.asset_id);
 
   const already = (await svc(`cockpit_sales_messages?request_id=eq.${enc(requestId)}&select=*`))[0];
   if (already) {
@@ -904,8 +918,404 @@ async function convoSend(who: Who, b: Row) {
     prefer: "return=representation",
   }))[0];
   await audit(who, "convo.send", "cockpit_sales_messages", String(row.id), null,
-    { channel, state, provider_status: status, followup_id: followupId }, { lead: lead.name ?? null });
+    { channel, state, provider_status: status, followup_id: followupId, asset_id: assetId }, { lead: lead.name ?? null });
+  if (assetId && state !== "failed") await assetSent(who, assetId, contactId, channel === "email" ? "email" : "whatsapp", String(row.id));
   return { message: saved };
+}
+
+// ---------------------------------------------------------------------------
+// WhatsApp templates: the only way to reach a lead whose window is closed
+// ---------------------------------------------------------------------------
+
+/** The sales asset a message carries, if it names one the cockpit has. */
+async function assetFor(v: unknown): Promise<string | null> {
+  const id = cleanText(v, 40);
+  if (!id) return null;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))
+    throw new Refusal("That is not one of the sales assets.");
+  const a = (await svc(`cockpit_sales_assets?id=eq.${enc(id)}&select=id,sendable`))[0];
+  if (!a) throw new Refusal("That asset is not in the library any more.", 404);
+  if (!a.sendable) throw new Refusal("That asset may not be sent (its link, its claims or its age).", 409);
+  return id;
+}
+
+/** A sales asset went to a lead: logged for the library's counts, never fatal to the send. */
+async function assetSent(who: Who, assetId: string, contactId: string, channel: "whatsapp" | "email", messageId: string) {
+  try {
+    await svc("cockpit_sales_asset_sends", {
+      method: "POST",
+      body: { asset_id: assetId, contact_id: contactId, channel, message_id: messageId, sent_by: who.email },
+      prefer: "return=minimal",
+    });
+  } catch (e) {
+    console.error("asset send log", redact(String(e)));
+  }
+}
+
+async function templateRoute(key: string): Promise<TemplateRoute> {
+  const r = (await svc(`cockpit_sales_wa_templates?key=eq.${enc(key)}&select=*`))[0] as unknown as TemplateRoute | undefined;
+  if (!r) throw new Refusal("That WhatsApp template is not in the cockpit.", 404);
+  if (!r.active || !r.workflow_id)
+    throw new Refusal(
+      `The ${r.name} template is not set up yet. A manager picks the HighLevel workflow that sends it, under Follow-ups, WhatsApp library.`,
+      409,
+    );
+  return r;
+}
+
+/** The newest WhatsApp that went to this lead since `since`, read back from their conversations. */
+async function whatsappSentSince(contactId: string, since: number): Promise<ThreadMessage | null> {
+  const convs = (((await ghl("GET", `/conversations/search?locationId=${LOCATION}&contactId=${enc(contactId)}&limit=5`)) as Row)
+    .conversations ?? []) as Row[];
+  for (const cv of convs.slice(0, 3)) {
+    const m = await ghl("GET", `/conversations/${enc(String(cv.id))}/messages?limit=10`);
+    const inner = ((m as Row).messages ?? {}) as Row;
+    const list = toThread(Array.isArray(inner.messages) ? inner.messages : (m as Row).messages, String(cv.id));
+    const hit = list.find(
+      x => x.direction === "outbound" && x.channel === "whatsapp" && x.at !== null && Date.parse(x.at) >= since - 15_000,
+    );
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/**
+ * Who a template says it is from: the lead's own rep, else the rep sending
+ * it; in an Arabic template only by their name in Arabic letters, else the
+ * sales team.
+ */
+async function signatureFor(contactId: string, who: Who, language: "ar" | "en"): Promise<string> {
+  const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contactId)}&select=assigned_to`))[0];
+  const owner = lead?.assigned_to
+    ? (await svc(`cockpit_sales_people?ghl_user_id=eq.${enc(String(lead.assigned_to))}&active=eq.true&select=name,name_ar`))[0]
+    : null;
+  const sender = who.email && who.email !== "sales-desk"
+    ? (await svc(`cockpit_sales_people?email=eq.${enc(who.email)}&select=name,name_ar`))[0]
+    : null;
+  const person = owner ?? sender ?? null;
+  const first = (v: unknown) => String(v ?? "").trim().split(/\s+/)[0] ?? "";
+  if (language === "ar") return first(person?.name_ar) || "فريق المبيعات";
+  return first(person?.name ?? (sender ? who.name : null)) || "the sales team";
+}
+
+/**
+ * Send an approved WhatsApp template to a lead. HighLevel's API cannot send
+ * a template itself, so the line and the signature go into the contact's
+ * two cockpit fields and the lead is enrolled in the one-step workflow that
+ * sends the template with them. Written first (request_id is unique, so a
+ * retry never sends twice), then read back from the conversation, because a
+ * template HighLevel accepts can still fail at Meta.
+ */
+async function sendTemplate(
+  who: Who,
+  o: { contactId: string; key: string; line: string; requestId: string; followupId: string | null; assetId?: string | null },
+) {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(o.requestId))
+    throw new Refusal("Reload the page and send again.");
+  const route = await templateRoute(o.key);
+  const needsLine = route.variables.includes("line");
+  const line = needsLine ? templateLine(o.line) : "";
+  if (needsLine && line.length < 2) throw new Refusal("Write the line that goes in the message.");
+
+  const already = (await svc(`cockpit_sales_messages?request_id=eq.${enc(o.requestId)}&select=*`))[0];
+  if (already) {
+    if (already.contact_id === o.contactId && already.template_key === o.key) return { message: already, repeated: true };
+    throw new Refusal("That send was already used for another message. Reload and send again.", 409);
+  }
+  if (!(await messagingSwitch()).whatsapp) throw new Refusal("Sending by WhatsApp is switched off in the cockpit.", 409);
+  const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(o.contactId)}&select=contact_id,name`))[0];
+  if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
+  const contact = (((await ghl("GET", `/contacts/${enc(o.contactId)}`, undefined, "2021-07-28")) as Row).contact ?? {}) as Row;
+  if (dndFor(contact, "whatsapp"))
+    throw new Refusal("This lead asked not to be contacted on WhatsApp (do not disturb is on in HighLevel).", 409);
+  if (!contact.phone) throw new Refusal("This lead has no phone number in HighLevel.", 409);
+  const firstName = cleanText(contact.firstName, 60).split(/\s+/)[0] ?? "";
+  if (route.variables.includes("first_name") && !firstName)
+    throw new Refusal("This lead has no first name in HighLevel, and the template greets them by it. Add it there first.", 409);
+  const signature = route.variables.includes("rep_name") ? await signatureFor(o.contactId, who, route.language) : "";
+  const text = renderTemplate(route.preview, route.variables, { first_name: firstName, rep_name: signature, line });
+  const fields = (await setting<{ line?: { id: string }; rep?: { id: string } }>("wa_fields")) ?? {};
+  if ((needsLine && !fields.line?.id) || (route.variables.includes("rep_name") && !fields.rep?.id))
+    throw new Refusal("The cockpit's two HighLevel contact fields are not set (setting wa_fields).", 409);
+
+  let row: Row;
+  try {
+    row = (await svc("cockpit_sales_messages", {
+      method: "POST",
+      body: {
+        request_id: o.requestId,
+        contact_id: o.contactId,
+        channel: "whatsapp",
+        via: "workflow",
+        template_key: route.key,
+        workflow_id: route.workflow_id,
+        body: text,
+        source: o.followupId ? "followup" : "rep",
+        followup_id: o.followupId,
+        sent_by: who.email,
+        state: "sending",
+      },
+      prefer: "return=representation",
+    }))[0];
+  } catch (e) {
+    if (/23505|duplicate/.test(String((e as Error).message ?? e))) {
+      const twin = (await svc(`cockpit_sales_messages?request_id=eq.${enc(o.requestId)}&select=*`))[0];
+      return { message: twin, repeated: true };
+    }
+    throw e;
+  }
+
+  const fail = async (err: string) => {
+    await svc(`cockpit_sales_messages?id=eq.${row.id}`, {
+      method: "PATCH",
+      body: { state: "failed", error: err, updated_at: new Date().toISOString() },
+      prefer: "return=minimal",
+    });
+    await audit(who, "wa.template", "cockpit_sales_messages", String(row.id), null, { template: route.key, state: "failed", error: err });
+    throw new Refusal(`HighLevel did not send it: ${err}`, 502);
+  };
+  const customFields = [
+    ...(needsLine ? [{ id: fields.line?.id, field_value: line }] : []),
+    ...(route.variables.includes("rep_name") ? [{ id: fields.rep?.id, field_value: signature }] : []),
+  ];
+  const startedAt = Date.now();
+  try {
+    if (customFields.length) await ghl("PUT", `/contacts/${enc(o.contactId)}`, { customFields }, "2021-07-28");
+    await ghl("POST", `/contacts/${enc(o.contactId)}/workflow/${enc(String(route.workflow_id))}`,
+      { eventStartTime: new Date(startedAt).toISOString() }, "2021-07-28");
+  } catch (e) {
+    return await fail(redact(String((e as Error).message ?? e)));
+  }
+  // Read it back: the workflow sends within seconds, and Meta decides after.
+  let seen: ThreadMessage | null = null;
+  for (let i = 0; i < 6; i++) {
+    await sleep(2000);
+    try {
+      seen = await whatsappSentSince(o.contactId, startedAt);
+    } catch {
+      seen = null;
+    }
+    if (seen && seen.status && !["pending", "queued"].includes(seen.status)) break;
+  }
+  const state = seen ? stateOf(seen.status === "pending" && !seen.error ? "sent" : seen.status) : "sent";
+  const saved = (await svc(`cockpit_sales_messages?id=eq.${row.id}`, {
+    method: "PATCH",
+    body: {
+      state,
+      provider_status: seen ? seen.status : "enrolled",
+      error: state === "failed" ? (seen?.error ?? "HighLevel marked it failed without a reason") : null,
+      ghl_message_id: seen?.id ?? null,
+      ghl_conversation_id: seen?.conversation_id ?? null,
+      updated_at: new Date().toISOString(),
+    },
+    prefer: "return=representation",
+  }))[0];
+  await audit(who, "wa.template", "cockpit_sales_messages", String(row.id), null,
+    { template: route.key, workflow: route.workflow_id, state, seen: Boolean(seen), followup_id: o.followupId,
+      asset_id: o.assetId ?? null },
+    { lead: lead.name ?? null });
+  if (o.assetId && state !== "failed") await assetSent(who, o.assetId, o.contactId, "whatsapp", String(row.id));
+  return { message: saved };
+}
+
+/** A rep sends an approved template from the lead's conversation. */
+async function waTemplateSend(who: Who, b: Row) {
+  const contactId = cleanText(b.contact_id, 80);
+  if (!contactId) throw new Refusal("Which lead?");
+  return await sendTemplate(who, {
+    contactId,
+    key: cleanText(b.template_key, 40),
+    line: String(b.line ?? ""),
+    requestId: String(b.request_id ?? ""),
+    followupId: null,
+    assetId: await assetFor(b.asset_id),
+  });
+}
+
+/** A manager sets up a template: its approved text, what goes in it, and the workflow that sends it. */
+async function waTemplateSave(who: Who, b: Row) {
+  needManager(who);
+  const c = checkTemplateRoute(b);
+  if (!c.ok) throw new Refusal(c.error);
+  const before = (await svc(`cockpit_sales_wa_templates?key=eq.${enc(c.value.key)}&select=*`))[0] ?? null;
+  if (c.value.workflow_id) {
+    const flows = await workflowsList();
+    const flow = flows.find(w => w.id === c.value.workflow_id);
+    if (!flow) throw new Refusal("That workflow is not in the sales sub-account.", 404);
+    if (c.value.active && flow.status !== "published")
+      throw new Refusal(`"${flow.name}" is a draft in HighLevel. Publish it there, then switch the template on.`, 409);
+  }
+  const out = await svc("cockpit_sales_wa_templates?on_conflict=key", {
+    method: "POST",
+    body: { ...c.value, updated_by: who.email, updated_at: new Date().toISOString() },
+    prefer: "resolution=merge-duplicates,return=representation",
+  });
+  await audit(who, "wa.template.save", "cockpit_sales_wa_templates", c.value.key, before, out[0]);
+  return { template: out[0] };
+}
+
+let workflowsCache: { at: number; list: { id: string; name: string; status: string }[] } | null = null;
+
+async function workflowsList() {
+  if (workflowsCache && Date.now() - workflowsCache.at < 60_000) return workflowsCache.list;
+  const out = await ghl("GET", `/workflows/?locationId=${LOCATION}`, undefined, "2021-07-28");
+  const list = ((out.workflows ?? []) as Row[])
+    .map(w => ({ id: String(w.id), name: String(w.name ?? ""), status: String(w.status ?? "") }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  workflowsCache = { at: Date.now(), list };
+  return list;
+}
+
+/** The sub-account's workflows, for a manager choosing which one sends a template. */
+async function ghlWorkflows(who: Who) {
+  needManager(who);
+  return { workflows: await workflowsList() };
+}
+
+async function snippetSave(who: Who, b: Row) {
+  needManager(who);
+  const c = checkSnippet(b);
+  if (!c.ok) throw new Refusal(c.error);
+  const id = cleanText(b.id, 40);
+  const at = new Date().toISOString();
+  let out: Row[];
+  let before: Row | null = null;
+  if (id) {
+    before = (await svc(`cockpit_sales_snippets?id=eq.${enc(id)}&deleted_at=is.null&select=*`))[0] ?? null;
+    if (!before) throw new Refusal("That message is not in the library any more.", 404);
+    out = await svc(`cockpit_sales_snippets?id=eq.${enc(id)}`, {
+      method: "PATCH",
+      body: { ...c.row, updated_at: at },
+      prefer: "return=representation",
+    });
+  } else {
+    out = await svc("cockpit_sales_snippets", {
+      method: "POST",
+      body: { ...c.row, created_by: who.email },
+      prefer: "return=representation",
+    });
+  }
+  await audit(who, "snippet.save", "cockpit_sales_snippets", String(out[0]?.id ?? id), before, out[0]);
+  return { snippet: out[0] };
+}
+
+async function snippetDelete(who: Who, b: Row) {
+  needManager(who);
+  const id = cleanText(b.id, 40);
+  const out = await svc(`cockpit_sales_snippets?id=eq.${enc(id)}&deleted_at=is.null`, {
+    method: "PATCH",
+    body: { deleted_at: new Date().toISOString() },
+    prefer: "return=representation",
+  });
+  if (!out.length) throw new Refusal("That message is not in the library any more.", 404);
+  await audit(who, "snippet.delete", "cockpit_sales_snippets", id, out[0], null);
+  return { snippet: out[0] };
+}
+
+// ---------------------------------------------------------------------------
+// Client references
+// ---------------------------------------------------------------------------
+
+/** A manager records a client reference: who, what they may say, and whether they agreed. */
+async function referenceSave(who: Who, b: Row) {
+  needManager(who);
+  const c = checkReference(b);
+  if (!c.ok) throw new Refusal(c.error);
+  const id = cleanText(b.id, 40);
+  const at = new Date().toISOString();
+  const before = id ? ((await svc(`cockpit_sales_references?id=eq.${enc(id)}&select=*`))[0] ?? null) : null;
+  if (id && !before) throw new Refusal("That reference is not here any more.", 404);
+  const consentChanged = !before || before.consent !== c.row.consent;
+  const row = {
+    ...c.row,
+    ...(consentChanged && c.row.consent !== "unknown" ? { consent_by: who.email, consent_at: at } : {}),
+    ...(consentChanged && c.row.consent === "unknown" ? { consent_by: null, consent_at: null } : {}),
+    updated_by: who.email,
+    updated_at: at,
+  };
+  const out = id
+    ? await svc(`cockpit_sales_references?id=eq.${enc(id)}`, { method: "PATCH", body: row, prefer: "return=representation" })
+    : await svc("cockpit_sales_references", { method: "POST", body: row, prefer: "return=representation" });
+  await audit(who, "reference.save", "cockpit_sales_references", String(out[0]?.id ?? id), before, out[0]);
+  return { reference: out[0] };
+}
+
+/** A rep asks for a reference call for their lead; a manager arranges it. */
+async function referenceAsk(who: Who, b: Row) {
+  const contactId = cleanText(b.contact_id, 80);
+  if (!contactId) throw new Refusal("For which lead?");
+  const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contactId)}&select=contact_id,name`))[0];
+  if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
+  const refId = cleanText(b.reference_id, 40) || null;
+  if (refId) {
+    const r = (await svc(`cockpit_sales_references?id=eq.${enc(refId)}&select=id,consent`))[0];
+    if (!r) throw new Refusal("That reference is not here any more.", 404);
+    if (r.consent === "no") throw new Refusal("That client said no to reference calls. Pick another, or leave it to the manager.", 409);
+  }
+  const open = await svc(`cockpit_sales_reference_asks?contact_id=eq.${enc(contactId)}&state=eq.asked&select=id`);
+  if (open.length) throw new Refusal("A reference call is already asked for this lead.", 409);
+  const note = cleanText(b.note, 1000) || null;
+  const out = await svc("cockpit_sales_reference_asks", {
+    method: "POST",
+    body: { contact_id: contactId, reference_id: refId, note, asked_by: who.email },
+    prefer: "return=representation",
+  });
+  await audit(who, "reference.ask", "cockpit_sales_reference_asks", String(out[0]?.id), null, out[0], { lead: lead.name ?? null });
+  return { ask: out[0] };
+}
+
+async function referenceAnswer(who: Who, b: Row) {
+  needManager(who);
+  const id = cleanText(b.id, 40);
+  const state = String(b.state ?? "");
+  if (!(REFERENCE_ASK_STATES as readonly string[]).includes(state)) throw new Refusal("Arranged, done or declined?");
+  const before = (await svc(`cockpit_sales_reference_asks?id=eq.${enc(id)}&select=*`))[0];
+  if (!before) throw new Refusal("That ask is not here any more.", 404);
+  const at = new Date().toISOString();
+  const refId = cleanText(b.reference_id, 40) || (before.reference_id as string | null) || null;
+  const out = await svc(`cockpit_sales_reference_asks?id=eq.${enc(id)}`, {
+    method: "PATCH",
+    body: { state, answer: cleanText(b.answer, 1000) || null, reference_id: refId, decided_by: who.email, decided_at: at },
+    prefer: "return=representation",
+  });
+  if (state === "done" && refId)
+    await svc(`cockpit_sales_references?id=eq.${enc(refId)}`, {
+      method: "PATCH",
+      body: { last_used_at: at },
+      prefer: "return=minimal",
+    });
+  await audit(who, "reference.answer", "cockpit_sales_reference_asks", id, before, out[0]);
+  return { ask: out[0] };
+}
+
+/**
+ * Take a lead the cockpit has just followed up out of the HighLevel
+ * automations that kind of follow-up replaces, when a manager has switched
+ * that on, so the lead never gets the old sequence and the new one. Each
+ * workflow's answer is kept on the follow-up.
+ */
+async function takeOver(who: Who, f: Row): Promise<Record<string, string> | null> {
+  const s = ((await setting<Row>("followups")) ?? {}) as Row;
+  const seg = String(f.segment);
+  if (((s.takeover ?? {}) as Row)[seg] !== true) return null;
+  const flows = (((s.replaces ?? {}) as Row)[seg] ?? []) as string[];
+  if (!flows.length) return null;
+  const out: Record<string, string> = {};
+  for (const w of flows) {
+    try {
+      await ghl("DELETE", `/contacts/${enc(String(f.contact_id))}/workflow/${enc(w)}`, undefined, "2021-07-28");
+      out[w] = "taken out";
+    } catch (e) {
+      out[w] = redact(String((e as Error).message ?? e)).slice(0, 200);
+    }
+  }
+  await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}`, {
+    method: "PATCH",
+    body: { took_over: out },
+    prefer: "return=minimal",
+  });
+  await audit(who, "followup.takeover", "cockpit_sales_followups", String(f.id), null, out, { segment: seg });
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -1243,7 +1653,9 @@ async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean) {
     });
     throw new Refusal("The conversation has moved on since this draft was made, so it was not sent. Read it first; the agent writes a fresh draft if one is still due.", 409);
   }
-  const body = String(b.body ?? f.body).replace(/\r\n/g, "\n").trim();
+  const template = f.channel === "whatsapp_template";
+  const body = template ? templateLine(b.body ?? f.body) : String(b.body ?? f.body).replace(/\r\n/g, "\n").trim();
+  if (!body) throw new Refusal("Write the message first.");
   const subject = f.channel === "email" ? cleanText(b.subject ?? f.subject, 300) : null;
   const claimed = await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}&status=eq.draft`, {
     method: "PATCH",
@@ -1253,14 +1665,22 @@ async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean) {
   if (!claimed.length) throw new Refusal("Someone else has just dealt with this draft.", 409);
   const edited = body !== String(f.body).trim() || (f.channel === "email" && subject !== (f.subject ?? null));
   try {
-    const out = await convoSend(who, {
-      contact_id: f.contact_id,
-      channel: f.channel,
-      body,
-      subject,
-      request_id: f.id,
-      followup_id: f.id,
-    });
+    const out = template
+      ? await sendTemplate(who, {
+          contactId: String(f.contact_id),
+          key: String(f.template_key ?? ""),
+          line: body,
+          requestId: String(f.id),
+          followupId: String(f.id),
+        })
+      : await convoSend(who, {
+          contact_id: f.contact_id,
+          channel: f.channel,
+          body,
+          subject,
+          request_id: f.id,
+          followup_id: f.id,
+        });
     const m = out.message as Row;
     const saved = (await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}`, {
       method: "PATCH",
@@ -1277,6 +1697,12 @@ async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean) {
     }))[0];
     await audit(who, auto ? "followup.autosend" : "followup.approve", "cockpit_sales_followups", String(f.id), f,
       { status: saved.status, edited, segment: f.segment, channel: f.channel });
+    if (saved.status === "sent") {
+      // A confirmation message counts as a try: the dialer's confirmation
+      // call waits for the lead to answer it first.
+      if (f.segment === "confirm" && f.appointment_id) await confirmationSent(who, f);
+      saved.took_over = await takeOver(who, f).catch(e => ({ error: redact(String((e as Error).message ?? e)) }));
+    }
     return { followup: saved, message: m };
   } catch (e) {
     const err = e instanceof Refusal ? e.message : redact(String((e as Error).message ?? e));
@@ -1288,6 +1714,29 @@ async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean) {
     await audit(who, auto ? "followup.autosend" : "followup.approve", "cockpit_sales_followups", String(f.id), f,
       { status: "failed", error: err });
     throw e;
+  }
+}
+
+/** A confirmation message went out for this call: recorded the way the dialer records a try. */
+async function confirmationSent(who: Who, f: Row) {
+  try {
+    const a = (await svc(`cockpit_sales_appointments?appointment_id=eq.${enc(String(f.appointment_id))}&select=call_type,start_at`))[0];
+    await svc("cockpit_sales_confirmations", {
+      method: "POST",
+      body: {
+        appointment_id: f.appointment_id,
+        contact_id: f.contact_id,
+        call_type: a?.call_type === "intro" || a?.call_type === "demo" ? a.call_type : null,
+        start_at: a?.start_at ?? null,
+        result: "message_sent",
+        via: f.channel === "email" ? "email" : "whatsapp",
+        note: "Follow-up message",
+        by_email: who.email ?? "sales-desk",
+      },
+      prefer: "return=minimal",
+    });
+  } catch (e) {
+    console.error("confirmation row", redact(String(e)));
   }
 }
 
@@ -1321,8 +1770,6 @@ async function followupSkip(who: Who, b: Row) {
   return { followup: saved };
 }
 
-const FOLLOWUP_SEGMENTS = ["reply", "no_show", "new", "after_call", "nurture"] as const;
-
 async function followupSettings(who: Who, b: Row) {
   needManager(who);
   const v = (b.value ?? {}) as Row;
@@ -1334,16 +1781,25 @@ async function followupSettings(who: Who, b: Row) {
   };
   const quietFrom = int((v.quiet as Row | undefined)?.from ?? 21, 0, 23, "The quiet hours' start");
   const quietTo = int((v.quiet as Row | undefined)?.to ?? 9, 0, 23, "The quiet hours' end");
+  const before = await setting<Row>("followups");
+  const takeover = (v.takeover ?? {}) as Row;
+  const fallback = (v.email_fallback ?? {}) as Row;
+  const replaces = ((before?.replaces ?? {}) as Row);
   const value = {
     enabled: v.enabled !== false,
     autosend: Object.fromEntries(FOLLOWUP_SEGMENTS.map(s => [s, auto[s] === true])),
+    // Only kinds that replace a HighLevel automation can take a lead out of it.
+    takeover: Object.fromEntries(Object.keys(replaces).map(s => [s, takeover[s] === true])),
+    replaces,
+    email_fallback: Object.fromEntries(FOLLOWUP_SEGMENTS.map(s => [s, fallback[s] !== false])),
+    cadence: before?.cadence ?? {},
+    automation_gap_hours: int(v.automation_gap_hours ?? 20, 0, 72, "Hours to wait after an automation's message"),
     per_run: int(v.per_run ?? 12, 1, 50, "Drafts per run"),
     per_day: int(v.per_day ?? 60, 1, 400, "Drafts per day"),
     quiet: { from: quietFrom, to: quietTo },
     nurture_every_days: int(v.nurture_every_days ?? 7, 2, 60, "Days between nurture messages"),
     nurture_per_day: int(v.nurture_per_day ?? 20, 0, 200, "Long-term messages a day"),
   };
-  const before = await setting<Row>("followups");
   await svc("cockpit_sales_settings?on_conflict=key", {
     method: "POST",
     body: { key: "followups", value, updated_by: who.email, updated_at: new Date().toISOString() },
@@ -1648,7 +2104,7 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
     const id = String(c.appointment_id);
     if (c.result === "confirmed" || c.result === "reschedule") confirmedAppt.add(id);
     const t = ms(c.at);
-    if (c.result === "no_answer" && t && (lastTry.get(id) ?? 0) < t) lastTry.set(id, t);
+    if ((c.result === "no_answer" || c.result === "message_sent") && t && (lastTry.get(id) ?? 0) < t) lastTry.set(id, t);
   }
   const hotBy = new Map(hotRows.map(r => [String(r.contact_id), r]));
   const list = leads.map(l => {
@@ -3108,6 +3564,14 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   "review.ask": reviewAsk,
   "coach.save": coachSave,
   "coach.delete": coachDelete,
+  "wa.template.send": waTemplateSend,
+  "wa.template.save": waTemplateSave,
+  "ghl.workflows": ghlWorkflows,
+  "snippet.save": snippetSave,
+  "snippet.delete": snippetDelete,
+  "reference.save": referenceSave,
+  "reference.ask": referenceAsk,
+  "reference.answer": referenceAnswer,
 };
 
 /** What the desk's service key may do: nothing but a trusted follow-up. */

@@ -2,6 +2,14 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
+<!-- webinar:metadata:start -->
+<meta name="webinar-event-key" content="mahara-live-training-next-001">
+<meta name="webinar-schedule-revision" content="1">
+<meta name="webinar-config-sha256" content="ebde955d74022e136f373e55f4d3614bd6e01163d8ed039f4543a5b448057d31">
+<meta name="webinar-start" content="">
+<script src="/webinar-schedule.js"></script>
+<!-- webinar:metadata:end -->
+<script src="/webinar-countdown.js" defer></script>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>تم التسجيل · مهارة ميديا</title>
 <meta name="robots" content="noindex">
@@ -194,8 +202,9 @@ background: rgba(0,207,200,0.08); border: 1px dashed rgba(0,207,200,0.55);
 <div class="remind">
 <div class="wrap">
 <span class="remind-txt">
-<span data-only="ar">الخميس ١٧ سبتمبر · ٨:٠٠ مساءً بتوقيت مكة · لايف على زوم</span>
-<span data-only="en">Thursday, September 17 · 8:00 PM Mecca time (GMT+3) · Live on Zoom</span>
+<!-- webinar:date:start -->
+<span data-only="ar">الموعد الياي بنعلنه قريب</span><span data-only="en">Next date to be announced</span>
+<!-- webinar:date:end -->
 </span>
 <div class="count" id="countdown">
 <div class="count-box"><div class="count-num" id="cd-d">--</div><div class="count-lab"><span data-only="ar">أيام</span><span data-only="en">Days</span></div></div>
@@ -230,11 +239,9 @@ background: rgba(0,207,200,0.08); border: 1px dashed rgba(0,207,200,0.55);
 <span data-only="ar">اللي مو بالتقويم.. ما يصير.</span>
 <span data-only="en">If it's not on the calendar, it doesn't happen.</span>
 </p>
-<a class="step-btn stroke" href="https://calendar.google.com/calendar/render?action=TEMPLATE&amp;text=%D8%A7%D9%84%D8%AA%D8%AF%D8%B1%D9%8A%D8%A8+%D8%A7%D9%84%D9%85%D8%A8%D8%A7%D8%B4%D8%B1+%D8%A7%D9%84%D9%85%D8%AC%D8%A7%D9%86%D9%8A+%C2%B7+%D9%85%D9%87%D8%A7%D8%B1%D8%A9+%D9%85%D9%8A%D8%AF%D9%8A%D8%A7+%7C+Mahara+Media+Free+Live+Training&amp;dates=20260917T170000Z%2F20260917T183000Z&amp;ctz=Asia%2FRiyadh&amp;location=Zoom&amp;details=%D9%84%D8%A7%D9%8A%D9%81+%D8%B9%D9%84%D9%89+%D8%B2%D9%88%D9%85..+%D8%B1%D8%A7%D8%A8%D8%B7+%D8%A7%D9%84%D8%AD%D8%B6%D9%88%D8%B1+%D8%A8%D9%8A%D9%88%D8%B5%D9%84%D9%83+%D8%B9%D9%84%D9%89+%D8%A5%D9%8A%D9%85%D9%8A%D9%84%D9%83+%D9%82%D8%A8%D9%84+%D8%A7%D9%84%D8%AA%D8%AF%D8%B1%D9%8A%D8%A8.%0ALive+on+Zoom.+The+join+link+will+be+emailed+to+you+before+the+training." target="_blank" rel="noopener">
-<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-<span data-only="ar">أضف للتقويم</span>
-<span data-only="en">Add to Calendar</span>
-</a>
+<!-- webinar:calendar:start -->
+<span class="step-btn stroke" aria-disabled="true"><span data-only="ar">بنضيف الموعد أول ما يتأكد</span><span data-only="en">Available when the date is confirmed</span></span>
+<!-- webinar:calendar:end -->
 </div>
 
 <div class="step-card reveal">
@@ -396,26 +403,6 @@ var enName = AR2EN[first] || (NAMES[lower] ? first.charAt(0).toUpperCase() + fir
 document.getElementById('nameAr').textContent = ' \u064a\u0627 ' + arName;
 document.getElementById('nameEn').textContent = ' ' + enName;
 }
-
-/* ---- countdown ---- */
-/* SET BEFORE LAUNCH: same ISO as landing.html, e.g. '2026-08-12T19:00:00+03:00' */
-var COUNTDOWN_ISO = '2026-09-17T20:00:00+03:00';
-var target = Date.parse(COUNTDOWN_ISO);
-if (isNaN(target)) { target = Date.now() + 3 * 86400000 + 7 * 3600000; } /* preview fallback until the real date is set */
-var elD = document.getElementById('cd-d'), elH = document.getElementById('cd-h'),
-    elM = document.getElementById('cd-m'), elS = document.getElementById('cd-s'),
-    box = document.getElementById('countdown'), over = document.getElementById('countOver');
-function pad(n) { return n < 10 ? '0' + n : '' + n; }
-function tick() {
-var diff = target - Date.now();
-if (diff <= 0) { box.style.display = 'none'; over.style.display = 'inline'; return; }
-elD.textContent = pad(Math.floor(diff / 86400000));
-elH.textContent = pad(Math.floor(diff / 3600000) % 24);
-elM.textContent = pad(Math.floor(diff / 60000) % 60);
-elS.textContent = pad(Math.floor(diff / 1000) % 60);
-setTimeout(tick, 1000);
-}
-tick();
 
 /* ---- reveals ---- */
 var io = new IntersectionObserver(function (entries) {

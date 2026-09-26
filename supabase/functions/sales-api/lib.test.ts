@@ -9,9 +9,16 @@ import {
   checkLink,
   checkOffer,
   checkPay,
+  checkReference,
+  checkSnippet,
+  checkTemplateRoute,
   cors,
   crmDecision,
+  fillSnippet,
+  greetingName,
   refuseMark,
+  renderTemplate,
+  templateLine,
   trimMessages,
 } from "./lib.ts";
 
@@ -171,5 +178,61 @@ describe("Aziz's call reviews", () => {
     expect(checkCoachReview({ title: "Bad type", url: "https://a.b", call_type: "webinar" }).ok).toBe(false);
     expect(checkCoachReview({ title: "Bad score", url: "https://a.b", score: 140 }).ok).toBe(false);
     expect(checkCoachReview({ title: "For one rep", lessons: "Slow down at the price", for_email: "Tahreer@maharamedia.com" }).ok).toBe(true);
+  });
+});
+
+describe("WhatsApp templates", () => {
+  const preview = "هلا {{1}}، معاك {{2}} من مهارة ميديا.\n{{3}}\nإذا حاب نكمل، رد علي هني.";
+  const variables = ["first_name", "rep_name", "line"] as const;
+
+  test("a line loses its line breaks, tabs and runs of spaces (Meta refuses them)", () => {
+    expect(templateLine("first\nsecond\r\n\tthird     fourth")).toBe("first second third fourth");
+    expect(templateLine("x".repeat(900)).length).toBe(700);
+    expect(templateLine(null)).toBe("");
+  });
+
+  test("the approved text reads with the values in, and a missing value stays visible", () => {
+    expect(renderTemplate(preview, variables, { first_name: "أحمد", rep_name: "سارة", line: "حبيت أتابع معاك." }))
+      .toBe("هلا أحمد، معاك سارة من مهارة ميديا.\nحبيت أتابع معاك.\nإذا حاب نكمل، رد علي هني.");
+    expect(renderTemplate(preview, variables, { first_name: "أحمد" })).toContain("{{2}}");
+  });
+
+  test("a lead is greeted by their first name, else the first word of their name", () => {
+    expect(greetingName("Omar", "Omar Saleh")).toBe("Omar");
+    expect(greetingName("", "عبد الله الواحد")).toBe("عبد");
+    expect(greetingName(null, null)).toBe("");
+  });
+
+  test("a ready-made message takes what is known and leaves the rest marked", () => {
+    expect(fillSnippet("هلا {name}، موعدنا {day} الساعة {time}", { name: "سارة", day: "باجر" }))
+      .toBe("هلا سارة، موعدنا باجر الساعة {time}");
+  });
+
+  test("a template route needs matching {{n}}, a real workflow before it goes on, and known kinds", () => {
+    const base = { key: "line_ar", name: "cockpit_line_ar", language: "ar", purpose: "Any follow-up", preview, variables: [...variables] };
+    expect(checkTemplateRoute(base).ok).toBe(true);
+    expect(checkTemplateRoute({ ...base, active: true })).toEqual({ ok: false, error: "Pick the workflow that sends it before switching it on." });
+    expect(checkTemplateRoute({ ...base, workflow_id: "c5467d7f-0692-4fef-b0c0-f286011db66b", active: true }).ok).toBe(true);
+    expect(checkTemplateRoute({ ...base, variables: ["first_name", "line"] }).ok).toBe(false);
+    expect(checkTemplateRoute({ ...base, name: "Cockpit Line" }).ok).toBe(false);
+    expect(checkTemplateRoute({ ...base, segments: ["reply", "somewhere"] }).ok).toBe(false);
+    expect(checkTemplateRoute({ ...base, workflow_id: "not-an-id" }).ok).toBe(false);
+  });
+
+  test("a ready-made message needs a moment, a language and words", () => {
+    expect(checkSnippet({ moment: "no_show", language: "ar", body: "هلا {name}" }).ok).toBe(true);
+    expect(checkSnippet({ moment: "whenever", language: "ar", body: "هلا" }).ok).toBe(false);
+    expect(checkSnippet({ moment: "no_show", language: "fr", body: "salut" }).ok).toBe(false);
+    expect(checkSnippet({ moment: "no_show", language: "en", body: " " }).ok).toBe(false);
+  });
+});
+
+describe("client references", () => {
+  test("a reference needs a client and a clear consent; proof by slug", () => {
+    const ok = checkReference({ client_name: "Example Contracting", consent: "yes", asset_slugs: "case-one, Case-Two" });
+    expect(ok.ok && ok.row.asset_slugs).toEqual(["case-one", "case-two"]);
+    expect(checkReference({ client_name: "X" }).ok).toBe(false);
+    expect(checkReference({ client_name: "Example", consent: "maybe" }).ok).toBe(false);
+    expect(checkReference({ client_name: "Example", asset_slugs: ["https://x.com"] }).ok).toBe(false);
   });
 });

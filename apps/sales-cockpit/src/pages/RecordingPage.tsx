@@ -52,7 +52,7 @@ export default function RecordingPage({ me }: { me: Me }) {
         ) : (
           <EmptyState
             title="This call is not here"
-            text="It may not have been copied from Fathom yet. Try again in half an hour."
+            text="It may not have been copied from Fathom or Maqsam yet. Try again in half an hour."
           />
         )}
       </Shell>
@@ -171,12 +171,17 @@ export default function RecordingPage({ me }: { me: Me }) {
       ) : null}
 
       <div className="grid gap-4 lg:grid-cols-2 lg:gap-6">
-        <SectionCard title="Fathom's summary">
+        <SectionCard
+          title={
+            r.source === "maqsam" ? "Maqsam's summary" : "Fathom's summary"
+          }
+        >
           {r.summary ? (
             <Prose text={r.summary} />
           ) : (
             <p className="muted text-sm">
-              Fathom wrote no summary of this call.
+              {r.source === "maqsam" ? "Maqsam" : "Fathom"} wrote no summary of
+              this call.
             </p>
           )}
         </SectionCard>

@@ -9,7 +9,9 @@ import type {
   MoneyPayload,
   OrganicPayload,
   TeamPayload,
+  WebinarPayload,
 } from "./payloads";
+import { extractWebinar, WEBINAR_DEFINITIONS } from "./webinarMetrics";
 
 /**
  * Every CEO cockpit number, named and defined once, so it can be written to
@@ -247,6 +249,7 @@ const CALL_CENTER_METRICS: [
 ];
 
 export const DEFINITIONS: MetricDefinition[] = [
+  ...WEBINAR_DEFINITIONS,
   // --- growth (Mahara's own funnel) ---
   d(
     "growth.spend",
@@ -1275,6 +1278,8 @@ export function extract(key: string, payload: unknown): MetricValue[] {
   if (!payload || typeof payload !== "object") return [];
   try {
     switch (key) {
+      case "webinar":
+        return extractWebinar(payload as WebinarPayload);
       case "growth":
         return extractGrowth(payload as GrowthPayload);
       case "money":

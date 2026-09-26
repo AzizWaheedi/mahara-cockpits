@@ -9,9 +9,19 @@ import {
   useState,
 } from "react";
 import { api } from "../lib/api";
+import { useSnippets, useTemplates } from "../lib/data";
 import { ago, clock, day } from "../lib/format";
 import { toast } from "../lib/toast";
+import {
+  callWords,
+  fillSnippet,
+  firstWord,
+  leadLanguage,
+  type Moment,
+  snippetLine,
+} from "../lib/whatsapp";
 import { buttonPrimary, field } from "./kit";
+import { SnippetPicker, TemplateComposer } from "./WhatsAppKit";
 
 /**
  * Talking to a lead from the cockpit: their whole HighLevel conversation
@@ -20,9 +30,11 @@ import { buttonPrimary, field } from "./kit";
  * should be able to talk to the lead, and in the lead section as well".
  *
  * WhatsApp takes a free message only within 24 hours of the lead's own last
- * message, so the box says so and offers email instead of failing. Every
- * send carries an id made for it, so a retry after a dropped connection
- * returns the first send instead of sending twice.
+ * message; outside it the box becomes an approved template with one line
+ * written for this lead (sent through its HighLevel workflow), and email
+ * stays one click away. The team's ready-made messages fill the box in the
+ * lead's language. Every send carries an id made for it, so a retry after a
+ * dropped connection returns the first send instead of sending twice.
  */
 
 export type Channel = "whatsapp" | "sms" | "email";
@@ -176,10 +188,10 @@ const STATUS_WORD: Record<string, string> = {
 function windowWords(c: ChannelState | undefined): string {
   const w = c?.window;
   if (!w?.last_inbound_at)
-    return "They have never written on WhatsApp, so WhatsApp only takes an approved template.";
+    return "They have never written on WhatsApp, so only an approved template goes: write the line it carries.";
   if (w.open)
     return `WhatsApp is open until ${day(w.closes_at)} ${clock(w.closes_at)} (they wrote ${ago(w.last_inbound_at)}).`;
-  return `WhatsApp is closed: they last wrote ${ago(w.last_inbound_at)}, and WhatsApp only takes a free message within 24 hours of that.`;
+  return `They last wrote ${ago(w.last_inbound_at)}, so WhatsApp's free window is closed and only an approved template goes: write the line it carries.`;
 }
 
 function draftKey(contactId: string, channel: Channel) {
@@ -193,6 +205,9 @@ interface Draft {
   subject: string;
   /** The send's request id, kept until it goes, so a retry never doubles it. */
   id: string;
+  /** A sales asset put in the box, logged with the send while its link is still in it. */
+  assetId?: string | null;
+  assetUrl?: string | null;
 }
 
 function readDraft(contactId: string, channel: Channel): Draft {
@@ -218,12 +233,41 @@ export function Conversation({
   contactId,
   convo,
   compact = false,
+  rep,
+  callAt,
+  prefill,
 }: {
   contactId: string;
   convo: ReturnType<typeof useConversation>;
   compact?: boolean;
+  /** The rep writing, for {rep} in a ready-made message. */
+  rep?: string | null;
+  /** The lead's booked call, for {day} and {time}. */
+  callAt?: string | null;
+  /**
+   * Words to put in the box from outside: a ready-made message for a moment
+   * (the dialer after a missed call), or a sales asset's message.
+   */
+  prefill?: {
+    moment?: Moment;
+    text?: string;
+    asset?: { id: string; url: string | null } | null;
+    nonce: number;
+  } | null;
 }) {
   const { data, error, thread } = convo;
+  const templates = useTemplates();
+  const snippets = useSnippets();
+  const language = leadLanguage(
+    thread.filter(m => m.direction === "inbound").map(m => m.body),
+  );
+  const call = callAt ? callWords(callAt, language) : null;
+  const values = {
+    name: firstWord(data?.contact.name) || null,
+    rep: firstWord(rep) || null,
+    day: call?.day ?? null,
+    time: call?.time ?? null,
+  };
   const listRef = useRef<HTMLDivElement>(null);
   const channels = data?.channels;
   const usable = (c: Channel) => {
@@ -251,7 +295,16 @@ export function Conversation({
       return { ok: false, why: windowWords(s) };
     return { ok: true, why: c === "whatsapp" ? windowWords(s) : "" };
   };
-  const preferred: Channel = usable("whatsapp").ok ? "whatsapp" : "email";
+  const waReach = channels?.whatsapp;
+  const templatesLive = (templates.data ?? []).some(
+    t => t.active && t.workflow_id,
+  );
+  // WhatsApp first: free inside the window, a template outside it.
+  const waTemplate = Boolean(
+    waReach?.on && !waReach.dnd && waReach.reachable && templatesLive,
+  );
+  const preferred: Channel =
+    usable("whatsapp").ok || waTemplate ? "whatsapp" : "email";
   const [channel, setChannel] = useState<Channel>("whatsapp");
   const picked = useRef(false);
   useEffect(() => {
@@ -261,10 +314,26 @@ export function Conversation({
   const [draft, setDraft] = useState<Draft>(() =>
     readDraft(contactId, channel),
   );
-  useEffect(
-    () => setDraft(readDraft(contactId, channel)),
-    [contactId, channel],
-  );
+  // Words waiting for a channel switch to land in that channel's box.
+  const pending = useRef<{
+    text: string;
+    asset: { id: string; url: string | null } | null;
+  } | null>(null);
+  useEffect(() => {
+    const d = readDraft(contactId, channel);
+    const p = pending.current;
+    pending.current = null;
+    setDraft(
+      p
+        ? {
+            ...d,
+            body: d.body.trim() ? `${d.body}\n\n${p.text}` : p.text,
+            assetId: p.asset?.id ?? null,
+            assetUrl: p.asset?.url ?? null,
+          }
+        : d,
+    );
+  }, [contactId, channel]);
   // Saved under the lead and channel it was written for, so switching
   // channel never files one channel's words under the other.
   useEffect(() => {
@@ -289,6 +358,65 @@ export function Conversation({
 
   const [busy, setBusy] = useState(false);
   const can = usable(channel);
+  const wa = channels?.whatsapp;
+  // WhatsApp is on and they can be reached, but only a template goes now.
+  const templateMode =
+    channel === "whatsapp" &&
+    Boolean(wa?.on && !wa.dnd && wa.reachable && !wa.window?.open);
+
+  // Words asked for from outside: a ready-made message for a moment (the
+  // dialer after a missed call goes to WhatsApp) or a sales asset's message
+  // (to the channel in use). Into the box, or as the template's line when
+  // WhatsApp's window is closed.
+  const [linePrefill, setLinePrefill] = useState<{
+    text: string;
+    nonce: number;
+    asset?: { id: string; url: string | null } | null;
+  } | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: once per request
+  useEffect(() => {
+    if (!prefill || !data) return;
+    let full = prefill.text ?? null;
+    let line = full;
+    if (!full && prefill.moment) {
+      if (!snippets.data) return;
+      const s =
+        snippets.data.find(
+          x => x.moment === prefill.moment && x.language === language,
+        ) ?? snippets.data.find(x => x.moment === prefill.moment);
+      if (!s) return;
+      full = fillSnippet(s.body, values);
+      line = fillSnippet(snippetLine(s.body), values);
+    }
+    if (!full) return;
+    const asset = prefill.asset ?? null;
+    const target: Channel = prefill.moment ? "whatsapp" : channel;
+    const closed = Boolean(
+      target === "whatsapp" &&
+        wa?.on &&
+        !wa.dnd &&
+        wa.reachable &&
+        !wa.window?.open,
+    );
+    if (target !== channel) picked.current = true;
+    if (closed) {
+      setLinePrefill({ text: line ?? full, nonce: prefill.nonce, asset });
+      if (target !== channel) setChannel(target);
+      return;
+    }
+    if (target !== channel) {
+      pending.current = { text: full, asset };
+      setChannel(target);
+      return;
+    }
+    const words = full;
+    setDraft(d => ({
+      ...d,
+      body: d.body.trim() ? `${d.body}\n\n${words}` : words,
+      assetId: asset?.id ?? d.assetId ?? null,
+      assetUrl: asset?.url ?? d.assetUrl ?? null,
+    }));
+  }, [prefill?.nonce, Boolean(data), Boolean(snippets.data)]);
   const byId = useMemo(
     () => new Map((data?.sends ?? []).map(s => [s.ghl_message_id, s] as const)),
     [data?.sends],
@@ -307,6 +435,11 @@ export function Conversation({
           body: draft.body,
           subject: channel === "email" ? draft.subject : undefined,
           request_id: draft.id,
+          asset_id:
+            draft.assetId &&
+            (!draft.assetUrl || draft.body.includes(draft.assetUrl))
+              ? draft.assetId
+              : undefined,
         },
       );
       if (out.message.state === "failed")
@@ -401,7 +534,7 @@ export function Conversation({
                   setChannel(c);
                 }}
                 title={u.ok ? undefined : u.why}
-                className={`inline-flex h-7 items-center gap-1 rounded-full border hairline px-2.5 text-xs ${channel === c ? "bg-[color:var(--secondary)] font-medium" : "muted"} ${u.ok ? "" : "opacity-60"}`}
+                className={`inline-flex h-7 items-center gap-1 rounded-full border hairline px-2.5 text-xs ${channel === c ? "bg-[color:var(--secondary)] font-medium" : "muted"} ${u.ok || (c === "whatsapp" && waTemplate) ? "" : "opacity-60"}`}
               >
                 <Icon className="size-3.5" aria-hidden /> {CHANNEL_WORD[c]}
               </button>
@@ -411,49 +544,74 @@ export function Conversation({
         {can.why ? (
           <p className={`text-xs ${can.ok ? "muted" : ""}`}>{can.why}</p>
         ) : null}
-        {channel === "email" ? (
-          <input
-            value={draft.subject}
-            onChange={e => setDraft(d => ({ ...d, subject: e.target.value }))}
-            placeholder="Subject"
-            className={field}
-            dir="auto"
-            disabled={!can.ok}
+        {templateMode ? (
+          <TemplateComposer
+            contactId={contactId}
+            firstName={values.name ?? ""}
+            language={language}
+            templates={templates.data ?? []}
+            values={values}
+            prefill={linePrefill}
+            onSent={() => void convo.reload()}
           />
-        ) : null}
-        <textarea
-          value={draft.body}
-          onChange={e => setDraft(d => ({ ...d, body: e.target.value }))}
-          onKeyDown={onKey}
-          rows={compact ? 3 : 4}
-          placeholder={
-            can.ok
-              ? channel === "whatsapp"
-                ? "Write to them on WhatsApp"
-                : "Write the email"
-              : "Pick a channel that is open"
-          }
-          className={`${field} h-auto py-2 leading-relaxed`}
-          dir="auto"
-          disabled={!can.ok}
-        />
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="muted text-xs">
-            Goes out from the official line through HighLevel.
-            <span className="hidden md:pointer-fine:inline">
-              {" "}
-              Ctrl or ⌘ and Enter sends.
-            </span>
-          </p>
-          <button
-            type="submit"
-            disabled={busy || !can.ok || !draft.body.trim()}
-            className={buttonPrimary}
-          >
-            <Send className="size-3.5" aria-hidden />
-            {busy ? "Sending…" : `Send by ${CHANNEL_WORD[channel]}`}
-          </button>
-        </div>
+        ) : (
+          <>
+            {channel === "email" ? (
+              <input
+                value={draft.subject}
+                onChange={e =>
+                  setDraft(d => ({ ...d, subject: e.target.value }))
+                }
+                placeholder="Subject"
+                className={field}
+                dir="auto"
+                disabled={!can.ok}
+              />
+            ) : null}
+            <textarea
+              value={draft.body}
+              onChange={e => setDraft(d => ({ ...d, body: e.target.value }))}
+              onKeyDown={onKey}
+              rows={compact ? 3 : 4}
+              placeholder={
+                can.ok
+                  ? channel === "whatsapp"
+                    ? "Write to them on WhatsApp"
+                    : "Write the email"
+                  : "Pick a channel that is open"
+              }
+              className={`${field} h-auto py-2 leading-relaxed`}
+              dir="auto"
+              disabled={!can.ok}
+            />
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                {can.ok ? (
+                  <SnippetPicker
+                    language={language}
+                    values={values}
+                    onPick={text => setDraft(d => ({ ...d, body: text }))}
+                  />
+                ) : null}
+                <p className="muted text-xs">
+                  Goes out from the official line through HighLevel.
+                  <span className="hidden md:pointer-fine:inline">
+                    {" "}
+                    Ctrl or ⌘ and Enter sends.
+                  </span>
+                </p>
+              </div>
+              <button
+                type="submit"
+                disabled={busy || !can.ok || !draft.body.trim()}
+                className={buttonPrimary}
+              >
+                <Send className="size-3.5" aria-hidden />
+                {busy ? "Sending…" : `Send by ${CHANNEL_WORD[channel]}`}
+              </button>
+            </div>
+          </>
+        )}
       </form>
     </div>
   );

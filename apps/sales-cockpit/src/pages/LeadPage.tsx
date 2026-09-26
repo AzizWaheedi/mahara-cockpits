@@ -1,7 +1,8 @@
 import { ArrowLeft, ArrowUpRight, Copy, Phone, ScrollText } from "lucide-react";
-import { type ReactNode, useEffect, useMemo } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import { AdOrigin } from "../components/AdOrigin";
+import { ProofToSend } from "../components/AssetPicker";
 import { CallNotesList, useCallNotes } from "../components/CallNotes";
 import { Conversation, useConversation } from "../components/Conversation";
 import { HotControl } from "../components/HotList";
@@ -21,8 +22,10 @@ import { LeadTimeline, type LiveMessage } from "../components/LeadTimeline";
 import { CrmLine, MarkControls } from "../components/MarkControls";
 import { NotesPanel } from "../components/NotesPanel";
 import { ProposalPanel } from "../components/ProposalPanel";
+import { AskReference } from "../components/References";
 import { ResearchPanel } from "../components/ResearchPanel";
-import { useLead, useLeadActivity, useTeam } from "../lib/data";
+import { assetStage, objectionsFrom } from "../lib/assets";
+import { useLead, useLeadActivity, useSetting, useTeam } from "../lib/data";
 import {
   ago,
   callType,
@@ -34,6 +37,7 @@ import {
 } from "../lib/format";
 import { toast } from "../lib/toast";
 import type { CalendarRow, Lead, Me } from "../lib/types";
+import { leadLanguage } from "../lib/whatsapp";
 
 const GHL_LOCATION = "7NI8yyJtwsh2OOWA5Icr";
 
@@ -53,6 +57,14 @@ export default function LeadPage({ me }: { me: Me }) {
   // the owner and the do-not-disturb flag.
   const convo = useConversation(contactId);
   const callNotes = useCallNotes(contactId);
+  const pipeline = useSetting<{ roles?: Record<string, string> }>("pipeline");
+  // A sales asset's message, put in the conversation box from "Proof to send".
+  const [convoPrefill, setConvoPrefill] = useState<{
+    text: string;
+    asset: { id: string; url: string | null };
+    nonce: number;
+  } | null>(null);
+  const convoRef = useRef<HTMLDivElement>(null);
   const live = convo.data;
   const timelineMessages: LiveMessage[] = useMemo(
     () =>
@@ -246,9 +258,17 @@ export default function LeadPage({ me }: { me: Me }) {
         </div>
 
         <div className="min-w-0 space-y-4 xl:col-span-5 xl:space-y-6">
-          <SectionCard title="Conversation">
-            <Conversation contactId={l.contact_id} convo={convo} />
-          </SectionCard>
+          <div ref={convoRef}>
+            <SectionCard title="Conversation">
+              <Conversation
+                contactId={l.contact_id}
+                convo={convo}
+                rep={me.name}
+                callAt={nextAppt?.start_at ?? null}
+                prefill={convoPrefill}
+              />
+            </SectionCard>
+          </div>
           <SectionCard title="Everything so far">
             {activity.error ? (
               <Failed
@@ -275,6 +295,38 @@ export default function LeadPage({ me }: { me: Me }) {
         </div>
 
         <div className="min-w-0 space-y-4 xl:col-span-3 xl:space-y-6">
+          <SectionCard title="Proof to send">
+            <ProofToSend
+              contactId={l.contact_id}
+              language={leadLanguage(
+                convo.thread
+                  .filter(m => m.direction === "inbound")
+                  .map(m => m.body),
+              )}
+              stage={assetStage(
+                pipeline.data?.roles?.[String(l.stage_id ?? "")] ?? null,
+              )}
+              objections={objectionsFrom(
+                (callNotes.data ?? []).flatMap(n =>
+                  (n.notes.objections ?? []).map(o => o.objection),
+                ),
+              )}
+              onUse={(text, a) => {
+                setConvoPrefill({
+                  text,
+                  asset: { id: a.id, url: a.url },
+                  nonce: Date.now(),
+                });
+                convoRef.current?.scrollIntoView({
+                  block: "start",
+                  behavior: "smooth",
+                });
+              }}
+            />
+            <div className="mt-3">
+              <AskReference contactId={l.contact_id} />
+            </div>
+          </SectionCard>
           <SectionCard title="What the calls told us">
             {callNotes.error ? (
               <Failed

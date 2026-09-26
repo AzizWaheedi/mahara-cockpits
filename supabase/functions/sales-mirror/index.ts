@@ -21,10 +21,14 @@
 // - Maqsam calls B2B stored since the last run, then linked to leads by the
 //   phone's last eight digits.
 // - rep scorecards (B2B's own b2b_rep_scorecard) every fifteen minutes.
+// - the sales assets and their tags (B2B's asset library) every hour,
+//   dropping any B2B unpublished.
 // Each run leaves a row in cockpit_sales_mirror_runs; a failed step is
 // written there and the other steps still run.
 
 import {
+  assetsSql,
+  assetVocabSql,
   B2B_REF,
   type CalendarInfo,
   callsSql,
@@ -55,6 +59,7 @@ const FULL_LEADS_EVERY = 6 * HOUR;
 const FULL_CALLS_EVERY = 30 * 60_000;
 const SCORECARDS_EVERY = 15 * 60_000;
 const MONTHS_EVERY = 6 * 3_600_000;
+const ASSETS_EVERY = HOUR;
 const LEAD_PAGE = 1000;
 const GHL = "https://services.leadconnectorhq.com";
 // HighLevel sits behind Cloudflare, which refuses a request with no
@@ -69,6 +74,7 @@ interface State {
   dials_since?: string | null;
   scorecards_at?: string | null;
   months_at?: string | null;
+  assets_at?: string | null;
 }
 
 function env(name: string): string {
@@ -412,6 +418,26 @@ async function mirrorScorecards(state: State, at: string, now: number): Promise<
   return n;
 }
 
+async function mirrorAssets(state: State, at: string, now: number): Promise<number> {
+  if (!older(state.assets_at, ASSETS_EVERY, now)) return 0;
+  const [assets, vocab] = await Promise.all([b2b(assetsSql()), b2b(assetVocabSql())]);
+  // An empty read is B2B answering oddly, not the library emptied: keep what we have.
+  if (!assets.length) throw new Error("B2B returned no published assets; the copy was kept");
+  const n = await upsert("cockpit_sales_assets", "id", assets.map(a => ({ ...a, mirrored_at: at })));
+  await upsert("cockpit_sales_asset_vocab", "facet,value", vocab.map(v => ({ ...v, mirrored_at: at })));
+  // Anything B2B no longer publishes.
+  await rest(`cockpit_sales_assets?mirrored_at=lt.${encodeURIComponent(at)}`, {
+    method: "DELETE",
+    prefer: "return=minimal",
+  });
+  await rest(`cockpit_sales_asset_vocab?mirrored_at=lt.${encodeURIComponent(at)}`, {
+    method: "DELETE",
+    prefer: "return=minimal",
+  });
+  state.assets_at = at;
+  return n;
+}
+
 Deno.serve(async (req: Request) => {
   // Only the pg_cron job, which sends the shared secret from the vault, may run it.
   const expected = env("CRON_SECRET");
@@ -466,6 +492,7 @@ Deno.serve(async (req: Request) => {
     return JSON.parse(out || "0");
   });
   await step("scorecards", () => mirrorScorecards(state, at, now));
+  await step("assets", () => mirrorAssets(state, at, now));
 
   try {
     await saveState(state);

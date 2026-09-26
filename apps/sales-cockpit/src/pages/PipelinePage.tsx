@@ -334,7 +334,7 @@ function Column({
           {cards.length}
         </span>
       </header>
-      <ul className="max-h-[70vh] min-h-16 space-y-2 overflow-y-auto p-2">
+      <ul className="max-h-[calc(100dvh-12.5rem)] min-h-16 space-y-2 overflow-y-auto p-2">
         {cards.map(c => (
           <CardItem key={c.contact_id} c={c} stages={stages} onMove={onMove} />
         ))}

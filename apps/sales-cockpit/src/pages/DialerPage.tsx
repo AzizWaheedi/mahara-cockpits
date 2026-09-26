@@ -25,6 +25,7 @@ import {
 } from "react";
 import { Link } from "react-router";
 import { AdOrigin } from "../components/AdOrigin";
+import { ProofToSend } from "../components/AssetPicker";
 import { CallNotesList, useCallNotes } from "../components/CallNotes";
 import { Conversation, useConversation } from "../components/Conversation";
 import { HotControl } from "../components/HotList";
@@ -55,7 +56,14 @@ import {
   writePrefs,
 } from "../components/ScriptParts";
 import { api } from "../lib/api";
-import { useLead, useLeadActivity, useLeadSearch, useNow } from "../lib/data";
+import { assetStage, objectionsFrom } from "../lib/assets";
+import {
+  useLead,
+  useLeadActivity,
+  useLeadSearch,
+  useNow,
+  useSetting,
+} from "../lib/data";
 import {
   alertsWanted,
   callbackPicks,
@@ -86,6 +94,7 @@ import {
 import { type Fill, groupBlocks, personalise } from "../lib/script";
 import { toast } from "../lib/toast";
 import type { Lead, Me } from "../lib/types";
+import { leadLanguage, type Moment } from "../lib/whatsapp";
 
 /**
  * The power dialer, level with the call centre's (mahara-power-dialer): the
@@ -453,8 +462,12 @@ export default function DialerPage({ me }: { me: Me }) {
   const [tier, setTier] = useState<TierFilter>("all");
   const [term, setTerm] = useState("");
   const [alertsOn, setAlertsOn] = useState(alertsWanted);
-  // Bumped to open the lead's conversation from the call pane ("Write to them").
-  const [talk, setTalk] = useState(0);
+  // Bumped to open the lead's conversation from the call pane ("Write to
+  // them"), with the ready-made message to start from, if any.
+  const [talk, setTalk] = useState<{ n: number; moment: Moment | null }>({
+    n: 0,
+    moment: null,
+  });
   const maqsam = useAgent();
 
   // One read at a time; a read asked for meanwhile runs right after.
@@ -732,7 +745,9 @@ export default function DialerPage({ me }: { me: Me }) {
               callRef={callRef}
               onCalled={a => setQ(prev => (prev ? { ...prev, open: a } : prev))}
               onFinished={finished}
-              onTalk={() => setTalk(n => n + 1)}
+              onTalk={moment =>
+                setTalk(t => ({ n: t.n + 1, moment: moment ?? null }))
+              }
             />
             <LeadPane
               key={`lead-${currentId}`}
@@ -1208,7 +1223,7 @@ function CallPane({
     how: "saved" | "skipped",
     words?: string,
   ) => void;
-  onTalk: () => void;
+  onTalk: (moment?: Moment) => void;
 }) {
   const lead = useLead(contactId);
   const l = lead.data;
@@ -1302,7 +1317,7 @@ function CallPane({
         toast.success("Marked held. Book the demo, or set a call-back.");
         return;
       }
-      if (kind === "confirm" && draft.outcome === "no_answer") {
+      if (draft.outcome === "no_answer") {
         setMode("unanswered");
         return;
       }
@@ -1439,11 +1454,21 @@ function CallPane({
           </NextStep>
         ) : mode === "unanswered" ? (
           <NextStep
-            title="No answer. Send them a message too?"
-            text="A short WhatsApp asking them to confirm often gets the answer a call did not. The dialer tries the call again in two hours."
+            title="No answer. Send them a WhatsApp?"
+            text={
+              kind === "confirm"
+                ? "A short WhatsApp asking them to confirm often gets the answer a call did not. The dialer tries the call again in two hours."
+                : "A WhatsApp right after a missed call gets answered far more often than an email. The missed-call message is ready in the box; read it, then send."
+            }
           >
-            <button type="button" onClick={onTalk} className={buttonPrimary}>
-              Write to them
+            <button
+              type="button"
+              onClick={() =>
+                onTalk(kind === "confirm" ? "confirm" : "missed_call")
+              }
+              className={buttonPrimary}
+            >
+              WhatsApp them
             </button>
             <button
               type="button"
@@ -2035,19 +2060,30 @@ function LeadPane({
   contactId: string;
   item: QueueItem | null;
   /** Changes when the call pane asks for the conversation. */
-  talk: number;
+  talk: { n: number; moment: Moment | null };
 }) {
   const lead = useLead(contactId);
   const activity = useLeadActivity(contactId, lead.data?.phone8 ?? null);
   const convo = useConversation(contactId);
   const callNotes = useCallNotes(contactId);
+  const pipeline = useSetting<{ roles?: Record<string, string> }>("pipeline");
   const [tab, setTab] = useState<LeadTab>("talk");
+  // What goes in the conversation box from outside: the call pane's
+  // ready-made message, or a sales asset from "Proof to send".
+  const [prefill, setPrefill] = useState<{
+    moment?: Moment;
+    text?: string;
+    asset?: { id: string; url: string | null } | null;
+    nonce: number;
+  } | null>(null);
   const paneRef = useRef<HTMLElement>(null);
   // "Write to them": open the conversation and put the cursor in the box.
-  const lastTalk = useRef(talk);
+  const lastTalk = useRef(talk.n);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: once per request (n); the moment rides with it
   useEffect(() => {
-    if (talk === lastTalk.current) return;
-    lastTalk.current = talk;
+    if (talk.n === lastTalk.current) return;
+    lastTalk.current = talk.n;
+    if (talk.moment) setPrefill({ moment: talk.moment, nonce: talk.n });
     setTab("talk");
     window.setTimeout(() => {
       paneRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
@@ -2055,7 +2091,7 @@ function LeadPane({
         ?.querySelector<HTMLTextAreaElement>("form textarea")
         ?.focus();
     }, 50);
-  }, [talk]);
+  }, [talk.n]);
   const l = lead.data;
   const messages: LiveMessage[] = useMemo(
     () =>
@@ -2202,7 +2238,42 @@ function LeadPane({
       </div>
       <div className="p-4" role="tabpanel">
         {tab === "talk" ? (
-          <Conversation contactId={contactId} convo={convo} compact />
+          <div className="space-y-5">
+            <Conversation
+              contactId={contactId}
+              convo={convo}
+              compact
+              rep={me.name}
+              callAt={item?.appointment?.start_at ?? null}
+              prefill={prefill}
+            />
+            <div className="border-t hairline pt-4">
+              <p className="mb-2 text-sm font-semibold">Proof to send</p>
+              <ProofToSend
+                contactId={contactId}
+                language={leadLanguage(
+                  convo.thread
+                    .filter(m => m.direction === "inbound")
+                    .map(m => m.body),
+                )}
+                stage={assetStage(
+                  pipeline.data?.roles?.[String(l?.stage_id ?? "")] ?? null,
+                )}
+                objections={objectionsFrom(
+                  (callNotes.data ?? []).flatMap(n =>
+                    (n.notes.objections ?? []).map(o => o.objection),
+                  ),
+                )}
+                onUse={(text, a) =>
+                  setPrefill({
+                    text,
+                    asset: { id: a.id, url: a.url },
+                    nonce: Date.now(),
+                  })
+                }
+              />
+            </div>
+          </div>
         ) : tab === "script" ? (
           <ScriptTab
             me={me}

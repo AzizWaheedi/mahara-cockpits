@@ -1,4 +1,4 @@
-import { FileText, Mic, Plus, Search } from "lucide-react";
+import { FileText, Mic, Phone, Plus, Search, Video } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { CoachReviewForm, CoachReviewList } from "../components/CoachReviews";
@@ -55,8 +55,8 @@ export default function RecordingsPage({ me }: { me: Me }) {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Recordings</h1>
           <p className="muted mt-1 text-sm">
-            Every recorded sales call, newest first. Open any call to ask Vince
-            to review it.
+            Every recorded sales call, video and phone, newest first. Open any
+            call to ask Vince to review it.
           </p>
         </div>
         <Segmented
@@ -80,9 +80,11 @@ export default function RecordingsPage({ me }: { me: Me }) {
       )}
 
       <SourceNote label="Where these calls come from">
-        Every recorded sales call comes from Fathom. A call belongs to a lead
-        when an invitee's email is the lead's, or when that lead's intro or demo
-        began within 30 minutes of it. Reviews are Vince's: the ones he wrote
+        Video calls come from Fathom and phone calls from Maqsam (every answered
+        call with a transcript since January, setters and closers). A video call
+        belongs to a lead when an invitee's email is the lead's, or when that
+        lead's intro or demo began within 30 minutes of it; a phone call belongs
+        to the lead whose number matches. Reviews are Vince's: the ones he wrote
         before he stopped in August, and the ones drafted since with his
         template and framework.
       </SourceNote>
@@ -102,6 +104,13 @@ function Calls({
   reps: RepList;
 }) {
   const by = params.get("by") ?? "";
+  const kind = (params.get("kind") ?? "") as "" | "video" | "phone";
+  const rep = reps.find(r => r.id === by) ?? null;
+  const addresses = rep
+    ? [rep.fathom_email, rep.maqsam_email]
+        .filter((x): x is string => Boolean(x))
+        .map(x => x.toLowerCase())
+    : [];
   const page = Math.max(0, Number(params.get("page") ?? 1) - 1) || 0;
   const [text, setText] = useState(params.get("q") ?? "");
   useEffect(() => {
@@ -112,7 +121,12 @@ function Calls({
     return () => window.clearTimeout(t);
   }, [text, params, set]);
 
-  const calls = useRecordings({ q: params.get("q") ?? "", by, page });
+  const calls = useRecordings({
+    q: params.get("q") ?? "",
+    by: addresses,
+    kind,
+    page,
+  });
   const rows = calls.data ?? [];
   const reviews = useReviews({ recordingIds: rows.map(r => r.recording_id) });
   const asks = useReviewAsks(rows.map(r => r.recording_id));
@@ -136,7 +150,7 @@ function Calls({
     () => new Map((leads.data ?? []).map(l => [l.contact_id, l.name] as const)),
     [leads.data],
   );
-  const recorders = reps.filter(r => r.fathom_email);
+  const recorders = reps.filter(r => r.fathom_email || r.maqsam_email);
 
   return (
     <>
@@ -163,10 +177,20 @@ function Calls({
         >
           <option value="">Everyone's calls</option>
           {recorders.map(r => (
-            <option key={r.id} value={String(r.fathom_email).toLowerCase()}>
+            <option key={r.id} value={r.id}>
               {r.display_name}
             </option>
           ))}
+        </select>
+        <select
+          aria-label="Video or phone"
+          value={kind}
+          onChange={e => set({ kind: e.target.value || null, page: null })}
+          className={`${field} sm:w-40`}
+        >
+          <option value="">Video and phone</option>
+          <option value="video">Video calls</option>
+          <option value="phone">Phone calls</option>
         </select>
       </div>
 
@@ -180,9 +204,9 @@ function Calls({
             icon={Mic}
             title="No calls here"
             text={
-              by || params.get("q")
+              by || kind || params.get("q")
                 ? "Nothing matches. Clear the search or pick everyone's calls."
-                : "Recorded sales calls appear here within half an hour of Fathom having them."
+                : "Recorded sales calls appear here within half an hour of Fathom or Maqsam having them."
             }
           />
         </section>
@@ -231,6 +255,11 @@ function CallRow({
           <p>{day(r.started_at)}</p>
           <p className="muted">{duration(r.duration_s)}</p>
         </div>
+        {r.source === "maqsam" ? (
+          <Phone className="muted size-3.5 shrink-0" aria-label="Phone call" />
+        ) : (
+          <Video className="muted size-3.5 shrink-0" aria-label="Video call" />
+        )}
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium" dir="auto">
             {r.title ?? "Untitled call"}
