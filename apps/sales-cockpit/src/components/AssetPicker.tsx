@@ -17,7 +17,7 @@ import {
 } from "../lib/data";
 import { ago } from "../lib/format";
 import { toast } from "../lib/toast";
-import { button, EmptyState, Failed, field } from "./kit";
+import { button, EmptyState, Failed, field, Segmented, select } from "./kit";
 
 /**
  * The sales assets in the cockpit: B2B's library (Muhammed's, copied every
@@ -259,7 +259,7 @@ export function AssetLibrary({ manager = false }: { manager?: boolean }) {
     showHidden,
   ]);
 
-  const select = (
+  const choose = (
     value: string,
     set: (v: string) => void,
     facet: string,
@@ -268,7 +268,7 @@ export function AssetLibrary({ manager = false }: { manager?: boolean }) {
     <select
       value={value}
       onChange={e => set(e.target.value)}
-      className={`${field} w-auto`}
+      className={select}
       aria-label={all}
     >
       <option value="">{all}</option>
@@ -295,31 +295,18 @@ export function AssetLibrary({ manager = false }: { manager?: boolean }) {
             className={`${field} w-56 ps-8`}
           />
         </label>
-        {select(stage, setStage, "stage", "Any stage")}
-        {select(objection, setObjection, "objection", "Any objection")}
-        {select(kind, setKind, "asset_type", "Any kind")}
-        <div
-          className="raised inline-flex rounded-[var(--radius-md)] p-0.5 text-xs"
-          role="group"
-          aria-label="Language"
-        >
-          {(
-            [
-              ["ar", "عربي"],
-              ["en", "English"],
-            ] as const
-          ).map(([k, label]) => (
-            <button
-              key={k}
-              type="button"
-              aria-pressed={language === k}
-              onClick={() => setLanguage(k)}
-              className={`rounded-[calc(var(--radius-md)-2px)] px-2 py-1 ${language === k ? "bg-[color:var(--card)] font-medium shadow-sm" : "muted"}`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        {choose(stage, setStage, "stage", "Any stage")}
+        {choose(objection, setObjection, "objection", "Any objection")}
+        {choose(kind, setKind, "asset_type", "Any kind")}
+        <Segmented
+          label="Language"
+          value={language}
+          options={[
+            ["ar", "عربي"],
+            ["en", "English"],
+          ]}
+          onChange={v => setLanguage(v as "ar" | "en")}
+        />
         <label className="muted inline-flex items-center gap-1.5 text-xs">
           <input
             type="checkbox"

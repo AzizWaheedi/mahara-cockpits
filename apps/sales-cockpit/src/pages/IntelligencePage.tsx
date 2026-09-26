@@ -140,11 +140,9 @@ export default function IntelligencePage() {
         </div>
       )}
       <SourceNote>
-        The desk on the VPS writes notes after every recorded sales call (Fathom
-        through the Obsidian vault) and, each morning, reads the last 7 and 30
-        days of those notes to write this page. Counts are how many calls raised
-        a point. Phone calls count once their transcripts are in the cockpit.
-        {d?.model ? ` Written by ${d.model}.` : ""}
+        The sales desk writes notes after every recorded sales call, video and
+        phone, and each morning reads the last 7 and 30 days of those notes to
+        write this page. Counts are how many calls raised a point.
       </SourceNote>
     </main>
   );

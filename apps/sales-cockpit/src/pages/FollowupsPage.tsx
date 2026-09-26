@@ -1,4 +1,11 @@
-import { ChevronDown, ChevronRight, Flame, Send, Sparkles } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  CircleAlert,
+  Flame,
+  Send,
+  Sparkles,
+} from "lucide-react";
 import { type FormEvent, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { DeskStatus } from "../components/DeskStatus";
@@ -904,17 +911,24 @@ function WhatsappHealth() {
     2,
   );
   return (
-    <p
-      className={`text-xs ${paused ? "callout-bad rounded-[var(--radius-md)] border px-2 py-1" : "muted"}`}
-    >
-      WhatsApp, last day: {settled.length} sent, {failed.length} failed
-      {reasons.length ? ` (${reasons.join("; ")})` : ""}.{" "}
-      {g
-        ? `${templatesToday} of today's ${g.templates_per_day} templates.`
-        : ""}
-      {paused
-        ? " Automatic sends are paused until fewer fail; people can still send."
-        : ""}
+    <p className={`flex items-start gap-1.5 text-xs ${paused ? "" : "muted"}`}>
+      {paused ? (
+        <CircleAlert
+          className="mt-px size-3.5 shrink-0"
+          style={{ color: "var(--warning)" }}
+          aria-hidden
+        />
+      ) : null}
+      <span>
+        WhatsApp, last day: {settled.length} sent, {failed.length} failed
+        {reasons.length ? ` (${reasons.join("; ")})` : ""}.{" "}
+        {g
+          ? `${templatesToday} of today's ${g.templates_per_day} templates.`
+          : ""}
+        {paused
+          ? " Automatic sends are paused until fewer fail; people can still send."
+          : ""}
+      </span>
     </p>
   );
 }

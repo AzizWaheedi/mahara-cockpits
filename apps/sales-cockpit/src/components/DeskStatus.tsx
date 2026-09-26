@@ -1,11 +1,12 @@
+import { CircleAlert } from "lucide-react";
 import { useWorkerStatus } from "../lib/data";
 import { ago } from "../lib/format";
 
 /**
- * When the sales desk (the worker on the VPS) last did a job, in a line on
- * the page that depends on it: late or failing says so, instead of the page
- * quietly showing nothing new (Aziz's rule: missing is never zero). The same
- * limits alert Aziz through the portal's sales watch.
+ * When the sales desk last did a job, in one line on the page that depends
+ * on it: late or failing says so, instead of the page quietly showing
+ * nothing new (Aziz's rule: missing is never zero). The same limits alert
+ * Aziz through the portal's sales watch.
  */
 export function DeskStatus({
   jobs,
@@ -17,12 +18,12 @@ export function DeskStatus({
   if (status.error)
     return (
       <p className="muted text-xs">
-        Whether the desk is running could not be read: {status.error}.
+        Whether the sales desk is running could not be read: {status.error}.
       </p>
     );
   if (!status.data) return null;
   return (
-    <div className="space-y-0.5">
+    <div className="space-y-1">
       {jobs.map(j => {
         const r = status.data?.find(
           x => x.worker === "sales-desk" && x.job === j.job,
@@ -32,15 +33,24 @@ export function DeskStatus({
         return (
           <p
             key={j.job}
-            className={`text-xs ${bad ? "callout-bad rounded-[var(--radius-md)] border px-2 py-1" : "muted"}`}
+            className={`flex items-start gap-1.5 text-xs ${bad ? "" : "muted"}`}
           >
-            {!r
-              ? `${j.what} has never run. The desk on the VPS may not be set up; Aziz is alerted.`
-              : late
-                ? `${j.what} last ran ${ago(r.at)}, later than it should. The desk on the VPS may be down; Aziz is alerted.`
-                : !r.ok
-                  ? `${j.what} failed ${ago(r.at)}: ${r.detail ?? "no reason given"}.`
-                  : `${j.what} last ran ${ago(r.at)}: ${r.detail ?? "done"}.`}
+            {bad ? (
+              <CircleAlert
+                className="mt-px size-3.5 shrink-0"
+                style={{ color: "var(--warning)" }}
+                aria-hidden
+              />
+            ) : null}
+            <span>
+              {!r
+                ? `${j.what} has not run yet. Aziz is alerted if it stays that way.`
+                : late
+                  ? `${j.what} last ran ${ago(r.at)}, later than it should. The sales desk may be down; Aziz is alerted if it stays that way.`
+                  : !r.ok
+                    ? `${j.what} failed ${ago(r.at)}: ${r.detail ?? "no reason given"}.`
+                    : `${j.what} last ran ${ago(r.at)}: ${r.detail ?? "done"}.`}
+            </span>
           </p>
         );
       })}

@@ -12,7 +12,7 @@ import {
   snippetLine,
   type TemplateRoute,
 } from "../lib/whatsapp";
-import { button, buttonPrimary, field } from "./kit";
+import { button, buttonPrimary, FilterChip, field, Segmented } from "./kit";
 
 /**
  * The team's ready-made WhatsApp messages, filled in for this lead, one click
@@ -72,28 +72,15 @@ export function SnippetPicker({
                 ? "Goes in as the template's line"
                 : "Fills the box; edit before sending"}
             </p>
-            <div
-              className="raised inline-flex rounded-[var(--radius-md)] p-0.5 text-xs"
-              role="group"
-              aria-label="Language"
-            >
-              {(
-                [
-                  ["ar", "عربي"],
-                  ["en", "English"],
-                ] as const
-              ).map(([k, label]) => (
-                <button
-                  key={k}
-                  type="button"
-                  aria-pressed={lang === k}
-                  onClick={() => setLang(k)}
-                  className={`rounded-[calc(var(--radius-md)-2px)] px-2 py-0.5 ${lang === k ? "bg-[color:var(--card)] font-medium shadow-sm" : "muted"}`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            <Segmented
+              label="Language"
+              value={lang}
+              options={[
+                ["ar", "عربي"],
+                ["en", "English"],
+              ]}
+              onChange={v => setLang(v as "ar" | "en")}
+            />
           </div>
           {snippets.error ? (
             <p className="px-1 text-xs">The messages could not be read.</p>
@@ -249,16 +236,13 @@ export function TemplateComposer({
       {live.length > 1 ? (
         <div className="flex flex-wrap items-center gap-1.5">
           {live.map(x => (
-            <button
+            <FilterChip
               key={x.key}
-              type="button"
-              aria-pressed={x.key === key}
+              on={x.key === key}
               onClick={() => setKey(x.key)}
-              className={`inline-flex h-7 items-center rounded-full border hairline px-2.5 text-xs ${x.key === key ? "bg-[color:var(--secondary)] font-medium" : "muted"}`}
-              title={x.purpose}
             >
               {x.language === "ar" ? "عربي" : "English"} · {x.name}
-            </button>
+            </FilterChip>
           ))}
         </div>
       ) : null}

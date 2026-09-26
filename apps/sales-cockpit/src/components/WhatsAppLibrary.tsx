@@ -24,6 +24,7 @@ import {
   Failed,
   field,
   SectionCard,
+  Segmented,
   StatusChip,
 } from "./kit";
 
@@ -81,7 +82,7 @@ export function WhatsAppLibrary({ manager }: { manager: boolean }) {
         ) : templates.loading && !templates.data ? (
           <p className="muted text-sm">Reading the templates…</p>
         ) : (
-          <ul className="space-y-3">
+          <ul className="divide-y hairline">
             {(templates.data ?? []).map(t => (
               <TemplateRow
                 key={t.key}
@@ -135,7 +136,7 @@ function TemplateRow({
   }
 
   return (
-    <li className="rounded-[var(--radius-md)] border hairline p-3">
+    <li className="py-4 first:pt-0 last:pb-0">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="flex flex-wrap items-center gap-2 text-sm font-semibold">
@@ -309,7 +310,7 @@ function CopyText({ text }: { text: string }) {
 /** What a manager does once in HighLevel so the templates can go. */
 function SetupSteps() {
   return (
-    <div className="mt-4 space-y-3 rounded-[var(--radius-md)] border hairline p-3 text-sm">
+    <div className="mt-4 space-y-3 rounded-xl bg-muted/40 p-4 text-sm">
       <p className="font-semibold">Setting them up in HighLevel, once</p>
       <ol className="list-decimal space-y-3 ps-5">
         <li>
@@ -381,28 +382,15 @@ function SnippetLibrary({ manager }: { manager: boolean }) {
       title="Ready-made messages"
       side={
         <div className="flex items-center gap-2">
-          <div
-            className="raised inline-flex rounded-[var(--radius-md)] p-0.5 text-xs"
-            role="group"
-            aria-label="Language"
-          >
-            {(
-              [
-                ["ar", "عربي"],
-                ["en", "English"],
-              ] as const
-            ).map(([k, label]) => (
-              <button
-                key={k}
-                type="button"
-                aria-pressed={lang === k}
-                onClick={() => setLang(k)}
-                className={`rounded-[calc(var(--radius-md)-2px)] px-2 py-0.5 ${lang === k ? "bg-[color:var(--card)] font-medium shadow-sm" : "muted"}`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <Segmented
+            label="Language"
+            value={lang}
+            options={[
+              ["ar", "عربي"],
+              ["en", "English"],
+            ]}
+            onChange={v => setLang(v as "ar" | "en")}
+          />
           {manager ? (
             <button
               type="button"
@@ -453,7 +441,7 @@ function SnippetLibrary({ manager }: { manager: boolean }) {
           {groups.map(g => (
             <div key={g.moment}>
               <p className="muted mb-1 text-xs">{g.label}</p>
-              <ul className="space-y-1.5">
+              <ul className="divide-y hairline">
                 {g.items.map(s => (
                   <SnippetRow
                     key={s.id}
@@ -495,7 +483,7 @@ function SnippetRow({
       </li>
     );
   return (
-    <li className="flex items-start gap-2 rounded-[var(--radius-md)] border hairline px-3 py-2">
+    <li className="flex items-start gap-2 py-2.5">
       <p className="min-w-0 flex-1 whitespace-pre-wrap text-sm" dir="auto">
         {s.body}
       </p>
@@ -565,10 +553,7 @@ function SnippetForm({
     }
   }
   return (
-    <form
-      onSubmit={save}
-      className="mb-3 space-y-2 rounded-[var(--radius-md)] border hairline p-3"
-    >
+    <form onSubmit={save} className="mb-3 space-y-2 rounded-xl bg-muted/40 p-4">
       <div className="flex flex-wrap gap-2">
         <select
           value={v.moment}

@@ -281,7 +281,7 @@ function ReferenceForm({
   return (
     <form
       onSubmit={save}
-      className="grid gap-3 rounded-[var(--radius-md)] border hairline p-3 sm:grid-cols-2"
+      className="grid gap-3 rounded-xl bg-muted/40 p-4 sm:grid-cols-2"
     >
       {text("client_name", "Client")}
       {text("trade", "Trade")}

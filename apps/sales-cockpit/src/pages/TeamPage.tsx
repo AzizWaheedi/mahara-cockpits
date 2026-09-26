@@ -401,15 +401,13 @@ function HealthCard({ now }: { now: number }) {
         )}
       </div>
 
-      <h3 className="mt-5 text-xs font-semibold">
-        The sales desk (on the VPS)
-      </h3>
+      <h3 className="mt-5 text-xs font-semibold">The sales desk</h3>
       <p className="muted mt-1 text-xs">
         {ai.error
           ? `Today's AI use could not be read: ${ai.error}.`
           : ai.data === null
             ? "Reading today's AI use…"
-            : `AI today: ${Math.round(ai.data / 1000).toLocaleString()} thousand tokens. The desk stops calling the model at 15 million a day unless SALES_AI_DAILY_TOKENS says otherwise.`}
+            : `AI today: ${Math.round(ai.data / 1000).toLocaleString()} thousand tokens. The desk stops calling the model at its daily ceiling (15 million unless set otherwise on the desk) and starts again at midnight.`}
       </p>
       <div className="mt-2">
         {workers.error ? (
