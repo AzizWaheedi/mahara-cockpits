@@ -1,6 +1,8 @@
 # Complete the Mahara cockpit migration to Supabase
 
-## Current supervised execution plan, 2026-09-26
+## Current execution plan, 2026-09-26
+
+**Continuation:** Muhammed explicitly authorized direct Codex execution after Gemini quota exhaustion. Stay in this chat. Main `4b90d9f` is reconciled; code `9d72d7a` passes five builds, ten typechecks and 215 Bun tests. Webinar target editing and CEO Goals have real, locally tested Supabase contracts. New migrations remain unapplied; CSM state is next. See the current checkpoint for precise remaining gaps.
 
 **Owner split confirmed by Muhammed:** Codex makes the plan and supervises; Gemini implements bounded code packets. Codex independently runs checks and reviews diffs. The executor permits one focused correction; any exhausted correction fallback must be recorded. Production, outward automations, and client-visible writes remain separate from local implementation.
 

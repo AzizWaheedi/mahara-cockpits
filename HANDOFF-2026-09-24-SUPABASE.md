@@ -1,53 +1,51 @@
-# Mahara cockpit migration: supervised execution checkpoint
+# Mahara cockpit migration: current checkpoint
 
-Updated 2026-09-26. This is the current checkpoint; keep this filename.
+Updated 2026-09-26. Continue in this same chat; do not suggest another chat just to reduce context.
 
-## Objective and working agreement
+## Objective and authorization
 
-Muhammed wants all five cockpits, the portal, embedded CEO/admin and background operations functioning on Supabase without Convex. Codex owns the plan, supervision and independent verification; Gemini executes bounded code packets. Local implementation is authorized. No production deployment, outward automation, client-visible write or Convex retirement has been performed in this session.
+Complete all five cockpits, portal, CEO/admin and background operations on Supabase, preserving behavior and history. Supabase Creative Triage is `bldgtotkfmhoxmlzowdx`; B2B is read-only. No production release, live SQL application, client-visible write or outward automation has occurred here.
 
-Completion and ordered work packets: **MIGRATION-TO-100-PERCENT.md**, current section at the top. Acceptance evidence format: **docs/CUTOVER-ACCEPTANCE.md**. Do not reuse historical completion percentages or claim compilation proves working journeys.
+Muhammed initially chose Codex planning/supervision with Gemini execution. Gemini subsequently exhausted its quota (provider 429, approximately until 16:40 UTC). Muhammed explicitly answered **Continue with Codex execution**. Continue implementing and independently testing locally without asking again. Gemini failures and scoped fallbacks are recorded through the efficiency policy helper.
 
-## Verified phase: readiness repair
+## Assembled source
 
-- Migration branch: `codex/supabase-cockpits-migration`, current integrated code commit `f70c5a1`.
-- Worktree: `C:/Users/20106/.codex/worktrees/cockpits-supabase-migration`.
-- Gemini implemented the checker, documentation and tests; Codex rejected the first pass, supervised one correction, then fixed a reproduced source-change bypass under the executor's recorded correction-limit fallback.
-- Twenty offline readiness regressions pass. All five frontend app/node typechecks and fresh Vite builds passed against the original configured migration worktree at baseline `0a1bf7b`; nine meaningful offline test suites passed there.
-- The initial clean-checkout run exposed missing Sales public build configuration and a legacy social test that imported generated Convex modules. Gemini extracted the scheduling calculation unchanged into `src/lib/socialSchedule.ts`; all 21 social tests now pass. Public Sales settings are supplied only to the verification process, without storing secrets in source. Final combined checks PASSED locally on clean verification commit `bd5b965`: all five fresh builds, ten app/node typechecks and 148 Bun tests across ten suites. Its application, script, SQL and documentation trees match migration commit `f70c5a1` exactly. Default release verification correctly exits 1 solely because production acceptance evidence is absent.
-- Default verification now requires release evidence and exits nonzero without it. No production acceptance bundle exists. No release is certified.
-- Checker worker: `C:/Users/20106/.codex/worktrees/cockpit-migration-verification/mahara-cockpits`; commit `83e9e0c` cherry-picked as `8495ab9`.
-- Worker manifests: `C:/Users/20106/.codex/gemini-worker/runs/20260926-123700-bed4432b/manifest.json` and correction `20260926-124349-1150b7f7/manifest.json`.
+- Migration worktree: `C:/Users/20106/.codex/worktrees/cockpits-supabase-migration`.
+- Branch: `codex/supabase-cockpits-migration`; tested code HEAD `9d72d7a`.
+- Incoming main `4b90d9f` is an ancestor. All 39 previously missing main commits were retained, including Sales, webinar target versions and release-project guards.
+- Merge commit `77b4aad` was constructed from reviewed resolution of the five conflicts; temporary conflict snapshot `d1cece6` is not in the migration branch history.
+- Helpers remain attached for reuse: `cockpit-migration-verification/mahara-cockpits`, `cockpit-migration-actions/mahara-cockpits`, and `cockpit-webinar-targets/mahara-cockpits`, under `C:/Users/20106/.codex/worktrees/`. No workers are running.
 
-## Verified local packet: checklist and decision contracts
+## Verified local work
 
-- Gemini worktree: `C:/Users/20106/.codex/worktrees/cockpit-migration-actions/mahara-cockpits`.
-- Initial manifest: `C:/Users/20106/.codex/gemini-worker/runs/20260926-124733-3a6e27be/manifest.json`.
-- Integrated as `735aafa`. Eighteen offline helper-contract tests pass. Both app typechecks pass, builds succeed, and the changed frontend files pass the repository checker (warnings remain).
-- All three checkbox callers now send explicit expected/current values; the snapshots use the existing guarded checklist read function.
-- Decision calls now use the actual RPC signature, preserving reason, metric, rerouting and amount zero. `20260926a_cockpit_decision_details.sql` adds the missing stored fields and audit trigger.
-- Gemini's SQL correction invented incompatible audit columns. Codex rejected that version and used the recorded correction-limit fallback to preserve the existing audit schema and immutability guard. A separate typecheck caught and corrected a nonexistent checkbox property.
-- Disposable PostgreSQL tests against the actual existing audit definition pass: persistence, zero values, insert/update/delete audits, immutable history, forbidden/absent/revoked-role callers, function grants and additive rerun. Fixture auth helpers are substitutes; this is NOT deployed identity/client-isolation verification.
-- SQL test runner: `apps/media-buyer-cockpit/scripts/test-decision-details.cjs`. It always uses in-memory PGlite and never DATABASE_URL. Local test dependency: `%TEMP%/cockpit-migration-review-20260926/postgres/node_modules/@electric-sql/pglite` (0.5.8), supplied through PGLITE_MODULE. SQL fixture refuses direct execution without the disposable-test setting.
-- No SQL has been applied to Supabase. The new migration must be deployed through the reviewed release procedure before live decision details can persist.
-- Correction manifest: `C:/Users/20106/.codex/gemini-worker/runs/20260926-125747-be210959/manifest.json`. No Gemini worker remains running.
+1. Release checks require fresh builds and source-bound independent evidence. Default without evidence rejects release. Python regressions catch skipped/stale checks, source changes during checks, invalid evidence and source imports of dev fixtures. Isolated src/dev harness code is retained; its imports cannot enter other production source files. Runtime independence still requires network evidence.
+2. Media Buyer/CSM checklists use their guarded RPC; all three checkbox callers pass explicit expected/new values. Decision details now have matching client parameters, additive stored fields and immutable audit entries (`20260926a_cockpit_decision_details.sql`).
+3. Common API references are stable across renders, initial queries no longer run twice, and roles/auth come from the verified Supabase provider rather than invented identities or roles.
+4. CEO webinar targets now read/save through authenticated server wrappers (`20260926k_cockpit_webinar_target_access.sql`). Existing target-version table, revision conflicts and request-id retries retained. Historical rounds do not inherit future defaults. Audits follow actual INSERTs, including service writes; retries do not duplicate them. Actual canonical founder gate tested against admin/role spoofing, unconfirmed and revoked identities in local PostgreSQL.
+5. CEO Goals now implements board, savePlan, saveTargets, removeTarget, startFrom and catalogue using the real plan/target tables (`20260926l_cockpit_ceo_goals_access.sql`). Batch edits are transactional; partial edits preserve notes; clones bind to an unchanged source fingerprint, retain prior actual/baseline values and clear new-period manual actuals. Pacing uses server Kuwait date and existing pure scoreboard logic. All operations are founder-gated and audited. The five actively referenced goal endpoints no longer fall through to fake success.
+6. Pure social scheduling and webinar attribution calculations were separated from legacy backend registrations so offline tests do not require generated Convex files. Bodies preserved; canonical pure webinar model/room/readiness exports prevent copied-type drift.
+7. Fixed ship.sh public-variable invocation (`env` plus properly quoted array). Three offline shell probes pass, including failed-build propagation. Shipping has NOT run. Predeployment acceptance sequencing remains part of release work.
 
-## Confirmed migration blockers
+## Evidence
 
-- Real dispatcher probe: `chat.ask`, `ceo.goals.savePlan`, `ceo.goals.saveTargets`, `ceo.manualPayments.add` and `softDelete` returned success with zero database calls. The dispatcher also fabricates roles.
-- Live catalog reads confirm checklist table SELECT is intentionally unavailable to browser users; use its guarded RPC. Direct CSM profile UPDATE is also unavailable, and current code ignores its errors.
-- CSM income-goal code does not match the goal-target schema or original per-person/month ownership.
-- Ask AI uses creative-production requests as a queue with nonexistent states/fields. A proper job contract is still required.
-- Authenticated role/client/revoked-user tests, full audit coverage, history reconciliation, active schedule parity, blocked-Convex journeys, and production/rollback verification remain outstanding.
-- Gemini initially called `cockpit_get_ceo_sections` and `eod_outbox` missing. Both exist; the claims were rejected and corrected.
+- All five fresh builds, ten app/node typechecks and **215 Bun tests in 18 suites** passed on clean `9d72d7a`.
+- Additional incoming-main checks: 190 Sales worker tests, 47 webinar worker tests, 118 Sales API/mirror tests, 11 schedule tests and 3 project guards passed.
+- 27 release infrastructure regressions passed; separate in-memory decision, canonical identity and full client-to-SQL webinar/Goals tests passed. Claims are local SQL/fixture verification, not actual deployed staff sessions.
+- Report: `docs/verification/cutover-local-20260926-continuation.json`. Full logs under `C:/Users/20106/AppData/Local/Temp/cockpit-migration-review-20260926/`.
+- Release verifier exits 1 solely because production acceptance evidence is absent. New SQL migrations are NOT applied live.
 
-## Integration and evidence
+## Next: CSM state and profile writes
 
-- Fetched main is `af01995`; baseline migration was 20 ahead / 31 behind. `git merge-tree --write-tree` preview found five conflicts: `.gitignore`, deleted `src/dev/convexStub.ts` and `src/dev/harness.tsx`, `WebinarFunnel.tsx`, and `scripts/ship.sh`. No actual merge was attempted.
-- Evidence/logs: `C:/Users/20106/AppData/Local/Temp/cockpit-migration-review-20260926/` (readiness reports, source-change probe, adapter probe, catalog/grants evidence, builds, typechecks, tests, merge preview).
-- Main working checkout has unrelated changes; preserved. Migration worktree's existing `scratch/` was not committed or altered.
-- Shared context sync stopped on unrelated local edits; using `398a4ed`. No reset/stash/overwrite. ClickUp tracking credentials were not available in the process or documented local paths; no board update was made.
+Read `apps/client-success-cockpit/convex/csm.ts`, `src/lib/useCsmSnapshot.ts` and `src/pages/CsmPage.tsx`. Live catalog/source checks found no existing dedicated CSM preferences/hot-list/dismissals/income-goal tables.
 
-## Next action
+Implement separately owned state rather than writing into refreshed profile JSON: client language, manual hot-list rows, loose-end dismissal records and per-user/month income goals. Preserve the original UI semantics: hot-list Add row creates a blank private draft, named rows are scoped by client; hidden rows remain tombstones; freeform manual names are allowed to unrestricted CSMs. Finance-related loose ends (invoice/payment/past due/billing/pause/refund/card) cannot be dismissed. Income counts merge changed keys, and explicit zero is preserved. The CSM UI currently submits full stale rows/counts; change to field-level patches. Surface snapshot errors instead of endless loading.
 
-Reconcile main on an isolated checkout, resolving the five known conflicts without reintroducing fake production clients or losing newer Sales/webinar behavior. Follow the ordered packets in the completion plan. The remaining dispatcher/state/auth/worker work is substantive; this migration is NOT end-to-end complete.
+Also repair `cockpit_update_client_profile`: existing INSERT/ON CONFLICT coalesces defaults and can erase omitted notes/KPI/overview. Preserve omitted human fields, enforce existing client scope and audit writes. Current profile RLS already scopes CSM/MB by member clients; admins are global. Do not incorrectly claim it has no client scope. An empty client list currently means unrestricted.
+
+## Still incomplete
+
+The conservative AST inventory at the earlier baseline found 133 reachable API references, 116 using generic-success branches. Goals fixes cover four of those generic writes plus a broken explicit read; many dispatcher domains remain. CSM appointments/KPIs/churn/tasks/freshness are still placeholders. EOD ownership/history, Ask AI job schema, all worker schedules/integrations, data catch-up and authenticated production journeys remain open. Complete runtime without Convex is NOT established.
+
+Gemini runner needed a two-line fix for string-valued error responses in run/resume; string and dictionary error-path tests pass. File: `C:/Users/20106/.codex/skills/gemini-executor/scripts/gemini_executor.py`; backup in the log directory. No permission/sandbox rules changed.
+
+Preserve the primary D: checkout's unrelated work and migration `scratch/`. Shared-context sync remains stopped on dirty/diverged state (`398a4ed` local base); notes saved locally only. ClickUp credentials unavailable in the documented local paths/process, so no board update was sent. Do not crawl the old vault.
