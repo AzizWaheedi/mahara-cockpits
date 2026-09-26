@@ -63,13 +63,14 @@ import {
   useLeadSearch,
   useNow,
   useSetting,
+  useSnippets,
+  useTemplates,
 } from "../lib/data";
 import {
   alertsWanted,
   callbackPicks,
   chime,
   clearDraft,
-  countdown,
   type Draft,
   localInput,
   mmss,
@@ -81,6 +82,19 @@ import {
   urgentEvents,
   writeDraft,
 } from "../lib/dialer";
+import {
+  afterMiss,
+  countsShown,
+  lateSentence,
+  liveSkips,
+  type MissMoment,
+  type Skip,
+  shortCountdown,
+  skipFor,
+  skipHolds,
+  type Undialable,
+  undialableLine,
+} from "../lib/dialerUi";
 import {
   ago,
   classLabel,
@@ -140,6 +154,8 @@ interface Queue {
   open: Attempt | null;
   today: Today;
   queue: QueueItem[];
+  /** Recent open leads the dialer cannot call: no number, or one it has no line for. */
+  undialable?: Undialable;
   /** When this copy was asked for, in the browser. */
   loadedAt: number;
 }
@@ -456,7 +472,12 @@ export default function DialerPage({ me }: { me: Me }) {
   const [as, setAs] = useState<As>(me.role === "closer" ? "closer" : "setter");
   const [q, setQ] = useState<Queue | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [skipped, setSkipped] = useState<Set<string>>(() => new Set());
+  // Skipped leads, with the tier and reason they were skipped for: a skip
+  // lapses after 30 minutes, or sooner when the lead moves or writes again.
+  const [skipped, setSkipped] = useState<Record<string, Skip>>({});
+  // Calls saved or let go on this page: a queue read that left before the
+  // save landed must not bring one back as the open call.
+  const [spent, setSpent] = useState<ReadonlySet<string>>(() => new Set());
   const [savedAt, setSavedAt] = useState<Record<string, number>>({});
   const [picked, setPicked] = useState<string | null>(null);
   const [tier, setTier] = useState<TierFilter>("all");
@@ -529,18 +550,20 @@ export default function DialerPage({ me }: { me: Me }) {
     };
   }, [as, load]);
 
-  const open = q?.open ?? null;
-  const visible = useMemo(
-    () =>
-      (q?.queue ?? []).filter(
-        i =>
-          !skipped.has(i.contact_id) &&
-          !(
-            savedAt[i.contact_id] && (q?.loadedAt ?? 0) < savedAt[i.contact_id]
-          ),
-      ),
-    [q, skipped, savedAt],
-  );
+  const open = q?.open && !spent.has(q.open.id) ? q.open : null;
+  const visible = useMemo(() => {
+    const now = Date.now();
+    return (q?.queue ?? []).filter(
+      i =>
+        !skipHolds(skipped[i.contact_id], i, now) &&
+        !(savedAt[i.contact_id] && (q?.loadedAt ?? 0) < savedAt[i.contact_id]),
+    );
+  }, [q, skipped, savedAt]);
+  // Each read of the queue lets go of the skips that no longer hold, so a
+  // lead that comes back for a new reason stays back.
+  useEffect(() => {
+    if (q) setSkipped(s => liveSkips(s, q.queue, Date.now()));
+  }, [q]);
   const priority = visible[0] ?? null;
   const currentId = open?.contact_id ?? picked ?? priority?.contact_id ?? null;
   const current =
@@ -572,13 +595,20 @@ export default function DialerPage({ me }: { me: Me }) {
       "Notification" in window &&
       Notification.permission === "granted"
     )
-      for (const e of fresh.slice(0, 3))
-        new Notification(`${e.title}: ${e.name ?? "a lead"}`, {
-          body: e.callback
-            ? "Call them back now, as agreed."
-            : "Dial within two minutes.",
-          tag: e.key,
-        });
+      for (const e of fresh.slice(0, 3)) {
+        // Chrome on Android refuses this constructor outside a service
+        // worker; the chime has played, so the page carries on without it.
+        try {
+          new Notification(`${e.title}: ${e.name ?? "a lead"}`, {
+            body: e.callback
+              ? "Call them back now, as agreed."
+              : "Dial within two minutes.",
+            tag: e.key,
+          });
+        } catch {
+          break;
+        }
+      }
   }, [q, urgent, alertsOn]);
 
   // After a reload the browser wants a click before it plays sound again.
@@ -628,26 +658,49 @@ export default function DialerPage({ me }: { me: Me }) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  function finished(
-    contactId: string,
-    how: "saved" | "skipped",
-    words?: string,
-  ) {
-    if (how === "skipped") setSkipped(s => new Set(s).add(contactId));
-    else setSavedAt(s => ({ ...s, [contactId]: Date.now() }));
-    setPicked(null);
+  // The lead's call on this page is done (saved, or let go): it is never
+  // shown as open again, whatever an earlier read of the queue says.
+  function closeCall(contactId: string) {
+    const done = open?.contact_id === contactId ? open.id : null;
+    if (done) setSpent(s => new Set(s).add(done));
     setQ(prev =>
       prev && prev.open?.contact_id === contactId
         ? { ...prev, open: null }
         : prev,
     );
+  }
+
+  function finished(
+    contactId: string,
+    how: "saved" | "skipped",
+    words?: string,
+  ) {
+    if (how === "skipped") {
+      const item = q?.queue.find(i => i.contact_id === contactId);
+      if (item)
+        setSkipped(s => ({ ...s, [contactId]: skipFor(item, Date.now()) }));
+    } else setSavedAt(s => ({ ...s, [contactId]: Date.now() }));
+    closeCall(contactId);
+    setPicked(null);
     if (words) toast.success(words);
+    void load();
+    void maqsam.check();
+  }
+
+  // Saved with a next step (the intro held, no answer): the lead stays on
+  // screen, whatever the queue reads next, until the rep moves on. The call
+  // it was saved on is done, so anything saved after it is a save of its own.
+  function stay(contactId: string) {
+    closeCall(contactId);
+    setPicked(contactId);
     void load();
     void maqsam.check();
   }
 
   const counts = q?.counts ?? [0, 0, 0, 0];
   const ready = counts.reduce((a, b) => a + b, 0);
+  // The chips count what the list shows, not the leads it is hiding.
+  const listCounts = q ? countsShown(q.counts, q.queue, visible) : counts;
 
   return (
     <main className="mx-auto w-full max-w-[1800px] space-y-4 px-4 py-5 md:px-6">
@@ -675,7 +728,7 @@ export default function DialerPage({ me }: { me: Me }) {
                 setAs(v as As);
                 setQ(null);
                 setPicked(null);
-                setSkipped(new Set());
+                setSkipped({});
               }}
             />
           ) : null}
@@ -718,7 +771,8 @@ export default function DialerPage({ me }: { me: Me }) {
           className="lg:[grid-area:queue]"
           loaded={Boolean(q)}
           items={visible}
-          counts={counts}
+          counts={listCounts}
+          undialable={undialableLine(q?.undialable)}
           currentId={currentId}
           manual={manual}
           locked={Boolean(open)}
@@ -730,35 +784,25 @@ export default function DialerPage({ me }: { me: Me }) {
           onBack={() => setPicked(null)}
         />
         {currentId ? (
-          <>
-            <CallPane
-              key={`call-${currentId}`}
-              className={`lg:[grid-area:call] xl:sticky xl:top-4 xl:self-start ${
-                open?.contact_id === currentId ? "glow-teal" : ""
-              }`}
-              me={me}
-              as={as}
-              contactId={currentId}
-              item={current}
-              open={open?.contact_id === currentId ? open : null}
-              agent={maqsam}
-              callRef={callRef}
-              onCalled={a => setQ(prev => (prev ? { ...prev, open: a } : prev))}
-              onFinished={finished}
-              onTalk={moment =>
-                setTalk(t => ({ n: t.n + 1, moment: moment ?? null }))
-              }
-            />
-            <LeadPane
-              key={`lead-${currentId}`}
-              className="lg:[grid-area:lead]"
-              me={me}
-              as={as}
-              contactId={currentId}
-              item={current}
-              talk={talk}
-            />
-          </>
+          <LeadWork
+            key={currentId}
+            me={me}
+            as={as}
+            contactId={currentId}
+            item={current}
+            open={open?.contact_id === currentId ? open : null}
+            pinned={picked === currentId}
+            agent={maqsam}
+            callRef={callRef}
+            talk={talk}
+            onCalled={a => setQ(prev => (prev ? { ...prev, open: a } : prev))}
+            onFinished={finished}
+            onStay={stay}
+            onPin={id => setPicked(id)}
+            onTalk={moment =>
+              setTalk(t => ({ n: t.n + 1, moment: moment ?? null }))
+            }
+          />
         ) : q ? (
           <div className="panel lg:[grid-area:call] xl:[grid-area:lead/lead/call/call]">
             <EmptyState
@@ -770,6 +814,82 @@ export default function DialerPage({ me }: { me: Me }) {
         ) : null}
       </div>
     </main>
+  );
+}
+
+/**
+ * The lead on screen: the call beside everything about them. One read of
+ * the lead's conversation serves both panes, so the call pane knows which
+ * channel a message can go on after a missed call.
+ */
+function LeadWork({
+  me,
+  as,
+  contactId,
+  item,
+  open,
+  pinned,
+  agent,
+  callRef,
+  talk,
+  onCalled,
+  onFinished,
+  onStay,
+  onPin,
+  onTalk,
+}: {
+  me: Me;
+  as: As;
+  contactId: string;
+  item: QueueItem | null;
+  open: Attempt | null;
+  /** The rep chose this lead (or is working on it), so the queue cannot swap it out. */
+  pinned: boolean;
+  agent: ReturnType<typeof useAgent>;
+  callRef: MutableRefObject<(() => void) | null>;
+  talk: { n: number; moment: Moment | null };
+  onCalled: (a: Attempt) => void;
+  onFinished: (
+    contactId: string,
+    how: "saved" | "skipped",
+    words?: string,
+  ) => void;
+  onStay: (contactId: string) => void;
+  onPin: (contactId: string) => void;
+  onTalk: (moment?: Moment) => void;
+}) {
+  const convo = useConversation(contactId);
+  return (
+    <>
+      <CallPane
+        className={`lg:[grid-area:call] xl:sticky xl:top-4 xl:self-start ${
+          open ? "glow-teal" : ""
+        }`}
+        me={me}
+        as={as}
+        contactId={contactId}
+        item={item}
+        open={open}
+        pinned={pinned}
+        agent={agent}
+        callRef={callRef}
+        convo={convo}
+        onCalled={onCalled}
+        onFinished={onFinished}
+        onStay={onStay}
+        onPin={onPin}
+        onTalk={onTalk}
+      />
+      <LeadPane
+        className="lg:[grid-area:lead]"
+        me={me}
+        as={as}
+        contactId={contactId}
+        item={item}
+        talk={talk}
+        convo={convo}
+      />
+    </>
   );
 }
 
@@ -883,10 +1003,10 @@ function UrgentStrip({
               </span>
             </span>
             <span
-              className="shrink-0 text-right text-sm font-semibold tabular-nums"
+              className="shrink-0 whitespace-nowrap text-right text-sm font-semibold tabular-nums"
               style={{ color: late ? "var(--destructive)" : undefined }}
             >
-              {countdown(e, now)}
+              {shortCountdown(e, now)}
             </span>
           </button>
         );
@@ -909,6 +1029,7 @@ function QueuePane({
   loaded,
   items,
   counts,
+  undialable,
   currentId,
   manual,
   locked,
@@ -923,6 +1044,8 @@ function QueuePane({
   loaded: boolean;
   items: QueueItem[];
   counts: number[];
+  /** A line on recent leads the dialer cannot call, when there are any. */
+  undialable: string | null;
   currentId: string | null;
   manual: boolean;
   locked: boolean;
@@ -1107,13 +1230,12 @@ function QueuePane({
                       {i.why}
                     </span>
                     {i.hot_reasons?.length ? (
-                      <span
-                        className="block truncate text-[11px]"
-                        style={{ color: "var(--primary)" }}
-                      >
+                      // Teal sits on the flame; the words stay in text colour.
+                      <span className="dim block truncate text-[11px]">
                         {i.hot ? (
                           <Flame
                             className="me-0.5 inline size-3 align-[-2px]"
+                            style={{ color: "var(--primary)" }}
                             aria-hidden
                           />
                         ) : null}
@@ -1137,6 +1259,11 @@ function QueuePane({
             </li>
           )}
         </ul>
+        {!searching && undialable ? (
+          <p className="muted border-t hairline px-3 py-2 text-xs leading-relaxed">
+            {undialable}
+          </p>
+        ) : null}
       </div>
     </section>
   );
@@ -1147,10 +1274,7 @@ function QueuePane({
 // ---------------------------------------------------------------------------
 
 /** Maqsam's record of the open call, asked every few seconds until it ends. */
-function useCallStatus(
-  attempt: Attempt | null,
-  onAutoSaved: (words: string) => void,
-) {
+function useCallStatus(attempt: Attempt | null, onAutoSaved: () => void) {
   const [call, setCall] = useState<CallInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const done = useRef(onAutoSaved);
@@ -1174,9 +1298,7 @@ function useCallStatus(
         setCall(r.call);
         setError(null);
         if (r.auto_saved) {
-          done.current(
-            "No answer, saved from Maqsam's record. Next lead is up.",
-          );
+          done.current();
           again = false;
         } else if (r.attempt?.state !== "placed" || r.call?.final) {
           again = false;
@@ -1196,6 +1318,8 @@ function useCallStatus(
   return { call, error };
 }
 
+const NO_DRAFT: Draft = { outcome: null, note: "", callback: "" };
+
 function CallPane({
   className,
   me,
@@ -1203,10 +1327,14 @@ function CallPane({
   contactId,
   item,
   open,
+  pinned,
   agent,
   callRef,
+  convo,
   onCalled,
   onFinished,
+  onStay,
+  onPin,
   onTalk,
 }: {
   className: string;
@@ -1215,14 +1343,20 @@ function CallPane({
   contactId: string;
   item: QueueItem | null;
   open: Attempt | null;
+  pinned: boolean;
   agent: ReturnType<typeof useAgent>;
   callRef: MutableRefObject<(() => void) | null>;
+  convo: ReturnType<typeof useConversation>;
   onCalled: (a: Attempt) => void;
   onFinished: (
     contactId: string,
     how: "saved" | "skipped",
     words?: string,
   ) => void;
+  /** Saved, with a next step: keep this lead on screen and close its call. */
+  onStay: (contactId: string) => void;
+  /** The rep is working on this lead: keep it on screen. */
+  onPin: (contactId: string) => void;
   onTalk: (moment?: Moment) => void;
 }) {
   const lead = useLead(contactId);
@@ -1237,15 +1371,34 @@ function CallPane({
   const [bookKind, setBookKind] = useState<"intro" | "demo" | null>(null);
   // Once the intro is marked held, what follows is ordinary lead work.
   const [kind, setKind] = useState<ItemKind>(item?.kind ?? "lead");
-  const appt = item?.appointment ?? null;
-  const status = useCallStatus(open, words =>
-    onFinished(contactId, "saved", words),
-  );
+  // What was saved while the lead stays on screen, for the band.
+  const [saved, setSaved] = useState<string | null>(null);
+  // The appointment the lead came up for, kept when the queue lets the item
+  // go while the rep is still on the lead.
+  const [apptSeen, setApptSeen] = useState(item?.appointment ?? null);
+  useEffect(() => {
+    if (item?.appointment) setApptSeen(item.appointment);
+  }, [item?.appointment]);
+  const appt = item?.appointment ?? apptSeen;
+  // A save without a call through the dialer carries its own id: made when
+  // the rep starts that save, kept for every retry of it, new once a save
+  // lands. Another lead is another pane, so another id.
+  const saveId = useRef<string | null>(null);
+  const status = useCallStatus(open, () => {
+    // Maqsam's record saved it as No answer: the lead stays, with the
+    // message step, until the rep moves on.
+    onStay(contactId);
+    setSaved("Saved from Maqsam's record: No answer");
+    setMode(m => (m === "outcomes" ? "unanswered" : m));
+    toast.success("No answer, saved from Maqsam's record.");
+  });
   const outcomes = OUTCOMES[kind];
   const chosen = outcomes.find(o => o.key === draft.outcome) ?? null;
   const dnd = Boolean(l?.dnd);
 
   function setDraft(d: Partial<Draft>) {
+    // Writing about this lead keeps it on screen when another comes up.
+    if (!pinned) onPin(contactId);
     setDraftState(prev => {
       const next = { ...prev, ...d };
       writeDraft(contactId, next);
@@ -1257,11 +1410,23 @@ function CallPane({
     if (busy || open || dnd) return;
     setBusy("call");
     try {
+      // What the call is for: an intro or a confirmation counts as a try on
+      // its appointment, not a miss on the lead. After "Held it" the lead's
+      // own work goes on, so a call then is a lead call.
+      const forAppt = kind !== "lead" && appt ? appt.id : null;
       const out = await api<{
         attempt: Attempt;
         route: { country: string; caller: string };
-      }>("dial.call", { contact_id: contactId, as });
+      }>("dial.call", {
+        contact_id: contactId,
+        as,
+        item_kind: forAppt ? kind : "lead",
+        appointment_id: forAppt,
+      });
       onCalled(out.attempt);
+      // Calling again after a saved call: back to saying how this one went.
+      setSaved(null);
+      if (mode === "held" || mode === "unanswered") setMode("outcomes");
       toast.success(
         `Calling on the ${out.route.country} line. Pick up in the Maqsam softphone.`,
       );
@@ -1295,9 +1460,15 @@ function CallPane({
       return;
     }
     setBusy("save");
+    if (!open) saveId.current ??= crypto.randomUUID();
     try {
-      await api("dial.save", {
-        ...(open ? { attempt_id: open.id } : { contact_id: contactId }),
+      const out = await api<{
+        attempt?: { outcome?: string | null } | null;
+        repeated?: boolean;
+      }>("dial.save", {
+        ...(open
+          ? { attempt_id: open.id }
+          : { contact_id: contactId, request_id: saveId.current }),
         outcome: draft.outcome,
         note: draft.note,
         as,
@@ -1308,23 +1479,34 @@ function CallPane({
             ? new Date(draft.callback).toISOString()
             : null,
       });
+      saveId.current = null;
       clearDraft(contactId);
-      // Two outcomes have a next step before the next lead.
-      if (kind === "intro" && draft.outcome === "showed") {
+      // Saved already (sent again after a dropped connection): what landed
+      // the first time is what stands.
+      const outcome = (out.repeated && out.attempt?.outcome) || draft.outcome;
+      const label = outcomes.find(o => o.key === outcome)?.label ?? outcome;
+      // Two outcomes have a next step before the next lead, and the lead
+      // stays on screen for it.
+      if (kind === "intro" && outcome === "showed") {
+        onStay(contactId);
         setKind("lead");
-        setDraftState({ outcome: null, note: "", callback: "" });
+        setDraftState(NO_DRAFT);
+        setSaved("Intro marked held");
         setMode("held");
         toast.success("Marked held. Book the demo, or set a call-back.");
         return;
       }
-      if (draft.outcome === "no_answer") {
+      if (outcome === "no_answer") {
+        onStay(contactId);
+        setDraftState(NO_DRAFT);
+        setSaved("Saved: No answer");
         setMode("unanswered");
         return;
       }
       onFinished(
         contactId,
         "saved",
-        `Saved: ${chosen?.label ?? draft.outcome}. Next lead is up.`,
+        `${out.repeated ? "Already saved" : "Saved"}: ${label}. Next lead is up.`,
       );
     } catch (err) {
       toast.error(msg(err));
@@ -1366,6 +1548,7 @@ function CallPane({
         call={status.call}
         callError={status.error}
         dnd={dnd}
+        saved={saved}
       />
       <div className="space-y-4 p-4">
         <div className="flex flex-wrap items-center gap-2">
@@ -1453,33 +1636,14 @@ function CallPane({
             </button>
           </NextStep>
         ) : mode === "unanswered" ? (
-          <NextStep
-            title="No answer. Send them a WhatsApp?"
-            text={
-              kind === "confirm"
-                ? "A short WhatsApp asking them to confirm often gets the answer a call did not. The dialer tries the call again in two hours."
-                : "A WhatsApp right after a missed call gets answered far more often than an email. The missed-call message is ready in the box; read it, then send."
+          <AfterMissStep
+            moment={kind === "confirm" ? "confirm" : "missed_call"}
+            convo={convo}
+            onTalk={onTalk}
+            onNext={() =>
+              onFinished(contactId, "saved", "Saved. Next lead is up.")
             }
-          >
-            <button
-              type="button"
-              onClick={() =>
-                onTalk(kind === "confirm" ? "confirm" : "missed_call")
-              }
-              className={buttonPrimary}
-            >
-              WhatsApp them
-            </button>
-            <button
-              type="button"
-              onClick={() =>
-                onFinished(contactId, "saved", "Saved. Next lead is up.")
-              }
-              className={button}
-            >
-              Next lead
-            </button>
-          </NextStep>
+          />
         ) : mode === "book" || mode === "move" ? (
           <BookForm
             me={me}
@@ -1656,6 +1820,55 @@ function NextStep({
 }
 
 /**
+ * After a call nobody answered: the message to send, on the channel that
+ * can take it now (WhatsApp inside the lead's 24 hours or as a template,
+ * else email), said plainly when nothing can go.
+ */
+function AfterMissStep({
+  moment,
+  convo,
+  onTalk,
+  onNext,
+}: {
+  moment: MissMoment;
+  convo: ReturnType<typeof useConversation>;
+  onTalk: (moment?: Moment) => void;
+  onNext: () => void;
+}) {
+  const templates = useTemplates();
+  const snippets = useSnippets();
+  const channels = convo.data?.channels;
+  const step = afterMiss({
+    moment,
+    whatsapp: channels?.whatsapp ?? null,
+    email: channels?.email ?? null,
+    templatesLive: templates.data
+      ? templates.data.some(t => t.active && Boolean(t.workflow_id))
+      : null,
+    messageReady: snippets.data
+      ? snippets.data.some(s => s.moment === moment)
+      : null,
+  });
+  return (
+    <NextStep title={step.title} text={step.text}>
+      {step.send ? (
+        <button
+          type="button"
+          // Email opens the box as it is; WhatsApp brings the ready message.
+          onClick={() => onTalk(step.send === "whatsapp" ? moment : undefined)}
+          className={buttonPrimary}
+        >
+          {step.send === "whatsapp" ? "WhatsApp them" : "Email them"}
+        </button>
+      ) : null}
+      <button type="button" onClick={onNext} className={button}>
+        Next lead
+      </button>
+    </NextStep>
+  );
+}
+
+/**
  * The line: what the call is doing right now, in one band. Ready; the
  * two-minute countdown for a lead to call now; ringing; Maqsam's record once
  * the call ends; or why it did not go through.
@@ -1666,18 +1879,25 @@ function CallBand({
   call,
   callError,
   dnd,
+  saved,
 }: {
   item: QueueItem | null;
   open: Attempt | null;
   call: CallInfo | null;
   callError: string | null;
   dnd: boolean;
+  /** What was saved while the lead stays on screen for a next step. */
+  saved: string | null;
 }) {
   const now = useNow(1000);
   const urgent = useMemo(
     () => (item && !open ? urgentEvents([item], Date.now())[0] : undefined),
     [item, open],
   );
+  const bookedAt = item?.appointment?.booked_at ?? null;
+  const booked = bookedAt
+    ? `Booked ${ago(bookedAt, now)}`
+    : "Booking date not known";
   let color = "var(--border)";
   let title: string;
   let detail: string | null = null;
@@ -1710,6 +1930,8 @@ function CallBand({
           ? `Maqsam: ${call.words}.`
           : "Maqsam's record of the call is read every few seconds; an unanswered call saves itself.";
     }
+  } else if (saved) {
+    title = saved;
   } else if (urgent) {
     const late = urgent.deadline <= now;
     color = late ? "var(--destructive)" : "var(--warning)";
@@ -1717,17 +1939,18 @@ function CallBand({
       item?.kind === "confirm" || item?.kind === "intro"
         ? item.why
         : urgent.title;
-    big = countdown(urgent, now);
+    // A few words beside the title; the sentence goes on the line below.
+    big = shortCountdown(urgent, now);
     detail =
       item?.kind === "intro"
         ? "Intros are phone calls: call them at the booked time, then say how it went."
         : item?.kind === "confirm"
-          ? `Booked ${ago(item.appointment?.booked_at ?? null, now)}; not confirmed yet.`
-          : null;
+          ? `${booked}; not confirmed yet.`
+          : lateSentence(urgent, now);
   } else if (item?.kind === "confirm") {
     color = "var(--primary)";
     title = item.why;
-    detail = `Booked ${ago(item.appointment?.booked_at ?? null, now)}; not confirmed yet. Call, or message them on WhatsApp.`;
+    detail = `${booked}; not confirmed yet. Call, or message them on WhatsApp.`;
   } else {
     title = "Ready to call";
     detail = item
@@ -1742,20 +1965,30 @@ function CallBand({
         ]
           .filter(Boolean)
           .join(" · ")
-      : "Picked from the search. Call, or save what happened.";
+      : "Not in the queue right now. Call, or save what happened.";
   }
   return (
+    // The clock goes under the words when both do not fit (a phone, the
+    // narrow column from 1280px), so the title and its line always show.
     <div
-      className="flex items-center gap-3 border-b hairline px-4 py-3"
+      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b hairline px-4 py-3"
       style={{
         borderInlineStart: `4px solid ${color}`,
         background: `color-mix(in oklch, ${color === "var(--border)" ? "var(--secondary)" : color} 9%, transparent)`,
       }}
-      aria-live="polite"
     >
-      <div className="min-w-0 flex-1">
-        <p className="text-sm font-semibold">{title}</p>
-        {detail ? <p className="muted text-xs">{detail}</p> : null}
+      <div className="min-w-0 flex-[1_1_10rem]">
+        {/* Only a change of state is spoken; the running clock is not. */}
+        <p className="text-sm font-semibold" aria-live="polite" aria-atomic>
+          {title}
+        </p>
+        {detail ? (
+          // On a call the line says what Maqsam reports; otherwise it carries
+          // times that move every minute, so it is read, not announced.
+          <p className="muted text-xs" aria-live={open ? "polite" : undefined}>
+            {detail}
+          </p>
+        ) : null}
       </div>
       {big ? (
         <p className="shrink-0 font-mono text-xl font-semibold tabular-nums tracking-tight">
@@ -2053,6 +2286,7 @@ function LeadPane({
   contactId,
   item,
   talk,
+  convo,
 }: {
   className: string;
   me: Me;
@@ -2061,10 +2295,11 @@ function LeadPane({
   item: QueueItem | null;
   /** Changes when the call pane asks for the conversation. */
   talk: { n: number; moment: Moment | null };
+  /** The lead's conversation, read once for both panes. */
+  convo: ReturnType<typeof useConversation>;
 }) {
   const lead = useLead(contactId);
   const activity = useLeadActivity(contactId, lead.data?.phone8 ?? null);
-  const convo = useConversation(contactId);
   const callNotes = useCallNotes(contactId);
   const pipeline = useSetting<{ roles?: Record<string, string> }>("pipeline");
   const [tab, setTab] = useState<LeadTab>("talk");
@@ -2244,7 +2479,13 @@ function LeadPane({
               convo={convo}
               compact
               rep={me.name}
-              callAt={item?.appointment?.start_at ?? null}
+              // The lead's booked call, for {day} and {time}: the next intro
+              // or demo on any item, else a closer's own demo.
+              callAt={
+                item?.appointment?.start_at ??
+                (as === "closer" ? item?.demo_at : null) ??
+                null
+              }
               country={l?.country ?? null}
               prefill={prefill}
             />
@@ -2320,6 +2561,12 @@ function LeadPane({
             deals={activity.data?.deals ?? []}
             proposals={activity.data?.proposals ?? []}
             messages={messages}
+            loading={!activity.data}
+            // The conversation tab says when a later read fails; the history
+            // says so only when it has none of the messages.
+            messagesLoading={!convo.data && !convo.error}
+            messagesError={convo.data ? null : convo.error}
+            messagesRetry={() => void convo.reload()}
           />
         )}
       </div>
