@@ -41,6 +41,7 @@ APP_NAMES = [
 # security logic. It creates an external network dependency and gives false confidence.
 RELEVANT_TEST_FILES = [
     "apps/media-buyer-cockpit/scripts/supabase-access.test.ts",
+    "apps/media-buyer-cockpit/scripts/snapshot-rpc-contracts.test.ts",
     "apps/media-buyer-cockpit/scripts/frameio-webhook.test.ts",
     "apps/media-buyer-cockpit/scripts/billing.test.ts",
     "apps/media-buyer-cockpit/scripts/webinar.test.ts",
