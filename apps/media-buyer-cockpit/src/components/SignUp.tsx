@@ -93,7 +93,7 @@ export function SignUp() {
             )}
             <Button type="submit" className="w-full h-11" disabled={loading}>
               {loading && <Loader2 className="size-4 animate-spin" />}
-              {loading ? "Creating account..." : "Create Account"}
+              {loading ? "Creating account…" : "Create account"}
             </Button>
           </form>
         </CardContent>
@@ -140,7 +140,7 @@ export function SignUp() {
           className="space-y-4"
         >
           <div className="space-y-2">
-            <Label htmlFor="code">Verification Code</Label>
+            <Label htmlFor="code">Verification code</Label>
             <Input
               id="code"
               name="code"
@@ -161,7 +161,7 @@ export function SignUp() {
           )}
           <Button type="submit" className="w-full h-11" disabled={loading}>
             {loading && <Loader2 className="size-4 animate-spin" />}
-            {loading ? "Verifying..." : "Verify Email"}
+            {loading ? "Verifying…" : "Verify email"}
           </Button>
           <Button
             type="button"

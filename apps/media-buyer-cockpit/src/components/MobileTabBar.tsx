@@ -14,6 +14,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { Link, useLocation, useSearchParams } from "react-router";
+import { COCKPIT_ICON } from "@/lib/cockpits";
 import { cn } from "@/lib/utils";
 import { api } from "../../convex/_generated/api";
 import { useSidebar } from "./ui/sidebar";
@@ -29,8 +30,11 @@ type Item = {
 /**
  * The bar at the foot of a phone screen: the four places a thumb goes most,
  * and "More" for the rest of the rail. Which four depends on where you are:
- * the CEO cockpit's own sections on /ceo, the media buyer's day otherwise.
- * Hidden from 1024px up, where the rail is on the left.
+ * the CEO cockpit's own sections on /ceo, the media buyer's day for a media
+ * buyer, otherwise the CEO, Admin and Team meetings doors a seat has.
+ * Hidden from 1024px up, where the rail is on the left. The labels are the
+ * rail's own words (Start of day, Touchpoints), shortened only where the
+ * rail's longer name would not fit (Ads, Tasks).
  */
 export function MobileTabBar() {
   const { setOpenMobile, isMobile } = useSidebar();
@@ -77,7 +81,7 @@ export function MobileTabBar() {
       ? [
           {
             key: "day",
-            label: "Day",
+            label: "Start of day",
             icon: LayoutDashboard,
             to: "/dashboard",
             active: path === "/dashboard",
@@ -98,7 +102,7 @@ export function MobileTabBar() {
           },
           {
             key: "clients",
-            label: "Clients",
+            label: "Touchpoints",
             icon: MessageSquare,
             to: "/touchpoints",
             active: path === "/touchpoints",
@@ -127,6 +131,15 @@ export function MobileTabBar() {
                 },
               ]
             : []),
+          // Everybody's: without it a seat with no cockpit here had "More"
+          // alone and nobody reached the meetings from the bar.
+          {
+            key: "team",
+            label: "Team",
+            icon: COCKPIT_ICON.team,
+            to: "/team",
+            active: path.startsWith("/team"),
+          },
         ];
   const cell =
     "flex min-h-14 w-full flex-col items-center justify-center gap-1 px-1 text-[11px] font-medium leading-none";

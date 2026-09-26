@@ -16,6 +16,7 @@ import {
   Settings,
   Sun,
   Trophy,
+  X,
 } from "lucide-react";
 import { Link, useLocation, useSearchParams } from "react-router";
 import { STATUS_COLOR } from "@/components/ceo/StatusChip";
@@ -71,7 +72,7 @@ const navItems = [
   },
   {
     href: "/touchpoints",
-    label: "Client touchpoints",
+    label: "Touchpoints",
     icon: MessageSquare,
     role: "media_buyer",
   },
@@ -96,8 +97,8 @@ const navItems = [
   { href: "/eod", label: "End of day", icon: MoonStar, role: "media_buyer" },
 ];
 
-/** Rows are 28px on a desktop in the CEO rail, so seventeen of them fit a laptop; a phone keeps the full height for thumbs. */
-const DENSE = "cockpit-nav-link md:h-7";
+/** Rows are 28px in the CEO rail on a laptop, so seventeen of them fit; the sheet below 1024px keeps the full 40px for thumbs. */
+const DENSE = "cockpit-nav-link lg:h-7";
 
 function NavLink({
   href,
@@ -409,7 +410,7 @@ function SidebarUserMenu() {
             <DropdownMenuContent
               side="top"
               align="start"
-              className="w-[--radix-dropdown-menu-trigger-width]"
+              className="w-(--radix-dropdown-menu-trigger-width)"
             >
               {switches.map(c => (
                 <DropdownMenuItem key={c.key} asChild>
@@ -469,15 +470,28 @@ function SidebarHeaderContent() {
           <Wordmark size="sm" />
         </Link>
       )}
-      <button
-        type="button"
-        onClick={toggleSidebar}
-        className="rounded-lg border p-2 hover:bg-sidebar-accent"
-        aria-label={open ? "Collapse sidebar" : "Expand sidebar"}
-        aria-expanded={open}
-      >
-        {open ? <PanelLeftClose size={16} /> : <PanelLeft size={16} />}
-      </button>
+      {/* In the sheet below 1024px this closes the menu, so it reads as a
+          close button; on the laptop rail it folds the rail. */}
+      {isMobile ? (
+        <button
+          type="button"
+          onClick={() => setOpenMobile(false)}
+          className="flex size-10 items-center justify-center rounded-lg border hover:bg-sidebar-accent"
+          aria-label="Close menu"
+        >
+          <X size={18} aria-hidden />
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={toggleSidebar}
+          className="rounded-lg border p-2 hover:bg-sidebar-accent"
+          aria-label={open ? "Collapse sidebar" : "Expand sidebar"}
+          aria-expanded={open}
+        >
+          {open ? <PanelLeftClose size={16} /> : <PanelLeft size={16} />}
+        </button>
+      )}
     </SidebarHeader>
   );
 }

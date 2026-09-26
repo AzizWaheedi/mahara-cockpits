@@ -37,12 +37,7 @@ export function LoginPage() {
   const signInUnavailable = !emailPasswordAvailable && !viktorSignInAvailable;
 
   return (
-    <div className="flex-1 flex items-center justify-center p-4 relative">
-      <div className="absolute inset-0 -z-10 overflow-hidden">
-        <div className="absolute top-0 left-1/4 size-96 rounded-full bg-primary/10 blur-3xl" />
-        <div className="absolute bottom-0 right-1/4 size-96 rounded-full bg-primary/5 blur-3xl" />
-      </div>
-
+    <div className="flex flex-1 items-center justify-center p-4">
       <div className="w-full max-w-sm space-y-6">
         <div className="text-center space-y-2">
           <div className="flex justify-center mb-6">

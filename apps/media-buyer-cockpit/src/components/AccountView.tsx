@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
  * Everything for one client on a single screen.
  *
  * The campaign table answers "what needs me today" across 40 accounts. This
- * answers the other question — "show me this client" — without her hunting
+ * answers the other question, "show me this client", without her hunting
  * through rows. Deliberately plain: totals, the campaigns, why leads died.
  */
 // biome-ignore lint/suspicious/noExplicitAny: snapshot rows are untyped
@@ -14,7 +14,7 @@ type Row = any;
 
 const money = (n?: number, dp = 0) =>
   n === undefined || n === null
-    ? "—"
+    ? "n/a"
     : `$${n.toLocaleString("en-US", {
         minimumFractionDigits: dp,
         maximumFractionDigits: dp,
@@ -53,11 +53,13 @@ export function AccountView({
   const live = campaigns.filter(isLive).length;
 
   return (
-    <div className="rounded-xl border bg-card p-4">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <div>
-          <div className="text-[17px] font-bold">{client}</div>
-          <div className="text-[12px] text-muted-foreground">
+    <div className="rounded-2xl border bg-card p-4 sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-[15px] font-semibold" dir="auto">
+            {client}
+          </h2>
+          <div className="mt-1 text-sm text-muted-foreground">
             {campaigns.length} campaign{campaigns.length === 1 ? "" : "s"} ·{" "}
             {live} live · last 7 days
           </div>
@@ -67,40 +69,40 @@ export function AccountView({
         </Button>
       </div>
 
-      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-5">
-        {[
-          ["Spend", money(spend)],
-          ["Leads", String(leads)],
-          ["Cost per lead", money(cpl, 2)],
-          ["Booked", String(booked)],
-          ["Cost per booking", money(cpb, 2)],
-        ].map(([label, value]) => (
-          <div key={label} className="rounded-lg border p-2.5">
-            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-              {label}
+      <div className="@container mt-4">
+        <div className="grid grid-cols-2 gap-3 @2xl:grid-cols-5">
+          {[
+            ["Spend", money(spend)],
+            ["Leads", String(leads)],
+            ["Cost per lead", money(cpl, 2)],
+            ["Booked", String(booked)],
+            ["Cost per booking", money(cpb, 2)],
+          ].map(([label, value]) => (
+            <div key={label} className="rounded-xl bg-muted/40 p-3">
+              <div className="text-xs text-muted-foreground">{label}</div>
+              <div className="mt-0.5 whitespace-nowrap text-lg font-semibold tabular-nums tracking-tight">
+                {value}
+              </div>
             </div>
-            <div className="mt-0.5 text-[16px] font-bold tabular-nums">
-              {value}
-            </div>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
 
-      <div className="mt-4 space-y-2">
+      <div className="mt-4 divide-y">
         {campaigns.map(c => (
           <div
             key={c._id}
-            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-2.5"
+            className="flex flex-wrap items-center justify-between gap-2 py-3"
           >
             <div className="min-w-0">
               <button
                 type="button"
-                className="text-left text-[14px] font-semibold hover:underline"
+                className="text-left text-sm font-semibold hover:underline"
                 onClick={() => onOpenCampaign(c.campaignName)}
               >
                 {c.campaignName}
               </button>
-              <div className="text-[12px] text-muted-foreground">
+              <div className="text-xs text-muted-foreground">
                 {money(c.spend7d)} · {c.leads7d ?? 0} leads · {money(c.cpl, 2)}{" "}
                 per lead
                 {c.daysLive !== undefined ? ` · live ${c.daysLive}d` : ""}

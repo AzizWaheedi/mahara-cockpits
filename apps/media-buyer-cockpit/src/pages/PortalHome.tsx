@@ -1,6 +1,7 @@
 import { useConvexAuth, useQuery } from "convex/react";
 import { Link, Navigate } from "react-router";
 import { BackendWait } from "@/components/BackendWait";
+import { Spinner } from "@/components/ui/spinner";
 import { Wordmark } from "@/components/Wordmark";
 import { COCKPIT_ICON } from "@/lib/cockpits";
 import { api } from "../../convex/_generated/api";
@@ -53,7 +54,10 @@ export function PortalHome() {
   if (isLoading)
     return (
       <BackendWait>
-        <div className="p-10 text-sm text-muted-foreground">One moment…</div>
+        <div className="flex flex-1 items-center justify-center gap-2 p-10 text-sm text-muted-foreground">
+          <Spinner />
+          One moment…
+        </div>
       </BackendWait>
     );
   if (!isAuthenticated) return <LoginPage />;
@@ -64,7 +68,8 @@ function Chooser() {
   const me = useQuery(api.roles.me, {});
   if (me === undefined)
     return (
-      <div className="p-10 text-sm text-muted-foreground">
+      <div className="flex flex-1 items-center justify-center gap-2 p-10 text-sm text-muted-foreground">
+        <Spinner />
         Checking your access…
       </div>
     );

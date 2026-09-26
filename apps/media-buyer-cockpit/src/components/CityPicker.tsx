@@ -2,24 +2,18 @@ import { useAction } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { api } from "../../convex/_generated/api";
+import { Button } from "./ui/button";
 
 type CityOption = { id: string; label: string; color?: string };
 
 let optionsCache: Promise<CityOption[]> | null = null;
 
-/** Dark text on light label colours (Bahrain's yellow), white on the rest. */
-function textOn(hex?: string) {
-  const m = /^#?([0-9a-f]{6})$/i.exec(hex ?? "");
-  if (!m) return "#fff";
-  const n = Number.parseInt(m[1], 16);
-  const lum =
-    (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
-  return lum > 0.6 ? "#111" : "#fff";
-}
+/** A picked city: the cockpit's own selected chip, not ClickUp's label colours. */
+const PICKED = "border-primary/40 bg-primary/15 text-foreground";
 
 /**
  * The campaign card's Advertising Cities on the Ads Management board, shown as
- * tags and edited here; saving writes the whole set to ClickUp. The choices are
+ * neutral chips and edited here; saving writes the whole set to ClickUp. The choices are
  * the field's own labels ("KW - Hawalli"), so a new city is added once on the
  * field in ClickUp and appears here. [Aziz, 2026-09-14]
  */
@@ -72,8 +66,6 @@ export function CityPicker({
 
   if (!hasCard) return null;
   const current = cities ?? [];
-  const colorOf = (label: string) =>
-    options.find(o => o.label === label)?.color ?? "#64748b";
 
   const saveIt = async () => {
     setBusy(true);
@@ -102,34 +94,35 @@ export function CityPicker({
   };
 
   return (
-    <div className="mt-1 text-[12px]">
-      <div className="flex flex-wrap items-center gap-1">
+    <div className="text-xs">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-muted-foreground">Cities</span>
         {current.length ? (
           current.map(c => (
             <span
               key={c}
-              className="rounded px-1.5 py-0.5 text-[11px] font-semibold"
-              style={{ backgroundColor: colorOf(c), color: textOn(colorOf(c)) }}
+              className="rounded-full border px-2 py-0.5 text-xs text-foreground"
             >
               {c}
             </span>
           ))
         ) : (
-          <span className="text-muted-foreground">no advertising cities</span>
+          <span className="text-muted-foreground">none set</span>
         )}
         <button
           type="button"
-          className="font-semibold text-primary underline"
+          className="font-medium text-primary hover:underline"
+          aria-expanded={open}
           onClick={() => setOpen(o => !o)}
         >
           {open ? "Close" : current.length ? "Edit cities" : "Add cities"}
         </button>
       </div>
       {open && (
-        <div className="mt-1 w-[min(36rem,85vw)] rounded-md border bg-card p-2 text-foreground shadow-sm">
-          <div className="mb-2 flex flex-wrap items-center gap-2">
+        <div className="mt-2 w-full max-w-xl rounded-xl border bg-card p-3 text-foreground">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
             <input
-              className="w-44 rounded border bg-background px-2 py-1"
+              className="h-8 w-44 rounded-lg border bg-background px-2 text-sm"
               placeholder="Find a city"
               value={q}
               onChange={e => setQ(e.target.value)}
@@ -140,39 +133,39 @@ export function CityPicker({
             {picked.length > 0 && (
               <button
                 type="button"
-                className="text-muted-foreground underline"
+                className="text-muted-foreground underline underline-offset-2 hover:text-foreground"
                 onClick={() => setPicked([])}
               >
                 Clear
               </button>
             )}
-            <button
-              type="button"
+            <Button
+              size="sm"
+              variant="teal"
               disabled={busy}
               onClick={saveIt}
-              className="ml-auto rounded-md border border-teal-400 bg-teal-50 px-2.5 py-1 font-semibold text-teal-800 disabled:opacity-50 dark:bg-teal-950 dark:text-teal-200"
+              className="ml-auto text-xs"
             >
-              {busy ? "Saving..." : "Save to ClickUp"}
-            </button>
+              {busy ? "Saving…" : "Save to ClickUp"}
+            </Button>
           </div>
           {!options.length ? (
-            <p className="text-muted-foreground">
-              Loading the board's cities...
-            </p>
+            <p className="text-muted-foreground">Loading the board's cities…</p>
           ) : (
-            <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
+            <div className="max-h-64 space-y-3 overflow-y-auto pr-1">
               {groups.map(([country, list]) => (
                 <div key={country}>
-                  <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                  <p className="mb-1 font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
                     {country}
                   </p>
-                  <div className="flex flex-wrap gap-1">
+                  <div className="flex flex-wrap gap-1.5">
                     {list.map(o => {
                       const on = picked.includes(o.label);
                       return (
                         <button
                           key={o.id}
                           type="button"
+                          aria-pressed={on}
                           onClick={() =>
                             setPicked(p =>
                               on
@@ -180,16 +173,7 @@ export function CityPicker({
                                 : [...p, o.label],
                             )
                           }
-                          className={`rounded border px-1.5 py-0.5 text-[11px] ${on ? "font-semibold" : "bg-background"}`}
-                          style={
-                            on
-                              ? {
-                                  backgroundColor: o.color ?? "#64748b",
-                                  borderColor: o.color ?? "#64748b",
-                                  color: textOn(o.color),
-                                }
-                              : undefined
-                          }
+                          className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${on ? PICKED : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
                         >
                           {o.label.split(" - ").slice(1).join(" - ") || o.label}
                         </button>
@@ -200,7 +184,7 @@ export function CityPicker({
               ))}
             </div>
           )}
-          <p className="mt-2 text-[11px] text-muted-foreground">
+          <p className="mt-3 text-xs text-muted-foreground">
             A city that is not in the list: add it as an option on the
             Advertising Cities field in ClickUp and it appears here.
           </p>

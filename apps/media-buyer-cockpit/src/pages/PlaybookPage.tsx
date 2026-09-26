@@ -50,12 +50,10 @@ export function PlaybookPage() {
   })();
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-4 py-6">
-      <header className="mb-5">
-        <h1 className="text-xl font-bold tracking-tight">
-          What works in the GCC
-        </h1>
-        <p className="mt-1 text-[14px] text-muted-foreground">
+    <div className="mx-auto w-full max-w-5xl">
+      <header className="mb-6">
+        <h1 className="text-2xl font-semibold tracking-tight">What works</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
           {dims
             ? `${dims.plays} ad sets across ${dims.clients} clients, ${dims.cities.length} cities. Every campaign we run adds to this.`
             : "Loading…"}
@@ -63,11 +61,9 @@ export function PlaybookPage() {
       </header>
 
       {opportunity && (
-        <div className="callout-warn mb-5 rounded-lg border p-3">
-          <div className="text-[12px] font-bold uppercase tracking-wide">
-            Worth copying
-          </div>
-          <p className="mt-1 text-[14px]">
+        <div className="callout-good mb-6 rounded-xl border p-4">
+          <div className="text-sm font-semibold">Worth copying</div>
+          <p className="mt-1 text-sm text-foreground">
             <strong>
               {opportunity.good.playType === "broad"
                 ? "Broad"
@@ -212,8 +208,10 @@ function CreativePatterns({ rows }: { rows: any[] | undefined }) {
 
   return (
     <div className="mt-6">
-      <h2 className="text-[14px] font-bold">What the winning ads look like</h2>
-      <p className="mb-2 text-[12px] text-muted-foreground">
+      <h2 className="text-[15px] font-semibold">
+        What the winning ads look like
+      </h2>
+      <p className="mb-3 mt-1 text-xs text-muted-foreground">
         Every ad we have run, grouped by what kind of ad it was rather than who
         it targeted. Same rule as above: at least $100 behind a pattern before
         it counts.
@@ -340,8 +338,10 @@ function WinningAds({ serviceLine }: { serviceLine?: string }) {
 
   return (
     <div className="mt-6">
-      <h2 className="text-[14px] font-bold">The winning ads, word for word</h2>
-      <p className="mb-2 text-[12px] text-muted-foreground">
+      <h2 className="text-[15px] font-semibold">
+        The winning ads, word for word
+      </h2>
+      <p className="mb-3 mt-1 text-xs text-muted-foreground">
         Ads found by the weekly check spent at least $100 at $15 or less a lead.
         Ads marked Saved were picked by the team, with their numbers from the
         day they were saved. Every one is kept, switched off or not. Click one
@@ -355,10 +355,10 @@ function WinningAds({ serviceLine }: { serviceLine?: string }) {
             type="button"
             onClick={() => setOrigin(o.key)}
             aria-pressed={origin === o.key}
-            className={`rounded-full border px-2.5 py-0.5 text-[12px] font-semibold ${
+            className={`inline-flex h-8 items-center rounded-full px-3 text-xs font-medium transition-colors ${
               origin === o.key
-                ? "bg-foreground text-background"
-                : "text-muted-foreground hover:bg-muted"
+                ? "bg-primary/15 text-foreground ring-1 ring-inset ring-primary/40"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground"
             }`}
           >
             {o.label}

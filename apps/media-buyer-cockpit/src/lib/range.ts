@@ -2,7 +2,7 @@
  * Date ranges, in Kuwait days.
  *
  * Everything the cockpit stores is stamped with the Kuwait calendar day the
- * tracker uses, so ranges are computed the same way — never in the browser's
+ * tracker uses, so ranges are computed the same way, never in the browser's
  * timezone, which would put "today" a day out for anyone travelling.
  * [aziz, 2026-09-07]
  */
@@ -117,7 +117,7 @@ export function defaultRange(): Range {
 
 export function customRange(start: string, end: string): Range {
   const [a, b] = start <= end ? [start, end] : [end, start];
-  return { start: a, end: b, label: `${a} → ${b}`, key: "custom" };
+  return { start: a, end: b, label: `${a} to ${b}`, key: "custom" };
 }
 
 /** How many days a range covers, inclusive. */

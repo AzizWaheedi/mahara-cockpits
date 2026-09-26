@@ -1,6 +1,7 @@
 import { useQuery } from "convex/react";
 import { Navigate, Outlet, useLocation } from "react-router";
 import { api } from "../../convex/_generated/api";
+import { Spinner } from "./ui/spinner";
 
 /**
  * One cockpit per role, one link per cockpit. A media buyer who opens the client
@@ -13,7 +14,8 @@ export function RoleRoute({ role }: { role: string }) {
 
   if (me === undefined) {
     return (
-      <div className="p-10 text-sm text-muted-foreground">
+      <div className="flex min-h-[50vh] items-center justify-center gap-2 text-sm text-muted-foreground">
+        <Spinner />
         Checking your access…
       </div>
     );
@@ -23,7 +25,7 @@ export function RoleRoute({ role }: { role: string }) {
     return <Navigate to={me.home} replace />;
 
   return (
-    <div className="mx-auto max-w-md space-y-2 p-10 text-center">
+    <div className="mx-auto max-w-md space-y-2 py-10 text-center">
       <h1 className="text-lg font-semibold">This cockpit isn't yours</h1>
       <p className="text-sm text-muted-foreground">
         Ask Aziz to give you this seat in the portal's admin view.

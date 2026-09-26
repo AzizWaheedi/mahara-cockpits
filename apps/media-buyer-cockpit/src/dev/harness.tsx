@@ -9,19 +9,35 @@
  *   today.json    - the result of ceo/queries:today
  *   people.json   - the result of ceo/people:list
  *   fixtures.json - any other function's result, keyed by its Convex name
+ * The media buyer's own screens (/dashboard, /ads, /tasks, /touchpoints,
+ * /eod, /playbook) and /admin and /settings read the stand-in data in
+ * portalFixtures.ts.
  */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { MemoryRouter, Navigate, Route, Routes } from "react-router";
 import { AppLayout } from "@/components/AppLayout";
+import { PublicLayout } from "@/components/PublicLayout";
 import { Toaster } from "@/components/ui/sonner";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { ThemeProvider as LibThemeProvider } from "@/lib/theme";
+import { AdminPage } from "@/pages/AdminPage";
 import { CeoPage } from "@/pages/CeoPage";
+import {
+  AdsPage,
+  EndOfDayPage,
+  StartOfDayPage,
+  TaskListPage,
+  TouchpointsPage,
+} from "@/pages/CockpitPage";
+import { LoginPage } from "@/pages/LoginPage";
+import { PlaybookPage } from "@/pages/PlaybookPage";
+import { SettingsPage } from "@/pages/SettingsPage";
 import { MeetingPage } from "@/pages/team/MeetingPage";
 import { TeamPage } from "@/pages/team/TeamPage";
 import "@/index.css";
 import { setFixtures } from "./convexStub";
+import { portalFixtures } from "./portalFixtures";
 
 async function load(path: string): Promise<unknown> {
   const res = await fetch(path);
@@ -38,6 +54,7 @@ async function main() {
   ]);
   setFixtures({
     ...(more as Record<string, unknown>),
+    ...portalFixtures(),
     "roles:me": {
       isCeo: true,
       isAdmin: true,
@@ -62,10 +79,21 @@ async function main() {
           <Toaster />
           <MemoryRouter initialEntries={[start]}>
             <Routes>
+              <Route element={<PublicLayout />}>
+                <Route path="/login" element={<LoginPage />} />
+              </Route>
               <Route element={<AppLayout />}>
                 <Route path="/ceo" element={<CeoPage />} />
                 <Route path="/team" element={<TeamPage />} />
                 <Route path="/team/:id" element={<MeetingPage />} />
+                <Route path="/dashboard" element={<StartOfDayPage />} />
+                <Route path="/ads" element={<AdsPage />} />
+                <Route path="/tasks" element={<TaskListPage />} />
+                <Route path="/touchpoints" element={<TouchpointsPage />} />
+                <Route path="/eod" element={<EndOfDayPage />} />
+                <Route path="/playbook" element={<PlaybookPage />} />
+                <Route path="/admin" element={<AdminPage />} />
+                <Route path="/settings" element={<SettingsPage />} />
                 <Route path="*" element={<Navigate to="/ceo" replace />} />
               </Route>
             </Routes>

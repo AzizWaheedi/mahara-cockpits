@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { bookingCostCell, bookingCostTone } from "@/lib/booking-cost";
 import { CPB_GATE, CPL_GATE } from "@/lib/kpi";
 import type { Range } from "@/lib/range";
-import { rangeDays } from "@/lib/range";
+import { kuwaitDay, rangeDays } from "@/lib/range";
 import { api } from "../../convex/_generated/api";
 import { RangePicker } from "./RangePicker";
 import { SaveWinnerButton } from "./SaveWinnerButton";
@@ -127,11 +127,19 @@ export function CampaignRange({
       : "skip",
   );
 
+  // The tracker pulls each day the next morning, so its last day is normally
+  // yesterday and a range ending today always runs past it. That is not
+  // stale. It is stale when even yesterday has not been pulled.
+  const behind = Boolean(coverage?.last && coverage.last < kuwaitDay(1));
+
   return (
     <div className="mt-3">
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <div className="text-[12px] font-bold uppercase tracking-wide text-muted-foreground">
-          Ad set and ad level · {range.label.toLowerCase()}
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="text-sm font-semibold">
+          Ad sets and ads{" "}
+          <span className="font-normal text-muted-foreground">
+            {range.label.toLowerCase()}
+          </span>
         </div>
         <RangePicker value={range} onChange={onRangeChange} compact />
       </div>
@@ -141,23 +149,22 @@ export function CampaignRange({
         end={range.end}
       />
 
-      {coverage?.last && range.end > coverage.last && (
-        <div className="mb-2 rounded border callout-warn px-2.5 py-1.5 text-[12px]">
+      {behind && coverage?.last && range.end > coverage.last && (
+        <div className="mb-3 rounded-lg border callout-warn px-3 py-2 text-xs">
           The tracker sheet has spend up to{" "}
           <span className="font-semibold">{coverage.last}</span>. Anything after
-          that is not missing: it has not been pulled yet, so today's numbers
-          appear tomorrow morning.
+          that is not missing: it has not been pulled yet.
         </div>
       )}
 
       {data === undefined && (
-        <div className="rounded border p-3 text-[13px] text-muted-foreground">
+        <div className="rounded-lg bg-background/60 p-3 text-sm text-muted-foreground">
           Loading {range.label.toLowerCase()}…
         </div>
       )}
 
       {data && !data.hasData && (
-        <div className="rounded border p-3 text-[13px] text-muted-foreground">
+        <div className="rounded-lg bg-background/60 p-3 text-sm text-muted-foreground">
           No spend recorded for this campaign between {range.start} and{" "}
           {range.end}.
           {days <= 2 &&
@@ -167,7 +174,7 @@ export function CampaignRange({
 
       {data?.hasData && (
         <>
-          <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 rounded border bg-muted/30 px-3 py-2 text-[13px]">
+          <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg bg-background/60 px-3 py-2 text-sm">
             <span>
               <span className="text-muted-foreground">Spend </span>
               <span className="font-semibold tabular-nums">
@@ -195,8 +202,8 @@ export function CampaignRange({
               </span>
             </span>
             {leadsOnly ? (
-              <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-semibold uppercase text-muted-foreground">
-                Done with you · leads only
+              <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
+                Done with you, leads only
               </span>
             ) : (
               <>
@@ -222,7 +229,7 @@ export function CampaignRange({
                 </span>
               </>
             )}
-            <span className="text-[12px] text-muted-foreground">
+            <span className="text-xs text-muted-foreground">
               {data.days} day{data.days === 1 ? "" : "s"} with data
               {!leadsOnly &&
                 data.bookingsTotal > 0 &&
@@ -266,21 +273,21 @@ export function CampaignRange({
                   t.spend > r.spend + 0.001,
               ),
           ) && (
-            <p className="mt-1 text-[12px] text-muted-foreground">
+            <p className="mt-1 text-xs text-muted-foreground">
               Some ads earned a booking after earlier spend. Their 30d cost is
               shown first; the selected-window quotient remains beneath it. Each
               cost uses spend and bookings from the same window.
             </p>
           )}
           {data.ads.some((r: Row) => r.spend === 0 && r.bookings > 0) && (
-            <p className="mt-1 text-[12px] text-muted-foreground">
+            <p className="mt-1 text-xs text-muted-foreground">
               Some bookings came from ads that spent before this range. Their
               bookings are counted here; a cost marked 30d uses the last 30 days
               of spend and bookings, not this range's $0 spend.
             </p>
           )}
           {quietCount(data.ads as Row[], extraAds) > 0 && (
-            <p className="mt-1 text-[12px] text-muted-foreground">
+            <p className="mt-1 text-xs text-muted-foreground">
               {quietCount(data.ads as Row[], extraAds)} ad
               {quietCount(data.ads as Row[], extraAds) === 1
                 ? " has"
@@ -292,7 +299,7 @@ export function CampaignRange({
           {!leadsOnly &&
             data.bookingsTotal > 0 &&
             data.bookingsAttributed === 0 && (
-              <p className="mt-1 text-[12px] text-muted-foreground">
+              <p className="mt-1 text-xs text-muted-foreground">
                 None of the {data.bookingsTotal} bookings in this window could
                 be traced back to a specific ad, so cost per booking is shown
                 for the campaign only. It is blank per ad rather than guessed.
@@ -335,15 +342,17 @@ function Table({
       : { value: r.costPerBooking };
   if (!rows || rows.length === 0) {
     return emptyNote ? (
-      <p className="mb-2 text-[12px] text-muted-foreground">{emptyNote}</p>
+      <p className="mb-2 text-xs text-muted-foreground">{emptyNote}</p>
     ) : null;
   }
   return (
     <div className="mb-3 overflow-x-auto">
-      <div className="mb-1 text-[12px] font-bold">{title}</div>
-      <table className="w-full text-[13px]">
+      <div className="mb-1 text-xs font-semibold">{title}</div>
+      {/* Wide enough that the numbers never run together; on a phone the
+          table scrolls inside this box instead. */}
+      <table className="w-full min-w-[44rem] text-[13px] [&_td:first-child]:pl-0 [&_td]:whitespace-nowrap [&_td]:px-2 [&_th:first-child]:pl-0 [&_th]:px-2 [&_th]:font-medium">
         <thead>
-          <tr className="text-[11px] uppercase text-muted-foreground">
+          <tr className="font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
             <th className="py-1 text-left">Name</th>
             <th className="text-left">Spend</th>
             <th className="text-left">Leads</th>
@@ -402,7 +411,7 @@ function Table({
                       <>
                         {r.bookings}
                         {r.bookingRate !== undefined && r.bookings > 0 && (
-                          <span className="ml-1 text-[12px] font-normal text-muted-foreground">
+                          <span className="ml-1 text-xs font-normal text-muted-foreground">
                             {Math.round(r.bookingRate)}%
                           </span>
                         )}

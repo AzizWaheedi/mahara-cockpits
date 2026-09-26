@@ -1,12 +1,4 @@
-import {
-  ArrowUpRight,
-  Compass,
-  Layers,
-  Radar,
-  Smartphone,
-  Users,
-} from "lucide-react";
-import type { ReactNode } from "react";
+import { ArrowUpRight } from "lucide-react";
 import { type ForeplayBoard, foreplay, isNew } from "../lib/foreplay";
 
 /**
@@ -18,60 +10,76 @@ import { type ForeplayBoard, foreplay, isNew } from "../lib/foreplay";
  * you go looking for something the board does not have yet, and whatever
  * gets saved there comes back here by itself.
  *
+ * Each link out carries one mark, the trailing arrow that says "opens in a
+ * new tab"; a leading icon as well was two marks on one chip (Aziz,
+ * 2026-09-26).
+ *
  * This file is the same in all three cockpits. Change it in one and copy it.
  */
-const LINKS: [string, string, ReactNode][] = [
-  [
-    "Search discovery",
-    foreplay.discovery,
-    <Compass key="i" className="h-3.5 w-3.5" />,
-  ],
-  ["By advertiser", foreplay.brands, <Users key="i" className="h-3.5 w-3.5" />],
-  [
-    "Brands we follow",
-    foreplay.spyder,
-    <Radar key="i" className="h-3.5 w-3.5" />,
-  ],
-  ["Boards", foreplay.boards, <Layers key="i" className="h-3.5 w-3.5" />],
-  [
-    "Save from your phone",
-    foreplay.onPhone,
-    <Smartphone key="i" className="h-3.5 w-3.5" />,
-  ],
+const LINKS: [string, string][] = [
+  ["Search discovery", foreplay.discovery],
+  ["By advertiser", foreplay.brands],
+  ["Brands we follow", foreplay.spyder],
+  ["Boards", foreplay.boards],
+  ["Save from your phone", foreplay.onPhone],
 ];
 
-export function ForeplayLinks({ bare = false }: { bare?: boolean }) {
+/** A chip row that scrolls sideways on a phone instead of wrapping to three lines. */
+const SCROLL_ROW =
+  "flex flex-nowrap items-center gap-2 overflow-x-auto [scrollbar-width:none] sm:flex-wrap [&::-webkit-scrollbar]:hidden";
+
+export function ForeplayLinks({
+  bare = false,
+  flat = false,
+}: {
+  /** Only the row of links. */
+  bare?: boolean;
+  /** The title, the links and the note, without a card around them. */
+  flat?: boolean;
+}) {
   const row = (
-    <div className="flex flex-wrap items-center gap-1.5">
-      {LINKS.map(([label, href, icon]) => (
+    <div className={SCROLL_ROW}>
+      {LINKS.map(([label, href]) => (
         <a
           key={label}
           href={href}
           target="_blank"
           rel="noreferrer noopener"
-          className="flex items-center gap-1.5 rounded-full border px-3 py-1 text-[12px] font-semibold text-muted-foreground hover:bg-muted hover:text-foreground"
+          className="inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground pointer-coarse:h-10"
         >
-          {icon}
           {label}
-          <ArrowUpRight className="h-3 w-3 opacity-60" />
+          <ArrowUpRight className="size-3.5" aria-hidden />
         </a>
       ))}
     </div>
   );
   if (bare) return row;
   return (
-    <div className="mb-3 rounded-md border p-2.5">
-      <p className="mb-2 text-[13px] font-semibold">Go looking in Foreplay</p>
-      {row}
-      <p className="mt-2 text-[12px] text-muted-foreground">
+    <div className={flat ? "" : "mb-4 rounded-2xl border bg-card p-4"}>
+      <p className="text-sm font-semibold">Go looking in Foreplay</p>
+      <p className="mt-1 text-xs text-muted-foreground">
         Anything the team saves into the Foreplay drop box lands on this board
         by itself, wherever they save it from.
       </p>
+      <div className="mt-3">{row}</div>
     </div>
   );
 }
 
 export default ForeplayLinks;
+
+/** The teal active state every filter chip shares; inactive stays quiet. */
+function chip(on: boolean) {
+  return `inline-flex h-8 items-center gap-1.5 whitespace-nowrap border text-xs font-medium transition-colors pointer-coarse:h-10 ${
+    on
+      ? "border-primary/40 bg-primary/15 text-foreground"
+      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+  }`;
+}
+
+/** A small mono tag inside a board chip ("ideation", "new"). */
+const TAG =
+  "rounded-full px-1.5 font-mono text-[11px] uppercase leading-4 tracking-[0.08em]";
 
 /**
  * One chip per board, so saves stay separated instead of pooling into one
@@ -91,20 +99,13 @@ export function BoardStrip({
   onChoose: (id: string) => void;
   total: number;
 }) {
-  const chip = (on: boolean) =>
-    `flex items-center gap-1.5 border px-3 py-1 text-[12px] font-semibold ${
-      on
-        ? "border-transparent bg-foreground text-background"
-        : "text-muted-foreground hover:bg-muted"
-    }`;
-
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
+    <div className={SCROLL_ROW}>
       <button
         type="button"
         onClick={() => onChoose("")}
         aria-pressed={!chosen}
-        className={`${chip(!chosen)} rounded-full`}
+        className={`${chip(!chosen)} shrink-0 rounded-full px-3`}
       >
         All boards
         <span className="tabular-nums opacity-70">{total}</span>
@@ -113,12 +114,12 @@ export function BoardStrip({
       {boards.map(b => {
         const on = chosen === b.id;
         return (
-          <span key={b.id} className="flex items-center">
+          <span key={b.id} className="flex shrink-0 items-center">
             <button
               type="button"
               onClick={() => onChoose(b.id)}
               aria-pressed={on}
-              className={`${chip(on)} rounded-l-full pr-2`}
+              className={`${chip(on)} rounded-l-full pr-2 pl-3`}
             >
               {b.name ?? "Untitled board"}
               <span className="tabular-nums opacity-70">
@@ -127,7 +128,7 @@ export function BoardStrip({
               {b.feeds_ideation ? (
                 <span
                   title="Saves here become ideation posts on their own"
-                  className="rounded-full px-1.5 text-[10px] font-bold uppercase tracking-wide"
+                  className={TAG}
                   style={{
                     color: "var(--success)",
                     backgroundColor:
@@ -140,7 +141,7 @@ export function BoardStrip({
               {isNew(b) ? (
                 <span
                   title="First seen this week"
-                  className="rounded-full px-1.5 text-[10px] font-bold uppercase tracking-wide"
+                  className={TAG}
                   style={{
                     color: "var(--primary)",
                     backgroundColor:
@@ -157,9 +158,9 @@ export function BoardStrip({
               rel="noreferrer noopener"
               title={`Open ${b.name ?? "this board"} in Foreplay`}
               aria-label={`Open ${b.name ?? "this board"} in Foreplay`}
-              className={`${chip(on)} rounded-r-full border-l-0 pl-2`}
+              className={`${chip(on)} rounded-r-full border-l-0 pr-3 pl-2`}
             >
-              <ArrowUpRight className="h-3 w-3" />
+              <ArrowUpRight className="size-3.5" aria-hidden />
             </a>
           </span>
         );

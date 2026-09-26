@@ -145,9 +145,9 @@ export function SaveWinnerButton({
               type="button"
               disabled={busy}
               title={`Saved to What works by ${first?.savedByName ?? "the team"} on ${dayLabel(first?.savedAt)}`}
-              className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-semibold tone-good disabled:opacity-50"
+              className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs font-medium disabled:opacity-50"
             >
-              <Star className="h-3 w-3 fill-current" />
+              <Star className="size-3 shrink-0 fill-current txt-good" />
               Saved
             </button>
           </DropdownMenuTrigger>
@@ -179,20 +179,22 @@ export function SaveWinnerButton({
         <span className="inline-flex items-center gap-1">
           {inWhatWorks && (
             <span
-              className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase text-muted-foreground"
+              className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground"
               title="The weekly check already put this ad in What works. Saving adds the team's note and numbers."
             >
               In What works
             </span>
           )}
+          {/* One mark per ad: the chip already says it is a winner, so the
+              button next to it carries no second star. */}
           <button
             type="button"
             onClick={() => setSaving(true)}
             title="Keep this ad in What works, with a note on why it works"
-            className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-semibold text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
           >
-            <Star className="h-3 w-3" />
-            Save as winner
+            {inWhatWorks ? null : <Star className="size-3 shrink-0" />}
+            {inWhatWorks ? "Add a note" : "Save as winner"}
           </button>
         </span>
       )}
@@ -234,7 +236,7 @@ export function SaveWinnerButton({
                 if (removing) void doRemove(removing);
               }}
             >
-              {busy ? "Removing..." : "Remove"}
+              {busy ? "Removing…" : "Remove"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -487,7 +489,7 @@ function SaveDialog({
             Cancel
           </Button>
           <Button onClick={submit} disabled={blocked || busy}>
-            {busy ? "Saving..." : "Save to What works"}
+            {busy ? "Saving…" : "Save to What works"}
           </Button>
         </DialogFooter>
       </DialogContent>

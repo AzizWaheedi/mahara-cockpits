@@ -98,7 +98,7 @@ export function SignIn() {
             )}
             <Button type="submit" className="w-full h-11" disabled={loading}>
               {loading && <Loader2 className="size-4 animate-spin" />}
-              {loading ? "Signing in..." : "Sign In"}
+              {loading ? "Signing in…" : "Sign in"}
             </Button>
           </form>
         </CardContent>
@@ -111,7 +111,7 @@ export function SignIn() {
       <Card variant="elevated">
         <CardContent className="pt-6">
           <div className="text-center mb-6">
-            <h2 className="font-semibold text-lg">Reset Password</h2>
+            <h2 className="font-semibold text-lg">Reset your password</h2>
             <p className="text-sm text-muted-foreground">
               Enter your email to receive a reset code
             </p>
@@ -168,7 +168,7 @@ export function SignIn() {
             )}
             <Button type="submit" className="w-full h-11" disabled={loading}>
               {loading && <Loader2 className="size-4 animate-spin" />}
-              {loading ? "Sending..." : "Send Reset Code"}
+              {loading ? "Sending…" : "Send the reset code"}
             </Button>
             <Button
               type="button"
@@ -243,7 +243,7 @@ export function SignIn() {
             )}
             <Button type="submit" className="w-full h-11" disabled={loading}>
               {loading && <Loader2 className="size-4 animate-spin" />}
-              {loading ? "Checking..." : "Continue"}
+              {loading ? "Checking…" : "Continue"}
             </Button>
             <Button
               type="button"
@@ -294,7 +294,7 @@ export function SignIn() {
             className="space-y-4"
           >
             <div className="space-y-2">
-              <Label htmlFor="code">Reset Code</Label>
+              <Label htmlFor="code">Reset code</Label>
               <Input
                 id="code"
                 name="code"
@@ -332,7 +332,7 @@ export function SignIn() {
     <Card variant="elevated">
       <CardContent className="pt-6">
         <div className="text-center mb-6">
-          <h2 className="font-semibold text-lg">Set New Password</h2>
+          <h2 className="font-semibold text-lg">Set a new password</h2>
           <p className="text-sm text-muted-foreground">
             Choose a strong password
           </p>
@@ -364,7 +364,7 @@ export function SignIn() {
           className="space-y-4"
         >
           <div className="space-y-2">
-            <Label htmlFor="newPassword">New Password</Label>
+            <Label htmlFor="newPassword">New password</Label>
             <Input
               id="newPassword"
               name="newPassword"
@@ -386,7 +386,7 @@ export function SignIn() {
           )}
           <Button type="submit" className="w-full h-11" disabled={loading}>
             {loading && <Loader2 className="size-4 animate-spin" />}
-            {loading ? "Resetting..." : "Reset Password"}
+            {loading ? "Resetting…" : "Reset password"}
           </Button>
           <Button
             type="button"

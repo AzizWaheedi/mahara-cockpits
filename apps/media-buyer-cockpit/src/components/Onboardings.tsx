@@ -1,4 +1,5 @@
 import { useQuery } from "convex/react";
+import { ArrowUpRight, Check, Circle, X } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { assistLabel, useAssist } from "@/components/useAssist";
@@ -8,7 +9,7 @@ import { api } from "../../convex/_generated/api";
  * New client launches, as one job instead of a ClickUp scavenger hunt.
  *
  * The real checklist is spread across four subtasks. This flattens it, and
- * marks the steps that are ad-account work Viktor can execute — everything to
+ * marks the steps that are ad-account work Viktor can execute; everything to
  * do with access, billing or a judgement call stays hers.
  */
 /** Issue text with the form URL turned into a link. */
@@ -59,24 +60,22 @@ export function Onboardings({
   if ((!rows || rows.length === 0) && problems.length === 0) return null;
 
   return (
-    <section className="mb-4 rounded-xl border bg-card p-4 shadow-sm">
-      <h2 className="mb-1 text-[12px] font-bold uppercase tracking-widest text-teal-600">
-        New client launches
-      </h2>
-      <p className="mb-3 text-[13px] text-muted-foreground">
+    <section className="rounded-2xl border bg-card p-4 sm:p-6">
+      <h2 className="text-[15px] font-semibold">New client launches</h2>
+      <p className="mt-1 text-sm text-muted-foreground">
         {(rows ?? []).length} waiting to go live. I can do the ad-account build;
         the access and billing steps are yours. Re-checked against the sheet,
         ClickUp and Meta on every sync.
       </p>
 
       {problems.length > 0 && (
-        <div className="callout-warn mb-3 rounded-lg border p-2.5">
-          <div className="text-[12px] font-bold uppercase tracking-wide">
+        <div className="callout-warn mt-4 rounded-xl border p-3 sm:p-4">
+          <div className="text-sm font-semibold">
             Launches that are stuck on something
           </div>
-          <div className="mt-1.5 space-y-1.5">
+          <div className="mt-2 space-y-2">
             {problems.map(w => (
-              <div key={w.client} className="text-[13px]">
+              <div key={w.client} className="text-sm">
                 <span className="font-semibold">{w.client}</span>
                 <span className="text-muted-foreground">
                   {" "}
@@ -92,12 +91,13 @@ export function Onboardings({
                 </ul>
                 {w.taskUrl && (
                   <a
-                    className="text-[12px] underline"
+                    className="inline-flex items-center gap-1 text-xs underline underline-offset-2"
                     href={w.taskUrl}
                     target="_blank"
                     rel="noreferrer"
                   >
-                    ClickUp task ↗
+                    ClickUp task
+                    <ArrowUpRight className="size-3.5" aria-hidden />
                   </a>
                 )}
               </div>
@@ -107,41 +107,44 @@ export function Onboardings({
       )}
 
       {stale.length > 0 && (
-        <details className="mb-3 rounded-lg border px-2.5 py-1.5 text-[13px]">
-          <summary className="cursor-pointer text-muted-foreground">
-            {stale.length} clients in Client Data are still marked Launching
-            with no launch task and no ad account — almost certainly statuses
-            nobody closed off.
+        <details className="mt-4 text-sm">
+          <summary className="text-muted-foreground">
+            {stale.length} clients still marked Launching with no task or ad
+            account
           </summary>
-          <div className="mt-1 text-[12px] text-muted-foreground">
+          <p className="mt-1 text-xs text-muted-foreground">
+            They sit in Client Data with no launch task and no ad account:
+            almost certainly statuses nobody closed off.
+          </p>
+          <div className="mt-1 text-xs text-muted-foreground">
             {stale.map(w => w.client).join(" · ")}
           </div>
         </details>
       )}
 
-      <div className="space-y-2">
+      <div className="mt-4 divide-y">
         {(rows ?? []).map(r => {
           const mine = r.groups
             .flatMap(g => g.items)
             .filter(i => i.viktorCanDo && !i.done).length;
           const isOpen = open === r.taskId;
           return (
-            <div key={r.taskId} className="rounded-lg border">
-              <div className="flex flex-wrap items-center justify-between gap-2 p-2.5">
+            <div key={r.taskId} className="py-3 first:pt-0 last:pb-0">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="min-w-0">
-                  <div className="text-[14px] font-semibold">{r.client}</div>
-                  <div className="text-[12px] text-muted-foreground">
+                  <div className="text-sm font-semibold">{r.client}</div>
+                  <div className="text-xs text-muted-foreground">
                     {r.done} of {r.total} steps done
                     {mine > 0 && r.accountId && (
                       <span className="txt-good"> · {mine} I can do</span>
                     )}
                   </div>
                 </div>
-                <div className="flex gap-1.5">
+                <div className="flex flex-wrap gap-1.5">
                   {onBuild && r.accountId && (
                     <Button
                       size="sm"
-                      className="h-7 text-[12px]"
+                      className="h-7 text-xs"
                       onClick={() => onBuild(r.client)}
                     >
                       Build the campaign
@@ -150,7 +153,8 @@ export function Onboardings({
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-7 text-[12px]"
+                    className="h-7 text-xs"
+                    aria-expanded={isOpen}
                     onClick={() => setOpen(isOpen ? null : r.taskId)}
                   >
                     {isOpen ? "Hide" : "Checklist"}
@@ -158,7 +162,7 @@ export function Onboardings({
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-7 text-[12px]"
+                    className="h-7 text-xs"
                     onClick={() =>
                       setWith(withMe === r.client ? null : r.client)
                     }
@@ -169,11 +173,12 @@ export function Onboardings({
                     <Button
                       size="sm"
                       variant="ghost"
-                      className="h-7 text-[12px]"
+                      className="h-7 text-xs"
                       asChild
                     >
                       <a href={r.taskUrl} target="_blank" rel="noreferrer">
                         ClickUp
+                        <ArrowUpRight className="size-3.5" aria-hidden />
                       </a>
                     </Button>
                   )}
@@ -181,15 +186,15 @@ export function Onboardings({
               </div>
 
               {!r.accountId && (
-                <div className="callout-warn border-t px-2.5 py-2 text-[13px]">
+                <div className="callout-warn mt-2 rounded-xl border p-3 text-sm">
                   <strong>Blocked before anything can be built.</strong>{" "}
                   {r.accountName
-                    ? `Client Data names the ad account "${r.accountName}", but no Meta account of ours matches that name — either it is spelled differently in Meta or it has not been shared with us.`
+                    ? `Client Data names the ad account "${r.accountName}", but no Meta account of ours matches that name: either it is spelled differently in Meta or it has not been shared with us.`
                     : `There is no ad account for ${r.client} in the Client Data sheet, so nothing here can be automated. Fill that cell first.`}
                 </div>
               )}
               {r.accountId && r.accountIdSource === "meta" && (
-                <div className="border-t px-2.5 py-1.5 text-[12px] text-muted-foreground">
+                <div className="mt-1 text-xs text-muted-foreground">
                   Ad account {r.accountId}, matched from the name in Client Data
                   on the last sync.
                 </div>
@@ -198,30 +203,34 @@ export function Onboardings({
               {withMe === r.client && <LaunchWithMe client={r.client} />}
 
               {isOpen && (
-                <div className="border-t p-2.5 pt-2">
+                <div className="mt-3 rounded-xl bg-muted/40 p-3">
                   {r.groups.map(g => (
-                    <div key={g.name} className="mb-2.5 last:mb-0">
-                      <div className="mb-1 text-[12px] font-bold uppercase tracking-wide text-muted-foreground">
+                    <div key={g.name} className="mb-3 last:mb-0">
+                      <div className="mb-1 font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
                         {g.name}
                       </div>
                       <ul className="space-y-1">
                         {g.items.map(i => (
                           <li
                             key={i.name}
-                            className="flex items-start gap-1.5 text-[13px]"
+                            className="flex items-start gap-2 text-sm"
                           >
-                            <span
-                              className={
-                                i.done ? "txt-good" : "text-muted-foreground"
-                              }
-                            >
-                              {i.done ? "✓" : "○"}
-                            </span>
+                            {i.done ? (
+                              <Check
+                                className="mt-0.5 size-3.5 shrink-0 txt-good"
+                                aria-label="Done"
+                              />
+                            ) : (
+                              <Circle
+                                className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"
+                                aria-label="Not done"
+                              />
+                            )}
                             <span className={i.done ? "opacity-60" : ""}>
                               {i.name}
                             </span>
                             {i.viktorCanDo && !i.done && (
-                              <span className="tone-good shrink-0 rounded px-1 text-[11px] font-semibold">
+                              <span className="tone-good shrink-0 rounded-full px-2 text-xs font-medium">
                                 I can do this
                               </span>
                             )}
@@ -256,11 +265,9 @@ function LaunchWithMe({ client }: { client: string }) {
   const row = launch.row;
 
   return (
-    <div className="border-t bg-muted/30 p-2.5">
-      <div className="text-[12px] font-bold uppercase tracking-wide text-muted-foreground">
-        Set this launch up with me
-      </div>
-      <p className="mb-2 mt-0.5 text-[12px] text-muted-foreground">
+    <div className="mt-3 rounded-xl bg-muted/40 p-3">
+      <div className="text-sm font-semibold">Set this launch up with me</div>
+      <p className="mb-2 mt-0.5 text-xs text-muted-foreground">
         Tell me what they sell and who they want, drop the creative links, and
         I'll take it as far as I can: check what's missing, load the creatives
         into the ad account, and write the copy. You build it from there.
@@ -310,21 +317,26 @@ function LaunchWithMe({ client }: { client: string }) {
         <ul className="mt-2 space-y-1">
           {row?.steps?.map(st => (
             <li key={st.label} className="flex items-start gap-1.5 text-[13px]">
-              <span
-                className={
-                  st.state === "done"
-                    ? "txt-good"
-                    : st.state === "blocked"
-                      ? "txt-bad"
-                      : "text-muted-foreground"
-                }
-              >
-                {st.state === "done" ? "✓" : st.state === "blocked" ? "×" : "○"}
-              </span>
+              {st.state === "done" ? (
+                <Check
+                  className="mt-0.5 size-3.5 shrink-0 txt-good"
+                  aria-label="Done"
+                />
+              ) : st.state === "blocked" ? (
+                <X
+                  className="mt-0.5 size-3.5 shrink-0 txt-bad"
+                  aria-label="Blocked"
+                />
+              ) : (
+                <Circle
+                  className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"
+                  aria-label="Not done"
+                />
+              )}
               <span>
                 {st.label}
                 {st.detail && (
-                  <span className="text-muted-foreground"> — {st.detail}</span>
+                  <span className="text-muted-foreground">: {st.detail}</span>
                 )}
               </span>
             </li>
@@ -333,8 +345,8 @@ function LaunchWithMe({ client }: { client: string }) {
       )}
       {(row?.variants ?? []).length > 0 && (
         <div className="mt-2 space-y-1.5">
-          <div className="text-[12px] font-bold uppercase tracking-wide text-muted-foreground">
-            Copy, ready for the builder
+          <div className="font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
+            Copy for the builder
           </div>
           {row?.variants?.map(v => (
             <div
@@ -342,7 +354,7 @@ function LaunchWithMe({ client }: { client: string }) {
               className="rounded border bg-background p-2 text-[13px]"
             >
               {v.angle && (
-                <div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                <div className="text-xs font-semibold text-muted-foreground">
                   {v.angle}
                 </div>
               )}

@@ -89,7 +89,7 @@ export function RequestCreativeButton({
             variant="outline"
             className={
               compact
-                ? "h-7 whitespace-nowrap px-2 text-[11px]"
+                ? "h-7 whitespace-nowrap px-2 text-xs"
                 : "h-7 whitespace-nowrap px-2 text-[12px]"
             }
           >
@@ -187,7 +187,7 @@ export function RequestCreativeButton({
           href={taskUrl}
           target="_blank"
           rel="noreferrer"
-          className="text-[11px] font-semibold underline"
+          className="text-xs font-semibold underline"
         >
           Open request
         </a>

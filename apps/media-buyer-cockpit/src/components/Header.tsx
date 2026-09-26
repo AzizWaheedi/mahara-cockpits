@@ -1,74 +1,30 @@
-import { useConvexAuth } from "convex/react";
-import { ArrowRight } from "lucide-react";
 import { Link, useLocation } from "react-router";
 import { Wordmark } from "@/components/Wordmark";
-import { APP_NAME } from "@/lib/constants";
-import { Button } from "./ui/button";
 
-type HeaderViewProps = {
-  isAuthenticated: boolean;
-  isLoading: boolean;
-  showAuthActions: boolean;
-};
-
-function HeaderView({
-  isAuthenticated,
-  isLoading,
-  showAuthActions,
-}: HeaderViewProps) {
+/**
+ * The public pages' header: the wordmark and nothing else. The sign-in form
+ * below it is the only way in, so there is no "Sign in" or "Get started"
+ * above it. The front door, the sign-in and the sign-up pages carry their
+ * own large wordmark, so there the header keeps only the safe-area space and
+ * the mark shows once.
+ */
+export function Header() {
   const location = useLocation();
-
-  const isAuthPage =
-    location.pathname === "/login" || location.pathname === "/signup";
-
+  const ownMark = ["/", "/login", "/signup"].includes(location.pathname);
+  if (ownMark) return <div className="pt-safe" />;
   return (
-    <header className="sticky top-0 z-50 border-b bg-background/80 backdrop-blur-md pt-safe">
+    <header className="sticky top-0 z-50 border-b bg-background/80 pt-safe backdrop-blur-md">
       <div className="container">
-        <div className="flex h-16 items-center justify-between">
+        <div className="flex h-16 items-center">
           <Link
             to="/"
-            className="flex items-center gap-2.5 font-semibold text-lg hover:opacity-80 transition-opacity"
+            aria-label="Mahara Media"
+            className="flex items-center transition-opacity hover:opacity-80"
           >
             <Wordmark size="sm" />
-            <span className="hidden sm:inline text-sm text-muted-foreground">
-              {APP_NAME}
-            </span>
           </Link>
-
-          <nav className="flex items-center gap-2">
-            {!showAuthActions || isLoading ? null : isAuthenticated ? (
-              <Button size="sm" asChild>
-                <Link to="/dashboard">
-                  Open App
-                  <ArrowRight className="size-4" />
-                </Link>
-              </Button>
-            ) : (
-              !isAuthPage && (
-                <>
-                  <Button variant="ghost" size="sm" asChild>
-                    <Link to="/login">Sign In</Link>
-                  </Button>
-                  <Button size="sm" asChild>
-                    <Link to="/signup">Get Started</Link>
-                  </Button>
-                </>
-              )
-            )}
-          </nav>
         </div>
       </div>
     </header>
-  );
-}
-
-export function Header() {
-  const { isAuthenticated, isLoading } = useConvexAuth();
-  return (
-    <HeaderView
-      isAuthenticated={isAuthenticated}
-      isLoading={isLoading}
-      showAuthActions
-    />
   );
 }

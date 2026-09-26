@@ -1,10 +1,11 @@
 import { useAction } from "convex/react";
 import {
-  ExternalLink,
+  ArrowUpRight,
+  Ellipsis,
   Eye,
   ImageOff,
   Keyboard,
-  Lightbulb,
+  Link2,
   LoaderCircle,
   Radar,
   RefreshCw,
@@ -96,7 +97,12 @@ const BOARD_LABEL: Record<Board, string> = {
   other: "Another industry",
   mahara: "Mahara B2B",
 };
-function BoardOptions() {
+/**
+ * The three boards as options. Called, not rendered as a component: the
+ * cockpit's select reads its options straight off its children, and a
+ * component in between left the choice blank.
+ */
+function boardOptions() {
   return (
     <>
       <option value="ours">{BOARD_LABEL.ours}</option>
@@ -121,12 +127,37 @@ function Pill({
   return (
     <span
       title={title}
-      className={`tone-${tone} rounded-full px-2 py-0.5 text-[11px] font-medium`}
+      className={`tone-${tone} inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium`}
     >
       {children}
     </span>
   );
 }
+
+/** The quiet button rows and panels use; a form keeps one teal primary. */
+const QUIET =
+  "inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50";
+/** The same, for the one action a row is waiting on (keep, retry, restore). */
+const QUIET_STRONG =
+  "inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border px-3 text-xs font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50";
+/** A square icon button; 40px on a touch screen. */
+const ICON_BUTTON =
+  "inline-flex size-8 items-center justify-center rounded-lg border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground pointer-coarse:size-10";
+/** Filter chips: teal when on, quiet when off. */
+const CHIP =
+  "inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-full border px-3 text-xs font-medium transition-colors";
+const chipTone = (on: boolean) =>
+  on
+    ? "border-primary/40 bg-primary/15 text-foreground"
+    : "text-muted-foreground hover:bg-muted hover:text-foreground";
+/** A chip row that scrolls sideways on a phone instead of wrapping. */
+const SCROLL_ROW =
+  "flex flex-nowrap items-center gap-1.5 overflow-x-auto [scrollbar-width:none] sm:flex-wrap [&::-webkit-scrollbar]:hidden";
+/** Text fields in the add-ideas panel. */
+const FIELD =
+  "h-9 w-full min-w-0 rounded-lg border bg-transparent px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring";
+const MENU_ITEM =
+  "flex h-9 w-full items-center gap-2 whitespace-nowrap rounded-lg px-3 text-left text-sm text-foreground hover:bg-muted pointer-coarse:h-10";
 
 function isStoryboard(r: Row): boolean {
   return typeof r.still_path === "string" && r.still_path.includes(".story.");
@@ -140,7 +171,6 @@ function TrendPill({ r }: { r: Row }) {
       tone="good"
       title={`${r.trend_label ?? "Trend"}: the same format on ${n ?? "several"} accounts in the last two weeks.`}
     >
-      <TrendingUp className="mr-1 inline h-3 w-3" />
       Trend{n ? ` · ${n} accounts` : ""}
     </Pill>
   );
@@ -238,11 +268,11 @@ function tierLabel(
 function statusPill(r: Row) {
   switch (r.status) {
     case "queued":
-      return <Pill tone="warn">Queued</Pill>;
+      return <Pill>Queued</Pill>;
     case "fetching":
       return (
-        <Pill tone="warn">
-          <LoaderCircle className="mr-1 inline h-3 w-3 animate-spin" />
+        <Pill>
+          <LoaderCircle className="size-3 animate-spin" aria-hidden />
           Fetching
         </Pill>
       );
@@ -253,7 +283,7 @@ function statusPill(r: Row) {
     case "saved":
       return (
         <Pill tone="good">
-          <Star className="mr-1 inline h-3 w-3" />
+          <Star className="size-3" aria-hidden />
           Saved
         </Pill>
       );
@@ -261,6 +291,14 @@ function statusPill(r: Row) {
       return <Pill>Proposed</Pill>;
   }
 }
+
+/** The status each tab already says, so its rows do not repeat it. */
+const TAB_STATUS: Partial<Record<Tab, string>> = {
+  saved: "saved",
+  proposed: "proposed",
+  failed: "failed",
+  dismissed: "dismissed",
+};
 
 function serverMessage(e: unknown): string {
   // biome-ignore lint/suspicious/noExplicitAny: ConvexError data is untyped
@@ -288,7 +326,7 @@ function Thumb({ r }: { r: Row }) {
             : "No picture for this post."
         }
       >
-        <ImageOff className="h-4 w-4" />
+        <ImageOff className="size-4" aria-hidden />
       </div>
     );
   }
@@ -327,7 +365,7 @@ function CopyButton({
           setTimeout(() => setDone(false), 1800);
         });
       }}
-      className="rounded border px-2 py-0.5 text-[12px] font-semibold text-muted-foreground hover:bg-muted"
+      className={QUIET}
     >
       {done ? "Copied" : label}
     </button>
@@ -538,42 +576,49 @@ export function IdeationPage({
 
   return (
     <div className="mx-auto w-full max-w-5xl">
-      <div className="mb-1 flex flex-wrap items-center gap-2">
-        {embedded ? null : (
-          <>
-            <Lightbulb className="h-4 w-4 text-muted-foreground" />
-            <h2 className="text-[15px] font-bold tracking-tight">Ideation</h2>
-          </>
-        )}
-        <span className="text-[13px] text-muted-foreground">
-          {counts
-            ? `${countOf("saved")} saved, ${countOf("proposed")} proposed by the scan`
-            : "Loading…"}
-        </span>
-        <button
-          type="button"
-          onClick={() => void refresh()}
-          className="ml-auto rounded border px-2 py-0.5 text-[12px] font-semibold text-muted-foreground hover:bg-muted"
-          title="Read the latest from the radar"
-        >
-          <RefreshCw
-            className={`mr-1 inline h-3 w-3 ${busy ? "animate-spin" : ""}`}
-          />
-          Refresh
-        </button>
-        <button
-          type="button"
-          onClick={() => setShowKeys(v => !v)}
-          aria-pressed={showKeys}
-          className="rounded border px-2 py-0.5 text-[12px] font-semibold text-muted-foreground hover:bg-muted"
-          title="Keyboard shortcuts (?)"
-        >
-          <Keyboard className="mr-1 inline h-3 w-3" />
-          Keys
-        </button>
-      </div>
+      <header
+        className={`${embedded ? "mb-4" : "mb-6"} flex flex-wrap items-end justify-between gap-3`}
+      >
+        <div className="min-w-0">
+          {embedded ? null : (
+            <h1 className="text-2xl font-semibold tracking-tight">Ideation</h1>
+          )}
+          <p
+            className={`${embedded ? "" : "mt-1 "}text-sm text-muted-foreground`}
+          >
+            {counts
+              ? `${countOf("saved")} saved, ${countOf("proposed")} proposed by the scan`
+              : "Loading…"}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void refresh()}
+            className={QUIET}
+            title="Read the latest from the radar"
+          >
+            <RefreshCw
+              className={`size-3.5 ${busy ? "animate-spin" : ""}`}
+              aria-hidden
+            />
+            Refresh
+          </button>
+          {/* Shortcuts need a keyboard: no button for them on a touch screen. */}
+          <button
+            type="button"
+            onClick={() => setShowKeys(v => !v)}
+            aria-pressed={showKeys}
+            className={`${QUIET} pointer-coarse:hidden`}
+            title="Keyboard shortcuts (?)"
+          >
+            <Keyboard className="size-3.5" aria-hidden />
+            Keys
+          </button>
+        </div>
+      </header>
       {showKeys ? (
-        <div className="mb-3 grid grid-cols-2 gap-x-6 gap-y-0.5 rounded-md border bg-muted/30 px-3 py-2 text-[12px] md:grid-cols-4">
+        <div className="mb-4 grid grid-cols-2 gap-x-6 gap-y-1 rounded-xl bg-muted/40 p-4 text-xs md:grid-cols-4">
           {SHORTCUTS.map(([k, what]) => (
             <div key={k}>
               <kbd className="rounded border bg-background px-1 font-mono text-[11px]">
@@ -584,101 +629,120 @@ export function IdeationPage({
           ))}
         </div>
       ) : null}
-      <p className="mb-3 text-[13px] text-muted-foreground">
-        {board === "mahara"
-          ? "Posts from the people Mahara competes with and learns from that ran far above their account's normal, with what they say, what is on screen and why they work. Paste a link to add your own; the Saturday scan proposes the rest, and anything saved to the #mahara_b2b board on Foreplay lands here too."
-          : "Posts that ran far above their account's normal, from our industry and from others, with what they say, what is on screen and why they work. Paste a link to add your own; the scan proposes the rest. The winning ads we ran ourselves stay on What works."}
-      </p>
 
       {error ? (
-        <div className="callout-bad mb-3 rounded-md border p-2 text-[13px]">
+        <div className="callout-bad mb-4 rounded-xl border px-4 py-3 text-sm">
           {error}
         </div>
       ) : null}
 
-      <ForeplayLinks />
-      <PasteBox onDone={refresh} board={board} />
-      <ScrapeBox onDone={refresh} board={board} />
-      {embedded ? null : <WatchlistPanel />}
+      {/* Every way into the board in one panel, so the list comes first. */}
+      <AddIdeas
+        hint={
+          embedded
+            ? "Paste a link, scrape a page or an ad library, or look in Foreplay"
+            : "Paste a link, scrape a page or an ad library, the watchlist, Foreplay"
+        }
+      >
+        <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
+          {board === "mahara"
+            ? "Posts from the people Mahara competes with and learns from that ran far above their account's normal, with what they say, what is on screen and why they work. Paste a link to add your own; the Saturday scan proposes the rest, and anything saved to the #mahara_b2b board on Foreplay lands here too."
+            : "Posts that ran far above their account's normal, from our industry and from others, with what they say, what is on screen and why they work. Paste a link to add your own; the scan proposes the rest. The winning ads we ran ourselves stay on What works."}
+        </p>
+        <PasteBox onDone={refresh} board={board} />
+        <ScrapeBox onDone={refresh} board={board} />
+        {embedded ? null : <WatchlistPanel />}
+        <div className="px-4 py-4 sm:px-6">
+          <ForeplayLinks flat />
+        </div>
+      </AddIdeas>
 
-      <div className="mb-3 flex flex-wrap gap-1 border-b">
-        {TABS.map(t => (
-          <button
-            key={t.key}
-            type="button"
-            onClick={() => setTab(t.key)}
-            className={`-mb-px border-b-2 px-2.5 py-1.5 text-[13px] font-semibold transition ${
-              tab === t.key
-                ? "border-primary text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            {t.label}
-            {countOf(t.key) ? (
-              <span className="ml-1 text-[11px] font-normal text-muted-foreground">
-                {countOf(t.key)}
-              </span>
-            ) : null}
-          </button>
-        ))}
+      <div className="mb-4 border-b">
+        <div className="flex flex-nowrap gap-1 overflow-x-auto [scrollbar-width:none] sm:flex-wrap [&::-webkit-scrollbar]:hidden">
+          {TABS.map(t => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setTab(t.key)}
+              aria-pressed={tab === t.key}
+              className={`shrink-0 whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
+                tab === t.key
+                  ? "border-primary text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {t.label}
+              {countOf(t.key) ? (
+                <span className="ml-1.5 text-xs font-normal tabular-nums text-muted-foreground">
+                  {countOf(t.key)}
+                </span>
+              ) : null}
+            </button>
+          ))}
+        </div>
       </div>
 
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <div className="flex flex-wrap items-center gap-1.5">
+      <div className="mb-4 grid gap-3">
+        <div role="group" aria-label="Platform" className={SCROLL_ROW}>
           {PLATFORM_CHIPS.map(([k, label]) => (
             <button
               key={k || "all"}
               type="button"
               onClick={() => setPlatform(k)}
               aria-pressed={platform === k}
-              className={`rounded-full border px-2.5 py-0.5 text-[12px] font-semibold ${
-                platform === k
-                  ? "bg-foreground text-background"
-                  : "text-muted-foreground hover:bg-muted"
-              }`}
+              className={`${CHIP} ${chipTone(platform === k)}`}
             >
               {label}
             </button>
           ))}
         </div>
-        {board ? null : (
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          {board ? null : (
+            <AnimatedSelect
+              value={industry}
+              onChange={e => setIndustry(e.target.value as Industry)}
+              aria-label="Industry"
+            >
+              <option value="">Every client industry</option>
+              <option value="ours">Our industry</option>
+              <option value="other">Other industries</option>
+              <option value="mahara">Mahara B2B</option>
+            </AnimatedSelect>
+          )}
           <AnimatedSelect
-            value={industry}
-            onChange={e => setIndustry(e.target.value as Industry)}
-            aria-label="Industry"
-            className="h-7 rounded-md border bg-background px-2 text-[12px]"
+            value={sort}
+            onChange={e => setSort(e.target.value as "newest" | "multiplier")}
+            aria-label="Sort"
           >
-            <option value="">Every client industry</option>
-            <option value="ours">Our industry</option>
-            <option value="other">Other industries</option>
-            <option value="mahara">Mahara B2B</option>
+            <option value="newest">Newest first</option>
+            <option value="multiplier">Biggest outliers first</option>
           </AnimatedSelect>
-        )}
-        <AnimatedSelect
-          value={sort}
-          onChange={e => setSort(e.target.value as "newest" | "multiplier")}
-          aria-label="Sort"
-          className="h-7 rounded-md border bg-background px-2 text-[12px]"
-        >
-          <option value="newest">Newest first</option>
-          <option value="multiplier">Biggest outliers first</option>
-        </AnimatedSelect>
-        <div className="ml-auto flex items-center gap-1.5 rounded-md border px-2 py-1">
-          <Search className="h-3.5 w-3.5 text-muted-foreground" />
-          <input
-            ref={searchRef}
-            value={q}
-            onChange={e => setQ(e.target.value)}
-            placeholder="Search hooks, captions, transcripts, notes"
-            className="w-56 bg-transparent text-[13px] outline-none"
-          />
+          <div className="flex h-9 w-full min-w-0 items-center gap-2 rounded-lg border px-3 sm:ml-auto sm:w-[22rem]">
+            <Search
+              className="size-3.5 shrink-0 text-muted-foreground"
+              aria-hidden
+            />
+            <input
+              ref={searchRef}
+              value={q}
+              onChange={e => setQ(e.target.value)}
+              placeholder="Search hooks, captions, transcripts, notes"
+              aria-label="Search ideas"
+              className="min-w-0 flex-1 bg-transparent text-sm outline-none"
+            />
+          </div>
         </div>
       </div>
 
       {rows === undefined ? (
-        <p className="text-[13px] text-muted-foreground">Loading…</p>
+        <p className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
+          <LoaderCircle className="size-4 animate-spin" aria-hidden />
+          Reading the board
+        </p>
       ) : rows.length === 0 ? (
-        <p className="text-[13px] text-muted-foreground">{emptyText(tab, q)}</p>
+        <p className="rounded-2xl border border-dashed px-4 py-10 text-center text-sm text-muted-foreground">
+          {emptyText(tab, q)}
+        </p>
       ) : tab === "trends" ? (
         <TrendGroups
           rows={rows}
@@ -690,11 +754,12 @@ export function IdeationPage({
           onChanged={refresh}
         />
       ) : (
-        <div className="divide-y rounded-lg border">
+        <div className="divide-y rounded-2xl border bg-card [&>div:first-child]:rounded-t-2xl [&>div:last-child]:rounded-b-2xl">
           {rows.map((r: Row) => (
             <IdeaRow
               key={r.key}
               r={r}
+              tab={tab}
               active={cursor === r.key}
               open={openKeys.has(r.key)}
               onToggleOpen={() => toggleOpen(r.key)}
@@ -713,12 +778,55 @@ export function IdeationPage({
         />
       ) : null}
       {data?.capped ? (
-        <p className="mt-2 text-[12px] text-muted-foreground">
+        <p className="mt-3 text-xs text-muted-foreground">
           Showing the newest 150. Narrow the filter or search to find older
           ones.
         </p>
       ) : null}
     </div>
+  );
+}
+
+const ADD_IDEAS_KEY = "ideation-add-ideas";
+
+/**
+ * Pasting, scraping, the watchlist and Foreplay, folded into one panel above
+ * the list. Open or closed is remembered on this device.
+ */
+function AddIdeas({
+  hint,
+  children,
+}: {
+  hint: string;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(() => {
+    try {
+      return localStorage.getItem(ADD_IDEAS_KEY) === "open";
+    } catch {
+      return false;
+    }
+  });
+  return (
+    <details
+      open={open}
+      onToggle={e => {
+        const next = e.currentTarget.open;
+        setOpen(next);
+        try {
+          localStorage.setItem(ADD_IDEAS_KEY, next ? "open" : "closed");
+        } catch {
+          /* Storage may be off: the panel just starts closed next time. */
+        }
+      }}
+      className="mb-6 rounded-2xl border bg-card"
+    >
+      <summary className="flex flex-wrap items-center gap-x-2 gap-y-0.5 px-4 py-3 sm:px-6">
+        <span className="text-[15px] font-semibold">Add ideas</span>
+        <span className="text-xs text-muted-foreground">{hint}</span>
+      </summary>
+      <div className="divide-y border-t">{children}</div>
+    </details>
   );
 }
 
@@ -755,7 +863,7 @@ function PasteBox({
   const [industry, setIndustry] = useState<Board>(board ?? "other");
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<{
-    tone: "warn" | "bad";
+    tone: "good" | "bad";
     text: string;
   } | null>(null);
 
@@ -769,7 +877,7 @@ function PasteBox({
       setUrl("");
       setNote("");
       setFeedback({
-        tone: "warn",
+        tone: "good",
         text: "Queued. The radar fetches it and reads it within a few minutes; it shows under Fetching until the transcript is in.",
       });
       await onDone();
@@ -781,16 +889,16 @@ function PasteBox({
   };
 
   return (
-    <section className="mb-4 rounded-lg border p-3">
-      <div className="flex items-center gap-2">
-        <Lightbulb className="h-4 w-4" />
-        <h3 className="text-[14px] font-bold">Add a post</h3>
-        <span className="text-[12px] text-muted-foreground">
+    <section className="px-4 py-4 sm:px-6">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+        <Link2 className="size-4 text-muted-foreground" aria-hidden />
+        <h3 className="text-sm font-semibold">Add a post</h3>
+        <span className="text-xs text-muted-foreground">
           paste a link from Instagram, TikTok, Snapchat, YouTube or Facebook
         </span>
       </div>
       <div
-        className={`mt-2 grid gap-2 ${board ? "md:grid-cols-[minmax(0,1fr)_auto]" : "md:grid-cols-[minmax(0,1fr)_150px_auto]"}`}
+        className={`mt-3 grid gap-2 text-sm ${board ? "md:grid-cols-[minmax(0,1fr)_auto]" : "md:grid-cols-[minmax(0,1fr)_170px_auto]"}`}
       >
         <input
           value={url}
@@ -799,23 +907,21 @@ function PasteBox({
             if (e.key === "Enter") void submit();
           }}
           placeholder="https://www.instagram.com/reel/…"
+          aria-label="Link to the post"
           dir="ltr"
-          className="rounded border bg-transparent px-2 py-1 text-[13px]"
+          className={FIELD}
         />
         {board ? null : (
           <AnimatedSelect
             value={industry}
             onChange={e => setIndustry(e.target.value as Board)}
-            className="rounded border bg-transparent px-2 py-1 text-[13px]"
+            aria-label="Which board it goes on"
+            className="w-full"
           >
-            <BoardOptions />
+            {boardOptions()}
           </AnimatedSelect>
         )}
-        <Button
-          size="sm"
-          onClick={() => void submit()}
-          disabled={busy || !url.trim()}
-        >
+        <Button onClick={() => void submit()} disabled={busy || !url.trim()}>
           {busy ? "Queuing…" : "Fetch and save"}
         </Button>
       </div>
@@ -825,11 +931,11 @@ function PasteBox({
         dir="auto"
         maxLength={500}
         placeholder="Why it caught your eye (optional). It stays on the idea."
-        className="mt-2 min-h-[44px] text-[13px]"
+        className="mt-2 min-h-[44px] text-sm"
       />
       {feedback ? (
         <div
-          className={`callout-${feedback.tone} mt-2 rounded-md border p-2 text-[13px]`}
+          className={`callout-${feedback.tone} mt-3 rounded-xl border px-3 py-2 text-sm`}
         >
           {feedback.text}
         </div>
@@ -863,7 +969,7 @@ function ScrapeBox({
   const [ads, setAds] = useState(true);
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<{
-    tone: "warn" | "bad";
+    tone: "good" | "bad";
     text: string;
   } | null>(null);
   const [requests, setRequests] = useState<Row[] | undefined>(undefined);
@@ -911,7 +1017,7 @@ function ScrapeBox({
       });
       setInput("");
       setFeedback({
-        tone: "warn",
+        tone: "good",
         text:
           kind === "profile"
             ? "Queued. Within two minutes the radar reads the page, proposes its best videos, watches the account and pulls its current Meta ads."
@@ -927,28 +1033,28 @@ function ScrapeBox({
   };
 
   return (
-    <section className="mb-4 rounded-lg border p-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <Radar className="h-4 w-4" />
-        <h3 className="text-[14px] font-bold">
+    <section className="px-4 py-4 sm:px-6">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <Radar className="size-4 text-muted-foreground" aria-hidden />
+        <h3 className="text-sm font-semibold">
           Scrape a page or an ad library
         </h3>
-        <span className="text-[12px] text-muted-foreground">
-          any creator or brand page; or the Meta and Google ad libraries, where
-          an ad still running after weeks is a proven one
-        </span>
         <button
           type="button"
           onClick={() => setOpen(o => !o)}
           aria-expanded={open}
-          className="ml-auto rounded border px-2 py-0.5 text-[12px] font-semibold text-muted-foreground hover:bg-muted"
+          className={`${QUIET} ml-auto`}
         >
           {open ? "Hide" : "Open"}
         </button>
+        <p className="basis-full text-xs text-muted-foreground">
+          Any creator or brand page, or the Meta and Google ad libraries, where
+          an ad still running after weeks is a proven one.
+        </p>
       </div>
       {open ? (
-        <div className="mt-2 space-y-2">
-          <div className="flex flex-wrap gap-1.5">
+        <div className="mt-3 space-y-3">
+          <div role="group" aria-label="What to scrape" className={SCROLL_ROW}>
             {(
               [
                 [
@@ -964,17 +1070,13 @@ function ScrapeBox({
                 type="button"
                 onClick={() => setKind(k)}
                 aria-pressed={kind === k}
-                className={`rounded-full border px-2.5 py-0.5 text-[12px] font-semibold ${
-                  kind === k
-                    ? "bg-foreground text-background"
-                    : "text-muted-foreground hover:bg-muted"
-                }`}
+                className={`${CHIP} ${chipTone(kind === k)}`}
               >
                 {label}
               </button>
             ))}
           </div>
-          <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_150px_130px_auto]">
+          <div className="grid gap-2 text-sm md:grid-cols-[minmax(0,1fr)_170px_150px_auto]">
             <input
               value={input}
               onChange={e => setInput(e.target.value)}
@@ -988,15 +1090,16 @@ function ScrapeBox({
                     ? "Page name, Instagram handle, page id, or a keyword"
                     : "Advertiser name"
               }
+              aria-label="What to scrape"
               dir="auto"
-              className="rounded border bg-transparent px-2 py-1 text-[13px]"
+              className={FIELD}
             />
             {kind === "profile" ? (
               <AnimatedSelect
                 value={platform}
                 onChange={e => setPlatform(e.target.value)}
                 aria-label="Platform for a bare handle"
-                className="rounded border bg-transparent px-2 py-1 text-[13px]"
+                className="w-full"
               >
                 <option value="">Platform (from the link)</option>
                 <option value="instagram">Instagram</option>
@@ -1013,51 +1116,55 @@ function ScrapeBox({
                 }
                 aria-label="Country"
                 placeholder="Country (KW)"
-                className="rounded border bg-transparent px-2 py-1 text-[13px]"
+                className={FIELD}
               />
             )}
             {board ? null : (
               <AnimatedSelect
                 value={industry}
                 onChange={e => setIndustry(e.target.value as Board)}
-                className="rounded border bg-transparent px-2 py-1 text-[13px]"
+                aria-label="Which board it goes on"
+                className="w-full"
               >
-                <BoardOptions />
+                {boardOptions()}
               </AnimatedSelect>
             )}
             <Button
-              size="sm"
+              variant="outline"
               onClick={() => void submit()}
               disabled={busy || !input.trim()}
             >
               {busy ? "Queuing…" : "Scrape"}
             </Button>
           </div>
-          <div className="flex flex-wrap items-center gap-3 text-[12px] text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
             <input
               value={client}
               onChange={e => setClient(e.target.value)}
               placeholder="Client it is for (optional)"
+              aria-label="Client it is for"
               dir="auto"
-              className="rounded border bg-transparent px-2 py-0.5 text-[12px]"
+              className="h-8 w-full min-w-0 rounded-lg border bg-transparent px-3 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-56"
             />
             {kind === "profile" ? (
               <>
-                <label className="flex items-center gap-1">
+                <label className="flex items-center gap-2">
                   <input
                     type="checkbox"
+                    className="size-4 accent-primary"
                     checked={watch}
                     onChange={e => setWatch(e.target.checked)}
                   />
-                  watch this account every week
+                  Watch this account every week
                 </label>
-                <label className="flex items-center gap-1">
+                <label className="flex items-center gap-2">
                   <input
                     type="checkbox"
+                    className="size-4 accent-primary"
                     checked={ads}
                     onChange={e => setAds(e.target.checked)}
                   />
-                  pull its current Meta ads too
+                  Pull its current Meta ads too
                 </label>
               </>
             ) : (
@@ -1069,7 +1176,7 @@ function ScrapeBox({
           </div>
           {feedback ? (
             <div
-              className={`callout-${feedback.tone} rounded-md border p-2 text-[13px]`}
+              className={`callout-${feedback.tone} rounded-xl border px-3 py-2 text-sm`}
             >
               {feedback.text}
             </div>
@@ -1089,7 +1196,7 @@ function requestStatus(r: Row): {
     case "done":
       return { text: "Done", tone: "good" };
     case "running":
-      return { text: "Running", tone: "warn" };
+      return { text: "Running", tone: "neutral" };
     case "failed":
       return { text: "Failed", tone: "bad" };
     default:
@@ -1122,34 +1229,37 @@ function requestSummary(r: Row): string {
 function RequestsList({ rows }: { rows: Row[] | undefined }) {
   if (!rows) return null;
   if (!rows.length)
-    return <p className="text-[12px] text-muted-foreground">No scrapes yet.</p>;
+    return <p className="text-xs text-muted-foreground">No scrapes yet.</p>;
   return (
-    <div className="divide-y rounded-md border text-[12px]">
+    <div className="divide-y rounded-xl bg-muted/40 text-xs">
       {rows.map((r: Row) => {
         const st = requestStatus(r);
+        const summary = requestSummary(r);
         return (
           <div
             key={r.id}
-            className="flex flex-wrap items-center gap-2 px-2 py-1"
+            className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2"
           >
             <Pill tone={st.tone}>{st.text}</Pill>
-            <span className="font-semibold">
+            <span className="font-medium">
               {r.kind === "profile"
                 ? "Page"
                 : r.platform === "google"
                   ? "Google ads"
                   : "Meta ads"}
             </span>
-            <span className="truncate" dir="auto" title={r.input}>
+            <span className="min-w-0 truncate" dir="auto" title={r.input}>
               {r.input}
             </span>
             <span className="text-muted-foreground">
               {r.requested_by_name ? `by ${r.requested_by_name} · ` : ""}
               {fmtWhen(r.created_at)}
             </span>
-            <span className="basis-full text-muted-foreground" dir="auto">
-              {requestSummary(r)}
-            </span>
+            {summary ? (
+              <span className="basis-full text-muted-foreground" dir="auto">
+                {summary}
+              </span>
+            ) : null}
           </div>
         );
       })}
@@ -1208,31 +1318,30 @@ function WatchlistPanel() {
   };
 
   return (
-    <section className="mb-4 rounded-lg border p-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <Eye className="h-4 w-4" />
-        <h3 className="text-[14px] font-bold">Watchlist</h3>
-        <span className="text-[12px] text-muted-foreground">
-          what the Saturday scan reads: accounts, hashtags and Instagram keyword
-          searches
-          {rows ? ` · ${rows.length} entries` : ""}
-        </span>
+    <section className="px-4 py-4 sm:px-6">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <Eye className="size-4 text-muted-foreground" aria-hidden />
+        <h3 className="text-sm font-semibold">Watchlist</h3>
         <button
           type="button"
           onClick={() => setOpen(o => !o)}
           aria-expanded={open}
-          className="ml-auto rounded border px-2 py-0.5 text-[12px] font-semibold text-muted-foreground hover:bg-muted"
+          className={`${QUIET} ml-auto`}
         >
           {open ? "Hide" : "Open"}
         </button>
+        <p className="basis-full text-xs text-muted-foreground">
+          What the Saturday scan reads: accounts, hashtags and Instagram keyword
+          searches{rows ? `, ${rows.length} entries` : ""}.
+        </p>
       </div>
       {open ? (
-        <div className="mt-2 space-y-2">
-          <div className="grid gap-2 md:grid-cols-[130px_150px_minmax(0,1fr)_130px_auto]">
+        <div className="mt-3 space-y-3">
+          <div className="grid gap-2 text-sm md:grid-cols-[140px_160px_minmax(0,1fr)_150px_auto]">
             <AnimatedSelect
               value={platform}
               onChange={e => setPlatform(e.target.value)}
-              className="rounded border bg-transparent px-2 py-1 text-[13px]"
+              className="w-full"
               aria-label="Platform"
             >
               <option value="instagram">Instagram</option>
@@ -1243,7 +1352,7 @@ function WatchlistPanel() {
             <AnimatedSelect
               value={kind}
               onChange={e => setKind(e.target.value)}
-              className="rounded border bg-transparent px-2 py-1 text-[13px]"
+              className="w-full"
               aria-label="Kind"
             >
               <option value="account">Account</option>
@@ -1265,19 +1374,20 @@ function WatchlistPanel() {
                     ? "#hashtag"
                     : "keyword, e.g. ديكور الكويت"
               }
+              aria-label="Account, hashtag or keyword"
               dir="auto"
-              className="rounded border bg-transparent px-2 py-1 text-[13px]"
+              className={FIELD}
             />
             <AnimatedSelect
               value={industry}
               onChange={e => setIndustry(e.target.value as Board)}
-              className="rounded border bg-transparent px-2 py-1 text-[13px]"
+              className="w-full"
               aria-label="Industry"
             >
-              <BoardOptions />
+              {boardOptions()}
             </AnimatedSelect>
             <Button
-              size="sm"
+              variant="outline"
               onClick={() => void submit()}
               disabled={busy || !value.trim()}
             >
@@ -1285,23 +1395,26 @@ function WatchlistPanel() {
             </Button>
           </div>
           {rows === undefined ? (
-            <p className="text-[12px] text-muted-foreground">Loading…</p>
+            <p className="flex items-center gap-2 text-xs text-muted-foreground">
+              <LoaderCircle className="size-3.5 animate-spin" aria-hidden />
+              Reading the watchlist
+            </p>
           ) : rows.length === 0 ? (
-            <p className="text-[12px] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               Nothing watched yet.
             </p>
           ) : (
-            <div className="divide-y rounded-md border text-[12px]">
+            <div className="divide-y rounded-xl bg-muted/40 text-xs">
               {rows.map((w: Row) => (
                 <div
                   key={w.key}
-                  className="flex flex-wrap items-center gap-2 px-2 py-1"
+                  className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2"
                 >
                   <Pill>{platformLabel(w.platform)}</Pill>
                   <span className="text-muted-foreground">
                     {w.kind === "search" ? "keyword" : w.kind}
                   </span>
-                  <span className="font-semibold" dir="auto">
+                  <span className="font-medium" dir="auto">
                     {w.kind === "hashtag"
                       ? `#${w.value}`
                       : w.kind === "account"
@@ -1337,7 +1450,7 @@ function WatchlistPanel() {
                         })
                         .catch(e => toast.error(serverMessage(e)))
                     }
-                    className="ml-auto rounded border px-2 py-0.5 text-[11px] font-semibold text-muted-foreground hover:bg-muted"
+                    className={`${QUIET} ml-auto`}
                   >
                     Remove
                   </button>
@@ -1386,25 +1499,29 @@ function TrendGroups({
     g.rows.push(r);
   }
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       {groups.map(g => (
-        <section key={g.id} className="rounded-lg border">
-          <div className="flex flex-wrap items-center gap-2 border-b bg-muted/30 px-3 py-1.5 text-[13px]">
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
+        <section key={g.id} className="rounded-2xl border bg-card">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-t-2xl border-b bg-muted/30 px-4 py-2.5 text-sm">
+            <TrendingUp
+              className="size-4 shrink-0 text-muted-foreground"
+              aria-hidden
+            />
             <span className="font-semibold" dir="auto">
               {g.label}
             </span>
-            <span className="text-[12px] text-muted-foreground">
+            <span className="text-xs text-muted-foreground">
               {g.n ? `${g.n} accounts` : ""}
               {g.n ? " · " : ""}
               {g.rows.length} post{g.rows.length === 1 ? "" : "s"} here
             </span>
           </div>
-          <div className="divide-y">
+          <div className="divide-y [&>div:last-child]:rounded-b-2xl">
             {g.rows.map((r: Row) => (
               <IdeaRow
                 key={r.key}
                 r={r}
+                tab="trends"
                 active={cursor === r.key}
                 open={openKeys.has(r.key)}
                 onToggleOpen={() => onToggleOpen(r.key)}
@@ -1420,8 +1537,86 @@ function TrendGroups({
   );
 }
 
+/** Who posted it, where, and whose it is, as one quiet line of text. */
+function metaParts(r: Row, who: string): { text: string; title?: string }[] {
+  return [
+    { text: platformLabel(r.platform) },
+    {
+      text:
+        r.industry === "ours"
+          ? "Our industry"
+          : r.industry === "mahara"
+            ? "Mahara B2B"
+            : "Other industry",
+    },
+    ...(r.client ? [{ text: `for ${r.client}`, title: "Our client" }] : []),
+    ...(r.packaging_only
+      ? [
+          {
+            text: "tiny account",
+            title:
+              "Under 2,000 followers: this proves packaging, not audience.",
+          },
+        ]
+      : []),
+    ...(who
+      ? [{ text: `${r.origin === "manual" ? "Pasted by" : "Kept by"} ${who}` }]
+      : []),
+  ];
+}
+
+/** A small menu for a row's less used actions. Closes on a pick, a click outside or Escape. */
+function RowMenu({
+  label,
+  children,
+}: {
+  label: string;
+  children: (close: () => void) => React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        aria-label={label}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen(o => !o)}
+        className={ICON_BUTTON}
+      >
+        <Ellipsis className="size-4" aria-hidden />
+      </button>
+      {open ? (
+        <div
+          role="menu"
+          className="absolute top-full left-0 z-10 mt-1 grid min-w-44 gap-0.5 rounded-xl border bg-card p-1 text-left sm:right-0 sm:left-auto"
+        >
+          {children(() => setOpen(false))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function IdeaRow({
   r,
+  tab,
   active,
   open,
   onToggleOpen,
@@ -1430,6 +1625,7 @@ function IdeaRow({
   onChanged,
 }: {
   r: Row;
+  tab: Tab;
   active: boolean;
   open: boolean;
   onToggleOpen: () => void;
@@ -1442,11 +1638,18 @@ function IdeaRow({
   const retry = useAction(api.ideation.retry);
   const tier = tierLabel(r);
   const running = runningPill(r);
+  // Ads are judged by how long they ran, posts by the multiplier: one chip.
+  const score = running ?? tier;
+  // The tab already says saved, proposed, failed or dismissed.
+  const showStatus = TAB_STATUS[tab] !== r.status;
+  // On the Trends tab the group above already names the trend.
+  const showTrend = Boolean(r.trend_id) && tab !== "trends";
   const title = r.hook?.text || r.caption || r.url;
   const who =
     r.saved_by_name ??
     r.pasted_by_name ??
     (r.saved_by ? String(r.saved_by).split("@")[0] : "");
+  const meta = metaParts(r, who);
 
   const act = async (fn: () => Promise<unknown>, done: string) => {
     try {
@@ -1463,53 +1666,52 @@ function IdeaRow({
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: the keyboard path is the page-level shortcut handler */}
       {/* biome-ignore lint/a11y/noStaticElementInteractions: a click only moves the keyboard cursor; every action has its own button */}
       <div
-        className={`flex items-start gap-3 px-3 py-2 hover:bg-muted/50 ${active ? "ring-1 ring-inset ring-primary/60 bg-muted/40" : ""}`}
+        className={`flex flex-wrap items-start gap-3 rounded-t-[inherit] px-4 py-3 last:rounded-b-[inherit] hover:bg-muted/40 sm:flex-nowrap ${active ? "bg-muted/40 ring-1 ring-inset ring-primary/60" : ""}`}
         onClick={onFocus}
       >
         <Thumb r={r} />
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-1.5 text-[13px]">
-            <span className="font-semibold">@{r.author_handle || "?"}</span>
-            <Pill>{platformLabel(r.platform)}</Pill>
-            <TrendPill r={r} />
-            {r.industry === "ours" ? (
-              <Pill tone="neutral">Our industry</Pill>
-            ) : r.industry === "mahara" ? (
-              <Pill tone="neutral">Mahara B2B</Pill>
-            ) : (
-              <Pill>Other industry</Pill>
-            )}
-            {tier ? <Pill tone={tier.tone}>{tier.text}</Pill> : null}
-            {running ? (
-              <Pill
-                tone={running.tone}
-                title="How long this ad has been in the library. Weeks of spend on one creative means it works."
-              >
-                {running.text}
-              </Pill>
-            ) : null}
-            {r.client ? <Pill title="Our client">{r.client}</Pill> : null}
-            {r.packaging_only ? (
-              <span
-                className="text-[11px] text-muted-foreground"
-                title="Under 2,000 followers: this proves packaging, not audience."
-              >
-                tiny account
-              </span>
-            ) : null}
-            {statusPill(r)}
-            {who ? (
-              <span className="rounded border px-1 text-[10px] font-semibold text-muted-foreground">
-                {r.origin === "manual" ? "Pasted by" : "Kept by"} {who}
-              </span>
-            ) : null}
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <span className="min-w-0 text-sm font-medium [overflow-wrap:anywhere]">
+              @{r.author_handle || "?"}
+            </span>
+            <span className="min-w-0 text-xs text-muted-foreground">
+              {meta.map((m, i) => (
+                <span key={m.text} title={m.title}>
+                  {i ? " · " : ""}
+                  {m.text}
+                </span>
+              ))}
+            </span>
           </div>
-          <div className="truncate text-[13px]" dir="auto" title={title}>
+          <div
+            className="mt-0.5 line-clamp-2 break-words text-sm"
+            dir="auto"
+            title={title}
+          >
             {title}
           </div>
+          {showStatus || score || showTrend ? (
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              {showStatus ? statusPill(r) : null}
+              {score ? (
+                <Pill
+                  tone={score.tone}
+                  title={
+                    running
+                      ? "How long this ad has been in the library. Weeks of spend on one creative means it works."
+                      : undefined
+                  }
+                >
+                  {score.text}
+                </Pill>
+              ) : null}
+              {showTrend ? <TrendPill r={r} /> : null}
+            </div>
+          ) : null}
           {r.format_label ? (
             <div
-              className="truncate text-[12px] text-muted-foreground"
+              className="mt-1 truncate text-xs text-muted-foreground"
               title="How the video is built, as the radar read it"
             >
               {r.format_label}
@@ -1519,59 +1721,57 @@ function IdeaRow({
             </div>
           ) : null}
           {r.status === "failed" && r.error ? (
-            <div className="text-[12px] txt-bad">{r.error}</div>
+            <div className="mt-1 text-xs txt-bad">{r.error}</div>
           ) : null}
           {(r.saved_note || r.note) && (
             <div
-              className="whitespace-pre-wrap text-[12px] text-muted-foreground"
+              className="mt-1 whitespace-pre-wrap text-xs text-muted-foreground"
               dir="auto"
             >
               Why it works: {r.saved_note ?? r.note}
             </div>
           )}
         </div>
-        <div className="shrink-0 text-right text-[12px] text-muted-foreground">
-          {isAd(r) ? (
-            <>
-              <div className="tabular-nums">
-                {r.ad_started_at ? `since ${fmtDay(r.ad_started_at)}` : ""}
-                {Array.isArray(r.ad_platforms) && r.ad_platforms.length
-                  ? ` · ${r.ad_platforms
-                      .map((p: string) => String(p).toLowerCase())
-                      .join(", ")}`
-                  : ""}
-              </div>
-              <div className="tabular-nums">
-                {num(r.spend) !== null
-                  ? `$${n(Math.round(num(r.spend) ?? 0))} spent`
-                  : ""}
-                {num(r.leads) !== null ? ` · ${n(r.leads)} leads` : ""}
-                {num(r.cpl) !== null
-                  ? ` · $${(num(r.cpl) ?? 0).toFixed(0)} per lead`
-                  : ""}
-                {r.ad_format ? ` · ${String(r.ad_format)}` : ""}
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="tabular-nums">
-                {n(r.views)} views · {n(r.likes)} likes
-              </div>
-              <div>
-                {r.posted_at ? `posted ${fmtDay(r.posted_at)}` : ""}
-                {num(r.author_followers)
-                  ? ` · ${n(r.author_followers)} followers`
-                  : ""}
-              </div>
-            </>
-          )}
-          <div className="mt-1 flex flex-wrap justify-end gap-1">
+        <div className="flex basis-full flex-col gap-2 text-xs text-muted-foreground sm:max-w-[45%] sm:shrink-0 sm:basis-auto sm:items-end sm:text-right">
+          <div className="space-y-0.5">
+            {isAd(r) ? (
+              <>
+                <div className="tabular-nums">
+                  {r.ad_started_at ? `since ${fmtDay(r.ad_started_at)}` : ""}
+                  {Array.isArray(r.ad_platforms) && r.ad_platforms.length
+                    ? ` · ${r.ad_platforms
+                        .map((p: string) => String(p).toLowerCase())
+                        .join(", ")}`
+                    : ""}
+                </div>
+                <div className="tabular-nums">
+                  {num(r.spend) !== null
+                    ? `$${n(Math.round(num(r.spend) ?? 0))} spent`
+                    : ""}
+                  {num(r.leads) !== null ? ` · ${n(r.leads)} leads` : ""}
+                  {num(r.cpl) !== null
+                    ? ` · $${(num(r.cpl) ?? 0).toFixed(0)} per lead`
+                    : ""}
+                  {r.ad_format ? ` · ${String(r.ad_format)}` : ""}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="tabular-nums">
+                  {n(r.views)} views · {n(r.likes)} likes
+                </div>
+                <div>
+                  {r.posted_at ? `posted ${fmtDay(r.posted_at)}` : ""}
+                  {num(r.author_followers)
+                    ? ` · ${n(r.author_followers)} followers`
+                    : ""}
+                </div>
+              </>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
             {r.status === "proposed" ? (
-              <button
-                type="button"
-                onClick={onKeep}
-                className="rounded border px-2 py-0.5 text-[12px] font-semibold text-muted-foreground hover:bg-muted"
-              >
+              <button type="button" onClick={onKeep} className={QUIET_STRONG}>
                 Keep it
               </button>
             ) : null}
@@ -1581,7 +1781,7 @@ function IdeaRow({
                 onClick={() =>
                   void act(() => retry({ key: r.key }), "Queued again.")
                 }
-                className="rounded border px-2 py-0.5 text-[12px] font-semibold text-muted-foreground hover:bg-muted"
+                className={QUIET_STRONG}
               >
                 Try again
               </button>
@@ -1592,37 +1792,49 @@ function IdeaRow({
                 onClick={() =>
                   void act(() => restore({ key: r.key }), "Back in the list.")
                 }
-                className="rounded border px-2 py-0.5 text-[12px] font-semibold text-muted-foreground hover:bg-muted"
+                className={QUIET_STRONG}
               >
                 Restore
               </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() =>
-                  void act(() => dismiss({ key: r.key }), "Dismissed.")
-                }
-                className="rounded border px-2 py-0.5 text-[12px] font-semibold text-muted-foreground hover:bg-muted"
-              >
-                Dismiss
-              </button>
-            )}
-            <a
-              href={r.url}
-              target="_blank"
-              rel="noreferrer"
-              className="rounded border px-2 py-0.5 text-[12px] font-semibold text-muted-foreground hover:bg-muted"
-            >
-              <ExternalLink className="mr-1 inline h-3 w-3" />
-              Open
-            </a>
+            ) : null}
             <button
               type="button"
               onClick={onToggleOpen}
-              className="rounded border px-2 py-0.5 text-[12px] font-semibold text-muted-foreground hover:bg-muted"
+              aria-expanded={open}
+              className={QUIET}
             >
               {open ? "Hide" : "Read it"}
             </button>
+            <RowMenu label={`More for @${r.author_handle || "this post"}`}>
+              {close => (
+                <>
+                  {r.status === "dismissed" ? null : (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        close();
+                        void act(() => dismiss({ key: r.key }), "Dismissed.");
+                      }}
+                      className={MENU_ITEM}
+                    >
+                      Dismiss
+                    </button>
+                  )}
+                  <a
+                    role="menuitem"
+                    href={r.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={close}
+                    className={MENU_ITEM}
+                  >
+                    Open the post
+                    <ArrowUpRight className="ml-auto size-3.5" aria-hidden />
+                  </a>
+                </>
+              )}
+            </RowMenu>
           </div>
         </div>
       </div>
@@ -1633,17 +1845,25 @@ function IdeaRow({
 
 function Field({
   label,
+  note,
   children,
 }: {
   label: string;
+  /** A qualifier after the label, in plain case: "high confidence". */
+  note?: string;
   children: React.ReactNode;
 }) {
   return (
     <div>
-      <div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+      <div className="font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
         {label}
+        {note ? (
+          <span className="ml-1.5 font-sans normal-case tracking-normal">
+            {note}
+          </span>
+        ) : null}
       </div>
-      <div>{children}</div>
+      <div className="mt-1">{children}</div>
     </div>
   );
 }
@@ -1675,7 +1895,10 @@ function IdeaDetail({
   }, [detail, keyId]);
   if (r === undefined)
     return (
-      <p className="px-3 py-2 text-[13px] text-muted-foreground">Loading…</p>
+      <p className="flex items-center gap-2 border-t px-4 py-3 text-sm text-muted-foreground">
+        <LoaderCircle className="size-4 animate-spin" aria-hidden />
+        Reading the breakdown
+      </p>
     );
   if (!r) return null;
   const osd: { at_sec?: number; text?: string }[] = Array.isArray(
@@ -1691,6 +1914,18 @@ function IdeaDetail({
     : [];
   const warnings: string[] = Array.isArray(r.warnings) ? r.warnings : [];
   const tags: string[] = Array.isArray(r.tags) ? r.tags : [];
+  // How it is made, as one quiet line rather than a wall of chips.
+  const traits = [
+    r.format,
+    r.voice,
+    r.language,
+    r.dialect,
+    r.cta ? `CTA: ${r.cta}` : "",
+    ...tags,
+    num(r.duration_sec) !== null
+      ? `${Math.round(num(r.duration_sec) ?? 0)}s`
+      : "",
+  ].filter((x: unknown): x is string => typeof x === "string" && x.length > 0);
   const copy = [
     r.hook?.text ? `HOOK: ${r.hook.text}` : "",
     r.transcript ? `SCRIPT: ${r.transcript}` : "",
@@ -1706,7 +1941,7 @@ function IdeaDetail({
     .join("\n\n");
   const notCaptured = r.status !== "saved" || !r.captured_at;
   return (
-    <div className="space-y-3 border-t bg-muted/30 px-3 py-3 text-[13px]">
+    <div className="space-y-4 rounded-b-[inherit] border-t bg-muted/30 px-4 py-4 text-sm">
       {isStoryboard(r) && r.still_url ? (
         <img
           src={String(r.still_url)}
@@ -1714,43 +1949,17 @@ function IdeaDetail({
           loading="lazy"
           decoding="async"
           referrerPolicy="no-referrer"
-          className="max-h-56 rounded border"
+          className="max-h-56 rounded-lg border"
         />
       ) : null}
-      {r.trend_id || r.format_label ? (
-        <div className="flex flex-wrap items-center gap-1.5">
-          <TrendPill r={r} />
-          {r.format_label ? (
-            <span className="text-[12px] text-muted-foreground">
-              {r.format_label}
-              {r.topic ? ` · ${r.topic}` : ""}
-            </span>
-          ) : null}
-        </div>
+      {/* The row above already shows the trend and the format. */}
+      {r.topic || traits.length ? (
+        <p className="text-xs text-muted-foreground">
+          {[r.topic ? `Topic: ${r.topic}` : "", ...traits]
+            .filter(Boolean)
+            .join(" · ")}
+        </p>
       ) : null}
-      <div className="flex flex-wrap gap-1.5">
-        {[
-          r.format,
-          r.voice,
-          r.language,
-          r.dialect,
-          r.cta ? `CTA: ${r.cta}` : "",
-          ...tags,
-        ]
-          .filter(
-            (x: unknown): x is string => typeof x === "string" && x.length > 0,
-          )
-          .map((t: string) => (
-            <span key={t} className="rounded border px-1.5 py-0.5 text-[11px]">
-              {t}
-            </span>
-          ))}
-        {num(r.duration_sec) !== null ? (
-          <span className="rounded border px-1.5 py-0.5 text-[11px]">
-            {Math.round(num(r.duration_sec) ?? 0)}s
-          </span>
-        ) : null}
-      </div>
       {notCaptured ? (
         <p className="text-muted-foreground">
           {r.status === "proposed"
@@ -1768,13 +1977,14 @@ function IdeaDetail({
         </Field>
       ) : null}
       {r.hook?.text ? (
-        <Field label={`Hook${r.hook.type ? ` (${r.hook.type})` : ""}`}>
+        <Field label="Hook" note={r.hook.type || undefined}>
           <div dir="auto">{r.hook.text}</div>
         </Field>
       ) : null}
       {r.transcript ? (
         <Field
-          label={`What is said${conf.transcript ? ` (${conf.transcript} confidence)` : ""}`}
+          label="What is said"
+          note={conf.transcript ? `${conf.transcript} confidence` : undefined}
         >
           <div className="whitespace-pre-wrap" dir="auto">
             {r.transcript}
@@ -1789,7 +1999,12 @@ function IdeaDetail({
       ) : null}
       {osd.length ? (
         <Field
-          label={`What is on screen${conf.on_screen_text ? ` (${conf.on_screen_text} confidence)` : ""}`}
+          label="On screen"
+          note={
+            conf.on_screen_text
+              ? `${conf.on_screen_text} confidence`
+              : undefined
+          }
         >
           <ul className="space-y-0.5">
             {osd.map((o, i) => (
@@ -1856,7 +2071,7 @@ function IdeaDetail({
         </div>
       </Field>
       {warnings.length ? (
-        <div className="callout-warn rounded p-2 text-[12px]">
+        <div className="callout-warn rounded-xl border px-3 py-2 text-xs">
           {warnings.join(" ")}
         </div>
       ) : null}
@@ -1865,7 +2080,7 @@ function IdeaDetail({
         note={r.saved_note ?? r.note ?? ""}
         onSaved={onChanged}
       />
-      <div className="flex flex-wrap items-center gap-2 text-[12px] text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-muted-foreground">
         <CopyButton text={copy} label="Copy this idea" />
         {r.saved_at ? <span>Saved {fmtWhen(r.saved_at)}</span> : null}
         {r.method?.breakdown ? (
@@ -1890,7 +2105,7 @@ function NoteEditor({
   const [saved, setSaved] = useState(false);
   return (
     <Field label="Your note">
-      <div className="flex flex-col gap-1 md:flex-row md:items-start">
+      <div className="flex flex-col gap-2 md:flex-row md:items-start">
         <Textarea
           value={value}
           onChange={e => setValue(e.target.value)}
@@ -1898,7 +2113,7 @@ function NoteEditor({
           maxLength={500}
           rows={2}
           placeholder="What to take from it, which client it fits, the hook to try."
-          className="min-h-[44px] text-[13px]"
+          className="min-h-[44px] text-sm"
         />
         <Button
           size="sm"
@@ -1963,7 +2178,7 @@ function KeepDialog({
             minutes.
           </DialogDescription>
         </DialogHeader>
-        <div className="rounded border bg-muted/30 px-3 py-2 text-[13px]">
+        <div className="rounded-xl bg-muted/40 p-3 text-sm">
           <div className="font-semibold">
             @{r.author_handle} on {platformLabel(r.platform)}
           </div>
@@ -1988,7 +2203,7 @@ function KeepDialog({
             maxLength={500}
             placeholder="The hook, the contrast, the way it opens. One or two lines."
           />
-          <div className="text-right text-[11px] text-muted-foreground">
+          <div className="text-right text-xs tabular-nums text-muted-foreground">
             {note.length}/500
           </div>
         </div>

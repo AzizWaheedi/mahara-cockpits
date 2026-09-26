@@ -58,9 +58,6 @@
 }
 
 :root {
-  --sidebar-width: 16rem;
-  --sidebar-width-icon: 3rem;
-
   --mahara-teal: #00cfc8;
   --deep-space: #091333;
   --royal-blue: #2e5bd6;
@@ -230,6 +227,11 @@
   select,
   textarea {
     font-size: max(16px, 1em);
+  }
+  /* Not textareas: they are two rows at least, and a floor here would beat
+     their own min-h (a message draft shrank to 40px on a phone). */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+  select {
     min-height: 2.5rem;
   }
   main :is(button, [role="button"]):not([role="switch"]):not(.no-touch),
@@ -244,8 +246,8 @@
 
   /* Shared with Mahara B2B: one spring-driven lamp, not six flashing backgrounds. */
   .campaign-board { min-width: 1060px; border-collapse: separate; border-spacing: 0; }
-  .campaign-board th:last-child { width: 23%; }
-  .campaign-client-header { padding: 14px; border-left: 3px solid #00cfc8; background: color-mix(in oklch, var(--muted) 55%, var(--card)); }
+  .campaign-board > thead th:last-child { width: 23%; }
+  .campaign-client-header { padding: 14px; border-left: 3px solid var(--mahara-teal); background: var(--muted); }
   .campaign-client-name { display: inline-block; font-size: 20px; font-weight: 600; line-height: 1.3; letter-spacing: -.4px; color: var(--foreground); }
   .campaign-client-header .campaign-client-assets { float: right; gap: 14px; margin-top: 5px; font-size: 12px; }
   .campaign-client-header .campaign-client-assets a, .campaign-client-header .campaign-client-assets button { color: var(--muted-foreground); font-weight: 400; text-underline-offset: 3px; }
@@ -281,7 +283,7 @@
     width: 3px;
     height: 56%;
     border-radius: 0 3px 3px 0;
-    background: #00cfc8;
+    background: var(--mahara-teal);
     box-shadow: 0 0 12px 1px rgb(0 207 200 / 70%);
   }
   [data-slot="select-trigger"].cockpit-select-trigger {
@@ -299,10 +301,12 @@
   }
   .cockpit-select-trigger > svg { transition: transform 200ms cubic-bezier(.2,.8,.2,1); }
   .cockpit-select-trigger[data-state="open"] > svg { transform: rotate(180deg); }
-  .cockpit-select-trigger[data-state="open"] { border-color: #00aaa4; box-shadow: 0 0 0 3px rgb(0 207 200 / 8%); }
+  .cockpit-select-trigger[data-state="open"] { border-color: var(--mahara-teal); box-shadow: 0 0 0 3px rgb(0 207 200 / 8%); }
   [data-slot="select-content"].cockpit-select-menu { border-radius: 12px; box-shadow: 0 14px 35px rgb(9 19 51 / 14%); animation-duration: 190ms; }
+  /* No grey drop shadow on Deep Space: the border carries the edge. */
+  .dark [data-slot="select-content"].cockpit-select-menu { box-shadow: none; }
   .cockpit-select-menu [data-slot="select-item"][data-state="checked"] { background: rgb(0 207 200 / 10%); color: var(--foreground); }
-  .cockpit-select-menu [data-state="checked"] svg { color: #009c90; }
+  .cockpit-select-menu [data-state="checked"] svg { color: var(--mahara-teal); }
   [data-slot="tabs-content"][data-state="active"] { animation: cockpit-content-in 180ms cubic-bezier(.2,.8,.2,1); }
   @keyframes cockpit-content-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
   @media (prefers-reduced-motion: reduce) {
@@ -385,6 +389,17 @@
     background-color: color-mix(in oklch, var(--warning) 12%, transparent);
     border-color: color-mix(in oklch, var(--warning) 45%, transparent);
     color: color-mix(in oklch, var(--warning) 80%, var(--foreground));
+  }
+  /* Same recipe in red ("deal with this first") and green ("make more of this"). */
+  .callout-bad {
+    background-color: color-mix(in oklch, var(--destructive) 12%, transparent);
+    border-color: color-mix(in oklch, var(--destructive) 45%, transparent);
+    color: color-mix(in oklch, var(--destructive) 80%, var(--foreground));
+  }
+  .callout-good {
+    background-color: color-mix(in oklch, var(--success) 12%, transparent);
+    border-color: color-mix(in oklch, var(--success) 45%, transparent);
+    color: color-mix(in oklch, var(--success) 80%, var(--foreground));
   }
 }
 

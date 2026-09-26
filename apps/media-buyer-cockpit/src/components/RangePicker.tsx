@@ -104,7 +104,7 @@ export function RangePicker({
             />
             <div className="cockpit-range-summary">
               <span>{draft.from ? isoDay(draft.from) : "Start date"}</span>
-              <span aria-hidden="true">→</span>
+              <span className="text-muted-foreground">to</span>
               <span>{draft.to ? isoDay(draft.to) : "End date"}</span>
             </div>
           </div>

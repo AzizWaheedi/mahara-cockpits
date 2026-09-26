@@ -17,13 +17,11 @@ export function TrackingIssues() {
   const total = rows.reduce((n, r) => n + r.count, 0);
 
   return (
-    <section className="mb-4 rounded-xl border p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <div className="text-[12px] font-bold uppercase tracking-wide text-muted-foreground">
-            Tracking backlog
-          </div>
-          <p className="text-[13px] text-muted-foreground">
+    <section className="rounded-2xl border bg-card p-4 sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 max-w-2xl">
+          <h2 className="text-[15px] font-semibold">Tracking backlog</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
             {total} ad{total === 1 ? "" : "s"} across {rows.length} client
             {rows.length === 1 ? "" : "s"} without UTM strings or a lead form.
             Backlog, not today's work: a ClickUp task on the ads board carries
@@ -33,7 +31,7 @@ export function TrackingIssues() {
         <Button
           size="sm"
           variant="outline"
-          className="h-7 text-[12px]"
+          aria-expanded={open}
           onClick={() => setOpen(!open)}
         >
           {open ? "Hide" : "Show"}
@@ -41,21 +39,21 @@ export function TrackingIssues() {
       </div>
 
       {open && (
-        <div className="mt-2.5 space-y-1.5">
+        <ul className="mt-4 divide-y">
           {rows.map(r => (
-            <div key={r.client} className="rounded border bg-background p-2">
-              <div className="text-[13px] font-semibold">
+            <li key={r.client} className="py-2.5 first:pt-0 last:pb-0">
+              <div className="text-sm font-medium">
                 {r.client}{" "}
-                <span className="font-normal text-muted-foreground">
+                <span className="font-normal tabular-nums text-muted-foreground">
                   · {r.count}
                 </span>
               </div>
-              <div className="mt-0.5 text-[12px] text-muted-foreground">
+              <div className="mt-0.5 text-xs text-muted-foreground">
                 {[...new Set(r.ads.map(a => a.issue))].join(" · ")}
               </div>
-            </div>
+            </li>
           ))}
-        </div>
+        </ul>
       )}
     </section>
   );

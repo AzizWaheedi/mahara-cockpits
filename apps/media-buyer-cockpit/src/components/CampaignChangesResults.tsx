@@ -1,4 +1,5 @@
 import { useAction, useMutation, useQuery } from "convex/react";
+import { ArrowUpRight } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AnimatedSelect } from "@/components/ui/animated-select";
@@ -30,6 +31,8 @@ type Change = {
   };
 };
 
+const sentenceCase = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+
 const money = (value: number | null) =>
   value === null ? "n/a" : `$${value.toFixed(2)}`;
 
@@ -43,14 +46,14 @@ function Window({
   leadsOnly: boolean;
 }) {
   return (
-    <div className="min-w-0 rounded-md border bg-background p-2.5">
-      <div className="text-[12px] font-semibold">
+    <div className="min-w-0 rounded-lg bg-background/60 p-2.5">
+      <div className="text-xs font-semibold">
         {title}{" "}
         <span className="font-normal text-muted-foreground">
           {data.from} to {data.to}
         </span>
       </div>
-      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[12px] tabular-nums">
+      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs tabular-nums">
         <span>
           Spend <strong>{money(data.spend)}</strong>
         </span>
@@ -67,7 +70,7 @@ function Window({
         )}
       </div>
       {data.daysWithData < 3 && (
-        <div className="mt-1 text-[11px] text-muted-foreground">
+        <div className="mt-1 text-xs text-muted-foreground">
           {data.daysWithData} of 3 daily records available
         </div>
       )}
@@ -119,9 +122,23 @@ export function CampaignChangesResults({
       />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h3 className="text-[14px] font-bold">Changes &amp; Results</h3>
-          <p className="text-[12px] text-muted-foreground">
+          <h3 className="text-sm font-semibold">Changes and results</h3>
+          <p className="text-xs text-muted-foreground">
             What changed in this campaign and what was observed afterwards.
+            {taskUrl && (
+              <>
+                {" "}
+                <a
+                  className="inline-flex items-center gap-0.5 text-primary hover:underline"
+                  href={taskUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Campaign task in ClickUp
+                  <ArrowUpRight className="size-3.5" aria-hidden />
+                </a>
+              </>
+            )}
           </p>
         </div>
         <Button size="sm" variant="outline" onClick={() => setAdding(v => !v)}>
@@ -129,14 +146,14 @@ export function CampaignChangesResults({
         </Button>
       </div>
       {adding && (
-        <div className="rounded-md border bg-background p-3">
+        <div className="rounded-xl bg-muted/40 p-3">
           <label
             htmlFor="campaign-change-note"
-            className="block text-[12px] font-semibold"
+            className="block text-xs font-semibold"
           >
             What changed?
           </label>
-          <p className="mb-2 text-[12px] text-muted-foreground">
+          <p className="mb-2 text-xs text-muted-foreground">
             Add work missing from Meta's activity log. It will also be posted to
             the campaign's ClickUp task.
           </p>
@@ -156,27 +173,24 @@ export function CampaignChangesResults({
         </div>
       )}
       {data === undefined ? (
-        <p className="rounded-md border p-3 text-[13px] text-muted-foreground">
+        <p className="rounded-xl bg-muted/40 p-3 text-sm text-muted-foreground">
           Loading changes…
         </p>
       ) : data.changes.length === 0 ? (
-        <p className="rounded-md border p-3 text-[13px] text-muted-foreground">
+        <p className="rounded-xl bg-muted/40 p-3 text-sm text-muted-foreground">
           No campaign changes are available for the last {data.periodDays} days.
           Add a change only if it is missing from Meta.
         </p>
       ) : (
         <div className="space-y-2">
           {data.changes.map(change => (
-            <article
-              key={change.id}
-              className="rounded-md border bg-background p-3"
-            >
+            <article key={change.id} className="rounded-xl bg-muted/40 p-3">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <div className="text-[13px] font-semibold" dir="auto">
+                  <div className="text-sm font-semibold" dir="auto">
                     {change.label}
                   </div>
-                  <div className="text-[12px] text-muted-foreground">
+                  <div className="text-xs text-muted-foreground">
                     {new Date(change.at).toLocaleString("en-GB", {
                       timeZone: "Asia/Kuwait",
                       day: "numeric",
@@ -185,23 +199,9 @@ export function CampaignChangesResults({
                       minute: "2-digit",
                     })}{" "}
                     · {change.actor} · {change.source}
-                    {taskUrl && (
-                      <>
-                        {" "}
-                        ·{" "}
-                        <a
-                          className="underline"
-                          href={taskUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          Campaign task in ClickUp
-                        </a>
-                      </>
-                    )}
                   </div>
                 </div>
-                <span className="rounded border px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">
+                <span className="rounded-full border px-2 py-0.5 text-xs font-medium text-muted-foreground">
                   {change.result.state === "too_early"
                     ? "Too early"
                     : change.result.state === "inconclusive"
@@ -221,14 +221,14 @@ export function CampaignChangesResults({
                   leadsOnly={leadsOnly}
                 />
               </div>
-              <p className="mt-2 text-[12px] text-muted-foreground">
+              <p className="mt-2 text-xs text-muted-foreground">
                 {change.result.reason}
               </p>
             </article>
           ))}
         </div>
       )}
-      <p className="text-[11px] text-muted-foreground">
+      <p className="text-xs text-muted-foreground">
         {data?.source ?? ""} The change day is excluded; each side uses three
         complete Kuwait days. Matched bookings are not every client booking.
         Other changes may affect the result.
@@ -288,13 +288,11 @@ function CreativeLaunchResult({
   if (!request.launched_meta_ad_id) return null;
   if (!result)
     return (
-      <p className="text-[12px] text-muted-foreground">
-        Loading launch results…
-      </p>
+      <p className="text-xs text-muted-foreground">Loading launch results…</p>
     );
   return (
     <div className="mt-2 space-y-2">
-      <div className="text-[12px] font-semibold">
+      <div className="text-xs font-semibold">
         Observed after the creative launch
       </div>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -311,7 +309,7 @@ function CreativeLaunchResult({
           leadsOnly={leadsOnly}
         />
       </div>
-      <p className="text-[12px] text-muted-foreground">
+      <p className="text-xs text-muted-foreground">
         Campaign result:{" "}
         {result.campaign.state === "too_early"
           ? "Too early"
@@ -322,7 +320,7 @@ function CreativeLaunchResult({
         {request.launch_time_source === "buyer_date" &&
           " Launch day was entered by the media buyer."}
       </p>
-      <p className="text-[11px] text-muted-foreground">
+      <p className="text-xs text-muted-foreground">
         {result.sourceBefore
           ? "These ads ran in different periods. The comparison is observational."
           : "No original ad was selected; the campaign result above is observational."}{" "}
@@ -404,25 +402,23 @@ function CreativeRequests({
     }
   };
   return (
-    <div className="rounded-md border bg-muted/20 p-3">
+    <div className="rounded-xl bg-muted/40 p-3">
       <div className="flex items-center justify-between gap-2">
-        <h3 className="text-[13px] font-bold">Creative requests</h3>
+        <h3 className="text-sm font-semibold">Creative requests</h3>
         <button
           type="button"
-          className="text-[12px] underline"
+          className="text-xs underline"
           onClick={() => void refresh()}
         >
           Refresh
         </button>
       </div>
-      {error && <p className="mt-2 text-[12px] txt-bad">{error}</p>}
+      {error && <p className="mt-2 text-xs txt-bad">{error}</p>}
       {rows === null && !error && (
-        <p className="mt-2 text-[12px] text-muted-foreground">
-          Loading requests…
-        </p>
+        <p className="mt-2 text-xs text-muted-foreground">Loading requests…</p>
       )}
       {rows?.length === 0 && (
-        <p className="mt-2 text-[12px] text-muted-foreground">
+        <p className="mt-2 text-xs text-muted-foreground">
           No creative request yet. Start one in Recommendations.
         </p>
       )}
@@ -436,17 +432,14 @@ function CreativeRequests({
         };
         const reasonLabel = reasonLabels[row.request_reason ?? ""];
         return (
-          <div
-            key={row.id}
-            className="mt-2 rounded-md border bg-background p-3"
-          >
-            <div className="flex flex-wrap items-center gap-2 text-[12px]">
+          <div key={row.id} className="mt-2 rounded-lg bg-background/60 p-3">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
               <strong dir="auto">{reasonLabel ?? "Creative request"}</strong>
               <span className="text-muted-foreground" dir="auto">
                 {row.source_ad_name ?? "Campaign-wide"}
               </span>
-              <span className="rounded border px-1.5 py-0.5 text-[11px]">
-                {row.status.replaceAll("_", " ")}
+              <span className="rounded-full border px-2 py-0.5 text-xs">
+                {sentenceCase(row.status.replaceAll("_", " "))}
               </span>
               {safeLink(row.script_task_url) && (
                 <a
@@ -480,11 +473,11 @@ function CreativeRequests({
               )}
             </div>
             {row.last_error && (
-              <p className="mt-1 text-[12px] txt-warn">{row.last_error}</p>
+              <p className="mt-1 text-xs txt-warn">{row.last_error}</p>
             )}
             {!row.launched_meta_ad_id && choices.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-2">
-                <p className="w-full text-[11px] text-muted-foreground">
+                <p className="w-full text-xs text-muted-foreground">
                   Confirm this ad uses the finished cut before linking it.
                 </p>
                 <AnimatedSelect
@@ -496,7 +489,7 @@ function CreativeRequests({
                       [row.id]: event.target.value,
                     }))
                   }
-                  className="min-w-40 flex-1 rounded-md border bg-background px-2 py-1 text-[12px]"
+                  className="min-w-40 flex-1 rounded-md border bg-background px-2 py-1 text-xs"
                 >
                   <option value="">Select the launched new ad</option>
                   {choices.map(ad => (
@@ -506,7 +499,7 @@ function CreativeRequests({
                   ))}
                 </AnimatedSelect>
                 {/* biome-ignore lint/a11y/noLabelWithoutControl: The custom control renders a button inside this label. */}
-                <label className="flex items-center gap-1.5 text-[12px]">
+                <label className="flex items-center gap-1.5 text-xs">
                   Day ad went live
                   <DateInput
                     aria-label={`Launch day for ${row.source_ad_name ?? "campaign"}`}
@@ -541,7 +534,7 @@ function CreativeRequests({
             />
             {row.launched_meta_ad_id && !row.verdict && (
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                <span className="text-[12px] text-muted-foreground">
+                <span className="text-xs text-muted-foreground">
                   After reviewing the result:
                 </span>
                 <Button
@@ -571,12 +564,12 @@ function CreativeRequests({
               </div>
             )}
             {row.verdict && (
-              <p className="mt-2 text-[12px] font-semibold">
+              <p className="mt-2 text-xs font-semibold">
                 Buyer assessment: {row.verdict.replaceAll("_", " ")}
               </p>
             )}
             {row.feedback_error && (
-              <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] txt-warn">
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs txt-warn">
                 <span>{row.feedback_error}</span>
                 <Button
                   size="sm"

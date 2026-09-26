@@ -101,10 +101,10 @@ export function TeamPage() {
   const noPurpose = data.meetings.filter(m => !m.purpose).length;
 
   return (
-    <div className="mx-auto grid w-full max-w-5xl gap-5">
-      <header className="flex flex-wrap items-start justify-between gap-3">
+    <div className="mx-auto grid w-full max-w-5xl gap-6">
+      <header className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0 max-w-2xl">
-          <h1 className="text-xl font-semibold tracking-tight">
+          <h1 className="text-2xl font-semibold tracking-tight">
             Team meetings
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -129,7 +129,7 @@ export function TeamPage() {
       ) : null}
 
       {noPurpose ? (
-        <p className="rounded-lg border bg-card px-4 py-3 text-sm">
+        <p className="rounded-2xl border bg-card px-4 py-3 text-sm sm:px-6">
           {noPurpose === data.meetings.length
             ? "No meeting has a purpose written yet."
             : `${noPurpose} of ${data.meetings.length} meetings have no purpose written yet.`}{" "}
@@ -140,7 +140,7 @@ export function TeamPage() {
         </p>
       ) : null}
 
-      <div className="-mx-1 flex gap-1 overflow-x-auto px-1 [scrollbar-width:none] sm:flex-wrap [&::-webkit-scrollbar]:hidden">
+      <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 [scrollbar-width:none] sm:flex-wrap [&::-webkit-scrollbar]:hidden">
         {(
           [
             ["mine", "Yours"],
@@ -179,13 +179,13 @@ export function TeamPage() {
       </div>
 
       {shown.length ? (
-        <ul className="overflow-hidden rounded-xl border bg-card">
+        <ul className="overflow-hidden rounded-2xl border bg-card">
           {shown.map(m => (
             <MeetingRow key={m.id} m={m} byId={byId} today={data.today} />
           ))}
         </ul>
       ) : (
-        <div className="rounded-xl border bg-card px-4 py-10 text-center">
+        <div className="rounded-2xl border bg-card px-4 py-10 text-center">
           <p className="text-sm font-medium">
             {filter === "mine"
               ? "You are not in any meeting yet."
@@ -204,10 +204,10 @@ export function TeamPage() {
 }
 
 const chip = (on: boolean) =>
-  `shrink-0 rounded-full border px-2.5 py-1 text-xs transition-colors ${
+  `inline-flex h-8 shrink-0 items-center rounded-full px-3 text-xs font-medium transition-colors ${
     on
-      ? "border-transparent bg-foreground text-background"
-      : "text-muted-foreground hover:text-foreground"
+      ? "bg-primary/15 text-foreground ring-1 ring-inset ring-primary/40"
+      : "text-muted-foreground hover:bg-muted hover:text-foreground"
   }`;
 
 function MeetingRow({
@@ -235,12 +235,15 @@ function MeetingRow({
           <span className="block font-medium" dir="auto">
             {m.title}
           </span>
-          <span
-            className={`mt-0.5 block text-sm ${m.purpose ? "text-muted-foreground" : "italic text-muted-foreground/80"}`}
-            dir="auto"
-          >
-            {m.purpose ?? "No purpose written yet"}
-          </span>
+          {/* A missing purpose is counted once, in the note above the list. */}
+          {m.purpose ? (
+            <span
+              className="mt-0.5 block text-sm text-muted-foreground"
+              dir="auto"
+            >
+              {m.purpose}
+            </span>
+          ) : null}
           <span className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
             {hosts.length ? (
               <span className="flex items-center gap-1.5">
@@ -311,7 +314,7 @@ function NewMeeting({
   const [error, setError] = useState<string | null>(null);
   return (
     <form
-      className="grid gap-3 rounded-xl border bg-card p-4 sm:p-5"
+      className="grid gap-3 rounded-2xl border bg-card p-4 sm:p-6"
       onSubmit={async e => {
         e.preventDefault();
         setBusy(true);
@@ -329,7 +332,7 @@ function NewMeeting({
         }
       }}
     >
-      <h2 className="text-sm font-semibold">A new meeting</h2>
+      <h2 className="text-[15px] font-semibold">A new meeting</h2>
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Name">
           {id => (

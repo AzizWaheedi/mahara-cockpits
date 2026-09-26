@@ -4,7 +4,6 @@ import {
   AlertTriangle,
   Bot,
   Check,
-  ExternalLink,
   Pencil,
   Plus,
   Search,
@@ -123,24 +122,38 @@ const agoAt = (now: number, ms?: number | null) => {
   return `${Math.round(m / 1440)} d ago`;
 };
 
+/** A seat, as a neutral pill: the name says which one, no colour code to learn. */
 function RoleChip({ role }: { role: string }) {
-  const tone =
-    role === "admin"
-      ? "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-100"
-      : role === "media_buyer"
-        ? "bg-sky-100 text-sky-900 dark:bg-sky-900/40 dark:text-sky-100"
-        : role === "csm"
-          ? "bg-teal-100 text-teal-900 dark:bg-teal-900/40 dark:text-teal-100"
-          : role === "editor"
-            ? "bg-rose-100 text-rose-900 dark:bg-rose-900/40 dark:text-rose-100"
-            : role === "sales"
-              ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-100"
-              : "bg-violet-100 text-violet-900 dark:bg-violet-900/40 dark:text-violet-100";
   return (
-    <span
-      className={`rounded-md px-1.5 py-0.5 text-[11px] font-semibold ${tone}`}
-    >
+    <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium">
       {ROLE_META.find(r => r.key === role)?.label ?? role}
+    </span>
+  );
+}
+
+const DOT: Record<"good" | "warn" | "bad" | "idle", string> = {
+  good: "var(--success)",
+  warn: "var(--warning)",
+  bad: "var(--destructive)",
+  idle: "color-mix(in oklch, var(--muted-foreground) 50%, transparent)",
+};
+
+/** A status line: the colour on a small dot, the words muted. */
+function Dot({
+  tone,
+  children,
+}: {
+  tone: keyof typeof DOT;
+  children: React.ReactNode;
+}) {
+  return (
+    <span className="inline-flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+      <span
+        aria-hidden
+        className="size-1.5 shrink-0 rounded-full"
+        style={{ backgroundColor: DOT[tone] }}
+      />
+      <span className="min-w-0 truncate">{children}</span>
     </span>
   );
 }
@@ -241,13 +254,27 @@ export function AdminPage() {
   const health = (overview?.health ?? []) as Any[];
   const healthFor = (app: string) => health.find(h => h.app === app);
 
+  const sourcesDown = ((overview?.sources ?? []) as Any[]).filter(
+    src => src.ok === false && src.streak >= 3,
+  ).length;
+  const jobsFailing = ((overview?.scheduled ?? []) as Any[]).filter(
+    j => !j.ok || now - j.at > Math.max(3 * j.everyMin, 45) * 60_000,
+  ).length;
+  const healthLine = [
+    sourcesDown
+      ? `${sourcesDown} data source${sourcesDown === 1 ? "" : "s"} down`
+      : "",
+    jobsFailing
+      ? `${jobsFailing} job${jobsFailing === 1 ? "" : "s"} failing`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
+
   return (
     <div className="mx-auto w-full max-w-6xl space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="text-[12px] font-bold uppercase tracking-widest text-teal-600">
-            Mahara portal
-          </p>
+        <div className="min-w-0">
           <h1 className="text-2xl font-semibold tracking-tight">Admin</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             One sign-in for the whole team. Add a person, give them a seat, and
@@ -260,100 +287,58 @@ export function AdminPage() {
       </header>
 
       {/* Cockpits: switch, and see at a glance that each one is alive. */}
-      <section className="grid gap-3 md:grid-cols-3">
+      <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {Object.entries(COCKPIT_META).map(([key, meta]) => {
           const h = healthFor(APP_KEY[key]);
           const ok = h ? h.ok : undefined;
           return (
-            <Card key={key} className="relative overflow-hidden">
-              <div
-                className={`absolute inset-x-0 top-0 h-1 ${ok === false ? "bg-red-500" : ok ? "bg-emerald-500" : "bg-muted"}`}
-              />
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center justify-between text-base">
-                  {meta.label}
-                  <span
-                    className={`inline-flex items-center gap-1 text-[11px] font-medium ${ok === false ? "text-red-600" : ok ? "text-emerald-600" : "text-muted-foreground"}`}
-                  >
-                    <span
-                      className={`size-2 rounded-full ${ok === false ? "bg-red-500" : ok ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
-                    />
-                    {ok === false
-                      ? `failing: ${(h.failing ?? []).join(", ")}`
-                      : ok
-                        ? `healthy, checked ${ago(h.at)}`
-                        : "no check yet"}
-                  </span>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="flex items-center justify-between">
-                <p className="text-sm text-muted-foreground">{meta.blurb}</p>
+            <div
+              key={key}
+              className="flex flex-col gap-3 rounded-2xl border bg-card p-4 sm:p-5"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[15px] font-semibold">{meta.label}</div>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {meta.blurb}
+                  </p>
+                </div>
                 <Button size="sm" variant="outline" asChild>
-                  <Link to={meta.to}>
-                    Open <ExternalLink className="size-3.5" />
-                  </Link>
+                  <Link to={meta.to}>Open</Link>
                 </Button>
-              </CardContent>
-            </Card>
+              </div>
+              <Dot tone={ok === false ? "bad" : ok ? "good" : "idle"}>
+                {ok === false
+                  ? `Failing: ${(h.failing ?? []).join(", ")}`
+                  : ok
+                    ? `Healthy, checked ${ago(h.at)}`
+                    : "No check yet"}
+              </Dot>
+            </div>
           );
         })}
       </section>
 
-      {/* Numbers that say whether the machine is running. */}
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat
-          icon={Users}
-          label="Team"
-          value={overview?.counts?.members ?? "…"}
-          hint={`${overview?.counts?.admins ?? 0} admin${overview?.counts?.admins === 1 ? "" : "s"}`}
-        />
-        <Stat
-          icon={Activity}
-          label="Last data sync"
-          value={overview?.lastSync ? ago(overview.lastSync.at) : "…"}
-          hint={
-            overview?.lastSync?.problems?.length
-              ? `${overview.lastSync.problems.length} problem(s)`
-              : overview?.lastSync
-                ? "clean"
-                : "no run yet"
-          }
-          bad={Boolean(overview?.lastSync && !overview.lastSync.ok)}
-        />
-        <Stat
-          icon={ShieldCheck}
-          label="Live campaigns"
-          value={overview?.counts?.liveCampaigns ?? "…"}
-          hint={`${overview?.counts?.campaigns ?? 0} on the board, ${overview?.counts?.clients ?? 0} clients`}
-        />
-        <Stat
-          icon={Bot}
-          label="Hermes"
-          value={overview?.hermes ? `${overview.hermes.queued} waiting` : "…"}
-          hint={
-            overview?.hermes
-              ? `${overview.hermes.doneToday} done today, last ${ago(overview.hermes.lastDone)}`
-              : ""
-          }
-          bad={(overview?.hermes?.queued ?? 0) > 5}
-        />
-      </section>
-
       {/* The team. */}
-      <Card>
-        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
-          <CardTitle className="text-base">Team members</CardTitle>
-          <div className="relative">
+      <Card className="gap-0 py-0">
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0 p-4 sm:p-6">
+          <CardTitle className="text-[15px]">
+            Team members{" "}
+            <span className="font-normal text-muted-foreground">
+              {overview?.counts?.members ?? ""}
+            </span>
+          </CardTitle>
+          <div className="relative w-full sm:w-56">
             <Search className="pointer-events-none absolute left-2 top-2.5 size-4 text-muted-foreground" />
             <Input
               value={query}
               onChange={e => setQuery(e.target.value)}
               placeholder="Find a person"
-              className="h-9 w-56 pl-8"
+              className="h-9 w-full pl-8"
             />
           </div>
         </CardHeader>
-        <CardContent className="overflow-x-auto p-0">
+        <CardContent className="overflow-x-auto border-t p-0">
           <Table>
             <TableHeader>
               <TableRow>
@@ -388,7 +373,7 @@ export function AdminPage() {
                         {m.email}
                       </div>
                       {m.note ? (
-                        <div className="text-xs text-muted-foreground italic">
+                        <div className="text-xs text-muted-foreground">
                           {m.note}
                         </div>
                       ) : null}
@@ -400,7 +385,7 @@ export function AdminPage() {
                             // Kept together, so the role never wraps away from its seat.
                             <span key={r} className="inline-flex gap-1">
                               <RoleChip role={r} />
-                              <span className="rounded-md border border-emerald-200 px-1.5 py-0.5 text-[11px] font-medium text-emerald-800 dark:border-emerald-900 dark:text-emerald-200">
+                              <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
                                 {salesRoleLabel(m.salesRole)}
                               </span>
                             </span>
@@ -464,222 +449,277 @@ export function AdminPage() {
         </CardContent>
       </Card>
 
-      {/* Every outside system, with the fix next to it when it is down. */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Activity className="size-4 text-teal-600" /> Data sources
-            <span className="ml-2 text-xs font-normal text-muted-foreground">
+      {/* The machine's health, the same story the CEO cockpit's Machine tab
+          tells in full. Folded, so the page stays about people and access;
+          the summary line says when something is wrong. */}
+      <details className="group rounded-2xl border bg-card">
+        <summary className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 sm:px-6 sm:py-4">
+          <span className="text-[15px] font-semibold">System health</span>
+          <Dot tone={healthLine ? "bad" : "good"}>
+            {healthLine ||
+              (overview?.lastSync
+                ? `All running, last sync ${ago(overview.lastSync.at)}`
+                : "Reading…")}
+          </Dot>
+        </summary>
+        <div className="space-y-6 border-t p-4 sm:p-6">
+          {/* Numbers that say whether the machine is running. */}
+          <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+            <Stat
+              icon={Users}
+              label="Team"
+              value={overview?.counts?.members ?? "…"}
+              hint={`${overview?.counts?.admins ?? 0} admin${overview?.counts?.admins === 1 ? "" : "s"}`}
+            />
+            <Stat
+              icon={Activity}
+              label="Last data sync"
+              value={overview?.lastSync ? ago(overview.lastSync.at) : "…"}
+              hint={
+                overview?.lastSync?.problems?.length
+                  ? `${overview.lastSync.problems.length} problem(s)`
+                  : overview?.lastSync
+                    ? "clean"
+                    : "no run yet"
+              }
+              bad={Boolean(overview?.lastSync && !overview.lastSync.ok)}
+            />
+            <Stat
+              icon={ShieldCheck}
+              label="Live campaigns"
+              value={overview?.counts?.liveCampaigns ?? "…"}
+              hint={`${overview?.counts?.campaigns ?? 0} on the board, ${overview?.counts?.clients ?? 0} clients`}
+            />
+            <Stat
+              icon={Bot}
+              label="Hermes"
+              value={
+                overview?.hermes ? `${overview.hermes.queued} waiting` : "…"
+              }
+              hint={
+                overview?.hermes
+                  ? `${overview.hermes.doneToday} done today, last ${ago(overview.hermes.lastDone)}`
+                  : ""
+              }
+              bad={(overview?.hermes?.queued ?? 0) > 5}
+            />
+          </section>
+
+          {/* Every outside system, with the fix next to it when it is down. */}
+          <section>
+            <h2 className="text-[15px] font-semibold">Data sources</h2>
+            <p className="mt-1 text-xs text-muted-foreground">
               Three failures in a row send one Slack message with the fix. Green
               means the last call worked. Repeated successful checks are
               recorded at most every 5 minutes.
-            </span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {(overview?.sources ?? []).map((src: Any) => {
-            const down = src.ok === false && src.streak >= 3;
-            const blip = src.ok === false && src.streak < 3;
-            return (
-              <div
-                key={src.source}
-                className={`rounded-lg border p-3 text-sm ${down ? "border-red-300 bg-red-50 dark:border-red-900 dark:bg-red-950/30" : ""}`}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium">{src.label}</span>
-                  <span
-                    className={`inline-flex items-center gap-1 text-[11px] ${down ? "text-red-600" : blip ? "text-amber-600" : src.ok ? "text-emerald-600" : "text-muted-foreground"}`}
+            </p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {(overview?.sources ?? []).map((src: Any) => {
+                const down = src.ok === false && src.streak >= 3;
+                const blip = src.ok === false && src.streak < 3;
+                return (
+                  <div
+                    key={src.source}
+                    className={`rounded-xl p-3 text-sm ${down ? "callout-bad border" : "bg-muted/40"}`}
                   >
-                    <span
-                      className={`size-2 rounded-full ${down ? "bg-red-500" : blip ? "bg-amber-500" : src.ok ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
-                    />
-                    {down
-                      ? `down, ${src.streak} in a row`
-                      : blip
-                        ? `failed ${src.streak}×, watching`
-                        : src.ok
-                          ? `ok ${ago(src.at)}`
-                          : "not used yet"}
-                  </span>
-                </div>
-                {src.ok === false ? (
-                  <>
-                    <p
-                      className="mt-1 truncate font-mono text-[11px] text-muted-foreground"
-                      title={src.lastError}
-                    >
-                      {src.lastError}
-                    </p>
-                    <p className="mt-1 text-xs">
-                      <span className="font-semibold">{src.owner}:</span>{" "}
-                      {src.fix}
-                    </p>
-                  </>
-                ) : (
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {src.lastFailAt
-                      ? `last failed ${ago(src.lastFailAt)}`
-                      : "no failures recorded"}
-                    {src.source === "hermes" && overview?.hermesWaiting
-                      ? ` · ${overview.hermesWaiting.queued} waiting, ${overview.hermesWaiting.claimed} in progress`
-                      : ""}
-                  </p>
-                )}
-              </div>
-            );
-          })}
-        </CardContent>
-      </Card>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="min-w-0 truncate font-medium">
+                        {src.label}
+                      </span>
+                      <Dot
+                        tone={
+                          down
+                            ? "bad"
+                            : blip
+                              ? "warn"
+                              : src.ok
+                                ? "good"
+                                : "idle"
+                        }
+                      >
+                        {down
+                          ? `down, ${src.streak} in a row`
+                          : blip
+                            ? `failed ${src.streak}×, watching`
+                            : src.ok
+                              ? `ok ${ago(src.at)}`
+                              : "not used yet"}
+                      </Dot>
+                    </div>
+                    {src.ok === false ? (
+                      <>
+                        <p
+                          className="mt-1 truncate font-mono text-[11px] opacity-80"
+                          title={src.lastError}
+                        >
+                          {src.lastError}
+                        </p>
+                        <p className="mt-1 text-xs">
+                          <span className="font-semibold">{src.owner}:</span>{" "}
+                          {src.fix}
+                        </p>
+                      </>
+                    ) : (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {src.lastFailAt
+                          ? `last failed ${ago(src.lastFailAt)}`
+                          : "no failures recorded"}
+                        {src.source === "hermes" && overview?.hermesWaiting
+                          ? ` · ${overview.hermesWaiting.queued} waiting, ${overview.hermesWaiting.claimed} in progress`
+                          : ""}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
 
-      {/* The clockwork: every job's last run and whether it is failing. */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Activity className="size-4 text-teal-600" /> Scheduled jobs
-            <span className="ml-2 text-xs font-normal text-muted-foreground">
+          {/* The clockwork: every job's last run and whether it is failing. */}
+          <section>
+            <h2 className="text-[15px] font-semibold">Scheduled jobs</h2>
+            <p className="mt-1 text-xs text-muted-foreground">
               A job that fails three times in a row files a fix job for Hermes
               and sends one message. One that stops running is flagged within
               the hour.
-            </span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="overflow-x-auto p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Job</TableHead>
-                <TableHead>Every</TableHead>
-                <TableHead>Last run</TableHead>
-                <TableHead>Took</TableHead>
-                <TableHead>State</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {(overview?.scheduled ?? []).length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={5} className="text-muted-foreground">
-                    No job has reported yet.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                (overview.scheduled as Any[]).map(j => {
-                  const late =
-                    now - j.at > Math.max(3 * j.everyMin, 45) * 60_000;
-                  return (
-                    <TableRow key={j.job}>
-                      <TableCell className="font-medium">{j.job}</TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {j.everyMin >= 1440
-                          ? `${Math.round(j.everyMin / 1440)} d`
-                          : j.everyMin >= 60
-                            ? `${Math.round(j.everyMin / 60)} h`
-                            : `${j.everyMin} min`}
-                      </TableCell>
-                      <TableCell
-                        className={
-                          late ? "text-red-600" : "text-muted-foreground"
-                        }
-                      >
-                        {ago(j.at)}
-                        {j.everyMin < 5 && (
-                          <span className="block text-[11px]">
-                            Successful checks saved every 5 min
-                          </span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {j.ms >= 1000
-                          ? `${Math.round(j.ms / 1000)} s`
-                          : `${j.ms} ms`}
-                      </TableCell>
-                      <TableCell>
-                        {j.ok && !late ? (
-                          <span className="text-emerald-600">ok</span>
-                        ) : late ? (
-                          <span className="text-red-600">not running</span>
-                        ) : (
-                          <span className="text-red-600" title={j.error}>
-                            failing ({j.streak} in a row)
-                          </span>
-                        )}
-                        {!j.ok && j.error ? (
-                          <div
-                            className="max-w-md truncate font-mono text-[11px] text-muted-foreground"
-                            title={j.error}
-                          >
-                            {j.error}
-                          </div>
-                        ) : null}
+            </p>
+            <div className="mt-4 overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Job</TableHead>
+                    <TableHead>Every</TableHead>
+                    <TableHead>Last run</TableHead>
+                    <TableHead>Took</TableHead>
+                    <TableHead>State</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(overview?.scheduled ?? []).length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-muted-foreground">
+                        No job has reported yet.
                       </TableCell>
                     </TableRow>
-                  );
-                })
-              )}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+                  ) : (
+                    (overview.scheduled as Any[]).map(j => {
+                      const late =
+                        now - j.at > Math.max(3 * j.everyMin, 45) * 60_000;
+                      return (
+                        <TableRow key={j.job}>
+                          <TableCell className="font-medium">{j.job}</TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {j.everyMin >= 1440
+                              ? `${Math.round(j.everyMin / 1440)} d`
+                              : j.everyMin >= 60
+                                ? `${Math.round(j.everyMin / 60)} h`
+                                : `${j.everyMin} min`}
+                          </TableCell>
+                          <TableCell
+                            className={
+                              late ? "txt-bad" : "text-muted-foreground"
+                            }
+                          >
+                            {ago(j.at)}
+                            {j.everyMin < 5 && (
+                              <span className="block text-xs">
+                                Successful checks saved every 5 min
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {j.ms >= 1000
+                              ? `${Math.round(j.ms / 1000)} s`
+                              : `${j.ms} ms`}
+                          </TableCell>
+                          <TableCell>
+                            {j.ok && !late ? (
+                              <Dot tone="good">ok</Dot>
+                            ) : late ? (
+                              <Dot tone="bad">not running</Dot>
+                            ) : (
+                              <span title={j.error}>
+                                <Dot tone="bad">
+                                  failing ({j.streak} in a row)
+                                </Dot>
+                              </span>
+                            )}
+                            {!j.ok && j.error ? (
+                              <div
+                                className="max-w-md truncate font-mono text-[11px] text-muted-foreground"
+                                title={j.error}
+                              >
+                                {j.error}
+                              </div>
+                            ) : null}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </section>
 
-      <section className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <AlertTriangle className="size-4 text-amber-500" /> Recent alerts
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {overview?.alerts?.length ? (
-              <ul className="space-y-2 text-sm">
-                {overview.alerts.map((a: Any) => (
-                  <li
-                    key={`${a.at}${a.text.slice(0, 20)}`}
-                    className="flex gap-3"
-                  >
-                    <span className="w-16 shrink-0 text-xs text-muted-foreground">
-                      {ago(a.at)}
-                    </span>
-                    <span className="whitespace-pre-wrap">{a.text}</span>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                Nothing has failed a check lately.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Bot className="size-4 text-teal-600" /> What Hermes did today
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {overview?.hermes?.actions?.length ? (
-              <ul className="space-y-2 text-sm">
-                {overview.hermes.actions.map((a: Any) => (
-                  <li key={`${a.at}${a.note}`} className="flex gap-3">
-                    <span className="w-16 shrink-0 text-xs text-muted-foreground">
-                      {ago(a.at)}
-                    </span>
-                    {a.ok ? (
-                      <Check className="mt-0.5 size-3.5 shrink-0 text-emerald-600" />
-                    ) : (
-                      <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-red-500" />
-                    )}
-                    <span>{a.note}</span>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                No ad account actions in the last day.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      </section>
+          <section className="grid gap-6 lg:grid-cols-2">
+            <div>
+              <h2 className="flex items-center gap-2 text-[15px] font-semibold">
+                <AlertTriangle className="size-4 txt-warn" aria-hidden />
+                Recent alerts
+              </h2>
+              {overview?.alerts?.length ? (
+                <ul className="mt-3 space-y-2 text-sm">
+                  {overview.alerts.map((a: Any) => (
+                    <li
+                      key={`${a.at}${a.text.slice(0, 20)}`}
+                      className="flex gap-3"
+                    >
+                      <span className="w-16 shrink-0 text-xs text-muted-foreground">
+                        {ago(a.at)}
+                      </span>
+                      <span className="min-w-0 whitespace-pre-wrap">
+                        {a.text}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-3 text-sm text-muted-foreground">
+                  Nothing has failed a check lately.
+                </p>
+              )}
+            </div>
+            <div>
+              <h2 className="flex items-center gap-2 text-[15px] font-semibold">
+                <Bot className="size-4 text-muted-foreground" aria-hidden />
+                What Hermes did today
+              </h2>
+              {overview?.hermes?.actions?.length ? (
+                <ul className="mt-3 space-y-2 text-sm">
+                  {overview.hermes.actions.map((a: Any) => (
+                    <li key={`${a.at}${a.note}`} className="flex gap-3">
+                      <span className="w-16 shrink-0 text-xs text-muted-foreground">
+                        {ago(a.at)}
+                      </span>
+                      {a.ok ? (
+                        <Check className="mt-0.5 size-3.5 shrink-0 txt-good" />
+                      ) : (
+                        <AlertTriangle className="mt-0.5 size-3.5 shrink-0 txt-bad" />
+                      )}
+                      <span className="min-w-0">{a.note}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-3 text-sm text-muted-foreground">
+                  No ad account actions in the last day.
+                </p>
+              )}
+            </div>
+          </section>
+        </div>
+      </details>
 
       {editing ? (
         <MemberDialog
@@ -706,24 +746,22 @@ function Stat({
   bad?: boolean;
 }) {
   return (
-    <Card>
-      <CardContent className="flex items-center gap-3 p-4">
-        <div
-          className={`rounded-lg p-2 ${bad ? "bg-red-100 text-red-700" : "bg-muted"}`}
-        >
-          <Icon className="size-4" />
+    <div className="flex min-w-0 items-center gap-3 rounded-xl bg-muted/40 p-3">
+      <div
+        className={`shrink-0 rounded-lg p-2 ${bad ? "tone-bad" : "bg-background/60"}`}
+      >
+        <Icon className="size-4" />
+      </div>
+      <div className="min-w-0">
+        <div className="text-xs text-muted-foreground">{label}</div>
+        <div className="text-lg font-semibold leading-tight tabular-nums">
+          {value}
         </div>
-        <div className="min-w-0">
-          <div className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
-            {label}
-          </div>
-          <div className="text-lg font-semibold leading-tight">{value}</div>
-          {hint ? (
-            <div className="truncate text-xs text-muted-foreground">{hint}</div>
-          ) : null}
-        </div>
-      </CardContent>
-    </Card>
+        {hint ? (
+          <div className="truncate text-xs text-muted-foreground">{hint}</div>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -808,7 +846,7 @@ function MemberDialog({
                   key={r.key}
                   aria-pressed={roles.includes(r.key)}
                   onClick={() => setRoles(toggle(roles, r.key))}
-                  className={`flex cursor-pointer items-start gap-2 rounded-md border p-2.5 text-left ${roles.includes(r.key) ? "border-primary bg-primary/5" : ""}`}
+                  className={`flex cursor-pointer items-start gap-2 rounded-lg border p-2.5 text-left ${roles.includes(r.key) ? "border-primary/40 bg-primary/15" : ""}`}
                 >
                   <Checkbox
                     checked={roles.includes(r.key)}
@@ -839,7 +877,7 @@ function MemberDialog({
                       key={s.key}
                       aria-pressed={salesRole === s.key}
                       onClick={() => setSalesRole(s.key)}
-                      className={`cursor-pointer rounded-md border px-2 py-1.5 text-sm ${salesRole === s.key ? "border-primary bg-primary/5 font-medium" : "text-muted-foreground"}`}
+                      className={`cursor-pointer rounded-lg border px-2 py-1.5 text-sm ${salesRole === s.key ? "border-primary/40 bg-primary/15 font-medium" : "text-muted-foreground"}`}
                     >
                       {s.label}
                     </button>

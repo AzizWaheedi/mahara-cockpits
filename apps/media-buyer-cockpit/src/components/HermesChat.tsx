@@ -183,7 +183,7 @@ export function HermesChat() {
             <div className="flex items-center gap-3">
               <button
                 type="button"
-                className="text-[12px] text-muted-foreground hover:underline"
+                className="rounded-md px-1.5 text-xs text-muted-foreground hover:underline pointer-coarse:min-h-10"
                 onClick={() => clear({})}
                 title="Start a new conversation"
               >
@@ -191,7 +191,7 @@ export function HermesChat() {
               </button>
               <button
                 type="button"
-                className="text-[12px] text-muted-foreground hover:underline"
+                className="rounded-md px-1.5 text-xs text-muted-foreground hover:underline pointer-coarse:min-h-10"
                 onClick={() => setOpen(false)}
               >
                 Close
@@ -272,7 +272,7 @@ export function HermesChat() {
             <button
               type="submit"
               disabled={!text.trim()}
-              className="rounded-md bg-primary px-3 py-2 text-[13px] font-semibold text-primary-foreground disabled:opacity-50"
+              className="rounded-lg bg-primary px-3 py-2 text-[13px] font-semibold text-primary-foreground disabled:opacity-50 pointer-coarse:min-h-10"
             >
               Send
             </button>

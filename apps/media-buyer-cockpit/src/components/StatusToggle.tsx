@@ -74,10 +74,15 @@ export function StatusToggle({
         }
       }}
       title={`${on ? "Turn off" : "Turn on"} this ${level}`}
-      className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 font-semibold disabled:opacity-50 ${compact ? "text-[11px]" : "text-[12px]"} ${on ? "tone-good" : "tone-neutral"}`}
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium disabled:opacity-50 ${compact ? "" : "py-1"} ${on ? "text-foreground" : "text-muted-foreground"}`}
     >
       <span
-        className={`inline-block h-2 w-2 rounded-full ${on ? "bg-emerald-500" : "bg-muted-foreground/50"}`}
+        className="inline-block size-1.5 rounded-full"
+        style={{
+          backgroundColor: on
+            ? "var(--success)"
+            : "color-mix(in oklch, var(--muted-foreground) 60%, transparent)",
+        }}
       />
       {busy ? "…" : on ? "On" : "Off"}
     </button>

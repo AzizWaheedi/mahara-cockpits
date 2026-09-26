@@ -43,7 +43,7 @@ import {
  * The agenda is the point. An item stays open until somebody finishes or
  * drops it, so the next meeting opens with what the last one did not get
  * to, and each open item shows how many meetings it has already been
- * carried through: one ring per meeting, amber from the third. Closing an
+ * carried through: one ring per meeting, orange from the third. Closing an
  * item stamps the meeting it was closed in, which is what "Finished last
  * time" reads back.
  */
@@ -156,16 +156,16 @@ export function MeetingPage() {
   const agendaFor = derived.next;
 
   return (
-    <div className="mx-auto grid w-full max-w-6xl gap-5">
+    <div className="mx-auto grid w-full max-w-6xl gap-6">
       <BackLink />
       <Header
         page={page}
         onSave={fields => act(() => saveMeeting({ id: m.id, ...fields }))}
       />
 
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)] lg:items-start">
-        <div className="grid min-w-0 gap-5">
-          <section className="rounded-xl border bg-card">
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)] lg:items-start">
+        <div className="grid min-w-0 gap-6">
+          <section className="rounded-2xl border bg-card">
             <div className="flex flex-wrap items-baseline justify-between gap-2 border-b px-4 py-3 sm:px-5">
               <h2 className="text-base font-semibold">
                 {agendaFor
@@ -246,7 +246,7 @@ export function MeetingPage() {
             ) : null}
           </section>
 
-          <section className="rounded-xl border bg-card p-4 sm:p-5">
+          <section className="rounded-2xl border bg-card p-4 sm:p-6">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-base font-semibold">
                 {notesSitting
@@ -295,12 +295,12 @@ export function MeetingPage() {
             ) : (
               <p className="text-sm text-muted-foreground">
                 Notes open once the meeting has a date.
-                {page.canManage ? " Set one in the panel on the right." : ""}
+                {page.canManage ? " Set one under Next meeting." : ""}
               </p>
             )}
           </section>
 
-          <section className="rounded-xl border bg-card p-4 sm:p-5">
+          <section className="rounded-2xl border bg-card p-4 sm:p-6">
             <h2 className="text-base font-semibold">The doc</h2>
             <p className="mb-3 mt-0.5 text-sm text-muted-foreground">
               This meeting's living document: the plan, the numbers, the
@@ -331,7 +331,7 @@ export function MeetingPage() {
           </section>
         </div>
 
-        <aside className="grid min-w-0 gap-5">
+        <aside className="grid min-w-0 gap-6">
           <When
             page={page}
             next={derived.next}
@@ -404,7 +404,7 @@ function Header({
   if (editing)
     return (
       <form
-        className="grid gap-3 rounded-xl border bg-card p-4 sm:p-5"
+        className="grid gap-3 rounded-2xl border bg-card p-4 sm:p-6"
         onSubmit={async e => {
           e.preventDefault();
           setBusy(true);
@@ -537,7 +537,7 @@ function Header({
 
 // --- the agenda ----------------------------------------------------------------
 
-/** One ring per meeting the item has been carried through; amber from three. */
+/** One ring per meeting the item has been carried through; orange from three. */
 function Carried({ n }: { n: number }) {
   if (!n) return null;
   const shown = Math.min(n, 5);
@@ -554,14 +554,14 @@ function Carried({ n }: { n: number }) {
             key={i}
             className="size-2 rounded-full border-[1.5px]"
             style={{
-              borderColor: stuck ? "#c98a00" : "var(--muted-foreground)",
+              borderColor: stuck ? "var(--warning)" : "var(--muted-foreground)",
             }}
           />
         ))}
       </span>
       <span
         className="text-[11px] tabular-nums"
-        style={{ color: stuck ? "#c98a00" : undefined }}
+        style={{ color: stuck ? "var(--warning)" : undefined }}
       >
         {n > 5 ? `${n}×` : null}
         <span className="sr-only">
@@ -676,24 +676,26 @@ function AgendaRow({
           {item.carried ? (
             <span>since {dayName(item.addedAt.slice(0, 10))}</span>
           ) : null}
-          <span className="ml-auto flex items-center gap-0.5 opacity-100 transition-opacity sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100">
+          {/* Shown on hover only where there is a mouse; a finger always
+              sees them, at a size a finger can hit. */}
+          <span className="ml-auto flex items-center gap-1 opacity-100 transition-opacity pointer-fine:sm:opacity-0 pointer-fine:sm:group-focus-within:opacity-100 pointer-fine:sm:group-hover:opacity-100">
             <button
               type="button"
               aria-label="Move up"
               disabled={busy || first}
               onClick={() => run(() => onMove("up"))}
-              className="rounded p-1 hover:bg-muted disabled:opacity-30"
+              className="flex size-8 items-center justify-center rounded-lg hover:bg-muted disabled:opacity-30 pointer-coarse:size-10"
             >
-              <ArrowUp className="size-3.5" aria-hidden />
+              <ArrowUp className="size-4" aria-hidden />
             </button>
             <button
               type="button"
               aria-label="Move down"
               disabled={busy || last}
               onClick={() => run(() => onMove("down"))}
-              className="rounded p-1 hover:bg-muted disabled:opacity-30"
+              className="flex size-8 items-center justify-center rounded-lg hover:bg-muted disabled:opacity-30 pointer-coarse:size-10"
             >
-              <ArrowDown className="size-3.5" aria-hidden />
+              <ArrowDown className="size-4" aria-hidden />
             </button>
             <button
               type="button"
@@ -701,9 +703,9 @@ function AgendaRow({
               title="Drop it: it will not be covered"
               disabled={busy}
               onClick={() => run(onDrop)}
-              className="rounded p-1 hover:bg-muted"
+              className="flex size-8 items-center justify-center rounded-lg hover:bg-muted pointer-coarse:size-10"
             >
-              <X className="size-3.5" aria-hidden />
+              <X className="size-4" aria-hidden />
             </button>
           </span>
         </div>
@@ -727,7 +729,12 @@ function ClosedRow({
         className={`min-w-0 flex-1 ${item.status === "dropped" ? "text-muted-foreground line-through" : ""}`}
         dir="auto"
       >
-        {item.status === "done" ? "✓ " : ""}
+        {item.status === "done" ? (
+          <Check
+            className="mr-1 inline size-3.5 align-[-2px] txt-good"
+            aria-label="Done"
+          />
+        ) : null}
         {item.text}
         {owner ? (
           <span className="text-muted-foreground">
@@ -818,7 +825,7 @@ function When({
   const [date, setDate] = useState("");
   const [busy, setBusy] = useState(false);
   return (
-    <section className="rounded-xl border bg-card p-4 sm:p-5">
+    <section className="rounded-2xl border bg-card p-4 sm:p-6">
       <h2 className="text-sm font-semibold">Next meeting</h2>
       <p className="mt-1 text-lg font-semibold tracking-tight">
         {next
@@ -903,7 +910,7 @@ function People({
     }
   };
   return (
-    <section className="rounded-xl border bg-card p-4 sm:p-5">
+    <section className="rounded-2xl border bg-card p-4 sm:p-6">
       <h2 className="text-sm font-semibold">
         Who is in it{" "}
         <span className="font-normal text-muted-foreground">
@@ -1036,7 +1043,7 @@ function Past({
   if (!past.length) return null;
   const shown = all ? past : past.slice(0, 5);
   return (
-    <section className="rounded-xl border bg-card p-4 sm:p-5">
+    <section className="rounded-2xl border bg-card p-4 sm:p-6">
       <h2 className="text-sm font-semibold">Past meetings</h2>
       <ul className="mt-2 grid gap-2.5">
         {shown.map(s => {
@@ -1084,7 +1091,7 @@ function Past({
 function Changes({ page }: { page: Page }) {
   if (!page.changes.length) return null;
   return (
-    <section className="rounded-xl border bg-card p-4 sm:p-5">
+    <section className="rounded-2xl border bg-card p-4 sm:p-6">
       <h2 className="text-sm font-semibold">What changed</h2>
       <ul className="mt-2 grid gap-1.5 text-xs">
         {page.changes.slice(0, 10).map((c, i) => (
