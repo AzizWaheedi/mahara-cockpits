@@ -1,5 +1,7 @@
 # Webinar hardening checkpoint, 26 September 2026
 
+> Later verified state: [internal production release and acceptance](WEBINAR-RELEASE-2026-09-26.md). The cockpit/collector are deployed, CEO target save/reload passed, and backups are inventoried. The historical deployment/login blockers below are superseded; occurrence wiring and real-event/recovery acceptance remain open.
+
 ## Verified production database changes
 
 Creative Triage only (`bldgtotkfmhoxmlzowdx`); B2B remains read-only.
