@@ -15,12 +15,14 @@ import {
   useMirrorRun,
   useNow,
   usePeople,
+  useQuery,
   useReps,
   useSetting,
   useWorkerStatus,
 } from "../lib/data";
 import { ago } from "../lib/format";
 import { portalUrl } from "../lib/portal";
+import { supabase } from "../lib/supabase";
 import { toast } from "../lib/toast";
 import type { Me, Person } from "../lib/types";
 
@@ -295,10 +297,43 @@ function countText(v: unknown): string {
   return "n/a";
 }
 
-/** The last copy from B2B and the worker's own reports. */
+/**
+ * How long each desk job may go without a run before it counts as late: the
+ * same limits the portal's sales watch alerts on (convex/salesWatch.ts). Jobs
+ * not listed write only when they have work, so their age says nothing.
+ */
+const DESK_LIMITS_MIN: Record<string, number> = {
+  requests: 15,
+  followups: 75,
+  "maqsam-calls": 75,
+  "calls-vault": 75,
+  recordings: 75,
+  reviews: 75,
+  notes: 75,
+  digest: 26 * 60,
+};
+
+/** Tokens the desk's model calls used since Kuwait's midnight. */
+function useAiToday() {
+  return useQuery<number>(async () => {
+    const k = new Date(Date.now() + 3 * 3_600_000);
+    const midnight = new Date(
+      Date.UTC(k.getUTCFullYear(), k.getUTCMonth(), k.getUTCDate()) -
+        3 * 3_600_000,
+    ).toISOString();
+    const { data, error } = await supabase.rpc(
+      "cockpit_sales_ai_tokens_since",
+      { p_since: midnight },
+    );
+    return { data: data === null ? null : Number(data), error };
+  }, []);
+}
+
+/** The last copy from B2B and the desk's own reports. */
 function HealthCard({ now }: { now: number }) {
   const mirror = useMirrorRun();
   const workers = useWorkerStatus();
+  const ai = useAiToday();
   const run = mirror.data;
   const late = run?.finished_at
     ? now - Date.parse(run.finished_at) > 20 * 60_000
@@ -366,7 +401,16 @@ function HealthCard({ now }: { now: number }) {
         )}
       </div>
 
-      <h3 className="mt-5 text-xs font-semibold">Proposal worker</h3>
+      <h3 className="mt-5 text-xs font-semibold">
+        The sales desk (on the VPS)
+      </h3>
+      <p className="muted mt-1 text-xs">
+        {ai.error
+          ? `Today's AI use could not be read: ${ai.error}.`
+          : ai.data === null
+            ? "Reading today's AI use…"
+            : `AI today: ${Math.round(ai.data / 1000).toLocaleString()} thousand tokens. The desk stops calling the model at 15 million a day unless SALES_AI_DAILY_TOKENS says otherwise.`}
+      </p>
       <div className="mt-2">
         {workers.error ? (
           <Failed
@@ -378,34 +422,43 @@ function HealthCard({ now }: { now: number }) {
           workers.loading ? (
             <p className="muted text-sm">Loading…</p>
           ) : (
-            <EmptyState
-              compact
-              title="The proposal worker has not reported yet."
-            />
+            <EmptyState compact title="The sales desk has not reported yet." />
           )
         ) : (
           <ul className="divide-y hairline">
-            {list.map(w => (
-              <li key={`${w.worker}:${w.job}`} className="py-2">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="min-w-0 truncate text-sm font-medium">
-                    {w.job}
-                  </span>
-                  <StatusChip
-                    tone={w.ok ? "good" : "critical"}
-                    label={w.ok ? "OK" : "Failing"}
-                  />
-                </div>
-                {w.detail ? (
-                  <p className="muted mt-0.5 text-xs [overflow-wrap:anywhere]">
-                    {w.detail}
+            {list.map(w => {
+              const limit = DESK_LIMITS_MIN[w.job];
+              const late =
+                w.worker === "sales-desk" &&
+                limit !== undefined &&
+                now - Date.parse(w.at) > limit * 60_000;
+              return (
+                <li key={`${w.worker}:${w.job}`} className="py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="min-w-0 truncate text-sm font-medium">
+                      {w.job}
+                    </span>
+                    <StatusChip
+                      tone={!w.ok ? "critical" : late ? "warning" : "good"}
+                      label={!w.ok ? "Failing" : late ? "Late" : "OK"}
+                      title={
+                        late
+                          ? `It should run at least every ${limit} minutes; the portal alerts Aziz when it stays late.`
+                          : undefined
+                      }
+                    />
+                  </div>
+                  {w.detail ? (
+                    <p className="muted mt-0.5 text-xs [overflow-wrap:anywhere]">
+                      {w.detail}
+                    </p>
+                  ) : null}
+                  <p className="muted mt-0.5 text-xs">
+                    {w.worker} · {ago(w.at, now)}
                   </p>
-                ) : null}
-                <p className="muted mt-0.5 text-xs">
-                  {w.worker} · {ago(w.at, now)}
-                </p>
-              </li>
-            ))}
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>
