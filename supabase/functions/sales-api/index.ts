@@ -55,10 +55,13 @@ import {
   type CloserFacts,
   type StageRole,
   stageRole,
+  tagsFor,
+  targetRoles,
   calendarFor,
   callSummary,
   dayStats,
   ghlTime,
+  heat,
   isNoAnswer,
   kuwaitAt,
   kuwaitWords,
@@ -1954,7 +1957,7 @@ async function saveOutcome(
     asRole?: string | null;
     kind?: ItemKind;
   } = {},
-): Promise<{ attempt: Row; state: Row } | null> {
+): Promise<{ attempt: Row; state: Row; stage_move?: Row | null } | null> {
   const now = Date.now();
   const kind: ItemKind = extra.kind ?? "lead";
   const effect = appointmentEffect(kind, outcome);
@@ -2065,6 +2068,18 @@ async function saveOutcome(
     body: state,
     prefer: "resolution=merge-duplicates,return=minimal",
   });
+  // The pipeline follows the outcome (a booking moves when book.create saves it).
+  const call = appt ? (appt.call_type === "demo" ? "demo" : "intro") : null;
+  const moved =
+    extra.auto || outcome === "booked"
+      ? null
+      : await autoMove(
+          who,
+          contactId,
+          current => targetRoles(kind, outcome, next?.closed ?? null, null, call, current),
+          { source: "dialer", outcome, attemptId: String(saved.id) },
+        );
+  const tagged = extra.auto ? null : await tagOutcome(contactId, outcome);
   // The dialer's rule: every outcome a person saves leaves a note in the CRM.
   // An unanswered call with nothing written does not. Best effort.
   let crmNote = "skipped";
@@ -2100,9 +2115,15 @@ async function saveOutcome(
     id,
     a,
     { ...saved, crm_note: crmNote },
-    { state, kind, ...(marked ? { mark: marked.status, mark_crm: marked.crm } : {}) },
+    {
+      state,
+      kind,
+      ...(marked ? { mark: marked.status, mark_crm: marked.crm } : {}),
+      ...(moved ? { stage_move: moved.state } : {}),
+      ...(tagged ? { tags: tagged } : {}),
+    },
   );
-  return { attempt: { ...saved, crm_note: crmNote }, state };
+  return { attempt: { ...saved, crm_note: crmNote }, state, stage_move: moved };
 }
 
 /** Outcomes whose story the next person needs in a line of notes. */
@@ -2516,8 +2537,16 @@ async function bookCreate(who: Who, b: Row) {
     appointmentId: apptId,
     asRole: cleanText(b.as, 10) || null,
   });
-  await audit(who, "book.create", "cockpit_sales_bookings", String(booking.id), null, row, { verified });
-  return { booking: row, verified, words, ...(out ?? {}) };
+  const moved = await autoMove(who, p.contact, () => targetRoles("lead", "booked", "booked", p.kind), {
+    source: "booking",
+    outcome: "booked",
+    attemptId: out?.attempt ? String(out.attempt.id) : null,
+  });
+  await audit(who, "book.create", "cockpit_sales_bookings", String(booking.id), null, row, {
+    verified,
+    stage_move: moved?.state ?? null,
+  });
+  return { booking: row, verified, words, stage_move: moved, ...(out ?? {}) };
 }
 
 /**
@@ -2596,6 +2625,312 @@ async function bookMove(who: Who, b: Row) {
     verified,
   });
   return { verified, words, ...(out ?? {}) };
+}
+
+// ---------------------------------------------------------------------------
+// The pipeline: stages from HighLevel, moves by the board and the dialer
+// ---------------------------------------------------------------------------
+
+interface PipeStage {
+  id: string;
+  name: string;
+  position: number;
+  role: StageRole | null;
+}
+interface Pipe {
+  id: string;
+  name: string;
+  stages: PipeStage[];
+}
+
+let pipeCache: { at: number; pipes: Pipe[] } | null = null;
+
+/** The sub-account's pipelines and stages in order, each stage with its role (ten minutes cached). */
+async function pipelines(fresh = false): Promise<Pipe[]> {
+  if (!fresh && pipeCache && Date.now() - pipeCache.at < 10 * 60_000) return pipeCache.pipes;
+  const [d, roles] = await Promise.all([
+    ghl("GET", `/opportunities/pipelines?locationId=${LOCATION}`, undefined, "2021-07-28"),
+    stageRoles(),
+  ]);
+  const pipes = ((d.pipelines ?? []) as Row[]).map(p => ({
+    id: String(p.id),
+    name: String(p.name ?? ""),
+    stages: ((p.stages ?? []) as Row[])
+      .map(st => ({
+        id: String(st.id),
+        name: String(st.name ?? ""),
+        position: Number(st.position ?? 0),
+        role: (roles[String(st.id)] as StageRole | undefined) ?? stageRole(String(st.name ?? "")),
+      }))
+      .sort((a, b) => a.position - b.position),
+  }));
+  pipeCache = { at: Date.now(), pipes };
+  return pipes;
+}
+
+async function pipelineStages(_who: Who, b: Row) {
+  return { pipelines: await pipelines(Boolean(b.fresh)) };
+}
+
+/**
+ * Move a lead's opportunity to a stage in HighLevel: written down first,
+ * carried out, and the cockpit's copy of the lead updated when HighLevel
+ * takes it. A lead with no opportunity gets one in the pipeline asked for.
+ */
+async function moveStage(
+  who: Who,
+  contactId: string,
+  target: { stageId?: string; roles?: StageRole[]; pipelineId?: string },
+  ctx: { source: "board" | "dialer" | "booking"; outcome?: string | null; attemptId?: string | null },
+): Promise<Row> {
+  const lead = (await svc(
+    `cockpit_sales_leads?contact_id=eq.${enc(contactId)}&select=contact_id,name,opportunity_id,pipeline_id,stage_id`,
+  ))[0];
+  if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
+  const pipes = await pipelines();
+  const pipe =
+    pipes.find(p => p.id === (target.pipelineId ?? lead.pipeline_id)) ??
+    pipes.find(p => p.stages.some(st => st.id === target.stageId)) ??
+    pipes.find(p => /2.?call/i.test(p.name)) ??
+    pipes[0];
+  const stage = target.stageId
+    ? pipe?.stages.find(st => st.id === target.stageId)
+    : (target.roles ?? []).map(r => pipe?.stages.find(st => st.role === r)).find(Boolean);
+  const base = {
+    contact_id: contactId,
+    opportunity_id: (lead.opportunity_id as string) ?? null,
+    pipeline_id: pipe?.id ?? null,
+    from_stage_id: (lead.stage_id as string) ?? null,
+    source: ctx.source,
+    outcome: ctx.outcome ?? null,
+    by_email: who.email,
+    attempt_id: ctx.attemptId ?? null,
+  };
+  if (!pipe || !stage) {
+    if (target.stageId) throw new Refusal("That stage is not in the sales pipelines any more. Reload the board.", 409);
+    return { state: "skipped", why: "no stage for this outcome in the lead's pipeline" };
+  }
+  if (lead.stage_id === stage.id && lead.opportunity_id)
+    return { state: "skipped", why: "already in that stage", to_stage_id: stage.id };
+  const row = (await svc("cockpit_sales_stage_moves", {
+    method: "POST",
+    body: { ...base, to_stage_id: stage.id },
+    prefer: "return=representation",
+  }))[0];
+  let opp = (lead.opportunity_id as string) || "";
+  try {
+    if (opp) {
+      await ghl(
+        "PUT",
+        `/opportunities/${enc(opp)}`,
+        { pipelineId: pipe.id, pipelineStageId: stage.id, status: "open" },
+        "2021-07-28",
+      );
+    } else {
+      const d = await ghl(
+        "POST",
+        "/opportunities/",
+        {
+          pipelineId: pipe.id,
+          locationId: LOCATION,
+          pipelineStageId: stage.id,
+          contactId,
+          name: String(lead.name ?? "Sales lead").slice(0, 120),
+          status: "open",
+        },
+        "2021-07-28",
+      );
+      opp = String(((d.opportunity ?? d) as Row).id ?? "");
+    }
+    await svc(`cockpit_sales_leads?contact_id=eq.${enc(contactId)}`, {
+      method: "PATCH",
+      body: {
+        opportunity_id: opp || null,
+        pipeline_id: pipe.id,
+        pipeline_name: pipe.name,
+        stage_id: stage.id,
+        stage_name: stage.name,
+        opp_status: "open",
+      },
+      prefer: "return=minimal",
+    });
+    const done = (await svc(`cockpit_sales_stage_moves?id=eq.${enc(String(row.id))}`, {
+      method: "PATCH",
+      body: { state: "done", opportunity_id: opp || null },
+      prefer: "return=representation",
+    }))[0];
+    await audit(who, "pipeline.move", "cockpit_sales_stage_moves", String(row.id), { stage_id: lead.stage_id }, done);
+    return { ...done, to_stage_name: stage.name };
+  } catch (e) {
+    const err = redact(String((e as Error).message ?? e));
+    const failed = (await svc(`cockpit_sales_stage_moves?id=eq.${enc(String(row.id))}`, {
+      method: "PATCH",
+      body: { state: "failed", error: err },
+      prefer: "return=representation",
+    }))[0];
+    await audit(who, "pipeline.move", "cockpit_sales_stage_moves", String(row.id), { stage_id: lead.stage_id }, failed);
+    if (ctx.source === "board") throw new Refusal(`HighLevel did not move it: ${err}`, 502);
+    return failed;
+  }
+}
+
+/**
+ * The board: one pipeline's stages in order, and a card per open lead in it
+ * (plus the sales leads that have no opportunity yet), each with its heat
+ * and reasons, when it was last touched, its next step and its owner. A lead
+ * with nothing in the last 60 days, no next step and not on the hot list is
+ * quiet: counted per stage, and shown only when asked for.
+ */
+async function pipelineBoard(who: Who, b: Row) {
+  const pipes = await pipelines();
+  const pipe =
+    pipes.find(p => p.id === cleanText(b.pipeline_id, 80)) ?? pipes.find(p => /2.?call/i.test(p.name)) ?? pipes[0];
+  if (!pipe) throw new Refusal("HighLevel has no sales pipeline to show.", 404);
+  const now = Date.now();
+  const since = now - 60 * 86_400_000;
+  const cols =
+    "contact_id,name,lead_class,stage_id,stage_name,opp_status,pipeline_id,assigned_to,revenue,readiness,lead_created_at,opp_updated_at,dnd";
+  const [inPipe, loose, inbox, hotRows, states, appts, people] = await Promise.all([
+    svcAll(`cockpit_sales_leads?pipeline_id=eq.${enc(pipe.id)}&select=${cols}&order=contact_id`),
+    svc(
+      `cockpit_sales_leads?pipeline_id=is.null&lead_class=not.is.null&lead_created_at=gte.${enc(new Date(since).toISOString())}&select=${cols}&limit=1000`,
+    ),
+    svcAll("cockpit_sales_inbox?select=contact_id,last_message_at,last_direction&order=conversation_id"),
+    svc("cockpit_sales_hot?removed_at=is.null&select=*&limit=2000"),
+    svcAll("cockpit_sales_queue_state?select=contact_id,callback_at,due_at,last_outcome,last_outcome_at,closed&order=contact_id"),
+    svc(
+      `cockpit_sales_calendar?select=contact_id,call_type,start_at,status&start_at=gte.${enc(new Date(now).toISOString())}&order=start_at&limit=2000`,
+    ),
+    svc("cockpit_sales_people?select=email,name,ghl_user_id"),
+  ]);
+  const inboundBy = new Map<string, number>();
+  for (const i of inbox)
+    if (i.last_direction === "inbound") inboundBy.set(String(i.contact_id), ms(i.last_message_at) ?? 0);
+  const hotBy = new Map(hotRows.map(r => [String(r.contact_id), r]));
+  const stateBy = new Map(states.map(r => [String(r.contact_id), r]));
+  const apptBy = new Map<string, Row>();
+  for (const a of appts)
+    if (!["cancelled", "noshow", "invalid"].includes(String(a.status ?? "")) && !apptBy.has(String(a.contact_id)))
+      apptBy.set(String(a.contact_id), a);
+  const ownerOf = new Map(people.filter(p => p.ghl_user_id).map(p => [String(p.ghl_user_id), String(p.name ?? p.email)]));
+  const mineOnly = b.scope === "mine";
+  const showAll = Boolean(b.all);
+  const quiet: Record<string, number> = {};
+  const cards: Row[] = [];
+  for (const l of [...inPipe, ...loose]) {
+    if (l.opp_status && l.opp_status !== "open") continue;
+    const id = String(l.contact_id);
+    const hot = hotBy.get(id);
+    const st = stateBy.get(id);
+    const appt = apptBy.get(id);
+    if (mineOnly && l.assigned_to !== who.ghl_user_id && hot?.owner_email !== who.email) continue;
+    const inbound = inboundBy.get(id) ?? null;
+    const touches = [inbound, ms(l.opp_updated_at), ms(st?.last_outcome_at), ms(l.lead_created_at)].filter(
+      (x): x is number => x !== null && x > 0,
+    );
+    const lastTouch = touches.length ? Math.max(...touches) : null;
+    const next = [
+      hot?.next_at ? { at: ms(hot.next_at), what: "Hot follow-up" } : null,
+      st?.callback_at ? { at: ms(st.callback_at), what: "Call back" } : null,
+      appt ? { at: ms(appt.start_at), what: appt.call_type === "demo" ? "Demo" : "Intro" } : null,
+      st?.due_at && !st?.closed ? { at: ms(st.due_at), what: "Next try" } : null,
+    ]
+      .filter((x): x is { at: number; what: string } => Boolean(x && x.at))
+      .sort((x, y) => x.at - y.at)[0];
+    const stageKey = String(l.stage_id ?? "none");
+    const active = Boolean(hot) || Boolean(next) || (lastTouch !== null && lastTouch >= since);
+    if (!active && !showAll) {
+      quiet[stageKey] = (quiet[stageKey] ?? 0) + 1;
+      continue;
+    }
+    const role = stageRole(String(l.stage_name ?? ""));
+    const h = heat(
+      {
+        lead_class: (l.lead_class as string) ?? null,
+        revenue: (l.revenue as string) ?? null,
+        readiness: (l.readiness as string) ?? null,
+        inbound_at: inbound,
+        created_at: ms(l.lead_created_at),
+        stage_role: role,
+        misses: 0,
+        hot: Boolean(hot),
+      } as Candidate,
+      now,
+    );
+    cards.push({
+      contact_id: id,
+      name: l.name ?? null,
+      lead_class: l.lead_class ?? null,
+      stage_id: l.stage_id ?? null,
+      heat: h.score,
+      reasons: h.reasons,
+      hot: Boolean(hot),
+      last_objection: hot?.last_objection ?? null,
+      last_touch_at: lastTouch ? new Date(lastTouch).toISOString() : null,
+      wrote_at: inbound ? new Date(inbound).toISOString() : null,
+      next_at: next ? new Date(next.at).toISOString() : null,
+      next_what: next?.what ?? null,
+      owner: l.assigned_to ? (ownerOf.get(String(l.assigned_to)) ?? null) : null,
+      dnd: Boolean(l.dnd),
+      quiet: !active,
+    });
+  }
+  return {
+    pipeline: pipe,
+    pipelines: pipes.map(p => ({ id: p.id, name: p.name })),
+    cards,
+    quiet,
+    loose: loose.length,
+  };
+}
+
+/** A rep moves a lead on the board. */
+async function pipelineMove(who: Who, b: Row) {
+  const contact = cleanText(b.contact_id, 80);
+  const stageId = cleanText(b.stage_id, 80);
+  if (!contact || !stageId) throw new Refusal("Which lead, and which stage?");
+  const out = await moveStage(who, contact, { stageId, pipelineId: cleanText(b.pipeline_id, 80) || undefined }, {
+    source: "board",
+  });
+  return { move: out };
+}
+
+/**
+ * The dialer's own move after an outcome, when the settings allow (on unless
+ * a manager turned it off). `rolesFor` gets the lead's current stage role, so
+ * a rule can depend on where the lead sits now.
+ */
+async function autoMove(
+  who: Who,
+  contactId: string,
+  rolesFor: (current: StageRole | null) => StageRole[],
+  ctx: { source: "dialer" | "booking"; outcome: string; attemptId: string | null },
+): Promise<Row | null> {
+  const v = await setting<{ auto_moves?: boolean; roles?: Record<string, StageRole> }>("pipeline");
+  const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contactId)}&select=stage_id,stage_name`))[0];
+  const current = lead
+    ? ((v?.roles?.[String(lead.stage_id ?? "")] as StageRole | undefined) ?? stageRole(lead.stage_name as string | null))
+    : null;
+  const roles = rolesFor(current);
+  if (!roles.length) return null;
+  if (v?.auto_moves === false) return { state: "skipped", why: "automatic moves are off" };
+  try {
+    return await moveStage(who, contactId, { roles }, ctx);
+  } catch (e) {
+    return { state: "failed", error: redact(String((e as Error).message ?? e)) };
+  }
+}
+
+/** The sub-account's own tags for an outcome (best effort; the outcome stands either way). */
+async function tagOutcome(contactId: string, outcome: AnyOutcome): Promise<string | null> {
+  const tags = tagsFor(outcome);
+  if (!tags.length) return null;
+  try {
+    await ghl("POST", `/contacts/${enc(contactId)}/tags`, { tags }, "2021-07-28");
+    return "tagged";
+  } catch {
+    return "failed";
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2765,6 +3100,9 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   "book.slots": bookSlots,
   "book.create": bookCreate,
   "book.move": bookMove,
+  "pipeline.stages": pipelineStages,
+  "pipeline.board": pipelineBoard,
+  "pipeline.move": pipelineMove,
   "hot.save": hotSave,
   "hot.remove": hotRemove,
   "review.ask": reviewAsk,

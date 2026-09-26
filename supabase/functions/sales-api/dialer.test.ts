@@ -27,6 +27,8 @@ import {
   slotOffered,
   speedToLead,
   stageRole,
+  tagsFor,
+  targetRoles,
   whenWords,
 } from "./dialer.ts";
 
@@ -360,10 +362,15 @@ describe("what a stage means", () => {
   test("the sales pipelines' own stage names", () => {
     const names: [string, string][] = [
       ["🚨New Lead", "new"],
-      ["👀Intro Call REQUESTED", "requested"],
-      ["📞Intro Call CONFIRMED", "intro_booked"],
+      ["👀Intro Call REQUESTED", "intro_booked"],
+      ["📞Intro Call CONFIRMED", "intro_confirmed"],
       ["👎Intro No Show", "intro_noshow"],
+      ["Cancelled Intro Call", "intro_cancelled"],
+      ["Intro Taken Didn't Convert", "no_progress"],
       ["📅Demo Booked (Qualified)", "demo_booked"],
+      ["Demo Cancelled", "demo_cancelled"],
+      ["Demo No Show", "demo_noshow"],
+      ["Showed - Didn't Close", "no_progress"],
       ["🔥Hot Leads", "hot"],
       ["⏳Short Term Nurture", "nurture_short"],
       ["⏰Long Term Nurture", "nurture_long"],
@@ -371,7 +378,9 @@ describe("what a stage means", () => {
       ["⏯️Paused", "paused"],
       ["💰Deposit / FU Booked", "deposit"],
       ["👎No Show", "demo_noshow"],
-      ["📞Call CONFIRMED", "demo_booked"],
+      [" 📞Call CONFIRMED", "demo_booked"],
+      ["🎉Closed ", "won"],
+      ["Offboarded", "won"],
     ];
     for (const [name, role] of names) expect([name, stageRole(name)]).toEqual([name, role]);
     expect(stageRole(null)).toBeNull();
@@ -428,5 +437,26 @@ describe("outcomes on appointment work", () => {
     expect(nextMorning(thu)).toBe(Date.parse("2026-09-26T07:00:00Z")); // Saturday 10:00
     const sat = Date.parse("2026-09-26T13:00:00Z");
     expect(nextMorning(sat)).toBe(Date.parse("2026-09-27T07:00:00Z"));
+  });
+});
+
+describe("where an outcome moves the lead in the pipeline", () => {
+  test("the moves HighLevel leaves undone are made; its own are not repeated", () => {
+    expect(targetRoles("lead", "booked", "booked", "intro")).toEqual(["intro_booked"]);
+    expect(targetRoles("intro", "booked", "booked", "demo")).toEqual(["demo_booked"]);
+    expect(targetRoles("confirm", "confirmed", null, null, "intro")).toEqual(["intro_confirmed"]);
+    expect(targetRoles("confirm", "confirmed", null, null, "demo")).toEqual([]);
+    expect(targetRoles("confirm", "cancelled", null, null, "demo")).toEqual(["demo_cancelled"]);
+    expect(targetRoles("confirm", "cancelled", null, null, "intro")).toEqual(["intro_cancelled"]);
+    expect(targetRoles("intro", "noshow", null)).toEqual([]);
+    expect(targetRoles("intro", "disqualified", "disqualified")).toEqual([]);
+    expect(targetRoles("lead", "disqualified", "disqualified")).toEqual(["disqualified"]);
+    expect(targetRoles("confirm", "not_interested", "not_interested")).toEqual(["nurture_long"]);
+    expect(targetRoles("lead", "no_answer", "unreachable", null, null, "new")).toEqual(["nurture_short"]);
+    expect(targetRoles("lead", "no_answer", "unreachable", null, null, "nurture_short")).toEqual(["nurture_long"]);
+    expect(targetRoles("lead", "no_answer", null)).toEqual([]);
+    expect(targetRoles("lead", "callback", null)).toEqual([]);
+    expect(tagsFor("wrong_number")).toEqual(["wrong-number"]);
+    expect(tagsFor("callback")).toEqual([]);
   });
 });

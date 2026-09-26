@@ -121,10 +121,13 @@ export function afterOutcome(
 /** What a stage of the sales pipeline means to the dialer. */
 export type StageRole =
   | "new"
-  | "requested"
   | "intro_booked"
+  | "intro_confirmed"
+  | "intro_cancelled"
   | "intro_noshow"
+  | "no_progress"
   | "demo_booked"
+  | "demo_cancelled"
   | "demo_noshow"
   | "hot"
   | "nurture_short"
@@ -142,23 +145,31 @@ const plainName = (s: unknown) =>
     .trim()
     .toLowerCase();
 
-/** A stage's role from its name, for stages the settings do not name. */
+/**
+ * A stage's role from its name, for stages the settings do not pin by id
+ * (the pipeline setting's roles, seeded from HighLevel on 2026-09-26). The
+ * order matters: "Demo Cancelled" is a cancellation, not a booking; "Intro
+ * Call REQUESTED" is an intro booked (the calendars confirm on booking; the
+ * lead's own confirmation is the CONFIRMED stage).
+ */
 export function stageRole(name: string | null | undefined): StageRole | null {
   const n = plainName(name);
   if (!n) return null;
   if (/disqualif/.test(n)) return "disqualified";
   if (/pause/.test(n)) return "paused";
+  if (/offboard/.test(n)) return "won";
   if (/long.?term/.test(n)) return "nurture_long";
   if (/short.?term|nurture/.test(n)) return "nurture_short";
   if (/\bhot\b/.test(n)) return "hot";
   if (/new lead/.test(n)) return "new";
-  if (/intro.*request|request/.test(n)) return "requested";
-  if (/intro.*no.?show/.test(n)) return "intro_noshow";
-  if (/intro.*(confirm|book)/.test(n)) return "intro_booked";
-  if (/no.?show/.test(n)) return "demo_noshow";
-  if (/demo.*book|call confirmed|call booked|demo/.test(n)) return "demo_booked";
+  if (/didn.?t (convert|close)|not convert/.test(n)) return "no_progress";
+  if (/cancel/.test(n)) return /demo/.test(n) ? "demo_cancelled" : "intro_cancelled";
+  if (/no.?show/.test(n)) return /intro/.test(n) ? "intro_noshow" : "demo_noshow";
   if (/deposit/.test(n)) return "deposit";
-  if (/won|closed|signed|client/.test(n)) return "won";
+  if (/intro.*confirm/.test(n)) return "intro_confirmed";
+  if (/intro.*request|intro.*book/.test(n)) return "intro_booked";
+  if (/demo.*book|call confirmed|call requested|demo/.test(n)) return "demo_booked";
+  if (/closed|won|signed|client/.test(n)) return "won";
   if (/lost|dead/.test(n)) return "lost";
   return "other";
 }
@@ -832,4 +843,46 @@ export function nextMorning(now: number): number {
   let t = kuwaitAt(now, 10, 0, 1);
   if (new Date(t + KUWAIT).getUTCDay() === 5) t += DAY;
   return t;
+}
+
+/**
+ * Where a dialer outcome moves the lead in the sales pipeline, as stage roles
+ * to try in order (the first the lead's pipeline has wins), or none to leave
+ * the stage alone. Built from what HighLevel does on the sub-account
+ * (research of 2026-09-26):
+ *
+ * - No answer and call back leave the stage: entering a nurture stage
+ *   messages the lead at once.
+ * - A no-show mark and a disqualified mark on an intro are moved by
+ *   HighLevel's own automation, so the dialer does not move them again.
+ * - Bookings, the lead's confirmation of an intro, cancellations and a clear
+ *   no are what HighLevel leaves where they were; the dialer moves those.
+ * - Four unanswered tries: short-term nurture from a fresh stage, long-term
+ *   nurture once already nurtured.
+ */
+export function targetRoles(
+  kind: ItemKind,
+  outcome: AnyOutcome,
+  closed: string | null,
+  booked: BookingKind | null = null,
+  call: "intro" | "demo" | null = null,
+  current: StageRole | null = null,
+): StageRole[] {
+  if (outcome === "booked") return booked === "demo" ? ["demo_booked"] : ["intro_booked"];
+  if (outcome === "confirmed") return call === "intro" ? ["intro_confirmed"] : [];
+  if (outcome === "cancelled") return call === "demo" ? ["demo_cancelled"] : ["intro_cancelled"];
+  if (outcome === "noshow") return [];
+  if (outcome === "disqualified") return kind === "intro" ? [] : ["disqualified"];
+  if (outcome === "not_interested") return ["nurture_long"];
+  if (kind === "lead" && outcome === "no_answer" && closed === "unreachable")
+    return current === "new" || current === "hot" || current === null ? ["nurture_short"] : ["nurture_long"];
+  return [];
+}
+
+/** The tags an outcome leaves on the contact (the sub-account's own tags). */
+export function tagsFor(outcome: AnyOutcome): string[] {
+  if (outcome === "not_interested") return ["not interested"];
+  if (outcome === "disqualified") return ["disqualified"];
+  if (outcome === "wrong_number") return ["wrong-number"];
+  return [];
 }

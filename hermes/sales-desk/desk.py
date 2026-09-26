@@ -41,6 +41,7 @@ from desk import engine as engine_mod  # noqa: E402
 from desk import fathom as fathom_mod  # noqa: E402
 from desk import http  # noqa: E402
 from desk import model as model_mod  # noqa: E402
+from desk import notes as notes_mod  # noqa: E402
 from desk import offer as offer_mod  # noqa: E402
 from desk import prompt as prompt_mod  # noqa: E402
 from desk import queue as queue_mod  # noqa: E402
@@ -451,6 +452,59 @@ def cmd_followups(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     return 0
 
 
+def notes_provider(cfg: Config, log: Logger) -> Any:
+    """The model the call notes and digests are written with: the desk's own
+    provider on the VPS key, SALES_NOTES_MODEL when set; never DeepSeek."""
+    model = key("SALES_NOTES_MODEL", "").strip()
+    if model:
+        if "deepseek" in model.lower():
+            raise model_mod.ModelUnreachable("Lead data never goes to DeepSeek; set SALES_NOTES_MODEL to another model.")
+        cfg.model = model
+    return model_mod.provider(cfg, log.info)
+
+
+def cmd_notes(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    """Notes after every recorded sales call: what was said, the objections, what the closer needs, a verdict."""
+    sb = _sb(cfg)
+    since = datetime.now(timezone.utc) - timedelta(days=args.days or 60)
+    try:
+        p = notes_provider(cfg, log)
+        out = notes_mod.run_notes(sb, p, log.info, since=since, limit=args.limit or 4,
+                                  min_chars=cfg.min_transcript_chars, timeout=cfg.model_timeout)
+    except model_mod.ModelUnreachable as e:
+        _status(cfg, log, "notes", False, str(e))
+        log.error(str(e))
+        return 1
+    detail = ("every call has its notes" if not out["due"] else
+              f"{out['written']} written, {out['failed']} failed of {out['due']} due"
+              + (f": {out['errors'][0]}" if out["errors"] else ""))
+    _status(cfg, log, "notes", not out["failed"], detail)
+    if out["due"] or args.json:
+        _print(out if args.json else detail, args.json)
+    return 1 if out["failed"] and not out["written"] else 0
+
+
+def cmd_digest(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    """What prospects keep saying over the last 7 and 30 days, from the call notes."""
+    sb = _sb(cfg)
+    try:
+        p = notes_provider(cfg, log)
+        outs = [notes_mod.run_digest(sb, p, log.info, days=d, timeout=cfg.model_timeout)
+                for d in ([args.days] if args.days else [7, 30])]
+    except model_mod.ModelUnreachable as e:
+        _status(cfg, log, "digest", False, str(e))
+        log.error(str(e))
+        return 1
+    except model_mod.ModelError as e:
+        _status(cfg, log, "digest", False, str(e))
+        log.error(str(e))
+        return 1
+    detail = "; ".join(f"{o['days']} days from {o['calls']} calls" for o in outs)
+    _status(cfg, log, "digest", True, detail)
+    _print(outs if args.json else detail, args.json)
+    return 0
+
+
 def cmd_status(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     sb = _sb(cfg)
     queue = sb.select("cockpit_sales_requests", "select=id,kind,contact_id,params,status,requested_by,requested_at,"
@@ -577,6 +631,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     rv.add_argument("--asked", action="store_true", help="only the calls reps asked to have reviewed")
     rs = sub.add_parser("research"); rs.add_argument("--limit", type=int)
     sub.add_parser("followups")
+    nt = sub.add_parser("notes"); nt.add_argument("--limit", type=int); nt.add_argument("--days", type=int)
+    dg = sub.add_parser("digest"); dg.add_argument("--days", type=int, choices=(7, 30))
     sub.add_parser("status")
     sub.add_parser("offer-sync")
     v = sub.add_parser("validate"); v.add_argument("deal"); v.add_argument("--transcript")
@@ -598,7 +654,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     handlers: dict[str, Callable[[Config, argparse.Namespace, Logger], int]] = {
         "doctor": cmd_doctor, "requests": cmd_requests, "recordings": cmd_recordings, "status": cmd_status,
         "calls-vault": cmd_calls_vault, "reviews-import": cmd_reviews_import, "reviews": cmd_reviews,
-        "research": cmd_research, "followups": cmd_followups,
+        "research": cmd_research, "followups": cmd_followups, "notes": cmd_notes, "digest": cmd_digest,
         "validate": cmd_validate, "build": cmd_build, "draft": cmd_draft, "offer-sync": cmd_offer_sync,
     }
     try:

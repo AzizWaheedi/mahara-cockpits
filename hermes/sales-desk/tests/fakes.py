@@ -40,6 +40,8 @@ PK = {
     "cockpit_sales_research": ("id",),
     "cockpit_sales_deals": ("response_id",),
     "cockpit_sales_review_asks": ("id",),
+    "cockpit_sales_call_notes": ("recording_id",),
+    "cockpit_sales_digests": ("id",),
 }
 
 
