@@ -677,6 +677,18 @@ def track_replies(sb: Any, now: datetime) -> int:
     return marked
 
 
+def expire_stale(sb: Any, now: datetime) -> int:
+    """Drafts past their time (a WhatsApp window that closed, two days
+    unanswered) are marked expired: the page already hides them, and while
+    they stayed drafts they held the lead's one open draft, so the agent
+    never wrote them a fresh one."""
+    out = sb.rest("PATCH", f"cockpit_sales_followups?status=eq.draft&expires_at=lt.{_q(now.isoformat())}",
+                  json_body={"status": "expired", "decided_at": now.isoformat(),
+                             "error": "Went stale before anyone sent it."},
+                  prefer="return=representation")
+    return len(out) if isinstance(out, list) else 0
+
+
 def reconcile_templates(sb: Any, token: str, now: datetime) -> dict[str, int]:
     """Template sends HighLevel took but had not shown yet: find the message
     in the conversation, or, after half an hour, say it never went."""
@@ -728,6 +740,7 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
     now = now or datetime.now(timezone.utc)
     if not settings.get("enabled", True):
         return {"skipped": "the follow-up agent is switched off"}
+    stale = expire_stale(sb, now)
     replied = track_replies(sb, now)
     reconciled = reconcile_templates(sb, ghl_token, now) if ghl_token else {"found": 0, "never_sent": 0}
     if quiet(now, settings.get("quiet") or {}):
@@ -892,4 +905,5 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
             log(f"followups: {contact} failed: {http.scrub(str(e))[:200]}")
     return {"picked": len(picked), "written": written, "by_channel": by_channel, "sent_by_itself": sent_auto,
             "held_for_automation": held, "in_a_conversation": talking, "no_open_channel": no_channel, "not_sales_leads": not_leads,
-            "failed": failed, "room": room, "replies_marked": replied, "templates": reconciled}
+            "failed": failed, "room": room, "replies_marked": replied, "went_stale": stale,
+            "templates": reconciled}

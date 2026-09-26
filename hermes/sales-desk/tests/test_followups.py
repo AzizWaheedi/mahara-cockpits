@@ -374,6 +374,20 @@ class Run(unittest.TestCase):
         self.assertEqual(pg.one("cockpit_sales_followups", id="f1")["replied_at"], ago(hours=2))
         self.assertIsNone(pg.one("cockpit_sales_followups", id="f2")["replied_at"])
 
+    def test_a_stale_draft_frees_the_lead_for_a_fresh_one(self):
+        pg = FakePostgrest()
+        self.seed_new_lead(pg, lead_created_at=ago(days=10))
+        pg.put("cockpit_sales_inbox", {"conversation_id": "cv1", "contact_id": "a", "last_direction": "inbound",
+                                       "last_message_at": ago(hours=1), "inbound_whatsapp_at": ago(hours=1)})
+        pg.put("cockpit_sales_followups", {"id": "old", "contact_id": "a", "segment": "reply", "status": "draft",
+                                           "channel": "whatsapp", "created_at": ago(days=2), "expires_at": ago(hours=20)})
+        draft = json.dumps({"body": "Hi Omar, here is the link.", "subject": None, "why": "He asked."})
+        with mock.patch.object(http, "request", pg):
+            out = fu.run(Supabase("https://example.supabase.co", "k"), FakeProvider([draft]), lambda _m: None,
+                         settings={"enabled": True}, ghl_token="", now=NOW)
+        self.assertEqual((out["went_stale"], out["written"]), (1, 1))
+        self.assertEqual(pg.one("cockpit_sales_followups", id="old")["status"], "expired")
+
     def test_quiet_hours_and_the_switch_write_nothing(self):
         pg = FakePostgrest()
         with mock.patch.object(http, "request", pg):
