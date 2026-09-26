@@ -44,6 +44,7 @@ RELEVANT_TEST_FILES = [
     "apps/media-buyer-cockpit/scripts/snapshot-rpc-contracts.test.ts",
     "apps/media-buyer-cockpit/scripts/cockpit-dispatch-auth.test.ts",
     "apps/media-buyer-cockpit/scripts/ceo-goals-supabase.test.ts",
+    "apps/media-buyer-cockpit/scripts/csm-state-supabase.test.ts",
     "apps/media-buyer-cockpit/scripts/cockpit-test-db.test.ts",
     "apps/media-buyer-cockpit/scripts/webinar-supabase-targets.test.ts",
     "apps/media-buyer-cockpit/scripts/webinar-target-access.test.ts",
