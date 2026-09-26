@@ -6,7 +6,7 @@ import {
   postIdOf,
   VERSION,
 } from "../convex/ghlSocial";
-import { spread } from "../convex/social";
+import { spread } from "../src/lib/socialSchedule";
 
 /**
  * The pure parts of the Social Planner integration: what GHL's words mean
