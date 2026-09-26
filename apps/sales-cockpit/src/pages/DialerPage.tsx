@@ -25,6 +25,7 @@ import {
 } from "react";
 import { Link } from "react-router";
 import { AdOrigin } from "../components/AdOrigin";
+import { CallNotesList, useCallNotes } from "../components/CallNotes";
 import { Conversation, useConversation } from "../components/Conversation";
 import { HotControl } from "../components/HotList";
 import {
@@ -2035,6 +2036,7 @@ function LeadPane({
   const lead = useLead(contactId);
   const activity = useLeadActivity(contactId, lead.data?.phone8 ?? null);
   const convo = useConversation(contactId);
+  const callNotes = useCallNotes(contactId);
   const [tab, setTab] = useState<LeadTab>("talk");
   const paneRef = useRef<HTMLElement>(null);
   // "Write to them": open the conversation and put the cursor in the box.
@@ -2206,6 +2208,14 @@ function LeadPane({
           />
         ) : tab === "lead" ? (
           <div className="grid gap-5 xl:grid-cols-2">
+            {(callNotes.data ?? []).length ? (
+              <div className="space-y-2 xl:col-span-2">
+                <p className="text-sm font-semibold">
+                  What the last call told us
+                </p>
+                <CallNotesList notes={callNotes.data ?? []} compact />
+              </div>
+            ) : null}
             <div className="space-y-2">
               <p className="text-sm font-semibold">What they told us</p>
               <Answers lead={l} />

@@ -1,5 +1,6 @@
 import { PhoneOff } from "lucide-react";
 import { Link } from "react-router";
+import { type CallGaps, minutesWords, type SpeedToLead } from "../lib/calls";
 import { count, duration, share } from "../lib/format";
 import type { DialStats } from "../lib/pay";
 import { EmptyState, Failed, SectionCard, StatTile } from "./kit";
@@ -13,6 +14,8 @@ export const DIALS_CAP = 5000;
  * address B2B keeps each agent's calls under.
  */
 export function NumbersDials({
+  speed,
+  gaps,
   stats,
   rows,
   loading,
@@ -22,6 +25,8 @@ export function NumbersDials({
   team,
   self,
 }: {
+  speed: SpeedToLead | null;
+  gaps: CallGaps | null;
   stats: DialStats | null;
   /** How many calls the read returned, to tell a full read from a cut one. */
   rows: number;
@@ -94,9 +99,40 @@ export function NumbersDials({
           </div>
         </>
       )}
-      <p className="muted mt-3 text-xs">
-        The gap between calls and speed to lead come with the dialer.
-      </p>
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <StatTile
+          label="Speed to lead"
+          value={speed ? (minutesWords(speed.medianMin) ?? "--") : null}
+          sub={
+            speed
+              ? [
+                  speed.medianWorkingMin !== null
+                    ? `${minutesWords(speed.medianWorkingMin)} in working hours`
+                    : null,
+                  team
+                    ? `${speed.called} of ${speed.leads} leads called · ${speed.never} never called`
+                    : `${speed.called} leads you called first`,
+                  `${speed.within5} within 5 min`,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")
+              : undefined
+          }
+          hint="The CEO cockpit's rule: from a lead coming in (the ROAS-tagged leads of this window) to the first Maqsam call with them by a sales rep, either direction, matched on the phone. Median on the clock and in working hours (10:00 to 18:00, Saturday to Thursday). The leads never called are counted beside it, not inside it. For one rep, the leads whose first call was theirs."
+        />
+        <StatTile
+          label="Gap between calls"
+          value={gaps ? (minutesWords(gaps.averageMin) ?? "--") : null}
+          sub={
+            gaps
+              ? gaps.samples
+                ? `Average of ${gaps.samples} gaps · median ${minutesWords(gaps.medianMin)}`
+                : "Not enough back-to-back calls in working hours"
+              : undefined
+          }
+          hint="The CEO cockpit's rule: from the end of one outbound call (ringing and talk) to the start of the next, never below zero, inside working hours (10:00 to 18:00, Saturday to Thursday, until a rep has a schedule); any other call in between breaks the chain."
+        />
+      </div>
     </SectionCard>
   );
 }

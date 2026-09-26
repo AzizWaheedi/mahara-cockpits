@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { CallRow, LeadRow } from "./calls";
 import type { GoalRow } from "./goals";
 import { supabase } from "./supabase";
 import type {
@@ -606,6 +607,53 @@ export function useCoachReviews(by: {
     if (by.recordingId) q = q.eq("recording_id", by.recordingId);
     return q;
   }, [by.recordingId ?? "", by.all ? 1 : 0]);
+}
+
+/**
+ * Speed to lead's inputs: the ROAS-tagged leads created in the window and
+ * every outbound call a sales rep made from the window's start to a week
+ * after its end (a lead's first call can come after the window closes).
+ */
+export function useSpeedToLead(
+  fromIso: string,
+  toIso: string,
+): Loaded<{ leads: LeadRow[]; calls: CallRow[] }> {
+  return useQuery<{ leads: LeadRow[]; calls: CallRow[] }>(async () => {
+    const until = new Date(
+      Math.min(Date.parse(toIso) + 7 * 86_400_000, Date.now() + 60_000),
+    ).toISOString();
+    const [leads, calls] = await Promise.all([
+      readAll<LeadRow>((from, to) =>
+        supabase
+          .from("cockpit_sales_leads")
+          .select("contact_id,phone8,lead_created_at")
+          .gte("lead_created_at", fromIso)
+          .lt("lead_created_at", toIso)
+          .in("lead_class", ["qualified", "unqualified"])
+          .order("contact_id")
+          .range(from, to),
+      ),
+      readAll<CallRow>((from, to) =>
+        supabase
+          .from("cockpit_sales_dials")
+          .select(
+            "occurred_at,agent_email,direction,state,duration_s,ringing_s,lead_phone8,sales_rep_id",
+          )
+          .eq("direction", "outbound")
+          .not("sales_rep_id", "is", null)
+          .gte("occurred_at", fromIso)
+          .lt("occurred_at", until)
+          .order("call_id")
+          .range(from, to),
+      ),
+    ]);
+    if (leads.error || calls.error)
+      return { data: null, error: leads.error ?? calls.error };
+    return {
+      data: { leads: leads.data ?? [], calls: calls.data ?? [] },
+      error: null,
+    };
+  }, [fromIso, toIso]);
 }
 
 /** A call's transcript from the private bucket. */

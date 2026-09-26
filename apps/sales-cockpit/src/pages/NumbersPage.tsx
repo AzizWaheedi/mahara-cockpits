@@ -7,6 +7,7 @@ import { DIALS_CAP, NumbersDials } from "../components/NumbersDials";
 import { NumbersGoals } from "../components/NumbersGoals";
 import { NumbersPay } from "../components/NumbersPay";
 import { NumbersCalls, NumbersClosing } from "../components/NumbersTiles";
+import { type CallRow, callGaps, speedToLead } from "../lib/calls";
 import {
   useBoard,
   useDials,
@@ -14,6 +15,7 @@ import {
   usePeople,
   useReps,
   useScoreRows,
+  useSpeedToLead,
 } from "../lib/data";
 import { ago, kuwaitDay, kuwaitMidnight } from "../lib/format";
 import {
@@ -140,6 +142,24 @@ export default function NumbersPage({ me }: { me: Me }) {
     [dials.data],
   );
   const hasMaqsam = team || Boolean(maqsam);
+  // The setter's rhythm: speed to lead (the first caller's cohort for one
+  // rep, every lead for the team) and the gap between calls.
+  const speedIn = useSpeedToLead(fromIso, toIso);
+  const speed = useMemo(
+    () =>
+      speedIn.data
+        ? speedToLead(
+            speedIn.data.leads,
+            speedIn.data.calls,
+            team ? null : maqsam,
+          )
+        : null,
+    [speedIn.data, team, maqsam],
+  );
+  const gaps = useMemo(
+    () => (dials.data ? callGaps(dials.data as unknown as CallRow[]) : null),
+    [dials.data],
+  );
 
   const rep = useMemo(() => {
     const id =
@@ -280,6 +300,8 @@ export default function NumbersPage({ me }: { me: Me }) {
       ) : (
         <>
           <NumbersDials
+            speed={speed}
+            gaps={gaps}
             stats={stats}
             rows={dials.data?.length ?? 0}
             loading={dials.loading}
