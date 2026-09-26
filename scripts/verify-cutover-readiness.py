@@ -42,6 +42,13 @@ APP_NAMES = [
 RELEVANT_TEST_FILES = [
     "apps/media-buyer-cockpit/scripts/supabase-access.test.ts",
     "apps/media-buyer-cockpit/scripts/snapshot-rpc-contracts.test.ts",
+    "apps/media-buyer-cockpit/scripts/cockpit-dispatch-auth.test.ts",
+    "apps/media-buyer-cockpit/scripts/cockpit-test-db.test.ts",
+    "apps/media-buyer-cockpit/scripts/webinar-supabase-targets.test.ts",
+    "apps/media-buyer-cockpit/scripts/webinar-target-access.test.ts",
+    "apps/media-buyer-cockpit/scripts/webinar-targets.test.ts",
+    "apps/media-buyer-cockpit/scripts/webinar-ingestion.test.ts",
+    "apps/media-buyer-cockpit/scripts/reporting-view-access.test.ts",
     "apps/media-buyer-cockpit/scripts/frameio-webhook.test.ts",
     "apps/media-buyer-cockpit/scripts/billing.test.ts",
     "apps/media-buyer-cockpit/scripts/webinar.test.ts",
@@ -250,11 +257,12 @@ def check_app_structure(repo_root: Path) -> Tuple[bool, List[str]]:
 
 def check_no_convex_source_imports(repo_root: Path) -> Tuple[bool, List[str]]:
     """
-    Scan apps/*/src for static import statements from Convex.
+    Scan production source imports. Isolated src/dev fixtures are excluded;
+    importing those fixtures from other source files is rejected.
     NOTE: Proves absence of static source imports only; does not certify full
     runtime Convex independence.
     """
-    import_re = re.compile(r'from\s+["\'](?:convex|@convex-dev|_generated).*?["\']')
+    import_re = re.compile(r'(?:\bfrom\s*|\bimport\s*(?:\(\s*)?|\brequire\s*\(\s*)["\']([^"\']+)["\']')
     found: List[str] = []
 
     for app in APP_NAMES:
@@ -268,9 +276,14 @@ def check_no_convex_source_imports(repo_root: Path) -> Tuple[bool, List[str]]:
                 continue
             try:
                 content = p.read_text(encoding="utf-8", errors="ignore")
-                if import_re.search(content):
-                    rel = p.relative_to(repo_root).as_posix()
-                    found.append(rel)
+                if p.relative_to(src_dir).parts[0] == "dev":
+                    continue
+                for spec in import_re.findall(content):
+                    if "/dev/" in spec or spec.startswith("dev/"):
+                        found.append(f"{p.relative_to(repo_root).as_posix()} (production import of dev fixture: {spec})")
+                    elif (spec == "convex" or spec.startswith(("convex/", "@convex-dev/", "_generated/"))
+                          or "/_generated/" in spec):
+                        found.append(p.relative_to(repo_root).as_posix())
             except Exception as exc:
                 found.append(f"{p.as_posix()} (read error: {exc})")
 
@@ -912,7 +925,7 @@ def verify_cutover(
         "note": "Proves no detected static source imports in apps/*/src; not full runtime Convex independence proof.",
     }
     if imports_ok:
-        print("  [PASS] Zero Convex imports detected in scanned apps/*/src files")
+        print("  [PASS] No detected Convex imports in production source; isolated dev fixtures excluded")
     else:
         all_local_passed = False
         report["failures"].extend(import_fails)

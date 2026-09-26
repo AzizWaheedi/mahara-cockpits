@@ -1,4 +1,3 @@
-import { useAction } from "@/lib/cockpitApi";
 import { type ReactNode, useId, useMemo, useState } from "react";
 import {
   Area,
@@ -30,11 +29,8 @@ import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import type { CeoSection } from "@/components/ceo/useCeo";
-import { api } from "@/lib/cockpitApi";
-import type {
-  WebinarPayload,
-  WebinarRound,
-} from "@/types/ceo/payloads";
+import { api, useAction } from "@/lib/cockpitApi";
+import type { WebinarPayload, WebinarRound } from "@/types/ceo/payloads";
 import { webinarReadiness } from "@/types/ceo/webinarReadiness";
 import type { Room } from "@/types/ceo/webinarRoom";
 import type { TargetSelection } from "@/types/ceo/webinarTargetsModel";

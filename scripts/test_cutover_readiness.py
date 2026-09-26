@@ -392,6 +392,22 @@ class TestCutoverReadinessRevision(unittest.TestCase):
 class TestIndependentReleaseReview(unittest.TestCase):
     setUp = TestCutoverReadinessRevision.setUp
     tearDown = TestCutoverReadinessRevision.tearDown
+
+    def test_only_isolated_dev_imports_are_exempt(self):
+        src = self.repo / "apps" / vcr.APP_NAMES[0] / "src"
+        dev = src / "dev"
+        dev.mkdir(exist_ok=True)
+        (dev / "fixture.ts").write_text('import { getFunctionName } from "convex/server";')
+        self.assertTrue(vcr.check_no_convex_source_imports(self.repo)[0])
+        for statement in [
+            'import { x } from "@/dev/fixture";',
+            'import { api } from "../../convex/_generated/api";',
+            'const client = import("convex/react");',
+            'const client = require("convex/react");',
+        ]:
+            with self.subTest(statement=statement):
+                (src / "entry.ts").write_text(statement)
+                self.assertFalse(vcr.check_no_convex_source_imports(self.repo)[0])
     def test_commit_change_or_unknown_postcheck_source_never_releases(self):
         other_sha = "b" * 40
         evidence, _ = create_valid_evidence_bundle(self.repo, other_sha)

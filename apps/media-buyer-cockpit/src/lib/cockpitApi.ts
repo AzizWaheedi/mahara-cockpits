@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { useCockpitAuth } from "../auth/SupabaseAuthProvider";
+import { loadSupabaseAccess } from "../auth/supabaseAccess";
 import { supabase } from "./supabase";
 
 export class ConvexError extends Error {
@@ -14,23 +16,17 @@ export class ConvexReactClient {
 }
 
 export function useConvexAuth() {
-  return { isAuthenticated: true, isLoading: false };
+  const { isAuthenticated, ready } = useCockpitAuth();
+  return { isAuthenticated, isLoading: !ready };
 }
 
 export type Id<_T extends string = string> = string;
-export type FunctionReturnType<F extends (...args: any) => any = any> = F extends (...args: any) => infer R ? Awaited<R> : any;
+export type FunctionReturnType<F extends (...args: any) => any = any> =
+  F extends (...args: any) => infer R ? Awaited<R> : any;
 
 // biome-ignore lint/suspicious/noExplicitAny: universal query runner
 export function useQuery<T = any>(queryFn: any, args?: any): T {
-  const [data, setData] = useState<any>(() => {
-    if (typeof queryFn === "function" && args !== "skip") {
-      try {
-        const res = queryFn(args);
-        if (res && !(res instanceof Promise)) return res;
-      } catch {}
-    }
-    return undefined;
-  });
+  const [data, setData] = useState<any>(undefined);
 
   const argsJson = JSON.stringify(args);
 
@@ -53,7 +49,9 @@ export function useQuery<T = any>(queryFn: any, args?: any): T {
   return data as T;
 }
 
-export function useMutation<T extends (...args: any[]) => any>(mutationFn: T): T {
+export function useMutation<T extends (...args: any[]) => any>(
+  mutationFn: T,
+): T {
   return mutationFn;
 }
 
@@ -78,7 +76,9 @@ export function useQueries(queries: any[] | Record<string, any>): any {
       Promise.all(
         queries.map(q => {
           if (!q || q.args === "skip") return Promise.resolve(undefined);
-          return Promise.resolve(typeof q.query === "function" ? q.query(q.args) : q);
+          return Promise.resolve(
+            typeof q.query === "function" ? q.query(q.args) : q,
+          );
         }),
       ).then(res => {
         if (active) setResults(res);
@@ -89,7 +89,9 @@ export function useQueries(queries: any[] | Record<string, any>): any {
         keys.map(k => {
           const q = (queries as Record<string, any>)[k];
           if (!q || q.args === "skip") return Promise.resolve([k, undefined]);
-          return Promise.resolve(typeof q.query === "function" ? q.query(q.args) : q).then(res => [k, res]);
+          return Promise.resolve(
+            typeof q.query === "function" ? q.query(q.args) : q,
+          ).then(res => [k, res]);
         }),
       ).then(entries => {
         if (active) {
@@ -114,13 +116,7 @@ async function handleApiCall(endpoint: string, args: any = {}): Promise<any> {
 
   // 1. Roles
   if (domain === "roles" && sub === "me") {
-    const { data: { session } } = await supabase.auth.getSession();
-    const email = session?.user?.email || "media-buyer@maharamedia.com";
-    return {
-      email,
-      name: session?.user?.user_metadata?.full_name || email.split("@")[0],
-      roles: ["media_buyer", "ceo", "admin", "csm", "creative", "video_editor"],
-    };
+    return loadSupabaseAccess(supabase);
   }
 
   // 2. Control (status toggles)
@@ -138,7 +134,15 @@ async function handleApiCall(endpoint: string, args: any = {}): Promise<any> {
   // 3. Board
   if (domain === "board") {
     if (sub === "adStatusOptions") {
-      return ["Active", "Paused", "Testing", "Scaling", "Dead Campaign", "Lost Client", "Review"];
+      return [
+        "Active",
+        "Paused",
+        "Testing",
+        "Scaling",
+        "Dead Campaign",
+        "Lost Client",
+        "Review",
+      ];
     }
     if (sub === "advertisingCityOptions") {
       return ["Kuwait", "Riyadh", "Dubai", "Jeddah", "Doha", "Abu Dhabi"];
@@ -168,10 +172,7 @@ async function handleApiCall(endpoint: string, args: any = {}): Promise<any> {
       }));
     }
     if (sub === "winners") {
-      const { data } = await supabase
-        .from("winner_ads")
-        .select("*")
-        .limit(100);
+      const { data } = await supabase.from("winner_ads").select("*").limit(100);
       return data || [];
     }
     return { ok: true };
@@ -206,7 +207,14 @@ async function handleApiCall(endpoint: string, args: any = {}): Promise<any> {
         return data || [];
       }
       if (rest[0] === "roles") {
-        return ["media_buyer", "creative", "csm", "video_editor", "sales", "ceo"];
+        return [
+          "media_buyer",
+          "creative",
+          "csm",
+          "video_editor",
+          "sales",
+          "ceo",
+        ];
       }
       return { ok: true };
     }
@@ -249,15 +257,21 @@ async function handleApiCall(endpoint: string, args: any = {}): Promise<any> {
   return { ok: true };
 }
 
+const apiReferences = new Map<string, any>();
 function createApiProxy(path: string[] = []): any {
-  return new Proxy(() => {}, {
+  const key = path.join(".");
+  if (apiReferences.has(key)) return apiReferences.get(key);
+  const reference = new Proxy(() => {}, {
     get(_target, prop: string) {
+      if (prop === "then" || typeof prop !== "string") return undefined;
       return createApiProxy([...path, prop]);
     },
     apply(_target, _thisArg, args) {
       return handleApiCall(path.join("."), args[0]);
     },
   });
+  apiReferences.set(key, reference);
+  return reference;
 }
 
 export const api: any = createApiProxy();

@@ -1,6 +1,6 @@
+import type { CallCenterReport } from "./callCenterContract";
 import type { WebinarReadiness } from "./webinarReadiness";
 import type { TargetSelection, WebinarTargets } from "./webinarTargetsModel";
-import type { CallCenterReport } from "./callCenterContract";
 /**
  * The exact shape of every CEO section payload. Adapters on the backend fill
  * these; the /ceo screens read them. Change a shape here first.
