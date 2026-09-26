@@ -25,6 +25,7 @@ import {
 } from "react";
 import { Link } from "react-router";
 import { AdOrigin } from "../components/AdOrigin";
+import { ProofToSend } from "../components/AssetPicker";
 import { CallNotesList, useCallNotes } from "../components/CallNotes";
 import { Conversation, useConversation } from "../components/Conversation";
 import { HotControl } from "../components/HotList";
@@ -54,7 +55,14 @@ import {
   writePrefs,
 } from "../components/ScriptParts";
 import { api } from "../lib/api";
-import { useLead, useLeadActivity, useLeadSearch, useNow } from "../lib/data";
+import { assetStage, objectionsFrom } from "../lib/assets";
+import {
+  useLead,
+  useLeadActivity,
+  useLeadSearch,
+  useNow,
+  useSetting,
+} from "../lib/data";
 import {
   alertsWanted,
   callbackPicks,
@@ -85,7 +93,7 @@ import {
 import { type Fill, groupBlocks, personalise } from "../lib/script";
 import { toast } from "../lib/toast";
 import type { Lead, Me } from "../lib/types";
-import type { Moment } from "../lib/whatsapp";
+import { leadLanguage, type Moment } from "../lib/whatsapp";
 
 /**
  * The power dialer, level with the call centre's (mahara-power-dialer): the
@@ -2054,13 +2062,24 @@ function LeadPane({
   const activity = useLeadActivity(contactId, lead.data?.phone8 ?? null);
   const convo = useConversation(contactId);
   const callNotes = useCallNotes(contactId);
+  const pipeline = useSetting<{ roles?: Record<string, string> }>("pipeline");
   const [tab, setTab] = useState<LeadTab>("talk");
+  // What goes in the conversation box from outside: the call pane's
+  // ready-made message, or a sales asset from "Proof to send".
+  const [prefill, setPrefill] = useState<{
+    moment?: Moment;
+    text?: string;
+    asset?: { id: string; url: string | null } | null;
+    nonce: number;
+  } | null>(null);
   const paneRef = useRef<HTMLElement>(null);
   // "Write to them": open the conversation and put the cursor in the box.
   const lastTalk = useRef(talk.n);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: once per request (n); the moment rides with it
   useEffect(() => {
     if (talk.n === lastTalk.current) return;
     lastTalk.current = talk.n;
+    if (talk.moment) setPrefill({ moment: talk.moment, nonce: talk.n });
     setTab("talk");
     window.setTimeout(() => {
       paneRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
@@ -2215,16 +2234,42 @@ function LeadPane({
       </div>
       <div className="p-4" role="tabpanel">
         {tab === "talk" ? (
-          <Conversation
-            contactId={contactId}
-            convo={convo}
-            compact
-            rep={me.name}
-            callAt={item?.appointment?.start_at ?? null}
-            prefill={
-              talk.moment ? { moment: talk.moment, nonce: talk.n } : null
-            }
-          />
+          <div className="space-y-5">
+            <Conversation
+              contactId={contactId}
+              convo={convo}
+              compact
+              rep={me.name}
+              callAt={item?.appointment?.start_at ?? null}
+              prefill={prefill}
+            />
+            <div className="border-t hairline pt-4">
+              <p className="mb-2 text-sm font-semibold">Proof to send</p>
+              <ProofToSend
+                contactId={contactId}
+                language={leadLanguage(
+                  convo.thread
+                    .filter(m => m.direction === "inbound")
+                    .map(m => m.body),
+                )}
+                stage={assetStage(
+                  pipeline.data?.roles?.[String(l?.stage_id ?? "")] ?? null,
+                )}
+                objections={objectionsFrom(
+                  (callNotes.data ?? []).flatMap(n =>
+                    (n.notes.objections ?? []).map(o => o.objection),
+                  ),
+                )}
+                onUse={(text, a) =>
+                  setPrefill({
+                    text,
+                    asset: { id: a.id, url: a.url },
+                    nonce: Date.now(),
+                  })
+                }
+              />
+            </div>
+          </div>
         ) : tab === "script" ? (
           <ScriptTab
             me={me}

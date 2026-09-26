@@ -19,10 +19,12 @@ import {
   checkLink,
   checkOffer,
   checkPay,
+  checkReference,
   checkSnippet,
   checkTemplateRoute,
   cleanText,
   FOLLOWUP_SEGMENTS,
+  REFERENCE_ASK_STATES,
   renderTemplate,
   type TemplateRoute,
   templateLine,
@@ -817,6 +819,7 @@ async function convoSend(who: Who, b: Row) {
   const subject = channel === "email" ? cleanText(b.subject, 300) : null;
   if (channel === "email" && !subject) throw new Refusal("An email needs a subject.");
   const followupId = b.followup_id ? cleanText(b.followup_id, 40) : null;
+  const assetId = await assetFor(b.asset_id);
 
   const already = (await svc(`cockpit_sales_messages?request_id=eq.${enc(requestId)}&select=*`))[0];
   if (already) {
@@ -915,13 +918,39 @@ async function convoSend(who: Who, b: Row) {
     prefer: "return=representation",
   }))[0];
   await audit(who, "convo.send", "cockpit_sales_messages", String(row.id), null,
-    { channel, state, provider_status: status, followup_id: followupId }, { lead: lead.name ?? null });
+    { channel, state, provider_status: status, followup_id: followupId, asset_id: assetId }, { lead: lead.name ?? null });
+  if (assetId && state !== "failed") await assetSent(who, assetId, contactId, channel === "email" ? "email" : "whatsapp", String(row.id));
   return { message: saved };
 }
 
 // ---------------------------------------------------------------------------
 // WhatsApp templates: the only way to reach a lead whose window is closed
 // ---------------------------------------------------------------------------
+
+/** The sales asset a message carries, if it names one the cockpit has. */
+async function assetFor(v: unknown): Promise<string | null> {
+  const id = cleanText(v, 40);
+  if (!id) return null;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))
+    throw new Refusal("That is not one of the sales assets.");
+  const a = (await svc(`cockpit_sales_assets?id=eq.${enc(id)}&select=id,sendable`))[0];
+  if (!a) throw new Refusal("That asset is not in the library any more.", 404);
+  if (!a.sendable) throw new Refusal("That asset may not be sent (its link, its claims or its age).", 409);
+  return id;
+}
+
+/** A sales asset went to a lead: logged for the library's counts, never fatal to the send. */
+async function assetSent(who: Who, assetId: string, contactId: string, channel: "whatsapp" | "email", messageId: string) {
+  try {
+    await svc("cockpit_sales_asset_sends", {
+      method: "POST",
+      body: { asset_id: assetId, contact_id: contactId, channel, message_id: messageId, sent_by: who.email },
+      prefer: "return=minimal",
+    });
+  } catch (e) {
+    console.error("asset send log", redact(String(e)));
+  }
+}
 
 async function templateRoute(key: string): Promise<TemplateRoute> {
   const r = (await svc(`cockpit_sales_wa_templates?key=eq.${enc(key)}&select=*`))[0] as unknown as TemplateRoute | undefined;
@@ -979,7 +1008,7 @@ async function signatureFor(contactId: string, who: Who, language: "ar" | "en"):
  */
 async function sendTemplate(
   who: Who,
-  o: { contactId: string; key: string; line: string; requestId: string; followupId: string | null },
+  o: { contactId: string; key: string; line: string; requestId: string; followupId: string | null; assetId?: string | null },
 ) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(o.requestId))
     throw new Refusal("Reload the page and send again.");
@@ -1082,8 +1111,10 @@ async function sendTemplate(
     prefer: "return=representation",
   }))[0];
   await audit(who, "wa.template", "cockpit_sales_messages", String(row.id), null,
-    { template: route.key, workflow: route.workflow_id, state, seen: Boolean(seen), followup_id: o.followupId },
+    { template: route.key, workflow: route.workflow_id, state, seen: Boolean(seen), followup_id: o.followupId,
+      asset_id: o.assetId ?? null },
     { lead: lead.name ?? null });
+  if (o.assetId && state !== "failed") await assetSent(who, o.assetId, o.contactId, "whatsapp", String(row.id));
   return { message: saved };
 }
 
@@ -1097,6 +1128,7 @@ async function waTemplateSend(who: Who, b: Row) {
     line: String(b.line ?? ""),
     requestId: String(b.request_id ?? ""),
     followupId: null,
+    assetId: await assetFor(b.asset_id),
   });
 }
 
@@ -1178,6 +1210,82 @@ async function snippetDelete(who: Who, b: Row) {
   if (!out.length) throw new Refusal("That message is not in the library any more.", 404);
   await audit(who, "snippet.delete", "cockpit_sales_snippets", id, out[0], null);
   return { snippet: out[0] };
+}
+
+// ---------------------------------------------------------------------------
+// Client references
+// ---------------------------------------------------------------------------
+
+/** A manager records a client reference: who, what they may say, and whether they agreed. */
+async function referenceSave(who: Who, b: Row) {
+  needManager(who);
+  const c = checkReference(b);
+  if (!c.ok) throw new Refusal(c.error);
+  const id = cleanText(b.id, 40);
+  const at = new Date().toISOString();
+  const before = id ? ((await svc(`cockpit_sales_references?id=eq.${enc(id)}&select=*`))[0] ?? null) : null;
+  if (id && !before) throw new Refusal("That reference is not here any more.", 404);
+  const consentChanged = !before || before.consent !== c.row.consent;
+  const row = {
+    ...c.row,
+    ...(consentChanged && c.row.consent !== "unknown" ? { consent_by: who.email, consent_at: at } : {}),
+    ...(consentChanged && c.row.consent === "unknown" ? { consent_by: null, consent_at: null } : {}),
+    updated_by: who.email,
+    updated_at: at,
+  };
+  const out = id
+    ? await svc(`cockpit_sales_references?id=eq.${enc(id)}`, { method: "PATCH", body: row, prefer: "return=representation" })
+    : await svc("cockpit_sales_references", { method: "POST", body: row, prefer: "return=representation" });
+  await audit(who, "reference.save", "cockpit_sales_references", String(out[0]?.id ?? id), before, out[0]);
+  return { reference: out[0] };
+}
+
+/** A rep asks for a reference call for their lead; a manager arranges it. */
+async function referenceAsk(who: Who, b: Row) {
+  const contactId = cleanText(b.contact_id, 80);
+  if (!contactId) throw new Refusal("For which lead?");
+  const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contactId)}&select=contact_id,name`))[0];
+  if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
+  const refId = cleanText(b.reference_id, 40) || null;
+  if (refId) {
+    const r = (await svc(`cockpit_sales_references?id=eq.${enc(refId)}&select=id,consent`))[0];
+    if (!r) throw new Refusal("That reference is not here any more.", 404);
+    if (r.consent === "no") throw new Refusal("That client said no to reference calls. Pick another, or leave it to the manager.", 409);
+  }
+  const open = await svc(`cockpit_sales_reference_asks?contact_id=eq.${enc(contactId)}&state=eq.asked&select=id`);
+  if (open.length) throw new Refusal("A reference call is already asked for this lead.", 409);
+  const note = cleanText(b.note, 1000) || null;
+  const out = await svc("cockpit_sales_reference_asks", {
+    method: "POST",
+    body: { contact_id: contactId, reference_id: refId, note, asked_by: who.email },
+    prefer: "return=representation",
+  });
+  await audit(who, "reference.ask", "cockpit_sales_reference_asks", String(out[0]?.id), null, out[0], { lead: lead.name ?? null });
+  return { ask: out[0] };
+}
+
+async function referenceAnswer(who: Who, b: Row) {
+  needManager(who);
+  const id = cleanText(b.id, 40);
+  const state = String(b.state ?? "");
+  if (!(REFERENCE_ASK_STATES as readonly string[]).includes(state)) throw new Refusal("Arranged, done or declined?");
+  const before = (await svc(`cockpit_sales_reference_asks?id=eq.${enc(id)}&select=*`))[0];
+  if (!before) throw new Refusal("That ask is not here any more.", 404);
+  const at = new Date().toISOString();
+  const refId = cleanText(b.reference_id, 40) || (before.reference_id as string | null) || null;
+  const out = await svc(`cockpit_sales_reference_asks?id=eq.${enc(id)}`, {
+    method: "PATCH",
+    body: { state, answer: cleanText(b.answer, 1000) || null, reference_id: refId, decided_by: who.email, decided_at: at },
+    prefer: "return=representation",
+  });
+  if (state === "done" && refId)
+    await svc(`cockpit_sales_references?id=eq.${enc(refId)}`, {
+      method: "PATCH",
+      body: { last_used_at: at },
+      prefer: "return=minimal",
+    });
+  await audit(who, "reference.answer", "cockpit_sales_reference_asks", id, before, out[0]);
+  return { ask: out[0] };
 }
 
 /**
@@ -3461,6 +3569,9 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   "ghl.workflows": ghlWorkflows,
   "snippet.save": snippetSave,
   "snippet.delete": snippetDelete,
+  "reference.save": referenceSave,
+  "reference.ask": referenceAsk,
+  "reference.answer": referenceAnswer,
 };
 
 /** What the desk's service key may do: nothing but a trusted follow-up. */

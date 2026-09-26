@@ -745,3 +745,40 @@ export function checkSnippet(b: Record<string, unknown>):
   if (!Number.isInteger(sort) || sort < 0 || sort > 1000) return { ok: false, error: "The order is a whole number from 0 to 1000." };
   return { ok: true, row: { moment, language, body, sort } };
 }
+
+// ---------------------------------------------------------------------------
+// Client references
+// ---------------------------------------------------------------------------
+
+export const REFERENCE_CONSENT = ["yes", "no", "unknown"] as const;
+export const REFERENCE_ASK_STATES = ["arranged", "done", "declined"] as const;
+
+/** A reference as a manager saves it, or why it cannot be saved. */
+export function checkReference(b: Record<string, unknown>):
+  | { ok: true; row: Record<string, unknown> }
+  | { ok: false; error: string } {
+  const name = cleanText(b.client_name, 200);
+  if (name.length < 2) return { ok: false, error: "Which client?" };
+  const consent = String(b.consent ?? "unknown");
+  if (!(REFERENCE_CONSENT as readonly string[]).includes(consent))
+    return { ok: false, error: "Have they agreed to take a call: yes, no, or not asked yet?" };
+  const slugs = (Array.isArray(b.asset_slugs) ? b.asset_slugs : String(b.asset_slugs ?? "").split(","))
+    .map(s => cleanText(s, 120).toLowerCase())
+    .filter(Boolean);
+  if (slugs.some(s => !/^[a-z0-9][a-z0-9-]*$/.test(s))) return { ok: false, error: "Proof is named by the asset's slug." };
+  return {
+    ok: true,
+    row: {
+      client_name: name,
+      trade: cleanText(b.trade, 120) || null,
+      city: cleanText(b.city, 120) || null,
+      country: cleanText(b.country, 120) || null,
+      active: b.active === true ? true : b.active === false ? false : null,
+      result_line: cleanText(b.result_line, 400) || null,
+      asset_slugs: [...new Set(slugs)].slice(0, 12),
+      consent,
+      route: cleanText(b.route, 300) || null,
+      notes: cleanText(b.notes, 2000) || null,
+    },
+  };
+}

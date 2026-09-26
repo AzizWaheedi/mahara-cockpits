@@ -78,6 +78,8 @@ export function WhatsAppLibrary({ manager }: { manager: boolean }) {
             error={templates.error}
             retry={templates.reload}
           />
+        ) : templates.loading && !templates.data ? (
+          <p className="muted text-sm">Reading the templates…</p>
         ) : (
           <ul className="space-y-3">
             {(templates.data ?? []).map(t => (
@@ -434,6 +436,8 @@ function SnippetLibrary({ manager }: { manager: boolean }) {
           error={snippets.error}
           retry={snippets.reload}
         />
+      ) : snippets.loading && !snippets.data ? (
+        <p className="muted text-sm">Reading the messages…</p>
       ) : !groups.length ? (
         <EmptyState
           icon={MessageSquareText}

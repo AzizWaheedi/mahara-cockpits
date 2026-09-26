@@ -156,8 +156,12 @@ export function TemplateComposer({
   language: "ar" | "en";
   templates: TemplateRoute[];
   values: SnippetValues;
-  /** A line to start from (the dialer's missed-call message), if the box is empty. */
-  prefill?: { text: string; nonce: number } | null;
+  /** A line to start from (the dialer's missed-call message, an asset's message). */
+  prefill?: {
+    text: string;
+    nonce: number;
+    asset?: { id: string; url: string | null } | null;
+  } | null;
   onSent: () => void;
 }) {
   const live = useMemo(
@@ -176,7 +180,9 @@ export function TemplateComposer({
   const takesLine = Boolean(t?.variables.includes("line"));
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new request (nonce) with the same words fills the box again
   useEffect(() => {
-    if (prefill?.text) setLine(l => l || prefill.text);
+    if (!prefill?.text) return;
+    const words = prefill.text.replace(/[\r\n]+/g, " ");
+    setLine(l => (l.trim() ? `${l.trim()} ${words}` : words));
   }, [prefill?.nonce, prefill?.text]);
 
   if (!live.length)
@@ -204,6 +210,11 @@ export function TemplateComposer({
         template_key: t.key,
         line,
         request_id: requestId,
+        asset_id:
+          prefill?.asset &&
+          (!prefill.asset.url || line.includes(prefill.asset.url))
+            ? prefill.asset.id
+            : undefined,
       });
       if (out.message.state === "failed")
         toast.error(

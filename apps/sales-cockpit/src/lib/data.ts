@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { Asset } from "./assets";
 import type { CallRow, LeadRow } from "./calls";
 import type { GoalRow } from "./goals";
 import { supabase } from "./supabase";
@@ -891,5 +892,55 @@ export function useTemplates() {
   return useQuery<TemplateRoute[]>(
     () => supabase.from("cockpit_sales_wa_templates").select("*").order("sort"),
     [],
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sales assets: B2B's library, copied hourly (lib/assets.ts picks from it)
+// ---------------------------------------------------------------------------
+
+const ASSET_COLS =
+  "id,slug,title,asset_type,send_when,stages,objections,industries,proof_types,language,what_it_proves,paste_message_ar,paste_message_en,does_not_cover,url,duration_seconds,published_at,is_canonical,sendable,send_count";
+
+export function useAssets() {
+  return useQuery<Asset[]>(
+    () =>
+      supabase
+        .from("cockpit_sales_assets")
+        .select(ASSET_COLS)
+        .eq("sendable", true)
+        .order("title"),
+    [],
+  );
+}
+
+export interface AssetWord {
+  facet: string;
+  value: string;
+  label: string | null;
+  sort_order: number | null;
+}
+
+export function useAssetVocab() {
+  return useQuery<AssetWord[]>(
+    () =>
+      supabase
+        .from("cockpit_sales_asset_vocab")
+        .select("facet,value,label,sort_order")
+        .order("sort_order"),
+    [],
+  );
+}
+
+export function useAssetSends(contactId: string) {
+  return useQuery<{ asset_id: string; sent_at: string; sent_by: string }[]>(
+    () =>
+      supabase
+        .from("cockpit_sales_asset_sends")
+        .select("asset_id,sent_at,sent_by")
+        .eq("contact_id", contactId)
+        .order("sent_at", { ascending: false })
+        .limit(50),
+    [contactId],
   );
 }

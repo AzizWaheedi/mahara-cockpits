@@ -205,6 +205,9 @@ interface Draft {
   subject: string;
   /** The send's request id, kept until it goes, so a retry never doubles it. */
   id: string;
+  /** A sales asset put in the box, logged with the send while its link is still in it. */
+  assetId?: string | null;
+  assetUrl?: string | null;
 }
 
 function readDraft(contactId: string, channel: Channel): Draft {
@@ -241,8 +244,16 @@ export function Conversation({
   rep?: string | null;
   /** The lead's booked call, for {day} and {time}. */
   callAt?: string | null;
-  /** A ready-made message to start from (the dialer after a missed call). */
-  prefill?: { moment: Moment; nonce: number } | null;
+  /**
+   * Words to put in the box from outside: a ready-made message for a moment
+   * (the dialer after a missed call), or a sales asset's message.
+   */
+  prefill?: {
+    moment?: Moment;
+    text?: string;
+    asset?: { id: string; url: string | null } | null;
+    nonce: number;
+  } | null;
 }) {
   const { data, error, thread } = convo;
   const templates = useTemplates();
@@ -303,10 +314,26 @@ export function Conversation({
   const [draft, setDraft] = useState<Draft>(() =>
     readDraft(contactId, channel),
   );
-  useEffect(
-    () => setDraft(readDraft(contactId, channel)),
-    [contactId, channel],
-  );
+  // Words waiting for a channel switch to land in that channel's box.
+  const pending = useRef<{
+    text: string;
+    asset: { id: string; url: string | null } | null;
+  } | null>(null);
+  useEffect(() => {
+    const d = readDraft(contactId, channel);
+    const p = pending.current;
+    pending.current = null;
+    setDraft(
+      p
+        ? {
+            ...d,
+            body: d.body.trim() ? `${d.body}\n\n${p.text}` : p.text,
+            assetId: p.asset?.id ?? null,
+            assetUrl: p.asset?.url ?? null,
+          }
+        : d,
+    );
+  }, [contactId, channel]);
   // Saved under the lead and channel it was written for, so switching
   // channel never files one channel's words under the other.
   useEffect(() => {
@@ -337,31 +364,58 @@ export function Conversation({
     channel === "whatsapp" &&
     Boolean(wa?.on && !wa.dnd && wa.reachable && !wa.window?.open);
 
-  // A ready-made message asked for from outside (the dialer): into the empty
-  // box, or as the template's line when the window is closed.
+  // Words asked for from outside: a ready-made message for a moment (the
+  // dialer after a missed call goes to WhatsApp) or a sales asset's message
+  // (to the channel in use). Into the box, or as the template's line when
+  // WhatsApp's window is closed.
   const [linePrefill, setLinePrefill] = useState<{
     text: string;
     nonce: number;
+    asset?: { id: string; url: string | null } | null;
   } | null>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: once per request
   useEffect(() => {
-    if (!prefill || !data || !snippets.data) return;
-    const s =
-      snippets.data.find(
-        x => x.moment === prefill.moment && x.language === language,
-      ) ?? snippets.data.find(x => x.moment === prefill.moment);
-    if (!s) return;
-    picked.current = true;
-    setChannel("whatsapp");
-    if (wa?.window?.open)
-      setDraft(d =>
-        d.body.trim() ? d : { ...d, body: fillSnippet(s.body, values) },
-      );
-    else
-      setLinePrefill({
-        text: fillSnippet(snippetLine(s.body), values),
-        nonce: prefill.nonce,
-      });
+    if (!prefill || !data) return;
+    let full = prefill.text ?? null;
+    let line = full;
+    if (!full && prefill.moment) {
+      if (!snippets.data) return;
+      const s =
+        snippets.data.find(
+          x => x.moment === prefill.moment && x.language === language,
+        ) ?? snippets.data.find(x => x.moment === prefill.moment);
+      if (!s) return;
+      full = fillSnippet(s.body, values);
+      line = fillSnippet(snippetLine(s.body), values);
+    }
+    if (!full) return;
+    const asset = prefill.asset ?? null;
+    const target: Channel = prefill.moment ? "whatsapp" : channel;
+    const closed = Boolean(
+      target === "whatsapp" &&
+        wa?.on &&
+        !wa.dnd &&
+        wa.reachable &&
+        !wa.window?.open,
+    );
+    if (target !== channel) picked.current = true;
+    if (closed) {
+      setLinePrefill({ text: line ?? full, nonce: prefill.nonce, asset });
+      if (target !== channel) setChannel(target);
+      return;
+    }
+    if (target !== channel) {
+      pending.current = { text: full, asset };
+      setChannel(target);
+      return;
+    }
+    const words = full;
+    setDraft(d => ({
+      ...d,
+      body: d.body.trim() ? `${d.body}\n\n${words}` : words,
+      assetId: asset?.id ?? d.assetId ?? null,
+      assetUrl: asset?.url ?? d.assetUrl ?? null,
+    }));
   }, [prefill?.nonce, Boolean(data), Boolean(snippets.data)]);
   const byId = useMemo(
     () => new Map((data?.sends ?? []).map(s => [s.ghl_message_id, s] as const)),
@@ -381,6 +435,11 @@ export function Conversation({
           body: draft.body,
           subject: channel === "email" ? draft.subject : undefined,
           request_id: draft.id,
+          asset_id:
+            draft.assetId &&
+            (!draft.assetUrl || draft.body.includes(draft.assetUrl))
+              ? draft.assetId
+              : undefined,
         },
       );
       if (out.message.state === "failed")

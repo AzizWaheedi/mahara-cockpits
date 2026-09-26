@@ -9,6 +9,7 @@ import {
   checkLink,
   checkOffer,
   checkPay,
+  checkReference,
   checkSnippet,
   checkTemplateRoute,
   cors,
@@ -223,5 +224,15 @@ describe("WhatsApp templates", () => {
     expect(checkSnippet({ moment: "whenever", language: "ar", body: "هلا" }).ok).toBe(false);
     expect(checkSnippet({ moment: "no_show", language: "fr", body: "salut" }).ok).toBe(false);
     expect(checkSnippet({ moment: "no_show", language: "en", body: " " }).ok).toBe(false);
+  });
+});
+
+describe("client references", () => {
+  test("a reference needs a client and a clear consent; proof by slug", () => {
+    const ok = checkReference({ client_name: "Example Contracting", consent: "yes", asset_slugs: "case-one, Case-Two" });
+    expect(ok.ok && ok.row.asset_slugs).toEqual(["case-one", "case-two"]);
+    expect(checkReference({ client_name: "X" }).ok).toBe(false);
+    expect(checkReference({ client_name: "Example", consent: "maybe" }).ok).toBe(false);
+    expect(checkReference({ client_name: "Example", asset_slugs: ["https://x.com"] }).ok).toBe(false);
   });
 });
