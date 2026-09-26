@@ -88,8 +88,9 @@ VOICE = """How Mahara writes to a lead:
   them, or offer "today or tomorrow" in words. The one exception is a call they already booked,
   given in the facts as the_call: name its day and time exactly as given.
 - In Arabic text write numbers in Arabic-Indic digits, all of them.
-- Email: sign with the rep's first name as given in the facts ("rep"); if no rep is given, sign
-  nothing. WhatsApp needs no signature. Never sign as anyone else."""
+- Email: sign with the rep's first name as given in the facts ("rep"; in an Arabic email "rep_ar"
+  when it is given); if no rep is given, sign nothing. WhatsApp needs no signature. Never sign as
+  anyone else."""
 
 GOAL = {
     "reply": "They wrote to us and nobody has answered. Answer what they asked, then move them to the next step.",
@@ -546,7 +547,8 @@ def call_words(start: datetime, now: datetime) -> dict[str, str]:
 
 
 def context_for(sb: Any, lead: dict[str, Any], ghl_token: str, now: datetime,
-                rep_name: Optional[str] = None, due: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+                rep_name: Optional[str] = None, due: Optional[dict[str, Any]] = None,
+                rep_ar: Optional[str] = None) -> dict[str, Any]:
     """Everything the cockpit knows that a rep would want the message to know."""
     c = str(lead["contact_id"])
     appts = sb.select("cockpit_sales_calendar",
@@ -588,6 +590,7 @@ def context_for(sb: Any, lead: dict[str, Any], ghl_token: str, now: datetime,
         "now_kuwait": kuwait_now(now).strftime("%A %d %B %Y, %H:%M"),
         # Who the message is from: the lead's own rep, by first name, or nobody.
         "rep": (rep_name or "").split(" ")[0] or None,
+        "rep_ar": (rep_ar or "").split(" ")[0] or None,
     }
     if due and due.get("start_at") and due.get("segment") in ("confirm", "no_show", "cancelled"):
         a = next((x for x in appts if _ts(x.get("start_at")) == _ts(due["start_at"])), {})
@@ -795,8 +798,9 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
                   cadence=settings.get("cadence"), nurture_every_days=int(settings.get("nurture_every_days", 7)),
                   nurture_room=nurture_room)
     by_id = {str(l["contact_id"]): l for l in leads}
-    people = sb.select("cockpit_sales_people", "select=email,ghl_user_id,active&active=eq.true&limit=200")
+    people = sb.select("cockpit_sales_people", "select=email,ghl_user_id,name_ar,active&active=eq.true&limit=200")
     seat_of = {str(p["ghl_user_id"]): str(p["email"]) for p in people if p.get("ghl_user_id")}
+    arabic_name_of = {str(p["ghl_user_id"]): str(p.get("name_ar") or "") for p in people if p.get("ghl_user_id")}
     reps = sb.select("cockpit_sales_reps", "select=ghl_user_id,display_name&limit=200")
     rep_name_of = {str(r["ghl_user_id"]): str(r.get("display_name") or "") for r in reps if r.get("ghl_user_id")}
     ours_by_contact: dict[str, set[str]] = {}
@@ -819,7 +823,8 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
             not_leads += 1
             continue
         try:
-            ctx = context_for(sb, lead, ghl_token, now, rep_name_of.get(str(lead.get("assigned_to") or "")), due)
+            owner = str(lead.get("assigned_to") or "")
+            ctx = context_for(sb, lead, ghl_token, now, rep_name_of.get(owner), due, arabic_name_of.get(owner))
             thread = ctx.pop("_thread")
             # A HighLevel automation messaged them lately: wait, so nobody gets
             # both. A confirmation waits less, since the reminders are generic.
