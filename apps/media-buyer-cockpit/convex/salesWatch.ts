@@ -1,5 +1,7 @@
 import { internalAction } from "./_generated/server";
 
+declare const process: { env: Record<string, string | undefined> };
+
 /**
  * The sales cockpit's watch (Aziz, 2026-09-26: "perfect and bullet proof").
  *
