@@ -407,7 +407,7 @@ function HealthCard({ now }: { now: number }) {
           ? `Today's AI use could not be read: ${ai.error}.`
           : ai.data === null
             ? "Reading today's AI use…"
-            : `AI today: ${Math.round(ai.data / 1000).toLocaleString()} thousand tokens. The desk stops calling the model at its daily ceiling (15 million unless set otherwise on the desk) and starts again at midnight.`}
+            : `AI since midnight: ${Math.round(ai.data / 1000).toLocaleString()} thousand tokens (counted since 26 September, when the meter started). The desk stops calling the model at its daily ceiling, 15 million unless set otherwise on the desk, and starts again at midnight.`}
       </p>
       <div className="mt-2">
         {workers.error ? (

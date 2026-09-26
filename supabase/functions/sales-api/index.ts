@@ -829,6 +829,7 @@ async function convoSend(who: Who, b: Row) {
   }
   if (!(await messagingSwitch())[channel])
     throw new Refusal(`Sending by ${CHANNEL_WORD[channel]} is switched off in the cockpit.`, 409);
+  await senderCeiling(who);
   const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contactId)}&select=contact_id,name`))[0];
   if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
 
@@ -975,6 +976,19 @@ async function whatsappHealth(): Promise<{ paused: boolean; why: string; sent: n
   };
 }
 
+/**
+ * No sender sends more than 30 messages in ten minutes: far above a person's
+ * pace, it stops a stuck page, a runaway script or a leaked session from
+ * flooding leads (and the number's standing with Meta).
+ */
+async function senderCeiling(who: Who) {
+  const recent = await svc(
+    `cockpit_sales_messages?sent_by=eq.${enc(String(who.email ?? ""))}&created_at=gte.${enc(new Date(Date.now() - 600_000).toISOString())}&select=id&limit=31`,
+  );
+  if (recent.length >= 30)
+    throw new Refusal("That is 30 messages in ten minutes from you. Wait a few minutes; the ceiling keeps a stuck page or a script from flooding leads.", 429);
+}
+
 /** The sales asset a message carries, if it names one the cockpit has. */
 async function assetFor(v: unknown): Promise<string | null> {
   const id = cleanText(v, 40);
@@ -1073,6 +1087,7 @@ async function sendTemplate(
     throw new Refusal("That send was already used for another message. Reload and send again.", 409);
   }
   if (!(await messagingSwitch()).whatsapp) throw new Refusal("Sending by WhatsApp is switched off in the cockpit.", 409);
+  await senderCeiling(who);
   const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(o.contactId)}&select=contact_id,name`))[0];
   if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
   // The line rides in a contact field until the workflow reads it: a second
