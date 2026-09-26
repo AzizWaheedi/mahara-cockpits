@@ -1,5 +1,15 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useCallback, useEffect, useState } from "react";
+import {
+  type CsmMoneyPatch,
+  csmPreferences,
+  dismissCsmLooseEnds,
+  readCsmState,
+  saveCsmHotRow,
+  saveCsmLanguage,
+  saveCsmMoneyGoals,
+  visibleLooseEnds,
+} from "./csmStateClient";
 
 // biome-ignore lint/suspicious/noExplicitAny: generic client success rows
 type Any = any;
@@ -72,8 +82,8 @@ export interface UseCsmSnapshotResult {
   clearLooseEnds: (args: { clientName?: string }) => Promise<Any>;
   saveMoneyGoals: (args: {
     month: string;
-    target?: number;
-    clients?: number;
+    target?: number | null;
+    clients?: number | null;
     counts?: Any;
   }) => Promise<void>;
 }
@@ -359,79 +369,69 @@ export function useCsmSnapshot(
   const fetchSnapshot = useCallback(async () => {
     if (!client) {
       setLoading(false);
+      setError(new Error("Client-success sign-in is required"));
       return;
     }
-    const day = kuwaitToday();
-    const month = day.slice(0, 7);
     try {
       setLoading(true);
 
-      // 1. Fetch client profiles
-      const { data: profileRows, error: pErr } = await client
-        .from("cockpit_client_profiles")
-        .select("*")
-        .order("client_name", { ascending: true });
-      if (pErr) throw pErr;
+      const staffState = await readCsmState(client);
+      const day = staffState.day;
+      const month = staffState.month;
+      const profileRows = staffState.profiles;
 
-      // 2. Fetch daily checks
-      const checkRows = await fetchDailyChecksRpc(client, "csm", day);
-
-      // 3. Fetch decisions
-      const { data: decisionRows, error: dErr } = await client
-        .from("cockpit_decisions")
-        .select("*")
-        .eq("role", "csm")
-        .eq("day", day);
-      if (dErr) throw dErr;
-
-      // 4. Fetch plan items
-      const { data: planRows, error: plErr } = await client
-        .from("cockpit_plan_items")
-        .select("*")
-        .eq("role", "csm")
-        .eq("day", day);
-      if (plErr) throw plErr;
-
-      // 5. Fetch EOD report
-      const { data: eodRow } = await client
-        .from("cockpit_eod_reports")
-        .select("*")
-        .eq("role", "csm")
-        .eq("day", day)
-        .maybeSingle();
-
-      const scopeSet =
-        allowedClients && allowedClients.length > 0
-          ? new Set(allowedClients.map(c => c.toLowerCase()))
-          : null;
+      const [checkRows, decisionsResult, planResult, eodResult] =
+        await Promise.all([
+          fetchDailyChecksRpc(client, "csm", day),
+          client
+            .from("cockpit_decisions")
+            .select("*")
+            .eq("role", "csm")
+            .eq("day", day),
+          client
+            .from("cockpit_plan_items")
+            .select("*")
+            .eq("role", "csm")
+            .eq("day", day),
+          client
+            .from("cockpit_eod_reports")
+            .select("*")
+            .eq("role", "csm")
+            .eq("day", day)
+            .maybeSingle(),
+        ]);
+      if (decisionsResult.error) throw decisionsResult.error;
+      if (planResult.error) throw planResult.error;
+      if (eodResult.error) throw eodResult.error;
+      const decisionRows = decisionsResult.data;
+      const planRows = planResult.data;
+      const eodRow = eodResult.data;
 
       // Normalize client profiles
-      const clients = (profileRows ?? [])
-        .map(p => {
-          const raw = (p.overview as Any) ?? {};
-          const name = p.client_name || raw.name || "";
-          return {
-            ...raw,
-            _id: p.source_id || String(p.id),
-            id: p.id,
-            name,
-            stage: p.stage || raw.stage || "Active",
-            level: p.health || raw.level || "neutral",
-            service: p.service || raw.service,
-            kpi: p.kpi ?? raw.kpi ?? {},
-            notes: p.notes ?? raw.notes ?? [],
-            loose: Array.isArray(raw.loose) ? raw.loose : [],
-            hot: Array.isArray(raw.hot) ? raw.hot : [],
-            hotBlocked: false,
-            rank: Number(raw.rank ?? 50),
-            bucket: raw.bucket || "management",
-            paying: Boolean(raw.paying ?? true),
-            paymentDue: raw.paymentDue != null ? Number(raw.paymentDue) : null,
-            newSignup: Boolean(raw.newSignup),
-            pauseRequired: Boolean(raw.pauseRequired),
-          };
-        })
-        .filter(c => !scopeSet || scopeSet.has(c.name.toLowerCase()));
+      const clients = (profileRows ?? []).map(p => {
+        const raw = (p.overview as Any) ?? {};
+        const name = p.client_name || raw.name || "";
+        return {
+          ...raw,
+          _id: p.source_id || String(p.id),
+          id: p.id,
+          name,
+          stage: p.stage || raw.stage || "Active",
+          level: p.health || raw.level || "neutral",
+          service: p.service || raw.service,
+          kpi: p.kpi ?? raw.kpi ?? {},
+          notes: p.notes ?? raw.notes ?? [],
+          loose: visibleLooseEnds(staffState, name, raw.loose),
+          hot: Array.isArray(raw.hot) ? raw.hot : [],
+          hotBlocked: false,
+          rank: Number(raw.rank ?? 50),
+          bucket: raw.bucket || "management",
+          paying: Boolean(raw.paying ?? true),
+          paymentDue: raw.paymentDue != null ? Number(raw.paymentDue) : null,
+          newSignup: Boolean(raw.newSignup),
+          pauseRequired: Boolean(raw.pauseRequired),
+        };
+      });
 
       // Normalize checks
       const checks = normalizeChecks(checkRows);
@@ -455,28 +455,23 @@ export function useCsmSnapshot(
         month,
         appointments: [],
         todaysCalls: [],
-        prefs: (profileRows ?? []).map(p => ({
-          clientName: p.client_name,
-          language: (p.overview as Any)?.language,
-        })),
-        hotRows: (profileRows ?? []).flatMap(
-          p => (p.overview as Any)?.hot ?? [],
-        ),
+        prefs: csmPreferences(staffState),
+        hotRows: staffState.hotRows,
         kpis: [],
         churn: null,
-        money: null,
+        money: staffState.money,
         clients,
         tasks: [],
         checks,
         decisions,
         plan,
         eod: eodRow ?? null,
-        lastSyncAt: Date.now(),
+        lastSyncAt: null,
         syncHealth: {
-          ok: true,
-          at: Date.now(),
+          ok: null,
+          at: null,
           profiles: clients.length,
-          errors: [],
+          errors: ["Client refresh status is not yet connected."],
         },
         totals: {
           clients: clients.length,
@@ -647,22 +642,7 @@ export function useCsmSnapshot(
 
   const setClientLanguage = useCallback(
     async (args: { clientName: string; language: string }) => {
-      if (!client) {
-        throw new Error("Supabase client is required");
-      }
-      const { data: profile } = await client
-        .from("cockpit_client_profiles")
-        .select("overview")
-        .eq("client_name", args.clientName)
-        .maybeSingle();
-      const currentOverview = (profile?.overview as Any) ?? {};
-      await client
-        .from("cockpit_client_profiles")
-        .update({
-          overview: { ...currentOverview, language: args.language },
-          updated_at: new Date().toISOString(),
-        })
-        .eq("client_name", args.clientName);
+      await saveCsmLanguage(client, args);
       await fetchSnapshot();
     },
     [client, fetchSnapshot],
@@ -670,27 +650,7 @@ export function useCsmSnapshot(
 
   const saveHotRow = useCallback(
     async (args: Any) => {
-      if (!client) {
-        throw new Error("Supabase client is required");
-      }
-      const { data: profile } = await client
-        .from("cockpit_client_profiles")
-        .select("overview")
-        .eq("client_name", args.clientName)
-        .maybeSingle();
-      const currentOverview = (profile?.overview as Any) ?? {};
-      const currentHot = Array.isArray(currentOverview.hot)
-        ? currentOverview.hot
-        : [];
-      const updatedHot = currentHot.filter((h: Any) => h.key !== args.key);
-      if (!args.hidden) updatedHot.push(args);
-      await client
-        .from("cockpit_client_profiles")
-        .update({
-          overview: { ...currentOverview, hot: updatedHot },
-          updated_at: new Date().toISOString(),
-        })
-        .eq("client_name", args.clientName);
+      await saveCsmHotRow(client, args);
       await fetchSnapshot();
     },
     [client, fetchSnapshot],
@@ -698,72 +658,16 @@ export function useCsmSnapshot(
 
   const clearLooseEnds = useCallback(
     async (args: { clientName?: string }) => {
-      if (!client) {
-        throw new Error("Supabase client is required");
-      }
-      if (args.clientName) {
-        const { data: profile } = await client
-          .from("cockpit_client_profiles")
-          .select("overview")
-          .eq("client_name", args.clientName)
-          .maybeSingle();
-        const currentOverview = (profile?.overview as Any) ?? {};
-        await client
-          .from("cockpit_client_profiles")
-          .update({
-            overview: { ...currentOverview, loose: [] },
-            updated_at: new Date().toISOString(),
-          })
-          .eq("client_name", args.clientName);
-      } else {
-        const { data: profiles } = await client
-          .from("cockpit_client_profiles")
-          .select("client_name, overview");
-        for (const p of profiles ?? []) {
-          const currentOverview = (p.overview as Any) ?? {};
-          if (
-            Array.isArray(currentOverview.loose) &&
-            currentOverview.loose.length > 0
-          ) {
-            await client
-              .from("cockpit_client_profiles")
-              .update({
-                overview: { ...currentOverview, loose: [] },
-                updated_at: new Date().toISOString(),
-              })
-              .eq("client_name", p.client_name);
-          }
-        }
-      }
+      const result = await dismissCsmLooseEnds(client, args);
       await fetchSnapshot();
-      return { cleared: 1, kept: 0 };
+      return result;
     },
     [client, fetchSnapshot],
   );
 
   const saveMoneyGoals = useCallback(
-    async (args: {
-      month: string;
-      target?: number;
-      clients?: number;
-      counts?: Any;
-    }) => {
-      if (!client) {
-        throw new Error("Supabase client is required");
-      }
-      await client.from("cockpit_goal_targets").upsert(
-        {
-          plan_id: `csm:${args.month}`,
-          metric_key: "csm_income",
-          target_value: args.target ?? 0,
-          metadata: {
-            clients: args.clients,
-            counts: args.counts,
-            month: args.month,
-          },
-        },
-        { onConflict: "plan_id,metric_key" },
-      );
+    async (args: CsmMoneyPatch) => {
+      await saveCsmMoneyGoals(client, args);
       await fetchSnapshot();
     },
     [client, fetchSnapshot],

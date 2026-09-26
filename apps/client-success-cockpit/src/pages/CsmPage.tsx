@@ -19,6 +19,7 @@ import {
   PENALTIES,
 } from "@/lib/csmMoney";
 import { spineFor } from "@/lib/csmOnboardingSpine";
+import { csmMoneyPatch } from "@/lib/csmStateClient";
 import {
   cadence,
   draftsFor,
@@ -850,22 +851,22 @@ function HotSheet({
   const [showAll, setShowAll] = useState(false);
   const allOpen = suggestions.filter(o => !takenKeys.has(o.key));
   const open = showAll ? allOpen : allOpen.slice(0, 6);
+  const persist = (values: Any, success?: string) => {
+    void onSave(values)
+      .then(() => {
+        if (success) toast.success(success);
+      })
+      .catch(error =>
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "The row could not be saved.",
+        ),
+      );
+  };
   const patch = (row: Any, field: string, value: string) =>
-    onSave({
-      key: row.key,
-      clientName: row.clientName,
-      type: row.type,
-      leadType: row.leadType,
-      status: row.status,
-      lastObjection: row.lastObjection,
-      contactUrl: row.contactUrl,
-      amount: row.amount,
-      lastFu: row.lastFu,
-      nextFu: row.nextFu,
-      notes: row.notes,
-      manual: row.manual,
-      [field]: value,
-    });
+    persist({ key: row.key, [field]: value });
+
   return (
     <div className="space-y-4">
       <p className="text-xs text-muted-foreground">
@@ -942,12 +943,10 @@ function HotSheet({
                       title="Remove from my list"
                       className="text-xs text-muted-foreground hover:text-rose-600"
                       onClick={() =>
-                        onSave({
-                          key: r.key,
-                          clientName: r.clientName,
-                          type: r.type,
-                          hidden: true,
-                        }).then(() => toast.success("Removed from your list"))
+                        persist(
+                          { key: r.key, hidden: true },
+                          "Removed from your list",
+                        )
                       }
                     >
                       ✕
@@ -963,7 +962,7 @@ function HotSheet({
         size="sm"
         variant="secondary"
         onClick={() =>
-          onSave({
+          persist({
             key: `manual:${Date.now()}`,
             clientName: "",
             type: "",
@@ -1002,14 +1001,17 @@ function HotSheet({
                 size="sm"
                 variant="outline"
                 onClick={() =>
-                  onSave({
-                    key: o.key,
-                    clientName: o.client?.name ?? "",
-                    type: o.type ?? "",
-                    leadType: "Warm",
-                    notes: humanise(o.why ?? ""),
-                    contactUrl: o.client?.taskUrl,
-                  }).then(() => toast.success("Added to your list"))
+                  persist(
+                    {
+                      key: o.key,
+                      clientName: o.client?.name ?? "",
+                      type: o.type ?? "",
+                      leadType: "Warm",
+                      notes: humanise(o.why ?? ""),
+                      contactUrl: o.client?.taskUrl,
+                    },
+                    "Added to your list",
+                  )
                 }
               >
                 Add it
@@ -1126,6 +1128,26 @@ export function CsmPage({ section }: { section: Section }) {
       ),
     [snap],
   );
+
+  if (sb.error) {
+    return (
+      <div className="p-10 text-sm text-muted-foreground" role="alert">
+        <p>
+          Client data could not be loaded. Try again or ask an admin to check
+          the connection and your access.
+        </p>
+        <Button
+          className="mt-3"
+          disabled={sb.loading}
+          onClick={() => {
+            void sb.refetch();
+          }}
+        >
+          Try again
+        </Button>
+      </div>
+    );
+  }
 
   if (snap === undefined) {
     return (
@@ -2651,9 +2673,9 @@ function MoneySection({
   // biome-ignore lint/suspicious/noExplicitAny: snapshot
   snap: any;
   targetEdit: string | null;
-  setTargetEdit: (v: string) => void;
+  setTargetEdit: (v: string | null) => void;
   clientsEdit: string | null;
-  setClientsEdit: (v: string) => void;
+  setClientsEdit: (v: string | null) => void;
   countEdits: Counts;
   setCountEdits: (v: Counts) => void;
   // biome-ignore lint/suspicious/noExplicitAny: convex mutation
@@ -2958,13 +2980,26 @@ function MoneySection({
           </div>
           <Button
             onClick={async () => {
-              await onSave({
-                month: snap.month,
-                target: Number(targetEdit ?? saved?.target ?? 0) || undefined,
-                clients: clients || undefined,
-                counts,
-              });
-              toast.success("Saved, this is your month");
+              try {
+                await onSave(
+                  csmMoneyPatch(
+                    snap.month,
+                    targetEdit,
+                    clientsEdit,
+                    countEdits,
+                  ),
+                );
+                setTargetEdit(null);
+                setClientsEdit(null);
+                setCountEdits({});
+                toast.success("Saved, this is your month");
+              } catch (error) {
+                toast.error(
+                  error instanceof Error
+                    ? error.message
+                    : "Your plan could not be saved.",
+                );
+              }
             }}
           >
             Save my plan
