@@ -626,3 +626,122 @@ export function checkCoachReview(b: Record<string, unknown>):
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// WhatsApp templates and the ready-made messages
+// ---------------------------------------------------------------------------
+
+export const FOLLOWUP_SEGMENTS = ["reply", "confirm", "no_show", "cancelled", "new", "after_call", "nurture"] as const;
+export type FollowupSegment = (typeof FOLLOWUP_SEGMENTS)[number];
+
+/** What each {{n}} of a template carries, in order. */
+export const TEMPLATE_VARIABLES = ["first_name", "rep_name", "line"] as const;
+export type TemplateVariable = (typeof TEMPLATE_VARIABLES)[number];
+
+export const SNIPPET_MOMENTS = [
+  "first_touch", "missed_call", "no_show", "cancelled", "confirm", "booked",
+  "after_intro", "after_demo", "no_reply", "nurture", "proof", "reactivate", "other",
+] as const;
+
+/**
+ * One line to go inside an approved WhatsApp template. Meta refuses a
+ * template value with a line break, a tab or more than four spaces in a row
+ * (error 132018), and a template's whole text tops out at 1,024 characters,
+ * so the line is flattened and capped here, before HighLevel sees it.
+ */
+export function templateLine(v: unknown, max = 700): string {
+  return String(v ?? "")
+    .replace(/\u0000/g, "")
+    .replace(/[\r\n\t\u2028\u2029]+/g, " ")
+    .replace(/ {2,}/g, " ")
+    .trim()
+    .slice(0, max)
+    .trim();
+}
+
+/** The approved text with the lead's values in, as the lead will read it. */
+export function renderTemplate(
+  preview: string,
+  variables: readonly string[],
+  values: Partial<Record<TemplateVariable, string | null>>,
+): string {
+  return preview.replace(/\{\{(\d+)\}\}/g, (all, n) => {
+    const name = variables[Number(n) - 1] as TemplateVariable | undefined;
+    const v = name ? values[name] : null;
+    return v ? v : all;
+  });
+}
+
+/** The name to greet a lead by: HighLevel's first name, else the first word of the whole name. */
+export function greetingName(first: unknown, full: unknown): string {
+  const f = cleanText(first, 60) || cleanText(full, 120);
+  return f.split(/\s+/)[0] ?? "";
+}
+
+/** A ready-made message with what the cockpit knows put in; anything unknown stays marked for the rep. */
+export function fillSnippet(
+  body: string,
+  values: Partial<Record<"name" | "rep" | "day" | "time", string | null>>,
+): string {
+  return body.replace(/\{(name|rep|day|time)\}/g, (all, k: "name" | "rep" | "day" | "time") => values[k] || all);
+}
+
+export interface TemplateRoute {
+  key: string;
+  name: string;
+  language: "ar" | "en";
+  purpose: string;
+  preview: string;
+  variables: TemplateVariable[];
+  workflow_id: string | null;
+  active: boolean;
+  segments: FollowupSegment[];
+  sort: number;
+}
+
+/** A template route as a manager saves it, or why it cannot be saved. */
+export function checkTemplateRoute(b: Record<string, unknown>): { ok: true; value: TemplateRoute } | { ok: false; error: string } {
+  const key = cleanText(b.key, 40).toLowerCase();
+  if (!/^[a-z0-9_]{2,40}$/.test(key)) return { ok: false, error: "Give it a short key: lowercase letters, digits and _." };
+  const name = cleanText(b.name, 120);
+  if (!/^[a-z0-9_]{1,120}$/.test(name))
+    return { ok: false, error: "Type the template's name exactly as HighLevel shows it (lowercase, digits and _)." };
+  const language = String(b.language ?? "");
+  if (language !== "ar" && language !== "en") return { ok: false, error: "Pick Arabic or English." };
+  const purpose = cleanText(b.purpose, 300);
+  if (purpose.length < 3) return { ok: false, error: "Say in a few words what the template is for." };
+  const preview = String(b.preview ?? "").replace(/\r\n/g, "\n").trim();
+  if (!preview || preview.length > 1024) return { ok: false, error: "Paste the approved text (1,024 characters at most)." };
+  const variables = (Array.isArray(b.variables) ? b.variables : []).map(v => String(v)) as TemplateVariable[];
+  if (variables.some(v => !(TEMPLATE_VARIABLES as readonly string[]).includes(v)))
+    return { ok: false, error: "Each {{n}} is the first name, the rep's name or the line." };
+  const slots = [...new Set([...preview.matchAll(/\{\{(\d+)\}\}/g)].map(m => Number(m[1])))].sort((a, b) => a - b);
+  if (slots.length !== variables.length || slots.some((n, i) => n !== i + 1))
+    return { ok: false, error: `The text has ${slots.length} {{n}} and ${variables.length} values are named; they have to match, from {{1}} on.` };
+  const workflow = cleanText(b.workflow_id, 60) || null;
+  if (workflow && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(workflow))
+    return { ok: false, error: "That is not a HighLevel workflow id." };
+  const active = b.active === true;
+  if (active && !workflow) return { ok: false, error: "Pick the workflow that sends it before switching it on." };
+  const segments = (Array.isArray(b.segments) ? b.segments : []).map(s => String(s)) as FollowupSegment[];
+  if (segments.some(s => !(FOLLOWUP_SEGMENTS as readonly string[]).includes(s)))
+    return { ok: false, error: "That is not a kind of follow-up." };
+  const sort = Number(b.sort ?? 100);
+  if (!Number.isInteger(sort) || sort < 0 || sort > 1000) return { ok: false, error: "The order is a whole number from 0 to 1000." };
+  return { ok: true, value: { key, name, language, purpose, preview, variables, workflow_id: workflow, active, segments, sort } };
+}
+
+/** A ready-made message as a manager saves it, or why it cannot be saved. */
+export function checkSnippet(b: Record<string, unknown>):
+  | { ok: true; row: { moment: string; language: "ar" | "en"; body: string; sort: number } }
+  | { ok: false; error: string } {
+  const moment = String(b.moment ?? "");
+  if (!(SNIPPET_MOMENTS as readonly string[]).includes(moment)) return { ok: false, error: "Pick when the message is for." };
+  const language = String(b.language ?? "");
+  if (language !== "ar" && language !== "en") return { ok: false, error: "Pick Arabic or English." };
+  const body = String(b.body ?? "").replace(/\r\n/g, "\n").trim();
+  if (body.length < 2 || body.length > 1500) return { ok: false, error: "Write the message (1,500 characters at most)." };
+  const sort = Number(b.sort ?? 100);
+  if (!Number.isInteger(sort) || sort < 0 || sort > 1000) return { ok: false, error: "The order is a whole number from 0 to 1000." };
+  return { ok: true, row: { moment, language, body, sort } };
+}

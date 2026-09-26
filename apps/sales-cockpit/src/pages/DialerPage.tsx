@@ -85,6 +85,7 @@ import {
 import { type Fill, groupBlocks, personalise } from "../lib/script";
 import { toast } from "../lib/toast";
 import type { Lead, Me } from "../lib/types";
+import type { Moment } from "../lib/whatsapp";
 
 /**
  * The power dialer, level with the call centre's (mahara-power-dialer): the
@@ -452,8 +453,12 @@ export default function DialerPage({ me }: { me: Me }) {
   const [tier, setTier] = useState<TierFilter>("all");
   const [term, setTerm] = useState("");
   const [alertsOn, setAlertsOn] = useState(alertsWanted);
-  // Bumped to open the lead's conversation from the call pane ("Write to them").
-  const [talk, setTalk] = useState(0);
+  // Bumped to open the lead's conversation from the call pane ("Write to
+  // them"), with the ready-made message to start from, if any.
+  const [talk, setTalk] = useState<{ n: number; moment: Moment | null }>({
+    n: 0,
+    moment: null,
+  });
   const maqsam = useAgent();
 
   // One read at a time; a read asked for meanwhile runs right after.
@@ -729,7 +734,9 @@ export default function DialerPage({ me }: { me: Me }) {
               callRef={callRef}
               onCalled={a => setQ(prev => (prev ? { ...prev, open: a } : prev))}
               onFinished={finished}
-              onTalk={() => setTalk(n => n + 1)}
+              onTalk={moment =>
+                setTalk(t => ({ n: t.n + 1, moment: moment ?? null }))
+              }
             />
             <LeadPane
               key={`lead-${currentId}`}
@@ -1205,7 +1212,7 @@ function CallPane({
     how: "saved" | "skipped",
     words?: string,
   ) => void;
-  onTalk: () => void;
+  onTalk: (moment?: Moment) => void;
 }) {
   const lead = useLead(contactId);
   const l = lead.data;
@@ -1299,7 +1306,7 @@ function CallPane({
         toast.success("Marked held. Book the demo, or set a call-back.");
         return;
       }
-      if (kind === "confirm" && draft.outcome === "no_answer") {
+      if (draft.outcome === "no_answer") {
         setMode("unanswered");
         return;
       }
@@ -1436,11 +1443,21 @@ function CallPane({
           </NextStep>
         ) : mode === "unanswered" ? (
           <NextStep
-            title="No answer. Send them a message too?"
-            text="A short WhatsApp asking them to confirm often gets the answer a call did not. The dialer tries the call again in two hours."
+            title="No answer. Send them a WhatsApp?"
+            text={
+              kind === "confirm"
+                ? "A short WhatsApp asking them to confirm often gets the answer a call did not. The dialer tries the call again in two hours."
+                : "A WhatsApp right after a missed call gets answered far more often than an email. The missed-call message is ready in the box; read it, then send."
+            }
           >
-            <button type="button" onClick={onTalk} className={buttonPrimary}>
-              Write to them
+            <button
+              type="button"
+              onClick={() =>
+                onTalk(kind === "confirm" ? "confirm" : "missed_call")
+              }
+              className={buttonPrimary}
+            >
+              WhatsApp them
             </button>
             <button
               type="button"
@@ -2031,7 +2048,7 @@ function LeadPane({
   contactId: string;
   item: QueueItem | null;
   /** Changes when the call pane asks for the conversation. */
-  talk: number;
+  talk: { n: number; moment: Moment | null };
 }) {
   const lead = useLead(contactId);
   const activity = useLeadActivity(contactId, lead.data?.phone8 ?? null);
@@ -2040,10 +2057,10 @@ function LeadPane({
   const [tab, setTab] = useState<LeadTab>("talk");
   const paneRef = useRef<HTMLElement>(null);
   // "Write to them": open the conversation and put the cursor in the box.
-  const lastTalk = useRef(talk);
+  const lastTalk = useRef(talk.n);
   useEffect(() => {
-    if (talk === lastTalk.current) return;
-    lastTalk.current = talk;
+    if (talk.n === lastTalk.current) return;
+    lastTalk.current = talk.n;
     setTab("talk");
     window.setTimeout(() => {
       paneRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
@@ -2051,7 +2068,7 @@ function LeadPane({
         ?.querySelector<HTMLTextAreaElement>("form textarea")
         ?.focus();
     }, 50);
-  }, [talk]);
+  }, [talk.n]);
   const l = lead.data;
   const messages: LiveMessage[] = useMemo(
     () =>
@@ -2198,7 +2215,16 @@ function LeadPane({
       </div>
       <div className="p-4" role="tabpanel">
         {tab === "talk" ? (
-          <Conversation contactId={contactId} convo={convo} compact />
+          <Conversation
+            contactId={contactId}
+            convo={convo}
+            compact
+            rep={me.name}
+            callAt={item?.appointment?.start_at ?? null}
+            prefill={
+              talk.moment ? { moment: talk.moment, nonce: talk.n } : null
+            }
+          />
         ) : tab === "script" ? (
           <ScriptTab
             me={me}

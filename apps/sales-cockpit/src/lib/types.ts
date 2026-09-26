@@ -320,6 +320,8 @@ export interface Person extends TeamMember {
   maqsam_email: string | null;
   fathom_email: string | null;
   slack_user_id: string | null;
+  /** How their name reads in an Arabic message. */
+  name_ar: string | null;
   goals: Goals;
   pay: PayRule;
   added_at: string;

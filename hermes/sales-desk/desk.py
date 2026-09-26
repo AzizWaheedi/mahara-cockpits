@@ -441,10 +441,17 @@ def cmd_followups(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     if "skipped" in out:
         detail = out["skipped"]
     else:
+        words = {"whatsapp": "WhatsApp", "whatsapp_template": "WhatsApp template", "email": "email"}
+        channels = ", ".join(f"{n} {words.get(k, k)}" for k, n in (out.get("by_channel") or {}).items())
         detail = (f"{out['written']} drafts written of {out['picked']} leads due"
+                  + (f" ({channels})" if channels else "")
                   + (f", {out['sent_by_itself']} sent by themselves" if out.get("sent_by_itself") else "")
+                  + (f", {out['held_for_automation']} waiting while a HighLevel automation messages them"
+                     if out.get("held_for_automation") else "")
+                  + (f", {out['in_a_conversation']} already talking with a rep" if out.get("in_a_conversation") else "")
                   + (f", {out['no_open_channel']} with no open channel" if out["no_open_channel"] else "")
                   + (f", {out['not_sales_leads']} not sales leads (clients, or no pipeline)" if out.get("not_sales_leads") else "")
+                  + (f", {out['replies_marked']} replies to earlier messages" if out.get("replies_marked") else "")
                   + (f", {out['failed']} failed" if out["failed"] else ""))
     _status(cfg, log, "followups", not out.get("failed"), detail)
     if out.get("written") or out.get("failed") or args.json:

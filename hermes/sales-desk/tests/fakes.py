@@ -42,6 +42,9 @@ PK = {
     "cockpit_sales_review_asks": ("id",),
     "cockpit_sales_call_notes": ("recording_id",),
     "cockpit_sales_digests": ("id",),
+    "cockpit_sales_wa_templates": ("key",),
+    "cockpit_sales_confirmations": ("id",),
+    "cockpit_sales_hot": ("contact_id",),
 }
 
 

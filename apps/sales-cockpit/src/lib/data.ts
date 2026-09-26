@@ -26,6 +26,7 @@ import type {
   WorkerStatus,
   WorkRequest,
 } from "./types";
+import type { Snippet, TemplateRoute } from "./whatsapp";
 
 /** One shape for every read: what came back, whether it is still loading,
  * and why it failed. A screen that cannot say "this failed" lies quietly. */
@@ -866,5 +867,29 @@ export function useReplies(hours = 48, everyMs = 60_000): Loaded<InboxRow[]> {
         .limit(50),
     [hours],
     everyMs,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// WhatsApp: the ready-made messages and the template routes (lib/whatsapp.ts)
+// ---------------------------------------------------------------------------
+
+export function useSnippets() {
+  return useQuery<Snippet[]>(
+    () =>
+      supabase
+        .from("cockpit_sales_snippets")
+        .select("id,moment,language,body,sort")
+        .is("deleted_at", null)
+        .order("moment")
+        .order("sort"),
+    [],
+  );
+}
+
+export function useTemplates() {
+  return useQuery<TemplateRoute[]>(
+    () => supabase.from("cockpit_sales_wa_templates").select("*").order("sort"),
+    [],
   );
 }

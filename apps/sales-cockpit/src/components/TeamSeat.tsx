@@ -211,6 +211,7 @@ function LinksForm({
     maqsam: person.maqsam_email ?? "",
     fathom: person.fathom_email ?? "",
     slack: person.slack_user_id ?? "",
+    nameAr: person.name_ar ?? "",
   };
   const [f, setF] = useState(initial);
   const [busy, setBusy] = useState(false);
@@ -225,6 +226,10 @@ function LinksForm({
     fathom:
       f.fathom.trim() && !EMAIL.test(f.fathom.trim())
         ? "That is not an email address."
+        : null,
+    nameAr:
+      f.nameAr.trim() && !/[\u0600-\u06ff]/.test(f.nameAr)
+        ? "Write it in Arabic letters, the way it reads in a message."
         : null,
   };
   const changed = (Object.keys(initial) as (keyof typeof initial)[]).filter(
@@ -246,6 +251,7 @@ function LinksForm({
     if (changed.includes("maqsam")) body.maqsam_email = f.maqsam.trim();
     if (changed.includes("fathom")) body.fathom_email = f.fathom.trim();
     if (changed.includes("slack")) body.slack_user_id = f.slack.trim();
+    if (changed.includes("nameAr")) body.name_ar = f.nameAr.trim();
     setBusy(true);
     try {
       const out = await api<{ person?: Person }>("person.save", body);
@@ -284,7 +290,8 @@ function LinksForm({
       className="space-y-4"
       onSubmit={e => {
         e.preventDefault();
-        if (changed.length && !bad.maqsam && !bad.fathom) void save();
+        if (changed.length && !bad.maqsam && !bad.fathom && !bad.nameAr)
+          void save();
       }}
     >
       <div className="grid gap-4 sm:grid-cols-2">
@@ -401,12 +408,31 @@ function LinksForm({
             className={field}
           />
         </TeamField>
+        <TeamField
+          label="Name in Arabic messages"
+          htmlFor={`${id}-name-ar`}
+          error={bad.nameAr}
+          help="How an Arabic WhatsApp template says who it is from (معاك تحرير من مهارة ميديا). Empty, it says the sales team."
+        >
+          <input
+            id={`${id}-name-ar`}
+            type="text"
+            autoComplete="off"
+            value={f.nameAr}
+            onChange={e => setF(x => ({ ...x, nameAr: e.target.value }))}
+            placeholder="تحرير"
+            className={field}
+            dir="rtl"
+          />
+        </TeamField>
       </div>
       <div className="flex flex-wrap items-center gap-3">
         <button
           type="submit"
           disabled={
-            busy || !changed.length || Boolean(bad.maqsam || bad.fathom)
+            busy ||
+            !changed.length ||
+            Boolean(bad.maqsam || bad.fathom || bad.nameAr)
           }
           className={buttonPrimary}
         >

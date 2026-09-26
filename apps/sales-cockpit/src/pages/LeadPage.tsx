@@ -241,7 +241,12 @@ export default function LeadPage({ me }: { me: Me }) {
 
         <div className="min-w-0 space-y-5 xl:col-span-5">
           <SectionCard title="Conversation">
-            <Conversation contactId={l.contact_id} convo={convo} />
+            <Conversation
+              contactId={l.contact_id}
+              convo={convo}
+              rep={me.name}
+              callAt={nextAppt?.start_at ?? null}
+            />
           </SectionCard>
           <SectionCard title="Everything so far">
             {activity.error ? (
