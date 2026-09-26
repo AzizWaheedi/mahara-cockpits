@@ -107,10 +107,8 @@ export function StatusChip({
 }) {
   const Icon = ICON[tone];
   const cls = cn(
-    "inline-flex max-w-full shrink-0 items-center gap-1 whitespace-nowrap rounded-full border bg-background/60 font-medium text-foreground",
-    size === "sm"
-      ? "h-5 px-1.5 text-[11px] leading-none"
-      : "h-6 px-2 text-xs leading-none",
+    "inline-flex max-w-full shrink-0 items-center whitespace-nowrap rounded-full border bg-background/60 text-xs font-medium leading-none text-foreground",
+    size === "sm" ? "h-5 gap-1 px-1.5" : "h-6 gap-1.5 px-2",
     className,
   );
   const inner = (
@@ -124,13 +122,15 @@ export function StatusChip({
     </>
   );
   if (!hint) return <span className={cls}>{inner}</span>;
+  // A chip that explains itself stays chip-sized on a phone (no-touch) and
+  // takes its tap through an invisible margin around it instead.
   return (
     <Hint content={hint}>
       <button
         type="button"
         className={cn(
           cls,
-          "cursor-help focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          "no-touch relative cursor-help after:absolute after:-inset-2 after:content-[''] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         )}
       >
         {inner}

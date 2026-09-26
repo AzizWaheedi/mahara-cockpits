@@ -3,11 +3,12 @@ import { Loader2, Plus, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { AnimatedSelect } from "@/components/ui/animated-select";
+import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
 import { api } from "../../../convex/_generated/api";
 import type { Board, TargetRow } from "../../../convex/ceo/goals";
 import type { MetricDef } from "../../../convex/ceo/scoreboard";
-import { fmt } from "./goalsKit";
+import { fmt, planTitle } from "./goalsKit";
 
 /**
  * Writing the plan: the period and the sentence it is for, then a target on
@@ -20,12 +21,10 @@ import { fmt } from "./goalsKit";
  */
 
 const field =
-  "w-full rounded-md border bg-background px-2.5 py-1.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-[var(--ceo-emphasis)]";
+  "w-full rounded-md border bg-background px-2.5 py-1.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring";
+// The shared select is sized by ceo.css (its own stylesheet beats utilities).
+const selectField = "ceo-select-md w-full";
 const label = "text-xs font-medium text-muted-foreground";
-const primary =
-  "rounded-md bg-[var(--ceo-emphasis)] px-3 py-1.5 text-sm font-medium text-background disabled:opacity-50";
-const quiet =
-  "rounded-md border px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50";
 
 type Draft = {
   id?: number;
@@ -140,13 +139,12 @@ export function PlanEditor({
 
   return (
     <SectionCard
-      kicker="Everything on this screen is the plan itself"
       title="Edit the plan"
       order={1}
       actions={
-        <button type="button" className={quiet} onClick={onClose}>
+        <Button variant="outline" size="sm" onClick={onClose}>
           Close
-        </button>
+        </Button>
       }
     >
       <div className="grid gap-5">
@@ -157,7 +155,7 @@ export function PlanEditor({
               className={field}
               value={title}
               onChange={e => setTitle(e.target.value)}
-              placeholder="October 2026 — The Plan"
+              placeholder="October 2026 plan"
             />
           </label>
           <div className="grid grid-cols-2 gap-3">
@@ -165,7 +163,7 @@ export function PlanEditor({
             <label className="grid gap-1">
               <span className={label}>From</span>
               <DateInput
-                className={field}
+                className={selectField}
                 value={from}
                 onChange={e => {
                   setFrom(e.target.value);
@@ -177,7 +175,7 @@ export function PlanEditor({
             <label className="grid gap-1">
               <span className={label}>To</span>
               <DateInput
-                className={field}
+                className={selectField}
                 value={to}
                 onChange={e => setTo(e.target.value)}
               />
@@ -205,7 +203,7 @@ export function PlanEditor({
           <label className="grid gap-1">
             <span className={label}>Status</span>
             <AnimatedSelect
-              className={field}
+              className={selectField}
               value={status}
               onChange={e =>
                 setStatus(e.target.value as "draft" | "live" | "closed")
@@ -219,9 +217,7 @@ export function PlanEditor({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            className={primary}
+          <Button
             disabled={busy || title.trim().length < 3}
             onClick={() =>
               run(async () => {
@@ -241,11 +237,10 @@ export function PlanEditor({
             }
           >
             {busy ? "Saving" : plan ? "Save the plan" : "Start the plan"}
-          </button>
+          </Button>
           {plan ? (
-            <button
-              type="button"
-              className={quiet}
+            <Button
+              variant="outline"
               disabled={busy}
               onClick={() =>
                 run(async () => {
@@ -254,7 +249,7 @@ export function PlanEditor({
                     fromPlanId: plan.id,
                     periodFrom: nf,
                     periodTo: monthEnd(nf),
-                    title: `${nf.slice(0, 7)} — The Plan`,
+                    title: planTitle(nf),
                   });
                   onSaved(res.id);
                   return `Started the next period with ${res.targets} targets carried over, and this period's real numbers as their baselines.`;
@@ -262,7 +257,7 @@ export function PlanEditor({
               }
             >
               Start the next period from this one
-            </button>
+            </Button>
           ) : null}
         </div>
 
@@ -273,7 +268,7 @@ export function PlanEditor({
               <label className="grid min-w-[16rem] flex-1 gap-1">
                 <span className={label}>Add a target</span>
                 <AnimatedSelect
-                  className={field}
+                  className={selectField}
                   value={pick}
                   onChange={e => add(e.target.value)}
                 >
@@ -294,7 +289,7 @@ export function PlanEditor({
                 {drafts.map((d, i) => (
                   <div
                     key={d.metricKey}
-                    className="grid gap-2 rounded-md border p-3 @xl:grid-cols-[minmax(0,1fr)_7rem_7rem_7rem_auto] @xl:items-end"
+                    className="grid gap-2 rounded-xl bg-muted/40 p-3 @xl:grid-cols-[minmax(0,1fr)_7rem_7rem_7rem_auto] @xl:items-end"
                   >
                     <div className="min-w-0">
                       <p className="text-sm font-medium">{d.label}</p>
@@ -304,7 +299,7 @@ export function PlanEditor({
                     </div>
                     <label className="grid gap-1">
                       <span className={label}>
-                        {d.unit === "rate" ? "Target, 0–1" : "Target"}
+                        {d.unit === "rate" ? "Target, 0 to 1" : "Target"}
                       </span>
                       <input
                         className={field}
@@ -349,22 +344,20 @@ export function PlanEditor({
                         }
                       />
                     </label>
-                    <button
-                      type="button"
-                      className={quiet}
+                    <Button
+                      variant="outline"
+                      size="icon"
                       onClick={() =>
                         setDrafts(x => x.filter((_, n) => n !== i))
                       }
                       aria-label={`Drop ${d.label}`}
                     >
-                      <Trash2 className="size-3.5" aria-hidden />
-                    </button>
+                      <Trash2 aria-hidden />
+                    </Button>
                   </div>
                 ))}
                 <div>
-                  <button
-                    type="button"
-                    className={primary}
+                  <Button
                     disabled={busy}
                     onClick={() =>
                       run(async () => {
@@ -390,11 +383,9 @@ export function PlanEditor({
                       })
                     }
                   >
-                    <span className="flex items-center gap-1.5">
-                      <Plus className="size-3.5" aria-hidden />
-                      {`Add ${drafts.length} ${drafts.length === 1 ? "target" : "targets"}`}
-                    </span>
-                  </button>
+                    <Plus aria-hidden />
+                    {`Add ${drafts.length} ${drafts.length === 1 ? "target" : "targets"}`}
+                  </Button>
                 </div>
               </div>
             ) : null}
@@ -449,14 +440,14 @@ function TargetList({
   return (
     <div className="grid gap-2">
       <p className={label}>{`${rows.length} targets on this plan`}</p>
-      <div className="max-h-[28rem] overflow-auto rounded-md border">
+      <div className="max-h-[28rem] overflow-auto rounded-xl bg-muted/40">
         {rows.map(t => {
           const set = (patch: Partial<Draft>) =>
             setEdits(x => ({ ...x, [t.id]: { ...x[t.id], ...patch } }));
           return (
             <div
               key={t.id}
-              className="grid gap-2 border-b px-3 py-2 last:border-b-0 @xl:grid-cols-[minmax(0,1fr)_6.5rem_6.5rem_6.5rem_auto] @xl:items-center"
+              className="grid gap-2 border-b border-[color:var(--ceo-grid)] px-3 py-2 last:border-b-0 @xl:grid-cols-[minmax(0,1fr)_6.5rem_6.5rem_6.5rem_auto] @xl:items-center"
             >
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium">{t.label}</p>
@@ -487,9 +478,9 @@ function TargetList({
                 defaultValue=""
                 onChange={ev => set({ actualManual: ev.target.value })}
               />
-              <button
-                type="button"
-                className={quiet}
+              <Button
+                variant="outline"
+                size="icon"
                 disabled={busy || saving}
                 aria-label={`Take ${t.label} off the plan`}
                 onClick={async () => {
@@ -502,16 +493,14 @@ function TargetList({
                   }
                 }}
               >
-                <Trash2 className="size-3.5" aria-hidden />
-              </button>
+                <Trash2 aria-hidden />
+              </Button>
             </div>
           );
         })}
       </div>
       <div>
-        <button
-          type="button"
-          className={primary}
+        <Button
           disabled={!dirty || saving}
           onClick={async () => {
             setSaving(true);
@@ -555,14 +544,14 @@ function TargetList({
           }}
         >
           {saving ? (
-            <span className="flex items-center gap-1.5">
-              <Loader2 className="size-3.5 animate-spin" aria-hidden />
+            <>
+              <Loader2 className="animate-spin" aria-hidden />
               Saving
-            </span>
+            </>
           ) : (
             `Save ${dirty} ${dirty === 1 ? "change" : "changes"}`
           )}
-        </button>
+        </Button>
       </div>
     </div>
   );

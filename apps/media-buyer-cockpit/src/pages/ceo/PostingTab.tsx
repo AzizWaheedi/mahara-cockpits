@@ -1,10 +1,14 @@
 import { useAction } from "convex/react";
-import { Clapperboard, ExternalLink } from "lucide-react";
+import { ArrowUpRight, Clapperboard, TriangleAlert } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
+import { FilterChips } from "@/components/ceo/FilterChips";
 import { shortDate } from "@/components/ceo/format";
+import { Kicker } from "@/components/ceo/Kicker";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatusChip, type StatusTone } from "@/components/ceo/StatusChip";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
 import type { Post } from "../../../convex/ceo/posting";
 import type { CeoTabProps } from "./types";
@@ -41,14 +45,14 @@ const STATUS_TONE: Record<string, StatusTone> = {
 };
 
 const STATUS_LABEL: Record<string, string> = {
-  new: "queued",
-  preparing: "preparing",
-  ready: "ready to read",
-  approved: "approved",
-  publishing: "publishing",
-  published: "published",
-  failed: "failed",
-  discarded: "discarded",
+  new: "Queued",
+  preparing: "Preparing",
+  ready: "Ready to read",
+  approved: "Approved",
+  publishing: "Publishing",
+  published: "Published",
+  failed: "Failed",
+  discarded: "Discarded",
 };
 
 const PLATFORM_LABEL: Record<string, string> = {
@@ -110,8 +114,18 @@ function putWithProgress(
 }
 
 const field = "w-full rounded-md border bg-background px-2 py-1.5 text-sm";
-const label =
-  "text-[11px] font-bold uppercase tracking-wide text-muted-foreground";
+/** Groups inside the desk sit on a quiet panel, never a second border. */
+const panel = "rounded-xl bg-muted/40 p-4";
+
+/** A suggestion that fills a field: the cockpit's pill, teal when it is the one in use. */
+function pill(active: boolean) {
+  return cn(
+    "inline-flex min-h-8 items-center rounded-full px-3 py-1 text-left text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50",
+    active
+      ? "bg-primary/15 text-foreground ring-1 ring-inset ring-primary/40"
+      : "text-muted-foreground ring-1 ring-inset ring-border hover:bg-muted hover:text-foreground",
+  );
+}
 
 /** The thumbnail as the worker will draw it, near enough to decide on. */
 /**
@@ -243,6 +257,8 @@ function Doors({
   const [paste, setPaste] = useState("");
   const [busy, setBusy] = useState(false);
   const yt = channels.find(c => c.platform === "youtube");
+  // Nothing read yet: no empty row above the form.
+  if (!channels.length) return null;
   return (
     <div className="grid gap-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -255,7 +271,7 @@ function Doors({
         ))}
       </div>
       {yt && !yt.connected ? (
-        <div className="grid gap-2 rounded-md border p-3 text-sm">
+        <div className={cn("grid gap-3 text-sm", panel)}>
           <p>
             <span className="font-medium">YouTube needs one consent.</span>{" "}
             {yt.authUrl
@@ -268,10 +284,14 @@ function Doors({
               href={yt.authUrl}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex w-fit items-center gap-1 rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-muted"
+              className={buttonVariants({
+                variant: "outline",
+                size: "sm",
+                className: "w-fit",
+              })}
             >
-              Open Google's consent page{" "}
-              <ExternalLink className="size-3.5" aria-hidden />
+              Open Google's consent page
+              <ArrowUpRight className="size-3.5" aria-hidden />
             </a>
           ) : null}
           <div className="flex gap-2">
@@ -283,8 +303,9 @@ function Doors({
               aria-label="The address Google sent you to"
               className={field}
             />
-            <button
+            <Button
               type="button"
+              variant="outline"
               disabled={busy || !/code=|^4\//.test(paste.trim())}
               onClick={() => {
                 setBusy(true);
@@ -292,10 +313,10 @@ function Doors({
                   .then(() => setPaste(""))
                   .finally(() => setBusy(false));
               }}
-              className="shrink-0 rounded-md bg-foreground px-3 py-1.5 text-sm font-medium text-background disabled:opacity-50"
+              className="shrink-0"
             >
               Connect
-            </button>
+            </Button>
           </div>
         </div>
       ) : null}
@@ -462,23 +483,18 @@ function NewPost({ onCreated }: { onCreated: (p: Post) => void }) {
   const chosen = KINDS.find(k => k.key === kind) ?? KINDS[0];
 
   return (
-    <div className="grid gap-3 rounded-md border p-4">
-      <div className="flex flex-wrap items-center gap-2">
+    <div className={cn("grid gap-3", panel)}>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <span className="text-sm font-medium">New</span>
-        <div className="flex gap-1">
-          {KINDS.map(k => (
-            <button
-              key={k.key}
-              type="button"
-              aria-pressed={kind === k.key}
-              onClick={() => setKind(k.key)}
-              className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${kind === k.key ? "bg-foreground text-background" : "text-muted-foreground"}`}
-            >
-              {k.label}
-            </button>
-          ))}
-        </div>
-        <span className="text-xs text-muted-foreground">{chosen.what}</span>
+        <FilterChips
+          ariaLabel="What you are posting"
+          value={kind}
+          onChange={setKind}
+          options={KINDS.map(k => ({ key: k.key, label: k.label }))}
+        />
+        <span className="basis-full text-xs text-muted-foreground sm:basis-auto">
+          {chosen.what}
+        </span>
       </div>
       {kind === "post" ? (
         <>
@@ -506,25 +522,18 @@ function NewPost({ onCreated }: { onCreated: (p: Post) => void }) {
           />
         </>
       ) : null}
-      <div className={kind === "post" ? "hidden" : "flex gap-1"}>
-        {(
-          [
-            ["upload", "Upload a file"],
-            ["drive", "Google Drive link"],
-            ["url", "Link"],
-          ] as const
-        ).map(([k, l]) => (
-          <button
-            key={k}
-            type="button"
-            aria-pressed={source === k}
-            onClick={() => setSource(k)}
-            className={`rounded-md border px-2.5 py-1 text-xs ${source === k ? "bg-muted font-medium" : "text-muted-foreground"}`}
-          >
-            {l}
-          </button>
-        ))}
-      </div>
+      {kind === "post" ? null : (
+        <FilterChips
+          ariaLabel="Where the video comes from"
+          value={source}
+          onChange={setSource}
+          options={[
+            { key: "upload", label: "Upload a file" },
+            { key: "drive", label: "Google Drive link" },
+            { key: "url", label: "Link" },
+          ]}
+        />
+      )}
       {kind === "post" ? null : source === "upload" ? (
         <input
           type="file"
@@ -581,26 +590,25 @@ function NewPost({ onCreated }: { onCreated: (p: Post) => void }) {
         </span>
       </div>
       {progress !== null ? (
-        <div className="h-1.5 w-full overflow-hidden rounded bg-muted">
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
           <div
-            className="h-full bg-foreground transition-[width]"
+            className="h-full bg-primary transition-[width]"
             style={{ width: `${Math.round(progress * 100)}%` }}
           />
         </div>
       ) : null}
-      <div className="flex items-center gap-3">
-        <button
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
           type="button"
           disabled={!canSubmit}
           onClick={() => void submit()}
-          className="rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background hover:opacity-90 disabled:opacity-50"
         >
           {busy
             ? progress !== null
               ? `Uploading ${Math.round(progress * 100)}%`
               : "Queuing…"
             : "Prepare it"}
-        </button>
+        </Button>
         {msg ? (
           <span className="text-sm text-muted-foreground">{msg}</span>
         ) : null}
@@ -703,8 +711,8 @@ function Editor({
   const pub = post.published ?? {};
 
   return (
-    <div className="grid gap-5">
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="grid gap-6">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <StatusChip
           tone={STATUS_TONE[post.status] ?? "neutral"}
           label={STATUS_LABEL[post.status] ?? post.status}
@@ -736,32 +744,39 @@ function Editor({
         ) : null}
         <div className="ml-auto flex gap-2">
           {post.status !== "published" && post.status !== "publishing" ? (
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               disabled={busy}
               onClick={() => act(() => discard({ id: post.id }), "Discarded.")}
-              className="rounded border px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted"
             >
               Discard
-            </button>
+            </Button>
           ) : null}
           {["failed", "ready"].includes(post.status) ? (
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               disabled={busy}
               onClick={() =>
                 act(() => reprepare({ id: post.id }), "Preparing again.")
               }
-              className="rounded border px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted"
             >
               Prepare again
-            </button>
+            </Button>
           ) : null}
         </div>
       </div>
       {post.error ? (
-        <p className="rounded-md border border-[var(--ceo-critical)]/40 p-2 text-sm">
-          {post.error}
+        <p className="flex items-start gap-2 rounded-xl bg-muted/40 px-4 py-3 text-sm">
+          <TriangleAlert
+            className="mt-0.5 size-4 shrink-0"
+            style={{ color: "var(--ceo-critical)" }}
+            aria-label="Error"
+          />
+          <span className="min-w-0 break-words">{post.error}</span>
         </p>
       ) : null}
       {method.notes ? (
@@ -783,12 +798,15 @@ function Editor({
         pub.youtube?.id ||
         post.status === "publishing" ||
         post.status === "approved") && (
-        <div className="grid gap-2 rounded-md border p-3 text-sm">
-          <div className={label}>Where it went</div>
+        <div className={cn("grid gap-3 text-sm", panel)}>
+          <Kicker as="div">Where it went</Kicker>
           {post.targets.map(t => {
             const p = pub[t];
             return (
-              <div key={t} className="flex flex-wrap items-center gap-2">
+              <div
+                key={t}
+                className="flex flex-wrap items-center gap-x-3 gap-y-1"
+              >
                 <span className="w-24 font-medium">
                   {PLATFORM_LABEL[t] ?? t}
                 </span>
@@ -798,23 +816,24 @@ function Editor({
                       tone="good"
                       label={
                         t === "youtube"
-                          ? `live · ${p.privacy ?? "public"}`
-                          : "live"
+                          ? `Live, ${p.privacy ?? "public"}`
+                          : "Live"
                       }
                     />
+                    <span className="text-xs text-muted-foreground tabular-nums">
+                      {shortDate(p.at)}
+                    </span>
                     {p.permalink || p.url ? (
                       <a
                         href={p.permalink ?? p.url}
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex items-center gap-1 text-xs hover:underline"
+                        className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
                       >
-                        open <ExternalLink className="size-3" aria-hidden />
+                        Open
+                        <ArrowUpRight className="size-3.5" aria-hidden />
                       </a>
                     ) : null}
-                    <span className="text-xs text-muted-foreground">
-                      {shortDate(p.at)}
-                    </span>
                   </>
                 ) : (
                   <>
@@ -823,20 +842,21 @@ function Editor({
                       label={
                         t === "instagram" && p?.container
                           ? "Meta is processing"
-                          : "waiting for the worker"
+                          : "Waiting for the worker"
                       }
                     />
                     {t === "instagram" ? (
-                      <button
+                      <Button
                         type="button"
+                        variant="outline"
+                        size="sm"
                         disabled={busy}
                         onClick={() =>
                           act(() => checkInstagram({ id: post.id }))
                         }
-                        className="rounded border px-2 py-0.5 text-xs hover:bg-muted"
                       >
                         Check now
-                      </button>
+                      </Button>
                     ) : null}
                   </>
                 )}
@@ -872,10 +892,10 @@ function Editor({
 
       {post.kind !== "post" && post.frames.length ? (
         <div className="grid gap-3">
-          <div className={label}>
+          <Kicker as="div">
             {post.kind === "reel" ? "Cover" : "Thumbnail"}
-          </div>
-          <div className="grid gap-3 md:grid-cols-2">
+          </Kicker>
+          <div className="grid gap-4 @2xl:grid-cols-2">
             <div className="grid gap-2">
               {post.kind === "reel" ? (
                 <CoverPreview frameUrl={frameUrl} text={thumbText} />
@@ -890,7 +910,7 @@ function Editor({
                     onClick={() => setFrameMs(f.ms)}
                     aria-pressed={frameMs === f.ms}
                     title={`${mmss(f.ms / 1000)}`}
-                    className={`shrink-0 overflow-hidden rounded border-2 ${frameMs === f.ms ? "border-foreground" : "border-transparent"}`}
+                    className={`shrink-0 overflow-hidden rounded-md border-2 ${frameMs === f.ms ? "border-primary" : "border-transparent"}`}
                   >
                     {post.urls.frames?.[String(f.ms)] ? (
                       <img
@@ -925,9 +945,10 @@ function Editor({
                     <button
                       key={o}
                       type="button"
+                      aria-pressed={thumbText === o}
                       onClick={() => setThumbText(o)}
                       disabled={!editable}
-                      className={`rounded-full border px-2.5 py-0.5 text-xs ${thumbText === o ? "bg-foreground text-background" : "text-muted-foreground hover:bg-muted"}`}
+                      className={pill(thumbText === o)}
                       dir="auto"
                     >
                       {o}
@@ -936,8 +957,10 @@ function Editor({
                 </div>
               ) : null}
               {editable ? (
-                <button
+                <Button
                   type="button"
+                  variant="outline"
+                  size="sm"
                   disabled={busy || !thumbText.trim()}
                   onClick={() =>
                     act(
@@ -950,10 +973,10 @@ function Editor({
                       "Rendering; the picture updates within two minutes.",
                     )
                   }
-                  className="w-fit rounded-md border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
+                  className="w-fit"
                 >
                   Render again
-                </button>
+                </Button>
               ) : null}
             </div>
             <div className="grid content-start gap-2">
@@ -984,22 +1007,23 @@ function Editor({
 
       {post.status !== "new" && post.status !== "preparing" ? (
         <div
-          className={`grid gap-5 ${targets.includes("youtube") && targets.includes("instagram") ? "md:grid-cols-2" : ""}`}
+          className={`grid gap-6 ${targets.includes("youtube") && targets.includes("instagram") ? "@2xl:grid-cols-2" : ""}`}
         >
           {targets.includes("youtube") ? (
-            <div className="grid gap-2">
-              <div className={label}>
+            <div className="grid content-start gap-2">
+              <Kicker as="div">
                 {post.kind === "reel" ? "YouTube Shorts" : "YouTube"}
-              </div>
+              </Kicker>
               {post.ytTitleOptions.length ? (
                 <div className="flex flex-wrap gap-1.5">
                   {post.ytTitleOptions.map(o => (
                     <button
                       key={o}
                       type="button"
+                      aria-pressed={ytTitle === o}
                       onClick={() => setYtTitle(o)}
                       disabled={!editable}
-                      className={`rounded-full border px-2.5 py-0.5 text-xs ${ytTitle === o ? "bg-foreground text-background" : "text-muted-foreground hover:bg-muted"}`}
+                      className={pill(ytTitle === o)}
                       dir="auto"
                     >
                       {o}
@@ -1016,10 +1040,7 @@ function Editor({
                 disabled={!editable}
                 className={`${field} font-medium`}
               />
-              <div
-                className="text-[11px] text-muted-foreground"
-                style={{ fontVariantNumeric: "tabular-nums" }}
-              >{`${ytTitle.length} characters`}</div>
+              <div className="text-xs text-muted-foreground tabular-nums">{`${ytTitle.length} characters`}</div>
               <textarea
                 value={ytDescription}
                 onChange={e => setYtDescription(e.target.value)}
@@ -1046,8 +1067,8 @@ function Editor({
             </div>
           ) : null}
           {targets.includes("instagram") ? (
-            <div className="grid gap-2">
-              <div className={label}>Instagram</div>
+            <div className="grid content-start gap-2">
+              <Kicker as="div">Instagram</Kicker>
               <textarea
                 value={igCaption}
                 onChange={e => setIgCaption(e.target.value)}
@@ -1058,10 +1079,7 @@ function Editor({
                 disabled={!editable}
                 className={field}
               />
-              <div
-                className="text-[11px] text-muted-foreground"
-                style={{ fontVariantNumeric: "tabular-nums" }}
-              >{`${igCaption.length} of 2,200 characters`}</div>
+              <div className="text-xs text-muted-foreground tabular-nums">{`${igCaption.length} of 2,200 characters`}</div>
               <input
                 value={igHashtags}
                 onChange={e => setIgHashtags(e.target.value)}
@@ -1077,9 +1095,9 @@ function Editor({
       ) : null}
 
       {segments.length ? (
-        <details className="rounded-md border p-3 text-sm">
+        <details className={cn("text-sm", panel)}>
           <summary className="cursor-pointer text-sm font-medium">{`Transcript · ${segments.length} lines${post.transcript?.language ? ` · ${post.transcript.language}` : ""}`}</summary>
-          <div className="mt-2 grid max-h-72 gap-1 overflow-y-auto" dir="auto">
+          <div className="mt-3 grid max-h-72 gap-1 overflow-y-auto" dir="auto">
             {segments.map((s, i) => (
               <div key={`${i}-${s.start ?? 0}`} className="flex gap-2">
                 <span
@@ -1098,7 +1116,7 @@ function Editor({
       {editable ? (
         <div className="grid gap-3 border-t pt-4">
           <div className="flex flex-wrap items-center gap-3 text-sm">
-            <span className={label}>Publish to</span>
+            <Kicker as="span">Publish to</Kicker>
             {TARGET_CHOICES[post.kind].map(t => (
               <label
                 key={t}
@@ -1121,20 +1139,20 @@ function Editor({
             ))}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <button
+            <Button
               type="button"
+              variant="outline"
               disabled={busy || !dirty}
               onClick={() => act(doSave, "Saved.")}
-              className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
             >
               Save edits
-            </button>
+            </Button>
             {confirming ? (
               <>
-                <span className="text-sm">
+                <span className="basis-full text-sm sm:basis-auto">
                   {publishSentence(post.kind, targets)}
                 </span>
-                <button
+                <Button
                   type="button"
                   disabled={busy}
                   onClick={() =>
@@ -1144,29 +1162,27 @@ function Editor({
                       setConfirming(false);
                     }, "Approved. Instagram publishes now; YouTube follows from the worker.")
                   }
-                  className="rounded-md bg-foreground px-4 py-1.5 text-sm font-medium text-background hover:opacity-90 disabled:opacity-50"
                 >
                   {busy ? "Publishing…" : "Yes, publish"}
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
+                  variant="ghost"
                   onClick={() => setConfirming(false)}
-                  className="rounded-md border px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted"
                 >
                   Not yet
-                </button>
+                </Button>
               </>
             ) : (
-              <button
+              <Button
                 type="button"
                 disabled={
                   busy || targets.length === 0 || post.status !== "ready"
                 }
                 onClick={() => setConfirming(true)}
-                className="rounded-md bg-foreground px-4 py-1.5 text-sm font-medium text-background hover:opacity-90 disabled:opacity-50"
               >
                 Approve and publish
-              </button>
+              </Button>
             )}
           </div>
         </div>
@@ -1243,14 +1259,15 @@ export function PostingTab(_props: CeoTabProps) {
   }, [posts]);
 
   return (
-    <div className="grid gap-5 lg:gap-7">
+    <div className="grid gap-4 lg:gap-6">
       <SectionCard
-        kicker="Mahara's own channels · nothing goes out before you approve it"
+        kicker="Own channels"
         title="Posting desk"
+        description="Nothing goes out before you approve it."
         order={0}
       >
         {() => (
-          <div className="grid gap-5">
+          <div className="grid gap-6">
             <Doors
               channels={channels}
               onConnect={async url => {
@@ -1278,10 +1295,10 @@ export function PostingTab(_props: CeoTabProps) {
         )}
       </SectionCard>
 
-      <div className="grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)] lg:gap-6">
+      <div className="grid items-start gap-4 lg:grid-cols-[320px_minmax(0,1fr)] lg:gap-6">
         <SectionCard
           title="Posts"
-          kicker={
+          description={
             posts
               ? `${counts.ready ?? 0} to read · ${counts.published ?? 0} published`
               : undefined
@@ -1290,14 +1307,19 @@ export function PostingTab(_props: CeoTabProps) {
         >
           {() =>
             posts === null ? null : posts.length ? (
-              <div className="grid gap-1.5">
+              <div className="grid gap-1">
                 {posts.map(p => (
                   <button
                     key={p.id}
                     type="button"
                     onClick={() => setSelectedId(p.id)}
                     aria-pressed={selectedId === p.id}
-                    className={`flex items-center gap-3 rounded-md border p-2 text-left hover:bg-muted/40 ${selectedId === p.id ? "ring-1 ring-foreground" : ""}`}
+                    className={cn(
+                      "flex items-center gap-3 rounded-lg p-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      selectedId === p.id
+                        ? "bg-primary/10 ring-1 ring-inset ring-primary/40"
+                        : "hover:bg-muted/60",
+                    )}
                   >
                     {p.urls.thumb ? (
                       <img
@@ -1319,7 +1341,7 @@ export function PostingTab(_props: CeoTabProps) {
                           tone={STATUS_TONE[p.status] ?? "neutral"}
                           label={STATUS_LABEL[p.status] ?? p.status}
                         />
-                        <span className="text-[11px] text-muted-foreground">{`${p.kind === "video" ? "video" : "reel"} · ${p.targets.map(t => PLATFORM_LABEL[t] ?? t).join(", ")}`}</span>
+                        <span className="text-xs text-muted-foreground">{`${KIND_LABEL[p.kind]} · ${p.targets.map(t => PLATFORM_LABEL[t] ?? t).join(", ")}`}</span>
                       </div>
                     </div>
                   </button>
@@ -1354,9 +1376,7 @@ export function PostingTab(_props: CeoTabProps) {
                 }}
               />
             ) : (
-              <p className="text-sm text-muted-foreground">
-                Pick a post on the left.
-              </p>
+              <p className="text-sm text-muted-foreground">Pick a post.</p>
             )
           }
         </SectionCard>

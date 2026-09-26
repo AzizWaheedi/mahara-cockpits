@@ -2,9 +2,11 @@ import { useAction, useQuery } from "convex/react";
 import { ListTodo } from "lucide-react";
 import { useEffect, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
+import { FilterChips } from "@/components/ceo/FilterChips";
 import { plural, relative } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatusChip } from "@/components/ceo/StatusChip";
+import { Button } from "@/components/ui/button";
 import { api } from "../../../convex/_generated/api";
 
 /**
@@ -98,7 +100,7 @@ function FeedbackQueue({ order, now }: { order: number; now: number }) {
 
   return (
     <SectionCard
-      kicker="Only you see this"
+      kicker="Private"
       title="Changes and bugs"
       order={order}
       notes={[
@@ -108,8 +110,9 @@ function FeedbackQueue({ order, now }: { order: number; now: number }) {
         },
       ]}
       actions={
-        <button
-          type="button"
+        <Button
+          variant="outline"
+          size="sm"
           disabled={busy || queued === 0}
           onClick={() =>
             void run(
@@ -117,30 +120,25 @@ function FeedbackQueue({ order, now }: { order: number; now: number }) {
               `Sent ${plural(queued, "item")} to build.`,
             )
           }
-          className="h-8 rounded-md border bg-card px-3 text-xs font-medium hover:bg-accent disabled:opacity-50"
         >
           {queued > 0
             ? `Deploy ${plural(queued, "queued item")}`
             : "Nothing queued"}
-        </button>
+        </Button>
       }
     >
       {() => (
         <div className="grid gap-4">
           <div className="grid gap-2">
-            <div className="flex gap-1">
-              {(["change", "bug"] as const).map(k => (
-                <button
-                  key={k}
-                  type="button"
-                  aria-pressed={kind === k}
-                  onClick={() => setKind(k)}
-                  className={`rounded-md border px-2.5 py-1 text-xs ${kind === k ? "bg-muted font-medium" : "text-muted-foreground"}`}
-                >
-                  {k === "change" ? "A change" : "A bug"}
-                </button>
-              ))}
-            </div>
+            <FilterChips
+              options={[
+                { key: "change", label: "A change" },
+                { key: "bug", label: "A bug" },
+              ]}
+              value={kind}
+              onChange={setKind}
+              ariaLabel="What you are logging"
+            />
             <textarea
               value={text}
               onChange={e => setText(e.target.value)}
@@ -152,11 +150,11 @@ function FeedbackQueue({ order, now }: { order: number; now: number }) {
                   : "What to change, in your words. Name the tab or the number."
               }
               aria-label="What to change or what broke"
-              className="w-full rounded-md border bg-card px-3 py-2 text-sm"
+              className="w-full rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                size="sm"
                 disabled={busy || text.trim().length < 3}
                 onClick={() =>
                   void run(
@@ -169,10 +167,9 @@ function FeedbackQueue({ order, now }: { order: number; now: number }) {
                       : "Queued. Press Deploy when you want it built.",
                   )
                 }
-                className="h-8 rounded-md border bg-card px-3 text-xs font-medium hover:bg-accent disabled:opacity-50"
               >
                 {kind === "bug" ? "Log the bug" : "Queue the change"}
-              </button>
+              </Button>
               {message ? (
                 <span className="text-xs text-muted-foreground">{message}</span>
               ) : null}
@@ -187,11 +184,11 @@ function FeedbackQueue({ order, now }: { order: number; now: number }) {
               compact
             />
           ) : (
-            <ul className="grid gap-2">
+            <ul className="divide-y border-y">
               {queue.open.map(i => (
                 <li
                   key={i.id}
-                  className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1 rounded-md border px-3 py-2 text-sm"
+                  className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1 py-2.5 text-sm"
                 >
                   <span className="min-w-0 flex-1">
                     <span className="text-xs text-muted-foreground">

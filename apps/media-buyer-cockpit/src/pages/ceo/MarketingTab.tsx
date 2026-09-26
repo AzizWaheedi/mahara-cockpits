@@ -25,6 +25,7 @@ import {
   type Unit,
 } from "@/components/ceo/format";
 import { DERIVED_NOTE, useGrowthWindow } from "@/components/ceo/growthWindow";
+import { Kicker } from "@/components/ceo/Kicker";
 import { Na, Value } from "@/components/ceo/Na";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
@@ -33,6 +34,7 @@ import { TimeSeriesChart } from "@/components/ceo/TimeSeriesChart";
 import { useTimeframe } from "@/components/ceo/timeframe";
 import { useFrequency } from "@/components/ceo/useFrequency";
 import { range } from "@/components/ceo/windows";
+import { cn } from "@/lib/utils";
 import type { FrequencyFigure } from "../../../convex/ceo/frequency";
 import type {
   FunnelWindow,
@@ -43,9 +45,9 @@ import type { CeoTabProps } from "./types";
 
 // --- Derived numbers, each null when its denominator is 0 ---
 
-/** "20.5 h" or "35 min", a dash when there is none. */
+/** "20.5 h" or "35 min", n/a when there is none. */
 function minutesText(m: number | null | undefined): string {
-  if (m === null || m === undefined) return "—";
+  if (m === null || m === undefined) return NA;
   return m >= 120 ? `${(m / 60).toFixed(1)} h` : `${Math.round(m)} min`;
 }
 
@@ -74,6 +76,28 @@ function costPerIntroShown(w: FunnelWindow): number | null {
 function retargeting(w: FunnelWindow): number | null {
   const v = w.raw.spend_retargeting;
   return isNum(v) ? v : null;
+}
+
+/**
+ * A tile's change against the earlier window. The timeframe bar at the top
+ * of the tab already names that window, so each tile says it to screen
+ * readers only instead of printing "vs 1 to 22 Aug" under every number.
+ */
+function WindowDelta({
+  vs,
+  ...props
+}: {
+  value: number | null;
+  goodWhen: GoodWhen;
+  kind?: DeltaKind;
+  vs?: string;
+}) {
+  return (
+    <>
+      <Delta {...props} />
+      {vs ? <span className="sr-only">{vs}</span> : null}
+    </>
+  );
 }
 
 // --- Notes: each caveat beside the card it qualifies ---
@@ -179,37 +203,33 @@ const NOT_MEASURED: { label: string; why: string }[] = [
   },
 ];
 
-/** Metrics with no source at all: named, shown as n/a, each with what is missing. */
+const NOT_MEASURED_NOTES: Note[] = [
+  {
+    level: "info",
+    text: "These are the marketing numbers a CEO would normally ask for that no source the cockpit reads can give. They are named here rather than left off, so nobody hunts for a number that does not exist. Each n/a says what is missing.",
+  },
+];
+
+/** Metrics with no source at all: named, shown as n/a, each n/a saying what is missing. */
 function NotMeasured({ order }: { order: number }) {
   return (
     <SectionCard
-      kicker="Marketing"
       title="Not measured yet"
+      notes={NOT_MEASURED_NOTES}
       order={order}
-      bodyClassName="mt-4"
+      hideAsOf
     >
-      <p className="mb-4 max-w-2xl text-xs leading-relaxed text-muted-foreground">
-        These are the marketing numbers a CEO would normally ask for that no
-        source the cockpit reads can give. They are named here rather than left
-        off, so nobody hunts for a number that does not exist.
-      </p>
-      <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-2 gap-x-6 gap-y-6 @lg:grid-cols-3 @4xl:grid-cols-4">
         {NOT_MEASURED.map(m => (
-          <div key={m.label} className="min-w-0">
-            <dt className="text-[13px] leading-5 text-muted-foreground">
-              {m.label}
-            </dt>
-            <dd className="mt-0.5 min-w-0">
-              <span className="text-base font-semibold tracking-tight">
-                <Na hint={m.why} />
-              </span>
-              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                {m.why}
-              </p>
-            </dd>
-          </div>
+          <StatTile
+            key={m.label}
+            variant="plain"
+            label={m.label}
+            value={null}
+            naHint={m.why}
+          />
         ))}
-      </dl>
+      </div>
     </SectionCard>
   );
 }
@@ -225,15 +245,12 @@ export function MarketingTab({ sections, now, day }: CeoTabProps) {
   const gw = useGrowthWindow(payload, tf, today);
   const { current, previous } = gw;
   const notes = useMemo(() => routeNotes(payload?.notes), [payload]);
-  const windowLabel = gw.bounds
-    ? range(gw.bounds.from, gw.bounds.to)
-    : "Timeframe";
 
   // With nothing to show, one card says so instead of five identical empty states.
   if (!payload)
     return (
-      <div className="grid gap-5 lg:gap-7">
-        <SectionCard title="Marketing" section={section}>
+      <div className="grid gap-4 lg:gap-6">
+        <SectionCard title="Spend, leads and calls" section={section}>
           {() => null}
         </SectionCard>
         <NotMeasured order={1} />
@@ -241,7 +258,7 @@ export function MarketingTab({ sections, now, day }: CeoTabProps) {
     );
 
   return (
-    <div className="grid gap-5 lg:gap-7">
+    <div className="grid gap-4 lg:gap-6">
       <TimeframeBar
         tf={tf}
         bounds={gw.bounds}
@@ -252,9 +269,8 @@ export function MarketingTab({ sections, now, day }: CeoTabProps) {
         note={gw.derived ? DERIVED_NOTE : undefined}
       />
 
-      <div className="grid gap-5 lg:gap-7 xl:grid-cols-12">
+      <div className="grid gap-4 lg:gap-6 xl:grid-cols-12">
         <SectionCard
-          kicker={windowLabel}
           title="Spend and leads"
           section={section}
           notes={cardNotes(notes, "spend")}
@@ -264,7 +280,6 @@ export function MarketingTab({ sections, now, day }: CeoTabProps) {
           {p => <SpendAndLeads w={current ?? p.windows.mtd} prev={previous} />}
         </SectionCard>
         <SectionCard
-          kicker={windowLabel}
           title="Calls booked and cost per call"
           section={section}
           notes={cardNotes(notes, "booked")}
@@ -280,12 +295,11 @@ export function MarketingTab({ sections, now, day }: CeoTabProps) {
           Ads, sources and the trend
         </h2>
         <p className="text-xs text-muted-foreground">
-          The ads table is always the last 7 days and the source bars this
-          month; the charts and the reach card carry their own timeframe.
+          Each card below keeps its own timeframe.
         </p>
       </div>
 
-      <div className="grid gap-5 lg:gap-7 xl:grid-cols-12">
+      <div className="grid items-start gap-4 lg:gap-6 xl:grid-cols-12">
         <SectionCard
           kicker="Last 7 days"
           title="Ads by spend"
@@ -321,7 +335,7 @@ export function MarketingTab({ sections, now, day }: CeoTabProps) {
       </SectionCard>
 
       <SectionCard
-        kicker="Meta, over the timeframe chosen here"
+        kicker="From Meta"
         title="Reach and frequency"
         section={section}
         notes={FREQUENCY_NOTES}
@@ -331,8 +345,9 @@ export function MarketingTab({ sections, now, day }: CeoTabProps) {
       </SectionCard>
 
       <SectionCard
-        kicker={`Last ${payload?.winningAds?.windowDays ?? 90} days, best first`}
+        kicker={`Last ${payload?.winningAds?.windowDays ?? 90} days`}
         title="Winning ads"
+        description="Best first: ranked by closes, then demos, then leads."
         section={section}
         order={6}
       >
@@ -360,14 +375,16 @@ function SpendAndLeads({
     kind: DeltaKind = "pct",
   ) =>
     prev && isNum(value) ? (
-      <Delta value={value} goodWhen={goodWhen} kind={kind} vs={vs} />
+      <WindowDelta value={value} goodWhen={goodWhen} kind={kind} vs={vs} />
     ) : undefined;
 
   const retarget = retargeting(w);
 
   return (
     <div>
-      <div className="grid grid-cols-2 gap-x-8 gap-y-6 sm:grid-cols-4">
+      {/* Four across only when the card is wide: beside the calls card on a
+          laptop it stays two by two, like its neighbour. */}
+      <div className="grid grid-cols-2 gap-x-8 gap-y-6 @2xl:grid-cols-4">
         <StatTile
           variant="plain"
           label="Lead-gen ad spend"
@@ -389,7 +406,11 @@ function SpendAndLeads({
           value={minutesText(
             w.speedToLead.workingMedianMin ?? w.speedToLead.medianMin,
           )}
-          sub={`${typeof w.speedToLead.workingMedianMin === "number" ? `working hours · ${minutesText(w.speedToLead.medianMin)} on the plain clock · ` : ""}${count(w.speedToLead.called)} of ${count(w.speedToLead.leads)} leads called by a sales rep · ${count(w.speedToLead.neverCalled)} never called${w.speedToLead.within5Share !== null ? ` · ${pct(w.speedToLead.workingWithin5Share ?? w.speedToLead.within5Share)} within 5 min` : ""}`}
+          sub={
+            typeof w.speedToLead.workingMedianMin === "number"
+              ? `working hours · ${minutesText(w.speedToLead.medianMin)} on the plain clock`
+              : undefined
+          }
           hint="From the lead's creation to the first Maqsam call with it made by a sales rep on the roster (setter, closer or both), never a call-centre agent, matched by the CRM contact or the phone's last eight digits. On the working clock the time starts at the later of the lead's creation and the next working window and only working minutes count; the plain clock figure is beside it. The median over the leads that were called; the never-called are counted beside it, not inside it."
           naHint="No lead in this window has a sales rep's Maqsam call against it."
         />
@@ -410,6 +431,24 @@ function SpendAndLeads({
           },
           { label: "Not ready", value: count(w.leadClasses.notReady) },
           { label: "Not yet tagged", value: count(w.leadClasses.untagged) },
+          {
+            label: "Called by a sales rep",
+            value: `${count(w.speedToLead.called)} of ${count(w.speedToLead.leads)}`,
+          },
+          {
+            label: "Never called",
+            value: count(w.speedToLead.neverCalled),
+          },
+          {
+            label: "Called within 5 min",
+            value:
+              w.speedToLead.within5Share !== null
+                ? pct(
+                    w.speedToLead.workingWithin5Share ??
+                      w.speedToLead.within5Share,
+                  )
+                : null,
+          },
         ]}
       />
     </div>
@@ -432,7 +471,7 @@ function CallsBooked({
     kind: DeltaKind = "pct",
   ) =>
     prev && isNum(value) ? (
-      <Delta value={value} goodWhen={goodWhen} kind={kind} vs={vs} />
+      <WindowDelta value={value} goodWhen={goodWhen} kind={kind} vs={vs} />
     ) : undefined;
 
   const booked = bookedCalls(w);
@@ -577,7 +616,7 @@ function LeadSources({
   const total = split.ads + split.organic + split.assumedAds;
   const share = (n: number) => (total > 0 ? pct(n / total) : NA);
   return (
-    <div className="grid gap-5">
+    <div className="grid gap-6">
       <div className="grid grid-cols-3 gap-x-4 gap-y-3">
         <StatTile
           variant="plain"
@@ -649,7 +688,7 @@ function DailyBody({
   const span = first && last ? `from ${date(first)} to ${date(last)}` : "";
 
   return (
-    <div className="grid gap-x-8 gap-y-8 sm:grid-cols-2 xl:grid-cols-3">
+    <div className="grid gap-8 @2xl:grid-cols-2 @4xl:grid-cols-3">
       {DAILY_SERIES.map(s => (
         <TimeSeriesChart
           initialRange="90d"
@@ -731,7 +770,7 @@ function FrequencyBody({
           Meta could not be read for this timeframe: {error}
         </p>
       ) : null}
-      <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
+      <div className="grid gap-6 @3xl:grid-cols-2">
         <FrequencyFigureTiles
           title="Lead-gen campaigns"
           figure={read?.leadGen ?? null}
@@ -760,11 +799,12 @@ function FrequencyFigureTiles({
     ? undefined
     : "No campaign of this kind on the account, or Meta has not answered yet.";
   return (
-    <section aria-label={title} className={stale ? "opacity-60" : undefined}>
-      <p className="mb-3 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        {title}
-      </p>
-      <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4">
+    <section
+      aria-label={title}
+      className={cn("@container min-w-0", stale && "opacity-60")}
+    >
+      <Kicker className="mb-3">{title}</Kicker>
+      <div className="grid grid-cols-2 gap-x-6 gap-y-6 @lg:grid-cols-4">
         <StatTile
           variant="plain"
           label="Frequency"
@@ -824,31 +864,57 @@ function WinningAdsBody({ p }: { p: GrowthPayload }) {
   const seen = new Map<string, number>();
   for (const r of w.rows) seen.set(r.name, (seen.get(r.name) ?? 0) + 1);
 
+  const th =
+    "h-9 whitespace-nowrap px-3 text-right text-xs font-medium text-muted-foreground";
   return (
-    <div className="grid gap-4">
-      <div className="overflow-x-auto rounded-md border">
-        <table
-          className="w-full text-sm"
-          style={{ fontVariantNumeric: "tabular-nums" }}
-        >
-          <thead>
-            <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
-              <th className="p-2 font-medium">Ad</th>
-              <th className="p-2 text-right font-medium">Spend</th>
-              <th className="p-2 text-right font-medium">Leads</th>
-              <th className="p-2 text-right font-medium">Cost/lead</th>
-              <th className="p-2 text-right font-medium">Qualified</th>
-              <th className="p-2 text-right font-medium">Demos</th>
-              <th className="p-2 text-right font-medium">Cost/demo</th>
-              <th className="p-2 text-right font-medium">Closes</th>
-              <th className="p-2 text-right font-medium">ROAS</th>
-            </tr>
-          </thead>
-          <tbody>
-            {w.rows.map(r => (
-              <tr key={r.adId} className="border-t align-middle">
-                <td className="p-2">
-                  <div className="flex items-center gap-3">
+    <div className="ceo-table-scroll overflow-x-auto">
+      <table className="w-full min-w-max border-collapse text-sm tabular-nums">
+        <caption className="sr-only">
+          Our ads over the last {w.windowDays} days, ranked by closes, then
+          demos, then leads
+        </caption>
+        <thead>
+          <tr className="border-b">
+            <th scope="col" className={cn(th, "pl-0 text-left")}>
+              Ad
+            </th>
+            <th scope="col" className={th}>
+              Spend
+            </th>
+            <th scope="col" className={th}>
+              Leads
+            </th>
+            <th scope="col" className={th}>
+              Cost per lead
+            </th>
+            <th scope="col" className={th}>
+              Qualified
+            </th>
+            <th scope="col" className={th}>
+              Demos
+            </th>
+            <th scope="col" className={th}>
+              Cost per demo
+            </th>
+            <th scope="col" className={th}>
+              Closes
+            </th>
+            <th scope="col" className={cn(th, "pr-0")}>
+              ROAS
+            </th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-[color:var(--ceo-grid)]">
+          {w.rows.map(r => {
+            const flags = [
+              r.inMeta ? null : "Meta has no snapshot",
+              (seen.get(r.name) ?? 0) > 1 ? "Two ads share this name" : null,
+              r.status?.includes("PAUSED") ? "Paused" : null,
+            ].filter(Boolean);
+            return (
+              <tr key={r.adId} className="align-middle">
+                <td className="py-2.5 pr-3">
+                  <div className="flex max-w-[22rem] items-center gap-3">
                     {r.thumbnail ? (
                       // Facebook serves these on an expiring link, so a broken
                       // one is not a fault in the data: drop it and keep the row.
@@ -856,40 +922,36 @@ function WinningAdsBody({ p }: { p: GrowthPayload }) {
                         src={r.thumbnail}
                         alt=""
                         loading="lazy"
-                        className="size-10 shrink-0 rounded object-cover"
+                        className="size-10 shrink-0 rounded-md object-cover"
                         onError={e => {
                           e.currentTarget.style.display = "none";
                         }}
                       />
                     ) : null}
                     <div className="min-w-0">
-                      <div className="truncate font-medium">{r.name}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {[
-                          r.inMeta ? null : "Meta has no snapshot",
-                          (seen.get(r.name) ?? 0) > 1
-                            ? "two ads share this name"
-                            : null,
-                          r.status?.includes("PAUSED") ? "paused" : null,
-                        ]
-                          .filter(Boolean)
-                          .join(" · ") || null}
+                      <div className="truncate font-medium" title={r.name}>
+                        {r.name}
                       </div>
+                      {flags.length ? (
+                        <div className="text-xs text-muted-foreground">
+                          {flags.join(" · ")}
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 </td>
-                <td className="p-2 text-right">
+                <td className="px-3 py-2.5 text-right">
                   {r.inMeta ? (
                     money(r.spend)
                   ) : (
-                    <span className="text-muted-foreground">unknown</span>
+                    <Na hint="Meta has no snapshot of this ad, so its spend is unknown rather than zero." />
                   )}
                 </td>
-                <td className="p-2 text-right">{count(r.leads)}</td>
-                <td className="p-2 text-right">
+                <td className="px-3 py-2.5 text-right">{count(r.leads)}</td>
+                <td className="px-3 py-2.5 text-right">
                   <Value value={r.cpl === null ? NA : money(r.cpl)} />
                 </td>
-                <td className="p-2 text-right">
+                <td className="px-3 py-2.5 text-right">
                   {count(r.qualified)}
                   {r.qualifiedPct === null ? null : (
                     <span className="block text-xs text-muted-foreground">
@@ -897,27 +959,30 @@ function WinningAdsBody({ p }: { p: GrowthPayload }) {
                     </span>
                   )}
                 </td>
-                <td className="p-2 text-right">{count(r.demos)}</td>
-                <td className="p-2 text-right">
+                <td className="px-3 py-2.5 text-right">{count(r.demos)}</td>
+                <td className="px-3 py-2.5 text-right">
                   <Value
                     value={r.costPerDemo === null ? NA : money(r.costPerDemo)}
                   />
                 </td>
-                <td className="p-2 text-right font-medium">
-                  {r.sales > 0 ? count(r.sales) : "—"}
-                </td>
-                <td className="p-2 text-right">
-                  {r.revRoas === null ? (
-                    <span className="text-muted-foreground">—</span>
-                  ) : (
-                    `${r.revRoas.toFixed(1)}x`
+                <td
+                  className={cn(
+                    "px-3 py-2.5 text-right",
+                    r.sales > 0 ? "font-medium" : "text-muted-foreground",
                   )}
+                >
+                  {count(r.sales)}
+                </td>
+                <td className="py-2.5 pl-3 text-right">
+                  <Value
+                    value={r.revRoas === null ? NA : `${r.revRoas.toFixed(1)}x`}
+                  />
                 </td>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

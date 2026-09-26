@@ -2,12 +2,22 @@ import { useAction, useMutation } from "convex/react";
 import { Landmark } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
-import { count, money, plural, shortDate } from "@/components/ceo/format";
+import {
+  count,
+  humanize,
+  money,
+  month,
+  plural,
+  shortDate,
+} from "@/components/ceo/format";
+import { Kicker } from "@/components/ceo/Kicker";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import type { CeoSection } from "@/components/ceo/useCeo";
 import { AnimatedSelect } from "@/components/ui/animated-select";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
 import type { MoneyPayload, Note } from "../../../convex/ceo/payloads";
 
@@ -192,12 +202,12 @@ export function BankStatementsCard({
 
   return (
     <SectionCard
-      kicker={
-        lastTo
-          ? `Newest statement ends ${shortDate(lastTo)}`
-          : "No statement uploaded yet"
-      }
       title="Bank statements"
+      description={
+        lastTo
+          ? `The newest statement ends ${shortDate(lastTo)}.`
+          : "No statement uploaded yet."
+      }
       section={section}
       notes={NOTES}
       order={order}
@@ -219,7 +229,14 @@ export function BankStatementsCard({
       {() => (
         <div className="grid gap-5">
           <div className="flex flex-wrap items-center gap-3">
-            <label className="inline-flex h-9 cursor-pointer items-center rounded-md border bg-card px-3 text-sm font-medium hover:bg-accent">
+            {/* The card's one action, so the teal button. */}
+            <label
+              className={cn(
+                buttonVariants(),
+                "cursor-pointer has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring",
+                busy && "pointer-events-none opacity-50",
+              )}
+            >
               {busy ? "Working" : "Upload a CBK statement"}
               <input
                 ref={fileRef}
@@ -247,7 +264,7 @@ export function BankStatementsCard({
             </p>
           ) : null}
           {result ? (
-            <div className="rounded-md border bg-muted/30 p-3 text-sm">
+            <div className="rounded-xl bg-muted/40 p-4 text-sm">
               <p className="font-medium">
                 {result.account} ({result.accountKind}),{" "}
                 {result.fromDay ? shortDate(result.fromDay) : "?"} to{" "}
@@ -256,7 +273,7 @@ export function BankStatementsCard({
                 {count(result.skipped)} already held.
               </p>
               {result.byKind.length ? (
-                <ul className="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
+                <ul className="mt-2 grid gap-x-6 gap-y-1 text-xs text-muted-foreground @xl:grid-cols-2">
                   {result.byKind.map(k => (
                     <li key={k.kind}>
                       {k.label}: {count(k.count)} · {money(k.usd)}
@@ -284,9 +301,7 @@ export function BankStatementsCard({
             </p>
           ) : ov && ov.statements.length ? (
             <div className="grid gap-2">
-              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                Statements held
-              </p>
+              <Kicker>Statements held</Kicker>
               <ul className="grid gap-1 text-sm">
                 {ov.statements.slice(0, 12).map(s => (
                   <li
@@ -318,7 +333,7 @@ export function BankStatementsCard({
           ) : null}
 
           {bank ? (
-            <div className="grid grid-cols-2 gap-x-6 gap-y-5 border-t pt-5 sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-6 border-t pt-5 @2xl:grid-cols-4">
               <StatTile
                 variant="plain"
                 label="Lines, 12 months"
@@ -352,9 +367,7 @@ export function BankStatementsCard({
           ) : null}
 
           <div className="grid gap-3 border-t pt-5">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              Kept out of the P&L
-            </p>
+            <Kicker>Kept out of the P&amp;L</Kicker>
             {ov?.exclusions.length ? (
               <ul className="grid gap-1 text-sm">
                 {ov.exclusions.map(x => (
@@ -396,7 +409,7 @@ export function BankStatementsCard({
                 value={exKind}
                 onChange={e => setExKind(e.target.value as "vendor" | "card")}
                 aria-label="Exclusion kind"
-                className="h-9 rounded-md border bg-card px-2 text-sm"
+                className="ceo-select-md"
               >
                 <option value="vendor">Vendor</option>
                 <option value="card">Card</option>
@@ -406,23 +419,22 @@ export function BankStatementsCard({
                 onChange={e => setExPattern(e.target.value)}
                 placeholder={exKind === "card" ? "537015XXXXXX4348" : "netflix"}
                 aria-label="Exclusion pattern"
-                className="h-9 min-w-0 flex-1 rounded-md border bg-card px-2 text-sm"
+                className="h-9 min-w-40 flex-1 rounded-md border bg-background px-3 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
               <input
                 value={exNote}
                 onChange={e => setExNote(e.target.value)}
                 placeholder="why (optional)"
                 aria-label="Exclusion note"
-                className="h-9 min-w-0 flex-1 rounded-md border bg-card px-2 text-sm"
+                className="h-9 min-w-40 flex-1 rounded-md border bg-background px-3 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
-              <button
-                type="button"
+              <Button
+                variant="outline"
                 disabled={busy}
                 onClick={() => void onAddExclusion()}
-                className="h-9 rounded-md border bg-card px-3 text-sm font-medium hover:bg-accent"
               >
                 Exclude
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -448,7 +460,9 @@ export function BankExpensesBody({ p }: { p: MoneyPayload }): ReactNode {
       {months.slice(0, 6).map(m => (
         <div key={m.month} className="grid gap-1">
           <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
-            <span className="font-medium">{m.month}</span>
+            <span className="font-medium">
+              {month(m.month, { long: true, year: true })}
+            </span>
             <span className="tabular-nums">
               {money(m.total)}
               <span className="text-muted-foreground">
@@ -461,7 +475,7 @@ export function BankExpensesBody({ p }: { p: MoneyPayload }): ReactNode {
           <ul className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground tabular-nums">
             {m.byCategory.map(c => (
               <li key={c.category}>
-                {c.category} {money(c.usd)}
+                {humanize(c.category)} {money(c.usd)}
               </li>
             ))}
           </ul>

@@ -1,3 +1,4 @@
+import { capitalize, humanize } from "@/components/ceo/format";
 import type { StatusTone } from "@/components/ceo/StatusChip";
 import type { MachinePayload } from "../../../convex/ceo/payloads";
 
@@ -46,3 +47,27 @@ export function feedState(f: Feed): MachineState {
     return { tone: "warning", label: "Late" };
   return { tone: "serious", label: "Failing" };
 }
+
+/** Display names for the cockpit's own data sources (keys from the health runbook). */
+export const SOURCE_LABELS: Record<string, string> = {
+  meta: "Meta ads",
+  clickup: "ClickUp",
+  sheets: "Google Sheets",
+  docs: "Google Docs",
+  calendar: "Google Calendar",
+  ghl: "GoHighLevel",
+  fathom: "Fathom call recordings",
+  slack: "Slack",
+  bridge_csm: "Client success cockpit",
+  bridge_creative: "Creative cockpit",
+  whapi: "WhatsApp (WHAPI)",
+  resend: "Email (Resend)",
+  jobs: "Scheduled jobs",
+  hermes: "Hermes",
+};
+
+export const sourceLabel = (key: string) => SOURCE_LABELS[key] ?? humanize(key);
+
+/** "ceo refresh" as "CEO refresh": job keys are lower case in the ledger. */
+export const jobName = (job: string) =>
+  capitalize(job).replace(/\b(ceo|kpi|ai|eod)\b/gi, w => w.toUpperCase());

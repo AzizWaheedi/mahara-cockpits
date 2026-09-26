@@ -24,6 +24,7 @@ import {
 } from "@/components/ceo/format";
 import { DERIVED_NOTE, useGrowthWindow } from "@/components/ceo/growthWindow";
 import { HeroFigure } from "@/components/ceo/HeroFigure";
+import { Kicker } from "@/components/ceo/Kicker";
 import {
   CAC_AD_SPEND_ONLY,
   CLOSE_RATE,
@@ -133,6 +134,33 @@ function join(...lists: (Note[] | undefined)[]): Note[] | null {
   return all.length ? all : null;
 }
 
+/**
+ * A tile's change against the earlier window. The timeframe bar above the
+ * cards already names that window, so each tile says it to screen readers
+ * only instead of printing "vs 1 to 22 Aug" under every number.
+ */
+function WindowDelta({
+  vs,
+  ...props
+}: {
+  value: number | null;
+  goodWhen: GoodWhen;
+  kind?: DeltaKind;
+  vs?: string;
+}) {
+  return (
+    <>
+      <Delta {...props} />
+      {vs ? <span className="sr-only">{vs}</span> : null}
+    </>
+  );
+}
+
+/** Caveats this tab leaves to another tab, said once among the card's notes. */
+function elsewhereNote(n: number, text: string): Note[] {
+  return n > 0 ? [{ level: "info", text }] : [];
+}
+
 /** Both kinds of cash sit on this tab, so the difference is spelled out every time. */
 const CASH_CLASH_NOTE: Note = {
   level: "warn",
@@ -213,7 +241,7 @@ export function FrontendTab(props: CeoTabProps) {
   // always run, and the webinar. The choice rides the address, ?funnel=.
   const [funnel, setFunnel] = useTabParam(FUNNELS, "call", "funnel");
   return (
-    <div className="grid gap-5 lg:gap-7">
+    <div className="grid gap-4 lg:gap-6">
       <FilterChips
         ariaLabel="Which funnel"
         value={funnel}
@@ -275,7 +303,11 @@ function CallFunnel({ sections, now, day, goTab }: CeoTabProps) {
   );
 
   const { current, previous } = gw;
+  // The timeframe bar spells out the comparison window once; the tiles say
+  // it to screen readers only.
   const vs = previous ? `vs ${range(previous.from, previous.to)}` : undefined;
+  const onMoneyTab = notes.money.moneyTab?.length ?? 0;
+  const onOtherTabs = notes.growth.otherTabs?.length ?? 0;
   const windowLabel = gw.bounds
     ? range(gw.bounds.from, gw.bounds.to)
     : "Timeframe";
@@ -285,31 +317,31 @@ function CallFunnel({ sections, now, day, goTab }: CeoTabProps) {
   if (!g && !m)
     return (
       <div className="grid min-w-0">
-        <SectionCard title="Frontend" section={growthSection}>
+        <SectionCard title="Call funnel" section={growthSection}>
           {() => null}
         </SectionCard>
       </div>
     );
 
   return (
-    <div className="grid gap-5 lg:gap-7">
+    <div className="grid gap-4 lg:gap-6">
       <SectionCard
         id="frontend-cash"
         kicker={month(monthKey, { long: true, year: true })}
         title="Cash collected"
         section={moneySection}
-        notes={join(notes.money.cash, railNotes(m))}
+        notes={join(
+          notes.money.cash,
+          railNotes(m),
+          elsewhereNote(
+            onMoneyTab,
+            `${plural(onMoneyTab, "more money caveat")} about numbers this tab does not show, such as expenses and the bank import, ${onMoneyTab === 1 ? "sits" : "sit"} on the Money tab.`,
+          ),
+        )}
         actions={<TabLink tab="money" label="Money" goTab={goTab} />}
         order={0}
       >
-        {p => (
-          <CashWon
-            p={p}
-            today={today}
-            onMoneyTab={notes.money.moneyTab?.length ?? 0}
-            goTab={goTab}
-          />
-        )}
+        {p => <CashWon p={p} today={today} />}
       </SectionCard>
 
       <div className="mt-2">
@@ -325,7 +357,6 @@ function CallFunnel({ sections, now, day, goTab }: CeoTabProps) {
       </div>
 
       <SectionCard
-        kicker={windowLabel}
         title="The whole funnel"
         section={growthSection}
         notes={join(
@@ -333,13 +364,12 @@ function CallFunnel({ sections, now, day, goTab }: CeoTabProps) {
           notes.money.funnel,
           [CASH_CLASH_NOTE],
           webinarOutNote(current),
+          elsewhereNote(
+            onOtherTabs,
+            `${plural(onOtherTabs, "more caveat")} about call records and the rep and ad tables ${onOtherTabs === 1 ? "sits" : "sit"} on the Sales and Marketing tabs.`,
+          ),
         )}
-        actions={
-          <>
-            <TabLink tab="marketing" label="Marketing" goTab={goTab} />
-            <TabLink tab="sales" label="Sales" goTab={goTab} />
-          </>
-        }
+        actions={<TabLink tab="sales" label="Sales" goTab={goTab} />}
         order={1}
       >
         {p => (
@@ -348,17 +378,15 @@ function CallFunnel({ sections, now, day, goTab }: CeoTabProps) {
             prev={previous}
             vs={vs}
             label={windowLabel}
-            onOtherTabs={notes.growth.otherTabs?.length ?? 0}
-            goTab={goTab}
           />
         )}
       </SectionCard>
 
       <SectionCard
-        kicker={windowLabel}
         title="What it costs"
         section={growthSection}
         alsoReads={[moneySection]}
+        actions={<TabLink tab="marketing" label="Marketing" goTab={goTab} />}
         notes={join(notes.growth.costs, notes.money.costs, [
           COST_TO_WIN_NOTE,
           COSTS_WINDOW_NOTE,
@@ -404,18 +432,7 @@ function CallFunnel({ sections, now, day, goTab }: CeoTabProps) {
 
 // --- Card 1: cash collected, by rail ---
 
-function CashWon({
-  p,
-  today,
-  onMoneyTab,
-  goTab,
-}: {
-  p: MoneyPayload;
-  today: string;
-  /** Money caveats about numbers this tab does not show, left on the Money tab. */
-  onMoneyTab: number;
-  goTab: CeoTabProps["goTab"];
-}) {
+function CashWon({ p, today }: { p: MoneyPayload; today: string }) {
   const headline = cashHeadline(p);
   const { railed, tap, whop, manual } = headline;
   const total = headline.rail;
@@ -429,8 +446,8 @@ function CashWon({
   );
 
   return (
-    <div className="min-w-0">
-      <div className="grid gap-8 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:gap-10">
+    <div className="@container/cash min-w-0">
+      <div className="grid gap-8 @4xl/cash:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
         <div className="flex min-w-0 flex-col">
           <HeroFigure
             label={headline.label}
@@ -447,44 +464,45 @@ function CashWon({
             sub={`Projected ${money(total.projectedMonth)} for ${thisMonthName}, day ${p.dayOfMonth} of ${p.daysInMonth}`}
             naHint="No connected rail gives a figure for this month."
           />
-          <div className="mt-6 grid grid-cols-2 gap-x-6 gap-y-5 border-t pt-4 sm:grid-cols-4 lg:mt-auto">
-            <StatTile
-              variant="plain"
-              label="Today so far"
-              value={money(total.today)}
-            />
-            <StatTile
-              variant="plain"
-              label="Yesterday"
-              value={money(total.yesterday)}
-            />
-            <StatTile
-              variant="plain"
-              label={`${lastMonthName} in full`}
-              value={money(total.lastMonth)}
-            />
-            {/* The same refunds figure Today and Money show. Only Whop reports
+          {/* Four across only when the column is wide enough for "$28,863". */}
+          <div className="@container mt-6 border-t pt-4 @4xl/cash:mt-auto">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-4">
+              <StatTile
+                variant="plain"
+                label="Today so far"
+                value={money(total.today)}
+              />
+              <StatTile
+                variant="plain"
+                label="Yesterday"
+                value={money(total.yesterday)}
+              />
+              <StatTile
+                variant="plain"
+                label={`${lastMonthName} in full`}
+                value={money(total.lastMonth)}
+              />
+              {/* The same refunds figure Today and Money show. Only Whop reports
                 refunds: Tap refunds are not read and hand-logged money has
                 none, so a total across rails would be n/a or wrong. */}
-            <StatTile
-              variant="plain"
-              label="Refunds this month"
-              value={money(p.refunds.mtd)}
-              sub={
-                tap?.connected
-                  ? "Whop only. Tap refunds are not read yet."
-                  : `${money(p.refunds.last90)} in the last 90 days`
-              }
-              naHint="Whop gave no refunds figure for this month."
-            />
+              <StatTile
+                variant="plain"
+                label="Refunds this month"
+                value={money(p.refunds.mtd)}
+                sub={
+                  tap?.connected
+                    ? "Whop only. Tap refunds are not read yet."
+                    : `${money(p.refunds.last90)} in the last 90 days`
+                }
+                naHint="Whop gave no refunds figure for this month."
+              />
+            </div>
           </div>
         </div>
 
         <div className="flex min-w-0 flex-col">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            By rail
-          </p>
-          <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-5">
+          <Kicker>By rail</Kicker>
+          <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-6">
             <StatTile
               variant="plain"
               label="Whop, month to date"
@@ -538,13 +556,13 @@ function CashWon({
 
           <div className="mt-8 min-w-0">
             <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-              <p className="text-[13px] font-medium text-foreground">
+              <p className="text-sm font-medium text-foreground">
                 Cash per day
               </p>
-              <p className="text-[13px] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 {daily.length
-                  ? `last ${count(daily.length)} complete days`
-                  : "no complete days yet"}
+                  ? `Last ${count(daily.length)} complete days`
+                  : "No complete days yet"}
               </p>
             </div>
             {daily.length ? (
@@ -565,21 +583,6 @@ function CashWon({
           </div>
         </div>
       </div>
-      {onMoneyTab > 0 ? (
-        <p className="mt-5 border-t pt-3 text-xs text-muted-foreground">
-          {plural(onMoneyTab, "more money caveat")} about numbers this tab does
-          not show, such as expenses and the bank import,{" "}
-          {onMoneyTab === 1 ? "sits" : "sit"} on the{" "}
-          <button
-            type="button"
-            onClick={() => goTab("money")}
-            className="rounded-sm font-medium text-foreground underline decoration-dotted underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            Money
-          </button>{" "}
-          tab.
-        </p>
-      ) : null}
     </div>
   );
 }
@@ -600,16 +603,12 @@ function FunnelBody({
   prev,
   vs,
   label,
-  onOtherTabs,
-  goTab,
 }: {
   w: FunnelWindow;
   prev: FunnelWindow | null;
+  /** The comparison window, read to screen readers only. */
   vs?: string;
   label: string;
-  /** Growth caveats about the rep and ad tables, left on the Sales and Marketing tabs. */
-  onOtherTabs: number;
-  goTab: CeoTabProps["goTab"];
 }) {
   const delta = (
     value: number | null,
@@ -617,7 +616,7 @@ function FunnelBody({
     kind: DeltaKind = "pct",
   ) =>
     prev && isNum(value) ? (
-      <Delta value={value} goodWhen={goodWhen} kind={kind} vs={vs} />
+      <WindowDelta value={value} goodWhen={goodWhen} kind={kind} vs={vs} />
     ) : undefined;
 
   const tiles: Tile[] = [
@@ -696,7 +695,7 @@ function FunnelBody({
           },
         ]}
       />
-      <div className="mt-6 grid grid-cols-2 gap-x-8 gap-y-6 border-t pt-5 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="mt-6 grid grid-cols-2 gap-x-8 gap-y-6 border-t pt-6 @lg:grid-cols-3 @4xl:grid-cols-6">
         {tiles.map(t => (
           <StatTile
             key={t.label}
@@ -728,28 +727,6 @@ function FunnelBody({
           },
         ]}
       />
-      {onOtherTabs > 0 ? (
-        <p className="mt-5 border-t pt-3 text-xs text-muted-foreground">
-          {plural(onOtherTabs, "more caveat")} about call records and the rep
-          and ad tables {onOtherTabs === 1 ? "sits" : "sit"} on the{" "}
-          <button
-            type="button"
-            onClick={() => goTab("sales")}
-            className="rounded-sm font-medium text-foreground underline decoration-dotted underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            Sales
-          </button>{" "}
-          and{" "}
-          <button
-            type="button"
-            onClick={() => goTab("marketing")}
-            className="rounded-sm font-medium text-foreground underline decoration-dotted underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            Marketing
-          </button>{" "}
-          tabs.
-        </p>
-      ) : null}
     </div>
   );
 }
@@ -769,7 +746,7 @@ function CostsBody({
 }) {
   const delta = (value: number | null, goodWhen: GoodWhen) =>
     prev && isNum(value) ? (
-      <Delta value={value} goodWhen={goodWhen} vs={vs} />
+      <WindowDelta value={value} goodWhen={goodWhen} vs={vs} />
     ) : undefined;
   const lastMonthName = m ? previousMonthName(m.month) : "last month";
   const moneyNa = "The money section has not been computed yet.";
@@ -884,25 +861,20 @@ function CostsBody({
   ];
 
   const groups: { title: string; tiles: Tile[] }[] = [
-    { title: "In the chosen window", tiles: windowTiles },
-    {
-      title: "What front-end cash buys, in the chosen window",
-      tiles: worthTiles,
-    },
+    { title: "Costs and returns", tiles: windowTiles },
+    { title: "Cash per call", tiles: worthTiles },
   ];
 
   return (
-    <div className="grid gap-5">
+    <div className="grid gap-6">
       {groups.map((group, i) => (
         <section
           key={group.title}
           aria-label={group.title}
-          className={cn(i > 0 && "border-t pt-5")}
+          className={cn(i > 0 && "border-t pt-6")}
         >
-          <p className="mb-3 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            {group.title}
-          </p>
-          <div className="grid grid-cols-2 gap-x-8 gap-y-6 sm:grid-cols-4">
+          <Kicker className="mb-3">{group.title}</Kicker>
+          <div className="grid grid-cols-2 gap-x-8 gap-y-6 @xl:grid-cols-4">
             {group.tiles.map(t => (
               <StatTile
                 key={t.label}
@@ -973,7 +945,7 @@ function TrendBody({
 
   return (
     <div className="grid gap-8">
-      <div className="grid gap-x-8 gap-y-8 sm:grid-cols-2">
+      <div className="grid gap-8 @2xl:grid-cols-2">
         {DAILY_SERIES.map(s => (
           <TimeSeriesChart
             initialRange="90d"
@@ -997,7 +969,6 @@ function TrendBody({
           kind="area"
           unit="money"
           title={cashLabel}
-          summary="through yesterday"
           height={220}
           ariaLabel={`Cash collected per day over the last ${count(cashDaily.length)} complete days.`}
           emptyText={
@@ -1027,7 +998,7 @@ function TargetsBody({ p }: { p: MoneyPayload }) {
   // The shared meter, so a target reads the same here, on Sales and on Money.
   const pace = p.targets.month === null || p.targets.month === p.month;
   return (
-    <div className="grid gap-x-10 gap-y-6 sm:grid-cols-2 xl:grid-cols-3">
+    <div className="grid gap-x-8 gap-y-6 @xl:grid-cols-2 @4xl:grid-cols-3">
       {items.map(item =>
         item.metric === "cac" ? (
           // Decision 5: the cost per close meter is ad spend only too.
@@ -1096,13 +1067,12 @@ const NO_SOURCE_NOTES: Note[] = [
 function NotMeasurableCard() {
   return (
     <SectionCard
-      kicker="Frontend"
       title="Not measurable yet"
       notes={NO_SOURCE_NOTES}
       order={5}
       hideAsOf
     >
-      <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-x-6 gap-y-6 @lg:grid-cols-3 @4xl:grid-cols-5">
         {NO_SOURCE_TILES.map(t => (
           <StatTile
             key={t.label}

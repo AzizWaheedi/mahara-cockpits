@@ -1,4 +1,3 @@
-import { CornerDownRight } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { count, isNum, pct } from "./format";
@@ -32,6 +31,9 @@ type Transition = {
  * Ordered steps as horizontal bars on one scale (the largest step is the full
  * length), the conversion between steps, and the weakest conversion marked as
  * the biggest leak. Steps must share a unit: put money (spend, cash) in `context`.
+ * A conversion the numbers cannot give is left out rather than printed as n/a,
+ * and the rate line carries no connector glyph: its place between two bars
+ * already says what it joins.
  */
 export function FunnelStrip({
   steps,
@@ -84,7 +86,9 @@ export function FunnelStrip({
       : null;
 
   return (
-    <div className={cn("min-w-0", className)}>
+    // Its own size container: the label moves beside the bar once the strip,
+    // not the screen, has room for both.
+    <div className={cn("@container min-w-0", className)}>
       {context?.length ? (
         <dl className="mb-4 flex flex-wrap gap-x-6 gap-y-2">
           {context.map(c => (
@@ -103,41 +107,37 @@ export function FunnelStrip({
           const frac = v !== null && max > 0 ? v / max : 0;
           const t = i > 0 ? transitions[i - 1] : null;
           const isLeak = leak !== null && t !== null && leak.index === t.index;
+          // No rate to print (skipped, or a step without a number): a gap only.
+          const showRate = t !== null && !t.skip && t.rate !== null;
           const fmt = step.format ?? count;
           return (
             <li key={`${step.label}-${i}`} className="min-w-0">
               {t ? (
-                <div
-                  aria-hidden={t.skip || undefined}
-                  className={cn(
-                    "flex min-w-0 items-center gap-1.5 text-xs sm:pl-[9.25rem]",
-                    t.skip ? "h-2" : "h-7",
-                    isLeak ? "text-foreground" : "text-muted-foreground",
-                  )}
-                >
-                  {t.skip ? null : (
-                    <>
-                      <CornerDownRight
-                        className="size-3.5 shrink-0 text-muted-foreground/70"
-                        aria-hidden
+                showRate ? (
+                  <div
+                    className={cn(
+                      "flex h-7 min-w-0 items-center gap-1.5 text-xs @sm:pl-[9.25rem]",
+                      isLeak ? "text-foreground" : "text-muted-foreground",
+                    )}
+                  >
+                    <span className="font-medium tabular-nums">
+                      {t.format(t.rate as number)}
+                    </span>
+                    <span className="truncate">{rateNoun}</span>
+                    {isLeak ? (
+                      <StatusChip
+                        tone="serious"
+                        label="Biggest leak"
+                        className="ml-1"
                       />
-                      <span className="font-medium tabular-nums">
-                        {t.rate === null ? <Na /> : t.format(t.rate)}
-                      </span>
-                      <span className="truncate">{rateNoun}</span>
-                    </>
-                  )}
-                  {isLeak ? (
-                    <StatusChip
-                      tone="serious"
-                      label="Biggest leak"
-                      className="ml-1"
-                    />
-                  ) : null}
-                </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div aria-hidden className="h-2" />
+                )
               ) : null}
-              <div className="grid min-w-0 items-center gap-x-3 gap-y-1 sm:grid-cols-[8.5rem_minmax(0,1fr)]">
-                <span className="min-w-0 truncate text-[13px] text-foreground">
+              <div className="grid min-w-0 items-center gap-x-3 gap-y-1 @sm:grid-cols-[8.5rem_minmax(0,1fr)]">
+                <span className="min-w-0 truncate text-sm text-foreground">
                   {step.label}
                 </span>
                 <div className="flex h-6 min-w-0 items-center gap-2">

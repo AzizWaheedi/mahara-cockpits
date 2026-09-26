@@ -22,6 +22,7 @@ import {
   shiftMonth,
 } from "@/components/ceo/format";
 import { DERIVED_NOTE, useGrowthWindow } from "@/components/ceo/growthWindow";
+import { Kicker } from "@/components/ceo/Kicker";
 import {
   CANCEL_RATE,
   CLOSE_RATE,
@@ -33,7 +34,7 @@ import {
   ROAS_CONTRACTED,
   SHOW_RATE,
 } from "@/components/ceo/metrics";
-import { Na, Value } from "@/components/ceo/Na";
+import { Value } from "@/components/ceo/Na";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
@@ -54,7 +55,7 @@ import type {
   MoneyPayload,
   Note,
 } from "../../../convex/ceo/payloads";
-import type { CeoTabKey, CeoTabProps } from "./types";
+import type { CeoTabProps } from "./types";
 
 /** a over b, null when b cannot carry a rate. A real zero stays 0. */
 function per(
@@ -137,13 +138,20 @@ export function SalesTab({ sections, now, day, goTab }: CeoTabProps) {
   const windowLabel = gw.bounds
     ? range(gw.bounds.from, gw.bounds.to)
     : "Timeframe";
+  // The timeframe bar spells out the comparison window once; the tiles say
+  // it to screen readers only.
+  const vs = previous ? `vs ${range(previous.from, previous.to)}` : null;
   const monthKey = m?.month ?? today.slice(0, 7);
+  const prevMonthKey = shiftMonth(monthKey, -1);
+  const lastMonthName = prevMonthKey
+    ? month(prevMonthKey, { long: true })
+    : "last month";
   const repsRefused = (gNotes.reps ?? []).some(
     n => n.level === "warn" && /rep scorecard could not be read/i.test(n.text),
   );
 
   return (
-    <div className="grid gap-5 lg:gap-7">
+    <div className="grid gap-4 lg:gap-6">
       {g ? (
         <TimeframeBar
           tf={tf}
@@ -156,36 +164,28 @@ export function SalesTab({ sections, now, day, goTab }: CeoTabProps) {
         />
       ) : null}
 
-      <div className="grid gap-5 lg:gap-7 xl:grid-cols-12">
+      <div className="grid items-start gap-4 lg:gap-6 xl:grid-cols-12">
         <SectionCard
-          kicker={windowLabel}
           title="Calls booked and shown"
           section={growthSection}
-          notes={gNotes.calls}
+          notes={join(
+            gNotes.calls,
+            notesElsewhere(
+              gNotes.marketing,
+              "leads, spend and ads",
+              "Marketing",
+            ),
+          )}
           actions={<TabLink tab="marketing" label="Marketing" goTab={goTab} />}
           order={0}
           className="xl:col-span-7"
         >
           {p => (
-            <CallsBody
-              w={current ?? p.windows.mtd}
-              prev={previous}
-              vs={previous ? `vs ${range(previous.from, previous.to)}` : null}
-              elsewhere={
-                <NotesElsewhere
-                  notes={gNotes.marketing}
-                  topic="leads, spend and ads"
-                  tab="marketing"
-                  label="Marketing"
-                  goTab={goTab}
-                />
-              }
-            />
+            <CallsBody w={current ?? p.windows.mtd} prev={previous} vs={vs} />
           )}
         </SectionCard>
 
         <SectionCard
-          kicker={windowLabel}
           title="Closing"
           section={growthSection}
           notes={gNotes.closing}
@@ -196,7 +196,7 @@ export function SalesTab({ sections, now, day, goTab }: CeoTabProps) {
             <ClosingBody
               w={current ?? p.windows.mtd}
               prev={previous}
-              vs={previous ? `vs ${range(previous.from, previous.to)}` : null}
+              vs={vs}
               label={windowLabel}
             />
           )}
@@ -207,24 +207,20 @@ export function SalesTab({ sections, now, day, goTab }: CeoTabProps) {
         kicker={month(monthKey, { long: true, year: true })}
         title="Deals signed and deal size"
         section={moneySection}
-        notes={mNotes.deals}
+        notes={join(
+          [
+            {
+              level: "info",
+              text: `Contracted value is the promise on the form, not money collected. The ${lastMonthName} figures beside each number are whole months, so a month to date figure will sit under them early on. The fair pace comparison, this month against the same days last month, is on the closing card above.`,
+            },
+          ],
+          mNotes.deals,
+          notesElsewhere(mNotes.money, "cash, refunds and expenses", "Money"),
+        )}
         actions={<TabLink tab="money" label="Money" goTab={goTab} />}
         order={2}
       >
-        {p => (
-          <DealSizeBody
-            p={p}
-            elsewhere={
-              <NotesElsewhere
-                notes={mNotes.money}
-                topic="cash, refunds and expenses"
-                tab="money"
-                label="Money"
-                goTab={goTab}
-              />
-            }
-          />
-        )}
+        {p => <DealSizeBody p={p} />}
       </SectionCard>
 
       <SectionCard
@@ -238,8 +234,8 @@ export function SalesTab({ sections, now, day, goTab }: CeoTabProps) {
       </SectionCard>
 
       <SectionCard
-        kicker="What a rep has to send"
         title="Sales assets"
+        description="What a rep has to send, and whether anybody sends it."
         section={sections.assets}
         order={5}
       >
@@ -259,7 +255,15 @@ export function SalesTab({ sections, now, day, goTab }: CeoTabProps) {
         kicker="Month to date"
         title="Reps"
         section={growthSection}
-        notes={gNotes.reps}
+        notes={join(
+          [
+            {
+              level: "info",
+              text: "Booked and shown are credited by whose calendar the call sat on, closes by the closer named on the form, so the two can disagree for the same person.",
+            },
+          ],
+          gNotes.reps,
+        )}
         actions={
           repsRefused ? (
             <StatusChip
@@ -275,8 +279,9 @@ export function SalesTab({ sections, now, day, goTab }: CeoTabProps) {
       </SectionCard>
 
       <SectionCard
-        kicker="Newest 10, whatever month they were signed in"
+        kicker="Newest 10"
         title="Deals on the closer form"
+        description="Whatever month they were signed in."
         section={moneySection}
         order={5}
       >
@@ -294,7 +299,12 @@ export function SalesTab({ sections, now, day, goTab }: CeoTabProps) {
         {p => <TargetsBody p={p} />}
       </SectionCard>
 
-      <SectionCard kicker="Sales" title="Not measured yet" order={7}>
+      <SectionCard
+        title="Not measured yet"
+        notes={NOT_MEASURED_NOTES}
+        order={7}
+        hideAsOf
+      >
         <NotMeasured />
       </SectionCard>
     </div>
@@ -303,35 +313,28 @@ export function SalesTab({ sections, now, day, goTab }: CeoTabProps) {
 
 // --- Small shared pieces ---
 
-/** Says how many caveats this card handed to another tab, so none reads as lost. */
-function NotesElsewhere({
-  notes,
-  topic,
-  tab,
-  label,
-  goTab,
-}: {
-  notes: Note[] | undefined;
-  topic: string;
-  tab: CeoTabKey;
-  label: string;
-  goTab: CeoTabProps["goTab"];
-}) {
+function join(...lists: (Note[] | undefined)[]): Note[] | null {
+  const all = lists.flatMap(l => l ?? []);
+  return all.length ? all : null;
+}
+
+/**
+ * Says how many caveats this card handed to another tab, so none reads as
+ * lost. It sits among the card's notes; the card header already links there.
+ */
+function notesElsewhere(
+  notes: Note[] | undefined,
+  topic: string,
+  label: string,
+): Note[] {
   const n = notes?.length ?? 0;
-  if (n === 0) return null;
-  return (
-    <p className="mt-5 border-t pt-3 text-xs text-muted-foreground">
-      {plural(n, "more caveat")} about {topic} {n === 1 ? "sits" : "sit"} on the{" "}
-      <button
-        type="button"
-        onClick={() => goTab(tab)}
-        className="rounded-sm font-medium text-foreground underline decoration-dotted underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        {label}
-      </button>{" "}
-      tab.
-    </p>
-  );
+  if (n === 0) return [];
+  return [
+    {
+      level: "info",
+      text: `${plural(n, "more caveat")} about ${topic} ${n === 1 ? "sits" : "sit"} on the ${label} tab.`,
+    },
+  ];
 }
 
 type Tile = {
@@ -347,7 +350,7 @@ function Tiles({ tiles, className }: { tiles: Tile[]; className?: string }) {
   return (
     <div
       className={cn(
-        "grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3",
+        "grid grid-cols-2 gap-x-6 gap-y-6 @lg:grid-cols-3",
         className,
       )}
     >
@@ -367,7 +370,11 @@ function Tiles({ tiles, className }: { tiles: Tile[]; className?: string }) {
   );
 }
 
-/** A delta only when there is a window to compare with. */
+/**
+ * A delta only when there is a window to compare with. The timeframe bar
+ * above the cards names that window, so the tile says it to screen readers
+ * only instead of printing "vs 1 to 22 Aug" under every number.
+ */
 function deltaFor(
   vs: string | null,
   value: number | null,
@@ -375,7 +382,12 @@ function deltaFor(
   kind: DeltaKind = "pct",
 ): ReactNode {
   if (vs === null || !isNum(value)) return undefined;
-  return <Delta value={value} goodWhen={goodWhen} kind={kind} vs={vs} />;
+  return (
+    <>
+      <Delta value={value} goodWhen={goodWhen} kind={kind} />
+      <span className="sr-only">{vs}</span>
+    </>
+  );
 }
 
 // --- Card 1: calls booked and shown ---
@@ -384,12 +396,10 @@ function CallsBody({
   w,
   prev,
   vs,
-  elsewhere,
 }: {
   w: FunnelWindow;
   prev: FunnelWindow | null;
   vs: string | null;
-  elsewhere: ReactNode;
 }) {
   const demosDue = w.raw.demos_due;
   const tiles: Tile[] = [
@@ -465,7 +475,6 @@ function CallsBody({
           },
         ]}
       />
-      {elsewhere}
     </div>
   );
 }
@@ -541,7 +550,7 @@ function ClosingBody({
 
   return (
     <div className="grid min-w-0 gap-6">
-      <Tiles tiles={tiles} className="sm:grid-cols-3" />
+      <Tiles tiles={tiles} />
       <Facts
         items={[
           {
@@ -560,7 +569,7 @@ function ClosingBody({
           },
         ]}
       />
-      <div className="border-t pt-5">
+      <div className="border-t pt-6">
         <FunnelStrip
           ariaLabel={`Booked calls to closes, ${label.toLowerCase()}`}
           steps={[
@@ -593,13 +602,7 @@ function ClosingBody({
 
 // --- Card 3: deals signed and deal size ---
 
-function DealSizeBody({
-  p,
-  elsewhere,
-}: {
-  p: MoneyPayload;
-  elsewhere: ReactNode;
-}) {
+function DealSizeBody({ p }: { p: MoneyPayload }) {
   const prev = shiftMonth(p.month, -1);
   const lastMonthName = prev ? month(prev, { long: true }) : "last month";
   const d = p.deals;
@@ -634,19 +637,8 @@ function DealSizeBody({
       naHint: "No deal signed in the last 90 days has a contracted value.",
     },
   ];
-  return (
-    <div className="min-w-0">
-      <Tiles tiles={tiles} className="xl:grid-cols-4" />
-      <p className="mt-5 text-xs leading-relaxed text-muted-foreground">
-        Contracted value is the promise on the form, not money collected. The{" "}
-        {lastMonthName} figures beside each number are whole months, so a month
-        to date figure will sit under them early on. The fair pace comparison,
-        this month against the same days last month, is on the closing card
-        above.
-      </p>
-      {elsewhere}
-    </div>
-  );
+  // Four tiles go two by two, then four across; never three and one.
+  return <Tiles tiles={tiles} className="@lg:grid-cols-2 @xl:grid-cols-4" />;
 }
 
 // --- Card 4: what moved, day by day ---
@@ -665,7 +657,7 @@ function DailyBody({
   const span = first && last ? `from ${date(first)} to ${date(last)}` : "";
 
   return (
-    <div className="grid gap-x-8 gap-y-8 sm:grid-cols-2">
+    <div className="grid gap-8 @2xl:grid-cols-2">
       <TimeSeriesChart
         initialRange="90d"
         data={days}
@@ -780,22 +772,15 @@ function RepsBody({ reps, refused }: { reps: Rep[]; refused: boolean }) {
     );
 
   return (
-    <div className="min-w-0">
-      <DataTable
-        rows={reps}
-        columns={REP_COLUMNS}
-        rowKey={(r, i) => `${r.name}-${i}`}
-        initialSort={{ key: "contracted", dir: "desc" }}
-        caption="Reps this month: calls booked and shown, closes, close rate, contracted and cash"
-        emptyText="No rep activity this month yet."
-        stickyFirst
-      />
-      <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-        Booked and shown are credited by whose calendar the call sat on, closes
-        by the closer named on the form, so the two can disagree for the same
-        person.
-      </p>
-    </div>
+    <DataTable
+      rows={reps}
+      columns={REP_COLUMNS}
+      rowKey={(r, i) => `${r.name}-${i}`}
+      initialSort={{ key: "contracted", dir: "desc" }}
+      caption="Reps this month: calls booked and shown, closes, close rate, contracted and cash"
+      emptyText="No rep activity this month yet."
+      stickyFirst
+    />
   );
 }
 
@@ -916,14 +901,14 @@ function TargetsBody({ p }: { p: MoneyPayload }) {
   return (
     <div className="min-w-0">
       {otherMonth ? (
-        <p className="mb-5 text-xs leading-relaxed text-muted-foreground">
+        <p className="mb-4 text-xs leading-relaxed text-muted-foreground">
           These targets are filed for{" "}
           {month(targetMonth, { long: true, year: true })}, not{" "}
           {month(p.month, { long: true, year: true })}, so read the pace as a
           comparison with an older plan.
         </p>
       ) : null}
-      <div className="grid gap-x-10 gap-y-6 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="grid gap-x-8 gap-y-6 @xl:grid-cols-2 @4xl:grid-cols-3">
         {items.map(item => (
           <TargetMeter
             key={item.metric}
@@ -971,29 +956,26 @@ const NOT_MEASURED: { label: string; why: string }[] = [
   },
 ];
 
+const NOT_MEASURED_NOTES: Note[] = [
+  {
+    level: "info",
+    text: "Every one of these is a real sales number. No source the cockpit reads can give it today, so each is left as n/a rather than filled with a stand-in figure. Each n/a says what is missing.",
+  },
+];
+
+/** The same shape as the Frontend and Marketing cards: the reason sits behind each n/a. */
 function NotMeasured() {
   return (
-    <div className="min-w-0">
-      <p className="text-xs leading-relaxed text-muted-foreground">
-        Every one of these is a real sales number. No source the cockpit reads
-        can give it today, so each is left as n/a rather than filled with a
-        stand-in figure.
-      </p>
-      <dl className="mt-5 grid gap-x-10 gap-y-5 sm:grid-cols-2 xl:grid-cols-3">
-        {NOT_MEASURED.map(item => (
-          <div key={item.label} className="min-w-0">
-            <dt className="text-[13px] leading-5 text-muted-foreground">
-              {item.label}
-            </dt>
-            <dd className="mt-1 text-lg font-semibold tracking-tight">
-              <Na hint={item.why} />
-            </dd>
-            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              {item.why}
-            </p>
-          </div>
-        ))}
-      </dl>
+    <div className="grid grid-cols-2 gap-x-6 gap-y-6 @lg:grid-cols-3 @4xl:grid-cols-4">
+      {NOT_MEASURED.map(item => (
+        <StatTile
+          key={item.label}
+          variant="plain"
+          label={item.label}
+          value={null}
+          naHint={item.why}
+        />
+      ))}
     </div>
   );
 }
@@ -1026,7 +1008,7 @@ function BacklogBody({ p }: { p: GrowthPayload }) {
     <div className="grid gap-6">
       {q ? (
         <div>
-          <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3">
+          <div className="grid grid-cols-2 gap-x-6 gap-y-6 @lg:grid-cols-3">
             <StatTile
               variant="plain"
               label="Records waiting on someone"
@@ -1045,7 +1027,7 @@ function BacklogBody({ p }: { p: GrowthPayload }) {
             ))}
           </div>
           {worst.length > 2 ? (
-            <ul className="mt-4 grid gap-1 border-t pt-3 sm:grid-cols-2">
+            <ul className="mt-4 grid gap-x-6 gap-y-1 border-t pt-4 @lg:grid-cols-2">
               {worst.slice(2).map(b => (
                 <li key={b.key} className="text-sm">
                   <span className="text-muted-foreground">{`${b.label}: `}</span>
@@ -1059,14 +1041,13 @@ function BacklogBody({ p }: { p: GrowthPayload }) {
 
       {st ? (
         <div className="border-t pt-4">
-          <p className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            {`Open deals not touched in ${st.staleDays} days`}
-          </p>
-          <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4">
+          <Kicker className="mb-3">Stalled deals</Kicker>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-4">
             <StatTile
               variant="plain"
               label="Gone quiet"
               value={`${st.stale} of ${st.total}`}
+              sub={`Not touched in ${st.staleDays} days`}
               status={
                 st.stale > st.total / 2 ? (
                   <StatusChip tone="serious" label="Most of them" />
@@ -1083,7 +1064,7 @@ function BacklogBody({ p }: { p: GrowthPayload }) {
             ))}
           </div>
           {st.byOwner.length ? (
-            <p className="mt-3 text-muted-foreground">
+            <p className="mt-4 text-xs text-muted-foreground">
               {`Owners, from the sample the database returns rather than the whole set: ${st.byOwner
                 .map(o => `${o.owner || "unassigned"} ${o.deals}`)
                 .join(", ")}.`}
@@ -1107,64 +1088,59 @@ function AssetsBody({ p }: { p: AssetsPayload }) {
   const lt = p.liveTraining;
   return (
     <div className="grid gap-6">
-      <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4">
-        <StatTile
-          variant="plain"
-          label="Assets ready to send"
-          value={count(p.live)}
-          sub={`${count(p.arabic)} in Arabic`}
-          hint="Each one carries what it proves, the objection it answers, where in a call it belongs, and paste-ready text."
-        />
-        <StatTile
-          variant="plain"
-          label="Sends ever recorded"
-          value={count(p.sends)}
-          status={
-            p.sends < 20 ? (
-              <StatusChip tone="serious" label="Barely used" />
-            ) : undefined
-          }
-          hint="From asset_sends: what a rep actually sent. Small numbers make every performance figure an anecdote."
-        />
-        <StatTile
-          variant="plain"
-          label="Gaps in the library"
-          value={`${p.gaps.length} of ${p.combinations}`}
-          sub="objection and stage pairs with nothing"
-          status={
-            p.gaps.length ? (
-              <StatusChip tone="warning" label="Nothing to send" />
-            ) : undefined
-          }
-        />
-        <StatTile
-          variant="plain"
-          label="Broken links"
-          value={count(p.broken)}
-          sub={p.broken ? "sending one sends a dead page" : "all resolving"}
-          status={
-            p.broken ? <StatusChip tone="serious" label="Dead" /> : undefined
-          }
+      <div>
+        <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-4">
+          <StatTile
+            variant="plain"
+            label="Assets ready to send"
+            value={count(p.live)}
+            sub={`${count(p.arabic)} in Arabic`}
+            hint="Each one carries what it proves, the objection it answers, where in a call it belongs, and paste-ready text."
+          />
+          <StatTile
+            variant="plain"
+            label="Sends ever recorded"
+            value={count(p.sends)}
+            status={
+              p.sends < 20 ? (
+                <StatusChip tone="serious" label="Barely used" />
+              ) : undefined
+            }
+            hint="From asset_sends: what a rep actually sent. Small numbers make every performance figure an anecdote."
+          />
+          <StatTile
+            variant="plain"
+            label="Gaps in the library"
+            value={`${p.gaps.length} of ${p.combinations}`}
+            sub="objection and stage pairs with nothing"
+            status={
+              p.gaps.length ? (
+                <StatusChip tone="warning" label="Nothing to send" />
+              ) : undefined
+            }
+          />
+          <StatTile
+            variant="plain"
+            label="Broken links"
+            value={count(p.broken)}
+            sub={p.broken ? "sending one sends a dead page" : "all resolving"}
+            status={
+              p.broken ? <StatusChip tone="serious" label="Dead" /> : undefined
+            }
+          />
+        </div>
+        <Facts
+          items={p.byType.map((t: AssetsPayload["byType"][number]) => ({
+            label: humanize(t.type),
+            value: count(t.count),
+          }))}
         />
       </div>
 
-      {p.byType.length ? (
-        <p className="text-xs text-muted-foreground">
-          {p.byType
-            .map(
-              (t: AssetsPayload["byType"][number]) =>
-                `${t.type.replace(/_/g, " ")} ${t.count}`,
-            )
-            .join(" · ")}
-        </p>
-      ) : null}
-
       {p.gaps.length ? (
         <div className="border-t pt-4">
-          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Moments in a call with nothing to send
-          </p>
-          <ul className="grid gap-1 sm:grid-cols-2">
+          <Kicker className="mb-2">Library gaps</Kicker>
+          <ul className="grid gap-x-6 gap-y-1 @lg:grid-cols-2">
             {p.gaps.map((g: AssetsPayload["gaps"][number]) => (
               <li key={`${g.stage}-${g.objection}`} className="text-sm">
                 <span className="text-muted-foreground">{`${g.stage}: `}</span>
@@ -1176,20 +1152,19 @@ function AssetsBody({ p }: { p: AssetsPayload }) {
       ) : null}
 
       {lt && !lt.everUsed ? (
-        <div className="border-t pt-4">
-          <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Live Training
+        <details className="border-t pt-4">
+          <summary className="cursor-pointer select-none text-sm font-medium text-foreground">
+            Live Training: built, wired and never run
+          </summary>
+          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+            Six tables and eight views are waiting: registrants with their full
+            UTM and ad, adset and campaign ids, attendance, engagement, a
+            retention curve, pitch attribution, and outcomes carrying contract
+            value and cash collected. That is attribution from a webinar through
+            to closed money. No figure is shown, because zero events and a
+            webinar that went badly would print the same zeros.
           </p>
-          <p className="text-sm text-muted-foreground">
-            Built, wired and never run. Six tables and eight views are waiting:
-            registrants with their full UTM and ad, adset and campaign ids,
-            attendance, engagement, a retention curve, pitch attribution, and
-            outcomes carrying contract value and cash collected. That is
-            attribution from a webinar through to closed money. No figure is
-            shown, because zero events and a webinar that went badly would print
-            the same zeros.
-          </p>
-        </div>
+        </details>
       ) : null}
     </div>
   );

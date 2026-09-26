@@ -365,7 +365,7 @@ function FormDeals({
   return (
     <div
       className={cn(
-        "rounded-lg border px-3 py-2 text-xs leading-relaxed",
+        "rounded-xl bg-muted/40 px-3 py-2 text-xs leading-relaxed",
         className,
       )}
     >
@@ -489,12 +489,12 @@ export function LogPaymentCard({
 
   return (
     <SectionCard
-      kicker="Bank transfer, cheque, cash, or Tap while Tap is not connected"
       title="Log a payment"
+      description="Bank transfer, cheque, cash, or Tap while Tap is not connected."
       order={order}
     >
       <form onSubmit={onSubmit} noValidate className="grid gap-5">
-        <div className="grid gap-x-4 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-4 @xl:grid-cols-2 @4xl:grid-cols-4">
           <FormField id={id("day")} label="Day received" error={shown.day}>
             <DateInput
               id={id("day")}
@@ -547,7 +547,9 @@ export function LogPaymentCard({
           </FormField>
 
           <fieldset className="grid gap-1.5">
-            <legend className="text-sm font-medium">What this is</legend>
+            <legend className="text-xs text-muted-foreground">
+              What this is
+            </legend>
             <div className="flex flex-wrap gap-4 text-sm">
               <label className="inline-flex items-center gap-2">
                 <input
@@ -649,7 +651,7 @@ export function LogPaymentCard({
                 ? "This is below the payment. Check it is the full contract value."
                 : "Only for a new deal signed with this payment and not on the closer form. It adds to contracted, never to cash."
             }
-            className="xl:col-span-2"
+            className="@4xl:col-span-2"
           >
             <Input
               id={id("deal")}
@@ -668,7 +670,7 @@ export function LogPaymentCard({
             id={id("note")}
             label="Note (optional)"
             error={shown.note}
-            className="sm:col-span-2 xl:col-span-2"
+            className="@xl:col-span-2"
           >
             <Input
               id={id("note")}
@@ -688,7 +690,7 @@ export function LogPaymentCard({
             <HandCoins aria-hidden />
             Review and log
           </Button>
-          <p className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground">
+          <p className="min-w-56 flex-1 text-xs leading-relaxed text-muted-foreground">
             You confirm before anything is saved. There is no edit: a wrong
             entry is removed and logged again, and both steps are kept in the
             history.
@@ -1023,12 +1025,12 @@ export function ManualEntriesCard({
         cell: r => (
           <div className="min-w-0">
             <span
-              className="block max-w-[10rem] truncate font-medium text-foreground sm:max-w-[16rem]"
+              className="block max-w-[10rem] truncate font-medium text-foreground @md:max-w-[16rem]"
               title={r.client}
             >
               {r.client}
             </span>
-            <span className="block max-w-[10rem] truncate text-xs text-muted-foreground sm:max-w-[16rem]">
+            <span className="block max-w-[10rem] truncate text-xs text-muted-foreground @md:max-w-[16rem]">
               {RAIL_LABEL[r.rail]}
               {r.clickupTaskId ? "" : ", no client card"}
               {r.note ? `, ${r.note}` : ""}
@@ -1116,7 +1118,7 @@ export function ManualEntriesCard({
               aria-label={`${removed ? "Restore" : "Remove"} ${money(r.amountUsd)} from ${r.client}`}
             >
               {removed ? <RotateCcw aria-hidden /> : <Trash2 aria-hidden />}
-              <span className="hidden sm:inline">
+              <span className="hidden @md:inline">
                 {removed ? "Restore" : "Remove"}
               </span>
             </Button>
@@ -1146,7 +1148,11 @@ export function ManualEntriesCard({
       order={order}
       actions={
         <Select value={shownMonth} onValueChange={v => setPicked(v)}>
-          <SelectTrigger size="sm" className="w-[9.5rem]" aria-label="Month">
+          <SelectTrigger
+            size="sm"
+            className="w-auto min-w-[10.5rem]"
+            aria-label="Month"
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -1172,7 +1178,7 @@ export function ManualEntriesCard({
         />
       ) : (
         <div className="grid gap-5">
-          <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3">
+          <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-3">
             <StatTile
               variant="plain"
               label="Live entries"
@@ -1257,8 +1263,8 @@ export function DuplicatesCard({
   const [open, setOpen] = useState<EntryRef | null>(null);
   return (
     <SectionCard
-      kicker="Hand entries of the last 90 days, hand-logged deals of the last 12 months"
       title="Possible duplicates"
+      description="Hand entries of the last 90 days, hand-logged deals of the last 12 months."
       section={section}
       notes={notes}
       order={order}
@@ -1313,7 +1319,7 @@ function DuplicateList({
         {list.map(d => (
           <li
             key={`${d.manualId}-${d.against}`}
-            className="grid gap-3 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start"
+            className="grid gap-3 py-3 @xl:grid-cols-[minmax(0,1fr)_auto] @xl:items-start"
           >
             <div className="min-w-0">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -1343,7 +1349,7 @@ function DuplicateList({
                 {d.why}
               </p>
             </div>
-            <div className="sm:pt-0.5">
+            <div className="@xl:pt-0.5">
               {d.against === "closer_form" ? (
                 <span className="text-xs text-muted-foreground">
                   Already left out of contracted

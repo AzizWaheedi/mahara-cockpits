@@ -4,7 +4,7 @@ import { LoaderCircle, ShieldOff } from "lucide-react";
 import { type ReactNode, useMemo } from "react";
 import { panelId, tabId, useTabParam } from "@/components/ceo/CeoTabs";
 import { EmptyState } from "@/components/ceo/EmptyState";
-import { kuwaitDay, longDate } from "@/components/ceo/format";
+import { date, kuwaitDay, longDate } from "@/components/ceo/format";
 import { highRiskCount } from "@/components/ceo/metrics";
 import { RefreshButton } from "@/components/ceo/RefreshButton";
 import { TrustPills } from "@/components/ceo/TrustPills";
@@ -102,6 +102,7 @@ export function CeoPage() {
 
   const View = TAB_VIEWS[tab];
   const ready = me !== undefined && !loading;
+  const shownDay = day ?? kuwaitDay(now);
 
   return (
     <div className="ceo-root mx-auto w-full min-w-0 max-w-[1440px]">
@@ -109,16 +110,21 @@ export function CeoPage() {
           Refresh. The business in one sentence belongs to Today only; on the
           other tabs it repeated the same line above every page. */}
       <header className="pb-6">
+        {/* The title keeps its width (every tab name fits in 140 to 170px);
+            when room runs out it is the status pill that gives way and
+            truncates. */}
         <div className="flex items-end justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-xs text-muted-foreground sm:text-sm">
-              {longDate(day ?? kuwaitDay(now))}
+          <div className="min-w-[8.75rem] max-w-[65%] shrink-0">
+            {/* One line on a phone: "Tue 22 Sep", the long form from sm up. */}
+            <p className="whitespace-nowrap text-xs text-muted-foreground sm:text-sm">
+              <span className="sm:hidden">{date(shownDay)}</span>
+              <span className="hidden sm:inline">{longDate(shownDay)}</span>
             </p>
             <h1 className="mt-0.5 truncate text-2xl font-semibold tracking-tight text-foreground sm:text-[28px] sm:leading-9">
               {CEO_LABELS[tab]}
             </h1>
           </div>
-          <div className="flex min-w-0 shrink-0 items-center gap-2 pb-0.5">
+          <div className="flex min-w-0 items-center gap-2 pb-0.5">
             {ready ? (
               <TrustPills
                 asOf={trust.asOf}

@@ -345,7 +345,7 @@ function PersonName({ name }: { name: string }) {
       type="button"
       onClick={() => setPerson(id)}
       title={`Open ${name}'s file`}
-      className="underline decoration-transparent underline-offset-4 transition-colors hover:decoration-current"
+      className="text-left underline decoration-transparent underline-offset-4 transition-colors hover:decoration-current"
     >
       {name}
     </button>
@@ -416,9 +416,9 @@ export function ManagementTab({ sections, now, day }: CeoTabProps) {
 
   if (!payload)
     return (
-      <div className="grid gap-5 lg:gap-7">
+      <div className="grid gap-4 lg:gap-6">
         <PeopleCard order={0} />
-        <SectionCard title="Management" section={team}>
+        <SectionCard title="Departments" section={team}>
           {() => null}
         </SectionCard>
       </div>
@@ -431,11 +431,10 @@ export function ManagementTab({ sections, now, day }: CeoTabProps) {
   return (
     <StatusUiContext.Provider value={ui}>
       <PeopleIndex.Provider value={index}>
-        <div className="grid gap-5 lg:gap-7">
+        <div className="grid gap-4 lg:gap-6">
           <PeopleCard order={0} />
 
           <SectionCard
-            kicker="Yesterday and the last 14 working days"
             title={
               <>
                 Departments
@@ -474,8 +473,8 @@ export function ManagementTab({ sections, now, day }: CeoTabProps) {
                   </span>
                 </p>
               ) : null}
-              <div className="border-t border-[color:var(--ceo-grid)] pt-5">
-                <p className="mb-3 text-[13px] text-muted-foreground">
+              <div className="border-t border-[color:var(--ceo-grid)] pt-6">
+                <p className="mb-3 text-xs text-muted-foreground">
                   Every department side by side: EOD discipline, activity today
                   and output over the last 7 days
                 </p>
@@ -485,7 +484,6 @@ export function ManagementTab({ sections, now, day }: CeoTabProps) {
           </SectionCard>
 
           <SectionCard
-            kicker="Yesterday, today and the last 14 working days"
             title="People by department"
             section={team}
             notes={routed.people}
@@ -495,7 +493,7 @@ export function ManagementTab({ sections, now, day }: CeoTabProps) {
           </SectionCard>
 
           <SectionCard
-            kicker="Paused and left, set by hand"
+            kicker="Set by hand"
             title={
               <>
                 Not active
@@ -542,7 +540,6 @@ export function ManagementTab({ sections, now, day }: CeoTabProps) {
             </SectionCard>
             <div className="grid min-w-0 gap-4 lg:gap-6">
               <SectionCard
-                kicker="Today"
                 title="Actions today"
                 section={team}
                 notes={routed.activity}
@@ -568,12 +565,7 @@ export function ManagementTab({ sections, now, day }: CeoTabProps) {
             </div>
           </div>
 
-          <SectionCard
-            kicker="Management"
-            title="Not in any source yet"
-            section={team}
-            order={6}
-          >
+          <SectionCard title="Not in any source yet" section={team} order={6}>
             <Gaps />
           </SectionCard>
 
@@ -774,11 +766,11 @@ function StatusControl({
   return (
     <div className="mt-3 border-t border-[color:var(--ceo-grid)] pt-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-[11px] text-muted-foreground">Status</span>
+        <span className="text-xs text-muted-foreground">Status</span>
         <div
           role="group"
           aria-label={`Status of ${person.name}`}
-          className="inline-flex rounded-md border bg-background/60 p-0.5"
+          className="inline-flex gap-1"
         >
           {STATUS_OPTIONS.map(o => {
             const on = o.key === current;
@@ -802,9 +794,9 @@ function StatusControl({
                 }
                 onClick={() => ui.pick({ person, status: o.key, offNow })}
                 className={cn(
-                  "h-6 rounded-[5px] px-2 text-[11px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60",
+                  "h-8 rounded-full px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60",
                   on
-                    ? "bg-[var(--ceo-emphasis-wash)] text-foreground shadow-[inset_0_0_0_1px_var(--ceo-emphasis)]"
+                    ? "bg-primary/15 text-foreground ring-1 ring-inset ring-primary/40"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground",
                 )}
               >
@@ -1136,7 +1128,7 @@ function StatusDialogBody({
             }
             className="min-h-[64px]"
           />
-          <p className="text-right text-[11px] text-muted-foreground tabular-nums">
+          <p className="text-right text-xs text-muted-foreground tabular-nums">
             {count(note.length)} of {count(NOTE_MAX)}
           </p>
         </div>
@@ -1212,7 +1204,7 @@ function InactiveCard({ person }: { person: TeamPerson }) {
   const before = status === "left" ? "before leaving" : "before the pause";
 
   return (
-    <li className="flex min-w-0 flex-col rounded-lg border p-4">
+    <li className="flex min-w-0 flex-col rounded-xl bg-muted/40 p-4">
       <div className="flex min-w-0 items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold text-foreground">
@@ -1235,10 +1227,10 @@ function InactiveCard({ person }: { person: TeamPerson }) {
 
       <dl className="mt-4 grid grid-cols-2 gap-2">
         <div className="min-w-0">
-          <dt className="truncate text-[11px] text-muted-foreground">
+          <dt className="truncate text-xs text-muted-foreground">
             {status === "left" ? "Left on" : "Paused from"}
           </dt>
-          <dd className="mt-0.5 text-[13px] font-medium text-foreground">
+          <dd className="mt-0.5 text-sm font-medium text-foreground">
             <Value
               value={sinceText}
               hint="Not recomputed yet: the start day shows after the refresh"
@@ -1246,8 +1238,8 @@ function InactiveCard({ person }: { person: TeamPerson }) {
           </dd>
         </div>
         <div className="min-w-0">
-          <dt className="truncate text-[11px] text-muted-foreground">Set</dt>
-          <dd className="mt-0.5 text-[13px] font-medium text-foreground">
+          <dt className="truncate text-xs text-muted-foreground">Set</dt>
+          <dd className="mt-0.5 text-sm font-medium text-foreground">
             {isNum(person.statusSetAt) ? (
               <Hint content={dateTime(person.statusSetAt, now)}>
                 <button
@@ -1269,17 +1261,17 @@ function InactiveCard({ person }: { person: TeamPerson }) {
       </dl>
 
       {person.statusNote ? (
-        <p className="mt-3 break-words rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-foreground">
+        <p className="mt-3 break-words rounded-md bg-background/60 px-2.5 py-1.5 text-xs text-foreground">
           {person.statusNote}
         </p>
       ) : null}
 
       <dl className="mt-3 grid grid-cols-2 gap-2 border-t border-[color:var(--ceo-grid)] pt-3">
         <div className="min-w-0">
-          <dt className="truncate text-[11px] text-muted-foreground">
+          <dt className="truncate text-xs text-muted-foreground">
             EODs {before}
           </dt>
-          <dd className="mt-0.5 text-[13px] font-medium tabular-nums text-foreground">
+          <dd className="mt-0.5 text-sm font-medium tabular-nums text-foreground">
             {due > 0 ? (
               <Hint
                 content={`Of the last 14 working days, only the ones ${before} count. ${count(late)} late.`}
@@ -1297,10 +1289,10 @@ function InactiveCard({ person }: { person: TeamPerson }) {
           </dd>
         </div>
         <div className="min-w-0">
-          <dt className="truncate text-[11px] text-muted-foreground">
+          <dt className="truncate text-xs text-muted-foreground">
             Last active
           </dt>
-          <dd className="mt-0.5 truncate text-[13px] font-medium text-foreground">
+          <dd className="mt-0.5 truncate text-sm font-medium text-foreground">
             {isNum(person.lastActiveAt) ? (
               <Hint content={dateTime(person.lastActiveAt, now)}>
                 <time
@@ -1350,7 +1342,7 @@ function CompanySummary({ people }: { people: TeamPerson[] }) {
   );
 
   return (
-    <div className="grid grid-cols-2 gap-x-6 gap-y-5 @3xl:grid-cols-4">
+    <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-4">
       <StatTile
         variant="plain"
         label="On time yesterday"
@@ -1592,7 +1584,7 @@ function PeopleByDept({
   ];
 
   return (
-    <div className="@container space-y-5">
+    <div className="@container space-y-6">
       {/* The chips keep their own row: the scroller needs the full card width on a phone. */}
       {withPeople.length > 1 ? (
         <FilterChips
@@ -1600,11 +1592,10 @@ function PeopleByDept({
           value={active}
           onChange={setFilter}
           ariaLabel="Show a department"
-          className="-mx-5 px-5"
         />
       ) : null}
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        <p className="text-[13px] text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           EODs over the last 14 working days, Fridays off
         </p>
         <EodLegend />
@@ -1672,8 +1663,8 @@ function Fact({
 }) {
   return (
     <div className="min-w-0">
-      <dt className="text-[11px] text-muted-foreground">{label}</dt>
-      <dd className="mt-0.5 text-[13px] font-medium tabular-nums text-foreground">
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className="mt-0.5 text-sm font-medium tabular-nums text-foreground">
         <Value value={value} hint={hint} />
       </dd>
     </div>
@@ -1694,7 +1685,7 @@ function PersonCard({ person, now }: { person: TeamPerson; now: number }) {
       : "All on time";
 
   return (
-    <li className="flex min-w-0 flex-col rounded-lg border p-4">
+    <li className="flex min-w-0 flex-col rounded-xl bg-muted/40 p-4">
       <div className="flex min-w-0 items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold text-foreground">
@@ -1727,10 +1718,10 @@ function PersonCard({ person, now }: { person: TeamPerson; now: number }) {
 
       <dl className="mt-4 grid grid-cols-3 gap-2 border-t border-[color:var(--ceo-grid)] pt-3">
         <div className="min-w-0">
-          <dt className="truncate text-[11px] text-muted-foreground">
+          <dt className="truncate text-xs text-muted-foreground">
             Last active
           </dt>
-          <dd className="mt-0.5 truncate text-[13px] font-medium text-foreground">
+          <dd className="mt-0.5 truncate text-sm font-medium text-foreground">
             {isNum(person.lastActiveAt) ? (
               <Hint content={dateTime(person.lastActiveAt, now)}>
                 <time
@@ -1749,16 +1740,16 @@ function PersonCard({ person, now }: { person: TeamPerson; now: number }) {
           </dd>
         </div>
         <div className="min-w-0">
-          <dt className="truncate text-[11px] text-muted-foreground">
+          <dt className="truncate text-xs text-muted-foreground">
             Actions today
           </dt>
-          <dd className="mt-0.5 truncate text-[13px] font-medium tabular-nums text-foreground">
+          <dd className="mt-0.5 truncate text-sm font-medium tabular-nums text-foreground">
             {count(person.actionsToday)}
           </dd>
         </div>
         <div className="min-w-0">
-          <dt className="truncate text-[11px] text-muted-foreground">Energy</dt>
-          <dd className="mt-0.5 truncate text-[13px] font-medium tabular-nums text-foreground">
+          <dt className="truncate text-xs text-muted-foreground">Energy</dt>
+          <dd className="mt-0.5 truncate text-sm font-medium tabular-nums text-foreground">
             <Value
               value={isNum(person.energy) ? decimal(person.energy) : null}
               hint="Energy is self-reported and only some EOD forms ask for it"
@@ -1903,7 +1894,7 @@ function Feed({ feed, now }: { feed: FeedItem[]; now: number }) {
           value={activeDept}
           onChange={setDept}
           ariaLabel="Show activity from a department"
-          className="-mx-5 mb-2 px-5"
+          className="mb-2"
         />
       ) : null}
       {kinds.length > 1 ? (
@@ -1912,7 +1903,7 @@ function Feed({ feed, now }: { feed: FeedItem[]; now: number }) {
           value={activeKind}
           onChange={setKind}
           ariaLabel="Show activity of kind"
-          className="-mx-5 mb-4 px-5"
+          className="mb-4"
         />
       ) : null}
       <FeedList
@@ -2062,15 +2053,14 @@ const GAPS: { label: string; hint: string; sub: string }[] = [
 
 function Gaps() {
   return (
-    <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2 xl:grid-cols-3">
+    <div className="grid grid-cols-2 gap-x-6 gap-y-6 @lg:grid-cols-3 @4xl:grid-cols-5">
       {GAPS.map(g => (
         <StatTile
           key={g.label}
           variant="plain"
           label={g.label}
           value={null}
-          naHint={g.hint}
-          sub={g.sub}
+          naHint={`${g.hint}. ${g.sub}`}
         />
       ))}
     </div>

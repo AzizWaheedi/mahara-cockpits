@@ -7,12 +7,12 @@ import { EmptyState } from "@/components/ceo/EmptyState";
 import { Facts } from "@/components/ceo/Facts";
 import { FilterChips, type FilterOption } from "@/components/ceo/FilterChips";
 import { count, money, plural, shortDate } from "@/components/ceo/format";
+import { Na } from "@/components/ceo/Na";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { TabLink } from "@/components/ceo/TabLink";
 import { TimeframeBar } from "@/components/ceo/TimeframeBar";
 import { useTimeframe } from "@/components/ceo/timeframe";
-import { range as rangeText } from "@/components/ceo/windows";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { api } from "../../../convex/_generated/api";
 import type {
@@ -195,7 +195,7 @@ const COLUMNS: Column<Transaction>[] = [
   {
     key: "person",
     header: "Credited to",
-    cell: t => role(t) || <span className="text-muted-foreground">—</span>,
+    cell: t => role(t) || <Na hint="Nobody is credited with this payment" />,
     sortValue: t => t.person ?? "",
     hideBelow: "md",
   },
@@ -205,7 +205,7 @@ const COLUMNS: Column<Transaction>[] = [
     cell: t => (
       <span className="block min-w-0 max-w-[14rem] truncate">
         {t.dealBusiness ?? t.clientName ?? (
-          <span className="text-muted-foreground">—</span>
+          <Na hint="Tied to no deal and no client" />
         )}
       </span>
     ),
@@ -257,7 +257,7 @@ function Reclassify({ t }: { t: Transaction }) {
           setBusy(false);
         }
       }}
-      className="h-7 max-w-[11rem] rounded-md border bg-card px-1 text-xs"
+      className="ceo-select-compact max-w-[11rem]"
     >
       {BANK_KINDS.map(k => (
         <option key={k.value} value={k.value}>
@@ -335,8 +335,8 @@ export function TransactionsTab({ sections, goTab }: CeoTabProps) {
 
   if (!a)
     return (
-      <div className="grid gap-5 lg:gap-7">
-        <SectionCard title="Transactions" section={section}>
+      <div className="grid gap-4 lg:gap-6">
+        <SectionCard title="Every payment in and out" section={section}>
           {() => (
             <EmptyState
               title="Payments have not been attributed yet"
@@ -353,8 +353,9 @@ export function TransactionsTab({ sections, goTab }: CeoTabProps) {
     oldest && bounds && bounds.from < oldest && a.from < oldest,
   );
 
+  const total = a.transactions.length;
   return (
-    <div className="grid gap-5 lg:gap-7">
+    <div className="grid gap-4 lg:gap-6">
       <TimeframeBar
         tf={tf}
         bounds={bounds}
@@ -367,13 +368,15 @@ export function TransactionsTab({ sections, goTab }: CeoTabProps) {
             : undefined
         }
       />
+      {/* The timeframe bar above already names the days, so the card only
+          says where its numbers come from. */}
       <SectionCard
-        kicker={
-          bounds
-            ? `${rangeText(bounds.from, bounds.to)} · added up from the payments listed`
-            : "Pick both dates"
-        }
         title="Where the money sits"
+        description={
+          bounds
+            ? "Added up from the payments listed below."
+            : "Pick both dates above."
+        }
         section={section}
         notes={notes}
         actions={<TabLink tab="money" label="Money" goTab={goTab} />}
@@ -383,20 +386,20 @@ export function TransactionsTab({ sections, goTab }: CeoTabProps) {
       </SectionCard>
 
       <SectionCard
-        kicker={`${plural(rows.length, "line")} of ${a.transactions.length}`}
         title="Every payment in and out"
+        description={
+          rows.length === total
+            ? plural(total, "line")
+            : `${count(rows.length)} of ${plural(total, "line")}`
+        }
         section={section}
         order={1}
-        actions={
-          <FilterChips
-            options={VIEWS}
-            value={view}
-            onChange={setView}
-            ariaLabel="Which payments to list"
-          />
-        }
       >
         {() => (
+          // The views sit on the table's own filter row, full width, so on a
+          // phone they scroll sideways instead of being clipped in the header.
+          // The table is as wide as its columns (min-w-max) and scrolls inside
+          // the card; the first 50 lines show, then 50 more per press.
           <DataTable
             rows={rows}
             columns={columns}
@@ -405,6 +408,16 @@ export function TransactionsTab({ sections, goTab }: CeoTabProps) {
             caption="Payments in and out for the timeframe chosen, newest first, with the side, the person and the deal or client each was tied to"
             emptyText="Nothing in this view."
             stickyFirst
+            pageSize={50}
+            tableClassName="min-w-max"
+            filters={
+              <FilterChips
+                options={VIEWS}
+                value={view}
+                onChange={setView}
+                ariaLabel="Which payments to list"
+              />
+            }
           />
         )}
       </SectionCard>
@@ -416,7 +429,7 @@ function Totals({ a }: { a: MoneyAttribution }) {
   const t = a.totals;
   return (
     <div className="grid gap-5">
-      <div className="grid grid-cols-2 gap-x-8 gap-y-6 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-3 @4xl:grid-cols-5">
         <StatTile
           variant="plain"
           label="Money in"

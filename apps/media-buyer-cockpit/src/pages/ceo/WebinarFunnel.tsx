@@ -1,4 +1,5 @@
 import { useAction } from "convex/react";
+import { Check, TriangleAlert } from "lucide-react";
 import { type ReactNode, useId, useMemo, useState } from "react";
 import {
   Area,
@@ -23,6 +24,7 @@ import {
   money,
   NA,
   pct,
+  plural,
   seconds,
   shortDate,
 } from "@/components/ceo/format";
@@ -30,6 +32,7 @@ import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import type { CeoSection } from "@/components/ceo/useCeo";
+import { Button } from "@/components/ui/button";
 import { api } from "../../../convex/_generated/api";
 import type {
   WebinarPayload,
@@ -87,7 +90,7 @@ type Row = {
 
 function MetricRows({ rows }: { rows: Row[] }) {
   return (
-    <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+    <dl className="grid gap-x-6 gap-y-4 @lg:grid-cols-2">
       {rows.map(r => (
         <div key={r.label} className="grid min-w-0 gap-0.5">
           <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -106,7 +109,7 @@ function MetricRows({ rows }: { rows: Row[] }) {
               </span>
             ) : null}
           </dd>
-          <dd className="text-[11px] text-muted-foreground">{r.source}</dd>
+          <dd className="text-xs text-muted-foreground">{r.source}</dd>
         </div>
       ))}
     </dl>
@@ -135,9 +138,9 @@ function Stage({
 }) {
   const share = people !== null && of > 0 ? Math.min(1, people / of) : null;
   return (
-    <li className="relative grid gap-3 pl-10 sm:pl-12">
+    <li className="relative grid gap-3 pl-10 @md:pl-12">
       <span
-        className="absolute left-0 top-0 flex size-7 items-center justify-center rounded-full border text-xs font-semibold tabular-nums sm:size-8"
+        className="absolute left-0 top-0 flex size-7 items-center justify-center rounded-full border text-xs font-semibold tabular-nums @md:size-8"
         aria-hidden
       >
         {n}
@@ -460,7 +463,7 @@ function stages(p: WebinarPayload, r: WebinarRound): StageDef[] {
           value: r.showUp.showRateByLead
             ? r.showUp.showRateByLead
                 .map(b =>
-                  b.registrants ? pct(b.attended / b.registrants) : "–",
+                  b.registrants ? pct(b.attended / b.registrants) : NA,
                 )
                 .join(" / ")
             : NA,
@@ -627,8 +630,8 @@ function stages(p: WebinarPayload, r: WebinarRound): StageDef[] {
         },
         {
           label: "CAC and ROAS",
-          value: `${money(r.sales.cac)} and ${decimal(r.sales.roasCash, 2)}×`,
-          source: `Contracted ROAS ${decimal(r.sales.roasContracted, 2)}×`,
+          value: `${money(r.sales.cac)} and ${decimal(r.sales.roasCash, 2)}x`,
+          source: `Contracted ROAS ${decimal(r.sales.roasContracted, 2)}x`,
           status: s.sales,
         },
         {
@@ -668,9 +671,9 @@ export function WebinarFunnel({
   }, [p, picked]);
 
   return (
-    <div className="grid gap-5 lg:gap-7">
+    <div className="grid gap-4 lg:gap-6">
       <SectionCard
-        title="Webinar funnel"
+        title="At a glance"
         kicker={round ? roundName(round) : "Live training"}
         section={section}
         notes={p?.notes}
@@ -683,7 +686,7 @@ export function WebinarFunnel({
               text="No registrant carries a webby tag and no webinar campaign has spent yet. Everything below fills in by itself once the Webinar Opt In form takes its first registration."
             />
           ) : (
-            <div className="grid gap-5">
+            <div className="grid gap-4">
               {payload.rounds.length > 1 ? (
                 <FilterChips
                   ariaLabel="Which session"
@@ -713,13 +716,13 @@ export function WebinarFunnel({
       {p && round ? (
         <SectionCard
           title="Stage by stage"
-          kicker="The tracking brief's six stages"
+          kicker="Six stages"
           section={section}
           hideAsOf
           order={1}
         >
           {() => (
-            <div className="grid gap-5">
+            <div className="grid gap-6">
               <ol className="grid gap-8">
                 {stages(p, round).map((s, i) => (
                   <Stage
@@ -733,9 +736,9 @@ export function WebinarFunnel({
                     extra={s.extra}
                   />
                 ))}
-                <li className="relative grid gap-3 pl-10 sm:pl-12">
+                <li className="relative grid gap-3 pl-10 @md:pl-12">
                   <span
-                    className="absolute left-0 top-0 flex size-7 items-center justify-center rounded-full border text-xs font-semibold sm:size-8"
+                    className="absolute left-0 top-0 flex size-7 items-center justify-center rounded-full border text-xs font-semibold @md:size-8"
                     aria-hidden
                   >
                     6
@@ -773,18 +776,21 @@ function Headline({ p, r }: { p: WebinarPayload; r: WebinarRound }) {
           ? "good"
           : "warning";
   return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+    <div className="grid grid-cols-2 gap-x-6 gap-y-6 border-t pt-4 @lg:grid-cols-3 @4xl:grid-cols-6">
       <StatTile
+        variant="plain"
         label="Spend"
         value={money(r.traffic.spend)}
         sub={`of ${money(t.plannedSpend)} planned`}
       />
       <StatTile
+        variant="plain"
         label="Registrations"
         value={count(r.registration.registrations)}
         sub={`target ${count(t.registrations.low)}–${count(t.registrations.high)}`}
       />
       <StatTile
+        variant="plain"
         label="Cost per registration"
         value={money(cpr)}
         sub={`target ${money(t.costPerRegistration.low)}–${money(t.costPerRegistration.high)}`}
@@ -809,6 +815,7 @@ function Headline({ p, r }: { p: WebinarPayload; r: WebinarRound }) {
         }
       />
       <StatTile
+        variant="plain"
         label="Show rate"
         value={pct(r.showUp.showRate)}
         sub={
@@ -818,14 +825,16 @@ function Headline({ p, r }: { p: WebinarPayload; r: WebinarRound }) {
         }
       />
       <StatTile
+        variant="plain"
         label="Calls booked"
         value={count(r.conversion.booked)}
         sub={`${pct(r.conversion.registrantToBooked)} of registrants`}
       />
       <StatTile
+        variant="plain"
         label="Cash"
         value={money(r.sales.cash)}
-        sub={`${count(r.sales.closes)} closed, ROAS ${decimal(r.sales.roasCash, 2)}×`}
+        sub={`${count(r.sales.closes)} closed, ROAS ${decimal(r.sales.roasCash, 2)}x`}
       />
     </div>
   );
@@ -880,7 +889,7 @@ function RollUp({ p }: { p: WebinarPayload }) {
                 {money(r.sales.cac)}
               </td>
               <td className="py-2 text-right tabular-nums">
-                {decimal(r.sales.roasCash, 2)}×
+                {decimal(r.sales.roasCash, 2)}x
               </td>
             </tr>
           ))}
@@ -938,9 +947,11 @@ function Ads({
                     Registered
                   </th>
                   <th className="py-2 pr-3 text-right font-normal">
-                    Page conv.
+                    Page conversion
                   </th>
-                  <th className="py-2 pr-3 text-right font-normal">Per reg.</th>
+                  <th className="py-2 pr-3 text-right font-normal">
+                    Cost per registration
+                  </th>
                   <th className="py-2 pr-3 text-right font-normal">Came</th>
                   <th className="py-2 pr-3 text-right font-normal">Booked</th>
                   <th className="py-2 pr-3 text-right font-normal">Closed</th>
@@ -1016,7 +1027,7 @@ function Tracking({
   return (
     <SectionCard
       title="What still has to be connected"
-      kicker="From the tracking brief"
+      kicker="Tracking brief"
       section={section}
       hideAsOf
       order={3}
@@ -1039,13 +1050,13 @@ function Tracking({
                   <StatusDot status={t.status} />
                   {t.metric}
                   <span className="text-xs font-normal text-muted-foreground">
-                    stage {t.stage}
+                    Stage {t.stage}
                   </span>
                 </span>
                 <span className="pl-3.5 text-sm text-muted-foreground">
                   {t.note}
                 </span>
-                <span className="pl-3.5 text-[11px] text-muted-foreground">
+                <span className="pl-3.5 text-xs text-muted-foreground">
                   Source: {t.source}
                 </span>
               </li>
@@ -1078,20 +1089,49 @@ const doors = (via: string) =>
 function Collector({ p }: { p: WebinarPayload }) {
   const line = (
     name: string,
-    run: WebinarPayload["collector"]["zoom"],
+    run: WebinarPayload["collector"]["zoom"] | undefined,
   ): string =>
     !run
       ? `${name}: not read yet`
       : run.ok === false
         ? `${name}: the last read failed (${run.detail ?? "no reason given"})${run.lastOkAt ? `; last good read ${dateTime(run.lastOkAt)}` : ""}`
         : `${name}: read ${run.lastOkAt ? dateTime(run.lastOkAt) : "never"}${run.via ? ` through ${doors(run.via)}` : ""}`;
+  // A payload stored before the collector log existed has none: every
+  // source then reads "not read yet" instead of the tab failing.
+  const c: Partial<WebinarPayload["collector"]> = p.collector ?? {};
+  const runs: [string, WebinarPayload["collector"]["zoom"] | undefined][] = [
+    ["Zoom", c.zoom],
+    ["Survey", c.typeform],
+    ["HighLevel messages", c.reminders],
+    ["Fathom calls", c.objections],
+  ];
+  const failed = runs.filter(([, run]) => run?.ok === false).length;
+  // A failed read changes how the numbers read, so the summary says so while
+  // the rest of the log stays folded.
   return (
-    <p className="text-xs text-muted-foreground">
-      {line("Zoom", p.collector.zoom)}. {line("Survey", p.collector.typeform)}.{" "}
-      {line("HighLevel messages", p.collector.reminders)}.{" "}
-      {line("Fathom calls", p.collector.objections)}. Zoom, the survey and
-      Fathom are read every hour, HighLevel's messages every six hours.
-    </p>
+    <details className="group text-xs text-muted-foreground">
+      <summary className="flex cursor-pointer select-none items-center gap-2 hover:text-foreground">
+        {failed ? (
+          <TriangleAlert
+            className="size-3.5 shrink-0"
+            style={{ color: "var(--ceo-warning)" }}
+            aria-hidden
+          />
+        ) : null}
+        {failed
+          ? `When each source was last read, ${plural(failed, "read")} failed`
+          : "When each source was last read"}
+      </summary>
+      <ul className="mt-2 grid gap-1">
+        {runs.map(([name, run]) => (
+          <li key={name}>{line(name, run)}.</li>
+        ))}
+        <li>
+          Zoom, the survey and Fathom are read every hour, HighLevel's messages
+          every six hours.
+        </li>
+      </ul>
+    </details>
   );
 }
 
@@ -1146,7 +1186,7 @@ function RoomCurve({ room, target }: { room: Room; target: number }) {
           Target at pitch 1: {pct(target)} of the peak
         </span>
       </div>
-      <div role="figure" aria-label={summary} className="h-44 sm:h-52">
+      <div role="figure" aria-label={summary} className="h-44 @lg:h-52">
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
             data={data}
@@ -1298,7 +1338,7 @@ function PitchTimes({ room }: { room: Room }) {
     );
   return (
     <form
-      className="grid gap-3 rounded-lg border p-3"
+      className="grid gap-3 rounded-xl bg-muted/40 p-4"
       onSubmit={async e => {
         e.preventDefault();
         setBusy(true);
@@ -1355,24 +1395,38 @@ function PitchTimes({ room }: { room: Room }) {
             onChange={e => setTwo(e.target.value)}
           />
         </div>
-        <button
-          type="submit"
-          disabled={busy}
-          className="rounded-md bg-[var(--ceo-emphasis)] px-3 py-1.5 text-sm font-medium text-background disabled:opacity-50"
-        >
+        <Button type="submit" size="sm" disabled={busy}>
           {busy ? "Saving" : "Save pitch times"}
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
-          className="text-xs text-muted-foreground hover:text-foreground"
+          variant="outline"
+          size="sm"
           onClick={() => setOpen(false)}
         >
           Close
-        </button>
+        </Button>
       </div>
-      {said ? <p className="text-xs text-[var(--ceo-good)]">{said}</p> : null}
+      {said ? (
+        <p className="flex items-start gap-1.5 text-xs text-foreground">
+          <Check
+            className="mt-0.5 size-3.5 shrink-0"
+            style={{ color: "var(--ceo-good)" }}
+            aria-hidden
+          />
+          {said}
+        </p>
+      ) : null}
       {error ? (
-        <p role="alert" className="text-xs text-[var(--ceo-critical)]">
+        <p
+          role="alert"
+          className="flex items-start gap-1.5 text-xs text-foreground"
+        >
+          <TriangleAlert
+            className="mt-0.5 size-3.5 shrink-0"
+            style={{ color: "var(--ceo-critical)" }}
+            aria-hidden
+          />
           {error}
         </p>
       ) : null}

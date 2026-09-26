@@ -1,9 +1,17 @@
 import { useAction } from "convex/react";
-import { Check, Loader2, Sparkles, X } from "lucide-react";
+import { Check, ChevronDown, Loader2, Plus, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { money } from "@/components/ceo/format";
 import { AnimatedSelect } from "@/components/ui/animated-select";
+import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
 import type { B2bAdsPayload } from "../../../convex/ceo/payloads";
 
@@ -55,12 +63,8 @@ function today(): string {
 }
 
 const field =
-  "w-full rounded-md border bg-background px-2.5 py-1.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-[var(--ceo-emphasis)]";
+  "w-full rounded-md border bg-background px-2.5 py-1.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring";
 const label = "text-xs font-medium text-muted-foreground";
-const primary =
-  "rounded-md bg-[var(--ceo-emphasis)] px-3 py-1.5 text-sm font-medium text-background disabled:opacity-50";
-const quiet =
-  "rounded-md border px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50";
 
 /**
  * One labelled field. The label is a heading rather than a `<label>` element
@@ -167,6 +171,7 @@ function CopyStudio({
       >
         <textarea
           aria-label="Brief"
+          dir="auto"
           className={`${field} min-h-[72px]`}
           value={brief}
           onChange={e => setBrief(e.target.value)}
@@ -199,24 +204,18 @@ function CopyStudio({
             ))}
           </AnimatedSelect>
         </Row>
-        <button
+        <Button
           type="button"
-          className={primary}
           disabled={busy || brief.trim().length < 12}
           onClick={generate}
         >
           {busy ? (
-            <span className="flex items-center gap-1.5">
-              <Loader2 className="size-3.5 animate-spin" aria-hidden />
-              Writing
-            </span>
+            <Loader2 className="animate-spin" aria-hidden />
           ) : (
-            <span className="flex items-center gap-1.5">
-              <Sparkles className="size-3.5" aria-hidden />
-              {ideas.length ? "Write more" : "Write angles"}
-            </span>
+            <Sparkles aria-hidden />
           )}
-        </button>
+          {busy ? "Writing" : ideas.length ? "Write more" : "Write angles"}
+        </Button>
       </div>
       {error ? (
         <p className="text-sm text-[var(--ceo-critical)]">{error}</p>
@@ -224,46 +223,50 @@ function CopyStudio({
       {ideas.length ? (
         <div className="grid gap-2">
           <p className="text-xs text-muted-foreground">
-            {`${ideas.filter(i => i.approved).length} of ${ideas.length} approved. Edit anything before you approve it; only the ones ticked become ads.`}
+            {`${ideas.filter(i => i.approved).length} of ${ideas.length} approved. Edit anything before you approve it; only the approved ones become ads.`}
           </p>
-          {ideas.map((idea, i) => (
-            <div
-              key={`${idea.headline}-${i}`}
-              className={`grid gap-2 rounded-md border p-3 ${idea.approved ? "border-[var(--ceo-emphasis)]" : ""}`}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-xs text-muted-foreground">
-                  {idea.angle || `Angle ${i + 1}`}
-                </span>
-                <button
-                  type="button"
-                  className={idea.approved ? primary : quiet}
-                  onClick={() => edit(i, { approved: !idea.approved })}
-                >
-                  <span className="flex items-center gap-1.5">
-                    {idea.approved ? (
-                      <Check className="size-3.5" aria-hidden />
-                    ) : (
-                      <X className="size-3.5" aria-hidden />
-                    )}
-                    {idea.approved ? "Approved" : "Approve"}
+          <div className="divide-y">
+            {ideas.map((idea, i) => (
+              <div
+                key={`${idea.headline}-${i}`}
+                className="grid gap-2 py-3 first:pt-0 last:pb-0"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="min-w-0 text-xs text-muted-foreground">
+                    {idea.angle || `Angle ${i + 1}`}
                   </span>
-                </button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    aria-pressed={idea.approved}
+                    className={cn(
+                      idea.approved &&
+                        "border-transparent bg-primary/15 text-foreground ring-1 ring-inset ring-primary/40 hover:bg-primary/20",
+                    )}
+                    onClick={() => edit(i, { approved: !idea.approved })}
+                  >
+                    {idea.approved ? <Check aria-hidden /> : null}
+                    {idea.approved ? "Approved" : "Approve"}
+                  </Button>
+                </div>
+                <input
+                  className={field}
+                  dir="auto"
+                  value={idea.headline}
+                  onChange={e => edit(i, { headline: e.target.value })}
+                  aria-label="Headline"
+                />
+                <textarea
+                  className={`${field} min-h-[64px]`}
+                  dir="auto"
+                  value={idea.primaryText}
+                  onChange={e => edit(i, { primaryText: e.target.value })}
+                  aria-label="Primary text"
+                />
               </div>
-              <input
-                className={field}
-                value={idea.headline}
-                onChange={e => edit(i, { headline: e.target.value })}
-                aria-label="Headline"
-              />
-              <textarea
-                className={`${field} min-h-[64px]`}
-                value={idea.primaryText}
-                onChange={e => edit(i, { primaryText: e.target.value })}
-                aria-label="Primary text"
-              />
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       ) : null}
     </div>
@@ -397,7 +400,7 @@ export function ManagePanel({
   const approved = ideas.filter(i => i.approved);
 
   return (
-    <div className="grid gap-3 rounded-md border border-dashed bg-muted/30 p-3">
+    <div className="@container grid gap-4 rounded-xl bg-muted/40 p-4">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="text-sm font-semibold">{MODE_TITLE[target.mode]}</p>
@@ -405,14 +408,9 @@ export function ManagePanel({
             {target.name}
           </p>
         </div>
-        <button
-          type="button"
-          className={quiet}
-          onClick={onClose}
-          aria-label="Close"
-        >
+        <Button type="button" size="sm" variant="outline" onClick={onClose}>
           Close
-        </button>
+        </Button>
       </div>
 
       {loading ? (
@@ -440,9 +438,8 @@ export function ManagePanel({
             />
           </Row>
           <div>
-            <button
+            <Button
               type="button"
-              className={primary}
               disabled={busy || !name.trim()}
               onClick={() =>
                 run(async () => {
@@ -456,7 +453,7 @@ export function ManagePanel({
               }
             >
               {busy ? "Saving" : "Save the name"}
-            </button>
+            </Button>
           </div>
         </div>
       ) : null}
@@ -487,9 +484,8 @@ export function ManagePanel({
             />
           </Row>
           <div>
-            <button
+            <Button
               type="button"
-              className={primary}
               disabled={
                 busy ||
                 !(Number(budget) >= 1) ||
@@ -507,7 +503,7 @@ export function ManagePanel({
               }
             >
               {busy ? "Saving" : "Set the budget"}
-            </button>
+            </Button>
           </div>
         </div>
       ) : null}
@@ -527,9 +523,8 @@ export function ManagePanel({
             />
           </Row>
           <div>
-            <button
+            <Button
               type="button"
-              className={primary}
               disabled={busy}
               onClick={() =>
                 run(async () => {
@@ -548,7 +543,7 @@ export function ManagePanel({
                 : endTime
                   ? "Set the end date"
                   : "Remove the end date"}
-            </button>
+            </Button>
           </div>
         </div>
       ) : null}
@@ -560,7 +555,7 @@ export function ManagePanel({
               ? `Now ${live.audience.countries?.length ? live.audience.countries.join(", ") : "no country set"}, ages ${live.audience.ageMin ?? 18} to ${live.audience.ageMax ?? 65}, ${live.audience.genders}${live.audience.detailed ? `, ${live.audience.detailed} detailed interests` : ""}${live.audience.custom ? `, ${live.audience.custom} saved audiences` : ""}.`
               : "Meta did not return this audience."}
           </p>
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 @lg:grid-cols-2">
             <Row title="Countries" hint="Two-letter codes. Blank keeps them.">
               <input
                 aria-label="Countries"
@@ -571,7 +566,7 @@ export function ManagePanel({
               />
             </Row>
             <Row title="Age" hint="Blank keeps it.">
-              <span className="flex items-center gap-1">
+              <span className="flex items-center gap-2">
                 <input
                   className={field}
                   type="number"
@@ -581,7 +576,7 @@ export function ManagePanel({
                   onChange={e => setAgeMin(e.target.value)}
                   aria-label="Youngest"
                 />
-                <span className="text-muted-foreground">–</span>
+                <span className="text-xs text-muted-foreground">to</span>
                 <input
                   className={field}
                   type="number"
@@ -600,9 +595,8 @@ export function ManagePanel({
             estimate as you go.
           </p>
           <div>
-            <button
+            <Button
               type="button"
-              className={primary}
               disabled={busy}
               onClick={() =>
                 run(async () => {
@@ -620,7 +614,7 @@ export function ManagePanel({
               }
             >
               {busy ? "Saving" : "Change the audience"}
-            </button>
+            </Button>
           </div>
         </div>
       ) : null}
@@ -644,9 +638,8 @@ export function ManagePanel({
             Copy its ads too
           </label>
           <div>
-            <button
+            <Button
               type="button"
-              className={primary}
               disabled={busy || !name.trim()}
               onClick={() =>
                 run(async () => {
@@ -660,7 +653,7 @@ export function ManagePanel({
               }
             >
               {busy ? "Copying" : "Duplicate it, paused"}
-            </button>
+            </Button>
           </div>
         </div>
       ) : null}
@@ -689,13 +682,13 @@ export function ManagePanel({
               {payload.campaigns.flatMap(c =>
                 c.adsets.map(s => (
                   <option key={s.id} value={s.id}>
-                    {`${s.name} — ${money(s.w30.spend)} in 30 days`}
+                    {`${s.name}, ${money(s.w30.spend)} in 30 days`}
                   </option>
                 )),
               )}
             </AnimatedSelect>
           </Row>
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 @xl:grid-cols-3">
             <Row
               title="Daily budget, USD"
               hint={
@@ -725,7 +718,7 @@ export function ManagePanel({
               />
             </Row>
             <Row title="Age" hint="Blank keeps the source's.">
-              <span className="flex items-center gap-1">
+              <span className="flex items-center gap-2">
                 <input
                   className={field}
                   type="number"
@@ -735,7 +728,7 @@ export function ManagePanel({
                   onChange={e => setAgeMin(e.target.value)}
                   aria-label="Youngest"
                 />
-                <span className="text-muted-foreground">–</span>
+                <span className="text-xs text-muted-foreground">to</span>
                 <input
                   className={field}
                   type="number"
@@ -749,9 +742,8 @@ export function ManagePanel({
             </Row>
           </div>
           <div>
-            <button
+            <Button
               type="button"
-              className={primary}
               disabled={
                 busy ||
                 !name.trim() ||
@@ -777,7 +769,7 @@ export function ManagePanel({
               }
             >
               {busy ? "Adding" : "Add the ad set, paused"}
-            </button>
+            </Button>
           </div>
         </div>
       ) : null}
@@ -786,11 +778,11 @@ export function ManagePanel({
         <div className="grid gap-4">
           <div className="grid gap-2">
             <p className={label}>Reuse an ad that already works</p>
-            <div className="max-h-56 overflow-auto rounded-md border">
+            <div className="max-h-56 divide-y overflow-auto rounded-lg border bg-background">
               {sameKind.slice(0, 40).map(a => (
                 <label
                   key={a.id}
-                  className="flex items-center gap-2 border-b px-2 py-1.5 text-sm last:border-b-0 hover:bg-muted/40"
+                  className="flex items-center gap-3 px-3 py-2 text-sm hover:bg-muted/40"
                 >
                   <input
                     type="checkbox"
@@ -803,9 +795,11 @@ export function ManagePanel({
                       )
                     }
                   />
-                  <span className="min-w-0 flex-1 truncate">{a.name}</span>
-                  <span className="shrink-0 tabular-nums text-xs text-muted-foreground">
-                    {`${money(a.spend)} · ${a.cpl === null ? "no leads" : `${money(a.cpl)} a lead`}`}
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate">{a.name}</span>
+                    <span className="block text-xs tabular-nums text-muted-foreground">
+                      {`${money(a.spend)} · ${a.cpl === null ? "no leads" : `${money(a.cpl)} a lead`}`}
+                    </span>
                   </span>
                 </label>
               ))}
@@ -843,9 +837,8 @@ export function ManagePanel({
           ) : null}
 
           <div>
-            <button
+            <Button
               type="button"
-              className={primary}
               disabled={busy || (!clones.length && !approved.length)}
               onClick={() =>
                 run(async () => {
@@ -868,7 +861,7 @@ export function ManagePanel({
               {busy
                 ? "Adding"
                 : `Add ${clones.length + approved.length || ""} ${clones.length + approved.length === 1 ? "ad" : "ads"}, paused`}
-            </button>
+            </Button>
           </div>
         </div>
       ) : null}
@@ -880,7 +873,31 @@ export function ManagePanel({
   );
 }
 
-/** The small toolbar that opens the panel for a row. */
+const MODE_LABEL: Record<Mode, string> = {
+  newAdset: "Ad set",
+  newAds: "Ads",
+  budget: "Budget",
+  audience: "Audience",
+  rename: "Rename",
+  duplicate: "Duplicate",
+  schedule: "End date",
+};
+
+/** A row action pill; the one whose panel is open reads teal. */
+function pill(active: boolean) {
+  return cn(
+    "inline-flex h-8 items-center gap-1 rounded-full px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+    active
+      ? "bg-primary/15 text-foreground ring-1 ring-inset ring-primary/40"
+      : "text-muted-foreground ring-1 ring-inset ring-border hover:bg-muted hover:text-foreground",
+  );
+}
+
+/**
+ * The small toolbar that opens the panel for a row: three pills at most, and
+ * the rest of an ad set's actions under "More", so a row never carries a
+ * wrapping line of six.
+ */
 export function ManageBar({
   level,
   id,
@@ -897,47 +914,64 @@ export function ManageBar({
   /** Meta will not accept a write while the ad account is not in good standing. */
   frozen?: string | null;
 }) {
-  // Said once, on the campaign. Repeating it under every ad set and every ad
-  // would bury the numbers under the same sentence thirty times.
-  if (frozen)
-    return level === "campaign" ? (
-      <span className="text-xs text-muted-foreground">
-        {`Meta is refusing writes while the ad account is ${frozen}. Settle it in Ads Manager and everything below can be changed again.`}
-      </span>
-    ) : null;
+  // The card above the rows says it once; repeating it on every row would
+  // bury the numbers under the same sentence thirty times.
+  if (frozen) return null;
   const modes: Mode[] =
     level === "campaign"
       ? ["newAdset", "rename", "budget"]
       : level === "adset"
         ? ["newAds", "budget", "audience", "duplicate", "schedule", "rename"]
         : ["rename"];
-  const LABEL: Record<Mode, string> = {
-    newAdset: "Ad set",
-    newAds: "Ads",
-    budget: "Budget",
-    audience: "Audience",
-    rename: "Rename",
-    duplicate: "Duplicate",
-    schedule: "End date",
-  };
+  const inline = modes.length > 3 ? modes.slice(0, 2) : modes;
+  const more = modes.length > 3 ? modes.slice(2) : [];
+  const isOpen = (m: Mode) => open?.id === id && open?.mode === m;
+  const toggle = (m: Mode) =>
+    onOpen(isOpen(m) ? null : { level, id, name, mode: m });
+  const moreOpen = more.find(isOpen);
   return (
-    <span className="flex flex-wrap items-center gap-1">
-      {modes.map(m => {
-        const active = open?.id === id && open?.mode === m;
-        return (
-          <button
-            key={m}
-            type="button"
-            className={`rounded-full border px-2 py-0.5 text-xs ${active ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"}`}
-            onClick={e => {
-              e.stopPropagation();
-              onOpen(active ? null : { level, id, name, mode: m });
-            }}
-          >
-            {m === "newAdset" || m === "newAds" ? `+ ${LABEL[m]}` : LABEL[m]}
-          </button>
-        );
-      })}
-    </span>
+    <div
+      role="group"
+      aria-label={`Change this ${level === "adset" ? "ad set" : level}`}
+      className="flex flex-wrap items-center gap-1.5"
+    >
+      {inline.map(m => (
+        <button
+          key={m}
+          type="button"
+          aria-pressed={isOpen(m)}
+          className={pill(isOpen(m))}
+          onClick={e => {
+            e.stopPropagation();
+            toggle(m);
+          }}
+        >
+          {m === "newAdset" || m === "newAds" ? (
+            <Plus className="size-3.5" aria-hidden />
+          ) : null}
+          {MODE_LABEL[m]}
+        </button>
+      ))}
+      {more.length ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button type="button" className={pill(Boolean(moreOpen))}>
+              {moreOpen ? MODE_LABEL[moreOpen] : "More"}
+              <ChevronDown className="size-3.5" aria-hidden />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            {more.map(m => (
+              <DropdownMenuItem key={m} onSelect={() => toggle(m)}>
+                {MODE_LABEL[m]}
+                {isOpen(m) ? (
+                  <Check className="ml-auto size-4" aria-label="Open" />
+                ) : null}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : null}
+    </div>
   );
 }

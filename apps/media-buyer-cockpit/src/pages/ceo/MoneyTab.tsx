@@ -1,4 +1,4 @@
-import { Receipt, Target, Wallet } from "lucide-react";
+import { Receipt, Target, TriangleAlert, Wallet } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 import { BarList, type BarListItem } from "@/components/ceo/BarList";
 import { ColumnChart } from "@/components/ceo/ColumnChart";
@@ -24,12 +24,17 @@ import {
   shiftMonth,
 } from "@/components/ceo/format";
 import { HeroFigure } from "@/components/ceo/HeroFigure";
+import { Kicker } from "@/components/ceo/Kicker";
 import { cashHeadline, contractedHeadline } from "@/components/ceo/metrics";
 import { Value } from "@/components/ceo/Na";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { ShowMore } from "@/components/ceo/ShowMore";
 import { StatTile } from "@/components/ceo/StatTile";
-import { StatusChip, type StatusTone } from "@/components/ceo/StatusChip";
+import {
+  STATUS_COLOR,
+  StatusChip,
+  type StatusTone,
+} from "@/components/ceo/StatusChip";
 import { TabLink } from "@/components/ceo/TabLink";
 import { TargetMeter } from "@/components/ceo/TargetMeter";
 import { TimeSeriesChart } from "@/components/ceo/TimeSeriesChart";
@@ -176,10 +181,8 @@ function HalfHeading({
   first?: boolean;
 }) {
   return (
-    <div className={first ? "min-w-0" : "min-w-0 border-t pt-5"}>
-      <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        {title}
-      </p>
+    <div className={first ? "min-w-0" : "min-w-0 border-t pt-6"}>
+      <Kicker as="h2">{title}</Kicker>
       <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
         {text}
       </p>
@@ -208,7 +211,7 @@ export function MoneyTab({ sections, now, day, goTab }: CeoTabProps) {
   const showLegacy = expenses === null;
 
   return (
-    <div className="grid gap-5 lg:gap-7">
+    <div className="grid gap-4 lg:gap-6">
       <HalfHeading
         first
         title="Cash in"
@@ -233,7 +236,7 @@ export function MoneyTab({ sections, now, day, goTab }: CeoTabProps) {
           </SectionCard>
 
           <SectionCard
-            kicker={`${month(monthKey, { long: true, year: true })}, with today and last month beside it`}
+            kicker={month(monthKey, { long: true, year: true })}
             title="Cash by rail"
             section={section}
             notes={withNotes(notes.rails, [cashHeadline(payload).note])}
@@ -257,7 +260,7 @@ export function MoneyTab({ sections, now, day, goTab }: CeoTabProps) {
           />
 
           <SectionCard
-            kicker={`${month(monthKey, { long: true, year: true })}, with last month and the last 12 months beside it`}
+            kicker={month(monthKey, { long: true, year: true })}
             title="Front end and back end"
             section={section}
             notes={notes.attribution}
@@ -292,7 +295,7 @@ export function MoneyTab({ sections, now, day, goTab }: CeoTabProps) {
           <DuplicatesCard section={section} notes={notes.dupes} order={5} />
 
           <SectionCard
-            kicker="This month, with the last 30 and 90 days beside it"
+            kicker="This month"
             title="Deals, refunds and failed checkouts"
             section={section}
             notes={notes.tiles}
@@ -313,8 +316,8 @@ export function MoneyTab({ sections, now, day, goTab }: CeoTabProps) {
           </SectionCard>
 
           <SectionCard
-            kicker="What the client cards say, not a measured charge"
             title="MRR on the books"
+            description="What the client cards say, not a measured charge."
             section={section}
             notes={notes.mrr}
             order={8}
@@ -323,8 +326,8 @@ export function MoneyTab({ sections, now, day, goTab }: CeoTabProps) {
           </SectionCard>
 
           <SectionCard
-            kicker="What was signed, against what we can prove arrived"
             title="Deals and collection"
+            description="What was signed, against what we can prove arrived."
             section={section}
             notes={notes.collection}
             order={9}
@@ -335,7 +338,7 @@ export function MoneyTab({ sections, now, day, goTab }: CeoTabProps) {
           <PayerMappingCard order={10} />
           <LtvWriteCard order={11} />
 
-          <div className="grid gap-5 lg:gap-7 xl:grid-cols-12">
+          <div className="grid gap-4 lg:gap-6 xl:grid-cols-12">
             <SectionCard
               kicker="Last 12 months"
               title="Cash and contracted by month"
@@ -361,8 +364,8 @@ export function MoneyTab({ sections, now, day, goTab }: CeoTabProps) {
           </div>
 
           <SectionCard
-            kicker="From the uploaded statements, personal exclusions apart"
             title="Expenses on the statements"
+            description="From the uploaded statements, personal exclusions apart."
             section={section}
             notes={notes.bank ?? []}
             order={14}
@@ -411,7 +414,7 @@ function AttributionBody({ p }: { p: MoneyPayload }) {
   const lastMonthName = previousMonthName(p.month);
   return (
     <div className="grid gap-5">
-      <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3">
+      <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-3">
         <StatTile
           variant="plain"
           label="Front-end cash"
@@ -436,17 +439,15 @@ function AttributionBody({ p }: { p: MoneyPayload }) {
       </div>
       {a.byPerson.length ? (
         <div className="border-t pt-5">
-          <p className="mb-3 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            By person, last 12 months
-          </p>
-          <ul className="grid gap-2 sm:grid-cols-2">
+          <Kicker className="mb-3">By person, 12 months</Kicker>
+          <ul className="grid gap-x-6 gap-y-2 @xl:grid-cols-2">
             {a.byPerson.slice(0, 8).map(x => (
               <li
                 key={`${x.role}:${x.name}`}
                 className="flex items-baseline justify-between gap-3 text-sm tabular-nums"
               >
                 <span className="min-w-0 truncate">
-                  {x.name}
+                  <bdi>{x.name}</bdi>
                   <span className="text-muted-foreground">
                     , {x.role === "closer" ? "closer" : "CSM"}
                   </span>
@@ -482,10 +483,12 @@ function CashBody({ p, today }: { p: MoneyPayload; today: string }) {
   );
 
   return (
-    <div className="grid gap-8 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:gap-10">
+    <div className="grid gap-8 @3xl:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] @3xl:gap-10">
       <div className="flex min-w-0 flex-col">
+        {/* The card is titled Cash collected and the kicker names the month,
+            so the figure's label only says which rails it covers. */}
         <HeroFigure
-          label={headline.label}
+          label={`From ${headline.scope}`}
           value={cash.mtd}
           format={money}
           delta={
@@ -498,7 +501,7 @@ function CashBody({ p, today }: { p: MoneyPayload; today: string }) {
           sub={`Projected ${money(cash.projectedMonth)} for ${thisMonthName}, day ${p.dayOfMonth} of ${p.daysInMonth}`}
           naHint="No connected cash rail gives a figure for this month."
         />
-        <dl className="mt-6 grid grid-cols-3 gap-4 border-t pt-4 lg:mt-auto">
+        <dl className="mt-6 grid grid-cols-3 gap-4 border-t pt-4 @3xl:mt-auto">
           <Fact label="Today so far" value={money(cash.today)} />
           <Fact label="Yesterday" value={money(cash.yesterday)} />
           <Fact
@@ -730,71 +733,33 @@ function RailsBody({
     r => r?.connected,
   ).length;
 
+  // Each rail's month and today are in the table, and the total is the cash
+  // card's figure above, so this card has no tiles of its own: every number
+  // is said once. The one thing a tile carried that the table does not, the
+  // warning that the total is a single rail, stays as a line.
   return (
     <div className="grid gap-6">
-      <div className="grid grid-cols-2 gap-x-6 gap-y-5 xl:grid-cols-4">
-        <StatTile
-          variant="plain"
-          label="Whop, month to date"
-          value={money(rails.whop.mtd)}
-          sub={`Today ${money(rails.whop.today)}`}
-          naHint={railNaHint(rails.whop, "cash for this month")}
-        />
-        <StatTile
-          variant="plain"
-          label="Tap, month to date"
-          value={money(rails.tap.mtd)}
-          sub={
-            rails.tap.connected
-              ? `Today ${money(rails.tap.today)}`
-              : "Not read yet, so it is not in the total."
-          }
-          naHint={railNaHint(rails.tap, "cash for this month")}
-        />
-        <StatTile
-          variant="plain"
-          label="Logged by hand, month to date"
-          value={money(manual?.mtd ?? null)}
-          sub={
-            manual
-              ? manual.connected
-                ? `Today ${money(manual.today)}`
-                : "Nothing logged yet, so it is not in the total."
-              : "Not read on the last refresh, so it is not in the total."
-          }
-          naHint={
-            manual
-              ? manual.connected
-                ? "The Manual rail cannot give cash for this month yet."
-                : "Nothing has been logged by hand yet, so there is no figure. A payment nobody logged is missing, not zero."
-              : "Payments logged by hand were not read on the last money refresh, so there is no figure and they are not in the total. The note on the Logged by hand card says why."
-          }
-        />
-        <StatTile
-          variant="plain"
-          label={`${rails.total.label}, month to date`}
-          value={money(rails.total.mtd)}
-          sub={
-            liveRails > 1
-              ? `${count(liveRails)} rails in the total`
-              : "One rail in the total, so this is not the whole business."
-          }
-          naHint="A connected rail cannot give a figure for this month, so a total would be a guess."
-          status={
-            liveRails > 1 ? undefined : (
-              <StatusChip
-                tone="warning"
-                label="Whop only"
-                hint={
-                  manual
-                    ? "Tap is not read and nothing has been logged by hand, so the total is the Whop rail alone."
-                    : "Tap is not read and the payments logged by hand were not read on the last refresh, so the total is the Whop rail alone."
-                }
-              />
-            )
-          }
-        />
-      </div>
+      {liveRails > 1 ? (
+        manual ? null : (
+          <p className="text-xs leading-5 text-muted-foreground">
+            Payments logged by hand were not read on the last refresh, so they
+            are not in the total. The note on the Logged by hand card says why.
+          </p>
+        )
+      ) : (
+        <p className="flex items-start gap-2 text-xs leading-5 text-muted-foreground">
+          <TriangleAlert
+            className="mt-0.5 size-3.5 shrink-0"
+            style={{ color: STATUS_COLOR.warning }}
+            aria-hidden
+          />
+          <span className="min-w-0">
+            {manual
+              ? "Only Whop is in the total: Tap is not read and nothing has been logged by hand, so it is not the whole business."
+              : "Only Whop is in the total: Tap is not read and the payments logged by hand were not read on the last refresh, so it is not the whole business."}
+          </span>
+        </p>
+      )}
 
       <DataTable
         rows={rows}
@@ -818,9 +783,8 @@ function RailsBody({
         />
       ) : (
         <p className="text-xs leading-relaxed text-muted-foreground">
-          Only the Whop rail is in the total, so the cash per day chart above
-          already covers it. A line per rail appears here once Tap is read or a
-          payment is logged by hand.
+          A line per rail appears here once Tap is read or a payment is logged
+          by hand.
         </p>
       )}
     </div>
@@ -828,6 +792,47 @@ function RailsBody({
 }
 
 // --- Signed deals against the cash tied to them ---
+
+type CollectionMonth = NonNullable<
+  MoneyPayload["collection"]
+>["byMonth"][number];
+
+// The kit table rather than a hand-rolled one: sentence-case headers in the
+// muted 12px, numbers right-aligned, the same rows as every other CEO table.
+const COLLECTION_COLUMNS: Column<CollectionMonth>[] = [
+  {
+    key: "month",
+    header: "Month",
+    cell: m => month(m.month, { long: true }),
+    sortValue: m => m.month,
+  },
+  {
+    key: "deals",
+    header: "Deals",
+    cell: m => count(m.deals),
+    sortValue: m => m.deals,
+    numeric: true,
+  },
+  {
+    key: "contracted",
+    header: "Contracted",
+    cell: m =>
+      m.contracted > 0 ? (
+        money(m.contracted)
+      ) : (
+        <span className="text-muted-foreground">Not asked</span>
+      ),
+    sortValue: m => m.contracted,
+    numeric: true,
+  },
+  {
+    key: "linked",
+    header: "Cash matched",
+    cell: m => money(m.linked),
+    sortValue: m => m.linked,
+    numeric: true,
+  },
+];
 
 /**
  * Contracted value beside the cash that can actually be matched to a deal.
@@ -854,7 +859,7 @@ function CollectionBody({ p }: { p: MoneyPayload }) {
 
   return (
     <div className="grid gap-6">
-      <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-x-6 gap-y-6 @2xl:grid-cols-4">
         <StatTile
           variant="plain"
           label="Contracted, all deals"
@@ -887,56 +892,26 @@ function CollectionBody({ p }: { p: MoneyPayload }) {
       </div>
 
       <div className="border-t pt-4">
-        <p className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          Contracted and matched cash, by month signed
-        </p>
-        <div className="overflow-x-auto">
-          <table
-            className="w-full text-sm"
-            style={{ fontVariantNumeric: "tabular-nums" }}
-          >
-            <thead>
-              <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
-                <th className="pb-2 pr-4 font-medium">Month</th>
-                <th className="pb-2 pr-4 text-right font-medium">Deals</th>
-                <th className="pb-2 pr-4 text-right font-medium">Contracted</th>
-                <th className="pb-2 text-right font-medium">Cash matched</th>
-              </tr>
-            </thead>
-            <tbody>
-              {c.byMonth.map(m => (
-                <tr key={m.month} className="border-t">
-                  <td className="py-1.5 pr-4">
-                    {month(m.month, { long: true })}
-                  </td>
-                  <td className="py-1.5 pr-4 text-right">{count(m.deals)}</td>
-                  <td className="py-1.5 pr-4 text-right">
-                    {m.contracted > 0 ? (
-                      money(m.contracted)
-                    ) : (
-                      <span className="text-muted-foreground">not asked</span>
-                    )}
-                  </td>
-                  <td className="py-1.5 text-right">{money(m.linked)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <Kicker className="mb-2">By month signed</Kicker>
+        <DataTable
+          rows={c.byMonth}
+          columns={COLLECTION_COLUMNS}
+          rowKey={m => m.month}
+          caption="Contracted and matched cash, by the month the deal was signed"
+          emptyText="No signed deals to group by month yet."
+        />
       </div>
 
       {rows.length ? (
         <div className="border-t pt-4">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            {`Signed, with no payment matched (${c.unmatched.length})`}
-          </p>
+          <Kicker>{`No payment matched (${c.unmatched.length})`}</Kicker>
           <p className="mt-1 text-xs text-muted-foreground">
             Check Whop before treating any of these as money owed.
           </p>
           <ul className="mt-3 grid gap-1">
             {rows.map(u => (
               <li key={`${u.client}-${u.month}`} className="text-sm">
-                {u.client}
+                <bdi>{u.client}</bdi>
                 <span className="text-muted-foreground">
                   {` · ${money(u.contracted)} · ${month(u.month, { long: true })}${u.plan ? ` · ${u.plan}` : ""}`}
                 </span>
@@ -1007,7 +982,7 @@ function MrrBody({ p }: { p: MoneyPayload }) {
 
   return (
     <div className="grid gap-6">
-      <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-x-6 gap-y-6 @2xl:grid-cols-4">
         {live.map(g => {
           const meta = MRR_GROUP[g.group];
           return (
@@ -1032,10 +1007,8 @@ function MrrBody({ p }: { p: MoneyPayload }) {
       </div>
 
       <div className="border-t pt-4">
-        <p className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          Of the live cards, what kind of money it is
-        </p>
-        <div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-3">
+        <Kicker className="mb-3">Kind of money</Kicker>
+        <div className="grid grid-cols-1 gap-x-6 gap-y-6 @xl:grid-cols-3">
           <StatTile
             variant="plain"
             label="On a recurring plan"
@@ -1067,7 +1040,8 @@ function MrrBody({ p }: { p: MoneyPayload }) {
       </div>
 
       <div className="border-t pt-4">
-        <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4">
+        <Kicker className="mb-3">Card fields</Kicker>
+        <div className="grid grid-cols-2 gap-x-6 gap-y-6 @2xl:grid-cols-4">
           <StatTile
             variant="plain"
             label="Payment Method filled"
@@ -1122,16 +1096,14 @@ function MrrBody({ p }: { p: MoneyPayload }) {
 
       {blank.length ? (
         <div className="border-t pt-4">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            {`Live cards with no MRR figure (${blank.length})`}
-          </p>
+          <Kicker>{`No MRR figure (${blank.length})`}</Kicker>
           <p className="mt-1 text-xs text-muted-foreground">
-            Their money is missing from every total above, not zero.
+            Live cards whose money is missing from every total above, not zero.
           </p>
-          <ul className="mt-3 grid gap-1 sm:grid-cols-2">
+          <ul className="mt-3 grid gap-x-6 gap-y-1 @xl:grid-cols-2">
             {shown.map(c => (
               <li key={c.taskId} className="text-sm">
-                {c.name}
+                <bdi>{c.name}</bdi>
                 <span className="text-muted-foreground">
                   {c.stage ? ` · ${c.stage}` : ""}
                 </span>
@@ -1160,7 +1132,7 @@ function MoneyTiles({ p }: { p: MoneyPayload }) {
   const contracted = contractedHeadline(p);
   const handDeals = contracted.handDeals;
   return (
-    <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3 xl:grid-cols-5">
+    <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-3 @4xl:grid-cols-5">
       <StatTile
         variant="plain"
         label="Deals this month"
@@ -1341,7 +1313,7 @@ function TargetsBody({ p }: { p: MoneyPayload }) {
   // The shared meter, so a target reads the same here, on Frontend and on Sales.
   const pace = p.targets.month === null || p.targets.month === p.month;
   return (
-    <div className="grid gap-x-10 gap-y-6 sm:grid-cols-2 xl:grid-cols-3">
+    <div className="grid gap-x-10 gap-y-6 @xl:grid-cols-2 @4xl:grid-cols-3">
       {items.map(item => (
         <TargetMeter
           key={item.metric}
@@ -1432,7 +1404,7 @@ const DEAL_COLUMNS: Column<Deal>[] = [
     cell: d => (
       <div className="min-w-0">
         <span
-          className="block max-w-[9.5rem] truncate font-medium text-foreground sm:max-w-[16rem]"
+          className="block max-w-[9.5rem] truncate font-medium text-foreground @md:max-w-[16rem]"
           title={d.business ?? undefined}
         >
           <Value
@@ -1440,8 +1412,8 @@ const DEAL_COLUMNS: Column<Deal>[] = [
             hint="The closer did not type a business name."
           />
         </span>
-        {/* On a phone the date column hides, so the date rides under the name. */}
-        <span className="block whitespace-nowrap text-xs tabular-nums text-muted-foreground sm:hidden">
+        {/* While the table is narrow the date column hides, so the date rides under the name. */}
+        <span className="block whitespace-nowrap text-xs tabular-nums text-muted-foreground @md:hidden">
           {date(d.date)}
         </span>
       </div>
@@ -1581,7 +1553,7 @@ function PnlHalf({
     : "no month loaded";
 
   return (
-    <div className="grid gap-5 lg:gap-7">
+    <div className="grid gap-4 lg:gap-6">
       <SectionCard
         title={`Expenses, ${monthLabel}`}
         section={section}
@@ -1691,7 +1663,7 @@ function MonthCoveredBody({ e, now }: { e: ExpensesPayload; now: number }) {
     ? e.monthsLoaded.map(m => month(m, { long: true, year: true })).join(", ")
     : null;
   return (
-    <dl className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4">
+    <dl className="grid grid-cols-2 gap-x-6 gap-y-6 @2xl:grid-cols-4">
       <Fact
         label="The month these numbers cover"
         value={e.month ? month(e.month, { long: true, year: true }) : NA}
@@ -1760,12 +1732,29 @@ function VendorList({
   );
 }
 
-function GroupLabel({ children }: { children: ReactNode }) {
+/**
+ * An explanation longer than two lines, folded under one quiet line. The n/a
+ * beside a figure carries the same reason on tap, so nothing is lost.
+ */
+function Explain({
+  summary,
+  children,
+}: {
+  summary: string;
+  children: ReactNode;
+}) {
   return (
-    <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-      {children}
-    </p>
+    <details className="mt-3 text-xs text-muted-foreground">
+      <summary className="cursor-pointer select-none hover:text-foreground">
+        {summary}
+      </summary>
+      <p className="mt-2 leading-relaxed">{children}</p>
+    </details>
   );
+}
+
+function GroupLabel({ children }: { children: ReactNode }) {
+  return <Kicker>{children}</Kicker>;
 }
 
 function ExcludedList({ rows }: { rows: { label: string; amount: number }[] }) {
@@ -1777,7 +1766,7 @@ function ExcludedList({ rows }: { rows: { label: string; amount: number }[] }) {
         {rows.map(r => (
           <div
             key={r.label}
-            className="flex items-baseline justify-between gap-3 text-[13px]"
+            className="flex items-baseline justify-between gap-3 text-sm"
           >
             <dt
               className="min-w-0 truncate text-muted-foreground"
@@ -1806,7 +1795,7 @@ function GroupBody({
 }) {
   const showHeadline = isNum(group.headline) && group.headline !== group.amount;
   return (
-    <div className="grid gap-8 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:gap-10">
+    <div className="grid gap-8 @3xl:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] @3xl:gap-10">
       <div className="min-w-0">
         <StatTile
           variant="plain"
@@ -1824,9 +1813,7 @@ function GroupBody({
           }
         />
         {group.why ? (
-          <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-            {group.why}
-          </p>
+          <Explain summary="How this is counted">{group.why}</Explain>
         ) : null}
         <ExcludedList rows={group.excluded} />
         {extra}
@@ -1839,9 +1826,9 @@ function GroupBody({
 function AdSpendBody({ e }: { e: ExpensesPayload }) {
   const clients = e.clientAdSpend.clients;
   return (
-    <div className="grid gap-8 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:gap-10">
+    <div className="grid gap-8 @3xl:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] @3xl:gap-10">
       <div className="min-w-0">
-        <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
+        <div className="grid gap-x-6 gap-y-6 @md:grid-cols-2">
           <StatTile
             variant="plain"
             label="Lead-gen ad spend, from the bank"
@@ -1867,9 +1854,7 @@ function AdSpendBody({ e }: { e: ExpensesPayload }) {
           />
         </div>
         {e.ownAdSpend.why ? (
-          <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-            {e.ownAdSpend.why}
-          </p>
+          <Explain summary="How this is counted">{e.ownAdSpend.why}</Explain>
         ) : null}
         <ExcludedList rows={e.ownAdSpend.excluded} />
       </div>
@@ -1881,9 +1866,9 @@ function AdSpendBody({ e }: { e: ExpensesPayload }) {
 function TotalsBody({ e }: { e: ExpensesPayload }) {
   const items = categoryItems(e.byCategory);
   return (
-    <div className="grid gap-8 lg:grid-cols-[minmax(0,6fr)_minmax(0,6fr)] lg:gap-10">
+    <div className="grid gap-8 @3xl:grid-cols-2 @3xl:gap-10">
       <div className="min-w-0">
-        <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3">
+        <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-3">
           <StatTile
             variant="plain"
             label="Spent in the month"
@@ -1931,9 +1916,7 @@ function TotalsBody({ e }: { e: ExpensesPayload }) {
           />
         </div>
         {e.profit.why ? (
-          <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
-            {e.profit.why}
-          </p>
+          <Explain summary="Why profit is not drawn">{e.profit.why}</Explain>
         ) : null}
       </div>
       <div className="min-w-0">

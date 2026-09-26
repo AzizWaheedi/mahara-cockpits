@@ -44,7 +44,7 @@ export function Meter({
   return (
     <div className={cn("min-w-0", className)}>
       <div className="flex items-baseline justify-between gap-3">
-        <p className="min-w-0 truncate text-[13px] text-muted-foreground">
+        <p className="min-w-0 truncate text-xs text-muted-foreground">
           {label}
         </p>
         {share !== null ? (

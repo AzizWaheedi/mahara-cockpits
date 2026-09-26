@@ -24,6 +24,7 @@ import {
   plural,
 } from "@/components/ceo/format";
 import { Hint } from "@/components/ceo/Hint";
+import { Kicker } from "@/components/ceo/Kicker";
 import { Na, Value } from "@/components/ceo/Na";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
@@ -192,7 +193,7 @@ export function DeliveryTab({ sections, now, day }: CeoTabProps) {
   return (
     <div className="@container grid min-w-0 gap-4 lg:gap-6">
       <SectionCard
-        kicker="Last 7 full days"
+        kicker="Last 7 days"
         title="Client ads"
         section={section}
         notes={topNotes}
@@ -210,7 +211,6 @@ export function DeliveryTab({ sections, now, day }: CeoTabProps) {
       />
 
       <SectionCard
-        kicker="Last 30 days"
         title="Spend, leads and bookings per day"
         section={section}
         order={1}
@@ -219,7 +219,7 @@ export function DeliveryTab({ sections, now, day }: CeoTabProps) {
       </SectionCard>
 
       <SectionCard
-        kicker="Campaigns right now"
+        kicker="Right now"
         title="Campaign health"
         section={section}
         order={2}
@@ -244,7 +244,7 @@ export function DeliveryTab({ sections, now, day }: CeoTabProps) {
 
       <div className="grid min-w-0 items-start gap-4 lg:gap-6 @4xl:grid-cols-2">
         <SectionCard
-          kicker="In flight right now"
+          kicker="Right now"
           title="Launches"
           section={section}
           notes={notes.launch}
@@ -253,7 +253,7 @@ export function DeliveryTab({ sections, now, day }: CeoTabProps) {
           {d => <Launches d={d} />}
         </SectionCard>
         <SectionCard
-          kicker="Open right now"
+          kicker="Right now"
           title="Ad account issues"
           section={section}
           order={5}
@@ -276,9 +276,9 @@ export function DeliveryTab({ sections, now, day }: CeoTabProps) {
 // --- Headline -----------------------------------------------------------------
 
 /**
- * Five tiles in one hairline-divided block. Phones get two columns with the
- * first tile across the top, mid widths a 2 over 3 split, wide cards one row,
- * so five tiles never leave an empty cell.
+ * Five tiles straight on the card (no box inside the box). Phones get two
+ * columns with the first tile across the top, mid widths a 2 over 3 split,
+ * wide cards one row, so five tiles never leave an empty cell.
  */
 const TILE_SPANS = [
   "col-span-2 @xl:col-span-3 @4xl:col-span-1",
@@ -290,7 +290,7 @@ const TILE_SPANS = [
 
 function TileBlock({ children }: { children: ReactNode }) {
   return (
-    <div className="grid min-w-0 grid-cols-2 gap-px overflow-hidden rounded-lg border bg-[var(--ceo-grid)] @xl:grid-cols-6 @4xl:grid-cols-5">
+    <div className="grid min-w-0 grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-6 @4xl:grid-cols-5">
       {children}
     </div>
   );
@@ -326,7 +326,7 @@ function TileCell({
   className?: string;
 }) {
   return (
-    <div className={cn("flex min-w-0 flex-col bg-card p-4", className)}>
+    <div className={cn("flex min-w-0 flex-col", className)}>
       {tile}
       <div className="mt-auto pt-3">{lines}</div>
     </div>
@@ -558,8 +558,8 @@ function CampaignHealth({ d }: { d: DeliveryPayload }) {
 
   return (
     <div className="min-w-0 space-y-6">
-      <div className="grid min-w-0 grid-cols-2 gap-px overflow-hidden rounded-lg border bg-[var(--ceo-grid)] @xl:grid-cols-3">
-        <div className="col-span-2 min-w-0 bg-card p-4 @xl:col-span-1">
+      <div className="grid min-w-0 grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-3">
+        <div className="col-span-2 min-w-0 @xl:col-span-1">
           <StatTile
             variant="plain"
             label="Running on Meta"
@@ -567,7 +567,7 @@ function CampaignHealth({ d }: { d: DeliveryPayload }) {
             sub="Campaigns live now, on the board"
           />
         </div>
-        <div className="min-w-0 bg-card p-4">
+        <div className="min-w-0">
           <StatTile
             variant="plain"
             label="Off on the board, still running"
@@ -576,7 +576,7 @@ function CampaignHealth({ d }: { d: DeliveryPayload }) {
             sub="Marked off in ClickUp but live on Meta"
           />
         </div>
-        <div className="min-w-0 bg-card p-4">
+        <div className="min-w-0">
           <StatTile
             variant="plain"
             label="Spending, not on the board"
@@ -587,9 +587,9 @@ function CampaignHealth({ d }: { d: DeliveryPayload }) {
         </div>
       </div>
 
-      <div className="min-w-0">
-        <div className="mb-2.5 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-          <p className="text-[13px] font-medium text-foreground">
+      <div className="min-w-0 border-t pt-6">
+        <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+          <p className="text-sm font-medium text-foreground">
             Verdicts on running campaigns
           </p>
           <p className="text-xs text-muted-foreground tabular-nums">
@@ -630,7 +630,7 @@ function CampaignHealth({ d }: { d: DeliveryPayload }) {
               <Hint content={v.hint}>
                 <button
                   type="button"
-                  className="flex min-w-0 cursor-help items-center gap-1.5 rounded-sm text-[13px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="no-touch relative flex min-w-0 cursor-help items-center gap-1.5 rounded-sm text-sm text-muted-foreground after:absolute after:-inset-2 after:content-[''] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <span
                     aria-hidden
@@ -759,7 +759,7 @@ function RateCell({
     <Hint content={detail}>
       <button
         type="button"
-        className="relative inline-flex cursor-help items-center gap-1.5 rounded-sm tabular-nums underline decoration-muted-foreground/35 decoration-dotted underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="no-touch relative inline-flex cursor-help items-center gap-1.5 rounded-sm tabular-nums underline decoration-muted-foreground/35 decoration-dotted underline-offset-4 after:absolute after:-inset-2 after:content-[''] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         {inner}
       </button>
@@ -773,7 +773,7 @@ function Stacked({ value, sub }: { value: ReactNode; sub?: ReactNode }) {
     <span className="inline-flex flex-col items-end leading-tight">
       <span>{value}</span>
       {sub ? (
-        <span className="text-[11px] font-normal leading-4 text-muted-foreground">
+        <span className="text-xs font-normal leading-4 text-muted-foreground">
           {sub}
         </span>
       ) : null}
@@ -819,7 +819,8 @@ function ClientsTable({ d }: { d: DeliveryPayload }) {
           />
           <span
             title={r.client}
-            className="block max-w-36 truncate font-medium text-foreground sm:max-w-64"
+            dir="auto"
+            className="block max-w-36 truncate text-left font-medium text-foreground sm:max-w-64"
           >
             {r.client}
           </span>
@@ -836,6 +837,7 @@ function ClientsTable({ d }: { d: DeliveryPayload }) {
         <StatusChip
           tone={STATUS[r.status].tone}
           label={STATUS[r.status].label}
+          className="min-w-max"
           hint={`${statusHint(r.status, d.gates)}${
             isNum(r.costPerShownAt60)
               ? ` At a ${SHOW_RATE_GOOD}% show rate, a shown booking would cost ${money(r.costPerShownAt60)}.`
@@ -984,13 +986,17 @@ function ClientsTable({ d }: { d: DeliveryPayload }) {
     tone: STATUS[key].tone,
     hint: statusHint(key, d.gates),
   });
-  const options: FilterOption<Filter>[] = [
+  const every: FilterOption<Filter>[] = [
     { key: "all", label: "All", count: d.clients.length },
     chip("bad"),
     chip("watch"),
     chip("good"),
-    ...(counts["no-data"] > 0 ? [chip("no-data")] : []),
+    chip("no-data"),
   ];
+  // A chip with nothing behind it is noise; the chosen one stays so it can be undone.
+  const options = every.filter(
+    o => o.key === "all" || o.key === filter || (o.count ?? 0) > 0,
+  );
 
   return (
     <DataTable
@@ -1042,21 +1048,26 @@ function ClientNoOutcome({ c }: { c: ClientRow }) {
   return (
     <li className="min-w-0">
       <details className="group min-w-0">
-        <summary className="no-marker flex min-w-0 cursor-pointer select-none list-none items-center gap-2.5 rounded-sm py-2.5 text-[13px] hover:bg-[var(--ceo-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <summary className="no-marker flex min-w-0 cursor-pointer select-none list-none items-center gap-2.5 rounded-sm py-2.5 text-sm hover:bg-[var(--ceo-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
           <ChevronRight
             className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90"
             aria-hidden
           />
-          <span className="min-w-0 flex-1 truncate font-medium text-foreground">
-            {c.client}
-          </span>
-          <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-            {plural(total, "appointment")}
-            {newest ? ` · newest ${date(newest)}` : ""}
+          <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-3 gap-y-0.5">
+            <span
+              dir="auto"
+              className="min-w-0 max-w-full truncate text-left font-medium text-foreground"
+            >
+              {c.client}
+            </span>
+            <span className="text-xs text-muted-foreground tabular-nums">
+              {plural(total, "appointment")}
+              {newest ? ` · newest ${date(newest)}` : ""}
+            </span>
           </span>
         </summary>
         {list.length ? (
-          <ol className="mb-3 ml-6 min-w-0 divide-y divide-[color:var(--ceo-grid)] rounded-md border">
+          <ol className="mb-3 ml-6 min-w-0 divide-y divide-[color:var(--ceo-grid)] rounded-xl bg-muted/40">
             {list.map((a, i) => (
               <li
                 key={`${a.at}-${i}`}
@@ -1112,12 +1123,10 @@ function NoOutcomeLedger({ d }: { d: DeliveryPayload }) {
   if (!o && rows.length === 0) return null;
 
   return (
-    <div className="mt-6 min-w-0 border-t border-[color:var(--ceo-grid)] pt-5">
+    <div className="mt-6 min-w-0 border-t border-[color:var(--ceo-grid)] pt-6">
       <div className="mb-3 flex flex-wrap items-end justify-between gap-x-4 gap-y-1">
         <div className="min-w-0">
-          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            Last 30 full days
-          </p>
+          <Kicker className="mb-1.5">Last 30 days</Kicker>
           <h3 className="text-sm font-semibold leading-5 text-foreground">
             Past appointments with no outcome in Mahara OS
           </h3>
@@ -1125,10 +1134,9 @@ function NoOutcomeLedger({ d }: { d: DeliveryPayload }) {
         {o ? (
           <p className="text-xs text-muted-foreground tabular-nums">
             {count(o.withOutcome)} of {count(o.pastAppointments)} past
-            appointments across every client have an outcome in Mahara OS
+            appointments across every client have an outcome
             {o.since ? `, reported since ${date(o.since)}` : ""} ·{" "}
-            {count(o.won)} won · {count(total)} to chase across the clients in
-            the table
+            {count(o.won)} won · {count(total)} to chase below
           </p>
         ) : null}
       </div>
@@ -1158,7 +1166,7 @@ function Launches({ d }: { d: DeliveryPayload }) {
     <div className="min-w-0">
       <dl className="grid grid-cols-2 gap-4">
         <div className="min-w-0">
-          <dt className="text-[13px] text-muted-foreground">In flight</dt>
+          <dt className="text-sm text-muted-foreground">In flight</dt>
           <dd className="mt-0.5 text-2xl font-semibold tracking-tight text-foreground">
             {count(inFlight)}
           </dd>
@@ -1167,7 +1175,7 @@ function Launches({ d }: { d: DeliveryPayload }) {
           </dd>
         </div>
         <div className="min-w-0">
-          <dt className="text-[13px] text-muted-foreground">Stuck</dt>
+          <dt className="text-sm text-muted-foreground">Stuck</dt>
           <dd className="mt-0.5 flex flex-wrap items-center gap-2 text-2xl font-semibold tracking-tight text-foreground">
             {count(stuck.length)}
             {stuck.length > 0 ? (
@@ -1193,14 +1201,17 @@ function Launches({ d }: { d: DeliveryPayload }) {
           className="mt-4"
         />
       ) : (
-        <ol className="mt-5 min-w-0 border-t border-[color:var(--ceo-grid)]">
+        <ol className="mt-6 min-w-0 border-t border-[color:var(--ceo-grid)]">
           {stuck.map((s, i) => (
             <li
               key={`${s.client}-${i}`}
               className="flex min-w-0 items-start justify-between gap-3 border-b border-[color:var(--ceo-grid)] py-3 last:border-0 last:pb-0"
             >
               <div className="min-w-0">
-                <p className="truncate text-[13px] font-medium text-foreground">
+                <p
+                  dir="auto"
+                  className="truncate text-left text-sm font-medium text-foreground"
+                >
                   {s.client}
                 </p>
                 <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
@@ -1241,7 +1252,10 @@ function AccountIssues({ d }: { d: DeliveryPayload }) {
             aria-label="Account issue"
           />
           <div className="min-w-0">
-            <p className="truncate text-[13px] font-medium text-foreground">
+            <p
+              dir="auto"
+              className="truncate text-left text-sm font-medium text-foreground"
+            >
               {a.client}
             </p>
             <p className="mt-0.5 break-words text-xs leading-relaxed text-muted-foreground">

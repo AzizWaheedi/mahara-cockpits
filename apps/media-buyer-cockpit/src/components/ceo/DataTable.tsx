@@ -5,7 +5,14 @@ import {
   Search,
   Table2,
 } from "lucide-react";
-import { type ReactNode, useDeferredValue, useMemo, useState } from "react";
+import {
+  type ReactNode,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { EmptyState } from "./EmptyState";
 import { count, isNum } from "./format";
@@ -21,7 +28,12 @@ export type Column<T> = {
   sortValue?: (row: T) => number | string | null | undefined;
   /** Right-aligned with tabular figures. */
   numeric?: boolean;
-  /** Hide the column below this breakpoint to spare phone width. */
+  /**
+   * Hide the column while the table is narrower than this, to spare phone
+   * width. Measured on the table's own width, not the screen's, so a table
+   * in a half-width card on a laptop drops the same columns as on a phone:
+   * sm 448px, md 576px, lg 768px.
+   */
   hideBelow?: "sm" | "md" | "lg";
   /** Extra classes for the header and cells (widths, wrapping). */
   className?: string;
@@ -30,9 +42,9 @@ export type Column<T> = {
 type Sort = { key: string; dir: "asc" | "desc" };
 
 const HIDE: Record<NonNullable<Column<unknown>["hideBelow"]>, string> = {
-  sm: "hidden sm:table-cell",
-  md: "hidden md:table-cell",
-  lg: "hidden lg:table-cell",
+  sm: "hidden @md:table-cell",
+  md: "hidden @xl:table-cell",
+  lg: "hidden @3xl:table-cell",
 };
 
 /**
@@ -47,12 +59,14 @@ export function DataTable<T>({
   search,
   filters,
   limit,
+  pageSize,
   emptyText = "Nothing to show yet.",
   caption,
   stickyFirst = false,
   bleed = true,
   onRowClick,
   className,
+  tableClassName,
 }: {
   /** The rows, in their default order. */
   rows: T[];
@@ -68,22 +82,39 @@ export function DataTable<T>({
   filters?: ReactNode;
   /** Show the first N rows with a "Show all" button. */
   limit?: number;
+  /**
+   * For lists that can run to hundreds of rows: show the first N, then N more
+   * per press ("Show 50 more"). Takes the place of `limit`; a new search or a
+   * new set of rows starts again from the first page.
+   */
+  pageSize?: number;
   /** Text when there are no rows (or none match the search). */
   emptyText?: string;
   /** Screen reader caption naming the table. */
   caption?: string;
   /** Keep the first column visible while scrolling sideways on a phone. */
   stickyFirst?: boolean;
-  /** Run rows to the card edges; assumes the 20px SectionCard padding. */
+  /** Run rows to the card edges; assumes the SectionCard padding (16px, 24px from sm up). */
   bleed?: boolean;
   /** Makes rows clickable. */
   onRowClick?: (row: T) => void;
   className?: string;
+  /** Classes for the table itself, e.g. min-w-max so wide rows scroll inside the card instead of wrapping. */
+  tableClassName?: string;
 }) {
   const [sort, setSort] = useState<Sort | null>(initialSort ?? null);
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState(false);
+  const [pages, setPages] = useState(1);
   const deferredQuery = useDeferredValue(query);
+  // Back to the first page when the list itself changes (a filter, a new
+  // timeframe) or the search does; a refresh that keeps the rows keeps it.
+  const firstKey = rows.length ? rowKey(rows[0], 0) : "";
+  const listSignature = `${rows.length}:${firstKey}:${deferredQuery}`;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the signature is the trigger
+  useEffect(() => {
+    setPages(1);
+  }, [listSignature]);
 
   const filtered = useMemo(() => {
     const q = deferredQuery.trim().toLowerCase();
@@ -117,7 +148,12 @@ export function DataTable<T>({
     });
   }, [filtered, sort, columns]);
 
-  const visible = limit && !expanded ? sorted.slice(0, limit) : sorted;
+  const visible = pageSize
+    ? sorted.slice(0, pageSize * pages)
+    : limit && !expanded
+      ? sorted.slice(0, limit)
+      : sorted;
+  const hiddenCount = sorted.length - visible.length;
 
   const toggleSort = (col: Column<T>) => {
     setSort(prev => {
@@ -127,14 +163,19 @@ export function DataTable<T>({
     });
   };
 
-  const edge = bleed ? "first:pl-5 last:pr-5" : "first:pl-0 last:pr-0";
+  // The bleed matches the SectionCard padding, so the first and last cells
+  // line up with the card's other content and the hairlines run edge to edge.
+  const edge = bleed
+    ? "first:pl-4 sm:first:pl-6 last:pr-4 sm:last:pr-6"
+    : "first:pl-0 last:pr-0";
 
   return (
-    <div className={cn("min-w-0", className)}>
+    // A size container: hideBelow reads the table's own width.
+    <div className={cn("@container min-w-0", className)}>
       {search || filters ? (
         <div className="mb-3 flex flex-wrap items-center gap-2">
           {search ? (
-            <label className="relative flex min-w-0 flex-1 items-center sm:max-w-64">
+            <label className="relative flex min-w-0 flex-1 items-center @md:max-w-64">
               <span className="sr-only">Search</span>
               <Search
                 className="pointer-events-none absolute left-2.5 size-3.5 text-muted-foreground"
@@ -161,10 +202,18 @@ export function DataTable<T>({
       {sorted.length === 0 ? (
         <EmptyState icon={Table2} title={emptyText} compact />
       ) : (
+        // relative: a visually hidden element in a scrolled-off cell (the
+        // native select behind a Kind picker, a screen reader label) belongs
+        // to this scroller, so it is clipped here instead of widening the page.
         <div
-          className={cn("ceo-table-scroll overflow-x-auto", bleed && "-mx-5")}
+          className={cn(
+            "ceo-table-scroll relative overflow-x-auto",
+            bleed && "-mx-4 sm:-mx-6",
+          )}
         >
-          <table className="w-full border-collapse text-sm">
+          <table
+            className={cn("w-full border-collapse text-sm", tableClassName)}
+          >
             {caption ? <caption className="sr-only">{caption}</caption> : null}
             <thead>
               <tr className="border-b">
@@ -201,7 +250,7 @@ export function DataTable<T>({
                           type="button"
                           onClick={() => toggleSort(col)}
                           className={cn(
-                            "group inline-flex items-center gap-1 rounded-sm hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                            "no-touch group relative inline-flex items-center gap-1 rounded-sm after:absolute after:-inset-x-1.5 after:-inset-y-2 after:content-[''] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                             col.numeric && "flex-row-reverse",
                             active && "text-foreground",
                           )}
@@ -263,7 +312,33 @@ export function DataTable<T>({
         </div>
       )}
 
-      {limit && sorted.length > limit ? (
+      {pageSize ? (
+        sorted.length > pageSize ? (
+          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+            {hiddenCount > 0 ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPages(p => p + 1)}
+              >
+                {`Show ${count(Math.min(pageSize, hiddenCount))} more`}
+              </Button>
+            ) : null}
+            <span className="text-xs text-muted-foreground tabular-nums">
+              {`${count(visible.length)} of ${count(sorted.length)} shown`}
+            </span>
+            {pages > 1 ? (
+              <button
+                type="button"
+                onClick={() => setPages(1)}
+                className="rounded-sm text-xs font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                Show fewer
+              </button>
+            ) : null}
+          </div>
+        ) : null
+      ) : limit && sorted.length > limit ? (
         <button
           type="button"
           onClick={() => setExpanded(e => !e)}

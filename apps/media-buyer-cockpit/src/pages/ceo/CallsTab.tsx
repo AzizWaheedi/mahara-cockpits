@@ -1,6 +1,7 @@
 import { useAction } from "convex/react";
 import { useEffect, useRef, useState } from "react";
 import { type Column, DataTable } from "@/components/ceo/DataTable";
+import { FilterChips } from "@/components/ceo/FilterChips";
 import {
   count,
   date,
@@ -12,7 +13,8 @@ import {
 } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
-import { cn } from "@/lib/utils";
+import { TabLink } from "@/components/ceo/TabLink";
+import { Button } from "@/components/ui/button";
 import { api } from "../../../convex/_generated/api";
 import {
   type CallCenterMetrics,
@@ -24,10 +26,21 @@ import type { CeoTabProps } from "./types";
 
 const FIELD =
   "h-9 rounded-md border bg-background px-2 text-sm text-foreground tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
-const BUTTON =
-  "rounded-md border px-3 py-2 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-wait disabled:opacity-50";
 type View = "overall" | "callers" | "clients" | "daily";
 type Focus = "calling" | "outcomes";
+/** The quick ranges, as the chips beside the dates; "custom" is any other pair of dates. */
+type Preset = "1" | "7" | "30" | "custom";
+const PRESETS: { key: Exclude<Preset, "custom">; label: string }[] = [
+  { key: "1", label: "Today" },
+  { key: "7", label: "7 days" },
+  { key: "30", label: "30 days" },
+];
+const VIEWS: { key: View; label: string }[] = [
+  { key: "overall", label: "Overall" },
+  { key: "callers", label: "Per caller" },
+  { key: "clients", label: "Per client" },
+  { key: "daily", label: "Day by day" },
+];
 type TableRow = CallCenterMetrics & { key: string; label: string };
 const before = (day: string, days: number) =>
   new Date(Date.parse(`${day}T00:00:00Z`) - days * 86_400_000)
@@ -41,6 +54,26 @@ const valueText = (values: CallCenterMetrics["values"]) =>
         )
         .join(" · ")
     : "n/a";
+
+/** How each group of numbers is counted, folded one heading at a time. */
+const READING: { title: string; text: string }[] = [
+  {
+    title: "Calls and leads",
+    text: "Dials are saved dispositions with a note. Actual calls, connections and response time use Maqsam evidence. New leads, dialed leads and contacted leads use leads created in the selected dates; contacted means a completed call with talk time and may include voicemail. A missing or ambiguous call link stays unverified.",
+  },
+  {
+    title: "Working time",
+    text: "Speed starts when the lead arrives and stops at its first actual dial, counting only the first caller’s working hours. The 2-minute share includes all new leads in the selected cohort, including those with no verified dial. Missing schedules have no invented response time. Average call gap removes ringing and talk time.",
+  },
+  {
+    title: "Bookings",
+    text: "Confirmed means the main or online booking calendar. Provisional is shown separately. New appointments count by booking creation date; reschedules are not a second booking. Unknown calendar classifications are shown separately. Delivery retains its separate appointment-date view.",
+  },
+  {
+    title: "Outcomes and ownership",
+    text: "Show rate is shows ÷ (shows + no-shows); close rate is closed projects ÷ shown appointments. Client sheet outcomes remain authoritative. Leads belong to the first verified caller, otherwise Unassigned; caller rows do not invent who should have called an untouched lead. Project values retain their recorded currencies.",
+  },
+];
 
 /** One date window and source for the company, callers and client comparison. */
 export function CallsTab({ sections, now, day, goTab }: CeoTabProps) {
@@ -88,6 +121,10 @@ export function CallsTab({ sections, now, day, goTab }: CeoTabProps) {
     setTo(today);
     void read(start, today);
   }
+  // The chip that matches the dates on screen, so a quick range reads as chosen.
+  const activePreset: Preset =
+    PRESETS.find(p => to === today && from === before(today, Number(p.key) - 1))
+      ?.key ?? "custom";
   const rows: TableRow[] = !report
     ? []
     : view === "callers"
@@ -108,11 +145,11 @@ export function CallsTab({ sections, now, day, goTab }: CeoTabProps) {
     <div className="@container grid min-w-0 gap-4 lg:gap-6">
       <SectionCard
         title="Call center scorecard"
-        kicker="Shared with the power dialer"
+        kicker="Shared with dialer"
         order={0}
       >
         <div className="space-y-4">
-          <div className="flex flex-wrap items-end gap-3">
+          <div className="flex flex-wrap items-end gap-x-3 gap-y-3">
             <label className="grid gap-1 text-xs text-muted-foreground">
               From
               <input
@@ -133,41 +170,24 @@ export function CallsTab({ sections, now, day, goTab }: CeoTabProps) {
                 onChange={e => setTo(e.target.value)}
               />
             </label>
-            <button
-              type="button"
-              className={cn(BUTTON, "bg-primary text-primary-foreground")}
-              disabled={busy}
-              onClick={() => void read()}
-            >
-              {busy ? "Loading…" : "Apply / refresh"}
-            </button>
-            <div
-              className="flex flex-wrap gap-1"
-              role="group"
-              aria-label="Date presets"
-            >
-              {[
-                [1, "Today"],
-                [7, "7 days"],
-                [30, "30 days"],
-              ].map(([days, label]) => (
-                <button
-                  type="button"
-                  key={days}
-                  className={BUTTON}
-                  disabled={busy}
-                  onClick={() => preset(Number(days))}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            <Button type="button" disabled={busy} onClick={() => void read()}>
+              {busy ? "Loading…" : "Load report"}
+            </Button>
+            <FilterChips
+              ariaLabel="Date presets"
+              value={activePreset}
+              onChange={key => {
+                if (!busy && key !== "custom") preset(Number(key));
+              }}
+              options={PRESETS}
+              className="basis-full sm:basis-auto sm:pb-1"
+            />
           </div>
           {stale ? (
             <p role="status" className="text-sm text-destructive">
               The latest scheduled report failed to refresh. The last good
-              report remains below with its original dates. Use Apply / refresh
-              to retry.
+              report remains below with its original dates. Use Load report to
+              retry.
             </p>
           ) : null}
           {error ? (
@@ -192,34 +212,13 @@ export function CallsTab({ sections, now, day, goTab }: CeoTabProps) {
               retired.
             </p>
           )}
-          <div
-            className="flex flex-wrap gap-1 border-t pt-3"
-            role="group"
-            aria-label="Scorecard view"
-          >
-            {(["overall", "callers", "clients", "daily"] as const).map(key => (
-              <button
-                key={key}
-                type="button"
-                className={cn(
-                  BUTTON,
-                  view === key
-                    ? "border-primary bg-primary/10 text-primary"
-                    : "border-transparent text-muted-foreground",
-                )}
-                aria-pressed={view === key}
-                onClick={() => setView(key)}
-              >
-                {key === "overall"
-                  ? "Overall"
-                  : key === "callers"
-                    ? "Per caller"
-                    : key === "clients"
-                      ? "Per client"
-                      : "Day by day"}
-              </button>
-            ))}
-          </div>
+          <FilterChips
+            ariaLabel="Scorecard view"
+            value={view}
+            onChange={setView}
+            options={VIEWS}
+            className="border-t pt-4"
+          />
         </div>
       </SectionCard>
 
@@ -235,31 +234,17 @@ export function CallsTab({ sections, now, day, goTab }: CeoTabProps) {
                 ? "Client comparison"
                 : "Daily results"
           }
-          kicker={`${date(report.from)} to ${date(report.to)}`}
           order={1}
           actions={
-            <div
-              role="group"
-              aria-label="Metric columns"
-              className="flex gap-1"
-            >
-              {(["calling", "outcomes"] as const).map(key => (
-                <button
-                  type="button"
-                  key={key}
-                  className={cn(
-                    BUTTON,
-                    focus === key && "border-primary text-primary",
-                  )}
-                  aria-pressed={focus === key}
-                  onClick={() => setFocus(key)}
-                >
-                  {key === "calling"
-                    ? "Calling & response"
-                    : "Bookings & outcomes"}
-                </button>
-              ))}
-            </div>
+            <FilterChips
+              ariaLabel="Metric columns"
+              value={focus}
+              onChange={setFocus}
+              options={[
+                { key: "calling", label: "Calling & response" },
+                { key: "outcomes", label: "Bookings & outcomes" },
+              ]}
+            />
           }
         >
           <DataTable
@@ -292,83 +277,54 @@ export function CallsTab({ sections, now, day, goTab }: CeoTabProps) {
           title="How to read these numbers"
           order={2}
           notes={report.warnings.map(text => ({ level: "info", text }))}
+          actions={
+            // Working hours live on the roster; the speed rules below read them.
+            <TabLink tab="team" label="Team & payroll" goTab={goTab} />
+          }
         >
-          <div className="grid gap-4 text-sm leading-relaxed text-muted-foreground lg:grid-cols-2">
-            <p>
-              <strong className="font-medium text-foreground">
-                Calls and leads.
-              </strong>{" "}
-              Dials are saved dispositions with a note. Actual calls,
-              connections and response time use Maqsam evidence. New leads,
-              dialed leads and contacted leads use leads created in the selected
-              dates; contacted means a completed call with talk time and may
-              include voicemail. A missing or ambiguous call link stays
-              unverified.
-            </p>
-            <p>
-              <strong className="font-medium text-foreground">
-                Working time.
-              </strong>{" "}
-              Speed starts when the lead arrives and stops at its first actual
-              dial, counting only the first caller’s working hours. The 2-minute
-              share includes all new leads in the selected cohort, including
-              those with no verified dial. Missing schedules have no invented
-              response time. Average call gap removes ringing and talk time.
-            </p>
-            <p>
-              <strong className="font-medium text-foreground">Bookings.</strong>{" "}
-              Confirmed means the main or online booking calendar. Provisional
-              is shown separately. New appointments count by booking creation
-              date; reschedules are not a second booking. Unknown calendar
-              classifications are shown separately. Delivery retains its
-              separate appointment-date view.
-            </p>
-            <p>
-              <strong className="font-medium text-foreground">
-                Outcomes and ownership.
-              </strong>{" "}
-              Show rate is shows ÷ (shows + no-shows); close rate is closed
-              projects ÷ shown appointments. Client sheet outcomes remain
-              authoritative. Leads belong to the first verified caller,
-              otherwise Unassigned; caller rows do not invent who should have
-              called an untouched lead. Project values retain their recorded
-              currencies.
-            </p>
+          {/* Each rule folds under its heading, so the card is a list of
+              four questions until one needs answering. */}
+          <div className="divide-y text-sm">
+            {READING.map(r => (
+              <details key={r.title} className="py-3 first:pt-0">
+                <summary className="text-sm font-medium text-foreground">
+                  {r.title}
+                </summary>
+                <p className="mt-2 max-w-prose leading-relaxed text-muted-foreground">
+                  {r.text}
+                </p>
+              </details>
+            ))}
+            <details className="py-3 last:pb-0">
+              <summary className="text-sm font-medium text-foreground">
+                Source coverage
+              </summary>
+              <p className="mt-2 max-w-prose text-xs leading-relaxed text-muted-foreground">
+                Supabase shared report v{report.version}. Current roster
+                schedules and date exceptions apply to history; recorded breaks
+                and effective-dated schedule history are not available. Mahara’s
+                own sales funnel remains separate.
+              </p>
+              <dl className="mt-3 grid gap-2 text-xs text-muted-foreground @lg:grid-cols-2">
+                {Object.entries(report.coverage)
+                  .filter(
+                    ([, value]) =>
+                      value === null ||
+                      ["string", "number", "boolean"].includes(typeof value),
+                  )
+                  .map(([key, value]) => (
+                    <div key={key}>
+                      <dt className="font-medium text-foreground">
+                        {key
+                          .replace(/([a-z])([A-Z])/g, "$1 $2")
+                          .replaceAll("_", " ")}
+                      </dt>
+                      <dd>{value === null ? "Unavailable" : String(value)}</dd>
+                    </div>
+                  ))}
+              </dl>
+            </details>
           </div>
-          <button
-            type="button"
-            className={cn(BUTTON, "mt-4 text-primary")}
-            onClick={() => goTab("team")}
-          >
-            Manage hours in Team & Payroll
-          </button>
-          <p className="mt-3 text-xs text-muted-foreground">
-            Supabase shared report v{report.version}. Current roster schedules
-            and date exceptions apply to history; recorded breaks and
-            effective-dated schedule history are not available. Mahara’s own
-            sales funnel remains separate.
-          </p>
-          <details className="mt-4 text-xs text-muted-foreground">
-            <summary className="cursor-pointer">Source coverage</summary>
-            <dl className="mt-3 grid gap-2 sm:grid-cols-2">
-              {Object.entries(report.coverage)
-                .filter(
-                  ([, value]) =>
-                    value === null ||
-                    ["string", "number", "boolean"].includes(typeof value),
-                )
-                .map(([key, value]) => (
-                  <div key={key}>
-                    <dt className="font-medium text-foreground">
-                      {key
-                        .replace(/([a-z])([A-Z])/g, "$1 $2")
-                        .replaceAll("_", " ")}
-                    </dt>
-                    <dd>{value === null ? "Unavailable" : String(value)}</dd>
-                  </div>
-                ))}
-            </dl>
-          </details>
         </SectionCard>
       ) : null}
     </div>
@@ -379,7 +335,7 @@ function Overview({ metrics: m }: { metrics: CallCenterMetrics }) {
   return (
     <>
       <SectionCard title="Lead response" order={1}>
-        <div className="grid grid-cols-2 gap-x-6 gap-y-5 @2xl:grid-cols-4">
+        <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-4">
           <StatTile
             variant="plain"
             label="New leads"
@@ -408,7 +364,7 @@ function Overview({ metrics: m }: { metrics: CallCenterMetrics }) {
         </div>
       </SectionCard>
       <SectionCard title="Calling activity" order={2}>
-        <div className="grid grid-cols-2 gap-x-6 gap-y-5 @2xl:grid-cols-4">
+        <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-4">
           <StatTile
             variant="plain"
             label="Dials"
@@ -435,23 +391,19 @@ function Overview({ metrics: m }: { metrics: CallCenterMetrics }) {
         </div>
       </SectionCard>
       <SectionCard title="Bookings and client outcomes" order={3}>
-        <div className="grid grid-cols-2 gap-5 @2xl:grid-cols-4">
-          <div className="rounded-lg border border-primary/25 bg-primary/5 p-4">
-            <StatTile
-              variant="plain"
-              label="Confirmed bookings"
-              value={count(m.confirmedBookings)}
-              sub="Main + online calendar"
-            />
-          </div>
-          <div className="rounded-lg border p-4">
-            <StatTile
-              variant="plain"
-              label="Provisional bookings"
-              value={count(m.provisionalBookings)}
-              sub="Not confirmed appointments"
-            />
-          </div>
+        <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-4">
+          <StatTile
+            variant="plain"
+            label="Confirmed bookings"
+            value={count(m.confirmedBookings)}
+            sub="Main and online calendar"
+          />
+          <StatTile
+            variant="plain"
+            label="Provisional bookings"
+            value={count(m.provisionalBookings)}
+            sub="Not confirmed appointments"
+          />
           <StatTile
             variant="plain"
             label="Show rate"

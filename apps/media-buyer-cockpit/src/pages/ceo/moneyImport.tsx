@@ -1,12 +1,21 @@
 import { useAction, useMutation, useQuery } from "convex/react";
-import { Upload } from "lucide-react";
+import { TriangleAlert, Upload } from "lucide-react";
 import { type ChangeEvent, useMemo, useRef, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { money, plural } from "@/components/ceo/format";
+import { Kicker } from "@/components/ceo/Kicker";
+import { Na } from "@/components/ceo/Na";
 import { SectionCard } from "@/components/ceo/SectionCard";
-import { StatusChip } from "@/components/ceo/StatusChip";
+import { STATUS_COLOR, StatusChip } from "@/components/ceo/StatusChip";
 import { AnimatedSelect } from "@/components/ui/animated-select";
+import { Button } from "@/components/ui/button";
 import { api } from "../../../convex/_generated/api";
+
+// The kit's table look for the hand-built previews: sentence-case headers in
+// muted 12px, hairline rows, no box of their own inside the card.
+const TH =
+  "h-9 px-3 text-left text-xs font-medium text-muted-foreground first:pl-0 last:pr-0";
+const TD = "px-3 py-2 align-top first:pl-0 last:pr-0";
 
 /**
  * Bring a month of bank transfers and cheques in at once.
@@ -268,29 +277,34 @@ export function ImportPaymentsCard({ order }: { order?: number }) {
   return (
     <SectionCard
       id="money-import"
-      kicker="Bank transfers and cheques, a month at a time"
       title="Import payments"
+      description="Bank transfers and cheques, a month at a time."
       order={order}
     >
       {() => (
         <div className="grid gap-4">
-          <p className="text-sm text-muted-foreground">
-            Drop a CSV from your bank, or paste rows straight from a sheet.
-            Date, amount and client, in that order, with or without a header
-            line. Nothing is logged until you have looked at it. A date like
-            03/09 is read as 3 September, the way banks here write it; write
-            2026-09-03 if you want to be certain.
-          </p>
+          <div className="text-sm text-muted-foreground">
+            <p>
+              Drop a CSV from your bank, or paste rows straight from a sheet.
+              Nothing is logged until you have looked at it.
+            </p>
+            <details className="mt-2 text-xs">
+              <summary className="cursor-pointer select-none hover:text-foreground">
+                How rows are read
+              </summary>
+              <p className="mt-2 leading-relaxed">
+                Date, amount and client, in that order, with or without a header
+                line. A date like 03/09 is read as 3 September, the way banks
+                here write it; write 2026-09-03 if you want to be certain.
+              </p>
+            </details>
+          </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              onClick={() => fileRef.current?.click()}
-              className="inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-muted"
-            >
-              <Upload className="size-4" aria-hidden />
+            <Button variant="outline" onClick={() => fileRef.current?.click()}>
+              <Upload aria-hidden />
               Choose a CSV
-            </button>
+            </Button>
             <input
               ref={fileRef}
               id="money-import-file"
@@ -313,7 +327,7 @@ export function ImportPaymentsCard({ order }: { order?: number }) {
                 setCurrency(c);
                 if (text) setRows(parse(text, clients, c));
               }}
-              className="rounded-md border bg-background px-2 py-1.5 text-sm"
+              className="ceo-select-md"
             >
               <option value="USD">US dollars</option>
               <option value="KWD">Kuwaiti dinar</option>
@@ -333,21 +347,20 @@ export function ImportPaymentsCard({ order }: { order?: number }) {
             placeholder={
               "2026-09-03, 1500, Ocean Home, bank transfer\n2026-09-11, 2000, Ardon, cheque"
             }
-            className="w-full rounded-md border bg-background p-3 font-mono text-xs"
+            className="w-full rounded-md border bg-background p-3 font-mono text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
 
           <div className="flex flex-wrap items-center gap-3">
-            <button
-              type="button"
+            <Button
+              variant="outline"
               onClick={() => {
                 setRows(parse(text, clients, currency));
                 setResults(null);
               }}
               disabled={!text.trim()}
-              className="rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-muted disabled:opacity-50"
             >
               Check the rows
-            </button>
+            </Button>
             {rows ? (
               <span className="text-sm text-muted-foreground">
                 {plural(ready.length, "row")} ready
@@ -358,52 +371,65 @@ export function ImportPaymentsCard({ order }: { order?: number }) {
           </div>
 
           {tapWarning ? (
-            <p className="text-sm text-[var(--ceo-warning)]">
-              Tap is connected, so Tap payments arrive on their own. Rows marked
-              Tap will be refused rather than counted twice.
+            <p className="flex items-start gap-2 text-sm">
+              <TriangleAlert
+                className="mt-0.5 size-4 shrink-0"
+                style={{ color: STATUS_COLOR.warning }}
+                aria-hidden
+              />
+              <span className="min-w-0">
+                Tap is connected, so Tap payments arrive on their own. Rows
+                marked Tap will be refused rather than counted twice.
+              </span>
             </p>
           ) : null}
 
           {rows && rows.length ? (
-            <div className="overflow-x-auto rounded-md border">
-              <table
-                className="w-full text-sm"
-                style={{ fontVariantNumeric: "tabular-nums" }}
-              >
+            <div className="ceo-table-scroll relative overflow-x-auto">
+              <table className="w-full min-w-max text-sm tabular-nums">
                 <thead>
-                  <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
-                    <th className="p-2 font-medium">Line</th>
-                    <th className="p-2 font-medium">Day</th>
-                    <th className="p-2 text-right font-medium">Amount</th>
-                    <th className="p-2 font-medium">Client</th>
-                    <th className="p-2 font-medium">Rail</th>
-                    <th className="p-2 font-medium">State</th>
+                  <tr className="border-b">
+                    <th className={TH}>Line</th>
+                    <th className={TH}>Day</th>
+                    <th className={`${TH} text-right`}>Amount</th>
+                    <th className={TH}>Client</th>
+                    <th className={TH}>Rail</th>
+                    <th className={TH}>State</th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map(r => {
                     const res = results?.find(x => x.line === r.line);
                     return (
-                      <tr key={r.line} className="border-t align-top">
-                        <td className="p-2 text-muted-foreground">{r.line}</td>
-                        <td className="p-2">{r.day || "—"}</td>
-                        <td className="p-2 text-right">
-                          {r.amount === null ? "—" : money(r.amount)}
+                      <tr
+                        key={r.line}
+                        className="border-b border-[color:var(--ceo-grid)] last:border-0"
+                      >
+                        <td className={`${TD} text-muted-foreground`}>
+                          {r.line}
                         </td>
-                        <td className="p-2">
-                          {r.clientText || (
-                            <span className="text-muted-foreground">—</span>
+                        <td className={TD}>
+                          {r.day || <Na hint="No date could be read" />}
+                        </td>
+                        <td className={`${TD} text-right`}>
+                          {r.amount === null ? (
+                            <Na hint="No amount could be read" />
+                          ) : (
+                            money(r.amount)
                           )}
+                        </td>
+                        <td className={TD}>
+                          {r.clientText || <Na hint="No client on this line" />}
                           {r.clickupTaskId ? null : (
                             <span className="block text-xs text-muted-foreground">
-                              no card matched
+                              No card matched
                             </span>
                           )}
                         </td>
-                        <td className="p-2">
+                        <td className={TD}>
                           {RAILS.find(x => x.value === r.rail)?.label}
                         </td>
-                        <td className="p-2">
+                        <td className={TD}>
                           {res ? (
                             <StatusChip
                               tone={res.ok ? "good" : "serious"}
@@ -431,14 +457,9 @@ export function ImportPaymentsCard({ order }: { order?: number }) {
           ) : null}
 
           <div>
-            <button
-              type="button"
-              onClick={run}
-              disabled={busy || !ready.length}
-              className="rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background hover:opacity-90 disabled:opacity-50"
-            >
-              {busy ? "Logging…" : `Log ${plural(ready.length, "payment")}`}
-            </button>
+            <Button onClick={run} disabled={busy || !ready.length}>
+              {busy ? "Logging" : `Log ${plural(ready.length, "payment")}`}
+            </Button>
             {results ? (
               <p className="mt-2 text-sm">
                 {results.filter(r => r.ok).length} logged,{" "}
@@ -486,7 +507,7 @@ export function LtvWriteCard({ order }: { order?: number }) {
   return (
     <SectionCard
       id="money-ltv"
-      kicker="Active and onboarding clients only"
+      kicker="Active and onboarding"
       title="Lifetime value on the cards"
       order={order}
     >
@@ -496,56 +517,68 @@ export function LtvWriteCard({ order }: { order?: number }) {
         const missing = plan.missing ?? [];
         return (
           <div className="grid gap-5">
-            <p className="text-sm text-muted-foreground">
-              Each card's LTV is the figure already typed on it, frozen as a
-              baseline, plus every payment logged against that client since.
-              Part of it was typed from memory and nothing can check it, so it
-              is carried rather than trusted. Whop money is left out: only 42 of
-              124 paid rows carry a deal id, so counting it would credit some
-              clients and not others for reasons unrelated to what they paid.
-            </p>
+            <div className="text-sm text-muted-foreground">
+              <p>
+                Each card's LTV is the figure already typed on it, frozen as a
+                baseline, plus every payment logged against that client since.
+              </p>
+              <details className="mt-2 text-xs">
+                <summary className="cursor-pointer select-none hover:text-foreground">
+                  Why Whop money is left out
+                </summary>
+                <p className="mt-2 leading-relaxed">
+                  Part of the baseline was typed from memory and nothing can
+                  check it, so it is carried rather than trusted. Whop money is
+                  left out: only 42 of 124 paid rows carry a deal id, so
+                  counting it would credit some clients and not others for
+                  reasons unrelated to what they paid.
+                </p>
+              </details>
+            </div>
 
             {rows.length ? (
-              <div className="overflow-x-auto rounded-md border">
-                <table
-                  className="w-full text-sm"
-                  style={{ fontVariantNumeric: "tabular-nums" }}
-                >
+              <div className="ceo-table-scroll relative overflow-x-auto">
+                <table className="w-full min-w-max text-sm tabular-nums">
                   <thead>
-                    <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
-                      <th className="p-2 font-medium">Client</th>
-                      <th className="p-2 text-right font-medium">Baseline</th>
-                      <th className="p-2 text-right font-medium">
-                        Logged since
-                      </th>
-                      <th className="p-2 text-right font-medium">
-                        On the card now
-                      </th>
-                      <th className="p-2 text-right font-medium">
-                        Would become
-                      </th>
+                    <tr className="border-b">
+                      <th className={TH}>Client</th>
+                      <th className={`${TH} text-right`}>Baseline</th>
+                      <th className={`${TH} text-right`}>Logged since</th>
+                      <th className={`${TH} text-right`}>On the card now</th>
+                      <th className={`${TH} text-right`}>Would become</th>
                     </tr>
                   </thead>
                   <tbody>
                     {rows.map((r: any) => (
-                      <tr key={r.clickupTaskId} className="border-t">
-                        <td className="p-2">
+                      <tr
+                        key={r.clickupTaskId}
+                        className="border-b border-[color:var(--ceo-grid)] last:border-0"
+                      >
+                        <td className={TD}>
                           {r.client}
                           <span className="block text-xs text-muted-foreground">
-                            {`baseline taken ${r.baselineDay}`}
+                            {`Baseline taken ${r.baselineDay}`}
                           </span>
                         </td>
-                        <td className="p-2 text-right">{money(r.baseline)}</td>
-                        <td className="p-2 text-right">
+                        <td className={`${TD} text-right`}>
+                          {money(r.baseline)}
+                        </td>
+                        <td className={`${TD} text-right`}>
                           {money(r.logged)}
                           <span className="block text-xs text-muted-foreground">
                             {plural(r.loggedCount, "payment")}
                           </span>
                         </td>
-                        <td className="p-2 text-right text-muted-foreground">
-                          {r.current === null ? "—" : money(r.current)}
+                        <td
+                          className={`${TD} text-right text-muted-foreground`}
+                        >
+                          {r.current === null ? (
+                            <Na hint="The card has no LTV figure now" />
+                          ) : (
+                            money(r.current)
+                          )}
                         </td>
-                        <td className="p-2 text-right font-medium">
+                        <td className={`${TD} text-right font-medium`}>
                           {money(r.target)}
                         </td>
                       </tr>
@@ -564,14 +597,12 @@ export function LtvWriteCard({ order }: { order?: number }) {
 
             {missing.length ? (
               <div className="border-t pt-4">
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  {`No LTV figure at all (${missing.length})`}
-                </p>
+                <Kicker>{`No LTV figure (${missing.length})`}</Kicker>
                 <p className="mt-1 text-xs text-muted-foreground">
                   There is no baseline to build on, so these are left alone.
                   Type a figure on the card and they join on the next refresh.
                 </p>
-                <ul className="mt-3 grid gap-1 sm:grid-cols-2">
+                <ul className="mt-3 grid gap-x-6 gap-y-1 @xl:grid-cols-2">
                   {missing.map((m: any) => (
                     <li key={m.clickupTaskId} className="text-sm">
                       {m.client}
@@ -585,19 +616,16 @@ export function LtvWriteCard({ order }: { order?: number }) {
             ) : null}
 
             <div>
-              <button
-                type="button"
-                onClick={run}
-                disabled={busy || !rows.length}
-                className="rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background hover:opacity-90 disabled:opacity-50"
-              >
+              <Button onClick={run} disabled={busy || !rows.length}>
                 {busy
-                  ? "Writing…"
+                  ? "Writing"
                   : `Write ${plural(rows.length, "card")} to ClickUp`}
-              </button>
+              </Button>
               {done ? <p className="mt-2 text-sm">{done}</p> : null}
               <p className="mt-2 text-xs text-muted-foreground">
-                {`${plan.outOfScope} paused, stopped and internal cards are never touched.`}
+                {typeof plan.outOfScope === "number"
+                  ? `${plan.outOfScope} paused, stopped and internal ${plan.outOfScope === 1 ? "card is" : "cards are"} never touched.`
+                  : "Paused, stopped and internal cards are never touched."}
               </p>
             </div>
           </div>

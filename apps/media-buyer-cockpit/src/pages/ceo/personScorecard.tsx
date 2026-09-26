@@ -1,9 +1,11 @@
 import { useAction } from "convex/react";
 import { Loader2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { shortDate } from "@/components/ceo/format";
-import { StatusChip } from "@/components/ceo/StatusChip";
+import { month as monthName, shortDate } from "@/components/ceo/format";
+import { STATUS_COLOR, StatusChip } from "@/components/ceo/StatusChip";
 import { AnimatedSelect } from "@/components/ui/animated-select";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
 import type { Scorecard, ScorecardItem } from "../../../convex/ceo/profiles";
 
@@ -35,10 +37,6 @@ const TONE: Record<Grade, "good" | "warning" | "serious" | "critical"> = {
 
 const field =
   "w-full rounded-md border bg-background px-2.5 py-1.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-[var(--ceo-emphasis)]";
-const primary =
-  "rounded-md bg-[var(--ceo-emphasis)] px-3 py-1.5 text-sm font-medium text-background disabled:opacity-50";
-const quiet =
-  "rounded-md border px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50";
 
 function GradePicker({
   value,
@@ -49,30 +47,36 @@ function GradePicker({
   onChange: (g: Grade | null) => void;
   name: string;
 }) {
+  // The chosen grade is teal like every other active pill; its status colour
+  // rides a 6px dot, never a fill.
   return (
     <div className="flex gap-1" role="group" aria-label={`Grade for ${name}`}>
-      {GRADES.map(g => (
-        <button
-          key={g}
-          type="button"
-          aria-pressed={value === g}
-          onClick={() => onChange(value === g ? null : g)}
-          className={`size-8 rounded-md border text-sm font-semibold transition-colors ${
-            value === g
-              ? "border-transparent text-background"
-              : "text-muted-foreground hover:text-foreground"
-          }`}
-          style={
-            value === g
-              ? {
-                  background: `var(--ceo-${TONE[g] === "warning" ? "warning" : TONE[g]})`,
-                }
-              : undefined
-          }
-        >
-          {g}
-        </button>
-      ))}
+      {GRADES.map(g => {
+        const on = value === g;
+        return (
+          <button
+            key={g}
+            type="button"
+            aria-pressed={on}
+            onClick={() => onChange(on ? null : g)}
+            className={cn(
+              "inline-flex h-8 min-w-10 items-center justify-center gap-1 rounded-full border px-2.5 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              on
+                ? "border-transparent bg-primary/15 text-foreground ring-1 ring-inset ring-primary/40"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground",
+            )}
+          >
+            {on ? (
+              <span
+                aria-hidden
+                className="size-1.5 shrink-0 rounded-full"
+                style={{ backgroundColor: STATUS_COLOR[TONE[g]] }}
+              />
+            ) : null}
+            {g}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -114,7 +118,7 @@ function Item({
         {open ? "Hide what each grade means" : "What each grade means"}
       </button>
       {open ? (
-        <dl className="grid gap-1 rounded-md bg-muted/40 p-2 text-xs">
+        <dl className="grid gap-1 rounded-lg bg-muted/40 p-3 text-xs">
           {GRADES.map(g => (
             <div key={g} className="flex gap-2">
               <dt className="w-4 shrink-0 font-semibold">{g}</dt>
@@ -224,7 +228,7 @@ export function ScorecardPanel({
               .reverse()
               .map(m => (
                 <option key={m} value={m}>
-                  {m}
+                  {monthName(m, { long: true, year: true })}
                 </option>
               ))}
           </AnimatedSelect>
@@ -252,7 +256,7 @@ export function ScorecardPanel({
       ) : null}
 
       {card.mission ? (
-        <p className="rounded-md bg-muted/40 p-2 text-sm">
+        <p className="rounded-lg bg-muted/40 p-3 text-sm">
           <span className="font-medium">Mission. </span>
           {card.mission}
         </p>
@@ -283,29 +287,28 @@ export function ScorecardPanel({
           onChange={e => setSummary(e.target.value)}
         />
         <div className="flex flex-wrap items-center gap-2">
-          <button
+          <Button
             type="button"
-            className={quiet}
+            variant="outline"
             disabled={busy}
             onClick={() => put("draft")}
           >
             {busy ? (
-              <span className="flex items-center gap-1.5">
-                <Loader2 className="size-3.5 animate-spin" aria-hidden />
+              <>
+                <Loader2 className="animate-spin" aria-hidden />
                 Saving
-              </span>
+              </>
             ) : (
               "Save the draft"
             )}
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
-            className={primary}
             disabled={busy || !overall}
             onClick={() => put("final")}
           >
             Sign it off
-          </button>
+          </Button>
           {!overall ? (
             <span className="text-xs text-muted-foreground">
               An overall grade is needed to sign off.

@@ -1,9 +1,8 @@
 import {
-  Bot,
+  ArrowUpRight,
   CircleAlert,
   CircleCheck,
   CircleDashed,
-  ExternalLink,
   type LucideIcon,
   MessageSquare,
   OctagonAlert,
@@ -17,7 +16,6 @@ import { FeedList } from "@/components/ceo/FeedList";
 import { type FunnelStep, FunnelStrip } from "@/components/ceo/FunnelStrip";
 import * as f from "@/components/ceo/format";
 import { HeroFigure } from "@/components/ceo/HeroFigure";
-import { Hint } from "@/components/ceo/Hint";
 import { Meter } from "@/components/ceo/Meter";
 import {
   CLOSE_RATE,
@@ -43,13 +41,18 @@ import { cn } from "@/lib/utils";
 import type {
   ClientRow,
   DeliveryPayload,
-  MachinePayload,
   MoneyPayload,
   Note,
   Point,
   TeamPerson,
 } from "../../../convex/ceo/payloads";
-import { feedState, syncEvery, syncState } from "./machineState";
+import {
+  feedState,
+  jobName,
+  sourceLabel,
+  syncEvery,
+  syncState,
+} from "./machineState";
 import { buildRoster, useLiveStatuses } from "./teamRoster";
 import type { CeoTabProps } from "./types";
 
@@ -69,7 +72,7 @@ export function TodayTab({ sections, now, day, goTab }: CeoTabProps) {
         goTab={goTab}
       />
 
-      <div className="grid gap-4 lg:gap-6 @4xl:grid-cols-2">
+      <div className="grid items-start gap-4 lg:gap-6 @4xl:grid-cols-2">
         <DeliveryFunnelCard
           delivery={sections.delivery}
           calls={sections.calls}
@@ -85,16 +88,11 @@ export function TodayTab({ sections, now, day, goTab }: CeoTabProps) {
         </div>
         <div className="grid min-w-0 gap-4 lg:gap-6">
           <LiveFeedCard section={sections.team} now={now} goTab={goTab} />
-          <TeamTodayCard
-            section={sections.team}
-            now={now}
-            today={today}
-            goTab={goTab}
-          />
+          <TeamTodayCard section={sections.team} now={now} today={today} />
         </div>
       </div>
 
-      <MachineStrip section={sections.machine} goTab={goTab} />
+      <MachineLine section={sections.machine} goTab={goTab} />
     </div>
   );
 }
@@ -224,10 +222,11 @@ function CashHero({
 }) {
   const p = section?.payload ?? null;
   const scopeNote = p ? cashHeadline(p).note : null;
+  // "Cash" once: the title names it, the figure's label says only the month
+  // and the rails ("This month, Whop and Tap").
   return (
     <SectionCard
-      kicker="This month"
-      title="Cash"
+      title="Cash collected"
       section={section}
       notes={[
         ...(scopeNote ? [scopeNote] : []),
@@ -285,7 +284,7 @@ function CashHeroBody({ m, today }: { m: MoneyPayload; today: string }) {
     <div className="grid gap-6 @4xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] @4xl:gap-10">
       <div className="min-w-0">
         <HeroFigure
-          label={headline.label}
+          label={`This month, ${headline.scope}`}
           value={cash.mtd}
           format={f.money}
           countKey="today-cash-mtd"
@@ -314,7 +313,7 @@ function CashHeroBody({ m, today }: { m: MoneyPayload; today: string }) {
           <div className="mt-2 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-xs text-muted-foreground">
             <span>
               {daily.length > 1
-                ? "Cash per day, last 90 days through yesterday"
+                ? "Per day, last 90 days through yesterday"
                 : "No daily cash to chart yet"}
             </span>
             {best ? (
@@ -387,7 +386,7 @@ function LedgerRow({
   return (
     // A grid rather than nested wrappers: a dl group may only hold dt and dd directly.
     <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 border-b border-[color:var(--ceo-grid)] py-3 first:pt-0 last:border-0 last:pb-0">
-      <dt className="col-start-1 row-start-1 text-[13px] text-muted-foreground">
+      <dt className="col-start-1 row-start-1 text-xs text-muted-foreground">
         {label}
       </dt>
       <dd className="col-start-2 row-span-2 row-start-1 text-xl font-semibold tracking-tight text-foreground">
@@ -420,13 +419,9 @@ function KpiRow({
   goTab: GoTab;
 }) {
   const title = "Client delivery and calls";
-  const kicker = "Yesterday, today and the last 7 days";
-  const actions = (
-    <>
-      <TabLink tab="delivery" label="Delivery" goTab={goTab} />
-      <TabLink tab="calls" label="Calls" goTab={goTab} />
-    </>
-  );
+  const kicker = "Yesterday and today";
+  // One link: most of the card is delivery. Calls is a tap away in the rail.
+  const actions = <TabLink tab="delivery" label="Delivery" goTab={goTab} />;
   if (!delivery && !calls)
     return (
       <SectionCard
@@ -453,9 +448,8 @@ function KpiRow({
       notes={[...warnings(d?.notes), ...warnings(c?.notes)]}
       actions={actions}
       order={1}
-      bodyClassName="@container"
     >
-      <div className="grid grid-cols-2 gap-x-6 gap-y-5 @2xl:grid-cols-3 @5xl:grid-cols-6">
+      <div className="grid grid-cols-2 gap-x-6 gap-y-6 @2xl:grid-cols-3 @5xl:grid-cols-6">
         <StatTile
           variant="plain"
           label="Client ad spend yesterday"
@@ -636,11 +630,17 @@ function DeliveryFunnelCard({
               ]}
             />
             {c ? (
-              <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
-                Actual calls and connections use the shared call center report.
-                Delivery bookings use appointment date, so these steps are
-                separate activity counts rather than a lead conversion funnel.
-              </p>
+              <details className="mt-4 text-xs text-muted-foreground">
+                <summary className="cursor-pointer select-none hover:text-foreground">
+                  How this is counted
+                </summary>
+                <p className="mt-2 leading-relaxed">
+                  Actual calls and connections use the shared call center
+                  report. Delivery bookings use appointment date, so these steps
+                  are separate activity counts rather than a lead conversion
+                  funnel.
+                </p>
+              </details>
             ) : null}
           </>
         );
@@ -743,7 +743,7 @@ function ClientsCard({
 }) {
   return (
     <SectionCard
-      kicker="The roster right now"
+      kicker="Right now"
       title="Clients that need you"
       section={section}
       notes={warnings(section?.payload?.notes)}
@@ -792,15 +792,12 @@ function ClientsCard({
                 <ClientRiskRow key={r.clickupTaskId || r.name} row={r} />
               ))}
             </ul>
+            {/* The header link already opens Client success, so the rest is a
+                count, not a second link to the same place. */}
             {more > 0 ? (
-              <button
-                type="button"
-                onClick={() => goTab("client-success")}
-                className="mt-3 rounded-sm text-xs font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                {f.plural(more, "more client")} at risk on the Client success
-                tab
-              </button>
+              <p className="mt-3 text-xs text-muted-foreground">
+                {f.plural(more, "more client")} at risk on Client success
+              </p>
             ) : null}
           </>
         );
@@ -818,22 +815,30 @@ function ClientRiskRow({ row }: { row: ClientRow }) {
     <li className="border-b border-[color:var(--ceo-grid)] py-3 first:pt-0 last:border-0 last:pb-0">
       <div className="flex min-w-0 items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="flex min-w-0 items-center gap-1.5">
-            <span className="truncate text-sm font-medium text-foreground">
+          {row.clickupTaskId ? (
+            <a
+              href={`https://app.clickup.com/t/${encodeURIComponent(row.clickupTaskId)}`}
+              target="_blank"
+              rel="noreferrer"
+              title={`Open ${row.name} in ClickUp`}
+              className="group/link flex min-w-0 items-center gap-1 rounded-sm text-sm font-medium text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <span className="truncate" dir="auto">
+                {row.name}
+              </span>
+              <ArrowUpRight
+                className="size-3.5 shrink-0 text-muted-foreground group-hover/link:text-foreground"
+                aria-hidden
+              />
+            </a>
+          ) : (
+            <p
+              className="truncate text-sm font-medium text-foreground"
+              dir="auto"
+            >
               {row.name}
-            </span>
-            {row.clickupTaskId ? (
-              <a
-                href={`https://app.clickup.com/t/${encodeURIComponent(row.clickupTaskId)}`}
-                target="_blank"
-                rel="noreferrer"
-                aria-label={`Open ${row.name} in ClickUp`}
-                className="inline-flex shrink-0 rounded-sm text-muted-foreground/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <ExternalLink className="size-3.5" aria-hidden />
-              </a>
-            ) : null}
-          </p>
+            </p>
+          )}
           <p className="mt-0.5 truncate text-xs text-muted-foreground">
             {meta}
           </p>
@@ -852,7 +857,7 @@ function ClientRiskRow({ row }: { row: ClientRow }) {
           {row.risk.reasons.map(reason => (
             <li
               key={reason}
-              className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] leading-4 text-foreground/80"
+              className="rounded-md bg-muted px-1.5 py-0.5 text-xs leading-4 text-foreground/80"
             >
               {f.capitalize(reason)}
             </li>
@@ -1058,25 +1063,18 @@ function TeamTodayCard({
   section,
   now,
   today,
-  goTab,
 }: {
   section: CeoSections["team"];
   now: number;
   today: string;
-  goTab: GoTab;
 }) {
   // The Management switch's live statuses, laid over the stored people so a
   // person set to Paused or Left leaves this card the moment it is saved,
   // the same as on the Management tab.
   const live = useLiveStatuses();
   return (
-    <SectionCard
-      kicker="Today, with yesterday's EODs"
-      title="Team today"
-      section={section}
-      actions={<TabLink tab="management" label="Management" goTab={goTab} />}
-      order={6}
-    >
+    // The Live feed above links to Management; one link to it is enough.
+    <SectionCard title="Team today" section={section} order={6}>
       {t => {
         const roster = buildRoster(
           t.people,
@@ -1158,137 +1156,79 @@ function TeamTodayCard({
   );
 }
 
-// --- 5. Machine strip ---
+// --- 5. Machine line ---
 
-function MachineStrip({
+/**
+ * The machine in one line, and only when something is wrong. The page header
+ * already says when the numbers were computed, how many sources are stale
+ * and whether Hermes is failing; this line names what the header cannot:
+ * which jobs, data sources and outside feeds are failing, and a slow sync.
+ * The whole picture is on the Machine tab, one tap away.
+ */
+function MachineLine({
   section,
   goTab,
 }: {
   section: CeoSections["machine"];
   goTab: GoTab;
 }) {
-  return (
-    <SectionCard
-      title="Machine"
-      section={section}
-      order={7}
-      // One thin row: title, pills and the link; a stale banner drops to its own line.
-      className="flex flex-wrap items-center gap-x-5 gap-y-3 py-3.5 [&>.ceo-stale]:order-last [&>.ceo-stale]:mt-0 [&>.ceo-stale]:basis-full"
-      bodyClassName="mt-0 w-full @2xl:w-auto @2xl:flex-1"
-    >
-      {m => <MachinePills m={m} goTab={goTab} />}
-    </SectionCard>
-  );
-}
+  const m = section?.payload ?? null;
+  if (!m) return null;
+  // The Machine tab's rules, so this line never disagrees with the tab it opens.
+  const sync = syncState(m.syncAgeMin, syncEvery(m));
+  const badFeeds = m.feeds.filter(feed => !feed.ok);
+  const counts: string[] = [];
+  if (m.failingJobs > 0)
+    counts.push(`${f.plural(m.failingJobs, "job")} failing`);
+  if (m.staleJobs > 0) counts.push(`${f.plural(m.staleJobs, "job")} overdue`);
+  if (m.failingSources > 0)
+    counts.push(`${f.plural(m.failingSources, "data source")} failing`);
+  if (badFeeds.length)
+    counts.push(`${f.plural(badFeeds.length, "outside feed")} behind`);
+  if (
+    (sync.tone === "warning" || sync.tone === "serious") &&
+    f.isNum(m.syncAgeMin)
+  )
+    counts.push(`last sync ${f.minutes(m.syncAgeMin)} ago`);
+  if (counts.length === 0) return null;
 
-function MachinePills({ m, goTab }: { m: MachinePayload; goTab: GoTab }) {
-  const open = () => goTab("machine");
-  // The Machine tab's rules, so a pill here never disagrees with the tab it opens.
-  const every = syncEvery(m);
-  const age = m.syncAgeMin;
-  const syncTone = syncState(age, every).tone;
-  const staleFeeds = m.feeds.filter(feed => !feed.ok);
-  const feedTone: StatusTone =
-    m.feeds.length === 0
-      ? "neutral"
-      : staleFeeds.some(feed => feedState(feed).tone === "serious")
+  const names = [
+    ...m.jobs.filter(j => !j.ok).map(j => jobName(j.job)),
+    ...m.sources
+      .filter(src => src.ok === false)
+      .map(src => sourceLabel(src.source)),
+    ...badFeeds.map(feed => feed.name),
+  ];
+  const tone: StatusTone =
+    m.failingJobs > 0
+      ? "critical"
+      : m.failingSources > 0 ||
+          sync.tone === "serious" ||
+          badFeeds.some(feed => feedState(feed).tone === "serious")
         ? "serious"
-        : staleFeeds.length > 0
-          ? "warning"
-          : "good";
+        : "warning";
+  const Icon = TONE_ICON[tone];
+  const shown = names.slice(0, 4);
 
   return (
-    <div className="flex min-w-0 flex-wrap items-center gap-2">
-      <StripPill
-        tone={syncTone}
-        label={
-          !f.isNum(age)
-            ? "Sync time n/a"
-            : age < 1
-              ? "Synced just now"
-              : `Synced ${f.minutes(age)} ago`
-        }
-        hint={`The media buyer sync runs every ${f.minutes(every)}`}
-        onClick={open}
+    <section
+      aria-label="Machine"
+      className="ceo-card flex min-w-0 items-start gap-3 rounded-2xl border bg-card px-4 py-3 sm:px-6"
+    >
+      <Icon
+        className="mt-0.5 size-4 shrink-0"
+        style={{ color: STATUS_COLOR[tone] }}
+        aria-hidden
       />
-      <StripPill
-        tone={m.failingJobs > 0 ? "critical" : "good"}
-        label={
-          m.failingJobs > 0
-            ? f.plural(m.failingJobs, "failing job")
-            : "No failing jobs"
-        }
-        hint={
-          m.staleJobs > 0
-            ? `${f.plural(m.staleJobs, "job")} overdue`
-            : "Cockpit jobs"
-        }
-        onClick={open}
-      />
-      {m.failingSources > 0 ? (
-        <StripPill
-          tone="serious"
-          label={f.plural(m.failingSources, "failing source")}
-          onClick={open}
-        />
-      ) : null}
-      <StripPill
-        tone={feedTone}
-        label={
-          m.feeds.length === 0
-            ? "Feeds not read"
-            : staleFeeds.length > 0
-              ? `${f.plural(staleFeeds.length, "feed")} behind`
-              : "Feeds fresh"
-        }
-        hint={
-          staleFeeds.length > 0
-            ? staleFeeds
-                .slice(0, 6)
-                .map(feed => feed.name)
-                .join(", ")
-            : undefined
-        }
-        onClick={open}
-      />
-      <StripPill
-        tone={m.hermes.failed > 0 ? "warning" : "neutral"}
-        icon={Bot}
-        label={`Hermes ${f.count(m.hermes.queued)} queued${m.hermes.failed > 0 ? `, ${f.count(m.hermes.failed)} failed` : ""}`}
-        onClick={open}
-      />
-    </div>
-  );
-}
-
-function StripPill({
-  tone,
-  label,
-  hint,
-  icon,
-  onClick,
-}: {
-  tone: StatusTone;
-  label: string;
-  hint?: string;
-  icon?: LucideIcon;
-  onClick: () => void;
-}) {
-  const Icon = icon ?? TONE_ICON[tone];
-  return (
-    <Hint content={hint}>
-      <button
-        type="button"
-        onClick={onClick}
-        className="inline-flex h-7 max-w-full shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border bg-background/60 px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-[var(--ceo-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        <Icon
-          className="size-3.5 shrink-0"
-          style={{ color: STATUS_COLOR[tone] }}
-          aria-hidden
-        />
-        <span className="truncate">{label}</span>
-      </button>
-    </Hint>
+      <p className="min-w-0 flex-1 text-sm leading-5 text-foreground">
+        {f.capitalize(counts.join(", "))}
+        {shown.length ? (
+          <span className="text-muted-foreground">
+            {`: ${shown.join(", ")}${names.length > shown.length ? ` and ${f.count(names.length - shown.length)} more` : ""}`}
+          </span>
+        ) : null}
+      </p>
+      <TabLink tab="machine" label="Machine" goTab={goTab} />
+    </section>
   );
 }

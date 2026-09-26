@@ -3,10 +3,16 @@ import { ArrowLeft, FileText, Loader2, Paperclip, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router";
 import { CeoTabs } from "@/components/ceo/CeoTabs";
-import { money, shortDate } from "@/components/ceo/format";
+import {
+  humanize,
+  money,
+  month as monthName,
+  shortDate,
+} from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import { AnimatedSelect } from "@/components/ui/animated-select";
+import { Button } from "@/components/ui/button";
 import { api } from "../../../convex/_generated/api";
 import type {
   PersonFile as FileRow,
@@ -39,10 +45,6 @@ type Any = Record<string, any>;
 const field =
   "w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-[var(--ceo-emphasis)]";
 const label = "text-xs font-medium text-muted-foreground";
-const primary =
-  "rounded-md bg-[var(--ceo-emphasis)] px-3 py-1.5 text-sm font-medium text-background disabled:opacity-50";
-const quiet =
-  "rounded-md border px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50";
 
 const PANELS = ["Who they are", "This month", "Every month", "Files"] as const;
 type Panel = (typeof PANELS)[number];
@@ -183,36 +185,36 @@ function Files({
           <option value="contract">Contract</option>
           <option value="other">Something else</option>
         </AnimatedSelect>
-        <label className={`${quiet} cursor-pointer`}>
-          <span className="flex items-center gap-1.5">
+        <Button asChild variant="outline">
+          <label className="relative cursor-pointer">
             {busy ? (
-              <Loader2 className="size-3.5 animate-spin" aria-hidden />
+              <Loader2 className="animate-spin" aria-hidden />
             ) : (
-              <Paperclip className="size-3.5" aria-hidden />
+              <Paperclip aria-hidden />
             )}
             {busy ? "Saving" : "Add a file"}
-          </span>
-          <input
-            type="file"
-            className="sr-only"
-            disabled={busy}
-            onChange={e => {
-              const f = e.target.files?.[0];
-              e.target.value = "";
-              if (f) void pick(f);
-            }}
-          />
-        </label>
+            <input
+              type="file"
+              className="sr-only"
+              disabled={busy}
+              onChange={e => {
+                const f = e.target.files?.[0];
+                e.target.value = "";
+                if (f) void pick(f);
+              }}
+            />
+          </label>
+        </Button>
         <span className="text-xs text-muted-foreground">
           Kept privately. A link you open stops working ten minutes later.
         </span>
       </div>
       {files.length ? (
-        <ul className="grid gap-1.5">
+        <ul className="divide-y">
           {files.map(f => (
             <li
               key={f.id}
-              className="flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-sm"
+              className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-sm"
             >
               <FileText
                 className="size-4 shrink-0 text-muted-foreground"
@@ -382,9 +384,13 @@ export function PersonPage({
             ) : null}
           </span>
         }
-        kicker={[
+        description={[
           person?.role ? String(person.role) : null,
-          person?.engagement ? String(person.engagement) : null,
+          person?.engagement
+            ? person.engagement === "bot"
+              ? "Shared account"
+              : humanize(String(person.engagement))
+            : null,
           cost !== null ? `${money(cost)} a month` : null,
           person?.started_on
             ? `since ${shortDate(String(person.started_on))}`
@@ -394,8 +400,8 @@ export function PersonPage({
           .join(" · ")}
         order={0}
       >
-        <div className="grid gap-5">
-          <div className="grid gap-5 @2xl:grid-cols-3">
+        <div className="grid gap-6">
+          <div className="grid gap-6 @2xl:grid-cols-3">
             <Grade
               name="Skill"
               value={form?.skill ?? null}
@@ -425,21 +431,16 @@ export function PersonPage({
             />
           ) : null}
           <div className="flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              className={primary}
-              disabled={saving || !form}
-              onClick={save}
-            >
+            <Button type="button" disabled={saving || !form} onClick={save}>
               {saving ? (
-                <span className="flex items-center gap-1.5">
-                  <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                <>
+                  <Loader2 className="animate-spin" aria-hidden />
                   Saving
-                </span>
+                </>
               ) : (
                 "Save the profile"
               )}
-            </button>
+            </Button>
             {msg ? <span className="text-sm">{msg}</span> : null}
             {error ? (
               <span className="text-sm text-[var(--ceo-critical)]">
@@ -464,12 +465,13 @@ export function PersonPage({
 
       {panel === "Who they are" && form ? (
         <SectionCard
-          kicker="Written by Aziz, read by nobody else"
+          kicker="Private"
           title="Who they are"
+          description="Written by Aziz, read by nobody else."
           order={1}
         >
-          <div className="grid gap-5">
-            <div className="grid gap-5 @3xl:grid-cols-2">
+          <div className="grid gap-6">
+            <div className="grid gap-6 @3xl:grid-cols-2">
               <Box
                 title="Personal goals"
                 hint="What they want out of the next year, in their own words."
@@ -515,14 +517,9 @@ export function PersonPage({
               rows={5}
             />
             <div>
-              <button
-                type="button"
-                className={primary}
-                disabled={saving}
-                onClick={save}
-              >
+              <Button type="button" disabled={saving} onClick={save}>
                 {saving ? "Saving" : "Save the profile"}
-              </button>
+              </Button>
             </div>
           </div>
         </SectionCard>
@@ -530,8 +527,8 @@ export function PersonPage({
 
       {panel === "This month" ? (
         <SectionCard
-          kicker="The working document of the one-to-one"
           title="The monthly scorecard"
+          description="The working document of the one-to-one."
           order={1}
         >
           <ScorecardPanel
@@ -546,24 +543,22 @@ export function PersonPage({
       ) : null}
 
       {panel === "Every month" ? (
-        <SectionCard
-          kicker="Every review, newest first"
-          title="Their months"
-          order={1}
-        >
+        <SectionCard kicker="Newest first" title="Their months" order={1}>
           {data?.months.length ? (
-            <ul className="grid gap-1.5">
+            <ul className="-mx-2 divide-y">
               {data.months.map(m => (
                 <li key={m.month}>
                   <button
                     type="button"
-                    className="flex w-full flex-wrap items-center gap-3 rounded-md border px-3 py-2 text-left text-sm hover:bg-muted/40"
+                    className="flex w-full flex-wrap items-center gap-3 rounded-lg px-2 py-3 text-left text-sm hover:bg-muted/40"
                     onClick={() => {
                       setMonth(m.month);
                       setPanel("This month");
                     }}
                   >
-                    <span className="font-medium tabular-nums">{m.month}</span>
+                    <span className="font-medium">
+                      {monthName(m.month, { long: true, year: true })}
+                    </span>
                     {m.overall ? (
                       <StatusChip
                         tone={
@@ -595,11 +590,7 @@ export function PersonPage({
       ) : null}
 
       {panel === "Files" ? (
-        <SectionCard
-          kicker="Kept in a private store, never a public link"
-          title="CV and contract"
-          order={1}
-        >
+        <SectionCard kicker="Private" title="CV and contract" order={1}>
           <Files
             personId={personId}
             files={data?.files ?? []}

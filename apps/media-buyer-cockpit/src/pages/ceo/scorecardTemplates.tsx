@@ -1,6 +1,7 @@
 import { useAction } from "convex/react";
 import {
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   ClipboardList,
   Loader2,
@@ -9,7 +10,9 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
+import { shortDate } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
+import { Button } from "@/components/ui/button";
 import {
   Sheet,
   SheetContent,
@@ -54,10 +57,6 @@ type Template = {
 const field =
   "w-full rounded-md border bg-background px-2.5 py-1.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-[var(--ceo-emphasis)]";
 const label = "text-xs font-medium text-muted-foreground";
-const primary =
-  "rounded-md bg-[var(--ceo-emphasis)] px-3 py-1.5 text-sm font-medium text-background disabled:opacity-50";
-const quiet =
-  "rounded-md border px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50";
 
 const blank = (n: number): Item => ({
   key: `item-${n}-${Math.random().toString(36).slice(2, 7)}`,
@@ -163,7 +162,10 @@ function Editor({
             <div className="grid gap-3">
               <p className={label}>{`${items.length} accountabilities`}</p>
               {items.map((it, i) => (
-                <div key={it.key} className="grid gap-2 rounded-md border p-3">
+                <div
+                  key={it.key}
+                  className="grid gap-3 rounded-xl bg-muted/40 p-4"
+                >
                   <div className="flex items-start gap-2">
                     <input
                       className={field}
@@ -175,32 +177,38 @@ function Editor({
                       placeholder="Under 7% client churn in the month"
                     />
                     <div className="flex shrink-0 gap-1">
-                      <button
+                      <Button
                         type="button"
-                        className={quiet}
+                        variant="ghost"
+                        size="icon"
+                        className="size-8 text-muted-foreground"
                         aria-label="Move up"
                         onClick={() => move(i, -1)}
                       >
-                        <ChevronUp className="size-3.5" aria-hidden />
-                      </button>
-                      <button
+                        <ChevronUp aria-hidden />
+                      </Button>
+                      <Button
                         type="button"
-                        className={quiet}
+                        variant="ghost"
+                        size="icon"
+                        className="size-8 text-muted-foreground"
                         aria-label="Move down"
                         onClick={() => move(i, 1)}
                       >
-                        <ChevronDown className="size-3.5" aria-hidden />
-                      </button>
-                      <button
+                        <ChevronDown aria-hidden />
+                      </Button>
+                      <Button
                         type="button"
-                        className={quiet}
+                        variant="ghost"
+                        size="icon"
+                        className="size-8 text-muted-foreground"
                         aria-label="Remove"
                         onClick={() =>
                           setItems(x => x.filter((_, n) => n !== i))
                         }
                       >
-                        <Trash2 className="size-3.5" aria-hidden />
-                      </button>
+                        <Trash2 aria-hidden />
+                      </Button>
                     </div>
                   </div>
                   <label className="grid gap-1">
@@ -254,16 +262,14 @@ function Editor({
                 </div>
               ))}
               <div>
-                <button
+                <Button
                   type="button"
-                  className={quiet}
+                  variant="outline"
                   onClick={() => setItems(x => [...x, blank(x.length + 1)])}
                 >
-                  <span className="flex items-center gap-1.5">
-                    <Plus className="size-3.5" aria-hidden />
-                    Add an accountability
-                  </span>
-                </button>
+                  <Plus aria-hidden />
+                  Add an accountability
+                </Button>
               </div>
             </div>
 
@@ -278,9 +284,8 @@ function Editor({
             </label>
 
             <div className="flex flex-wrap items-center gap-2">
-              <button
+              <Button
                 type="button"
-                className={primary}
                 disabled={busy || !title.trim() || !roleKey.trim()}
                 onClick={async () => {
                   setBusy(true);
@@ -306,17 +311,17 @@ function Editor({
                 }}
               >
                 {busy ? (
-                  <span className="flex items-center gap-1.5">
-                    <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                  <>
+                    <Loader2 className="animate-spin" aria-hidden />
                     Saving
-                  </span>
+                  </>
                 ) : (
                   "Save the scorecard"
                 )}
-              </button>
-              <button type="button" className={quiet} onClick={onClose}>
+              </Button>
+              <Button type="button" variant="outline" onClick={onClose}>
                 Close
-              </button>
+              </Button>
             </div>
             {error ? (
               <p className="text-sm text-[var(--ceo-critical)]">{error}</p>
@@ -356,26 +361,25 @@ export function ScorecardTemplates({ order }: { order?: number }) {
 
   return (
     <SectionCard
-      kicker="What gets graded in each role's monthly one-to-one"
       title="Role scorecards"
+      description="What gets graded in each role's monthly one-to-one."
       order={order}
       actions={
-        <button
+        <Button
           type="button"
-          className={quiet}
+          variant="outline"
+          size="sm"
           onClick={() => {
             setOpen(null);
             setAdding(true);
           }}
         >
-          <span className="flex items-center gap-1.5">
-            <Plus className="size-3.5" aria-hidden />
-            New role
-          </span>
-        </button>
+          <Plus aria-hidden />
+          New role
+        </Button>
       }
     >
-      <div className="grid gap-2">
+      <div className="grid">
         {error ? (
           <p className="text-sm text-[var(--ceo-critical)]">{error}</p>
         ) : null}
@@ -385,27 +389,36 @@ export function ScorecardTemplates({ order }: { order?: number }) {
             Reading them
           </p>
         ) : rows.length ? (
-          rows.map(t => (
-            <button
-              key={t.roleKey}
-              type="button"
-              onClick={() => {
-                setAdding(false);
-                setOpen(t);
-              }}
-              className="grid gap-0.5 rounded-md border p-3 text-left hover:bg-muted/40"
-            >
-              <span className="text-sm font-medium">{t.title}</span>
-              <span className="text-xs text-muted-foreground">
-                {`${t.items.length} accountabilities${t.updatedAt ? ` · last changed ${t.updatedAt.slice(0, 10)}` : ""}`}
-              </span>
-              {t.mission ? (
-                <span className="line-clamp-2 text-xs text-muted-foreground">
-                  {t.mission}
-                </span>
-              ) : null}
-            </button>
-          ))
+          <ul className="-mx-2 divide-y">
+            {rows.map(t => (
+              <li key={t.roleKey}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAdding(false);
+                    setOpen(t);
+                  }}
+                  className="flex w-full items-center gap-3 rounded-lg px-2 py-3 text-left hover:bg-muted/40"
+                >
+                  <span className="grid min-w-0 flex-1 gap-0.5">
+                    <span className="text-sm font-medium">{t.title}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {`${t.items.length} accountabilities${t.updatedAt ? ` · last changed ${shortDate(t.updatedAt.slice(0, 10))}` : ""}`}
+                    </span>
+                    {t.mission ? (
+                      <span className="line-clamp-2 text-xs text-muted-foreground">
+                        {t.mission}
+                      </span>
+                    ) : null}
+                  </span>
+                  <ChevronRight
+                    className="size-4 shrink-0 text-muted-foreground"
+                    aria-hidden
+                  />
+                </button>
+              </li>
+            ))}
+          </ul>
         ) : (
           <EmptyState
             title="No scorecards yet"

@@ -1,12 +1,15 @@
 import { useAction } from "convex/react";
 import { Loader2, Wand2 } from "lucide-react";
 import { Fragment, useMemo, useState } from "react";
+import { KICKER } from "@/components/ceo/Kicker";
 import { SectionCard } from "@/components/ceo/SectionCard";
-import { StatusChip } from "@/components/ceo/StatusChip";
+import { StatusChip, StatusDot } from "@/components/ceo/StatusChip";
+import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
+import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
 import type { Board, TargetRow } from "../../../convex/ceo/goals";
-import { fmt } from "./goalsKit";
+import { fmt, paceTone, planTitle, worstThree } from "./goalsKit";
 
 /**
  * Next month's plan, set in one screen.
@@ -28,12 +31,8 @@ import { fmt } from "./goalsKit";
  */
 
 const field =
-  "w-full rounded-md border bg-background px-2.5 py-1.5 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-[var(--ceo-emphasis)]";
+  "w-full rounded-md border bg-background px-2.5 py-1.5 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring";
 const label = "text-xs font-medium text-muted-foreground";
-const primary =
-  "rounded-md bg-[var(--ceo-emphasis)] px-3 py-1.5 text-sm font-medium text-background disabled:opacity-50";
-const quiet =
-  "rounded-md border px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50";
 
 function monthEnd(from: string): string {
   const [y, m] = from.split("-").map(Number);
@@ -42,24 +41,6 @@ function monthEnd(from: string): string {
 function nextMonthFrom(to: string): string {
   const [y, m] = to.split("-").map(Number);
   return new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10);
-}
-const MONTHS = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
-];
-function monthName(day: string): string {
-  const [y, m] = day.split("-").map(Number);
-  return `${MONTHS[m - 1]} ${y}`;
 }
 
 /** Round the way a target is written: money and counts whole, rates to 2dp. */
@@ -83,6 +64,7 @@ export function NextMonth({
   const saveTargets = useAction(api.ceo.goals.saveTargets);
 
   const plan = board.plan;
+  const worst = useMemo(() => worstThree(board.behind), [board]);
   const groups = useMemo(
     () => (Array.isArray(board.groups) ? board.groups : []),
     [board],
@@ -94,9 +76,7 @@ export function NextMonth({
   const firstDay = plan ? nextMonthFrom(plan.periodTo) : "";
   const [from, setFrom] = useState(firstDay);
   const [to, setTo] = useState(firstDay ? monthEnd(firstDay) : "");
-  const [title, setTitle] = useState(
-    firstDay ? `${monthName(firstDay)} — The Plan` : "",
-  );
+  const [title, setTitle] = useState(firstDay ? planTitle(firstDay) : "");
   const [mission, setMission] = useState(plan?.mission ?? "");
   const [headline, setHeadline] = useState("");
   const [values, setValues] = useState<Record<number, string>>(() =>
@@ -128,13 +108,13 @@ export function NextMonth({
 
   return (
     <SectionCard
-      kicker="This month's real numbers beside next month's targets"
       title="Plan the next month"
+      description="This month's real numbers beside next month's targets."
       order={1}
       actions={
-        <button type="button" className={quiet} onClick={onClose}>
+        <Button variant="outline" size="sm" onClick={onClose}>
           Close
-        </button>
+        </Button>
       }
     >
       <div className="grid gap-5">
@@ -151,13 +131,13 @@ export function NextMonth({
           <label className="grid gap-1">
             <span className={label}>From</span>
             <DateInput
-              className={field}
+              className="ceo-select-md w-full"
               value={from}
               onChange={e => {
                 setFrom(e.target.value);
                 if (e.target.value) {
                   setTo(monthEnd(e.target.value));
-                  setTitle(`${monthName(e.target.value)} — The Plan`);
+                  setTitle(planTitle(e.target.value));
                 }
               }}
             />
@@ -166,7 +146,7 @@ export function NextMonth({
           <label className="grid gap-1">
             <span className={label}>To</span>
             <DateInput
-              className={field}
+              className="ceo-select-md w-full"
               value={to}
               onChange={e => setTo(e.target.value)}
             />
@@ -193,23 +173,23 @@ export function NextMonth({
 
         <div className="flex flex-wrap items-center gap-2 border-t pt-4">
           <span className={label}>Fill every box</span>
-          <button
-            type="button"
-            className={quiet}
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => fillAll(t => t.target)}
           >
             Same as this month
-          </button>
-          <button
-            type="button"
-            className={quiet}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => fillAll(t => t.actual ?? t.target)}
           >
             This month's actual
-          </button>
-          <button
-            type="button"
-            className={quiet}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() =>
               fillAll(t =>
                 t.target === null
@@ -220,10 +200,8 @@ export function NextMonth({
               )
             }
           >
-            <span className="flex items-center gap-1.5">
-              <Wand2 className="size-3.5" aria-hidden />A tenth better
-            </span>
-          </button>
+            <Wand2 aria-hidden />A tenth better
+          </Button>
           <span className="text-xs text-muted-foreground">
             {`${changed} of ${rows.length} changed`}
           </span>
@@ -243,11 +221,8 @@ export function NextMonth({
             <tbody>
               {groups.map(g => (
                 <Fragment key={g.key}>
-                  <tr className="border-b bg-muted/30">
-                    <td
-                      colSpan={5}
-                      className="py-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground"
-                    >
+                  <tr className="border-b">
+                    <td colSpan={5} className={cn(KICKER, "pb-2 pt-4")}>
                       {g.label}
                     </td>
                   </tr>
@@ -265,14 +240,25 @@ export function NextMonth({
                         {fmt(t.target, t.unit)}
                       </td>
                       <td className="py-1.5 text-right tabular-nums">
-                        <span
-                          className={
-                            t.onPace === false
-                              ? "text-[var(--ceo-critical)]"
-                              : ""
-                          }
-                        >
-                          {fmt(t.actual, t.unit)}
+                        {/* Behind pace shows as a dot; the number stays in ink. */}
+                        <span className="inline-flex items-center justify-end gap-1.5">
+                          {t.onPace === false ? (
+                            <StatusDot
+                              tone={
+                                paceTone(t, worst) === "critical"
+                                  ? "critical"
+                                  : "warning"
+                              }
+                              label="Behind pace"
+                            />
+                          ) : null}
+                          <span
+                            className={
+                              t.actual === null ? "text-muted-foreground" : ""
+                            }
+                          >
+                            {fmt(t.actual, t.unit)}
+                          </span>
                         </span>
                       </td>
                       <td className="w-28 py-1.5 pl-3">
@@ -306,9 +292,7 @@ export function NextMonth({
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            className={primary}
+          <Button
             disabled={busy || !title.trim() || !from || !to}
             onClick={async () => {
               setBusy(true);
@@ -358,14 +342,14 @@ export function NextMonth({
             }}
           >
             {busy ? (
-              <span className="flex items-center gap-1.5">
-                <Loader2 className="size-3.5 animate-spin" aria-hidden />
+              <>
+                <Loader2 className="animate-spin" aria-hidden />
                 Saving
-              </span>
+              </>
             ) : (
               `Save ${rows.length} targets as a draft`
             )}
-          </button>
+          </Button>
           <StatusChip
             tone="neutral"
             label="Draft until you make it live"

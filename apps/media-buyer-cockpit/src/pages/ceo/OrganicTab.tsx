@@ -1,9 +1,11 @@
-import { ExternalLink, Youtube } from "lucide-react";
+import { ArrowUpRight, Heart, MessageCircle, Youtube } from "lucide-react";
+import type { ReactNode } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { count, countCompact, shortDate } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
+import { buttonVariants } from "@/components/ui/button";
 import type { OrganicPayload } from "../../../convex/ceo/payloads";
 import { ContentBusiness } from "./contentBusiness";
 import type { CeoTabProps } from "./types";
@@ -18,8 +20,42 @@ import type { CeoTabProps } from "./types";
  * views.
  */
 
-const na = (v: number | null) => (v === null ? "—" : countCompact(v));
+/** A missing number is the kit's explained n/a (null), never a dash. */
+const na = (v: number | null) => (v === null ? null : countCompact(v));
 const times = (m: number) => `${m >= 10 ? Math.round(m) : m.toFixed(1)}×`;
+
+/** The multiple over the platform's normal, a quiet badge on the thumbnail. */
+const BADGE =
+  "absolute left-2 top-2 rounded-full bg-background/85 px-2 py-0.5 text-xs font-semibold tabular-nums text-foreground backdrop-blur-sm";
+
+/** Thumbnail tiles sit on a quiet panel, not a second border inside the card. */
+const TILE =
+  "rounded-lg bg-muted/40 p-2 transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+
+/** "Library: 22 reels in 90 days, newest 27 Aug", with no dash when a part is missing. */
+function libraryLine(
+  c: { last90: number; newest: string | null } | undefined,
+  noun: string,
+): string | undefined {
+  if (!c) return undefined;
+  const newest = c.newest ? `, newest ${shortDate(c.newest)}` : "";
+  return `Library: ${count(c.last90)} ${noun} in 90 days${newest}`;
+}
+
+/** The account itself, opened on the platform: its name and one trailing arrow. */
+function OpenLink({ href, children }: { href: string; children: ReactNode }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="-my-1 inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-[var(--ceo-hover)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      {children}
+      <ArrowUpRight className="size-3.5" aria-hidden />
+    </a>
+  );
+}
 
 function Best({
   rows,
@@ -60,56 +96,44 @@ function Best({
 
 function BestCard({ r }: { r: OrganicPayload["best"][number] }) {
   return (
-    <>
-      {[r].map(r => (
-        <a
-          key={r.id}
-          href={r.url}
-          target="_blank"
-          rel="noreferrer"
-          className="w-[168px] shrink-0 rounded-lg border p-2 hover:bg-muted/40"
+    <a
+      href={r.url}
+      target="_blank"
+      rel="noreferrer"
+      className={`w-[168px] shrink-0 ${TILE}`}
+    >
+      <div
+        className={`relative w-full overflow-hidden rounded-md bg-muted ${r.platform === "youtube" ? "aspect-video" : "aspect-[4/5]"}`}
+      >
+        {r.thumbnail ? (
+          <img
+            src={r.thumbnail}
+            alt=""
+            loading="lazy"
+            referrerPolicy="no-referrer"
+            className="h-full w-full object-cover"
+            onError={e => {
+              e.currentTarget.style.display = "none";
+            }}
+          />
+        ) : null}
+        <span
+          className={BADGE}
+          title={`${times(r.multiple)} the platform's normal`}
         >
-          <div
-            className={`relative w-full overflow-hidden rounded-md bg-muted ${r.platform === "youtube" ? "aspect-video" : "aspect-[4/5]"}`}
-          >
-            {r.thumbnail ? (
-              <img
-                src={r.thumbnail}
-                alt=""
-                loading="lazy"
-                referrerPolicy="no-referrer"
-                className="h-full w-full object-cover"
-                onError={e => {
-                  e.currentTarget.style.display = "none";
-                }}
-              />
-            ) : null}
-            <span
-              className="absolute left-2 top-2 rounded-full bg-foreground px-2 py-0.5 text-xs font-bold text-background"
-              style={{ fontVariantNumeric: "tabular-nums" }}
-              title={`${times(r.multiple)} the platform's normal`}
-            >
-              {times(r.multiple)}
-            </span>
-          </div>
-          <div className="mt-2 flex items-center justify-between text-xs">
-            <span className="font-semibold">{`${countCompact(r.value)} ${r.metric}`}</span>
-            <span className="text-muted-foreground">
-              {r.platform === "youtube" ? "YouTube" : "Instagram"}
-            </span>
-          </div>
-          <p
-            className="mt-1 line-clamp-2 text-xs text-muted-foreground"
-            dir="auto"
-          >
-            {r.title}
-          </p>
-          <div className="mt-1 text-[11px] text-muted-foreground">
-            {shortDate(r.at)}
-          </div>
-        </a>
-      ))}
-    </>
+          {times(r.multiple)}
+        </span>
+      </div>
+      <div className="mt-2 flex items-center justify-between gap-2 text-xs">
+        <span className="font-semibold tabular-nums">{`${countCompact(r.value)} ${r.metric}`}</span>
+        <span className="text-muted-foreground tabular-nums">
+          {shortDate(r.at)}
+        </span>
+      </div>
+      <p className="mt-1 line-clamp-2 text-xs text-muted-foreground" dir="auto">
+        {r.title}
+      </p>
+    </a>
   );
 }
 
@@ -127,9 +151,9 @@ function Posts({
           href={p.url}
           target="_blank"
           rel="noreferrer"
-          className="grid gap-1 rounded-md border p-2 hover:bg-muted/40"
+          className={`grid content-start gap-1 ${TILE}`}
         >
-          <div className="relative aspect-square w-full overflow-hidden rounded bg-muted">
+          <div className="relative aspect-square w-full overflow-hidden rounded-md bg-muted">
             {p.thumbnail ? (
               <img
                 src={p.thumbnail}
@@ -142,26 +166,36 @@ function Posts({
               />
             ) : null}
             {p.multiple !== null && p.multiple >= 1.5 ? (
-              <span className="absolute left-1.5 top-1.5 rounded-full bg-foreground px-1.5 py-0.5 text-[10px] font-bold text-background">
-                {times(p.multiple)}
-              </span>
+              <span className={BADGE}>{times(p.multiple)}</span>
             ) : null}
           </div>
-          <div
-            className="flex items-center justify-between text-xs"
-            style={{ fontVariantNumeric: "tabular-nums" }}
-          >
-            <span>
+          <div className="flex items-center justify-between gap-2 text-xs tabular-nums">
+            <span className="font-medium">
               {p.views !== null
                 ? `${countCompact(p.views)} views`
                 : p.reach !== null
                   ? `${countCompact(p.reach)} reach`
-                  : `♥ ${count(p.likes)}`}
+                  : `${count(p.likes)} likes`}
             </span>
             <span className="text-muted-foreground">{shortDate(p.at)}</span>
           </div>
-          <div className="text-[11px] text-muted-foreground">
-            {`♥ ${count(p.likes)} · ${count(p.comments)}${p.saved !== null ? ` · ${count(p.saved)} saved` : ""}${p.shares !== null ? ` · ${count(p.shares)} shared` : ""}`}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground tabular-nums">
+            <span className="inline-flex items-center gap-1">
+              <Heart className="size-3" role="img" aria-label="Likes" />
+              {count(p.likes)}
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <MessageCircle
+                className="size-3"
+                role="img"
+                aria-label="Comments"
+              />
+              {count(p.comments)}
+            </span>
+            {p.saved !== null ? <span>{`${count(p.saved)} saved`}</span> : null}
+            {p.shares !== null ? (
+              <span>{`${count(p.shares)} shared`}</span>
+            ) : null}
           </div>
           {p.caption ? (
             <div className="truncate text-xs text-muted-foreground" dir="auto">
@@ -179,7 +213,7 @@ export function OrganicTab({ sections }: CeoTabProps) {
   const p = section?.payload ?? null;
   if (!p)
     return (
-      <SectionCard title="Content" section={section}>
+      <SectionCard title="Mahara's own content" section={section}>
         {() => null}
       </SectionCard>
     );
@@ -195,20 +229,21 @@ export function OrganicTab({ sections }: CeoTabProps) {
       <ContentBusiness payload={p} section={section} order={0} />
 
       <SectionCard
-        kicker="By how far above its platform's normal a post is running"
+        kicker="Above normal"
         title="Performing best"
+        description="Ranked by how far above its platform's normal a post is running. Normal is the median of what was read."
         section={section}
         notes={p.notes}
         order={1}
       >
         {() => (
-          <div className="grid gap-5">
+          <div className="grid gap-6">
             <Best
               rows={p.best ?? []}
               platform="instagram"
               normal={
                 ig?.normalViews
-                  ? `${countCompact(ig.normalViews)} views a reel, the median of what was read`
+                  ? `${countCompact(ig.normalViews)} views a reel`
                   : null
               }
             />
@@ -217,7 +252,7 @@ export function OrganicTab({ sections }: CeoTabProps) {
               platform="youtube"
               normal={
                 yt.enabled && yt.normalViewsPerDay
-                  ? `${yt.normalViewsPerDay.toFixed(1)} views a day per video, the median of what was read`
+                  ? `${yt.normalViewsPerDay.toFixed(1)} views a day per video`
                   : null
               }
             />
@@ -226,28 +261,22 @@ export function OrganicTab({ sections }: CeoTabProps) {
       </SectionCard>
 
       <SectionCard
-        kicker="@mahara_media · last 28 days"
+        kicker="Last 28 days"
         title="Instagram"
         section={section}
         order={2}
         actions={
           ig ? (
-            <a
-              href={`https://www.instagram.com/${ig.username}/`}
-              target="_blank"
-              rel="noreferrer"
-              className="text-muted-foreground hover:text-foreground"
-              title="Open on Instagram"
-            >
-              <ExternalLink className="size-4" aria-hidden />
-            </a>
+            <OpenLink href={`https://www.instagram.com/${ig.username}/`}>
+              {`@${ig.username}`}
+            </OpenLink>
           ) : undefined
         }
       >
         {() =>
           ig ? (
-            <div className="grid gap-5">
-              <div className="grid grid-cols-2 gap-x-6 gap-y-5 @md:grid-cols-3 @2xl:grid-cols-5">
+            <div className="grid gap-6">
+              <div className="grid grid-cols-2 gap-x-6 gap-y-6 @md:grid-cols-3 @2xl:grid-cols-5">
                 <StatTile
                   variant="plain"
                   label="Followers"
@@ -268,11 +297,7 @@ export function OrganicTab({ sections }: CeoTabProps) {
                   variant="plain"
                   label="Posted, 28 days"
                   value={count(ig.published28)}
-                  sub={
-                    reelC
-                      ? `library: ${count(reelC.last90)} reels in 90 · newest ${reelC.newest ?? "—"}`
-                      : undefined
-                  }
+                  sub={libraryLine(reelC, "reels")}
                   hint="Counted from the live post list. The asset library lags it by days."
                 />
                 <StatTile
@@ -306,8 +331,8 @@ export function OrganicTab({ sections }: CeoTabProps) {
       >
         {() =>
           yt.enabled ? (
-            <div className="grid gap-5">
-              <div className="grid grid-cols-2 gap-x-6 gap-y-5 @lg:grid-cols-4">
+            <div className="grid gap-6">
+              <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-4">
                 <StatTile
                   variant="plain"
                   label="Subscribers"
@@ -327,11 +352,7 @@ export function OrganicTab({ sections }: CeoTabProps) {
                   variant="plain"
                   label="Published, 28 days"
                   value={na(yt.published28)}
-                  sub={
-                    ytC
-                      ? `library: ${count(ytC.last90)} in 90 · newest ${ytC.newest ?? "—"}`
-                      : undefined
-                  }
+                  sub={libraryLine(ytC, "videos")}
                   hint="Counted from the live upload list. The asset library lags it by days."
                 />
               </div>
@@ -343,9 +364,9 @@ export function OrganicTab({ sections }: CeoTabProps) {
                       href={`https://www.youtube.com/watch?v=${v.id}`}
                       target="_blank"
                       rel="noreferrer"
-                      className="grid gap-1 rounded-md border p-2 hover:bg-muted/40"
+                      className={`grid content-start gap-1 ${TILE}`}
                     >
-                      <div className="relative aspect-video w-full overflow-hidden rounded bg-muted">
+                      <div className="relative aspect-video w-full overflow-hidden rounded-md bg-muted">
                         {v.thumbnail ? (
                           <img
                             src={v.thumbnail}
@@ -355,18 +376,13 @@ export function OrganicTab({ sections }: CeoTabProps) {
                           />
                         ) : null}
                         {v.multiple !== null && v.multiple >= 1.5 ? (
-                          <span className="absolute left-1.5 top-1.5 rounded-full bg-foreground px-1.5 py-0.5 text-[10px] font-bold text-background">
-                            {times(v.multiple)}
-                          </span>
+                          <span className={BADGE}>{times(v.multiple)}</span>
                         ) : null}
                       </div>
                       <div className="truncate text-xs font-medium" dir="auto">
                         {v.title}
                       </div>
-                      <div
-                        className="text-xs text-muted-foreground"
-                        style={{ fontVariantNumeric: "tabular-nums" }}
-                      >
+                      <div className="text-xs text-muted-foreground tabular-nums">
                         {`${countCompact(v.views)} views${v.viewsPerDay !== null ? ` · ${v.viewsPerDay.toFixed(1)} a day` : ""} · ${shortDate(v.at)}`}
                       </div>
                     </a>
@@ -386,9 +402,13 @@ export function OrganicTab({ sections }: CeoTabProps) {
                 href={yt.enableUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="justify-self-start rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-muted"
+                className={buttonVariants({
+                  variant: "outline",
+                  className: "justify-self-center",
+                })}
               >
                 Enable the YouTube Data API
+                <ArrowUpRight aria-hidden />
               </a>
             </div>
           )
@@ -396,27 +416,19 @@ export function OrganicTab({ sections }: CeoTabProps) {
       </SectionCard>
 
       <SectionCard
-        kicker="MaharaMedia page · last 28 days"
+        kicker="Last 28 days"
         title="Facebook"
         section={section}
         order={4}
         actions={
           fb?.url ? (
-            <a
-              href={fb.url}
-              target="_blank"
-              rel="noreferrer"
-              className="text-muted-foreground hover:text-foreground"
-              title="Open on Facebook"
-            >
-              <ExternalLink className="size-4" aria-hidden />
-            </a>
+            <OpenLink href={fb.url}>MaharaMedia page</OpenLink>
           ) : undefined
         }
       >
         {() =>
           fb ? (
-            <div className="grid grid-cols-2 gap-x-6 gap-y-5 @lg:grid-cols-4">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-4">
               <StatTile
                 variant="plain"
                 label="Followers"

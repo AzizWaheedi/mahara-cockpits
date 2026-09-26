@@ -6,7 +6,6 @@ import {
   capitalize,
   count,
   dateTime,
-  humanize,
   isNum,
   minutes,
   plural,
@@ -33,8 +32,10 @@ import type { MachinePayload } from "../../../convex/ceo/payloads";
 import { FeedbackQueueCard } from "./feedbackQueue";
 import {
   feedState,
+  jobName,
   jobState,
   type MachineState as State,
+  sourceLabel,
   syncEvery,
   syncState,
 } from "./machineState";
@@ -43,24 +44,6 @@ import type { CeoTabProps } from "./types";
 type Job = MachinePayload["jobs"][number];
 type Source = MachinePayload["sources"][number];
 type Feed = MachinePayload["feeds"][number];
-
-/** Display names for the cockpit's own data sources (keys from the health runbook). */
-const SOURCE_LABELS: Record<string, string> = {
-  meta: "Meta ads",
-  clickup: "ClickUp",
-  sheets: "Google Sheets",
-  docs: "Google Docs",
-  calendar: "Google Calendar",
-  ghl: "GoHighLevel",
-  fathom: "Fathom call recordings",
-  slack: "Slack",
-  bridge_csm: "Client success cockpit",
-  bridge_creative: "Creative cockpit",
-  whapi: "WhatsApp (WHAPI)",
-  resend: "Email (Resend)",
-  jobs: "Scheduled jobs",
-  hermes: "Hermes",
-};
 
 // The name each section is known by on screen, matching the tab it feeds. Used
 // only when a section has never computed and so carries no label of its own.
@@ -85,12 +68,6 @@ const PROJECT: Record<Feed["project"], string> = {
   b2b: "B2B",
   triage: "Creative Triage",
 };
-
-/** "ceo refresh" as "CEO refresh": job keys are lower case in the ledger. */
-const jobName = (job: string) =>
-  capitalize(job).replace(/\b(ceo|kpi|ai|eod)\b/gi, w => w.toUpperCase());
-
-const sourceLabel = (key: string) => SOURCE_LABELS[key] ?? humanize(key);
 
 const severity: Record<StatusTone, number> = {
   critical: 0,
@@ -132,7 +109,7 @@ export function MachineTab({ sections, now }: CeoTabProps) {
   const info = payload?.notes.filter(n => n.level !== "warn") ?? [];
 
   return (
-    <div className="grid gap-5 lg:gap-7">
+    <div className="grid gap-4 lg:gap-6">
       <FeedbackQueueCard order={0} now={now} />
 
       <SectionCard
@@ -148,7 +125,7 @@ export function MachineTab({ sections, now }: CeoTabProps) {
       {payload ? (
         <>
           <SectionCard
-            kicker="Last successful run of each"
+            kicker="Last success"
             title="Outside feeds"
             section={machine}
             notes={info}
@@ -158,7 +135,7 @@ export function MachineTab({ sections, now }: CeoTabProps) {
           </SectionCard>
           <div className="grid gap-4 2xl:grid-cols-2 2xl:items-start 2xl:gap-6">
             <SectionCard
-              kicker="Last run of each"
+              kicker="Last run"
               title="Cockpit jobs"
               section={machine}
               order={2}
@@ -178,7 +155,7 @@ export function MachineTab({ sections, now }: CeoTabProps) {
       ) : null}
 
       <SectionCard
-        kicker="Last refresh of each"
+        kicker="Last refresh"
         title="CEO sections"
         order={4}
         actions={<RetrySections sections={sections} now={now} />}
@@ -212,7 +189,7 @@ function Status({ m, now }: { m: MachinePayload; now: number }) {
   const chip = (s: State) => <StatusChip tone={s.tone} label={s.label} />;
 
   return (
-    <div className="@container space-y-5">
+    <div className="space-y-5">
       <div
         role="status"
         className="flex items-start gap-2.5 rounded-lg bg-muted/60 px-3 py-2.5"
@@ -237,7 +214,7 @@ function Status({ m, now }: { m: MachinePayload; now: number }) {
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-x-6 gap-y-5 @xl:grid-cols-3 @5xl:grid-cols-6">
+      <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-3 @5xl:grid-cols-6">
         <StatTile
           variant="plain"
           label="Cockpit sync age"
@@ -337,16 +314,36 @@ function When({
   );
 }
 
-/** Name on top, the error in muted text under it, so the reason never needs a hover. */
-function NameWithError({ name, error }: { name: string; error?: string }) {
+/**
+ * A status dot, the name, and under it what is wrong, so the reason never
+ * needs a hover. The dot replaces a status column that squeezed the names
+ * on a phone ("Faili..."); anything not healthy says its state in words.
+ */
+function NameCell({
+  state,
+  name,
+  error,
+}: {
+  state: State;
+  name: string;
+  error?: string;
+}) {
+  const line = [state.tone === "good" ? null : state.label, error]
+    .filter(Boolean)
+    .join(": ");
   return (
-    <div className="min-w-0">
-      <p className="font-medium text-foreground">{name}</p>
-      {error ? (
-        <p className="mt-0.5 line-clamp-2 max-w-md break-words text-xs leading-relaxed text-muted-foreground">
-          {error}
-        </p>
-      ) : null}
+    <div className="flex min-w-0 items-start gap-2">
+      <span className="mt-[7px] flex shrink-0">
+        <StatusDot tone={state.tone} label={state.label} />
+      </span>
+      <div className="min-w-0">
+        <p className="font-medium text-foreground">{name}</p>
+        {line ? (
+          <p className="mt-0.5 line-clamp-2 max-w-md break-words text-xs leading-relaxed text-muted-foreground">
+            {line}
+          </p>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -375,18 +372,10 @@ function Feeds({ feeds, now }: { feeds: Feed[]; now: number }) {
       {
         key: "name",
         header: "Feed",
-        cell: f => <NameWithError name={f.name} error={f.error} />,
+        cell: f => (
+          <NameCell state={feedState(f)} name={f.name} error={f.error} />
+        ),
         sortValue: f => f.name,
-        className: "min-w-56",
-      },
-      {
-        key: "status",
-        header: "Status",
-        cell: f => {
-          const s = feedState(f);
-          return <StatusChip tone={s.tone} label={s.label} />;
-        },
-        sortValue: f => severity[feedState(f).tone],
       },
       {
         key: "last",
@@ -464,18 +453,14 @@ function Jobs({ jobs, now }: { jobs: Job[]; now: number }) {
       {
         key: "job",
         header: "Job",
-        cell: j => <NameWithError name={jobName(j.job)} error={j.error} />,
+        cell: j => (
+          <NameCell
+            state={jobState(j, now)}
+            name={jobName(j.job)}
+            error={j.error}
+          />
+        ),
         sortValue: j => j.job,
-        className: "min-w-44",
-      },
-      {
-        key: "status",
-        header: "Status",
-        cell: j => {
-          const s = jobState(j, now);
-          return <StatusChip tone={s.tone} label={s.label} />;
-        },
-        sortValue: j => severity[jobState(j, now).tone],
       },
       {
         key: "at",
@@ -540,22 +525,13 @@ function Sources({ sources, now }: { sources: Source[]; now: number }) {
         key: "source",
         header: "Source",
         cell: s => (
-          <NameWithError
+          <NameCell
+            state={sourceState(s)}
             name={sourceLabel(s.source)}
             error={s.ok === false ? s.lastError : undefined}
           />
         ),
         sortValue: s => sourceLabel(s.source),
-        className: "min-w-44",
-      },
-      {
-        key: "status",
-        header: "Status",
-        cell: s => {
-          const st = sourceState(s);
-          return <StatusChip tone={st.tone} label={st.label} />;
-        },
-        sortValue: s => severity[sourceState(s).tone],
       },
       {
         key: "ok",
@@ -627,7 +603,8 @@ function SectionsTrust({
       key: "section",
       header: "Section",
       cell: r => (
-        <NameWithError
+        <NameCell
+          state={sectionState(r.section, now)}
           name={r.section?.label ?? SECTION_NAMES[r.key]}
           error={
             r.section?.ok === false ? (r.section.error ?? undefined) : undefined
@@ -635,16 +612,7 @@ function SectionsTrust({
         />
       ),
       sortValue: r => r.section?.label ?? SECTION_NAMES[r.key],
-      className: "min-w-48",
-    },
-    {
-      key: "status",
-      header: "Status",
-      cell: r => {
-        const s = sectionState(r.section, now);
-        return <StatusChip tone={s.tone} label={s.label} />;
-      },
-      sortValue: r => severity[sectionState(r.section, now).tone],
+      className: "min-w-44",
     },
     {
       key: "computed",

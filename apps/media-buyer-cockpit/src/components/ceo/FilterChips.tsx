@@ -20,7 +20,9 @@ export type FilterOption<K extends string> = {
 
 /**
  * One row of toggle chips that scope the list below them. On a phone the row
- * scrolls sideways instead of wrapping, so it stays one row.
+ * scrolls sideways instead of wrapping, so it stays one row. The active chip
+ * is the teal pill; a chip that would show nothing ("All 0") is left out
+ * unless it is the one selected.
  */
 export function FilterChips<K extends string>({
   options,
@@ -43,61 +45,66 @@ export function FilterChips<K extends string>({
     <div
       role="group"
       aria-label={ariaLabel}
+      // The 4px of padding lets each chip's invisible tap margin reach past
+      // it: a scroller clips everything inside it, vertically too.
       className={cn(
-        "ceo-scroll-x flex min-w-0 max-w-full items-center gap-1.5 overflow-x-auto",
+        "ceo-scroll-x -my-1 flex min-w-0 max-w-full items-center gap-1 overflow-x-auto py-1",
         className,
       )}
     >
-      {options.map(o => {
-        const active = o.key === value;
-        const Icon = o.icon;
-        const chip = (
-          <button
-            key={o.key}
-            type="button"
-            aria-pressed={active}
-            onClick={() => onChange(o.key)}
-            className={cn(
-              "inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-              active
-                ? "border-foreground/20 bg-foreground/[0.07] text-foreground"
-                : "bg-card text-muted-foreground hover:bg-[var(--ceo-hover)] hover:text-foreground",
-            )}
-          >
-            {o.tone ? (
-              <span
-                aria-hidden
-                className="size-1.5 shrink-0 rounded-full"
-                style={{
-                  backgroundColor:
-                    o.tone === "neutral"
-                      ? "var(--ceo-deemphasis)"
-                      : STATUS_COLOR[o.tone],
-                }}
-              />
-            ) : null}
-            {Icon ? <Icon className="size-3.5" aria-hidden /> : null}
-            {o.label}
-            {typeof o.count === "number" ? (
-              <span
-                className={cn(
-                  "tabular-nums",
-                  active ? "text-foreground/65" : "text-muted-foreground/80",
-                )}
-              >
-                {count(o.count)}
-              </span>
-            ) : null}
-          </button>
-        );
-        return o.hint ? (
-          <Hint key={o.key} content={o.hint}>
-            {chip}
-          </Hint>
-        ) : (
-          chip
-        );
-      })}
+      {options
+        .filter(o => o.count !== 0 || o.key === value)
+        .map(o => {
+          const active = o.key === value;
+          const Icon = o.icon;
+          const chip = (
+            <button
+              key={o.key}
+              type="button"
+              aria-pressed={active}
+              onClick={() => onChange(o.key)}
+              className={cn(
+                "no-touch relative inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3 text-xs font-medium transition-colors after:absolute after:-inset-1 after:content-[''] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                active
+                  ? "bg-primary/15 text-foreground ring-1 ring-inset ring-primary/40"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
+              )}
+            >
+              {o.tone ? (
+                <span
+                  aria-hidden
+                  className="size-1.5 shrink-0 rounded-full"
+                  style={{
+                    backgroundColor:
+                      o.tone === "neutral"
+                        ? "var(--ceo-deemphasis)"
+                        : STATUS_COLOR[o.tone],
+                  }}
+                />
+              ) : null}
+              {Icon ? <Icon className="size-3.5" aria-hidden /> : null}
+              {o.label}
+              {typeof o.count === "number" ? (
+                <span
+                  className={cn(
+                    "tabular-nums",
+                    active ? "text-foreground/70" : "text-muted-foreground/80",
+                  )}
+                >
+                  {count(o.count)}
+                </span>
+              ) : null}
+            </button>
+          );
+          // The chip's own tap filters; its hint stays a hover tooltip.
+          return o.hint ? (
+            <Hint key={o.key} content={o.hint} tap={false}>
+              {chip}
+            </Hint>
+          ) : (
+            chip
+          );
+        })}
     </div>
   );
 }

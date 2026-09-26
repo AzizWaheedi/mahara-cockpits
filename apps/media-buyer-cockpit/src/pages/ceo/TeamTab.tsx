@@ -14,6 +14,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { Facts } from "@/components/ceo/Facts";
 import {
+  capitalize,
   count,
   kuwaitDay,
   money,
@@ -24,7 +25,9 @@ import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import { AnimatedSelect } from "@/components/ui/animated-select";
+import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
+import { Switch } from "@/components/ui/switch";
 import { api } from "../../../convex/_generated/api";
 import {
   COMMISSION_BASES,
@@ -160,7 +163,7 @@ function RoleField({
         value={value}
         disabled={disabled}
         onChange={e => onChange(e.target.value)}
-        placeholder="what they do"
+        placeholder="What they do"
         aria-label={label}
         className={box}
       />
@@ -196,7 +199,7 @@ function RoleField({
           value={value}
           disabled={disabled}
           onChange={e => onChange(e.target.value)}
-          placeholder="type the role"
+          placeholder="Type the role"
           aria-label={`${label}, typed`}
           className={box}
         />
@@ -217,19 +220,14 @@ function Toggle({
   onChange: (on: boolean) => void;
 }) {
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={on}
+    <Switch
+      checked={on}
       aria-label={label}
       disabled={disabled}
-      onClick={() => onChange(!on)}
-      className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${on ? "bg-[var(--ceo-emphasis)]" : "bg-muted-foreground/40"} disabled:opacity-50`}
-    >
-      <span
-        className={`absolute top-0.5 size-4 rounded-full bg-background transition-[left] ${on ? "left-[18px]" : "left-0.5"}`}
-      />
-    </button>
+      onCheckedChange={onChange}
+      // The switch is 24px tall; the invisible ring makes it an easy tap.
+      className="relative after:absolute after:-inset-2 after:content-['']"
+    />
   );
 }
 
@@ -369,15 +367,16 @@ function HoursEditor({
   };
 
   return (
-    <div className="grid gap-3 rounded-md border p-3 @3xl:col-span-4 @3xl:grid-cols-2 @3xl:gap-x-6">
-      <div className="grid gap-1.5">
+    <div className="grid gap-4 rounded-xl bg-muted/40 p-4 @3xl:grid-cols-2 @3xl:gap-x-6 @5xl:col-span-4">
+      {/* Its own container: on a phone the times take the line under the day. */}
+      <div className="@container/week grid gap-1.5">
         <span className="text-xs text-muted-foreground">{`A normal week, ${timezone} time`}</span>
         {WEEK_ORDER.map(k => {
           const d = h.week[k];
           return (
             <div
               key={k}
-              className="grid grid-cols-[2.5rem_2.25rem_minmax(0,1fr)] items-center gap-2 text-sm"
+              className="grid grid-cols-[2.5rem_2.75rem_minmax(0,1fr)] items-center gap-x-2 gap-y-1.5 text-sm"
             >
               <span className={d.on ? "" : "text-muted-foreground"}>
                 {DAY_SHORT[k]}
@@ -389,13 +388,13 @@ function HoursEditor({
                 onChange={on => setDay(k, { on })}
               />
               {d.on ? (
-                <span className="flex min-w-0 items-center gap-1.5">
+                <span className="col-span-3 flex min-w-0 items-center gap-1.5 @sm/week:col-span-1">
                   <input
                     type="time"
                     value={d.start}
                     onChange={e => setDay(k, { start: e.target.value })}
                     aria-label={`${DAY_LABEL[k]} start`}
-                    className={`${field} w-[6.25rem]`}
+                    className={`${field} w-32 min-w-0`}
                     style={tabular}
                   />
                   <span className="text-xs text-muted-foreground">to</span>
@@ -404,13 +403,13 @@ function HoursEditor({
                     value={d.end}
                     onChange={e => setDay(k, { end: e.target.value })}
                     aria-label={`${DAY_LABEL[k]} end`}
-                    className={`${field} w-[6.25rem]`}
+                    className={`${field} w-32 min-w-0`}
                     style={tabular}
                   />
                   <DayBar start={d.start} end={d.end} />
                 </span>
               ) : (
-                <span className="text-xs text-muted-foreground">off</span>
+                <span className="text-xs text-muted-foreground">Off</span>
               )}
             </div>
           );
@@ -453,7 +452,7 @@ function HoursEditor({
                       setException(x.key, { start: e.target.value })
                     }
                     aria-label="Exception start"
-                    className={`${field} w-[6.25rem]`}
+                    className={`${field} w-32`}
                     style={tabular}
                   />
                   <span className="text-xs text-muted-foreground">to</span>
@@ -462,7 +461,7 @@ function HoursEditor({
                     value={x.end}
                     onChange={e => setException(x.key, { end: e.target.value })}
                     aria-label="Exception end"
-                    className={`${field} w-[6.25rem]`}
+                    className={`${field} w-32`}
                     style={tabular}
                   />
                 </>
@@ -483,48 +482,53 @@ function HoursEditor({
             None yet. Add one for a day off or shorter hours.
           </span>
         )}
-        <button
+        <Button
           type="button"
+          variant="outline"
+          size="sm"
           disabled={busy}
           onClick={addException}
-          className="inline-flex w-fit items-center gap-1 rounded-md border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
+          className="w-fit"
         >
-          <Plus className="size-3" aria-hidden /> Add an exception
-        </button>
+          <Plus aria-hidden /> Add an exception
+        </Button>
       </div>
       <div className="flex flex-wrap items-center gap-2 @3xl:col-span-2">
         <p
-          className={`min-w-0 flex-1 text-xs ${checked.problem ? "text-[var(--ceo-critical)]" : "text-muted-foreground"}`}
+          className={`min-w-0 basis-full text-xs ${checked.problem ? "text-[var(--ceo-critical)]" : "text-muted-foreground"}`}
         >
           {checked.schedule
             ? scheduleSummary(checked.schedule)
             : checked.problem}
         </p>
-        <button
+        <Button
           type="button"
+          size="sm"
           disabled={busy || !checked.schedule}
           onClick={() => checked.schedule && submit(checked.schedule)}
-          className="inline-flex items-center gap-1 rounded-md bg-foreground px-2.5 py-1 text-xs font-medium text-background disabled:opacity-50"
         >
-          <Check className="size-3.5" aria-hidden /> Save hours
-        </button>
-        <button
+          <Check aria-hidden /> Save hours
+        </Button>
+        <Button
           type="button"
+          variant="outline"
+          size="sm"
           disabled={busy}
           onClick={onClose}
-          className="rounded-md border px-2.5 py-1 text-xs hover:bg-muted disabled:opacity-50"
         >
           Cancel
-        </button>
+        </Button>
         {person.schedule ? (
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             disabled={busy}
             onClick={() => submit(null)}
-            className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted disabled:opacity-50"
+            className="text-muted-foreground"
           >
             Clear hours
-          </button>
+          </Button>
         ) : null}
       </div>
       {msg ? (
@@ -634,7 +638,7 @@ function Row({
   const offWord = account ? "retired" : "off the team";
 
   return (
-    <div className="grid gap-2 py-3 @3xl:grid-cols-[minmax(0,1.4fr)_15rem_13rem_auto] @3xl:items-center">
+    <div className="grid gap-2 py-3 @5xl:grid-cols-[minmax(0,1.4fr)_15rem_13rem_auto] @5xl:items-center">
       <div className="flex min-w-0 items-center gap-3">
         {account ? (
           <span
@@ -659,7 +663,7 @@ function Row({
               <button
                 type="button"
                 onClick={() => onOpen(p)}
-                className="truncate font-medium underline decoration-transparent underline-offset-4 transition-colors hover:decoration-current"
+                className="truncate text-left font-medium underline decoration-transparent underline-offset-4 transition-colors hover:decoration-current"
                 title={`Open ${p.name}'s file`}
               >
                 {p.name}
@@ -695,7 +699,7 @@ function Row({
             <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
               <Clock className="size-3 shrink-0" aria-hidden />
               <span className="min-w-0 truncate">
-                {p.schedule ? scheduleSummary(p.schedule) : "no hours set"}
+                {p.schedule ? scheduleSummary(p.schedule) : "No hours set"}
               </span>
               <button
                 type="button"
@@ -710,19 +714,19 @@ function Row({
         </div>
       </div>
       {account ? (
-        <p className="text-xs text-muted-foreground @3xl:col-span-2">
+        <p className="text-xs text-muted-foreground @5xl:col-span-2">
           No pay and no commission
         </p>
       ) : (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 @3xl:contents">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 @5xl:contents">
           <div className="flex flex-wrap items-center gap-1.5 text-sm">
             <input
               inputMode="decimal"
               value={d.monthlyCost}
               onChange={e => setD({ ...d, monthlyCost: e.target.value })}
-              placeholder="pay a month"
+              placeholder="Pay a month"
               aria-label={`${p.name}'s monthly pay`}
-              className={`${field} w-24 text-right`}
+              className={`${field} w-28 text-right`}
               style={{ fontVariantNumeric: "tabular-nums" }}
             />
             <AnimatedSelect
@@ -776,60 +780,65 @@ function Row({
               <input
                 value={d.note}
                 onChange={e => setD({ ...d, note: e.target.value })}
-                placeholder="how it works"
+                placeholder="How it works"
                 aria-label={`${p.name}'s commission note`}
                 className={`${field} w-36`}
               />
             ) : null}
-            {p.isSales ? <StatusChip tone="neutral" label="sales" /> : null}
+            {p.isSales ? <StatusChip tone="neutral" label="Sales" /> : null}
           </div>
         </div>
       )}
       <div className="flex flex-wrap items-center justify-end gap-2">
         {dirty ? (
-          <button
+          <Button
             type="button"
+            size="sm"
             disabled={busy}
             onClick={() => act(() => save(argsOf(d)))}
-            className="inline-flex items-center gap-1 rounded-md bg-foreground px-2.5 py-1 text-xs font-medium text-background disabled:opacity-50"
           >
-            <Check className="size-3.5" aria-hidden /> Save
-          </button>
+            <Check aria-hidden /> Save
+          </Button>
         ) : null}
         {account || !p.active ? null : paused ? (
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
             disabled={busy}
             onClick={unpause}
-            className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs hover:bg-muted disabled:opacity-50"
           >
-            <Play className="size-3.5" aria-hidden /> Unpause
-          </button>
+            <Play aria-hidden /> Unpause
+          </Button>
         ) : (
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
             disabled={busy}
             aria-expanded={pausing}
             onClick={() => {
               setWhy("");
               setPausing(v => !v);
             }}
-            className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs text-muted-foreground hover:bg-muted disabled:opacity-50"
+            className="text-muted-foreground"
           >
-            <Pause className="size-3.5" aria-hidden /> Pause
-          </button>
+            <Pause aria-hidden /> Pause
+          </Button>
         )}
-        <label className="flex cursor-pointer items-center gap-2 text-xs">
+        <label
+          htmlFor={`team-active-${p.id}`}
+          className="flex cursor-pointer items-center gap-2 text-xs"
+        >
           <span className="text-muted-foreground">
-            {p.active ? onWord : offWord}
+            {capitalize(p.active ? onWord : offWord)}
           </span>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={p.active}
+          <Switch
+            id={`team-active-${p.id}`}
+            checked={p.active}
             aria-label={`${p.name} is ${p.active ? onWord : offWord}`}
             disabled={busy}
-            onClick={() =>
+            onCheckedChange={() =>
               act(() =>
                 setActive({
                   id: p.id,
@@ -840,47 +849,44 @@ function Row({
                 }),
               )
             }
-            className={`relative h-5 w-9 rounded-full transition-colors ${p.active ? "bg-[var(--ceo-emphasis)]" : "bg-muted-foreground/40"} disabled:opacity-50`}
-          >
-            <span
-              className={`absolute top-0.5 size-4 rounded-full bg-background transition-[left] ${p.active ? "left-[18px]" : "left-0.5"}`}
-            />
-          </button>
+            className="relative after:absolute after:-inset-2 after:content-['']"
+          />
         </label>
       </div>
       {pausing ? (
-        <div className="flex flex-wrap items-center gap-1.5 text-xs @3xl:col-span-4">
+        <div className="flex flex-wrap items-center gap-2 text-xs @5xl:col-span-4">
           <span className="text-muted-foreground">Paused because</span>
           <input
             value={why}
             onChange={e => setWhy(e.target.value)}
-            placeholder="between projects"
+            placeholder="Between projects"
             aria-label={`Why ${p.name} is paused`}
             className={`${field} w-56 max-w-full`}
           />
-          <button
+          <Button
             type="button"
+            size="sm"
             disabled={busy || !why.trim()}
             onClick={pause}
-            className="inline-flex items-center gap-1 rounded-md bg-foreground px-2.5 py-1 text-xs font-medium text-background disabled:opacity-50"
           >
-            <Pause className="size-3.5" aria-hidden /> Pause
-          </button>
-          <button
+            <Pause aria-hidden /> Pause
+          </Button>
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
             disabled={busy}
             onClick={() => setPausing(false)}
-            className="rounded-md border px-2.5 py-1 text-xs hover:bg-muted disabled:opacity-50"
           >
             Cancel
-          </button>
+          </Button>
           <span className="text-muted-foreground">
             They stay on the team, off this month's payroll.
           </span>
         </div>
       ) : null}
       {msg ? (
-        <p className="text-xs text-[var(--ceo-critical)] @3xl:col-span-4">
+        <p className="text-xs text-[var(--ceo-critical)] @5xl:col-span-4">
           {msg}
         </p>
       ) : null}
@@ -931,15 +937,17 @@ function AddPerson({
   return (
     <div className="grid gap-2">
       <div className="flex flex-wrap items-center gap-2">
-        <button
+        <Button
           type="button"
+          variant="outline"
+          aria-expanded={open}
           onClick={() => setOpen(v => !v)}
-          className="inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-muted"
         >
-          <UserPlus className="size-4" aria-hidden /> Add someone
-        </button>
-        <button
+          <UserPlus aria-hidden /> Add someone
+        </Button>
+        <Button
           type="button"
+          variant="outline"
           disabled={busy}
           onClick={() =>
             act(async () => {
@@ -953,16 +961,15 @@ function AddPerson({
               );
             }, "")
           }
-          className="rounded-md border px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted disabled:opacity-50"
         >
           Add from Google Workspace
-        </button>
+        </Button>
         {msg ? (
           <span className="text-sm text-muted-foreground">{msg}</span>
         ) : null}
       </div>
       {open ? (
-        <div className="grid gap-2 rounded-md border p-3 @md:grid-cols-2 @3xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_8rem_7rem_5.5rem_auto]">
+        <div className="grid gap-2 rounded-xl bg-muted/40 p-4 @md:grid-cols-2 @3xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_8rem_7rem_5.5rem_auto]">
           <input
             value={name}
             onChange={e => setName(e.target.value)}
@@ -1019,7 +1026,7 @@ function AddPerson({
               </AnimatedSelect>
             </>
           )}
-          <button
+          <Button
             type="button"
             disabled={busy || !name.trim()}
             onClick={() =>
@@ -1040,10 +1047,9 @@ function AddPerson({
                 setOpen(false);
               }, "Added.")
             }
-            className="rounded-md bg-foreground px-3 py-1.5 text-sm font-medium text-background disabled:opacity-50"
           >
             Add
-          </button>
+          </Button>
         </div>
       ) : null}
     </div>
@@ -1101,22 +1107,28 @@ export function TeamTab({ goTab }: CeoTabProps) {
   const onCommission = working.filter(
     p => p.commission.basis !== "none",
   ).length;
+  // Until the roster loads the tiles say n/a, with the reason, never a dash.
+  const notLoaded = error
+    ? "The roster could not be read. The reason is under the buttons."
+    : "The roster has not loaded yet.";
 
   return (
     <div className="@container grid gap-4 lg:gap-6">
+      {/* The page is Team & payroll already; this card is the roster summary. */}
       <SectionCard
-        kicker="Who Mahara pays, and what it costs a month"
-        title="Team & payroll"
+        title="Roster"
+        description="Who Mahara pays, and what it costs a month."
         order={0}
       >
         {() => (
-          <div className="grid gap-5">
+          <div className="grid gap-6">
             <div>
-              <div className="grid grid-cols-2 gap-x-6 gap-y-5 @xl:grid-cols-3 @4xl:grid-cols-5">
+              <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-3 @4xl:grid-cols-5">
                 <StatTile
                   variant="plain"
                   label="On payroll"
-                  value={data ? count(data.activeCount) : "—"}
+                  value={data ? count(data.activeCount) : null}
+                  naHint={notLoaded}
                   sub={
                     data ? `${count(external)} freelance or agency` : undefined
                   }
@@ -1125,35 +1137,43 @@ export function TeamTab({ goTab }: CeoTabProps) {
                 <StatTile
                   variant="plain"
                   label="Payroll a month"
-                  value={data ? money(data.activeMonthlyUsd) : "—"}
+                  value={data ? money(data.activeMonthlyUsd) : null}
+                  naHint={notLoaded}
                   sub={
-                    uncosted
-                      ? `${plural(uncosted, "person", "people")} not costed yet`
-                      : "everyone costed"
+                    !data
+                      ? undefined
+                      : uncosted
+                        ? `${plural(uncosted, "person", "people")} not costed yet`
+                        : "Everyone costed"
                   }
                   hint="The sum of monthly pay for everyone being paid, converted to dollars at the cockpit's fixed rates. Paused people and shared accounts are out of it, and people without a pay figure are missing from it, not zero."
                 />
                 <StatTile
                   variant="plain"
                   label="Paused"
-                  value={data ? count(data.pausedCount) : "—"}
+                  value={data ? count(data.pausedCount) : null}
+                  naHint={notLoaded}
                   sub={
-                    data?.pausedCount
-                      ? `${money(data.pausedMonthlyUsd)} held back this month`
-                      : "everyone on the team is being paid"
+                    !data
+                      ? undefined
+                      : data.pausedCount
+                        ? `${money(data.pausedMonthlyUsd)} held back this month`
+                        : "Everyone on the team is being paid"
                   }
                   hint="On the team and off this month's payroll. Their pay is kept out of the payroll figure, and comes back the day they do."
                 />
                 <StatTile
                   variant="plain"
                   label="On commission"
-                  value={data ? count(onCommission) : "—"}
+                  value={data ? count(onCommission) : null}
+                  naHint={notLoaded}
                 />
                 <StatTile
                   variant="plain"
                   label="Off the team"
-                  value={data ? count(gone.length) : "—"}
-                  sub="kept for the months they were paid"
+                  value={data ? count(gone.length) : null}
+                  naHint={notLoaded}
+                  sub={data ? "Kept for the months they were paid" : undefined}
                 />
               </div>
               <Facts
@@ -1176,38 +1196,55 @@ export function TeamTab({ goTab }: CeoTabProps) {
 
       <SectionCard
         title="On the team"
-        kicker="pay, commission and hours edit in place; pause somebody without taking them off"
+        description="Pay, commission and hours edit in place. Pause somebody without taking them off."
         order={1}
       >
         {() =>
-          data === null ? null : live.length ? (
-            <div className="divide-y">
-              <div className="hidden pb-1 text-xs text-muted-foreground @3xl:grid @3xl:grid-cols-[minmax(0,1.4fr)_15rem_13rem_auto]">
-                <span>Person</span>
-                <span>Pay a month</span>
-                <span>Commission</span>
-                <span />
-              </div>
-              {live.map(p => (
-                <Row
-                  key={p.id}
-                  p={p}
-                  roles={roles}
-                  onChanged={refresh}
-                  onOpen={p => {
-                    setPerson(p.id);
-                    goTab("management");
-                  }}
+          data === null ? null : (
+            <>
+              {live.length ? (
+                <div className="divide-y">
+                  <div className="hidden pb-2 text-xs text-muted-foreground @5xl:grid @5xl:grid-cols-[minmax(0,1.4fr)_15rem_13rem_auto]">
+                    <span>Person</span>
+                    <span>Pay a month</span>
+                    <span>Commission</span>
+                    <span />
+                  </div>
+                  {live.map(p => (
+                    <Row
+                      key={p.id}
+                      p={p}
+                      roles={roles}
+                      onChanged={refresh}
+                      onOpen={p => {
+                        setPerson(p.id);
+                        goTab("management");
+                      }}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <EmptyState
+                  title="Nobody on the team yet"
+                  text="Add someone above, or pull the Google Workspace directory in."
+                  icon={Users}
+                  compact
                 />
-              ))}
-            </div>
-          ) : (
-            <EmptyState
-              title="Nobody on the team yet"
-              text="Add someone above, or pull the Google Workspace directory in."
-              icon={Users}
-              compact
-            />
+              )}
+              {data.people.some(p => p.commission.basis !== "none") ? (
+                <details className="mt-4 border-t pt-3">
+                  <summary className="cursor-pointer select-none text-xs text-muted-foreground hover:text-foreground">
+                    How commission works
+                  </summary>
+                  <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                    Commission is a rule per person: what it is paid on, then
+                    the rate in that unit. A share is typed as a percent; a
+                    per-unit amount is in the person's currency. The payout
+                    itself is not worked out here yet.
+                  </p>
+                </details>
+              ) : null}
+            </>
           )
         }
       </SectionCard>
@@ -1218,13 +1255,15 @@ export function TeamTab({ goTab }: CeoTabProps) {
           kicker={`${plural(gone.length, "person", "people")}`}
           order={2}
           actions={
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
+              aria-expanded={showGone}
               onClick={() => setShowGone(v => !v)}
-              className="rounded border px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted"
             >
               {showGone ? "Hide" : "Show"}
-            </button>
+            </Button>
           }
         >
           {() =>
@@ -1246,13 +1285,6 @@ export function TeamTab({ goTab }: CeoTabProps) {
             ) : null
           }
         </SectionCard>
-      ) : null}
-      {data && data.people.some(p => p.commission.basis !== "none") ? (
-        <p className="text-xs text-muted-foreground">
-          Commission is a rule per person: what it is paid on, then the rate in
-          that unit. A share is typed as a percent; a per-unit amount is in the
-          person's currency. The payout itself is not worked out here yet.
-        </p>
       ) : null}
     </div>
   );

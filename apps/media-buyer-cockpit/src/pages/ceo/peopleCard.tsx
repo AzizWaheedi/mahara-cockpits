@@ -2,13 +2,15 @@ import { useAction } from "convex/react";
 import { UserPlus } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
-import { money, plural } from "@/components/ceo/format";
+import { money, plural, shortDate } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import { AnimatedSelect } from "@/components/ui/animated-select";
+import { Button } from "@/components/ui/button";
 import { api } from "../../../convex/_generated/api";
 import { commissionText } from "../../../convex/ceo/commission";
+import type { Note } from "../../../convex/ceo/payloads";
 import type { Person, Roster } from "../../../convex/ceo/people";
 import { usePersonParam } from "./personPage";
 
@@ -22,6 +24,12 @@ import { usePersonParam } from "./personPage";
  */
 
 type Engagement = Person["engagement"];
+
+/** Why the roster is kept by hand: folded into the card's notes, not printed above the numbers. */
+const WHY_BY_HAND: Note = {
+  level: "info",
+  text: "Nothing in the stack knows who works here: ClickUp time tracking has never recorded an entry, and the bank's salaries line is a label whose rows are mostly card top-ups naming nobody. So this roster is the source, and it is what makes gross margin and a real cost per client possible. Somebody who leaves is marked gone, never deleted, because the months they were paid for still happened.",
+};
 
 /**
  * The same roster the Team and payroll tab edits, shown here too. Pausing
@@ -145,30 +153,22 @@ export function PeopleCard({ order }: { order?: number }) {
   return (
     <SectionCard
       id="people"
-      kicker="Staff and freelancers, kept by hand"
+      kicker="Kept by hand"
       title="Who we pay"
+      notes={[WHY_BY_HAND]}
       order={order}
     >
       {() => (
-        <div className="grid gap-5">
-          <p className="text-sm text-muted-foreground">
-            Nothing in the stack knows who works here: ClickUp time tracking has
-            never recorded an entry, and the bank's salaries line is a label
-            whose rows are mostly card top-ups naming nobody. So this roster is
-            the source, and it is what makes gross margin and a real cost per
-            client possible. Somebody who leaves is marked gone, never deleted,
-            because the months they were paid for still happened.
-          </p>
-
+        <div className="grid gap-6">
           {data.ready ? null : (
-            <p className="rounded-md border border-[var(--ceo-warning)] p-3 text-sm">
+            <p className="callout-warn rounded-lg border px-3 py-2 text-sm">
               The people table does not exist yet. Run{" "}
               <code>supabase/migrations/20260919b_people.sql</code> in the
               Creative Triage SQL editor.
             </p>
           )}
 
-          <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3">
+          <div className="grid grid-cols-2 gap-x-6 gap-y-6 @lg:grid-cols-3">
             <StatTile
               variant="plain"
               label="On the books each month"
@@ -189,67 +189,74 @@ export function PeopleCard({ order }: { order?: number }) {
             />
             <StatTile
               variant="plain"
-              label="Nobody has costed yet"
+              label="Not costed yet"
               value={String(data.missingCost.length)}
               sub={
                 data.missingCost.length
                   ? data.missingCost.slice(0, 3).join(", ")
-                  : "everyone has a figure"
+                  : "Everyone has a figure"
               }
               hint="Until these carry a cost, the monthly total above is a floor rather than the payroll."
             />
           </div>
 
           {live.length ? (
-            <div className="overflow-x-auto rounded-md border">
+            <div className="ceo-table-scroll relative -mx-1 overflow-x-auto px-1">
               <table
-                className="w-full text-sm"
+                className="w-full min-w-[40rem] text-sm"
                 style={{ fontVariantNumeric: "tabular-nums" }}
               >
                 <thead>
-                  <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
-                    <th className="p-2 font-medium">Person</th>
-                    <th className="p-2 font-medium">Engagement</th>
-                    <th className="p-2 text-right font-medium">Monthly</th>
-                    <th className="p-2 font-medium">Commission</th>
-                    <th className="p-2 font-medium" />
+                  <tr className="border-b text-left text-xs text-muted-foreground">
+                    <th className="min-w-40 py-2 pr-3 font-medium">Person</th>
+                    <th className="min-w-36 px-3 py-2 font-medium">
+                      Engagement
+                    </th>
+                    <th className="px-3 py-2 text-right font-medium">
+                      Monthly
+                    </th>
+                    <th className="min-w-56 px-3 py-2 font-medium">
+                      Commission
+                    </th>
+                    <th className="py-2 pl-3 font-medium">
+                      <span className="sr-only">Actions</span>
+                    </th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y">
                   {live.map(p => (
-                    <tr key={p.id} className="border-t align-top">
-                      <td className="p-2">
+                    <tr key={p.id} className="align-top">
+                      <td className="py-3 pr-3">
                         <button
                           type="button"
                           onClick={() => setPerson(p.id)}
                           title={`Open ${p.name}'s file`}
-                          className="font-medium underline decoration-transparent underline-offset-4 transition-colors hover:decoration-current"
+                          className="text-left font-medium underline decoration-transparent underline-offset-4 transition-colors hover:decoration-current"
                         >
                           {p.name}
                         </button>
                         <span className="block text-xs text-muted-foreground">
                           {[p.role, p.isSales ? "sells" : null]
                             .filter(Boolean)
-                            .join(" · ") || "no role set"}
+                            .join(" · ") || "No role set"}
                         </span>
                       </td>
-                      <td className="p-2">
-                        <span className="capitalize">
-                          {p.engagement === "bot"
-                            ? "Shared account"
-                            : p.engagement}
+                      <td className="px-3 py-3">
+                        <span>
+                          {ENGAGEMENTS.find(e => e.value === p.engagement)
+                            ?.label ?? p.engagement}
                         </span>
                         {p.pausedOn ? (
                           <span className="block text-xs text-muted-foreground">
-                            Paused since {p.pausedOn}
+                            Paused since {shortDate(p.pausedOn)}
                             {p.pausedWhy ? `: ${p.pausedWhy}` : ""}. Change it
-                            on Team and payroll.
+                            on Team & payroll.
                           </span>
                         ) : null}
                       </td>
-                      <td className="p-2 text-right">
+                      <td className="whitespace-nowrap px-3 py-3 text-right">
                         {p.monthlyUsd === null ? (
-                          <span className="text-muted-foreground">not set</span>
+                          <span className="text-muted-foreground">Not set</span>
                         ) : (
                           <>
                             {money(p.monthlyUsd)}
@@ -261,13 +268,13 @@ export function PeopleCard({ order }: { order?: number }) {
                           </>
                         )}
                       </td>
-                      <td className="p-2">
+                      <td className="px-3 py-3">
                         {commissionText(
                           p.commission,
                           p.currency,
                           p.commissionNote,
                         ) === null ? (
-                          <span className="text-muted-foreground">—</span>
+                          <span className="text-muted-foreground">None</span>
                         ) : (
                           <>
                             {commissionText(
@@ -284,16 +291,19 @@ export function PeopleCard({ order }: { order?: number }) {
                           </>
                         )}
                       </td>
-                      <td className="p-2 whitespace-nowrap">
-                        <button
+                      <td className="whitespace-nowrap py-3 pl-3 text-right">
+                        <Button
                           type="button"
+                          variant="outline"
+                          size="sm"
                           onClick={() => edit(p)}
-                          className="rounded-md border px-2 py-1 text-xs hover:bg-muted"
                         >
                           Edit
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                           type="button"
+                          variant="ghost"
+                          size="sm"
                           disabled={busy}
                           onClick={() =>
                             act(() =>
@@ -304,10 +314,10 @@ export function PeopleCard({ order }: { order?: number }) {
                               }),
                             )
                           }
-                          className="ml-1 rounded-md border px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
+                          className="ml-1 text-muted-foreground"
                         >
                           Gone
-                        </button>
+                        </Button>
                       </td>
                     </tr>
                   ))}
@@ -323,11 +333,11 @@ export function PeopleCard({ order }: { order?: number }) {
             />
           )}
 
-          <div className="rounded-md border p-4">
-            <p className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              {editing === null ? "Add somebody" : "Edit"}
+          <div className="rounded-xl bg-muted/40 p-4">
+            <p className="mb-3 text-sm font-medium text-foreground">
+              {editing === null ? "Add somebody" : "Edit somebody"}
             </p>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-3 @md:grid-cols-2 @3xl:grid-cols-4">
               <input
                 id="person-name"
                 className={field}
@@ -411,7 +421,7 @@ export function PeopleCard({ order }: { order?: number }) {
               />
               <input
                 id="person-commission-note"
-                className={`${field} sm:col-span-2 lg:col-span-3`}
+                className={`${field} @md:col-span-2 @3xl:col-span-3`}
                 placeholder="Anything the percentage cannot say, e.g. KD 50 per booked demo"
                 value={form.commissionNote}
                 onChange={e =>
@@ -433,29 +443,29 @@ export function PeopleCard({ order }: { order?: number }) {
                 Their job is selling
               </label>
             </div>
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <button
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <Button
                 type="button"
                 disabled={busy || !form.name.trim() || !data.ready}
                 onClick={submit}
-                className="rounded-md bg-foreground px-3 py-1.5 text-sm font-medium text-background hover:opacity-90 disabled:opacity-50"
               >
                 {editing === null ? "Add" : "Save"}
-              </button>
+              </Button>
               {editing === null ? null : (
-                <button
+                <Button
                   type="button"
+                  variant="outline"
                   onClick={() => {
                     setEditing(null);
                     setForm({ ...blank });
                   }}
-                  className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted"
                 >
                   Cancel
-                </button>
+                </Button>
               )}
-              <button
+              <Button
                 type="button"
+                variant="outline"
                 disabled={busy || !data.ready}
                 onClick={() =>
                   act(async () => {
@@ -469,11 +479,10 @@ export function PeopleCard({ order }: { order?: number }) {
                     );
                   })
                 }
-                className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
                 title="Adds Workspace accounts that are not here yet. It never edits or removes anybody, and never sets a cost."
               >
                 Add from Workspace
-              </button>
+              </Button>
             </div>
             {imported ? (
               <p className="mt-2 text-sm text-muted-foreground">{imported}</p>
@@ -484,6 +493,7 @@ export function PeopleCard({ order }: { order?: number }) {
             <div className="border-t pt-4">
               <button
                 type="button"
+                aria-expanded={showGone}
                 onClick={() => setShowGone(v => !v)}
                 className="text-xs font-medium text-muted-foreground hover:text-foreground"
               >
@@ -492,39 +502,49 @@ export function PeopleCard({ order }: { order?: number }) {
                   : `${plural(gone.length, "person", "people")} who left`}
               </button>
               {showGone ? (
-                <ul className="mt-3 grid gap-1 sm:grid-cols-2">
+                <ul className="mt-3 divide-y">
                   {gone.map(p => (
-                    <li key={p.id} className="text-sm">
+                    <li
+                      key={p.id}
+                      className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-sm"
+                    >
                       <button
                         type="button"
                         onClick={() => setPerson(p.id)}
                         title={`Open ${p.name}'s file`}
-                        className="underline decoration-transparent underline-offset-4 transition-colors hover:decoration-current"
+                        className="min-w-0 text-left underline decoration-transparent underline-offset-4 transition-colors hover:decoration-current"
                       >
                         {p.name}
                       </button>
-                      <span className="text-muted-foreground">
-                        {p.endedOn ? ` · left ${p.endedOn}` : ""}
+                      {p.endedOn ? (
+                        <span className="text-xs text-muted-foreground">
+                          {`Left ${shortDate(p.endedOn)}`}
+                        </span>
+                      ) : null}
+                      <span className="ml-auto flex items-center gap-1">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={busy}
+                          onClick={() =>
+                            act(() => setActive({ id: p.id, active: true }))
+                          }
+                        >
+                          Back
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          disabled={busy}
+                          onClick={() => act(() => remove({ id: p.id }))}
+                          className="text-muted-foreground"
+                          title="Only works when no payroll month references them: for a row added by mistake."
+                        >
+                          Delete
+                        </Button>
                       </span>
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() =>
-                          act(() => setActive({ id: p.id, active: true }))
-                        }
-                        className="ml-2 rounded-md border px-1.5 py-0.5 text-xs hover:bg-muted"
-                      >
-                        Back
-                      </button>
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => act(() => remove({ id: p.id }))}
-                        className="ml-1 rounded-md border px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted"
-                        title="Only works when no payroll month references them: for a row added by mistake."
-                      >
-                        Delete
-                      </button>
                     </li>
                   ))}
                 </ul>

@@ -143,7 +143,7 @@ export function CeoTabs<K extends string>({
             {showCount ? (
               <span
                 className={cn(
-                  "inline-flex h-[18px] min-w-[18px] items-center justify-center gap-1 rounded-full px-1.5 text-[11px] font-medium leading-none tabular-nums",
+                  "inline-flex h-[18px] min-w-[18px] items-center justify-center gap-1 rounded-full px-1.5 text-xs font-medium leading-none tabular-nums",
                   active
                     ? "bg-foreground/10 text-foreground"
                     : "bg-muted text-muted-foreground",
@@ -163,7 +163,7 @@ export function CeoTabs<K extends string>({
               <motion.span
                 layoutId={reduce ? undefined : "ceo-tab-pill"}
                 transition={{ type: "spring", stiffness: 480, damping: 38 }}
-                className="absolute inset-0 -z-10 rounded-full border border-border/40 bg-background shadow-xs"
+                className="absolute inset-0 -z-10 rounded-full bg-primary/15 ring-1 ring-inset ring-primary/40"
                 aria-hidden
               />
             ) : null}

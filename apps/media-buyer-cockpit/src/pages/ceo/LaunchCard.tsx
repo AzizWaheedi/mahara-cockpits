@@ -2,9 +2,12 @@ import { useAction } from "convex/react";
 import { Rocket } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
-import { money, plural } from "@/components/ceo/format";
+import { capitalize, date, money, plural } from "@/components/ceo/format";
+import { Kicker } from "@/components/ceo/Kicker";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatusChip, type StatusTone } from "@/components/ceo/StatusChip";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
 import type { B2bAdsPayload } from "../../../convex/ceo/payloads";
 
@@ -57,6 +60,16 @@ const STATUS_TONE: Record<Draft["status"], StatusTone> = {
 };
 
 const isArabic = (s: string) => /[؀-ۿ]/.test(s);
+
+/** A segmented choice pill: the chosen one reads teal. */
+function choice(active: boolean) {
+  return cn(
+    "inline-flex h-8 items-center rounded-full px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+    active
+      ? "bg-primary/15 text-foreground ring-1 ring-inset ring-primary/40"
+      : "text-muted-foreground hover:bg-muted hover:text-foreground",
+  );
+}
 
 export function LaunchCard({
   ads,
@@ -118,53 +131,62 @@ export function LaunchCard({
     )
     .slice(0, 8);
 
-  const field = "rounded-md border bg-background px-2 py-1.5 text-sm";
+  const field =
+    "rounded-md border bg-background px-2 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
   const live = (drafts ?? []).filter(d => d.status !== "discarded");
 
   return (
     <SectionCard
       id="ads-launch"
-      kicker="From a brief to a paused campaign on Meta"
       title="Launch a campaign"
+      description="From a brief to a paused campaign. Nothing touches Meta until you press launch."
       order={order}
     >
       {() => (
-        <div className="grid gap-5">
-          <p className="text-sm text-muted-foreground">
-            Choose the kind, write what the campaign is for, pick the winners
-            whose creatives it should reuse, and build. You get a draft to read
-            and edit. Nothing touches Meta until you press launch, and
-            everything is created paused.
-          </p>
+        <div className="grid gap-4">
+          <details className="text-xs text-muted-foreground">
+            <summary className="w-fit select-none hover:text-foreground">
+              How it works
+            </summary>
+            <p className="mt-1 max-w-prose">
+              Choose the kind, write what the campaign is for, pick the winners
+              whose creatives it should reuse, and build. You get a draft to
+              read and edit; everything it creates on Meta starts paused.
+            </p>
+          </details>
 
-          <div className="grid gap-3 rounded-md border p-4">
-            <div className="flex flex-wrap items-center gap-2">
-              {(["lead_gen", "retargeting"] as Kind[]).map(k => (
-                <button
-                  key={k}
-                  type="button"
-                  aria-pressed={kind === k}
-                  onClick={() => {
-                    setKind(k);
-                    setClone([]);
-                  }}
-                  className={`rounded-full border px-3 py-1 text-sm font-medium ${
-                    kind === k
-                      ? "bg-foreground text-background"
-                      : "text-muted-foreground"
-                  }`}
-                >
-                  {k === "lead_gen" ? "Lead generation" : "Retargeting"}
-                </button>
-              ))}
-              <span className="text-xs text-muted-foreground">
+          <div className="grid gap-4 rounded-xl bg-muted/40 p-4">
+            <div className="grid gap-2">
+              <div
+                role="group"
+                aria-label="Kind of campaign"
+                className="flex flex-wrap items-center gap-1.5"
+              >
+                {(["lead_gen", "retargeting"] as Kind[]).map(k => (
+                  <button
+                    key={k}
+                    type="button"
+                    aria-pressed={kind === k}
+                    onClick={() => {
+                      setKind(k);
+                      setClone([]);
+                    }}
+                    className={choice(kind === k)}
+                  >
+                    {k === "lead_gen" ? "Lead generation" : "Retargeting"}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
                 {kind === "lead_gen"
                   ? "Cold audience sent to the funnel page, settings copied from the best lead-gen ad set, judged on cost per lead."
                   : "Warm audience, settings copied from the best retargeting ad set, named so it is never counted as lead gen."}
-              </span>
+              </p>
             </div>
             <textarea
               id="launch-brief"
+              aria-label="Brief"
+              dir="auto"
               value={brief}
               onChange={e => setBrief(e.target.value)}
               rows={3}
@@ -173,45 +195,51 @@ export function LaunchCard({
                   ? "Who it is for and the one thing it promises, e.g. Kuwait interior design firms who want booked projects, not likes."
                   : "Who has already seen us and what should move them now, e.g. everyone who watched a video in 30 days, push them to book the intro."
               }
-              className="w-full rounded-md border bg-background p-3 text-sm"
+              className="w-full rounded-md border bg-background p-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
-            <div className="flex flex-wrap items-center gap-3">
-              <label
-                htmlFor="launch-budget"
-                className="text-sm text-muted-foreground"
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+              <div className="flex items-center gap-2">
+                <label
+                  htmlFor="launch-budget"
+                  className="text-sm text-muted-foreground"
+                >
+                  Daily budget
+                </label>
+                <input
+                  id="launch-budget"
+                  inputMode="decimal"
+                  value={budget}
+                  onChange={e => setBudget(e.target.value)}
+                  className={`${field} w-24`}
+                />
+                <span className="text-xs text-muted-foreground">
+                  USD, on the ad set
+                </span>
+              </div>
+              <div
+                role="group"
+                aria-label="Language of the copy"
+                className="flex gap-1.5"
               >
-                Daily budget
-              </label>
-              <input
-                id="launch-budget"
-                inputMode="decimal"
-                value={budget}
-                onChange={e => setBudget(e.target.value)}
-                className={`${field} w-24`}
-              />
-              <span className="text-xs text-muted-foreground">
-                USD, on the ad set
-              </span>
-              <span className="ml-2 flex gap-1">
                 {(["ar", "en"] as const).map(l => (
                   <button
                     key={l}
                     type="button"
                     aria-pressed={lang === l}
                     onClick={() => setLang(l)}
-                    className={`rounded-full border px-2.5 py-0.5 text-xs ${lang === l ? "bg-foreground text-background" : "text-muted-foreground"}`}
+                    className={choice(lang === l)}
                   >
                     {l === "ar" ? "Arabic copy" : "English copy"}
                   </button>
                 ))}
-              </span>
+              </div>
             </div>
             {winners.length ? (
               <div>
-                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                <p className="mb-2 text-xs font-medium text-muted-foreground">
                   {`Reuse the creatives of these ${kind === "lead_gen" ? "lead-gen" : "retargeting"} winners`}
                 </p>
-                <div className="grid gap-1 sm:grid-cols-2">
+                <div className="grid gap-x-6 gap-y-2 @2xl:grid-cols-2">
                   {winners.map(a => (
                     <label
                       key={a.id}
@@ -240,9 +268,11 @@ export function LaunchCard({
                           }}
                         />
                       ) : null}
-                      <span className="truncate">{a.name}</span>
-                      <span className="ml-auto shrink-0 text-xs text-muted-foreground">
-                        {`${a.w30.leads} leads · ${a.w30.demosShown} demos · ${a.w30.closes} closes`}
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate">{a.name}</span>
+                        <span className="block text-xs tabular-nums text-muted-foreground">
+                          {`${a.w30.leads} leads · ${a.w30.demosShown} demos · ${a.w30.closes} closes`}
+                        </span>
                       </span>
                     </label>
                   ))}
@@ -254,7 +284,7 @@ export function LaunchCard({
               </p>
             )}
             <div>
-              <button
+              <Button
                 type="button"
                 disabled={
                   busy || brief.trim().length < 12 || !(Number(budget) >= 5)
@@ -270,10 +300,9 @@ export function LaunchCard({
                     }),
                   )
                 }
-                className="rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background hover:opacity-90 disabled:opacity-50"
               >
                 {busy ? "Building…" : "Build the draft"}
-              </button>
+              </Button>
             </div>
           </div>
 
@@ -287,20 +316,20 @@ export function LaunchCard({
                 const dirty = Object.keys(e).length > 0;
                 const editable = d.status === "ready" || d.status === "failed";
                 return (
-                  <div key={d.id} className="rounded-md border p-4">
+                  <div key={d.id} className="rounded-xl bg-muted/40 p-4">
                     <div className="flex flex-wrap items-center gap-2">
                       <StatusChip
                         tone={d.kind === "lead_gen" ? "good" : "neutral"}
                         label={
-                          d.kind === "lead_gen" ? "lead gen" : "retargeting"
+                          d.kind === "lead_gen" ? "Lead gen" : "Retargeting"
                         }
                       />
                       <StatusChip
                         tone={STATUS_TONE[d.status]}
-                        label={d.status}
+                        label={capitalize(d.status)}
                       />
                       <span className="text-xs text-muted-foreground">
-                        {d.createdAt.slice(0, 10)}
+                        {date(d.createdAt)}
                       </span>
                     </div>
                     {editable ? (
@@ -335,7 +364,7 @@ export function LaunchCard({
                     ) : null}
 
                     {editable ? (
-                      <div className="mt-3 grid gap-2">
+                      <div className="mt-3 grid gap-3">
                         <div className="flex items-center gap-2 text-sm">
                           <label
                             htmlFor={`draft-budget-${d.id}`}
@@ -359,54 +388,56 @@ export function LaunchCard({
                             className={`${field} w-24`}
                           />
                         </div>
-                        {variants.map((v, i) => {
-                          const rtl = isArabic(v.primaryText || v.headline);
-                          return (
-                            <div
-                              key={`${d.id}-${i}`}
-                              className="rounded-md border bg-muted/30 p-2"
-                            >
-                              <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">{`Angle ${i + 1}`}</div>
-                              <input
-                                id={`draft-${d.id}-h-${i}`}
-                                value={v.headline}
-                                dir={rtl ? "rtl" : "ltr"}
-                                onChange={ev => {
-                                  const next = variants.map((x, j) =>
-                                    j === i
-                                      ? { ...x, headline: ev.target.value }
-                                      : x,
-                                  );
-                                  setEdits(m => ({
-                                    ...m,
-                                    [d.id]: { ...e, variants: next },
-                                  }));
-                                }}
-                                className={`${field} mb-1 w-full font-semibold`}
-                              />
-                              <textarea
-                                id={`draft-${d.id}-t-${i}`}
-                                value={v.primaryText}
-                                dir={rtl ? "rtl" : "ltr"}
-                                rows={3}
-                                onChange={ev => {
-                                  const next = variants.map((x, j) =>
-                                    j === i
-                                      ? { ...x, primaryText: ev.target.value }
-                                      : x,
-                                  );
-                                  setEdits(m => ({
-                                    ...m,
-                                    [d.id]: { ...e, variants: next },
-                                  }));
-                                }}
-                                className={`${field} w-full`}
-                              />
-                            </div>
-                          );
-                        })}
-                        <button
+                        <div className="divide-y border-y">
+                          {variants.map((v, i) => {
+                            const rtl = isArabic(v.primaryText || v.headline);
+                            return (
+                              <div key={`${d.id}-${i}`} className="py-3">
+                                <Kicker className="mb-1.5">{`Angle ${i + 1}`}</Kicker>
+                                <input
+                                  id={`draft-${d.id}-h-${i}`}
+                                  value={v.headline}
+                                  dir={rtl ? "rtl" : "ltr"}
+                                  onChange={ev => {
+                                    const next = variants.map((x, j) =>
+                                      j === i
+                                        ? { ...x, headline: ev.target.value }
+                                        : x,
+                                    );
+                                    setEdits(m => ({
+                                      ...m,
+                                      [d.id]: { ...e, variants: next },
+                                    }));
+                                  }}
+                                  className={`${field} mb-1 w-full font-semibold`}
+                                />
+                                <textarea
+                                  id={`draft-${d.id}-t-${i}`}
+                                  value={v.primaryText}
+                                  dir={rtl ? "rtl" : "ltr"}
+                                  rows={3}
+                                  onChange={ev => {
+                                    const next = variants.map((x, j) =>
+                                      j === i
+                                        ? { ...x, primaryText: ev.target.value }
+                                        : x,
+                                    );
+                                    setEdits(m => ({
+                                      ...m,
+                                      [d.id]: { ...e, variants: next },
+                                    }));
+                                  }}
+                                  className={`${field} w-full`}
+                                />
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <Button
                           type="button"
+                          size="sm"
+                          variant="outline"
+                          className="justify-self-start"
                           onClick={() =>
                             setEdits(m => ({
                               ...m,
@@ -419,14 +450,14 @@ export function LaunchCard({
                               },
                             }))
                           }
-                          className="justify-self-start rounded-md border px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted"
                         >
                           Add an angle
-                        </button>
+                        </Button>
                         <div className="flex flex-wrap items-center gap-2">
                           {dirty ? (
-                            <button
+                            <Button
                               type="button"
+                              variant="outline"
                               disabled={busy}
                               onClick={() =>
                                 act(async () => {
@@ -442,12 +473,11 @@ export function LaunchCard({
                                   });
                                 })
                               }
-                              className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted"
                             >
                               Save edits
-                            </button>
+                            </Button>
                           ) : null}
-                          <button
+                          <Button
                             type="button"
                             disabled={busy}
                             onClick={() =>
@@ -462,18 +492,17 @@ export function LaunchCard({
                                 await launch({ id: d.id });
                               })
                             }
-                            className="rounded-md bg-foreground px-3 py-1.5 text-sm font-medium text-background hover:opacity-90 disabled:opacity-50"
                           >
-                            {`Launch it paused — ${money(dailyBudgetUsd)}/day`}
-                          </button>
-                          <button
+                            {`Launch it paused, ${money(dailyBudgetUsd)} a day`}
+                          </Button>
+                          <Button
                             type="button"
+                            variant="outline"
                             disabled={busy}
                             onClick={() => act(() => discard({ id: d.id }))}
-                            className="rounded-md border px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted"
                           >
                             Throw it away
-                          </button>
+                          </Button>
                         </div>
                       </div>
                     ) : null}

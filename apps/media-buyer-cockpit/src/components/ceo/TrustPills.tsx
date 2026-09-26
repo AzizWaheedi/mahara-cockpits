@@ -64,8 +64,10 @@ export function TrustPills({
     </div>
   );
 
+  // On a touch screen a tap on a calm pill opens its detail; a pill with
+  // trouble goes straight to the Machine tab, which lists every source.
   return (
-    <Hint content={detail} side="bottom">
+    <Hint content={detail} side="bottom" tap={!trouble}>
       <button
         type="button"
         onClick={trouble ? onOpenMachine : undefined}
@@ -88,7 +90,9 @@ export function TrustPills({
             backgroundColor: trouble ? "var(--ceo-warning)" : "var(--ceo-good)",
           }}
         />
-        <span>{asOf ? `Updated ${dateTime(asOf, now)}` : "No data yet"}</span>
+        <span className="min-w-0 truncate">
+          {asOf ? `Updated ${dateTime(asOf, now)}` : "No data yet"}
+        </span>
         {trouble ? (
           <span className="hidden truncate text-muted-foreground md:inline">
             {issues.join(", ")}

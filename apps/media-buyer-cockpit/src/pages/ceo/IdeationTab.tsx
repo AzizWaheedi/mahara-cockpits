@@ -1,12 +1,19 @@
 import { useAction } from "convex/react";
-import { ExternalLink, Radar } from "lucide-react";
+import { ArrowUpRight, Radar } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
-import { count, countCompact, shortDate } from "@/components/ceo/format";
+import {
+  count,
+  countCompact,
+  humanize,
+  shortDate,
+} from "@/components/ceo/format";
+import { Kicker } from "@/components/ceo/Kicker";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import { AnimatedSelect } from "@/components/ui/animated-select";
+import { Button } from "@/components/ui/button";
 import { api } from "../../../convex/_generated/api";
 import { IdeationPage } from "../IdeationPage";
 import type { CeoTabProps } from "./types";
@@ -63,6 +70,14 @@ const profileUrl = (platform: string, value: string): string => {
   }
 };
 
+/** A list the server sent, or none: a missing or odd reply renders the empty state, never a crash. */
+const rowsOf = (x: unknown): Row[] =>
+  Array.isArray(x)
+    ? x
+    : Array.isArray((x as { rows?: unknown } | null)?.rows)
+      ? (x as { rows: Row[] }).rows
+      : [];
+
 function serverMessage(e: unknown): string {
   const raw = e instanceof Error ? e.message : String(e ?? "");
   return (
@@ -96,7 +111,7 @@ function WinningStrip({ rows }: { rows: Row[] }) {
             href={r.url}
             target="_blank"
             rel="noreferrer"
-            className="group w-[168px] shrink-0 rounded-lg border p-2 hover:bg-muted/40"
+            className="group w-[168px] shrink-0 rounded-lg bg-muted/40 p-2 transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <div className="relative aspect-[4/5] w-full overflow-hidden rounded-md bg-muted">
               {src ? (
@@ -113,8 +128,7 @@ function WinningStrip({ rows }: { rows: Row[] }) {
               ) : null}
               {mult ? (
                 <span
-                  className="absolute left-2 top-2 rounded-full bg-foreground px-2 py-0.5 text-xs font-bold text-background"
-                  style={{ fontVariantNumeric: "tabular-nums" }}
+                  className="absolute left-2 top-2 rounded-full bg-background/85 px-2 py-0.5 text-xs font-semibold tabular-nums text-foreground backdrop-blur-sm"
                   title="How many times the account's normal views this post reached"
                 >
                   {`${mult >= 10 ? Math.round(mult) : mult.toFixed(1)}×`}
@@ -135,11 +149,13 @@ function WinningStrip({ rows }: { rows: Row[] }) {
             >
               {hook}
             </p>
-            <div className="mt-1 flex items-center justify-between text-[11px] text-muted-foreground">
-              <span>
+            <div className="mt-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+              <span className="tabular-nums">
                 {r.views ? `${countCompact(num(r.views))} views` : ""}
               </span>
-              <span>{r.hook_kind ?? ""}</span>
+              <span className="truncate">
+                {r.hook_kind ? humanize(String(r.hook_kind)) : ""}
+              </span>
             </div>
           </a>
         );
@@ -178,13 +194,13 @@ export function IdeationTab(_props: CeoTabProps) {
         countIdeas({ industry: BOARD }),
         requestsList({ limit: 10 }),
       ]);
-      setWatch((w as Row[]).filter((x: Row) => x.industry === BOARD));
-      setProposed(p.rows as Row[]);
-      setSaved(s.rows as Row[]);
-      setCounts(c as Record<string, number>);
-      setRequests(
-        (rq as Row[]).filter((r: Row) => r.params?.industry === BOARD),
+      setWatch(rowsOf(w).filter((x: Row) => x.industry === BOARD));
+      setProposed(rowsOf(p));
+      setSaved(rowsOf(s));
+      setCounts(
+        c && typeof c === "object" ? (c as Record<string, number>) : null,
       );
+      setRequests(rowsOf(rq).filter((r: Row) => r.params?.industry === BOARD));
       setError(null);
     } catch (e) {
       setError(serverMessage(e));
@@ -271,35 +287,37 @@ export function IdeationTab(_props: CeoTabProps) {
     }
   }
 
-  const field = "rounded-md border bg-background px-2 py-1.5 text-sm";
+  const field = "h-9 rounded-md border bg-background px-2 text-sm";
 
   return (
     <div className="@container grid gap-4 lg:gap-6">
       <SectionCard
-        kicker="Mahara B2B · who we compete with and learn from"
+        kicker="Mahara B2B"
         title="Competitor desk"
+        description="Who we compete with and learn from."
         order={0}
         actions={
           <a
             href={FOREPLAY_BOARD}
             target="_blank"
             rel="noreferrer"
-            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+            className="-my-1 inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-[var(--ceo-hover)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             title="The #mahara_b2b swipe file on Foreplay; saves there land on this board"
           >
-            #mahara_b2b on Foreplay
-            <ExternalLink className="size-3.5" aria-hidden />
+            Foreplay board
+            <ArrowUpRight className="size-3.5" aria-hidden />
           </a>
         }
       >
         {() => (
-          <div className="grid gap-5">
-            <div className="grid grid-cols-2 gap-x-6 gap-y-5 @lg:grid-cols-4">
+          <div className="grid gap-6">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-4">
               <StatTile
                 variant="plain"
                 label="Watching"
-                value={watch ? count(watch.length) : "—"}
-                sub={byPlatform || "no accounts yet"}
+                value={watch ? count(watch.length) : null}
+                naHint="Not loaded yet."
+                sub={byPlatform || undefined}
               />
               <StatTile
                 variant="plain"
@@ -310,31 +328,31 @@ export function IdeationTab(_props: CeoTabProps) {
               <StatTile
                 variant="plain"
                 label="Saved ideas"
-                value={counts ? count(counts.saved ?? 0) : "—"}
+                value={counts ? count(counts.saved ?? 0) : null}
+                naHint="Not loaded yet."
               />
               <StatTile
                 variant="plain"
                 label="Trends"
-                value={counts ? count(counts.trends ?? 0) : "—"}
+                value={counts ? count(counts.trends ?? 0) : null}
+                naHint="Not loaded yet."
                 hint="The same format on three or more accounts inside two weeks."
               />
             </div>
 
             <div>
-              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Winning right now
-              </p>
+              <Kicker className="mb-2">Winning right now</Kicker>
               <WinningStrip rows={winning} />
             </div>
 
-            <div className="grid gap-3 rounded-md border p-4">
-              <div className="flex flex-wrap items-center gap-2">
+            <div className="grid gap-3 rounded-xl bg-muted/40 p-4">
+              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                 <span className="text-sm font-medium">Add a competitor</span>
                 <span className="text-xs text-muted-foreground">
-                  any account you want read every week
+                  Any account you want read every week
                 </span>
               </div>
-              <div className="grid gap-2 sm:grid-cols-[150px_minmax(0,1fr)_auto]">
+              <div className="grid gap-2 @lg:grid-cols-[150px_minmax(0,1fr)_auto]">
                 <AnimatedSelect
                   value={platform}
                   onChange={e => setPlatform(e.target.value)}
@@ -362,24 +380,24 @@ export function IdeationTab(_props: CeoTabProps) {
                   aria-label="Account"
                   className={field}
                 />
-                <button
+                <Button
                   type="button"
                   disabled={busy || !value.trim()}
                   onClick={() => void add()}
-                  className="rounded-md bg-foreground px-4 py-1.5 text-sm font-medium text-background hover:opacity-90 disabled:opacity-50"
                 >
                   {busy ? "Adding…" : "Watch"}
-                </button>
+                </Button>
               </div>
               <label
                 htmlFor="read-now"
-                className="flex items-center gap-2 text-xs text-muted-foreground"
+                className="flex items-start gap-2 text-xs text-muted-foreground"
               >
                 <input
                   id="read-now"
                   type="checkbox"
                   checked={readNow}
                   onChange={e => setReadNow(e.target.checked)}
+                  className="mt-px"
                 />
                 Read it now as well: its best posts within minutes, not on
                 Saturday
@@ -388,7 +406,7 @@ export function IdeationTab(_props: CeoTabProps) {
             </div>
 
             {watch === null ? null : watch.length ? (
-              <div className="divide-y rounded-md border text-sm">
+              <div className="divide-y text-sm">
                 {watch.map((w: Row) => {
                   const url = profileUrl(w.platform, String(w.value ?? ""));
                   const n = outliersByTarget.get(w.key) ?? 0;
@@ -396,7 +414,7 @@ export function IdeationTab(_props: CeoTabProps) {
                   return (
                     <div
                       key={w.key}
-                      className="flex flex-wrap items-center gap-2 px-3 py-2"
+                      className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 first:pt-0 last:pb-0"
                     >
                       <StatusChip
                         tone="neutral"
@@ -445,22 +463,21 @@ export function IdeationTab(_props: CeoTabProps) {
                         />
                       ) : null}
                       {status && status !== "ok" ? (
-                        <StatusChip
-                          tone="warning"
-                          label={status.replace(/_/g, " ")}
-                        />
+                        <StatusChip tone="warning" label={humanize(status)} />
                       ) : null}
-                      <button
+                      <Button
                         type="button"
+                        variant="outline"
+                        size="sm"
                         onClick={() =>
                           void watchlistRemove({ key: w.key })
                             .then(load)
                             .catch(e => setNotice(serverMessage(e)))
                         }
-                        className="ml-auto rounded border px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted"
+                        className="ml-auto"
                       >
                         Stop watching
-                      </button>
+                      </Button>
                     </div>
                   );
                 })}
@@ -473,10 +490,10 @@ export function IdeationTab(_props: CeoTabProps) {
             )}
 
             {requests.length ? (
-              <div className="text-xs text-muted-foreground">
+              <div className="grid gap-1 text-xs text-muted-foreground">
                 {requests.slice(0, 5).map((r: Row) => (
-                  <div key={r.id}>
-                    {`${shortDate(r.created_at)} · ${r.kind} ${r.input}: ${r.status}${r.error ? ` — ${String(r.error).slice(0, 120)}` : ""}`}
+                  <div key={r.id} className="break-words">
+                    {`${shortDate(r.created_at)} · ${r.kind} ${r.input}: ${r.status}${r.error ? `, ${String(r.error).slice(0, 120)}` : ""}`}
                   </div>
                 ))}
               </div>
@@ -490,7 +507,7 @@ export function IdeationTab(_props: CeoTabProps) {
 
       <SectionCard
         title="The board"
-        kicker="Proposed by the scan, kept by you, and the trends across them"
+        description="Proposed by the scan, kept by you, and the trends across them."
         order={1}
       >
         {() => <IdeationPage board={BOARD} embedded />}

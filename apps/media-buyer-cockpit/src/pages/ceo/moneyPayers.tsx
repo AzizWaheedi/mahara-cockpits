@@ -7,7 +7,14 @@ import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import { AnimatedSelect } from "@/components/ui/animated-select";
+import { Button } from "@/components/ui/button";
 import { api } from "../../../convex/_generated/api";
+
+// The kit's table look: sentence-case headers in muted 12px, hairline rows.
+const TH =
+  "h-9 px-3 text-left text-xs font-medium text-muted-foreground first:pl-0 last:pr-0";
+const TD = "px-3 py-2.5 align-top first:pl-0 last:pr-0";
+
 import type { PayerList, UnmappedPayer } from "../../../convex/ceo/payers";
 
 /**
@@ -79,22 +86,25 @@ export function PayerMappingCard({ order }: { order?: number }) {
   return (
     <SectionCard
       id="money-payers"
-      kicker="Cash that reaches no client, biggest first"
       title="Who these payers are"
+      description="Cash that reaches no client, biggest first. Saying who a payer is attributes every payment they have made, and every one to come."
       order={order}
     >
       {() => (
         <div className="grid gap-5">
-          <p className="text-sm text-muted-foreground">
-            Whop records who paid, not which client they paid for, and the payer
-            is usually a person while the client is a company. That cannot be
-            matched automatically, so the cockpit suggests a card only where the
-            names plainly agree and leaves the rest to you. Saying who someone
-            is here attributes every payment they have ever made, and every one
-            they make from now on.
-          </p>
+          <details className="text-xs text-muted-foreground">
+            <summary className="cursor-pointer select-none hover:text-foreground">
+              Why these are not matched automatically
+            </summary>
+            <p className="mt-2 leading-relaxed">
+              Whop records who paid, not which client they paid for, and the
+              payer is usually a person while the client is a company. That
+              cannot be matched automatically, so the cockpit suggests a card
+              only where the names plainly agree and leaves the rest to you.
+            </p>
+          </details>
 
-          <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3">
+          <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-3">
             <StatTile
               variant="plain"
               label="Cash reaching no client"
@@ -118,7 +128,7 @@ export function PayerMappingCard({ order }: { order?: number }) {
           </div>
 
           {data.canAssign ? null : (
-            <p className="rounded-md border border-[var(--ceo-warning)] p-3 text-sm">
+            <p className="callout-warn rounded-lg border px-3 py-2 text-sm">
               Assigning is not switched on yet: the payer table does not exist.
               Run <code>supabase/migrations/20260919_cockpit_core.sql</code> in
               the Creative Triage SQL editor and this list becomes clickable.
@@ -126,17 +136,16 @@ export function PayerMappingCard({ order }: { order?: number }) {
             </p>
           )}
 
-          <div className="overflow-x-auto rounded-md border">
-            <table
-              className="w-full text-sm"
-              style={{ fontVariantNumeric: "tabular-nums" }}
-            >
+          <div className="ceo-table-scroll relative overflow-x-auto">
+            <table className="w-full min-w-[36rem] text-sm tabular-nums">
               <thead>
-                <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
-                  <th className="p-2 font-medium">Payer</th>
-                  <th className="p-2 text-right font-medium">Cash</th>
-                  <th className="p-2 font-medium">Is this client</th>
-                  <th className="p-2 font-medium" />
+                <tr className="border-b">
+                  <th className={TH}>Payer</th>
+                  <th className={`${TH} text-right`}>Cash</th>
+                  <th className={TH}>Is this client</th>
+                  <th className={TH}>
+                    <span className="sr-only">Save</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -147,15 +156,18 @@ export function PayerMappingCard({ order }: { order?: number }) {
                     p.suggestion?.clickupTaskId ??
                     "";
                   return (
-                    <tr key={p.payer} className="border-t align-top">
-                      <td className="p-2">
+                    <tr
+                      key={p.payer}
+                      className="border-b border-[color:var(--ceo-grid)] last:border-0"
+                    >
+                      <td className={TD}>
                         {p.payer}
                         <span className="block text-xs text-muted-foreground">
                           {`${plural(p.payments, "payment")} · ${p.firstMonth}${p.lastMonth === p.firstMonth ? "" : ` to ${p.lastMonth}`}`}
                         </span>
                       </td>
-                      <td className="p-2 text-right">{money(p.usd)}</td>
-                      <td className="p-2">
+                      <td className={`${TD} text-right`}>{money(p.usd)}</td>
+                      <td className={TD}>
                         <AnimatedSelect
                           id={`payer-${p.payer}`}
                           value={picked}
@@ -163,9 +175,9 @@ export function PayerMappingCard({ order }: { order?: number }) {
                           onChange={e =>
                             setDraft(d => ({ ...d, [p.payer]: e.target.value }))
                           }
-                          className="w-full min-w-48 rounded-md border bg-background px-2 py-1 text-sm"
+                          className="ceo-select-sm w-full"
                         >
-                          <option value="">—</option>
+                          <option value="">Not set</option>
                           {cards.map(c => (
                             <option
                               key={c.clickupTaskId}
@@ -177,39 +189,41 @@ export function PayerMappingCard({ order }: { order?: number }) {
                         </AnimatedSelect>
                         {p.mapped ? (
                           <span className="mt-1 block text-xs text-muted-foreground">
-                            saved
+                            Saved
                           </span>
                         ) : p.suggestion ? (
                           <span className="mt-1 block text-xs text-muted-foreground">
-                            {`suggested: ${p.suggestion.why}`}
+                            {`Suggested: ${p.suggestion.why}`}
                           </span>
                         ) : null}
                       </td>
-                      <td className="p-2">
-                        <button
-                          type="button"
-                          disabled={
-                            !data.canAssign || busy === p.payer || !picked
-                          }
-                          onClick={() => save(p, picked || null)}
-                          className="rounded-md border px-2 py-1 text-xs font-medium hover:bg-muted disabled:opacity-40"
-                        >
-                          {busy === p.payer
-                            ? "…"
-                            : p.mapped
-                              ? "Change"
-                              : "Save"}
-                        </button>
-                        {p.mapped ? (
-                          <button
-                            type="button"
-                            disabled={busy === p.payer}
-                            onClick={() => save(p, null)}
-                            className="ml-1 rounded-md border px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
+                      <td className={TD}>
+                        <span className="flex flex-wrap gap-1.5">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={
+                              !data.canAssign || busy === p.payer || !picked
+                            }
+                            onClick={() => save(p, picked || null)}
                           >
-                            Clear
-                          </button>
-                        ) : null}
+                            {busy === p.payer
+                              ? "Saving"
+                              : p.mapped
+                                ? "Change"
+                                : "Save"}
+                          </Button>
+                          {p.mapped ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={busy === p.payer}
+                              onClick={() => save(p, null)}
+                            >
+                              Clear
+                            </Button>
+                          ) : null}
+                        </span>
                       </td>
                     </tr>
                   );

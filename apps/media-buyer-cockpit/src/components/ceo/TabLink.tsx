@@ -27,8 +27,10 @@ export function TabLink<K extends string>({
       type="button"
       onClick={() => goTab(tab)}
       aria-label={`Open the ${label} tab`}
+      // no-touch keeps it a quiet 24px link on a phone; the invisible margin
+      // around it takes the tap instead of a 40px capsule.
       className={cn(
-        "-my-1 inline-flex h-6 items-center gap-0.5 rounded-md pl-1.5 pr-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-[var(--ceo-hover)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "no-touch relative -my-1 inline-flex h-6 items-center gap-0.5 rounded-md pl-1.5 pr-1 text-xs font-medium text-muted-foreground transition-colors after:absolute after:-inset-2 after:content-[''] hover:bg-[var(--ceo-hover)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         className,
       )}
     >

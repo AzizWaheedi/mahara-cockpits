@@ -1,9 +1,8 @@
 import { useAction } from "convex/react";
 import {
-  ArrowRight,
+  ArrowUpRight,
   Bot,
   CircleDashed,
-  ExternalLink,
   Inbox,
   Mail,
   MoveRight,
@@ -28,6 +27,7 @@ import {
   pct,
   plural,
 } from "@/components/ceo/format";
+import { Kicker } from "@/components/ceo/Kicker";
 import { Na } from "@/components/ceo/Na";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { ShowMore } from "@/components/ceo/ShowMore";
@@ -35,6 +35,8 @@ import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import { useRefresh } from "@/components/ceo/useCeo";
 import { AnimatedSelect } from "@/components/ui/animated-select";
+import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { api } from "../../../convex/_generated/api";
 import type {
   HiringCandidate,
@@ -102,7 +104,7 @@ const TRACK: Record<string, { role: string; copy: string } | undefined> = {
 
 const SCALE = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 const tabular = { fontVariantNumeric: "tabular-nums" } as const;
-const field = "rounded-md border bg-background px-2 py-1 text-sm";
+const field = "h-9 rounded-md border bg-background px-2 text-sm";
 
 /** The server's own sentence, without the Convex framing around it. */
 function serverMessage(e: unknown): string {
@@ -126,7 +128,7 @@ function daysHere(days: number | null) {
   );
 }
 
-/** The name, linked to the GoHighLevel card when the board gave one. */
+/** The name, linked to the GoHighLevel card when the board gave one. The name is the link; no icon repeats on every row. */
 function CandidateName({ c }: { c: HiringCandidate }) {
   const cls = "min-w-0 truncate text-sm font-medium text-foreground";
   if (!c.ghlUrl) return <span className={cls}>{c.name}</span>;
@@ -135,10 +137,10 @@ function CandidateName({ c }: { c: HiringCandidate }) {
       href={c.ghlUrl}
       target="_blank"
       rel="noreferrer"
-      className={`${cls} inline-flex items-center gap-1 hover:underline`}
+      title="Open the card in GoHighLevel"
+      className={`${cls} underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring`}
     >
       {c.name}
-      <ExternalLink className="size-3 shrink-0 opacity-60" aria-hidden />
     </a>
   );
 }
@@ -283,32 +285,30 @@ function TrackSwitch({
             className={`${field} min-w-0`}
           />
           <div className="flex flex-wrap items-center gap-2">
-            <button
+            <Button
               type="button"
+              variant="outline"
               disabled={busy}
               onClick={() => void move()}
-              className="inline-flex h-8 items-center gap-1.5 rounded-md border bg-card px-3 text-xs font-medium text-foreground hover:bg-[var(--ceo-emphasis-wash)] disabled:opacity-50"
             >
-              <MoveRight className="size-3.5 shrink-0" aria-hidden />
               {busy ? "Moving" : track.copy}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="ghost"
               disabled={busy}
               onClick={() => setOpen(false)}
-              className="inline-flex h-8 items-center rounded-sm px-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
             >
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       ) : (
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="inline-flex h-8 min-w-0 items-center gap-1.5 justify-self-start rounded-sm text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+          className="inline-flex h-8 min-w-0 items-center justify-self-start rounded-sm text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          <MoveRight className="size-3.5 shrink-0 opacity-70" aria-hidden />
           <span className="min-w-0 truncate">{track.copy}</span>
         </button>
       )}
@@ -349,12 +349,12 @@ function AgentProposal({ c }: { c: HiringCandidate }) {
   if (!note) label = open ? "Hide the questions" : "Questions to ask";
 
   return (
-    <div className="grid min-w-0 gap-1.5 self-start rounded-md border border-dashed px-2.5 py-2">
+    <div className="grid min-w-0 gap-1.5 self-start rounded-xl bg-muted/40 p-3">
       <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
-        <span className="inline-flex items-center gap-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-          <Bot className="size-3 shrink-0" aria-hidden />
+        <Kicker as="span" className="inline-flex items-center gap-1.5">
+          <Bot className="size-3.5 shrink-0" aria-hidden />
           Recruiting agent
-        </span>
+        </Kicker>
         <span className="text-xs text-muted-foreground" style={tabular}>
           <strong className="font-medium text-foreground">
             {decimal(c.agentScore, 1)}
@@ -362,7 +362,7 @@ function AgentProposal({ c }: { c: HiringCandidate }) {
           {` / 10${verdict ? ` \u00b7 ${verdict}` : ""}`}
         </span>
       </div>
-      <p className="text-[11px] leading-relaxed text-muted-foreground">
+      <p className="text-xs leading-relaxed text-muted-foreground">
         A proposal from the application. Your score is the one that counts.
       </p>
       {note ? (
@@ -377,14 +377,14 @@ function AgentProposal({ c }: { c: HiringCandidate }) {
           type="button"
           aria-expanded={open}
           onClick={() => setOpen(o => !o)}
-          className="justify-self-start rounded-sm text-[11px] font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="no-touch relative justify-self-start rounded-sm text-xs font-medium text-muted-foreground underline-offset-4 after:absolute after:-inset-2 after:content-[''] hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {label}
         </button>
       ) : null}
       {open && asks.length ? (
         <div className="grid min-w-0 gap-1">
-          <p className="text-[11px] font-medium text-foreground/80">
+          <p className="text-xs font-medium text-foreground/80">
             Questions to ask on the call
           </p>
           <ul className="grid min-w-0 gap-1">
@@ -427,6 +427,9 @@ function GradeRow({
   const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const due = isScoreKey(c.scoreDue) ? c.scoreDue : null;
+  // The save button waits until something on the row has been touched, so an
+  // untouched queue is not a column of disabled buttons.
+  const touched = score !== null || note.trim() !== "" || moveTo !== "";
 
   const save = async () => {
     if (score === null || due === null) return;
@@ -457,7 +460,7 @@ function GradeRow({
   };
 
   return (
-    <div className="grid gap-2.5 border-b border-[color:var(--ceo-grid)] py-4 first:pt-0 last:border-0 last:pb-0">
+    <div className="grid gap-3 border-b border-[color:var(--ceo-grid)] py-4 first:pt-0 last:border-0 last:pb-0">
       <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
         <CandidateName c={c} />
         <span className="text-xs text-muted-foreground">{c.roleLabel}</span>
@@ -488,12 +491,12 @@ function GradeRow({
           <div className="grid min-w-0 items-start gap-x-6 gap-y-3 @2xl:grid-cols-[minmax(0,24rem)_minmax(0,1fr)]">
             <div className="grid min-w-0 max-w-sm gap-1.5">
               <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-                <span className="text-[13px] text-foreground">
+                <span className="text-sm text-foreground">
                   {SCORE_LABEL[due]} score
                 </span>
                 <span className="text-sm text-muted-foreground" style={tabular}>
                   {score === null ? (
-                    "not picked"
+                    "Not picked"
                   ) : (
                     <>
                       <strong className="text-base font-semibold text-foreground">
@@ -514,7 +517,9 @@ function GradeRow({
             </div>
             <AgentProposal c={c} />
           </div>
-          <div className="grid gap-2 @lg:grid-cols-[minmax(0,1fr)_11rem_auto] @lg:items-center">
+          <div
+            className={`grid gap-2 @lg:items-center ${touched ? "@lg:grid-cols-[minmax(0,1fr)_11rem_auto]" : "@lg:grid-cols-[minmax(0,1fr)_11rem]"}`}
+          >
             <input
               value={note}
               onChange={e => setNote(e.target.value)}
@@ -537,15 +542,15 @@ function GradeRow({
                 </option>
               ))}
             </AnimatedSelect>
-            <button
-              type="button"
-              disabled={busy || score === null}
-              onClick={() => void save()}
-              className="inline-flex h-8 items-center justify-center gap-1 rounded-md bg-foreground px-3 text-xs font-medium text-background disabled:opacity-50"
-            >
-              {busy ? "Saving" : "Save the score"}
-              {busy ? null : <ArrowRight className="size-3.5" aria-hidden />}
-            </button>
+            {touched ? (
+              <Button
+                type="button"
+                disabled={busy || score === null}
+                onClick={() => void save()}
+              >
+                {busy ? "Saving" : "Save the score"}
+              </Button>
+            ) : null}
           </div>
         </>
       )}
@@ -579,10 +584,10 @@ function RolePanel({ r }: { r: HiringRoleFunnel }) {
           href={r.careersUrl}
           target="_blank"
           rel="noreferrer"
-          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+          className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
         >
           Careers page
-          <ExternalLink className="size-3" aria-hidden />
+          <ArrowUpRight className="size-3.5" aria-hidden />
         </a>
       </div>
 
@@ -671,7 +676,7 @@ function PersonRow({
         </span>
         {isNum(c.scores.total) ? (
           <span className="text-xs text-muted-foreground" style={tabular}>
-            total{" "}
+            Total{" "}
             <strong className="font-medium text-foreground">
               {decimal(c.scores.total, 1)}
             </strong>
@@ -687,7 +692,10 @@ function PersonRow({
   );
 }
 
-/** One switch, the same shape as the team roster's, so a toggle means the same thing everywhere. */
+/**
+ * One switch: the app's own, so a toggle means the same thing everywhere. The
+ * invisible ring widens what a thumb can hit without growing the row.
+ */
 function Toggle({
   on,
   label,
@@ -700,19 +708,13 @@ function Toggle({
   onChange: (on: boolean) => void;
 }) {
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={on}
+    <Switch
+      checked={on}
+      onCheckedChange={onChange}
       aria-label={label}
       disabled={disabled}
-      onClick={() => onChange(!on)}
-      className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${on ? "bg-[var(--ceo-emphasis)]" : "bg-muted-foreground/40"} disabled:opacity-50`}
-    >
-      <span
-        className={`absolute top-0.5 size-4 rounded-full bg-background transition-[left] ${on ? "left-[18px]" : "left-0.5"}`}
-      />
-    </button>
+      className="relative after:absolute after:-inset-2 after:content-['']"
+    />
   );
 }
 
@@ -760,8 +762,8 @@ function EngineCard({
   };
 
   return (
-    <div className="grid gap-5">
-      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3 rounded-lg border p-3">
+    <div className="grid gap-6">
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3 rounded-xl bg-muted/40 p-4">
         <div className="min-w-0">
           <p className="flex items-center gap-2 text-sm font-medium text-foreground">
             {engine.armed ? (
@@ -785,17 +787,28 @@ function EngineCard({
             {engine.armed
               ? `Every switch below that is on will send over ${engine.channel} without asking you.`
               : byGoHighLevel
-                ? "The published workflows on the hiring sub-account send every candidate message, on email and on SMS. The cockpit stays quiet so nobody hears anything twice. The words still come from the custom values, so edit them there."
+                ? "The hiring sub-account's published workflows send every candidate message, by email and SMS."
                 : "Every message is written down and nothing is sent. Read the drafts below, send the ones you like, and arm it when the words are right."}
           </p>
+          {!engine.armed && byGoHighLevel ? (
+            <details className="mt-1 max-w-prose text-xs text-muted-foreground">
+              <summary className="hover:text-foreground">
+                Why the cockpit stays quiet
+              </summary>
+              <p className="mt-1 leading-relaxed">
+                So nobody hears anything twice. The words still come from the
+                custom values in GoHighLevel, so edit them there.
+              </p>
+            </details>
+          ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-2 text-xs">
           <span className="text-muted-foreground">
             {engine.armed
-              ? "sending"
+              ? "Sending"
               : byGoHighLevel
                 ? "GoHighLevel"
-                : "writing only"}
+                : "Writing only"}
           </span>
           <Toggle
             on={engine.armed}
@@ -815,19 +828,19 @@ function EngineCard({
         </div>
       </div>
 
-      <div className="grid gap-2">
-        <p className="text-[13px] text-foreground">
+      <div className="grid gap-3">
+        <p className="text-sm font-medium text-foreground">
           What it is allowed to send
         </p>
         {engine.actions.length ? (
-          <div className="grid gap-x-6 gap-y-2 @2xl:grid-cols-2">
+          <div className="grid gap-x-8 gap-y-3 @2xl:grid-cols-2">
             {engine.actions.map(a => (
               <div
                 key={a.action}
                 className="flex min-w-0 items-start justify-between gap-3"
               >
                 <div className="min-w-0">
-                  <p className="text-[13px] text-foreground">
+                  <p className="text-sm text-foreground">
                     {humanize(a.action)}
                   </p>
                   {ACTION_HINT[a.action] ? (
@@ -861,8 +874,8 @@ function EngineCard({
       </div>
 
       {engine.blockers.length ? (
-        <div className="grid gap-1.5">
-          <p className="text-[13px] text-foreground">
+        <div className="grid gap-2">
+          <p className="text-sm font-medium text-foreground">
             What has to be true before it sends
           </p>
           <ul className="grid gap-1.5">
@@ -895,37 +908,36 @@ function EngineCard({
 
       <div className="grid gap-3">
         <div className="flex flex-wrap items-center gap-2">
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
             disabled={busy !== null}
             onClick={() =>
               void run("drafts", async () => {
                 setDrafts(((await loadDrafts({})) ?? []) as DraftRow[]);
               })
             }
-            className="inline-flex h-8 items-center gap-1.5 rounded-lg border bg-card px-3 text-xs font-medium text-foreground hover:bg-[var(--ceo-emphasis-wash)] disabled:opacity-50"
           >
-            <Mail
-              className="size-3.5 text-[color:var(--ceo-emphasis)]"
-              aria-hidden
-            />
+            <Mail aria-hidden />
             {busy === "drafts" ? "Opening" : "Read the drafts"}
-          </button>
+          </Button>
           {drafts !== null ? (
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="sm"
               onClick={() => setDrafts(null)}
-              className="rounded-sm text-xs text-muted-foreground hover:text-foreground"
             >
               Close
-            </button>
+            </Button>
           ) : null}
         </div>
 
         {drafts === null ? null : drafts.length ? (
-          <ul className="grid gap-2">
+          <ul className="divide-y">
             {drafts.map(d => (
-              <li key={d.id} className="grid gap-2 rounded-lg border p-3">
+              <li key={d.id} className="grid gap-2 py-3 first:pt-0 last:pb-0">
                 <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
                   <span className="text-sm font-medium text-foreground">
                     {d.name}
@@ -943,8 +955,10 @@ function EngineCard({
                   {d.text}
                 </p>
                 <div className="flex flex-wrap items-center gap-2">
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
+                    size="sm"
                     disabled={busy !== null || sent[d.id] !== undefined}
                     onClick={() =>
                       void run(`send-${d.id}`, async () => {
@@ -953,11 +967,10 @@ function EngineCard({
                         await onChanged();
                       })
                     }
-                    className="inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium text-foreground hover:bg-[var(--ceo-emphasis-wash)] disabled:opacity-50"
                   >
-                    <Send className="size-3.5" aria-hidden />
+                    <Send aria-hidden />
                     {busy === `send-${d.id}` ? "Sending" : "Send this one"}
-                  </button>
+                  </Button>
                   {sent[d.id] ? (
                     <span className="text-xs text-muted-foreground">
                       {sent[d.id]}
@@ -1043,18 +1056,16 @@ export function HiringTab({ sections, now }: CeoTabProps) {
   };
 
   const pullButton = (
-    <button
+    <Button
       type="button"
+      variant="outline"
+      size="sm"
       disabled={pulling}
       onClick={() => void pullBoard()}
-      className="inline-flex h-8 items-center gap-2 rounded-lg border bg-card px-3 text-xs font-medium text-foreground hover:bg-[var(--ceo-emphasis-wash)] disabled:opacity-50"
     >
-      <UserPlus
-        className="size-3.5 text-[color:var(--ceo-emphasis)]"
-        aria-hidden
-      />
+      <UserPlus aria-hidden />
       {pulling ? "Pulling" : "Pull the board"}
-    </button>
+    </Button>
   );
 
   // Nothing computed, or nothing connected: one card says so, the way the
@@ -1063,7 +1074,7 @@ export function HiringTab({ sections, now }: CeoTabProps) {
     return (
       <div className="grid min-w-0">
         <SectionCard
-          title="Recruiting"
+          title="Hiring board"
           section={section}
           actions={pullButton}
           order={0}
@@ -1077,8 +1088,8 @@ export function HiringTab({ sections, now }: CeoTabProps) {
     return (
       <div className="grid min-w-0">
         <SectionCard
-          kicker="Five roles, one board"
-          title="Recruiting"
+          kicker="Five roles"
+          title="Hiring board"
           section={section}
           notes={payload.notes}
           actions={pullButton}
@@ -1119,21 +1130,22 @@ export function HiringTab({ sections, now }: CeoTabProps) {
   return (
     <div className="@container grid min-w-0 gap-4 lg:gap-6">
       <SectionCard
-        kicker="Nothing advances until a stage's score is given"
+        kicker="Grading queue"
         title="Waiting on you"
+        description="Nothing advances until a stage's score is given."
         section={section}
         notes={payload.notes}
         actions={pullButton}
         order={0}
       >
         {d => (
-          <div className="grid gap-5">
-            <div className="grid grid-cols-2 gap-x-6 gap-y-5 @lg:grid-cols-4">
+          <div className="grid gap-6">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-4">
               <StatTile
                 variant="plain"
-                label="Waiting on you"
+                label="Scores due"
                 value={count(d.totals.ungraded)}
-                sub="a score their stage is holding out for"
+                sub="A score their stage is holding out for"
               />
               <StatTile
                 variant="plain"
@@ -1172,9 +1184,10 @@ export function HiringTab({ sections, now }: CeoTabProps) {
                       href={d.boardUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="hover:underline"
+                      className="inline-flex items-center gap-0.5 hover:underline"
                     >
-                      open in GoHighLevel
+                      Open in GoHighLevel
+                      <ArrowUpRight className="size-3.5" aria-hidden />
                     </a>
                   ) : null,
                 },
@@ -1214,14 +1227,14 @@ export function HiringTab({ sections, now }: CeoTabProps) {
       </SectionCard>
 
       <SectionCard
-        kicker="One role at a time"
+        kicker="By role"
         title="Where candidates get stuck"
         section={section}
         order={1}
       >
         {() =>
           roles.length && chosen ? (
-            <div className="grid min-w-0 gap-5">
+            <div className="grid min-w-0 gap-6">
               <FilterChips
                 options={roles.map(r => ({
                   key: r.role,
@@ -1250,7 +1263,7 @@ export function HiringTab({ sections, now }: CeoTabProps) {
 
       <div className="grid min-w-0 items-start gap-4 lg:gap-6 @4xl:grid-cols-2">
         <SectionCard
-          kicker={`No move in more than ${count(payload.engine.staleDays)} days`}
+          kicker={`Over ${count(payload.engine.staleDays)} days`}
           title="Going cold"
           section={section}
           order={2}
@@ -1281,8 +1294,9 @@ export function HiringTab({ sections, now }: CeoTabProps) {
         </SectionCard>
 
         <SectionCard
-          kicker="Good, but not now. Best total first"
+          kicker="Best total first"
           title="The bench"
+          description="Good, but not now."
           section={section}
           order={3}
         >
@@ -1320,8 +1334,9 @@ export function HiringTab({ sections, now }: CeoTabProps) {
       </div>
 
       <SectionCard
-        kicker="What it writes, and whether it sends"
+        kicker="Candidate messages"
         title="The message engine"
+        description="What it writes, and whether it sends."
         section={section}
         order={4}
       >

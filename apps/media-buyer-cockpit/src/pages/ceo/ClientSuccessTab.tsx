@@ -363,8 +363,9 @@ export function ClientSuccessTab({ sections, now, day }: CeoTabProps) {
 
   const portalCard = (
     <SectionCard
-      kicker="Mahara OS, right now"
+      kicker="Right now"
       title="Client portal"
+      description="Mahara OS"
       section={portal}
       alsoReads={payload ? [clients] : undefined}
       notes={[
@@ -380,7 +381,7 @@ export function ClientSuccessTab({ sections, now, day }: CeoTabProps) {
   // One empty state for the whole roster, not six stacked ones.
   if (!payload)
     return (
-      <div className="grid gap-5 lg:gap-7">
+      <div className="grid gap-4 lg:gap-6">
         <SectionCard title="Clients" section={clients}>
           {() => null}
         </SectionCard>
@@ -395,17 +396,11 @@ export function ClientSuccessTab({ sections, now, day }: CeoTabProps) {
   const churnHead = churnHeadline(payload);
 
   return (
-    <div className="grid gap-5 lg:gap-7">
+    <div className="grid gap-4 lg:gap-6">
       <SectionCard
-        kicker="The roster right now"
-        title={
-          <>
-            Client book
-            <TitleNote>
-              {plural(payload.counts.total, "client")} on the roster
-            </TitleNote>
-          </>
-        }
+        kicker="Right now"
+        title="Client book"
+        description={`${plural(payload.counts.total, "client")} on the roster`}
         section={clients}
         notes={cardNotes(routed, "book")}
         order={0}
@@ -414,17 +409,8 @@ export function ClientSuccessTab({ sections, now, day }: CeoTabProps) {
       </SectionCard>
 
       <SectionCard
-        kicker="The roster right now"
-        title={
-          <>
-            Clients that need you
-            {high + medium > 0 ? (
-              <TitleNote>
-                {count(high)} high, {count(medium)} medium
-              </TitleNote>
-            ) : null}
-          </>
-        }
+        kicker="Right now"
+        title="Clients that need you"
         section={clients}
         notes={cardNotes(routed, "risk")}
         order={1}
@@ -433,13 +419,9 @@ export function ClientSuccessTab({ sections, now, day }: CeoTabProps) {
       </SectionCard>
 
       <SectionCard
-        kicker="Days of silence counted to today"
-        title={
-          <>
-            Silence and last contact
-            <TitleNote>active and onboarding clients</TitleNote>
-          </>
-        }
+        kicker="Counted to today"
+        title="Silence and last contact"
+        description="Active and onboarding clients"
         section={clients}
         notes={cardNotes(routed, "silence")}
         order={2}
@@ -448,13 +430,9 @@ export function ClientSuccessTab({ sections, now, day }: CeoTabProps) {
       </SectionCard>
 
       <SectionCard
-        kicker="Next payment dates from today"
-        title={
-          <>
-            Payments on the card
-            <TitleNote>next payment date, not a payment record</TitleNote>
-          </>
-        }
+        kicker="From today"
+        title="Payments on the card"
+        description="The next payment date on the card, not a payment record"
         section={clients}
         notes={cardNotes(routed, "payments")}
         order={3}
@@ -463,15 +441,8 @@ export function ClientSuccessTab({ sections, now, day }: CeoTabProps) {
       </SectionCard>
 
       <SectionCard
-        kicker="The roster right now"
-        title={
-          <>
-            Onboarding pipeline
-            <TitleNote>
-              {plural(payload.counts.onboarding, "client")} onboarding
-            </TitleNote>
-          </>
-        }
+        kicker="Right now"
+        title="Onboarding pipeline"
         section={clients}
         notes={cardNotes(routed, "onboarding")}
         order={4}
@@ -480,13 +451,9 @@ export function ClientSuccessTab({ sections, now, day }: CeoTabProps) {
       </SectionCard>
 
       <SectionCard
-        kicker="The Client Extension Form and the card's dates"
-        title={
-          <>
-            Extensions and launches
-            <TitleNote>month to date, first launch only</TitleNote>
-          </>
-        }
+        kicker="Month to date"
+        title="Extensions and launches"
+        description="From the Client Extension Form and the card's dates, first launch only"
         section={clients}
         notes={cardNotes(routed, "extensions")}
         order={5}
@@ -495,15 +462,9 @@ export function ClientSuccessTab({ sections, now, day }: CeoTabProps) {
       </SectionCard>
 
       <SectionCard
-        kicker="Launched clients, this month and the 90 day term"
-        title={
-          <>
-            Churn and renewals
-            {churnHead.month ? (
-              <TitleNote>{churnHead.month} so far</TitleNote>
-            ) : null}
-          </>
-        }
+        kicker="Launched clients"
+        title="Churn and renewals"
+        description={`${churnHead.month ? `${churnHead.month} so far` : "This month"}, and each launched client's 90 day term`}
         section={clients}
         notes={[...(payload.churn?.notes ?? []), ...cardNotes(routed, "terms")]}
         actions={
@@ -521,7 +482,7 @@ export function ClientSuccessTab({ sections, now, day }: CeoTabProps) {
       </SectionCard>
 
       <SectionCard
-        kicker="The roster right now"
+        kicker="Right now"
         title="Stopped, paused and cancellation signals"
         section={clients}
         notes={cardNotes(routed, "churn")}
@@ -531,7 +492,7 @@ export function ClientSuccessTab({ sections, now, day }: CeoTabProps) {
       </SectionCard>
 
       <SectionCard
-        kicker="The roster right now"
+        kicker="Right now"
         title="All clients"
         section={clients}
         notes={cardNotes(routed, "roster")}
@@ -547,12 +508,6 @@ export function ClientSuccessTab({ sections, now, day }: CeoTabProps) {
   );
 }
 
-function TitleNote({ children }: { children: ReactNode }) {
-  return (
-    <span className="ml-2 font-normal text-muted-foreground">{children}</span>
-  );
-}
-
 function ClientName({
   row,
   className,
@@ -561,15 +516,20 @@ function ClientName({
   className?: string;
 }) {
   if (!row.clickupTaskId)
-    return <span className={cn("text-foreground", className)}>{row.name}</span>;
+    return (
+      <span dir="auto" className={cn("text-left text-foreground", className)}>
+        {row.name}
+      </span>
+    );
   return (
     <a
+      dir="auto"
       href={clickupUrl(row.clickupTaskId)}
       target="_blank"
       rel="noreferrer"
       title="Open the ClickUp card"
       className={cn(
-        "rounded-sm text-foreground decoration-muted-foreground/40 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "rounded-sm text-left text-foreground decoration-muted-foreground/40 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         className,
       )}
     >
@@ -595,7 +555,7 @@ function Book({
   const live = counts.active + counts.onboarding;
   return (
     <div className="@container">
-      <div className="grid grid-cols-2 gap-x-6 gap-y-5 @xl:grid-cols-3 @4xl:grid-cols-6">
+      <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-3 @4xl:grid-cols-6">
         <StatTile
           variant="plain"
           label="Active"
@@ -664,7 +624,7 @@ function AtRisk({ rows }: { rows: ClientRow[] }) {
   const shown = expanded ? list : list.slice(0, AT_RISK_START);
   return (
     <div className="@container">
-      <ul className="grid gap-3 @2xl:grid-cols-2 @6xl:grid-cols-3">
+      <ul className="grid gap-4 @2xl:grid-cols-2 @6xl:grid-cols-3">
         {shown.map(r => (
           <RiskCard key={r.clickupTaskId || r.name} row={r} />
         ))}
@@ -680,14 +640,31 @@ function AtRisk({ rows }: { rows: ClientRow[] }) {
   );
 }
 
+/**
+ * Risk reasons the panel's own numbers already carry (silence, cost per lead,
+ * Pulse): they show once, as the number with a status dot, not again as a chip.
+ */
+const SHOWN_AS_NUMBER = /^(silent \d+ days?|cpl \$\d+ in 7 days)/i;
+/** Pulse folds into its number only when there is a score to put the dot on. */
+const PULSE_REASON = /^pulse health /i;
+
+/** A dot only for the exceptions, as in the roster table. */
+const exception = (tone: StatusTone | null) =>
+  tone === "warning" || tone === "serious" ? tone : null;
+
 function RiskCard({ row }: { row: ClientRow }) {
-  const { level, score, reasons } = row.risk;
+  const { level, score } = row.risk;
+  const pulseScore = row.pulse?.score ?? null;
+  const reasons = row.risk.reasons.filter(
+    r =>
+      !SHOWN_AS_NUMBER.test(r) && !(isNum(pulseScore) && PULSE_REASON.test(r)),
+  );
   const meta = [row.stage, row.service, row.csm ? `CSM ${row.csm}` : null]
     .filter(Boolean)
     .join(" · ");
-  const pulseScore = row.pulse?.score ?? null;
+  const cplTone = exception(gateTone(row.cpl7d, CPL_GATE));
   return (
-    <li className="flex min-w-0 flex-col rounded-lg border p-4">
+    <li className="flex min-w-0 flex-col rounded-xl bg-muted/40 p-4">
       <div className="flex min-w-0 items-start justify-between gap-3">
         <div className="min-w-0">
           <ClientName
@@ -712,7 +689,7 @@ function RiskCard({ row }: { row: ClientRow }) {
           {reasons.map(reason => (
             <li
               key={reason}
-              className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] leading-4 text-foreground/85"
+              className="rounded-full bg-muted px-2 py-0.5 text-xs text-foreground/85"
             >
               {capitalize(reason)}
             </li>
@@ -725,6 +702,8 @@ function RiskCard({ row }: { row: ClientRow }) {
           label="Silent"
           value={isNum(row.silentDays) ? plural(row.silentDays, "day") : null}
           naHint={HINT.silent}
+          tone={silentTone(row.silentDays)}
+          toneLabel="Long silence"
         />
         <Mini
           label="Leads 7d"
@@ -735,18 +714,22 @@ function RiskCard({ row }: { row: ClientRow }) {
           label="CPL 7d"
           value={isNum(row.cpl7d) ? money(row.cpl7d) : null}
           naHint={cplHint(row)}
+          tone={cplTone}
+          toneLabel={cplTone ? gateLabel(cplTone, CPL_GATE) : undefined}
         />
         <Mini
           label="Pulse"
           value={isNum(pulseScore) ? count(pulseScore) : null}
           naHint={row.pulse ? HINT.pulseNoData : HINT.pulse}
+          tone={exception(pulseTone(row.pulse?.status ?? null))}
+          toneLabel={`Pulse ${row.pulse?.status ?? ""}`}
         />
       </dl>
 
       {row.latestUpdate ? (
         <p className="mt-3 flex min-w-0 gap-2 text-xs leading-relaxed text-muted-foreground">
           <MessageSquare className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-          <span className="line-clamp-3 min-w-0">
+          <span dir="auto" className="line-clamp-3 min-w-0">
             <span className="sr-only">Latest update: </span>
             {row.latestUpdate}
           </span>
@@ -760,16 +743,26 @@ function Mini({
   label,
   value,
   naHint,
+  tone,
+  toneLabel,
 }: {
   label: string;
   value: string | null;
   naHint?: string;
+  /** A status dot before the value when it is one of the reasons for the risk. */
+  tone?: StatusTone | null;
+  toneLabel?: string;
 }) {
   return (
     <div className="min-w-0">
-      <dt className="truncate text-[11px] text-muted-foreground">{label}</dt>
-      <dd className="mt-0.5 truncate text-[13px] font-medium text-foreground">
-        <Value value={value} hint={naHint} />
+      <dt className="truncate text-xs text-muted-foreground">{label}</dt>
+      <dd className="mt-0.5 flex min-w-0 items-center gap-1.5 text-sm font-medium text-foreground">
+        {tone && value !== null ? (
+          <StatusDot tone={tone} label={toneLabel ?? label} />
+        ) : null}
+        <span className="truncate">
+          <Value value={value} hint={naHint} />
+        </span>
       </dd>
     </div>
   );
@@ -818,7 +811,7 @@ function ExtensionsLaunches({ payload }: { payload: ClientsPayload }) {
 
   return (
     <div className="@container">
-      <div className="grid grid-cols-2 gap-x-6 gap-y-5 @xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-4">
         <StatTile
           variant="plain"
           label="Weeks granted this month"
@@ -839,8 +832,8 @@ function ExtensionsLaunches({ payload }: { payload: ClientsPayload }) {
           sub={
             ext
               ? nextToEnd
-                ? `next to end ${date(nextToEnd)}`
-                : "no cover running today"
+                ? `Next to end ${date(nextToEnd)}`
+                : "No cover running today"
               : undefined
           }
           hint="Clients whose latest extension ends today or later. The clock starts at submission."
@@ -856,7 +849,7 @@ function ExtensionsLaunches({ payload }: { payload: ClientsPayload }) {
           naHint="No launched client has both a creation day and a Launch Date yet"
           sub={
             launch && launch.clients > 0
-              ? `median ${decimal(launch.medianDays)} · ${plural(launch.clients, "client")}`
+              ? `Median ${decimal(launch.medianDays)} · ${plural(launch.clients, "client")}`
               : undefined
           }
           hint="From the day the ClickUp card was created to the card's Launch Date, first launch only."
@@ -889,7 +882,7 @@ function ExtensionsLaunches({ payload }: { payload: ClientsPayload }) {
           sub={
             ext
               ? `${date(ext.from)} to ${date(ext.to)}, plus any cover still running`
-              : "the form was not read this run"
+              : "The form was not read this run"
           }
         >
           {ext ? (
@@ -902,8 +895,8 @@ function ExtensionsLaunches({ payload }: { payload: ClientsPayload }) {
           title="Time to first launch"
           sub={
             launch
-              ? `slowest first · ${plural(launch.notLaunched, "live client")} not launched yet`
-              : "not computed yet"
+              ? `Slowest first · ${plural(launch.notLaunched, "live client")} not launched yet`
+              : "Not computed yet"
           }
         >
           {launch ? (
@@ -912,7 +905,7 @@ function ExtensionsLaunches({ payload }: { payload: ClientsPayload }) {
                 key: r.clickupTaskId || r.client,
                 label: r.client,
                 value: r.days,
-                sub: `launched ${date(r.launchDate)}`,
+                sub: `Launched ${date(r.launchDate)}`,
               }))}
               format={d => plural(d, "day")}
               limit={LAUNCH_LIST_MAX}
@@ -958,27 +951,27 @@ function ExtensionList({ rows }: { rows: Extensions["perClient"] }) {
         {shown.map(c => (
           <li
             key={c.clickupTaskId ?? c.client}
-            className="flex min-w-0 items-center justify-between gap-3 py-2"
+            className="flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 py-2"
           >
-            <div className="min-w-0">
+            <div className="min-w-0 flex-auto">
               <ClientName
                 row={{ name: c.client, clickupTaskId: c.clickupTaskId ?? "" }}
-                className="block truncate text-[13px] font-medium"
+                className="block truncate text-sm font-medium"
               />
               {!c.clickupTaskId ? (
                 <p className="truncate text-xs text-muted-foreground">
-                  as typed on the form, no card matched
+                  As typed on the form, no card matched
                 </p>
               ) : null}
             </div>
-            <div className="flex shrink-0 items-center gap-3 text-xs tabular-nums">
+            <div className="flex flex-none items-center gap-3 text-xs tabular-nums">
               <span className="text-foreground">
                 {c.weeks > 0
                   ? `${plural(c.weeks, "week")} this month`
-                  : "none this month"}
+                  : "None this month"}
               </span>
               <span className="text-muted-foreground">
-                until {date(c.until)}
+                Until {date(c.until)}
               </span>
               <StatusChip
                 tone={c.live ? "good" : "neutral"}
@@ -1050,7 +1043,7 @@ function WriteExtensions({ field }: { field: Extensions["clickupField"] }) {
       </Button>
       <p
         role="status"
-        className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground"
+        className="min-w-0 flex-1 basis-60 text-xs leading-relaxed text-muted-foreground"
       >
         {result ?? field.note}
       </p>
@@ -1091,14 +1084,17 @@ function Roster({
   }, [payload.rows, atRisk, filter]);
   const columns = useMemo(() => rosterColumns(now, today), [now, today]);
 
-  const options: FilterOption<RosterFilter>[] = [
-    { key: "all", label: "All", count: payload.rows.length },
-    { key: "risk", label: "At risk", count: atRisk.length },
-    { key: "active", label: "Active", count: counts.active },
-    { key: "onboarding", label: "Onboarding", count: counts.onboarding },
-    { key: "paused", label: "Paused", count: counts.paused },
-    { key: "churned", label: "Churned", count: counts.churned },
-  ];
+  // A chip with nothing behind it is noise; the chosen one stays so it can be undone.
+  const options: FilterOption<RosterFilter>[] = (
+    [
+      { key: "all", label: "All", count: payload.rows.length },
+      { key: "risk", label: "At risk", count: atRisk.length },
+      { key: "active", label: "Active", count: counts.active },
+      { key: "onboarding", label: "Onboarding", count: counts.onboarding },
+      { key: "paused", label: "Paused", count: counts.paused },
+      { key: "churned", label: "Churned", count: counts.churned },
+    ] satisfies FilterOption<RosterFilter>[]
+  ).filter(o => o.key === "all" || o.key === filter || o.count > 0);
 
   return (
     <DataTable
@@ -1338,6 +1334,7 @@ function RiskCell({ row }: { row: ClientRow }) {
         tone={RISK[level].tone}
         label={level === "high" ? "High" : "Medium"}
         hint={why}
+        className="min-w-max"
       />
     );
   if (!why) return <span className="text-xs text-muted-foreground">None</span>;
@@ -1345,7 +1342,7 @@ function RiskCell({ row }: { row: ClientRow }) {
     <Hint content={why}>
       <button
         type="button"
-        className="cursor-help rounded-sm text-xs text-muted-foreground underline decoration-muted-foreground/35 decoration-dotted underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="no-touch relative cursor-help rounded-sm text-xs text-muted-foreground underline decoration-muted-foreground/35 decoration-dotted underline-offset-4 after:absolute after:-inset-2 after:content-[''] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         Low
       </button>
@@ -1370,9 +1367,9 @@ function Portal({
   const { crm } = payload;
   return (
     <div className="@container">
-      <div className="grid gap-6 @4xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] @4xl:gap-10">
+      <div className="grid gap-6 @4xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] @4xl:gap-8">
         <div className="min-w-0">
-          <div className="grid grid-cols-2 gap-x-6 gap-y-5 @xl:grid-cols-3">
+          <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-3">
             <StatTile
               variant="plain"
               label="Clients with access"
@@ -1490,7 +1487,7 @@ function PortalTrust({
   return (
     <dl className="mt-6 grid gap-x-6 gap-y-3 border-t border-[color:var(--ceo-grid)] pt-4 @xl:grid-cols-2">
       <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1.5">
-        <dt className="text-[13px] text-muted-foreground">Self-check</dt>
+        <dt className="text-sm text-muted-foreground">Self-check</dt>
         <dd className="flex min-w-0 flex-wrap items-center gap-2">
           <StatusChip tone={healthTone} label={healthLabel} size="md" />
           {status !== null ? (
@@ -1501,7 +1498,7 @@ function PortalTrust({
         </dd>
       </div>
       <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1.5">
-        <dt className="text-[13px] text-muted-foreground">Backup</dt>
+        <dt className="text-sm text-muted-foreground">Backup</dt>
         <dd className="flex min-w-0 flex-wrap items-center gap-2">
           <StatusChip
             tone={!isNum(backupAt) ? "serious" : backupOld ? "warning" : "good"}
@@ -1539,7 +1536,7 @@ function SeenList({
   return (
     <div className="min-w-0">
       <div className="mb-2 flex items-baseline justify-between gap-3">
-        <p className="text-[13px] font-medium text-foreground">
+        <p className="text-sm font-medium text-foreground">
           Seen in the last 7 days
         </p>
         <p className="text-xs tabular-nums text-muted-foreground">
@@ -1560,7 +1557,8 @@ function SeenList({
               className="flex min-w-0 items-center justify-between gap-3 border-b border-[color:var(--ceo-grid)] py-2 last:border-0"
             >
               <span
-                className="min-w-0 truncate text-[13px] text-foreground"
+                dir="auto"
+                className="min-w-0 truncate text-left text-sm text-foreground"
                 title={s.client}
               >
                 {s.client}
@@ -1692,14 +1690,14 @@ const SILENCE_TILES: {
   {
     key: "fresh",
     label: "Contacted in 7 days",
-    sub: "no risk point for silence",
+    sub: "No risk point for silence",
   },
-  { key: "week", label: "Silent 8 to 14 days", sub: "one risk point each" },
-  { key: "long", label: "Silent over 14 days", sub: "two risk points each" },
+  { key: "week", label: "Silent 8 to 14 days", sub: "One risk point each" },
+  { key: "long", label: "Silent over 14 days", sub: "Two risk points each" },
   {
     key: "unknown",
     label: "No contact date",
-    sub: "silence cannot be judged",
+    sub: "Silence cannot be judged",
     hint: "The client card has no Last POC date, so the cockpit does not know when this client was last spoken to.",
   },
 ];
@@ -1747,7 +1745,7 @@ function Silence({ payload }: { payload: ClientsPayload }) {
 
   return (
     <div className="@container">
-      <div className="grid grid-cols-2 gap-x-6 gap-y-5 @xl:grid-cols-3 @4xl:grid-cols-5">
+      <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-3 @4xl:grid-cols-5">
         {SILENCE_TILES.map(t => (
           <StatTile
             key={t.key}
@@ -1804,15 +1802,15 @@ function Silence({ payload }: { payload: ClientsPayload }) {
 // --- Payments on the client card ---
 
 const PAY_TILES: { key: PayState; label: string; sub: string }[] = [
-  { key: "overdue", label: "Past due", sub: "the cockpit is chasing these" },
+  { key: "overdue", label: "Past due", sub: "The cockpit is chasing these" },
   {
     key: "past",
     label: "Date passed",
-    sub: "extended on the card, or a stage the sync leaves alone",
+    sub: "Extended on the card, or a stage the sync leaves alone",
   },
-  { key: "soon", label: "Due in 7 days", sub: "by the date on the card" },
-  { key: "later", label: "Later", sub: "more than 7 days away" },
-  { key: "none", label: "No date", sub: "nothing set on the card" },
+  { key: "soon", label: "Due in 7 days", sub: "By the date on the card" },
+  { key: "later", label: "Later", sub: "More than 7 days away" },
+  { key: "none", label: "No date", sub: "Nothing set on the card" },
 ];
 
 /** Where the next payment date sits for every live client, and what it cannot say. */
@@ -1883,7 +1881,12 @@ function Payments({
         cell: r => {
           const pay = PAY[paymentOf(r, today).state];
           return (
-            <StatusChip tone={pay.tone} label={pay.label} hint={pay.hint} />
+            <StatusChip
+              tone={pay.tone}
+              label={pay.label}
+              hint={pay.hint}
+              className="min-w-max"
+            />
           );
         },
         sortValue: r => PAY_RANK[paymentOf(r, today).state],
@@ -1901,7 +1904,7 @@ function Payments({
 
   return (
     <div className="@container">
-      <div className="grid grid-cols-2 gap-x-6 gap-y-5 @xl:grid-cols-3 @4xl:grid-cols-6">
+      <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-3 @4xl:grid-cols-6">
         {PAY_TILES.map(t => (
           <StatTile
             key={t.key}
@@ -1922,7 +1925,7 @@ function Payments({
           label="Money past due"
           value={null}
           naHint="The client card carries a date but no amount, and no Whop or Tap payment is joined to a client, so what is at stake in money cannot be shown."
-          sub="no amount on the card"
+          sub="No amount on the card"
         />
       </div>
 
@@ -2006,7 +2009,7 @@ function Onboarding({ payload }: { payload: ClientsPayload }) {
 
   return (
     <div className="@container">
-      <div className="grid grid-cols-2 gap-x-6 gap-y-5 @xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-4">
         <StatTile
           variant="plain"
           label="In onboarding"
@@ -2017,7 +2020,7 @@ function Onboarding({ payload }: { payload: ClientsPayload }) {
           variant="plain"
           label="Silent over 7 days"
           value={count(quiet)}
-          sub="since the Last POC date"
+          sub="Since the Last POC date"
         />
         <StatTile
           variant="plain"
@@ -2029,14 +2032,14 @@ function Onboarding({ payload }: { payload: ClientsPayload }) {
           variant="plain"
           label="Seen in the portal"
           value={count(inPortal)}
-          sub="with an unexpired session"
+          sub="With an unexpired session"
           hint="Sessions expire after 30 to 90 days, so a client that visited once long ago does not count here."
         />
       </div>
 
-      <div className="mt-6 grid gap-6 border-t border-[color:var(--ceo-grid)] pt-4 @4xl:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] @4xl:gap-10">
+      <div className="mt-6 grid gap-6 border-t border-[color:var(--ceo-grid)] pt-4 @4xl:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] @4xl:gap-8">
         <div className="min-w-0">
-          <p className="mb-3 text-[13px] font-medium text-foreground">
+          <p className="mb-3 text-sm font-medium text-foreground">
             Where they are
           </p>
           <BarList
@@ -2047,7 +2050,7 @@ function Onboarding({ payload }: { payload: ClientsPayload }) {
           />
         </div>
         <div className="min-w-0">
-          <p className="mb-3 text-[13px] font-medium text-foreground">
+          <p className="mb-3 text-sm font-medium text-foreground">
             Who is waiting
           </p>
           <DataTable
@@ -2130,7 +2133,12 @@ function TermCell({ row, today }: { row: ClientRow; today: string }) {
         : "No Launch Date on the card, so the client has not launched and has no term."
       : `Launched ${date(row.launchDate)}. The term ${away !== null && away < 0 ? "ended" : "ends"} ${date(row.termEnd)}${away === null ? "" : `, ${awayWords(away)}`}.${gone ? " The card is in a stopped stage, so the loss is dated on the stop when that came first." : ""}`;
   return (
-    <StatusChip tone={gone ? "neutral" : t.tone} label={t.label} hint={hint} />
+    <StatusChip
+      tone={gone ? "neutral" : t.tone}
+      label={t.label}
+      hint={hint}
+      className="min-w-max"
+    />
   );
 }
 
@@ -2197,7 +2205,14 @@ function churnColumns(today: string, launched: boolean): Column<ChurnClient>[] {
       header: "Why",
       cell: c => {
         const r = REASON[c.reason];
-        return <StatusChip tone={r.tone} label={r.label} hint={r.hint} />;
+        return (
+          <StatusChip
+            tone={r.tone}
+            label={r.label}
+            hint={r.hint}
+            className="min-w-max"
+          />
+        );
       },
       sortValue: c => c.reason,
     });
@@ -2291,6 +2306,7 @@ function termColumns(
             tone="warning"
             label="Card still live"
             hint={STILL_LIVE_HINT}
+            className="min-w-max"
           />
         ) : null}
       </span>
@@ -2314,12 +2330,12 @@ function termColumns(
 
 function ChurnRule() {
   return (
-    <p className="rounded-lg border bg-muted/40 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
-      <span className="font-medium text-foreground">
-        The rule, decided on 16 September 2026.{" "}
-      </span>
-      {CHURN_RULE}
-    </p>
+    <details className="rounded-xl bg-muted/40 px-4 py-3 text-xs leading-relaxed text-muted-foreground">
+      <summary className="select-none font-medium text-foreground">
+        The churn rule, decided on 16 September 2026
+      </summary>
+      <p className="mt-2">{CHURN_RULE}</p>
+    </details>
   );
 }
 
@@ -2334,7 +2350,7 @@ function ListBlock({
 }) {
   return (
     <div className="min-w-0">
-      <p className="text-[13px] font-medium text-foreground">{title}</p>
+      <p className="text-sm font-medium text-foreground">{title}</p>
       <p className="mt-0.5 text-xs text-muted-foreground">{sub}</p>
       <div className="mt-3">{children}</div>
     </div>
@@ -2391,7 +2407,7 @@ function ChurnRenewals({
     <div className="@container">
       <ChurnRule />
 
-      <div className="mt-5 grid grid-cols-2 gap-x-6 gap-y-5 @xl:grid-cols-3 @4xl:grid-cols-5">
+      <div className="mt-6 grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-3 @4xl:grid-cols-5">
         <StatTile
           variant="plain"
           label={head.label}
@@ -2413,8 +2429,8 @@ function ChurnRenewals({
           value={count(churn.renewalDueSoon.length)}
           sub={
             soonest
-              ? `first: ${soonest.name}, ${awayWords(soonest.daysToTermEnd)}`
-              : "no term ends in the next 15 days"
+              ? `First: ${soonest.name}, ${awayWords(soonest.daysToTermEnd)}`
+              : "No term ends in the next 15 days"
           }
           hint="Launched clients still on the books whose term end (Launch Date plus 90 days) falls from today to 15 days from now."
         />
@@ -2425,7 +2441,7 @@ function ChurnRenewals({
           sub={
             stillLive > 0
               ? `${plural(stillLive, "card")} still live on ClickUp`
-              : "counted as churned on the term end"
+              : "Counted as churned on the term end"
           }
           hint="Past the term end with no payment dated after it, on any rail the cockpit can tie to the client. Each counts as churned on its term end."
         />
@@ -2433,12 +2449,12 @@ function ChurnRenewals({
           variant="plain"
           label="Term ended, renewed"
           value={count(churn.termEndedRenewed.length)}
-          sub="a payment dated after the term end"
+          sub="A payment dated after the term end"
           hint="The payment is the only renewal evidence that exists: no form, field or table records a renewal."
         />
       </div>
 
-      <div className="mt-6 grid gap-6 border-t border-[color:var(--ceo-grid)] pt-4 @4xl:grid-cols-2 @4xl:gap-10">
+      <div className="mt-6 grid gap-6 border-t border-[color:var(--ceo-grid)] pt-4 @4xl:grid-cols-2 @4xl:gap-8">
         <ListBlock
           title={`Churned in ${head.month ?? "this month"}`}
           sub="Launched clients, newest loss first"
@@ -2495,7 +2511,7 @@ function ChurnRenewals({
         </ListBlock>
       </div>
 
-      <div className="mt-6 grid gap-6 border-t border-[color:var(--ceo-grid)] pt-4 @4xl:grid-cols-2 @4xl:gap-10">
+      <div className="mt-6 grid gap-6 border-t border-[color:var(--ceo-grid)] pt-4 @4xl:grid-cols-2 @4xl:gap-8">
         <ListBlock
           title="Renewal due in the next 15 days"
           sub="Soonest term end first"
@@ -2639,37 +2655,37 @@ function Churn({ payload }: { payload: ClientsPayload }) {
 
   return (
     <div className="@container">
-      <div className="grid grid-cols-2 gap-x-6 gap-y-5 @xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-4">
         <StatTile
           variant="plain"
           label="Churned"
           value={count(payload.counts.churned)}
-          sub="on the roster today"
+          sub="On the roster today"
           hint="A count of cards sitting in a churned stage right now, not a churn rate. The churn and renewals card applies the churn rule and dates each loss."
         />
         <StatTile
           variant="plain"
           label="Paused"
           value={count(payload.counts.paused)}
-          sub="stopped, not gone"
+          sub="Stopped, not gone"
         />
         <StatTile
           variant="plain"
           label="Live clients showing a signal"
           value={count(signalled.length)}
-          sub="unhappy on the card, or a DEFCON flag"
+          sub="Unhappy on the card, or a DEFCON flag"
         />
         <StatTile
           variant="plain"
           label="Reason they left"
           value={null}
           naHint="No field on the client card records why a client left, so no churn reason can be counted."
-          sub="nothing records it"
+          sub="Nothing records it"
         />
       </div>
 
       <div className="mt-6 border-t border-[color:var(--ceo-grid)] pt-4">
-        <p className="mb-3 text-[13px] font-medium text-foreground">
+        <p className="mb-3 text-sm font-medium text-foreground">
           Live clients showing a cancellation signal
         </p>
         {signalled.length === 0 ? (
@@ -2691,7 +2707,7 @@ function Churn({ payload }: { payload: ClientsPayload }) {
       </div>
 
       <div className="mt-6 border-t border-[color:var(--ceo-grid)] pt-4">
-        <p className="mb-3 text-[13px] font-medium text-foreground">
+        <p className="mb-3 text-sm font-medium text-foreground">
           Paused and churned clients
         </p>
         {gone.length === 0 ? (
@@ -2738,10 +2754,10 @@ function PortalRoster({ rows, now }: { rows: ClientRow[]; now: number }) {
 
   return (
     <div className="mt-6 border-t border-[color:var(--ceo-grid)] pt-4">
-      <p className="mb-3 text-[13px] font-medium text-foreground">
+      <p className="mb-3 text-sm font-medium text-foreground">
         Portal use across the client roster
       </p>
-      <div className="grid grid-cols-2 gap-x-6 gap-y-5 @xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-4">
         <StatTile
           variant="plain"
           label="Seen in 7 days"
@@ -2752,19 +2768,19 @@ function PortalRoster({ rows, now }: { rows: ClientRow[]; now: number }) {
           variant="plain"
           label={`Seen 8 to ${PORTAL_SEEN_DAYS} days ago`}
           value={count(seen30)}
-          sub="still inside the session window"
+          sub="Still inside the session window"
         />
         <StatTile
           variant="plain"
           label={`Seen over ${PORTAL_SEEN_DAYS} days ago`}
           value={count(older)}
-          sub="session not expired yet"
+          sub="Session not expired yet"
         />
         <StatTile
           variant="plain"
           label="No unexpired session"
           value={count(never)}
-          sub="never visited, or the session expired"
+          sub="Never visited, or the session expired"
           hint="The client row carries the newest unexpired session only. A client that has never been given access looks the same as one whose session expired, so this is not a count of clients without access."
         />
       </div>
@@ -2813,24 +2829,25 @@ const NOT_MEASURED: { label: string; why: string }[] = [
   },
 ];
 
+const NOT_MEASURED_NOTES: Note[] = [
+  {
+    level: "info",
+    text: "These are the client success numbers a CEO would normally ask for that no source the cockpit reads can give. They are named here rather than left off, so nobody hunts for a number that does not exist.",
+  },
+];
+
 /** Metrics with no source at all: named, shown as n/a, each with what is missing. */
 function NotMeasured({ order }: { order: number }) {
   return (
     <SectionCard
-      kicker="Client success"
       title="Not measured yet"
+      notes={NOT_MEASURED_NOTES}
       order={order}
-      bodyClassName="mt-4"
     >
-      <p className="mb-4 max-w-2xl text-xs leading-relaxed text-muted-foreground">
-        These are the client success numbers a CEO would normally ask for that
-        no source the cockpit reads can give. They are named here rather than
-        left off, so nobody hunts for a number that does not exist.
-      </p>
-      <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-3">
+      <dl className="grid gap-x-6 gap-y-6 @2xl:grid-cols-2 @5xl:grid-cols-3">
         {NOT_MEASURED.map(m => (
           <div key={m.label} className="min-w-0">
-            <dt className="text-[13px] leading-5 text-muted-foreground">
+            <dt className="text-sm leading-5 text-muted-foreground">
               {m.label}
             </dt>
             <dd className="mt-0.5 min-w-0">
