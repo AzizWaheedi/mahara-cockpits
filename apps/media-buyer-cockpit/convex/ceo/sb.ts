@@ -36,10 +36,7 @@ export async function sql<T extends Row = Row>(
 }
 
 /** A number from a SQL cell (Postgres numerics arrive as strings). */
-export function num(x: unknown): number {
-  const n = typeof x === "number" ? x : Number(x);
-  return Number.isFinite(n) ? n : 0;
-}
+export { num } from "./numbers";
 
 /** Epoch ms from a timestamp cell, or undefined. */
 export function ms(x: unknown): number | undefined {

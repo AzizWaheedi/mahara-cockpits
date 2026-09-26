@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { withoutWebinar } from "../convex/ceo/adapters/growth";
+import { withoutWebinar } from "../convex/ceo/webinarAttribution";
 import { DEFINITIONS, extract } from "../convex/ceo/metricRegistry";
 import { objectionStats, reminderStats } from "../convex/ceo/webinarFollowUp";
 import { type PageVisitor, pageStats } from "../convex/ceo/webinarPage";
