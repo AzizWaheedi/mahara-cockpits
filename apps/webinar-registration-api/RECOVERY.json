@@ -1,0 +1,44 @@
+{
+  "recoveredAt": "2026-09-26",
+  "projectId": "prj_qttONjb459HrCVtw2HJHIKaK1p1c",
+  "deploymentId": "dpl_Arg8EB9DEr24CinmYJ9PhL3pk6Fk",
+  "source": "Vercel deployment source files, hashes verified",
+  "files": [
+    {
+      "path": "README.md",
+      "sha1": "bc32205dd375a26ff9218ea365d4b3f9bf46732f"
+    },
+    {
+      "path": "api/health.js",
+      "sha1": "bc4c130afbab43f643fe4d4447d2d87f95c9eced"
+    },
+    {
+      "path": "api/register.js",
+      "sha1": "63b71b54d5b8aaddec5cf491d0bca39584b260b0"
+    },
+    {
+      "path": "api/survey.js",
+      "sha1": "1b45bdac5a47a11aafd9ca54b324abb560c94435"
+    },
+    {
+      "path": "lib/ghl.js",
+      "sha1": "c0b37d1ac9c9ef8c0d7ddd90dd2d99d431956da5"
+    },
+    {
+      "path": "package.json",
+      "sha1": "d9f609b9ec419189386264a9f006e2378a9cf36a"
+    },
+    {
+      "path": "public/index.html",
+      "sha1": "e1e56424bad61d38f3fee00a83277c8887067b63"
+    },
+    {
+      "path": "public/thanks.html",
+      "sha1": "019acf13504be9968918bf2d70cca9e15f91dbec"
+    },
+    {
+      "path": "vercel.json",
+      "sha1": "9497b0bd755f659859af3b413ab4eebfc941f2d9"
+    }
+  ]
+}
