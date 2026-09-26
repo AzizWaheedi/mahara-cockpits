@@ -361,72 +361,124 @@ def kind_of(rec: dict[str, Any], appointment_type: Optional[str]) -> str:
     return "intro" if ("intro" in title or "تعريفية" in title) else "demo"
 
 
+def review_one(sb: Any, p: Any, rec: dict[str, Any], rep_of: dict[str, dict[str, Any]], *,
+               knowledge: Path, timeout: float = 900) -> dict[str, Any]:
+    """Review one call with Vince's template and framework; the row saved."""
+    rid = str(rec["recording_id"])
+    appt_type = None
+    if rec.get("appointment_id"):
+        a = sb.select("cockpit_sales_appointments",
+                      f"select=call_type&appointment_id=eq.{http.quote(str(rec['appointment_id']))}&limit=1")
+        appt_type = (a[0].get("call_type") if a else None)
+    kind = kind_of(rec, appt_type)
+    lead = sb.lead(str(rec.get("contact_id") or "")) if rec.get("contact_id") else None
+    rep = rep_of.get(str(rec.get("recorded_by") or "").lower())
+    transcript = sb.download_from("sales-calls", str(rec["transcript_path"])).decode("utf-8", "replace")
+    started = str(rec.get("started_at") or "")
+    day = (datetime.fromisoformat(started.replace("Z", "+00:00")) + timedelta(hours=3)).date().isoformat() \
+        if started else ""
+    system, user = build_prompt(kind, knowledge, name=str(rec.get("title") or rid),
+                                rep=str((rep or {}).get("display_name") or rec.get("recorded_by") or ""),
+                                day=day, link=str(rec.get("share_url") or ""), transcript=transcript)
+    want = 10 if kind == "intro" else 15
+    out = None
+    for attempt in range(2):
+        reply = p.complete(system, user if attempt == 0 else user + (
+            f"\n\nYour last answer did not score all {want} parts, one per line as "
+            f"'*<number>. <Part> — <score>/10*', with a '*Grade: <total>/{want * 10}*' line. Write the whole log again."),
+            temperature=None, timeout=timeout)
+        parsed = parse(reply.text, f"{kind}_{rid}")
+        if parsed["items"] and len(parsed["items"]) >= want - 1 and parsed["score"] is not None:
+            out = parsed
+            break
+    if out is None:
+        raise ValueError(f"the model did not return a scored log for {rid}")
+    row = {
+        "source_ref": f"desk:{rid}",
+        "source": "desk",
+        "recording_id": rid,
+        "contact_id": rec.get("contact_id"),
+        "call_type": kind,
+        "rep_name": (rep or {}).get("display_name") or rec.get("recorded_by"),
+        "rep_key": str((rep or {}).get("id") or "") or None,
+        "lead_name": (lead or {}).get("name"),
+        "call_at": rec.get("started_at"),
+        "reviewed_at": datetime.now(timezone.utc).isoformat(),
+        "model": getattr(p, "model", None),
+        "score": out["score"],
+        "score_max": out["score_max"],
+        "items": out["items"],
+        "pros": out["pros"],
+        "feedback": out["feedback"],
+        "body": out["body"],
+        "joined_by": "link",
+    }
+    sb.upsert("cockpit_sales_reviews", [row], "source_ref")
+    return row
+
+
+def _rep_index(sb: Any) -> dict[str, dict[str, Any]]:
+    reps = sb.select("cockpit_sales_reps", "select=id,display_name,fathom_email,maqsam_email&limit=500")
+    return {str(r.get(k) or "").lower(): r for r in reps for k in ("fathom_email", "maqsam_email") if r.get(k)}
+
+
+REC_COLS = ("select=recording_id,title,recorded_by,started_at,share_url,contact_id,appointment_id,"
+            "transcript_path,transcript_chars")
+
+
+def review_asked(sb: Any, p: Any, log: Callable[[str], None], *, knowledge: Path, limit: int,
+                 timeout: float = 900) -> dict[str, Any]:
+    """The calls reps asked about, oldest ask first. A call already reviewed
+    closes the ask without a second review; one that fails says why."""
+    asks = sb.select("cockpit_sales_review_asks",
+                     f"select=id,recording_id,requested_by&state=eq.queued&order=requested_at.asc&limit={limit}")
+    if not asks:
+        return {"asked": 0, "reviewed": 0, "failed": 0, "errors": []}
+    rep_of = _rep_index(sb)
+    reviewed = failed = 0
+    errors: list[str] = []
+    now = lambda: datetime.now(timezone.utc).isoformat()  # noqa: E731
+    for ask in asks:
+        aid, rid = str(ask["id"]), str(ask["recording_id"])
+        sb.patch("cockpit_sales_review_asks", f"id=eq.{http.quote(aid)}&state=eq.queued", {"state": "reviewing"})
+        try:
+            have = sb.select("cockpit_sales_reviews", f"select=id&recording_id=eq.{http.quote(rid)}&limit=1")
+            if not have:
+                recs = sb.select("cockpit_sales_recordings", f"{REC_COLS}&recording_id=eq.{http.quote(rid)}&limit=1")
+                if not recs or not recs[0].get("transcript_path"):
+                    raise ValueError("the call has no transcript in the cockpit")
+                row = review_one(sb, p, recs[0], rep_of, knowledge=knowledge, timeout=timeout)
+                reviewed += 1
+                log(f"reviews: asked {rid} scored {row['score']:.0f}/{row['score_max']:.0f}")
+            sb.patch("cockpit_sales_review_asks", f"id=eq.{http.quote(aid)}",
+                      {"state": "done", "finished_at": now(), "error": None})
+        except Exception as e:  # noqa: BLE001 - one call is not worth the rest
+            failed += 1
+            msg = http.scrub(str(e))[:300]
+            errors.append(f"{rid}: {msg[:160]}")
+            sb.patch("cockpit_sales_review_asks", f"id=eq.{http.quote(aid)}",
+                      {"state": "failed", "finished_at": now(), "error": msg})
+            log(f"reviews: asked {rid} failed: {msg[:200]}")
+    return {"asked": len(asks), "reviewed": reviewed, "failed": failed, "errors": errors[:5]}
+
+
 def review_new(sb: Any, p: Any, log: Callable[[str], None], *, knowledge: Path, since: datetime,
                limit: int, min_chars: int, timeout: float = 900) -> dict[str, Any]:
     """Review the newest unreviewed calls with Vince's template and framework."""
     todo = due(sb, since=since, min_chars=min_chars, limit=limit)
     if not todo:
         return {"due": 0, "reviewed": 0, "failed": 0}
-    reps = sb.select("cockpit_sales_reps", "select=id,display_name,fathom_email,maqsam_email&limit=500")
-    rep_of = {str(r.get(k) or "").lower(): r for r in reps for k in ("fathom_email", "maqsam_email") if r.get(k)}
+    rep_of = _rep_index(sb)
     reviewed = failed = 0
     errors: list[str] = []
     for rec in todo:
         rid = str(rec["recording_id"])
         try:
-            appt_type = None
-            if rec.get("appointment_id"):
-                a = sb.select("cockpit_sales_appointments",
-                              f"select=call_type&appointment_id=eq.{http.quote(str(rec['appointment_id']))}&limit=1")
-                appt_type = (a[0].get("call_type") if a else None)
-            kind = kind_of(rec, appt_type)
-            lead = sb.lead(str(rec.get("contact_id") or "")) if rec.get("contact_id") else None
-            rep = rep_of.get(str(rec.get("recorded_by") or "").lower())
-            transcript = sb.download_from("sales-calls", str(rec["transcript_path"])).decode("utf-8", "replace")
-            started = str(rec.get("started_at") or "")
-            day = (datetime.fromisoformat(started.replace("Z", "+00:00")) + timedelta(hours=3)).date().isoformat() \
-                if started else ""
-            system, user = build_prompt(kind, knowledge, name=str(rec.get("title") or rid),
-                                        rep=str((rep or {}).get("display_name") or rec.get("recorded_by") or ""),
-                                        day=day, link=str(rec.get("share_url") or ""), transcript=transcript)
-            want = 10 if kind == "intro" else 15
-            out = None
-            for attempt in range(2):
-                reply = p.complete(system, user if attempt == 0 else user + (
-                    f"\n\nYour last answer did not score all {want} parts, one per line as "
-                    f"'*<number>. <Part> — <score>/10*', with a '*Grade: <total>/{want * 10}*' line. Write the whole log again."),
-                    temperature=None, timeout=timeout)
-                parsed = parse(reply.text, f"{kind}_{rid}")
-                if parsed["items"] and len(parsed["items"]) >= want - 1 and parsed["score"] is not None:
-                    out = parsed
-                    break
-            if out is None:
-                raise ValueError(f"the model did not return a scored log for {rid}")
-            sb.upsert("cockpit_sales_reviews", [{
-                "source_ref": f"desk:{rid}",
-                "source": "desk",
-                "recording_id": rid,
-                "contact_id": rec.get("contact_id"),
-                "call_type": kind,
-                "rep_name": (rep or {}).get("display_name") or rec.get("recorded_by"),
-                "rep_key": str((rep or {}).get("id") or "") or None,
-                "lead_name": (lead or {}).get("name"),
-                "call_at": rec.get("started_at"),
-                "reviewed_at": datetime.now(timezone.utc).isoformat(),
-                "model": getattr(p, "model", None),
-                "score": out["score"],
-                "score_max": out["score_max"],
-                "items": out["items"],
-                "pros": out["pros"],
-                "feedback": out["feedback"],
-                "body": out["body"],
-                "joined_by": "link",
-            }], "source_ref")
+            row = review_one(sb, p, rec, rep_of, knowledge=knowledge, timeout=timeout)
             reviewed += 1
-            log(f"reviews: {kind} {rid} scored {out['score']:.0f}/{out['score_max']:.0f}")
+            log(f"reviews: {row['call_type']} {rid} scored {row['score']:.0f}/{row['score_max']:.0f}")
         except Exception as e:  # noqa: BLE001 - one call is not worth the rest
             failed += 1
             errors.append(f"{rid}: {http.scrub(str(e))[:160]}")
             log(f"reviews: {rid} failed: {http.scrub(str(e))[:200]}")
     return {"due": len(todo), "reviewed": reviewed, "failed": failed, "errors": errors[:5]}
-

@@ -365,22 +365,35 @@ def cmd_reviews(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     since_text = key("SALES_REVIEW_SINCE", "2026-08-24").strip()
     since = datetime.fromisoformat(since_text).replace(tzinfo=timezone.utc) if args.days is None else (
         datetime.now(timezone.utc) - timedelta(days=args.days))
+    # What reps asked for goes first, every run; with --asked, only that
+    # (the two-minute cron), so an ask is answered in minutes.
     try:
         p = review_provider(cfg, log)
-        out = reviews_mod.review_new(sb, p, log.info, knowledge=knowledge, since=since,
-                                     limit=args.limit or 2, min_chars=cfg.min_transcript_chars,
-                                     timeout=cfg.model_timeout)
+        asked = reviews_mod.review_asked(sb, p, log.info, knowledge=knowledge, limit=args.limit or 3,
+                                         timeout=cfg.model_timeout)
+        out = {"due": 0, "reviewed": 0, "failed": 0, "errors": []} if args.asked else reviews_mod.review_new(
+            sb, p, log.info, knowledge=knowledge, since=since, limit=args.limit or 2,
+            min_chars=cfg.min_transcript_chars, timeout=cfg.model_timeout)
     except model_mod.ModelUnreachable as e:
         _status(cfg, log, "reviews", False, str(e))
         log.error(str(e))
         return 1
-    detail = ("nothing to review" if not out["due"] else
-              f"{out['reviewed']} reviewed, {out['failed']} failed of {out['due']} due"
-              + (f": {out['errors'][0]}" if out["errors"] else ""))
-    _status(cfg, log, "reviews", not out["failed"], detail)
-    if out["due"] or args.json:
-        _print(out if args.json else detail, args.json)
-    return 1 if out["failed"] and not out["reviewed"] else 0
+    parts = []
+    if asked["asked"]:
+        parts.append(f"{asked['reviewed']} asked-for reviewed, {asked['failed']} failed of {asked['asked']} asked"
+                     + (f": {asked['errors'][0]}" if asked["errors"] else ""))
+    if out["due"]:
+        parts.append(f"{out['reviewed']} reviewed, {out['failed']} failed of {out['due']} due"
+                     + (f": {out['errors'][0]}" if out["errors"] else ""))
+    detail = "; ".join(parts) or "nothing to review"
+    failed, done = asked["failed"] + out["failed"], asked["reviewed"] + out["reviewed"]
+    # The two-minute run reports only when it had work, so the half-hourly
+    # line is not overwritten by "nothing" every two minutes.
+    if not args.asked or asked["asked"]:
+        _status(cfg, log, "reviews", not failed, detail)
+    if asked["asked"] or out["due"] or args.json:
+        _print({"asked": asked, "new": out} if args.json else detail, args.json)
+    return 1 if failed and not done else 0
 
 
 def cmd_research(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
@@ -561,6 +574,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     cv = sub.add_parser("calls-vault"); cv.add_argument("--vault"); cv.add_argument("--dry", action="store_true")
     ri = sub.add_parser("reviews-import"); ri.add_argument("--folder"); ri.add_argument("--dry", action="store_true")
     rv = sub.add_parser("reviews"); rv.add_argument("--limit", type=int); rv.add_argument("--days", type=int)
+    rv.add_argument("--asked", action="store_true", help="only the calls reps asked to have reviewed")
     rs = sub.add_parser("research"); rs.add_argument("--limit", type=int)
     sub.add_parser("followups")
     sub.add_parser("status")

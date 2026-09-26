@@ -247,7 +247,10 @@ export function Seated({
               <Route path="/eod" element={<EodPage me={me} />} />
               <Route path="/followups" element={<FollowupsPage me={me} />} />
               <Route path="/recordings" element={<RecordingsPage me={me} />} />
-              <Route path="/recording/:id" element={<RecordingPage />} />
+              <Route
+                path="/recording/:id"
+                element={<RecordingPage me={me} />}
+              />
               <Route path="/review/:id" element={<ReviewOnlyPage />} />
               <Route path="/links" element={<LinksPage me={me} />} />
               <Route

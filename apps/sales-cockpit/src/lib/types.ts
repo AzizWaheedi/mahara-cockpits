@@ -255,6 +255,35 @@ export interface Review {
   joined_by: string | null;
 }
 
+/** A rep's ask for an AI review of one call. */
+export interface ReviewAsk {
+  id: string;
+  recording_id: string;
+  requested_by: string;
+  requested_at: string;
+  state: "queued" | "reviewing" | "done" | "failed";
+  error: string | null;
+  finished_at: string | null;
+}
+
+/** One of Aziz's own call reviews (Skool or elsewhere), for the team. */
+export interface CoachReview {
+  id: string;
+  title: string;
+  url: string | null;
+  recording_id: string | null;
+  contact_id: string | null;
+  call_type: "intro" | "demo" | "phone" | "other" | null;
+  /** A seat's email, or null for the whole team. */
+  for_email: string | null;
+  lessons: string | null;
+  tags: string[];
+  score: number | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface TeamMember {
   email: string;
   name: string | null;

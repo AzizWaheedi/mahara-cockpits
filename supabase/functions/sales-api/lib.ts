@@ -582,3 +582,47 @@ export function eodColumns(role: EodRole, name: string, day: string, submittedMs
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// Aziz's own call reviews (Skool and elsewhere)
+// ---------------------------------------------------------------------------
+
+export const COACH_CALL_TYPES = ["intro", "demo", "phone", "other"] as const;
+
+/** A coach review as the form sends it, cleaned, or why it cannot be saved. */
+export function checkCoachReview(b: Record<string, unknown>):
+  | { ok: true; row: Record<string, unknown> }
+  | { ok: false; error: string } {
+  const title = cleanText(b.title, 200);
+  if (title.length < 2) return { ok: false, error: "Give the review a title." };
+  const url = cleanText(b.url, 1000);
+  if (url && !/^https?:\/\/\S+$/i.test(url)) return { ok: false, error: "The link has to start with https://." };
+  const lessons = cleanText(b.lessons, 20000);
+  if (!url && lessons.length < 3) return { ok: false, error: "Add the link to the review, or write what to take from it." };
+  const callType = cleanText(b.call_type, 10);
+  if (callType && !(COACH_CALL_TYPES as readonly string[]).includes(callType))
+    return { ok: false, error: "Pick intro, demo, phone or other." };
+  const forEmail = cleanText(b.for_email, 200).toLowerCase();
+  if (forEmail && !/^[^@\s]+@[^@\s]+$/.test(forEmail)) return { ok: false, error: "That is not a seat's email." };
+  const rawTags = Array.isArray(b.tags) ? b.tags : String(b.tags ?? "").split(",");
+  const tags = [...new Set(rawTags.map(t => cleanText(t, 40).toLowerCase()).filter(Boolean))].slice(0, 12);
+  let score: number | null = null;
+  if (b.score !== undefined && b.score !== null && b.score !== "") {
+    score = Number(b.score);
+    if (!Number.isFinite(score) || score < 0 || score > 100) return { ok: false, error: "A score is 0 to 100." };
+  }
+  return {
+    ok: true,
+    row: {
+      title,
+      url: url || null,
+      recording_id: cleanText(b.recording_id, 200) || null,
+      contact_id: cleanText(b.contact_id, 80) || null,
+      call_type: callType || null,
+      for_email: forEmail || null,
+      lessons: lessons || null,
+      tags,
+      score,
+    },
+  };
+}

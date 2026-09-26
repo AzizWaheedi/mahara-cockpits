@@ -139,6 +139,37 @@ class NewReviews(unittest.TestCase):
         self.assertEqual(len(p.calls), 2)
         self.assertIsNone(self.pg.one("cockpit_sales_reviews", source_ref="desk:11"))
 
+    def ask(self, replies, **ask):
+        self.pg.put("cockpit_sales_review_asks", {"id": "q1", "recording_id": "11", "requested_by": "rep@x.com",
+                                                  "state": "queued", "requested_at": "2026-09-26T08:00:00+00:00",
+                                                  **ask})
+        p = FakeProvider(replies)
+        with mock.patch.object(http, "request", self.pg):
+            out = reviews.review_asked(Supabase("https://example.supabase.co", "k"), p, lambda _m: None,
+                                       knowledge=self.knowledge, limit=5)
+        return out, p
+
+    def test_a_call_a_rep_asked_about_is_reviewed_and_the_ask_closed(self):
+        out, _ = self.ask([demo_log(preamble=False)])
+        self.assertEqual((out["asked"], out["reviewed"], out["failed"]), (1, 1, 0))
+        self.assertEqual(self.pg.one("cockpit_sales_review_asks", id="q1")["state"], "done")
+        self.assertIsNotNone(self.pg.one("cockpit_sales_reviews", source_ref="desk:11"))
+
+    def test_a_call_already_reviewed_closes_the_ask_without_a_second_review(self):
+        self.pg.put("cockpit_sales_reviews", {"id": "v1", "source_ref": "desk:11", "recording_id": "11"})
+        out, p = self.ask([])
+        self.assertEqual((out["reviewed"], out["failed"]), (0, 0))
+        self.assertEqual(len(p.calls), 0)
+        self.assertEqual(self.pg.one("cockpit_sales_review_asks", id="q1")["state"], "done")
+
+    def test_an_ask_that_fails_says_why(self):
+        self.pg.put("cockpit_sales_recordings", {"recording_id": "12", "title": "No words", "transcript_path": None})
+        out, _ = self.ask([], recording_id="12")
+        self.assertEqual(out["failed"], 1)
+        row = self.pg.one("cockpit_sales_review_asks", id="q1")
+        self.assertEqual(row["state"], "failed")
+        self.assertIn("no transcript", row["error"])
+
 
 if __name__ == "__main__":
     unittest.main()

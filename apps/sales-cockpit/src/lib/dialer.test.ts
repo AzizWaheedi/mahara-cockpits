@@ -91,3 +91,44 @@ describe("call-back times", () => {
     expect(p[1].at).toBe(kuwaitAt(now, 10, 0, 2));
   });
 });
+
+describe("appointment work in the strip", () => {
+  const now = Date.parse("2026-09-26T12:58:00Z");
+  test("the intro counts down to its start; a confirmation to half an hour before", () => {
+    const e = urgentEvents(
+      [
+        item({
+          contact_id: "i",
+          kind: "intro",
+          appointment: {
+            id: "a",
+            type: "intro",
+            start_at: "2026-09-26T13:00:00Z",
+            booked_at: null,
+            assigned_user_id: null,
+            confirmed: false,
+          },
+        }),
+        item({
+          contact_id: "c",
+          kind: "confirm",
+          appointment: {
+            id: "b",
+            type: "demo",
+            start_at: "2026-09-26T15:00:00Z",
+            booked_at: null,
+            assigned_user_id: null,
+            confirmed: false,
+          },
+        }),
+      ],
+      now,
+    );
+    expect(e.map(x => [x.contact_id, x.title])).toEqual([
+      ["i", "Intro call"],
+      ["c", "Confirm the demo"],
+    ]);
+    expect(countdown(e[0], now)).toBe("Due in 2 min");
+    expect(countdown(e[1], now)).toBe("Due in 92 min");
+  });
+});

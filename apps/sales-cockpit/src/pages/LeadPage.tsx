@@ -3,6 +3,7 @@ import { type ReactNode, useEffect, useMemo } from "react";
 import { Link, useParams } from "react-router";
 import { AdOrigin } from "../components/AdOrigin";
 import { Conversation, useConversation } from "../components/Conversation";
+import { HotControl } from "../components/HotList";
 import {
   EmptyState,
   Failed,
@@ -165,6 +166,7 @@ export default function LeadPage({ me }: { me: Me }) {
             .filter(Boolean)
             .join(" · ")}
         </p>
+        <HotControl me={me} contactId={l.contact_id} />
         <div className="flex flex-wrap gap-2">
           <Link
             to={`/call/${l.contact_id}?script=${callScript(me, appointments)}`}

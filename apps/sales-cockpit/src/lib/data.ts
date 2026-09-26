@@ -4,6 +4,7 @@ import { supabase } from "./supabase";
 import type {
   BoardRow,
   CalendarRow,
+  CoachReview,
   Deal,
   Dial,
   InboxRow,
@@ -16,6 +17,7 @@ import type {
   Recording,
   Rep,
   Review,
+  ReviewAsk,
   SalesLink,
   ScoreRow,
   TeamMember,
@@ -565,6 +567,45 @@ export function useReviews(by: {
     if (by.repKey) q = q.eq("rep_key", by.repKey);
     return q;
   }, [key]);
+}
+
+/** Open and recent asks for AI reviews of these calls. */
+export function useReviewAsks(
+  recordingIds: string[],
+  everyMs = 0,
+): Loaded<ReviewAsk[]> {
+  const ids = recordingIds.slice(0, 100);
+  return useQuery<ReviewAsk[]>(
+    () =>
+      ids.length
+        ? supabase
+            .from("cockpit_sales_review_asks")
+            .select("*")
+            .in("recording_id", ids)
+            .order("requested_at", { ascending: false })
+            .limit(200)
+        : none<ReviewAsk[]>(),
+    [ids.join(",")],
+    everyMs,
+  );
+}
+
+/** Aziz's reviews: of one call, or all of them, newest first. */
+export function useCoachReviews(by: {
+  recordingId?: string;
+  all?: boolean;
+}): Loaded<CoachReview[]> {
+  return useQuery<CoachReview[]>(() => {
+    if (!by.recordingId && !by.all) return none<CoachReview[]>();
+    let q = supabase
+      .from("cockpit_sales_coach_reviews")
+      .select("*")
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (by.recordingId) q = q.eq("recording_id", by.recordingId);
+    return q;
+  }, [by.recordingId ?? "", by.all ? 1 : 0]);
 }
 
 /** A call's transcript from the private bucket. */
