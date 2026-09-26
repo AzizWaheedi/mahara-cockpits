@@ -74,8 +74,13 @@ GAP = timedelta(hours=20)
 GULF = ("kuwait", "saudi", "ksa", "emirates", "uae", "qatar", "bahrain", "oman", "الكويت", "السعودية", "الإمارات",
         "قطر", "البحرين", "عمان")
 # The UAE and Oman keep UTC+4; Kuwait, Saudi Arabia, Qatar and Bahrain UTC+3.
-# A call's time goes to the lead in their own clock.
-PLUS_FOUR = re.compile(r"emirates|\buae\b|u\.a\.e|dubai|abu dhabi|sharjah|ajman|\boman\b|muscat|الإمارات|الامارات|دبي|أبوظبي|ابوظبي|الشارقة|مسقط", re.I)
+# A call's time goes to the lead in their own clock. The lead copy holds ISO
+# codes (SA, KW, AE, QA, BH, 2026-09-26); names are matched too.
+PLUS_FOUR = re.compile(r"^\s*(ae|om)\s*$|emirates|\buae\b|u\.a\.e|dubai|abu dhabi|sharjah|ajman|\boman\b|muscat"
+                       r"|الإمارات|الامارات|دبي|أبوظبي|ابوظبي|الشارقة|مسقط", re.I)
+# Countries whose leads write Arabic unless they show otherwise (ISO codes).
+ARABIC_COUNTRIES = {"sa", "kw", "ae", "qa", "bh", "om", "eg", "jo", "iq", "lb", "sy", "ye", "ps", "ly", "tn", "dz",
+                    "ma", "sd"}
 # A lead who asked to be left alone gets nothing from the agent: messaging
 # them anyway is how a number gets reported to Meta, and then limited.
 OPT_OUT = re.compile(
@@ -316,8 +321,8 @@ def language_for(lead: dict[str, Any], thread: list[dict[str, Any]]) -> str:
         return "ar" if any(re.search(r"[\u0600-\u06ff]", t) for t in theirs) else "en"
     if re.search(r"[\u0600-\u06ff]", str(lead.get("name") or "")):
         return "ar"
-    country = str(lead.get("country") or "").lower()
-    if not country or any(g in country for g in GULF):
+    country = str(lead.get("country") or "").strip().lower()
+    if not country or country in ARABIC_COUNTRIES or any(g in country for g in GULF):
         return "ar"
     return "en"
 

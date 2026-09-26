@@ -219,6 +219,10 @@ class Rules(unittest.TestCase):
         self.assertEqual(fu.language_for({"name": "عمر"}, []), "ar")
         self.assertEqual(fu.language_for({"name": "Omar", "country": "Kuwait"}, []), "ar")
         self.assertEqual(fu.language_for({"name": "Omar", "country": "United Kingdom"}, []), "en")
+        # The lead copy holds ISO codes.
+        self.assertEqual(fu.language_for({"name": "Omar", "country": "SA"}, []), "ar")
+        self.assertEqual(fu.language_for({"name": "Omar", "country": "KW"}, []), "ar")
+        self.assertEqual(fu.language_for({"name": "Omar", "country": "US"}, []), "en")
 
     def test_a_draft_needs_a_body_a_reason_and_for_email_a_subject(self):
         ok = fu.parse_draft(json.dumps({"body": "هلا عمر، نقدر نرتب موعد ثاني؟", "subject": None, "why": "Missed the intro."}), "whatsapp")
@@ -259,6 +263,8 @@ class Safety(unittest.TestCase):
         self.assertEqual(fu.call_words(start, NOW, "United Arab Emirates")["time_24h"], "16:00")
         self.assertEqual(fu.call_words(start, NOW, "Oman")["time_24h"], "16:00")
         self.assertEqual(fu.call_words(start, NOW, None)["time_24h"], "15:00")
+        self.assertEqual(fu.call_words(start, NOW, "AE")["time_24h"], "16:00")
+        self.assertEqual(fu.call_words(start, NOW, "SA")["time_24h"], "15:00")
 
 
 class FakeGhl:

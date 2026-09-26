@@ -39,6 +39,9 @@ describe("a booked call in a rep's words", () => {
     expect(leadOffsetHours("Oman")).toBe(4);
     expect(leadOffsetHours("Saudi Arabia")).toBe(3);
     expect(leadOffsetHours(null)).toBe(3);
+    expect(leadOffsetHours("AE")).toBe(4);
+    expect(leadOffsetHours("OM")).toBe(4);
+    expect(leadOffsetHours("SA")).toBe(3);
     expect(callWords("2026-09-25T12:00:00Z", "en", NOW, 4)).toEqual({
       day: "tomorrow",
       time: "4 pm",

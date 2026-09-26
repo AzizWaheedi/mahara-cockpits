@@ -93,7 +93,8 @@ const EN_DAYS = [
  * and Bahrain UTC+3 (and so does anyone whose country is unknown).
  */
 export function leadOffsetHours(country: string | null | undefined): number {
-  return /emirates|\buae\b|u\.a\.e|dubai|abu dhabi|sharjah|ajman|\boman\b|muscat|الإمارات|الامارات|دبي|أبوظبي|ابوظبي|الشارقة|مسقط/i.test(
+  // The lead copy holds ISO codes (AE, OM); names are matched too.
+  return /^\s*(ae|om)\s*$|emirates|\buae\b|u\.a\.e|dubai|abu dhabi|sharjah|ajman|\boman\b|muscat|الإمارات|الامارات|دبي|أبوظبي|ابوظبي|الشارقة|مسقط/i.test(
     String(country ?? ""),
   )
     ? 4
