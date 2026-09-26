@@ -30,6 +30,7 @@ import {
   usePeople,
   useReplies,
   useScoreRows,
+  useSetting,
 } from "../lib/data";
 import {
   ago,
@@ -446,13 +447,24 @@ function NewLeadsCard({
 function WeekCard({ me, view }: { me: Me; view: ScopeView }) {
   const week = useScoreRows("week");
   const people = usePeople();
+  // A quiet week has no scorecard rows at all: when the copy read the
+  // scorecard in the last half hour, nothing there is a real zero, not n/a.
+  const mirror = useSetting<{ scorecards_at?: string | null }>("mirror_state");
+  const readAt = mirror.data?.scorecards_at
+    ? Date.parse(mirror.data.scorecards_at)
+    : null;
+  const read = readAt !== null && Date.now() - readAt < 30 * 60_000;
   const theirRow = (week.data ?? []).find(r => r.person_key === view.repId);
   const rows =
     view.kind === "team" ? (week.data ?? []) : theirRow ? [theirRow] : [];
   const sum = (
     k: "calls_scheduled" | "calls_shown" | "closes" | "cash_collected",
   ) =>
-    rows.length ? rows.reduce((a, r) => a + Number(r.row[k] ?? 0), 0) : null;
+    rows.length
+      ? rows.reduce((a, r) => a + Number(r.row[k] ?? 0), 0)
+      : read
+        ? 0
+        : null;
   const goals =
     view.kind === "mine"
       ? (people.data ?? []).find(p => p.email === me.email)?.goals?.weekly
