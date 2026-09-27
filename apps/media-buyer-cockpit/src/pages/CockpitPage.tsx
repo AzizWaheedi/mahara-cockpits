@@ -1087,7 +1087,7 @@ function Cockpit({ view }: { view: View }) {
       const c = [...list].sort(
         (a, b) => Number(b.spend7d ?? 0) - Number(a.spend7d ?? 0),
       )[0];
-      const lang = isArabic(client) ? "ar" : "en";
+      const lang: "ar" | "en" = isArabic(client) ? "ar" : "en";
       const ar = lang === "ar";
       const names = new Set(list.map(x => x.campaignName));
       const labels = today
