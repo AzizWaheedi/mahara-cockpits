@@ -2613,6 +2613,12 @@ async function dialQueue(who: Who, b: Row) {
     a => a.crm_note === "failed" || (ms(a.saved_at) ?? now) < now - 120_000,
   );
   const nameOf = new Map(list.map(c => [c.contact_id, c.name] as const));
+  const unnamed = [...new Set(stuck.map(a => String(a.contact_id)))].filter(id => !nameOf.has(id));
+  if (unnamed.length)
+    for (const l of await svc(
+      `cockpit_sales_leads?select=contact_id,name&contact_id=in.(${unnamed.slice(0, 50).map(enc).join(",")})`,
+    ))
+      nameOf.set(String(l.contact_id), (l.name as string) ?? null);
   const meGhl = (who.ghl_user_id as string) || null;
   const ranked =
     as === "closer"
@@ -2747,11 +2753,25 @@ async function dialCall(who: Who, b: Row) {
       : null;
     if (!appt || String(appt.contact_id) !== contact) throw new Refusal("That appointment is not this lead's.", 409);
   }
-  const recent = (await svc(
-    `cockpit_sales_attempts?rep_email=eq.${enc(me)}&manual=eq.false&select=started_at&order=started_at.desc&limit=1`,
-  ))[0];
-  if (recent && Date.now() - Date.parse(String(recent.started_at)) < 12_000)
-    throw new Refusal("Give it a few seconds between calls, then call again.", 429);
+  // Two guards from the call centre dialer, and no wait beyond them: a
+  // double click never places two calls, and a call Maqsam could not confirm
+  // is given two minutes before the same lead is called again, because a
+  // delayed call may still ring them.
+  const [recent, unsure] = await Promise.all([
+    svc(`cockpit_sales_attempts?rep_email=eq.${enc(me)}&manual=eq.false&select=started_at&order=started_at.desc&limit=1`),
+    svc(
+      `cockpit_sales_attempts?rep_email=eq.${enc(me)}&contact_id=eq.${enc(contact)}&call_state=eq.uncertain&started_at=gte.${enc(new Date(Date.now() - 120_000).toISOString())}&select=started_at&order=started_at.desc&limit=1`,
+    ),
+  ]);
+  if (recent[0] && Date.now() - Date.parse(String(recent[0].started_at)) < 3_000)
+    throw new Refusal("That call is already on its way.", 429);
+  if (unsure[0]) {
+    const wait = Math.max(5, Math.ceil((Date.parse(String(unsure[0].started_at)) + 120_000 - Date.now()) / 1000));
+    throw new Refusal(
+      `Maqsam may still be placing the last call to this lead. Check the softphone first; you can call them again in ${wait} seconds, and you can save how it went now.`,
+      409,
+    );
+  }
 
   await maqsamReady(maqsamEmail);
 
@@ -2796,12 +2816,25 @@ async function dialCall(who: Who, b: Row) {
     }))[0];
   } catch (e) {
     const err = e instanceof Refusal ? e.message : redact(String((e as Error).message ?? e));
+    // Maqsam answering "no" is a call that did not start. No answer at all
+    // (a timeout, a dropped connection, a server error) may be a call that
+    // did: it is marked uncertain, and the same lead waits two minutes.
+    const status = e instanceof Refusal ? e.status : Number(/Maqsam said (\d{3})/.exec(err)?.[1] ?? 0);
+    const refused =
+      /did not accept the call/.test(err) ||
+      (status >= 400 && status < 500) ||
+      (e instanceof Refusal && /not connected/.test(err));
     await svc(`cockpit_sales_attempts?id=eq.${attempt.id}`, {
       method: "PATCH",
-      body: { state: "failed", error: err },
+      body: { state: "failed", error: err, ...(refused ? {} : { call_state: "uncertain" }) },
       prefer: "return=minimal",
     });
-    throw new Refusal(`The call did not go through: ${err}`, 502);
+    throw new Refusal(
+      refused
+        ? `The call did not go through: ${err}`
+        : `Maqsam did not confirm the call: ${err}. It may still ring. Check the softphone before calling again; you can save how it went now.`,
+      502,
+    );
   }
   await audit(who, "dial.call", "cockpit_sales_attempts", String(attempt.id), null, attempt, { country: r.route.flag });
   return { attempt, route: { country: r.route.country, caller: r.route.caller } };
@@ -3589,9 +3622,7 @@ async function bookCreate(who: Who, b: Row) {
   heavy = null;
   // The lead becomes the setter's with the intro they booked, and the
   // closer's with the demo they host (Aziz, 2026-09-27).
-  const owner = verified
-    ? await setOwner(p.contact, p.kind === "demo" ? assigned : (who.ghl_user_id as string) || assigned)
-    : null;
+  const ownerId = verified ? (p.kind === "demo" ? assigned : (who.ghl_user_id as string) || assigned) || null : null;
   const words = `${p.kind === "intro" ? "Intro" : "Demo"} booked for ${kuwaitWords(start)} (Kuwait time)`;
   // A booking HighLevel took but that did not read back is not in the
   // cockpit's copy yet: the lead is saved as booked without naming it.
@@ -3599,17 +3630,23 @@ async function bookCreate(who: Who, b: Row) {
     appointmentId: verified ? apptId : null,
     asRole: cleanText(b.as, 10) || null,
   });
-  const moved = await autoMove(who, p.contact, () => targetRoles("lead", "booked", "booked", p.kind), {
-    source: "booking",
-    outcome: "booked",
-    attemptId: out?.attempt ? String(out.attempt.id) : null,
-  });
+  // The owner and the stage follow in the background: the booking itself is
+  // verified above, and the rep moves on as soon as it is.
+  background(
+    (async () => {
+      if (ownerId) await setOwner(p.contact, ownerId);
+      await autoMove(who, p.contact, () => targetRoles("lead", "booked", "booked", p.kind), {
+        source: "booking",
+        outcome: "booked",
+        attemptId: out?.attempt ? String(out.attempt.id) : null,
+      });
+    })(),
+  );
   await audit(who, "book.create", "cockpit_sales_bookings", String(booking.id), null, row, {
     verified,
-    stage_move: moved?.state ?? null,
-    owner,
+    owner: ownerId,
   });
-  return { booking: row, verified, words, stage_move: moved, owner, ...(out ?? {}) };
+  return { ...(out ?? {}), booking: row, verified, words, stage_move: { state: "pending" }, owner: ownerId };
 }
 
 /**
