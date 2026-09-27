@@ -8,6 +8,7 @@ import type {
 import { B2B, ms, num, type Row, sql, TRIAGE } from "../sb";
 import { kuwaitDay } from "../time";
 import type { Adapter, SourceStamp } from "../types";
+import { NOT_VOIDED } from "../voids";
 import {
   collectionHealth,
   WEBINAR_COLLECTION_HEALTH_SQL,
@@ -135,7 +136,8 @@ const JOURNEY_SQL = `select
     from public.closed_deals d
     where ((d.contact_id is not null and d.contact_id = l.contact_id)
         or (nullif(lower(btrim(l.email)), '') is not null and lower(btrim(d.email)) = lower(btrim(l.email))))
-      and d.submitted_at >= ${webbyFrom("l")} - interval '1 hour') as deals,
+      and d.submitted_at >= ${webbyFrom("l")} - interval '1 hour'
+      and ${NOT_VOIDED("d")}) as deals,
   (select min(m.occurred_at) from public.maqsam_calls m
     where m.occurred_at >= ${webbyFrom("l")}
       and ${BY_SALES_REP}

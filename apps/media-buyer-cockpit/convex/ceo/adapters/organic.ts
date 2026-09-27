@@ -4,6 +4,7 @@ import type { Note, OrganicPayload } from "../payloads";
 import { B2B, num, sql } from "../sb";
 import { addDays, kuwaitDay } from "../time";
 import type { Adapter, DailyPoint, SourceStamp } from "../types";
+import { voidedDeals } from "../voids";
 
 /**
  * Mahara's own organic presence: the Facebook Page, @mahara_media on
@@ -477,6 +478,12 @@ export const organic: Adapter = {
         notes.push({
           level: "info",
           text: `${business.dealsOrganic.deals} of the ${business.dealsAll.deals} deals signed in this window were put down to something other than ads by the closer who signed them, worth $${business.dealsOrganic.contracted.toLocaleString("en-US")}. That answer on the closing form is the only place a non-paid origin is ever named: no signed deal in the database traces back to an organic contact by its contact id.`,
+        });
+      const voided = business.voided?.deals ?? 0;
+      if (voided > 0)
+        notes.push({
+          level: "info",
+          text: `${voidedDeals(voided)} signed in this window ${voided === 1 ? "is" : "are"} left out of every deal figure here ($${(business.voided?.contracted ?? 0).toLocaleString("en-US")} contracted): B2B keeps a voided closing form in its table and marks it void.`,
         });
     } catch (e) {
       sources.push({

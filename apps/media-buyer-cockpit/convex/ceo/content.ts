@@ -1,4 +1,5 @@
 import { B2B, num, sql } from "./sb";
+import { NOT_VOIDED, VOIDED } from "./voids";
 
 /**
  * What the content brings in, as against what the ads bring in.
@@ -35,6 +36,9 @@ import { B2B, num, sql } from "./sb";
  * a paid ad. So deals and revenue here are read from the closer's own answer
  * on the closing form, which is the only place a non-paid origin is ever
  * named, and the screen says that is what it is.
+ *
+ * Voided deals are left out of every deal figure (./voids.ts); `voided` says
+ * how many fell in the window.
  */
 
 export type ContentPlatform = {
@@ -80,6 +84,8 @@ export type ContentWindow = {
   dealsAll: { deals: number; contracted: number; cash: number };
   /** The deals whose closer did not say "ads". */
   dealsOrganic: { deals: number; contracted: number; cash: number };
+  /** Voided deals signed in the window, left out of every figure above. Absent on older payloads. */
+  voided?: { deals: number; contracted: number; cash: number };
 };
 
 function day(d: string): string {
@@ -138,9 +144,9 @@ per as (
     count(*) filter (where roas_lead) as leads,
     count(*) filter (where exists (select 1 from public.calls c where c.contact_id = t.contact_id and c.call_type in ('intro','demo'))) as booked,
     count(*) filter (where exists (select 1 from public.calls c where c.contact_id = t.contact_id and c.call_type = 'demo' and (c.status='showed' or (c.status in ('confirmed','invalid') and c.start_at <= now())))) as demos_shown,
-    count(*) filter (where exists (select 1 from public.closed_deals d where d.contact_id = t.contact_id)) as closes,
-    coalesce(sum((select coalesce(sum(d.contracted_revenue),0) from public.closed_deals d where d.contact_id = t.contact_id)),0) as contracted,
-    coalesce(sum((select coalesce(sum(d.cash_collected),0)     from public.closed_deals d where d.contact_id = t.contact_id)),0) as cash
+    count(*) filter (where exists (select 1 from public.closed_deals d where d.contact_id = t.contact_id and ${NOT_VOIDED("d")})) as closes,
+    coalesce(sum((select coalesce(sum(d.contracted_revenue),0) from public.closed_deals d where d.contact_id = t.contact_id and ${NOT_VOIDED("d")})),0) as contracted,
+    coalesce(sum((select coalesce(sum(d.cash_collected),0)     from public.closed_deals d where d.contact_id = t.contact_id and ${NOT_VOIDED("d")})),0) as cash
   from tagged t where not paid group by 1
 ),
 totals as (
@@ -153,14 +159,23 @@ totals as (
   from tagged
 ),
 deals as (
-  select coalesce(nullif(btrim(lead_source),''),'Not answered') as source,
+  select coalesce(nullif(btrim(d.lead_source),''),'Not answered') as source,
     count(*) as deals,
-    coalesce(sum(contracted_revenue),0) as contracted,
-    coalesce(sum(cash_collected),0) as cash,
-    count(*) filter (where ad_id is not null) as with_ad
-  from public.closed_deals
-  where (submitted_at at time zone 'Asia/Riyadh')::date between ${f} and ${t}
+    coalesce(sum(d.contracted_revenue),0) as contracted,
+    coalesce(sum(d.cash_collected),0) as cash,
+    count(*) filter (where d.ad_id is not null) as with_ad
+  from public.closed_deals d
+  where (d.submitted_at at time zone 'Asia/Riyadh')::date between ${f} and ${t}
+    and ${NOT_VOIDED("d")}
   group by 1
+),
+voided as (
+  select count(*) as deals,
+    coalesce(sum(d.contracted_revenue),0) as contracted,
+    coalesce(sum(d.cash_collected),0) as cash
+  from public.closed_deals d
+  where (d.submitted_at at time zone 'Asia/Riyadh')::date between ${f} and ${t}
+    and ${VOIDED("d")}
 ),
 posts as (
   select case when asset_type = 'reel' then 'Instagram' else 'YouTube' end as platform,
@@ -174,7 +189,8 @@ select
   (select jsonb_agg(to_jsonb(p) order by p.contacts desc) from per p)      as platforms,
   (select jsonb_agg(to_jsonb(d) order by d.contracted desc) from deals d)  as deals,
   (select to_jsonb(x) from totals x)                                       as totals,
-  (select jsonb_agg(to_jsonb(q)) from posts q)                             as posts`;
+  (select jsonb_agg(to_jsonb(q)) from posts q)                             as posts,
+  (select to_jsonb(v) from voided v)                                       as voided`;
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: jsonb rows are untyped
@@ -244,6 +260,7 @@ export async function contentWindow(
   });
 
   const t = (r.totals ?? {}) as Any;
+  const v = (r.voided ?? {}) as Any;
   return {
     from,
     to,
@@ -261,5 +278,10 @@ export async function contentWindow(
     dealsOrganic: add(
       deals.filter(d => !d.paid && d.source !== "Not answered"),
     ),
+    voided: {
+      deals: num(v.deals),
+      contracted: usd(num(v.contracted)),
+      cash: usd(num(v.cash)),
+    },
   };
 }

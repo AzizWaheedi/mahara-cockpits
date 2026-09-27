@@ -55,6 +55,15 @@ import {
   monthStart,
 } from "../time";
 import type { Adapter, DailyPoint, SourceStamp } from "../types";
+import {
+  NOT_VOIDED,
+  VOIDED,
+  voidedDeals,
+  voidedId,
+  voidedPartOf,
+  voidedSums,
+  withoutVoids,
+} from "../voids";
 import { IS_LEAD } from "./growth";
 
 /** Whop and the closer form sync every 15 minutes; an hour behind is stale. */
@@ -216,7 +225,8 @@ export const money: Adapter = {
     const mtd = cashBetween(monthStart(today), today);
 
     // --- Core: 12 months of cash, refunds (by the Kuwait day of the refund)
-    // and deals (by the Kuwait day the closer form was submitted).
+    // and deals (by the Kuwait day the closer form was submitted). Voided
+    // deals are left out and counted apart, for the note that says so.
     const monthRows = await sql(
       B2B,
       `with months as (
@@ -237,12 +247,21 @@ export const money: Adapter = {
          group by 1
        ),
        deals as (
-         select date_trunc('month', (submitted_at at time zone 'Asia/Kuwait')::date)::date as m,
+         select date_trunc('month', (d.submitted_at at time zone 'Asia/Kuwait')::date)::date as m,
                 count(*) as deals,
-                count(*) filter (where contracted_revenue is null) as missing_contracted,
-                sum(contracted_revenue) as contracted
-         from public.closed_deals
-         where (submitted_at at time zone 'Asia/Kuwait')::date >= ${day(firstMonthStart)}
+                count(*) filter (where d.contracted_revenue is null) as missing_contracted,
+                sum(d.contracted_revenue) as contracted
+         from public.closed_deals d
+         where (d.submitted_at at time zone 'Asia/Kuwait')::date >= ${day(firstMonthStart)}
+           and ${NOT_VOIDED("d")}
+         group by 1
+       ),
+       voided as (
+         select date_trunc('month', (d.submitted_at at time zone 'Asia/Kuwait')::date)::date as m,
+                ${voidedSums("d")}
+         from public.closed_deals d
+         where (d.submitted_at at time zone 'Asia/Kuwait')::date >= ${day(firstMonthStart)}
+           and ${VOIDED("d")}
          group by 1
        )
        select to_char(mo.m, 'YYYY-MM') as month,
@@ -250,11 +269,14 @@ export const money: Adapter = {
               coalesce(r.refunds, 0) as refunds,
               coalesce(d.contracted, 0) as contracted,
               coalesce(d.deals, 0) as deals,
-              coalesce(d.missing_contracted, 0) as missing_contracted
+              coalesce(d.missing_contracted, 0) as missing_contracted,
+              coalesce(v.signed, 0) as voided,
+              coalesce(v.revenue, 0) as voided_contracted
        from months mo
        left join cash c on c.m = mo.m
        left join refunds r on r.m = mo.m
        left join deals d on d.m = mo.m
+       left join voided v on v.m = mo.m
        order by mo.m`,
     );
     const monthly = monthRows.map(r => ({
@@ -288,10 +310,11 @@ export const money: Adapter = {
            )
        ),
        recent_deals as (
-         select contracted_revenue
-         from public.closed_deals
-         where contracted_revenue is not null
-           and (submitted_at at time zone 'Asia/Kuwait')::date between ${day(from90)} and ${day(today)}
+         select d.contracted_revenue
+         from public.closed_deals d
+         where d.contracted_revenue is not null
+           and (d.submitted_at at time zone 'Asia/Kuwait')::date between ${day(from90)} and ${day(today)}
+           and ${NOT_VOIDED("d")}
        )
        select
          (select coalesce(sum(refunded_amount), 0) from w
@@ -303,8 +326,8 @@ export const money: Adapter = {
          (select floor(extract(epoch from max(synced_at)) * 1000) from w) as whop_synced_ms,
          (select floor(extract(epoch from max(paid_at)) * 1000) from w where status = 'paid') as whop_last_paid_ms,
          (select round(avg(contracted_revenue), 2) from recent_deals) as avg_contract_90,
-         (select floor(extract(epoch from max(synced_at)) * 1000) from public.closed_deals) as deals_synced_ms,
-         (select to_char(min((submitted_at at time zone 'Asia/Kuwait')::date), 'YYYY-MM-DD') from public.closed_deals) as first_deal_day,
+         (select floor(extract(epoch from max(d.synced_at)) * 1000) from public.closed_deals d where ${NOT_VOIDED("d")}) as deals_synced_ms,
+         (select to_char(min((d.submitted_at at time zone 'Asia/Kuwait')::date), 'YYYY-MM-DD') from public.closed_deals d where ${NOT_VOIDED("d")}) as first_deal_day,
          (select string_agg(distinct to_char(incurred_at, 'YYYY-MM'), ',') from public.expenses) as expense_months,
          (select string_agg(distinct to_char(received_at, 'YYYY-MM'), ',') from public.transfers) as transfer_months`,
     );
@@ -378,6 +401,19 @@ export const money: Adapter = {
           )}), so contracted reads low for ${missing.length === 1 ? "that month" : "those months"}.`,
       });
     }
+    // Voided deals (../voids.ts): left out above, and said month by month
+    // when any of the twelve had one.
+    const voidedMonths = monthRows.filter(r => num(r.voided) > 0);
+    if (voidedMonths.length)
+      notes.push({
+        level: "info",
+        text: `Voided deals are left out of every deal count and contracted figure here. B2B keeps a voided closer form submission in its table, marks it void, and still counts it on its own dashboard: ${voidedMonths
+          .map(
+            r =>
+              `${monthName(String(r.month))} had ${voidedDeals(num(r.voided))} (${dollars(num(r.voided_contracted))} contracted), so it reads ${num(r.voided)} ${says(num(r.voided), "deal", "deals")} lower here than there`,
+          )
+          .join("; ")}.`,
+      });
     const firstDeal = s.first_deal_day ? String(s.first_deal_day) : null;
     if (firstDeal && firstDeal > firstMonthStart)
       notes.push({
@@ -429,8 +465,9 @@ export const money: Adapter = {
                 contracted_revenue as contracted,
                 cash_collected as cash,
                 left(nullif(btrim(payment_structure), ''), 60) as plan
-         from public.closed_deals
+         from public.closed_deals d
          where submitted_at is not null
+           and ${NOT_VOIDED("d")}
          order by submitted_at desc
          limit 10`,
       );
@@ -474,18 +511,33 @@ export const money: Adapter = {
       };
       if (targetMonth === month) {
         // The target metric names are b2b_window_metrics keys, in the same
-        // units (rates in percent), so month to date actuals come from there.
+        // units (rates in percent), so month to date actuals come from there,
+        // less the voided deals it counts (../voids.ts): signed, revenue,
+        // cash and new MRR, and the rates built on them worked out again.
         // Only runs when this month has targets; cost_per_intro has no key.
         try {
-          const got = await sql(
+          const [got] = await sql(
             B2B,
-            `select m.key as metric, (m.value #>> '{}')::numeric as actual
-             from jsonb_each(public.b2b_window_metrics(${day(monthStart(today))}, ${day(today)}, null::text[])::jsonb) m
-             where jsonb_typeof(m.value) = 'number'`,
+            `select public.b2b_window_metrics(${day(monthStart(today))}, ${day(today)}, null::text[]) as m,
+               (select json_build_object('signed', x.signed, 'revenue', x.revenue,
+                         'cash_collected', x.cash_collected, 'new_mrr', x.new_mrr)
+                from (select ${voidedSums("d")}
+                      from public.closed_deals d
+                      where (d.submitted_at at time zone 'Asia/Riyadh')::date
+                              between ${day(monthStart(today))} and ${day(today)}
+                        and ${VOIDED("d")}) x) as vd`,
           );
-          for (const r of got)
-            if (!(String(r.metric) in actuals))
-              actuals[String(r.metric)] = num(r.actual);
+          const m = withoutVoids(
+            (typeof got?.m === "string" ? JSON.parse(got.m) : got?.m) ?? {},
+            voidedPartOf(got?.vd),
+          );
+          for (const [metric, value] of Object.entries(m))
+            if (
+              !(metric in actuals) &&
+              typeof value === "number" &&
+              Number.isFinite(value)
+            )
+              actuals[metric] = value;
           // Leads on this cockpit are the ROAS-tagged contacts (growth.ts),
           // not the dashboard's is_lead flag, so the three lead actuals are
           // recomputed on that rule from the dashboard's own spend and demos.
@@ -1056,6 +1108,7 @@ export const money: Adapter = {
                     left(nullif(btrim(w.user_username), ''), 120) as username
              from public.whop_payments w
              left join public.closed_deals d on d.response_id = w.deal_response_id
+               and ${NOT_VOIDED("d")}
              where w.status = 'paid' and w.currency = 'usd' and w.net_amount > 0
                and w.paid_on between ${day(addDays(firstDay(recent), -MATCH_DAYS))} and ${day(today)}`,
           );
@@ -1096,10 +1149,11 @@ export const money: Adapter = {
             `select to_char((submitted_at at time zone 'Asia/Kuwait')::date, 'YYYY-MM-DD') as day,
                     left(btrim(business_name), 80) as business,
                     contracted_revenue as contracted
-             from public.closed_deals
+             from public.closed_deals d
              where contracted_revenue is not null
                and nullif(btrim(business_name), '') is not null
-               and (submitted_at at time zone 'Asia/Kuwait')::date between ${day(lookFrom)} and ${day(today)}`,
+               and (submitted_at at time zone 'Asia/Kuwait')::date between ${day(lookFrom)} and ${day(today)}
+               and ${NOT_VOIDED("d")}`,
           );
           dealRows = rows.map(r => ({
             day: String(r.day),
@@ -1535,6 +1589,8 @@ export const money: Adapter = {
     // whop_payments.deal_response_id and transfers.deal_response_id. The
     // second is empty because no off-Whop payment has ever been logged, and
     // the first is only as good as its matching rule, which is email alone.
+    // It lists voided deals too, so they are left out here, and a payment
+    // tied to one belongs to no deal: it counts as unlinked.
     let collection: MoneyPayload["collection"];
     const collectionDaily: DailyPoint[] = [];
     try {
@@ -1547,18 +1603,24 @@ export const money: Adapter = {
                   coalesce(sum(d.whop_cash), 0) as linked,
                   count(*) filter (where coalesce(d.whop_cash, 0) > 0) as with_cash
            from public.b2b_deal_cash() d
+           where ${NOT_VOIDED("d")}
            group by 1 order by 1`,
         ),
         sql(
           B2B,
-          `select count(*) filter (where deal_response_id is null) as unlinked_rows,
-                  coalesce(sum(net_amount) filter (where deal_response_id is null), 0) as unlinked_cash,
-                  coalesce(sum(net_amount) filter (where deal_response_id is null
-                    and paid_on < (select min((submitted_at at time zone 'Asia/Kuwait')::date)
-                                   from public.closed_deals)), 0) as before_form,
-                  (select to_char(min(submitted_at at time zone 'Asia/Kuwait'), 'YYYY-MM')
-                     from public.closed_deals) as form_started
-           from public.whop_payments where status = 'paid'`,
+          `with w as (
+             select net_amount, paid_on,
+                    (deal_response_id is null or ${voidedId("deal_response_id")}) as unlinked
+             from public.whop_payments where status = 'paid'
+           )
+           select count(*) filter (where unlinked) as unlinked_rows,
+                  coalesce(sum(net_amount) filter (where unlinked), 0) as unlinked_cash,
+                  coalesce(sum(net_amount) filter (where unlinked
+                    and paid_on < (select min((d.submitted_at at time zone 'Asia/Kuwait')::date)
+                                   from public.closed_deals d where ${NOT_VOIDED("d")})), 0) as before_form,
+                  (select to_char(min(d.submitted_at at time zone 'Asia/Kuwait'), 'YYYY-MM')
+                     from public.closed_deals d where ${NOT_VOIDED("d")}) as form_started
+           from w`,
         ),
         sql(
           B2B,
@@ -1568,6 +1630,7 @@ export const money: Adapter = {
            from public.b2b_deal_cash() d
            where coalesce(d.whop_cash, 0) = 0 and coalesce(d.ledger_cash, 0) = 0
              and coalesce(d.contracted_revenue, 0) > 0
+             and ${NOT_VOIDED("d")}
            order by d.contracted_revenue desc limit 12`,
         ),
       ]);
@@ -1689,8 +1752,9 @@ export const money: Adapter = {
                     nullif(btrim(business_name), '') as business,
                     nullif(btrim(concat_ws(' ', client_first_name, client_last_name)), '') as contact,
                     closer, csm, cash_collected, payment_structure
-             from public.closed_deals
-             where submitted_at >= ${day(addDays(from12, -90))}`,
+             from public.closed_deals d
+             where submitted_at >= ${day(addDays(from12, -90))}
+               and ${NOT_VOIDED("d")}`,
           ),
           sql(
             B2B,

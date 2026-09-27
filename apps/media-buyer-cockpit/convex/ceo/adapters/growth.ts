@@ -9,6 +9,19 @@ import { workingHoursForAdapters } from "../settings";
 import { addDays, daysInMonth, kuwaitDay, monthStart } from "../time";
 import type { Adapter, DailyPoint, SourceStamp } from "../types";
 import {
+  dollars,
+  NOT_VOIDED,
+  VOIDED,
+  type VoidedDay,
+  voidedByDaySql,
+  voidedDayOf,
+  voidedDaysText,
+  voidedDeals,
+  voidedPartOf,
+  voidedSums,
+  withoutVoids,
+} from "../voids";
+import {
   webbyCall,
   webbyCampaign,
   webbyDeal,
@@ -135,6 +148,10 @@ export const DEPOSIT_CONFIRMED = `(exists (
  * in the window, plus the kickoff cash the CSM collects on the onboarding
  * call once that form is read (it is not yet), with the share a Whop payment
  * or a bank transfer confirms.
+ *
+ * Voided deals (../voids.ts): b2b_window_metrics counts them, so `vd` carries
+ * the voided deals of each window, dated as the function dates a deal, for
+ * toWindow to take off; every direct read of closed_deals leaves them out.
  */
 function windowsSql(
   ranges: Record<WindowKey, Range>,
@@ -206,6 +223,15 @@ fe as (
   from w
   join public.closed_deals d on (d.submitted_at at time zone 'Asia/Riyadh')::date between w.f and w.t
     and not ${webbyDeal("d")}
+    and ${NOT_VOIDED("d")}
+  group by w.k
+),
+-- The voided deals b2b_window_metrics counts, dated as it dates a deal.
+vd_signed as (
+  select w.k, ${voidedSums("d")}
+  from w
+  join public.closed_deals d on (d.submitted_at at time zone 'Asia/Riyadh')::date between w.f and w.t
+    and ${VOIDED("d")}
   group by w.k
 ),
 -- The webinar's share of what b2b_window_metrics counts, with its exact
@@ -274,6 +300,7 @@ wb_signed as (
   from w
   join public.closed_deals d on (d.submitted_at at time zone 'Asia/Riyadh')::date between w.f and w.t
     and ${webbyDeal("d")}
+    and ${NOT_VOIDED("d")}
   group by w.k
 )
 select w.k, w.f::text as d_from, w.t::text as d_to,
@@ -301,7 +328,11 @@ select w.k, w.f::text as d_from, w.t::text as d_to,
     'shown_intros', coalesce(wh.shown_intros, 0), 'intros_advanced', coalesce(wh.intros_advanced, 0),
     'signed', coalesce(ws.signed, 0), 'revenue', coalesce(ws.revenue, 0),
     'cash_collected', coalesce(ws.cash_collected, 0), 'new_mrr', coalesce(ws.new_mrr, 0)
-  ) as wb
+  ) as wb,
+  json_build_object(
+    'signed', coalesce(vd.signed, 0), 'revenue', coalesce(vd.revenue, 0),
+    'cash_collected', coalesce(vd.cash_collected, 0), 'new_mrr', coalesce(vd.new_mrr, 0)
+  ) as vd
 from w
 left join still_confirmed sc on sc.k = w.k
 left join roas r on r.k = w.k
@@ -311,7 +342,8 @@ left join wb_meta wm on wm.k = w.k
 left join wb_leads wl on wl.k = w.k
 left join wb_calls wc on wc.k = w.k
 left join wb_handoff wh on wh.k = w.k
-left join wb_signed ws on ws.k = w.k`;
+left join wb_signed ws on ws.k = w.k
+left join vd_signed vd on vd.k = w.k`;
 }
 
 /**
@@ -400,6 +432,7 @@ cl as (
   from public.closed_deals d
   where (d.submitted_at at time zone 'Asia/Riyadh')::date between ${f} and ${t}
     and not ${webbyDeal("d")}
+    and ${NOT_VOIDED("d")}
   group by 1
 )
 select days.d::text as date,
@@ -429,22 +462,62 @@ left join cl on cl.d = days.d
 order by days.d`;
 }
 
-/** b2b_rep_scorecard, trimmed to first names and the payload's columns. */
+/**
+ * b2b_rep_scorecard, trimmed to first names and the payload's columns, less
+ * the voided deals it counts. A voided deal comes off the row the scorecard
+ * gives it (read 2026-09-27): the Riyadh day of the form, and every rep whose
+ * closer_aliases hold its closer name, else "unattributed". Close rate is
+ * worked out again with the scorecard's formula, a row that was there only
+ * for voided deals goes, and the order is the scorecard's own (revenue, then
+ * calls scheduled) on what is left.
+ */
 function repsSql(from: string, to: string): string {
-  return `select
-  case when (e.value->>'is_known')::boolean
-    then split_part(btrim(e.value->>'display_name'), ' ', 1)
-    else e.value->>'display_name' end as name,
-  coalesce(e.value->>'role', sr.role) as role,
-  e.value->>'calls_scheduled' as booked,
-  e.value->>'calls_shown' as shown,
-  e.value->>'closes' as closes,
-  e.value->>'close_rate' as close_rate,
-  e.value->>'revenue' as contracted,
-  e.value->>'cash_collected' as cash
-from json_array_elements(public.b2b_rep_scorecard(${day(from)}, ${day(to)})) with ordinality e
-left join public.sales_reps sr on sr.id::text = e.value->>'person_key'
-order by e.ordinality`;
+  return `with sc as (
+  select e.value as v, e.ordinality as ord
+  from json_array_elements(public.b2b_rep_scorecard(${day(from)}, ${day(to)})) with ordinality e
+),
+vd as (
+  select coalesce(sr.id::text, 'unattributed') as person_key,
+    count(*) as closes,
+    coalesce(sum(cd.contracted_revenue), 0) as revenue,
+    coalesce(sum(cd.cash_collected), 0) as cash
+  from public.closed_deals cd
+  left join public.sales_reps sr on exists (
+    select 1 from unnest(sr.closer_aliases) al where lower(btrim(al)) = lower(btrim(cd.closer)))
+  where (cd.submitted_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)}
+    and ${VOIDED("cd")}
+  group by 1
+),
+r as (
+  select sc.v, sc.ord,
+    coalesce((sc.v->>'closes')::numeric, 0) - coalesce(vd.closes, 0) as closes,
+    round(coalesce((sc.v->>'revenue')::numeric, 0) - coalesce(vd.revenue, 0), 2) as revenue,
+    round(coalesce((sc.v->>'cash_collected')::numeric, 0) - coalesce(vd.cash, 0), 2) as cash,
+    coalesce(vd.closes, 0) as v_closes,
+    coalesce(vd.revenue, 0) as v_revenue,
+    coalesce(vd.cash, 0) as v_cash,
+    coalesce((sc.v->>'calls_scheduled')::int, 0) as calls
+  from sc
+  left join vd on vd.person_key = sc.v->>'person_key'
+)
+select
+  case when (r.v->>'is_known')::boolean
+    then split_part(btrim(r.v->>'display_name'), ' ', 1)
+    else r.v->>'display_name' end as name,
+  coalesce(r.v->>'role', sr.role) as role,
+  r.v->>'calls_scheduled' as booked,
+  r.v->>'calls_shown' as shown,
+  r.closes,
+  case when r.v_closes > 0
+    then round((100.0 * r.closes / nullif((r.v->>'demos_qualified')::numeric, 0))::numeric, 1)::text
+    else r.v->>'close_rate' end as close_rate,
+  r.revenue as contracted,
+  r.cash,
+  r.v_closes, r.v_revenue, r.v_cash
+from r
+left join public.sales_reps sr on sr.id::text = r.v->>'person_key'
+where not (r.v_closes > 0 and r.closes <= 0 and r.calls = 0)
+order by r.revenue desc, r.calls desc, r.ord`;
 }
 
 /** The Marketing tab's per-ad table, top 6 by spend. */
@@ -466,39 +539,72 @@ limit 6`;
 /**
  * Every ad with something to show for itself, over a long enough window that a
  * close can be attributed. Ranked by outcome, not by spend.
+ *
+ * b2b_marketing_ads counts voided deals as sales, so the voided deals of each
+ * ad (dated as it dates a sale) come off sales, revenue and cash, and cost per
+ * sale and revenue ROAS are worked out again with its formulas (read
+ * 2026-09-27) on the rows that had any. `v_sales` says how many came off.
  */
 function winningAdsSql(from: string, to: string): string {
-  return `select
-  e.value->>'ad_id' as ad_id,
-  coalesce(nullif(btrim(e.value->>'ad_name'), ''), 'Ad ' || (e.value->>'ad_id')) as name,
-  e.value->>'thumbnail_url' as thumbnail,
-  e.value->>'status' as status,
-  e.value->>'in_meta' as in_meta,
-  e.value->>'spend' as spend,
-  e.value->>'impressions' as impressions,
-  e.value->>'clicks' as clicks,
-  e.value->>'ctr' as ctr,
-  e.value->>'leads' as leads,
-  e.value->>'cpl' as cpl,
-  e.value->>'qualified_leads' as qualified,
-  e.value->>'qualified_pct' as qualified_pct,
-  e.value->>'demos_booked' as demos,
-  e.value->>'cost_per_demo' as cost_per_demo,
-  e.value->>'sales' as sales,
-  e.value->>'revenue' as revenue,
-  e.value->>'cash' as cash,
-  e.value->>'cpa' as cpa,
-  e.value->>'rev_roas' as rev_roas
-from json_array_elements(public.b2b_marketing_ads(${day(from)}, ${day(to)}, null::text[])) with ordinality e
-where (coalesce((e.value->>'leads')::numeric, 0) > 0
-   or coalesce((e.value->>'spend')::numeric, 0) > 0)
+  return `with ads as (
+  select e.value as v, e.ordinality as ord
+  from json_array_elements(public.b2b_marketing_ads(${day(from)}, ${day(to)}, null::text[])) with ordinality e
+),
+vd as (
+  select d.ad_id, count(*) as sales,
+    coalesce(sum(d.contracted_revenue), 0) as revenue,
+    coalesce(sum(d.cash_collected), 0) as cash
+  from public.closed_deals d
+  where d.ad_id is not null
+    and (d.submitted_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)}
+    and ${VOIDED("d")}
+  group by 1
+),
+r as (
+  select a.v, a.ord,
+    coalesce((a.v->>'sales')::numeric, 0) - coalesce(vd.sales, 0) as sales,
+    coalesce((a.v->>'revenue')::numeric, 0) - coalesce(vd.revenue, 0) as revenue,
+    coalesce((a.v->>'cash')::numeric, 0) - coalesce(vd.cash, 0) as cash,
+    coalesce(vd.sales, 0) as v_sales
+  from ads a
+  left join vd on vd.ad_id = a.v->>'ad_id'
+)
+select
+  r.v->>'ad_id' as ad_id,
+  coalesce(nullif(btrim(r.v->>'ad_name'), ''), 'Ad ' || (r.v->>'ad_id')) as name,
+  r.v->>'thumbnail_url' as thumbnail,
+  r.v->>'status' as status,
+  r.v->>'in_meta' as in_meta,
+  r.v->>'spend' as spend,
+  r.v->>'impressions' as impressions,
+  r.v->>'clicks' as clicks,
+  r.v->>'ctr' as ctr,
+  r.v->>'leads' as leads,
+  r.v->>'cpl' as cpl,
+  r.v->>'qualified_leads' as qualified,
+  r.v->>'qualified_pct' as qualified_pct,
+  r.v->>'demos_booked' as demos,
+  r.v->>'cost_per_demo' as cost_per_demo,
+  r.sales,
+  r.revenue,
+  r.cash,
+  case when r.v_sales = 0 then r.v->>'cpa'
+    when r.sales <= 0 or r.v->>'cpa' is null then null
+    else round(((r.v->>'spend')::numeric / r.sales)::numeric, 2)::text end as cpa,
+  case when r.v_sales = 0 then r.v->>'rev_roas'
+    when r.sales <= 0 or r.v->>'rev_roas' is null then null
+    else round((r.revenue / (r.v->>'spend')::numeric)::numeric, 2)::text end as rev_roas,
+  r.v_sales
+from r
+where (coalesce((r.v->>'leads')::numeric, 0) > 0
+   or coalesce((r.v->>'spend')::numeric, 0) > 0)
   and not exists (
     select 1 from public.meta_ad_snapshots ws
-    where ws.ad_id = e.value->>'ad_id' and ${webbyCampaign("ws")})
-order by coalesce((e.value->>'sales')::numeric, 0) desc,
-         coalesce((e.value->>'demos_booked')::numeric, 0) desc,
-         coalesce((e.value->>'leads')::numeric, 0) desc,
-         e.ordinality
+    where ws.ad_id = r.v->>'ad_id' and ${webbyCampaign("ws")})
+order by r.sales desc,
+         coalesce((r.v->>'demos_booked')::numeric, 0) desc,
+         coalesce((r.v->>'leads')::numeric, 0) desc,
+         r.ord
 limit 24`;
 }
 
@@ -537,7 +643,7 @@ select s.source, s.status, s.synced_ms, s.age_min,
   (extract(epoch from case s.source
     when 'leads' then (select max(lead_created_at) from public.leads where is_lead)
     when 'ghl_calls' then (select max(booked_at) from public.calls)
-    when 'typeform' then (select max(submitted_at) from public.closed_deals)
+    when 'typeform' then (select max(d.submitted_at) from public.closed_deals d where ${NOT_VOIDED("d")})
   end) * 1000)::bigint as newest_ms,
   (select max(date)::text from public.meta_ad_snapshots
      where spend > 0 and public.b2b_campaign_type(campaign_name) = 'lead_gen') as last_spend_day,
@@ -726,7 +832,11 @@ export function withoutWebinar(m: Row, wb: WebinarPart): Row {
 
 function toWindow(r: Row): FunnelWindow {
   const wb = partOf(r);
-  const m = withoutWebinar(metricsOf(r), wb);
+  const b2b = metricsOf(r);
+  // The voided deals come off first, then the webinar's share (which leaves
+  // voided deals out too), so each deal is taken off once.
+  const vd = voidedPartOf(r.vd);
+  const m = withoutWebinar(withoutVoids(b2b, vd), wb);
   const spend = num(m.spend);
   const qualified = num(r.roas_q);
   const unqualified = num(r.roas_u);
@@ -824,6 +934,55 @@ function toWindow(r: Row): FunnelWindow {
       contracted: round2(wb.revenue ?? 0),
       cash: round2(wb.cash_collected ?? 0),
     },
+    voidedOut: {
+      closes: vd.signed,
+      contracted: round2(vd.revenue),
+      cash: round2(vd.cash_collected),
+      newMrr: round2(vd.new_mrr),
+      b2b: {
+        closes: num(b2b.signed),
+        contracted: round2(num(b2b.revenue)),
+        cash: round2(num(b2b.cash_collected)),
+      },
+    },
+  };
+}
+
+/** The six windows in words, for notes. */
+const WINDOW_WORDS: Record<WindowKey, string> = {
+  yesterday: "yesterday",
+  last7: "the last 7 days",
+  prevLast7: "the 7 days before",
+  mtd: "this month",
+  lastMonthToDate: "last month to date",
+  lastMonth: "last month",
+};
+
+/**
+ * Voided deals are left out, said once: which days in the last 365 had any,
+ * and which of the six windows read lower than the B2B dashboard for them.
+ * Null when there were none. It names the closed-deal form and close rates,
+ * so the Sales tab puts it on its closing card and the Frontend tab on the
+ * funnel.
+ */
+export function voidedNote(
+  days: VoidedDay[],
+  windows: Partial<Record<WindowKey, FunnelWindow>>,
+): Note | null {
+  const which = voidedDaysText(days);
+  const lower = (Object.keys(WINDOW_WORDS) as WindowKey[])
+    .map(k => ({ k, v: windows[k]?.voidedOut }))
+    .filter(x => (x.v?.closes ?? 0) > 0)
+    .map(
+      ({ k, v }) =>
+        `${WINDOW_WORDS[k]} by ${v?.closes} ${v?.closes === 1 ? "close" : "closes"}, ${dollars(v?.contracted ?? 0)} contracted and ${dollars(v?.cash ?? 0)} cash`,
+    );
+  if (!which && !lower.length) return null;
+  return {
+    level: "info",
+    text: `Voided deals are left out of every close, contracted and cash figure here, and of the close rates, cost to win and ROAS built on them. B2B keeps a voided closed-deal form in its table and its own dashboard still counts it.${
+      which ? ` In the last 365 days: ${which}.` : ""
+    }${lower.length ? ` So this reads lower than the B2B dashboard for ${lower.join("; ")}.` : ""}`,
   };
 }
 
@@ -948,7 +1107,30 @@ export const growth: Adapter = {
           closeRate: pct(r.close_rate),
           contracted: num(r.contracted),
           cash: num(r.cash),
+          ...(num(r.v_closes) > 0
+            ? {
+                voided: {
+                  closes: num(r.v_closes),
+                  contracted: round2(num(r.v_revenue)),
+                  cash: round2(num(r.v_cash)),
+                },
+              }
+            : {}),
         })),
+    );
+    // Deals, not rows: a row that held only voided deals is gone, and the
+    // scorecard is read for the month to date, the same days as `mtd`.
+    const repVoids = mtd.voidedOut?.closes ?? 0;
+
+    // Voided deals over the daily series' reach, for the note that says so.
+    const voidedDays = await attempt(
+      "The voided deals",
+      notes,
+      [] as VoidedDay[],
+      async () =>
+        (await sql(B2B, voidedByDaySql(addDays(today, -364), today))).map(
+          voidedDayOf,
+        ),
     );
 
     const topAds = await attempt(
@@ -986,6 +1168,8 @@ export const growth: Adapter = {
     // Caveats, most important first.
     const stillConfirmed = stillConfirmedNote(mtd);
     if (stillConfirmed) notes.push(stillConfirmed);
+    const voided = voidedNote(voidedDays, windows);
+    if (voided) notes.push(voided);
     notes.push(
       {
         level: "info",
@@ -1017,7 +1201,11 @@ export const growth: Adapter = {
       },
       {
         level: "info",
-        text: "Reps: booked and shown are calls on each person's GHL calendar by call day. A close goes to the closer named on the form. Top ads include retargeting spend and only leads tied to an ad.",
+        text: `Reps: booked and shown are calls on each person's GHL calendar by call day. A close goes to the closer named on the form.${
+          repVoids > 0
+            ? ` ${voidedDeals(repVoids)} this month ${repVoids === 1 ? "is" : "are"} taken off the closer ${repVoids === 1 ? "it names" : "they name"}, which the B2B dashboard still counts.`
+            : ""
+        } Top ads include retargeting spend and only leads tied to an ad.`,
       },
     );
 
@@ -1083,18 +1271,32 @@ export const growth: Adapter = {
       notes,
       undefined as GrowthPayload["actionQueue"],
       async () => {
+        // The queue lists every closed deal without an ad id as a signed deal
+        // waiting to be matched, voided ones too; they are nobody's to fix.
         const rows = await sql(
           B2B,
-          `select (public.b2b_action_queue(1)::jsonb) as q`,
+          `select (public.b2b_action_queue(1)::jsonb) as q,
+             (select count(*) from public.closed_deals d
+               where d.ad_id is null and ${VOIDED("d")}) as voided_no_ad`,
         );
         const q = (rows[0]?.q ?? {}) as Any;
-        const buckets = ((q.buckets ?? []) as Any[]).map(b => ({
-          key: String(b.key ?? ""),
-          label: String(b.label ?? b.key ?? ""),
-          hint: String(b.hint ?? ""),
-          count: num(b.count),
-        }));
-        return { total: num(q.total), buckets };
+        const voidedNoAd = num(rows[0]?.voided_no_ad);
+        let taken = 0;
+        const buckets = ((q.buckets ?? []) as Any[]).map(b => {
+          const key = String(b.key ?? "");
+          let count = num(b.count);
+          if (key === "closes_no_ad") {
+            taken = Math.min(count, voidedNoAd);
+            count -= taken;
+          }
+          return {
+            key,
+            label: String(b.label ?? b.key ?? ""),
+            hint: String(b.hint ?? ""),
+            count,
+          };
+        });
+        return { total: Math.max(0, num(q.total) - taken), buckets };
       },
     );
     if (actionQueue && actionQueue.total > 0) {
@@ -1168,6 +1370,7 @@ export const growth: Adapter = {
           x === null || x === undefined || x === "" ? null : num(x);
         return {
           windowDays: WINNING_DAYS,
+          voided: rows.reduce((n, r) => n + num(r.v_sales), 0),
           rows: rows.map(r => ({
             adId: String(r.ad_id),
             name: String(r.name),
@@ -1196,7 +1399,11 @@ export const growth: Adapter = {
     if (winningAds?.rows.length)
       notes.push({
         level: "info",
-        text: `Ads are ranked by what they produced over ${WINNING_DAYS} days, closes first, then demos, then leads, because the biggest spender is rarely the winner. An ad Meta no longer has a snapshot for still appears when leads or demos are attributed to it, with its spend shown as unknown rather than zero. Thumbnails come from Facebook on an expiring link, so one that stops loading is not a fault in the data.`,
+        text: `Ads are ranked by what they produced over ${WINNING_DAYS} days, closes first, then demos, then leads, because the biggest spender is rarely the winner.${
+          winningAds.voided
+            ? ` ${voidedDeals(winningAds.voided)} tied to these ads ${winningAds.voided === 1 ? "is" : "are"} left out of their sales, revenue and cash, though the B2B dashboard still counts ${winningAds.voided === 1 ? "it" : "them"}.`
+            : ""
+        } An ad Meta no longer has a snapshot for still appears when leads or demos are attributed to it, with its spend shown as unknown rather than zero. Thumbnails come from Facebook on an expiring link, so one that stops loading is not a fault in the data.`,
       });
 
     const pacing = await attempt(
@@ -1204,17 +1411,36 @@ export const growth: Adapter = {
       notes,
       undefined as GrowthPayload["pacing"],
       async () => {
+        // b2b_pacing_pipeline's close rate (every deal ever over every
+        // qualified demo ever) and average deal (90 days) count voided deals,
+        // so both are worked out again with its formulas (read 2026-09-27)
+        // whenever a voided deal is in their reach.
         const rows = await sql(
           B2B,
-          `select (public.b2b_pacing_pipeline(${day(monthStart(today))}, ${day(today)})::jsonb) as p`,
+          `select (public.b2b_pacing_pipeline(${day(monthStart(today))}, ${day(today)})::jsonb) as p,
+             (select count(*) from public.closed_deals d where ${VOIDED("d")}) as voided_all,
+             (select count(*) from public.closed_deals d
+               where d.contracted_revenue is not null
+                 and (d.submitted_at at time zone 'Asia/Riyadh')::date > (now() at time zone 'Asia/Riyadh')::date - 90
+                 and ${VOIDED("d")}) as voided_90,
+             round(100.0 * (select count(*) from public.closed_deals d where ${NOT_VOIDED("d")})
+               / nullif((select count(*) from public.calls
+                   where call_type = 'demo'
+                     and (status = 'showed' or (status = 'confirmed' and start_at <= now()))), 0), 1) as close_rate,
+             (select round(avg(d.contracted_revenue)) from public.closed_deals d
+               where d.contracted_revenue is not null
+                 and (d.submitted_at at time zone 'Asia/Riyadh')::date > (now() at time zone 'Asia/Riyadh')::date - 90
+                 and ${NOT_VOIDED("d")}) as avg_deal_value`,
         );
-        const q = (rows[0]?.p ?? {}) as Any;
+        const r = rows[0] ?? {};
+        const q = (r.p ?? {}) as Any;
         const n = (x: unknown) =>
           x === null || x === undefined ? null : num(x);
         return {
           openDemosLeft: n(q.open_demos_left),
-          closeRate: n(q.close_rate),
-          avgDealValue: n(q.avg_deal_value),
+          closeRate: num(r.voided_all) > 0 ? n(r.close_rate) : n(q.close_rate),
+          avgDealValue:
+            num(r.voided_90) > 0 ? n(r.avg_deal_value) : n(q.avg_deal_value),
         };
       },
     );

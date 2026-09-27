@@ -10,6 +10,7 @@ import type {
 import { B2B, num, sql } from "../sb";
 import { addDays, kuwaitDay } from "../time";
 import type { Adapter, DailyPoint, SourceStamp } from "../types";
+import { NOT_VOIDED, VOIDED, voidedDeals } from "../voids";
 
 type Any = Record<string, any>;
 
@@ -136,12 +137,14 @@ function treeSql(from7: string, from30: string, to: string): string {
         or (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)})
     group by 1),
   ${alias}_deals as (
-    select ad_id, count(*) as closes,
-           coalesce(sum(contracted_revenue),0) as contracted,
-           coalesce(sum(cash_collected),0) as cash
-    from public.closed_deals
-    where ad_id is not null
-      and (submitted_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)}
+    -- Voided deals are left out (../voids.ts).
+    select d.ad_id, count(*) as closes,
+           coalesce(sum(d.contracted_revenue),0) as contracted,
+           coalesce(sum(d.cash_collected),0) as cash
+    from public.closed_deals d
+    where d.ad_id is not null
+      and (d.submitted_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)}
+      and ${NOT_VOIDED("d")}
     group by 1)`;
 
   const cols = (a: string) => `
@@ -190,12 +193,13 @@ function treeSql(from7: string, from30: string, to: string): string {
     group by c.ad_id, c.assigned_user_id, sr.display_name
     order by c.ad_id, count(*) desc),
   closers as (
-    select distinct on (ad_id) ad_id, closer as closer_name, count(*) as closer_closes
-    from public.closed_deals
-    where ad_id is not null and closer is not null and btrim(closer) <> ''
-      and (submitted_at at time zone 'Asia/Riyadh')::date between ${day(from30)} and ${day(to)}
-    group by ad_id, closer
-    order by ad_id, count(*) desc)
+    select distinct on (d.ad_id) d.ad_id, d.closer as closer_name, count(*) as closer_closes
+    from public.closed_deals d
+    where d.ad_id is not null and d.closer is not null and btrim(d.closer) <> ''
+      and (d.submitted_at at time zone 'Asia/Riyadh')::date between ${day(from30)} and ${day(to)}
+      and ${NOT_VOIDED("d")}
+    group by d.ad_id, d.closer
+    order by d.ad_id, count(*) desc)
 select ident.*, public.b2b_campaign_type(ident.campaign_name) as campaign_type,
   setters.setter_name, setters.setter_shown, setters.setter_due,
   closers.closer_name, closers.closer_closes,
@@ -613,15 +617,19 @@ export async function adsPayload(
     // it carries an ad. Without this the ad-attributed totals would read as
     // the business, and they are not: 310 leads and 8 signed deals in the
     // thirty days to 2026-09-20 against 224 and 2 with an ad on them.
+    // Voided deals are left out, and counted apart for the note.
+    const inWindow = (from: string) =>
+      `(d.submitted_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(today)}`;
     const totals = await sql(
       B2B,
       `select
         (select count(*) from public.leads l where ('roas-qualified' = any(coalesce(l.tags, '{}'::text[])) or 'roas-unqualified' = any(coalesce(l.tags, '{}'::text[]))) and (l.lead_created_at at time zone 'Asia/Riyadh')::date between ${day(from7)} and ${day(today)}) as w7_leads,
         (select count(*) from public.leads l where ('roas-qualified' = any(coalesce(l.tags, '{}'::text[])) or 'roas-unqualified' = any(coalesce(l.tags, '{}'::text[]))) and (l.lead_created_at at time zone 'Asia/Riyadh')::date between ${day(from30)} and ${day(today)}) as w30_leads,
-        (select count(*) from public.closed_deals where (submitted_at at time zone 'Asia/Riyadh')::date between ${day(from7)} and ${day(today)}) as w7_closes,
-        (select count(*) from public.closed_deals where (submitted_at at time zone 'Asia/Riyadh')::date between ${day(from30)} and ${day(today)}) as w30_closes,
-        (select coalesce(sum(contracted_revenue),0) from public.closed_deals where (submitted_at at time zone 'Asia/Riyadh')::date between ${day(from7)} and ${day(today)}) as w7_contracted,
-        (select coalesce(sum(contracted_revenue),0) from public.closed_deals where (submitted_at at time zone 'Asia/Riyadh')::date between ${day(from30)} and ${day(today)}) as w30_contracted`,
+        (select count(*) from public.closed_deals d where ${inWindow(from7)} and ${NOT_VOIDED("d")}) as w7_closes,
+        (select count(*) from public.closed_deals d where ${inWindow(from30)} and ${NOT_VOIDED("d")}) as w30_closes,
+        (select coalesce(sum(d.contracted_revenue),0) from public.closed_deals d where ${inWindow(from7)} and ${NOT_VOIDED("d")}) as w7_contracted,
+        (select coalesce(sum(d.contracted_revenue),0) from public.closed_deals d where ${inWindow(from30)} and ${NOT_VOIDED("d")}) as w30_contracted,
+        (select count(*) from public.closed_deals d where ${inWindow(from30)} and ${VOIDED("d")}) as w30_voided`,
     );
     const t = totals[0] ?? {};
 
@@ -793,9 +801,14 @@ export async function adsPayload(
         text: `On ${gapAds.length} ${gapAds.length === 1 ? "ad" : "ads"} the CRM received fewer than half the leads Meta counts. Meta counts a form fill; the CRM counts a contact that arrived with its attribution. The gap is either forms that never became contacts or contacts that lost the ad on the way in, and it is the first thing to check before believing any cost per lead here.`,
       });
     const cov = coverage.w30;
+    const voided30 = num(t.w30_voided);
     notes.push({
       level: "info",
-      text: `In the last thirty days the CRM holds ${cov.leads} leads and ${cov.closes} signed deals worth $${cov.contracted.toLocaleString("en-US")}; ${cov.adLeads} leads and ${cov.adCloses} deals ($${cov.adContracted.toLocaleString("en-US")}) carry an ad id and are what this screen attributes. The rest came in organically, on WhatsApp or by hand. The account row is lead-gen campaigns only, the way the B2B dashboard reads it; retargeting spend is shown beside it and never inside a cost per lead.`,
+      text: `In the last thirty days the CRM holds ${cov.leads} leads and ${cov.closes} signed deals worth $${cov.contracted.toLocaleString("en-US")}; ${cov.adLeads} leads and ${cov.adCloses} deals ($${cov.adContracted.toLocaleString("en-US")}) carry an ad id and are what this screen attributes. The rest came in organically, on WhatsApp or by hand.${
+        voided30 > 0
+          ? ` ${voidedDeals(voided30)} in these days ${voided30 === 1 ? "is" : "are"} left out of every count here, though B2B keeps ${voided30 === 1 ? "it" : "them"} in its table.`
+          : ""
+      } The account row is lead-gen campaigns only, the way the B2B dashboard reads it; retargeting spend is shown beside it and never inside a cost per lead.`,
     });
     notes.push({
       level: "info",

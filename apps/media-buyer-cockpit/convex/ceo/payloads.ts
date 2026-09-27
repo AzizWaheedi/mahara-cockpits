@@ -741,8 +741,25 @@ export type FunnelWindow = {
   roasCash: number | null;
   /** Contracted ROAS: contracted over lead-gen spend. */
   roasContracted: number | null;
-  /** Every numeric key the B2B window function returned, as is. */
+  /**
+   * Every numeric key the B2B window function returned, less the voided
+   * deals and the webinar's share (`voidedOut`, `webinarOut`), rates worked
+   * out again with its formulas.
+   */
   raw: Record<string, number | null>;
+  /**
+   * Voided deals taken out of this window (2026-09-27). B2B keeps a voided
+   * deal in closed_deals and marks it in record_voids, and its
+   * b2b_window_metrics still counts it; `b2b` is what that function returned,
+   * voided deals and the webinar included. Absent on older payloads.
+   */
+  voidedOut?: {
+    closes: number;
+    contracted: number;
+    cash: number;
+    newMrr: number;
+    b2b: { closes: number; contracted: number; cash: number };
+  };
   /**
    * What the webinar funnel took out of this window (2026-09-23): the spend
    * of its campaigns, and the leads, calls and deals of anyone tagged
@@ -816,7 +833,11 @@ export type GrowthPayload = {
    * payloads stored before this shipped.
    */
   daily: GrowthDay[];
-  /** Month to date. */
+  /**
+   * Month to date. b2b_rep_scorecard less the voided deals it counts;
+   * `voided` is what came off a row, so the scorecard's own figure is the
+   * two added up.
+   */
   reps: {
     name: string;
     role: string | null;
@@ -826,6 +847,7 @@ export type GrowthPayload = {
     closeRate: number | null;
     contracted: number;
     cash: number;
+    voided?: { closes: number; contracted: number; cash: number };
   }[];
   /** Last 7 days, top 6 by spend. */
   topAds: { name: string; spend: number; leads: number; cpl: number | null }[];
@@ -846,6 +868,8 @@ export type GrowthPayload = {
    */
   winningAds?: {
     windowDays: number;
+    /** Voided deals taken off these rows' sales (the dashboard counts them). */
+    voided?: number;
     rows: {
       adId: string;
       name: string;
@@ -882,6 +906,8 @@ export type GrowthPayload = {
    * The largest bucket is calls with no outcome, which is the same rot behind
    * the show rate: a past call still marked booked counts as neither shown nor
    * missed, so every rate computed over it is soft.
+   *
+   * Signed deals with no ad leave out voided deals, which the function lists.
    */
   actionQueue?: {
     total: number;
@@ -898,7 +924,10 @@ export type GrowthPayload = {
     buckets: { age: string; deals: number }[];
     byOwner: { owner: string; deals: number; value: number }[];
   };
-  /** Pace against the month (b2b_pacing_pipeline). */
+  /**
+   * Pace against the month (b2b_pacing_pipeline). Close rate and average deal
+   * are worked out again with its formulas without voided deals.
+   */
   pacing?: {
     openDemosLeft: number | null;
     closeRate: number | null;

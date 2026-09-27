@@ -71,6 +71,11 @@ const B2B =
   "B2B GoHighLevel and Meta through the B2B Supabase database (flwboeijllbtrufxkhts)";
 const TRIAGE = "Creative Triage Supabase (bldgtotkfmhoxmlzowdx)";
 const CLICKUP = "ClickUp, the Clients - Mahara list, synced into the cockpit";
+/**
+ * B2B keeps a voided deal in closed_deals and marks it in record_voids; every
+ * deal figure here leaves it out (./voids.ts), the B2B dashboard does not.
+ */
+const VOIDED_OUT = "Voided deals, which the B2B dashboard still counts.";
 
 /** Definitions and projections point to the exact report the dialer reads. */
 const CALL_CENTER_METRICS: [
@@ -478,6 +483,7 @@ export const DEFINITIONS: MetricDefinition[] = [
     "Deals signed on the closer's New Client Form, by the day the form was submitted.",
     B2B,
     "count",
+    VOIDED_OUT,
   ),
   d(
     "growth.close_rate",
@@ -486,7 +492,7 @@ export const DEFINITIONS: MetricDefinition[] = [
     "Signed over every demo shown in the window (the dashboard's close_rate_all).",
     B2B,
     "share",
-    "Can pass 100%: a deal is dated by its form day.",
+    `Can pass 100%: a deal is dated by its form day. ${VOIDED_OUT}`,
   ),
   d(
     "growth.qualified_close_rate",
@@ -495,6 +501,7 @@ export const DEFINITIONS: MetricDefinition[] = [
     "Signed over demos qualified (shown minus invalid).",
     B2B,
     "share",
+    VOIDED_OUT,
   ),
   d(
     "growth.contracted",
@@ -503,7 +510,7 @@ export const DEFINITIONS: MetricDefinition[] = [
     "Contract value typed on the closer form, by form day.",
     B2B,
     "usd",
-    "Typed, not paid.",
+    `Typed, not paid. ${VOIDED_OUT}`,
   ),
   d(
     "growth.front_end_cash",
@@ -512,7 +519,7 @@ export const DEFINITIONS: MetricDefinition[] = [
     "The deposit typed on the closer form for deals signed in the window, plus kickoff cash once the kickoff form is read.",
     B2B,
     "usd",
-    "Kickoff cash is not read yet, so this is the deposit alone.",
+    `Kickoff cash is not read yet, so this is the deposit alone. ${VOIDED_OUT}`,
   ),
   d(
     "growth.front_end_cash_confirmed_share",
@@ -530,6 +537,7 @@ export const DEFINITIONS: MetricDefinition[] = [
     "Front-end cash over lead-gen spend.",
     B2B,
     "ratio",
+    VOIDED_OUT,
   ),
   d(
     "growth.roas_contracted",
@@ -538,6 +546,7 @@ export const DEFINITIONS: MetricDefinition[] = [
     "Contracted over lead-gen spend.",
     B2B,
     "ratio",
+    VOIDED_OUT,
   ),
   d(
     "growth.cost_per_demo_shown",
@@ -554,6 +563,7 @@ export const DEFINITIONS: MetricDefinition[] = [
     "Lead-gen spend over deals signed.",
     B2B,
     "usd",
+    VOIDED_OUT,
   ),
   // --- money ---
   d(
@@ -613,6 +623,7 @@ export const DEFINITIONS: MetricDefinition[] = [
     "Closer-form deals by form day.",
     B2B,
     "count",
+    VOIDED_OUT,
   ),
   d(
     "money.contracted",
@@ -621,6 +632,7 @@ export const DEFINITIONS: MetricDefinition[] = [
     "Closer-form contract value by form day.",
     B2B,
     "usd",
+    VOIDED_OUT,
   ),
   d(
     "money.front_end_cash",

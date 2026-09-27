@@ -7,6 +7,8 @@ import {
   internalQuery,
 } from "./_generated/server";
 
+declare const process: { env: Record<string, string | undefined> };
+
 /**
  * The health ledger: one row per outside system the cockpits depend on.
  *
@@ -339,12 +341,45 @@ const JOBS: Record<string, { ref: any; everyMin: number }> = {
   "hiring engine": { ref: internal.hiring.engine.run, everyMin: 10 },
 };
 
+/**
+ * Scheduled work belongs to production alone.
+ *
+ * A development deployment gets these same crons the moment code is pushed to
+ * it (`convex dev`, `convex codegen`), and with a copy of production's keys it
+ * acted on the live systems. On 2026-09-27 the dev deployment's fan-out
+ * overwrote the creative cockpit's winners 19 seconds after the real one,
+ * wiping every "Save as winner" there, and it drained the other cockpits'
+ * outboxes into ClickUp and WhatsApp alongside production. So a job runs only
+ * where this deployment is production, or where RUN_SCHEDULED_JOBS=1 is set on
+ * purpose to test one on a dev deployment.
+ */
+const PRODUCTION_SITE = "https://adorable-seahorse-418.convex.site";
+
+export function jobsRunHere(): boolean {
+  return (
+    process.env.CONVEX_SITE_URL === PRODUCTION_SITE ||
+    process.env.RUN_SCHEDULED_JOBS === "1"
+  );
+}
+
+/** Whether scheduled jobs run on this deployment, and why: for the runbook's check. */
+export const whereJobsRun = internalQuery({
+  args: {},
+  returns: v.object({ site: v.string(), jobsRun: v.boolean() }),
+  handler: async () => ({
+    site: process.env.CONVEX_SITE_URL ?? "",
+    jobsRun: jobsRunHere(),
+  }),
+});
+
 export const runJob = internalAction({
   args: { job: v.string() },
   returns: v.any(),
   handler: async (ctx, { job }): Promise<Any> => {
     const j = JOBS[job];
     if (!j) throw new Error(`unknown job ${job}`);
+    // Not production: nothing runs, and nothing is written to the ledger.
+    if (!jobsRunHere()) return { skipped: "not the production deployment" };
     const t0 = Date.now();
     let error: string | undefined;
     let result: Any;

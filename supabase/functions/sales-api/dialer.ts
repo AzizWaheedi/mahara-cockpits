@@ -327,6 +327,38 @@ export interface Candidate {
    * so a leaver's leads are nobody's again. Null: the shared queue's.
    */
   owner?: string | null;
+  /** The lead's latest call to us in the last day that nobody answered. */
+  inbound_call_at?: number | null;
+}
+
+/** "14:30", Kuwait time. */
+function kuwaitClock(t: number): string {
+  return new Date(t + KUWAIT).toISOString().slice(11, 16);
+}
+
+/**
+ * The lead called us and nobody picked up, and nobody has called them since:
+ * the call centre's missed-call rule, the warmest lead there is. Urgent for
+ * ten minutes, today's work for the rest of the day.
+ */
+export function missedCall(c: Candidate, now: number): "now" | "today" | null {
+  const t = c.inbound_call_at ?? null;
+  if (t === null || now - t > DAY || (c.last_dial_at !== null && c.last_dial_at >= t)) return null;
+  return now - t <= 10 * MIN ? "now" : "today";
+}
+
+/**
+ * A call-back shows five minutes before the agreed time (the call centre's
+ * rule) and stays urgent for ten minutes after it.
+ */
+export function callbackSoon(c: Candidate, now: number): boolean {
+  return c.callback_at !== null && c.callback_at - 5 * MIN <= now && now - c.callback_at <= 10 * MIN;
+}
+
+function callbackWords(c: Candidate, now: number): string {
+  return c.callback_at !== null && c.callback_at > now
+    ? `Call back at ${kuwaitClock(c.callback_at)}, as agreed`
+    : "Call back now, as agreed";
 }
 
 export type ItemKind = "lead" | "intro" | "confirm";
@@ -466,14 +498,26 @@ export function rankForSetter(
     if (c.closed) continue;
     const fresh = c.created_at !== null && now - c.created_at <= 10 * MIN && !c.last_dial_at;
     const replied = c.inbound_at !== null && now - c.inbound_at <= 10 * MIN && (!c.last_dial_at || c.last_dial_at < c.inbound_at);
-    const callbackNow = c.callback_at !== null && c.callback_at <= now && now - c.callback_at <= 10 * MIN;
-    if (fresh || replied || callbackNow) {
+    const callbackNow = callbackSoon(c, now);
+    const missed = missedCall(c, now);
+    if (fresh || replied || callbackNow || missed === "now") {
       place(out, c, h, {
         tier: 0,
         kind: "lead",
-        why: callbackNow ? "Call back now, as agreed" : replied ? "Wrote back minutes ago" : "New lead, call now",
-        sort: -(c.callback_at ?? c.inbound_at ?? c.created_at ?? 0),
+        why: callbackNow
+          ? callbackWords(c, now)
+          : missed === "now"
+            ? "Called us, missed it"
+            : replied
+              ? "Wrote back minutes ago"
+              : "New lead, call now",
+        sort: -(c.callback_at ?? c.inbound_call_at ?? c.inbound_at ?? c.created_at ?? 0),
       });
+      continue;
+    }
+    // They called us today and nobody answered: before any retry timing.
+    if (missed === "today") {
+      place(out, c, h, { tier: 1, kind: "lead", why: "Called us, missed it", sort: -(c.inbound_call_at ?? 0) });
       continue;
     }
     if (c.due_at !== null && c.due_at > now) continue;
@@ -563,14 +607,19 @@ export function rankForCloser(
       continue;
     }
     const replied = c.inbound_at !== null && now - c.inbound_at <= 10 * MIN && (!c.last_dial_at || c.last_dial_at < c.inbound_at);
-    const callbackNow = c.callback_at !== null && c.callback_at <= now && now - c.callback_at <= 10 * MIN;
-    if (replied || callbackNow) {
+    const callbackNow = callbackSoon(c, now);
+    const missed = missedCall(c, now);
+    if (replied || callbackNow || missed === "now") {
       place(out, c, h, {
         tier: 0,
         kind: "lead",
-        why: callbackNow ? "Call back now, as agreed" : "Wrote back minutes ago",
-        sort: -(c.inbound_at ?? c.callback_at ?? 0),
+        why: callbackNow ? callbackWords(c, now) : missed === "now" ? "Called us, missed it" : "Wrote back minutes ago",
+        sort: -(c.inbound_call_at ?? c.inbound_at ?? c.callback_at ?? 0),
       });
+      continue;
+    }
+    if (missed === "today") {
+      place(out, c, h, { tier: 1, kind: "lead", why: "Called us, missed it", sort: -(c.inbound_call_at ?? 0) });
       continue;
     }
     if (c.closed) continue;

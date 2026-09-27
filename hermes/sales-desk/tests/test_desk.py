@@ -1089,13 +1089,37 @@ def load_cli():
 class CliTests(unittest.TestCase):
     def test_doctor_names_each_blocker_in_a_sentence(self):
         cli = load_cli()
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"SALES_DESK_HOME": tmp}):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {
+                "SALES_DESK_HOME": tmp, "SALES_MODEL_PROVIDER": "openai", "OPENAI_API_KEY": ""}):
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
                 code = cli.main(["doctor", "--offline"])
         self.assertEqual(code, 1)
         self.assertIn("OPENAI_API_KEY is not set, so the openai provider cannot draft.", buf.getvalue())
         self.assertNotIn("sk-", buf.getvalue())
+
+    def test_the_vps_proxy_needs_no_key(self):
+        cli = load_cli()
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"SALES_DESK_HOME": tmp}):
+            os.environ.pop("SALES_MODEL_PROVIDER", None)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                cli.main(["doctor", "--offline"])
+        self.assertIn("none needed: the Claude proxy on the VPS", buf.getvalue())
+
+    def test_stuck_dialer_saves_are_sent_again_and_said_only_when_there_were_some(self):
+        cli = load_cli()
+        cfg = mock.Mock(supabase_url="https://example.supabase.co", supabase_key="service-test")
+        log = mock.Mock()
+        answers = [json.dumps({"tried": 2, "written": 1, "failed": 1}).encode(), json.dumps({"tried": 0}).encode()]
+        with mock.patch.object(cli.http, "request", side_effect=[(200, {}, answers[0]), (200, {}, answers[1])]) as req:
+            self.assertEqual(cli._resync_stuck(cfg, log), "1 of 2 stuck dialer saves sent to HighLevel again")
+            self.assertEqual(cli._resync_stuck(cfg, log), "")
+        body = json.loads(req.call_args_list[0].kwargs["data"].decode())
+        self.assertEqual(body, {"action": "dial.resync_stuck"})
+        with mock.patch.object(cli.http, "request", side_effect=cli.http.HttpError(502, "busy")):
+            self.assertEqual(cli._resync_stuck(cfg, log), "")
+        log.warn.assert_called()
 
     def test_requests_is_quiet_when_nothing_is_queued_and_says_so_on_the_status_row(self):
         cli = load_cli()

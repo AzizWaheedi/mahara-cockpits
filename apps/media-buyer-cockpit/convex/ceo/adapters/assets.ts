@@ -1,6 +1,7 @@
 import type { AssetsPayload, Note } from "../payloads";
 import { B2B, num, sql } from "../sb";
 import type { Adapter, DailyPoint, SourceStamp } from "../types";
+import { VOIDED, voidedDeals } from "../voids";
 
 /**
  * The sales asset library: what we have to send, and what sending it did.
@@ -46,14 +47,39 @@ export const assets: Adapter = {
         `select objection, objection_label, stage, stage_label, asset_count
          from public.b2b_asset_coverage()`,
       ),
+      // b2b_asset_performance counts voided deals among the closes after a
+      // send (../voids.ts), so its own attribution (read 2026-09-27: a deal
+      // of the contact sent to, signed at or after the send, once per asset)
+      // is run for the voided deals alone and taken off.
       sql(
         B2B,
-        `select slug, title, asset_type, sends, contacts_reached,
-                closes_after, revenue_usd,
-                extract(epoch from last_sent_at) * 1000 as last_sent_ms
-         from public.b2b_asset_performance()
-         where sends > 0
-         order by closes_after desc, sends desc
+        `with perf as (
+           select slug, title, asset_type, sends, contacts_reached,
+                  closes_after, revenue_usd, last_sent_at
+           from public.b2b_asset_performance()
+           where sends > 0
+         ),
+         vd as (
+           select a.slug, count(*) as closes,
+                  coalesce(sum(x.contracted_revenue), 0) as revenue
+           from (
+             select distinct s.asset_id, d.response_id, d.contracted_revenue
+             from public.asset_sends s
+             join public.closed_deals d
+               on d.contact_id = s.contact_id and d.submitted_at >= s.sent_at
+             where s.contact_id is not null and ${VOIDED("d")}
+           ) x
+           join public.assets a on a.id = x.asset_id
+           group by a.slug
+         )
+         select p.slug, p.title, p.asset_type, p.sends, p.contacts_reached,
+                p.closes_after - coalesce(vd.closes, 0) as closes_after,
+                p.revenue_usd - coalesce(vd.revenue, 0) as revenue_usd,
+                extract(epoch from p.last_sent_at) * 1000 as last_sent_ms,
+                coalesce(vd.closes, 0) as voided
+         from perf p
+         left join vd on vd.slug = p.slug
+         order by 6 desc, p.sends desc
          limit 20`,
       ),
     ]);
@@ -105,11 +131,17 @@ export const assets: Adapter = {
       lastSentAt: num(r.last_sent_ms) || null,
     }));
     const sends = performance.reduce((n, a) => n + a.sends, 0);
+    const voided = performanceRows.reduce((n, r) => n + num(r.voided), 0);
 
     notes.push({
       level: "info",
       text: `The library holds ${live} published assets of ${total} on file, tagged by what they prove, which objection they answer and where in a call they belong. Arabic and English paste text sits on each one.`,
     });
+    if (voided > 0)
+      notes.push({
+        level: "info",
+        text: `${voidedDeals(voided)} ${voided === 1 ? "is" : "are"} left out of the closes after a send, though B2B's own count still has ${voided === 1 ? "it" : "them"}.`,
+      });
     if (sends === 0)
       notes.push({
         level: "warn",
