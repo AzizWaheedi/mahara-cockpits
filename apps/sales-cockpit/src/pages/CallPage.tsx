@@ -1,6 +1,7 @@
 import { ArrowLeft, ArrowRight, Check, Timer } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
+import { FunnelLadder } from "../components/FunnelLadder";
 import {
   button,
   buttonPrimary,
@@ -26,8 +27,25 @@ import {
   writePrefs,
 } from "../components/ScriptParts";
 import { api } from "../lib/api";
-import { useLead, useLeadActivity, useNow } from "../lib/data";
+import { useLead, useLeadActivity, useNow, useQuery } from "../lib/data";
+import { outcomeWords } from "../lib/dialerUi";
 import { when } from "../lib/format";
+import {
+  type Currency,
+  currencyFor,
+  type Funnel,
+  funnel,
+  funnelTokens,
+  gapFor,
+  isCurrency,
+  type LeakKey,
+  readGiven,
+  readNumber,
+  sayMany,
+  sayMoney,
+  sayPct,
+  stepWords,
+} from "../lib/funnel";
 import {
   CARRY_OVER,
   type Capture,
@@ -36,6 +54,7 @@ import {
   personalise,
   summarise,
 } from "../lib/script";
+import { supabase } from "../lib/supabase";
 import { toast } from "../lib/toast";
 import type { Me, Note } from "../lib/types";
 
@@ -45,7 +64,9 @@ import type { Me, Note } from "../lib/types";
  * Gulf Arabic, with the lead's details already in the lines. What the lead
  * says is captured beside the question that draws it out, saved to the lead
  * as the call's notes, and what the setter captured fills the closer's demo
- * so the demo never asks it again.
+ * so the demo never asks it again. The numbers they give are worked out as
+ * they are typed (lib/funnel.ts): their funnel beside ours, the one step
+ * that leaks the most, and every numbers line of the script filled in.
  */
 
 const draftKey = (contactId: string, key: Key) =>
@@ -79,6 +100,10 @@ export default function CallPage({ me }: { me: Me }) {
   const [stageIdx, setStageIdx] = useState(0);
   const [checked, setChecked] = useState<Record<string, boolean>>({});
   const [values, setValues] = useState<Record<string, string>>({});
+  // Which lead and script the answers were restored for: nothing is kept
+  // on the device until then, or a refresh would write over the draft
+  // before reading it back.
+  const [restored, setRestored] = useState<string | null>(null);
   const [stageStart, setStageStart] = useState(() => Date.now());
   const [saving, setSaving] = useState(false);
   const [tab, setTab] = useState<"script" | "capture" | "objections">("script");
@@ -106,6 +131,38 @@ export default function CallPage({ me }: { me: Me }) {
       n.kind === "script" &&
       (n.fields as { script?: string }).script === "intro",
   );
+  // What the setter wrote in the dialer on this lead (the call that booked
+  // the intro, the intro itself), for the closer: most intro calls are
+  // worked from the dialer, not this page.
+  const setterNotes = useQuery<SetterNote[]>(
+    () =>
+      supabase
+        .from("cockpit_sales_attempts")
+        .select("id,rep_email,outcome,note,saved_at,item_kind")
+        .eq("contact_id", contactId)
+        .eq("state", "saved")
+        .eq("as_role", "setter")
+        .not("note", "is", null)
+        .order("saved_at", { ascending: false })
+        .limit(6),
+    [contactId, key],
+  );
+  const dialerNotes =
+    key === "demo"
+      ? (setterNotes.data ?? []).filter(n => (n.note ?? "").trim())
+      : [];
+  // Everything the setter captured, for the demo: carried fields seed the
+  // closer's answers, and the rest (quotes, why now, what they tried) still
+  // feeds the numbers and the lines.
+  const introValues = useMemo(
+    () =>
+      key === "demo"
+        ? (((
+            lastIntro?.fields as { values?: Record<string, string> } | undefined
+          )?.values ?? {}) as Record<string, string>)
+        : ({} as Record<string, string>),
+    [key, lastIntro],
+  );
   // biome-ignore lint/correctness/useExhaustiveDependencies: seed once per lead and script
   useEffect(() => {
     let seeded: Record<string, string> = {};
@@ -128,10 +185,12 @@ export default function CallPage({ me }: { me: Me }) {
       // no draft
     }
     setValues(seeded);
+    setRestored(`${contactId}:${key}`);
   }, [contactId, key, lastOwn?.id, lastIntro?.id]);
 
   // Keep a draft on this device, so a refresh mid-call loses nothing.
   useEffect(() => {
+    if (restored !== `${contactId}:${key}`) return;
     try {
       localStorage.setItem(
         draftKey(contactId, key),
@@ -140,7 +199,18 @@ export default function CallPage({ me }: { me: Me }) {
     } catch {
       // private window
     }
-  }, [contactId, key, values, checked]);
+  }, [contactId, key, values, checked, restored]);
+
+  const currency: Currency = isCurrency(values.currency)
+    ? values.currency
+    : isCurrency(introValues.currency)
+      ? introValues.currency
+      : currencyFor(lead.data?.country);
+  const f = useMemo(
+    () => funnel(readGiven({ ...introValues, ...values }), currency),
+    [introValues, values, currency],
+  );
+  const tokens = useMemo(() => funnelTokens(f, prefs.lang), [f, prefs.lang]);
 
   const fill: Fill = useMemo(
     () => ({
@@ -149,14 +219,15 @@ export default function CallPage({ me }: { me: Me }) {
       city: countryName(lead.data?.country, prefs.lang),
       closer: demo?.assigned_user_name ?? null,
       date: demo?.start_at ? when(demo.start_at) : null,
-      problem: values.pain ?? null,
-      revenue: values.revenue_12m ?? null,
-      goal: values.goal ?? values.desired_state ?? null,
-      tried: values.tried ?? null,
-      desired: values.desired_state ?? values.goal ?? null,
-      gap: values.gap_per_year ?? null,
+      problem: values.pain || introValues.pain || null,
+      revenue: tokens.REVENUE ?? (values.revenue_12m || null),
+      goal: values.goal || values.desired_state || introValues.goal || null,
+      tried: values.tried || introValues.tried || null,
+      desired: values.desired_state || values.goal || introValues.goal || null,
+      gap: tokens["GAP YEAR"] ?? null,
+      tokens,
     }),
-    [lead.data, me.name, demo, values, prefs.lang],
+    [lead.data, me.name, demo, values, introValues, tokens, prefs.lang],
   );
 
   if (lead.error)
@@ -216,7 +287,9 @@ export default function CallPage({ me }: { me: Me }) {
   }
 
   async function save() {
-    const body = summarise(doc?.captures ?? [], values);
+    const answers = summarise(doc?.captures ?? [], values);
+    const numbers = numbersSummary(f);
+    const body = [answers, numbers].filter(Boolean).join("\n");
     if (!body) {
       toast.error(
         "Capture at least one answer before saving the call's notes.",
@@ -234,7 +307,8 @@ export default function CallPage({ me }: { me: Me }) {
           script: key,
           lang: prefs.lang,
           version: script.data?.version,
-          values,
+          values: { ...values, currency },
+          math: numbersFields(f),
           stage_reached: stage.no,
           checklist: checked,
           minutes: Math.round((Date.now() - startedAt) / 60_000),
@@ -376,15 +450,9 @@ export default function CallPage({ me }: { me: Me }) {
               })}
             </ol>
           </SectionCard>
-          {key === "demo" && lastIntro ? (
+          {key === "demo" && (lastIntro || dialerNotes.length) ? (
             <SectionCard title="From the intro call">
-              <p className="whitespace-pre-wrap text-sm" dir="auto">
-                {lastIntro.body.replace(/^Intro call notes\n/, "")}
-              </p>
-              <p className="muted mt-2 text-xs">
-                Captured by {lastIntro.author.split("@")[0]}. Don't ask these
-                again.
-              </p>
+              <FromIntro note={lastIntro} dialer={dialerNotes} />
             </SectionCard>
           ) : null}
         </aside>
@@ -414,24 +482,60 @@ export default function CallPage({ me }: { me: Me }) {
               <p className="muted mt-1 text-sm">{stage.goal}</p>
             ) : null}
 
+            {key === "demo" &&
+            stageIdx === 0 &&
+            (lastIntro || dialerNotes.length) ? (
+              <div className="mt-4 rounded-[var(--radius-md)] border hairline p-3 lg:hidden">
+                <p className="text-sm font-medium">From the intro call</p>
+                <div className="mt-1">
+                  <FromIntro note={lastIntro} dialer={dialerNotes} />
+                </div>
+              </div>
+            ) : null}
+
             <div className="mt-4 space-y-3">
-              {groupBlocks(stage.blocks).map((g, gi) =>
-                g.branch ? (
+              {groupBlocks(stage.blocks).map((g, gi) => {
+                // A branch that says which leak it tells speaks that step's
+                // numbers, and opens by itself when it is the prospect's.
+                const whenKey = g.blocks[0]?.when ?? "";
+                const leakKey = whenKey.startsWith("leak:")
+                  ? (whenKey.slice(5) as LeakKey)
+                  : null;
+                const groupFill = leakKey
+                  ? { ...fill, tokens: funnelTokens(f, prefs.lang, leakKey) }
+                  : fill;
+                const theirs = leakKey != null && f.leak === leakKey;
+                return g.branch ? (
                   <BranchGroup
                     key={`${stage.no}-${gi}`}
                     label={personalise(g.branch, fill)}
+                    open={theirs}
+                    badge={
+                      theirs ? (
+                        <span
+                          className="shrink-0 text-xs font-semibold"
+                          style={{ color: "var(--primary)" }}
+                        >
+                          Their numbers
+                        </span>
+                      ) : null
+                    }
                   >
-                    <Blocks blocks={g.blocks} fill={fill} mode={prefs.mode} />
+                    <Blocks
+                      blocks={g.blocks}
+                      fill={groupFill}
+                      mode={prefs.mode}
+                    />
                   </BranchGroup>
                 ) : (
                   <Blocks
                     key={`${stage.no}-${gi}`}
                     blocks={g.blocks}
-                    fill={fill}
+                    fill={groupFill}
                     mode={prefs.mode}
                   />
-                ),
-              )}
+                );
+              })}
             </div>
 
             {stage.checklist.length ? (
@@ -503,13 +607,27 @@ export default function CallPage({ me }: { me: Me }) {
         <aside
           className={`min-w-0 space-y-4 lg:col-span-3 ${tab === "script" ? "hidden lg:block" : ""}`}
         >
-          <div className={tab === "objections" ? "hidden lg:block" : ""}>
+          <div
+            className={`space-y-4 ${tab === "objections" ? "hidden lg:block" : ""}`}
+          >
+            <FunnelLadder
+              f={f}
+              script={key}
+              onCurrency={c => setValues(x => ({ ...x, currency: c }))}
+            />
             <Captures
               captures={stageCaptures.length ? stageCaptures : doc.captures}
               all={doc.captures}
               values={values}
               onChange={(k, v) => setValues(x => ({ ...x, [k]: v }))}
               stageTitle={stageCaptures.length ? stage.title : null}
+              fromIntro={k => {
+                const from = INTRO_FIELD[k];
+                return Boolean(
+                  from && values[k] && introValues[from] === values[k],
+                );
+              }}
+              currency={currency}
             />
           </div>
           <div className={tab === "capture" ? "hidden lg:block" : ""}>
@@ -521,8 +639,154 @@ export default function CallPage({ me }: { me: Me }) {
   );
 }
 
+/**
+ * How a typed number was read, when it was not typed as a plain number
+ * ("85k" reads as 85,000 KWD), and a plain warning when it cannot be read.
+ */
+function Reads({
+  raw,
+  money,
+  currency,
+}: {
+  raw: string | undefined;
+  money: boolean;
+  currency: Currency;
+}) {
+  const text = (raw ?? "").trim();
+  if (!text || /^\d+(\.\d+)?$/.test(text)) return null;
+  const n = readNumber(text);
+  if (n == null)
+    return (
+      <p className="text-xs" style={{ color: "var(--warning)" }}>
+        No number in this, so the math leaves it out.
+      </p>
+    );
+  return (
+    <p className="muted text-xs tabular-nums">
+      Reads as{" "}
+      {money
+        ? sayMoney(n, currency, "en")
+        : Number.isInteger(n)
+          ? n.toLocaleString("en-US")
+          : String(Math.round(n * 10) / 10)}
+    </p>
+  );
+}
+
+interface SetterNote {
+  id: string;
+  rep_email: string | null;
+  outcome: string | null;
+  note: string | null;
+  saved_at: string | null;
+  item_kind: string | null;
+}
+
+/**
+ * What the setter found, for the closer before the demo: the answers they
+ * captured on the guided intro call, then what they wrote in the dialer.
+ */
+function FromIntro({
+  note,
+  dialer,
+}: {
+  note: Note | undefined;
+  dialer: SetterNote[];
+}) {
+  return (
+    <div className="space-y-3">
+      {note ? (
+        <div>
+          <p className="whitespace-pre-wrap text-sm" dir="auto">
+            {note.body.replace(/^Intro call notes\n/, "")}
+          </p>
+          <p className="muted mt-1 text-xs">
+            Captured by {note.author.split("@")[0]} {when(note.created_at)}.
+            Confirm these, don't ask them again.
+          </p>
+        </div>
+      ) : null}
+      {dialer.length ? (
+        <div>
+          <p className="muted text-xs font-medium">
+            {note ? "And in the dialer" : "What the setter wrote in the dialer"}
+          </p>
+          <ul className="mt-1 space-y-2">
+            {dialer.map(n => (
+              <li key={n.id} className="text-sm">
+                <p className="whitespace-pre-wrap" dir="auto">
+                  {n.note}
+                </p>
+                <p className="muted text-xs">
+                  {n.outcome ? outcomeWords(n.outcome) : "Note"},{" "}
+                  {(n.rep_email ?? "").split("@")[0]} {when(n.saved_at)}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function Wrap({ children }: { children: ReactNode }) {
   return <main className={page}>{children}</main>;
+}
+
+// Which intro field each demo field was seeded from.
+const INTRO_FIELD: Record<string, string> = Object.fromEntries(
+  Object.entries(CARRY_OVER).map(([from, to]) => [to, from]),
+);
+
+/** The numbers, said for the team in the call's saved notes. */
+function numbersSummary(f: Funnel): string {
+  const m = (n: number) => sayMoney(n, f.currency, "en");
+  const g = f.given;
+  const parts: string[] = [];
+  if (g.spend != null) parts.push(`ad spend ${m(g.spend)} a month`);
+  if (f.costs.perLead != null)
+    parts.push(
+      `${m(f.costs.perLead)} an inquiry${f.costs.perLeadAllSources ? " (all sources)" : ""}, ours ${m(f.ours.perLead)}`,
+    );
+  if (g.leads != null) parts.push(`${g.leads} inquiries a month`);
+  const names: Record<string, string> = {
+    booking: "booked",
+    show: "held",
+    close: "signed",
+  };
+  for (const st of f.steps)
+    if (st.key !== "ads" && st.theirs != null && st.standing !== "impossible")
+      parts.push(
+        `${names[st.key]} ${sayPct(st.theirs, "en")}, ours ${sayPct(st.ours, "en")}`,
+      );
+  if (f.rates.quoteWin != null && f.rates.quoteWin <= 1)
+    parts.push(`wins ${sayPct(f.rates.quoteWin, "en")} of quotes`);
+  const lines: string[] = [];
+  if (parts.length) lines.push(`Their numbers: ${parts.join("; ")}.`);
+  const gap = gapFor(f);
+  if (f.leak && gap?.projectsYear != null && gap.projectsYear >= 0.5)
+    lines.push(
+      `The one thing: ${stepWords(f.leak, "en")}, ${sayMany(gap.projectsYear, "project", "en", f.leak !== "referrals")} a year${
+        gap.moneyYear != null ? `, ${m(gap.moneyYear)} a year` : ""
+      }.`,
+    );
+  return lines.join("\n");
+}
+
+/** The same numbers kept whole on the note, for anyone who adds them up later. */
+function numbersFields(f: Funnel) {
+  const gap = gapFor(f);
+  return {
+    currency: f.currency,
+    leak: f.leak,
+    gap_projects_year: gap?.projectsYear ?? null,
+    gap_money_year: gap?.moneyYear ?? null,
+    rates: f.rates,
+    costs: f.costs,
+    ours: f.ours,
+    problems: f.problems,
+  };
 }
 
 function Captures({
@@ -531,12 +795,16 @@ function Captures({
   values,
   onChange,
   stageTitle,
+  fromIntro,
+  currency,
 }: {
   captures: Capture[];
   all: Capture[];
   values: Record<string, string>;
   onChange: (key: string, value: string) => void;
   stageTitle: string | null;
+  fromIntro: (key: string) => boolean;
+  currency: Currency;
 }) {
   const [showAll, setShowAll] = useState(false);
   const list = showAll ? all : captures;
@@ -557,8 +825,19 @@ function Captures({
       <div className="space-y-3">
         {list.map(c => (
           <div key={c.key} className="space-y-1">
-            <span className="muted block text-xs" id={`cap-${c.key}`}>
-              {c.label}
+            <span
+              className="muted flex items-baseline justify-between gap-2 text-xs"
+              id={`cap-${c.key}`}
+            >
+              <span>
+                {c.label}
+                {c.type === "money" ? ` (${currency})` : ""}
+              </span>
+              {fromIntro(c.key) ? (
+                <span className="shrink-0" style={{ color: "var(--primary)" }}>
+                  from the intro
+                </span>
+              ) : null}
             </span>
             {c.type === "choice" ? (
               <div
@@ -579,14 +858,23 @@ function Captures({
                 ))}
               </div>
             ) : (
-              <input
-                aria-labelledby={`cap-${c.key}`}
-                value={values[c.key] ?? ""}
-                onChange={e => onChange(c.key, e.target.value)}
-                inputMode={c.type === "number" ? "decimal" : undefined}
-                dir="auto"
-                className={field}
-              />
+              <>
+                <input
+                  aria-labelledby={`cap-${c.key}`}
+                  value={values[c.key] ?? ""}
+                  onChange={e => onChange(c.key, e.target.value)}
+                  inputMode={c.type === "number" ? "decimal" : undefined}
+                  dir="auto"
+                  className={field}
+                />
+                {c.type === "money" || c.type === "number" ? (
+                  <Reads
+                    raw={values[c.key]}
+                    money={c.type === "money"}
+                    currency={currency}
+                  />
+                ) : null}
+              </>
             )}
           </div>
         ))}
