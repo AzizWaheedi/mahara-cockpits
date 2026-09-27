@@ -4,6 +4,9 @@ import {
   appointments,
   howItIsGoing,
   joinList,
+  videoNews,
+  videos,
+  weekUpdate,
   whatWeDid,
   whatWeDidAll,
 } from "../src/lib/clientUpdate";
@@ -150,5 +153,87 @@ describe("joinList", () => {
     expect(joinList(["a", "b", "c"], "en")).toBe("a, b and c");
     expect(joinList(["أ", "ب"], "ar")).toBe("أ، وب");
     expect(joinList(["أ", "ب", "ج"], "ar")).toBe("أ، ب، وج");
+  });
+});
+
+describe("videos and the week", () => {
+  test("video counts agree in both languages", () => {
+    expect(videos(1, "en")).toBe("1 video");
+    expect(videos(3, "en")).toBe("3 videos");
+    expect(videos(1, "ar")).toBe("فيديو واحد");
+    expect(videos(2, "ar")).toBe("فيديوين");
+    expect(videos(4, "ar")).toBe("٤ فيديوهات");
+    expect(videos(12, "ar")).toBe("١٢ فيديو");
+  });
+
+  test("video news says what happened, and nothing when nothing did", () => {
+    expect(videoNews({ finished: 2, withClient: 1, making: 3 }, "en")).toBe(
+      "2 new videos are finished, 1 video is with you for review and we're working on 3 more",
+    );
+    expect(videoNews({ finished: 0, withClient: 0, making: 1 }, "en")).toBe(
+      "we're working on a new video",
+    );
+    expect(videoNews({ finished: 1, withClient: 2, making: 0 }, "ar")).toBe(
+      "خلصنا لكم فيديو يديد، وفيه فيديوين عندكم للمراجعة",
+    );
+    expect(
+      videoNews({ finished: 0, withClient: 0, making: 0 }, "en"),
+    ).toBeNull();
+    expect(videoNews(undefined, "ar")).toBeNull();
+  });
+
+  const week = {
+    ads: [
+      { label: "Scale the winner" },
+      { label: 'Created 3 new ads (paused) from "Hook 1" with new copy' },
+      { label: "Left" },
+    ],
+    verdict: "scale",
+    bookings: 4,
+    weBook: true,
+    videos: {
+      finished: ["Villa reel", "Kitchen promo"],
+      withClient: ["Majlis"],
+      making: 3,
+    },
+  };
+
+  test("the week in English", () => {
+    expect(weekUpdate(week, "Ahmad", "en")).toBe(
+      "Hi Ahmad, a quick update on what we did for you this week:\n\n" +
+        "• Ads: We gave more budget to your best-performing ad and wrote new wording for your ads. 4 appointments were booked with you this week.\n" +
+        "• Videos: 2 new videos are finished, 1 video is with you for review and we're working on 3 more.\n\n" +
+        "Anything you'd like us to focus on next week?",
+    );
+  });
+
+  test("the week in Arabic keeps the voice rules and never mentions leads", () => {
+    const ar = weekUpdate(week, "أحمد", "ar") ?? "";
+    expect(ar).toBe(
+      "هلا أحمد، تحديث سريع على اللي سويناه لكم هالأسبوع:\n\n" +
+        "• الإعلانات: عطينا أقوى إعلان عندكم ميزانية أكثر، وكتبنا كلام يديد للإعلانات. انحجز لكم ٤ مواعيد هالأسبوع.\n" +
+        "• الفيديوهات: خلصنا لكم فيديوين، فيه فيديو واحد عندكم للمراجعة، وقاعدين نشتغل على ٣ فيديوهات.\n\n" +
+        "فيه شي تبون نركز عليه الأسبوع الياي؟",
+    );
+    expect(ar).not.toMatch(ARABIC_RULES);
+    expect(ar).not.toMatch(NO_LEADS);
+    expect(weekUpdate(week, "Ahmad", "en")).not.toMatch(NO_LEADS);
+  });
+
+  test("no week to tell: no message, so the option does not show", () => {
+    expect(weekUpdate(undefined, "Ahmad", "en")).toBeNull();
+    expect(
+      weekUpdate({ ads: [{ label: "Left" }], verdict: "scale" }, "Ahmad", "en"),
+    ).toBeNull();
+    // Only videos: no ads line at all.
+    expect(
+      weekUpdate(
+        { videos: { finished: 1, withClient: 0, making: 0 } },
+        "",
+        "en",
+      ),
+    ).toBe(
+      "Hi, a quick update on what we did for you this week:\n\n• Videos: A new video is finished.\n\nAnything you'd like us to focus on next week?",
+    );
   });
 });

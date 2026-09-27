@@ -258,3 +258,125 @@ export function whatWeDidAll(labels: string[], lang: Lang): string[] {
   }
   return out;
 }
+
+/** "3 videos" or "٣ فيديوهات", with Arabic's agreement for counted nouns. */
+export function videos(n: number, lang: Lang): string {
+  if (lang === "en") return `${n} video${n === 1 ? "" : "s"}`;
+  if (n === 1) return "فيديو واحد";
+  if (n === 2) return "فيديوين";
+  if (n >= 3 && n <= 10) return `${arNumber(n)} فيديوهات`;
+  return `${arNumber(n)} فيديو`;
+}
+
+/**
+ * Their videos this week, in client words, or null when there is nothing to
+ * say. "Finished" is only what was finished this week.
+ */
+export function videoNews(
+  v: { finished: number; withClient: number; making: number } | undefined,
+  lang: Lang,
+): string | null {
+  if (!v) return null;
+  const en = lang === "en";
+  const parts: string[] = [];
+  if (v.finished > 0)
+    parts.push(
+      en
+        ? v.finished === 1
+          ? "a new video is finished"
+          : `${v.finished} new videos are finished`
+        : `خلصنا لكم ${v.finished === 1 ? "فيديو يديد" : videos(v.finished, lang)}`,
+    );
+  if (v.withClient > 0)
+    parts.push(
+      en
+        ? `${videos(v.withClient, lang)} ${v.withClient === 1 ? "is" : "are"} with you for review`
+        : `فيه ${videos(v.withClient, lang)} عندكم للمراجعة`,
+    );
+  if (v.making > 0)
+    parts.push(
+      en
+        ? `we're working on ${parts.length ? `${v.making} more` : v.making === 1 ? "a new video" : `${v.making} new videos`}`
+        : `قاعدين نشتغل على ${videos(v.making, lang)}`,
+    );
+  return parts.length ? joinList(parts, lang) : null;
+}
+
+/** A client's week as the client success cockpit receives it (fanout.ts). */
+export type Week = {
+  ads?: { label: string }[];
+  verdict?: string;
+  bookings?: number;
+  weBook?: boolean;
+  videos?: {
+    finished: string[] | number;
+    withClient: string[] | number;
+    making: number;
+  };
+};
+
+const count = (x: string[] | number | undefined) =>
+  Array.isArray(x) ? x.length : Number(x ?? 0);
+
+const capital = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
+
+/**
+ * The client success manager's "What we did this week": the ad changes a
+ * client can be told, how the campaign is doing, and their videos. Null when
+ * the team did nothing this week it can tell them, so the option only shows
+ * when there is something real to say.
+ */
+export function weekUpdate(
+  w: Week | undefined,
+  firstName: string,
+  lang: Lang,
+): string | null {
+  if (!w) return null;
+  const done = whatWeDidAll(
+    (w.ads ?? []).map(a => a.label),
+    lang,
+  );
+  const vids = videoNews(
+    w.videos
+      ? {
+          finished: count(w.videos.finished),
+          withClient: count(w.videos.withClient),
+          making: count(w.videos.making),
+        }
+      : undefined,
+    lang,
+  );
+  if (done.length === 0 && !vids) return null;
+  const en = lang === "en";
+  const lines: string[] = [];
+  if (done.length > 0 || w.verdict !== undefined) {
+    const going =
+      w.verdict !== undefined
+        ? howItIsGoing(
+            {
+              verdict: w.verdict,
+              bookings: w.bookings,
+              weBook: w.weBook ?? true,
+            },
+            lang,
+          )
+        : "";
+    const said = en
+      ? [
+          done.length ? `we ${joinList(done, lang)}.` : "",
+          going ? `${capital(going)}.` : "",
+        ]
+      : [
+          done.length ? `${joinList(done, lang)}.` : "",
+          going ? `${going}.` : "",
+        ];
+    const text = said.filter(Boolean).join(" ");
+    lines.push(en ? `• Ads: ${capital(text)}` : `• الإعلانات: ${text}`);
+  }
+  if (vids)
+    lines.push(en ? `• Videos: ${capital(vids)}.` : `• الفيديوهات: ${vids}.`);
+  const name = firstName.trim();
+  return en
+    ? `Hi${name ? ` ${name}` : ""}, a quick update on what we did for you this week:\n\n${lines.join("\n")}\n\nAnything you'd like us to focus on next week?`
+    : `هلا${name ? ` ${name}` : ""}، تحديث سريع على اللي سويناه لكم هالأسبوع:\n\n${lines.join("\n")}\n\nفيه شي تبون نركز عليه الأسبوع الياي؟`;
+}

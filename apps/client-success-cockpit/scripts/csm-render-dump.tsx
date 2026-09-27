@@ -13,6 +13,11 @@ const snapshot = await Bun.file(
 mock.module("convex/react", () => ({
   useQuery: () => snapshot,
   useMutation: () => async () => null,
+  // The page also runs actions and batched reads; none answer here.
+  useAction: () => async () => null,
+  useQueries: () => ({}),
+  useConvex: () => ({}),
+  useConvexAuth: () => ({ isLoading: false, isAuthenticated: true }),
 }));
 mock.module("../convex/_generated/api", () => ({
   api: { csm: new Proxy({}, { get: (_t, k) => String(k) }) },
