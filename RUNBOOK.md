@@ -225,6 +225,10 @@ copy run and the writer's status.
 | A setter cannot see a lead in the queue | Another working rep owns it: HighLevel's owner is set to the setter who booked the intro, and to the closer from the demo. A manager sees every lead; pausing a seat hands its leads back to the queue | Aziz |
 | A stage move failed with "duplicate opportunity" | Fixed on 2026-09-27: a new lead's opportunity is read from HighLevel before moving. A row in `cockpit_sales_stage_moves` still failing names HighLevel's own reason | Hermes |
 | Maqsam's calls and the cockpit's disagree (Team page, 7 days) | The desk reads Maqsam each half hour and adds the calls B2B does not keep (the closers', `origin` maqsam); a gap that stays means neither B2B nor the desk read that agent's calls: check the agent's Maqsam address on their seat | Hermes |
+| Change a call script's words | The four scripts (intro and demo, English and Arabic) are the Google Docs plus the cockpit's own revisions in `hermes/sales-desk/scripts_import/revise.py`, applied on every import. Edit the Doc, export and parse as before, then run `load.py`: a changed script becomes the next version. If the Doc changed a line a revision edits, the import stops and names the line; bring `revise.py` in line and run it again. Arabic lines follow the Kuwaiti voice skill | Aziz |
+| A numbers line in the script shows a dashed blank | The notes do not have that number yet (the blank says which). Type it in the Answers panel; the funnel ladder and every [NUMBER] line fill in as it is typed. "Reads as" under a field shows how a typed amount was read; "No number in this" means the math leaves it out | Rep |
+| The demo's gap looks too big | The ladder says so when it is more than twice what they sign a year now; the one thing is always a step inside their funnel (booking, show-up, closing) worked out from their own numbers. A step they gave no number for is counted at ours, and the ladder says that too | Closer |
+| An intro that rang out does not come back at once | By design since 2026-09-27: it waits five minutes and returns while its twenty-minute window is open, so Next lead moves on | Aziz |
 
 ## Sales desk
 
