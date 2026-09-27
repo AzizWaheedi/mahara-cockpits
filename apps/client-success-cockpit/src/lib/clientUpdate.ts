@@ -233,13 +233,160 @@ const SAID: [RegExp, Said][] = [
   ],
 ];
 
-/** One thing we did, in the client's words (after "we"), or null. */
-export function whatWeDid(label: string, lang: Lang): string | null {
+/**
+ * A change typed by hand into the change log. The media buyer mostly writes
+ * these in Arabic ("زياده الميزانيه من ٣٠الى ٣٥", "ايقاف فيديو عالي التكلفه",
+ * "توسيع المساحه من ٢٠كم الى ٣٠كم"), sometimes in English, and one line can
+ * hold several changes. Each is recognised by its words; anything else says
+ * nothing. Arabic spelling varies (ة and ه, ى and ي, typos such as ايقلف),
+ * so the text is folded first.
+ */
+const DOWN: Said = {
+  kind: "budget-down",
+  en: "adjusted the daily budget",
+  ar: "عدّلنا الميزانية اليومية",
+};
+const OFF: Said = {
+  kind: "cut",
+  en: "switched off an ad that was not pulling its weight",
+  ar: "وقفنا إعلان ما كان يعطي",
+};
+
+/** Arabic folded to one spelling, Arabic digits to Latin ones. */
+function fold(text: string): string {
+  return text
+    .replace(/[ً-ْـ]/g, "")
+    .replace(/[أإآ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي")
+    .replace(/[٠-٩]/g, d => String(AR_DIGITS.indexOf(d)))
+    .toLowerCase();
+}
+
+/** Up or down, from "من ٣٠ الى ٣٥" or "from 30 to 35" when the line says so. */
+function direction(t: string): "up" | "down" | undefined {
+  const m = t.match(
+    /(?:من|from)\s*\$?(\d+(?:\.\d+)?)\s*\$?\s*(?:الي|ال|ل|to)\s*\$?(\d+(?:\.\d+)?)/,
+  );
+  if (!m) return undefined;
+  const [a, b] = [Number(m[1]), Number(m[2])];
+  return b > a ? "up" : b < a ? "down" : undefined;
+}
+
+const TYPED: ((t: string) => Said | null)[] = [
+  t => {
+    if (!/ميزانيه|ميزانيات|budget/.test(t)) return null;
+    const way =
+      direction(t) ??
+      (/زياده|زيادة|رفع|زود|increas|rais|upped|scal/.test(t)
+        ? "up"
+        : /تقليل|تخفيض|نقص|نزلنا|خفض|lower|decreas|reduc|\bcut\b/.test(t)
+          ? "down"
+          : undefined);
+    return way === "up" ? BUDGET : way === "down" ? DOWN : null;
+  },
+  t =>
+    /(ايقاف|ايقلف|وقف|اطفاء|طفي|قفل)\s*(ال)?(حمله|حملات)|\b(paused|stopped|turned off)\b.{0,20}\bcampaign/.test(
+      t,
+    )
+      ? { kind: "campaign-off", en: "paused the campaign", ar: "وقفنا الحملة" }
+      : null,
+  t =>
+    /تفعيل\s*(ال)?حمله|(شغلنا|رجعنا)\s*(ال)?حمله|\b(re-?activated|turned on|restarted|resumed)\b.{0,20}\bcampaign/.test(
+      t,
+    )
+      ? {
+          kind: "campaign-on",
+          en: "switched the campaign back on",
+          ar: "رجعنا شغلنا الحملة",
+        }
+      : null,
+  t =>
+    /(ايقاف|ايقلف|وقف|اطفاء|طفي|قفل)\s*(ال)?(فيديو|فيديوهات|اعلان|اعلانات|اد)(?![\u0600-\u06FF])|\b(paused|stopped|turned off|killed|switched off)\b.{0,25}\b(ad|ads|video|videos|creative)\b/.test(
+      t,
+    )
+      ? OFF
+      : null,
+  t =>
+    /توسيع\s*(ال)?(مساحه|نطاق|منطقه|مسافه|دائره)|وسعنا|\b(expand|widen)(ed)?\b.{0,20}\b(radius|area|location)/.test(
+      t,
+    )
+      ? {
+          kind: "area",
+          en: "widened the area the ads reach",
+          ar: "وسّعنا المنطقة اللي توصلها الإعلانات",
+        }
+      : null,
+  t =>
+    /(تعديل|غيرنا|تغيير)\s*(ال)?استهداف|\b(adjust(ed)?|changed?|updated?)\b.{0,15}\btargeting\b/.test(
+      t,
+    )
+      ? {
+          kind: "targeting",
+          en: "adjusted who sees the ads",
+          ar: "عدّلنا الاستهداف",
+        }
+      : null,
+  t =>
+    /(جمهور|اودينس|ادست)\s*(جديد|يديد|تجربه|تست)|\b(new|test(ed|ing)?|created?)\b.{0,20}\b(audience|ad ?set|lookalike)s?\b/.test(
+      t,
+    )
+      ? {
+          kind: "audience",
+          en: "set up a new audience to test",
+          ar: "جهزنا جمهور يديد نجربه",
+        }
+      : null,
+  t =>
+    /(نص|كوبي|كابشن|هيدلاين)\s*(جديد|يديد)|(تغيير|تعديل)\s*(ال)?(نص|كوبي|كابشن|هيدلاين)|\b(new|changed?|updated?|rewrote)\b.{0,20}\b(copy|headline|caption|wording)\b/.test(
+      t,
+    )
+      ? {
+          kind: "copy",
+          en: "wrote new wording for your ads",
+          ar: "كتبنا كلام يديد للإعلانات",
+        }
+      : null,
+  t =>
+    /(اضافه|اضفنا|نزلنا|تنزيل)\s*(فيديو|فيديوهات|اعلان|اعلانات)|\b(added|launched|uploaded)\b.{0,20}\b(ad|ads|video|videos|creative)\b/.test(
+      t,
+    )
+      ? {
+          kind: "new-ad",
+          en: "added a new ad",
+          ar: "نزلنا إعلان يديد",
+        }
+      : null,
+];
+
+/** Notes that are not changes: a question to Aziz, anything asked. */
+const QUIET = [/^Asked Aziz/i, /[?؟]\s*$/];
+
+/** Everything a label says to a client, one per kind. */
+function saysIn(label: string): Said[] {
   const text = label.trim();
-  for (const [pattern, said] of SAID) {
-    if (pattern.test(text)) return said[lang];
+  if (!text || QUIET.some(q => q.test(text))) return [];
+  // The cockpit's own labels mean exactly one thing.
+  const own = SAID.find(([pattern]) => pattern.test(text));
+  if (own) return [own[1]];
+  const t = fold(text);
+  const out: Said[] = [];
+  for (const read of TYPED) {
+    const said = read(t);
+    if (said && !out.some(o => o.kind === said.kind)) out.push(said);
   }
-  return null;
+  return out;
+}
+
+/** What a label says to a client (after "we"), or null when nothing. */
+export function whatWeDid(label: string, lang: Lang): string | null {
+  const said = saysIn(label);
+  return said.length
+    ? joinList(
+        said.map(x => x[lang]),
+        lang,
+      )
+    : null;
 }
 
 /**
@@ -250,12 +397,12 @@ export function whatWeDid(label: string, lang: Lang): string | null {
 export function whatWeDidAll(labels: string[], lang: Lang): string[] {
   const kinds = new Set<string>();
   const out: string[] = [];
-  for (const label of labels) {
-    const said = SAID.find(([pattern]) => pattern.test(label.trim()))?.[1];
-    if (!said || kinds.has(said.kind)) continue;
-    kinds.add(said.kind);
-    out.push(said[lang]);
-  }
+  for (const label of labels)
+    for (const said of saysIn(label)) {
+      if (kinds.has(said.kind)) continue;
+      kinds.add(said.kind);
+      out.push(said[lang]);
+    }
   return out;
 }
 

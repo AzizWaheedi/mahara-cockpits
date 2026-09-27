@@ -137,7 +137,17 @@ function weekWhy(c: Client): string {
     (w.ads ?? []).map((a: { label: string }) => a.label),
     "en",
   );
-  if (ads.length) bits.push(`ads: ${ads.join("; ")}`);
+  if (ads.length) {
+    // What was logged, as it was written, so she can check the draft.
+    const logged = [
+      ...new Set(
+        (w.ads ?? []).map((a: { label: string }) =>
+          a.label.length > 70 ? `${a.label.slice(0, 69)}…` : a.label,
+        ),
+      ),
+    ].slice(0, 4);
+    bits.push(`ads: ${ads.join("; ")} (logged: ${logged.join(" · ")})`);
+  }
   const v = w.videos;
   if (v) {
     const finished: string[] = Array.isArray(v.finished) ? v.finished : [];

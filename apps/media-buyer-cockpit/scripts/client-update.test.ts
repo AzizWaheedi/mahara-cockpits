@@ -121,7 +121,8 @@ describe("whatWeDid", () => {
       "Client card declined, chase the payment",
       "Leads are not being called",
       "Asked Aziz: can we raise the budget?",
-      "Changed the headline because the client asked",
+      "Should we raise the budget?",
+      "Asked Aziz: AD-2 ايقاف",
       'Turned off adset "Broad" from the cockpit',
     ])
       expect(whatWeDid(label, "en")).toBeNull();
@@ -235,5 +236,76 @@ describe("videos and the week", () => {
     ).toBe(
       "Hi, a quick update on what we did for you this week:\n\n• Videos: A new video is finished.\n\nAnything you'd like us to focus on next week?",
     );
+  });
+});
+
+describe("changes typed by hand", () => {
+  // The media buyer's own change log, 2026-09-20 to 2026-09-27.
+  const said = (label: string) => whatWeDidAll([label], "en");
+  test("her Arabic lines, as she wrote them", () => {
+    expect(
+      said("ايقاف فيديو بتكلفه ٢٠ دولار ورفع الميزانيه من ٣٠الى ٣٥"),
+    ).toEqual([
+      "raised the daily budget",
+      "switched off an ad that was not pulling its weight",
+    ]);
+    expect(
+      said("التكلفه قلت خلال يومين وتم زياده الميزانية من ٣٠الى ٣٥"),
+    ).toEqual(["raised the daily budget"]);
+    expect(said("زياده الميزانيه من ٣٠الى ٣٥")).toEqual([
+      "raised the daily budget",
+    ]);
+    expect(said("دفع واعاده تفعيل الحمله")).toEqual([
+      "switched the campaign back on",
+    ]);
+    expect(said("ايقاف فيديو عالي التكلفه")).toEqual([
+      "switched off an ad that was not pulling its weight",
+    ]);
+    expect(
+      said("ايقلف فيديو عالى التكلفه-توسيع المساحه من ٢٠كم الى ٣٠كم"),
+    ).toEqual([
+      "switched off an ad that was not pulling its weight",
+      "widened the area the ads reach",
+    ]);
+  });
+
+  test("the direction of a budget change comes from its numbers", () => {
+    expect(said("الميزانيه من ٥٠ الى ٤٠")).toEqual([
+      "adjusted the daily budget",
+    ]);
+    expect(said("Budget from $40 to $55")).toEqual(["raised the daily budget"]);
+    expect(said("Lowered the budget")).toEqual(["adjusted the daily budget"]);
+  });
+
+  test("English typed lines, and the Arabic for them", () => {
+    expect(said("Changed the headline because the client asked")).toEqual([
+      "wrote new wording for your ads",
+    ]);
+    expect(said("Paused two videos with high CPL")).toEqual([
+      "switched off an ad that was not pulling its weight",
+    ]);
+    expect(said("Expanded radius to 30km")).toEqual([
+      "widened the area the ads reach",
+    ]);
+    expect(whatWeDidAll(["توسيع المساحه من ٢٠كم الى ٣٠كم"], "ar")).toEqual([
+      "وسّعنا المنطقة اللي توصلها الإعلانات",
+    ]);
+  });
+
+  test("a line of the week says each kind once, across the cockpit's labels too", () => {
+    expect(
+      whatWeDidAll(
+        [
+          "Scale the winner",
+          "زياده الميزانيه من ٣٠الى ٣٥",
+          "ايقاف فيديو عالي التكلفه",
+          'Turned off ad "Hook 2" from the cockpit',
+        ],
+        "en",
+      ),
+    ).toEqual([
+      "gave more budget to your best-performing ad",
+      "switched off an ad that was not pulling its weight",
+    ]);
   });
 });
