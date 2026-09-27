@@ -989,6 +989,7 @@ def roster(state: State, newcomers: List[Row]) -> Roster:
     guest whose first name is its first name, once, so the match is exact
     from then on."""
     by_email = {str(p["email"]).lower(): p["id"] for p in state.people if p.get("email")}
+    known_ids = {p["id"] for p in state.people}
     by_first: Dict[str, Row] = {}
     for p in state.people:
         if not p.get("email"):
@@ -1007,9 +1008,12 @@ def roster(state: State, newcomers: List[Row]) -> Roster:
             by_email[email] = p["id"]
             return p["id"]
         pid = slug(email.split("@")[0].replace(".", " "), 40)
+        by_email[email] = pid
+        if pid in known_ids:
+            return pid  # a second address for someone already on the roster
         name = (display or "").strip() or first.replace("-", " ").title()
         newcomers.append({"id": pid, "name": name, "email": email, "active": True})
-        by_email[email] = pid
+        known_ids.add(pid)
         names[pid] = name
         return pid
 
