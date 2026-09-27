@@ -534,8 +534,16 @@ export function OwnerPick({
         {known ? known[1].split(/\s+/)[0] : value.split("@")[0]}
       </span>
     );
-  // "Sara K.": fits the column and still tells two Saras apart.
-  const options: [string, string][] = seats.map(([e, n]) => [e, shortName(n)]);
+  // "Sara K.": fits the column and still tells two Saras apart. One person
+  // with two seats (a work and a personal address) is told apart by the
+  // address: "Aziz W. (gmail.com)".
+  const short = seats.map(([, n]) => shortName(n));
+  const options: [string, string][] = seats.map(([e, n], i) => [
+    e,
+    short.filter(x => x === short[i]).length > 1
+      ? `${short[i]} (${e.split("@")[1] ?? e})`
+      : shortName(n),
+  ]);
   if (!known) options.unshift([value, `${value.split("@")[0]} (no seat)`]);
   return (
     <Picker label="Owner" value={value} options={options} onPick={onPick} />
