@@ -395,6 +395,25 @@ export function confirmFrom(start: number): number {
   return hour < 12 ? kuwaitAt(start, 18, 0, -1) : kuwaitAt(start, 9);
 }
 
+/** An intro is the setter's call from five minutes before it to twenty after. */
+function introWindow(a: Appt, now: number): boolean {
+  return now >= a.start - 5 * MIN && now <= a.start + 20 * MIN;
+}
+
+/** How long an intro that rang out waits before it comes back, inside its window. */
+export const INTRO_RETRY = 5 * MIN;
+
+/**
+ * An intro the setter just tried and nobody answered: it leaves the queue
+ * for five minutes, so Next lead moves on instead of bringing it straight
+ * back, and returns while its window is still open (a try at the booked
+ * minute, then about every five minutes to twenty past).
+ */
+export function introWaiting(a: Appt | null, now: number): boolean {
+  if (!a || a.type !== "intro" || ENDED.has(String(a.status ?? "")) || !introWindow(a, now)) return false;
+  return a.last_try !== null && a.last_try >= a.start - 5 * MIN && now - a.last_try < INTRO_RETRY;
+}
+
 /**
  * Appointment work, before any lead: the intro call itself (intros are phone
  * calls the setter makes at the booked minute), then confirmations of calls
@@ -411,8 +430,10 @@ export function appointmentWork(
 ): { tier: 0 | 1; kind: ItemKind; why: string; sort: number } | null {
   if (!a || ENDED.has(String(a.status ?? ""))) return null;
   const mine = !meGhl || !a.assigned || a.assigned === meGhl;
-  if (as === "setter" && a.type === "intro" && mine && now >= a.start - 5 * MIN && now <= a.start + 20 * MIN)
+  if (as === "setter" && a.type === "intro" && mine && introWindow(a, now)) {
+    if (introWaiting(a, now)) return null;
     return { tier: 0, kind: "intro", why: `Intro call now, booked for ${whenWords(a.start, now).replace(/^today at /, "")}`, sort: a.start };
+  }
   const farAhead = a.booked !== null && a.start - a.booked > DAY;
   if (a.start <= now || !farAhead || a.confirmed || now < confirmFrom(a.start)) return null;
   // Setters confirm their own intros and help with every demo; a closer
@@ -487,6 +508,8 @@ export function rankForSetter(
     // A number the dialer cannot call is left for the Maqsam softphone.
     if (!routePhone(c.phone).ok) continue;
     if (c.claimed_by && c.claimed_by !== me) continue;
+    // The intro that just rang out waits its five minutes out of sight.
+    if (introWaiting(c.appt, now)) continue;
     const h = heat(c, now);
     const job = appointmentWork(c.appt, now, "setter", meGhl) ?? hotFollowUp(c, me, now, manager);
     if (job) {

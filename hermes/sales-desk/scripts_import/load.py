@@ -4,9 +4,12 @@
 Usage: load.py <dir with {intro,demo}.{en,ar}.json> [--by <email>]
 
 Needs DESK_SUPABASE_URL and DESK_SUPABASE_KEY (the service pair the editor
-desk uses). A script whose text is unchanged since the newest version is
-skipped; a changed one becomes the next version and the older versions are
-switched off, never deleted.
+desk uses). The revisions made in the cockpit (revise.py) are applied on top
+of every doc first, so a re-import from Google Docs never undoes them; a doc
+that has changed under a revision stops the import and names the words.
+A script whose text is unchanged since the newest version is skipped; a
+changed one becomes the next version and the older versions are switched
+off, never deleted.
 """
 from __future__ import annotations
 
@@ -16,6 +19,9 @@ import os
 import sys
 import urllib.request
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+import revise  # noqa: E402
 
 SOURCES = {
     "intro": {"doc": "1EtAtB_vwr0zZU1_jasFL96JOmoaM-Kl5KB4qKUo-_W0", "title": "Intro Call Framework"},
@@ -40,30 +46,40 @@ def main() -> None:
     src = Path(sys.argv[1])
     by = sys.argv[sys.argv.index("--by") + 1] if "--by" in sys.argv else "scripts_import"
     captures = json.loads((Path(__file__).parent / "captures.json").read_text())
+    # Every doc revised before any is loaded: a doc that drifted stops the
+    # whole import, so the four scripts never disagree with each other.
+    docs = []
     for key in ("intro", "demo"):
         for lang in ("en", "ar"):
             f = src / f"{key}.{lang}.json"
             if not f.exists():
                 continue
             doc = json.loads(f.read_text())
+            doc["key"], doc["lang"] = key, lang
+            try:
+                doc = revise.apply(doc)
+            except revise.Drift as e:
+                sys.exit(f"{key}.{lang}: {e}. Nothing was loaded; bring revise.py in line with the doc first.")
             doc["captures"] = captures.get(key, [])
-            digest = hashlib.sha256(json.dumps(doc, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
-            newest = rest("GET", f"cockpit_sales_scripts?key=eq.{key}&lang=eq.{lang}&select=version,source&order=version.desc&limit=1")
-            if newest and (newest[0].get("source") or {}).get("sha256") == digest:
-                print(f"{key}.{lang}: unchanged (version {newest[0]['version']})")
-                continue
-            version = (newest[0]["version"] + 1) if newest else 1
-            rest("POST", "cockpit_sales_scripts", {
-                "key": key, "lang": lang, "version": version,
-                "title": doc.get("title") or SOURCES[key]["title"],
-                "doc": doc,
-                "source": {**SOURCES[key], "lang": lang, "sha256": digest},
-                "active": True,
-                "imported_by": by,
-            }, prefer="return=minimal")
-            rest("PATCH", f"cockpit_sales_scripts?key=eq.{key}&lang=eq.{lang}&version=lt.{version}",
-                 {"active": False}, prefer="return=minimal")
-            print(f"{key}.{lang}: loaded as version {version}")
+            docs.append((key, lang, doc))
+    for key, lang, doc in docs:
+        digest = hashlib.sha256(json.dumps(doc, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        newest = rest("GET", f"cockpit_sales_scripts?key=eq.{key}&lang=eq.{lang}&select=version,source&order=version.desc&limit=1")
+        if newest and (newest[0].get("source") or {}).get("sha256") == digest:
+            print(f"{key}.{lang}: unchanged (version {newest[0]['version']})")
+            continue
+        version = (newest[0]["version"] + 1) if newest else 1
+        rest("POST", "cockpit_sales_scripts", {
+            "key": key, "lang": lang, "version": version,
+            "title": doc.get("title") or SOURCES[key]["title"],
+            "doc": doc,
+            "source": {**SOURCES[key], "lang": lang, "sha256": digest, "revisions": doc.get("revisions", [])},
+            "active": True,
+            "imported_by": by,
+        }, prefer="return=minimal")
+        rest("PATCH", f"cockpit_sales_scripts?key=eq.{key}&lang=eq.{lang}&version=lt.{version}",
+             {"active": False}, prefer="return=minimal")
+        print(f"{key}.{lang}: loaded as version {version}")
 
 
 if __name__ == "__main__":

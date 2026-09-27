@@ -19,13 +19,22 @@ import { CampaignTrend } from "./Trends";
  * working. [aziz, 2026-09-07]
  */
 
-/** The ads that spent in the range, then every other ad Meta has in the campaign at $0. */
-function withQuietAds(rows: Row[], names?: string[]): Row[] {
+/**
+ * The ads that spent in the range, then every other ad Meta has in the
+ * campaign at $0. A quiet row carries its Meta ids from the tree, so it can
+ * be saved as a winner and shows when it already is.
+ */
+function withQuietAds(
+  rows: Row[],
+  names?: string[],
+  idsByName?: Record<string, string[]>,
+): Row[] {
   const seen = new Set(rows.map(r => r.key));
-  const quiet = (names ?? [])
+  const quiet = [...new Set(names ?? [])]
     .filter(n => !seen.has(n))
     .map(n => ({
       key: n,
+      adIds: idsByName?.[n],
       spend: 0,
       leads: 0,
       bookings: 0,
@@ -77,10 +86,13 @@ export function CampaignRange({
   renderAdCall,
   leadsOnly,
   extraAds,
+  adIdsByName,
 }: {
   campaignName: string;
   /** Every ad Meta has in this campaign; ones with no spend in the range still get a row. */
   extraAds?: string[];
+  /** Meta ids per ad name, from the tree, for the rows with no spend. */
+  adIdsByName?: Record<string, string[]>;
   range: Range;
   onRangeChange: (r: Range) => void;
   /** Done With You: we do not book for them, so booking columns are hidden. */
@@ -98,13 +110,12 @@ export function CampaignRange({
   });
 
   // Which ads in this table are already in What works: one read per open
-  // panel, for every "Save as winner" button in it.
+  // panel, for every "Save as winner" button in it, quiet rows included.
   const adIds = [
-    ...new Set(
-      ((data?.ads ?? []) as Row[]).flatMap(r =>
-        r.leads > 0 ? (r.adIds ?? []) : [],
-      ),
-    ),
+    ...new Set([
+      ...((data?.ads ?? []) as Row[]).flatMap(r => r.adIds ?? []),
+      ...(extraAds ?? []).flatMap(n => adIdsByName?.[n] ?? []),
+    ]),
   ].sort();
   const savedIn = useQuery(
     api.winnerSaves.savedIn,
@@ -245,7 +256,7 @@ export function CampaignRange({
           />
           <Table
             title="Ads"
-            rows={withQuietAds(data.ads as Row[], extraAds)}
+            rows={withQuietAds(data.ads as Row[], extraAds, adIdsByName)}
             referenceRows={(trailing?.ads ?? []) as Row[]}
             selectedWindow={`${range.start} to ${range.end}`}
             leadsOnly={leadsOnly}

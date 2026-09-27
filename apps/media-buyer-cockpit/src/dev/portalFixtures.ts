@@ -477,6 +477,31 @@ export function portalFixtures(): Record<string, unknown> {
     },
     "stats:campaignTrend": [],
     "winnerSaves:savedIn": {},
+    // A paused ad with no leads in the range: the dialog shows its 90 days.
+    "winnerSaves:preview": {
+      candidates: [
+        {
+          adId: "120211234567890002",
+          name: "Hook 2 | before and after",
+          status: "PAUSED",
+          live: false,
+        },
+      ],
+      adId: "120211234567890002",
+      stats: {
+        spend: 212.4,
+        leads: 9,
+        cpl: 23.6,
+        impressions: 18_200,
+        linkClicks: 240,
+        bookings: 2,
+        showed: 1,
+        costPerBooking: 106.2,
+        bookingsAttributed: true,
+      },
+      window: { start: day(89), end: day(0), label: "Last 90 days" },
+      widened: true,
+    },
     "market:dimensions": {
       plays: 412,
       clients: 23,

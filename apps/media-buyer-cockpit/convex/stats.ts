@@ -396,13 +396,17 @@ export const campaignTrend = authenticatedQuery({
     await assertRole(ctx, "media_buyer");
     await assertScope(ctx, { campaignName: args.campaignName });
     const byDate = new Map<string, { spend: number; leads: number }>();
+    // The range, read as the range: this read the campaign's whole history
+    // and dropped what fell outside it, once per open panel and account page.
     for (const d of await ctx.db
       .query("dailyStats")
       .withIndex("by_campaign_date", q =>
-        q.eq("campaignName", args.campaignName),
+        q
+          .eq("campaignName", args.campaignName)
+          .gte("date", args.start)
+          .lte("date", args.end),
       )
       .collect()) {
-      if (d.date < args.start || d.date > args.end) continue;
       const row = byDate.get(d.date) ?? { spend: 0, leads: 0 };
       row.spend += Number(d.spend ?? 0);
       row.leads += Number(d.leads ?? 0);

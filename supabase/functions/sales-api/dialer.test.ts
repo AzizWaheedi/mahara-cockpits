@@ -6,6 +6,7 @@ import {
   type Appt,
   appointmentWork,
   BOOKING_CALENDARS,
+  introWaiting,
   type Candidate,
   calendarFor,
   callSummary,
@@ -388,6 +389,23 @@ describe("appointment work", () => {
     expect(appointmentWork(base, NOW, "setter", "ghl-other")).toBeNull();
     expect(appointmentWork({ ...base, start: NOW - 25 * 60_000 }, NOW, "setter", "ghl-tahrir")).toBeNull();
     expect(appointmentWork({ ...base, status: "showed" }, NOW, "setter", "ghl-tahrir")).toBeNull();
+  });
+  test("an intro that rang out waits five minutes, then comes back inside its window", () => {
+    const start = NOW - 60_000;
+    const rang = { ...base, start, last_try: NOW - 2 * 60_000 };
+    expect(introWaiting(rang, NOW)).toBe(true);
+    expect(appointmentWork(rang, NOW, "setter", "ghl-tahrir")).toBeNull();
+    const later = NOW + 4 * 60_000;
+    expect(introWaiting(rang, later)).toBe(false);
+    expect(appointmentWork(rang, later, "setter", "ghl-tahrir")).toMatchObject({ tier: 0, kind: "intro" });
+    // A confirmation try the evening before is not a try at the intro.
+    expect(introWaiting({ ...base, start, last_try: NOW - 14 * 3_600_000 }, NOW)).toBe(false);
+    // Past its twenty minutes it is not the setter's call any more.
+    expect(introWaiting({ ...rang, start: NOW - 25 * 60_000 }, NOW)).toBe(false);
+    // While it waits, the lead is not in the setter's list at all.
+    const booked = lead({ contact_id: "c-intro", appt: rang });
+    expect(rankForSetter([booked], "tahreer@maharamedia.com", NOW, "ghl-tahrir").map(r => r.contact_id)).toEqual([]);
+    expect(rankForSetter([booked], "tahreer@maharamedia.com", later, "ghl-tahrir")[0]).toMatchObject({ contact_id: "c-intro", kind: "intro" });
   });
   test("a call booked more than a day ahead is confirmed the evening before (morning calls) or that morning", () => {
     const eve = Date.parse("2026-09-24T15:30:00Z"); // Thursday 18:30 Kuwait
