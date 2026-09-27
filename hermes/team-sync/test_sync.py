@@ -179,6 +179,14 @@ class Matching(unittest.TestCase):
         self.assertEqual([(r["meeting_id"], r["cal_event_id"]) for r in parts], [("b2b-drill", "dup")])
         self.assertIn("found another series of it", [c["what"] for c in p.changes])
 
+    def test_a_same_titled_series_with_nothing_live_is_left_alone(self):
+        # Every pass would otherwise join it again without a row to show for it.
+        st = state([meeting(id="b2b-drill", title="B2B Drill", managed="calendar", cal_calendar=None,
+                            cal_event_id="orig", calendar_id="orig")])
+        p = plan(st, [occ("2026-09-20", master="dup", title="B2B Drill", start="10:00", status="cancelled")])
+        self.assertFalse([c for c in p.changes if "another series" in c["what"]])
+        self.assertFalse([w for w in p.writes if w[1].startswith("team_meeting_series")])
+
     def test_an_old_series_of_a_meeting_the_cockpit_manages_is_left_alone(self):
         st = state([meeting(id="whole-team-vision-projections", title="Whole Team", cal_event_id="new")])
         p = plan(st, [occ("2026-10-03", master="old", title="🏢 Whole Team — Vision & Projections", start="11:45")])

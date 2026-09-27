@@ -465,6 +465,8 @@ def match(series: Dict[Key, Series], meetings: List[Row], part_rows: List[Row]) 
             # links its own series, so an old one of its title is left alone.
             title = str(face.get("summary") or "").strip()
             same = by_title.get(title) or by_slug.get(slug(title))
+            if same and not s.live():
+                continue  # nothing of it left to show: history the meeting already has
             if same and (same.get("managed") or "calendar") == "calendar":
                 mid, part = same["id"], True
                 out.adopted.append(key)
