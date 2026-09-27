@@ -3615,6 +3615,27 @@ async function pipelineStages(_who: Who, b: Row) {
  * carried out, and the cockpit's copy of the lead updated when HighLevel
  * takes it. A lead with no opportunity gets one in the pipeline asked for.
  */
+/** The contact's open opportunity in HighLevel (the latest when there are several), or null. */
+async function openOpportunity(
+  contactId: string,
+): Promise<{ id: string; pipelineId: string; stageId: string } | null> {
+  try {
+    const d = await ghl(
+      "GET",
+      `/opportunities/search?location_id=${LOCATION}&contact_id=${enc(contactId)}`,
+      undefined,
+      "2021-07-28",
+    );
+    const open = ((d.opportunities ?? []) as Row[])
+      .filter(o => String(o.status ?? "open") === "open")
+      .sort((a, b) => String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")));
+    const o = open[0];
+    return o ? { id: String(o.id), pipelineId: String(o.pipelineId ?? ""), stageId: String(o.pipelineStageId ?? "") } : null;
+  } catch {
+    return null;
+  }
+}
+
 async function moveStage(
   who: Who,
   contactId: string,
@@ -3625,20 +3646,26 @@ async function moveStage(
     `cockpit_sales_leads?contact_id=eq.${enc(contactId)}&select=contact_id,name,opportunity_id,pipeline_id,stage_id`,
   ))[0];
   if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
+  // A lead HighLevel made minutes ago reaches the copy before its opportunity
+  // does (B2B brings that within 15 minutes): read it from HighLevel, so a
+  // move never tries to make a second one ("Can not create duplicate
+  // opportunity", found in the test run of 2026-09-27).
+  const found = lead.opportunity_id ? null : await openOpportunity(contactId);
   const pipes = await pipelines();
   const pipe =
-    pipes.find(p => p.id === (target.pipelineId ?? lead.pipeline_id)) ??
+    pipes.find(p => p.id === (target.pipelineId ?? lead.pipeline_id ?? found?.pipelineId)) ??
     pipes.find(p => p.stages.some(st => st.id === target.stageId)) ??
     pipes.find(p => /2.?call/i.test(p.name)) ??
     pipes[0];
   const stage = target.stageId
     ? pipe?.stages.find(st => st.id === target.stageId)
     : (target.roles ?? []).map(r => pipe?.stages.find(st => st.role === r)).find(Boolean);
+  const fromStage = (lead.stage_id as string) ?? found?.stageId ?? null;
   const base = {
     contact_id: contactId,
-    opportunity_id: (lead.opportunity_id as string) ?? null,
+    opportunity_id: (lead.opportunity_id as string) ?? found?.id ?? null,
     pipeline_id: pipe?.id ?? null,
-    from_stage_id: (lead.stage_id as string) ?? null,
+    from_stage_id: fromStage,
     source: ctx.source,
     outcome: ctx.outcome ?? null,
     by_email: who.email,
@@ -3648,14 +3675,14 @@ async function moveStage(
     if (target.stageId) throw new Refusal("That stage is not in the sales pipelines any more. Reload the board.", 409);
     return { state: "skipped", why: "no stage for this outcome in the lead's pipeline" };
   }
-  if (lead.stage_id === stage.id && lead.opportunity_id)
+  if (fromStage === stage.id && (lead.opportunity_id || found))
     return { state: "skipped", why: "already in that stage", to_stage_id: stage.id };
   const row = (await svc("cockpit_sales_stage_moves", {
     method: "POST",
     body: { ...base, to_stage_id: stage.id },
     prefer: "return=representation",
   }))[0];
-  let opp = (lead.opportunity_id as string) || "";
+  let opp = (lead.opportunity_id as string) || found?.id || "";
   try {
     if (opp) {
       await ghl(
