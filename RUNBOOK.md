@@ -33,6 +33,8 @@ last error and this fix next to it.
 | Fathom | `401` | New API key, set `FATHOM_API_KEY` | Aziz |
 | Slack | `channel_not_found` | `ALERT_SLACK_TO` must be Aziz's user id (U…), not a D… channel | Aziz |
 | Client success or creative cockpit (bridge) | `HTTP 5xx` or schema error | Redeploy: `scripts/ship.sh client-success` (or `creative`). If 401, `CSM_BRIDGE_TOKEN` / `CREATIVE_BRIDGE_TOKEN` differ from that deployment's `BRIDGE_TOKEN` | Hermes or Aziz |
+| Media buyer dev deployment | Saved winners, clients or boards in the creative or client success cockpit revert minutes after a sync | A dev deployment was running the crons with production's bridge links (2026-09-27: it wiped the saved winners). `cd apps/media-buyer-cockpit && bunx convex run health:whereJobsRun` must say `jobsRun: false` (`--prod` says true); never set `CREATIVE_BRIDGE_*` / `CSM_BRIDGE_*` on a dev deployment; `RUN_SCHEDULED_JOBS=1` only to test one job on purpose | Whoever deployed |
+| OpenAI | `429` credit_balance_exhausted | Top up at platform.openai.com (Settings, Billing). Captions, words on pictures, read-backs (Salma) and the sales desk's drafting resume by themselves; Salma's health line turns green within ten minutes | Aziz |
 | Hermes | "jobs waiting, last poll N min ago" | Restart the Hermes poller on its host. Chat answers, reply drafts, call briefs and report narratives resume by themselves | Aziz |
 | Resend | sign-up or reset emails not arriving | Set `RESEND_API_KEY` and `AUTH_EMAIL_FROM` on all three deployments; verify the domain in Resend | Aziz |
 
