@@ -21,6 +21,59 @@ import { api as ideationApi } from "./ideation";
 import { api as swipeApi } from "./swipe";
 import { campaignBuildAction } from "./campaignBuildsClient";
 import { runWinnerSave } from "./winnerSavesClient";
+import {
+  type TeamUserContext,
+  fetchTeamOverview,
+  fetchMeetingPage,
+  saveMeeting,
+  setPart,
+  addSitting,
+  saveDoc,
+  saveNotes,
+  addItem,
+  editItem,
+  closeItem,
+  moveItem,
+  saveBlock,
+  deleteBlock,
+  moveBlock,
+  saveWheel,
+  deleteWheel,
+  saveWheelOption,
+  deleteWheelOption,
+  moveWheelOption,
+  setPrizeAmount,
+  spin,
+  setGoalHit,
+  saveCreativeRow,
+  deleteCreativeRow,
+  openCreativeRequests,
+  setSeries,
+  moveSitting,
+  cancelSitting,
+  endMeeting,
+  setEmail,
+  putOnCalendar,
+  takeOver,
+  retryCalendar,
+} from "./team";
+
+async function getTeamUserContext(client: any): Promise<TeamUserContext> {
+  const { data: auth } = await client.auth.getUser();
+  const email = auth?.user?.email?.toLowerCase().trim() ?? "";
+  const isCeo = ["aziz@maharamedia.com", "awaheedi2008@gmail.com"].includes(email);
+  let isAdmin = false;
+  if (auth?.user?.id) {
+    const { data: member } = await client
+      .from("cockpit_members")
+      .select("roles")
+      .eq("auth_user_id", auth.user.id)
+      .maybeSingle();
+    const roles: string[] = member?.roles ?? [];
+    isAdmin = roles.includes("admin");
+  }
+  return { email, isCeo, isAdmin };
+}
 
 const MEDIA_READS = new Set(["board.adStatusOptions", "board.advertisingCityOptions", "ceo.b2bManage.inspect", "ceo.b2bLaunch.list"]);
 const MEDIA_WRITES = new Set([
@@ -295,6 +348,57 @@ async function handleApiCall(endpoint: string, args: any = {}): Promise<any> {
     }
     return unavailable();
   }
+  // 7. Team & TeamCalendar
+  if (domain === "team" || domain === "teamCalendar") {
+    const u = await getTeamUserContext(supabase);
+    const op = sub;
+    if (domain === "team") {
+      switch (op) {
+        case "overview": return fetchTeamOverview(supabase, u);
+        case "page": return fetchMeetingPage(supabase, u, args.id);
+        case "saveMeeting": return saveMeeting(supabase, u, args);
+        case "setPart": return setPart(supabase, u, args);
+        case "addSitting": return addSitting(supabase, u, args);
+        case "saveDoc": return saveDoc(supabase, u, args);
+        case "saveNotes": return saveNotes(supabase, u, args);
+        case "addItem": return addItem(supabase, u, args);
+        case "editItem": return editItem(supabase, u, args);
+        case "closeItem": return closeItem(supabase, u, args);
+        case "moveItem": return moveItem(supabase, u, args);
+        case "saveBlock": return saveBlock(supabase, u, args);
+        case "deleteBlock": return deleteBlock(supabase, u, args);
+        case "moveBlock": return moveBlock(supabase, u, args);
+        case "saveWheel": return saveWheel(supabase, u, args);
+        case "deleteWheel": return deleteWheel(supabase, u, args);
+        case "saveWheelOption": return saveWheelOption(supabase, u, args);
+        case "deleteWheelOption": return deleteWheelOption(supabase, u, args);
+        case "moveWheelOption": return moveWheelOption(supabase, u, args);
+        case "setPrizeAmount": return setPrizeAmount(supabase, u, args);
+        case "spin": return spin(supabase, u, args);
+        case "setGoalHit": return setGoalHit(supabase, u, args);
+        case "saveCreativeRow": return saveCreativeRow(supabase, u, args);
+        case "deleteCreativeRow": return deleteCreativeRow(supabase, u, args);
+        case "openCreativeRequests": return openCreativeRequests(supabase, u);
+        default: throw new Error(`Unknown team operation: ${op}`);
+      }
+    }
+    if (domain === "teamCalendar") {
+      switch (op) {
+        case "setPart": return setPart(supabase, u, args);
+        case "setEmail": return setEmail(supabase, u, args);
+        case "setSeries": return setSeries(supabase, u, args);
+        case "moveSitting": return moveSitting(supabase, u, args);
+        case "cancelSitting": return cancelSitting(supabase, u, args);
+        case "addSitting": return addSitting(supabase, u, args);
+        case "endMeeting": return endMeeting(supabase, u, args);
+        case "putOnCalendar": return putOnCalendar(supabase, u, args);
+        case "takeOver": return takeOver(supabase, u, args);
+        case "retryCalendar": return retryCalendar(supabase, u, args);
+        default: throw new Error(`Unknown team calendar operation: ${op}`);
+      }
+    }
+  }
+
 
   // Default fallback
   return unavailable();

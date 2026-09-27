@@ -6,7 +6,7 @@ import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { usePageVisible } from "@/lib/usePageVisible";
-import { addItem as addItemApi, addSitting as addSittingApi, closeItem as closeItemApi, editItem as editItemApi, fetchMeetingPage, moveItem as moveItemApi, saveDoc as saveDocApi, saveMeeting as saveMeetingApi, saveNotes as saveNotesApi, setPart as setPartApi, type Item, type MeetingPage as Page, type Person, type Sitting } from "@/lib/team";
+import { addItem as addItemApi, closeItem as closeItemApi, editItem as editItemApi, fetchMeetingPage, moveItem as moveItemApi, saveDoc as saveDocApi, saveMeeting as saveMeetingApi, saveNotes as saveNotesApi, type Item, type MeetingPage as Page, type Person, type Sitting } from "@/lib/team";
 
 
 import { PipelineBoard, PipelineStrip } from "./Pipeline";
@@ -69,26 +69,6 @@ export function MeetingPage() {
     }) => {
       if (!auth.client) throw new Error("Not signed in");
       return saveMeetingApi(auth.client, userContext, args);
-    },
-    [auth.client, userContext],
-  );
-
-  const setPart = useCallback(
-    async (args: {
-      meetingId: string;
-      personId: string;
-      part: "host" | "required" | "optional" | "off";
-    }) => {
-      if (!auth.client) throw new Error("Not signed in");
-      return setPartApi(auth.client, userContext, args);
-    },
-    [auth.client, userContext],
-  );
-
-  const addSitting = useCallback(
-    async (args: { meetingId: string; date: string }) => {
-      if (!auth.client) throw new Error("Not signed in");
-      return addSittingApi(auth.client, userContext, args);
     },
     [auth.client, userContext],
   );

@@ -9,9 +9,9 @@ import { DateInput } from "@/components/ui/date-input";
 import { Input } from "@/components/ui/input";
 import { usePageVisible } from "@/lib/usePageVisible";
 import { fetchTeamOverview, saveMeeting as saveMeetingApi, type MeetingSummary, type Overview } from "@/lib/team";
-import { api } from "@/lib/cockpitApi";
-import { DAY_NAMES, dayLabel, seriesLine } from "../../../convex/teamCore";
-import type { Prize, WeekDay } from "../../../convex/teamPage";
+import { api, useAction } from "@/lib/cockpitApi";
+import { DAY_NAMES, dayLabel, seriesLine } from "@/lib/teamCore";
+import type { Prize, WeekDay } from "@/lib/team";
 import { CADENCES } from "./MeetingPage";
 import { chip, DayChips, dayName, errorText, Field, fieldClass, Initials, peopleById, selectClass, timeRange } from "./teamKit";
 
@@ -296,7 +296,7 @@ function WeekView({ weeks, today }: { weeks: WeekDay[][]; today: string }) {
                         }
                       >
                         <span className="block font-mono text-[11px] text-muted-foreground">
-                          {timeRange(x.time, x.endTime) || "No time"}
+                          {timeRange(x.time, x.endTime ?? null) || "No time"}
                           {x.status === "moved" ? " moved" : ""}
                         </span>
                         <span
@@ -417,7 +417,7 @@ function MeetingRow({
   const series =
     m.startTime && m.minutes
       ? seriesLine({
-          weekdays: m.weekdays,
+          weekdays: m.weekdays ?? null,
           startTime: m.startTime,
           minutes: m.minutes,
         }).replace(/, Kuwait time$/, "")

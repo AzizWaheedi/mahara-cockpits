@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import type { Person } from "@/lib/team";
-import { DAY_NAMES } from "../../../convex/teamCore";
+import { DAY_NAMES } from "@/lib/teamCore";
 
 
 /** Native selects styled as the kit's Input, so a phone gets its own picker. */

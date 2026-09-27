@@ -1,4 +1,4 @@
-import { useAction } from "convex/react";
+import { api, useAction } from "@/lib/cockpitApi";
 import {
   ArrowUpRight,
   CalendarPlus,
@@ -12,15 +12,14 @@ import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
 import { Input } from "@/components/ui/input";
-import { api } from "../../../convex/_generated/api";
 import {
   addDays,
   dayLabel,
   seriesLine,
   seriesPreview,
   utcToZoned,
-} from "../../../convex/teamCore";
-import type { MeetingPage as Page, Sitting } from "../../../convex/teamPage";
+} from "@/lib/teamCore";
+import type { MeetingPage as Page, Sitting } from "@/lib/team";
 import {
   ConfirmInline,
   DayChips,
@@ -61,9 +60,9 @@ export function WhenAndWho({ page, act }: { page: Page; act: Act }) {
   const line =
     m.startTime || m.weekdays?.length
       ? seriesLine({
-          weekdays: m.weekdays,
-          startTime: m.startTime,
-          minutes: m.minutes,
+          weekdays: m.weekdays ?? null,
+          startTime: m.startTime ?? null,
+          minutes: m.minutes ?? null,
           tz: m.tz,
           rrule: m.rrule,
           onDay: !m.weekdays?.length
@@ -463,7 +462,7 @@ function SittingRow({ s, page, act }: { s: Sitting; page: Page; act: Act }) {
   const cancelled = s.status === "cancelled";
   // A moved sitting shows where it went; its own day stays its name.
   const at = s.startsAt
-    ? utcToZoned(s.startsAt, page.meeting.tz).day
+    ? utcToZoned(s.startsAt, page.meeting.tz ?? "Asia/Kuwait").day
     : s.onDate;
   const movedFrom =
     s.status !== "moved"
@@ -483,7 +482,7 @@ function SittingRow({ s, page, act }: { s: Sitting; page: Page; act: Act }) {
             {at === page.today ? "Today" : dayLabel(at)}
           </span>{" "}
           <span className="font-mono text-[13px] text-muted-foreground">
-            {timeRange(s.time, s.endTime)}
+            {timeRange(s.time ?? null, s.endTime ?? null)}
           </span>
           {movedFrom ? (
             <span className="ml-2 text-xs txt-warn">

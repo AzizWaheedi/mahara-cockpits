@@ -22,8 +22,7 @@ import {
   weekStart,
   withOurBlock,
   zonedToUtc,
-} from "../convex/teamCore";
-
+} from "../src/lib/teamCore";
 // The team meetings' rules (convex/teamCore.ts). The calendar sync's own
 // rules are tested in hermes/team-sync/test_sync.py.
 

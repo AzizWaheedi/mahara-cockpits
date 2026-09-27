@@ -1,4 +1,4 @@
-import { useAction } from "convex/react";
+import { api, useAction } from "@/lib/cockpitApi";
 import {
   ArrowDown,
   ArrowUp,
@@ -13,13 +13,12 @@ import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { api } from "../../../convex/_generated/api";
-import { dayLabel } from "../../../convex/teamCore";
+import { dayLabel } from "@/lib/teamCore";
 import type {
   MeetingPage as Page,
   Sitting,
   Wheel,
-} from "../../../convex/teamPage";
+} from "@/lib/team";
 import {
   ConfirmInline,
   chip,

@@ -1,17 +1,16 @@
-import { useAction } from "convex/react";
+import { api, useAction } from "@/lib/cockpitApi";
 import { Loader2, Plus, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
 import { Input } from "@/components/ui/input";
-import { api } from "../../../convex/_generated/api";
-import { addDays, dayLabel, weekStart } from "../../../convex/teamCore";
+import { addDays, dayLabel, weekStart } from "@/lib/teamCore";
 import type {
   CreativeRow,
   MeetingPage as Page,
   Strip,
-} from "../../../convex/teamPage";
+} from "@/lib/team";
 import {
   ConfirmInline,
   chip,
