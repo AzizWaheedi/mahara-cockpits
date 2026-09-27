@@ -604,6 +604,59 @@ describe("save", () => {
     expect(db.rows("campaignChat")).toHaveLength(0);
   });
 
+  test("a range with no leads saves the ad's 90 days instead, and says so", async () => {
+    const { db, nada } = seedWorld();
+    const ctx = makeCtx(db, nada);
+    const quiet = { start: "2026-09-13", end: "2026-09-14" };
+    const p = await ws.preview._handler(ctx, {
+      campaignName: CAMPAIGN,
+      adName: "Video A",
+      adIds: ["100001"],
+      ...quiet,
+    });
+    checkReturn(ws.preview, p, "preview");
+    expect(p.widened).toBe(true);
+    expect(p.window).toEqual({
+      start: "2026-06-17",
+      end: "2026-09-14",
+      label: "Last 90 days",
+    });
+    expect(p.stats).toMatchObject({ spend: 1099.12, leads: 6, cpl: 183.19 });
+    expect(p.problem).toBeUndefined();
+    await ws.save._handler(ctx, saveArgs({ ...quiet, rangeLabel: "Last 2 days" }));
+    const r = db.rows("winnersArchive")[0];
+    expect(r.savedRange).toEqual({
+      start: "2026-06-17",
+      end: "2026-09-14",
+      label: "Last 90 days",
+    });
+    expect([r.wonFrom, r.wonTo, r.cpl]).toEqual(["2026-06-17", "2026-09-14", 183.19]);
+    expect(db.rows("campaignChat")[0].text).toContain("Last 90 days: $1,099.12 spent, 6 leads");
+    // A range that has leads keeps its own days.
+    const own = await ws.preview._handler(ctx, {
+      campaignName: CAMPAIGN,
+      adName: "Video A",
+      adIds: ["100001"],
+      start: "2026-09-10",
+      end: "2026-09-11",
+    });
+    expect([own.widened, own.window]).toEqual([
+      false,
+      { start: "2026-09-10", end: "2026-09-11" },
+    ]);
+    // No lead in the 90 days either: refused, with what it spent.
+    const none = await ws.preview._handler(ctx, {
+      campaignName: CAMPAIGN,
+      adName: "Twin",
+      adIds: ["100002"],
+      adId: "100002",
+      ...quiet,
+    });
+    expect(none.problem).toBe(
+      "This ad had no leads between 2026-09-13 and 2026-09-14, or in the 90 days to 2026-09-14 ($20.00 spent), so there is no cost per lead to keep yet. It can be saved after its first lead.",
+    );
+  });
+
   test("an ad the tree knows by name but whose rows carry no id still saves, and gets enriched", async () => {
     const { db, nada } = seedWorld();
     const ctx = makeCtx(db, nada);
