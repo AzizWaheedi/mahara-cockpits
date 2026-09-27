@@ -148,14 +148,14 @@ export default function SendReviewPage() {
   const [copied, copy] = useCopy();
 
   const load = useCallback(async () => {
-    const { data } = await supabase.rpc("review_list", { p_limit: 25 });
+    const { data } = await supabase.rpc("cockpit_review_list", { p_limit: 25 });
     setRows((data as Row[]) ?? []);
   }, []);
   useEffect(() => {
     void load();
   }, [load]);
 
-  const ready = title.trim() && drafts.some(d => d.video_url.trim());
+  const ready = client.trim() && title.trim() && drafts.some(d => d.video_url.trim());
 
   function patch(i: number, change: Partial<Draft>) {
     setDrafts(cur => cur.map((x, j) => (j === i ? { ...x, ...change } : x)));
@@ -172,7 +172,7 @@ export default function SendReviewPage() {
           video_url: d.video_url.trim(),
           poster_url: d.poster_url.trim() || null,
         }));
-      const { data, error } = await supabase.rpc("review_create", {
+      const { data, error } = await supabase.rpc("cockpit_review_create", {
         p_title: title.trim(),
         p_note: note.trim(),
         p_client: client.trim() || null,
@@ -221,7 +221,7 @@ export default function SendReviewPage() {
                   className={`${FIELD} h-10`}
                 />
               </Field>
-              <Field id="review-client" label="Client">
+              <Field id="review-client" label="Client (required)">
                 <input
                   id="review-client"
                   value={client}

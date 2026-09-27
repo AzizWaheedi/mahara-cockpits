@@ -1,5 +1,4 @@
-import { adAsIdea } from "./adAsIdea";
-import { boom, who } from "./ideation";
+import { boom, requireIdeationAccess } from "./ideation";
 import { supabase } from "./supabase";
 
 /**
@@ -13,10 +12,10 @@ import { supabase } from "./supabase";
  * `supabase/migrations/20260919c_ideation_for_editors.sql`.
  */
 // biome-ignore lint/suspicious/noExplicitAny: Supabase rows are untyped here
-type Row = Record<string, any>;
 
 /** Saved ads, longest on air first: the strongest single signal one works. */
 async function ads({ limit }: { limit?: number } = {}) {
+  await requireIdeationAccess();
   const n = Math.max(1, Math.min(500, limit ?? 300));
   const { data, error } = await supabase
     .from("foreplay_ads")
@@ -33,6 +32,7 @@ async function ads({ limit }: { limit?: number } = {}) {
  * still has to appear.
  */
 async function boards(_args: Record<string, never> = {}) {
+  await requireIdeationAccess();
   const { data, error } = await supabase
     .from("foreplay_boards")
     .select("*")
@@ -51,22 +51,10 @@ async function boards(_args: Record<string, never> = {}) {
  * rather than duplicating.
  */
 async function toIdeation({ id }: { id: string }) {
-  const { email, name } = await who();
-  const { data, error: read } = await supabase
-    .from("foreplay_ads")
-    .select("*")
-    .eq("id", id)
-    .maybeSingle();
-  boom(read);
-  const ad = data as Row | null;
-  if (!ad) throw new Error("That ad is no longer in the swipe file.");
-  const { error } = await supabase
-    .from("ideation_posts")
-    .upsert(adAsIdea(ad, { by: email, byName: name }), {
-      onConflict: "key",
-    });
+  const { data, error } = await supabase.rpc("cockpit_ideation_copy", {p_source: "foreplay", p_id: id, p_note: null});
   boom(error);
-  return { key: `foreplay:${ad.id}` };
+  if (!data?.key) throw new Error("The ad was not saved to the board.");
+  return data;
 }
 
 export const api = { foreplay: { ads, boards, toIdeation } };

@@ -5,6 +5,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -64,6 +65,7 @@ export function SupabaseAuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [access, setAccess] = useState<SupabaseAccess | null>(null);
   const [ready, setReady] = useState(false);
+  const generation = useRef(0);
 
   const client = useMemo(() => {
     try {
@@ -75,17 +77,16 @@ export function SupabaseAuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const reloadAccess = useCallback(
-    async (targetClient: SupabaseClient, targetSession: Session | null) => {
+    async (targetClient: SupabaseClient, targetSession: Session | null): Promise<SupabaseAccess | null> => {
       if (!targetSession?.user || !targetSession.user.email_confirmed_at) {
-        setAccess(null);
-        return;
+        return null;
       }
       try {
         const loaded = await loadSupabaseAccess(targetClient);
-        setAccess(loaded);
+        return loaded;
       } catch (err) {
         console.error("Failed to load cockpit access:", err);
-        setAccess(null);
+        return null;
       }
     },
     [],
@@ -97,21 +98,36 @@ export function SupabaseAuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    client.auth.getSession().then(async ({ data }) => {
-      setSession(data.session);
-      await reloadAccess(client, data.session);
-      setReady(true);
+    let active = true;
+    const receive = (nextSession: Session | null) => {
+      const current = ++generation.current;
+      setSession(nextSession);
+      setAccess(null);
+      setReady(false);
+      // Return from the auth callback before running auth/network methods.
+      setTimeout(() => {
+        if (!active || current !== generation.current) return;
+        void reloadAccess(client, nextSession).then(loaded => {
+          if (!active || current !== generation.current) return;
+          setAccess(loaded);
+          setReady(true);
+        });
+      }, 0);
+    };
+    const initial = generation.current;
+    client.auth.getSession().then(({ data }) => {
+      if (active && generation.current === initial) receive(data.session);
+    }).catch(() => {
+      if (active && generation.current === initial) receive(null);
     });
 
     const { data: sub } = client.auth.onAuthStateChange(
-      async (_event, nextSession) => {
-        setSession(nextSession);
-        await reloadAccess(client, nextSession);
-        setReady(true);
-      },
+      (_event, nextSession) => receive(nextSession),
     );
 
     return () => {
+      active = false;
+      generation.current += 1;
       sub.subscription.unsubscribe();
     };
   }, [client, reloadAccess]);
@@ -126,7 +142,9 @@ export function SupabaseAuthProvider({ children }: { children: ReactNode }) {
 
   const refreshAccess = useCallback(async () => {
     if (client && session) {
-      await reloadAccess(client, session);
+      const current = generation.current;
+      const loaded = await reloadAccess(client, session);
+      if (current === generation.current) setAccess(loaded);
     }
   }, [client, session, reloadAccess]);
 

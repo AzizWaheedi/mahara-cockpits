@@ -179,6 +179,7 @@ export function SendForReview({ folded = false }: { folded?: boolean }) {
   async function pullFolder() {
     try {
       const chosen = clients.find(c => c.task_id === client);
+      if (!chosen) throw new Error("Choose a client first.");
       const { id } = (await importFolder({
         folder,
         title: title.trim() || undefined,
@@ -196,6 +197,7 @@ export function SendForReview({ folded = false }: { folded?: boolean }) {
     setBusy(true);
     try {
       const chosen = clients.find(c => c.task_id === client);
+      if (!chosen) throw new Error("Choose a client first.");
       const out = (await create({
         title: title.trim() || "Videos for review",
         note: note.trim() || undefined,
@@ -313,7 +315,7 @@ export function SendForReview({ folded = false }: { folded?: boolean }) {
             onChange={e => setClient(e.target.value)}
             className="h-9"
           >
-            <option value="">Which client</option>
+            <option value="">Choose a client (required)</option>
             {clients.map(c => (
               <option key={c.task_id} value={c.task_id}>
                 {c.name}
@@ -330,7 +332,7 @@ export function SendForReview({ folded = false }: { folded?: boolean }) {
 
         <button
           type="button"
-          disabled={busy || !ready}
+          disabled={busy || !ready || !client}
           onClick={() => void (folder.trim() ? pullFolder() : send())}
           className="mt-1 inline-flex h-9 w-fit items-center gap-1.5 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground disabled:opacity-50"
         >

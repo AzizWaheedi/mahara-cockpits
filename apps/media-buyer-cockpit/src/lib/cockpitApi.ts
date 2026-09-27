@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useCockpitAuth } from "../auth/SupabaseAuthProvider";
 import { loadSupabaseAccess } from "../auth/supabaseAccess";
 import {
@@ -12,6 +12,43 @@ import {
 import { supabase } from "./supabase";
 import {ManualPaymentError,manualPaymentList,manualPaymentInfo,manualPaymentClients,addManualPayment,changeManualPayment,manualPaymentHistory} from "./ceoManualPaymentsClient";
 import {readPeople,readPeopleRoles,savePerson,setPersonActive,unavailablePeopleDirectory} from "./ceoPeopleClient";
+import { callCenterRange, parseCallCenterReport } from "../types/ceo/callCenterContract";
+import { readMediaStats } from "./mediaStatsClient";
+import { mediaAction } from "./mediaActionsClient";
+import { ceoAction } from "./ceoActionsClient";
+import { listCreativeRequests, reviewCreativeRequest, creativeProviderAction } from "./creativeActionsClient";
+import { api as ideationApi } from "./ideation";
+import { api as swipeApi } from "./swipe";
+import { campaignBuildAction } from "./campaignBuildsClient";
+import { runWinnerSave } from "./winnerSavesClient";
+
+const MEDIA_READS = new Set(["board.adStatusOptions", "board.advertisingCityOptions", "ceo.b2bManage.inspect", "ceo.b2bLaunch.list"]);
+const MEDIA_WRITES = new Set([
+  "control.setStatus", "ceo.b2bControl.setStatus", "edit.setAdSetBudget", "edit.duplicateAdSet",
+  "board.setAdStatus", "board.setAdvertisingCities", "board.renameCard", "board.addToBoard",
+  "edit.newAdsFromExisting", "edit.addCreativeToCampaign", "ceo.b2bManage.rename",
+  "ceo.b2bManage.setBudget", "ceo.b2bManage.setSchedule", "ceo.b2bManage.setAudience",
+  "ceo.b2bManage.createAdset", "ceo.b2bManage.duplicateAdset", "ceo.b2bManage.createAds", "ceo.ltv.apply",
+  "execute.runAction", "cockpit.askForDetail", "edit.askViktorFor", "board.dismissOffBoard",
+  "ceo.b2bManage.copyIdeas", "ceo.b2bLaunch.build", "ceo.b2bLaunch.save", "ceo.b2bLaunch.discard", "ceo.b2bLaunch.launch",
+]);
+const DATA_CHANGED = "cockpit-data-changed";
+const refreshWrappers = new WeakMap<(...args: any[]) => any, (...args: any[]) => any>();
+const READ_VERBS = new Set(["get", "list", "detail", "counts", "preview", "inspect", "page", "templates", "history", "overview", "fileUrl", "formInfo", "clientOptions", "catalogue", "board", "read", "requestsList", "watchlistList"]);
+function refreshAfter<T extends (...args: any[]) => any>(fn: T): T {
+  const prior = refreshWrappers.get(fn);
+  if (prior) return prior as T;
+  const wrapped = async (...args: any[]) => {
+    const result = await fn(...args);
+    const endpoint = (fn as any).__endpoint as string | undefined;
+    if (!READ_VERBS.has(endpoint?.split(".").at(-1) ?? "") && typeof window !== "undefined") {
+      window.dispatchEvent(new Event(DATA_CHANGED));
+    }
+    return result;
+  };
+  refreshWrappers.set(fn, wrapped);
+  return wrapped as T;
+}
 
 export class ConvexError extends Error {
   data: any;
@@ -37,143 +74,137 @@ export type FunctionReturnType<F extends (...args: any) => any = any> =
 // biome-ignore lint/suspicious/noExplicitAny: universal query runner
 export function useQuery<T = any>(queryFn: any, args?: any): T {
   const [data, setData] = useState<any>(undefined);
+  const [error, setError] = useState<Error | null>(null);
+  const { session } = useCockpitAuth();
+  const owner = session?.user.id ?? null;
+  const previous = useRef<{ query: any; args: string | undefined; owner: string | null } | null>(null);
 
   const argsJson = JSON.stringify(args);
 
   useEffect(() => {
-    if (args === "skip" || !queryFn) return;
+    const changed = previous.current?.query !== queryFn || previous.current?.args !== argsJson || previous.current?.owner !== owner;
+    previous.current = { query: queryFn, args: argsJson, owner };
+    if (changed) { setError(null); setData(undefined); }
+    if (args === "skip" || !queryFn || !owner) return;
     let active = true;
-    Promise.resolve(typeof queryFn === "function" ? queryFn(args) : queryFn)
-      .then(res => {
-        if (active) setData(res);
-      })
-      .catch(err => {
-        console.error("useQuery error:", err);
-        if (active) setData(undefined);
-      });
+    let generation = 0;
+    const load = () => {
+      const run = ++generation;
+      Promise.resolve().then(() => typeof queryFn === "function" ? queryFn(args) : queryFn)
+        .then(res => { if (active && run === generation) { setData(res); setError(null); } })
+        .catch(err => { if (active && run === generation) setError(err instanceof Error ? err : new Error(String(err))); });
+    };
+    load();
+    const poll = setInterval(() => { if (typeof document === "undefined" || !document.hidden) load(); }, 30_000);
+    if (typeof window !== "undefined") window.addEventListener(DATA_CHANGED, load);
     return () => {
       active = false;
+      clearInterval(poll);
+      if (typeof window !== "undefined") window.removeEventListener(DATA_CHANGED, load);
     };
-  }, [queryFn, argsJson]);
+  }, [queryFn, argsJson, owner]);
 
+  if (error) throw error;
   return data as T;
 }
 
 export function useMutation<T extends (...args: any[]) => any>(
   mutationFn: T,
 ): T {
-  return mutationFn;
+  return refreshAfter(mutationFn);
 }
 
 export function useAction<T extends (...args: any[]) => any>(actionFn: T): T {
-  return actionFn;
+  return refreshAfter(actionFn);
 }
 
 export function useQueries(queries: any[] | Record<string, any>): any {
   const isArray = Array.isArray(queries);
-  const [results, setResults] = useState<any>(() => {
-    if (isArray) return queries.map(() => undefined);
-    const init: Record<string, any> = {};
-    for (const k of Object.keys(queries || {})) init[k] = undefined;
-    return init;
-  });
-
+  const current = useRef(queries);
+  current.current = queries;
   const queriesJson = JSON.stringify(queries);
-
-  useEffect(() => {
-    let active = true;
-    if (isArray) {
-      Promise.all(
-        queries.map(q => {
-          if (!q || q.args === "skip") return Promise.resolve(undefined);
-          return Promise.resolve(
-            typeof q.query === "function" ? q.query(q.args) : q,
-          );
-        }),
-      ).then(res => {
-        if (active) setResults(res);
-      });
-    } else if (queries && typeof queries === "object") {
-      const keys = Object.keys(queries);
-      Promise.all(
-        keys.map(k => {
-          const q = (queries as Record<string, any>)[k];
-          if (!q || q.args === "skip") return Promise.resolve([k, undefined]);
-          return Promise.resolve(
-            typeof q.query === "function" ? q.query(q.args) : q,
-          ).then(res => [k, res]);
-        }),
-      ).then(entries => {
-        if (active) {
-          const obj: Record<string, any> = {};
-          for (const [k, v] of entries) {
-            obj[k] = v;
-          }
-          setResults(obj);
-        }
-      });
-    }
-    return () => {
-      active = false;
+  const load = useMemo(() => async () => {
+    const values = current.current;
+    const read = async (q: any) => {
+      if (!q || q.args === "skip") return undefined;
+      if (typeof q.query !== "function") throw new Error("A callable query is required.");
+      return q.query(q.args);
     };
+    if (Array.isArray(values)) return Promise.all(values.map(read));
+    return Object.fromEntries(await Promise.all(Object.entries(values ?? {}).map(async ([key,q]) => [key,await read(q)])));
   }, [queriesJson, isArray]);
-
-  return results;
+  const result = useQuery(load);
+  return result ?? (isArray ? queries.map(() => undefined) : Object.fromEntries(Object.keys(queries ?? {}).map(key => [key,undefined])));
 }
 
 async function handleApiCall(endpoint: string, args: any = {}): Promise<any> {
   const [domain, sub, ...rest] = endpoint.split(".");
+  const unavailable = (): never => {
+    throw new Error(`This operation has not completed its Supabase migration (${endpoint}). No action was performed.`);
+  };
 
   // 1. Roles
   if (domain === "roles" && sub === "me") {
     return loadSupabaseAccess(supabase);
   }
+  if (domain === "stats" && ["range", "campaignTrend", "portfolioTrend", "coverage"].includes(sub)) {
+    return readMediaStats(supabase, sub, args);
+  }
+  if (MEDIA_READS.has(endpoint)) return mediaAction(endpoint, args);
+  if (MEDIA_WRITES.has(endpoint)) return mediaAction(endpoint, args, { apply: true });
+  if (domain === "ideation" && Object.hasOwn(ideationApi.ideation, sub)) {
+    return (ideationApi.ideation as Record<string, (args: any) => Promise<any>>)[sub](args);
+  }
+  if (domain === "foreplay" && Object.hasOwn(swipeApi.foreplay, sub)) {
+    return (swipeApi.foreplay as Record<string, (args: any) => Promise<any>>)[sub](args);
+  }
+  if (domain === "winnerSaves") return runWinnerSave(supabase, sub, args);
+  if (domain === "cockpit" && ["buildsFor", "requestBuild", "saveVariants", "launchBuild", "discardBuild"].includes(sub)) {
+    return campaignBuildAction(supabase, sub, args);
+  }
+  if (domain === "cockpit" && sub === "setClientLanguage") {
+    const { data, error } = await supabase.rpc("cockpit_media_preferences", { p_client: args.clientName, p_language: args.language });
+    if (error) throw error;
+    if (data?.ok !== true) throw new Error("The language preference was not saved.");
+    return null;
+  }
+  if (domain === "creativeRequests" && sub === "list") return listCreativeRequests(supabase, args);
+  if (domain === "creativeRequests" && sub === "review") return reviewCreativeRequest(supabase, args);
+  if (domain === "creativeRequests" && ["request", "linkLaunch", "retryFeedback"].includes(sub)) {
+    return creativeProviderAction(supabase, sub as "request" | "linkLaunch" | "retryFeedback", args, true);
+  }
+  if (domain === "ceo" && ["settings", "feedback", "profiles", "teamStatus", "bankImport", "bankPdf", "payers", "ltv"].includes(sub)) {
+    return ceoAction(supabase, `${sub}.${rest.join(".")}`, args);
+  }
 
   // 2. Control (status toggles)
   if (domain === "control" && sub === "setStatus") {
-    const { campaignName, status } = args;
-    if (campaignName && status) {
-      await supabase
-        .from("cockpit_campaigns")
-        .update({ status })
-        .ilike("campaign_name", campaignName);
-    }
-    return { ok: true };
+    // Updating a cached campaign is not a confirmed change in Meta.
+    return unavailable();
   }
 
   // 3. Board
   if (domain === "board") {
     if (sub === "adStatusOptions") {
-      return [
-        "Active",
-        "Paused",
-        "Testing",
-        "Scaling",
-        "Dead Campaign",
-        "Lost Client",
-        "Review",
-      ];
+      return unavailable();
     }
     if (sub === "advertisingCityOptions") {
-      return ["Kuwait", "Riyadh", "Dubai", "Jeddah", "Doha", "Abu Dhabi"];
+      return unavailable();
     }
     if (sub === "setAdStatus") {
-      await supabase
-        .from("cockpit_campaigns")
-        .update({ status: args.status })
-        .ilike("campaign_name", args.campaignName);
-      return { ok: true };
+      return unavailable();
     }
-    return { ok: true };
+    return unavailable();
   }
 
   // 4. Cockpit queries & mutations
   if (domain === "cockpit") {
     if (sub === "onboardings") {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("cockpit_client_profiles")
         .select("*")
         .eq("stage", "onboarding");
+      if (error) throw error;
       return (data || []).map(p => ({
         id: String(p.id),
         clientName: p.client_name,
@@ -182,18 +213,19 @@ async function handleApiCall(endpoint: string, args: any = {}): Promise<any> {
       }));
     }
     if (sub === "winners") {
-      const { data } = await supabase.from("winner_ads").select("*").limit(100);
+      const { data, error } = await supabase.from("winner_ads").select("*").limit(100);
+      if (error) throw error;
       return data || [];
     }
-    return { ok: true };
+    return unavailable();
   }
 
   // 5. Personal calendars
   if (domain === "personalCalendars") {
     if (sub === "mine") {
-      return { email: "media-buyer@maharamedia.com", configured: true };
+      return unavailable();
     }
-    return { ok: true };
+    return unavailable();
   }
 
   // 6. CEO Features
@@ -247,22 +279,25 @@ async function handleApiCall(endpoint: string, args: any = {}): Promise<any> {
     }
 
     if (sub === "queries" && rest[0] === "callCenterReport") {
-      return { daily: [], total: 0 };
+      const { from, to } = callCenterRange(args.from, args.to);
+      const { data, error } = await supabase.rpc("cockpit_ceo_call_center_report", { p_from: from, p_to: to });
+      if (error) throw error;
+      return parseCallCenterReport(data, from, to);
     }
     if (sub === "queries" && rest[0] === "refreshNow") {
-      return { ok: true };
+      return ceoAction(supabase, "queries.refreshNow", args);
     }
     if (sub === "frequency" && rest[0] === "forRange") {
-      return { freq: 1.0 };
+      return unavailable();
     }
     if (sub === "windows") {
-      return { rows: [], spend: 0, leads: 0 };
+      return unavailable();
     }
-    return { ok: true };
+    return unavailable();
   }
 
   // Default fallback
-  return { ok: true };
+  return unavailable();
 }
 
 const apiReferences = new Map<string, any>();
@@ -271,6 +306,8 @@ function createApiProxy(path: string[] = []): any {
   if (apiReferences.has(key)) return apiReferences.get(key);
   const reference = new Proxy(() => {}, {
     get(_target, prop: string) {
+      if (prop === "__endpoint") return key;
+      if (prop === "toJSON") return () => key;
       if (prop === "then" || typeof prop !== "string") return undefined;
       return createApiProxy([...path, prop]);
     },

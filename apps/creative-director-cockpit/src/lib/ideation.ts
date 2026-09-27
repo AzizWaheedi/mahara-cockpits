@@ -223,8 +223,9 @@ async function one(key: string, select = "*"): Promise<Row | null> {
 }
 
 async function patch(key: string, body: Row): Promise<void> {
-  const { error } = await supabase.from(TABLE).update(body).eq("key", key);
+  const { data, error } = await supabase.from(TABLE).update(body).eq("key", key).select("key").maybeSingle();
   boom(error);
+  if (!data) throw new Error("That idea could not be updated. Refresh the board and try again.");
 }
 
 // ---------------------------------------------------------------------------
@@ -322,7 +323,8 @@ async function counts(
       if (tab === "trends") query = query.not("trend_id", "is", null);
       const { count, error } = await query;
       boom(error);
-      return [tab, count ?? 0] as const;
+      if (count === null) throw new Error("The board counts are unavailable. Try again.");
+      return [tab, count] as const;
     }),
   );
   return Object.fromEntries(pairs);
@@ -418,7 +420,7 @@ async function dismiss({ key }: { key: string }) {
 /** Back from dismissed: a capture returns to saved, a scan find to proposed, a paste is fetched again. */
 async function restore({ key }: { key: string }) {
   const row = await one(key, "key,origin,captured_at,saved_at");
-  if (!row) return null;
+  if (!row) throw new Error("That idea is gone.");
   const at = now();
   await patch(key, {
     status: row.captured_at
@@ -522,11 +524,12 @@ async function watchlistAdd(args: {
 }
 
 async function watchlistRemove({ key }: { key: string }) {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("ideation_watchlist")
     .update({ active: false, updated_at: now() })
-    .eq("key", key);
+    .eq("key", key).select("key").maybeSingle();
   boom(error);
+  if (!data) throw new Error("That watchlist entry could not be updated. Refresh and try again.");
   return null;
 }
 
@@ -612,96 +615,39 @@ async function requestsList({ limit }: { limit?: number } = {}) {
 }
 
 async function saveFromWinner({ adId, note }: { adId: string; note?: string }) {
-  const { data: winner, error: wErr } = await supabase
-    .from("winner_ads")
-    .select("*")
-    .eq("ad_id", adId)
-    .maybeSingle();
-  boom(wErr);
-  if (!winner) throw new Error("That ad is not in the scripting database any more.");
-
-  const { email, name } = await who();
-  const key = `meta_ads:${adId}`;
-  const now = new Date().toISOString();
-  const clientName = winner.client || "";
-
-  const { data: existing } = await supabase
-    .from("ideation_posts")
-    .select("key, status, saved_at, saved_by, saved_by_name, note, saved_note, tags")
-    .eq("key", key)
-    .maybeSingle();
-
-  const body = {
-    key,
-    platform: "meta_ads",
-    post_id: adId,
-    url: winner.watch_url || `https://www.facebook.com/ads/library/?id=${adId}`,
-    origin: "library",
-    status: existing?.status === "dismissed" ? "saved" : (existing?.status ?? "saved"),
-    at: now,
-    updated_at: now,
-    author_handle: clientName.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
-    author_name: clientName,
-    advertiser: clientName,
-    client: clientName,
-    caption: winner.headline || winner.body || "",
-    transcript: winner.transcript || "",
-    hook: winner.hook ? { text: winner.hook, type: "" } : null,
-    voice: winner.voice || null,
-    language: winner.service_line || null,
-    cta: winner.cta || null,
-    ad_format: winner.format || null,
-    thumb_url: winner.thumb_url || null,
-    industry: "ours",
-    tags: [
-      ...new Set([
-        ...(existing?.tags ?? []),
-        "ours",
-        "winner",
-        clientName ? `client:${clientName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}` : "",
-        winner.service_line ? `service:${winner.service_line}` : "",
-      ].filter(Boolean)),
-    ],
-    spend: winner.spend ? Number(winner.spend) : null,
-    leads: winner.leads ? Number(winner.leads) : null,
-    cpl: winner.cpl ? Number(winner.cpl) : null,
-    why_it_works: note || "",
-    saved_by: existing?.saved_by ?? email,
-    saved_by_name: existing?.saved_by_name ?? name,
-    saved_at: existing?.saved_at ?? now,
-    saved_note: note ?? existing?.saved_note ?? null,
-    note: note ?? existing?.note ?? null,
-  };
-
-  const { error: insErr } = await supabase
-    .from("ideation_posts")
-    .upsert(body, { onConflict: "key" });
-  boom(insErr);
-  return { key, status: body.status };
+  const {data,error}=await supabase.rpc("cockpit_ideation_copy",{p_source:"winner",p_id:adId,p_note:note??null});
+  boom(error); if(!data?.key) throw new Error("The ad was not saved to the board."); return data;
 }
 
 /**
  * The same shape the page imports from Convex in the other two cockpits, so
  * the page file itself does not have to know which one it is running in.
  */
+export async function requireIdeationAccess():Promise<void>{
+  const {data,error}=await supabase.rpc("cockpit_ideation_allowed");
+  boom(error);
+  if(data!==true) throw new Error("Your account does not have access to this board. Ask Aziz to check your role.");
+}
+const checked=<F extends (...args:any[])=>Promise<any>>(fn:F):F=>(async(...args:Parameters<F>)=>{await requireIdeationAccess();return fn(...args);}) as F;
+
 export const api = {
   ideation: {
-    list,
-    detail,
-    counts,
-    paste,
-    keep,
-    dismiss,
-    restore,
-    retry,
-    setNote,
-    watchlistList,
-    watchlistAdd,
-    watchlistRemove,
-    requestScrape,
-    requestsList,
-    saveFromWinner,
-    saveFromClientAd,
+    list: checked(list),
+    detail: checked(detail),
+    counts: checked(counts),
+    paste: checked(paste),
+    keep: checked(keep),
+    dismiss: checked(dismiss),
+    restore: checked(restore),
+    retry: checked(retry),
+    setNote: checked(setNote),
+    watchlistList: checked(watchlistList),
+    watchlistAdd: checked(watchlistAdd),
+    watchlistRemove: checked(watchlistRemove),
+    requestScrape: checked(requestScrape),
+    requestsList: checked(requestsList),
+    saveFromWinner: checked(saveFromWinner),
+    saveFromClientAd: checked(saveFromClientAd),
   },
 };
 
@@ -716,22 +662,8 @@ export async function saveFromClientAd(props: {
   cpl?: number;
   live?: boolean;
 }) {
-  const { email, name } = await who();
-  const key = `meta_ads:${props.metaAdId}`;
-  const now = new Date().toISOString();
-  const { error } = await supabase.from("ideation_posts").upsert({
-    key,
-    platform: "meta",
-    post_id: props.metaAdId,
-    status: "saved",
-    caption: props.name || props.campaignName || "",
-    thumb_url: props.thumbUrl,
-    industry: props.client,
-    saved_by: email,
-    saved_by_name: name,
-    saved_at: now,
-  });
-  if (error) boom(error);
+  const {data,error}=await supabase.rpc("cockpit_ideation_copy",{p_source:"client_ad",p_id:props.metaAdId,p_note:null});
+  boom(error); if(!data?.key) throw new Error("The ad was not saved to the board."); return data;
 }
 
 /**

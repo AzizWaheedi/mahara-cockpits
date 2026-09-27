@@ -223,8 +223,9 @@ async function one(key: string, select = "*"): Promise<Row | null> {
 }
 
 async function patch(key: string, body: Row): Promise<void> {
-  const { error } = await supabase.from(TABLE).update(body).eq("key", key);
+  const { data, error } = await supabase.from(TABLE).update(body).eq("key", key).select("key").maybeSingle();
   boom(error);
+  if (!data) throw new Error("That idea could not be updated. Refresh the board and try again.");
 }
 
 // ---------------------------------------------------------------------------
@@ -322,7 +323,8 @@ async function counts(
       if (tab === "trends") query = query.not("trend_id", "is", null);
       const { count, error } = await query;
       boom(error);
-      return [tab, count ?? 0] as const;
+      if (count === null) throw new Error("The board counts are unavailable. Try again.");
+      return [tab, count] as const;
     }),
   );
   return Object.fromEntries(pairs);
@@ -418,7 +420,7 @@ async function dismiss({ key }: { key: string }) {
 /** Back from dismissed: a capture returns to saved, a scan find to proposed, a paste is fetched again. */
 async function restore({ key }: { key: string }) {
   const row = await one(key, "key,origin,captured_at,saved_at");
-  if (!row) return null;
+  if (!row) throw new Error("That idea is gone.");
   const at = now();
   await patch(key, {
     status: row.captured_at
@@ -522,11 +524,12 @@ async function watchlistAdd(args: {
 }
 
 async function watchlistRemove({ key }: { key: string }) {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("ideation_watchlist")
     .update({ active: false, updated_at: now() })
-    .eq("key", key);
+    .eq("key", key).select("key").maybeSingle();
   boom(error);
+  if (!data) throw new Error("That watchlist entry could not be updated. Refresh and try again.");
   return null;
 }
 
@@ -615,22 +618,29 @@ async function requestsList({ limit }: { limit?: number } = {}) {
  * The same shape the page imports from Convex in the other two cockpits, so
  * the page file itself does not have to know which one it is running in.
  */
+export async function requireIdeationAccess():Promise<void>{
+  const {data,error}=await supabase.rpc("cockpit_ideation_allowed");
+  boom(error);
+  if(data!==true) throw new Error("Your account does not have access to this board. Ask Aziz to check your role.");
+}
+const checked=<F extends (...args:any[])=>Promise<any>>(fn:F):F=>(async(...args:Parameters<F>)=>{await requireIdeationAccess();return fn(...args);}) as F;
+
 export const api = {
   ideation: {
-    list,
-    detail,
-    counts,
-    paste,
-    keep,
-    dismiss,
-    restore,
-    retry,
-    setNote,
-    watchlistList,
-    watchlistAdd,
-    watchlistRemove,
-    requestScrape,
-    requestsList,
+    list: checked(list),
+    detail: checked(detail),
+    counts: checked(counts),
+    paste: checked(paste),
+    keep: checked(keep),
+    dismiss: checked(dismiss),
+    restore: checked(restore),
+    retry: checked(retry),
+    setNote: checked(setNote),
+    watchlistList: checked(watchlistList),
+    watchlistAdd: checked(watchlistAdd),
+    watchlistRemove: checked(watchlistRemove),
+    requestScrape: checked(requestScrape),
+    requestsList: checked(requestsList),
   },
 };
 

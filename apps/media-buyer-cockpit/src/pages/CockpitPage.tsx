@@ -579,8 +579,9 @@ function AdStatusPicker({
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (!hasCard) return;
-    if (!statusOptionsCache) statusOptionsCache = loadOptions({});
-    statusOptionsCache.then(setOptions).catch(() => setOptions([]));
+    const request: Promise<string[]> = statusOptionsCache ?? Promise.resolve(loadOptions({}));
+    statusOptionsCache = request;
+    request.then(setOptions).catch(() => { statusOptionsCache = null; setOptions([]); });
   }, [hasCard, loadOptions]);
   if (!hasCard) return null;
   const list = options.length ? options : status ? [status] : [];
@@ -903,10 +904,10 @@ function Cockpit({ view }: { view: View }) {
   const snap = sb.snap;
   const toggleCheck = sb.toggleCheck as any;
   const decide = sb.decide as any;
-  const run = async (_args: any) => ({ ok: true, did: "Applied." });
+  const run = useAction(api.execute.runAction);
   const addPlanItems = sb.addPlanItems as any;
-  const askForDetail = async (_args?: any) => {};
-  const setClientLanguage = async (_args?: any) => {};
+  const askForDetail = useAction(api.cockpit.askForDetail);
+  const setClientLanguage = useAction(api.cockpit.setClientLanguage);
   const removeDecision = sb.removeDecision as any;
   const saveEod = sb.saveEod as any;
   const sendFeedback = sb.sendFeedback as any;

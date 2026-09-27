@@ -4,7 +4,7 @@ let user: any;
 let member: any;
 let authError: Error | null = null;
 const query: any = { select: () => query, eq: () => query, maybeSingle: async () => ({data:member,error:null}) };
-mock.module("../src/lib/supabase", () => ({supabase:{
+mock.module("../src/lib/supabase", () => ({IDEA_STILLS_BUCKET:"fixture-stills",supabase:{
   auth:{getUser:async () => ({data:{user},error:authError})},
   from:() => query,
 }}));
@@ -16,6 +16,17 @@ test("action and query references stay stable without thenable behavior", async 
   expect(api.chat.thread).not.toBe(api.chat.ask);
   expect(api.then).toBeUndefined();
   expect(await Promise.resolve(api)).toBe(api);
+  expect(JSON.stringify({query:api.stats.range,args:{start:"2026-09-01"}})).toBe('{"query":"stats.range","args":{"start":"2026-09-01"}}');
+});
+
+test("unmigrated operations never fabricate success, identity, or financial totals", async () => {
+  for (const operation of [
+    api.personalCalendars.mine,
+    api.ceo.frequency.forRange, api.ceo.windows.list, api.unknown.write,
+  ]) {
+    await expect(operation({ campaignName: "Fixture", status: "Paused" }))
+      .rejects.toThrow("No action was performed");
+  }
 });
 
 test("roles.me uses verified active membership, never invented role or email defaults", async () => {

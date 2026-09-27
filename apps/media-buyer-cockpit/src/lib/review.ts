@@ -35,7 +35,7 @@ export async function createReview(
       `"${bad.url.slice(0, 50)}" is not a link. Paste the address of the video file itself.`,
     );
 
-  const { data, error } = await sb.rpc("review_create", {
+  const { data, error } = await sb.rpc("cockpit_review_create", {
     p_title: args.title.trim() || "Videos for review",
     p_note: (args.note ?? "").trim() || null,
     p_client: (args.client ?? "").trim() || null,
@@ -66,7 +66,7 @@ export async function listSentReviews(
   _args?: any,
 ) {
   const sb = client ?? supabase;
-  const { data, error } = await sb.rpc("review_list", { p_limit: 25 });
+  const { data, error } = await sb.rpc("cockpit_review_list", { p_limit: 25 });
   if (error) throw new Error(error.message);
   const rows = (data as Array<Record<string, unknown>>) ?? [];
   return rows.map(r => ({
@@ -81,7 +81,7 @@ export async function listReviewClients(
   _args?: any,
 ) {
   const sb = client ?? supabase;
-  const { data, error } = await sb.rpc("review_clients", {});
+  const { data, error } = await sb.rpc("cockpit_review_clients", {});
   if (error) throw new Error(error.message);
   return (data as Array<{ task_id: string; name: string }>) ?? [];
 }
@@ -102,7 +102,7 @@ export async function importReviewFolder(
   const folder = args.folder.trim();
   if (!/drive\.google\.com|^[A-Za-z0-9_-]{20,}$/.test(folder))
     throw new Error("Paste the Google Drive folder link.");
-  const { data, error } = await sb.rpc("review_import_folder", {
+  const { data, error } = await sb.rpc("cockpit_review_import_folder", {
     p_folder: folder,
     p_title: (args.title ?? "").trim() || "Videos for review",
     p_note: (args.note ?? "").trim() || null,
@@ -121,7 +121,7 @@ export async function checkReviewImportStatus(
 ) {
   const sb = client ?? supabase;
   if (!args) return null;
-  const { data, error } = await sb.rpc("review_import_status", {
+  const { data, error } = await sb.rpc("cockpit_review_import_status", {
     p_id: args.id,
   });
   if (error) throw new Error(error.message);

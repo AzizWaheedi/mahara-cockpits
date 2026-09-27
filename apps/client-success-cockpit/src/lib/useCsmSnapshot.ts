@@ -1,16 +1,16 @@
+import {executeCsmAction} from "./csmActionClient";
+import {readCsmSources,buildCsmReadModel} from "./csmReadModel";
 import {readPersonalEod,savePersonalEod} from "./personalEod";
 import {useRef} from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useCallback, useEffect, useState } from "react";
 import {
   type CsmMoneyPatch,
-  csmPreferences,
   dismissCsmLooseEnds,
   readCsmState,
   saveCsmHotRow,
   saveCsmLanguage,
   saveCsmMoneyGoals,
-  visibleLooseEnds,
 } from "./csmStateClient";
 
 // biome-ignore lint/suspicious/noExplicitAny: generic client success rows
@@ -207,6 +207,10 @@ export function normalizeDecisions(decisionRows: Any[] | null | undefined) {
     return {
       _id: String(d.id),
       id: d.id,
+      source_id: d.source_id,
+      loggedAt: d.logged_at,
+      clickupTaskId: d.clickup_task_id,
+      clickupTaskUrl: d.clickup_task_url,
       subject: d.subject,
       action: d.action,
       evidence: d.evidence,
@@ -379,10 +383,9 @@ export function useCsmSnapshot(
     try {
       setLoading(true);
 
-      const staffState = await readCsmState(client);
+      const [staffState,source] = await Promise.all([readCsmState(client),readCsmSources(client)]);
       const day = staffState.day;
-      const month = staffState.month;
-      const profileRows = staffState.profiles;
+
 
       const [checkRows, decisionsResult, planResult, eodResult] =
         await Promise.all([
@@ -407,32 +410,6 @@ export function useCsmSnapshot(
       const eodRow = eodContext.report;
       reportDay.current = eodContext.day;
 
-      // Normalize client profiles
-      const clients = (profileRows ?? []).map(p => {
-        const raw = (p.overview as Any) ?? {};
-        const name = p.client_name || raw.name || "";
-        return {
-          ...raw,
-          _id: p.source_id || String(p.id),
-          id: p.id,
-          name,
-          stage: p.stage || raw.stage || "Active",
-          level: p.health || raw.level || "neutral",
-          service: p.service || raw.service,
-          kpi: p.kpi ?? raw.kpi ?? {},
-          notes: p.notes ?? raw.notes ?? [],
-          loose: visibleLooseEnds(staffState, name, raw.loose),
-          hot: Array.isArray(raw.hot) ? raw.hot : [],
-          hotBlocked: false,
-          rank: Number(raw.rank ?? 50),
-          bucket: raw.bucket || "management",
-          paying: Boolean(raw.paying ?? true),
-          paymentDue: raw.paymentDue != null ? Number(raw.paymentDue) : null,
-          newSignup: Boolean(raw.newSignup),
-          pauseRequired: Boolean(raw.pauseRequired),
-        };
-      });
-
       // Normalize checks
       const checks = normalizeChecks(checkRows);
 
@@ -448,47 +425,12 @@ export function useCsmSnapshot(
         clientName: pl.client_name,
         listName: pl.list_name,
         dueDate: pl.due_date,
+        confirmed: pl.confirmed,
+        clickupTaskId: pl.provider_task_id,
+        clickupTaskUrl: pl.provider_task_url,
       }));
 
-      const builtSnap: Any = {
-        day,
-        month,
-        appointments: [],
-        todaysCalls: [],
-        prefs: csmPreferences(staffState),
-        hotRows: staffState.hotRows,
-        kpis: [],
-        churn: null,
-        money: staffState.money,
-        clients,
-        tasks: [],
-        checks,
-        decisions,
-        plan,
-        eod: eodRow ?? null,
-        eodOwner: eodContext.owner,
-        eodDay: eodContext.day,
-        lastSyncAt: null,
-        syncHealth: {
-          ok: null,
-          at: null,
-          profiles: clients.length,
-          errors: ["Client refresh status is not yet connected."],
-        },
-        totals: {
-          clients: clients.length,
-          dueToday: clients.filter(c => c.rank < 40 && c.level !== "green")
-            .length,
-          newSignups: clients.filter(c => c.newSignup).length,
-          pauses: clients.filter(c => c.pauseRequired).length,
-          onboarding: clients.filter(c => c.bucket === "onboarding").length,
-          managed: clients.filter(c => c.bucket === "management").length,
-          pastDue: clients.filter(c => (c.paymentDue ?? -99) >= 1).length,
-          hot: clients.filter(c => (c.hot ?? []).length > 0).length,
-          loose: clients.reduce((s, c) => s + (c.loose ?? []).length, 0),
-          healthy: clients.filter(c => c.level === "green").length,
-        },
-      };
+      const builtSnap = buildCsmReadModel(source,staffState,{checks,decisions,plan,eod:eodRow??null,eodOwner:eodContext.owner,eodDay:eodContext.day});
 
       setSnap(builtSnap);
       setError(null);
@@ -562,22 +504,7 @@ export function useCsmSnapshot(
         dueDate?: string;
       }>;
     }) => {
-      if (!client) {
-        throw new Error("Supabase client is required");
-      }
-      const day = kuwaitToday();
-      for (const item of args.items) {
-        const { error: rpcErr } = await client.rpc("cockpit_add_plan_item", {
-          p_role: "csm",
-          p_day: day,
-          p_text: item.text,
-          p_reason: item.reason ?? null,
-          p_client_name: item.clientName ?? null,
-          p_list_name: item.listName ?? null,
-          p_due_date: item.dueDate ?? null,
-        });
-        if (rpcErr) throw rpcErr;
-      }
+      await executeCsmAction(client,'plan',args);
       await fetchSnapshot();
     },
     [client, fetchSnapshot],

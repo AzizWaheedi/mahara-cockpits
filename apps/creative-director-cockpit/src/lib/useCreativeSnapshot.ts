@@ -1,3 +1,5 @@
+import {buildSnapshot,snapshotContext} from "./creativeSourceModels";
+import {logClientTouch} from "./clients";
 import {readPersonalEod,savePersonalEod} from "./personalEod";
 import {useRef} from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -129,18 +131,9 @@ export function useCreativeSnapshot(
       const eodRow = eodContext.report;
       reportDay.current = eodContext.day;
 
-      // 5. Fetch clients for touchpoints
-      const { data: clientRows } = await client
-        .from("cockpit_client_profiles")
-        .select("*")
-        .order("client_name", { ascending: true });
-
-      // 6. Fetch winning ads
-      const { data: adRows } = await client
-        .from("cockpit_ads")
-        .select("*")
-        .order("spend", { ascending: false })
-        .limit(60);
+      const {data:source,error:sourceError}=await client.rpc("cockpit_creative_source_read");
+      if(sourceError) throw sourceError;
+      if(!source?.tables) throw new Error("Creative source data is unavailable.");
 
       const checksMap = new Map((checkRows ?? []).map(c => [c.check_key, c]));
       const checks = DEFAULT_CREATIVE_CHECKS.map((def, idx) => {
@@ -177,57 +170,13 @@ export function useCreativeSnapshot(
         dueDate: pl.due_date,
       }));
 
-      const clients = (clientRows ?? []).map(c => ({
-        _id: String(c.id),
-        id: c.id,
-        name: c.client_name,
-        stage: c.stage,
-        health: c.health,
-      }));
-
-      const winners = (adRows ?? []).map(a => ({
-        _id: String(a.id),
-        id: a.id,
-        name: a.ad_name,
-        campaignName: a.campaign_name,
-        spend: Number(a.spend || 0),
-        leads: Number(a.leads || 0),
-        stillUrl: a.still_url,
-        thumbnailUrl: a.thumbnail_url,
-      }));
-
-      const builtSnap: Any = {
-        day,
-        checks,
-        decisions,
-        plan,
-        clients,
-        winners,
-        brandDNA: [],
-        touchpoints: [],
-        staleScripts: 0,
-        overduePosts: [],
-        dna: [],
-        scripts: [],
-        pipeline: [],
-        fatigued: [],
-        calendar: [],
-        eod: eodRow ?? null,
-        eodOwner: eodContext.owner,
-        eodDay: eodContext.day,
-        counts: {
-          brandDNA: 0,
-          scripts: 0,
-          videos: 0,
-          overdueVideos: 0,
-          checksDone: checks.filter(c => c.done).length,
-          checksTotal: checks.length,
-          dna: 0,
-          pipeline: 0,
-          winners: winners.length,
-          touchpoints: clients.length,
-        },
-      };
+      const model = await buildSnapshot(snapshotContext({...source.tables,
+        checks:(checkRows??[]).map(c=>({...c,key:c.check_key,doneAt:c.done_at?Date.parse(c.done_at):null})),
+        planItems:(planRows??[]).map(p=>({...p,_id:String(p.id),client:p.client_name})),
+        eodReports:eodRow?[{...eodRow,day}]:[],
+      }),allowedClients?.length?new Set(allowedClients.map(n=>n.trim().toLowerCase())):null);
+      const builtSnap:Any={...model,day,checks,decisions,plan,eod:eodRow??null,eodOwner:eodContext.owner,eodDay:eodContext.day,source:source.source,
+        counts:{...model.counts,checksDone:checks.filter(c=>c.done).length,checksTotal:checks.length}};
 
       setSnap(builtSnap);
       setError(null);
@@ -248,7 +197,7 @@ export function useCreativeSnapshot(
       if (!client) return;
       const day = kuwaitToday();
       // Ensure check row exists in cockpit_daily_checks
-      const { data: existing } = await client
+      const { data: existing, error: existingError } = await client
         .from("cockpit_daily_checks")
         .select("id")
         .eq("role", "creative")
@@ -256,15 +205,17 @@ export function useCreativeSnapshot(
         .eq("check_key", args.key)
         .maybeSingle();
 
+      if(existingError) throw existingError;
       if (existing) {
-        await client.rpc("cockpit_set_daily_check", {
+        const {error:writeError}=await client.rpc("cockpit_set_daily_check", {
           p_id: existing.id,
           p_expected_done: !args.done,
           p_done: args.done,
         });
+        if(writeError) throw writeError;
       } else {
         const def = DEFAULT_CREATIVE_CHECKS.find(c => c.key === args.key);
-        await client
+        const {error:writeError}=await client
           .from("cockpit_daily_checks")
           .insert({
             role: "creative",
@@ -277,6 +228,7 @@ export function useCreativeSnapshot(
             done_at: args.done ? new Date().toISOString() : null,
             source_system: "supabase",
           });
+        if(writeError) throw writeError;
       }
       await fetchSnapshot();
     },
@@ -286,21 +238,7 @@ export function useCreativeSnapshot(
   const logTouch = useCallback(
     async (args: { client?: string; clientName?: string; action?: string; note?: string; kind?: string }) => {
       if (!client) return;
-      const day = kuwaitToday();
-      const subject = args.clientName || args.client || "";
-      const action = args.action || "touchpoint";
-      const { error: rpcErr } = await client.rpc("cockpit_log_decision", {
-        p_role: "creative",
-        p_day: day,
-        p_subject: subject,
-        p_action: action,
-        p_evidence: args.note ?? null,
-        p_kind: args.kind ?? "touchpoint",
-        p_rerouted_to: null,
-        p_amount: null,
-        p_metadata: {},
-      });
-      if (rpcErr) throw rpcErr;
+      await logClientTouch(client,{client:args.client??args.clientName,kind:args.kind??args.action,note:args.note});
       await fetchSnapshot();
     },
     [client, fetchSnapshot],

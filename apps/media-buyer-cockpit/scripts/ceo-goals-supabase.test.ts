@@ -386,9 +386,13 @@ test("measured actuals, including zero, come from stored section facts and carry
 });
 
 test("actual API dispatcher calls the real goals operations and rejects unknown routes", async () => {
-  mock.module("../src/lib/supabase", () => ({ supabase: client }));
+  mock.module("../src/lib/supabase", () => ({
+    supabase: client,
+    IDEA_STILLS_BUCKET: "ideation-stills",
+    STILLS_BUCKET: "editor-stills",
+    AD_VIDEOS_BUCKET: "ad-videos",
+  }));
   const { api } = await import("../src/lib/cockpitApi");
-  await actor(db, founder);
   expect((await api.ceo.goals.board({ planId })).plan.id).toBe(planId);
   expect(
     await api.ceo.goals.savePlan({

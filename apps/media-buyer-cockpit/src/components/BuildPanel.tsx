@@ -202,7 +202,9 @@ export function BuildPanel({
                   setLinks("");
                   setTargeting("");
                   setOpen(false);
-                  toast.success("Building it. Copy and settings in a moment.");
+                  toast.success("Draft ready. Review the copy and settings.");
+                } catch (error) {
+                  toast.error(error instanceof Error ? error.message : "The draft could not be built.");
                 } finally {
                   setBusy(false);
                 }
@@ -231,7 +233,7 @@ export function BuildPanel({
           {latest.status === "launched" && (
             <p className="text-sm txt-good">
               Built and <span className="font-semibold">paused</span> on Meta.{" "}
-              {latest.note} Logged on the ClickUp task.
+              {latest.note}
             </p>
           )}
           {(latest.status === "ready" || latest.status === "launching") && (
@@ -243,7 +245,7 @@ export function BuildPanel({
               }}
               onLaunch={async () => {
                 await launchBuild({ id: latest._id });
-                toast.success("Going up on Meta, paused");
+                toast.success("Created on Meta, paused.");
               }}
               onDiscard={async () => {
                 await discardBuild({ id: latest._id });
