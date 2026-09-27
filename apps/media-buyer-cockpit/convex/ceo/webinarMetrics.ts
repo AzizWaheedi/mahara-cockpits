@@ -237,7 +237,7 @@ export const WEBINAR_DEFINITIONS: MetricDefinition[] = entries.map(
     source,
     definition,
     leavesOut:
-      "Call-funnel traffic and pre-registration activity. Repeat registrants are attributed to the latest round; historical registrations are not reconstructed. Missing evidence remains null.",
+      "Call-funnel traffic, pre-registration activity and voided deals. Repeat registrants are attributed to the latest round; historical registrations are not reconstructed. Missing evidence remains null.",
   }),
 );
 

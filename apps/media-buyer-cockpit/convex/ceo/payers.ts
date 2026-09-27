@@ -4,6 +4,7 @@ import { internalQuery } from "../_generated/server";
 import { authenticatedAction } from "../functions";
 import { isCeoEmail } from "./gate";
 import { B2B, num, sql } from "./sb";
+import { voidedId } from "./voids";
 
 declare const process: { env: Record<string, string | undefined> };
 
@@ -134,6 +135,7 @@ export const list = authenticatedAction({
       { userId: ctx.userId },
     );
 
+    // A payment tied to a voided deal reaches no deal either (./voids.ts).
     const rows = await sql(
       B2B,
       `select coalesce(nullif(btrim(billing_name), ''), user_email) as payer,
@@ -142,7 +144,8 @@ export const list = authenticatedAction({
               to_char(min(paid_on), 'YYYY-MM') as first_month,
               to_char(max(paid_on), 'YYYY-MM') as last_month
        from public.whop_payments
-       where status = 'paid' and deal_response_id is null
+       where status = 'paid'
+         and (deal_response_id is null or ${voidedId("deal_response_id")})
          and coalesce(nullif(btrim(billing_name), ''), user_email) is not null
        group by 1
        order by 3 desc`,

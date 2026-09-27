@@ -18,6 +18,7 @@ import {
 } from "../teamRules";
 import { addDays, KUWAIT_OFFSET_MS, kuwaitDay } from "../time";
 import type { Adapter, DailyPoint, SourceStamp } from "../types";
+import { NOT_VOIDED } from "../voids";
 
 type Any = any;
 
@@ -402,7 +403,8 @@ export const team: Adapter = {
         });
 
     // Secondary: deals signed on the New Client form, over the feed's week.
-    // Voided deals are already deleted from closed_deals.
+    // B2B keeps a voided deal in closed_deals and marks it in record_voids,
+    // so voided deals are left out here (../voids.ts).
     let deals: Any[] = [];
     let dealsOk = true;
     try {
@@ -413,6 +415,7 @@ export const team: Adapter = {
           d.contracted_revenue as contracted
         from closed_deals d
         where d.submitted_at >= now() - interval '7 days'
+          and ${NOT_VOIDED("d")}
         order by d.submitted_at desc
         limit 20`,
       );

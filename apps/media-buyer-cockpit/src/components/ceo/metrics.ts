@@ -17,6 +17,15 @@ import type {
 } from "../../../convex/ceo/payloads";
 import { isNum, money, month as monthLabel, pct, pct1, plural } from "./format";
 
+/**
+ * B2B keeps a voided deal in its closed-deal table and marks it void, and its
+ * dashboard still counts it. Every deal figure in the cockpit leaves it out
+ * (convex/ceo/voids.ts, 2026-09-27), so every hint on a number built on
+ * signed deals says so.
+ */
+export const VOIDED_OUT =
+  "Voided deals are left out, though the B2B dashboard still counts them.";
+
 // --- Cash collected ------------------------------------------------------
 
 /**
@@ -158,8 +167,8 @@ export function contractedHeadline(p: MoneyPayload): ContractedHeadline {
       : null,
     hint:
       byHand === null
-        ? "Contracted value on the closer form. Deal values logged by hand on the Money tab were not read on the last refresh, so they are not in it."
-        : "Contracted value on the closer form plus deal values logged by hand with a payment on the Money tab. A hand-logged deal the closer form already has is left out, so no deal counts twice.",
+        ? `Contracted value on the closer form. Deal values logged by hand on the Money tab were not read on the last refresh, so they are not in it. ${VOIDED_OUT}`
+        : `Contracted value on the closer form plus deal values logged by hand with a payment on the Money tab. A hand-logged deal the closer form already has is left out, so no deal counts twice. ${VOIDED_OUT}`,
   };
 }
 
@@ -299,7 +308,7 @@ export const COST_TO_WIN = {
   /** The visible sub line. */
   sub: CAC_AD_SPEND_ONLY,
   /** The definition behind the info icon. */
-  hint: `${CAC_AD_SPEND_ONLY} Spend is lead-gen plus retargeting Meta ad spend in the window, divided by the deals signed in it. The B2B dashboard's own figure leaves retargeting out, so it reads lower.`,
+  hint: `${CAC_AD_SPEND_ONLY} Spend is lead-gen plus retargeting Meta ad spend in the window, divided by the deals signed in it. The B2B dashboard's own figure leaves retargeting out, so it reads lower. ${VOIDED_OUT}`,
   of(w: FunnelWindow): { value: number | null; naHint?: string } {
     const retargeting = w.raw.spend_retargeting;
     if (typeof retargeting !== "number" || !Number.isFinite(retargeting))
@@ -364,7 +373,7 @@ export const INTRO_SHOW_RATE = {
  */
 export const CLOSE_RATE = {
   label: "Close rate",
-  hint: "Deals signed over every demo counted as shown in the same window (the B2B dashboard's close_rate_all). A deal can be signed after the window its demo sat in, so this can pass 100%.",
+  hint: `Deals signed over every demo counted as shown in the same window (the B2B dashboard's close_rate_all). A deal can be signed after the window its demo sat in, so this can pass 100%. ${VOIDED_OUT}`,
   naHint: "No demo in this window counts as shown.",
   /** One decimal, as the dashboard prints it: 14.3%, not 14%. */
   format: pct1,
@@ -376,7 +385,7 @@ export const CLOSE_RATE = {
  */
 export const QUALIFIED_CLOSE_RATE = {
   label: "Qualified close rate",
-  hint: "Deals signed over demos qualified: demos shown minus the calls marked invalid (the B2B dashboard's close_rate). A demo with an invalid prospect was held but could never close, so this rate judges the closer on the demos that could.",
+  hint: `Deals signed over demos qualified: demos shown minus the calls marked invalid (the B2B dashboard's close_rate). A demo with an invalid prospect was held but could never close, so this rate judges the closer on the demos that could. ${VOIDED_OUT}`,
   naHint:
     "No demo in this window counts as shown once calls marked invalid are left out.",
   format: pct1,
@@ -393,14 +402,14 @@ export const CANCEL_RATE = {
 /** Front-end ROAS, the main one: front-end cash over lead-gen spend. */
 export const ROAS_CASH = {
   label: "Front-end ROAS",
-  hint: "Front-end cash over lead-gen ad spend in the same window. Front-end cash is the deposit the closer typed at signing plus the kickoff cash the CSM collects on the onboarding call; the kickoff form is not read yet, so this is the deposit alone and reads low.",
+  hint: `Front-end cash over lead-gen ad spend in the same window. Front-end cash is the deposit the closer typed at signing plus the kickoff cash the CSM collects on the onboarding call; the kickoff form is not read yet, so this is the deposit alone and reads low. ${VOIDED_OUT}`,
   naHint: "No lead-gen spend in this window.",
 } as const;
 
 /** Contracted ROAS: contracted value over lead-gen spend. */
 export const ROAS_CONTRACTED = {
   label: "Contracted ROAS",
-  hint: "Contracted value typed on the closer form over lead-gen ad spend in the same window (the B2B dashboard's roas). Signed money, not collected money.",
+  hint: `Contracted value typed on the closer form over lead-gen ad spend in the same window (the B2B dashboard's roas). Signed money, not collected money. ${VOIDED_OUT}`,
   naHint: "No lead-gen spend in this window.",
 } as const;
 
