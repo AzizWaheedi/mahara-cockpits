@@ -39,3 +39,7 @@ From here: `node --test test/*.test.mjs`.
 From `apps/media-buyer-cockpit`: `bun test scripts/webinar-intake.test.ts scripts/webinar-collection-health.test.ts scripts/webinar-ingestion.test.ts`.
 
 The normal cockpit ship helper includes these checks but does not deploy this API. Never interpret a passing synthetic suite as the live registration/join/rejoin acceptance.
+
+## GHL pipeline projection
+
+[Pipeline runbook](../../docs/WEBINAR-GHL-PIPELINE-2026-09-27.md) covers the live new board, draft-only installer, occurrence-scoped projection, native form ingestion, provider failure recovery and remaining release gates. New server variables are `WEBINAR_PIPELINE_SIGNAL_SECRET` (private inbound hint), `WEBINAR_PIPELINE_SYNC_ENABLED` (off by default), and the existing store/GHL credentials. The database mapping is also disabled. No automatic sales booking attribution or messaging is implied by installing this schema.

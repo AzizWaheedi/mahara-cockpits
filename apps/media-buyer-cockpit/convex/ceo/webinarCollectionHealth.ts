@@ -10,7 +10,7 @@ export const WEBINAR_COLLECTION_HEALTH_SQL = `select
   (select coalesce(json_agg(x), '[]'::json) from (
     select distinct on(source) source, started_at, finished_at, ok, counts,
       (select max(q.finished_at) from public.cockpit_webinar_pulls q where q.source=p.source and q.ok) as last_ok
-    from public.cockpit_webinar_pulls p where source in ('zoom','typeform','reminders')
+    from public.cockpit_webinar_pulls p where source in ('zoom','typeform','reminders','pipeline','native_forms')
     order by source,started_at desc) x) as pulls,
   (select json_build_object(
     'pending',count(*) filter(where state in ('ready','retry','running')),
@@ -18,6 +18,8 @@ export const WEBINAR_COLLECTION_HEALTH_SQL = `select
     'blocked',count(*) filter(where state='blocked'),
     'oldest',min(created_at) filter(where state in ('ready','retry','running')))
     from public.cockpit_webinar_jobs) as queue,
+  (select row_to_json(h) from public.cockpit_webinar_pipeline_health h) as pipeline,
+  (select count(*) from public.cockpit_webinar_pipeline_config where enabled) as enabled_pipelines,
   (select count(*) from public.cockpit_webinar_survey_receipts where registration_id is null) as unmatched_surveys,
   case when exists(select 1 from public.cockpit_webinar_event_versions v
     where v.revision=(select max(q.revision) from public.cockpit_webinar_event_versions q where q.event_id=v.event_id)
@@ -44,27 +46,35 @@ export function collectionHealth(
     ["zoom", "Zoom collection"],
     ["typeform", "Survey collection"],
     ["reminders", "Reminder receipts"],
+    ["pipeline", "GHL pipeline sync"],
+    ["native_forms", "GHL form ingestion"],
   ]) {
-    const row = rows.find(r => r.source === source),
+    const row = rows.find((r) => r.source === source),
       c = object(row?.counts);
     const good = time(row?.last_ok),
       started = time(row?.started_at),
       finished = time(row?.finished_at);
     const interval =
-      source === "reminders"
-        ? data.reminder_interval_minutes === 60
-          ? 60
-          : 360
-        : 60;
+      source === "pipeline" || source === "native_forms"
+        ? 5
+        : source === "reminders"
+          ? data.reminder_interval_minutes === 60
+            ? 60
+            : 360
+          : 60;
     let status: CollectionCheck["status"] = "verified",
       detail =
         "Recent successful source read. This does not prove the complete customer journey.";
-    if (!row || good === null) {
+    if (source === "pipeline" && data.enabled_pipelines === 0) {
+      status = "unavailable";
+      detail =
+        "Pipeline is prepared. Automatic stage changes are switched off.";
+    } else if (!row || good === null) {
       status = "unavailable";
       detail = "No successful source read is recorded.";
     } else if (good > now + 60000 || now - good > 2 * interval * 60000) {
       status = "needs_attention";
-      detail = `Source collection missed two ${interval === 60 ? "hourly" : "six-hourly"} windows.`;
+      detail = `Source collection missed two ${interval}-minute windows.`;
     } else if (row.ok === false || c.complete === false) {
       status = "needs_attention";
       detail = "Latest source read failed or reported incomplete coverage.";
@@ -86,6 +96,26 @@ export function collectionHealth(
     ) {
       status = "needs_attention";
       detail = "Survey pagination totals have not reconciled.";
+    }
+    const pipeline = object(data.pipeline);
+    if (
+      source === "pipeline" &&
+      data.enabled_pipelines !== 0 &&
+      ((count(pipeline.blocked) ?? 0) > 0 ||
+        (count(pipeline.uncertain) ?? 0) > 0)
+    ) {
+      status = "needs_attention";
+      detail = `${count(pipeline.blocked) ?? 0} held and ${count(pipeline.uncertain) ?? 0} uncertain pipeline updates. Review provider receipts before retrying.`;
+    }
+    if (
+      source === "pipeline" &&
+      data.enabled_pipelines !== 0 &&
+      (count(data.enabled_pipelines) === null ||
+        count(pipeline.blocked) === null ||
+        count(pipeline.uncertain) === null)
+    ) {
+      status = "unavailable";
+      detail = "Pipeline configuration or failure counts could not be read.";
     }
     checks.push({
       key: `webinar-${source}`,

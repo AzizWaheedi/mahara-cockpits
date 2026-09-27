@@ -1,0 +1,17 @@
+{
+  "location_id": "7NI8yyJtwsh2OOWA5Icr",
+  "pipeline_id": "gpytC6cU1OstqMZpRleR",
+  "name": "WEBBY | Webinar Journey",
+  "stages": {
+    "registered": "61688ad4-669f-43d2-a060-c04a3a495fcd",
+    "attended": "677180f8-e0ae-471b-89fa-cf857d40c979",
+    "survey_completed": "aea4d2fe-dfbd-47aa-a6df-1f6d8989d4d0",
+    "call_booked": "cbee132a-b9ef-43a2-94a6-519cdc7a46b7",
+    "call_attended": "c1cde351-5b57-475d-bc4f-72c5eebd5b06",
+    "client_won": "5bbae57d-17da-4977-b95c-888bac0a8a8c",
+    "webinar_missed": "a6eff23a-61b0-4d7a-bf54-60d5d8f7b5f5",
+    "call_follow_up": "285df75d-e9a1-477b-874f-88b04b3fd792"
+  },
+  "verified_at": "2026-09-27",
+  "automation_enabled": false
+}
