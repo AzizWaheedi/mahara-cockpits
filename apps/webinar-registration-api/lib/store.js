@@ -15,6 +15,7 @@ export function createStore(env = process.env, fetcher = fetch) {
     if (!response.ok) {
       let error; try { error = await response.json(); } catch {}
       if (["Intake receipt reused", "Survey receipt reused"].includes(error?.message)) throw new IntakeError("receipt_conflict", 409);
+      if (["Link unavailable", "Registration not confirmed"].includes(error?.message)) throw new IntakeError("link_unavailable", 409);
       if (error?.message === "Registration closed or configuration changed") throw new IntakeError("registration_closed", 503);
       throw new IntakeError("storage_unavailable", 503);
     }

@@ -9,6 +9,8 @@ This recovery itself does not deploy or connect Git to Vercel.
 This application is NOT part of `scripts/ship.sh media-buyer`. Do not deploy it
 just because the dashboard release is ready.
 
+Latest continuation: [personal links and confirmation](../../docs/WEBINAR-PERSONAL-LINKS-2026-09-27.md). Scope links, status UI and exact-evidence projections are built; native form delivery, the reporting consumer and real-provider acceptance remain gates.
+
 Before replacing the current API:
 
 Implementation update: [durable intake checkpoint](../../docs/WEBINAR-TRACKING-IMPLEMENTATION-2026-09-27.md). Receipt storage, the queue state machine and mandatory webhook verification are built and tested. Hosted tables are installed. API/worker dispatch, workflow handoff, link delivery, event-cohort reporting and real-provider acceptance remain open; the list below is still a release gate.

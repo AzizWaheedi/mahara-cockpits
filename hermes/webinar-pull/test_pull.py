@@ -371,6 +371,34 @@ class Reliability(unittest.TestCase):
         self.assertEqual(result["responses"], 1)
         self.assertEqual(sb.upsert.call_args.args[2], "response_id")
 
+    def test_survey_backfill_receipt_uses_reference_hash_and_never_persists_link_in_projection(self):
+        sb, provider = MagicMock(), MagicMock()
+        sb.dry = False
+        sb.req.return_value = []
+        ref = "A" * 43
+        provider.run.return_value = {"items": [{"response_id": "receipt", "submitted_at": "2026-01-01T00:00:00Z", "answers": [], "hidden": {"webinar_ref": ref}}]}
+        pull.pull_survey(sb, provider, full=True)
+        receipt = [c for c in sb.req.call_args_list if c.args[0] == "POST"][0].args[2]
+        self.assertEqual(receipt["p_ref_hash"], pull.hashlib.sha256(ref.encode()).hexdigest())
+        self.assertNotIn("webinar_ref", (sb.upsert.call_args.args[1][0]["hidden"] or {}))
+
+    def test_dry_survey_backfill_never_writes_receipts(self):
+        sb, provider = MagicMock(), MagicMock()
+        sb.dry = True
+        sb.req.return_value = []
+        provider.run.return_value = {"items": [{"response_id": "receipt", "submitted_at": "2026-01-01T00:00:00Z", "answers": []}]}
+        pull.pull_survey(sb, provider, full=True)
+        self.assertFalse(any(c.args[0] == "POST" for c in sb.req.call_args_list))
+
+    def test_receipt_failure_does_not_advance_survey_projection(self):
+        sb, provider = MagicMock(), MagicMock()
+        sb.dry = False
+        sb.req.side_effect = [[], pull.Failure("receipt unavailable")]
+        provider.run.return_value = {"items": [{"response_id": "receipt", "submitted_at": "2026-01-01T00:00:00Z", "answers": []}]}
+        with self.assertRaisesRegex(pull.Failure, "receipt unavailable"):
+            pull.pull_survey(sb, provider, full=True)
+        sb.upsert.assert_not_called()
+
     def test_failed_later_survey_page_does_not_advance_the_watermark(self):
         sb, provider = MagicMock(), MagicMock()
         sb.req.return_value = []

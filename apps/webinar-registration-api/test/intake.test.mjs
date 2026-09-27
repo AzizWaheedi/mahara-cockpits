@@ -11,7 +11,7 @@ import { rawBody } from "../lib/intake.js";
 const now=Date.now();
 const current={status:'scheduled',event_key:'test',revision:1,starts_at:new Date(now+86400000).toISOString(),duration_minutes:90,legacy_round:'test',config_sha256:'a'.repeat(64),providers:{ghl_location_id:'location',ghl_calendar_id:'calendar'}};
 const env={WEBINAR_INTAKE_ENABLED:'true',WEBINAR_PUBLIC_ORIGIN:'https://example.invalid',WEBINAR_GHL_HANDOFF_SECRET:'synthetic-secret',TYPEFORM_SECRET:'synthetic-typeform'};
-const body={request_id:crypto.randomUUID(),first_name:'Test',email:'test@example.invalid',phone:'+96500000000'};
+const body={event_key:'test',revision:1,status_token:crypto.randomBytes(32).toString('base64url'),request_id:crypto.randomUUID(),first_name:'Test',email:'test@example.invalid',phone:'+96500000000'};
 function request(value,headers={}) {
   const req=Readable.from([typeof value==='string'?value:JSON.stringify(value)]);
   req.method='POST';req.headers={'content-type':'application/json',origin:'https://example.invalid',...headers};return req;
@@ -30,7 +30,7 @@ test('database failure returns retryable error without false confirmation or pri
   const res=response();await handle(request(body),res);assert.equal(res.code,503);assert.equal(res.headers['Retry-After'],'30');assert.equal(JSON.stringify(res.body).includes('email@'),false);
 });
 test('closed schedule, untrusted IDs, foreign origin and missing receipt do not reach storage',async()=>{
-  for(const [input,headers,overrides,status] of [[{...body,contact_id:'victim'},{},{},400],[body,{origin:'https://evil.invalid'},{},403],[{...body,request_id:undefined},{},{},400],[body,{}, {current:{...current,status:'draft'}},503]]) {
+  for(const [input,headers,overrides,status] of [[{...body,contact_id:'victim'},{},{},400],[body,{origin:'https://evil.invalid'},{},403],[{...body,request_id:undefined},{},{},400],[body,{}, {current:{...current,status:'draft'}},503],[{...body,revision:2},{},{},409]]) {
     const {handle,calls}=fixture(registerHandler,overrides);const res=response();await handle(request(input,headers),res);assert.equal(res.code,status);assert.equal(calls.length,0);
   }
 });

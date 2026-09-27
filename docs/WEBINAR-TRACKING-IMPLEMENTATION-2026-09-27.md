@@ -2,6 +2,8 @@
 
 This is the first implementation slice of [the acceptance contract](WEBINAR-TRACKING-ACCEPTANCE.md). It is not a public funnel release. Existing target editing remains live. No training date, GHL workflow, campaign, contact or appointment was changed; no customer message was sent.
 
+Latest continuation: [personalized links, confirmation and exact evidence projections](WEBINAR-PERSONAL-LINKS-2026-09-27.md). That checkpoint supersedes the unfinished-link notes below; the public release remains held.
+
 ## Installed and verified
 
 - Recovery replay ran under the existing VPS `~/.webinar-pull.lock`: Zoom `--again`, Typeform `--full-backfill`, and reminder receipts. Supabase receipts show success at 07:40:55, 07:40:58 and 07:40:59 UTC. The ordinary 07:23 hourly run had also recovered. Typeform read zero responses against a source total of zero; Zoom returned no available sessions. This is empty-source collection proof, not a real attendance test. The abandoned 26 September run remains in history.

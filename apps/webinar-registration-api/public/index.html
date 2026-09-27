@@ -37,7 +37,7 @@
       <input id="email" name="email" type="email" required autocomplete="email" placeholder="name@company.com" dir="ltr" style="text-align:right">
       <button id="btn" type="submit">احجز مقعدي</button>
       <div class="err" id="err"></div>
-      <div class="note">بيوصلك رابط الدخول على الإيميل والواتساب.</div>
+      <div class="note">بعد التسجيل تقدر تشوف حالة حجزك وتفتح رابط التدريب من صفحة التأكيد.</div>
     </form>
   </div>
   <div class="dev">placeholder registration page — replace with the designed landing page; the form posts to /api/register</div>
@@ -45,16 +45,27 @@
 <script>
   const f=document.getElementById('f'),btn=document.getElementById('btn'),err=document.getElementById('err');
   f.addEventListener('submit',async(e)=>{e.preventDefault();err.style.display='none';btn.disabled=true;btn.textContent='ثواني…';
-    const body=Object.fromEntries(new FormData(f).entries());
-    // Keep the same receipt ID across a network retry, including a page reload.
-    const key='webinar-intake-request';
-    let saved; try{saved=JSON.parse(sessionStorage.getItem(key)||'null');}catch{}
-    const fingerprint=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(body))))).map(x=>x.toString(16).padStart(2,'0')).join('');
-    const request=saved?.fingerprint===fingerprint?saved:{fingerprint,id:crypto.randomUUID()};
-    try{sessionStorage.setItem(key,JSON.stringify(request));}catch{}body.request_id=request.id;
-    try{const r=await fetch('/api/register',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(body)});
+    try {
+      const healthResponse=await fetch('/api/health',{cache:'no-store',signal:AbortSignal.timeout(10000)});
+      if(!healthResponse.ok)throw Error('unavailable');
+      const health=await healthResponse.json();
+      if(!health.scheduleReady||!health.intakeEnabled||!health.eventKey||!health.scheduleRevision)throw Error('closed');
+      const body=Object.fromEntries(new FormData(f).entries());
+      body.event_key=health.eventKey;body.revision=health.scheduleRevision;
+      body.attribution={};const params=new URLSearchParams(location.search);
+      for(const name of ['utm_source','utm_medium','utm_campaign','utm_content','utm_term','ad_id','adset_id','campaign_id','visit_id']) {
+        const value=params.get(name);if(value&&value.length<=200)body.attribution[name]=value;
+      }
+      // The same browser can register for another training; retries keep this occurrence's receipt.
+      const key='webinar-intake-request:'+body.event_key+':'+body.revision;
+      let saved;try{saved=JSON.parse(sessionStorage.getItem(key)||'null');}catch{}
+      const fingerprint=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(body))))).map(x=>x.toString(16).padStart(2,'0')).join('');
+      const request=saved?.fingerprint===fingerprint&&saved.token?saved:{fingerprint,id:crypto.randomUUID(),token:btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))).replaceAll('+','-').replaceAll('/','_').replaceAll('=','')};
+      try{sessionStorage.setItem(key,JSON.stringify(request));}catch{}
+      body.request_id=request.id;body.status_token=request.token;
+      const r=await fetch('/api/register',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(15000)});
       const j=await r.json();
-      if(r.status===202&&j.status==='processing'){err.textContent='وصلنا طلبك، وقاعدين نكمل التسجيل. تأكيد الحجز ليلحين قيد التجهيز.';err.style.display='block';btn.textContent='وصلنا طلبك';return;}
+      if(r.status===202&&j.status==='processing'){location.assign('/confirmation.html#status='+request.token);return;}
       throw new Error(j.error||'failed');
     }catch(ex){err.textContent='ما قدرنا نستلم طلبك الحين. جرّب مرة ثانية بعد شوي.';err.style.display='block';btn.disabled=false;btn.textContent='احجز مقعدي';}
   });

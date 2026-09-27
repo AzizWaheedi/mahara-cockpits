@@ -11,6 +11,7 @@ export function registerHandler({ store = createStore(), env = process.env, curr
       if (!env.WEBINAR_PUBLIC_ORIGIN || req.headers.origin !== env.WEBINAR_PUBLIC_ORIGIN) throw new IntakeError("origin_not_allowed", 403);
       if (!String(req.headers["content-type"] || "").startsWith("application/json")) throw new IntakeError("json_required", 415);
       const body = jsonBody(await rawBody(req, 16384));
+      if (body.event_key !== current.event_key || body.revision !== current.revision) throw new IntakeError("schedule_changed", 409);
       const payload = registrationInput(body);
       await store.rpc("cockpit_accept_webinar_intake", {
         p_source: "web", p_source_id: body.request_id, p_key: current.event_key, p_revision: current.revision,

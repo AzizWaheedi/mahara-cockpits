@@ -45,7 +45,9 @@ export function registrationInput(body) {
     const value = text(body.attribution?.[key], 200);
     if (value) attribution[key] = value;
   }
-  return { first_name, last_name, email, phone, attribution };
+  const status_hash = referenceHash(body.status_token);
+  if (!status_hash) throw new IntakeError("status_token_required");
+  return { first_name, last_name, email, phone, attribution, status_hash };
 }
 export function referenceHash(value) {
   return typeof value === "string" && /^[A-Za-z0-9_-]{43}$/.test(value)
