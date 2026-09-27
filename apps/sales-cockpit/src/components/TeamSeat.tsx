@@ -48,7 +48,8 @@ function fail(e: unknown) {
 /**
  * What a seat still lacks before its first day, in the order it is set on
  * this card: each one is something a rep hits (calls not dialled from their
- * line, marks and pay not theirs, messages signed with no name).
+ * line, marks and pay not theirs, messages signed with no name). A Slack id
+ * is optional: the end of day posts without a mention when there is none.
  */
 function seatMissing(person: Person, reps: Rep[], hasPay: boolean): string[] {
   const rep = reps.find(r => r.id === person.b2b_rep_id) ?? null;
@@ -63,7 +64,6 @@ function seatMissing(person: Person, reps: Rep[], hasPay: boolean): string[] {
     person.role !== "setter" && !(person.fathom_email || rep?.fathom_email)
       ? "their Fathom email"
       : null,
-    person.slack_user_id ? null : "their Slack id",
     person.name_ar ? null : "their name in Arabic",
     hasPay ? null : "a pay rule",
     goals ? null : "goals",
