@@ -28,6 +28,7 @@ beforeAll(async () => {
     "20260926081758_webinar_occurrence_ledger_v1.sql",
     "20260927074120_webinar_durable_intake.sql",
     "20260927080543_webinar_intake_review_guards.sql",
+    "20260927081808_webinar_intake_revision_index.sql",
   ])
     await db.exec(
       readFileSync(
