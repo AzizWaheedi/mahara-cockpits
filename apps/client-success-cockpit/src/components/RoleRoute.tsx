@@ -7,7 +7,7 @@ import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
  * plainly instead of shown an empty dashboard. The server enforces the same rule.
  */
 export function RoleRoute({ role }: { role: string }) {
-  const { access, ready } = useCockpitAuth();
+  const { access, ready, session } = useCockpitAuth();
   const location = useLocation();
 
   if (!ready) {
@@ -18,7 +18,7 @@ export function RoleRoute({ role }: { role: string }) {
     );
   }
   if (access?.isAdmin || access?.isCeo || access?.roles.includes(role)) {
-    return <Outlet />;
+    return <Outlet key={session?.user.id ?? "signed-out"} />;
   }
   if (access?.home && access.home !== location.pathname) {
     return <Navigate to={access.home} replace />;

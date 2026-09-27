@@ -126,9 +126,10 @@ def create_mock_repo(base_dir: Path) -> Path:
 
     # Relevant test files
     for app in (mb, cs, cd):
-        adapter = app / "src/lib/askAiClient.ts"
-        adapter.parent.mkdir(parents=True, exist_ok=True)
-        adapter.write_text("export const fixture = true;", encoding="utf-8")
+        for filename in ("askAiClient.ts", "personalEod.ts"):
+            adapter = app / "src/lib" / filename
+            adapter.parent.mkdir(parents=True, exist_ok=True)
+            adapter.write_text("export const fixture = true;", encoding="utf-8")
     for tf in vcr.RELEVANT_TEST_FILES:
         t_path = repo / tf
         t_path.parent.mkdir(parents=True, exist_ok=True)

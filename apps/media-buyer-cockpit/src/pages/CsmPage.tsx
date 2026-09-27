@@ -1088,6 +1088,19 @@ export function CsmPage({ section = "clients" }: { section?: Section } = {}) {
   const [offboarded, setOffboarded] = useState("");
   const [extended, setExtended] = useState("");
   const [pausedToday, setPausedToday] = useState("");
+  const [eodSaving,setEodSaving]=useState(false);
+  useEffect(()=>{
+    if(!snap?.eodOwner)return;
+    const a=snap.eod?.answers??{};
+    setEnergy(String(snap.eod?.energy??"7"));setStress(String(snap.eod?.stress??"4"));
+    setCallSummary(String(a.callSummary??""));setExpectations(String(a.expectations??""));
+    setTouchpoints(String(a.touchpoints??"Y"));setFathom(String(a.fathom??"Y"));
+    setNewSignups(String(a.newSignups??"N"));setUpsells(String(a.upsells??"N"));
+    setReviews(String(a.reviews??"N"));setReferrals(String(a.referrals??"N"));
+    setLost(String(a.lost??""));setOnePercent(String(a.onePercent??""));setRollup(String(a.rollup??""));
+    setOffboarded(String(a.offboarded??""));setExtended(String(a.extended??""));setPausedToday(String(a.paused??""));
+  },[snap?.eodOwner,snap?.eodDay,snap?.eod?._id]);
+
   // Income plan. Local overrides win over the saved row until he saves again.
   const [targetEdit, setTargetEdit] = useState<string | null>(null);
   const [clientsEdit, setClientsEdit] = useState<string | null>(null);
@@ -2440,9 +2453,9 @@ export function CsmPage({ section = "clients" }: { section?: Section } = {}) {
 
             {/* This replaces the Account Manager EOD Typeform, same questions, but the
               countable ones are already answered from today's activity. */}
-            <div className="space-y-2 border-t pt-3">
+            <fieldset aria-label="Your EOD" disabled={eodSaving || Boolean(snap.eod?.submittedAt)} className="space-y-2 border-t pt-3">
               <div className="text-sm font-semibold">
-                Your EOD {snap.eod ? "· submitted ✓" : ""}
+                Your EOD {snap.eod?.submittedAt ? "· submitted ✓" : snap.eod ? "· draft saved" : ""}
               </div>
               <div className="grid gap-2 text-xs sm:grid-cols-2">
                 <div className="rounded bg-muted/50 p-2">
@@ -2583,6 +2596,8 @@ export function CsmPage({ section = "clients" }: { section?: Section } = {}) {
                 size="sm"
                 variant="secondary"
                 onClick={async () => {
+                  setEodSaving(true);
+                  try {
                   await submitEod({
                     energy,
                     stress,
@@ -2614,13 +2629,16 @@ export function CsmPage({ section = "clients" }: { section?: Section } = {}) {
                     },
                   });
                   toast.success(
-                    "EOD filed. It posts to the EOD channel and the sheet on its own.",
+                    "Your EOD is submitted in the cockpit. Slack and sheet delivery are not enabled here yet.",
                   );
+                  } catch(error) {toast.error(error instanceof Error?error.message:"Could not save your EOD.");}
+                  finally {setEodSaving(false);}
                 }}
               >
-                File my EOD
+                {eodSaving ? "Saving…" : snap.eod?.submittedAt ? "Submitted" : "File my EOD"}
               </Button>
-            </div>
+              <p className="text-xs text-muted-foreground">Report day: {snap.eodDay}. Slack and sheet delivery are not enabled here yet.</p>
+            </fieldset>
           </div>
         </section>
       )}

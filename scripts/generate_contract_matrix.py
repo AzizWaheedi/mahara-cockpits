@@ -104,7 +104,7 @@ This matrix maps every single Convex contract (frontend call, HTTP route, or bac
 
 | ID | Contract Name | Current Convex Source | Target Supabase Replacement | Role & Client Scope | Side Effects & Audit | Migration & Source | Acceptance Test |
 |---|---|---|---|---|---|---|---|
-| B1 | Daily Snapshot | `api.cockpit.snapshot` | View/RPC `cockpit_get_dashboard_summary` | `media_buyer`, `admin` | Scoped to assigned clients | Live read from `cockpit_ads`, `cockpit_campaigns` | Load `/dashboard`, verify KPIs |
+| B1 | Daily Snapshot | `useMediaBuyerSnapshot` | Scoped reads + `cockpit_personal_eod` | `media_buyer`, `admin` | Scoped to assigned clients | Live read from `cockpit_ads`, `cockpit_campaigns` | Load `/dashboard`, verify KPIs |
 | B2 | Toggle Checklist Item | `api.cockpit.toggleCheck` | RPC `cockpit_set_daily_check` | `media_buyer`, `admin` | Writes checkmark, logs `cockpit_audit_log` row | 287 rows reconciled | Toggle check, verify DB update & audit |
 | B3 | Get Daily Checklist | `api.cockpit.dailyChecks` | RPC `cockpit_get_daily_checks` | `media_buyer`, `admin` | Scoped to role and date | 287 rows reconciled | Load checklist for today |
 | B4 | Log Buyer Decision | `api.cockpit.setDecision` | RPC `cockpit_log_decision` | `media_buyer`, `admin` | Logs decision to `cockpit_decisions`, writes audit | 23 rows reconciled | Log optimization decision |
@@ -118,7 +118,7 @@ This matrix maps every single Convex contract (frontend call, HTTP route, or bac
 
 | ID | Contract Name | Current Convex Source | Target Supabase Replacement | Role & Client Scope | Side Effects & Audit | Migration & Source | Acceptance Test |
 |---|---|---|---|---|---|---|---|
-| C1 | CSM Daily Snapshot | `api.csm.snapshot` | View/RPC `cockpit_get_dashboard_summary` | `csm`, `admin` | Filtered by CSM assigned clients | Live read from `cockpit_client_profiles`, `appointments` | Load `/client-success`, verify cards |
+| C1 | CSM Daily Snapshot | `useCsmSnapshot` | Scoped reads + `cockpit_personal_eod` | `csm`, `admin` | Filtered by CSM assigned clients | Live read from `cockpit_client_profiles`, `appointments` | Load `/client-success`, verify cards |
 | C2 | CSM Checklist Toggle | `api.csm.toggleCheck` | RPC `cockpit_set_daily_check` | `csm`, `admin` | Updates check, logs audit | Shared `cockpit_daily_checks` table | Toggle CSM checkmark |
 | C3 | CSM EOD Submission | `api.csm.submitEod` | RPC `cockpit_save_eod` | `csm`, `admin` | Upserts `cockpit_eod_reports` with role='csm' | Unique on (role, day) | Submit CSM EOD |
 | C4 | Client Profile Update | `api.csm.updateProfile` | RPC `cockpit_update_client_profile` | `csm`, `admin` | Updates `cockpit_client_profiles` | 48 rows reconciled | Edit client health/stage |

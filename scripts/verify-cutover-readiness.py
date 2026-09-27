@@ -49,6 +49,7 @@ RELEVANT_TEST_FILES = [
     "apps/media-buyer-cockpit/scripts/csm-state-supabase.test.ts",
     "apps/media-buyer-cockpit/scripts/supabase-ask-ai.test.ts",
     "apps/media-buyer-cockpit/scripts/eod-delivery-supabase.test.ts",
+    "apps/media-buyer-cockpit/scripts/personal-eod-supabase.test.ts",
     "hermes/cockpit-ask-ai/scripts/test_askai.py",
     "hermes/eod-out/test_out.py",
     "scripts/test_plan_manual_payments_import.py",
@@ -384,6 +385,8 @@ def check_shared_files(repo_root: Path) -> Tuple[bool, List[str]]:
     compare_files("convex/billingCore.ts", mb / "convex" / "billingCore.ts", cs / "convex" / "billingCore.ts")
     compare_files("askAiClient (MB vs CSM)", mb / "src/lib/askAiClient.ts", cs / "src/lib/askAiClient.ts")
     compare_files("askAiClient (MB vs Creative)", mb / "src/lib/askAiClient.ts", cd / "src/lib/askAiClient.ts")
+    compare_files("personalEod (MB vs CSM)", mb / "src/lib/personalEod.ts", cs / "src/lib/personalEod.ts")
+    compare_files("personalEod (MB vs Creative)", mb / "src/lib/personalEod.ts", cd / "src/lib/personalEod.ts")
     compare_files(
         "BillingSheet.tsx",
         mb / "src" / "components" / "billing" / "BillingSheet.tsx",

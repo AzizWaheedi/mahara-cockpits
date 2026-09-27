@@ -139,6 +139,7 @@ function Creative({ view }: { view: View }) {
   const snap = sb.snap;
   const [showAllBrand, setShowAllBrand] = useState(false);
 
+  if (sb.error) return <p role="alert" className="p-6 text-sm">Could not load your cockpit: {sb.error.message}. Reload to try again.</p>;
   if (snap === undefined) {
     return (
       <div className="p-6 text-[14px] text-muted-foreground">Loading…</div>
@@ -226,6 +227,7 @@ function Creative({ view }: { view: View }) {
       {view === "clients" && <ClientProfiles rows={snap.clients} />}
       {view === "eod" && (
         <EndOfDay
+          key={`${snap.eodOwner}:${snap.eodDay}`}
           snap={snap}
           onSave={auth.client ? (sb.saveEod as any) : undefined}
           onAddItem={auth.client ? (sb.addPlanItem as any) : undefined}
@@ -1202,7 +1204,7 @@ function EndOfDay({
   onAddItem?: (args: any) => Promise<void>;
   onRemoveItem?: (args: any) => Promise<void>;
 }) {
-  const save = onSave ?? (async () => {});
+  const save = onSave ?? (async () => {throw new Error("Sign in before saving your EOD.");});
   const addItem = onAddItem ?? (async () => {});
   const removeItem = onRemoveItem ?? (async () => {});
   const [line, setLine] = useState("");
@@ -1210,6 +1212,7 @@ function EndOfDay({
     snap.eod?.answers ?? {},
   );
   const [saving, setSaving] = useState(false);
+  const [saveError,setSaveError]=useState<string|null>(null);
 
   const computed = {
     brandDnaOpen: snap.counts.brandDNA,
@@ -1305,7 +1308,7 @@ function EndOfDay({
       <Section
         icon={PenLine}
         title="Your EOD"
-        sub="saved in the cockpit only: it does not reach the EOD sheet yet, so still submit the EOD form"
+        sub="Your personal draft. Slack and sheet delivery are not enabled here yet."
       >
         <div className="space-y-2">
           {EOD_QUESTIONS.map((q: Any) => (
@@ -1341,11 +1344,14 @@ function EndOfDay({
           <Button
             size="sm"
             className="h-8 text-[12px]"
-            disabled={saving}
+            disabled={saving || Boolean(snap.eod?.submittedAt)}
             onClick={async () => {
               setSaving(true);
+              setSaveError(null);
               try {
-                await save({ answers, computed });
+                await save({ answers, computed, submit: false });
+              } catch(error) {
+                setSaveError(error instanceof Error?error.message:"Could not save your EOD.");
               } finally {
                 setSaving(false);
               }
@@ -1357,10 +1363,10 @@ function EndOfDay({
                 ? "Update the draft"
                 : "Save a draft"}
           </Button>
+          {saveError && <p role="alert" className="text-sm">{saveError}</p>}
           {snap.eod && (
             <p className="text-[12px] text-muted-foreground">
-              Draft saved at {new Date(snap.eod.at).toLocaleTimeString()}. The
-              EOD form is still the record.
+              {snap.eod.submittedAt ? "Submitted" : "Draft saved"} for {snap.eodDay} at {new Date(snap.eod.at).toLocaleTimeString()}. Slack and sheet delivery are not enabled here yet.
             </p>
           )}
         </div>

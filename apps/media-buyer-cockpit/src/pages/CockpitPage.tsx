@@ -800,7 +800,6 @@ function Cockpit({ view }: { view: View }) {
   const setClientLanguage = async (_args?: any) => {};
   const removeDecision = sb.removeDecision as any;
   const saveEod = sb.saveEod as any;
-  const resubmitEod = sb.saveEod as any;
   const sendFeedback = sb.sendFeedback as any;
   /** Today's EOD row, if one was saved: the submitted state lives here, not in the tab. */
   const eodRow = (snap?.eod ?? null) as {
@@ -998,6 +997,7 @@ function Cockpit({ view }: { view: View }) {
   }, [snap]);
 
   const eodReport = useMemo(() => {
+    if (snap?.eod?.submittedAt && typeof snap.eod.body === "string") return snap.eod.body;
     const cs = ((snap?.campaigns ?? []) as Campaign[]).filter(c => !c.internal);
     const ds = (snap?.decisions ?? []) as {
       subject: string;
@@ -1015,7 +1015,7 @@ function Cockpit({ view }: { view: View }) {
         (c.serviceMode !== "DWY" && (c.costPerBooking ?? 0) > CPB_GATE),
     );
     const lines: string[] = [
-      `EOD — ${new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}`,
+      `EOD - ${snap?.eodDay ? new Date(snap.eodDay + "T12:00:00+03:00").toLocaleDateString("en-GB", { timeZone: "Asia/Kuwait", weekday: "long", day: "numeric", month: "long" }) : "Date unavailable"}`,
       "",
       `Active client accounts managed: ${cs.length}`,
       `Total ad spend (7d): ${money(spend)}`,
@@ -2868,7 +2868,7 @@ function Cockpit({ view }: { view: View }) {
                 <pre className="whitespace-pre-wrap rounded-md border bg-background p-3 text-[13px] leading-relaxed">
                   {eodReport}
                 </pre>
-                <div className="mt-4 space-y-4">
+                <fieldset disabled={Boolean(eodRow?.submittedAt)} className="mt-4 space-y-4">
                   <div>
                     <div className="text-[12px] font-bold uppercase tracking-widest text-muted-foreground">
                       Health
@@ -3028,10 +3028,9 @@ function Cockpit({ view }: { view: View }) {
                             },
                             submit: true,
                           });
-                          // "Sent" is only true once submittedAt lands; the
-                          // button below reads that from the snapshot.
+                          // Submission confirms storage, not external delivery.
                           toast.success(
-                            "Saved. Posting to #media-eods and the EOD Reports sheet now.",
+                            "Your EOD is submitted in the cockpit. Slack and sheet delivery are not enabled here yet.",
                           );
                         } catch (e) {
                           toast.error(
@@ -3048,34 +3047,11 @@ function Cockpit({ view }: { view: View }) {
                           ? "Saving…"
                           : "Submit my EOD"}
                     </Button>
-                    {eodRow && !eodRow.submittedAt && !eodSending && (
-                      <span className="text-[12px] text-amber-800">
-                        Saved, still posting to #media-eods
-                        {eodRow.error ? ` (${eodRow.error})` : ""}.{" "}
-                        {/* Retry only once a post has actually failed. In the
-                            seconds the first post is still running the row is
-                            saved but not yet submitted, and a click here then
-                            would race it. */}
-                        {eodRow.error && (
-                          <button
-                            type="button"
-                            className="underline"
-                            onClick={() =>
-                              void resubmitEod({}).then(() =>
-                                toast.success("Posting it again."),
-                              )
-                            }
-                          >
-                            Retry
-                          </button>
-                        )}
-                      </span>
-                    )}
+                    {eodRow && !eodRow.submittedAt && <span className="text-[12px] text-muted-foreground">Draft saved. Submit when it is ready.</span>}
                   </div>
-                </div>
+                </fieldset>
                 <p className="mt-2 text-[12px] text-muted-foreground">
-                  This replaces the form. Submitting posts it to #media-eods and
-                  appends the row to the EOD Reports sheet, exactly as before.
+                  Report day: {snap.eodDay}. This is your personal report. Slack and sheet delivery are not enabled here yet.
                 </p>
               </section>
             )}

@@ -66,6 +66,8 @@ same convex/foreplay.ts "$CD/convex/foreplay.ts" "$MB/convex/foreplay.ts"
 CS=apps/client-success-cockpit
 same askAiClient.ts "$MB/src/lib/askAiClient.ts" "$CS/src/lib/askAiClient.ts"
 same askAiClient.ts "$MB/src/lib/askAiClient.ts" "$CD/src/lib/askAiClient.ts"
+same personalEod.ts "$MB/src/lib/personalEod.ts" "$CS/src/lib/personalEod.ts"
+same personalEod.ts "$MB/src/lib/personalEod.ts" "$CD/src/lib/personalEod.ts"
 same convex/billingCore.ts "$MB/convex/billingCore.ts" "$CS/convex/billingCore.ts"
 same BillingSheet.tsx "$MB/src/components/billing/BillingSheet.tsx" \
   "$CS/src/components/billing/BillingSheet.tsx"

@@ -1,3 +1,5 @@
+import {readPersonalEod,savePersonalEod} from "./personalEod";
+import {useRef} from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useCallback, useEffect, useState } from "react";
 
@@ -21,7 +23,7 @@ export interface UseCsmSnapshotResult {
     kind?: string;
     amount?: number;
   }) => Promise<void>;
-  submitEod: (args: { energy?: string; answers?: Any; computed?: Any }) => Promise<void>;
+  submitEod: (args: { energy?: string; stress?: string; submit?: boolean; body?: string; answers?: Any; computed?: Any }) => Promise<void>;
   addPlanItems: (args: {
     items: Array<{
       text: string;
@@ -52,6 +54,8 @@ export function useCsmSnapshot(
   allowedClients?: string[] | null,
 ): UseCsmSnapshotResult {
   const [snap, setSnap] = useState<Any | undefined>(undefined);
+  // Keep the chosen report day stable while someone is writing across midnight.
+  const reportDay = useRef<string | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
@@ -99,12 +103,9 @@ export function useCsmSnapshot(
       if (plErr) throw plErr;
 
       // 5. Fetch EOD report
-      const { data: eodRow } = await client
-        .from("cockpit_eod_reports")
-        .select("*")
-        .eq("role", "csm")
-        .eq("day", day)
-        .maybeSingle();
+      const eodContext = await readPersonalEod(client,"csm",reportDay.current);
+      const eodRow = eodContext.report;
+      reportDay.current = eodContext.day;
 
       const scopeSet =
         allowedClients && allowedClients.length > 0
@@ -197,6 +198,8 @@ export function useCsmSnapshot(
         decisions,
         plan,
         eod: eodRow ?? null,
+        eodOwner: eodContext.owner,
+        eodDay: eodContext.day,
         lastSyncAt: Date.now(),
         syncHealth: { ok: true, at: Date.now(), profiles: clients.length, errors: [] },
         totals: {
@@ -270,20 +273,12 @@ export function useCsmSnapshot(
   );
 
   const submitEod = useCallback(
-    async (args: { energy?: string; answers?: Any; computed?: Any }) => {
-      if (!client) return;
-      const day = kuwaitToday();
-      const { error: rpcErr } = await client.rpc("cockpit_save_eod", {
-        p_role: "csm",
-        p_day: day,
-        p_energy: args.energy ?? null,
-        p_answers: args.answers ?? {},
-        p_computed: args.computed ?? {},
-      });
-      if (rpcErr) throw rpcErr;
+    async (args: { energy?: string; stress?: string; submit?: boolean; body?: string; answers?: Any; computed?: Any }) => {
+      if (!client) throw new Error("Sign in before saving your EOD.");
+      await savePersonalEod(client,"csm",{owner:snap?.eodOwner??"",day:snap?.eodDay??""},{...args,submit:true});
       await fetchSnapshot();
     },
-    [client, fetchSnapshot],
+    [client, fetchSnapshot, snap?.eodOwner, snap?.eodDay],
   );
 
   const addPlanItems = useCallback(

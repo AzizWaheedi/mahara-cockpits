@@ -1,3 +1,5 @@
+import {readPersonalEod,savePersonalEod} from "./personalEod";
+import {useRef} from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useCallback, useEffect, useState } from "react";
 
@@ -304,6 +306,8 @@ export function useMediaBuyerSnapshot(
   allowedClients?: string[] | null,
 ): UseMediaBuyerSnapshotResult {
   const [snap, setSnap] = useState<Any | undefined>(undefined);
+  // Keep the chosen report day stable while someone is writing across midnight.
+  const reportDay = useRef<string | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
@@ -349,12 +353,9 @@ export function useMediaBuyerSnapshot(
       if (pErr) throw pErr;
 
       // 6. Fetch EOD report
-      const { data: eodRow } = await client
-        .from("cockpit_eod_reports")
-        .select("*")
-        .eq("role", "media_buyer")
-        .eq("day", day)
-        .maybeSingle();
+      const eodContext = await readPersonalEod(client,"media_buyer",reportDay.current);
+      const eodRow = eodContext.report;
+      reportDay.current = eodContext.day;
 
       const scopeSet =
         allowedClients && allowedClients.length > 0
@@ -485,6 +486,8 @@ export function useMediaBuyerSnapshot(
         },
         eodSubmitted: Boolean(eodRow?.submitted_at),
         eod: eodRow ?? null,
+        eodOwner: eodContext.owner,
+        eodDay: eodContext.day,
         lastSyncAt: Date.now(),
         syncProblems: [],
       };
@@ -564,18 +567,10 @@ export function useMediaBuyerSnapshot(
       if (!client) {
         throw new Error("Supabase client is required");
       }
-      const day = kuwaitToday();
-      const { error: rpcErr } = await client.rpc("cockpit_save_eod", {
-        p_role: "media_buyer",
-        p_day: day,
-        p_energy: args.energy ?? null,
-        p_answers: args.answers ?? {},
-        p_computed: args.computed ?? {},
-      });
-      if (rpcErr) throw rpcErr;
+      await savePersonalEod(client,"media_buyer",{owner:snap?.eodOwner??"",day:snap?.eodDay??""},{...args,submit:args.submit ?? false});
       await fetchSnapshot();
     },
-    [client, fetchSnapshot],
+    [client, fetchSnapshot, snap?.eodOwner, snap?.eodDay],
   );
 
   const addPlanItems = useCallback(
