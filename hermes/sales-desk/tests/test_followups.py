@@ -197,6 +197,9 @@ class Eligible(unittest.TestCase):
         self.assertIn("not a sales lead",
                       fu.eligible({"contact_id": "w", "contact_type": "lead", "pipeline_name": None, "lead_class": None}, set()))
         self.assertEqual(fu.eligible(None, set()), "not in the cockpit's lead copy")
+        # Tagged client in HighLevel: an active client, whatever its pipeline says.
+        self.assertEqual(fu.eligible({**lead, "tags": ["roas-qualified", "client"]}, set()), "a client")
+        self.assertIsNone(fu.eligible({**lead, "tags": ["client-referral"]}, set()))
 
 
 class Rules(unittest.TestCase):
@@ -724,6 +727,18 @@ class Closing(unittest.TestCase):
         confirm = {"segment": "confirm", "appointment_id": "c3", "created_at": ago(hours=3)}
         self.assertIn("already started", fu.gone_reason(confirm, [held], [], [], NOW))
         self.assertIn("no longer on the calendar", fu.gone_reason(confirm, [], [], [], NOW))
+
+    def test_an_active_clients_open_draft_is_closed(self):
+        pg = FakePostgrest()
+        self.draft(pg, "d-client", "cl", "nurture", channel="email")
+        self.draft(pg, "d-lead", "ld", "nurture", channel="email")
+        pg.put("cockpit_sales_leads", {"contact_id": "cl", "tags": ["roas-qualified", "client"]})
+        pg.put("cockpit_sales_leads", {"contact_id": "ld", "tags": ["roas-qualified"]})
+        with mock.patch.object(http, "request", pg):
+            self.assertEqual(fu.close_clients(Supabase("https://example.supabase.co", "k"), NOW), 1)
+        status = {r["id"]: (r["status"], r.get("error")) for r in pg.rows("cockpit_sales_followups")}
+        self.assertEqual(status["d-client"], ("expired", fu.CLIENT_CLOSED))
+        self.assertEqual(status["d-lead"][0], "draft")
 
     def test_a_send_that_stopped_halfway_is_freed_by_what_its_message_says(self):
         pg = FakePostgrest()

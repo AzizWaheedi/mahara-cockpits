@@ -27,6 +27,7 @@ import { ProposalPanel } from "../components/ProposalPanel";
 import { AskReference } from "../components/References";
 import { ResearchPanel } from "../components/ResearchPanel";
 import { assetStage, objectionsFrom } from "../lib/assets";
+import { CLIENT_NOTE, isClient } from "../lib/clients";
 import { useLead, useLeadActivity, useSetting, useTeam } from "../lib/data";
 import {
   ago,
@@ -37,11 +38,10 @@ import {
   statusLabel,
   when,
 } from "../lib/format";
+import { ghlContactUrl } from "../lib/highlevel";
 import { toast } from "../lib/toast";
 import type { CalendarRow, Lead, Me } from "../lib/types";
 import { leadLanguage } from "../lib/whatsapp";
-
-const GHL_LOCATION = "7NI8yyJtwsh2OOWA5Icr";
 
 const CLASS_TONE: Record<string, Tone> = {
   qualified: "good",
@@ -173,6 +173,14 @@ export default function LeadPage({ me }: { me: Me }) {
               label={plainStage(l.stage_name)}
             />
           ) : null}
+          {isClient(l) ? (
+            <StatusChip
+              size="md"
+              tone="good"
+              label="Active client"
+              title={CLIENT_NOTE}
+            />
+          ) : null}
           {live?.contact.dnd || l.dnd ? (
             <StatusChip
               size="md"
@@ -197,17 +205,29 @@ export default function LeadPage({ me }: { me: Me }) {
             ]}
           />
         </p>
-        <HotControl me={me} contactId={l.contact_id} />
+        {isClient(l) ? (
+          <p className="muted text-sm">{CLIENT_NOTE}</p>
+        ) : (
+          <HotControl
+            me={me}
+            contactId={l.contact_id}
+            name={l.name}
+            phone8={l.phone8}
+          />
+        )}
         <div className="flex flex-wrap gap-2">
-          <Link
-            to={`/call/${l.contact_id}?script=${callScript(me, appointments)}`}
-            className={buttonPrimary}
-          >
-            <ScrollText className="size-3.5" aria-hidden />
-            {callScript(me, appointments) === "demo"
-              ? "Open the demo script"
-              : "Open the intro script"}
-          </Link>
+          {/* No sales call script for an active client. */}
+          {isClient(l) ? null : (
+            <Link
+              to={`/call/${l.contact_id}?script=${callScript(me, appointments)}`}
+              className={buttonPrimary}
+            >
+              <ScrollText className="size-3.5" aria-hidden />
+              {callScript(me, appointments) === "demo"
+                ? "Open the demo script"
+                : "Open the intro script"}
+            </Link>
+          )}
           {l.phone ? (
             <CopyChip icon={Phone} text={l.phone} label="Copy the number" />
           ) : null}
@@ -224,7 +244,7 @@ export default function LeadPage({ me }: { me: Me }) {
             </a>
           ) : null}
           <a
-            href={`https://app.gohighlevel.com/v2/location/${GHL_LOCATION}/contacts/detail/${l.contact_id}`}
+            href={ghlContactUrl(l.contact_id)}
             target="_blank"
             rel="noopener noreferrer"
             className={button}

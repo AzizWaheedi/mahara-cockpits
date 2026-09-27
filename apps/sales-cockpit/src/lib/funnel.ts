@@ -613,20 +613,28 @@ export function sayMoney(n: number, currency: Currency, lang: Lang): string {
     return currency === "USD" ? `$${body}` : `${body} ${word}`;
   }
   let body: string;
+  // Three to ten take the plural (٦ آلاف، ٣ ملايين); a fraction, and eleven
+  // and up, the singular (٢٫٥ ألف، ٨٥ ألف).
+  const unit = (
+    n: number,
+    one: string,
+    two: string,
+    few: string,
+    many: string,
+  ) =>
+    n === 1
+      ? one
+      : n === 2
+        ? two
+        : `${digits(String(n), lang)} ${Number.isInteger(n) && n >= 3 && n <= 10 ? few : many}`;
   if (a < 100) body = digits(trim(a, 1), lang);
   else if (a < 1_000) body = digits(grouped(a), lang);
   else if (a < 999_500) {
     const k = a < 10_000 ? Number(trim(a / 1_000, 1)) : Math.round(a / 1_000);
-    body =
-      k === 1 ? "ألف" : k === 2 ? "ألفين" : `${digits(String(k), lang)} ألف`;
+    body = unit(k, "ألف", "ألفين", "آلاف", "ألف");
   } else {
     const m = Number(trim(a / 1_000_000, 1));
-    body =
-      m === 1
-        ? "مليون"
-        : m === 2
-          ? "مليونين"
-          : `${digits(String(m), lang)} مليون`;
+    body = unit(m, "مليون", "مليونين", "ملايين", "مليون");
   }
   return `${body} ${word}`;
 }
