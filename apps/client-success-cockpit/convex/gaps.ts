@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { internalQuery, type QueryCtx } from "./_generated/server";
 import { authenticatedMutation, authenticatedQuery } from "./functions";
+import { currentProfiles } from "./profileRows";
 import { allowedClients, assertRole } from "./roles";
 
 // biome-ignore lint/suspicious/noExplicitAny: profile blobs
@@ -98,7 +99,7 @@ export async function buildGapsList(
   const clients = (await ctx.db.query("clients").collect()).filter(
     c => c.bucket !== "inactive" && (!scope || scope.has(c.name.toLowerCase())),
   );
-  const profiles = await ctx.db.query("clientProfiles").collect();
+  const profiles = await currentProfiles(ctx);
   const byName = new Map(profiles.map(p => [p.clientName, p]));
   const queued = (await ctx.db.query("outbox").collect()).filter(
     o => o.kind === "issue",
@@ -181,7 +182,7 @@ export const summary = internalQuery({
     const clients = (await ctx.db.query("clients").collect()).filter(
       c => c.bucket !== "inactive",
     );
-    const profiles = await ctx.db.query("clientProfiles").collect();
+    const profiles = await currentProfiles(ctx);
     const byName = new Map(profiles.map(p => [p.clientName, p]));
     const out: Record<string, string[]> = {};
     const reasons: Record<string, number> = {};
@@ -208,7 +209,7 @@ export const matrix = internalQuery({
   returns: v.any(),
   handler: async ctx => {
     const clients = await ctx.db.query("clients").collect();
-    const profiles = await ctx.db.query("clientProfiles").collect();
+    const profiles = await currentProfiles(ctx);
     const byName = new Map(profiles.map(p => [p.clientName, p]));
     return clients.map(c => {
       const p = byName.get(c.name) as Any;
@@ -244,7 +245,7 @@ export const forAudit = internalQuery({
     const clients = (await ctx.db.query("clients").collect()).filter(
       c => c.bucket !== "inactive",
     );
-    const profiles = await ctx.db.query("clientProfiles").collect();
+    const profiles = await currentProfiles(ctx);
     const byName = new Map(profiles.map(p => [p.clientName, p]));
     return clients
       .map(c => ({
@@ -269,7 +270,7 @@ export const extras = internalQuery({
     const clients = (await ctx.db.query("clients").collect()).filter(
       c => c.bucket !== "inactive",
     );
-    const profiles = await ctx.db.query("clientProfiles").collect();
+    const profiles = await currentProfiles(ctx);
     const byName = new Map(profiles.map(p => [p.clientName, p]));
     return clients.map(c => {
       const p = byName.get(c.name) as Any;

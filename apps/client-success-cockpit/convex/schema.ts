@@ -52,6 +52,13 @@ const schema = defineSchema({
     pausedDays: v.optional(v.number()),
     loose: v.array(v.string()),
     changes: v.array(v.any()),
+    /**
+     * What the team did for this client this week (media buyer fanout.ts,
+     * weekOfWork): ad changes a client can be told, how the campaign is
+     * doing, videos finished / with the client / being made, and Client
+     * Success board tasks finished. Feeds "What we did this week".
+     */
+    work: v.optional(v.any()),
     campaignLinks: v.optional(v.array(v.any())),
     lastNoteOn: v.optional(v.string()),
     noteMissing: v.optional(v.boolean()),

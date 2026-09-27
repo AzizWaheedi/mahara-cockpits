@@ -575,6 +575,327 @@ export const TEAM_ROWS = TEAM.map(t => ({
   via_portal: true,
 }));
 
+// ---------------------------------------------------------------------------
+// The dialer: what each queue holds, the saves HighLevel has not taken yet,
+// a lead's conversation, and the ready-made messages. The harness keeps the
+// state (open call, saved leads) and filters these.
+// ---------------------------------------------------------------------------
+
+const MIN = 60_000;
+const iso = (ms: number) => new Date(ms).toISOString();
+
+/** "14:30" on the Kuwait clock. */
+function kwClock(ms: number): string {
+  return new Date(ms + 3 * H).toISOString().slice(11, 16);
+}
+
+/** One queue item for LEADS[i], as sales-api shapes it. */
+export function queueItem(i: number, over: Row): Row {
+  const l = LEADS[i];
+  return {
+    contact_id: l.contact_id,
+    name: l.name,
+    phone: l.phone,
+    stage: l.stage_name,
+    lead_class: l.lead_class,
+    tier: 3,
+    why: "Never called",
+    created_at: l.lead_created_at,
+    last_dial_at: null,
+    due_at: null,
+    inbound_at: null,
+    callback_at: null,
+    demo_at: null,
+    step: 0,
+    last_outcome: null,
+    kind: "lead",
+    heat: 0,
+    hot_reasons: [],
+    hot: false,
+    misses: 0,
+    stage_role: null,
+    inbound_call_at: null,
+    appointment: null,
+    ...over,
+  };
+}
+
+/**
+ * The queue as sales-api ranks it, one of each kind of work: a new lead, a
+ * missed call, a call-back five minutes early, an intro starting, a
+ * confirmation, replies, retries (one on do not disturb) and the long tail.
+ * `start` is when the harness opened, so the times hold still.
+ */
+export function dialItems(as: "setter" | "closer", start: number): Row[] {
+  const now = start;
+  if (as === "closer")
+    return [
+      queueItem(10, {
+        tier: 0,
+        kind: "confirm",
+        why: `Confirm the demo today at ${kwClock(now + 2 * H)}`,
+        appointment: {
+          id: "a-demo-1",
+          type: "demo",
+          start_at: iso(now + 2 * H),
+          booked_at: iso(now - 2 * D),
+          assigned_user_id: "u-aziz",
+          confirmed: false,
+        },
+      }),
+      queueItem(2, {
+        tier: 1,
+        why: "Showed, not signed yet",
+        demo_at: iso(now - D),
+        last_dial_at: iso(now - D),
+      }),
+      queueItem(11, {
+        tier: 1,
+        why: "Hot lead: follow up as planned",
+        hot: true,
+        heat: 82,
+        hot_reasons: ["Asked for the price", "Opened the deck twice"],
+      }),
+      queueItem(12, {
+        tier: 1,
+        why: "Wrote back today",
+        inbound_at: iso(now - 40 * MIN),
+        last_dial_at: iso(now - 2 * D),
+      }),
+      queueItem(13, {
+        tier: 2,
+        why: "Missed the demo, rebook it",
+        last_dial_at: iso(now - 3 * D),
+      }),
+    ];
+  const tail = [9, 14, 15, 16, 17, 18, 19].map(i =>
+    queueItem(i, { tier: 3, why: "Never called" }),
+  );
+  return [
+    queueItem(0, {
+      tier: 0,
+      why: "New lead, call now",
+      created_at: iso(now - 40_000),
+    }),
+    queueItem(1, {
+      tier: 0,
+      why: "Called us, missed it",
+      inbound_call_at: iso(now - 90_000),
+      last_dial_at: iso(now - 3 * D),
+      step: 1,
+      last_outcome: "no_answer",
+    }),
+    queueItem(2, {
+      tier: 0,
+      why: `Call back at ${kwClock(now + 4 * MIN)}, as agreed`,
+      callback_at: iso(now + 4 * MIN),
+      last_dial_at: iso(now - 2 * H),
+      last_outcome: "callback",
+    }),
+    queueItem(3, {
+      tier: 0,
+      kind: "intro",
+      why: `Intro call now, booked for ${kwClock(now + 3 * MIN)}`,
+      appointment: {
+        id: "a-intro-1",
+        type: "intro",
+        start_at: iso(now + 3 * MIN),
+        booked_at: iso(now - 2 * D),
+        assigned_user_id: "u-aziz",
+        confirmed: true,
+      },
+    }),
+    queueItem(4, {
+      tier: 1,
+      kind: "confirm",
+      why: `Confirm the demo tomorrow at ${kwClock(now + D + 2 * H)}`,
+      appointment: {
+        id: "a-demo-2",
+        type: "demo",
+        start_at: iso(now + D + 2 * H),
+        booked_at: iso(now - 3 * D),
+        assigned_user_id: "u-omar",
+        confirmed: false,
+      },
+    }),
+    queueItem(6, {
+      tier: 1,
+      why: "Called us, missed it",
+      inbound_call_at: iso(now - 3 * H),
+    }),
+    queueItem(7, {
+      tier: 1,
+      why: "Wrote back today",
+      inbound_at: iso(now - 2 * H),
+      last_dial_at: iso(now - D),
+    }),
+    // LEADS[5] is on do not disturb: the dialer shows it and will not call.
+    queueItem(5, {
+      tier: 2,
+      why: "Next try is due",
+      step: 1,
+      last_dial_at: iso(now - D),
+      last_outcome: "no_answer",
+    }),
+    queueItem(8, {
+      tier: 2,
+      why: "Missed the intro, rebook it",
+      last_dial_at: iso(now - 2 * D),
+    }),
+    ...tail,
+  ];
+}
+
+/** Saves HighLevel has not taken: one it refused, one still waiting. */
+export function savedWork(start: number): Row[] {
+  return [
+    {
+      attempt_id: "att-old-1",
+      contact_id: LEADS[20].contact_id,
+      name: LEADS[20].name,
+      outcome: "callback",
+      saved_at: iso(start - 25 * MIN),
+      crm_note: "failed",
+      error: "HighLevel said 422: this contact was merged into another",
+    },
+    {
+      attempt_id: "att-old-2",
+      contact_id: LEADS[21].contact_id,
+      name: LEADS[21].name,
+      outcome: "not_interested",
+      saved_at: iso(start - 6 * MIN),
+      crm_note: "pending",
+      error: null,
+    },
+  ];
+}
+
+/**
+ * One lead's conversation as convo.read returns it. Odd-numbered leads
+ * wrote on WhatsApp two hours ago (the free window is open); the others
+ * last wrote yesterday, so only a template goes. The missed-call lead has
+ * the call in the thread.
+ */
+export function conversation(contactId: string, now: number): Row {
+  const i = Math.max(
+    0,
+    LEADS.findIndex(l => l.contact_id === contactId),
+  );
+  const l = LEADS[i];
+  const wrote = i % 2 === 1 ? now - 2 * H : now - 30 * H;
+  const thread: Row[] = [
+    {
+      id: `${contactId}-m1`,
+      conversation_id: `conv-${contactId}`,
+      direction: "outbound",
+      channel: "whatsapp",
+      type: "TYPE_WHATSAPP",
+      status: "read",
+      at: iso(wrote - 3 * H),
+      body: "Hi, this is Mahara Media. When is a good time for a short call?",
+      subject: null,
+      attachments: [],
+      error: null,
+      source: "workflow",
+    },
+    {
+      id: `${contactId}-m2`,
+      conversation_id: `conv-${contactId}`,
+      direction: "inbound",
+      channel: "whatsapp",
+      type: "TYPE_WHATSAPP",
+      status: "delivered",
+      at: iso(wrote),
+      body: i % 2 ? "تمام، موجود." : "Sure, call me in the evening.",
+      subject: null,
+      attachments: [],
+      error: null,
+      source: null,
+    },
+  ];
+  if (i === 1)
+    thread.push({
+      id: `${contactId}-call`,
+      conversation_id: `conv-${contactId}`,
+      direction: "inbound",
+      channel: "call",
+      type: "TYPE_CALL",
+      status: "no-answer",
+      at: iso(now - 90_000),
+      body: null,
+      subject: null,
+      attachments: [],
+      error: null,
+      source: null,
+    });
+  return {
+    contact: {
+      name: l.name,
+      email: l.email,
+      phone: l.phone,
+      tags: l.tags,
+      dnd: l.dnd,
+      assigned_to: l.assigned_to,
+    },
+    channels: {
+      whatsapp: {
+        on: true,
+        dnd: Boolean(l.dnd),
+        reachable: true,
+        window: {
+          open: now - wrote < 24 * H,
+          closes_at: iso(wrote + 24 * H),
+          last_inbound_at: iso(wrote),
+        },
+      },
+      email: { on: true, dnd: Boolean(l.dnd), reachable: true },
+      sms: { on: true, dnd: Boolean(l.dnd), reachable: true },
+    },
+    thread,
+    cursors: {},
+    sends: [],
+    read_at: iso(now),
+  };
+}
+
+/** The team's ready-made messages the dialer puts in the box (English only here). */
+export const SNIPPETS: Row[] = [
+  {
+    id: "sn-missed",
+    moment: "missed_call",
+    language: "en",
+    body: "Hi {name}, it's {rep} from Mahara Media. I just tried to call you. When suits you to talk?",
+    sort: 10,
+    deleted_at: null,
+  },
+  {
+    id: "sn-confirm",
+    moment: "confirm",
+    language: "en",
+    body: "Hi {name}, it's {rep} from Mahara Media. Can you confirm our call {day} at {time}?",
+    sort: 10,
+    deleted_at: null,
+  },
+];
+
+/** One approved WhatsApp template with its HighLevel workflow, so templates are live. */
+export const WA_TEMPLATES: Row[] = [
+  {
+    key: "follow_up_en",
+    name: "Follow up",
+    language: "en",
+    purpose: "A line to a lead outside the 24 hours",
+    preview: "Hi {{first_name}}, {{line}}",
+    variables: ["first_name", "line"],
+    workflow_id: "wf-follow-up",
+    active: true,
+    segments: [],
+    sort: 10,
+    updated_by: "aziz@maharamedia.com",
+    updated_at: new Date().toISOString(),
+  },
+];
+
 export const SETTINGS: Row[] = [
   { key: "crm_writes", value: { dispositions: true, backlog_days: 7 } },
   {

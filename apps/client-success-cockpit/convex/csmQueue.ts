@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
+import { currentProfile } from "./profileRows";
 
 /**
  * The work the app cannot do itself, queued for Viktor's scheduled job.
@@ -140,11 +141,7 @@ export const clearLoose = internalMutation({
 export const profileFor = internalQuery({
   args: { clientName: v.string() },
   returns: v.any(),
-  handler: async (ctx, { clientName }) =>
-    await ctx.db
-      .query("clientProfiles")
-      .withIndex("by_client", q => q.eq("clientName", clientName))
-      .first(),
+  handler: async (ctx, { clientName }) => await currentProfile(ctx, clientName),
 });
 
 /** Queue a report the way the CSM's button does, from the command line. */

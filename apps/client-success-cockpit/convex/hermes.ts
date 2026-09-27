@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
 import { authenticatedMutation, authenticatedQuery } from "./functions";
+import { currentProfile } from "./profileRows";
 import { allowedClients, assertRole, userEmail } from "./roles";
 
 // biome-ignore lint/suspicious/noExplicitAny: context blobs
@@ -25,10 +26,7 @@ async function contextFor(ctx: any, clientName?: string): Promise<string> {
   const clients = await ctx.db.query("clients").collect();
   if (clientName) {
     const c = clients.find((x: Any) => x.name === clientName);
-    const p = await ctx.db
-      .query("clientProfiles")
-      .withIndex("by_client", (q: Any) => q.eq("clientName", clientName))
-      .first();
+    const p = await currentProfile(ctx, clientName);
     return JSON.stringify({
       client: c
         ? {

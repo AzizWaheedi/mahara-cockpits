@@ -1,19 +1,34 @@
 import { describe, expect, test } from "bun:test";
-import { type QueueItem, urgentEvents } from "./dialer";
+import { urgentEvents } from "./dialer";
 import {
   afterMiss,
+  afterSave,
   countsShown,
+  type DialItem,
+  isNextLeadKey,
   lateSentence,
   liveSkips,
+  missedCallAt,
+  missedCallLine,
+  openAfterRead,
+  outcomeWords,
+  plainError,
   type Reach,
+  readyLine,
+  rowTime,
+  type SavedWork,
   SKIP_MS,
+  savedWorkTitle,
+  savedWorkWhy,
+  shortAgo,
   shortCountdown,
   skipFor,
   skipHolds,
   undialableLine,
+  urgentFor,
 } from "./dialerUi";
 
-const item = (over: Partial<QueueItem>): QueueItem => ({
+const item = (over: Partial<DialItem>): DialItem => ({
   contact_id: "c1",
   name: "Lead",
   phone: "96550012345",
@@ -268,5 +283,284 @@ describe("after a no-answer", () => {
     expect(s.text).toBe(
       "A short WhatsApp asking them to confirm often gets the answer a call did not. The dialer tries the call again in two hours.",
     );
+  });
+});
+
+describe("missed calls", () => {
+  // 11:00 Kuwait on Saturday 26 September.
+  const now = Date.parse("2026-09-26T08:00:00Z");
+  const called = new Date(now - 90_000).toISOString();
+
+  test("count while nobody has called them back, for a day", () => {
+    expect(missedCallAt(item({ inbound_call_at: called }), now)).toBe(
+      now - 90_000,
+    );
+    expect(
+      missedCallAt(
+        item({
+          inbound_call_at: called,
+          last_dial_at: new Date(now - 30_000).toISOString(),
+        }),
+        now,
+      ),
+    ).toBeNull();
+    expect(
+      missedCallAt(
+        item({ inbound_call_at: new Date(now - 25 * 3_600_000).toISOString() }),
+        now,
+      ),
+    ).toBeNull();
+    expect(missedCallAt(item({ inbound_call_at: null }), now)).toBeNull();
+  });
+
+  test("the banner says when, on the Kuwait clock", () => {
+    expect(missedCallLine(item({ inbound_call_at: called }), now)).toBe(
+      "Missed their call at 10:58. Call them back.",
+    );
+    // 22:30 Kuwait the evening before.
+    expect(
+      missedCallLine(item({ inbound_call_at: "2026-09-25T19:30:00Z" }), now),
+    ).toBe("Missed their call yesterday at 22:30. Call them back.");
+    expect(missedCallLine(item({}), now)).toBeNull();
+  });
+
+  test("the strip counts two minutes from their call, not from when they came in", () => {
+    const [e] = urgentFor(
+      [
+        item({
+          why: "Called us, missed it",
+          created_at: new Date(now - 5 * 3_600_000).toISOString(),
+          inbound_call_at: called,
+        }),
+      ],
+      now,
+    );
+    expect(e.title).toBe("Missed their call");
+    expect(shortCountdown(e, now)).toBe("Dial within 0:30");
+    // urgentEvents alone read it as a new lead five hours late.
+    const [old] = urgentEvents(
+      [item({ created_at: new Date(now - 5 * 3_600_000).toISOString() })],
+      now,
+    );
+    expect(shortCountdown(old, now)).toBe("298 min late");
+  });
+
+  test("a later reply, a close call-back or a booked call keeps its own event", () => {
+    const reply = urgentFor(
+      [
+        item({
+          inbound_call_at: called,
+          inbound_at: new Date(now - 10_000).toISOString(),
+        }),
+      ],
+      now,
+    );
+    expect(reply.map(e => e.title)).toEqual(["Wrote back"]);
+    const callback = urgentFor(
+      [
+        item({
+          inbound_call_at: called,
+          callback_at: new Date(now + 3 * 60_000).toISOString(),
+        }),
+      ],
+      now,
+    );
+    expect(callback.map(e => e.title)).toEqual(["Call back, as agreed"]);
+    expect(
+      urgentFor([item({ tier: 1, inbound_call_at: called })], now),
+    ).toEqual([]);
+  });
+
+  test("the strip is still ordered by deadline", () => {
+    const e = urgentFor(
+      [
+        item({
+          contact_id: "new",
+          created_at: new Date(now - 20_000).toISOString(),
+        }),
+        item({ contact_id: "missed", inbound_call_at: called }),
+      ],
+      now,
+    );
+    expect(e.map(x => x.contact_id)).toEqual(["missed", "new"]);
+  });
+});
+
+describe("a call-back five minutes early", () => {
+  const now = Date.parse("2026-09-26T08:00:00Z");
+  const early = item({
+    why: "Call back at 11:04, as agreed",
+    callback_at: new Date(now + 4 * 60_000).toISOString(),
+    created_at: new Date(now - 10 * 3_600_000).toISOString(),
+  });
+
+  test("is due, never late, and its row shows the agreed time", () => {
+    const [e] = urgentFor([early], now);
+    expect(e.callback).toBe(true);
+    expect(shortCountdown(e, now)).toBe("Due in 4 min");
+    expect(lateSentence(e, now)).toBeNull();
+    expect(e.deadline > now).toBe(true);
+    expect(rowTime(early, now)).toBe("11:04");
+  });
+});
+
+describe("queue rows and the ready line", () => {
+  const now = Date.parse("2026-09-26T08:00:00Z");
+  test("rows show the booked call, the missed call or how long ago", () => {
+    expect(
+      rowTime(
+        item({
+          kind: "confirm",
+          appointment: {
+            id: "a",
+            type: "demo",
+            start_at: "2026-09-26T15:00:00Z",
+            booked_at: null,
+            assigned_user_id: null,
+            confirmed: false,
+          },
+        }),
+        now,
+      ),
+    ).toBe("18:00");
+    expect(
+      rowTime(
+        item({
+          tier: 1,
+          inbound_call_at: new Date(now - 3 * 3_600_000).toISOString(),
+          created_at: new Date(now - 5 * 86_400_000).toISOString(),
+        }),
+        now,
+      ),
+    ).toBe("3h");
+    expect(
+      rowTime(
+        item({ created_at: new Date(now - 40 * 60_000).toISOString() }),
+        now,
+      ),
+    ).toBe("40m");
+    expect(shortAgo(new Date(now + 20 * 60_000).toISOString(), now)).toBe(
+      "in 20m",
+    );
+  });
+
+  test("never says never called twice", () => {
+    expect(readyLine(item({ tier: 3, why: "Never called" }), now)).toBe(
+      "Never called",
+    );
+    expect(readyLine(item({ why: "Wrote back today" }), now)).toBe(
+      "Wrote back today · never called",
+    );
+    expect(
+      readyLine(
+        item({
+          why: "Next try is due",
+          step: 2,
+          last_dial_at: new Date(now - 2 * 3_600_000).toISOString(),
+        }),
+        now,
+      ),
+    ).toBe("Next try is due · 2 unanswered tries so far · last called 2 h ago");
+  });
+});
+
+describe("after a save", () => {
+  test("the next lead opens at once, the call centre's way", () => {
+    for (const o of [
+      "no_answer",
+      "callback",
+      "not_interested",
+      "disqualified",
+      "wrong_number",
+      "handled",
+    ])
+      expect(afterSave("lead", o, false)).toBe("next");
+    expect(afterSave("confirm", "confirmed", false)).toBe("next");
+    expect(afterSave("confirm", "no_answer", false)).toBe("next");
+    expect(afterSave("intro", "noshow", false)).toBe("next");
+  });
+
+  test("a held intro and a no-answer to message stay on the lead", () => {
+    expect(afterSave("intro", "showed", false)).toBe("held");
+    expect(afterSave("lead", "no_answer", true)).toBe("message");
+    expect(afterSave("confirm", "no_answer", true)).toBe("message");
+    // Only a no-answer has the message step.
+    expect(afterSave("lead", "callback", true)).toBe("next");
+  });
+
+  test("Alt+→ moves on, but not while typing or with other keys held", () => {
+    const k = {
+      key: "ArrowRight",
+      altKey: true,
+      ctrlKey: false,
+      metaKey: false,
+      shiftKey: false,
+    };
+    expect(isNextLeadKey(k, false)).toBe(true);
+    expect(isNextLeadKey(k, true)).toBe(false);
+    expect(isNextLeadKey({ ...k, shiftKey: true }, false)).toBe(false);
+    expect(isNextLeadKey({ ...k, altKey: false }, false)).toBe(false);
+    expect(isNextLeadKey({ ...k, key: "ArrowLeft" }, false)).toBe(false);
+  });
+});
+
+describe("a late read of the queue", () => {
+  const call = { id: "att-7" };
+  test("never ends a call it could not know about", () => {
+    // Asked at 100, the call placed at 150: the read says no call.
+    expect(openAfterRead(null, { attempt: call, at: 150 }, 100)).toBe(call);
+  });
+  test("a read asked after the call is believed", () => {
+    expect(openAfterRead(null, { attempt: call, at: 150 }, 200)).toBeNull();
+    const other = { id: "att-8" };
+    expect(openAfterRead(other, { attempt: call, at: 150 }, 100)).toBe(other);
+    expect(openAfterRead(null, null, 100)).toBeNull();
+  });
+});
+
+describe("saved work", () => {
+  const w = (over: Partial<SavedWork>): SavedWork => ({
+    attempt_id: "a1",
+    contact_id: "c1",
+    name: "Lead",
+    outcome: "callback",
+    saved_at: "2026-09-26T07:00:00Z",
+    crm_note: "failed",
+    error: null,
+    ...over,
+  });
+  test("says how many, once", () => {
+    expect(savedWorkTitle(1)).toBe("1 save is not in HighLevel yet");
+    expect(savedWorkTitle(3)).toBe("3 saves are not in HighLevel yet");
+  });
+  test("says why in a few words", () => {
+    expect(savedWorkWhy(w({}))).toBe("HighLevel did not take it.");
+    expect(savedWorkWhy(w({ crm_note: "pending" }))).toBe(
+      "Still not in HighLevel after two minutes.",
+    );
+    expect(savedWorkWhy(w({ error: "HighLevel said 422: merged" }))).toBe(
+      "HighLevel said 422: merged",
+    );
+    expect(savedWorkWhy(w({ error: "x".repeat(300) })).length).toBe(140);
+  });
+  test("names outcomes as the screen does", () => {
+    expect(outcomeWords("not_interested")).toBe("Not interested");
+    expect(outcomeWords("showed")).toBe("Intro held");
+    expect(outcomeWords("something_new")).toBe("something new");
+  });
+});
+
+describe("server sentences on screen", () => {
+  test("a JSON blob becomes its message", () => {
+    expect(
+      plainError(
+        'The call did not go through: Maqsam did not accept the call: {"message":"agent is busy"}',
+      ),
+    ).toBe(
+      "The call did not go through: Maqsam did not accept the call: agent is busy",
+    );
+    expect(plainError('Maqsam said: {"code":7}')).toBe("Maqsam said");
+    expect(plainError("Fill in {name} first.")).toBe("Fill in {name} first.");
+    expect(plainError(null)).toBe("");
   });
 });

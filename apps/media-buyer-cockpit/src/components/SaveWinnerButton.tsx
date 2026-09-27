@@ -45,6 +45,10 @@ import { api } from "../../convex/_generated/api";
  * This lets the media buyer keep an ad she knows is worth reusing, with a line
  * on why. The numbers saved are the ad's own, over the range she is looking
  * at, worked out on the server. [aziz, 2026-09-16]
+ *
+ * Every row has the button (Aziz, 2026-09-27: "It should still be there"):
+ * when the range has no leads for the ad, the server takes its 90 days to the
+ * range's end, and the dialog says so.
  */
 
 /** What `winnerSaves.savedIn` says about one ad id. */
@@ -112,9 +116,6 @@ export function SaveWinnerButton({
   const [removing, setRemoving] = useState<string | null>(null);
   const unsave = useMutation(api.winnerSaves.unsave);
   const [busy, setBusy] = useState(false);
-
-  // No leads, no cost per lead: nothing to save. Quiet rows land here too.
-  if (!(row.leads > 0)) return null;
 
   const ids = row.adIds ?? [];
   const savedIds = ids.filter(id => savedIn?.[id]?.saved);
@@ -425,10 +426,20 @@ function SaveDialog({
           </p>
         )}
 
+        {stats && p?.widened && p.window && (
+          <p className="text-[12px] text-muted-foreground">
+            No leads between {range.start} and {range.end}, so these are its
+            last 90 days, {p.window.start} to {p.window.end}.
+          </p>
+        )}
+
         {stats && (
           <div className="rounded border bg-muted/30 px-3 py-2 text-[13px]">
             <div>
-              <span className="font-semibold">{range.label}:</span>{" "}
+              <span className="font-semibold">
+                {p?.widened ? (p.window?.label ?? "Last 90 days") : range.label}
+                :
+              </span>{" "}
               {usd(stats.spend)} spent, {plural(stats.leads, "lead")},{" "}
               {usd(stats.cpl)} a lead
               {showBookings &&

@@ -6,7 +6,7 @@ import {
   MessageSquareWarning,
 } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import { AccountView } from "@/components/AccountView";
 import { BuildPanel } from "@/components/BuildPanel";
@@ -41,8 +41,18 @@ import { Textarea } from "@/components/ui/textarea";
 import { ViktorStatus } from "@/components/ViktorStatus";
 import { WhatsAppDesk } from "@/components/WhatsAppDesk";
 import { useContentTransition } from "@/hooks/use-content-transition";
+import {
+  howItIsGoing,
+  joinList,
+  whatWeDid,
+  whatWeDidAll,
+} from "@/lib/clientUpdate";
 import { CPB_GATE, CPL_GATE, LEARNING_DAYS } from "@/lib/kpi";
-import { defaultRange, type Range } from "@/lib/range";
+import {
+  defaultRange,
+  kuwaitDay as kuwaitToday,
+  type Range,
+} from "@/lib/range";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { CampaignChangesResults } from "../components/CampaignChangesResults";
@@ -327,6 +337,17 @@ function LiveInMeta({ c, tree }: { c: Campaign; tree: Campaign[] }) {
         ))}
     </div>
   );
+}
+
+/** Meta ad ids per ad name, from the tree: several ads can share a name. */
+function idsByName(tree: Campaign[]): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const t of tree) {
+    if (t.kind !== "ad" || !t.metaId) continue;
+    const name = String(t.name);
+    out[name] = [...(out[name] ?? []), String(t.metaId)];
+  }
+  return out;
 }
 
 /**
@@ -944,8 +965,23 @@ function Cockpit({ view }: { view: View }) {
   const [note, setNote] = useState("");
   const [onePercent, setOnePercent] = useState("");
   const [eodSending, setEodSending] = useState(false);
-  /** When set, the ads tab shows one client in full instead of the table. */
-  const [accountView, setAccountView] = useState<string | null>(null);
+  /**
+   * When set, the ads tab shows one client in full instead of the table. It
+   * lives in the address (?account=), so the page can be opened, reloaded,
+   * shared and left with the browser's back button like any other.
+   */
+  const [params, setParams] = useSearchParams();
+  const accountView = view === "ads" ? params.get("account") : null;
+  const setAccountView = (name: string | null) =>
+    setParams(prev => {
+      const next = new URLSearchParams(prev);
+      if (name) next.set("account", name);
+      else next.delete("account");
+      return next;
+    });
+  /** The account page's own range and open campaign. */
+  const [accountRange, setAccountRange] = useState<Range>(defaultRange);
+  const [accountCampaign, setAccountCampaign] = useState<string | null>(null);
   /** The EOD form's own human answers. Numbers are filled in for her. */
   const [eodForm, setEodForm] = useState<Record<string, string>>({
     focus: "",
@@ -986,6 +1022,16 @@ function Cockpit({ view }: { view: View }) {
    * A touchpoint is owed when something changed on the account today, or when the
    * numbers moved enough that the client should hear it from us first.
    */
+  /**
+   * What each client should hear from us today, one message per client.
+   *
+   * Aziz, 2026-09-27: most clients do not know what a lead is and never see
+   * one; they see appointments in their calendar. So the message never quotes
+   * leads or cost per lead: it says what we did today in their words, how the
+   * campaign is doing in plain words, and counts appointments only for
+   * clients we book for (lib/clientUpdate.ts). Her own line above the message
+   * keeps the numbers.
+   */
   const touchpoints = useMemo(() => {
     const out: {
       campaign: Campaign;
@@ -996,79 +1042,107 @@ function Cockpit({ view }: { view: View }) {
       short: string;
       message: string;
     }[] = [];
-    const seen = new Set<string>();
     /** Her saved choice wins; the client's own name is only the fallback guess. */
     // biome-ignore lint/suspicious/noExplicitAny: pref row
     const prefLang = new Map<string, string>(
       ((snap?.prefs ?? []) as any[]).map(p => [p.clientName, p.language]),
     );
     const isArabic = (t: string) =>
-      prefLang.get(t) ? prefLang.get(t) === "ar" : /[\u0600-\u06FF]/.test(t);
-    const decided = new Map<string, string>();
-    for (const d of snap?.decisions ?? []) {
-      if (d.kind !== "touch") decided.set(d.subject, d.action);
-    }
+      prefLang.get(t) ? prefLang.get(t) === "ar" : /[؀-ۿ]/.test(t);
+    // Today's changes, oldest first: the decisions she took and the change
+    // log, which also holds what a decision did on Meta.
+    const since = Date.parse(`${snap?.day ?? kuwaitToday()}T00:00:00+03:00`);
+    const today = [
+      ...((snap?.decisions ?? []) as Campaign[])
+        .filter(d => d.kind !== "touch")
+        .map(d => ({
+          campaign: String(d.subject),
+          label: String(d.action),
+          at: Number(d.loggedAt ?? d._creationTime ?? 0),
+        })),
+      ...((snap?.manualChanges ?? []) as Campaign[])
+        .filter(m => Number(m.at) >= since)
+        .map(m => ({
+          campaign: String(m.campaignName),
+          label: String(m.what),
+          at: Number(m.at),
+        })),
+    ].sort((a, b) => a.at - b.at);
+    // Told today already: "I sent it, log it" takes the client off the list.
+    const told = new Set(
+      ((snap?.decisions ?? []) as Campaign[])
+        .filter(d => d.kind === "touch")
+        .map(d => String(d.subject)),
+    );
+    const byClient = new Map<string, Campaign[]>();
     for (const c of (snap?.campaigns ?? []) as Campaign[]) {
       if (c.internal) continue;
-      const change = decided.get(c.campaignName);
       const client = c.clientName ?? c.campaignName;
-      // One message per client, not per campaign.
-      if (seen.has(client)) continue;
-      const ar = isArabic(client);
-      if (change) {
+      byClient.set(client, [...(byClient.get(client) ?? []), c]);
+    }
+    const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
+    for (const [client, list] of byClient) {
+      if (list.some(c => told.has(c.campaignName))) continue;
+      // The biggest spender speaks for the client's week.
+      const c = [...list].sort(
+        (a, b) => Number(b.spend7d ?? 0) - Number(a.spend7d ?? 0),
+      )[0];
+      const lang: "ar" | "en" = isArabic(client) ? "ar" : "en";
+      const ar = lang === "ar";
+      const names = new Set(list.map(x => x.campaignName));
+      const labels = today
+        .filter(t => names.has(t.campaign) || t.campaign === client)
+        .map(t => t.label);
+      const done = whatWeDidAll(labels, lang);
+      const weBook = list.some(x => x.serviceMode !== "DWY");
+      // bookings7d is the client's own count, carried on every campaign.
+      const bookings = Math.max(0, ...list.map(x => Number(x.bookings7d ?? 0)));
+      const going = howItIsGoing(
+        { verdict: c.verdict, bookings, weBook },
+        lang,
+      );
+      const numbers = `7 days: ${c.leads7d} leads at ${money(c.cpl, 2)}${weBook ? `, ${bookings} booked` : ""}`;
+      const base = { campaign: c, key: c.campaignName, client, lang };
+      if (done.length > 0) {
+        const kept = labels.filter(l => whatWeDid(l, "en") !== null);
         out.push({
-          campaign: c,
-          key: c.campaignName,
-          client,
-          lang: ar ? "ar" : "en",
-          why: `You changed something today: ${change}`,
-          short: change,
+          ...base,
+          why: `Changed today: ${[...new Set(kept)].join(", ")} · ${numbers}`,
+          short: "told them today's changes",
           message: ar
-            ? `صباح الخير 👋 عدّلنا شي على الحملة اليوم — ${change}.\n\n` +
-              `وضعكم الحالي: ${c.leads7d} عميل محتمل خلال آخر أسبوع، بتكلفة ${money(c.cpl, 2)} للعميل` +
-              `${c.bookings7d ? ` و${c.bookings7d} حجز موعد` : ""}.\n\n` +
-              `بنشوف تأثير التعديل خلال يومين ثلاثة وأخبركم.`
-            : `Morning 👋 we changed something on your campaign today — ${change}.\n\n` +
-              `Where you stand: ${c.leads7d} leads this week at ${money(c.cpl, 2)} each` +
-              `${c.bookings7d ? `, ${c.bookings7d} of them booked a call` : ""}.\n\n` +
-              `Give it two or three days and I'll tell you what it did.`,
+            ? `صباح الخير 👋 تحديث سريع على حملتكم: اليوم ${joinList(done, lang)}.\n\n` +
+              `${going}.\n\n` +
+              "بنعطيها يومين ثلاثة ونقولكم شلون ماشية."
+            : `Morning 👋 a quick update on your campaign: today we ${joinList(done, lang)}.\n\n` +
+              `${cap(going)}.\n\n` +
+              "We'll give it two or three days and let you know how it's going.",
         });
       } else if (c.verdict === "scale" && c.leads7d >= 5) {
         out.push({
-          campaign: c,
-          key: c.campaignName,
-          client,
-          lang: ar ? "ar" : "en",
-          why: "Good week: send the win before they have to ask",
+          ...base,
+          why: `Good week: send the win before they have to ask · ${numbers}`,
           short: "shared the week's result",
           message: ar
-            ? `أسبوع زين عندكم 👌 ${c.leads7d} عميل محتمل بتكلفة ${money(c.cpl, 2)} للواحد` +
-              `${c.bookings7d ? ` و${c.bookings7d} حجز` : ""}.\n\n` +
-              `خلّينا على نفس الخط، وأنا أجرب زاوية جديدة أنزّل فيها التكلفة أكثر.`
-            : `Good week on your side 👌 ${c.leads7d} leads at ${money(c.cpl, 2)} each` +
-              `${c.bookings7d ? `, ${c.bookings7d} booked calls` : ""}.\n\n` +
-              `I'm leaving it running and testing one new angle to get the cost down further.`,
+            ? `أسبوع زين على حملتكم 👌 ${going}.\n\n` +
+              "بنخليها على نفس الخط، ونجرب فكرة يديدة على جنب عشان نطلع منها أكثر."
+            : `Good week on your campaign 👌 ${cap(going)}.\n\n` +
+              "We're keeping it running as it is and testing one new idea on the side to make it even better.",
         });
       } else if (c.verdict === "fatiguing" || c.verdict === "kill") {
+        const creative = c.findings?.[0]?.constraint === "Creative";
         out.push({
-          campaign: c,
-          key: c.campaignName,
-          client,
-          lang: ar ? "ar" : "en",
-          why: "Tell them before the number gets worse, not after",
+          ...base,
+          why: `Tell them before the number gets worse, not after · ${numbers}`,
           short: "flagged performance and the fix",
           message: ar
-            ? `حبيت أكلمكم قبل ما تسألون 🙏 الإعلان الحالي بدأ يتعب` +
-              `${c.cpl ? ` وتكلفة العميل صارت ${money(c.cpl, 2)}` : ""}.\n\n` +
-              `أنا شغّالة عليه: ${c.findings?.[0]?.constraint === "Creative" ? "نجهّز إعلانات جديدة" : "نعدّل الاستهداف والميزانية"}.\n\n` +
-              `أخبركم بالنتيجة خلال أيام.`
-            : `Wanted to tell you before you had to ask 🙏 the current ad is tiring out` +
-              `${c.cpl ? ` and your cost per lead is ${money(c.cpl, 2)}` : ""}.\n\n` +
-              `I'm on it: ${c.findings?.[0]?.constraint === "Creative" ? "new creative is being made" : "adjusting targeting and budget"}.\n\n` +
-              `I'll come back to you in a few days with the result.`,
+            ? `حبينا نقولكم قبل لا تلاحظون 🙏 ${going}.\n\n` +
+              `احنا شغالين عليها: ${creative ? "قاعدين نسوي إعلانات يديدة" : "قاعدين نعدّل الاستهداف والميزانية"}.\n\n` +
+              "نرجع لكم خلال كم يوم ونقولكم شلون صارت."
+            : `Wanted to tell you before you notice it 🙏 ${cap(going)}.\n\n` +
+              `We're already on it: ${creative ? "new ads are being made" : "we're adjusting who sees the ads and the budget"}.\n\n` +
+              "We'll come back to you in a few days with how it's going.",
         });
       }
-      if (out.length && out[out.length - 1].campaign === c) seen.add(client);
     }
     return out.slice(0, 8);
   }, [snap]);
@@ -1291,6 +1365,8 @@ function Cockpit({ view }: { view: View }) {
       ...extra,
     });
     setOpen(null);
+    // On the account page the panel stays open: back to its first view.
+    setMode("ads");
     if (did) {
       toast.success(did, { duration: 8000 });
       return;
@@ -2017,12 +2093,7 @@ function Cockpit({ view }: { view: View }) {
                 <Button
                   size="sm"
                   onClick={() =>
-                    act(
-                      tp.campaign,
-                      `Client updated — ${tp.short}`,
-                      "touch",
-                      {},
-                    )
+                    act(tp.campaign, `Client updated: ${tp.short}`, "touch", {})
                   }
                 >
                   I sent it, log it
@@ -2358,6 +2429,581 @@ function Cockpit({ view }: { view: View }) {
     </section>
   );
 
+  /**
+   * One campaign in full: its status and links, the client's rules, the
+   * calls and the edits, and its ad sets and ads over a range with their
+   * pictures and controls. The table's open row and the account page show
+   * this same panel, so nothing can be done in one and not the other.
+   * [Aziz, 2026-09-27]
+   */
+  const campaignPanel = (
+    c: Campaign,
+    where: {
+      range: Range;
+      onRangeChange: (r: Range) => void;
+      /** Cancel in the reroute and leave forms. */
+      onDone: () => void;
+      /** On the account page: its own ad wall and lost leads replace these. */
+      inAccount?: boolean;
+    },
+  ) => {
+    const links = findClientLinks(
+      (snap.clientLinks ?? []) as Campaign[],
+      clientOf(c),
+    );
+    const updates = updatesFor(snap.clientUpdates as ClientUpdate[], links);
+    const acts = actionsFor(c);
+    // Only a real finding earns the eye-catching button.
+    const needsDecision = (c.findings ?? []).some(
+      // biome-ignore lint/suspicious/noExplicitAny: finding rows
+      (f: any) => f.severity !== "optimization",
+    );
+    const ads = snap.ads.filter(
+      (a: Campaign) => a.campaignName === c.campaignName,
+    );
+    const tree = (snap.metaTree ?? []).filter(
+      (t: Campaign) => t.campaignName === c.campaignName,
+    );
+    // The insights table keys ads by name; the Meta tree keys
+    // them by id. Bridge the two so a row can be toggled.
+    const adNode = (adName: string) =>
+      tree.find((t: Campaign) => t.kind === "ad" && t.name === adName);
+    const adMetaId = (adName: string) => adNode(adName)?.metaId;
+    const adIsActive = (adName: string) =>
+      (adNode(adName)?.effectiveStatus ?? adNode(adName)?.status) === "ACTIVE";
+    // The picture for one row of the ads table. The range
+    // table knows the row's ad ids, so the tree node is
+    // matched by id first and by name only as a fallback.
+    // Stored preview links are never passed: the preview
+    // is fetched when she opens it.
+    const adPicture = (adName: string, adIds?: string[]) => {
+      const byId = (adIds ?? [])
+        .map((id: string) =>
+          tree.find((t: Campaign) => t.kind === "ad" && t.metaId === id),
+        )
+        .filter(Boolean);
+      const node: Campaign =
+        byId.find((t: Campaign) => t.stillUrl || t.stillTinyUrl) ??
+        byId[0] ??
+        adNode(adName);
+      const metaAdId: string | undefined = node?.metaId ?? adIds?.[0];
+      const row: Campaign = ads.find((a: Campaign) => a.adName === adName);
+      // The ads row is keyed by name; trust its picture
+      // first only when it is the same ad.
+      const same =
+        row && (!row.metaAdId || !metaAdId || row.metaAdId === metaAdId);
+      const first = same ? row : node;
+      const second = same ? node : row;
+      return {
+        metaAdId: metaAdId ?? row?.metaAdId,
+        accountId: node?.accountId as string | undefined,
+        stillUrl: (first?.stillUrl ?? second?.stillUrl) as string | undefined,
+        stillTinyUrl: (first?.stillTinyUrl ?? second?.stillTinyUrl) as
+          | string
+          | undefined,
+        thumbUrl: ((same ? row?.thumbnailUrl : undefined) ??
+          node?.thumbUrl ??
+          row?.thumbnailUrl) as string | undefined,
+      };
+    };
+    const facts = [
+      c.internal ? "Mahara's own account" : null,
+      c.daysLive !== undefined ? `Live ${c.daysLive} days` : null,
+      c.currency && c.currency !== "USD"
+        ? `${c.currency} account, converted to USD`
+        : null,
+    ].filter(Boolean);
+    return (
+      <>
+        <div className="mb-4 grid gap-3 rounded-xl bg-muted/40 p-3 text-sm sm:p-4">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <AdStatusPicker
+              campaignName={c.campaignName}
+              status={c.boardAdStatus}
+              hasCard={Boolean(c.taskId)}
+            />
+            {facts.length > 0 && (
+              <span className="text-xs text-muted-foreground">
+                {facts.join(" · ")}
+              </span>
+            )}
+            <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs sm:ml-auto">
+              {adsManagerUrl(c) && (
+                <a
+                  className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
+                  href={adsManagerUrl(c)}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open in Ads Manager
+                  <ArrowUpRight className="size-3.5" aria-hidden />
+                </a>
+              )}
+              {c.taskUrl && (
+                <a
+                  className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground hover:underline"
+                  href={c.taskUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  ClickUp task
+                  <ArrowUpRight className="size-3.5" aria-hidden />
+                </a>
+              )}
+            </span>
+          </div>
+          {c.accountIssue && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
+              <span className="flex min-w-0 items-start gap-2">
+                <span
+                  aria-hidden
+                  className="mt-1 size-1.5 shrink-0 rounded-full"
+                  style={{
+                    backgroundColor: TONE_DOT.bad,
+                  }}
+                />
+                {c.accountIssue}
+              </span>
+              {/unsettled/i.test(c.accountIssue) && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  title="Files a 'card declined' request on the Client Success board so the CSM chases the payment. Meta refuses every edit until it is paid."
+                  onClick={() => {
+                    window.open(
+                      "https://forms.clickup.com/90182518398/f/2kzmr1ky-1218/EGZ60WWQVFFLDWOE89",
+                      "_blank",
+                      "noopener",
+                    );
+                    decide({
+                      subject: c.campaignName,
+                      action: "Client card declined, chase the payment",
+                      kind: "rerouted",
+                      evidence: `${c.accountIssue} Ad account: ${c.accountName}.`,
+                      reroutedTo: "client_success",
+                    });
+                  }}
+                >
+                  Card declined form
+                </Button>
+              )}
+            </div>
+          )}
+          {adsTab === "running" && isOffOnBoard(c) && (
+            <p className="flex items-start gap-2 text-xs">
+              <span
+                aria-hidden
+                className="mt-1 size-1.5 shrink-0 rounded-full"
+                style={{ backgroundColor: TONE_DOT.bad }}
+              />
+              The board has this campaign as {c.boardAdStatus}, but Meta is
+              still running it and spending. Pause it on Meta, or set the Ad
+              Status back to Live.
+            </p>
+          )}
+          {!isOffOnBoard(c) && offOnMeta.has(c.campaignName) && (
+            <p className="flex items-start gap-2 text-xs">
+              <span
+                aria-hidden
+                className="mt-1 size-1.5 shrink-0 rounded-full"
+                style={{
+                  backgroundColor: TONE_DOT.warn,
+                }}
+              />
+              The board says this campaign is on, but nothing is delivering on
+              Meta. If it is off, set the Ad Status.
+            </p>
+          )}
+          {c.staleTaskName && (
+            <p className="text-xs">
+              The board card still says “{c.staleTaskName}
+              ”. <RenameCardButton campaignName={c.campaignName} />
+            </p>
+          )}
+          <CityPicker
+            campaignName={c.campaignName}
+            cities={c.advertisingCities}
+            hasCard={Boolean(c.taskId)}
+          />
+        </div>
+        <ClientRules name={clientOf(c)} links={links} updates={updates} />
+        <div
+          className="mb-4 flex gap-1 overflow-x-auto border-b [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          role="group"
+          aria-label="Campaign details"
+        >
+          <button
+            type="button"
+            aria-pressed={campaignPanelTab === "recommendations"}
+            onClick={() => {
+              setMode("ads");
+              setCampaignPanelTab("recommendations");
+            }}
+            className={`-mb-px shrink-0 whitespace-nowrap border-b-2 px-2.5 py-2 text-sm font-medium sm:px-3 ${campaignPanelTab === "recommendations" ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+          >
+            Recommendations
+          </button>
+          <button
+            type="button"
+            aria-pressed={campaignPanelTab === "changes"}
+            onClick={() => {
+              setMode("ads");
+              setCampaignPanelTab("changes");
+            }}
+            className={`-mb-px shrink-0 whitespace-nowrap border-b-2 px-2.5 py-2 text-sm font-medium sm:px-3 ${campaignPanelTab === "changes" ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+          >
+            Changes and results
+          </button>
+        </div>
+        {campaignPanelTab === "changes" && (
+          <CampaignChangesResults
+            campaignName={c.campaignName}
+            taskUrl={c.taskUrl}
+            leadsOnly={c.serviceMode === "DWY"}
+            ads={tree
+              .filter((t: Campaign) => t.kind === "ad" && t.metaId)
+              .map((t: Campaign) => ({
+                metaId: String(t.metaId),
+                name: String(t.name),
+                status: String(t.effectiveStatus ?? t.status),
+              }))}
+          />
+        )}
+        {mode === "ads" && campaignPanelTab === "recommendations" && (
+          <div>
+            {/* The decisions live here, next to the
+                                      evidence for them, instead of crowding
+                                      every row of the table. */}
+            <div className="mb-4 flex flex-wrap items-center gap-2 border-b pb-4">
+              <span className="basis-full text-xs text-muted-foreground">
+                <span className="font-semibold text-foreground">
+                  What do you want to do?
+                </span>{" "}
+                {isExecutable(acts[0])
+                  ? "The first one changes Meta straight away."
+                  : "These are logged, not applied."}
+              </span>
+              <Button
+                size="sm"
+                className="h-7 whitespace-nowrap px-2.5 text-xs"
+                onClick={() => act(c, acts[0], "approved")}
+              >
+                {acts[0]}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 whitespace-nowrap px-2.5 text-xs"
+                onClick={() => act(c, acts[1], "alternative")}
+              >
+                {acts[1]}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2.5 text-xs text-muted-foreground"
+                onClick={() => setMode("leave")}
+              >
+                Leave it
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2.5 text-xs text-muted-foreground"
+                onClick={() => setMode("reroute")}
+              >
+                Send to another team
+              </Button>
+              <StatusToggle
+                metaId={c.metaCampaignId}
+                level="campaign"
+                name={c.campaignName}
+                clientTag={c.clientTag}
+                campaignName={c.campaignName}
+                // Campaign rows carry no status; an
+                // ad delivering under it means on.
+                active={tree.some(
+                  (t: Campaign) =>
+                    t.kind === "ad" &&
+                    (t.effectiveStatus ?? t.status) === "ACTIVE",
+                )}
+              />
+            </div>
+            <EditPanel campaign={c} tree={tree} />
+            <CampaignChat
+              campaignId={c.campaignName}
+              campaignName={c.campaignName}
+              client={c.clientTag ?? undefined}
+            />
+            <p className="mb-1 mt-4 text-xs text-muted-foreground">
+              The call below is the 7-day read: {c.reason}
+            </p>
+            <CampaignRange
+              campaignName={c.campaignName}
+              range={where.range}
+              onRangeChange={where.onRangeChange}
+              leadsOnly={c.serviceMode === "DWY"}
+              extraAds={[
+                ...new Set<string>(
+                  tree
+                    .filter((t: Campaign) => t.kind === "ad")
+                    .map((t: Campaign) => String(t.name)),
+                ),
+              ]}
+              adIdsByName={idsByName(tree)}
+              renderAdCell={(
+                adName: string,
+                rangeRow?: { adIds?: string[] },
+              ) => {
+                const p = adPicture(adName, rangeRow?.adIds);
+                return (
+                  <div className="flex items-center gap-2">
+                    <CreativePreview
+                      name={adName}
+                      metaAdId={p.metaAdId}
+                      accountId={p.accountId ?? c.metaAccountId ?? undefined}
+                      stillUrl={p.stillUrl}
+                      stillTinyUrl={p.stillTinyUrl}
+                      thumbUrl={p.thumbUrl}
+                    />
+                    <span>{adName}</span>
+                  </div>
+                );
+              }}
+              renderAdCall={(
+                adName: string,
+                rangeRow?: { adIds?: string[] },
+              ) => {
+                const row = ads.find((a: Campaign) => a.adName === adName);
+                const sameName = tree.filter(
+                  (t: Campaign) => t.kind === "ad" && t.name === adName,
+                );
+                const requestAdId =
+                  rangeRow?.adIds?.length === 1
+                    ? rangeRow.adIds[0]
+                    : sameName.length === 1
+                      ? sameName[0].metaId
+                      : undefined;
+                return (
+                  <div className="flex items-center gap-1.5">
+                    {row && (
+                      <StatusChip tone={VERDICT_TONE[row.verdict] ?? "neutral"}>
+                        {sentence(row.verdict)}
+                      </StatusChip>
+                    )}
+                    <StatusToggle
+                      compact
+                      metaId={adMetaId(adName)}
+                      level="ad"
+                      name={adName}
+                      clientTag={c.clientTag}
+                      campaignName={c.campaignName}
+                      active={adIsActive(adName)}
+                    />
+                    <RequestCreativeButton
+                      campaignName={c.campaignName}
+                      adId={requestAdId}
+                      adName={adName}
+                      compact
+                    />
+                  </div>
+                );
+              }}
+            />
+            {(c.findings ?? []).length > 0 && (
+              <div className="mb-4 rounded-xl bg-muted/40 p-4">
+                <div className={`mb-3 ${KICKER}`}>
+                  {needsDecision
+                    ? "What needs a decision"
+                    : "Optional optimizations"}
+                </div>
+                <div className="space-y-3">
+                  {(c.findings ?? []).map(
+                    // biome-ignore lint/suspicious/noExplicitAny: finding rows
+                    (f: any, i: number) => (
+                      <div key={f.constraint}>
+                        <div className="flex flex-wrap items-center gap-2 text-sm font-semibold">
+                          {f.constraint}
+                          {f.severity === "optimization" ? (
+                            <StatusChip tone="neutral">Optimization</StatusChip>
+                          ) : (
+                            i === 0 && (
+                              <StatusChip tone="bad">Fix this first</StatusChip>
+                            )
+                          )}
+                        </div>
+                        <div className="text-sm text-muted-foreground">
+                          {f.evidence}
+                        </div>
+                        <ul className="mt-1 list-disc pl-5 text-sm">
+                          {f.fixes.map((fx: string) => (
+                            <li key={fx}>{fx}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ),
+                  )}
+                </div>
+                <p className="mt-3 text-xs text-muted-foreground">
+                  {needsDecision
+                    ? "Patch one leak at a time: take the top one today, re-check tomorrow."
+                    : "Nothing needs touching. Cheap leads that book; leave it running, these are optional."}{" "}
+                  The playbook behind these calls:{" "}
+                  <a
+                    className="inline-flex items-center gap-0.5 text-primary hover:underline"
+                    href="https://docs.google.com/document/d/1cioKqspTOI6zK76ob0lOTzfNLDMe5WS6NJ_hgTwb-p4/edit"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Diagnosing and fixing acquisition constraints
+                    <ArrowUpRight className="size-3.5" aria-hidden />
+                  </a>
+                </p>
+              </div>
+            )}
+            {!where.inAccount && (
+              <LostLeads
+                lost={c.lost}
+                adNameById={Object.fromEntries(
+                  tree
+                    .filter((t: Campaign) => t.kind === "ad" && t.metaId)
+                    .map((t: Campaign) => [t.metaId, t.name]),
+                )}
+              />
+            )}
+            <BuildPanel
+              clientTag={c.clientTag ?? c.accountName}
+              clientName={c.clientName ?? c.accountName}
+              accountId={c.metaAccountId}
+              serviceType={c.serviceType}
+              language={
+                /[؀-ۿ]/.test(c.clientName ?? c.accountName) ? "ar" : "en"
+              }
+            />
+            {!where.inAccount && <LiveInMeta c={c} tree={tree} />}
+          </div>
+        )}
+        {mode === "reroute" && (
+          <div className="max-w-2xl space-y-3">
+            <div className="text-sm font-semibold">
+              Send to another team: {c.campaignName}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              This is not for me: pick what needs to happen and it lands on that
+              team's ClickUp board as a request.
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              <RequestCreativeButton
+                campaignName={c.campaignName}
+                ads={tree
+                  .filter((t: Campaign) => t.kind === "ad" && t.metaId)
+                  .map((t: Campaign) => ({
+                    metaId: String(t.metaId),
+                    name: String(t.name),
+                  }))}
+              />
+              {REQUESTS.map(r => (
+                <button
+                  key={r.label}
+                  type="button"
+                  aria-pressed={r.label === dept}
+                  onClick={() => setDept(r.label)}
+                  className={choice(r.label === dept)}
+                >
+                  {r.label}
+                </button>
+              ))}
+            </div>
+            <div className="rounded-xl bg-muted/40 p-3 text-sm">{c.reason}</div>
+            <Textarea
+              className="min-h-[70px] text-sm"
+              placeholder="Anything the other team needs to know. It goes into Additional Notes on the ticket."
+              value={note}
+              onChange={e => setNote(e.target.value)}
+            />
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                onClick={() => {
+                  const r = REQUESTS.find(x => x.label === dept) ?? REQUESTS[0];
+                  act(c, r.label, "rerouted", {
+                    reroutedTo: r.dept,
+                    reason: note || undefined,
+                  });
+                  setNote("");
+                }}
+              >
+                Send to{" "}
+                {
+                  (REQUESTS.find(x => x.label === dept) ?? REQUESTS[0])
+                    .deptLabel
+                }
+              </Button>
+              <Button size="sm" variant="outline" onClick={where.onDone}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
+        {mode === "leave" && (
+          <div className="max-w-2xl space-y-3">
+            <div className="text-sm font-semibold">
+              Leave it: {c.campaignName}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {REASONS.map(r => (
+                <button
+                  key={r}
+                  type="button"
+                  aria-pressed={r === reason}
+                  onClick={() => setReason(r)}
+                  className={choice(r === reason)}
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {CLOCKS.map(r => (
+                <button
+                  key={r}
+                  type="button"
+                  aria-pressed={r === clock}
+                  onClick={() => setClock(r)}
+                  className={choice(r === clock)}
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              "Client hasn't approved the budget" creates a CSM touchpoint task.
+              "Disagree with the call" is logged separately, and a rule
+              disagreed with three times gets changed, not re-shown.
+            </p>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                onClick={() =>
+                  act(c, "Left", "left", {
+                    reason,
+                    snooze: clock,
+                  })
+                }
+              >
+                Leave it
+              </Button>
+              <Button size="sm" variant="outline" onClick={where.onDone}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
+      </>
+    );
+  };
+
   const running = (snap.campaigns as Campaign[]).filter(c => !isParked(c));
   const board = (
     <section className={CARD}>
@@ -2484,17 +3130,9 @@ function Cockpit({ view }: { view: View }) {
                 );
                 const decided = decidedBySubject.get(c.campaignName);
                 const flag = flagFor(c);
-                const acts = actionsFor(c);
                 // Only a real finding earns the eye-catching button.
                 const needsDecision = (c.findings ?? []).some(
-                  // biome-ignore lint/suspicious/noExplicitAny: finding rows
-                  (f: any) => f.severity !== "optimization",
-                );
-                const ads = snap.ads.filter(
-                  (a: Campaign) => a.campaignName === c.campaignName,
-                );
-                const tree = (snap.metaTree ?? []).filter(
-                  (t: Campaign) => t.campaignName === c.campaignName,
+                  (f: Campaign) => f.severity !== "optimization",
                 );
                 // The name, the button and the row itself all open the
                 // same panel.
@@ -2503,65 +3141,6 @@ function Cockpit({ view }: { view: View }) {
                   if (!isOpen) setCampaignPanelTab("recommendations");
                   setOpen(isOpen && mode === "ads" ? null : c.campaignName);
                 };
-                // The insights table keys ads by name; the Meta tree keys
-                // them by id. Bridge the two so a row can be toggled.
-                const adNode = (adName: string) =>
-                  tree.find(
-                    (t: Campaign) => t.kind === "ad" && t.name === adName,
-                  );
-                const adMetaId = (adName: string) => adNode(adName)?.metaId;
-                const adIsActive = (adName: string) =>
-                  (adNode(adName)?.effectiveStatus ??
-                    adNode(adName)?.status) === "ACTIVE";
-                // The picture for one row of the ads table. The range
-                // table knows the row's ad ids, so the tree node is
-                // matched by id first and by name only as a fallback.
-                // Stored preview links are never passed: the preview
-                // is fetched when she opens it.
-                const adPicture = (adName: string, adIds?: string[]) => {
-                  const byId = (adIds ?? [])
-                    .map((id: string) =>
-                      tree.find(
-                        (t: Campaign) => t.kind === "ad" && t.metaId === id,
-                      ),
-                    )
-                    .filter(Boolean);
-                  const node: Campaign =
-                    byId.find((t: Campaign) => t.stillUrl || t.stillTinyUrl) ??
-                    byId[0] ??
-                    adNode(adName);
-                  const metaAdId: string | undefined =
-                    node?.metaId ?? adIds?.[0];
-                  const row: Campaign = ads.find(
-                    (a: Campaign) => a.adName === adName,
-                  );
-                  // The ads row is keyed by name; trust its picture
-                  // first only when it is the same ad.
-                  const same =
-                    row &&
-                    (!row.metaAdId || !metaAdId || row.metaAdId === metaAdId);
-                  const first = same ? row : node;
-                  const second = same ? node : row;
-                  return {
-                    metaAdId: metaAdId ?? row?.metaAdId,
-                    accountId: node?.accountId as string | undefined,
-                    stillUrl: (first?.stillUrl ?? second?.stillUrl) as
-                      | string
-                      | undefined,
-                    stillTinyUrl: (first?.stillTinyUrl ??
-                      second?.stillTinyUrl) as string | undefined,
-                    thumbUrl: ((same ? row?.thumbnailUrl : undefined) ??
-                      node?.thumbUrl ??
-                      row?.thumbnailUrl) as string | undefined,
-                  };
-                };
-                const facts = [
-                  c.internal ? "Mahara's own account" : null,
-                  c.daysLive !== undefined ? `Live ${c.daysLive} days` : null,
-                  c.currency && c.currency !== "USD"
-                    ? `${c.currency} account, converted to USD`
-                    : null,
-                ].filter(Boolean);
                 return (
                   <Fragment key={c._id}>
                     {newClient && (
@@ -2574,10 +3153,13 @@ function Cockpit({ view }: { view: View }) {
                             onOpen={
                               c.internal
                                 ? undefined
-                                : () =>
+                                : () => {
+                                    setAccountRange(globalRange);
+                                    setAccountCampaign(null);
                                     setAccountView(
                                       c.clientName ?? c.accountName,
-                                    )
+                                    );
+                                  }
                             }
                           />
                         </td>
@@ -2743,575 +3325,11 @@ function Cockpit({ view }: { view: View }) {
                             table beside them scrolls. */}
                         <td colSpan={8} className="p-0">
                           <div className="sticky left-0 w-[100cqw] p-3 sm:p-4">
-                            <div className="mb-4 grid gap-3 rounded-xl bg-muted/40 p-3 text-sm sm:p-4">
-                              <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-                                <AdStatusPicker
-                                  campaignName={c.campaignName}
-                                  status={c.boardAdStatus}
-                                  hasCard={Boolean(c.taskId)}
-                                />
-                                {facts.length > 0 && (
-                                  <span className="text-xs text-muted-foreground">
-                                    {facts.join(" · ")}
-                                  </span>
-                                )}
-                                <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs sm:ml-auto">
-                                  {adsManagerUrl(c) && (
-                                    <a
-                                      className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
-                                      href={adsManagerUrl(c)}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                    >
-                                      Open in Ads Manager
-                                      <ArrowUpRight
-                                        className="size-3.5"
-                                        aria-hidden
-                                      />
-                                    </a>
-                                  )}
-                                  {c.taskUrl && (
-                                    <a
-                                      className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground hover:underline"
-                                      href={c.taskUrl}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                    >
-                                      ClickUp task
-                                      <ArrowUpRight
-                                        className="size-3.5"
-                                        aria-hidden
-                                      />
-                                    </a>
-                                  )}
-                                </span>
-                              </div>
-                              {c.accountIssue && (
-                                <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
-                                  <span className="flex min-w-0 items-start gap-2">
-                                    <span
-                                      aria-hidden
-                                      className="mt-1 size-1.5 shrink-0 rounded-full"
-                                      style={{
-                                        backgroundColor: TONE_DOT.bad,
-                                      }}
-                                    />
-                                    {c.accountIssue}
-                                  </span>
-                                  {/unsettled/i.test(c.accountIssue) && (
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      className="h-7 text-xs"
-                                      title="Files a 'card declined' request on the Client Success board so the CSM chases the payment. Meta refuses every edit until it is paid."
-                                      onClick={() => {
-                                        window.open(
-                                          "https://forms.clickup.com/90182518398/f/2kzmr1ky-1218/EGZ60WWQVFFLDWOE89",
-                                          "_blank",
-                                          "noopener",
-                                        );
-                                        decide({
-                                          subject: c.campaignName,
-                                          action:
-                                            "Client card declined, chase the payment",
-                                          kind: "rerouted",
-                                          evidence: `${c.accountIssue} Ad account: ${c.accountName}.`,
-                                          reroutedTo: "client_success",
-                                        });
-                                      }}
-                                    >
-                                      Card declined form
-                                    </Button>
-                                  )}
-                                </div>
-                              )}
-                              {adsTab === "running" && isOffOnBoard(c) && (
-                                <p className="flex items-start gap-2 text-xs">
-                                  <span
-                                    aria-hidden
-                                    className="mt-1 size-1.5 shrink-0 rounded-full"
-                                    style={{ backgroundColor: TONE_DOT.bad }}
-                                  />
-                                  The board has this campaign as{" "}
-                                  {c.boardAdStatus}, but Meta is still running
-                                  it and spending. Pause it on Meta, or set the
-                                  Ad Status back to Live.
-                                </p>
-                              )}
-                              {!isOffOnBoard(c) &&
-                                offOnMeta.has(c.campaignName) && (
-                                  <p className="flex items-start gap-2 text-xs">
-                                    <span
-                                      aria-hidden
-                                      className="mt-1 size-1.5 shrink-0 rounded-full"
-                                      style={{
-                                        backgroundColor: TONE_DOT.warn,
-                                      }}
-                                    />
-                                    The board says this campaign is on, but
-                                    nothing is delivering on Meta. If it is off,
-                                    set the Ad Status.
-                                  </p>
-                                )}
-                              {c.staleTaskName && (
-                                <p className="text-xs">
-                                  The board card still says “{c.staleTaskName}
-                                  ”.{" "}
-                                  <RenameCardButton
-                                    campaignName={c.campaignName}
-                                  />
-                                </p>
-                              )}
-                              <CityPicker
-                                campaignName={c.campaignName}
-                                cities={c.advertisingCities}
-                                hasCard={Boolean(c.taskId)}
-                              />
-                            </div>
-                            <ClientRules
-                              name={clientOf(c)}
-                              links={links}
-                              updates={updates}
-                            />
-                            <div
-                              className="mb-4 flex gap-1 overflow-x-auto border-b [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                              role="group"
-                              aria-label="Campaign details"
-                            >
-                              <button
-                                type="button"
-                                aria-pressed={
-                                  campaignPanelTab === "recommendations"
-                                }
-                                onClick={() => {
-                                  setMode("ads");
-                                  setCampaignPanelTab("recommendations");
-                                }}
-                                className={`-mb-px shrink-0 whitespace-nowrap border-b-2 px-2.5 py-2 text-sm font-medium sm:px-3 ${campaignPanelTab === "recommendations" ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}
-                              >
-                                Recommendations
-                              </button>
-                              <button
-                                type="button"
-                                aria-pressed={campaignPanelTab === "changes"}
-                                onClick={() => {
-                                  setMode("ads");
-                                  setCampaignPanelTab("changes");
-                                }}
-                                className={`-mb-px shrink-0 whitespace-nowrap border-b-2 px-2.5 py-2 text-sm font-medium sm:px-3 ${campaignPanelTab === "changes" ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}
-                              >
-                                Changes and results
-                              </button>
-                            </div>
-                            {campaignPanelTab === "changes" && (
-                              <CampaignChangesResults
-                                campaignName={c.campaignName}
-                                taskUrl={c.taskUrl}
-                                leadsOnly={c.serviceMode === "DWY"}
-                                ads={tree
-                                  .filter(
-                                    (t: Campaign) =>
-                                      t.kind === "ad" && t.metaId,
-                                  )
-                                  .map((t: Campaign) => ({
-                                    metaId: String(t.metaId),
-                                    name: String(t.name),
-                                    status: String(
-                                      t.effectiveStatus ?? t.status,
-                                    ),
-                                  }))}
-                              />
-                            )}
-                            {mode === "ads" &&
-                              campaignPanelTab === "recommendations" && (
-                                <div>
-                                  {/* The decisions live here, next to the
-                                      evidence for them, instead of crowding
-                                      every row of the table. */}
-                                  <div className="mb-4 flex flex-wrap items-center gap-2 border-b pb-4">
-                                    <span className="basis-full text-xs text-muted-foreground">
-                                      <span className="font-semibold text-foreground">
-                                        What do you want to do?
-                                      </span>{" "}
-                                      {isExecutable(acts[0])
-                                        ? "The first one changes Meta straight away."
-                                        : "These are logged, not applied."}
-                                    </span>
-                                    <Button
-                                      size="sm"
-                                      className="h-7 whitespace-nowrap px-2.5 text-xs"
-                                      onClick={() =>
-                                        act(c, acts[0], "approved")
-                                      }
-                                    >
-                                      {acts[0]}
-                                    </Button>
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      className="h-7 whitespace-nowrap px-2.5 text-xs"
-                                      onClick={() =>
-                                        act(c, acts[1], "alternative")
-                                      }
-                                    >
-                                      {acts[1]}
-                                    </Button>
-                                    <Button
-                                      size="sm"
-                                      variant="ghost"
-                                      className="h-7 px-2.5 text-xs text-muted-foreground"
-                                      onClick={() => setMode("leave")}
-                                    >
-                                      Leave it
-                                    </Button>
-                                    <Button
-                                      size="sm"
-                                      variant="ghost"
-                                      className="h-7 px-2.5 text-xs text-muted-foreground"
-                                      onClick={() => setMode("reroute")}
-                                    >
-                                      Send to another team
-                                    </Button>
-                                    <StatusToggle
-                                      metaId={c.metaCampaignId}
-                                      level="campaign"
-                                      name={c.campaignName}
-                                      clientTag={c.clientTag}
-                                      campaignName={c.campaignName}
-                                      // Campaign rows carry no status; an
-                                      // ad delivering under it means on.
-                                      active={tree.some(
-                                        (t: Campaign) =>
-                                          t.kind === "ad" &&
-                                          (t.effectiveStatus ?? t.status) ===
-                                            "ACTIVE",
-                                      )}
-                                    />
-                                  </div>
-                                  <EditPanel campaign={c} tree={tree} />
-                                  <CampaignChat
-                                    campaignId={c.campaignName}
-                                    campaignName={c.campaignName}
-                                    client={c.clientTag ?? undefined}
-                                  />
-                                  <p className="mb-1 mt-4 text-xs text-muted-foreground">
-                                    The call below is the 7-day read: {c.reason}
-                                  </p>
-                                  <CampaignRange
-                                    campaignName={c.campaignName}
-                                    range={rangeFor(c.campaignName)}
-                                    onRangeChange={r =>
-                                      setRange(c.campaignName, r)
-                                    }
-                                    leadsOnly={c.serviceMode === "DWY"}
-                                    extraAds={[
-                                      ...new Set<string>(
-                                        tree
-                                          .filter(
-                                            (t: Campaign) => t.kind === "ad",
-                                          )
-                                          .map((t: Campaign) => String(t.name)),
-                                      ),
-                                    ]}
-                                    renderAdCell={(
-                                      adName: string,
-                                      rangeRow?: { adIds?: string[] },
-                                    ) => {
-                                      const p = adPicture(
-                                        adName,
-                                        rangeRow?.adIds,
-                                      );
-                                      return (
-                                        <div className="flex items-center gap-2">
-                                          <CreativePreview
-                                            name={adName}
-                                            metaAdId={p.metaAdId}
-                                            accountId={
-                                              p.accountId ??
-                                              c.metaAccountId ??
-                                              undefined
-                                            }
-                                            stillUrl={p.stillUrl}
-                                            stillTinyUrl={p.stillTinyUrl}
-                                            thumbUrl={p.thumbUrl}
-                                          />
-                                          <span>{adName}</span>
-                                        </div>
-                                      );
-                                    }}
-                                    renderAdCall={(
-                                      adName: string,
-                                      rangeRow?: { adIds?: string[] },
-                                    ) => {
-                                      const row = ads.find(
-                                        (a: Campaign) => a.adName === adName,
-                                      );
-                                      const sameName = tree.filter(
-                                        (t: Campaign) =>
-                                          t.kind === "ad" && t.name === adName,
-                                      );
-                                      const requestAdId =
-                                        rangeRow?.adIds?.length === 1
-                                          ? rangeRow.adIds[0]
-                                          : sameName.length === 1
-                                            ? sameName[0].metaId
-                                            : undefined;
-                                      return (
-                                        <div className="flex items-center gap-1.5">
-                                          {row && (
-                                            <StatusChip
-                                              tone={
-                                                VERDICT_TONE[row.verdict] ??
-                                                "neutral"
-                                              }
-                                            >
-                                              {sentence(row.verdict)}
-                                            </StatusChip>
-                                          )}
-                                          <StatusToggle
-                                            compact
-                                            metaId={adMetaId(adName)}
-                                            level="ad"
-                                            name={adName}
-                                            clientTag={c.clientTag}
-                                            campaignName={c.campaignName}
-                                            active={adIsActive(adName)}
-                                          />
-                                          <RequestCreativeButton
-                                            campaignName={c.campaignName}
-                                            adId={requestAdId}
-                                            adName={adName}
-                                            compact
-                                          />
-                                        </div>
-                                      );
-                                    }}
-                                  />
-                                  {(c.findings ?? []).length > 0 && (
-                                    <div className="mb-4 rounded-xl bg-muted/40 p-4">
-                                      <div className={`mb-3 ${KICKER}`}>
-                                        {needsDecision
-                                          ? "What needs a decision"
-                                          : "Optional optimizations"}
-                                      </div>
-                                      <div className="space-y-3">
-                                        {(c.findings ?? []).map(
-                                          // biome-ignore lint/suspicious/noExplicitAny: finding rows
-                                          (f: any, i: number) => (
-                                            <div key={f.constraint}>
-                                              <div className="flex flex-wrap items-center gap-2 text-sm font-semibold">
-                                                {f.constraint}
-                                                {f.severity ===
-                                                "optimization" ? (
-                                                  <StatusChip tone="neutral">
-                                                    Optimization
-                                                  </StatusChip>
-                                                ) : (
-                                                  i === 0 && (
-                                                    <StatusChip tone="bad">
-                                                      Fix this first
-                                                    </StatusChip>
-                                                  )
-                                                )}
-                                              </div>
-                                              <div className="text-sm text-muted-foreground">
-                                                {f.evidence}
-                                              </div>
-                                              <ul className="mt-1 list-disc pl-5 text-sm">
-                                                {f.fixes.map((fx: string) => (
-                                                  <li key={fx}>{fx}</li>
-                                                ))}
-                                              </ul>
-                                            </div>
-                                          ),
-                                        )}
-                                      </div>
-                                      <p className="mt-3 text-xs text-muted-foreground">
-                                        {needsDecision
-                                          ? "Patch one leak at a time: take the top one today, re-check tomorrow."
-                                          : "Nothing needs touching. Cheap leads that book; leave it running, these are optional."}{" "}
-                                        The playbook behind these calls:{" "}
-                                        <a
-                                          className="inline-flex items-center gap-0.5 text-primary hover:underline"
-                                          href="https://docs.google.com/document/d/1cioKqspTOI6zK76ob0lOTzfNLDMe5WS6NJ_hgTwb-p4/edit"
-                                          target="_blank"
-                                          rel="noreferrer"
-                                        >
-                                          Diagnosing and fixing acquisition
-                                          constraints
-                                          <ArrowUpRight
-                                            className="size-3.5"
-                                            aria-hidden
-                                          />
-                                        </a>
-                                      </p>
-                                    </div>
-                                  )}
-                                  <LostLeads
-                                    lost={c.lost}
-                                    adNameById={Object.fromEntries(
-                                      tree
-                                        .filter(
-                                          (t: Campaign) =>
-                                            t.kind === "ad" && t.metaId,
-                                        )
-                                        .map((t: Campaign) => [
-                                          t.metaId,
-                                          t.name,
-                                        ]),
-                                    )}
-                                  />
-                                  <BuildPanel
-                                    clientTag={c.clientTag ?? c.accountName}
-                                    clientName={c.clientName ?? c.accountName}
-                                    accountId={c.metaAccountId}
-                                    serviceType={c.serviceType}
-                                    language={
-                                      /[؀-ۿ]/.test(
-                                        c.clientName ?? c.accountName,
-                                      )
-                                        ? "ar"
-                                        : "en"
-                                    }
-                                  />
-                                  <LiveInMeta c={c} tree={tree} />
-                                </div>
-                              )}
-                            {mode === "reroute" && (
-                              <div className="max-w-2xl space-y-3">
-                                <div className="text-sm font-semibold">
-                                  Send to another team: {c.campaignName}
-                                </div>
-                                <p className="text-xs text-muted-foreground">
-                                  This is not for me: pick what needs to happen
-                                  and it lands on that team's ClickUp board as a
-                                  request.
-                                </p>
-                                <div className="flex flex-wrap gap-1.5">
-                                  <RequestCreativeButton
-                                    campaignName={c.campaignName}
-                                    ads={tree
-                                      .filter(
-                                        (t: Campaign) =>
-                                          t.kind === "ad" && t.metaId,
-                                      )
-                                      .map((t: Campaign) => ({
-                                        metaId: String(t.metaId),
-                                        name: String(t.name),
-                                      }))}
-                                  />
-                                  {REQUESTS.map(r => (
-                                    <button
-                                      key={r.label}
-                                      type="button"
-                                      aria-pressed={r.label === dept}
-                                      onClick={() => setDept(r.label)}
-                                      className={choice(r.label === dept)}
-                                    >
-                                      {r.label}
-                                    </button>
-                                  ))}
-                                </div>
-                                <div className="rounded-xl bg-muted/40 p-3 text-sm">
-                                  {c.reason}
-                                </div>
-                                <Textarea
-                                  className="min-h-[70px] text-sm"
-                                  placeholder="Anything the other team needs to know. It goes into Additional Notes on the ticket."
-                                  value={note}
-                                  onChange={e => setNote(e.target.value)}
-                                />
-                                <div className="flex gap-2">
-                                  <Button
-                                    size="sm"
-                                    onClick={() => {
-                                      const r =
-                                        REQUESTS.find(x => x.label === dept) ??
-                                        REQUESTS[0];
-                                      act(c, r.label, "rerouted", {
-                                        reroutedTo: r.dept,
-                                        reason: note || undefined,
-                                      });
-                                      setNote("");
-                                    }}
-                                  >
-                                    Send to{" "}
-                                    {
-                                      (
-                                        REQUESTS.find(x => x.label === dept) ??
-                                        REQUESTS[0]
-                                      ).deptLabel
-                                    }
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => setOpen(null)}
-                                  >
-                                    Cancel
-                                  </Button>
-                                </div>
-                              </div>
-                            )}
-                            {mode === "leave" && (
-                              <div className="max-w-2xl space-y-3">
-                                <div className="text-sm font-semibold">
-                                  Leave it: {c.campaignName}
-                                </div>
-                                <div className="flex flex-wrap gap-1.5">
-                                  {REASONS.map(r => (
-                                    <button
-                                      key={r}
-                                      type="button"
-                                      aria-pressed={r === reason}
-                                      onClick={() => setReason(r)}
-                                      className={choice(r === reason)}
-                                    >
-                                      {r}
-                                    </button>
-                                  ))}
-                                </div>
-                                <div className="flex flex-wrap gap-1.5">
-                                  {CLOCKS.map(r => (
-                                    <button
-                                      key={r}
-                                      type="button"
-                                      aria-pressed={r === clock}
-                                      onClick={() => setClock(r)}
-                                      className={choice(r === clock)}
-                                    >
-                                      {r}
-                                    </button>
-                                  ))}
-                                </div>
-                                <p className="text-xs leading-relaxed text-muted-foreground">
-                                  "Client hasn't approved the budget" creates a
-                                  CSM touchpoint task. "Disagree with the call"
-                                  is logged separately, and a rule disagreed
-                                  with three times gets changed, not re-shown.
-                                </p>
-                                <div className="flex gap-2">
-                                  <Button
-                                    size="sm"
-                                    onClick={() =>
-                                      act(c, "Left", "left", {
-                                        reason,
-                                        snooze: clock,
-                                      })
-                                    }
-                                  >
-                                    Leave it
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => setOpen(null)}
-                                  >
-                                    Cancel
-                                  </Button>
-                                </div>
-                              </div>
-                            )}
+                            {campaignPanel(c, {
+                              range: rangeFor(c.campaignName),
+                              onRangeChange: r => setRange(c.campaignName, r),
+                              onDone: () => setOpen(null),
+                            })}
                           </div>
                         </td>
                       </tr>
@@ -3385,21 +3403,39 @@ function Cockpit({ view }: { view: View }) {
 
       {view === "ads" && (
         <>
-          {tiles}
+          {!accountView && tiles}
           {!accountView && <TrackingIssues />}
           {accountView && (
             <AccountView
               client={accountView}
               campaigns={(snap.campaigns as Campaign[]).filter(
-                c => (c.clientName ?? c.accountName) === accountView,
+                c => clientOf(c) === accountView,
               )}
-              tree={snap.metaTree ?? []}
-              onClose={() => setAccountView(null)}
-              onOpenCampaign={name => {
-                setAccountView(null);
+              tree={((snap.metaTree ?? []) as Campaign[]).filter(t =>
+                (snap.campaigns as Campaign[]).some(
+                  c =>
+                    clientOf(c) === accountView &&
+                    c.campaignName === t.campaignName,
+                ),
+              )}
+              verdicts={snap.ads as Campaign[]}
+              range={accountRange}
+              onRangeChange={setAccountRange}
+              selected={accountCampaign}
+              onSelect={name => {
                 setMode("ads");
-                setOpen(name);
+                setCampaignPanelTab("recommendations");
+                setAccountCampaign(name);
               }}
+              renderPanel={c =>
+                campaignPanel(c, {
+                  range: accountRange,
+                  onRangeChange: setAccountRange,
+                  onDone: () => setMode("ads"),
+                  inAccount: true,
+                })
+              }
+              onClose={() => setAccountView(null)}
             />
           )}
           {!accountView && sweep}

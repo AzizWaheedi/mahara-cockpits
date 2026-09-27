@@ -8,6 +8,7 @@ import type { Id } from "./_generated/dataModel";
 import type { QueryCtx } from "./_generated/server";
 import { PAUSE_IS_CHURN_DAYS, stateOf } from "./csmSync";
 import { authenticatedMutation, authenticatedQuery } from "./functions";
+import { currentProfile, currentProfiles } from "./profileRows";
 import { allowedClients, assertRole, userEmail } from "./roles";
 
 function kuwaitToday(): string {
@@ -781,7 +782,8 @@ export async function buildPerformanceOverview(
     if (!smoke) await assertRole(ctx, "csm");
     // Client access set in the portal: an empty list means every client.
     const scope = smoke ? null : await allowedClients(ctx);
-    const rows = (await ctx.db.query("clientProfiles").collect()).filter(
+    // One row per client: a push in progress holds the old and the new set.
+    const rows = (await currentProfiles(ctx)).filter(
       r => !scope || scope.has(r.clientName.toLowerCase()),
     );
     // The media buyer sync already sorts every card into management,
@@ -951,10 +953,7 @@ export async function buildClientProfile(
     if (!smoke) await assertRole(ctx, "csm");
     const scope = smoke ? null : await allowedClients(ctx);
     if (scope && !scope.has(args.clientName.toLowerCase())) return null;
-    const p = await ctx.db
-      .query("clientProfiles")
-      .withIndex("by_client", q => q.eq("clientName", args.clientName))
-      .first();
+    const p = await currentProfile(ctx, args.clientName);
     if (!p) return null;
     // The board row carries the relationship clocks (last contact, last call, last
     // report) that the sheet knows nothing about. Diagnosis needs both halves.

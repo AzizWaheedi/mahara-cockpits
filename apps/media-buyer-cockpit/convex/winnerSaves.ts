@@ -31,6 +31,12 @@ import schema from "./schema";
  * from the browser. A save is logged to the campaign thread and to usage, never
  * to manualChanges: a row there would restart the campaign's learning clock and
  * post a false change to ClickUp. [aziz, 2026-09-16]
+ *
+ * Every ad can be saved, not only the ones with leads in the range on screen
+ * (Aziz, 2026-09-27: "Some of the ads don't have the Save as winner option.
+ * It should still be there"). When the range has no leads, the numbers are
+ * the ad's 90 days that end where the range ends; only an ad with no lead in
+ * those either is refused, since a winner is kept with its cost per lead.
  */
 
 const AD_ID = /^\d{5,25}$/;
@@ -39,6 +45,9 @@ const NOTE_MAX = 500;
 /** Below these, link CTR, CPM and opt-in rate are noise. Matches stats.ts. */
 const MIN_IMPRESSIONS_FOR_RATES = 1000;
 const MIN_LINK_CLICKS_FOR_OPTIN = 50;
+
+/** When the range on screen has no leads, the numbers widen to this many days. */
+const FALLBACK_DAYS = 90;
 
 /** A mutation context is also a query context, so helpers take this. */
 type Ctx = QueryCtx;
@@ -281,6 +290,62 @@ async function numbersFor(
   return await foldAd(ctx, { ...a, byName: a.adName });
 }
 
+type Window = { start: string; end: string; label?: string };
+
+/** The 90 days that end where her range ends. */
+function fallbackWindow(end: string): Window {
+  const start = new Date(
+    Date.parse(`${end}T00:00:00Z`) - (FALLBACK_DAYS - 1) * 86_400_000,
+  )
+    .toISOString()
+    .slice(0, 10);
+  return { start, end, label: `Last ${FALLBACK_DAYS} days` };
+}
+
+/**
+ * The numbers a save keeps and the days they cover: the range she picked,
+ * or, when the ad had no leads in it, its 90 days to the range's end.
+ */
+async function saveNumbers(
+  ctx: Ctx,
+  a: {
+    campaignName: string;
+    adId: string;
+    adName: string;
+    start: string;
+    end: string;
+    node: Tree | null;
+  },
+) {
+  const picked = await numbersFor(ctx, a);
+  const days =
+    (Date.parse(`${a.end}T00:00:00Z`) - Date.parse(`${a.start}T00:00:00Z`)) /
+      86_400_000 +
+    1;
+  if (picked.stats.leads > 0 || days >= FALLBACK_DAYS) {
+    return {
+      ...picked,
+      window: { start: a.start, end: a.end } as Window,
+      widened: false,
+    };
+  }
+  const window = fallbackWindow(a.end);
+  const wide = await numbersFor(ctx, { ...a, ...window });
+  return { ...wide, window, widened: true };
+}
+
+/** Why an ad with no leads cannot be kept, in one sentence. */
+function noLeads(
+  start: string,
+  end: string,
+  widened: boolean,
+  spend: number,
+): string {
+  return widened
+    ? `This ad had no leads between ${start} and ${end}, or in the ${FALLBACK_DAYS} days to ${end} (${usd(spend)} spent), so there is no cost per lead to keep yet. It can be saved after its first lead.`
+    : `This ad had no leads between ${start} and ${end}, so there is no cost per lead to save.`;
+}
+
 /** The saved picture for an ad: the tree node's, else the stills table's. */
 async function pictureFor(
   ctx: Ctx,
@@ -332,6 +397,16 @@ export const preview = authenticatedQuery({
     candidates: v.array(vCandidate),
     adId: v.optional(v.string()),
     stats: vStats,
+    /** The days `stats` covers: the range, or 90 days when it had no leads. */
+    window: v.optional(
+      v.object({
+        start: v.string(),
+        end: v.string(),
+        label: v.optional(v.string()),
+      }),
+    ),
+    /** True when the range had no leads and the numbers are the 90 days. */
+    widened: v.optional(v.boolean()),
     /** Why this ad cannot be saved for this range, when it cannot. */
     problem: v.optional(v.string()),
   }),
@@ -411,7 +486,7 @@ export const preview = authenticatedQuery({
     }
 
     const node = nodes.get(picked) ?? null;
-    const { stats, rowsWithId } = await numbersFor(ctx, {
+    const { stats, rowsWithId, window, widened } = await saveNumbers(ctx, {
       campaignName: args.campaignName,
       adId: picked,
       adName: args.adName,
@@ -424,10 +499,12 @@ export const preview = authenticatedQuery({
       candidates,
       adId: picked,
       stats,
+      window: strip(window),
+      widened,
       problem: !belongs
         ? "That ad is not in this campaign."
         : stats.leads === 0
-          ? `This ad had no leads between ${args.start} and ${args.end}, so there is no cost per lead to save.`
+          ? noLeads(args.start, args.end, widened, stats.spend)
           : undefined,
     };
   },
@@ -494,23 +571,18 @@ async function saveWinner(
   const label = (args.rangeLabel ?? "").trim().slice(0, 60) || undefined;
   const { email, name } = await saver(ctx);
 
-  // 2. The ad's own numbers, worked out here.
+  // 2. The ad's own numbers, worked out here: the range, or its 90 days
+  // when the range had no leads.
   const node = await treeAd(ctx, adId, campaignName);
-  const { stats, rowsWithId, adSetName } = await numbersFor(ctx, {
-    campaignName,
-    adId,
-    adName,
-    start,
-    end,
-    node,
-  });
+  const { stats, rowsWithId, adSetName, window, widened } = await saveNumbers(
+    ctx,
+    { campaignName, adId, adName, start, end, node },
+  );
   if (!(node?.campaignName === campaignName || rowsWithId > 0)) {
     refuse("That ad is not in this campaign.");
   }
   if (stats.leads === 0 || stats.cpl === undefined) {
-    refuse(
-      `This ad had no leads between ${start} and ${end}, so there is no cost per lead to save.`,
-    );
+    refuse(noLeads(start, end, widened, stats.spend));
   }
 
   // 3. Context: the campaign card, the tree node, the collected play.
@@ -554,7 +626,11 @@ async function saveWinner(
   const picture = existing?.stillUrl
     ? {}
     : await pictureFor(ctx, stillKey, node);
-  const savedRange = strip({ start, end, label });
+  const savedRange = strip({
+    start: window.start,
+    end: window.end,
+    label: widened ? window.label : label,
+  });
   // A save counts only while it is newer than the last removal, so a save
   // made in the same millisecond as a removal must still land after it.
   const savedAt = Math.max(now, (existing?.unsavedAt ?? 0) + 1);
@@ -609,8 +685,8 @@ async function saveWinner(
       patch.spend = stats.spend;
       patch.leads = stats.leads;
       patch.cpl = stats.cpl;
-      patch.wonFrom = start;
-      patch.wonTo = end;
+      patch.wonFrom = window.start;
+      patch.wonTo = window.end;
     }
     await ctx.db.patch(existing._id, patch);
     finalRow = { ...existing, ...patch };
@@ -657,8 +733,8 @@ async function saveWinner(
       leads: stats.leads,
       cpl: stats.cpl as number,
       stillLive: node ? adIsLive(status) : undefined,
-      wonFrom: start,
-      wonTo: end,
+      wonFrom: window.start,
+      wonTo: window.end,
       firstArchivedAt: now,
       lastSeenAt: now,
       origin: "manual" as const,
@@ -672,7 +748,7 @@ async function saveWinner(
   }
 
   // 7. Logged where the team sees cockpit work: the campaign thread.
-  const numbers = `${label ?? `${start} to ${end}`}: ${usd(stats.spend)} spent, ${plural(stats.leads, "lead")}, ${usd(stats.cpl)} a lead`;
+  const numbers = `${savedRange.label ?? `${savedRange.start} to ${savedRange.end}`}: ${usd(stats.spend)} spent, ${plural(stats.leads, "lead")}, ${usd(stats.cpl)} a lead`;
   await ctx.db.insert("campaignChat", {
     campaignId: campaignName,
     campaignName,
