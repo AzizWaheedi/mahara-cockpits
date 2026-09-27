@@ -2,7 +2,7 @@
 
 ## Current execution plan, 2026-09-27
 
-**Continuation:** Stay in this chat. Gemini quota is available again; Codex supervises and takes over after the one-correction limit. Main `4b90d9f` is reconciled. Clean worker assembly `464a64f` passes five builds, ten typechecks, 238 Bun tests and 28 Python tests. CSM state, scoped chat persistence and EOD delivery safety are integrated locally, alongside webinar targets and CEO Goals. New migrations remain unapplied. CEO People is the next active packet; see the single checkpoint for remaining gaps and worker location.
+**Continuation:** Stay in this chat. Gemini resumed, but later runs produced no work with a denied file-read action; Codex used recorded fallback. Main baseline `4b90d9f` is reconciled. Clean assembly `9c50b9b` passes five builds, ten typechecks, 251 Bun tests and 35 Python tests. CSM, scoped chat, EOD delivery, CEO People and manual-payment persistence are integrated locally, alongside webinar targets and Goals. An offline history planner has produced a protected one-payment/one-audit candidate from the older snapshot. New SQL remains unapplied; fresh history reconciliation and money recomputation remain unfinished gates. See the single checkpoint for remaining domains and production acceptance work.
 
 **Owner split confirmed by Muhammed:** Codex makes the plan and supervises; Gemini implements bounded code packets. Codex independently runs checks and reviews diffs. The executor permits one focused correction; any exhausted correction fallback must be recorded. Production, outward automations, and client-visible writes remain separate from local implementation.
 
