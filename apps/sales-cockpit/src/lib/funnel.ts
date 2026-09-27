@@ -317,22 +317,17 @@ export function funnel(given: Given, currency: Currency): Funnel {
 
   const steps: Step[] = [];
 
-  // Ads: the same budget at our cost of an inquiry, then their own path.
+  // Ads: the same budget at our cost of an inquiry, then their own path
+  // from inquiry to signed project. Only their own path: at our rates the
+  // claim would rest on nothing they said.
   {
     const s = standing(perLead, ours.perLead, true);
     let extraMonth: number | null = null;
     let extraUnits: number | null = null;
-    let usesOurs = false;
     if (s === "behind" && pos(spend) && pos(adLeads)) {
       extraUnits = spend / ours.perLead - adLeads;
-      let after: number;
-      if (leadToClient != null && ok(leadToClient)) after = leadToClient;
-      else {
-        usesOurs = true;
-        after =
-          (ok(booking) ? (booking as number) : ours.booking) * showOr * closeOr;
-      }
-      extraMonth = extraUnits * after;
+      if (leadToClient != null && ok(leadToClient))
+        extraMonth = extraUnits * leadToClient;
     }
     steps.push({
       key: "ads",
@@ -341,7 +336,7 @@ export function funnel(given: Given, currency: Currency): Funnel {
       standing: s,
       extraMonth,
       extraUnits,
-      usesOurs,
+      usesOurs: false,
     });
   }
   // Booking: a quarter of the same inquiries booked, then their own path.

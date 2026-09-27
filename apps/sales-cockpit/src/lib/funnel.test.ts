@@ -261,6 +261,27 @@ describe("other shapes of funnel", () => {
     expect(payback(f, "en")).toBeNull();
   });
 
+  test("the ads step is never worked out from our rates alone", () => {
+    // The intro: ad spend and the inquiries it brings, and 12 months of
+    // projects, but not how many inquiries sign.
+    const f = funnel(
+      given({
+        spend: 9_000,
+        adLeads: 40,
+        closed12: 18,
+        quotes12: 60,
+        aov: 300_000,
+      }),
+      "SAR",
+    );
+    const ads = f.steps.find(s => s.key === "ads");
+    expect(ads?.standing).toBe("behind");
+    expect(ads?.extraUnits).toBeCloseTo(9_000 / 56.25 - 40, 5);
+    expect(ads?.extraMonth).toBeNull();
+    expect(f.leak).toBeNull();
+    expect(funnelTokens(f, "en").CPL).toBe("225 SAR");
+  });
+
   test("the quote win rate the setter asks for", () => {
     const f = funnel(given({ closed12: 18, quotes12: 60 }), "USD");
     expect(funnelTokens(f, "en")["QUOTE WIN RATE"]).toBe("30%");

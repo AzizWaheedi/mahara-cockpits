@@ -288,7 +288,7 @@ export default function CallPage({ me }: { me: Me }) {
 
   async function save() {
     const answers = summarise(doc?.captures ?? [], values);
-    const numbers = numbersSummary(f);
+    const numbers = numbersSummary(f, key);
     const body = [answers, numbers].filter(Boolean).join("\n");
     if (!body) {
       toast.error(
@@ -739,8 +739,11 @@ const INTRO_FIELD: Record<string, string> = Object.fromEntries(
   Object.entries(CARRY_OVER).map(([from, to]) => [to, from]),
 );
 
-/** The numbers, said for the team in the call's saved notes. */
-function numbersSummary(f: Funnel): string {
+/**
+ * The numbers, said for the team in the call's saved notes. The intro's are
+ * too few to name the one thing; the demo names it.
+ */
+function numbersSummary(f: Funnel, script: "intro" | "demo"): string {
   const m = (n: number) => sayMoney(n, f.currency, "en");
   const g = f.given;
   const parts: string[] = [];
@@ -764,7 +767,7 @@ function numbersSummary(f: Funnel): string {
     parts.push(`wins ${sayPct(f.rates.quoteWin, "en")} of quotes`);
   const lines: string[] = [];
   if (parts.length) lines.push(`Their numbers: ${parts.join("; ")}.`);
-  const gap = gapFor(f);
+  const gap = script === "demo" ? gapFor(f) : null;
   if (f.leak && gap?.projectsYear != null && gap.projectsYear >= 0.5)
     lines.push(
       `The one thing: ${stepWords(f.leak, "en")}, ${sayMany(gap.projectsYear, "project", "en", f.leak !== "referrals")} a year${
@@ -774,14 +777,16 @@ function numbersSummary(f: Funnel): string {
   return lines.join("\n");
 }
 
-/** The same numbers kept whole on the note, for anyone who adds them up later. */
+/** The same numbers kept on the note, for anyone who adds them up later. */
 function numbersFields(f: Funnel) {
   const gap = gapFor(f);
+  const round = (n: number | null | undefined, places: number) =>
+    n == null ? null : Math.round(n * 10 ** places) / 10 ** places;
   return {
     currency: f.currency,
     leak: f.leak,
-    gap_projects_year: gap?.projectsYear ?? null,
-    gap_money_year: gap?.moneyYear ?? null,
+    gap_projects_year: round(gap?.projectsYear, 1),
+    gap_money_year: round(gap?.moneyYear, 0),
     rates: f.rates,
     costs: f.costs,
     ours: f.ours,
