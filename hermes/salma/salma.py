@@ -142,6 +142,55 @@ def deepseek(system: str, user: str, *, max_tokens: int = 4000) -> str:
     return out["choices"][0]["message"]["content"]
 
 
+# The OpenAI account can run out of credit (it did on 2026-09-27, stopping
+# captions, words on pictures and read-backs here and the sales desk's
+# drafting). A 429 saying so is a person's job, not a retry: it becomes one
+# sentence on the post and on the calendar's health line.
+OPENAI_EMPTY = (
+    "The OpenAI account is out of credit, so captions, words on pictures and "
+    "read-backs are paused. Top it up at platform.openai.com (Settings, Billing), "
+    "then ask again."
+)
+OPENAI_STATE_FILE = os.path.expanduser("~/.salma-openai.json")
+
+
+def remember_openai(state: str) -> None:
+    try:
+        with open(OPENAI_STATE_FILE, "w") as fh:
+            json.dump({"state": state, "at": now()}, fh)
+    except OSError:
+        pass
+
+
+def openai_state() -> str:
+    try:
+        with open(OPENAI_STATE_FILE) as fh:
+            return str(json.load(fh).get("state") or "")
+    except (OSError, ValueError):
+        return ""
+
+
+def openai_call(body: dict, *, timeout: int = 180) -> dict:
+    """One chat completion, with an empty account said in words."""
+    key = os.environ.get("OPENAI_API_KEY", "")
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/chat/completions",
+        data=json.dumps(body).encode(),
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            out = json.load(r)
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode("utf-8", "replace")
+        if e.code == 429 and ("credit" in raw or "insufficient_quota" in raw):
+            remember_openai("empty")
+            raise RuntimeError(OPENAI_EMPTY) from None
+        raise RuntimeError(f"OpenAI said no ({e.code}): {raw[:200]}") from None
+    remember_openai("ok")
+    return out
+
+
 def frontier(system: str, user: str, *, max_tokens: int = 2000) -> tuple[str, str]:
     """Captions. A client's dialect is judgment, not extraction, so this
     never goes to the cheap model.
@@ -178,21 +227,14 @@ def frontier(system: str, user: str, *, max_tokens: int = 2000) -> tuple[str, st
             "No frontier key: set ANTHROPIC_API_KEY (preferred) or OPENAI_API_KEY. "
             "Captions do not go to the cheap model."
         )
-    body = {
+    out = openai_call({
         "model": "gpt-4.1",
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
         "max_tokens": max_tokens,
-    }
-    req = urllib.request.Request(
-        "https://api.openai.com/v1/chat/completions",
-        data=json.dumps(body).encode(),
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=180) as r:
-        out = json.load(r)
+    })
     return out["choices"][0]["message"]["content"], "gpt-4.1"
 
 
@@ -1125,12 +1167,7 @@ def vision_read(jpeg: bytes) -> str:
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}},
             ]}],
         }
-        req = urllib.request.Request(
-            "https://api.openai.com/v1/chat/completions", data=json.dumps(body).encode(),
-            headers={"Authorization": f"Bearer {okey}", "Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=120) as r:
-            out = json.load(r)
+        out = openai_call(body, timeout=120)
         return str(out["choices"][0]["message"]["content"] or "")
     if last:
         raise RuntimeError(f"No vision model would read the picture ({last})")
@@ -2361,8 +2398,15 @@ def health_checks() -> list[tuple[str, bool, str]]:
     except Exception as e:  # noqa: BLE001
         out.append(("meta", False, f"Meta is refusing the ads token, so nothing can post: {str(e)[:120]}"))
     frontier_ok = bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY"))
-    out.append(("captions", frontier_ok, "" if frontier_ok else
-                "Captions are paused: the server has no ANTHROPIC_API_KEY or OPENAI_API_KEY."))
+    detail = "" if frontier_ok else "Captions are paused: the server has no ANTHROPIC_API_KEY or OPENAI_API_KEY."
+    if frontier_ok and not os.environ.get("ANTHROPIC_API_KEY") and openai_state() != "ok":
+        # Empty last time, or never asked: one token says whether it still is.
+        try:
+            openai_call({"model": "gpt-4.1-nano", "max_tokens": 1,
+                         "messages": [{"role": "user", "content": "ok"}]}, timeout=30)
+        except Exception as e:  # noqa: BLE001
+            frontier_ok, detail = False, str(e)[:240]
+    out.append(("captions", frontier_ok, detail))
     ds = bool(os.environ.get("DEEPSEEK_API_KEY"))
     out.append(("planning", ds, "" if ds else
                 "Filling the month is paused: the server has no DEEPSEEK_API_KEY."))

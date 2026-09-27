@@ -322,6 +322,30 @@ def test_motion_refuses_drawn_words():
         assert "bending them" in str(e)
 
 
+def test_openai_out_of_credit():
+    import urllib.error
+    import urllib.request
+
+    saved = (urllib.request.urlopen, salma.OPENAI_STATE_FILE)
+    body = b'{"error":{"code":"credit_balance_exhausted","message":"You have no credits remaining."}}'
+
+    def empty(req, timeout=0):
+        raise urllib.error.HTTPError(req.full_url, 429, "Too Many Requests", {}, io.BytesIO(body))
+
+    with tempfile.TemporaryDirectory() as d:
+        urllib.request.urlopen = empty
+        salma.OPENAI_STATE_FILE = os.path.join(d, "openai.json")
+        try:
+            try:
+                salma.openai_call({"model": "x", "messages": []})
+                raise AssertionError("an empty account must stop the call")
+            except RuntimeError as e:
+                assert str(e) == salma.OPENAI_EMPTY
+            assert salma.openai_state() == "empty"
+        finally:
+            urllib.request.urlopen, salma.OPENAI_STATE_FILE = saved
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
