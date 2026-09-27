@@ -88,6 +88,7 @@ BEGIN
  END LOOP;
  v:=jsonb_populate_record(v,vals);
  IF v.name IS NULL OR btrim(v.name)='' THEN RAISE EXCEPTION 'A person needs a name'; END IF;
+ IF creating OR vals ?| ARRAY['commission_pct','commission_basis','commission_rate'] THEN
  IF vals ? 'commission_pct' AND NOT(vals ? 'commission_basis') AND NOT(vals ? 'commission_rate') THEN
    v.commission_basis:=CASE WHEN v.commission_pct IS NULL THEN 'none' ELSE 'closed_cash' END;v.commission_rate:=v.commission_pct;
  ELSIF vals ? 'commission_basis' AND NOT(vals ? 'commission_rate') THEN v.commission_rate:=NULL;
@@ -96,6 +97,7 @@ BEGIN
  IF v.commission_basis IN ('none','other') THEN v.commission_rate:=NULL; END IF;
  IF v.commission_rate<0 OR (share AND v.commission_rate>1) THEN RAISE EXCEPTION 'Invalid commission rate'; END IF;
  v.commission_pct:=CASE WHEN share THEN v.commission_rate ELSE NULL END;
+ END IF;
  IF v.engagement='bot' THEN v.monthly_cost:=NULL;v.is_sales:=false;v.paused_on:=NULL; END IF;
  IF vals->'active'='true'::jsonb THEN v.ended_on:=NULL; END IF;
  IF creating THEN

@@ -51,11 +51,12 @@ test("partial edits preserve human data, schedules and original provenance; expl
  const {db,client}=await fixture();try{
   const hours=defaultSchedule();const {id}=await savePerson(client,{name:"Original",note:"Human note",monthlyCost:100,
    email:"person@tests.invalid",commissionBasis:"closed_cash",commissionRate:0.1,schedule:hours});
-  await owner(db);await db.query("update cockpit_people set source='workspace',added_by='original-import' where id=$1",[id]);
+  await owner(db);await db.query("update cockpit_people set source='workspace',added_by='original-import',commission_pct=0.12 where id=$1",[id]);
   await actor(db,F);await savePerson(client,{id,role:"Lead"});
   let p=(await readPeople(client)).people[0];
   expect(p.note).toBe("Human note");expect(p.monthlyCost).toBe(100);expect(p.email).toBe("person@tests.invalid");
   expect(p.commission.rate).toBe(0.1);expect(p.schedule).toEqual(hours);expect(p.source).toBe("workspace");
+  expect(p.commissionPct).toBe(0.12); // An unrelated edit must not normalize away a human value.
   await savePerson(client,{id,note:null,monthlyCost:0,commissionRate:0,schedule:null});
   p=(await readPeople(client)).people[0];expect(p.note).toBeNull();expect(p.monthlyCost).toBe(0);
   expect(p.commission.rate).toBe(0);expect(p.commissionPct).toBe(0);expect(p.schedule).toBeNull();
