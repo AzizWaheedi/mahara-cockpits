@@ -18,5 +18,9 @@ export default function handler(req, res) {
     scheduleReady: issues.length === 0,
     scheduleIssues: issues,
     typeformSecretSet: !!process.env.TYPEFORM_SECRET,
+    durableIntakeConfigured: !!process.env.WEBINAR_SUPABASE_URL && !!process.env.WEBINAR_SUPABASE_SERVICE_KEY,
+    intakeEnabled: process.env.WEBINAR_INTAKE_ENABLED === "true",
+    dispatchEnabled: process.env.WEBINAR_DISPATCH_ENABLED === "true",
+    ghlHandoffConfigured: !!process.env.WEBINAR_GHL_HANDOFF_SECRET,
   });
 }

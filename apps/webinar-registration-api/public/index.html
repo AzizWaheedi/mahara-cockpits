@@ -46,11 +46,17 @@
   const f=document.getElementById('f'),btn=document.getElementById('btn'),err=document.getElementById('err');
   f.addEventListener('submit',async(e)=>{e.preventDefault();err.style.display='none';btn.disabled=true;btn.textContent='ثواني…';
     const body=Object.fromEntries(new FormData(f).entries());
+    // Keep the same receipt ID across a network retry, including a page reload.
+    const key='webinar-intake-request';
+    let saved; try{saved=JSON.parse(sessionStorage.getItem(key)||'null');}catch{}
+    const fingerprint=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(body))))).map(x=>x.toString(16).padStart(2,'0')).join('');
+    const request=saved?.fingerprint===fingerprint?saved:{fingerprint,id:crypto.randomUUID()};
+    try{sessionStorage.setItem(key,JSON.stringify(request));}catch{}body.request_id=request.id;
     try{const r=await fetch('/api/register',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(body)});
       const j=await r.json();
-      if(j.ok){location.href=j.redirect||'/thanks.html';return;}
+      if(r.status===202&&j.status==='processing'){err.textContent='وصلنا طلبك، وقاعدين نكمل التسجيل. تأكيد الحجز ليلحين قيد التجهيز.';err.style.display='block';btn.textContent='وصلنا طلبك';return;}
       throw new Error(j.error||'failed');
-    }catch(ex){err.textContent='ما قدرنا نسجلك: '+ex.message;err.style.display='block';btn.disabled=false;btn.textContent='احجز مقعدي';}
+    }catch(ex){err.textContent='ما قدرنا نستلم طلبك الحين. جرّب مرة ثانية بعد شوي.';err.style.display='block';btn.disabled=false;btn.textContent='احجز مقعدي';}
   });
 </script>
 </body>

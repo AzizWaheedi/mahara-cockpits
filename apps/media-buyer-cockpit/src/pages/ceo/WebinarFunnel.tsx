@@ -1253,7 +1253,15 @@ function Collector({ p }: { p: WebinarPayload }) {
     ["HighLevel messages", c.reminders],
     ["Fathom calls", c.objections],
   ];
-  const failed = runs.filter(([, run]) => run?.ok === false).length;
+  const health = p.collectionHealth;
+  const expiredHealth = !health || Date.now() - health.checkedAt > 45 * 60_000;
+  const failed = expiredHealth
+    ? 1
+    : health
+      ? health.checks.filter(
+          c => c.status === "needs_attention" || c.status === "unavailable",
+        ).length
+      : runs.filter(([, run]) => run?.ok === false).length;
   // A failed read changes how the numbers read, so the summary says so while
   // the rest of the log stays folded.
   return (
@@ -1267,16 +1275,28 @@ function Collector({ p }: { p: WebinarPayload }) {
           />
         ) : null}
         {failed
-          ? `When each source was last read, ${plural(failed, "read")} failed`
+          ? expiredHealth
+            ? "Collection health needs a fresh check"
+            : `Source collection: ${plural(failed, "check")} to review`
           : "When each source was last read"}
       </summary>
       <ul className="mt-2 grid gap-1">
+        {expiredHealth ? (
+          <li>Collection health needs a fresh check.</li>
+        ) : (
+          health?.checks.map(check => (
+            <li key={check.key}>
+              {check.label}: {check.status.replaceAll("_", " ")}. {check.detail}
+            </li>
+          ))
+        )}
         {runs.map(([name, run]) => (
           <li key={name}>{line(name, run)}.</li>
         ))}
         <li>
-          Zoom, the survey and Fathom are read every hour, HighLevel's messages
-          every six hours.
+          Zoom and the survey are read hourly. HighLevel messages are read every
+          six hours, increasing to hourly around a scheduled training. Optional
+          transcript analysis remains held.
         </li>
       </ul>
     </details>

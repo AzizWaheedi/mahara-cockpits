@@ -11,6 +11,8 @@ just because the dashboard release is ready.
 
 Before replacing the current API:
 
+Implementation update: [durable intake checkpoint](../../docs/WEBINAR-TRACKING-IMPLEMENTATION-2026-09-27.md). Receipt storage, the queue state machine and mandatory webhook verification are built and tested. Hosted tables are installed. API/worker dispatch, workflow handoff, link delivery, event-cohort reporting and real-provider acceptance remain open; the list below is still a release gate.
+
 1. Use a stable event UUID and schedule revisions from the new occurrence ledger.
    The authoritative schedule is now `config/webinar/current.json`, per Aziz.
    Propagate that same version to
