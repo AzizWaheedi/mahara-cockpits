@@ -1,0 +1,765 @@
+{
+  "tool": "verify-cutover-readiness",
+  "timestamp": "2026-09-27T14:31:33.349138+00:00",
+  "mode": "local",
+  "repo_root": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits",
+  "initial_git": {
+    "available": true,
+    "sha": "4aba6d1bcc9508069c3e5b564c172e7a79ecee46",
+    "is_dirty": false,
+    "dirty_files": [],
+    "error": null
+  },
+  "checks": {
+    "structure": {
+      "passed": true,
+      "failures": []
+    },
+    "no_convex_source_imports": {
+      "passed": true,
+      "failures": [],
+      "note": "Proves no detected static source imports in apps/*/src; not full runtime Convex independence proof."
+    },
+    "shared_files": {
+      "passed": true,
+      "failures": []
+    },
+    "typechecks": {
+      "passed": true,
+      "details": {
+        "media-buyer-cockpit": {
+          "tsconfig.app.json": {
+            "status": "pass"
+          },
+          "tsconfig.node.json": {
+            "status": "pass"
+          }
+        },
+        "client-success-cockpit": {
+          "tsconfig.app.json": {
+            "status": "pass"
+          },
+          "tsconfig.node.json": {
+            "status": "pass"
+          }
+        },
+        "creative-director-cockpit": {
+          "tsconfig.app.json": {
+            "status": "pass"
+          },
+          "tsconfig.node.json": {
+            "status": "pass"
+          }
+        },
+        "video-editor-cockpit": {
+          "tsconfig.app.json": {
+            "status": "pass"
+          },
+          "tsconfig.node.json": {
+            "status": "pass"
+          }
+        },
+        "sales-cockpit": {
+          "tsconfig.app.json": {
+            "status": "pass"
+          },
+          "tsconfig.node.json": {
+            "status": "pass"
+          }
+        }
+      },
+      "failures": []
+    },
+    "fresh_builds": {
+      "passed": true,
+      "details": {
+        "media-buyer-cockpit": {
+          "status": "pass",
+          "output_size_bytes": 1875,
+          "fresh_temp_verified": true
+        },
+        "client-success-cockpit": {
+          "status": "pass",
+          "output_size_bytes": 1779,
+          "fresh_temp_verified": true
+        },
+        "creative-director-cockpit": {
+          "status": "pass",
+          "output_size_bytes": 1752,
+          "fresh_temp_verified": true
+        },
+        "video-editor-cockpit": {
+          "status": "pass",
+          "output_size_bytes": 2659,
+          "fresh_temp_verified": true
+        },
+        "sales-cockpit": {
+          "status": "pass",
+          "output_size_bytes": 4246,
+          "fresh_temp_verified": true
+        }
+      },
+      "failures": []
+    },
+    "test_suites": {
+      "passed": true,
+      "details": {
+        "apps/media-buyer-cockpit/scripts/supabase-access.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/snapshot-rpc-contracts.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/cockpit-dispatch-auth.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/ceo-goals-supabase.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/ceo-people-supabase.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/ceo-manual-payments-supabase.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/csm-state-supabase.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/supabase-ask-ai.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/eod-delivery-supabase.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/personal-eod-supabase.test.ts": {
+          "status": "pass"
+        },
+        "hermes/cockpit-ask-ai/scripts/test_askai.py": {
+          "status": "pass"
+        },
+        "hermes/eod-out/test_out.py": {
+          "status": "pass"
+        },
+        "scripts/test_plan_manual_payments_import.py": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/cockpit-test-db.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/webinar-supabase-targets.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/webinar-target-access.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/webinar-targets.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/webinar-ingestion.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/reporting-view-access.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/frameio-webhook.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/billing.test.ts": {
+          "status": "pass"
+        },
+        "apps/media-buyer-cockpit/scripts/webinar.test.ts": {
+          "status": "pass"
+        },
+        "apps/creative-director-cockpit/scripts/social.test.ts": {
+          "status": "pass"
+        },
+        "apps/sales-cockpit/src/lib/pay.test.ts": {
+          "status": "pass"
+        },
+        "apps/sales-cockpit/src/lib/goals.test.ts": {
+          "status": "pass"
+        },
+        "apps/sales-cockpit/src/lib/env.test.ts": {
+          "status": "pass"
+        },
+        "apps/sales-cockpit/src/components/Prose.test.tsx": {
+          "status": "pass"
+        }
+      },
+      "failures": []
+    },
+    "release_evidence": {
+      "passed": false,
+      "skipped": true,
+      "reason": "Not run in local mode. Use --mode release to evaluate cutover readiness."
+    }
+  },
+  "failures": [],
+  "command_logs": [
+    {
+      "cmd": [
+        "C:\\Program Files\\nodejs\\node.EXE",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpits-supabase-migration\\apps\\media-buyer-cockpit\\node_modules\\typescript\\bin\\tsc",
+        "-p",
+        "tsconfig.app.json",
+        "--noEmit"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits\\apps\\media-buyer-cockpit",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "duration_s": 15.68
+    },
+    {
+      "cmd": [
+        "C:\\Program Files\\nodejs\\node.EXE",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpits-supabase-migration\\apps\\media-buyer-cockpit\\node_modules\\typescript\\bin\\tsc",
+        "-p",
+        "tsconfig.node.json",
+        "--noEmit"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits\\apps\\media-buyer-cockpit",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "duration_s": 0.78
+    },
+    {
+      "cmd": [
+        "C:\\Program Files\\nodejs\\node.EXE",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpits-supabase-migration\\apps\\client-success-cockpit\\node_modules\\typescript\\bin\\tsc",
+        "-p",
+        "tsconfig.app.json",
+        "--noEmit"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits\\apps\\client-success-cockpit",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "duration_s": 6.18
+    },
+    {
+      "cmd": [
+        "C:\\Program Files\\nodejs\\node.EXE",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpits-supabase-migration\\apps\\client-success-cockpit\\node_modules\\typescript\\bin\\tsc",
+        "-p",
+        "tsconfig.node.json",
+        "--noEmit"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits\\apps\\client-success-cockpit",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "duration_s": 0.66
+    },
+    {
+      "cmd": [
+        "C:\\Program Files\\nodejs\\node.EXE",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpits-supabase-migration\\apps\\creative-director-cockpit\\node_modules\\typescript\\bin\\tsc",
+        "-p",
+        "tsconfig.app.json",
+        "--noEmit"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits\\apps\\creative-director-cockpit",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "duration_s": 7.56
+    },
+    {
+      "cmd": [
+        "C:\\Program Files\\nodejs\\node.EXE",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpits-supabase-migration\\apps\\creative-director-cockpit\\node_modules\\typescript\\bin\\tsc",
+        "-p",
+        "tsconfig.node.json",
+        "--noEmit"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits\\apps\\creative-director-cockpit",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "duration_s": 0.69
+    },
+    {
+      "cmd": [
+        "C:\\Program Files\\nodejs\\node.EXE",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpits-supabase-migration\\apps\\video-editor-cockpit\\node_modules\\typescript\\bin\\tsc",
+        "-p",
+        "tsconfig.app.json",
+        "--noEmit"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits\\apps\\video-editor-cockpit",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "duration_s": 0.99
+    },
+    {
+      "cmd": [
+        "C:\\Program Files\\nodejs\\node.EXE",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpits-supabase-migration\\apps\\video-editor-cockpit\\node_modules\\typescript\\bin\\tsc",
+        "-p",
+        "tsconfig.node.json",
+        "--noEmit"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits\\apps\\video-editor-cockpit",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "duration_s": 0.78
+    },
+    {
+      "cmd": [
+        "C:\\Program Files\\nodejs\\node.EXE",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpits-supabase-migration\\apps\\sales-cockpit\\node_modules\\typescript\\bin\\tsc",
+        "-p",
+        "tsconfig.app.json",
+        "--noEmit"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits\\apps\\sales-cockpit",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "duration_s": 1.07
+    },
+    {
+      "cmd": [
+        "C:\\Program Files\\nodejs\\node.EXE",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpits-supabase-migration\\apps\\sales-cockpit\\node_modules\\typescript\\bin\\tsc",
+        "-p",
+        "tsconfig.node.json",
+        "--noEmit"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits\\apps\\sales-cockpit",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "duration_s": 0.68
+    },
+    {
+      "cmd": [
+        "C:\\Program Files\\nodejs\\node.EXE",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpits-supabase-migration\\apps\\media-buyer-cockpit\\node_modules\\vite\\bin\\vite.js",
+        "build",
+        "--outDir",
+        "C:\\Users\\20106\\AppData\\Local\\Temp\\cutover_build_media-buyer-cockpit_fdw4lnqb",
+        "--emptyOutDir"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits\\apps\\media-buyer-cockpit",
+      "returncode": 0,
+      "stdout": "vite v7.3.6 building client environment for production...\ntransforming...\n\u2713 4187 modules transformed.\nrendering chunks...\ncomputing gzip size...\n../../../../../../AppData/Local/Temp/cutover_build_media-buyer-cockpit_fdw4lnqb/manifest.webmanifest                            0.53 kB\n../../../../../../AppData/Local/Temp/cutover_build_media-buyer-cockpit_fdw4lnqb/index.html                                      1.88 kB \u2502 gzip:   0.74 kB\n../../../../../../AppData/Local/Temp/cutover_build_media-buyer-cockpit_fdw4lnqb/assets/mahara-logo-light-Yb7lWkqK.png          11.20 kB\n../../../../../../AppData/Local/Temp/cutover_build_media-buyer-cockpit_fdw4lnqb/assets/mahara-logo-dark-C-yVwZ7S.png           11.52 kB\n../../../../../../AppData/Local/Temp/cutover_build_media-buyer-cockpit_fdw4lnqb/assets/AuthenticatedAppRoutes--GypQEBi.css      4.31 kB \u2502 gzip:   1.29 kB\n../../../../../../AppData/Local/Temp/cutover_build_media-buyer-cockpit_fdw4lnqb/assets/index-DK7kBvgr.css                     205.40 kB \u2502 gzip:  32.03 kB\n../../../../../../AppData/Local/Temp/cutover_build_media-buyer-cockpit_fdw4lnqb/assets/star-C56tTqfw.js                         1.00 kB \u2502 gzip:   0.49 kB\n../../../../../../AppData/Local/Temp/cutover_build_media-buyer-cockpit_fdw4lnqb/assets/workbox-window.prod.es5-BBnX5xw4.js      5.75 kB \u2502 gzip:   2.36 kB\n../../../../../../AppData/Local/Temp/cutover_build_media-buyer-cockpit_fdw4lnqb/assets/PublicAppRoutes-xnSRTn_O.js              8.53 kB \u2502 gzip:   2.33 kB\n../../../../../../AppData/Local/Temp/cutover_build_media-buyer-cockpit_fdw4lnqb/assets/index-BddGPdeS.js                      304.94 kB \u2502 gzip:  96.85 kB\n../../../../../../AppData/Local/Temp/cutover_build_media-buyer-cockpit_fdw4lnqb/assets/AuthenticatedAppRoutes-Bdp98Zlz.js   2,160.33 kB \u2502 gzip: 632.22 kB\n\u2713 built in 10.10s\n\nPWA v1.3.0\nmode      generateSW\nprecache  24 entries (2816.36 KiB)\nfiles generated\n  ../../../../../../AppData/Local/Temp/cutover_build_media-buyer-cockpit_fdw4lnqb/sw.js\n  ../../../../../../AppData/Local/Temp/cutover_build_media-buyer-cockpit_fdw4lnqb/workbox-a3c94b52.js\n",
+      "stderr": "../../../../cockpits-supabase-migration/apps/media-buyer-cockpit/node_modules/zod/v4/core/util.js (330:0): A comment\n\n\"// Wrapped in a `@__PURE__` IIFE: esbuild never tree-shakes a top-level initializer that contains a member access on `Number`, so the bare object literal survived into every bundle.\"\n\nin \"../../../../cockpits-supabase-migration/apps/media-buyer-cockpit/node_modules/zod/v4/core/util.js\" contains an annotation that Rollup cannot interpret due to the position of the comment. The comment will be removed to avoid issues.\n../../../../cockpits-supabase-migration/apps/media-buyer-cockpit/node_modules/zod/v4/core/regexes.js (70:0): A comment\n\n\"/** Anchors a pattern source. The interpolation lives here rather than at the call site because\n * esbuild will not drop a `@__PURE__` call whose own argument interpolates a variable, but it\n * will drop `anchor(dateSource)`. Keeping it inline pinned `date` into every bundle. */\"\n\nin \"../../../../cockpits-supabase-migration/apps/media-buyer-cockpit/node_modules/zod/v4/core/regexes.js\" contains an annotation that Rollup cannot interpret due to the position of the comment. The comment will be removed to avoid issues.\n\n(!) Some chunks are larger than 500 kB after minification. Consider:\n- Using dynamic import() to code-split the application\n- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks\n- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.\n",
+      "duration_s": 13.13
+    },
+    {
+      "cmd": [
+        "C:\\Program Files\\nodejs\\node.EXE",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpits-supabase-migration\\apps\\client-success-cockpit\\node_modules\\vite\\bin\\vite.js",
+        "build",
+        "--outDir",
+        "C:\\Users\\20106\\AppData\\Local\\Temp\\cutover_build_client-success-cockpit_5htbdv01",
+        "--emptyOutDir"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits\\apps\\client-success-cockpit",
+      "returncode": 0,
+      "stdout": "vite v7.3.6 building client environment for production...\ntransforming...\n\u2713 3940 modules transformed.\nrendering chunks...\ncomputing gzip size...\n../../../../../../AppData/Local/Temp/cutover_build_client-success-cockpit_5htbdv01/index.html                                     1.78 kB \u2502 gzip:   0.72 kB\n../../../../../../AppData/Local/Temp/cutover_build_client-success-cockpit_5htbdv01/assets/mahara-logo-light-Yb7lWkqK.png         11.20 kB\n../../../../../../AppData/Local/Temp/cutover_build_client-success-cockpit_5htbdv01/assets/mahara-logo-dark-C-yVwZ7S.png          11.52 kB\n../../../../../../AppData/Local/Temp/cutover_build_client-success-cockpit_5htbdv01/assets/index-DTox4Psp.css                    146.04 kB \u2502 gzip:  23.43 kB\n../../../../../../AppData/Local/Temp/cutover_build_client-success-cockpit_5htbdv01/assets/constants-CDbDQWUF.js                   0.60 kB \u2502 gzip:   0.39 kB\n../../../../../../AppData/Local/Temp/cutover_build_client-success-cockpit_5htbdv01/assets/PublicAppRoutes-B6aAHaGL.js             1.74 kB \u2502 gzip:   0.75 kB\n../../../../../../AppData/Local/Temp/cutover_build_client-success-cockpit_5htbdv01/assets/index-CAnkzuo5.js                     303.95 kB \u2502 gzip:  96.31 kB\n../../../../../../AppData/Local/Temp/cutover_build_client-success-cockpit_5htbdv01/assets/AuthenticatedAppRoutes-DqGsL81V.js  1,102.82 kB \u2502 gzip: 329.96 kB\n\u2713 built in 7.99s\n",
+      "stderr": "\n(!) Some chunks are larger than 500 kB after minification. Consider:\n- Using dynamic import() to code-split the application\n- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks\n- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.\n",
+      "duration_s": 8.6
+    },
+    {
+      "cmd": [
+        "C:\\Program Files\\nodejs\\node.EXE",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpits-supabase-migration\\apps\\creative-director-cockpit\\node_modules\\vite\\bin\\vite.js",
+        "build",
+        "--outDir",
+        "C:\\Users\\20106\\AppData\\Local\\Temp\\cutover_build_creative-director-cockpit_srl45kla",
+        "--emptyOutDir"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits\\apps\\creative-director-cockpit",
+      "returncode": 0,
+      "stdout": "vite v7.3.6 building client environment for production...\ntransforming...\n\u2713 3952 modules transformed.\nrendering chunks...\ncomputing gzip size...\n../../../../../../AppData/Local/Temp/cutover_build_creative-director-cockpit_srl45kla/index.html                                     1.75 kB \u2502 gzip:   0.71 kB\n../../../../../../AppData/Local/Temp/cutover_build_creative-director-cockpit_srl45kla/assets/mahara-logo-light-Yb7lWkqK.png         11.20 kB\n../../../../../../AppData/Local/Temp/cutover_build_creative-director-cockpit_srl45kla/assets/mahara-logo-dark-C-yVwZ7S.png          11.52 kB\n../../../../../../AppData/Local/Temp/cutover_build_creative-director-cockpit_srl45kla/assets/index-Bhthx8cQ.css                    168.30 kB \u2502 gzip:  26.05 kB\n../../../../../../AppData/Local/Temp/cutover_build_creative-director-cockpit_srl45kla/assets/constants-BT6wuXSA.js                   1.03 kB \u2502 gzip:   0.51 kB\n../../../../../../AppData/Local/Temp/cutover_build_creative-director-cockpit_srl45kla/assets/PublicAppRoutes-Bw5eCEpw.js             8.52 kB \u2502 gzip:   2.32 kB\n../../../../../../AppData/Local/Temp/cutover_build_creative-director-cockpit_srl45kla/assets/index-Bkdag8ZE.js                     304.02 kB \u2502 gzip:  96.32 kB\n../../../../../../AppData/Local/Temp/cutover_build_creative-director-cockpit_srl45kla/assets/AuthenticatedAppRoutes-C_8Lms_v.js  1,198.61 kB \u2502 gzip: 351.29 kB\n\u2713 built in 8.82s\n",
+      "stderr": "\n(!) Some chunks are larger than 500 kB after minification. Consider:\n- Using dynamic import() to code-split the application\n- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks\n- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.\n",
+      "duration_s": 9.46
+    },
+    {
+      "cmd": [
+        "C:\\Program Files\\nodejs\\node.EXE",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpits-supabase-migration\\apps\\video-editor-cockpit\\node_modules\\vite\\bin\\vite.js",
+        "build",
+        "--outDir",
+        "C:\\Users\\20106\\AppData\\Local\\Temp\\cutover_build_video-editor-cockpit_wc7_a5qc",
+        "--emptyOutDir"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits\\apps\\video-editor-cockpit",
+      "returncode": 0,
+      "stdout": "vite v7.3.6 building client environment for production...\ntransforming...\n\u2713 2117 modules transformed.\nrendering chunks...\ncomputing gzip size...\n../../../../../../AppData/Local/Temp/cutover_build_video-editor-cockpit_wc7_a5qc/index.html                               2.66 kB \u2502 gzip:   1.11 kB\n../../../../../../AppData/Local/Temp/cutover_build_video-editor-cockpit_wc7_a5qc/assets/mahara-logo-light-Yb7lWkqK.png   11.20 kB\n../../../../../../AppData/Local/Temp/cutover_build_video-editor-cockpit_wc7_a5qc/assets/mahara-logo-dark-C-yVwZ7S.png    11.52 kB\n../../../../../../AppData/Local/Temp/cutover_build_video-editor-cockpit_wc7_a5qc/assets/index-DK92MZPH.css               60.78 kB \u2502 gzip:  12.50 kB\n../../../../../../AppData/Local/Temp/cutover_build_video-editor-cockpit_wc7_a5qc/assets/index-DjMKNPgr.js               749.46 kB \u2502 gzip: 223.51 kB\n\u2713 built in 3.81s\n",
+      "stderr": "\n(!) Some chunks are larger than 500 kB after minification. Consider:\n- Using dynamic import() to code-split the application\n- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks\n- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.\n",
+      "duration_s": 4.34
+    },
+    {
+      "cmd": [
+        "C:\\Program Files\\nodejs\\node.EXE",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpits-supabase-migration\\apps\\sales-cockpit\\node_modules\\vite\\bin\\vite.js",
+        "build",
+        "--outDir",
+        "C:\\Users\\20106\\AppData\\Local\\Temp\\cutover_build_sales-cockpit_bhu24yaw",
+        "--emptyOutDir"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits\\apps\\sales-cockpit",
+      "returncode": 0,
+      "stdout": "vite v7.3.6 building client environment for production...\ntransforming...\n\u2713 2093 modules transformed.\nrendering chunks...\ncomputing gzip size...\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/index.html                               4.25 kB \u2502 gzip:   1.75 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/mahara-logo-light-Yb7lWkqK.png   11.20 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/mahara-logo-dark-C-yVwZ7S.png    11.52 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/index-DLThKAmp.css               48.10 kB \u2502 gzip:   9.59 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/chevron-down-oelzxfWS.js          0.16 kB \u2502 gzip:   0.16 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/chevron-left-DVMnMNXQ.js          0.16 kB \u2502 gzip:   0.17 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/plus-CLyTidCE.js                  0.19 kB \u2502 gzip:   0.17 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/arrow-left-CnmK9vaM.js            0.20 kB \u2502 gzip:   0.18 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/arrow-up-right-WS65WB0I.js        0.20 kB \u2502 gzip:   0.18 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/search-BU0GPncf.js                0.20 kB \u2502 gzip:   0.18 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/flame-DwtJZWzo.js                 0.23 kB \u2502 gzip:   0.21 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/copy-W9PchcwA.js                  0.27 kB \u2502 gzip:   0.23 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/external-link-DHt8Osn-.js         0.29 kB \u2502 gzip:   0.23 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/pencil-D5jp_ODp.js                0.31 kB \u2502 gzip:   0.24 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/send-Co_BWbST.js                  0.32 kB \u2502 gzip:   0.25 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/refresh-cw-Bwl196Wr.js            0.36 kB \u2502 gzip:   0.24 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/phone-CWz73o5Q.js                 0.36 kB \u2502 gzip:   0.25 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/trash-CsQQioC_.js                 0.38 kB \u2502 gzip:   0.25 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/calendar-clock-CUoqIxcQ.js        0.42 kB \u2502 gzip:   0.28 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/phone-off-CSwsFlaP.js             0.48 kB \u2502 gzip:   0.30 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/sparkles-BkfOo3_4.js              0.55 kB \u2502 gzip:   0.31 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/DeskStatus-BD0oCQjO.js            0.98 kB \u2502 gzip:   0.57 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/ProposalsPage-BDJT9VSA.js         2.08 kB \u2502 gzip:   1.08 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/whatsapp-BELpQPZz.js              2.36 kB \u2502 gzip:   1.36 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/dialer-DAAP_nMT.js                3.41 kB \u2502 gzip:   1.56 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/IntelligencePage-D4eNrSV0.js      3.76 kB \u2502 gzip:   1.54 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/ProposalPanel-Ra3uNFmQ.js         4.72 kB \u2502 gzip:   1.96 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/NumbersGoals-chiaEXA5.js          5.14 kB \u2502 gzip:   1.94 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/ReviewCard-B1l8uukg.js            5.37 kB \u2502 gzip:   2.24 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/CoachReviews-DQyFxvGw.js          5.96 kB \u2502 gzip:   2.20 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/dialerUi-DanUtYMt.js              6.34 kB \u2502 gzip:   2.83 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/pay-By_-wr_e.js                   7.74 kB \u2502 gzip:   3.19 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/RecordingPage-DssIrbXa.js         8.53 kB \u2502 gzip:   3.24 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/EodPage-Wem3Lmq0.js               8.72 kB \u2502 gzip:   3.48 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/LeadsPage-CJTwWdAm.js             9.22 kB \u2502 gzip:   3.44 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/ProposalPage-CnNHJYY0.js          9.39 kB \u2502 gzip:   3.89 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/LinksPage-CVmkxd3V.js             9.41 kB \u2502 gzip:   3.54 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/PipelinePage-BAOjMnt_.js          9.57 kB \u2502 gzip:   3.92 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/CalendarPage-D3VHnptT.js          9.65 kB \u2502 gzip:   4.02 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/References-C2N0YhCz.js            9.67 kB \u2502 gzip:   3.49 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/RecordingsPage-B4p_oKML.js       10.13 kB \u2502 gzip:   3.82 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/AssetPicker-DK5hXwTU.js          11.78 kB \u2502 gzip:   4.99 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/GoalsPage-DPwboM8N.js            14.00 kB \u2502 gzip:   5.21 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/LeadPage-DxrwxN4G.js             14.73 kB \u2502 gzip:   5.44 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/ScriptParts-D_U2bT2m.js          21.88 kB \u2502 gzip:   8.75 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/CallPage-lGt3Gh72.js             23.29 kB \u2502 gzip:   8.16 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/TeamPage-Bm8URSJS.js             27.72 kB \u2502 gzip:   9.03 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/NumbersPage-BDr5TZRL.js          28.64 kB \u2502 gzip:   9.95 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/FollowupsPage-D-qYmxXC.js        32.93 kB \u2502 gzip:  10.53 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/ResearchPanel-BxZq9Bho.js        37.02 kB \u2502 gzip:  12.38 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/DialerPage-CUcXeDiO.js           52.37 kB \u2502 gzip:  17.25 kB\n../../../../../../AppData/Local/Temp/cutover_build_sales-cockpit_bhu24yaw/assets/index-B4t39SvA.js               571.67 kB \u2502 gzip: 169.85 kB\n\u2713 built in 3.93s\n",
+      "stderr": "\n(!) Some chunks are larger than 500 kB after minification. Consider:\n- Using dynamic import() to code-split the application\n- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks\n- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.\n",
+      "duration_s": 4.44
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/supabase-access.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\n 4 pass\n 0 fail\n 15 expect() calls\nRan 4 tests across 1 file. [51.00ms]\n",
+      "duration_s": 0.1
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/snapshot-rpc-contracts.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\n 18 pass\n 0 fail\n 114 expect() calls\nRan 18 tests across 1 file. [31.00ms]\n",
+      "duration_s": 0.08
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/cockpit-dispatch-auth.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\n 3 pass\n 0 fail\n 18 expect() calls\nRan 3 tests across 1 file. [56.00ms]\n",
+      "duration_s": 0.11
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/ceo-goals-supabase.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\n 9 pass\n 0 fail\n 89 expect() calls\nRan 9 tests across 1 file. [1219.00ms]\n",
+      "duration_s": 1.31
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/ceo-people-supabase.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\n 6 pass\n 0 fail\n 67 expect() calls\nRan 6 tests across 1 file. [5.89s]\n",
+      "duration_s": 5.99
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/ceo-manual-payments-supabase.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\n 7 pass\n 0 fail\n 130 expect() calls\nRan 7 tests across 1 file. [5.12s]\n",
+      "duration_s": 5.24
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/csm-state-supabase.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\n 8 pass\n 0 fail\n 98 expect() calls\nRan 8 tests across 1 file. [1264.00ms]\n",
+      "duration_s": 1.34
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/supabase-ask-ai.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\n 6 pass\n 0 fail\n 96 expect() calls\nRan 6 tests across 1 file. [4.01s]\n",
+      "duration_s": 4.12
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/eod-delivery-supabase.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\n 9 pass\n 0 fail\n 44 expect() calls\nRan 9 tests across 1 file. [7.16s]\n",
+      "duration_s": 7.28
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/personal-eod-supabase.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\n 6 pass\n 0 fail\n 87 expect() calls\nRan 6 tests across 1 file. [4.46s]\n",
+      "duration_s": 4.57
+    },
+    {
+      "cmd": [
+        "C:\\Python314\\python.exe",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits\\hermes\\cockpit-ask-ai\\scripts",
+        "-p",
+        "test_askai.py"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "...............\n----------------------------------------------------------------------\nRan 15 tests in 0.029s\n\nOK\n",
+      "duration_s": 0.35
+    },
+    {
+      "cmd": [
+        "C:\\Python314\\python.exe",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits\\hermes\\eod-out",
+        "-p",
+        "test_out.py"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "[14:33:23] Starting live EOD delivery worker (worker_id=ASUS-44920-9e98d320, lease=300s, limit=20)\n[14:33:23]   Row #5 [AMBIGUOUS SLACK]: Connection reset by peer during postMessage. Failing closed for reconciliation.\n[14:33:23] Run completed: 0 sent, 0 failed, 1 flagged for reconciliation.\n[14:33:23] Starting live EOD delivery worker (worker_id=ASUS-44920-beac26a8, lease=300s, limit=20)\n[14:33:23]   Row #2: filed to sheet 'CSM'\n[14:33:23]   Row #2: posted to Slack channel C456\n[14:33:23]   Completed #2 for Dina Ezzat (csm) -> C456\n[14:33:23] Run completed: 1 sent, 0 failed, 0 flagged for reconciliation.\n[14:33:23] Starting live EOD delivery worker (worker_id=ASUS-44920-9047b45c, lease=300s, limit=20)\n[14:33:23]   Row #3: filed to sheet 'Video Editors'\n[14:33:23]   Completed #3 for Karim Abdelrahman (video_editor) -> C789\n[14:33:23] Run completed: 1 sent, 0 failed, 0 flagged for reconciliation.\n[14:33:23] Starting live EOD delivery worker (worker_id=ASUS-44920-26bf074e, lease=300s, limit=20)\n[14:33:23]   Row #4 [CRITICAL]: Sheet append succeeded but receipt write failed (Database error writing receipt for row 4). Halting row.\n[14:33:23] Run completed: 0 sent, 1 failed, 0 flagged for reconciliation.\n[14:33:23] Starting live EOD delivery worker (worker_id=ASUS-44920-f06c9580, lease=300s, limit=20)\n[14:33:23]   Row #99: uncertain Slack outcome; durable intent retained for reconciliation\n[14:33:23] Run completed: 0 sent, 1 failed, 0 flagged for reconciliation.\n",
+      "stderr": ".............\n----------------------------------------------------------------------\nRan 13 tests in 0.240s\n\nOK\n",
+      "duration_s": 0.58
+    },
+    {
+      "cmd": [
+        "C:\\Python314\\python.exe",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits\\scripts",
+        "-p",
+        "test_plan_manual_payments_import.py"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ".......\n----------------------------------------------------------------------\nRan 7 tests in 0.033s\n\nOK\n",
+      "duration_s": 0.17
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/cockpit-test-db.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\n 1 pass\n 0 fail\n 5 expect() calls\nRan 1 test across 1 file. [916.00ms]\n",
+      "duration_s": 0.98
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/webinar-supabase-targets.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\n 8 pass\n 0 fail\n 24 expect() calls\nRan 8 tests across 1 file. [68.00ms]\n",
+      "duration_s": 0.13
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/webinar-target-access.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\n 6 pass\n 0 fail\n 36 expect() calls\nRan 6 tests across 1 file. [1064.00ms]\n",
+      "duration_s": 1.14
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/webinar-targets.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\n 17 pass\n 0 fail\n 47 expect() calls\nRan 17 tests across 1 file. [996.00ms]\n",
+      "duration_s": 1.07
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/webinar-ingestion.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\n 4 pass\n 0 fail\n 25 expect() calls\nRan 4 tests across 1 file. [1122.00ms]\n",
+      "duration_s": 1.2
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/reporting-view-access.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\n 1 pass\n 0 fail\n 22 expect() calls\nRan 1 test across 1 file. [947.00ms]\n",
+      "duration_s": 1.02
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/frameio-webhook.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\n 15 pass\n 0 fail\n 32 expect() calls\nRan 15 tests across 1 file. [28.00ms]\n",
+      "duration_s": 0.09
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/billing.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\n 9 pass\n 0 fail\n 31 expect() calls\nRan 9 tests across 1 file. [91.00ms]\n",
+      "duration_s": 0.14
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/media-buyer-cockpit/scripts/webinar.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\n 42 pass\n 0 fail\n 111 expect() calls\nRan 42 tests across 1 file. [39.00ms]\n",
+      "duration_s": 0.09
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/creative-director-cockpit/scripts/social.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\n 21 pass\n 0 fail\n 185 expect() calls\nRan 21 tests across 1 file. [23.00ms]\n",
+      "duration_s": 0.07
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/sales-cockpit/src/lib/pay.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\n 41 pass\n 0 fail\n 123 expect() calls\nRan 41 tests across 1 file. [28.00ms]\n",
+      "duration_s": 0.07
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/sales-cockpit/src/lib/goals.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\n 11 pass\n 0 fail\n 22 expect() calls\nRan 11 tests across 1 file. [32.00ms]\n",
+      "duration_s": 0.08
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/sales-cockpit/src/lib/env.test.ts"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\n 6 pass\n 0 fail\n 10 expect() calls\nRan 6 tests across 1 file. [22.00ms]\n",
+      "duration_s": 0.07
+    },
+    {
+      "cmd": [
+        "C:\\Users\\20106\\AppData\\Roaming\\npm\\bun.CMD",
+        "test",
+        "apps/sales-cockpit/src/components/Prose.test.tsx"
+      ],
+      "cwd": "C:\\Users\\20106\\.codex\\worktrees\\cockpit-migration-actions\\mahara-cockpits",
+      "returncode": 0,
+      "stdout": "bun test v1.4.2 (744846f84)\n",
+      "stderr": "\n 5 pass\n 0 fail\n 13 expect() calls\nRan 5 tests across 1 file. [55.00ms]\n",
+      "duration_s": 0.1
+    }
+  ],
+  "local_checks_passed": true,
+  "release_ready": false,
+  "status": "LOCAL_PASSED",
+  "post_git": {
+    "available": true,
+    "sha": "4aba6d1bcc9508069c3e5b564c172e7a79ecee46",
+    "is_dirty": false,
+    "dirty_files": [],
+    "error": null
+  },
+  "summary": "LOCAL CHECKS PASSED: Build, typecheck, tests, and shared code are clean."
+}
