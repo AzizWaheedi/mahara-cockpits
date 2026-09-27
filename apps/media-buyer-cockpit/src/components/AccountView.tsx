@@ -1,6 +1,6 @@
 import { useQueries, useQuery } from "convex/react";
 import { ChevronLeft } from "lucide-react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { CreativePreview } from "@/components/CreativePreview";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { money } from "@/components/ceo/format";
@@ -91,6 +91,20 @@ const usd2 = (n: number | undefined) =>
 const pctText = (n: number | undefined) =>
   n === undefined || Number.isNaN(n) ? "n/a" : `${n.toFixed(2)}%`;
 
+/** One read per campaign over the range, keyed by campaign name. */
+function byCampaign(
+  reads: string,
+  query: typeof api.stats.range | typeof api.stats.campaignTrend,
+) {
+  const [names, start, end] = JSON.parse(reads) as [string[], string, string];
+  return Object.fromEntries(
+    names.map(campaignName => [
+      campaignName,
+      { query, args: { campaignName, start, end } },
+    ]),
+  );
+}
+
 type AdCard = {
   key: string;
   campaign: Row;
@@ -140,21 +154,21 @@ export function AccountView({
   onClose: () => void;
 }) {
   const names = campaigns.map(c => String(c.campaignName));
-  const args = (campaignName: string) => ({
-    campaignName,
-    start: range.start,
-    end: range.end,
-  });
-  const ranges = useQueries(
-    Object.fromEntries(
-      names.map(n => [n, { query: api.stats.range, args: args(n) }]),
-    ),
-  ) as Record<string, Row>;
-  const trends = useQueries(
-    Object.fromEntries(
-      names.map(n => [n, { query: api.stats.campaignTrend, args: args(n) }]),
-    ),
-  ) as Record<string, Row>;
+  // useQueries keys its subscription on the identity of the object it gets.
+  // A new object on every render resubscribes and sets state during render,
+  // forever: React error #301 when this page first shipped (2026-09-27). So
+  // one object per set of campaigns and range, rebuilt only when they change.
+  const reads = JSON.stringify([names, range.start, range.end]);
+  const rangeQueries = useMemo(
+    () => byCampaign(reads, api.stats.range),
+    [reads],
+  );
+  const trendQueries = useMemo(
+    () => byCampaign(reads, api.stats.campaignTrend),
+    [reads],
+  );
+  const ranges = useQueries(rangeQueries) as Record<string, Row>;
+  const trends = useQueries(trendQueries) as Record<string, Row>;
   const coverage = useQuery(api.stats.coverage, {});
 
   const results = names.map(n => ranges[n]);

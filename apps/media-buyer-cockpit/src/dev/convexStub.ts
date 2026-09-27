@@ -8,7 +8,7 @@
  */
 import type { FunctionReference } from "convex/server";
 import { getFunctionName } from "convex/server";
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 
 type Fixtures = Record<string, unknown>;
 let fixtures: Fixtures = {};
@@ -58,9 +58,47 @@ export function useQuery(
   return answer(ref);
 }
 
-export function useQueries(
-  queries: Record<string, { query: FunctionReference<"query">; args: unknown }>,
-): Record<string, unknown> {
+type Queries = Record<
+  string,
+  { query: FunctionReference<"query">; args: unknown }
+>;
+
+/** What a queries object asks for, so two objects can be compared by content. */
+function asked(queries: Queries): string {
+  return JSON.stringify(
+    Object.entries(queries).map(([key, q]) => [
+      key,
+      getFunctionName(q.query),
+      q.args,
+    ]),
+  );
+}
+
+/**
+ * The real hook keys its subscription on the identity of this object: a new
+ * object with the same queries on every render makes it resubscribe and set
+ * state during render, forever. In production that is React error #301 (the
+ * account page, 2026-09-27, which the harness rendered happily). So this one
+ * fails the same way, and renders once more after mounting, as the real hook
+ * does when it subscribes, so the check runs on the first view.
+ */
+export function useQueries(queries: Queries): Record<string, unknown> {
+  const last = useRef<{ queries: Queries; asked: string } | null>(null);
+  const now = asked(queries);
+  if (
+    last.current &&
+    last.current.queries !== queries &&
+    last.current.asked === now
+  ) {
+    throw new Error(
+      "useQueries got a new object asking for the same queries. Memoize it (useMemo): the real hook re-renders forever on this (React error #301).",
+    );
+  }
+  last.current = { queries, asked: now };
+  const [, settle] = useState(false);
+  useEffect(() => {
+    settle(true);
+  }, []);
   const out: Record<string, unknown> = {};
   for (const [key, q] of Object.entries(queries)) out[key] = answer(q.query);
   return out;
