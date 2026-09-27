@@ -308,7 +308,8 @@ export function portalFixtures(): Record<string, unknown> {
           taskId: "i2",
         },
       ],
-      prefs: [],
+      // Liwan writes in Arabic, so the touchpoints show both languages.
+      prefs: [{ clientName: "Liwan Limited", language: "ar" }],
       eod: null,
       checks,
       feedback: [
