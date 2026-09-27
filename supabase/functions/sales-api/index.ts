@@ -87,6 +87,7 @@ import {
   slotOffered,
 } from "./dialer.ts";
 import { hotFresh, hotPatch, stillHot } from "./hot.ts";
+import { CLIENT_DRAFT_CLOSED, CLIENT_REFUSAL, isClient } from "./clients.ts";
 
 type Row = Record<string, unknown>;
 
@@ -1808,10 +1809,21 @@ function leadHour(country: unknown, now = Date.now()): number {
 
 async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean) {
   if (f.status !== "draft") throw new Refusal(`This draft was already ${f.status}.`, 409);
+  const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(String(f.contact_id))}&select=country,tags`))[0];
+  // An active client gets no sales follow-up: the draft closes, saying why.
+  if (isClient(lead)) {
+    await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}&status=eq.draft`, {
+      method: "PATCH",
+      body: { status: "expired", decided_at: new Date().toISOString(), error: CLIENT_DRAFT_CLOSED },
+      prefer: "return=minimal",
+    });
+    await audit(who, auto ? "followup.autosend" : "followup.approve", "cockpit_sales_followups", String(f.id), f,
+      { status: "expired", error: CLIENT_DRAFT_CLOSED });
+    throw new Refusal(CLIENT_REFUSAL, 409);
+  }
   // A follow-up does not arrive at night: an answer to a lead who just wrote
   // may, anything else waits for 09:00 on the lead's own clock.
   if (f.segment !== "reply") {
-    const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(String(f.contact_id))}&select=country`))[0];
     const h = leadHour(lead?.country);
     if (h < 9 || h >= 21)
       throw new Refusal("It is night where the lead is. Send it after 9 in the morning, their time.", 409);
@@ -1846,17 +1858,23 @@ async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean) {
     });
     throw new Refusal("The conversation has moved on since this draft was made, so it was not sent. Read it first; the agent writes a fresh draft if one is still due.", 409);
   }
-  const template = f.channel === "whatsapp_template";
+  // The draft's channel, or WhatsApp when the rep picks it (Aziz,
+  // 2026-09-27: inside the lead's 24-hour window a follow-up can go on
+  // WhatsApp as well). convo.send checks the window live and refuses outside
+  // it, and the draft then waits with the reason.
+  const channel = b.channel === "whatsapp" ? "whatsapp" : String(f.channel);
+  const switched = channel !== f.channel;
+  const template = channel === "whatsapp_template";
   const body = template ? templateLine(b.body ?? f.body) : String(b.body ?? f.body).replace(/\r\n/g, "\n").trim();
   if (!body) throw new Refusal("Write the message first.");
-  const subject = f.channel === "email" ? cleanText(b.subject ?? f.subject, 300) : null;
+  const subject = channel === "email" ? cleanText(b.subject ?? f.subject, 300) : null;
   const claimed = await svc(`cockpit_sales_followups?id=eq.${enc(String(f.id))}&status=eq.draft`, {
     method: "PATCH",
     body: { status: "sending", decided_by: who.email, decided_at: new Date().toISOString() },
     prefer: "return=representation",
   });
   if (!claimed.length) throw new Refusal("Someone else has just dealt with this draft.", 409);
-  const edited = body !== String(f.body).trim() || (f.channel === "email" && subject !== (f.subject ?? null));
+  const edited = body !== String(f.body).trim() || (channel === "email" && subject !== (f.subject ?? null));
   try {
     const out = template
       ? await sendTemplate(who, {
@@ -1868,7 +1886,7 @@ async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean) {
         })
       : await convoSend(who, {
           contact_id: f.contact_id,
-          channel: f.channel,
+          channel,
           body,
           subject,
           request_id: f.id,
@@ -1885,15 +1903,17 @@ async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean) {
         message_id: m.id ?? null,
         error: m.state === "failed" ? (m.error ?? "HighLevel marked it failed") : null,
         auto,
+        // The channel it went on: a draft written for email may go on WhatsApp.
+        ...(switched ? { channel } : {}),
       },
       prefer: "return=representation",
     }))[0];
     await audit(who, auto ? "followup.autosend" : "followup.approve", "cockpit_sales_followups", String(f.id), f,
-      { status: saved.status, edited, segment: f.segment, channel: f.channel });
+      { status: saved.status, edited, segment: f.segment, channel, ...(switched ? { written_for: f.channel } : {}) });
     if (saved.status === "sent") {
       // A confirmation message counts as a try: the dialer's confirmation
       // call waits for the lead to answer it first.
-      if (f.segment === "confirm" && f.appointment_id) await confirmationSent(who, f);
+      if (f.segment === "confirm" && f.appointment_id) await confirmationSent(who, { ...f, channel });
       // The lead leaves the old automation only once the message is seen to
       // have gone; a send not seen yet is settled by the desk (followup.settle).
       if (sendSettled(m))
@@ -1910,7 +1930,7 @@ async function sendFollowup(who: Who, f: Row, b: Row, auto: boolean) {
       method: "PATCH",
       body: fixable
         ? { status: "draft", error: err, decided_by: null, decided_at: null }
-        : { status: "failed", error: err, final_body: body, final_subject: subject, edited },
+        : { status: "failed", error: err, final_body: body, final_subject: subject, edited, ...(switched ? { channel } : {}) },
       prefer: "return=minimal",
     });
     await audit(who, auto ? "followup.autosend" : "followup.approve", "cockpit_sales_followups", String(f.id), f,
@@ -2306,7 +2326,7 @@ const ms = (v: unknown) => {
 let heavy: { at: number; leads: Row[]; appts: Row[]; dials: Row[]; deals: Row[]; missed: Row[] } | null = null;
 const HEAVY_FOR = 20_000;
 const LEAD_COLS =
-  "contact_id,name,phone,phone8,lead_created_at,stage_id,stage_name,pipeline_id,lead_class,dnd,contact_type,revenue,readiness,assigned_to";
+  "contact_id,name,phone,phone8,lead_created_at,stage_id,stage_name,pipeline_id,lead_class,dnd,contact_type,revenue,readiness,assigned_to,tags";
 
 type DialFacts = { last: number; reached: boolean; tries: number[] };
 
@@ -2460,7 +2480,9 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
     if (id && t && (lastTry.get(id) ?? 0) < t) lastTry.set(id, t);
   }
   const hotBy = new Map(hotRows.map(r => [String(r.contact_id), r]));
-  const list = leads.map(l => {
+  // An active client (tagged client in HighLevel) is never in the queue
+  // (clients.ts): client success looks after them.
+  const list = leads.filter(l => !isClient(l)).map(l => {
     const id = String(l.contact_id);
     const st = stateBy.get(id) ?? {};
     const mine = apptBy.get(id) ?? [];
@@ -3995,7 +4017,7 @@ async function pipelineBoard(who: Who, b: Row) {
   const now = Date.now();
   const since = now - 60 * 86_400_000;
   const cols =
-    "contact_id,name,lead_class,stage_id,stage_name,opp_status,pipeline_id,assigned_to,revenue,readiness,lead_created_at,opp_updated_at,dnd";
+    "contact_id,name,lead_class,stage_id,stage_name,opp_status,pipeline_id,assigned_to,revenue,readiness,lead_created_at,opp_updated_at,dnd,tags";
   const [inPipe, loose, inbox, hotRows, states, appts, people] = await Promise.all([
     svcAll(`cockpit_sales_leads?pipeline_id=eq.${enc(pipe.id)}&select=${cols}&order=contact_id`),
     svc(
@@ -4026,6 +4048,9 @@ async function pipelineBoard(who: Who, b: Row) {
   const cards: Row[] = [];
   for (const l of [...inPipe, ...loose]) {
     if (l.opp_status && l.opp_status !== "open") continue;
+    // An active client sits in the pipeline from their own deal; the board
+    // is the sales team's, so they are left off it (clients.ts).
+    if (isClient(l)) continue;
     const id = String(l.contact_id);
     const hot = hotBy.get(id);
     const st = stateBy.get(id);
@@ -4156,8 +4181,9 @@ async function tagOutcome(contactId: string, outcome: AnyOutcome): Promise<strin
 async function hotSave(who: Who, b: Row) {
   const contact = cleanText(b.contact_id, 80);
   if (!contact) throw new Refusal("Which lead?");
-  const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contact)}&select=contact_id`))[0];
+  const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contact)}&select=contact_id,tags`))[0];
   if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
+  if (isClient(lead)) throw new Refusal(CLIENT_REFUSAL, 409);
   const before = (await svc(`cockpit_sales_hot?contact_id=eq.${enc(contact)}&select=*`))[0] ?? null;
   const live = before && !before.removed_at ? before : null;
   if (live && !who.manager && live.owner_email !== who.email)

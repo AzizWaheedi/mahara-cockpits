@@ -27,6 +27,7 @@ import { ProposalPanel } from "../components/ProposalPanel";
 import { AskReference } from "../components/References";
 import { ResearchPanel } from "../components/ResearchPanel";
 import { assetStage, objectionsFrom } from "../lib/assets";
+import { CLIENT_NOTE, isClient } from "../lib/clients";
 import { useLead, useLeadActivity, useSetting, useTeam } from "../lib/data";
 import {
   ago,
@@ -172,6 +173,14 @@ export default function LeadPage({ me }: { me: Me }) {
               label={plainStage(l.stage_name)}
             />
           ) : null}
+          {isClient(l) ? (
+            <StatusChip
+              size="md"
+              tone="good"
+              label="Active client"
+              title={CLIENT_NOTE}
+            />
+          ) : null}
           {live?.contact.dnd || l.dnd ? (
             <StatusChip
               size="md"
@@ -196,22 +205,29 @@ export default function LeadPage({ me }: { me: Me }) {
             ]}
           />
         </p>
-        <HotControl
-          me={me}
-          contactId={l.contact_id}
-          name={l.name}
-          phone8={l.phone8}
-        />
+        {isClient(l) ? (
+          <p className="muted text-sm">{CLIENT_NOTE}</p>
+        ) : (
+          <HotControl
+            me={me}
+            contactId={l.contact_id}
+            name={l.name}
+            phone8={l.phone8}
+          />
+        )}
         <div className="flex flex-wrap gap-2">
-          <Link
-            to={`/call/${l.contact_id}?script=${callScript(me, appointments)}`}
-            className={buttonPrimary}
-          >
-            <ScrollText className="size-3.5" aria-hidden />
-            {callScript(me, appointments) === "demo"
-              ? "Open the demo script"
-              : "Open the intro script"}
-          </Link>
+          {/* No sales call script for an active client. */}
+          {isClient(l) ? null : (
+            <Link
+              to={`/call/${l.contact_id}?script=${callScript(me, appointments)}`}
+              className={buttonPrimary}
+            >
+              <ScrollText className="size-3.5" aria-hidden />
+              {callScript(me, appointments) === "demo"
+                ? "Open the demo script"
+                : "Open the intro script"}
+            </Link>
+          )}
           {l.phone ? (
             <CopyChip icon={Phone} text={l.phone} label="Copy the number" />
           ) : null}

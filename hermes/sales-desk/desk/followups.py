@@ -399,15 +399,29 @@ def language_for(lead: dict[str, Any], thread: list[dict[str, Any]]) -> str:
     return "en"
 
 
+CLIENT_CLOSED = "An active client (tagged client in HighLevel): kept out of sales follow-ups."
+
+
+def is_client(lead: Optional[dict[str, Any]]) -> bool:
+    """Tagged client in HighLevel: an active client (Aziz, 2026-09-27: "They
+    shouldn't be in any sales process"). The same test as sales-api
+    clients.ts."""
+    tags = (lead or {}).get("tags")
+    return isinstance(tags, list) and any(str(t).strip().lower() == "client" for t in tags)
+
+
 def eligible(lead: Optional[dict[str, Any]], dealt: set[str]) -> Optional[str]:
     """Why this contact is not the follow-up agent's to write to, or None.
 
     Only sales leads: in a sales pipeline or carrying a lead tag, and not a
     client. Found 2026-09-24: an existing client's contract email sat in the
-    sales inbox and was drafted a sales pitch."""
+    sales inbox and was drafted a sales pitch. Found 2026-09-27: 65 contacts
+    tagged client sat open in a sales pipeline, two with drafts waiting."""
     if not lead:
         return "not in the cockpit's lead copy"
     c = str(lead.get("contact_id") or "")
+    if is_client(lead):
+        return "a client"
     if str(lead.get("contact_type") or "").lower() == "customer" or c in dealt:
         return "a client"
     if "closed" in str(lead.get("stage_name") or "").lower():
@@ -990,6 +1004,28 @@ def close_gone(sb: Any, now: datetime) -> int:
     return closed
 
 
+def close_clients(sb: Any, now: datetime) -> int:
+    """Open drafts for a contact tagged client, closed with the reason: an
+    active client gets no sales follow-up. The tag can arrive after a draft
+    was written, when a lead signs; sales-api refuses to send one anyway."""
+    drafts = sb.select_all("cockpit_sales_followups", "select=id,contact_id&status=eq.draft", order="id")
+    if not drafts:
+        return 0
+    clients: set[str] = set()
+    for chunk in _chunks(sorted({str(d["contact_id"]) for d in drafts})):
+        clients |= {str(lead.get("contact_id")) for lead in
+                    sb.select("cockpit_sales_leads", f"select=contact_id,tags&contact_id={_in(chunk)}") if is_client(lead)}
+    closed = 0
+    for d in drafts:
+        if str(d["contact_id"]) not in clients:
+            continue
+        out = sb.rest("PATCH", f"cockpit_sales_followups?id=eq.{_q(str(d['id']))}&status=eq.draft",
+                      json_body={"status": "expired", "decided_at": now.isoformat(), "error": CLIENT_CLOSED},
+                      prefer="return=representation")
+        closed += bool(isinstance(out, list) and out)
+    return closed
+
+
 def settle_sends(sb: Any, token: str, now: datetime, settle: Optional[Callable[[str], dict[str, Any]]] = None,
                  warn: Callable[[str], None] = lambda _m: None) -> dict[str, int]:
     """Follow-ups sent in the last two days whose message HighLevel had not
@@ -1096,6 +1132,7 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
     freed = free_stuck(sb, now, settle, warn)
     stale = expire_stale(sb, now)
     closed = close_gone(sb, now)
+    clients_closed = close_clients(sb, now)
     replied = track_replies(sb, now)
     reconciled = reconcile_templates(sb, ghl_token, now, settle, warn) if ghl_token else {"found": 0, "never_sent": 0}
     settled = settle_sends(sb, ghl_token, now, settle, warn) if ghl_token else {"read": 0, "gone": 0, "failed": 0}
@@ -1366,5 +1403,6 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
             "held_for_automation": held, "in_a_conversation": talking, "already_answered": answered,
             "asked_to_stop": stopped, "conversation_unreadable": unread, "no_open_channel": no_channel,
             "not_sales_leads": not_leads, "set_aside": set_aside, "failed": failed, "room": room,
-            "replies_marked": replied, "went_stale": stale, "reason_gone": closed, "stuck_freed": freed,
+            "replies_marked": replied, "went_stale": stale, "reason_gone": closed, "clients_closed": clients_closed,
+            "stuck_freed": freed,
             "templates": reconciled, "settled": settled}

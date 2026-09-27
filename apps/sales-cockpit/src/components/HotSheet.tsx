@@ -9,6 +9,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import { api } from "../lib/api";
+import { CLIENT_NOTE, isClient } from "../lib/clients";
 import {
   type Loaded,
   readAll,
@@ -982,7 +983,11 @@ function AddLead({
                     />
                   </span>
                 </span>
-                {on ? (
+                {isClient(l) ? (
+                  <span className="muted shrink-0 text-xs" title={CLIENT_NOTE}>
+                    Active client
+                  </span>
+                ) : on ? (
                   <span className="muted shrink-0 text-xs">
                     On {whose}
                     {isOpen(on)

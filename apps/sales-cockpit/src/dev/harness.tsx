@@ -781,6 +781,7 @@ async function main() {
     cockpit_sales_mirror_runs: [F.MIRROR_RUN],
     cockpit_sales_worker_status: [],
     cockpit_sales_inbox: [...F.INBOX, ...F.HOT_INBOX],
+    cockpit_sales_followups: F.FOLLOWUPS,
     cockpit_sales_hot: F.HOT,
     cockpit_sales_messages: F.MESSAGES,
     cockpit_sales_snippets: F.SNIPPETS,

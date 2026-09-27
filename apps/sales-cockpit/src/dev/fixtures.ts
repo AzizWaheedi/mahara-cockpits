@@ -104,12 +104,15 @@ export const LEADS: Row[] = Array.from({ length: 24 }, (_, i) => {
     company,
     country,
     source: "ROASForm",
-    tags:
+    // The last lead is an active client (tagged client in HighLevel).
+    tags: [
       i % 3 === 0
-        ? ["roas-qualified"]
+        ? "roas-qualified"
         : i % 3 === 1
-          ? ["roas-unqualified"]
-          : ["roas-unprepared"],
+          ? "roas-unqualified"
+          : "roas-unprepared",
+      ...(i === 23 ? ["client"] : []),
+    ],
     lead_class:
       i % 3 === 0 ? "qualified" : i % 3 === 1 ? "unqualified" : "unprepared",
     is_lead: true,
@@ -448,6 +451,68 @@ export const REPS: Row[] = TEAM.map(t => ({
   maqsam_email: null,
   fathom_email: null,
 }));
+
+/**
+ * Follow-up drafts: one for a lead who wrote on WhatsApp twelve minutes ago
+ * (INBOX c1), written for email, so it can go on WhatsApp as well; one for
+ * a lead who only emails.
+ */
+export const FOLLOWUPS: Row[] = [
+  {
+    id: "fu-1",
+    contact_id: "lead-2",
+    owner_email: null,
+    segment: "reply",
+    channel: "email",
+    template_key: null,
+    touch: 1,
+    heat: 80,
+    appointment_id: null,
+    subject: "Moving tomorrow's call",
+    body: "Hi, thanks for letting us know. Tomorrow afternoon works: would 4 pm suit you?",
+    why: "They asked to move tomorrow's call to the afternoon.",
+    context: { heat: ["wrote today"] },
+    model: "fixture",
+    status: "draft",
+    created_at: new Date(Date.now() - 5 * 60_000).toISOString(),
+    expires_at: new Date(Date.now() + 48 * H).toISOString(),
+    decided_by: null,
+    decided_at: null,
+    final_body: null,
+    edited: null,
+    skip_reason: null,
+    error: null,
+    auto: false,
+    replied_at: null,
+  },
+  {
+    id: "fu-2",
+    contact_id: "lead-7",
+    owner_email: null,
+    segment: "new",
+    channel: "email",
+    template_key: null,
+    touch: 1,
+    heat: 40,
+    appointment_id: null,
+    subject: "The deck before your call",
+    body: "Hi, here is the deck you asked for before the call.",
+    why: "They asked for the deck by email.",
+    context: null,
+    model: "fixture",
+    status: "draft",
+    created_at: new Date(Date.now() - 30 * 60_000).toISOString(),
+    expires_at: new Date(Date.now() + 48 * H).toISOString(),
+    decided_by: null,
+    decided_at: null,
+    final_body: null,
+    edited: null,
+    skip_reason: null,
+    error: null,
+    auto: false,
+    replied_at: null,
+  },
+];
 
 export const INBOX: Row[] = [
   {
