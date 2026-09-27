@@ -10,6 +10,7 @@ import {
   saveGoalTargets,
 } from "./ceoGoalsClient";
 import { supabase } from "./supabase";
+import {ManualPaymentError,manualPaymentList,manualPaymentInfo,manualPaymentClients,addManualPayment,changeManualPayment,manualPaymentHistory} from "./ceoManualPaymentsClient";
 import {readPeople,readPeopleRoles,savePerson,setPersonActive,unavailablePeopleDirectory} from "./ceoPeopleClient";
 
 export class ConvexError extends Error {
@@ -228,25 +229,23 @@ async function handleApiCall(endpoint: string, args: any = {}): Promise<any> {
       }
     }
     if (sub === "manualPayments") {
-      if (rest[0] === "list") {
-        const { data } = await supabase
-          .from("cockpit_manual_payments")
-          .select("*")
-          .order("day", { ascending: false });
-        return data || [];
+      try {
+        switch(rest.join(".")){
+          case "list": return await manualPaymentList(supabase,args);
+          case "formInfo": return await manualPaymentInfo(supabase);
+          case "clientOptions": return await manualPaymentClients(supabase);
+          case "add": return await addManualPayment(supabase,args);
+          case "softDelete": return await changeManualPayment(supabase,args,true);
+          case "restore": return await changeManualPayment(supabase,args,false);
+          case "history": return await manualPaymentHistory(supabase,args);
+          default: throw new Error("Unknown manual-payment operation.");
+        }
+      } catch(error) {
+        throw new ConvexError(error instanceof ManualPaymentError ? error.data :
+          {code:"refused",message:error instanceof Error?error.message:"The payment operation was not confirmed."});
       }
-      if (rest[0] === "formInfo") {
-        return { rails: ["bank_transfer", "cheque", "cash", "tap", "other"] };
-      }
-      if (rest[0] === "clientOptions") {
-        const { data } = await supabase
-          .from("cockpit_client_profiles")
-          .select("client_name")
-          .order("client_name");
-        return (data || []).map(c => c.client_name);
-      }
-      return { ok: true };
     }
+
     if (sub === "queries" && rest[0] === "callCenterReport") {
       return { daily: [], total: 0 };
     }
