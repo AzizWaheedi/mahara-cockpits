@@ -321,6 +321,28 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     return 1 if blockers else 0
 
 
+def _resync_stuck(cfg: Config, log: Logger) -> str:
+    """Dialer saves HighLevel has not taken, sent again by sales-api (the call
+    centre's durable-worker lesson). Best effort: a failure here is a warning,
+    never the requests job's own failure. Empty when nothing was stuck."""
+    try:
+        _, _, raw = http.request(
+            "POST", f"{cfg.supabase_url.rstrip('/')}/functions/v1/sales-api",
+            headers={"Authorization": f"Bearer {cfg.supabase_key}", "Content-Type": "application/json",
+                     "x-region": "eu-west-1"},
+            data=json.dumps({"action": "dial.resync_stuck"}).encode(),
+            timeout=60, retries=0,
+        )
+        out = json.loads(raw.decode("utf-8") or "{}")
+    except Exception as e:  # noqa: BLE001 - the resend is a courtesy to the requests job
+        log.warn(f"requests: stuck dialer saves could not be sent again: {http.scrub(str(e))[:160]}")
+        return ""
+    tried = int(out.get("tried") or 0)
+    if not tried:
+        return ""
+    return f"{int(out.get('written') or 0)} of {tried} stuck dialer saves sent to HighLevel again"
+
+
 def cmd_requests(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     """Carry out what the cockpit asked for. Quiet when nothing is queued."""
     sb = _sb(cfg)
@@ -340,6 +362,9 @@ def cmd_requests(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
         done = ", ".join(f"{n} {s.replace('_', ' ')}" for s, n in sorted(out["statuses"].items()))
         detail = (f"{out['done']} done ({done or 'none'}), {out['retry']} to try again, {out['failed']} failed"
                   + (f", {out['reaped']} reaped" if out["reaped"] else ""))
+    resent = _resync_stuck(cfg, log)
+    if resent:
+        detail += f"; {resent}"
     _status(cfg, log, "requests", not out.get("blocked") and not out["failed"], detail)
     if busy or args.json:
         log.info(f"requests: {detail}")

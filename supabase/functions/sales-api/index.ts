@@ -3135,6 +3135,15 @@ async function dialResync(who: Who, b: Row) {
   if (!who.manager && a.rep_email !== who.email) throw new Refusal("That is another rep's save.", 403);
   if (a.state !== "saved") throw new Refusal("That call has no saved outcome yet.", 409);
   if (!["pending", "failed"].includes(String(a.crm_note))) throw new Refusal("It is already in HighLevel.", 409);
+  const out = await resyncAttempt(who, a);
+  await audit(who, "dial.resync", "cockpit_sales_attempts", id, { crm_note: a.crm_note }, { crm_note: out.crm_note });
+  if (out.crm_note !== "written") throw new Refusal("HighLevel did not take it this time either. Try again in a few minutes.", 502);
+  return { attempt: { id, crm_note: out.crm_note } };
+}
+
+/** One save's note, tags and (if not yet done) stage move, sent to HighLevel again. */
+async function resyncAttempt(who: Who, a: Row): Promise<{ crm_note: string }> {
+  const id = String(a.id);
   const appt = a.appointment_id
     ? ((await svc(`cockpit_sales_appointments?appointment_id=eq.${enc(String(a.appointment_id))}&select=*`))[0] ?? null)
     : null;
@@ -3159,9 +3168,41 @@ async function dialResync(who: Who, b: Row) {
         : current => targetRoles(kind, outcome, (st?.closed as string) ?? null, null, call, current),
     tag: true,
   });
-  await audit(who, "dial.resync", "cockpit_sales_attempts", id, { crm_note: a.crm_note }, { crm_note: out.crm_note });
-  if (out.crm_note !== "written") throw new Refusal("HighLevel did not take it this time either. Try again in a few minutes.", 502);
-  return { attempt: { id, crm_note: out.crm_note } };
+  return { crm_note: out.crm_note };
+}
+
+/**
+ * The desk, every two minutes (the call centre's durable worker): saves
+ * HighLevel has not taken, older than two minutes, sent again as the rep who
+ * saved them. Five tries at most, ten minutes apart.
+ */
+async function dialResyncStuck(_who: Who, _b: Row) {
+  const now = Date.now();
+  const at = (t: number) => enc(new Date(t).toISOString());
+  const rows = await svc(
+    `cockpit_sales_attempts?select=*&state=eq.saved&crm_note=in.(pending,failed)&crm_tries=lt.5&saved_at=gte.${at(now - 86_400_000)}&saved_at=lt.${at(now - 120_000)}&or=(crm_tried_at.is.null,crm_tried_at.lt.${at(now - 600_000)})&order=saved_at&limit=10`,
+  );
+  let written = 0;
+  let failed = 0;
+  for (const a of rows) {
+    await svc(`cockpit_sales_attempts?id=eq.${enc(String(a.id))}`, {
+      method: "PATCH",
+      body: { crm_tries: Number(a.crm_tries ?? 0) + 1, crm_tried_at: new Date(now).toISOString() },
+      prefer: "return=minimal",
+    });
+    const seat = (await svc(`cockpit_sales_people?email=eq.${enc(String(a.rep_email))}&select=email,name,ghl_user_id`))[0];
+    const rep: Who = {
+      signed_in: true,
+      seat: true,
+      email: String(a.rep_email),
+      name: (seat?.name as string) ?? String(a.rep_email),
+      ghl_user_id: (seat?.ghl_user_id as string) ?? null,
+    };
+    const out = await resyncAttempt(rep, a).catch(() => ({ crm_note: "failed" }));
+    if (out.crm_note === "written") written += 1;
+    else failed += 1;
+  }
+  return { tried: rows.length, written, failed };
 }
 
 /** Outcomes whose story the next person needs in a line of notes. */
@@ -4281,6 +4322,7 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
 const DESK_ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   "followup.autosend": followupAutosend,
   "followup.settle": followupSettle,
+  "dial.resync_stuck": dialResyncStuck,
 };
 
 /** The role claim of a token the gateway has already verified. */
