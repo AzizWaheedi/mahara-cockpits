@@ -336,6 +336,21 @@ export function seriesUnchanged(
   );
 }
 
+/**
+ * How a series ends on its last day. A series whose first sitting comes
+ * after that day is cancelled, never deleted: an end date before its start
+ * would still keep the first sitting, since a rule's start always counts as
+ * its first occurrence. A single event on or before the day is left alone.
+ */
+export function endPlan(
+  rrule: string | null,
+  firstDay: string | null,
+  lastDay: string,
+): "cancel" | "until" | "keep" {
+  if (firstDay && firstDay > lastDay) return "cancel";
+  return rrule ? "until" : "keep";
+}
+
 /** The wall-clock end of a sitting, over midnight if it must. */
 export function endOf(day: string, start: string, minutes: number): string {
   const [h, m] = hhmm(start).split(":").map(Number);

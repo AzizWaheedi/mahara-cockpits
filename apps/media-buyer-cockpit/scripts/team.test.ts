@@ -4,6 +4,7 @@ import {
   applyGuestChanges,
   blocksFor,
   buildRrule,
+  endPlan,
   endRrule,
   guestUpdates,
   overdue,
@@ -584,5 +585,20 @@ describe("writing to Google", () => {
         { weekdays: [1], startTime: "13:00", minutes: 30 },
       ),
     ).toBe(false);
+  });
+
+  test("a series that would end before its first sitting is cancelled, not given an impossible end", () => {
+    // CSM Daily's Sunday series first meets on 4 Oct; the Sunday meeting takes 4 Oct.
+    expect(
+      endPlan("RRULE:FREQ=WEEKLY;BYDAY=SU", "2026-10-04", "2026-10-03"),
+    ).toBe("cancel");
+    expect(
+      endPlan("RRULE:FREQ=WEEKLY;BYDAY=SU", "2026-09-06", "2026-10-03"),
+    ).toBe("until");
+    expect(endPlan(null, "2026-10-10", "2026-10-03")).toBe("cancel");
+    expect(endPlan(null, "2026-10-01", "2026-10-03")).toBe("keep");
+    expect(endPlan("RRULE:FREQ=WEEKLY;BYDAY=SU", null, "2026-10-03")).toBe(
+      "until",
+    );
   });
 });
