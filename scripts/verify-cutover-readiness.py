@@ -51,6 +51,7 @@ RELEVANT_TEST_FILES = [
     "apps/media-buyer-cockpit/scripts/eod-delivery-supabase.test.ts",
     "hermes/cockpit-ask-ai/scripts/test_askai.py",
     "hermes/eod-out/test_out.py",
+    "scripts/test_plan_manual_payments_import.py",
     "apps/media-buyer-cockpit/scripts/cockpit-test-db.test.ts",
     "apps/media-buyer-cockpit/scripts/webinar-supabase-targets.test.ts",
     "apps/media-buyer-cockpit/scripts/webinar-target-access.test.ts",
