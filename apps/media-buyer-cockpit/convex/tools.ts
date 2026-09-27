@@ -580,6 +580,60 @@ export async function googleDirectoryToken(): Promise<string> {
   return googleTokenFor(DIRECTORY_SCOPE, DIRECTORY_SUBJECT);
 }
 
+/** True when this deployment holds the calendar sign-in the team meetings write with. */
+export function calendarWriteReady(): boolean {
+  return Boolean(
+    process.env.GOOGLE_CAL_CLIENT_ID &&
+      process.env.GOOGLE_CAL_CLIENT_SECRET &&
+      process.env.GOOGLE_CAL_REFRESH_TOKEN,
+  );
+}
+
+/**
+ * A token that changes Google Calendar events as the CEO's account (team
+ * meetings v5, 2026-09-27). Google only lets an event be changed through its
+ * organiser's calendar, and that account owns the team's calendars; the
+ * service account above reads and cannot write. An OAuth client with the
+ * calendar scope: GOOGLE_CAL_CLIENT_ID, GOOGLE_CAL_CLIENT_SECRET,
+ * GOOGLE_CAL_REFRESH_TOKEN, set out of band and never logged.
+ */
+export async function googleCalendarWriteToken(): Promise<string> {
+  const cacheKey = "calendar-write";
+  const cached = googleTokens.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now() + 60_000) {
+    return cached.token;
+  }
+  if (!calendarWriteReady()) {
+    note("calendar", false, "calendar sign-in not set");
+    throw new Error(
+      "Google Calendar is not connected to the cockpit yet (GOOGLE_CAL_CLIENT_ID, GOOGLE_CAL_CLIENT_SECRET and GOOGLE_CAL_REFRESH_TOKEN on the deployment).",
+    );
+  }
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: env("GOOGLE_CAL_CLIENT_ID"),
+      client_secret: env("GOOGLE_CAL_CLIENT_SECRET"),
+      refresh_token: env("GOOGLE_CAL_REFRESH_TOKEN"),
+      grant_type: "refresh_token",
+    }),
+  });
+  const json = await bodyOf(res);
+  if (!res.ok || !json?.access_token) {
+    note("calendar", false, `calendar sign-in refused (${res.status})`);
+    throw new Error(
+      `Google refused the cockpit's calendar sign-in (${res.status} ${String(json?.error ?? "")}). It needs signing in again.`,
+    );
+  }
+  const token = {
+    token: String(json.access_token),
+    expiresAt: Date.now() + Number(json.expires_in ?? 3600) * 1000,
+  };
+  googleTokens.set(cacheKey, token);
+  return token.token;
+}
+
 async function googleTokenFor(
   scope: string,
   subject?: string,

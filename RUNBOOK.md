@@ -178,6 +178,25 @@ names what is wrong.
 | No objection categories though registrants had sales calls | The call's invitee email is not the registrant's, or the title reads like a client call (launch, check-in, onboarding). `python3 pull.py objections` prints what it matched | Aziz |
 | Landing page numbers stop moving | `webinar.maharamedia.com` must still load `/mm-track.js` (sites/webinar); the Edge Function `webinar-events` must be ACTIVE in Creative Triage | Aziz |
 
+## Team meetings
+
+The portal's Team meetings (`/team`) write every change to Google Calendar
+through `convex/teamCalendar.ts`: Supabase first, then a row in
+`team_calendar_ops`, then Google in the same action; the minute drain
+retries a change up to ten times and then shows it on the meeting's page
+with Retry. The VPS worker `hermes/team-sync` reads Google back every five
+minutes (cron as `hermes`, lock `~/.teamsync.lock`, log `~/.teamsync.log`;
+`python3 sync.py doctor`, `python3 sync.py --dry-run`).
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| A meeting page says "changes waiting to reach Google Calendar" and the calendar sign-in is not set | Set `GOOGLE_CAL_CLIENT_ID`, `GOOGLE_CAL_CLIENT_SECRET` and `GOOGLE_CAL_REFRESH_TOKEN` on the media buyer's Convex deployment (`bunx convex env set NAME` with the value, prod) and in `~/.team-sync/env` on the VPS. The CEO account's OAuth client with the calendar scope; never pasted in chat or committed | CEO |
+| "Google refused the cockpit's calendar sign-in" | The refresh token was revoked or expired (a Testing-mode OAuth app lasts seven days). Sign the CEO account in again and replace `GOOGLE_CAL_REFRESH_TOKEN` in both places, then press Retry on the meeting | CEO |
+| "Google Calendar refused the change (403)" on one meeting | The series is organised on a calendar the CEO account cannot edit. Take over from the meeting's page, or ask its organiser to share the calendar with edit rights | Host or CEO |
+| A change made in Google does not show within five minutes | `crontab -l` as `hermes` must show the `*/5` team-sync line (README). `tail ~/.teamsync.log`; a meeting with a change still waiting for Google is skipped on purpose until it lands | Hermes or CEO |
+| A meeting appeared twice | Two different Google series with the same title that no meeting owned. Link the right one from its page; the other is marked inactive after three quiet weeks | Host |
+| The editor cockpit's Meetings page is empty | Fathom recordings are in `team_recordings` since 2026-09-27; the editor desk's `meetings` job fills it hourly and each person sees the ones they were invited to | Hermes |
+
 ## Sales cockpit
 
 cockpit.maharamedia.com/sales/, for the setters and closers (plan:

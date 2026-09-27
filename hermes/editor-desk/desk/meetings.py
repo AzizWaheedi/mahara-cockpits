@@ -44,7 +44,7 @@ def is_team_meeting(meeting: dict[str, Any]) -> bool:
 
 
 def row(meeting: dict[str, Any]) -> Optional[dict[str, Any]]:
-    """One Fathom meeting as a `team_meetings` row, or nothing if unusable."""
+    """One Fathom meeting as a `team_recordings` row, or nothing if unusable."""
     rid = str(meeting.get("recording_id") or "")
     if not rid:
         return None

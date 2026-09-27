@@ -601,6 +601,12 @@ export const drainAll = internalAction({
       }
     }
     await flush(ctx);
+    // Team meetings: calendar changes that did not reach Google at once.
+    try {
+      out.teamCalendar = await ctx.runAction(internal.teamCalendar.drain, {});
+    } catch (e) {
+      out.teamCalendar = `FAILED ${String(e).slice(0, 160)}`;
+    }
     // Calendars linked in the last minute get their first read now.
     try {
       out.calendars = await ctx.runAction(

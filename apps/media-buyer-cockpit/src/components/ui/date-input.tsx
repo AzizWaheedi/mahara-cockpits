@@ -42,7 +42,11 @@ export function DateInput({
   "aria-label": ariaLabel,
   "aria-describedby": ariaDescribedBy,
   "aria-invalid": ariaInvalid,
-}: React.InputHTMLAttributes<HTMLInputElement>) {
+  display,
+}: React.InputHTMLAttributes<HTMLInputElement> & {
+  /** How the chosen day reads on the trigger; "Sep 27, 2026" by default. */
+  display?: (day: Date) => string;
+}) {
   const [localValue, setLocalValue] = React.useState(
     String(defaultValue ?? ""),
   );
@@ -96,11 +100,13 @@ export function DateInput({
           >
             <span className={selectedDay ? "" : "cockpit-date-placeholder"}>
               {selectedDay
-                ? selectedDay.toLocaleDateString("en", {
-                    month: "short",
-                    day: "numeric",
-                    year: "numeric",
-                  })
+                ? display
+                  ? display(selectedDay)
+                  : selectedDay.toLocaleDateString("en", {
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                    })
                 : (placeholder ?? "Choose date")}
             </span>
             <CalendarDays aria-hidden="true" size={16} />

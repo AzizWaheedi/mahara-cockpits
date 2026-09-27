@@ -295,7 +295,10 @@ class Supabase:
             self.patch("editor_people", f"email=eq.{http.quote(email)}", {"via_clickup": False})
         return {"granted": added, "revoked": len(stale)}
 
-    # ---- team meetings ---------------------------------------------------
+    # ---- team meetings, as Fathom recorded them --------------------------
+    # Their own table since 2026-09-27: `team_meetings` is the cockpit's
+    # meetings (convex/team.ts), and writing recordings there failed every
+    # hour with PGRST204.
     def store_meetings(self, rows: list[dict[str, Any]]) -> int:
         stamp = now_iso()
         clean = []
@@ -305,7 +308,7 @@ class Supabase:
                 continue
             body["synced_at"] = stamp
             clean.append(body)
-        return self.upsert("team_meetings", clean, "recording_id")
+        return self.upsert("team_recordings", clean, "recording_id")
 
     # ---- the swipe file --------------------------------------------------
     def known_ideation_keys(self, keys: Iterable[str]) -> list[str]:
