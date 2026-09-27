@@ -52,6 +52,7 @@ const LinksPage = lazy(() => import("./pages/LinksPage"));
 const PipelinePage = lazy(() => import("./pages/PipelinePage"));
 const IntelligencePage = lazy(() => import("./pages/IntelligencePage"));
 const TeamPage = lazy(() => import("./pages/TeamPage"));
+const DeckPage = lazy(() => import("./pages/DeckPage"));
 
 const ROLE_WORDS: Record<string, string> = {
   setter: "Setter",
@@ -275,6 +276,7 @@ export function Seated({
               />
               <Route path="/review/:id" element={<ReviewOnlyPage />} />
               <Route path="/links" element={<LinksPage me={me} />} />
+              <Route path="/deck" element={<DeckPage me={me} />} />
               <Route
                 path="/team"
                 element={

@@ -300,6 +300,8 @@ describe("saying numbers", () => {
     expect(sayMoney(2_500, "SAR", "ar")).toBe("٢٫٥ ألف ريال");
     expect(sayMoney(1_000, "USD", "ar")).toBe("ألف دولار");
     expect(sayMoney(450, "BHD", "ar")).toBe("٤٥٠ دينار");
+    expect(sayMoney(6_000, "USD", "ar")).toBe("٦ آلاف دولار");
+    expect(sayMoney(3_000_000, "SAR", "ar")).toBe("٣ ملايين ريال");
     expect(sayMoney(999_700, "KWD", "ar")).toBe("مليون دينار");
     expect(sayMoney(1_190_000, "KWD", "ar")).toBe("١٫٢ مليون دينار");
   });
