@@ -321,6 +321,12 @@ export interface Candidate {
   hot_owner: string | null;
   hot_next_at: number | null;
   appt: Appt | null;
+  /**
+   * The rep whose lead this is (Aziz, 2026-09-27): the setter from the intro
+   * they booked, the closer from the demo. Only a working rep's seat counts,
+   * so a leaver's leads are nobody's again. Null: the shared queue's.
+   */
+  owner?: string | null;
 }
 
 export type ItemKind = "lead" | "intro" | "confirm";
@@ -455,6 +461,8 @@ export function rankForSetter(
       place(out, c, h, job);
       continue;
     }
+    // Another rep's lead is theirs to work; a manager still sees it.
+    if (c.owner && c.owner !== me && !manager) continue;
     if (c.closed) continue;
     const fresh = c.created_at !== null && now - c.created_at <= 10 * MIN && !c.last_dial_at;
     const replied = c.inbound_at !== null && now - c.inbound_at <= 10 * MIN && (!c.last_dial_at || c.last_dial_at < c.inbound_at);

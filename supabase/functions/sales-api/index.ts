@@ -2305,7 +2305,7 @@ const ms = (v: unknown) => {
 let heavy: { at: number; leads: Row[]; appts: Row[]; dials: Row[]; deals: Row[] } | null = null;
 const HEAVY_FOR = 20_000;
 const LEAD_COLS =
-  "contact_id,name,phone,phone8,lead_created_at,stage_id,stage_name,pipeline_id,lead_class,dnd,contact_type,revenue,readiness";
+  "contact_id,name,phone,phone8,lead_created_at,stage_id,stage_name,pipeline_id,lead_class,dnd,contact_type,revenue,readiness,assigned_to";
 
 type DialFacts = { last: number; reached: boolean; tries: number[] };
 
@@ -2354,7 +2354,7 @@ type QueueCandidate = Candidate &
 /** Everything the queue needs, read in a handful of queries, no huge id lists. */
 async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
   const soon = enc(new Date(now - 3_600_000).toISOString());
-  const [states, inbox, attempts, h, confirmations, hotRows, roles] = await Promise.all([
+  const [states, inbox, attempts, h, confirmations, hotRows, roles, seats] = await Promise.all([
     svcAll("cockpit_sales_queue_state?select=*&order=contact_id"),
     svc(`cockpit_sales_inbox?select=contact_id,last_message_at,last_direction&last_direction=eq.inbound&last_message_at=gte.${enc(new Date(now - 86_400_000).toISOString())}`),
     svc("cockpit_sales_attempts?select=contact_id,rep_email,started_at,call_checked_at&state=in.(dialing,placed)"),
@@ -2362,7 +2362,16 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
     svc(`cockpit_sales_confirmations?select=appointment_id,result,at&start_at=gte.${soon}&order=at.desc&limit=2000`),
     svc("cockpit_sales_hot?select=contact_id,owner_email,next_at&removed_at=is.null&limit=2000"),
     stageRoles(),
+    svc("cockpit_sales_people?select=email,ghl_user_id,role&active=eq.true&via_portal=eq.true&limit=500"),
   ]);
+  // Who owns a lead: a working rep's seat by HighLevel's owner field. A
+  // manager's or a leaver's lead is the shared queue's (Aziz, 2026-09-27).
+  const working = new Set(seats.map(s => String(s.email)));
+  const ownerOf = new Map(
+    seats
+      .filter(s => s.ghl_user_id && ["setter", "closer", "both"].includes(String(s.role)))
+      .map(s => [String(s.ghl_user_id), String(s.email)] as const),
+  );
   const leads = [...h.leads];
   // Beyond the last 30 days' leads and anyone with a call in the window
   // (heavyReads): on the hot list, who wrote in the last day, or with a
@@ -2509,7 +2518,9 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
       readiness: (l.readiness as string) ?? null,
       misses,
       hot: Boolean(hot),
-      hot_owner: hot ? String(hot.owner_email ?? "") || null : null,
+      // A leaver's hot lead is anyone's to follow up.
+      hot_owner: hot && working.has(String(hot.owner_email ?? "")) ? String(hot.owner_email) : null,
+      owner: ownerOf.get(String(l.assigned_to ?? "")) ?? null,
       hot_next_at: hot ? ms(hot.next_at) : null,
       appt: current
         ? {
@@ -3428,6 +3439,11 @@ async function bookCreate(who: Who, b: Row) {
     });
   }
   heavy = null;
+  // The lead becomes the setter's with the intro they booked, and the
+  // closer's with the demo they host (Aziz, 2026-09-27).
+  const owner = verified
+    ? await setOwner(p.contact, p.kind === "demo" ? assigned : (who.ghl_user_id as string) || assigned)
+    : null;
   const words = `${p.kind === "intro" ? "Intro" : "Demo"} booked for ${kuwaitWords(start)} (Kuwait time)`;
   // A booking HighLevel took but that did not read back is not in the
   // cockpit's copy yet: the lead is saved as booked without naming it.
@@ -3443,8 +3459,31 @@ async function bookCreate(who: Who, b: Row) {
   await audit(who, "book.create", "cockpit_sales_bookings", String(booking.id), null, row, {
     verified,
     stage_move: moved?.state ?? null,
+    owner,
   });
-  return { booking: row, verified, words, stage_move: moved, ...(out ?? {}) };
+  return { booking: row, verified, words, stage_move: moved, owner, ...(out ?? {}) };
+}
+
+/**
+ * Makes a HighLevel user the lead's owner, in HighLevel and in the cockpit's
+ * copy at once (B2B's next copy brings the same). A failure is logged and
+ * never undoes the booking: the owner is then set by hand in HighLevel.
+ */
+async function setOwner(contactId: string, userId: string | null): Promise<string | null> {
+  if (!userId) return null;
+  try {
+    await ghl("PUT", `/contacts/${enc(contactId)}`, { assignedTo: userId }, "2021-07-28");
+    await svc(`cockpit_sales_leads?contact_id=eq.${enc(contactId)}`, {
+      method: "PATCH",
+      body: { assigned_to: userId },
+      prefer: "return=minimal",
+    });
+    heavy = null;
+    return userId;
+  } catch (e) {
+    console.error("the lead's owner was not set", redact(String((e as Error).message ?? e)));
+    return null;
+  }
 }
 
 /**
