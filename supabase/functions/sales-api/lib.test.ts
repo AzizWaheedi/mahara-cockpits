@@ -274,3 +274,16 @@ describe("do-not-disturb by channel", () => {
     expect(dndFor({ dnd: true }, "email")).toBe(true);
   });
 });
+
+describe("the setter's pay rule", () => {
+  test("a base, each qualified intro and each fully closed deal are kept", () => {
+    const out = checkPay({ base_monthly: 500, per_intro_qualified: 10, per_full_close: 50, currency: "usd" });
+    expect(out).toEqual({
+      ok: true,
+      pay: { base_monthly: 500, per_intro_qualified: 10, per_full_close: 50, currency: "USD" },
+    });
+  });
+  test("a negative base is refused", () => {
+    expect(checkPay({ base_monthly: -1 }).ok).toBe(false);
+  });
+});

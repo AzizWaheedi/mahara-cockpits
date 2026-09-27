@@ -342,7 +342,10 @@ export default function NumbersPage({ me }: { me: Me }) {
                 card={card}
                 fromIso={fromIso}
                 toIso={toIso}
+                fromDay={days.from}
+                toDay={days.to}
                 whose={whose}
+                manager={manager}
               />
             )}
           </div>

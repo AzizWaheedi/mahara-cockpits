@@ -291,6 +291,18 @@ export const CLOSER_PLAN = {
   currency: "USD",
 } as const;
 
+/**
+ * Aziz's setter plan of 2026-09-27: $500 base a month, $10 for each intro
+ * the setter ran that showed and qualified, $50 for each deal from their
+ * leads that fully closed ("fully closed, not onboarding fee then ghosted").
+ */
+export const SETTER_PLAN = {
+  base_monthly: 500,
+  per_intro_qualified: 10,
+  per_full_close: 50,
+  currency: "USD",
+} as const;
+
 const positive = (v: unknown): number | null => {
   const n = num(v);
   return n !== null && n > 0 ? n : null;
@@ -305,6 +317,9 @@ export function hasPayRule(rule: PayRule | null | undefined): boolean {
     rule.per_intro_shown,
     rule.per_demo_shown,
     rule.per_signed,
+    rule.base_monthly,
+    rule.per_intro_qualified,
+    rule.per_full_close,
   ].some(v => positive(v) !== null);
 }
 
@@ -325,6 +340,18 @@ export function payWords(
   const cur = rule.currency || "USD";
   const who = whose === "your" ? "you" : "they";
   const parts: string[] = [];
+  const base = positive(rule.base_monthly);
+  if (base !== null) parts.push(`a base of ${money(base, cur)} a month`);
+  const perQualified = positive(rule.per_intro_qualified);
+  if (perQualified !== null)
+    parts.push(
+      `${money(perQualified, cur)} for each intro ${who} run that shows and qualifies`,
+    );
+  const perFull = positive(rule.per_full_close);
+  if (perFull !== null)
+    parts.push(
+      `${money(perFull, cur)} for each deal from ${whose} leads that fully closes (paid past the onboarding fee)`,
+    );
   const rate = positive(rule.cash_rate);
   if (rate !== null)
     parts.push(
@@ -351,6 +378,9 @@ export interface PayForm {
   perIntro: string;
   perDemo: string;
   perSigned: string;
+  base: string;
+  perQualified: string;
+  perFullClose: string;
   currency: string;
   note: string;
 }
@@ -367,6 +397,9 @@ export function payToForm(rule: PayRule | null | undefined): PayForm {
     perIntro: s(rule?.per_intro_shown),
     perDemo: s(rule?.per_demo_shown),
     perSigned: s(rule?.per_signed),
+    base: s(rule?.base_monthly),
+    perQualified: s(rule?.per_intro_qualified),
+    perFullClose: s(rule?.per_full_close),
     currency: rule?.currency || "USD",
     note: rule?.note ?? "",
   };
@@ -383,13 +416,24 @@ export function payFromForm(
   if (pct !== null) pay.cash_rate = Number((pct / 100).toFixed(6));
   const fixed: [
     keyof PayForm,
-    "pif_bonus" | "per_intro_shown" | "per_demo_shown" | "per_signed",
+    (
+      | "pif_bonus"
+      | "per_intro_shown"
+      | "per_demo_shown"
+      | "per_signed"
+      | "base_monthly"
+      | "per_intro_qualified"
+      | "per_full_close"
+    ),
     string,
   ][] = [
     ["pif", "pif_bonus", "The paid-in-full bonus"],
     ["perIntro", "per_intro_shown", "The amount per intro shown"],
     ["perDemo", "per_demo_shown", "The amount per demo shown"],
     ["perSigned", "per_signed", "The amount per signed client"],
+    ["base", "base_monthly", "The monthly base"],
+    ["perQualified", "per_intro_qualified", "The amount per qualified intro"],
+    ["perFullClose", "per_full_close", "The amount per fully closed deal"],
   ];
   for (const [field, key, label] of fixed) {
     const v = amount(f[field]);
@@ -506,6 +550,61 @@ export function payEstimate(
     paidInFull,
     bonuses: pif === null ? null : cents(pif * paidInFull),
     signed: perSigned === null ? null : cents(perSigned * deals.length),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// A setter's estimate
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether a window earns the monthly base: it starts on the 1st and ends
+ * inside that same month (the month so far, or the whole month). A week or
+ * the last 30 days shows the base beside the estimate instead.
+ */
+export function baseApplies(fromDay: string, toDay: string): boolean {
+  return (
+    /^\d{4}-\d{2}-01$/.test(fromDay) &&
+    toDay.slice(0, 7) === fromDay.slice(0, 7)
+  );
+}
+
+export interface SetterEstimate {
+  /** The monthly base when the window earns it; null otherwise or with no base in the rule. */
+  base: number | null;
+  qualified: number;
+  /** per_intro_qualified × qualified intros; null with no such amount in the rule. */
+  intros: number | null;
+  fullyClosed: number;
+  /** Deals credited to the setter that are not (yet) fully closed. */
+  waiting: number;
+  /** per_full_close × fully closed deals; null with no such amount in the rule. */
+  closes: number | null;
+  total: number;
+}
+
+/** What a setter's window earns: the base (for a month), qualified intros and fully closed deals. */
+export function setterEstimate(
+  rule: PayRule | null | undefined,
+  qualified: number,
+  deals: { fully_closed: boolean }[],
+  monthBase: boolean,
+): SetterEstimate {
+  const base = positive(rule?.base_monthly);
+  const perIntro = positive(rule?.per_intro_qualified);
+  const perClose = positive(rule?.per_full_close);
+  const fullyClosed = deals.filter(d => d.fully_closed).length;
+  const out = {
+    base: base !== null && monthBase ? base : null,
+    qualified,
+    intros: perIntro === null ? null : cents(perIntro * qualified),
+    fullyClosed,
+    waiting: deals.length - fullyClosed,
+    closes: perClose === null ? null : cents(perClose * fullyClosed),
+  };
+  return {
+    ...out,
+    total: cents((out.base ?? 0) + (out.intros ?? 0) + (out.closes ?? 0)),
   };
 }
 

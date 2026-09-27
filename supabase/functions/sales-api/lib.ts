@@ -127,7 +127,18 @@ export function checkPay(
       return { ok: false, error: "The cash rate is a share between 0 and 1 (10% is 0.10)." };
     out.cash_rate = rate;
   }
-  for (const k of ["pif_bonus", "per_intro_shown", "per_demo_shown", "per_signed"]) {
+  // base_monthly: a setter's base each month; per_intro_qualified: each intro
+  // they ran that showed and qualified; per_full_close: each deal from their
+  // leads that fully closed (Aziz's setter plan of 2026-09-27).
+  for (const k of [
+    "pif_bonus",
+    "per_intro_shown",
+    "per_demo_shown",
+    "per_signed",
+    "base_monthly",
+    "per_intro_qualified",
+    "per_full_close",
+  ]) {
     const n = num(src[k]);
     if (n === null) continue;
     if (Number.isNaN(n) || n < 0 || n > 100_000)

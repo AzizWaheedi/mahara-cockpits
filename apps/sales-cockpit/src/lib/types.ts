@@ -313,6 +313,12 @@ export interface PayRule {
   per_intro_shown?: number;
   per_demo_shown?: number;
   per_signed?: number;
+  /** A setter's base, each month. */
+  base_monthly?: number;
+  /** Each intro the setter ran that showed and qualified. */
+  per_intro_qualified?: number;
+  /** Each deal from the setter's leads that fully closed (paid past the onboarding fee). */
+  per_full_close?: number;
   currency?: string;
   note?: string;
 }

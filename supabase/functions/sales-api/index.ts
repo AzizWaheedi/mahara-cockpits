@@ -2070,6 +2070,41 @@ const GOAL_METRICS = ["booked", "shown", "closes", "cash", "dials"] as const;
  * forecast beside it. A blank value clears it, and a row left with neither
  * is removed.
  */
+/**
+ * A manager's word on whether a deal fully closed: the client paid past the
+ * onboarding fee (true), or paid it and went quiet (false). Null clears it,
+ * and the deal is judged by its form again (paid in full at signing, or
+ * waiting). A setter's $50 follows it.
+ */
+async function dealStatus(who: Who, b: Row) {
+  needManager(who);
+  const id = cleanText(b.response_id, 80);
+  if (!id) throw new Refusal("Which deal?");
+  const deal = (await svc(`cockpit_sales_deals?response_id=eq.${enc(id)}&select=response_id,voided`))[0];
+  if (!deal) throw new Refusal("That deal is not in the cockpit.", 404);
+  if (deal.voided) throw new Refusal("That deal was voided in B2B, so it pays nobody.", 409);
+  const before = (await svc(`cockpit_sales_deal_status?response_id=eq.${enc(id)}&select=*`))[0] ?? null;
+  if (b.fully_closed === null || b.fully_closed === undefined) {
+    await svc(`cockpit_sales_deal_status?response_id=eq.${enc(id)}`, { method: "DELETE", prefer: "return=minimal" });
+    await audit(who, "deal.status", "cockpit_sales_deal_status", id, before, null);
+    return { status: null };
+  }
+  const row = {
+    response_id: id,
+    fully_closed: b.fully_closed === true,
+    note: cleanText(b.note, 300) || null,
+    decided_by: String(who.email),
+    decided_at: new Date().toISOString(),
+  };
+  const out = (await svc("cockpit_sales_deal_status?on_conflict=response_id", {
+    method: "POST",
+    body: row,
+    prefer: "resolution=merge-duplicates,return=representation",
+  }))[0];
+  await audit(who, "deal.status", "cockpit_sales_deal_status", id, before, out);
+  return { status: out };
+}
+
 async function goalSet(who: Who, b: Row) {
   const rep = cleanText(b.rep, 60);
   const month = String(b.month ?? "");
@@ -3960,6 +3995,7 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   // A follow-up send is only ever made by followup.approve / autosend.
   "convo.send": (who, b) => convoSend(who, { ...b, followup_id: undefined }),
   "goal.set": goalSet,
+  "deal.status": dealStatus,
   "dial.agent": dialAgent,
   "dial.queue": dialQueue,
   "dial.call": dialCall,
