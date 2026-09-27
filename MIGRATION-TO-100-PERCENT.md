@@ -8,6 +8,8 @@
 
 **Done means:** all five cockpits plus portal and embedded CEO/admin preserve their real working journeys on Supabase; permitted saves survive refresh, forbidden access fails on the server, every write is audited, history is reconciled, workers complete and retry correctly, and the exact production release runs with no Convex dependency. Compiling, copied tables, and success-shaped placeholders do not count.
 
+**EOD decision and implementation:** Muhammed approved personal reports. Local code now isolates owner/role/day, preserves shared legacy history, distinguishes drafts from submission and blocks stale/cross-user writes. Clean assembly `a4d71b1` passed five builds, ten typechecks and 27 suites (257 Bun + 35 Python tests). Recipient routing, outward delivery and production proof remain outstanding; this does not authorize sending reports.
+
 | Order | Gemini execution packet | Codex acceptance before moving on |
 |---|---|---|
 | 1 | Repair the readiness checker | Fresh builds/typechecks, offline regressions, missing/invalid evidence rejects release. Implemented locally at `8495ab9`; independent source-change bypass repaired after the correction limit. |
