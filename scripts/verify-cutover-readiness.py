@@ -286,10 +286,19 @@ def check_no_convex_source_imports(repo_root: Path) -> Tuple[bool, List[str]]:
                 continue
             try:
                 content = p.read_text(encoding="utf-8", errors="ignore")
-                if p.relative_to(src_dir).parts[0] == "dev":
+                relative = p.relative_to(src_dir)
+                deferred_team = src_dir / "pages" / "team"
+                # Muhammed explicitly excluded team meetings from this cutover.
+                # Preserve their source, but forbid any production dependency on it.
+                if relative.parts[0] == "dev" or (
+                    app == "media-buyer-cockpit" and p.is_relative_to(deferred_team)
+                ):
                     continue
                 for spec in import_re.findall(content):
-                    if "/dev/" in spec or spec.startswith("dev/"):
+                    target = ((src_dir / spec[2:]) if spec.startswith("@/") else (p.parent / spec)).resolve()
+                    if app == "media-buyer-cockpit" and target.is_relative_to(deferred_team.resolve()):
+                        found.append(f"{p.relative_to(repo_root).as_posix()} (production import of deferred team meetings: {spec})")
+                    elif "/dev/" in spec or spec.startswith("dev/"):
                         found.append(f"{p.relative_to(repo_root).as_posix()} (production import of dev fixture: {spec})")
                     elif (spec == "convex" or spec.startswith(("convex/", "@convex-dev/", "_generated/"))
                           or "/_generated/" in spec):

@@ -407,6 +407,17 @@ class TestIndependentReleaseReview(unittest.TestCase):
     setUp = TestCutoverReadinessRevision.setUp
     tearDown = TestCutoverReadinessRevision.tearDown
 
+    def test_deferred_team_is_exempt_only_when_unreachable(self):
+        src = self.repo / "apps" / "media-buyer-cockpit" / "src"
+        team = src / "pages" / "team"
+        team.mkdir(parents=True, exist_ok=True)
+        (team / "TeamPage.tsx").write_text('import { useAction } from "convex/react";')
+        self.assertTrue(vcr.check_no_convex_source_imports(self.repo)[0])
+        for spec in ["@/pages/team/TeamPage", "./pages/team/TeamPage"]:
+            with self.subTest(spec=spec):
+                (src / "entry.ts").write_text(f'import {{ TeamPage }} from "{spec}";')
+                self.assertFalse(vcr.check_no_convex_source_imports(self.repo)[0])
+
     def test_only_isolated_dev_imports_are_exempt(self):
         src = self.repo / "apps" / vcr.APP_NAMES[0] / "src"
         dev = src / "dev"
