@@ -2070,6 +2070,41 @@ const GOAL_METRICS = ["booked", "shown", "closes", "cash", "dials"] as const;
  * forecast beside it. A blank value clears it, and a row left with neither
  * is removed.
  */
+/**
+ * A manager's word on whether a deal fully closed: the client paid past the
+ * onboarding fee (true), or paid it and went quiet (false). Null clears it,
+ * and the deal is judged by its form again (paid in full at signing, or
+ * waiting). A setter's $50 follows it.
+ */
+async function dealStatus(who: Who, b: Row) {
+  needManager(who);
+  const id = cleanText(b.response_id, 80);
+  if (!id) throw new Refusal("Which deal?");
+  const deal = (await svc(`cockpit_sales_deals?response_id=eq.${enc(id)}&select=response_id,voided`))[0];
+  if (!deal) throw new Refusal("That deal is not in the cockpit.", 404);
+  if (deal.voided) throw new Refusal("That deal was voided in B2B, so it pays nobody.", 409);
+  const before = (await svc(`cockpit_sales_deal_status?response_id=eq.${enc(id)}&select=*`))[0] ?? null;
+  if (b.fully_closed === null || b.fully_closed === undefined) {
+    await svc(`cockpit_sales_deal_status?response_id=eq.${enc(id)}`, { method: "DELETE", prefer: "return=minimal" });
+    await audit(who, "deal.status", "cockpit_sales_deal_status", id, before, null);
+    return { status: null };
+  }
+  const row = {
+    response_id: id,
+    fully_closed: b.fully_closed === true,
+    note: cleanText(b.note, 300) || null,
+    decided_by: String(who.email),
+    decided_at: new Date().toISOString(),
+  };
+  const out = (await svc("cockpit_sales_deal_status?on_conflict=response_id", {
+    method: "POST",
+    body: row,
+    prefer: "resolution=merge-duplicates,return=representation",
+  }))[0];
+  await audit(who, "deal.status", "cockpit_sales_deal_status", id, before, out);
+  return { status: out };
+}
+
 async function goalSet(who: Who, b: Row) {
   const rep = cleanText(b.rep, 60);
   const month = String(b.month ?? "");
@@ -2270,7 +2305,7 @@ const ms = (v: unknown) => {
 let heavy: { at: number; leads: Row[]; appts: Row[]; dials: Row[]; deals: Row[] } | null = null;
 const HEAVY_FOR = 20_000;
 const LEAD_COLS =
-  "contact_id,name,phone,phone8,lead_created_at,stage_id,stage_name,pipeline_id,lead_class,dnd,contact_type,revenue,readiness";
+  "contact_id,name,phone,phone8,lead_created_at,stage_id,stage_name,pipeline_id,lead_class,dnd,contact_type,revenue,readiness,assigned_to";
 
 type DialFacts = { last: number; reached: boolean; tries: number[] };
 
@@ -2319,7 +2354,7 @@ type QueueCandidate = Candidate &
 /** Everything the queue needs, read in a handful of queries, no huge id lists. */
 async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
   const soon = enc(new Date(now - 3_600_000).toISOString());
-  const [states, inbox, attempts, h, confirmations, hotRows, roles] = await Promise.all([
+  const [states, inbox, attempts, h, confirmations, hotRows, roles, seats] = await Promise.all([
     svcAll("cockpit_sales_queue_state?select=*&order=contact_id"),
     svc(`cockpit_sales_inbox?select=contact_id,last_message_at,last_direction&last_direction=eq.inbound&last_message_at=gte.${enc(new Date(now - 86_400_000).toISOString())}`),
     svc("cockpit_sales_attempts?select=contact_id,rep_email,started_at,call_checked_at&state=in.(dialing,placed)"),
@@ -2327,7 +2362,16 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
     svc(`cockpit_sales_confirmations?select=appointment_id,result,at&start_at=gte.${soon}&order=at.desc&limit=2000`),
     svc("cockpit_sales_hot?select=contact_id,owner_email,next_at&removed_at=is.null&limit=2000"),
     stageRoles(),
+    svc("cockpit_sales_people?select=email,ghl_user_id,role&active=eq.true&via_portal=eq.true&limit=500"),
   ]);
+  // Who owns a lead: a working rep's seat by HighLevel's owner field. A
+  // manager's or a leaver's lead is the shared queue's (Aziz, 2026-09-27).
+  const working = new Set(seats.map(s => String(s.email)));
+  const ownerOf = new Map(
+    seats
+      .filter(s => s.ghl_user_id && ["setter", "closer", "both"].includes(String(s.role)))
+      .map(s => [String(s.ghl_user_id), String(s.email)] as const),
+  );
   const leads = [...h.leads];
   // Beyond the last 30 days' leads and anyone with a call in the window
   // (heavyReads): on the hot list, who wrote in the last day, or with a
@@ -2474,7 +2518,9 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
       readiness: (l.readiness as string) ?? null,
       misses,
       hot: Boolean(hot),
-      hot_owner: hot ? String(hot.owner_email ?? "") || null : null,
+      // A leaver's hot lead is anyone's to follow up.
+      hot_owner: hot && working.has(String(hot.owner_email ?? "")) ? String(hot.owner_email) : null,
+      owner: ownerOf.get(String(l.assigned_to ?? "")) ?? null,
       hot_next_at: hot ? ms(hot.next_at) : null,
       appt: current
         ? {
@@ -3393,6 +3439,11 @@ async function bookCreate(who: Who, b: Row) {
     });
   }
   heavy = null;
+  // The lead becomes the setter's with the intro they booked, and the
+  // closer's with the demo they host (Aziz, 2026-09-27).
+  const owner = verified
+    ? await setOwner(p.contact, p.kind === "demo" ? assigned : (who.ghl_user_id as string) || assigned)
+    : null;
   const words = `${p.kind === "intro" ? "Intro" : "Demo"} booked for ${kuwaitWords(start)} (Kuwait time)`;
   // A booking HighLevel took but that did not read back is not in the
   // cockpit's copy yet: the lead is saved as booked without naming it.
@@ -3408,8 +3459,31 @@ async function bookCreate(who: Who, b: Row) {
   await audit(who, "book.create", "cockpit_sales_bookings", String(booking.id), null, row, {
     verified,
     stage_move: moved?.state ?? null,
+    owner,
   });
-  return { booking: row, verified, words, stage_move: moved, ...(out ?? {}) };
+  return { booking: row, verified, words, stage_move: moved, owner, ...(out ?? {}) };
+}
+
+/**
+ * Makes a HighLevel user the lead's owner, in HighLevel and in the cockpit's
+ * copy at once (B2B's next copy brings the same). A failure is logged and
+ * never undoes the booking: the owner is then set by hand in HighLevel.
+ */
+async function setOwner(contactId: string, userId: string | null): Promise<string | null> {
+  if (!userId) return null;
+  try {
+    await ghl("PUT", `/contacts/${enc(contactId)}`, { assignedTo: userId }, "2021-07-28");
+    await svc(`cockpit_sales_leads?contact_id=eq.${enc(contactId)}`, {
+      method: "PATCH",
+      body: { assigned_to: userId },
+      prefer: "return=minimal",
+    });
+    heavy = null;
+    return userId;
+  } catch (e) {
+    console.error("the lead's owner was not set", redact(String((e as Error).message ?? e)));
+    return null;
+  }
 }
 
 /**
@@ -3541,6 +3615,27 @@ async function pipelineStages(_who: Who, b: Row) {
  * carried out, and the cockpit's copy of the lead updated when HighLevel
  * takes it. A lead with no opportunity gets one in the pipeline asked for.
  */
+/** The contact's open opportunity in HighLevel (the latest when there are several), or null. */
+async function openOpportunity(
+  contactId: string,
+): Promise<{ id: string; pipelineId: string; stageId: string } | null> {
+  try {
+    const d = await ghl(
+      "GET",
+      `/opportunities/search?location_id=${LOCATION}&contact_id=${enc(contactId)}`,
+      undefined,
+      "2021-07-28",
+    );
+    const open = ((d.opportunities ?? []) as Row[])
+      .filter(o => String(o.status ?? "open") === "open")
+      .sort((a, b) => String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")));
+    const o = open[0];
+    return o ? { id: String(o.id), pipelineId: String(o.pipelineId ?? ""), stageId: String(o.pipelineStageId ?? "") } : null;
+  } catch {
+    return null;
+  }
+}
+
 async function moveStage(
   who: Who,
   contactId: string,
@@ -3551,20 +3646,26 @@ async function moveStage(
     `cockpit_sales_leads?contact_id=eq.${enc(contactId)}&select=contact_id,name,opportunity_id,pipeline_id,stage_id`,
   ))[0];
   if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
+  // A lead HighLevel made minutes ago reaches the copy before its opportunity
+  // does (B2B brings that within 15 minutes): read it from HighLevel, so a
+  // move never tries to make a second one ("Can not create duplicate
+  // opportunity", found in the test run of 2026-09-27).
+  const found = lead.opportunity_id ? null : await openOpportunity(contactId);
   const pipes = await pipelines();
   const pipe =
-    pipes.find(p => p.id === (target.pipelineId ?? lead.pipeline_id)) ??
+    pipes.find(p => p.id === (target.pipelineId ?? lead.pipeline_id ?? found?.pipelineId)) ??
     pipes.find(p => p.stages.some(st => st.id === target.stageId)) ??
     pipes.find(p => /2.?call/i.test(p.name)) ??
     pipes[0];
   const stage = target.stageId
     ? pipe?.stages.find(st => st.id === target.stageId)
     : (target.roles ?? []).map(r => pipe?.stages.find(st => st.role === r)).find(Boolean);
+  const fromStage = (lead.stage_id as string) ?? found?.stageId ?? null;
   const base = {
     contact_id: contactId,
-    opportunity_id: (lead.opportunity_id as string) ?? null,
+    opportunity_id: (lead.opportunity_id as string) ?? found?.id ?? null,
     pipeline_id: pipe?.id ?? null,
-    from_stage_id: (lead.stage_id as string) ?? null,
+    from_stage_id: fromStage,
     source: ctx.source,
     outcome: ctx.outcome ?? null,
     by_email: who.email,
@@ -3574,14 +3675,14 @@ async function moveStage(
     if (target.stageId) throw new Refusal("That stage is not in the sales pipelines any more. Reload the board.", 409);
     return { state: "skipped", why: "no stage for this outcome in the lead's pipeline" };
   }
-  if (lead.stage_id === stage.id && lead.opportunity_id)
+  if (fromStage === stage.id && (lead.opportunity_id || found))
     return { state: "skipped", why: "already in that stage", to_stage_id: stage.id };
   const row = (await svc("cockpit_sales_stage_moves", {
     method: "POST",
     body: { ...base, to_stage_id: stage.id },
     prefer: "return=representation",
   }))[0];
-  let opp = (lead.opportunity_id as string) || "";
+  let opp = (lead.opportunity_id as string) || found?.id || "";
   try {
     if (opp) {
       await ghl(
@@ -3960,6 +4061,7 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   // A follow-up send is only ever made by followup.approve / autosend.
   "convo.send": (who, b) => convoSend(who, { ...b, followup_id: undefined }),
   "goal.set": goalSet,
+  "deal.status": dealStatus,
   "dial.agent": dialAgent,
   "dial.queue": dialQueue,
   "dial.call": dialCall,

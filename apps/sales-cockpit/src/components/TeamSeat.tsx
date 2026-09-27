@@ -12,6 +12,7 @@ import {
   payFromForm,
   payToForm,
   payWords,
+  SETTER_PLAN,
 } from "../lib/pay";
 import { toast } from "../lib/toast";
 import type { Goals, Person, Rep, SalesRole } from "../lib/types";
@@ -47,7 +48,8 @@ function fail(e: unknown) {
 /**
  * What a seat still lacks before its first day, in the order it is set on
  * this card: each one is something a rep hits (calls not dialled from their
- * line, marks and pay not theirs, messages signed with no name).
+ * line, marks and pay not theirs, messages signed with no name). A Slack id
+ * is optional: the end of day posts without a mention when there is none.
  */
 function seatMissing(person: Person, reps: Rep[], hasPay: boolean): string[] {
   const rep = reps.find(r => r.id === person.b2b_rep_id) ?? null;
@@ -62,7 +64,6 @@ function seatMissing(person: Person, reps: Rep[], hasPay: boolean): string[] {
     person.role !== "setter" && !(person.fathom_email || rep?.fathom_email)
       ? "their Fathom email"
       : null,
-    person.slack_user_id ? null : "their Slack id",
     person.name_ar ? null : "their name in Arabic",
     hasPay ? null : "a pay rule",
     goals ? null : "goals",
@@ -578,6 +579,17 @@ function PayEditor({
         )}
         {amountField("perDemo", "Per demo shown")}
         {amountField("perSigned", "Per signed client")}
+        {amountField("base", "Base a month", "A setter's base, each month.")}
+        {amountField(
+          "perQualified",
+          "Per qualified intro",
+          "For each intro they ran that shows and qualifies.",
+        )}
+        {amountField(
+          "perFullClose",
+          "Per fully closed deal",
+          "For each deal from their leads that fully closes: paid in full, or marked fully closed by a manager.",
+        )}
         <TeamField
           label="Currency"
           htmlFor={`${id}-currency`}
@@ -653,6 +665,27 @@ function PayEditor({
         <span className="muted text-xs">
           10% of cash collected and {money(CLOSER_PLAN.pif_bonus)} when a client
           pays in full
+        </span>
+        <button
+          type="button"
+          onClick={() => {
+            setError(null);
+            setF(x => ({
+              ...x,
+              base: String(SETTER_PLAN.base_monthly),
+              perQualified: String(SETTER_PLAN.per_intro_qualified),
+              perFullClose: String(SETTER_PLAN.per_full_close),
+              currency: SETTER_PLAN.currency,
+            }));
+          }}
+          className={button}
+        >
+          Use the setter plan
+        </button>
+        <span className="muted text-xs">
+          {money(SETTER_PLAN.base_monthly)} a month,{" "}
+          {money(SETTER_PLAN.per_intro_qualified)} per qualified intro,{" "}
+          {money(SETTER_PLAN.per_full_close)} per fully closed deal
         </span>
       </div>
     </form>

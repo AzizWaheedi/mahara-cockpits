@@ -468,3 +468,23 @@ describe("the retry ladder's times (Kuwait)", () => {
     expect(nextWorkingNine(at("2026-09-26T07:00:00Z"))).toBe(at("2026-09-27T06:00:00Z")); // Sat -> Sun
   });
 });
+
+describe("whose lead it is (Aziz, 2026-09-27)", () => {
+  // A fresh lead nobody called: in the shared queue unless another rep owns it.
+  const fresh = { created_at: NOW - 2 * 86_400_000, last_dial_at: null };
+  test("a lead another rep booked is theirs, and out of my queue", () => {
+    expect(rankForSetter([lead({ contact_id: "a", ...fresh, owner: "other@maharamedia.com" })], "me", NOW)).toEqual([]);
+  });
+  test("my own lead and a lead nobody owns stay in my queue", () => {
+    const q = rankForSetter(
+      [lead({ contact_id: "b", ...fresh, owner: "me" }), lead({ contact_id: "c", ...fresh, owner: null })],
+      "me",
+      NOW,
+    );
+    expect(q.map(x => x.contact_id).sort()).toEqual(["b", "c"]);
+  });
+  test("a manager still sees another rep's lead", () => {
+    const q = rankForSetter([lead({ contact_id: "d", ...fresh, owner: "other@maharamedia.com" })], "boss", NOW, null, true);
+    expect(q.map(x => x.contact_id)).toEqual(["d"]);
+  });
+});
