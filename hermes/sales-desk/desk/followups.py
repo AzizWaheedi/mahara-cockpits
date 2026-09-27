@@ -1134,7 +1134,10 @@ def run(sb: Any, provider: Any, log: Callable[[str], None], *, settings: dict[st
     confirmations = sb.select_all("cockpit_sales_confirmations", "select=appointment_id,result"
                                                                  f"&start_at=gte.{_q((now - timedelta(hours=1)).isoformat())}",
                                   order="id")
-    hot = {str(h["contact_id"]) for h in sb.select_all("cockpit_sales_hot", "select=contact_id&removed_at=is.null",
+    # Only a row still being worked is hot: a closed or lost one stays on the
+    # sheet for the record (20260927f_sales_hot_sheet.sql).
+    hot = {str(h["contact_id"]) for h in sb.select_all("cockpit_sales_hot",
+                                                       "select=contact_id&removed_at=is.null&status=eq.nurturing",
                                                        order="contact_id")}
     templates = sb.select("cockpit_sales_wa_templates", "select=*&active=eq.true")
     # Leads the reads above name but the lead read left out, being older than

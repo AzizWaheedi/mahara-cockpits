@@ -911,3 +911,169 @@ export const SETTINGS: Row[] = [
     },
   },
 ];
+
+// ---------------------------------------------------------------------------
+// The hot list: rows as cockpit_sales_hot keeps them (the harness changes
+// them as hot.save does), and what the sheet reads as a lead's last
+// follow-up besides a mark by hand: an outbound call, a WhatsApp from us.
+// One of each: overdue, due today, later, none set; closed and lost; a row
+// from before the sheet's columns; the owner's, the team's.
+// ---------------------------------------------------------------------------
+
+/** A lead put on the list: every field blank, as sales-api's hotFresh. */
+export function hotFresh(contactId: string, owner: string, at: string): Row {
+  return {
+    contact_id: contactId,
+    owner_email: owner,
+    next_at: null,
+    next_how: null,
+    last_objection: null,
+    note: null,
+    heat: "hot",
+    status: "nurturing",
+    amount: null,
+    amount_currency: "USD",
+    last_fu_at: null,
+    added_by: owner,
+    added_at: at,
+    updated_at: at,
+    removed_at: null,
+    removed_why: null,
+  };
+}
+
+function hotRow(i: number, owner: string, over: Row): Row {
+  return {
+    ...hotFresh(String(LEADS[i].contact_id), owner, iso(Date.now() - 6 * D)),
+    updated_at: iso(Date.now() - 2 * H),
+    ...over,
+  };
+}
+
+// A row from before the 2026-09-27 columns: no type, status, amount or mark.
+const before = hotRow(1, "aziz@maharamedia.com", {
+  next_how: "call",
+  last_objection: "Needs to check the budget with finance",
+});
+for (const k of ["heat", "status", "amount", "amount_currency", "last_fu_at"])
+  delete before[k];
+
+export const HOT: Row[] = [
+  hotRow(0, "aziz@maharamedia.com", {
+    heat: "red_hot",
+    amount: 6500,
+    next_at: iso(Date.now() - 26 * H),
+    last_fu_at: iso(Date.now() - 3 * D),
+    last_objection: "Talking to his partner first",
+    note: "Asked for the Riyadh villa case study.\nCall after 5, never mornings.",
+  }),
+  hotRow(2, "sara@example.com", {
+    amount: 8000,
+    next_at: iso(Date.now() + 90 * MIN),
+    last_objection: "Wants to see the contract first",
+  }),
+  hotRow(4, "omar@example.com", {
+    heat: "warm",
+    amount: "12000.00",
+    next_at: iso(Date.now() + 2 * D),
+    last_objection: "بعد الصيف",
+    note: "يبي يشوف شغلنا في الكويت",
+  }),
+  before,
+  hotRow(9, "aziz@maharamedia.com", {
+    amount: 1500,
+    amount_currency: "KWD",
+    next_at: iso(Date.now() + 6 * D),
+    last_objection: "Budget opens next quarter",
+  }),
+  hotRow(11, "noor@example.com", {
+    heat: "red_hot",
+    amount: 9000,
+    next_at: iso(Date.now() - 3 * H),
+    last_objection: "Asked for a smaller first month",
+  }),
+  hotRow(6, "sara@example.com", {
+    status: "closed",
+    amount: 6000,
+    next_at: iso(Date.now() - 5 * D),
+    note: "Signed on the split plan.",
+  }),
+  hotRow(8, "omar@example.com", {
+    heat: "warm",
+    status: "lost",
+    last_objection: "Went with another agency",
+  }),
+];
+
+function outboundCall(
+  id: string,
+  lead: Row,
+  ago: number,
+  answered: boolean,
+): Row {
+  return {
+    call_id: id,
+    occurred_at: iso(Date.now() - ago),
+    agent_email: "sara@example.com",
+    agent_name: "Sara Khalil",
+    sales_rep_id: "rep-sara",
+    direction: "outbound",
+    state: answered ? "completed" : "no_answer",
+    duration_s: answered ? 140 : 0,
+    ringing_s: answered ? 7 : 30,
+    handling_s: null,
+    lead_phone8: lead.phone8,
+    contact_id: lead.contact_id,
+    sentiment: null,
+    summary_en: null,
+    summary_ar: null,
+    has_transcript: false,
+    tags: [],
+  };
+}
+
+/** Calls the hot list reads as follow-ups: older than a mark, the latest, and one not linked to its lead yet. */
+export const HOT_DIALS: Row[] = [
+  outboundCall("d-hot-1", LEADS[0], 5 * D, true),
+  outboundCall("d-hot-2", LEADS[2], 2 * H, false),
+  { ...outboundCall("d-hot-3", LEADS[11], D, true), contact_id: null },
+];
+
+/** A conversation whose last message is our WhatsApp. */
+export const HOT_INBOX: Row[] = [
+  {
+    conversation_id: "c3",
+    contact_id: LEADS[9].contact_id,
+    contact_name: LEADS[9].name,
+    last_message_at: iso(Date.now() - 20 * H),
+    last_direction: "outbound",
+    last_type: "TYPE_WHATSAPP",
+    last_body: "Sent you the proposal. Tell me when you have read it.",
+    unread: 0,
+    inbound_whatsapp_at: iso(Date.now() - 3 * D),
+    assigned_to: "u-sara",
+    mirrored_at: new Date().toISOString(),
+  },
+];
+
+/** WhatsApp messages sent from the cockpit (cockpit_sales_messages). */
+export const MESSAGES: Row[] = [
+  {
+    id: "msg-hot-1",
+    request_id: "req-hot-1",
+    contact_id: LEADS[4].contact_id,
+    channel: "whatsapp",
+    subject: null,
+    body: "هلا، أرسلت لك أمثلة من شغلنا في الكويت.",
+    source: "rep",
+    followup_id: null,
+    sent_by: "omar@example.com",
+    state: "read",
+    ghl_message_id: null,
+    ghl_conversation_id: null,
+    provider_status: null,
+    error: null,
+    created_at: iso(Date.now() - 4 * H),
+    updated_at: iso(Date.now() - 4 * H),
+  },
+];

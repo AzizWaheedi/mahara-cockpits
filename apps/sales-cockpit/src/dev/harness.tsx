@@ -24,6 +24,7 @@
  *   book     verified | unverified | slow | taken
  *   resync   ok | done | fail
  *   crm      pending | failed     (what a save's HighLevel half does)
+ *   hot      ok | fail       (hot.save refuses every change: a cell's failed state)
  *   wait     ms every sales-api answer takes (250)
  *   queueWait  ms dial.queue takes; it reads when asked and answers late,
  *            as a slow server does (0: the same as wait)
@@ -53,6 +54,7 @@ const knobs = {
   book: "verified",
   resync: "ok",
   crm: "pending",
+  hot: "ok",
   wait: 250,
   queueWait: 0,
   gap: 12_000,
@@ -290,6 +292,87 @@ function queue(as: "setter" | "closer") {
     },
     queue: items,
   };
+}
+
+// ---------------------------------------------------------------------------
+// The hot list, as sales-api hot.save keeps it: only the fields sent change,
+// each checked with the server's words (supabase/functions/sales-api/hot.ts).
+// ---------------------------------------------------------------------------
+
+const HOT_FIELDS = [
+  "heat",
+  "status",
+  "amount",
+  "amount_currency",
+  "last_objection",
+  "note",
+  "next_at",
+  "next_how",
+  "last_fu_at",
+  "owner_email",
+];
+
+function hotSave(b: Row, now: number): Row {
+  const id = String(b.contact_id ?? "");
+  if (!leadOf(id)) throw new Refusal("That lead is not in the cockpit.", 404);
+  if (knobs.hot === "fail")
+    throw new Refusal(
+      "The database did not answer (harness knob hot=fail). Try again.",
+      503,
+    );
+  const patch: Row = {};
+  for (const k of HOT_FIELDS)
+    if (k in b && b[k] !== undefined)
+      patch[k] = typeof b[k] === "string" && !String(b[k]).trim() ? null : b[k];
+  if (patch.heat && !["red_hot", "hot", "warm"].includes(String(patch.heat)))
+    throw new Refusal("The type is red hot, hot or warm.");
+  if (
+    "status" in patch &&
+    !["nurturing", "closed", "lost"].includes(String(patch.status))
+  )
+    throw new Refusal("The status is nurturing, closed or lost.");
+  if (patch.amount !== null && patch.amount !== undefined) {
+    const n = Number(String(patch.amount).replace(/[,\s]/g, ""));
+    if (!Number.isFinite(n) || n < 0 || n > 10_000_000)
+      throw new Refusal("The amount is a number from 0 to 10,000,000.");
+    patch.amount = Math.round(n * 100) / 100;
+  }
+  if (
+    "amount_currency" in patch &&
+    !["USD", "KWD", "SAR", "AED", "QAR", "BHD", "OMR"].includes(
+      String(patch.amount_currency ?? "").toUpperCase(),
+    )
+  )
+    throw new Refusal("Amounts are in USD, KWD, SAR, AED, QAR, BHD or OMR.");
+  if (patch.next_at) {
+    const t = Date.parse(String(patch.next_at));
+    if (
+      !Number.isFinite(t) ||
+      t < now - 86_400_000 ||
+      t > now + 366 * 86_400_000
+    )
+      throw new Refusal(
+        "Pick a next follow-up from yesterday up to a year ahead.",
+      );
+    patch.next_at = new Date(t).toISOString();
+  }
+  if (patch.last_fu_at) {
+    const t = Date.parse(String(patch.last_fu_at));
+    if (!Number.isFinite(t))
+      throw new Refusal("Pick when you last followed up.");
+    if (t > now + 5 * MIN)
+      throw new Refusal("The last follow-up cannot be in the future.");
+    patch.last_fu_at = new Date(t).toISOString();
+  }
+  const at = new Date(now).toISOString();
+  const i = F.HOT.findIndex(h => h.contact_id === id);
+  const live = i >= 0 && !F.HOT[i].removed_at ? F.HOT[i] : null;
+  const row = live
+    ? { ...live, ...patch, updated_at: at }
+    : { ...F.hotFresh(id, F.ME.email, at), ...patch };
+  if (i >= 0) F.HOT[i] = row;
+  else F.HOT.push(row);
+  return { hot: { ...row } };
 }
 
 async function salesApi(b: Row, signal?: AbortSignal | null): Promise<Row> {
@@ -642,6 +725,20 @@ async function salesApi(b: Row, signal?: AbortSignal | null): Promise<Row> {
           read_at: new Date(now).toISOString(),
         },
       };
+    case "hot.save":
+      return hotSave(b, now);
+    case "hot.remove": {
+      const i = F.HOT.findIndex(
+        h => h.contact_id === String(b.contact_id ?? "") && !h.removed_at,
+      );
+      if (i < 0) throw new Refusal("This lead is not on the hot list.", 404);
+      F.HOT[i] = {
+        ...F.HOT[i],
+        removed_at: new Date(now).toISOString(),
+        removed_why: String(b.why ?? "") || null,
+      };
+      return {};
+    }
     case "ghl.users":
       return {
         users: [
@@ -668,7 +765,7 @@ async function main() {
   const tables: Record<string, Row[]> = {
     cockpit_sales_leads: F.LEADS,
     cockpit_sales_calendar: F.APPOINTMENTS,
-    cockpit_sales_dials: F.DIALS,
+    cockpit_sales_dials: [...F.DIALS, ...F.HOT_DIALS],
     cockpit_sales_deals: F.DEALS,
     cockpit_sales_notes: [],
     cockpit_sales_proposals: F.PROPOSALS,
@@ -683,7 +780,9 @@ async function main() {
     cockpit_sales_settings: F.SETTINGS,
     cockpit_sales_mirror_runs: [F.MIRROR_RUN],
     cockpit_sales_worker_status: [],
-    cockpit_sales_inbox: F.INBOX,
+    cockpit_sales_inbox: [...F.INBOX, ...F.HOT_INBOX],
+    cockpit_sales_hot: F.HOT,
+    cockpit_sales_messages: F.MESSAGES,
     cockpit_sales_snippets: F.SNIPPETS,
     cockpit_sales_wa_templates: F.WA_TEMPLATES,
     cockpit_sales_scripts: Object.values(scripts).map((doc, i) => ({

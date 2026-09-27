@@ -86,6 +86,7 @@ import {
   routePhone,
   slotOffered,
 } from "./dialer.ts";
+import { hotFresh, hotPatch, stillHot } from "./hot.ts";
 
 type Row = Record<string, unknown>;
 
@@ -2360,19 +2361,25 @@ type QueueCandidate = Candidate &
 /** Everything the queue needs, read in a handful of queries, no huge id lists. */
 async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
   const soon = enc(new Date(now - 3_600_000).toISOString());
-  const [states, inbox, attempts, h, confirmations, hotRows, roles, seats, introTries] = await Promise.all([
+  const [states, inbox, attempts, h, confirmations, hotList, roles, seats, introTries] = await Promise.all([
     svcAll("cockpit_sales_queue_state?select=*&order=contact_id"),
     svc(`cockpit_sales_inbox?select=contact_id,last_message_at,last_direction&last_direction=eq.inbound&last_message_at=gte.${enc(new Date(now - 86_400_000).toISOString())}`),
     svc("cockpit_sales_attempts?select=contact_id,rep_email,started_at,call_checked_at&state=in.(dialing,placed)"),
     heavyReads(now),
     svc(`cockpit_sales_confirmations?select=appointment_id,result,at&start_at=gte.${soon}&order=at.desc&limit=2000`),
-    svc("cockpit_sales_hot?select=contact_id,owner_email,next_at&removed_at=is.null&limit=2000"),
+    // Every column, and the status filtered here (hot.ts stillHot): naming
+    // the status column in the read would fail the whole queue until the
+    // 2026-09-27 migration is in.
+    svc("cockpit_sales_hot?select=*&removed_at=is.null&limit=2000"),
     stageRoles(),
     svc("cockpit_sales_people?select=email,ghl_user_id,role&active=eq.true&via_portal=eq.true&limit=500"),
     // Intro calls that rang out in the last hour: the intro waits a few
     // minutes before it comes back (dialer.ts introWaiting).
     svc(`cockpit_sales_attempts?select=appointment_id,saved_at&state=eq.saved&item_kind=eq.intro&outcome=eq.no_answer&saved_at=gte.${soon}&limit=2000`),
   ]);
+  // A closed or lost hot lead stays on the list for the record, and is no
+  // longer hot here (Aziz, 2026-09-27).
+  const hotRows = hotList.filter(stillHot);
   // Who owns a lead: a working rep's seat by HighLevel's owner field. A
   // manager's or a leaver's lead is the shared queue's (Aziz, 2026-09-27).
   const working = new Set(seats.map(s => String(s.email)));
@@ -4005,7 +4012,8 @@ async function pipelineBoard(who: Who, b: Row) {
   const inboundBy = new Map<string, number>();
   for (const i of inbox)
     if (i.last_direction === "inbound") inboundBy.set(String(i.contact_id), ms(i.last_message_at) ?? 0);
-  const hotBy = new Map(hotRows.map(r => [String(r.contact_id), r]));
+  // As in the dialer: a closed or lost hot row is kept, and is not hot.
+  const hotBy = new Map(hotRows.filter(stillHot).map(r => [String(r.contact_id), r]));
   const stateBy = new Map(states.map(r => [String(r.contact_id), r]));
   const apptBy = new Map<string, Row>();
   for (const a of appts)
@@ -4136,44 +4144,54 @@ async function tagOutcome(contactId: string, outcome: AnyOutcome): Promise<strin
 // The hot list
 // ---------------------------------------------------------------------------
 
-const HOW = ["call", "whatsapp", "email", "meeting"] as const;
-
-/** Put a lead on the hot list, or change when and how to follow up. */
+/**
+ * Put a lead on the hot list, or change fields of its row. The list is
+ * edited like a sheet (Aziz, 2026-09-27), a cell at a time, so only the
+ * fields the body names change (hot.ts hotPatch): a note saved just after an
+ * amount never puts the old amount back. A lead not on the list, or taken
+ * off it, starts a fresh row that whoever puts it there owns (a manager may
+ * name another seat). Only the owner or a manager changes a row; closing or
+ * losing a deal keeps the row (hot.remove takes it off).
+ */
 async function hotSave(who: Who, b: Row) {
   const contact = cleanText(b.contact_id, 80);
+  if (!contact) throw new Refusal("Which lead?");
   const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contact)}&select=contact_id`))[0];
   if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
   const before = (await svc(`cockpit_sales_hot?contact_id=eq.${enc(contact)}&select=*`))[0] ?? null;
-  if (before && !before.removed_at && !who.manager && before.owner_email !== who.email)
-    throw new Refusal(`This lead is on ${String(before.owner_email).split("@")[0]}'s hot list. Ask them or a manager.`, 403);
-  let nextAt: string | null = null;
-  if (b.next_at) {
-    const t = Date.parse(String(b.next_at));
-    if (!Number.isFinite(t) || t < Date.now() - 86_400_000 || t > Date.now() + 90 * 86_400_000)
-      throw new Refusal("Pick when to follow up, within the next 90 days.");
-    nextAt = new Date(t).toISOString();
+  const live = before && !before.removed_at ? before : null;
+  if (live && !who.manager && live.owner_email !== who.email)
+    throw new Refusal(`This lead is on ${String(live.owner_email).split("@")[0]}'s hot list. Ask them or a manager.`, 403);
+  const checked = hotPatch(b, Date.now(), { email: String(who.email ?? ""), manager: Boolean(who.manager) });
+  if (!checked.ok) throw new Refusal(checked.error);
+  const patch = checked.patch;
+  if (typeof patch.owner_email === "string" && patch.owner_email !== String(who.email ?? "").toLowerCase()) {
+    // A working seat, as the dialer counts one (candidates): else the lead
+    // would be nobody's there.
+    const seat = (await svc(
+      `cockpit_sales_people?email=eq.${enc(patch.owner_email)}&active=eq.true&via_portal=eq.true&select=email`,
+    ))[0];
+    if (!seat) throw new Refusal("Give it to someone with a working seat in the sales cockpit.");
   }
-  const how = cleanText(b.next_how, 10);
-  if (how && !(HOW as readonly string[]).includes(how)) throw new Refusal("Follow up by call, WhatsApp, email or a meeting.");
-  const owner = who.manager && b.owner_email ? cleanText(b.owner_email, 200).toLowerCase() : String(who.email);
-  const row = {
-    contact_id: contact,
-    owner_email: owner,
-    next_at: nextAt,
-    next_how: how || null,
-    last_objection: cleanText(b.last_objection, 500) || null,
-    note: cleanText(b.note, 4000) || null,
-    updated_at: new Date().toISOString(),
-    removed_at: null,
-    removed_why: null,
-    ...(before && !before.removed_at ? {} : { added_by: who.email, added_at: new Date().toISOString() }),
-  };
-  const out = (await svc("cockpit_sales_hot?on_conflict=contact_id", {
-    method: "POST",
-    body: row,
-    prefer: "resolution=merge-duplicates,return=representation",
-  }))[0];
-  await audit(who, "hot.save", "cockpit_sales_hot", contact, before, out);
+  const at = new Date().toISOString();
+  let out: Row | undefined;
+  if (live) {
+    // Already on the list and nothing named: nothing to write.
+    if (!Object.keys(patch).length) return { hot: live };
+    out = (await svc(`cockpit_sales_hot?contact_id=eq.${enc(contact)}&removed_at=is.null`, {
+      method: "PATCH",
+      body: { ...patch, updated_at: at },
+      prefer: "return=representation",
+    }))[0];
+    if (!out) throw new Refusal("This lead came off the hot list a moment ago. Put it back on to change it.", 409);
+  } else {
+    out = (await svc("cockpit_sales_hot?on_conflict=contact_id", {
+      method: "POST",
+      body: { ...hotFresh(contact, String(who.email), at), ...patch },
+      prefer: "resolution=merge-duplicates,return=representation",
+    }))[0];
+  }
+  await audit(who, "hot.save", "cockpit_sales_hot", contact, before, out, { fields: Object.keys(patch) });
   return { hot: out };
 }
 

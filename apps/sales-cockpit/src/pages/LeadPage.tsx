@@ -37,11 +37,10 @@ import {
   statusLabel,
   when,
 } from "../lib/format";
+import { ghlContactUrl } from "../lib/highlevel";
 import { toast } from "../lib/toast";
 import type { CalendarRow, Lead, Me } from "../lib/types";
 import { leadLanguage } from "../lib/whatsapp";
-
-const GHL_LOCATION = "7NI8yyJtwsh2OOWA5Icr";
 
 const CLASS_TONE: Record<string, Tone> = {
   qualified: "good",
@@ -197,7 +196,12 @@ export default function LeadPage({ me }: { me: Me }) {
             ]}
           />
         </p>
-        <HotControl me={me} contactId={l.contact_id} />
+        <HotControl
+          me={me}
+          contactId={l.contact_id}
+          name={l.name}
+          phone8={l.phone8}
+        />
         <div className="flex flex-wrap gap-2">
           <Link
             to={`/call/${l.contact_id}?script=${callScript(me, appointments)}`}
@@ -224,7 +228,7 @@ export default function LeadPage({ me }: { me: Me }) {
             </a>
           ) : null}
           <a
-            href={`https://app.gohighlevel.com/v2/location/${GHL_LOCATION}/contacts/detail/${l.contact_id}`}
+            href={ghlContactUrl(l.contact_id)}
             target="_blank"
             rel="noopener noreferrer"
             className={button}
