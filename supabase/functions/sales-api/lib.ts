@@ -16,7 +16,9 @@ export function cors(origin: string | null): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": ok ? origin : "null",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info",
+    // x-region: the cockpit asks Supabase to run the function beside the
+    // database (eu-west-1), not beside the rep: a save is ten round trips.
+    "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info, x-region",
     "Access-Control-Max-Age": "86400",
     Vary: "Origin",
   };

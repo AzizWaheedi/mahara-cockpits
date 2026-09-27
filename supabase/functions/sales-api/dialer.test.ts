@@ -488,3 +488,39 @@ describe("whose lead it is (Aziz, 2026-09-27)", () => {
     expect(q.map(x => x.contact_id)).toEqual(["d"]);
   });
 });
+
+describe("the call centre's rules: missed calls and early call-backs (2026-09-27)", () => {
+  test("a lead who called in the last ten minutes, and nobody answered, is called first", () => {
+    const q = rankForSetter([lead({ contact_id: "m", inbound_call_at: NOW - 3 * 60_000, last_dial_at: NOW - 86_400_000, reached: true })], "me", NOW);
+    expect(q[0]).toMatchObject({ contact_id: "m", tier: 0, why: "Called us, missed it" });
+  });
+  test("earlier today it is today's work, even with a retry not yet due", () => {
+    const q = rankForSetter(
+      [lead({ contact_id: "m", inbound_call_at: NOW - 3 * 3_600_000, last_dial_at: NOW - 86_400_000, due_at: NOW + 3_600_000 })],
+      "me",
+      NOW,
+    );
+    expect(q[0]).toMatchObject({ tier: 1, why: "Called us, missed it" });
+  });
+  test("a call back since, or a missed call over a day old, is not a missed call", () => {
+    const since = rankForSetter([lead({ contact_id: "m", inbound_call_at: NOW - 3 * 60_000, last_dial_at: NOW - 60_000, reached: true, closed: "handled" })], "me", NOW);
+    expect(since).toEqual([]);
+    const old = rankForSetter([lead({ contact_id: "m", inbound_call_at: NOW - 2 * 86_400_000, closed: "handled" })], "me", NOW);
+    expect(old).toEqual([]);
+  });
+  test("a closer sees their own lead's missed call first", () => {
+    const q = rankForCloser(
+      [{ ...lead({ contact_id: "c", inbound_call_at: NOW - 60_000, last_dial_at: NOW - 86_400_000 }), demo_at: NOW - 86_400_000, demo_status: "showed", signed: false }],
+      "me",
+      NOW,
+    );
+    expect(q[0]).toMatchObject({ tier: 0, why: "Called us, missed it" });
+  });
+  test("a call-back shows five minutes early, with its time, and not before", () => {
+    // NOW is 12:00 in Kuwait; the call-back is at 12:04.
+    const early = rankForSetter([lead({ contact_id: "b", callback_at: NOW + 4 * 60_000, due_at: NOW + 4 * 60_000, last_dial_at: NOW - 3_600_000 })], "me", NOW);
+    expect(early[0]).toMatchObject({ tier: 0, why: "Call back at 12:04, as agreed" });
+    const tooEarly = rankForSetter([lead({ contact_id: "b", callback_at: NOW + 20 * 60_000, due_at: NOW + 20 * 60_000, last_dial_at: NOW - 3_600_000 })], "me", NOW);
+    expect(tooEarly).toEqual([]);
+  });
+});
