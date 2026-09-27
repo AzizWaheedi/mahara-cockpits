@@ -21,6 +21,7 @@ import type {
   Person,
   Sitting,
 } from "../../../convex/teamPage";
+import { ClientSuccessPanel } from "./ClientSuccessPanel";
 import { PipelineBoard, PipelineStrip } from "./Pipeline";
 import { RunOfShow } from "./RunOfShow";
 import {
@@ -169,6 +170,7 @@ export function MeetingPage() {
         onSave={fields => act(() => saveMeeting({ id: m.id, ...fields }))}
       />
       <WhenAndWho page={page} act={act} />
+      {m.embed ? <ClientSuccessPanel meetingId={m.id} embed={m.embed} /> : null}
       {page.strip ? <PipelineStrip strip={page.strip} /> : null}
       {page.creative ? (
         <PipelineBoard page={page} act={act} onError={setError} />

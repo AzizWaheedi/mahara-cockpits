@@ -674,7 +674,7 @@ def plan_pass(
             if main.key != here:
                 patch.update({"cal_calendar": main.key[0], "cal_event_id": main.key[1],
                               "calendar_id": main.key[1][:120]})
-            now_fields = meeting_fields(m, main, live)
+            now_fields = meeting_fields(m, main, live, today)
             for k, v in now_fields.items():
                 if not _same(v, m.get(k)):
                     patch[k] = v
@@ -713,10 +713,24 @@ def plan_pass(
     return plan
 
 
-def meeting_fields(m: Row, main: Part, live: List[Part]) -> Row:
+def over_before_next(days: List[int], ends_on: Optional[str], today: dt.date) -> bool:
+    """A series that ends before its next sitting is over as far as the
+    meeting's days go (CSM Daily's Sunday once the Sunday meeting took its
+    place): the same rule as the cockpit's read-back (teamCalendar.ts)."""
+    if not ends_on or not days:
+        return False
+    for i in range(7):
+        d = today + dt.timedelta(days=i)
+        if sun0(d) in days:
+            return d.isoformat() > str(ends_on)[:10]
+    return False
+
+
+def meeting_fields(m: Row, main: Part, live: List[Part], today: Optional[dt.date] = None) -> Row:
     """The meeting's own series columns from the series it is made of: the
     series itself when it is one, the days of all of them when it is a
-    series a day (the time, length and link are the main one's)."""
+    series a day (the time, length and link are the main one's). A day's
+    series that ends before its next sitting no longer counts as a day."""
     f = main.fields
     out: Row = {k: f[k] for k in ("start_time", "minutes", "meet_link") if f.get(k) is not None}
     out["cal_writable"] = all(p.row.get("cal_writable") for p in live)
@@ -727,10 +741,11 @@ def meeting_fields(m: Row, main: Part, live: List[Part]) -> Row:
         return out
     days: Set[int] = set()
     for p in live:
-        if p.fields.get("weekdays"):
-            days |= set(p.fields["weekdays"])
-        elif p.row.get("weekday") is not None:
-            days.add(int(p.row["weekday"]))
+        own = list(p.fields.get("weekdays") or ([] if p.row.get("weekday") is None else [int(p.row["weekday"])]))
+        ends = p.fields.get("ends_on") or p.row.get("ends_on")
+        if today and over_before_next(own, ends, today):
+            continue
+        days |= set(own)
     out["weekdays"] = sorted(days) or m.get("weekdays")
     if "rrule" in f:
         out.update({"rrule": f["rrule"], "cal_etag": f["cal_etag"]})

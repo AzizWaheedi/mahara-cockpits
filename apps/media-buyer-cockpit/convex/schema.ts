@@ -386,6 +386,11 @@ const schema = defineSchema({
     reportDays: v.optional(v.number()),
     reportTracked: v.optional(v.boolean()),
     reportDue: v.optional(v.boolean()),
+    /** ClickUp "Contract end date"; renewalTracked is false while the field is missing. */
+    renewalDate: v.optional(v.string()),
+    renewalTracked: v.optional(v.boolean()),
+    /** Active and live 14 days: the hot list's first-win rule. */
+    firstWin: v.optional(v.boolean()),
     silentDays: v.optional(v.number()),
     callDays: v.optional(v.number()),
     todo: v.string(),

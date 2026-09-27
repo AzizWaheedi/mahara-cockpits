@@ -18,6 +18,7 @@ import {
   Settings,
   Sun,
   Sunrise,
+  Target,
   X,
 } from "lucide-react";
 import { Link, useLocation } from "react-router";
@@ -78,6 +79,7 @@ const navGroups = [
   {
     label: "Growth",
     items: [
+      { href: "/projections", label: "Projections", icon: Target },
       { href: "/hotlist", label: "Hot list", icon: Flame },
       { href: "/money", label: "My money", icon: DollarSign },
     ],

@@ -21,6 +21,7 @@ import {
   LoginPage,
   MeetingsPage,
   MyMoneyPage,
+  ProjectionsPage,
   SettingsPage,
   SignupPage,
   StartOfDayPage,
@@ -54,6 +55,7 @@ export function AuthenticatedRoutes() {
             <Route path="/hotlist" element={<HotListPage />} />
             <Route path="/links" element={<KeyLinksPage />} />
             <Route path="/money" element={<MyMoneyPage />} />
+            <Route path="/projections" element={<ProjectionsPage />} />
             <Route path="/eod" element={<EndOfDayPage />} />
             {/* Every page in this cockpit is the CSM's: a session minted for
                 another seat gets "not yours", not a crashed screen. */}

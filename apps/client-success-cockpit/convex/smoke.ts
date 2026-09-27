@@ -8,6 +8,7 @@ import {
 } from "./csm";
 import { buildGapsList } from "./gaps";
 import { stillsCopyProblem } from "./previews";
+import { buildProjections } from "./projections";
 
 /** Minutes without a feed before the check fails, inside the working day. */
 const STALE_AFTER_MIN = 45;
@@ -82,6 +83,26 @@ export const run = internalQuery({
     });
     await t("comms.overview", () => buildOverview(ctx, true));
     await t("gaps.list", () => buildGapsList(ctx, null));
+    await t("projections.page", () =>
+      buildProjections(ctx, {
+        email: "smoke@check.invalid",
+        isCeo: false,
+        isAdmin: false,
+        scope: null,
+      }),
+    );
+    // The billing ledger behind the cash actuals is read every half hour;
+    // three hours of failed reads in a row is a feed that has stopped.
+    await t("projections.billing", async () => {
+      const feed = await ctx.db
+        .query("billingFeed")
+        .withIndex("by_key", q => q.eq("key", "ledger"))
+        .first();
+      if (feed && (feed.failures ?? 0) >= 6)
+        throw new Error(
+          `billing feed failing since ${feed.okAt ? kuwaitClock(feed.okAt) : "it started"} Kuwait: ${feed.error ?? "no error text"}`,
+        );
+    });
     // A screen that renders without throwing but shows yesterday's numbers
     // is the failure the CSM acts on, so a feed that keeps failing, or stops
     // during the working day, fails the check too.

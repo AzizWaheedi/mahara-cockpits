@@ -15,6 +15,7 @@ import {
   renderOption,
   sendUpdatesFor,
   seriesLine,
+  seriesUnchanged,
   slipsAdded,
   spinRefusal,
   totalMinutes,
@@ -545,5 +546,43 @@ describe("writing to Google", () => {
     expect(
       renamedSummary("Weekly sync", "Whole Team", "All Hands", false),
     ).toBe("Weekly sync");
+  });
+
+  test("a day's series that is not changing is left alone", () => {
+    const monday = { start_time: "13:00:00", minutes: 30, weekdays: [1] };
+    // Unticking Sunday on CSM Daily: Monday's series already is Monday, 13:00, 30 minutes.
+    expect(
+      seriesUnchanged(monday, {
+        weekdays: [1],
+        startTime: "13:00",
+        minutes: 30,
+      }),
+    ).toBe(true);
+    expect(
+      seriesUnchanged(monday, {
+        weekdays: [1],
+        startTime: "13:30",
+        minutes: 30,
+      }),
+    ).toBe(false);
+    expect(
+      seriesUnchanged(monday, {
+        weekdays: [1],
+        startTime: "13:00",
+        minutes: 20,
+      }),
+    ).toBe(false);
+    expect(
+      seriesUnchanged(
+        { start_time: "13:30", minutes: 30, weekdays: [4, 0] },
+        { weekdays: [0, 4], startTime: "13:30", minutes: 30 },
+      ),
+    ).toBe(true);
+    expect(
+      seriesUnchanged(
+        { start_time: null, minutes: null, weekdays: null },
+        { weekdays: [1], startTime: "13:00", minutes: 30 },
+      ),
+    ).toBe(false);
   });
 });

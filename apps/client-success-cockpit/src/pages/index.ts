@@ -13,5 +13,6 @@ export {
 export { LandingPage } from "./LandingPage";
 export { LoginPage } from "./LoginPage";
 export { MeetingsPage } from "./MeetingsPage";
+export { ProjectionsPage } from "./ProjectionsPage";
 export { SettingsPage } from "./SettingsPage";
 export { SignupPage } from "./SignupPage";

@@ -253,6 +253,11 @@ export type MeetingPage = {
     endsOn: string | null;
     meetLink: string | null;
     pipeline: "board" | "strip" | null;
+    /**
+     * A client success panel on the page, read live from that cockpit:
+     * the week's projections and the renewal window, or CSM Daily's corner.
+     */
+    embed: "cs-projections" | "cs-daily" | null;
   };
   calendar: CalendarStatus;
   people: Person[];
@@ -546,6 +551,8 @@ export async function page(w: Who, id: string): Promise<MeetingPage> {
       endsOn: m.ends_on ?? null,
       meetLink: m.meet_link ?? null,
       pipeline: m.pipeline ?? null,
+      embed:
+        m.embed === "cs-projections" || m.embed === "cs-daily" ? m.embed : null,
     },
     calendar: {
       state: !m.cal_event_id ? "off" : writable ? "on" : "someone-else",

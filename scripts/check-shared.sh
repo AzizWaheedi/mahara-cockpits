@@ -59,6 +59,12 @@ same adAsIdea "$CD/convex/adAsIdea.ts" "$ED/src/lib/adAsIdea.ts"
 # did in their words) reads the same from the media buyer and from the CSM.
 same clientUpdate "$MB/src/lib/clientUpdate.ts" "apps/client-success-cockpit/src/lib/clientUpdate.ts"
 
+# The Projections screen: the client success cockpit owns the data and its
+# own tab, and the Sunday meeting's page in the media buyer shows the same
+# parts. One set of words and shapes, one set of parts.
+same projectionsView "apps/client-success-cockpit/src/lib/projectionsView.ts" "$MB/src/lib/projectionsView.ts"
+same ProjectionsKit "apps/client-success-cockpit/src/components/projections/ProjectionsKit.tsx" "$MB/src/components/projections/ProjectionsKit.tsx"
+
 # The swipe file's backend is the same in the two Convex cockpits, bar the
 # role each one checks.
 same convex/foreplay.ts "$CD/convex/foreplay.ts" "$MB/convex/foreplay.ts"

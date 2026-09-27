@@ -55,6 +55,9 @@ const provider = ConvexCredentials<DataModel>({
       name,
       roles,
       clients,
+      // The portal signs its own CEO flag into the pass. An older pass
+      // without it leaves what we knew as it was.
+      ...(typeof payload.ceo === "boolean" ? { isCeo: payload.ceo } : {}),
     });
     try {
       const existing = await retrieveAccount(ctx, {
@@ -84,6 +87,7 @@ export const remember = internalMutation({
     name: v.optional(v.string()),
     roles: v.array(v.string()),
     clients: v.array(v.string()),
+    isCeo: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -133,6 +137,8 @@ export const storeMembers = internalMutation({
         clients: m.clients,
         at: now,
         revokedAt: m.roles.length === 0 ? now : undefined,
+        // A member list never grants the CEO flag; a removed seat loses it.
+        ...(m.roles.length === 0 ? { isCeo: false } : {}),
       };
       if (row) await ctx.db.patch(row._id, doc);
       else await ctx.db.insert("portalMembers", doc);
@@ -143,6 +149,7 @@ export const storeMembers = internalMutation({
       await ctx.db.patch(row._id, {
         roles: [],
         clients: [],
+        isCeo: false,
         at: now,
         revokedAt: now,
       });
@@ -170,6 +177,7 @@ export const forget = internalMutation({
     const gone = {
       roles: [] as string[],
       clients: [] as string[],
+      isCeo: false,
       at: Date.now(),
       revokedAt: Date.now(),
     };

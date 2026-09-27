@@ -300,6 +300,16 @@ class ADayEach(unittest.TestCase):
         self.assertEqual({(r["cal_event_id"], r["weekday"]) for r in stored}, {("sun", 0), ("mon", 1)})
 
 
+    def test_a_days_series_that_ends_before_its_next_sitting_is_not_a_day(self):
+        # CSM Daily's Sunday series, ended the day before the Sunday meeting starts.
+        self.assertTrue(sync.over_before_next([0], "2026-10-03", dt.date(2026, 9, 28)))
+        # On the Sunday itself its last sitting is still today.
+        self.assertFalse(sync.over_before_next([0], "2026-10-03", dt.date(2026, 9, 27)))
+        self.assertFalse(sync.over_before_next([1], "2026-10-20", dt.date(2026, 9, 28)))
+        self.assertFalse(sync.over_before_next([0], None, dt.date(2026, 9, 28)))
+        self.assertFalse(sync.over_before_next([], "2026-10-03", dt.date(2026, 9, 28)))
+
+
 class Links(unittest.TestCase):
     def test_an_exact_match_is_same_days_same_start_on_an_editable_calendar(self):
         m = meeting(cal_calendar=None, cal_event_id=None)

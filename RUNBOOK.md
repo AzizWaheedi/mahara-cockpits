@@ -190,12 +190,35 @@ minutes (cron as `hermes`, lock `~/.teamsync.lock`, log `~/.teamsync.log`;
 
 | Symptom | Fix | Who |
 | --- | --- | --- |
+| A meeting page says "Waiting for Google Calendar" | The calendar sign-in is not on the deployment yet. Nothing is lost: the changes wait untouched (no tries used) and go out within a minute of the sign-in being set (next row) | CEO |
 | A meeting page says "changes waiting to reach Google Calendar" and the calendar sign-in is not set | Set `GOOGLE_CAL_CLIENT_ID`, `GOOGLE_CAL_CLIENT_SECRET` and `GOOGLE_CAL_REFRESH_TOKEN` on the media buyer's Convex deployment (`bunx convex env set NAME` with the value, prod) and in `~/.team-sync/env` on the VPS. The CEO account's OAuth client with the calendar scope; never pasted in chat or committed | CEO |
 | "Google refused the cockpit's calendar sign-in" | The refresh token was revoked or expired (a Testing-mode OAuth app lasts seven days). Sign the CEO account in again and replace `GOOGLE_CAL_REFRESH_TOKEN` in both places, then press Retry on the meeting | CEO |
 | "Google Calendar refused the change (403)" on one meeting | The series is organised on a calendar the CEO account cannot edit. Take over from the meeting's page, or ask its organiser to share the calendar with edit rights | Host or CEO |
 | A change made in Google does not show within five minutes | `crontab -l` as `hermes` must show the `*/5` team-sync line (README). `tail ~/.teamsync.log`; a meeting with a change still waiting for Google is skipped on purpose until it lands | Hermes or CEO |
 | A meeting appeared twice | Two different Google series with the same title that no meeting owned. Link the right one from its page; the other is marked inactive after three quiet weeks | Host |
 | The editor cockpit's Meetings page is empty | Fathom recordings are in `team_recordings` since 2026-09-27; the editor desk's `meetings` job fills it hourly and each person sees the ones they were invited to | Hermes |
+
+## Projections (client success)
+
+The client success cockpit's Projections tab (`/client-success/projections`)
+and the Sunday "Renewals & Re-sell Projections" meeting page show the same
+data: `convex/projections.ts` in the client success app, read and changed
+from the media buyer through the bridge (`convex/teamProjections.ts`).
+Re-sells, reviews and referrals count wins logged in the cockpit (hot-list
+rows marked Closed, renewal plans marked re-sold); renewals count plans marked
+renewed; cash is back-end payments in `cockpit_client_payments`, read every
+half hour into `billingFeed` (cron `projections billing ledger`, freshness
+`okAt`, `failures`; the smoke check fails at six failures in a row). A source
+that cannot answer shows "Manual entry", never zero. A won renewal or re-sell
+queues one line for `#eods-csms` in `eod_outbox` (role `csm-win`).
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| "Renewal date unknown" and an empty renewal window | Add a Date field named `Contract end date` to Clients - Mahara in ClickUp and fill it per client; the media buyer sync reads it by name and the window fills on the next feed (ten minutes) | CEO or CSM |
+| Cash says "Manual entry" | The billing ledger has not been refreshed in two days, or Supabase could not be read (the note says which). Refresh billing in the CEO cockpit, or press "Read billing again" on the Projections tab | CSM or CEO |
+| "Book call" says no GoHighLevel contact is linked | The client has no WhatsApp thread or past appointment in the client account. Book it in GoHighLevel and put the day in "Booked another way?" | CSM |
+| The gold-standard switch is missing for the CEO | The flag comes with the portal's pass: open the client success cockpit from the portal once | CEO |
+| Proving the rules on production | `cd apps/client-success-cockpit && bunx convex run --prod projections:selfTest` runs every rule on sentinel rows (week of 2000-01-02) in one transaction and deletes them before it returns | Anyone shipping |
 
 ## Sales cockpit
 

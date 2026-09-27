@@ -42,6 +42,12 @@ if [ -f apps/media-buyer-cockpit/scripts/team.test.ts ]; then
   (cd apps/media-buyer-cockpit && bun test scripts/team.test.ts >/dev/null 2>&1) \
     || { echo "the team meetings rules tests fail"; exit 1; }
 fi
+# The Projections rules (renewal window, the re-sell cap, the booked call's
+# title, actuals that are never a stand-in zero).
+if [ -f apps/client-success-cockpit/scripts/projections.test.ts ]; then
+  (cd apps/client-success-cockpit && bun test scripts/projections.test.ts >/dev/null 2>&1) \
+    || { echo "the projections rules tests fail"; exit 1; }
+fi
 if [ -f hermes/team-sync/test_sync.py ]; then
   (cd hermes/team-sync && python3 -m unittest test_sync >/dev/null 2>&1) \
     || { echo "the team calendar sync tests fail"; exit 1; }

@@ -23,6 +23,7 @@ import {
   type SeriesChange,
   sendUpdatesFor,
   seriesLine,
+  seriesUnchanged,
   utcToZoned,
   wallClock,
   weekdayOf,
@@ -44,7 +45,7 @@ import {
   type Who,
 } from "./teamDb";
 import { type MeetingPage, meetingLink, page } from "./teamPage";
-import { googleCalendarWriteToken } from "./tools";
+import { calendarWriteReady, googleCalendarWriteToken } from "./tools";
 
 /**
  * A meeting's Google Calendar series, changed from the cockpit.
@@ -477,6 +478,8 @@ async function changeSeries(
 ): Promise<void> {
   const master = await readEvent(p.cal_calendar, p.cal_event_id);
   const now = eventSeries(master, c.tz);
+  // Nothing to change on this series: no split, no update to anyone.
+  if (seriesUnchanged(now, change)) return;
   const plan = planSeriesChange(
     {
       startDay: now.firstDay ?? change.from,
@@ -926,7 +929,15 @@ async function readBack(meetingId: string): Promise<void> {
   if (!read.length) return;
   const main = read.find(x => x.p.cal_event_id === c.m.cal_event_id) ?? read[0];
   const days = new Set<number>();
-  for (const x of read) for (const d of x.s.weekdays ?? []) days.add(d);
+  for (const x of read) {
+    const own = x.s.weekdays ?? [];
+    // A series that ends before its next sitting is over as far as the page
+    // goes: its day is no longer one the meeting meets on (CSM Daily's
+    // Sunday once the Sunday meeting took its place).
+    if (x.s.ends_on && own.length && nextOn(own, c.today) > x.s.ends_on)
+      continue;
+    for (const d of own) days.add(d);
+  }
   const body: Any = {
     start_time: main.s.start_time,
     minutes: main.s.minutes,
@@ -1040,6 +1051,18 @@ async function enqueue(
 async function runWaiting(
   meetingId: string,
 ): Promise<{ done: number; failed: string | null }> {
+  // No calendar sign-in on the deployment yet: the changes wait, untouched,
+  // rather than using up their ten tries on an error nobody can fix here.
+  if (!calendarWriteReady()) {
+    const message =
+      "Waiting for Google Calendar: the cockpit's calendar sign-in is not set on the deployment yet. The change goes out once it is.";
+    await db(`team_meetings?id=eq.${enc(meetingId)}`, {
+      method: "PATCH",
+      body: { cal_error: message },
+      prefer: "return=minimal",
+    });
+    return { done: 0, failed: message };
+  }
   const ops = (await db(
     `team_calendar_ops?select=*&meeting_id=eq.${enc(meetingId)}&status=eq.pending&order=id.asc&limit=10`,
   )) as Op[];
@@ -1109,6 +1132,7 @@ export const drain = internalAction({
   args: {},
   returns: v.any(),
   handler: async ctx => {
+    if (!calendarWriteReady()) return { waiting: "calendar sign-in not set" };
     const since = new Date(Date.now() - 90_000).toISOString();
     const waiting = await db(
       `team_calendar_ops?select=meeting_id&status=eq.pending&or=(tried_at.is.null,tried_at.lt.${since})&order=id.asc&limit=25`,
