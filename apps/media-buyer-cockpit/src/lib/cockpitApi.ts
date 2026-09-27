@@ -10,6 +10,7 @@ import {
   saveGoalTargets,
 } from "./ceoGoalsClient";
 import { supabase } from "./supabase";
+import {readPeople,readPeopleRoles,savePerson,setPersonActive,unavailablePeopleDirectory} from "./ceoPeopleClient";
 
 export class ConvexError extends Error {
   data: any;
@@ -215,24 +216,16 @@ async function handleApiCall(endpoint: string, args: any = {}): Promise<any> {
       }
     }
     if (sub === "people") {
-      if (rest[0] === "list") {
-        const { data } = await supabase
-          .from("cockpit_team_members")
-          .select("*")
-          .order("name", { ascending: true });
-        return data || [];
+      switch(rest.join(".")) {
+        case "list": return readPeople(supabase);
+        case "roles": return readPeopleRoles(supabase);
+        case "save": return savePerson(supabase,args);
+        case "setActive": return setPersonActive(supabase,args);
+        case "workspace":
+        case "importWorkspace": return unavailablePeopleDirectory(supabase);
+        case "remove": throw new Error("Preserve the person's history: mark them as gone instead of deleting them.");
+        default: throw new Error("Unknown people operation.");
       }
-      if (rest[0] === "roles") {
-        return [
-          "media_buyer",
-          "creative",
-          "csm",
-          "video_editor",
-          "sales",
-          "ceo",
-        ];
-      }
-      return { ok: true };
     }
     if (sub === "manualPayments") {
       if (rest[0] === "list") {
