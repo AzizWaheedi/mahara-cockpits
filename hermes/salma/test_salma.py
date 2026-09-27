@@ -346,6 +346,57 @@ def test_openai_out_of_credit():
             urllib.request.urlopen, salma.OPENAI_STATE_FILE = saved
 
 
+def test_claude_on_the_vps():
+    import json
+    import urllib.error
+    import urllib.request
+
+    saved = (urllib.request.urlopen, salma.VPS_STATE_FILE, os.environ.pop("SALMA_TEXT", None))
+    asked = []
+
+    def answer(text):
+        def fake(req, timeout=0):
+            asked.append(req)
+            return io.BytesIO(json.dumps({"choices": [{"message": {"content": text}}]}).encode())
+        return fake
+
+    lapsed = b'{"error":{"message":"Failed to authenticate. API Error: 401 OAuth access token has expired.","type":"proxy_error"}}'
+
+    def refused(req, timeout=0):
+        raise urllib.error.HTTPError(req.full_url, 500, "Internal Server Error", {}, io.BytesIO(lapsed))
+
+    with tempfile.TemporaryDirectory() as d:
+        salma.VPS_STATE_FILE = os.path.join(d, "vps.json")
+        try:
+            # Captions go to the proxy on this server, with no key.
+            urllib.request.urlopen = answer('{"instagram": "كلام", "facebook": ""}')
+            text, used = salma.frontier("system", "user")
+            assert used == "opus (Claude on the VPS)" and "كلام" in text
+            assert asked[-1].full_url == "http://127.0.0.1:3456/v1/chat/completions"
+            assert not asked[-1].get_header("Authorization")
+            assert salma.vps_state() == "ok"
+            # A lapsed sign-in, as an error or as the text of an answer: one sentence, never a caption.
+            for fake in (refused, answer("[Error: Failed to authenticate. API Error: 401 OAuth access "
+                                         "token has expired. Re-authenticate to continue.\n]")):
+                urllib.request.urlopen = fake
+                try:
+                    salma.frontier("system", "user")
+                    raise AssertionError("a lapsed sign-in must stop the caption")
+                except RuntimeError as e:
+                    assert str(e) == salma.VPS_SIGN_IN
+                assert salma.vps_state() == "signed out"
+            # A proxy that drops the picture is a reader that failed, not a pass or a miss.
+            urllib.request.urlopen = answer("I don't see an image attached to your message.")
+            got = salma.read_back(b"jpeg", {"headline": "كلام"})
+            assert got["ok"] is None and "did not receive the picture" in got["error"]
+            urllib.request.urlopen = answer("كلام")
+            assert salma.read_back(b"jpeg", {"headline": "كلام"})["ok"] is True
+        finally:
+            urllib.request.urlopen, salma.VPS_STATE_FILE = saved[0], saved[1]
+            if saved[2] is not None:
+                os.environ["SALMA_TEXT"] = saved[2]
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

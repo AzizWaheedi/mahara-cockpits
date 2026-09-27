@@ -7,8 +7,10 @@ on (`publish_due`). There are no GoHighLevel credentials in this process
 and there should never be.
 
 Environment: DESK_SUPABASE_URL, DESK_SUPABASE_KEY, DEEPSEEK_API_KEY,
-ANTHROPIC_API_KEY, META_ACCESS_TOKEN, HF_KEY (or the file named by
-HF_KEY_FILE). Read by name, never printed.
+META_ACCESS_TOKEN, HF_KEY (or the file named by HF_KEY_FILE); client copy is
+written by Claude through the proxy on this server (no key), or by
+ANTHROPIC_API_KEY / OPENAI_API_KEY when SALMA_TEXT names one. Read by name,
+never printed.
 """
 from __future__ import annotations
 
@@ -191,16 +193,101 @@ def openai_call(body: dict, *, timeout: int = 180) -> dict:
     return out
 
 
+# Aziz, 2026-09-27: "I want to use my VPS, not OpenAI". Captions, words on
+# pictures and read-backs go to his own proxy to Claude Code on this server
+# (openclaw-claude-proxy): his Claude plan, no key, no API credit to run out.
+# SALMA_TEXT=anthropic or =openai switches back to an API key by name.
+VPS_URL = "http://127.0.0.1:3456/v1"
+VPS_MODEL = "opus"
+VPS_SIGN_IN = (
+    "The Claude sign-in on the server has lapsed, so captions, words on pictures and "
+    "read-backs are paused. Sign Claude Code in again on the VPS as aziz (run claude, "
+    "then /login), then ask again."
+)
+VPS_STATE_FILE = os.path.expanduser("~/.salma-vps.json")
+# A failure behind the proxy can come back as the whole answer, "[Error: ...]".
+PROXY_ERROR = re.compile(r"^\[Error: (.*)\]$", re.S)
+
+
+def text_route() -> str:
+    return (os.environ.get("SALMA_TEXT") or "vps").strip().lower()
+
+
+def remember_vps(state: str) -> None:
+    try:
+        with open(VPS_STATE_FILE, "w") as fh:
+            json.dump({"state": state, "at": now()}, fh)
+    except OSError:
+        pass
+
+
+def vps_state() -> str:
+    try:
+        with open(VPS_STATE_FILE) as fh:
+            return str(json.load(fh).get("state") or "")
+    except (OSError, ValueError):
+        return ""
+
+
+def vps_refusal(said: str) -> str:
+    """What a failure behind the proxy means, in one sentence for the post."""
+    low = said.lower()
+    if "oauth" in low or "authenticate" in low or "401" in low or "subscription access" in low:
+        remember_vps("signed out")
+        return VPS_SIGN_IN
+    if any(w in low for w in ("usage limit", "hit your limit", "limit reached", "rate limit")):
+        return ("The Claude plan on the server is at its usage limit, so captions and words wait "
+                "until it resets.")
+    return f"The Claude proxy on the server failed: {said[:200]}"
+
+
+def vps_call(messages: list, *, timeout: int = 300) -> str:
+    """One answer from Claude on this server, with a lapsed sign-in said in words."""
+    base = (os.environ.get("SALMA_VPS_URL") or VPS_URL).rstrip("/")
+    body = {"model": os.environ.get("SALMA_VPS_MODEL") or VPS_MODEL, "messages": messages}
+    req = urllib.request.Request(
+        f"{base}/chat/completions", data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            out = json.load(r)
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode("utf-8", "replace")
+        try:
+            said = str(json.loads(raw)["error"]["message"])
+        except (ValueError, KeyError, TypeError):
+            said = f"{e.code}: {raw[:200]}"
+        raise RuntimeError(vps_refusal(said)) from None
+    except (urllib.error.URLError, OSError):
+        raise RuntimeError(
+            "The Claude proxy on the server (127.0.0.1:3456) is not answering, so captions and "
+            "words are paused. Start it again on the VPS, then ask again."
+        ) from None
+    text = str(out["choices"][0]["message"]["content"] or "")
+    m = PROXY_ERROR.match(text.strip())
+    if m:
+        raise RuntimeError(vps_refusal(m.group(1).strip()))
+    remember_vps("ok")
+    return text
+
+
 def frontier(system: str, user: str, *, max_tokens: int = 2000) -> tuple[str, str]:
     """Captions. A client's dialect is judgment, not extraction, so this
     never goes to the cheap model.
 
-    Anthropic first, OpenAI if that key is missing. Which one wrote it is
-    returned and recorded on the job: nobody should have to guess what
+    Claude on this server unless SALMA_TEXT names an API. Which one wrote it
+    is returned and recorded on the job: nobody should have to guess what
     produced a client's Arabic. The "never OpenAI" house rule is about
     images, not text.
     """
-    key = os.environ.get("ANTHROPIC_API_KEY")
+    route = text_route()
+    if route == "vps":
+        model = os.environ.get("SALMA_VPS_MODEL") or VPS_MODEL
+        answer = vps_call([{"role": "system", "content": system}, {"role": "user", "content": user}])
+        return answer, f"{model} (Claude on the VPS)"
+
+    key = os.environ.get("ANTHROPIC_API_KEY") if route == "anthropic" else ""
     if key:
         body = {
             "model": "claude-sonnet-4-6",
@@ -221,11 +308,11 @@ def frontier(system: str, user: str, *, max_tokens: int = 2000) -> tuple[str, st
             out = json.load(r)
         return "".join(b.get("text", "") for b in out.get("content", [])), "claude-sonnet-4-6"
 
-    key = os.environ.get("OPENAI_API_KEY")
+    key = os.environ.get("OPENAI_API_KEY") if route == "openai" else ""
     if not key:
         raise RuntimeError(
-            "No frontier key: set ANTHROPIC_API_KEY (preferred) or OPENAI_API_KEY. "
-            "Captions do not go to the cheap model."
+            f"SALMA_TEXT is {route}, but its key is not set on the server. Remove SALMA_TEXT to use "
+            "Claude on the VPS. Captions do not go to the cheap model."
         )
     out = openai_call({
         "model": "gpt-4.1",
@@ -1128,7 +1215,19 @@ def vision_read(jpeg: bytes) -> str:
 
     b64 = base64.b64encode(jpeg).decode()
     last: Exception | None = None
-    key = os.environ.get("ANTHROPIC_API_KEY")
+    route = text_route()
+    if route == "vps":
+        seen = vps_call([{"role": "user", "content": [
+            {"type": "text", "text": READ_PROMPT},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+        ]}], timeout=180)
+        # A proxy that dropped the picture would answer about its absence:
+        # that is a reader that failed, never a picture without words.
+        if re.search(r"image|picture|attach", seen, re.I) and \
+                re.search(r"\bno\b|\bnot\b|n't|cannot|unable", seen, re.I):
+            raise RuntimeError("Claude on the server did not receive the picture, so the words were not read back.")
+        return seen
+    key = os.environ.get("ANTHROPIC_API_KEY") if route == "anthropic" else ""
     if key:
         content = [
             {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}},
@@ -1157,7 +1256,7 @@ def vision_read(jpeg: bytes) -> str:
     # misread it. None of them, blind or shown the intended words, saw the
     # one real slip (a doubled letter's missing dots): this finds missing or
     # wrong words, not a lost dot, and the screen says so.
-    okey = os.environ.get("OPENAI_API_KEY")
+    okey = os.environ.get("OPENAI_API_KEY") if route == "openai" else ""
     if okey:
         body = {
             "model": os.environ.get("READBACK_OPENAI_MODEL") or "gpt-5.5",
@@ -1171,7 +1270,8 @@ def vision_read(jpeg: bytes) -> str:
         return str(out["choices"][0]["message"]["content"] or "")
     if last:
         raise RuntimeError(f"No vision model would read the picture ({last})")
-    raise RuntimeError("Reading the words back needs ANTHROPIC_API_KEY or OPENAI_API_KEY on the server.")
+    raise RuntimeError(f"SALMA_TEXT is {route}, but its key is not set on the server, so the words were "
+                       "not read back. Remove SALMA_TEXT to use Claude on the VPS.")
 
 
 def read_back(jpeg: bytes, words: dict | None) -> dict:
@@ -2397,15 +2497,27 @@ def health_checks() -> list[tuple[str, bool, str]]:
         out.append(("meta", True, ""))
     except Exception as e:  # noqa: BLE001
         out.append(("meta", False, f"Meta is refusing the ads token, so nothing can post: {str(e)[:120]}"))
-    frontier_ok = bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY"))
-    detail = "" if frontier_ok else "Captions are paused: the server has no ANTHROPIC_API_KEY or OPENAI_API_KEY."
-    if frontier_ok and not os.environ.get("ANTHROPIC_API_KEY") and openai_state() != "ok":
-        # Empty last time, or never asked: one token says whether it still is.
-        try:
-            openai_call({"model": "gpt-4.1-nano", "max_tokens": 1,
-                         "messages": [{"role": "user", "content": "ok"}]}, timeout=30)
-        except Exception as e:  # noqa: BLE001
-            frontier_ok, detail = False, str(e)[:240]
+    route = text_route()
+    if route == "vps":
+        frontier_ok, detail = True, ""
+        if vps_state() != "ok":
+            # Signed out last time, or never asked: one short answer says
+            # whether it still is. Once it answers, the jobs keep the state.
+            try:
+                vps_call([{"role": "user", "content": "Reply with OK."}], timeout=120)
+            except Exception as e:  # noqa: BLE001
+                frontier_ok, detail = False, str(e)[:240]
+    else:
+        name = "ANTHROPIC_API_KEY" if route == "anthropic" else "OPENAI_API_KEY"
+        frontier_ok = bool(os.environ.get(name))
+        detail = "" if frontier_ok else f"Captions are paused: SALMA_TEXT is {route} and the server has no {name}."
+        if frontier_ok and route == "openai" and openai_state() != "ok":
+            # Empty last time, or never asked: one token says whether it still is.
+            try:
+                openai_call({"model": "gpt-4.1-nano", "max_tokens": 1,
+                             "messages": [{"role": "user", "content": "ok"}]}, timeout=30)
+            except Exception as e:  # noqa: BLE001
+                frontier_ok, detail = False, str(e)[:240]
     out.append(("captions", frontier_ok, detail))
     ds = bool(os.environ.get("DEEPSEEK_API_KEY"))
     out.append(("planning", ds, "" if ds else

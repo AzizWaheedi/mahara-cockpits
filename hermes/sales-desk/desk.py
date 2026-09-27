@@ -156,7 +156,8 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     p = None
     try:
         p = model_mod.provider(cfg, log.info)
-        add("model key", True, f"{model_mod.KEY_NAMES[cfg.provider]} set for {cfg.provider}", True)
+        add("model key", True, "none needed: the Claude proxy on the VPS" if cfg.provider == "vps"
+            else f"{model_mod.KEY_NAMES[cfg.provider]} set for {cfg.provider}", True)
     except NotNow as e:
         add("model key", False, str(e), True)
 
@@ -515,7 +516,7 @@ def review_provider(cfg: Config, log: Logger) -> Any:
     metered like every other job's."""
     model = key("SALES_REVIEW_MODEL", "").strip() or cfg.model
     model_mod.check_model(model, setting="SALES_REVIEW_MODEL")
-    if (cfg.provider or "openai") == "openai":
+    if (cfg.provider or "vps") == "openai":
         if not cfg.openai_key:
             raise model_mod.ModelUnreachable("OPENAI_API_KEY is not set, so Vince cannot review calls.")
         return model_mod.metered(model_mod.OpenAIShaped("openai", model_mod.OPENAI_URL, cfg.openai_key, model,

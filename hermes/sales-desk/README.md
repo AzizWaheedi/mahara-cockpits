@@ -127,9 +127,20 @@ included is taken as no guarantee.
 
 | Provider | Key | Default model |
 |---|---|---|
-| `openai` (the default) | `OPENAI_API_KEY`, already on the VPS | `gpt-5` |
+| `vps` (the default) | none: Claude Code's sign-in on the VPS | `opus` |
+| `openai` | `OPENAI_API_KEY`, already on the VPS | `gpt-5` |
 | `anthropic` | `ANTHROPIC_API_KEY`, empty on the VPS today | `claude-opus-5` |
 | `openrouter` | `OPENROUTER_API_KEY` | `openai/gpt-5` |
+
+`vps` since 2026-09-27 (Aziz: "I want to use my VPS, not OpenAI"): Aziz's
+own proxy to Claude Code, `openclaw-claude-proxy` on 127.0.0.1:3456
+(`SALES_VPS_URL` if it moves), on his Claude plan, so there is no key and no
+API credit to run out. When Claude Code's sign-in lapses, the proxy answers
+with the error as the text of a reply; the desk takes that as the outage it
+is ("sign Claude Code in again on the VPS as aziz: `claude`, then `/login`")
+and never as a draft. The proxy reports no usage, so the day's ceiling counts
+an estimate of three characters a token. The researcher stays on OpenAI: it
+needs OpenAI's web search.
 
 gpt-5 because the drafter follows a long rulebook over a transcript that can
 pass 60,000 tokens and returns a 20,000 character document with every figure
@@ -263,8 +274,8 @@ holds settings only, never a key:
 cd ~/mahara-cockpits && git pull -q --ff-only
 mkdir -p ~/.sales-desk/reference && chmod 700 ~/.sales-desk
 cat > ~/.sales-desk/env <<'EOF'
-SALES_MODEL_PROVIDER=openai
-SALES_PROPOSAL_MODEL=gpt-5
+SALES_MODEL_PROVIDER=vps
+SALES_PROPOSAL_MODEL=opus
 EOF
 chmod 600 ~/.sales-desk/env
 cd hermes/sales-desk
@@ -309,7 +320,7 @@ editor desk's README says. Never pipe a stale copy.
 
 | Name | Default |
 |---|---|
-| `SALES_MODEL_PROVIDER` | `openai` |
+| `SALES_MODEL_PROVIDER` | `vps` |
 | `SALES_PROPOSAL_MODEL` | per provider, above |
 | `SALES_MODEL_TIMEOUT` | `900` seconds of silence per try |
 | `SALES_MODEL_ATTEMPTS` | `3` tries per model call |

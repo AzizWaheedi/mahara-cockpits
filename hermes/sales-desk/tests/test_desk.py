@@ -1089,13 +1089,23 @@ def load_cli():
 class CliTests(unittest.TestCase):
     def test_doctor_names_each_blocker_in_a_sentence(self):
         cli = load_cli()
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"SALES_DESK_HOME": tmp}):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {
+                "SALES_DESK_HOME": tmp, "SALES_MODEL_PROVIDER": "openai", "OPENAI_API_KEY": ""}):
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
                 code = cli.main(["doctor", "--offline"])
         self.assertEqual(code, 1)
         self.assertIn("OPENAI_API_KEY is not set, so the openai provider cannot draft.", buf.getvalue())
         self.assertNotIn("sk-", buf.getvalue())
+
+    def test_the_vps_proxy_needs_no_key(self):
+        cli = load_cli()
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"SALES_DESK_HOME": tmp}):
+            os.environ.pop("SALES_MODEL_PROVIDER", None)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                cli.main(["doctor", "--offline"])
+        self.assertIn("none needed: the Claude proxy on the VPS", buf.getvalue())
 
     def test_stuck_dialer_saves_are_sent_again_and_said_only_when_there_were_some(self):
         cli = load_cli()
