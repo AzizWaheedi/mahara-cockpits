@@ -477,8 +477,10 @@ export interface Gap {
 export function gapFor(f: Funnel, key: LeakKey | null = f.leak): Gap | null {
   if (!key) return null;
   const aov = f.given.aov;
+  // Money follows the whole projects the rep says out loud ("11 more
+  // projects" at 300,000 is 3.3 million), so the two never disagree.
   const money = (projectsYear: number | null) =>
-    projectsYear != null && pos(aov) ? projectsYear * aov : null;
+    projectsYear != null && pos(aov) ? Math.round(projectsYear) * aov : null;
   const big = (projectsYear: number | null) =>
     projectsYear != null && pos(f.closed) && projectsYear > 2 * f.closed * 12;
   if (key === "volume") {
@@ -547,7 +549,10 @@ export function wholeFunnel(
     at(r.show, f.ours.show) *
     at(r.close, f.ours.close);
   const projectsYear = Math.max(0, signed - f.closed) * 12;
-  return { projectsYear, moneyYear: pos(aov) ? projectsYear * aov : null };
+  return {
+    projectsYear,
+    moneyYear: pos(aov) ? Math.round(projectsYear) * aov : null,
+  };
 }
 
 /** Moving the close rate ten points, for the pitch's closing pillar. */

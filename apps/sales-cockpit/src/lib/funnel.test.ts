@@ -111,7 +111,8 @@ describe("the one thing", () => {
     // 12.5 meetings at a quarter of 50, 3.5 more, signing 2 of every 9.
     expect(gap?.unitsMonth).toBeCloseTo(3.5, 5);
     expect(gap?.projectsYear).toBeCloseTo(3.5 * (2 / 9) * 12, 5);
-    expect(gap?.moneyYear).toBeCloseTo(3.5 * (2 / 9) * 12 * 85_000, 3);
+    // 9.33 projects is said as 9, and the money is 9 of them.
+    expect(gap?.moneyYear).toBe(9 * 85_000);
     expect(gap?.usesOurs).toBe(false);
     expect(gap?.big).toBe(false);
   });
@@ -123,8 +124,8 @@ describe("the one thing", () => {
     expect(t["EXTRA MEETINGS"]).toBe("4 more meetings");
     expect(t["EXTRA PROJECTS A YEAR"]).toBe("9 more projects");
     expect(t["LOST PROJECTS A YEAR"]).toBe("9 projects");
-    expect(t["GAP YEAR"]).toBe("793,000 KWD");
-    expect(t["GAP MONTH"]).toBe("66,000 KWD");
+    expect(t["GAP YEAR"]).toBe("765,000 KWD");
+    expect(t["GAP MONTH"]).toBe("64,000 KWD");
     expect(t["PROJECT VALUE"]).toBe("85,000 KWD");
     expect(t.CPL).toBe("30 KWD");
     expect(t["OUR CPL"]).toBe("4.6 KWD");
@@ -141,7 +142,7 @@ describe("the one thing", () => {
     const t = funnelTokens(f, "ar");
     expect(t["BOOKING RATE"]).toBe("١٨٪");
     expect(t["EXTRA PROJECTS A YEAR"]).toBe("٩ مشاريع زيادة");
-    expect(t["GAP YEAR"]).toBe("٧٩٣ ألف دينار");
+    expect(t["GAP YEAR"]).toBe("٧٦٥ ألف دينار");
     expect(t["OUR CPL"]).toBe("٤٫٦ دينار");
     expect(t["WEAK STEP"]).toBe("الخطوة من الاستفسار للموعد");
   });
