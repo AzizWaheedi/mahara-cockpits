@@ -1,57 +1,14 @@
 import { motion } from "framer-motion";
-import {
-  ArrowRightLeft,
-  Bookmark,
-  CalendarDays,
-  Clapperboard,
-  FileText,
-  Filter,
-  LayoutGrid,
-  Lightbulb,
-  Link2,
-  LogOut,
-  MessageSquare,
-  Moon,
-  MoonStar,
-  PanelLeft,
-  PanelLeftClose,
-  Send,
-  Settings,
-  Share2,
-  ShieldCheck,
-  Sparkles,
-  Sun,
-  Sunrise,
-  Trophy,
-  Users,
-  UsersRound,
-} from "lucide-react";
+import { Bookmark, CalendarDays, FileText, Filter, LayoutGrid, Lightbulb, Link2, LogOut, MessageSquare, Moon, MoonStar, PanelLeft, PanelLeftClose, Send, Settings, Share2, Sparkles, Sun, Sunrise, Trophy, Users, X } from "lucide-react";
 import { Link, useLocation } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { portalUrl } from "@/lib/portal";
 import { Wordmark } from "@/components/Wordmark";
 import { useTheme } from "@/contexts/ThemeContext";
+import { COCKPIT_ICON } from "@/lib/cockpits";
 import { Avatar, AvatarFallback } from "./ui/avatar";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "./ui/dropdown-menu";
-import {
-  Sidebar,
-  SidebarContent,
-  SidebarFooter,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarHeader,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  useSidebar,
-} from "./ui/sidebar";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "./ui/dropdown-menu";
+import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "./ui/sidebar";
 
 type NavItem = {
   href: string;
@@ -65,7 +22,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
     label: "Your day",
     items: [
       { href: "/dashboard", label: "Start of day", icon: Sunrise },
-      { href: "/work", label: "Middle of the day", icon: Clapperboard },
+      { href: "/work", label: "Middle of the day", icon: Sun },
       {
         href: "/touchpoints",
         label: "Client touchpoints",
@@ -177,21 +134,23 @@ function PortalGroup() {
       show: isAdmin || roles.includes("sales"),
     },
   ].filter(d => d.show);
-  if (doors.length === 0) return null;
+  // Team meetings are everybody's, so they sit with the doors at the foot.
+  const rows = [
+    { key: "team", label: "Team meetings", href: `${portal}/team` },
+    ...doors,
+  ];
   return (
-    <SidebarGroup>
-      <SidebarGroupLabel>Switch cockpit</SidebarGroupLabel>
+    <SidebarGroup className="mt-auto border-t border-sidebar-border">
       <SidebarGroupContent>
         <SidebarMenu>
-          {doors.map(d => (
+          {rows.map(d => (
             <SidebarMenuItem key={d.key}>
               <SidebarMenuButton asChild tooltip={d.label}>
                 <a href={d.href}>
-                  {d.key === "admin" ? (
-                    <ShieldCheck className="size-4" />
-                  ) : (
-                    <ArrowRightLeft className="size-4" />
-                  )}
+                  {(() => {
+                    const Icon = COCKPIT_ICON[d.key];
+                    return Icon ? <Icon className="size-4" /> : null;
+                  })()}
                   <span>{d.label}</span>
                 </a>
               </SidebarMenuButton>
@@ -203,34 +162,11 @@ function PortalGroup() {
   );
 }
 
-/** The team's meetings and agendas, in the portal, for everyone. */
-function TeamGroup() {
-  return (
-    <SidebarGroup>
-      <SidebarGroupLabel>Team</SidebarGroupLabel>
-      <SidebarGroupContent>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton asChild>
-              <a href={`${portalUrl()}/team`}>
-                <UsersRound className="size-4" />
-                <span>Team meetings</span>
-              </a>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarGroupContent>
-    </SidebarGroup>
-  );
-}
-
 function SidebarNav() {
   const location = useLocation();
 
   return (
     <SidebarContent>
-      <PortalGroup />
-      <TeamGroup />
       {navGroups.map(group => (
         <SidebarGroup key={group.label}>
           <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
@@ -242,13 +178,17 @@ function SidebarNav() {
                   href={item.href}
                   label={item.label}
                   icon={item.icon}
-                  isActive={location.pathname === item.href}
+                  isActive={
+                    location.pathname === item.href ||
+                    location.pathname.startsWith(`${item.href}/`)
+                  }
                 />
               ))}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
       ))}
+      <PortalGroup />
     </SidebarContent>
   );
 }
@@ -334,22 +274,35 @@ function SidebarHeaderContent() {
     <SidebarHeader className="border-b border-sidebar-border flex-row items-center justify-between">
       {(open || isMobile) && (
         <Link
-          to="/"
+          to="/dashboard"
           onClick={() => setOpenMobile(false)}
           className="flex items-center px-2 py-2"
         >
           <Wordmark size="sm" />
         </Link>
       )}
-      <button
-        type="button"
-        onClick={toggleSidebar}
-        className="rounded-lg border p-2 hover:bg-sidebar-accent"
-        aria-label={open ? "Collapse sidebar" : "Expand sidebar"}
-        aria-expanded={open}
-      >
-        {open ? <PanelLeftClose size={16} /> : <PanelLeft size={16} />}
-      </button>
+      {/* Below 1024px the rail is a sheet with no close button of its own,
+          so this is how it closes: an X with a full 40px target. */}
+      {isMobile ? (
+        <button
+          type="button"
+          onClick={() => setOpenMobile(false)}
+          className="inline-flex size-10 items-center justify-center rounded-lg text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+          aria-label="Close menu"
+        >
+          <X className="size-5" />
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={toggleSidebar}
+          className="rounded-lg border p-2 hover:bg-sidebar-accent"
+          aria-label={open ? "Collapse sidebar" : "Expand sidebar"}
+          aria-expanded={open}
+        >
+          {open ? <PanelLeftClose size={16} /> : <PanelLeft size={16} />}
+        </button>
+      )}
     </SidebarHeader>
   );
 }

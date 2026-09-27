@@ -30,6 +30,7 @@
   --color-destructive: var(--destructive);
   --color-success: var(--success);
   --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
   --color-owed: var(--owed);
   --color-won: var(--won);
 
@@ -49,6 +50,8 @@
 
   --success: oklch(0.6 0.13 158);
   --warning: oklch(0.7 0.17 55);
+  /* Text on a warning (orange) fill, such as the owed-calls count. */
+  --warning-foreground: #1b1300;
 
   /* The sales cockpit names three of those for what they mean on a rep's day:
      a call that is owed a mark, a call or deal that went well, and now. */
@@ -184,9 +187,81 @@ h3 {
   word-break: break-word;
 }
 
+/* Figures of one width, in Geist. A number that should be set in Geist Mono
+   (a running timer) says so with font-mono. */
 .tabular-nums {
   font-variant-numeric: tabular-nums;
-  font-family: var(--font-mono);
+}
+
+/* The rail's active row: the same teal lamp as the other cockpits' rails. */
+.cockpit-nav-link {
+  position: relative;
+  isolation: isolate;
+  transition: color 180ms ease;
+}
+.cockpit-nav-link[data-active="true"] {
+  background: transparent;
+}
+.cockpit-nav-lamp {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: rgb(0 207 200 / 12%);
+  box-shadow: inset 0 0 0 1px rgb(0 207 200 / 30%);
+  pointer-events: none;
+}
+.cockpit-nav-lamp::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 56%;
+  border-radius: 0 3px 3px 0;
+  background: #00cfc8;
+  box-shadow: 0 0 12px 1px rgb(0 207 200 / 70%);
+}
+
+/* The same status vocabulary as the other cockpits, for light and dark. */
+@utility tone-good {
+  background-color: color-mix(in oklch, var(--success) 12%, transparent);
+  color: var(--success);
+}
+@utility tone-warn {
+  background-color: color-mix(in oklch, var(--warning) 15%, transparent);
+  color: color-mix(in oklch, var(--warning) 85%, var(--foreground));
+}
+@utility tone-bad {
+  background-color: color-mix(in oklch, var(--destructive) 12%, transparent);
+  color: var(--destructive);
+}
+@utility tone-neutral {
+  background-color: var(--muted);
+  color: var(--muted-foreground);
+}
+@utility txt-good {
+  color: var(--success);
+}
+@utility txt-bad {
+  color: var(--destructive);
+}
+@utility txt-warn {
+  color: color-mix(in oklch, var(--warning) 85%, var(--foreground));
+}
+/* Signature elevation on dark surfaces (brand §4): a live element only. */
+@utility glow-teal {
+  box-shadow:
+    0 0 0 1px color-mix(in oklch, var(--primary) 45%, transparent),
+    0 8px 28px -10px color-mix(in oklch, var(--primary) 55%, transparent);
+}
+/* A row of chips that scrolls sideways on a phone, without a scrollbar. */
+@utility no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -208,6 +283,7 @@ h3 {
   img, video, canvas, svg { max-width: 100%; }
   .pt-safe { padding-top: env(safe-area-inset-top, 0px); }
   .pb-safe { padding-bottom: env(safe-area-inset-bottom, 0px); }
+  input[type="checkbox"], input[type="radio"] { accent-color: var(--mahara-teal); }
 }
 /* Outside every layer so the text-sm and h-8 utilities do not win; touch screens only. */
 @media (pointer: coarse) {
@@ -298,7 +374,7 @@ h3 {
   display: grid;
   grid-template-columns: repeat(var(--hours), minmax(0, 1fr));
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   color: var(--muted-foreground);
   margin-top: 0.35rem;
 }

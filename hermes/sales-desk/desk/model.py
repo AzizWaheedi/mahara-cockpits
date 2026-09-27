@@ -1,11 +1,14 @@
-"""The model, behind one small interface: OpenAI, Anthropic or OpenRouter.
+"""The model, behind one small interface: the VPS's Claude, OpenAI, Anthropic or OpenRouter.
 
 The engine in Mahara-B2B called an OpenAI-shaped proxy to Claude on
 Muhammed's account. That proxy is not ours, so the desk talks to a provider
 directly with a key already on the VPS (Aziz, 2026-09-24: "the VPS" pays;
 OpenAI by default, Anthropic or OpenRouter switched in by
-SALES_MODEL_PROVIDER). Lead data never goes to DeepSeek: there is no DeepSeek
-provider, and a DeepSeek model named through OpenRouter is refused.
+SALES_MODEL_PROVIDER). Since 2026-09-27 ("I want to use my VPS, not OpenAI")
+`vps` is Aziz's own proxy to Claude Code on the VPS, with no key and no API
+credit to run out. Lead data never goes to DeepSeek: there is no DeepSeek
+provider, and every provider refuses a model outside the allowlist below, so
+no setting can name DeepSeek, another vendor or a router's alias.
 
 Every call streams. Not for progress: streaming makes the socket timeout a
 limit on silence between chunks rather than a budget for the whole answer,
@@ -30,6 +33,7 @@ from typing import Any, Callable, Iterable, Optional
 
 from . import http
 from .config import DEFAULT_MODELS, PROVIDERS, Config
+from .config import key as setting
 from .errors import NotNow
 
 OPENAI_URL = "https://api.openai.com/v1"
@@ -41,8 +45,44 @@ ANTHROPIC_VERSION = "2023-06-01"
 # so this should never fire; it is here so a false positive costs nothing.
 ANTHROPIC_FALLBACK_BETA = "server-side-fallback-2026-07-01"
 ANTHROPIC_MAX_TOKENS = 64000
+# The Claude proxy on the VPS itself (SALES_MODEL_PROVIDER=vps). SALES_VPS_URL
+# points elsewhere when the proxy moves.
+VPS_URL = "http://127.0.0.1:3456/v1"
+VPS_SIGN_IN = ("The Claude sign-in on the VPS has lapsed, so nothing can be drafted. Sign Claude Code in "
+               "again on the VPS as aziz (run claude, then /login); drafting resumes by itself.")
 
-KEY_NAMES = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY", "openrouter": "OPENROUTER_API_KEY"}
+KEY_NAMES = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY", "openrouter": "OPENROUTER_API_KEY",
+             "vps": "the Claude sign-in on the VPS"}
+
+# The models the desk may send anything to, by prefix: the frontier models it
+# works on today (gpt-5 by default, gpt-4.1 the fallback the README names,
+# OpenAI's o3 and o4, Claude), directly or through OpenRouter. Anything else
+# is refused, so no setting can route a lead's words to another vendor, or to
+# a router alias such as openrouter/auto that picks one by itself.
+FRONTIER = ("gpt-5", "gpt-4.1", "o3", "o4", "claude-",
+            "openai/gpt-5", "openai/gpt-4.1", "openai/o3", "openai/o4", "anthropic/claude-",
+            # Claude Code's own names for Anthropic's models, which the VPS proxy takes.
+            "opus", "sonnet")
+# DeepSeek only for a job that never carries lead data (Kuwaiti and Saudi data
+# law). Every job that asks a model today does: proposals, reviews and notes
+# read call transcripts, the digest what prospects said, follow-ups a lead's
+# messages and answers, research their name and company. So none may name it.
+NO_LEAD_DATA_ONLY = ("deepseek-", "deepseek/deepseek-")
+
+
+def model_allowed(model: str, *, lead_data: bool = True) -> bool:
+    m = str(model or "").strip().lower()
+    return m.startswith(FRONTIER) or (not lead_data and m.startswith(NO_LEAD_DATA_ONLY))
+
+
+def check_model(model: str, *, lead_data: bool = True, setting: str = "the job's model setting") -> None:
+    """A model outside the allowlist refused in one plain sentence, before anything is sent."""
+    if model_allowed(model, lead_data=lead_data):
+        return
+    if "deepseek" in str(model or "").lower():
+        raise ModelUnreachable(f"Lead data never goes to DeepSeek. Set {setting} to a model that is not DeepSeek's.")
+    raise ModelUnreachable(f"{model or 'No model'} is not a model the desk may send a lead's words to. Set {setting} "
+                           "to gpt-5, gpt-4.1, o3, o4 or a claude- model (openai/ or anthropic/ ones through OpenRouter).")
 
 
 class ModelUnreachable(NotNow):
@@ -289,9 +329,41 @@ def as_json(text: str, reasoning: str = "", *, expect: Optional[Callable[[dict[s
 
 # ---- providers ----------------------------------------------------------------
 
+# A streamed failure behind the VPS proxy arrives with a 200, as the whole
+# answer "[Error: <what Claude Code said>]".
+PROXY_ERROR = re.compile(r"^\[Error: (.*)\]$", re.S)
+
+
+def vps_reply(reply: Reply, asked: str) -> Reply:
+    """The VPS proxy's answer, with its failures raised rather than kept as a
+    draft. It sends no usage, so the day's ceiling counts an estimate of three
+    characters a token, on the high side, rather than nothing."""
+    m = PROXY_ERROR.match(reply.text)
+    if m:
+        said = m.group(1).strip()
+        low = said.lower()
+        if "oauth" in low or "authenticate" in low or "401" in low or "subscription access" in low:
+            raise ModelUnreachable(VPS_SIGN_IN)
+        if any(w in low for w in ("usage limit", "hit your limit", "limit reached", "rate limit")):
+            raise ModelUnreachable(f"The Claude plan on the VPS is at its usage limit ({http.scrub(said)[:160]}); "
+                                   "drafting waits until it resets.")
+        raise ModelError(f"the Claude proxy on the VPS failed: {http.scrub(said)[:300]}")
+    if not reply.usage:
+        i, o = -(-len(asked) // 3), -(-len(reply.text + reply.reasoning) // 3)
+        reply.usage = {"prompt_tokens": i, "completion_tokens": o, "total_tokens": i + o}
+    return reply
+
+
 def _classify(e: http.HttpError, provider: str, model: str) -> Exception:
     """An HTTP failure as either an outage (the request waits) or a failed try."""
     body = e.body.decode("utf-8", "replace") if isinstance(e.body, (bytes, bytearray)) else str(e)
+    if provider == "vps":
+        low = body.lower()
+        if e.status in (401, 403) or "oauth" in low or "authenticate" in low or "subscription access" in low:
+            return ModelUnreachable(VPS_SIGN_IN)
+        if e.status == 0 and not e.timed_out:
+            return ModelUnreachable("The Claude proxy on the VPS (127.0.0.1:3456) is not answering. Start it "
+                                    "again; drafting waits until then.")
     if e.status in (401, 403):
         return ModelUnreachable(
             f"{provider} refused the key ({e.status}). Set {KEY_NAMES[provider]} again on the VPS; "
@@ -312,7 +384,8 @@ class OpenAIShaped:
 
     def __init__(self, name: str, base: str, key: str, model: str, *, max_tokens: Optional[int] = None,
                  reasoning_effort: str = "", json_mode: bool = True, extra_headers: Optional[dict[str, str]] = None,
-                 log: Optional[Callable[[str], None]] = None):
+                 log: Optional[Callable[[str], None]] = None, lead_data: bool = True):
+        check_model(model, lead_data=lead_data)
         self.name = name
         self.base = base.rstrip("/")
         self.key = key
@@ -355,10 +428,12 @@ class OpenAIShaped:
                 if stream:
                     resp = http.open_stream(url, headers=self._headers(), json_body=body, timeout=timeout)
                     with resp:
-                        return read_openai_stream(resp)
-                _, _, raw = http.request("POST", url, headers=self._headers(), json_body=body,
-                                         timeout=timeout, retries=0)
-                return read_openai_body(raw)
+                        reply = read_openai_stream(resp)
+                else:
+                    _, _, raw = http.request("POST", url, headers=self._headers(), json_body=body,
+                                             timeout=timeout, retries=0)
+                    reply = read_openai_body(raw)
+                return vps_reply(reply, system + user) if self.name == "vps" else reply
             except http.HttpError as e:
                 text = (e.body or b"").decode("utf-8", "replace").lower()
                 if e.status == 400 and stream and "stream" in text and ("verif" in text or "not supported" in text):
@@ -392,6 +467,8 @@ class OpenAIShaped:
                 return f"{self.model} answered (one token is too few for a full reply, which is expected)"
             raise _classify(e, self.name, self.model)
         reply = read_openai_body(raw)
+        if self.name == "vps":
+            vps_reply(reply, "")
         return f"{reply.model or self.model} answered"
 
     def stream_check(self, timeout: float = 60) -> Optional[bool]:
@@ -427,7 +504,8 @@ class AnthropicProvider:
     name = "anthropic"
 
     def __init__(self, key: str, model: str, *, max_tokens: Optional[int] = None,
-                 log: Optional[Callable[[str], None]] = None):
+                 log: Optional[Callable[[str], None]] = None, lead_data: bool = True):
+        check_model(model, lead_data=lead_data)
         self.key = key
         self.model = model
         self.max_tokens = max_tokens or ANTHROPIC_MAX_TOKENS
@@ -491,15 +569,121 @@ class AnthropicProvider:
         return sorted(str(m.get("id")) for m in (data or {}).get("data") or [] if isinstance(m, dict) and m.get("id"))
 
 
+class BudgetSpent(NotNow):
+    """Today's AI ceiling is reached: the job stops and its items wait for tomorrow, untouched."""
+
+
+class SpendUnknown(NotNow):
+    """Today's spend could not be read: no model is asked until it can be, because an unknown spend is not zero."""
+
+
+@dataclass
+class Meter:
+    """What this process's model calls spend, against the desk's daily ceiling.
+
+    `used_today` reads the tokens already spent today (all jobs, from the
+    database) before the first call; while it cannot be read, no model is
+    asked, since a ceiling counted from zero is no ceiling. `record` writes
+    one row per call. A write that fails is warned about and never fails the
+    job: the ceiling still counts what this process spent."""
+    job: str
+    cap: int
+    used_today: Callable[[], int]
+    record: Callable[[dict[str, Any]], None]
+    spent: int = 0
+    base: Optional[int] = None
+    warn: Optional[Callable[[str], None]] = None
+
+    def check(self) -> None:
+        """Before a call: refused past the day's ceiling, or when today's spend cannot be read."""
+        if self.base is None:
+            try:
+                self.base = int(self.used_today())
+            except Exception as e:  # noqa: BLE001 - said in the refusal
+                raise SpendUnknown(f"Today's AI spend could not be read ({http.scrub(str(e))[:160]}), so the "
+                                   f"{self.job} job asks no model until it can: an unknown spend is not zero. It "
+                                   "tries again on its next run.") from None
+        if self.cap and self.base + self.spent >= self.cap:
+            raise BudgetSpent(f"today's AI ceiling of {self.cap:,} tokens is reached ({self.base + self.spent:,} spent); "
+                              "the desk's model calls start again after midnight Kuwait. If today is expected to need "
+                              "more, raise SALES_AI_DAILY_TOKENS in ~/.sales-desk/env")
+
+    def add(self, model: Optional[str], usage: dict[str, Any]) -> None:
+        """After a call: its tokens counted, and its row written."""
+        i, o, r, t = usage_tokens(usage or {})
+        self.spent += t
+        try:
+            self.record({"job": self.job, "model": model, "input_tokens": i, "output_tokens": o,
+                         "reasoning_tokens": r, "total_tokens": t})
+        except Exception as e:  # noqa: BLE001 - a missing usage row never costs the answer
+            if self.warn:
+                self.warn(f"{self.job}: the usage of a model call ({t:,} tokens) was not written, so the cockpit's "
+                          f"AI counts miss it: {http.scrub(str(e))[:200]}")
+
+
+_METER: Optional[Meter] = None
+
+
+def meter(m: Optional[Meter]) -> None:
+    """Meter every provider this process makes from now on (desk.py sets it per command)."""
+    global _METER
+    _METER = m
+
+
+def current_meter() -> Optional[Meter]:
+    """The meter desk.py set for this command, for a job that calls a model without a provider (research)."""
+    return _METER
+
+
+def metered(p: Any) -> Any:
+    """A provider counted against the day's ceiling when desk.py has set a meter."""
+    return Metered(p, _METER) if _METER is not None else p
+
+
+def usage_tokens(usage: dict[str, Any]) -> tuple[int, int, int, int]:
+    """(input, output, reasoning, total) from OpenAI's or Anthropic's usage shape."""
+    i = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
+    o = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
+    details = usage.get("completion_tokens_details") or usage.get("output_tokens_details") or {}
+    r = int((details or {}).get("reasoning_tokens") or 0)
+    return i, o, r, int(usage.get("total_tokens") or (i + o))
+
+
+class Metered:
+    """A provider whose every call is counted and logged, and refused past the day's ceiling."""
+
+    def __init__(self, inner: Any, m: Meter):
+        self.inner, self.m = inner, m
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.inner, name)
+
+    def complete(self, system: str, user: str, *, temperature: Optional[float] = None, timeout: float = 900) -> Reply:
+        self.m.check()
+        reply = self.inner.complete(system, user, temperature=temperature, timeout=timeout)
+        self.m.add(reply.model or getattr(self.inner, "model", None), reply.usage or {})
+        return reply
+
+
 def provider(cfg: Config, log: Optional[Callable[[str], None]] = None) -> Any:
+    """The configured provider, metered when desk.py has set a meter, or ModelUnreachable in one plain sentence."""
+    return metered(_provider(cfg, log))
+
+
+def _provider(cfg: Config, log: Optional[Callable[[str], None]] = None) -> Any:
     """The configured provider, or ModelUnreachable in one plain sentence."""
-    name = (cfg.provider or "openai").strip().lower()
+    name = (cfg.provider or "vps").strip().lower()
     model = (cfg.model or "").strip() or DEFAULT_MODELS.get(name, "")
     if "deepseek" in name or "deepseek" in model.lower():
         raise ModelUnreachable("Lead data never goes to DeepSeek. Set SALES_MODEL_PROVIDER to openai, anthropic "
                                "or openrouter, and SALES_PROPOSAL_MODEL to a model that is not DeepSeek's.")
+    check_model(model, setting="SALES_PROPOSAL_MODEL (or the job's own model setting)")
     if name not in PROVIDERS:
-        raise ModelUnreachable(f"SALES_MODEL_PROVIDER is {name!r}; it has to be openai, anthropic or openrouter.")
+        raise ModelUnreachable(f"SALES_MODEL_PROVIDER is {name!r}; it has to be vps, openai, anthropic or openrouter.")
+    if name == "vps":
+        # No key: the proxy speaks for the Claude plan Claude Code is signed in with.
+        return OpenAIShaped("vps", setting("SALES_VPS_URL", "").strip() or VPS_URL, "vps", model,
+                            max_tokens=cfg.max_tokens, json_mode=False, log=log)
     key = {"openai": cfg.openai_key, "anthropic": cfg.anthropic_key, "openrouter": cfg.openrouter_key}[name]
     if not key:
         hint = "" if name == "openai" else ", or set SALES_MODEL_PROVIDER back to openai"

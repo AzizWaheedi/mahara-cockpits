@@ -41,6 +41,9 @@ OUTSIDER = "one_or_more_external"
 # Rows whose transcript Fathom cannot give the desk: Ahmed's private calls,
 # copied from B2B (b2b_fathom.py). The cockpit's own copy is read instead.
 STORED_ONLY = ("b2b_fathom",)
+# Hides one meeting recorded twice and the phone "transcripts" that are only
+# the carrier's message (20260926m_sales_hardening.sql); safe at any time.
+MARK = "rpc/cockpit_sales_mark_recordings"
 
 NO_RECORDING = ("No Fathom recording of this lead's demo was found. Share the recording "
                 "with the team in Fathom, then draft again.")
@@ -201,6 +204,7 @@ def index(sb: Any, fathom: Fathom, log: Callable[[str], None], *, days: int) -> 
 
     kept = _keep_earlier_matches(sb, rows)
     stored = sb.store_recordings(rows) if rows else 0
+    marked = mark_recordings(sb, log, "recordings")
     by = {"email": 0, "appointment": 0, "none": 0}
     for r in rows:
         by[r["matched_by"]] = by.get(r["matched_by"], 0) + 1
@@ -208,7 +212,7 @@ def index(sb: Any, fathom: Fathom, log: Callable[[str], None], *, days: int) -> 
         "days": days, "reps": len(reps), "seen": len(meetings), "not_sales": not_sales,
         "team": team, "indexed": stored, "by_email": by.get("email", 0),
         "by_appointment": by.get("appointment", 0), "unmatched": by.get("none", 0),
-        "kept_earlier_match": kept, "reps_unread": unread,
+        "kept_earlier_match": kept, "reps_unread": unread, "marked": marked,
     }
     log(f"recordings: {summary}")
     return summary
@@ -218,10 +222,18 @@ def _quoted(values: Iterable[str]) -> list[str]:
     return ['"' + str(v).replace('"', '') + '"' for v in values]
 
 
-def _keep_earlier_matches(sb: Any, rows: list[dict[str, Any]]) -> int:
+def _keep_earlier_matches(sb: Any, rows: list[dict[str, Any]], *, redo: Iterable[str] = ()) -> int:
     """A match found once is evidence. A later run that cannot see it again
     (the appointment left the mirror, say) does not overwrite it with none,
-    and a match somebody made by hand is never overwritten at all."""
+    and a match somebody made by hand is never overwritten at all.
+
+    An import that names the rules it decides (`redo`) decides those afresh
+    on every run, and leaves a match by any other rule alone. The phone
+    import names the phone rule, whose earlier version gave a call on digits
+    two leads shared to the newer of them: a match it made is no evidence
+    when the rule now finds more than one lead could be meant, and it never
+    overrides a match by email or appointment."""
+    again = set(redo)
     ids = [r["recording_id"] for r in rows]
     have: dict[str, dict[str, Any]] = {}
     for i in range(0, len(ids), 100):
@@ -237,12 +249,25 @@ def _keep_earlier_matches(sb: Any, rows: list[dict[str, Any]]) -> int:
             continue
         how = str(was.get("matched_by") or "")
         by_hand = how and how not in OURS
-        lost = r["matched_by"] == "none" and how in MATCHES
+        others = how in MATCHES and how not in again
+        lost = others and (r["matched_by"] == "none" or bool(again))
         if by_hand or lost:
             r["contact_id"], r["appointment_id"], r["matched_by"] = (
                 was.get("contact_id"), was.get("appointment_id"), how)
             kept += 1
     return kept
+
+
+def mark_recordings(sb: Any, log: Callable[[str], None], job: str) -> Optional[int]:
+    """Once after an import wrote recordings: hide one meeting recorded twice
+    (duplicate_of the longest) and the phone calls whose transcript is only
+    the carrier's message. The rows it changed; None when it could not be
+    asked, which the import survives: the calls are in, only not yet marked."""
+    try:
+        return int(sb.rest("POST", MARK, json_body={}) or 0)
+    except (http.HttpError, TypeError, ValueError) as e:
+        log(f"{job}: recordings stored, but duplicates and stubs were not marked: {http.scrub(str(e))[:200]}")
+        return None
 
 
 @dataclass

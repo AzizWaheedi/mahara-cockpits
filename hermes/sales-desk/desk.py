@@ -88,6 +88,34 @@ def _status(cfg: Config, log: Logger, job: str, ok: bool, detail: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+# The commands that call a model, each metered against the day's ceiling.
+METERED = ("requests", "draft", "reviews", "followups", "notes", "digest", "research")
+DAILY_TOKENS = 15_000_000
+
+
+def _meter(cfg: Config, job: str, log: Logger) -> None:
+    """Count and log every model call this run makes (cockpit_sales_ai_usage),
+    and stop them past SALES_AI_DAILY_TOKENS for the Kuwait day, or while the
+    day's spend cannot be read."""
+    sb = _sb(cfg)
+    try:
+        cap = int(key("SALES_AI_DAILY_TOKENS", str(DAILY_TOKENS)).replace(",", "").strip() or DAILY_TOKENS)
+    except ValueError:
+        cap = DAILY_TOKENS
+    now = datetime.now(timezone.utc)
+    k = now + timedelta(hours=3)
+    midnight = (k.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(hours=3)).isoformat()
+
+    def used_today() -> int:
+        out = sb.rest("POST", "rpc/cockpit_sales_ai_tokens_since", json_body={"p_since": midnight})
+        return int(out or 0)
+
+    def record(row: dict[str, Any]) -> None:
+        sb.rest("POST", "cockpit_sales_ai_usage", json_body=[row], prefer="return=minimal", retries=0)
+
+    model_mod.meter(model_mod.Meter(job=job, cap=cap, used_today=used_today, record=record, warn=log.warn))
+
+
 def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     rows: list[dict[str, Any]] = []
 
@@ -128,7 +156,8 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     p = None
     try:
         p = model_mod.provider(cfg, log.info)
-        add("model key", True, f"{model_mod.KEY_NAMES[cfg.provider]} set for {cfg.provider}", True)
+        add("model key", True, "none needed: the Claude proxy on the VPS" if cfg.provider == "vps"
+            else f"{model_mod.KEY_NAMES[cfg.provider]} set for {cfg.provider}", True)
     except NotNow as e:
         add("model key", False, str(e), True)
 
@@ -208,7 +237,7 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
                 if cfg.model in ids:
                     add("model listed", True, f"{cfg.model} is one of the {len(ids)} models this key can use")
                 else:
-                    usable = [i for i in ids if i.startswith(("gpt-4.1", "gpt-5", "o3", "o4", "claude-", "openai/gpt-5"))]
+                    usable = [i for i in ids if model_mod.model_allowed(i)]
                     add("model listed", False, f"{cfg.model} is not among the models this key can use. Set "
                                                "SALES_PROPOSAL_MODEL to one of: " + ", ".join(usable[:20] or ids[:20]), True)
             except (NotNow, model_mod.ModelError) as e:
@@ -251,6 +280,19 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
         except (maqsam_mod.MaqsamError, http.HttpError, SupabaseError) as e:
             add("maqsam", None, f"phone calls cannot be copied: {http.scrub(str(e))[:200]}")
 
+        ghl_token = key("GHL_B2B_API_KEY") or key("SALES_GHL_TOKEN")
+        if ghl_token:
+            try:
+                followups_mod.ghl_probe(ghl_token)
+                add("highlevel", True, "answers: the sales sub-account's conversations can be read, as the follow-up "
+                                       "agent and the template check need", True)
+            except http.HttpError as e:
+                add("highlevel", False, f"HighLevel refused the desk's key ({e.status}): set GHL_B2B_API_KEY in "
+                                        "/opt/data/bibi/api-keys.env. Until then follow-ups wait", True)
+        else:
+            add("highlevel", False, "GHL_B2B_API_KEY is not set, so the follow-up agent cannot read a conversation "
+                                    "and writes nothing", True)
+
         if engine == "playwright":
             with tempfile.TemporaryDirectory() as tmp:
                 page = Path(tmp) / "probe.html"
@@ -280,6 +322,28 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     return 1 if blockers else 0
 
 
+def _resync_stuck(cfg: Config, log: Logger) -> str:
+    """Dialer saves HighLevel has not taken, sent again by sales-api (the call
+    centre's durable-worker lesson). Best effort: a failure here is a warning,
+    never the requests job's own failure. Empty when nothing was stuck."""
+    try:
+        _, _, raw = http.request(
+            "POST", f"{cfg.supabase_url.rstrip('/')}/functions/v1/sales-api",
+            headers={"Authorization": f"Bearer {cfg.supabase_key}", "Content-Type": "application/json",
+                     "x-region": "eu-west-1"},
+            data=json.dumps({"action": "dial.resync_stuck"}).encode(),
+            timeout=60, retries=0,
+        )
+        out = json.loads(raw.decode("utf-8") or "{}")
+    except Exception as e:  # noqa: BLE001 - the resend is a courtesy to the requests job
+        log.warn(f"requests: stuck dialer saves could not be sent again: {http.scrub(str(e))[:160]}")
+        return ""
+    tried = int(out.get("tried") or 0)
+    if not tried:
+        return ""
+    return f"{int(out.get('written') or 0)} of {tried} stuck dialer saves sent to HighLevel again"
+
+
 def cmd_requests(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     """Carry out what the cockpit asked for. Quiet when nothing is queued."""
     sb = _sb(cfg)
@@ -299,6 +363,9 @@ def cmd_requests(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
         done = ", ".join(f"{n} {s.replace('_', ' ')}" for s, n in sorted(out["statuses"].items()))
         detail = (f"{out['done']} done ({done or 'none'}), {out['retry']} to try again, {out['failed']} failed"
                   + (f", {out['reaped']} reaped" if out["reaped"] else ""))
+    resent = _resync_stuck(cfg, log)
+    if resent:
+        detail += f"; {resent}"
     _status(cfg, log, "requests", not out.get("blocked") and not out["failed"], detail)
     if busy or args.json:
         log.info(f"requests: {detail}")
@@ -391,9 +458,11 @@ def cmd_maqsam_calls(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
                      else f"from {out['seats']} seats ")
                   + f"({out['first'] or '?'} to {out['last'] or '?'}), {out['by_phone']} matched to a lead by phone, "
                   f"{out['unmatched']} unmatched, {out['uploaded']} transcripts uploaded"
-                  + (f"; could not read {', '.join(out['seats_unread'])}" if out["seats_unread"] else ""))
+                  + (f"; could not read {', '.join(out['seats_unread'])}" if out["seats_unread"] else "")
+                  + f"; {out['dials_said']}")
     if not args.dry:
-        _status(cfg, log, "maqsam-calls", bool(out["seats"]) and not out["seats_unread"], detail)
+        _status(cfg, log, "maqsam-calls", bool(out["seats"]) and not out["seats_unread"]
+                and not out["dials"]["errors"], detail)
     _print(out if args.json else detail, args.json)
     return 1 if out["seats_unread"] and not out["rows"] else 0
 
@@ -443,16 +512,16 @@ def cmd_reviews_import(cfg: Config, args: argparse.Namespace, log: Logger) -> in
 
 def review_provider(cfg: Config, log: Logger) -> Any:
     """The model Vince writes with: the desk's own provider and key (the VPS
-    keys), SALES_REVIEW_MODEL when set, and plain text rather than JSON."""
+    keys), SALES_REVIEW_MODEL when set, and plain text rather than JSON;
+    metered like every other job's."""
     model = key("SALES_REVIEW_MODEL", "").strip() or cfg.model
-    if (cfg.provider or "openai") == "openai":
+    model_mod.check_model(model, setting="SALES_REVIEW_MODEL")
+    if (cfg.provider or "vps") == "openai":
         if not cfg.openai_key:
             raise model_mod.ModelUnreachable("OPENAI_API_KEY is not set, so Vince cannot review calls.")
-        if "deepseek" in model.lower():
-            raise model_mod.ModelUnreachable("Lead data never goes to DeepSeek; set SALES_REVIEW_MODEL to another model.")
-        return model_mod.OpenAIShaped("openai", model_mod.OPENAI_URL, cfg.openai_key, model,
-                                      max_tokens=cfg.max_tokens, reasoning_effort=cfg.reasoning_effort,
-                                      json_mode=False, log=log.info)
+        return model_mod.metered(model_mod.OpenAIShaped("openai", model_mod.OPENAI_URL, cfg.openai_key, model,
+                                                        max_tokens=cfg.max_tokens, reasoning_effort=cfg.reasoning_effort,
+                                                        json_mode=False, log=log.info))
     cfg.model = model
     return model_mod.provider(cfg, log.info)
 
@@ -477,10 +546,10 @@ def cmd_reviews(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     try:
         p = review_provider(cfg, log)
         asked = reviews_mod.review_asked(sb, p, log.info, knowledge=knowledge, limit=args.limit or 3,
-                                         timeout=cfg.model_timeout)
-        out = {"due": 0, "reviewed": 0, "failed": 0, "errors": []} if args.asked else reviews_mod.review_new(
-            sb, p, log.info, knowledge=knowledge, since=since, limit=args.limit or 2,
-            min_chars=cfg.min_transcript_chars, timeout=cfg.model_timeout)
+                                         timeout=cfg.model_timeout, warn=log.warn)
+        out = {"due": 0, "reviewed": 0, "failed": 0, "set_aside": 0, "errors": []} if args.asked else \
+            reviews_mod.review_new(sb, p, log.info, knowledge=knowledge, since=since, limit=args.limit or 2,
+                                   min_chars=cfg.min_transcript_chars, timeout=cfg.model_timeout, warn=log.warn)
     except model_mod.ModelUnreachable as e:
         _status(cfg, log, "reviews", False, str(e))
         log.error(str(e))
@@ -489,16 +558,20 @@ def cmd_reviews(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     if asked["asked"]:
         parts.append(f"{asked['reviewed']} asked-for reviewed, {asked['failed']} failed of {asked['asked']} asked"
                      + (f": {asked['errors'][0]}" if asked["errors"] else ""))
+    if asked.get("freed"):
+        parts.append(f"{asked['freed']} asks a stopped run had left half-done freed")
     if out["due"]:
         parts.append(f"{out['reviewed']} reviewed, {out['failed']} failed of {out['due']} due"
                      + (f": {out['errors'][0]}" if out["errors"] else ""))
+    if out.get("set_aside"):
+        parts.append(f"{out['set_aside']} set aside for a day after failing twice")
     detail = "; ".join(parts) or "nothing to review"
     failed, done = asked["failed"] + out["failed"], asked["reviewed"] + out["reviewed"]
     # The two-minute run reports only when it had work, so the half-hourly
     # line is not overwritten by "nothing" every two minutes.
-    if not args.asked or asked["asked"]:
+    if not args.asked or asked["asked"] or asked.get("freed"):
         _status(cfg, log, "reviews", not failed, detail)
-    if asked["asked"] or out["due"] or args.json:
+    if asked["asked"] or asked.get("freed") or out["due"] or args.json:
         _print({"asked": asked, "new": out} if args.json else detail, args.json)
     return 1 if failed and not done else 0
 
@@ -509,11 +582,19 @@ def cmd_research(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     if not cfg.openai_key:
         _status(cfg, log, "research", False, "OPENAI_API_KEY is not set, so the researcher cannot search.")
         return 1
+    model = key("SALES_RESEARCH_MODEL", "").strip() or "gpt-5"
+    try:
+        model_mod.check_model(model, setting="SALES_RESEARCH_MODEL")
+    except model_mod.ModelUnreachable as e:
+        _status(cfg, log, "research", False, str(e))
+        log.error(str(e))
+        return 1
     apify = key("APIFY_API_KEY") or key("APIFY_TOKEN")
-    out = research_mod.run(sb, cfg, log.info, host=WORKER, limit=args.limit or 3,
-                           model=key("SALES_RESEARCH_MODEL", "").strip() or "gpt-5", apify_key=apify)
-    if out["seen"] or args.json:
-        detail = f"{out['done']} researched, {out['failed']} failed" + ("" if apify else " (no Apify key: web search only)")
+    out = research_mod.run(sb, cfg, log.info, host=WORKER, limit=args.limit or 3, model=model, apify_key=apify,
+                           warn=log.warn)
+    if out["seen"] or out.get("reaped") or args.json:
+        detail = (f"{out['done']} researched, {out['failed']} failed" + ("" if apify else " (no Apify key: web search only)")
+                  + (f"; {out['reaped']} a stopped run had left half-done freed" if out.get("reaped") else ""))
         _status(cfg, log, "research", not out["failed"], detail)
         _print(out if args.json else detail, args.json)
     return 0
@@ -521,44 +602,67 @@ def cmd_research(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
 
 def cmd_followups(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     """Write follow-up drafts for the leads who need one now, for their reps to approve."""
+    ghl_token = key("GHL_B2B_API_KEY") or key("SALES_GHL_TOKEN")
+    if not ghl_token:
+        # Without it every conversation reads as empty: no automation's
+        # message, no stop, no window. Nothing is written instead.
+        detail = ("GHL_B2B_API_KEY is not set, so the follow-up agent cannot read a conversation and writes nothing. "
+                  "Set it in /opt/data/bibi/api-keys.env.")
+        _status(cfg, log, "followups", False, detail)
+        log.error(detail)
+        return 1
     sb = _sb(cfg)
     settings = sb.setting("followups") or {}
     try:
         model = key("SALES_FOLLOWUP_MODEL", "").strip()
         if model:
+            model_mod.check_model(model, setting="SALES_FOLLOWUP_MODEL")
             cfg.model = model
         p = model_mod.provider(cfg, log.info)
     except model_mod.ModelUnreachable as e:
         _status(cfg, log, "followups", False, str(e))
         log.error(str(e))
         return 1
-    def autosend(followup_id: str) -> dict:
-        """The cockpit's own send, asked by the desk with its service key."""
+
+    def sales_api(action: str, followup_id: str) -> dict:
+        """The cockpit's own door, asked by the desk with its service key."""
         _, _, raw = http.request(
             "POST", f"{cfg.supabase_url.rstrip('/')}/functions/v1/sales-api",
             headers={"Authorization": f"Bearer {cfg.supabase_key}", "Content-Type": "application/json"},
-            data=json.dumps({"action": "followup.autosend", "id": followup_id}).encode(),
+            data=json.dumps({"action": action, "id": followup_id}).encode(),
             timeout=60, retries=0, ok_statuses=(200, 400, 403, 404, 409, 500, 502),
         )
         return json.loads(raw.decode("utf-8") or "{}")
 
-    out = followups_mod.run(sb, p, log.info, settings=settings,
-                            ghl_token=key("GHL_B2B_API_KEY") or key("SALES_GHL_TOKEN"), autosend=autosend)
+    out = followups_mod.run(sb, p, log.info, settings=settings, ghl_token=ghl_token, warn=log.warn,
+                            autosend=lambda i: sales_api("followup.autosend", i),
+                            settle=lambda i: sales_api("followup.settle", i))
     if "skipped" in out:
         detail = out["skipped"]
     else:
         words = {"whatsapp": "WhatsApp", "whatsapp_template": "WhatsApp template", "email": "email"}
         channels = ", ".join(f"{n} {words.get(k, k)}" for k, n in (out.get("by_channel") or {}).items())
+        settled = out.get("settled") or {}
         detail = (f"{out['written']} drafts written of {out['picked']} leads due"
                   + (f" ({channels})" if channels else "")
                   + (f", {out['sent_by_itself']} sent by themselves" if out.get("sent_by_itself") else "")
                   + (f", {out['held_for_automation']} waiting while a HighLevel automation messages them"
                      if out.get("held_for_automation") else "")
                   + (f", {out['in_a_conversation']} already talking with a rep" if out.get("in_a_conversation") else "")
+                  + (f", {out['already_answered']} already answered" if out.get("already_answered") else "")
+                  + (f", {out['asked_to_stop']} asked not to be messaged" if out.get("asked_to_stop") else "")
+                  + (f", {out['conversation_unreadable']} waiting because HighLevel could not be read"
+                     if out.get("conversation_unreadable") else "")
                   + (f", {out['no_open_channel']} with no open channel" if out["no_open_channel"] else "")
                   + (f", {out['not_sales_leads']} not sales leads (clients, or no pipeline)" if out.get("not_sales_leads") else "")
+                  + (f", {out['set_aside']} set aside for a day after failing twice" if out.get("set_aside") else "")
                   + (f", {out['replies_marked']} replies to earlier messages" if out.get("replies_marked") else "")
                   + (f", {out['went_stale']} stale drafts closed" if out.get("went_stale") else "")
+                  + (f", {out['reason_gone']} drafts closed because their reason is gone" if out.get("reason_gone") else "")
+                  + (f", {out['stuck_freed']} sends that stopped halfway freed" if out.get("stuck_freed") else "")
+                  + (f", {settled.get('gone', 0) + settled.get('failed', 0)} sends settled"
+                     + (f" ({settled['failed']} failed at HighLevel)" if settled.get("failed") else "")
+                     if settled.get("gone") or settled.get("failed") else "")
                   + (f", {out['failed']} failed" if out["failed"] else ""))
     _status(cfg, log, "followups", not out.get("failed"), detail)
     if out.get("written") or out.get("failed") or args.json:
@@ -571,8 +675,7 @@ def notes_provider(cfg: Config, log: Logger) -> Any:
     provider on the VPS key, SALES_NOTES_MODEL when set; never DeepSeek."""
     model = key("SALES_NOTES_MODEL", "").strip()
     if model:
-        if "deepseek" in model.lower():
-            raise model_mod.ModelUnreachable("Lead data never goes to DeepSeek; set SALES_NOTES_MODEL to another model.")
+        model_mod.check_model(model, setting="SALES_NOTES_MODEL")
         cfg.model = model
     return model_mod.provider(cfg, log.info)
 
@@ -584,18 +687,26 @@ def cmd_notes(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     try:
         p = notes_provider(cfg, log)
         out = notes_mod.run_notes(sb, p, log.info, since=since, limit=args.limit or 4,
-                                  min_chars=cfg.min_transcript_chars, timeout=cfg.model_timeout)
+                                  min_chars=cfg.min_transcript_chars, timeout=cfg.model_timeout, warn=log.warn)
     except model_mod.ModelUnreachable as e:
         _status(cfg, log, "notes", False, str(e))
         log.error(str(e))
         return 1
-    detail = ("every call has its notes" if not out["due"] else
-              f"{out['written']} written, {out['failed']} failed of {out['due']} due"
-              + (f": {out['errors'][0]}" if out["errors"] else ""))
+    detail = ((f"{out['written']} written, {out['failed']} failed of {out['due']} due"
+               + (f": {out['errors'][0]}" if out["errors"] else "")) if out["due"] else
+              "no other call is due" if out.get("set_aside") else "every call has its notes")
+    detail += f"; {out['set_aside']} set aside for a day after failing twice" if out.get("set_aside") else ""
     _status(cfg, log, "notes", not out["failed"], detail)
-    if out["due"] or args.json:
+    if out["due"] or out.get("set_aside") or args.json:
         _print(out if args.json else detail, args.json)
     return 1 if out["failed"] and not out["written"] else 0
+
+
+def digest_words(o: dict[str, Any]) -> str:
+    """One digest's line: from how many of the window's calls, and the past calls nobody has marked."""
+    calls = f"{o['calls']} of {o['of']} calls (partial)" if o.get("partial") else f"{o['calls']} calls"
+    return (f"{o['days']} days from {calls}"
+            + (f", {o['unmarked']} past calls nobody has marked yet" if o.get("unmarked") else ""))
 
 
 def cmd_digest(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
@@ -603,7 +714,8 @@ def cmd_digest(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     sb = _sb(cfg)
     try:
         p = notes_provider(cfg, log)
-        outs = [notes_mod.run_digest(sb, p, log.info, days=d, timeout=cfg.model_timeout)
+        outs = [notes_mod.run_digest(sb, p, log.info, days=d, timeout=cfg.model_timeout,
+                                     min_chars=cfg.min_transcript_chars)
                 for d in ([args.days] if args.days else [7, 30])]
     except model_mod.ModelUnreachable as e:
         _status(cfg, log, "digest", False, str(e))
@@ -613,7 +725,7 @@ def cmd_digest(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
         _status(cfg, log, "digest", False, str(e))
         log.error(str(e))
         return 1
-    detail = "; ".join(f"{o['days']} days from {o['calls']} calls" for o in outs)
+    detail = "; ".join(digest_words(o) for o in outs)
     _status(cfg, log, "digest", True, detail)
     _print(outs if args.json else detail, args.json)
     return 0
@@ -784,16 +896,21 @@ def main(argv: Optional[list[str]] = None) -> int:
         "research": cmd_research, "followups": cmd_followups, "notes": cmd_notes, "digest": cmd_digest,
         "validate": cmd_validate, "build": cmd_build, "draft": cmd_draft, "offer-sync": cmd_offer_sync,
     }
+    if args.cmd in METERED and cfg.supabase_configured:
+        _meter(cfg, args.cmd, log)
     try:
         return handlers[args.cmd](cfg, args, log)
     except (SupabaseError, http.HttpError, NotNow, Refused) as e:
         log.error(http.scrub(str(e))[:400])
         if args.cmd in ("requests", "recordings", "status", "offer-sync", "calls-vault", "reviews", "research",
-                        "followups", "maqsam-calls") and not getattr(args, "dry", False):
+                        "followups", "maqsam-calls", "notes", "digest") and not getattr(args, "dry", False):
             _status(cfg, log, args.cmd, False, http.scrub(str(e))[:400])
         return 1
     except KeyboardInterrupt:
         return 130
+    finally:
+        # A meter counts one command's calls, under that command's name.
+        model_mod.meter(None)
 
 
 if __name__ == "__main__":

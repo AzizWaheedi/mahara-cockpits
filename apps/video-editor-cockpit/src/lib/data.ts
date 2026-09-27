@@ -211,12 +211,15 @@ export function useEodToday(day: string): Loaded<WorkRequest[]> {
   );
 }
 
-/** Team meetings. A row policy decides which ones: the ones you were on. */
+/**
+ * Team meetings as Fathom recorded them. A row policy decides which ones:
+ * the ones you were on (team_recordings, 20260927d).
+ */
 export function useMeetings(): Loaded<TeamMeeting[]> {
   return useQuery<TeamMeeting[]>(
     () =>
       supabase
-        .from("team_meetings")
+        .from("team_recordings")
         .select("*")
         .order("started_at", { ascending: false, nullsFirst: false })
         .limit(60),

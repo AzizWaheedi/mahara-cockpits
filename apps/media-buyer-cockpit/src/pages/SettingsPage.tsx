@@ -1,26 +1,20 @@
-import { ChevronRight, Loader2, Moon, Palette, Sun, User } from "lucide-react";
+import { ChevronRight, Loader2, User } from "lucide-react";
+
+
+
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
-import { useTheme } from "@/contexts/ThemeContext";
+
+
 
 export function SettingsPage() {
   const auth = useCockpitAuth();
-  const { theme, toggleTheme, switchable } = useTheme();
   const navigate = useNavigate();
   const emailPasswordAvailable = true;
   const user = { name: auth.name, email: auth.email };
@@ -72,7 +66,7 @@ export function SettingsPage() {
         }, 1500);
       }
     } catch {
-      setError("Invalid code or password. Please try again.");
+      setError("That code or password did not work. Try again.");
     } finally {
       setLoading(false);
     }
@@ -92,104 +86,53 @@ export function SettingsPage() {
   };
 
   return (
-    <div className="space-y-8 max-w-2xl mx-auto">
-      <div>
-        <h1 className="text-2xl md:text-3xl font-bold tracking-tight">
-          Settings
-        </h1>
-        <p className="text-muted-foreground mt-1">
-          Your account, appearance and password.
+    <div className="mx-auto w-full max-w-2xl space-y-6">
+      <header>
+        <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Your account and password. Light or dark mode is in your account menu.
         </p>
-      </div>
+      </header>
 
-      <Card className="overflow-hidden">
-        <div className="h-20 bg-gradient-to-r from-primary/20 via-primary/10 to-transparent" />
-        <CardContent className="-mt-10 pb-6">
-          <div className="flex items-end gap-4">
-            <Avatar className="size-16 border-4 border-background shadow-lg">
-              <AvatarFallback className="text-xl bg-primary text-primary-foreground">
-                {user?.name?.charAt(0).toUpperCase() || (
-                  <User className="size-6" />
-                )}
-              </AvatarFallback>
-            </Avatar>
-            <div className="pb-1">
-              <p className="font-semibold">{user?.name || "User"}</p>
-              <p className="text-sm text-muted-foreground">{user?.email}</p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="pb-4">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Palette className="size-4 text-muted-foreground" />
-            Appearance
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-1">
-          {switchable ? (
-            <div className="flex items-center justify-between rounded-lg border p-4 transition-colors hover:bg-muted/50">
-              <div className="flex items-center gap-4">
-                <div className="size-10 rounded-full bg-secondary flex items-center justify-center">
-                  {theme === "light" ? (
-                    <Moon className="size-5 text-foreground" />
-                  ) : (
-                    <Sun className="size-5 text-foreground" />
-                  )}
-                </div>
-                <div>
-                  <Label htmlFor="dark-mode" className="font-medium">
-                    Dark mode
-                  </Label>
-                  <p className="text-sm text-muted-foreground">
-                    Follows your system unless you switch it.
-                  </p>
-                </div>
-              </div>
-              <Switch
-                id="dark-mode"
-                checked={theme === "dark"}
-                onCheckedChange={toggleTheme}
-              />
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground px-4 py-2">
-              Theme follows your system preference
+      <section className="rounded-2xl border bg-card">
+        <div className="flex items-center gap-4 p-4 sm:p-6">
+          <Avatar className="size-12">
+            <AvatarFallback className="bg-primary text-lg text-primary-foreground">
+              {user?.name?.charAt(0).toUpperCase() || (
+                <User className="size-5" />
+              )}
+            </AvatarFallback>
+          </Avatar>
+          <div className="min-w-0">
+            <p className="truncate font-semibold">{user?.name || "User"}</p>
+            <p className="truncate text-sm text-muted-foreground">
+              {user?.email}
             </p>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="pb-4">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <User className="size-4 text-muted-foreground" />
-            Account
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-1">
+          </div>
+        </div>
+        <div className="divide-y border-t">
           {emailPasswordAvailable && (
             <button
+              type="button"
               onClick={() => setChangePasswordOpen(true)}
-              className="w-full flex items-center justify-between rounded-lg border p-4 transition-colors hover:bg-muted/50 text-left"
+              className="flex w-full items-center justify-between gap-3 px-4 py-4 text-left transition-colors hover:bg-muted/50 sm:px-6"
             >
               <div>
-                <p className="font-medium text-sm">Change password</p>
+                <p className="text-sm font-medium">Change password</p>
                 <p className="text-sm text-muted-foreground">
-                  Update your password
+                  A code goes to your email first
                 </p>
               </div>
               <ChevronRight className="size-4 text-muted-foreground" />
             </button>
           )}
           <button
+            type="button"
             onClick={() => setDeleteAccountOpen(true)}
-            className="w-full flex items-center justify-between rounded-lg border border-destructive/20 p-4 transition-colors hover:bg-destructive/5 text-left"
+            className="flex w-full items-center justify-between gap-3 rounded-b-2xl px-4 py-4 text-left transition-colors hover:bg-destructive/5 sm:px-6"
           >
             <div>
-              <p className="font-medium text-sm text-destructive">
+              <p className="text-sm font-medium text-destructive">
                 Delete account
               </p>
               <p className="text-sm text-muted-foreground">
@@ -198,14 +141,14 @@ export function SettingsPage() {
             </div>
             <ChevronRight className="size-4 text-destructive" />
           </button>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
 
       {emailPasswordAvailable && (
         <Dialog open={changePasswordOpen} onOpenChange={setChangePasswordOpen}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Change Password</DialogTitle>
+              <DialogTitle>Change password</DialogTitle>
               <DialogDescription>
                 {passwordStep === "request"
                   ? "We'll send a verification code to your email."
@@ -238,14 +181,14 @@ export function SettingsPage() {
                   </Button>
                   <Button type="submit" disabled={loading}>
                     {loading && <Loader2 className="size-4 animate-spin" />}
-                    Send Code
+                    Send code
                   </Button>
                 </DialogFooter>
               </form>
             ) : (
               <form onSubmit={handleResetPassword} className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="code">Verification Code</Label>
+                  <Label htmlFor="code">Verification code</Label>
                   <Input
                     id="code"
                     name="code"
@@ -256,7 +199,7 @@ export function SettingsPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="newPassword">New Password</Label>
+                  <Label htmlFor="newPassword">New password</Label>
                   <Input
                     id="newPassword"
                     name="newPassword"
@@ -290,7 +233,7 @@ export function SettingsPage() {
                   </Button>
                   <Button type="submit" disabled={loading}>
                     {loading && <Loader2 className="size-4 animate-spin" />}
-                    Change Password
+                    Change password
                   </Button>
                 </DialogFooter>
               </form>
@@ -302,7 +245,7 @@ export function SettingsPage() {
       <Dialog open={deleteAccountOpen} onOpenChange={setDeleteAccountOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete Account</DialogTitle>
+            <DialogTitle>Delete account</DialogTitle>
             <DialogDescription>
               This action cannot be undone. This will permanently delete your
               account and remove all your data.
@@ -331,7 +274,7 @@ export function SettingsPage() {
               disabled={loading}
             >
               {loading && <Loader2 className="size-4 animate-spin" />}
-              Delete Account
+              Delete account
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -20,7 +20,7 @@ export function OfflineBanner() {
   return (
     <div
       role="status"
-      className="mx-4 mt-1 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs text-muted-foreground lg:mx-6"
+      className="mb-4 flex items-center gap-2 rounded-xl border px-3 py-2 text-xs text-muted-foreground"
     >
       <WifiOff className="size-3.5 shrink-0" aria-hidden />
       You are offline. The numbers refresh the moment the connection is back.

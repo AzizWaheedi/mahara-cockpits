@@ -14,19 +14,27 @@ import {
 } from "./ui/sidebar";
 import { Skeleton } from "./ui/skeleton";
 
+/**
+ * What a cold open of the installed app shows while the session is read:
+ * the same shell the page then renders, so nothing jumps. The rail from
+ * 1024px only, no top bar, the page's own padding, and the tab bar below
+ * 1024px.
+ */
 function AppSkeleton() {
   return (
     <SidebarProvider>
-      <Sidebar>
+      <Sidebar collapsible="icon" variant="floating">
         <SidebarHeader className="border-b border-sidebar-border">
-          <div className="flex items-center gap-2.5 px-2 py-1">
-            <Skeleton className="size-8 rounded-lg" />
-            <Skeleton className="h-5 w-16" />
+          <div className="flex items-center gap-2.5 px-2 py-2">
+            <Skeleton className="h-5 w-24" />
           </div>
         </SidebarHeader>
         <SidebarContent>
           <div className="p-2">
             <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuSkeleton showIcon />
+              </SidebarMenuItem>
               <SidebarMenuItem>
                 <SidebarMenuSkeleton showIcon />
               </SidebarMenuItem>
@@ -47,18 +55,23 @@ function AppSkeleton() {
         </SidebarFooter>
       </Sidebar>
       <SidebarInset>
-        <header className="flex h-14 items-center gap-2 border-b px-4">
-          <Skeleton className="size-7 rounded-md" />
-          <div className="flex-1" />
-        </header>
-        <main className="flex-1 p-4 lg:p-6 space-y-6">
-          <Skeleton className="h-8 w-48" />
-          <div className="grid gap-4 md:grid-cols-3">
-            <Skeleton className="h-32 rounded-lg" />
-            <Skeleton className="h-32 rounded-lg" />
-            <Skeleton className="h-32 rounded-lg" />
+        <main className="flex-1 px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-28 sm:px-6 sm:pt-[max(1.5rem,env(safe-area-inset-top))] lg:px-8 lg:pt-8 lg:pb-12">
+          <div className="mx-auto w-full max-w-6xl space-y-6">
+            <div className="space-y-2">
+              <Skeleton className="h-8 w-48" />
+              <Skeleton className="h-4 w-64 max-w-full" />
+            </div>
+            <div className="grid gap-4 lg:grid-cols-3">
+              <Skeleton className="h-32 rounded-2xl" />
+              <Skeleton className="h-32 rounded-2xl" />
+              <Skeleton className="h-32 rounded-2xl" />
+            </div>
           </div>
         </main>
+        <div
+          aria-hidden
+          className="fixed inset-x-0 bottom-0 z-40 min-h-14 border-t border-sidebar-border bg-sidebar/95 pb-safe lg:hidden"
+        />
       </SidebarInset>
     </SidebarProvider>
   );

@@ -78,7 +78,7 @@ export function PaceRail({
 
 function Legend() {
   return (
-    <div className="muted flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
+    <div className="muted flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
       <span className="inline-flex items-center gap-1.5">
         <span
           aria-hidden
@@ -222,7 +222,7 @@ export function NumbersGoals({
               const projected = projection(actual, elapsed, total);
               const verdict = paceVerdict(actual, f.goal, projected, finished);
               const show = (v: number | null) =>
-                v === null ? "--" : f.money ? money(v) : count(Math.round(v));
+                v === null ? "n/a" : f.money ? money(v) : count(Math.round(v));
               const noDials = f.key === "dials" && !hasMaqsam;
               return (
                 <li key={f.key} className="py-3">

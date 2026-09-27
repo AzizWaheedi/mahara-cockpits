@@ -1,5 +1,5 @@
 import { ChevronDown, MessageSquareText, Send } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { useSnippets } from "../lib/data";
 import { toast } from "../lib/toast";
@@ -12,7 +12,7 @@ import {
   snippetLine,
   type TemplateRoute,
 } from "../lib/whatsapp";
-import { button, buttonPrimary, field } from "./kit";
+import { button, buttonPrimary, FilterChip, field, Segmented } from "./kit";
 
 /**
  * The team's ready-made WhatsApp messages, filled in for this lead, one click
@@ -72,28 +72,15 @@ export function SnippetPicker({
                 ? "Goes in as the template's line"
                 : "Fills the box; edit before sending"}
             </p>
-            <div
-              className="raised inline-flex rounded-[var(--radius-md)] p-0.5 text-xs"
-              role="group"
-              aria-label="Language"
-            >
-              {(
-                [
-                  ["ar", "عربي"],
-                  ["en", "English"],
-                ] as const
-              ).map(([k, label]) => (
-                <button
-                  key={k}
-                  type="button"
-                  aria-pressed={lang === k}
-                  onClick={() => setLang(k)}
-                  className={`rounded-[calc(var(--radius-md)-2px)] px-2 py-0.5 ${lang === k ? "bg-[color:var(--card)] font-medium shadow-sm" : "muted"}`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            <Segmented
+              label="Language"
+              value={lang}
+              options={[
+                ["ar", "عربي"],
+                ["en", "English"],
+              ]}
+              onChange={v => setLang(v as "ar" | "en")}
+            />
           </div>
           {snippets.error ? (
             <p className="px-1 text-xs">The messages could not be read.</p>
@@ -176,6 +163,8 @@ export function TemplateComposer({
   const t = live.find(x => x.key === key) ?? null;
   const [line, setLine] = useState("");
   const [requestId, setRequestId] = useState(() => crypto.randomUUID());
+  // The template and line the id was last sent with: other words need a new id.
+  const tried = useRef<string | null>(null);
   const [busy, setBusy] = useState(false);
   const takesLine = Boolean(t?.variables.includes("line"));
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new request (nonce) with the same words fills the box again
@@ -196,6 +185,22 @@ export function TemplateComposer({
 
   async function send() {
     if (!t || busy || (takesLine && line.trim().length < 2)) return;
+    const blank = /\{(name|rep|day|time)\}/.exec(line);
+    if (blank) {
+      toast.error(
+        `Fill in ${blank[0]} first: the cockpit did not know it for this lead.`,
+      );
+      return;
+    }
+    // The same words retried keep their id (a dropped connection is not
+    // sent twice); changed words are a new send.
+    const words = `${t.key}|${line}`;
+    let id = requestId;
+    if (tried.current !== null && tried.current !== words) {
+      id = crypto.randomUUID();
+      setRequestId(id);
+    }
+    tried.current = words;
     setBusy(true);
     try {
       const out = await api<{
@@ -209,18 +214,21 @@ export function TemplateComposer({
         contact_id: contactId,
         template_key: t.key,
         line,
-        request_id: requestId,
+        request_id: id,
         asset_id:
           prefill?.asset &&
           (!prefill.asset.url || line.includes(prefill.asset.url))
             ? prefill.asset.id
             : undefined,
       });
-      if (out.message.state === "failed")
+      if (out.message.state === "failed") {
         toast.error(
-          `WhatsApp did not deliver it: ${out.message.error ?? "no reason given"}.`,
+          `WhatsApp did not deliver it: ${out.message.error ?? "no reason given"}. The line is still in the box to send again.`,
         );
-      else
+        // Kept, with a new id, so sending again is a new try.
+        setRequestId(crypto.randomUUID());
+        tried.current = null;
+      } else {
         toast.success(
           out.repeated
             ? "That template was already sent."
@@ -228,11 +236,19 @@ export function TemplateComposer({
               ? "HighLevel is sending the template; it shows in the thread in a moment."
               : "Sent by WhatsApp template.",
         );
-      setLine("");
-      setRequestId(crypto.randomUUID());
+        setLine("");
+        setRequestId(crypto.randomUUID());
+        tried.current = null;
+      }
       onSent();
     } catch (e) {
-      toast.error(String((e as Error).message ?? e));
+      const msg = String((e as Error).message ?? e);
+      // An id already spent on other words: the next press is a new send.
+      if (/already used/.test(msg)) {
+        setRequestId(crypto.randomUUID());
+        tried.current = null;
+      }
+      toast.error(msg);
     } finally {
       setBusy(false);
     }
@@ -249,16 +265,13 @@ export function TemplateComposer({
       {live.length > 1 ? (
         <div className="flex flex-wrap items-center gap-1.5">
           {live.map(x => (
-            <button
+            <FilterChip
               key={x.key}
-              type="button"
-              aria-pressed={x.key === key}
+              on={x.key === key}
               onClick={() => setKey(x.key)}
-              className={`inline-flex h-7 items-center rounded-full border hairline px-2.5 text-xs ${x.key === key ? "bg-[color:var(--secondary)] font-medium" : "muted"}`}
-              title={x.purpose}
             >
               {x.language === "ar" ? "عربي" : "English"} · {x.name}
-            </button>
+            </FilterChip>
           ))}
         </div>
       ) : null}

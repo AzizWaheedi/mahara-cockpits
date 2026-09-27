@@ -9,27 +9,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { WhatsAppDesk } from "@/components/WhatsAppDesk";
 import { opportunitiesFor, rankOpportunities } from "@/lib/csmHotList";
 import { LINK_GROUPS } from "@/lib/csmLinks";
-import {
-  CHURN_TARGET,
-  type Counts,
-  computePay,
-  EARNERS,
-  FOUR_RS,
-  PENALTIES,
-} from "@/lib/csmMoney";
+import { CHURN_TARGET, type Counts, computePay, EARNERS, FOUR_RS, PENALTIES } from "@/lib/csmMoney";
 import { spineFor } from "@/lib/csmOnboardingSpine";
-import {
-  cadence,
-  draftsFor,
-  guessLang,
-  humanise,
-  isChurned,
-  type Lang,
-  LINKS,
-  nextCall,
-  nextPocState,
-  serviceModel,
-} from "@/lib/csmTemplates";
+import { cadence, draftsFor, guessLang, humanise, isChurned, type Lang, LINKS, nextCall, nextPocState, serviceModel } from "@/lib/csmTemplates";
 import { publishOpenClient } from "@/lib/openClient";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { useCsmSnapshot } from "@/lib/useCsmSnapshot";
@@ -221,7 +203,7 @@ export function AiHelper({ page }: { page: string; clientName?: string }) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
   return (
-    <div className="fixed bottom-4 left-4 z-40 w-[min(22rem,calc(100vw-2rem))] md:left-[calc(var(--sidebar-width,16rem)+1rem)]">
+    <div className="fixed left-4 bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] z-30 w-[min(22rem,calc(100vw-2rem))] lg:bottom-4 lg:left-[calc(var(--sidebar-width,16rem)+1rem)]">
       {open ? (
         <div className="space-y-2 rounded-lg border bg-card p-3 shadow-lg">
           <div className="flex items-center gap-2">

@@ -1,56 +1,66 @@
-import { ConvexError, v } from "convex/values";
+import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import { type ActionCtx, internalQuery } from "./_generated/server";
-import { rest, type SbRow } from "./ceo/sbWrite";
+import { internalQuery } from "./_generated/server";
+import type { SbRow } from "./ceo/sbWrite";
 import { kuwaitDay } from "./ceo/time";
 import { authenticatedAction } from "./functions";
-import { flush, note } from "./health";
 import { accessFor } from "./roles";
+import { ensureSitting } from "./teamCalendar";
+import {
+  appendWithVersion,
+  blocksFor,
+  pickIndex,
+  renderOption,
+  STAGES,
+  slipsAdded,
+  spinLine,
+  spinRefusal,
+} from "./teamCore";
+import {
+  type Any,
+  clean,
+  db,
+  enc,
+  logChange,
+  meetingOrRefuse,
+  mustBeBoss,
+  mustManage,
+  noted,
+  slug,
+  type Who,
+} from "./teamDb";
+import { type MeetingPage, type Overview, overviewOf, page } from "./teamPage";
 
 /**
  * Team meetings: the screen at /team, for everybody on the team.
  *
- * Aziz, 2026-09-22: "an entire team section on the cockpit that the whole
+ * The CEO, 2026-09-22: "an entire team section on the cockpit that the whole
  * team can see for team meetings and agendas, including what we're going to
  * cover in each meeting ... a doc and an agenda for each meeting ...
  * everybody can edit it ... We can look back on them in the next meeting
  * and make sure we're getting everything done, and every meeting has a
  * specific purpose."
  *
- * The data is in Supabase (20260922b and 20260923d): the meetings and their
- * sittings come from the calendars through hermes/team-sync every hour. An
+ * v5, 2026-09-27: the weekly meeting system. Each meeting has a timed run of
+ * show, wheels (any meeting can have them), the creative pipeline on the
+ * creative call, and its Google Calendar series edited from the page
+ * (teamCalendar.ts; hermes/team-sync reads Google back every five minutes).
+ *
+ * The data is in Supabase (20260922b, 20260923d, 20260927d, 20260927e). An
  * agenda item belongs to the meeting, not to one sitting, and stays open
  * until somebody closes it, so the next meeting opens with what was not
- * finished. Closing it stamps the sitting it was closed in, which is what
- * "look back on them" reads.
+ * finished. The run of show is the fixed part: the same blocks every
+ * sitting, some only on one weekday.
  *
  * Who may do what. Everyone signed in to the portal reads every meeting and
- * edits agendas, the doc and the notes, as in a shared document. Changing
- * who is in a meeting, who hosts it, and what it is for is for its hosts,
- * admins and Aziz. Every write leaves a row in team_changes.
+ * edits agendas, the run of show, scenario options, the pipeline, the doc
+ * and the notes, as in a shared document. Who is in a meeting, when it
+ * meets, what it is for, its wheels and the week's goal are for its hosts,
+ * admins and the CEO; prize wheels and their amounts for the CEO and
+ * admins. Every write leaves a row in team_changes.
  */
 
-// biome-ignore lint/suspicious/noExplicitAny: PostgREST rows
-type Any = Record<string, any>;
-
-type Who = {
-  email: string;
-  name: string | null;
-  isCeo: boolean;
-  isAdmin: boolean;
-};
-
-const CADENCES = [
-  "weekly",
-  "every two weeks",
-  "monthly",
-  "quarterly",
-  "as needed",
-] as const;
-const PARTS = ["host", "required", "optional"] as const;
-const DAY = /^\d{4}-\d{2}-\d{2}$/;
-
-/** Anyone with a seat in the portal: any cockpit, admin, or Aziz. */
+/** Anyone with a seat in the portal: any cockpit, admin, or the CEO. */
 export const who = internalQuery({
   args: { userId: v.id("users") },
   returns: v.any(),
@@ -59,7 +69,7 @@ export const who = internalQuery({
     const a = await accessFor(ctx, user?.email, userId);
     if (!a.isCeo && !a.isAdmin && a.cockpits.length === 0)
       throw new Error(
-        "Team meetings are for the team. Ask Aziz to add you in the portal.",
+        "Team meetings are for the team. Ask an admin to add you in the portal.",
       );
     return {
       email: a.email,
@@ -70,159 +80,7 @@ export const who = internalQuery({
   },
 });
 
-// --- Supabase, noted on the health ledger ----------------------------------
-
-async function db(
-  path: string,
-  init: { method?: string; body?: unknown; prefer?: string } = {},
-): Promise<SbRow[]> {
-  let rows: SbRow[] | null;
-  try {
-    rows = await rest(path, init);
-  } catch (e) {
-    note("supabase", false, String(e instanceof Error ? e.message : e));
-    throw new Error(
-      "The team meetings could not be read from Supabase just now. Try again in a minute.",
-    );
-  }
-  note("supabase", true);
-  if (rows === null)
-    throw new Error(
-      "The team meetings tables are not in Supabase yet (migration 20260922b).",
-    );
-  return rows;
-}
-
-/**
- * A refusal the screen can read. In production Convex hides the text of an
- * error an action throws ("Server Error"), but not a ConvexError's data, so
- * every sentence written for a person is sent as one. [2026-09-23]
- */
-function plain(e: unknown): ConvexError<{ message: string }> {
-  if (e instanceof ConvexError) return e as ConvexError<{ message: string }>;
-  const raw = e instanceof Error ? e.message : String(e);
-  const message =
-    raw
-      .replace(/^[\s\S]*?Uncaught Error: /, "")
-      .split("\n")[0]
-      .trim()
-      .slice(0, 300) || "That did not work. Try again in a minute.";
-  return new ConvexError({ message });
-}
-
-async function noted<T>(ctx: ActionCtx, fn: () => Promise<T>): Promise<T> {
-  try {
-    return await fn();
-  } catch (e) {
-    throw plain(e);
-  } finally {
-    await flush(ctx);
-  }
-}
-
-const enc = encodeURIComponent;
-
-function clean(s: unknown, max: number): string {
-  return String(s ?? "")
-    .replace(/[ \t]+/g, " ")
-    .trim()
-    .slice(0, max);
-}
-
-function addDays(day: string, n: number): string {
-  return new Date(Date.parse(`${day}T00:00:00Z`) + n * 86_400_000)
-    .toISOString()
-    .slice(0, 10);
-}
-
-function slug(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 48);
-}
-
-async function logChange(
-  by: string,
-  meetingId: string | null,
-  what: string,
-  detail?: Any,
-): Promise<void> {
-  await db("team_changes", {
-    method: "POST",
-    body: { by_whom: by, meeting_id: meetingId, what, detail: detail ?? null },
-    prefer: "return=minimal",
-  });
-}
-
-/** The person on the roster behind the signed-in address, if there is one. */
-function meOf(people: SbRow[], w: Who): SbRow | null {
-  return (
-    people.find(p => String(p.email ?? "").toLowerCase() === w.email) ?? null
-  );
-}
-
-async function canManage(w: Who, meetingId: string): Promise<boolean> {
-  if (w.isCeo || w.isAdmin) return true;
-  const people = await db(
-    `team_people?select=id,email&email=ilike.${enc(w.email)}`,
-  );
-  const me = people[0];
-  if (!me) return false;
-  const rows = await db(
-    `team_meeting_people?select=part&meeting_id=eq.${enc(meetingId)}&person_id=eq.${enc(me.id)}&removed=eq.false`,
-  );
-  return rows.some(r => r.part === "host");
-}
-
-async function mustManage(w: Who, meetingId: string): Promise<void> {
-  if (!(await canManage(w, meetingId)))
-    throw new Error(
-      "Only this meeting's hosts, admins and Aziz change who is in it and what it is for. Ask a host.",
-    );
-}
-
 // --- reads -------------------------------------------------------------------
-
-export type Person = {
-  id: string;
-  name: string;
-  role: string | null;
-  department: string | null;
-  email: string | null;
-};
-
-export type MeetingSummary = {
-  id: string;
-  title: string;
-  purpose: string | null;
-  cadence: string | null;
-  department: string | null;
-  hostIds: string[];
-  peopleIds: string[];
-  nextSitting: string | null;
-  lastSitting: string | null;
-  openItems: number;
-  mine: boolean;
-};
-
-export type Overview = {
-  today: string;
-  me: { email: string; personId: string | null; canCreate: boolean };
-  people: Person[];
-  meetings: MeetingSummary[];
-};
-
-function personOf(r: SbRow): Person {
-  return {
-    id: String(r.id),
-    name: String(r.name ?? r.id),
-    role: r.role ?? null,
-    department: r.department ?? null,
-    email: r.email ?? null,
-  };
-}
 
 export const overview = authenticatedAction({
   args: {},
@@ -232,185 +90,9 @@ export const overview = authenticatedAction({
       const w: Who = await ctx.runQuery(internal.team.who, {
         userId: ctx.userId,
       });
-      const today = kuwaitDay();
-      const [people, meetings, links, sittings, open] = await Promise.all([
-        db(
-          "team_people?select=id,name,role,department,email,active&active=eq.true&order=name.asc",
-        ),
-        db(
-          "team_meetings?select=id,title,purpose,cadence,department&active=eq.true&order=title.asc",
-        ),
-        db(
-          "team_meeting_people?select=meeting_id,person_id,part&removed=eq.false",
-        ),
-        db(
-          `team_sittings?select=meeting_id,on_date&on_date=gte.${addDays(today, -180)}&order=on_date.asc`,
-        ),
-        db("team_agenda?select=meeting_id&status=eq.open"),
-      ]);
-      const me = meOf(people, w);
-      return {
-        today,
-        me: { email: w.email, personId: me?.id ?? null, canCreate: true },
-        people: people.map(personOf),
-        meetings: meetings.map(m => {
-          const mine = links.filter(l => l.meeting_id === m.id);
-          const dates = sittings
-            .filter(s => s.meeting_id === m.id)
-            .map(s => String(s.on_date));
-          return {
-            id: String(m.id),
-            title: String(m.title),
-            purpose: m.purpose ?? null,
-            cadence: m.cadence ?? null,
-            department: m.department ?? null,
-            hostIds: mine
-              .filter(l => l.part === "host")
-              .map(l => String(l.person_id)),
-            peopleIds: mine.map(l => String(l.person_id)),
-            nextSitting: dates.find(d => d >= today) ?? null,
-            lastSitting: dates.filter(d => d < today).pop() ?? null,
-            openItems: open.filter(o => o.meeting_id === m.id).length,
-            mine: Boolean(me && mine.some(l => l.person_id === me.id)),
-          };
-        }),
-      };
+      return overviewOf(w);
     }),
 });
-
-export type Item = {
-  id: number;
-  text: string;
-  ownerId: string | null;
-  status: "open" | "done" | "dropped";
-  position: number;
-  sittingId: string | null;
-  addedBy: string | null;
-  addedAt: string;
-  closedAt: string | null;
-  closedBy: string | null;
-  /** Past sittings this item has stayed open through. */
-  carried: number;
-};
-
-export type Sitting = {
-  id: string;
-  onDate: string;
-  notes: string;
-  notesBy: string | null;
-  notesAt: string | null;
-  notesVersion: number;
-};
-
-export type MeetingPage = {
-  today: string;
-  me: { email: string; personId: string | null };
-  canManage: boolean;
-  meeting: {
-    id: string;
-    title: string;
-    purpose: string | null;
-    cadence: string | null;
-    department: string | null;
-    fromCalendar: boolean;
-    doc: string;
-    docBy: string | null;
-    docAt: string | null;
-    docVersion: number;
-  };
-  people: Person[];
-  members: { personId: string; part: "host" | "required" | "optional" }[];
-  sittings: Sitting[];
-  items: Item[];
-  changes: { at: string; by: string; what: string }[];
-};
-
-async function page(w: Who, id: string): Promise<MeetingPage> {
-  const today = kuwaitDay();
-  const [meetings, people, links, sittings, items, changes] = await Promise.all(
-    [
-      db(`team_meetings?select=*&id=eq.${enc(id)}`),
-      db(
-        "team_people?select=id,name,role,department,email,active&active=eq.true&order=name.asc",
-      ),
-      db(
-        `team_meeting_people?select=person_id,part&meeting_id=eq.${enc(id)}&removed=eq.false`,
-      ),
-      db(
-        `team_sittings?select=*&meeting_id=eq.${enc(id)}&order=on_date.desc&limit=60`,
-      ),
-      db(
-        `team_agenda?select=*&meeting_id=eq.${enc(id)}&or=(status.eq.open,closed_at.gte.${addDays(today, -120)})&order=position.asc,id.asc`,
-      ),
-      db(
-        `team_changes?select=at,by_whom,what&meeting_id=eq.${enc(id)}&order=at.desc&limit=25`,
-      ),
-    ],
-  );
-  const m = meetings[0];
-  if (!m)
-    throw new Error(
-      "That meeting is not in the list any more. Go back to Team meetings.",
-    );
-  const me = meOf(people, w);
-  const hosts = links.filter(l => l.part === "host").map(l => l.person_id);
-  const manage = w.isCeo || w.isAdmin || Boolean(me && hosts.includes(me.id));
-  const pastDays = sittings.map(s => String(s.on_date)).filter(d => d < today);
-  return {
-    today,
-    me: { email: w.email, personId: me?.id ?? null },
-    canManage: manage,
-    meeting: {
-      id: String(m.id),
-      title: String(m.title),
-      purpose: m.purpose ?? null,
-      cadence: m.cadence ?? null,
-      department: m.department ?? null,
-      fromCalendar: Boolean(m.calendar_id),
-      doc: String(m.doc ?? ""),
-      docBy: m.doc_by ?? null,
-      docAt: m.doc_at ?? null,
-      docVersion: Number(m.doc_version ?? 0),
-    },
-    people: people.map(personOf),
-    members: links.map(l => ({
-      personId: String(l.person_id),
-      part: (PARTS as readonly string[]).includes(l.part) ? l.part : "required",
-    })),
-    sittings: sittings.map(s => ({
-      id: String(s.id),
-      onDate: String(s.on_date),
-      notes: String(s.notes ?? ""),
-      notesBy: s.notes_by ?? null,
-      notesAt: s.notes_at ?? null,
-      notesVersion: Number(s.notes_version ?? 0),
-    })),
-    items: items.map(i => {
-      const added = String(i.added_at).slice(0, 10);
-      return {
-        id: Number(i.id),
-        text: String(i.text),
-        ownerId: i.owner_id ?? null,
-        status: i.status,
-        position: Number(i.position ?? 0),
-        sittingId: i.sitting_id ?? null,
-        addedBy: i.added_by ?? null,
-        addedAt: String(i.added_at),
-        closedAt: i.closed_at ?? null,
-        closedBy: i.closed_by ?? null,
-        carried:
-          i.status === "open"
-            ? pastDays.filter(d => d >= added && d < today).length
-            : 0,
-      };
-    }),
-    changes: changes.map(c => ({
-      at: String(c.at),
-      by: String(c.by_whom),
-      what: String(c.what),
-    })),
-  };
-}
 
 export const meeting = authenticatedAction({
   args: { id: v.string() },
@@ -424,233 +106,10 @@ export const meeting = authenticatedAction({
     }),
 });
 
-// --- the meeting itself --------------------------------------------------------
-
-export const saveMeeting = authenticatedAction({
-  args: {
-    id: v.optional(v.string()),
-    title: v.string(),
-    purpose: v.string(),
-    cadence: v.string(),
-    department: v.optional(v.string()),
-  },
-  returns: v.any(),
-  handler: (ctx, a): Promise<MeetingPage> =>
-    noted(ctx, async () => {
-      const w: Who = await ctx.runQuery(internal.team.who, {
-        userId: ctx.userId,
-      });
-      const title = clean(a.title, 120);
-      const purpose = clean(a.purpose, 300);
-      const department = clean(a.department, 60) || null;
-      if (title.length < 3) throw new Error("Give the meeting a name.");
-      if (purpose.length < 8)
-        throw new Error(
-          "Say what the meeting is for in one sentence: every meeting has a purpose.",
-        );
-      if (!(CADENCES as readonly string[]).includes(a.cadence))
-        throw new Error("Pick how often it meets.");
-
-      if (a.id) {
-        await mustManage(w, a.id);
-        const [before] = await db(
-          `team_meetings?select=title,purpose,cadence,department&id=eq.${enc(a.id)}`,
-        );
-        if (!before)
-          throw new Error("That meeting is not in the list any more.");
-        // Title, cadence and department are the calendar's until somebody
-        // changes one here; then the hourly sync leaves them alone.
-        const calendarFields =
-          before.title !== title ||
-          before.cadence !== a.cadence ||
-          (before.department ?? null) !== department;
-        await db(`team_meetings?id=eq.${enc(a.id)}`, {
-          method: "PATCH",
-          body: {
-            title,
-            purpose,
-            cadence: a.cadence,
-            department,
-            updated_at: new Date().toISOString(),
-            ...(calendarFields ? { managed: "cockpit" } : {}),
-          },
-          prefer: "return=minimal",
-        });
-        const changed = [
-          before.title !== title ? `renamed it "${title}"` : null,
-          before.purpose !== purpose ? "set its purpose" : null,
-          before.cadence !== a.cadence ? `made it ${a.cadence}` : null,
-          (before.department ?? null) !== department
-            ? department
-              ? `put it under ${department}`
-              : "took its department off"
-            : null,
-        ].filter(Boolean);
-        if (changed.length)
-          await logChange(w.email, a.id, changed.join(", "), {
-            before,
-            after: { title, purpose, cadence: a.cadence, department },
-          });
-        return page(w, a.id);
-      }
-
-      // A new meeting, not from the calendar. Whoever makes it hosts it.
-      const base = slug(title) || "meeting";
-      const taken = new Set(
-        (await db(`team_meetings?select=id&id=like.${enc(`${base}*`)}`)).map(
-          r => String(r.id),
-        ),
-      );
-      let id = base;
-      for (let n = 2; taken.has(id); n++) id = `${base}-${n}`;
-      const people = await db(
-        `team_people?select=id,email&email=ilike.${enc(w.email)}`,
-      );
-      const me = people[0] ?? null;
-      await db("team_meetings", {
-        method: "POST",
-        body: {
-          id,
-          title,
-          purpose,
-          cadence: a.cadence,
-          department,
-          host_id: me?.id ?? null,
-          active: true,
-          managed: "cockpit",
-          created_by: w.email,
-        },
-        prefer: "return=minimal",
-      });
-      if (me)
-        await db("team_meeting_people", {
-          method: "POST",
-          body: {
-            meeting_id: id,
-            person_id: me.id,
-            part: "host",
-            source: "cockpit",
-            changed_by: w.email,
-            changed_at: new Date().toISOString(),
-          },
-          prefer: "return=minimal",
-        });
-      await logChange(w.email, id, `made the meeting "${title}"`, {
-        purpose,
-        cadence: a.cadence,
-        department,
-      });
-      return page(w, id);
-    }),
-});
-
-/** Put a person in a meeting, change their part, or take them off. */
-export const setPart = authenticatedAction({
-  args: {
-    meetingId: v.string(),
-    personId: v.string(),
-    part: v.union(
-      v.literal("host"),
-      v.literal("required"),
-      v.literal("optional"),
-      v.literal("off"),
-    ),
-  },
-  returns: v.any(),
-  handler: (ctx, a): Promise<MeetingPage> =>
-    noted(ctx, async () => {
-      const w: Who = await ctx.runQuery(internal.team.who, {
-        userId: ctx.userId,
-      });
-      await mustManage(w, a.meetingId);
-      const [person] = await db(
-        `team_people?select=id,name&id=eq.${enc(a.personId)}`,
-      );
-      if (!person) throw new Error("That person is not on the team roster.");
-      const [current] = await db(
-        `team_meeting_people?select=part,removed&meeting_id=eq.${enc(a.meetingId)}&person_id=eq.${enc(a.personId)}`,
-      );
-      if (a.part === "off" || (current?.part === "host" && a.part !== "host")) {
-        // A meeting keeps at least one host.
-        const hosts = await db(
-          `team_meeting_people?select=person_id&meeting_id=eq.${enc(a.meetingId)}&part=eq.host&removed=eq.false`,
-        );
-        const others = hosts.filter(h => h.person_id !== a.personId);
-        if (current?.part === "host" && !current.removed && !others.length)
-          throw new Error(
-            "Make somebody else the host first: every meeting has one.",
-          );
-      }
-      const now = new Date().toISOString();
-      await db("team_meeting_people?on_conflict=meeting_id,person_id", {
-        method: "POST",
-        body: {
-          meeting_id: a.meetingId,
-          person_id: a.personId,
-          part: a.part === "off" ? (current?.part ?? "required") : a.part,
-          removed: a.part === "off",
-          source: "cockpit",
-          changed_by: w.email,
-          changed_at: now,
-        },
-        prefer: "resolution=merge-duplicates,return=minimal",
-      });
-      // The meeting's host column follows its first host, and the calendar
-      // no longer overrules it.
-      const hosts = await db(
-        `team_meeting_people?select=person_id&meeting_id=eq.${enc(a.meetingId)}&part=eq.host&removed=eq.false&order=changed_at.asc.nullsfirst`,
-      );
-      await db(`team_meetings?id=eq.${enc(a.meetingId)}`, {
-        method: "PATCH",
-        body: {
-          host_id: hosts[0]?.person_id ?? null,
-          managed: "cockpit",
-          updated_at: now,
-        },
-        prefer: "return=minimal",
-      });
-      const name = String(person.name);
-      await logChange(
-        w.email,
-        a.meetingId,
-        a.part === "off"
-          ? `took ${name} off the meeting`
-          : !current || current.removed
-            ? `added ${name} as ${a.part === "host" ? "a host" : a.part}`
-            : `made ${name} ${a.part === "host" ? "a host" : a.part}`,
-      );
-      return page(w, a.meetingId);
-    }),
-});
-
-/** Add a date the meeting sits on, for meetings the calendar does not carry. */
-export const addSitting = authenticatedAction({
-  args: { meetingId: v.string(), date: v.string() },
-  returns: v.any(),
-  handler: (ctx, a): Promise<MeetingPage> =>
-    noted(ctx, async () => {
-      const w: Who = await ctx.runQuery(internal.team.who, {
-        userId: ctx.userId,
-      });
-      await mustManage(w, a.meetingId);
-      if (!DAY.test(a.date)) throw new Error("Pick a date.");
-      const today = kuwaitDay();
-      if (a.date < addDays(today, -60) || a.date > addDays(today, 370))
-        throw new Error("Pick a date within the year.");
-      await db("team_sittings?on_conflict=id", {
-        method: "POST",
-        body: {
-          id: `${a.meetingId}:${a.date}`,
-          meeting_id: a.meetingId,
-          on_date: a.date,
-          held: a.date <= today,
-        },
-        prefer: "resolution=ignore-duplicates,return=minimal",
-      });
-      await logChange(w.email, a.meetingId, `set a meeting on ${a.date}`);
-      return page(w, a.meetingId);
-    }),
-});
+/** The meeting a sitting belongs to, from its id ("<meeting>:<YYYY-MM-DD>"). */
+function meetingOfSitting(sittingId: string): string {
+  return sittingId.replace(/:\d{4}-\d{2}-\d{2}$/, "");
+}
 
 // --- the doc and the notes -----------------------------------------------------
 
@@ -694,10 +153,10 @@ export const saveDoc = authenticatedAction({
         },
       );
       if (!done.length) {
-        const [now] = await db(
-          `team_meetings?select=doc,doc_by,doc_at,doc_version&id=eq.${enc(a.meetingId)}`,
+        const now = await meetingOrRefuse(
+          a.meetingId,
+          "doc,doc_by,doc_at,doc_version",
         );
-        if (!now) throw new Error("That meeting is not in the list any more.");
         return {
           ok: false as const,
           conflict: {
@@ -725,11 +184,10 @@ export const saveNotes = authenticatedAction({
       const w: Who = await ctx.runQuery(internal.team.who, {
         userId: ctx.userId,
       });
-      const [sitting] = await db(
-        `team_sittings?select=id,meeting_id,on_date&id=eq.${enc(a.sittingId)}`,
+      const sitting = await ensureSitting(
+        meetingOfSitting(a.sittingId),
+        a.sittingId,
       );
-      if (!sitting)
-        throw new Error("That meeting date is not in the list any more.");
       const text = String(a.text).slice(0, 30_000);
       const done = await db(
         `team_sittings?id=eq.${enc(a.sittingId)}&notes_version=eq.${Math.trunc(a.version)}`,
@@ -792,11 +250,7 @@ export const addItem = authenticatedAction({
       });
       const text = clean(a.text, 500);
       if (text.length < 3) throw new Error("Write the agenda item first.");
-      const [meeting] = await db(
-        `team_meetings?select=id&id=eq.${enc(a.meetingId)}`,
-      );
-      if (!meeting)
-        throw new Error("That meeting is not in the list any more.");
+      await meetingOrRefuse(a.meetingId, "id");
       const [last] = await db(
         `team_agenda?select=position&meeting_id=eq.${enc(a.meetingId)}&status=eq.open&order=position.desc&limit=1`,
       );
@@ -892,7 +346,7 @@ export const closeItem = authenticatedAction({
       }
       const today = kuwaitDay();
       const [at] = await db(
-        `team_sittings?select=id&meeting_id=eq.${enc(meetingId)}&on_date=lte.${today}&order=on_date.desc&limit=1`,
+        `team_sittings?select=id&meeting_id=eq.${enc(meetingId)}&on_date=lte.${today}&status=neq.cancelled&order=on_date.desc&limit=1`,
       );
       await db(`team_agenda?id=eq.${Math.trunc(a.id)}`, {
         method: "PATCH",
@@ -940,5 +394,955 @@ export const moveItem = authenticatedAction({
           prefer: "return=minimal",
         });
       return page(w, meetingId);
+    }),
+});
+
+// --- the run of show ------------------------------------------------------------
+
+async function blockOrRefuse(id: number): Promise<SbRow> {
+  const [b] = await db(`team_meeting_blocks?select=*&id=eq.${Math.trunc(id)}`);
+  if (!b)
+    throw new Error("That part of the run of show is not there any more.");
+  return b;
+}
+
+function checkWeekday(d: number | null | undefined): number | null {
+  if (d === null || d === undefined) return null;
+  if (!Number.isInteger(d) || d < 0 || d > 6)
+    throw new Error("Pick a day from Sunday to Saturday.");
+  return d;
+}
+
+/** Add a block to the run of show, or change one. Anyone on the team may. */
+export const saveBlock = authenticatedAction({
+  args: {
+    meetingId: v.string(),
+    id: v.optional(v.number()),
+    weekday: v.optional(v.union(v.number(), v.null())),
+    minutes: v.optional(v.union(v.number(), v.null())),
+    title: v.string(),
+    detail: v.optional(v.union(v.string(), v.null())),
+  },
+  returns: v.any(),
+  handler: (ctx, a): Promise<MeetingPage> =>
+    noted(ctx, async () => {
+      const w: Who = await ctx.runQuery(internal.team.who, {
+        userId: ctx.userId,
+      });
+      const title = clean(a.title, 200);
+      if (!title) throw new Error("Give the block a title.");
+      const detail =
+        a.detail === undefined ? undefined : clean(a.detail, 1000) || null;
+      const minutes =
+        a.minutes === undefined || a.minutes === null
+          ? a.minutes
+          : Math.trunc(a.minutes);
+      if (typeof minutes === "number" && (minutes < 0 || minutes > 480))
+        throw new Error("A block runs between 0 and 480 minutes.");
+      const weekday =
+        a.weekday === undefined ? undefined : checkWeekday(a.weekday);
+      const stamp = {
+        updated_by: w.email,
+        updated_at: new Date().toISOString(),
+      };
+      if (a.id !== undefined) {
+        const b = await blockOrRefuse(a.id);
+        if (String(b.meeting_id) !== a.meetingId)
+          throw new Error("That block belongs to another meeting.");
+        await db(`team_meeting_blocks?id=eq.${Math.trunc(a.id)}`, {
+          method: "PATCH",
+          body: {
+            title,
+            ...(detail !== undefined ? { detail } : {}),
+            ...(minutes !== undefined ? { minutes } : {}),
+            ...(weekday !== undefined ? { weekday } : {}),
+            ...stamp,
+          },
+          prefer: "return=minimal",
+        });
+        await logChange(
+          w.email,
+          a.meetingId,
+          `changed "${title.slice(0, 60)}" in the run of show`,
+          {
+            before: {
+              title: b.title,
+              minutes: b.minutes,
+              detail: b.detail,
+              weekday: b.weekday,
+            },
+          },
+        );
+        return page(w, a.meetingId);
+      }
+      await meetingOrRefuse(a.meetingId, "id");
+      const [last] = await db(
+        `team_meeting_blocks?select=position&meeting_id=eq.${enc(a.meetingId)}&order=position.desc&limit=1`,
+      );
+      await db("team_meeting_blocks", {
+        method: "POST",
+        body: {
+          meeting_id: a.meetingId,
+          weekday: weekday ?? null,
+          position: Number(last?.position ?? 0) + 1,
+          minutes: minutes ?? null,
+          title,
+          detail: detail ?? null,
+          ...stamp,
+        },
+        prefer: "return=minimal",
+      });
+      await logChange(
+        w.email,
+        a.meetingId,
+        `added "${title.slice(0, 60)}" to the run of show`,
+      );
+      return page(w, a.meetingId);
+    }),
+});
+
+export const deleteBlock = authenticatedAction({
+  args: { id: v.number() },
+  returns: v.any(),
+  handler: (ctx, a): Promise<MeetingPage> =>
+    noted(ctx, async () => {
+      const w: Who = await ctx.runQuery(internal.team.who, {
+        userId: ctx.userId,
+      });
+      const b = await blockOrRefuse(a.id);
+      await db(`team_meeting_blocks?id=eq.${Math.trunc(a.id)}`, {
+        method: "DELETE",
+        prefer: "return=minimal",
+      });
+      await logChange(
+        w.email,
+        String(b.meeting_id),
+        `took "${String(b.title).slice(0, 60)}" out of the run of show`,
+        {
+          block: b,
+        },
+      );
+      return page(w, String(b.meeting_id));
+    }),
+});
+
+/**
+ * Move a block one place up or down in the run of show as one day shows
+ * it. The blocks of other days keep their places.
+ */
+export const moveBlock = authenticatedAction({
+  args: {
+    id: v.number(),
+    dir: v.union(v.literal("up"), v.literal("down")),
+    weekday: v.optional(v.union(v.number(), v.null())),
+  },
+  returns: v.any(),
+  handler: (ctx, a): Promise<MeetingPage> =>
+    noted(ctx, async () => {
+      const w: Who = await ctx.runQuery(internal.team.who, {
+        userId: ctx.userId,
+      });
+      const b = await blockOrRefuse(a.id);
+      const meetingId = String(b.meeting_id);
+      const all = (
+        await db(
+          `team_meeting_blocks?select=id,weekday,position&meeting_id=eq.${enc(meetingId)}`,
+        )
+      ).map(x => ({
+        id: Number(x.id),
+        weekday: x.weekday === null ? null : Number(x.weekday),
+        position: Number(x.position ?? 0),
+        minutes: null,
+        title: "",
+        detail: null,
+      }));
+      const global = [...all].sort(
+        (x, y) => x.position - y.position || x.id - y.id,
+      );
+      const shown = blocksFor(all, checkWeekday(a.weekday ?? null));
+      const at = shown.findIndex(x => x.id === Math.trunc(a.id));
+      const to = a.dir === "up" ? at - 1 : at + 1;
+      if (at < 0 || to < 0 || to >= shown.length) return page(w, meetingId);
+      // Swap the two slots in the whole run of show, then number it 1..n.
+      const i = global.findIndex(x => x.id === shown[at].id);
+      const j = global.findIndex(x => x.id === shown[to].id);
+      [global[i], global[j]] = [global[j], global[i]];
+      for (let k = 0; k < global.length; k++)
+        if (global[k].position !== k + 1)
+          await db(`team_meeting_blocks?id=eq.${global[k].id}`, {
+            method: "PATCH",
+            body: { position: k + 1 },
+            prefer: "return=minimal",
+          });
+      return page(w, meetingId);
+    }),
+});
+
+// --- wheels ----------------------------------------------------------------------
+
+async function wheelOrRefuse(id: string): Promise<SbRow> {
+  const [wheel] = await db(`team_wheels?select=*&id=eq.${enc(id)}`);
+  if (!wheel) throw new Error("That wheel is not there any more.");
+  return wheel;
+}
+
+/** Scenario and name wheels are the meeting's hosts'; prize wheels the CEO's and admins'. */
+async function mustEditWheel(
+  w: Who,
+  wheel: { kind: string; meeting_id: string | null },
+): Promise<void> {
+  if (wheel.kind === "prize") return mustBeBoss(w, "change prize wheels");
+  if (wheel.meeting_id) return mustManage(w, wheel.meeting_id);
+  mustBeBoss(w, "change a wheel with no meeting");
+}
+
+/** Add a wheel to any meeting, or rename, lock or switch one off. */
+export const saveWheel = authenticatedAction({
+  args: {
+    meetingId: v.string(),
+    id: v.optional(v.string()),
+    name: v.string(),
+    kind: v.optional(
+      v.union(v.literal("scenario"), v.literal("person"), v.literal("prize")),
+    ),
+    lockedUntilGoal: v.optional(v.boolean()),
+    active: v.optional(v.boolean()),
+    sourceUrl: v.optional(v.union(v.string(), v.null())),
+  },
+  returns: v.any(),
+  handler: (ctx, a): Promise<MeetingPage> =>
+    noted(ctx, async () => {
+      const w: Who = await ctx.runQuery(internal.team.who, {
+        userId: ctx.userId,
+      });
+      const name = clean(a.name, 80);
+      if (name.length < 2) throw new Error("Give the wheel a name.");
+      const sourceUrl =
+        a.sourceUrl === undefined
+          ? undefined
+          : a.sourceUrl
+            ? clean(a.sourceUrl, 300)
+            : null;
+      if (sourceUrl && !/^https:\/\//.test(sourceUrl))
+        throw new Error("A source link starts with https://.");
+      const stamp = {
+        updated_by: w.email,
+        updated_at: new Date().toISOString(),
+      };
+      if (a.id) {
+        const wheel = await wheelOrRefuse(a.id);
+        await mustEditWheel(
+          w,
+          wheel as { kind: string; meeting_id: string | null },
+        );
+        await db(`team_wheels?id=eq.${enc(a.id)}`, {
+          method: "PATCH",
+          body: {
+            name,
+            ...(a.lockedUntilGoal !== undefined && wheel.kind === "prize"
+              ? { locked_until_goal: a.lockedUntilGoal }
+              : {}),
+            ...(a.active !== undefined ? { active: a.active } : {}),
+            ...(sourceUrl !== undefined ? { source_url: sourceUrl } : {}),
+            ...stamp,
+          },
+          prefer: "return=minimal",
+        });
+        await logChange(
+          w.email,
+          String(wheel.meeting_id ?? a.meetingId),
+          `changed the ${name} wheel`,
+          {
+            before: {
+              name: wheel.name,
+              locked: wheel.locked_until_goal,
+              active: wheel.active,
+            },
+          },
+        );
+        return page(w, String(wheel.meeting_id ?? a.meetingId));
+      }
+      const kind = a.kind ?? "scenario";
+      await mustEditWheel(w, { kind, meeting_id: a.meetingId });
+      await meetingOrRefuse(a.meetingId, "id");
+      const base = slug(`${a.meetingId}-${name}`) || "wheel";
+      const taken = new Set(
+        (await db(`team_wheels?select=id&id=like.${enc(`${base}*`)}`)).map(r =>
+          String(r.id),
+        ),
+      );
+      let id = base;
+      for (let n = 2; taken.has(id); n++) id = `${base}-${n}`;
+      const [last] = await db(
+        `team_wheels?select=position&meeting_id=eq.${enc(a.meetingId)}&order=position.desc&limit=1`,
+      );
+      await db("team_wheels", {
+        method: "POST",
+        body: {
+          id,
+          meeting_id: a.meetingId,
+          name,
+          kind,
+          source_url: sourceUrl ?? null,
+          locked_until_goal:
+            kind === "prize" ? (a.lockedUntilGoal ?? true) : false,
+          active: true,
+          position: Number(last?.position ?? 0) + 1,
+          ...stamp,
+        },
+        prefer: "return=minimal",
+      });
+      await logChange(w.email, a.meetingId, `added the ${name} wheel`, {
+        wheel: id,
+        kind,
+      });
+      return page(w, a.meetingId);
+    }),
+});
+
+export const deleteWheel = authenticatedAction({
+  args: { id: v.string() },
+  returns: v.any(),
+  handler: (ctx, a): Promise<MeetingPage> =>
+    noted(ctx, async () => {
+      const w: Who = await ctx.runQuery(internal.team.who, {
+        userId: ctx.userId,
+      });
+      const wheel = await wheelOrRefuse(a.id);
+      await mustEditWheel(
+        w,
+        wheel as { kind: string; meeting_id: string | null },
+      );
+      const options = await db(
+        `team_wheel_options?select=label,amount,currency,amount_suffix,condition&wheel_id=eq.${enc(a.id)}`,
+      );
+      await db(`team_wheels?id=eq.${enc(a.id)}`, {
+        method: "DELETE",
+        prefer: "return=minimal",
+      });
+      // The spins it made stay in the sittings' notes.
+      await logChange(
+        w.email,
+        wheel.meeting_id ?? null,
+        `deleted the ${wheel.name} wheel`,
+        { wheel, options },
+      );
+      return page(w, String(wheel.meeting_id ?? ""));
+    }),
+});
+
+async function optionOrRefuse(
+  id: number,
+): Promise<{ option: SbRow; wheel: SbRow }> {
+  const [option] = await db(
+    `team_wheel_options?select=*&id=eq.${Math.trunc(id)}`,
+  );
+  if (!option) throw new Error("That option is not there any more.");
+  return { option, wheel: await wheelOrRefuse(String(option.wheel_id)) };
+}
+
+/** Anyone on the team edits a scenario; a prize is the CEO's and admins'. */
+function mustEditOption(w: Who, wheel: SbRow): void {
+  if (wheel.kind === "prize") mustBeBoss(w, "change prizes");
+}
+
+function cents(amount: number): number {
+  if (!Number.isFinite(amount) || amount < 0)
+    throw new Error("An amount is a number of zero or more.");
+  const c = Math.round(amount * 100);
+  if (Math.abs(c - amount * 100) > 1e-6)
+    throw new Error("An amount has at most two decimals.");
+  return c / 100;
+}
+
+export const saveWheelOption = authenticatedAction({
+  args: {
+    wheelId: v.string(),
+    id: v.optional(v.number()),
+    label: v.string(),
+    condition: v.optional(v.union(v.string(), v.null())),
+    amount: v.optional(v.union(v.number(), v.null())),
+    currency: v.optional(v.union(v.string(), v.null())),
+    suffix: v.optional(v.union(v.string(), v.null())),
+    active: v.optional(v.boolean()),
+  },
+  returns: v.any(),
+  handler: (ctx, a): Promise<MeetingPage> =>
+    noted(ctx, async () => {
+      const w: Who = await ctx.runQuery(internal.team.who, {
+        userId: ctx.userId,
+      });
+      const wheel = await wheelOrRefuse(a.wheelId);
+      mustEditOption(w, wheel);
+      if (wheel.kind === "person")
+        throw new Error(
+          "A name wheel fills itself from the people in the sitting.",
+        );
+      const label = clean(a.label, 200);
+      if (!label) throw new Error("An option needs words.");
+      const body: Any = {
+        label,
+        ...(a.condition !== undefined
+          ? { condition: a.condition ? clean(a.condition, 200) : null }
+          : {}),
+        ...(a.amount !== undefined
+          ? { amount: a.amount === null ? null : cents(a.amount) }
+          : {}),
+        ...(a.currency !== undefined
+          ? { currency: a.currency ? clean(a.currency, 8).toUpperCase() : null }
+          : {}),
+        ...(a.suffix !== undefined
+          ? { amount_suffix: a.suffix ? clean(a.suffix, 8) : null }
+          : {}),
+        ...(a.active !== undefined ? { active: a.active } : {}),
+        updated_by: w.email,
+        updated_at: new Date().toISOString(),
+      };
+      const meetingId = String(wheel.meeting_id ?? "");
+      if (a.id !== undefined) {
+        const { option } = await optionOrRefuse(a.id);
+        if (option.wheel_id !== a.wheelId)
+          throw new Error("That option is on another wheel.");
+        await db(`team_wheel_options?id=eq.${Math.trunc(a.id)}`, {
+          method: "PATCH",
+          body,
+          prefer: "return=minimal",
+        });
+        await logChange(
+          w.email,
+          meetingId || null,
+          `changed "${renderOption(option as never)}" on the ${wheel.name} wheel`,
+          {
+            before: option,
+          },
+        );
+      } else {
+        const [last] = await db(
+          `team_wheel_options?select=position&wheel_id=eq.${enc(a.wheelId)}&order=position.desc&limit=1`,
+        );
+        await db("team_wheel_options", {
+          method: "POST",
+          body: {
+            wheel_id: a.wheelId,
+            active: true,
+            position: Number(last?.position ?? 0) + 1,
+            ...body,
+          },
+          prefer: "return=minimal",
+        });
+        await logChange(
+          w.email,
+          meetingId || null,
+          `added "${label}" to the ${wheel.name} wheel`,
+        );
+      }
+      return page(w, meetingId);
+    }),
+});
+
+export const deleteWheelOption = authenticatedAction({
+  args: { id: v.number() },
+  returns: v.any(),
+  handler: (ctx, a): Promise<MeetingPage> =>
+    noted(ctx, async () => {
+      const w: Who = await ctx.runQuery(internal.team.who, {
+        userId: ctx.userId,
+      });
+      const { option, wheel } = await optionOrRefuse(a.id);
+      mustEditOption(w, wheel);
+      await db(`team_wheel_options?id=eq.${Math.trunc(a.id)}`, {
+        method: "DELETE",
+        prefer: "return=minimal",
+      });
+      await logChange(
+        w.email,
+        wheel.meeting_id ?? null,
+        `took "${option.label}" off the ${wheel.name} wheel`,
+        {
+          option,
+        },
+      );
+      return page(w, String(wheel.meeting_id ?? ""));
+    }),
+});
+
+export const moveWheelOption = authenticatedAction({
+  args: { id: v.number(), dir: v.union(v.literal("up"), v.literal("down")) },
+  returns: v.any(),
+  handler: (ctx, a): Promise<MeetingPage> =>
+    noted(ctx, async () => {
+      const w: Who = await ctx.runQuery(internal.team.who, {
+        userId: ctx.userId,
+      });
+      const { wheel } = await optionOrRefuse(a.id);
+      mustEditOption(w, wheel);
+      const rows = await db(
+        `team_wheel_options?select=id,position&wheel_id=eq.${enc(String(wheel.id))}&order=position.asc,id.asc`,
+      );
+      const at = rows.findIndex(r => Number(r.id) === Math.trunc(a.id));
+      const to = a.dir === "up" ? at - 1 : at + 1;
+      if (at >= 0 && to >= 0 && to < rows.length) {
+        const order = rows.map(r => Number(r.id));
+        [order[at], order[to]] = [order[to], order[at]];
+        for (let i = 0; i < order.length; i++)
+          await db(`team_wheel_options?id=eq.${order[i]}`, {
+            method: "PATCH",
+            body: { position: i + 1 },
+            prefer: "return=minimal",
+          });
+      }
+      return page(w, String(wheel.meeting_id ?? ""));
+    }),
+});
+
+/** A prize's number. The CEO and admins set it; the sentence around it stays. */
+export const setPrizeAmount = authenticatedAction({
+  args: {
+    optionId: v.number(),
+    amount: v.number(),
+    meetingId: v.optional(v.string()),
+  },
+  returns: v.any(),
+  handler: (ctx, a): Promise<MeetingPage | Overview> =>
+    noted(ctx, async () => {
+      const w: Who = await ctx.runQuery(internal.team.who, {
+        userId: ctx.userId,
+      });
+      mustBeBoss(w, "set prize amounts");
+      const { option, wheel } = await optionOrRefuse(a.optionId);
+      if (wheel.kind !== "prize")
+        throw new Error("Only a prize has an amount to set.");
+      const amount = cents(a.amount);
+      await db(`team_wheel_options?id=eq.${Math.trunc(a.optionId)}`, {
+        method: "PATCH",
+        body: {
+          amount,
+          updated_by: w.email,
+          updated_at: new Date().toISOString(),
+        },
+        prefer: "return=minimal",
+      });
+      const face = {
+        label: String(option.label),
+        currency: option.currency ?? null,
+        amount_suffix: option.amount_suffix ?? null,
+      };
+      const before = renderOption({
+        ...face,
+        amount: option.amount === null ? null : Number(option.amount),
+      });
+      const after = renderOption({ ...face, amount });
+      await logChange(
+        w.email,
+        wheel.meeting_id ?? null,
+        `set the ${wheel.name} prize "${before}" to "${after}"`,
+        {
+          option: option.id,
+          before: option.amount,
+          after: amount,
+        },
+      );
+      return a.meetingId ? page(w, a.meetingId) : overviewOf(w);
+    }),
+});
+
+/**
+ * Spin a wheel for a sitting. The server picks, with crypto random over the
+ * active options (or the people in the sitting for a name wheel); the
+ * screen only shows the wheel landing where the server said. The result
+ * goes into the sitting's notes ("Spun <wheel>: <result>") with the notes'
+ * version, so nobody's typing is overwritten, and into the spin log with
+ * the label as it read that day.
+ */
+export const spin = authenticatedAction({
+  args: {
+    wheelId: v.string(),
+    sittingId: v.string(),
+    among: v.optional(v.array(v.string())),
+    forPerson: v.optional(v.string()),
+  },
+  returns: v.any(),
+  handler: (
+    ctx,
+    a,
+  ): Promise<{
+    page: MeetingPage;
+    result: {
+      wheelId: string;
+      index: number;
+      label: string;
+      choices: string[];
+    };
+  }> =>
+    noted(ctx, async () => {
+      const w: Who = await ctx.runQuery(internal.team.who, {
+        userId: ctx.userId,
+      });
+      const wheel = await wheelOrRefuse(a.wheelId);
+      const meetingId = String(wheel.meeting_id ?? "");
+      if (!meetingId) throw new Error("That wheel is not on a meeting.");
+      if (meetingOfSitting(a.sittingId) !== meetingId)
+        throw new Error("That sitting is another meeting's.");
+      const sitting = await ensureSitting(meetingId, a.sittingId);
+      let choices: { id: number | null; label: string }[] = [];
+      if (wheel.kind === "person") {
+        const links = await db(
+          `team_meeting_people?select=person_id&meeting_id=eq.${enc(meetingId)}&removed=eq.false`,
+        );
+        const ids = links
+          .map(l => String(l.person_id))
+          .filter(id => !a.among || a.among.includes(id));
+        const people = ids.length
+          ? await db(
+              `team_people?select=id,name&id=in.(${ids.map(id => `"${id.replace(/"/g, "")}"`).join(",")})`,
+            )
+          : [];
+        choices = ids
+          .map(id => people.find(p => p.id === id))
+          .filter((p): p is SbRow => Boolean(p))
+          .map(p => ({ id: null, label: String(p.name) }));
+      } else {
+        const options = await db(
+          `team_wheel_options?select=*&wheel_id=eq.${enc(a.wheelId)}&active=eq.true&order=position.asc,id.asc`,
+        );
+        choices = options.map(o => ({
+          id: Number(o.id),
+          label: renderOption(o as never),
+        }));
+      }
+      const refusal = spinRefusal(
+        {
+          kind: String(wheel.kind),
+          locked_until_goal: Boolean(wheel.locked_until_goal),
+          active: wheel.active !== false,
+          name: String(wheel.name),
+        },
+        { goal_hit: sitting.goal_hit ?? null },
+        choices.length,
+      );
+      if (refusal) throw new Error(refusal);
+      const index = pickIndex(
+        choices.length,
+        () => crypto.getRandomValues(new Uint32Array(1))[0],
+      );
+      const won = choices[index];
+      let forName: string | null = null;
+      if (a.forPerson) {
+        const [p] = await db(
+          `team_people?select=name&id=eq.${enc(a.forPerson)}`,
+        );
+        forName = p ? String(p.name) : null;
+      }
+      await appendWithVersion(
+        async () => {
+          const [s] = await db(
+            `team_sittings?select=notes,notes_version&id=eq.${enc(a.sittingId)}`,
+          );
+          return {
+            notes: String(s?.notes ?? ""),
+            version: Number(s?.notes_version ?? 0),
+          };
+        },
+        async (notes, version) =>
+          (
+            await db(
+              `team_sittings?id=eq.${enc(a.sittingId)}&notes_version=eq.${version}`,
+              {
+                method: "PATCH",
+                body: {
+                  notes,
+                  notes_by: w.email,
+                  notes_at: new Date().toISOString(),
+                  notes_version: version + 1,
+                },
+                prefer: "return=representation",
+              },
+            )
+          ).length > 0,
+        spinLine(String(wheel.name), won.label, forName),
+      );
+      await db("team_wheel_spins", {
+        method: "POST",
+        body: {
+          wheel_id: a.wheelId,
+          sitting_id: a.sittingId,
+          option_id: won.id,
+          result_label: won.label,
+          spun_by: w.email,
+          spun_for: forName,
+        },
+        prefer: "return=minimal",
+      });
+      await logChange(
+        w.email,
+        meetingId,
+        `spun the ${wheel.name} wheel: ${won.label}`,
+        {
+          sitting: a.sittingId,
+        },
+      );
+      return {
+        page: await page(w, meetingId),
+        result: {
+          wheelId: a.wheelId,
+          index,
+          label: won.label,
+          choices: choices.map(c => c.label),
+        },
+      };
+    }),
+});
+
+/** Whether the week's goal was hit, on a sitting: it unlocks an earned prize wheel. */
+export const setGoalHit = authenticatedAction({
+  args: { sittingId: v.string(), hit: v.union(v.boolean(), v.null()) },
+  returns: v.any(),
+  handler: (ctx, a): Promise<MeetingPage> =>
+    noted(ctx, async () => {
+      const w: Who = await ctx.runQuery(internal.team.who, {
+        userId: ctx.userId,
+      });
+      const meetingId = meetingOfSitting(a.sittingId);
+      await mustManage(w, meetingId);
+      const s = await ensureSitting(meetingId, a.sittingId);
+      await db(`team_sittings?id=eq.${enc(a.sittingId)}`, {
+        method: "PATCH",
+        body: { goal_hit: a.hit },
+        prefer: "return=minimal",
+      });
+      await logChange(
+        w.email,
+        meetingId,
+        a.hit === null
+          ? `cleared the goal for ${s.on_date}`
+          : `marked the week's goal ${a.hit ? "hit" : "missed"} on ${s.on_date}`,
+      );
+      return page(w, meetingId);
+    }),
+});
+
+// --- the creative pipeline ---------------------------------------------------------
+
+const KINDS = ["new", "refresh", "edit"] as const;
+const SOURCES = [
+  "slow_client_call",
+  "creative_request",
+  "fatigue",
+  "other",
+] as const;
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+function day(value: string | null | undefined, what: string): string | null {
+  if (value === undefined || value === null || value === "") return null;
+  if (!DAY.test(value)) throw new Error(`Pick a date for ${what}.`);
+  return value;
+}
+
+/**
+ * A video on the pipeline. Anyone on the team adds and edits rows; moving a
+ * due date that already passed, for a step not yet done, is a slip, counted
+ * here and never typed.
+ */
+export const saveCreativeRow = authenticatedAction({
+  args: {
+    meetingId: v.string(),
+    id: v.optional(v.number()),
+    client: v.string(),
+    angle: v.optional(v.union(v.string(), v.null())),
+    kind: v.optional(v.union(v.string(), v.null())),
+    source: v.optional(v.union(v.string(), v.null())),
+    creativeRequestId: v.optional(v.union(v.string(), v.null())),
+    scriptDue: v.optional(v.union(v.string(), v.null())),
+    footageDue: v.optional(v.union(v.string(), v.null())),
+    editDue: v.optional(v.union(v.string(), v.null())),
+    approvedOn: v.optional(v.union(v.string(), v.null())),
+    launchOn: v.optional(v.union(v.string(), v.null())),
+    launchedOn: v.optional(v.union(v.string(), v.null())),
+    status: v.optional(v.string()),
+    ownerId: v.optional(v.union(v.string(), v.null())),
+    notes: v.optional(v.union(v.string(), v.null())),
+  },
+  returns: v.any(),
+  handler: (ctx, a): Promise<MeetingPage> =>
+    noted(ctx, async () => {
+      const w: Who = await ctx.runQuery(internal.team.who, {
+        userId: ctx.userId,
+      });
+      const client = clean(a.client, 120);
+      if (!client) throw new Error("Name the client the video is for.");
+      if (a.kind && !(KINDS as readonly string[]).includes(a.kind))
+        throw new Error("Pick new, refresh or edit.");
+      if (a.source && !(SOURCES as readonly string[]).includes(a.source))
+        throw new Error("Pick where the video came from.");
+      if (a.status && !(STAGES as readonly string[]).includes(a.status))
+        throw new Error("Pick a status from the list.");
+      const today = kuwaitDay();
+      const body: Any = { client };
+      const set = (key: string, value: unknown) => {
+        if (value !== undefined) body[key] = value;
+      };
+      set(
+        "angle",
+        a.angle === undefined
+          ? undefined
+          : a.angle
+            ? clean(a.angle, 200)
+            : null,
+      );
+      set("kind", a.kind === undefined ? undefined : a.kind || null);
+      set("source", a.source === undefined ? undefined : a.source || null);
+      set(
+        "creative_request_id",
+        a.creativeRequestId === undefined
+          ? undefined
+          : a.creativeRequestId || null,
+      );
+      set(
+        "script_due",
+        a.scriptDue === undefined ? undefined : day(a.scriptDue, "the script"),
+      );
+      set(
+        "footage_due",
+        a.footageDue === undefined
+          ? undefined
+          : day(a.footageDue, "the footage"),
+      );
+      set(
+        "edit_due",
+        a.editDue === undefined ? undefined : day(a.editDue, "the first cut"),
+      );
+      set(
+        "approved_on",
+        a.approvedOn === undefined
+          ? undefined
+          : day(a.approvedOn, "the approval"),
+      );
+      set(
+        "launch_on",
+        a.launchOn === undefined ? undefined : day(a.launchOn, "the launch"),
+      );
+      set(
+        "launched_on",
+        a.launchedOn === undefined
+          ? undefined
+          : day(a.launchedOn, "the launch"),
+      );
+      set("status", a.status);
+      set("owner_id", a.ownerId === undefined ? undefined : a.ownerId || null);
+      set(
+        "notes",
+        a.notes === undefined
+          ? undefined
+          : a.notes
+            ? String(a.notes).slice(0, 2000)
+            : null,
+      );
+      if (body.status === "launched" && body.launched_on === undefined)
+        body.launched_on = today;
+      if (body.status === "approved" && body.approved_on === undefined)
+        body.approved_on = today;
+      body.updated_by = w.email;
+      body.updated_at = new Date().toISOString();
+      if (a.id !== undefined) {
+        const [before] = await db(
+          `team_creative_rows?select=*&id=eq.${Math.trunc(a.id)}`,
+        );
+        if (!before)
+          throw new Error("That row is not on the pipeline any more.");
+        const after = { ...before, ...body };
+        const slips = slipsAdded(before as never, after as never, today);
+        if (slips) body.slip_count = Number(before.slip_count ?? 0) + slips;
+        if (
+          body.launched_on === undefined &&
+          before.status !== "launched" &&
+          body.status === "launched"
+        )
+          body.launched_on = today;
+        await db(`team_creative_rows?id=eq.${Math.trunc(a.id)}`, {
+          method: "PATCH",
+          body,
+          prefer: "return=minimal",
+        });
+        await logChange(
+          w.email,
+          a.meetingId,
+          slips
+            ? `moved a passed date on ${client}'s video: slip ${body.slip_count}`
+            : `updated ${client}'s video on the pipeline`,
+          { before, after: body },
+        );
+        return page(w, a.meetingId);
+      }
+      await db("team_creative_rows", {
+        method: "POST",
+        body: {
+          ...body,
+          status: body.status ?? "planned",
+          created_by: w.email,
+        },
+        prefer: "return=minimal",
+      });
+      await logChange(
+        w.email,
+        a.meetingId,
+        `added a ${body.kind ?? "new"} video for ${client} to the pipeline`,
+      );
+      return page(w, a.meetingId);
+    }),
+});
+
+export const deleteCreativeRow = authenticatedAction({
+  args: { meetingId: v.string(), id: v.number() },
+  returns: v.any(),
+  handler: (ctx, a): Promise<MeetingPage> =>
+    noted(ctx, async () => {
+      const w: Who = await ctx.runQuery(internal.team.who, {
+        userId: ctx.userId,
+      });
+      const [row] = await db(
+        `team_creative_rows?select=*&id=eq.${Math.trunc(a.id)}`,
+      );
+      if (!row) throw new Error("That row is not on the pipeline any more.");
+      await db(`team_creative_rows?id=eq.${Math.trunc(a.id)}`, {
+        method: "DELETE",
+        prefer: "return=minimal",
+      });
+      await logChange(
+        w.email,
+        a.meetingId,
+        `took ${row.client}'s video off the pipeline`,
+        { row },
+      );
+      return page(w, a.meetingId);
+    }),
+});
+
+/** Open creative requests from the cockpit that are not on the pipeline yet. */
+export const openCreativeRequests = authenticatedAction({
+  args: {},
+  returns: v.any(),
+  handler: ctx =>
+    noted(ctx, async () => {
+      await ctx.runQuery(internal.team.who, { userId: ctx.userId });
+      const [requests, rows] = await Promise.all([
+        db(
+          "cockpit_creative_requests?select=id,client_name,campaign_name,request_reason,note,status,created_at&status=in.(requested,script_ready,editing,asset_ready)&order=created_at.desc&limit=60",
+        ),
+        db(
+          "team_creative_rows?select=creative_request_id&creative_request_id=not.is.null",
+        ),
+      ]);
+      const onBoard = new Set(rows.map(r => String(r.creative_request_id)));
+      return requests
+        .filter(r => !onBoard.has(String(r.id)))
+        .map(r => ({
+          id: String(r.id),
+          client: String(r.client_name ?? r.campaign_name ?? "Client"),
+          campaign: r.campaign_name ?? null,
+          reason: r.request_reason ?? null,
+          note: r.note ?? null,
+          status: String(r.status),
+          createdAt: String(r.created_at).slice(0, 10),
+        }));
     }),
 });

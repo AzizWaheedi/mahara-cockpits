@@ -1,19 +1,23 @@
 import { Wallet } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router";
+import { api } from "../lib/api";
 import { useQuery } from "../lib/data";
 import { count, day, money, num } from "../lib/format";
 import {
+  baseApplies,
   closerNames,
   hasPayRule,
   isTheirDeal,
   payEstimate,
   payWords,
   ratePercent,
+  setterEstimate,
 } from "../lib/pay";
 import { supabase } from "../lib/supabase";
+import { toast } from "../lib/toast";
 import type { Deal, PayRule, Rep, SalesRole, Scorecard } from "../lib/types";
-import { EmptyState, Failed, SectionCard, StatusChip } from "./kit";
+import { button, EmptyState, Failed, SectionCard, StatusChip } from "./kit";
 
 /**
  * The person's pay rule in words and, for a closer, what the window's deals
@@ -39,7 +43,10 @@ export function NumbersPay({
   card,
   fromIso,
   toIso,
+  fromDay,
+  toDay,
   whose,
+  manager = false,
 }: {
   rule: PayRule | null;
   role: SalesRole | null;
@@ -48,7 +55,12 @@ export function NumbersPay({
   card: Scorecard | null;
   fromIso: string;
   toIso: string;
+  /** The window's first and last Kuwait days, for the monthly base. */
+  fromDay: string;
+  toDay: string;
   whose: "your" | "their";
+  /** A manager may say whether a setter's deal fully closed. */
+  manager?: boolean;
 }) {
   if (!rule || !hasPayRule(rule))
     return (
@@ -90,10 +102,22 @@ export function NumbersPay({
         </p>
       ) : null}
       {setter ? (
-        <p className="muted mt-3 text-xs">
-          Setter pay is not estimated here yet. The rule above is the plan as
-          agreed.
-        </p>
+        rep ? (
+          <SetterEstimateView
+            rule={rule}
+            rep={rep}
+            fromIso={fromIso}
+            toIso={toIso}
+            monthBase={baseApplies(fromDay, toDay)}
+            whose={whose}
+            manager={manager}
+          />
+        ) : (
+          <p className="muted mt-3 text-xs">
+            {whose === "your" ? "Your seat is" : "This seat is"} not linked to a
+            B2B rep yet, so no intros or deals can be counted.
+          </p>
+        )
       ) : rep ? (
         <Estimate
           rule={rule}
@@ -110,6 +134,219 @@ export function NumbersPay({
         </p>
       )}
     </SectionCard>
+  );
+}
+
+interface SetterDeal {
+  response_id: string;
+  submitted_at: string;
+  closer: string | null;
+  client_name: string | null;
+  business_name: string | null;
+  payment_structure: string | null;
+  cash_collected: number | null;
+  contracted_revenue: number | null;
+  credited_by: "form" | "intro";
+  fully_closed: boolean;
+  fully_closed_by: "paid in full" | "confirmed" | null;
+}
+
+/**
+ * A setter's window: the base (for a month), the intros they ran that were
+ * marked showed (a showed intro not marked disqualified is a qualified one),
+ * and the deals from their leads, each paying once it fully closed.
+ */
+function SetterEstimateView({
+  rule,
+  rep,
+  fromIso,
+  toIso,
+  monthBase,
+  whose,
+  manager,
+}: {
+  rule: PayRule;
+  rep: Rep;
+  fromIso: string;
+  toIso: string;
+  monthBase: boolean;
+  whose: "your" | "their";
+  manager: boolean;
+}) {
+  const intros = useQuery<{ status: string | null; needs_mark: boolean }[]>(
+    () =>
+      supabase
+        .from("cockpit_sales_calendar")
+        .select("status,needs_mark")
+        .eq("call_type", "intro")
+        .eq("assigned_user_id", rep.ghl_user_id ?? "__none__")
+        .gte("start_at", fromIso)
+        .lt("start_at", toIso)
+        .limit(2000),
+    [rep.ghl_user_id, fromIso, toIso],
+  );
+  const deals = useQuery<SetterDeal[]>(
+    () =>
+      supabase.rpc("cockpit_sales_setter_deals", {
+        p_rep_id: rep.id,
+        p_from: fromIso,
+        p_to: toIso,
+      }),
+    [rep.id, fromIso, toIso],
+  );
+  const [busy, setBusy] = useState<string | null>(null);
+
+  if (intros.error || deals.error)
+    return (
+      <div className="mt-3">
+        <Failed
+          what={intros.error ? "The intros" : "The deals"}
+          error={intros.error ?? deals.error ?? "no reason given"}
+          retry={() => {
+            intros.reload();
+            deals.reload();
+          }}
+        />
+      </div>
+    );
+  if (!intros.data || !deals.data)
+    return <p className="muted mt-3 text-sm">Reading the intros and deals…</p>;
+
+  const cur = rule.currency || "USD";
+  const qualified = intros.data.filter(i => i.status === "showed").length;
+  const unmarked = intros.data.filter(i => i.needs_mark).length;
+  const e = setterEstimate(rule, qualified, deals.data, monthBase);
+  const base = num(rule.base_monthly);
+  const perIntro = num(rule.per_intro_qualified);
+  const perClose = num(rule.per_full_close);
+
+  async function decide(id: string, fully: boolean | null) {
+    setBusy(id);
+    try {
+      await api("deal.status", { response_id: id, fully_closed: fully });
+      toast.success(
+        fully === null
+          ? "Cleared."
+          : fully
+            ? "Marked fully closed."
+            : "Marked not fully closed.",
+      );
+      deals.reload();
+    } catch (err) {
+      toast.error(String((err as Error).message ?? err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="mt-3">
+      <div className="divide-y hairline border-y hairline">
+        {base !== null && base > 0 ? (
+          <Line
+            label="Base"
+            value={e.base !== null ? money(e.base, cur) : "n/a"}
+            sub={
+              e.base !== null
+                ? "For the month"
+                : `${money(base, cur)} a month; pick a month to see it counted`
+            }
+          />
+        ) : null}
+        {e.intros !== null && perIntro !== null ? (
+          <Line
+            label="Qualified intros"
+            value={money(e.intros, cur)}
+            sub={`${count(qualified)} × ${money(perIntro, cur)}`}
+          />
+        ) : null}
+        {e.closes !== null && perClose !== null ? (
+          <Line
+            label="Fully closed deals"
+            value={money(e.closes, cur)}
+            sub={`${count(e.fullyClosed)} × ${money(perClose, cur)}${
+              e.waiting ? `, ${count(e.waiting)} not fully closed yet` : ""
+            }`}
+          />
+        ) : null}
+        <Line label="In all so far" value={money(e.total, cur)} />
+      </div>
+      {deals.data.length ? (
+        <ul className="mt-3 space-y-2">
+          {deals.data.slice(0, 12).map(d => (
+            <li
+              key={d.response_id}
+              className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs"
+            >
+              <span className="min-w-0 max-w-full truncate">
+                <bdi>{d.business_name || d.client_name || "A client"}</bdi>
+                <span className="muted"> · {day(d.submitted_at)}</span>
+              </span>
+              <span className="flex shrink-0 flex-wrap items-center gap-1.5">
+                <StatusChip
+                  tone={d.fully_closed ? "good" : "neutral"}
+                  label={
+                    d.fully_closed
+                      ? d.fully_closed_by === "paid in full"
+                        ? "Paid in full"
+                        : "Fully closed"
+                      : d.fully_closed_by === "confirmed"
+                        ? "Not fully closed"
+                        : "Waiting on a manager"
+                  }
+                />
+                {manager && d.fully_closed_by !== "paid in full" ? (
+                  <>
+                    {!d.fully_closed ? (
+                      <button
+                        type="button"
+                        disabled={busy === d.response_id}
+                        onClick={() => void decide(d.response_id, true)}
+                        className={button}
+                      >
+                        Fully closed
+                      </button>
+                    ) : null}
+                    {d.fully_closed || d.fully_closed_by !== "confirmed" ? (
+                      <button
+                        type="button"
+                        disabled={busy === d.response_id}
+                        onClick={() => void decide(d.response_id, false)}
+                        className={button}
+                      >
+                        Not fully closed
+                      </button>
+                    ) : null}
+                  </>
+                ) : null}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="muted mt-3 text-sm">
+          No deals from {whose === "your" ? "your" : "their"} leads in this
+          window.
+        </p>
+      )}
+      <div className="muted mt-3 space-y-1.5 text-xs">
+        {unmarked ? (
+          <p>
+            {count(unmarked)} past {unmarked === 1 ? "intro is" : "intros are"}{" "}
+            not marked yet: only intros marked showed are paid, so mark them on
+            the Calendar.
+          </p>
+        ) : null}
+        <p>
+          A deal is {whose === "your" ? "yours" : "theirs"} when the New Client
+          Form names {whose === "your" ? "you" : "them"} as the setter, or, when
+          it names nobody, when {whose === "your" ? "you" : "they"} ran the
+          lead's last intro before it was signed. It pays once it fully closes:
+          paid in full at signing, or marked fully closed by a manager once the
+          client paid past the onboarding fee.
+        </p>
+      </div>
+    </div>
   );
 }
 

@@ -11,11 +11,11 @@ export function PortfolioTrends() {
   if (!rows) return null;
   const pts = (k: string) => rows.map(r => ({ x: r.date, y: r[k] ?? null }));
   return (
-    <section className="rounded-xl border bg-card p-4 shadow-sm">
-      <h2 className="mb-2 text-[12px] font-bold uppercase tracking-widest text-teal-600">
-        Trends, last 30 days
-      </h2>
-      <div className="grid gap-3 md:grid-cols-3">
+    // Each chart is its own card, so the heading sits on the page rather
+    // than wrapping them in a second border.
+    <section>
+      <h2 className="text-[15px] font-semibold">Trends, last 30 days</h2>
+      <div className="mt-3 grid gap-4 md:grid-cols-3">
         <TrendChart title="Leads per day" points={pts("leads")} kind="bar" />
         <TrendChart title="Spend per day" points={pts("spend")} unit="$" />
         <TrendChart

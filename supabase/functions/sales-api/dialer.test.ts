@@ -6,6 +6,7 @@ import {
   type Appt,
   appointmentWork,
   BOOKING_CALENDARS,
+  introWaiting,
   type Candidate,
   calendarFor,
   callSummary,
@@ -25,11 +26,11 @@ import {
   revenueOf,
   routePhone,
   slotOffered,
-  speedToLead,
   stageRole,
   tagsFor,
   targetRoles,
   whenWords,
+  nextWorkingNine,
 } from "./dialer.ts";
 
 describe("phone routing", () => {
@@ -61,12 +62,12 @@ describe("the retry ladder", () => {
     expect(n.step).toBe(1);
     expect(n.due).toBe(kuwaitAt(morning, 17));
   });
-  test("first miss after 16:00: tomorrow at 09:00", () => {
-    const late = Date.parse("2026-09-24T13:30:00Z"); // 16:30 Kuwait
-    expect(nextTry(0, late).due).toBe(kuwaitAt(late, 9, 0, 1));
+  test("first miss after 16:00: the next working morning at 09:00 (Thursday: Saturday)", () => {
+    const late = Date.parse("2026-09-24T13:30:00Z"); // Thursday 16:30 Kuwait
+    expect(nextTry(0, late).due).toBe(kuwaitAt(late, 9, 0, 2));
   });
-  test("second and third misses: next day at 09:00; the fourth leaves the lead unreachable", () => {
-    expect(nextTry(1, morning).due).toBe(kuwaitAt(morning, 9, 0, 1));
+  test("second and third misses: the next working morning at 09:00; the fourth leaves the lead unreachable", () => {
+    expect(nextTry(1, morning).due).toBe(kuwaitAt(morning, 9, 0, 2)); // Thursday: Saturday
     expect(nextTry(3, morning)).toEqual({ step: 3, due: null, unreachable: true });
     expect(afterOutcome("no_answer", 3, morning, null).closed).toBe("unreachable");
   });
@@ -198,12 +199,6 @@ describe("the queue order", () => {
     const q = rankForSetter([lead({ contact_id: "ns", reached: true, last_dial_at: NOW - 2 * 86_400_000, last_call_type: "intro", last_call_status: "noshow", last_call_at: NOW - 86_400_000 })], "me", NOW);
     expect(q[0].tier).toBe(2);
   });
-});
-
-test("speed to lead is minutes to the first outbound call", () => {
-  expect(speedToLead(NOW, NOW + 150_000)).toBe(3);
-  expect(speedToLead(NOW, null)).toBeNull();
-  expect(speedToLead(NOW, NOW - 1)).toBeNull();
 });
 
 describe("the closer's queue", () => {
@@ -395,6 +390,23 @@ describe("appointment work", () => {
     expect(appointmentWork({ ...base, start: NOW - 25 * 60_000 }, NOW, "setter", "ghl-tahrir")).toBeNull();
     expect(appointmentWork({ ...base, status: "showed" }, NOW, "setter", "ghl-tahrir")).toBeNull();
   });
+  test("an intro that rang out waits five minutes, then comes back inside its window", () => {
+    const start = NOW - 60_000;
+    const rang = { ...base, start, last_try: NOW - 2 * 60_000 };
+    expect(introWaiting(rang, NOW)).toBe(true);
+    expect(appointmentWork(rang, NOW, "setter", "ghl-tahrir")).toBeNull();
+    const later = NOW + 4 * 60_000;
+    expect(introWaiting(rang, later)).toBe(false);
+    expect(appointmentWork(rang, later, "setter", "ghl-tahrir")).toMatchObject({ tier: 0, kind: "intro" });
+    // A confirmation try the evening before is not a try at the intro.
+    expect(introWaiting({ ...base, start, last_try: NOW - 14 * 3_600_000 }, NOW)).toBe(false);
+    // Past its twenty minutes it is not the setter's call any more.
+    expect(introWaiting({ ...rang, start: NOW - 25 * 60_000 }, NOW)).toBe(false);
+    // While it waits, the lead is not in the setter's list at all.
+    const booked = lead({ contact_id: "c-intro", appt: rang });
+    expect(rankForSetter([booked], "tahreer@maharamedia.com", NOW, "ghl-tahrir").map(r => r.contact_id)).toEqual([]);
+    expect(rankForSetter([booked], "tahreer@maharamedia.com", later, "ghl-tahrir")[0]).toMatchObject({ contact_id: "c-intro", kind: "intro" });
+  });
   test("a call booked more than a day ahead is confirmed the evening before (morning calls) or that morning", () => {
     const eve = Date.parse("2026-09-24T15:30:00Z"); // Thursday 18:30 Kuwait
     // Saturday 10:00 Kuwait, booked three days before: due from Friday 18:00.
@@ -458,5 +470,75 @@ describe("where an outcome moves the lead in the pipeline", () => {
     expect(targetRoles("lead", "callback", null)).toEqual([]);
     expect(tagsFor("wrong_number")).toEqual(["wrong-number"]);
     expect(tagsFor("callback")).toEqual([]);
+  });
+});
+
+describe("the retry ladder's times (Kuwait)", () => {
+  const at = (iso: string) => Date.parse(iso);
+  test("a morning miss comes back at 17:00, an afternoon or evening miss the next working morning", () => {
+    expect(nextTry(0, at("2026-09-24T07:00:00Z")).due).toBe(at("2026-09-24T14:00:00Z")); // 10:00 -> 17:00
+    expect(nextTry(0, at("2026-09-24T13:30:00Z")).due).toBe(at("2026-09-26T06:00:00Z")); // Thu 16:30 -> Sat 09:00
+    expect(nextTry(0, at("2026-09-23T15:30:00Z")).due).toBe(at("2026-09-24T06:00:00Z")); // Wed 18:30 -> Thu 09:00
+  });
+  test("later tries skip Friday, and the fourth leaves the lead unreachable", () => {
+    expect(nextTry(1, at("2026-09-24T14:00:00Z")).due).toBe(at("2026-09-26T06:00:00Z")); // Thu -> Sat
+    expect(nextTry(3, at("2026-09-24T07:00:00Z")).unreachable).toBe(true);
+    expect(nextWorkingNine(at("2026-09-26T07:00:00Z"))).toBe(at("2026-09-27T06:00:00Z")); // Sat -> Sun
+  });
+});
+
+describe("whose lead it is (Aziz, 2026-09-27)", () => {
+  // A fresh lead nobody called: in the shared queue unless another rep owns it.
+  const fresh = { created_at: NOW - 2 * 86_400_000, last_dial_at: null };
+  test("a lead another rep booked is theirs, and out of my queue", () => {
+    expect(rankForSetter([lead({ contact_id: "a", ...fresh, owner: "other@maharamedia.com" })], "me", NOW)).toEqual([]);
+  });
+  test("my own lead and a lead nobody owns stay in my queue", () => {
+    const q = rankForSetter(
+      [lead({ contact_id: "b", ...fresh, owner: "me" }), lead({ contact_id: "c", ...fresh, owner: null })],
+      "me",
+      NOW,
+    );
+    expect(q.map(x => x.contact_id).sort()).toEqual(["b", "c"]);
+  });
+  test("a manager still sees another rep's lead", () => {
+    const q = rankForSetter([lead({ contact_id: "d", ...fresh, owner: "other@maharamedia.com" })], "boss", NOW, null, true);
+    expect(q.map(x => x.contact_id)).toEqual(["d"]);
+  });
+});
+
+describe("the call centre's rules: missed calls and early call-backs (2026-09-27)", () => {
+  test("a lead who called in the last ten minutes, and nobody answered, is called first", () => {
+    const q = rankForSetter([lead({ contact_id: "m", inbound_call_at: NOW - 3 * 60_000, last_dial_at: NOW - 86_400_000, reached: true })], "me", NOW);
+    expect(q[0]).toMatchObject({ contact_id: "m", tier: 0, why: "Called us, missed it" });
+  });
+  test("earlier today it is today's work, even with a retry not yet due", () => {
+    const q = rankForSetter(
+      [lead({ contact_id: "m", inbound_call_at: NOW - 3 * 3_600_000, last_dial_at: NOW - 86_400_000, due_at: NOW + 3_600_000 })],
+      "me",
+      NOW,
+    );
+    expect(q[0]).toMatchObject({ tier: 1, why: "Called us, missed it" });
+  });
+  test("a call back since, or a missed call over a day old, is not a missed call", () => {
+    const since = rankForSetter([lead({ contact_id: "m", inbound_call_at: NOW - 3 * 60_000, last_dial_at: NOW - 60_000, reached: true, closed: "handled" })], "me", NOW);
+    expect(since).toEqual([]);
+    const old = rankForSetter([lead({ contact_id: "m", inbound_call_at: NOW - 2 * 86_400_000, closed: "handled" })], "me", NOW);
+    expect(old).toEqual([]);
+  });
+  test("a closer sees their own lead's missed call first", () => {
+    const q = rankForCloser(
+      [{ ...lead({ contact_id: "c", inbound_call_at: NOW - 60_000, last_dial_at: NOW - 86_400_000 }), demo_at: NOW - 86_400_000, demo_status: "showed", signed: false }],
+      "me",
+      NOW,
+    );
+    expect(q[0]).toMatchObject({ tier: 0, why: "Called us, missed it" });
+  });
+  test("a call-back shows five minutes early, with its time, and not before", () => {
+    // NOW is 12:00 in Kuwait; the call-back is at 12:04.
+    const early = rankForSetter([lead({ contact_id: "b", callback_at: NOW + 4 * 60_000, due_at: NOW + 4 * 60_000, last_dial_at: NOW - 3_600_000 })], "me", NOW);
+    expect(early[0]).toMatchObject({ tier: 0, why: "Call back at 12:04, as agreed" });
+    const tooEarly = rankForSetter([lead({ contact_id: "b", callback_at: NOW + 20 * 60_000, due_at: NOW + 20 * 60_000, last_dial_at: NOW - 3_600_000 })], "me", NOW);
+    expect(tooEarly).toEqual([]);
   });
 });

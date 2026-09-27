@@ -47,7 +47,7 @@ export function NumbersBoard({
   };
   const you = (
     <span
-      className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
+      className="rounded-full px-1.5 py-0.5 text-xs font-medium"
       style={{
         background: "color-mix(in oklch, var(--primary) 22%, transparent)",
         color: "var(--foreground)",
@@ -61,7 +61,7 @@ export function NumbersBoard({
     <SectionCard
       title="Team board"
       side={
-        <span className="muted text-xs">rates only, everyone sees this</span>
+        <span className="muted text-xs">Rates only, everyone sees this</span>
       }
       flush
     >
@@ -106,7 +106,7 @@ export function NumbersBoard({
                     <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1.5">
                       {COLUMNS.map(c => (
                         <div key={c.key} className="min-w-0">
-                          <dt className="muted text-[11px]">{c.label}</dt>
+                          <dt className="muted text-xs">{c.label}</dt>
                           <dd className="tabular-nums text-sm">
                             {pct(r[c.key], 1)}
                           </dd>

@@ -9,7 +9,10 @@ import { Link, useSearchParams } from "react-router";
 import {
   EmptyState,
   Failed,
+  FilterChip,
+  page,
   SectionCard,
+  Segmented,
   StatusChip,
   type Tone,
 } from "../components/kit";
@@ -144,10 +147,10 @@ export default function CalendarPage({ me }: { me: Me }) {
   const owed = useOwed(mine, OWED_DAYS);
 
   return (
-    <main className="mx-auto w-full max-w-6xl space-y-5 px-4 py-6 md:px-6">
+    <main className={page}>
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-xl font-semibold tracking-tight">Calendar</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Calendar</h1>
           <Freshness now={now} />
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -198,14 +201,14 @@ function Freshness({ now }: { now: number }) {
   const run = mirror.data;
   if (mirror.error)
     return (
-      <p className="muted text-sm">
+      <p className="muted mt-1 text-sm">
         Kuwait time. Could not tell when the calls were last read:{" "}
         {mirror.error}
       </p>
     );
   if (!run?.finished_at)
     return (
-      <p className="muted text-sm">
+      <p className="muted mt-1 text-sm">
         {mirror.loading
           ? "Kuwait time"
           : "Kuwait time · waiting for the first read of the CRM"}
@@ -213,7 +216,7 @@ function Freshness({ now }: { now: number }) {
     );
   const stale = now - Date.parse(run.finished_at) > 20 * 60_000;
   return (
-    <p className="muted flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+    <p className="muted mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
       Kuwait time · calls as of {ago(run.finished_at, now)}
       {run.ok === false || stale ? (
         <StatusChip
@@ -237,44 +240,38 @@ function ViewSwitch({
 }) {
   const n = owed?.length ?? 0;
   return (
-    <div
-      className="raised inline-flex rounded-[var(--radius-md)] p-0.5 text-sm"
-      role="group"
-      aria-label="Which calls"
-    >
-      {VIEWS.map(v => (
-        <button
-          key={v.key}
-          type="button"
-          aria-pressed={view === v.key}
-          onClick={() => onPick(v.key)}
-          className={`inline-flex items-center gap-1.5 rounded-[calc(var(--radius-md)-2px)] px-3 py-1 ${
-            view === v.key
-              ? "bg-[color:var(--card)] font-medium shadow-sm"
-              : "muted"
-          }`}
-        >
-          {v.label}
-          {v.key === "owed" && n > 0 ? (
+    <Segmented
+      label="Which calls"
+      value={view}
+      options={VIEWS.map((v): [string, ReactNode] => [
+        v.key,
+        v.key === "owed" && n > 0 ? (
+          <>
+            {v.label}
             <span
-              className="rounded-full px-1.5 text-[11px] font-semibold tabular-nums"
-              style={{ background: "var(--owed)", color: "#1b1300" }}
+              className="rounded-full px-1.5 text-xs font-semibold tabular-nums"
+              style={{
+                background: "var(--owed)",
+                color: "var(--warning-foreground)",
+              }}
             >
               {n >= OWED_CAP ? `${OWED_CAP}+` : n}
             </span>
-          ) : null}
-        </button>
-      ))}
-    </div>
+          </>
+        ) : (
+          v.label
+        ),
+      ])}
+      onChange={v => onPick(v as View)}
+    />
   );
 }
 
-const CHIP_ON = {
-  background: "color-mix(in oklch, var(--primary) 14%, transparent)",
-  borderColor: "color-mix(in oklch, var(--primary) 55%, transparent)",
-};
-
-/** All, Intro, Demo, Follow-up, Callback, each with how many the view holds. */
+/**
+ * All, Intro, Demo, Follow-up, Callback, each with how many the view holds.
+ * A type with none is left out (the chosen one and All stay, so a filter can
+ * always be cleared); with nothing at all there is no row.
+ */
 function TypeChips({
   value,
   rows,
@@ -285,35 +282,37 @@ function TypeChips({
   rows: CalendarRow[] | null;
   onPick: (t: string) => void;
 }) {
+  const chips = TYPES.map(t => ({
+    ...t,
+    n: rows
+      ? t.key
+        ? rows.filter(r => r.call_type === t.key).length
+        : rows.length
+      : null,
+  })).filter(
+    t =>
+      t.n === null ||
+      t.n > 0 ||
+      t.key === value ||
+      (t.key === "" && value !== ""),
+  );
+  if (!chips.some(t => t.key !== "") && !value) return null;
   return (
-    <div className="flex flex-wrap gap-1.5" role="group" aria-label="Call type">
-      {TYPES.map(t => {
-        const on = value === t.key;
-        const n = rows
-          ? t.key
-            ? rows.filter(r => r.call_type === t.key).length
-            : rows.length
-          : null;
-        return (
-          <button
-            key={t.key || "all"}
-            type="button"
-            aria-pressed={on}
-            onClick={() => onPick(t.key)}
-            className={`inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs ${
-              on
-                ? "font-medium"
-                : "muted hairline hover:bg-[color:var(--secondary)]"
-            }`}
-            style={on ? CHIP_ON : undefined}
-          >
-            {t.label}
-            {n === null ? null : (
-              <span className="tabular-nums opacity-70">{n}</span>
-            )}
-          </button>
-        );
-      })}
+    <div
+      className="no-scrollbar flex flex-nowrap gap-2 overflow-x-auto"
+      role="group"
+      aria-label="Call type"
+    >
+      {chips.map(t => (
+        <FilterChip
+          key={t.key || "all"}
+          on={value === t.key}
+          onClick={() => onPick(t.key)}
+          count={t.n}
+        >
+          {t.label}
+        </FilterChip>
+      ))}
     </div>
   );
 }
@@ -472,7 +471,7 @@ function OwedView({
 
   return (
     <>
-      <div className="space-y-3">
+      <div className="space-y-4">
         <TypeChips
           value={type}
           rows={owed.data && !capped ? rows : null}
@@ -546,7 +545,7 @@ function Days({
     else days.set(key, [r]);
   }
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       {[...days].map(([key, list]) => {
         const iso = list[0]?.start_at ?? null;
         const title = key ? dayLabel(iso, now) : "No time set";

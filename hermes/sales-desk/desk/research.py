@@ -18,18 +18,25 @@ match (the name and the company, the name and the email's own domain, the
 company and the city); a common first name and nothing else is "not found".
 A claim whose page the search never opened is kept but marked unverified.
 
-Lead data goes to OpenAI and Apify only, never to DeepSeek (PDPL).
+Lead data goes to OpenAI and Apify only, never to DeepSeek (PDPL): the model
+is checked against the desk's allowlist before anything is sent. Its tokens
+count against the desk's daily ceiling like every other job's.
 """
 from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
 from . import http
+from . import model as model_mod
+from .errors import NotNow
+from .supabase import iso
 
 OPENAI = "https://api.openai.com/v1/responses"
+# A request claimed (running) this long without finishing is a run that died.
+STUCK = timedelta(minutes=30)
 APIFY_GOOGLE = "https://api.apify.com/v2/acts/apify~google-search-scraper/run-sync-get-dataset-items"
 FREE_MAIL = {"gmail.com", "hotmail.com", "outlook.com", "yahoo.com", "icloud.com", "live.com", "msn.com",
              "me.com", "aol.com", "proton.me", "protonmail.com", "gmx.com", "yandex.com", "mail.com"}
@@ -218,9 +225,13 @@ def check_sources(brief: dict[str, Any], consulted: list[str]) -> tuple[dict[str
 def research(lead: dict[str, Any], *, openai_key: str, apify_key: str, model: str = "gpt-5",
              log: Callable[[str], None] = lambda _m: None, timeout: float = 600) -> dict[str, Any]:
     """The brief for one lead: Google through Apify, then the model with web search."""
+    model_mod.check_model(model, setting="SALES_RESEARCH_MODEL")
     f = lead_facts(lead)
     if not f["name"] and not f["company"] and not f["email_domain"]:
         raise ValueError("The lead has no name, company or company email to search for.")
+    meter = model_mod.current_meter()
+    if meter is not None:
+        meter.check()
     hits: list[dict[str, Any]] = []
     try:
         hits = google(apify_key, queries(f), f["country_code"])
@@ -238,6 +249,8 @@ def research(lead: dict[str, Any], *, openai_key: str, apify_key: str, model: st
                                                       "Content-Type": "application/json"},
                              data=json.dumps(body).encode(), timeout=timeout, retries=1)
     resp = json.loads(raw.decode("utf-8"))
+    if meter is not None:
+        meter.add(str(resp.get("model") or model), resp.get("usage") or {})
     text, urls = _text_and_sources(resp)
     brief = first_json(text)
     if brief is None:
@@ -251,9 +264,37 @@ def research(lead: dict[str, Any], *, openai_key: str, apify_key: str, model: st
             "at": datetime.now(timezone.utc).isoformat()}
 
 
+def reap(sb: Any, now: datetime, *, max_attempts: int, warn: Callable[[str], None]) -> int:
+    """Requests a run claimed (running) half an hour ago and never finished:
+    the run died (this morning's reboot), and the cockpit refused to research
+    that lead again while its brief said running. Back in the queue, or
+    failed when its tries are used; conditional on nobody touching it since."""
+    n = 0
+    for req in sb.stuck("research", iso(now - STUCK)):
+        final = int(req.get("attempts") or 0) >= max_attempts
+        message = ("The researcher stopped before finishing this lead twice. Ask again." if final else
+                   "The researcher stopped before finishing; it is researched again.")
+        if not sb.reaped(req, message, final=final):
+            continue
+        rid = http.quote(str(req["id"]))
+        sb.patch("cockpit_sales_research", f"request_id=eq.{rid}&status=eq.running",
+                 {"status": "failed", "error": message, "finished_at": now.isoformat()} if final else
+                 {"status": "queued"})
+        n += 1
+        warn(f"research: request {req['id']} was left half-done by a run that stopped; "
+             + ("failed" if final else "back in the queue"))
+    return n
+
+
 def run(sb: Any, cfg: Any, log: Callable[[str], None], *, host: str, limit: int = 3,
-        model: str = "gpt-5", apify_key: str = "", max_attempts: int = 2) -> dict[str, Any]:
-    """Drain the research requests the cockpit queued."""
+        model: str = "gpt-5", apify_key: str = "", max_attempts: int = 2,
+        warn: Optional[Callable[[str], None]] = None) -> dict[str, Any]:
+    """Drain the research requests the cockpit queued, after freeing any a
+    dead run left claimed. When the model cannot be asked now (a refused
+    model, the day's ceiling, today's spend unread), the request goes back
+    untouched, its try not counted, and the run stops."""
+    warn = warn or log
+    reaped = reap(sb, datetime.now(timezone.utc), max_attempts=max_attempts, warn=warn)
     rows = sb.queued("research", max_attempts=max_attempts, limit=limit)
     done = failed = 0
     for req in rows:
@@ -276,6 +317,10 @@ def run(sb: Any, cfg: Any, log: Callable[[str], None], *, host: str, limit: int 
             sb.request_done(rid, {"usage": out["usage"], "pages": len(out["sources"]["pages"])})
             done += 1
             log(f"research: {contact} ready ({len(out['sources']['pages'])} pages)")
+        except NotNow as e:
+            sb.request_released(rid, http.scrub(str(e))[:400], int(mine.get("attempts") or 1) - 1)
+            sb.patch("cockpit_sales_research", f"request_id=eq.{http.quote(rid)}&status=eq.running", {"status": "queued"})
+            raise
         except Exception as e:  # noqa: BLE001 - one lead is not worth the rest
             msg = http.scrub(str(e))[:400]
             final = int(mine.get("attempts") or 1) >= max_attempts
@@ -285,5 +330,5 @@ def run(sb: Any, cfg: Any, log: Callable[[str], None], *, host: str, limit: int 
                          {"status": "failed", "error": msg,
                           "finished_at": datetime.now(timezone.utc).isoformat()})
             failed += 1
-            log(f"research: {contact} failed: {msg}")
-    return {"seen": len(rows), "done": done, "failed": failed}
+            warn(f"research: {contact} failed: {msg}")
+    return {"seen": len(rows), "done": done, "failed": failed, "reaped": reaped}

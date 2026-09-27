@@ -1,3 +1,5 @@
+import { ArrowUpRight } from "lucide-react";
+
 /**
  * What the newest comments on the client's ClickUp card said: call summaries,
  * kickoff handoffs, client briefs and notes, digested by Hermes within about
@@ -72,9 +74,12 @@ export function relevantUpdates(
   );
 }
 
+const MONTHS = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(" ");
+
+/** "20 Sep". */
 function day(at: number) {
   const d = new Date(at);
-  return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`;
+  return `${d.getDate()} ${MONTHS[d.getMonth()]}`;
 }
 
 /** The updates as a plain list, for inside another panel. */
@@ -92,15 +97,17 @@ export function ClientUpdateList({
   return (
     <ul className="space-y-3">
       {list.map(u => (
-        <li key={`${u.at}-${u.kind}`} className="text-[13px] leading-snug">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        <li key={`${u.at}-${u.kind}`} className="text-sm leading-snug">
+          <p className="font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
             {KIND[u.kind] ?? "Comment"} · {day(u.at)}
           </p>
           {focus === "csm" && u.summary ? (
-            <p className="mt-0.5">{u.summary}</p>
+            <p className="mt-1" dir="auto">
+              {u.summary}
+            </p>
           ) : null}
           {itemsFor(u, focus).map(([label, items]) => (
-            <p key={label} className="mt-1">
+            <p key={label} className="mt-1" dir="auto">
               <span className="font-semibold">{label}: </span>
               {items.slice(0, 5).join(" · ")}
               {items.length > 5
@@ -128,9 +135,9 @@ export function ClientUpdates({
 }) {
   if (!relevantUpdates(updates, focus).length) return null;
   return (
-    <section className="rounded-lg border bg-card p-3">
-      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
-        <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+    <section className="rounded-2xl border bg-card p-4 sm:p-6">
+      <div className="mb-4 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <h3 className="text-[15px] font-semibold">
           Latest from the ClickUp card
         </h3>
         {url ? (
@@ -138,9 +145,10 @@ export function ClientUpdates({
             href={url}
             target="_blank"
             rel="noreferrer"
-            className="text-[12px] underline underline-offset-2"
+            className="inline-flex items-center gap-1 text-xs text-primary underline-offset-4 hover:underline"
           >
             Open the card
+            <ArrowUpRight aria-hidden className="size-3.5" />
           </a>
         ) : null}
       </div>

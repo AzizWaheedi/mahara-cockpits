@@ -12,15 +12,14 @@ type Theme = "light" | "dark";
 const STORAGE_KEY = "mahara-cockpit-theme";
 
 function readInitial(): Theme {
-  if (typeof window === "undefined") return "light";
+  if (typeof window === "undefined") return "dark";
   const saved =
     window.localStorage.getItem(STORAGE_KEY) ??
     // The retired second provider stored its choice under "theme".
     window.localStorage.getItem("theme");
   if (saved === "light" || saved === "dark") return saved;
-  return window.matchMedia?.("(prefers-color-scheme: dark)").matches
-    ? "dark"
-    : "light";
+  // Dark unless someone chose light: the brand's web default (guidelines v1.0).
+  return "dark";
 }
 
 const ThemeContext = createContext<{

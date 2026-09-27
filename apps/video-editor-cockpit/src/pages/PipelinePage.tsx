@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Link } from "react-router";
-import { Empty, Problem, Spinner } from "../components/bits";
+import { Empty, Page, PageHeader, Problem, Spinner } from "../components/bits";
 import { useJobs } from "../lib/data";
 import { day, whenDue } from "../lib/format";
 import type { Job } from "../lib/types";
@@ -22,47 +22,78 @@ const ORDER = [
 ];
 const CLOSED = new Set(["complete", "closed", "done", "cancelled"]);
 
+/** The two dots a card can carry, said once in the header's legend. */
+const DOT = {
+  ready: { label: "Ready to start", tone: "var(--success)" },
+  // Waiting on somebody is orange; red is kept for a date that has passed.
+  stuck: { label: "Waiting on someone", tone: "var(--warning)" },
+} as const;
+
+/** "in progress" -> "In progress": the board's words, in sentence case. */
+function sentence(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 function Card({ job }: { job: Job }) {
   const due = whenDue(job.due_at);
   const stuck = job.state === "blocked" || job.state === "stale";
+  const dot = stuck ? DOT.stuck : job.state === "ready" ? DOT.ready : null;
   return (
     <Link
       to={`/job/${job.task_id}`}
-      className="block rounded-[var(--radius-md)] border hairline bg-[color:var(--card)] px-3 py-2.5 transition-colors hover:bg-[color:var(--secondary)]"
+      className="block rounded-xl border bg-card p-3 transition-colors hover:border-primary/50"
     >
       <div className="flex items-start gap-2">
-        <span className="min-w-0 flex-1 truncate text-sm font-medium">
+        <span
+          dir="auto"
+          className="min-w-0 flex-1 truncate text-sm font-medium"
+        >
           {job.client ?? "No client tag"}
         </span>
         {/* A colour on its own says nothing to a screen reader, so the dot
             carries a role and a label as well as a tooltip. */}
-        {stuck || job.state === "ready" ? (
+        {dot ? (
           <span
             role="img"
-            aria-label={stuck ? "blocked" : "ready to start"}
-            title={stuck ? "blocked" : "ready to start"}
+            aria-label={dot.label}
+            title={dot.label}
             className="mt-1.5 size-1.5 shrink-0 rounded-full"
-            style={{
-              background: stuck ? "var(--destructive)" : "var(--success)",
-            }}
+            style={{ background: dot.tone }}
           />
         ) : null}
       </div>
-      <p className="muted mt-1 truncate text-[11px]">
-        {job.editor ?? "nobody assigned"}
+      <p className="mt-1 truncate text-xs text-muted-foreground">
+        {job.editor ?? "Nobody assigned"}
       </p>
       <p
-        className="mt-0.5 text-[11px]"
-        style={
-          due.late
-            ? { color: "var(--destructive)" }
-            : { color: "var(--muted-foreground)" }
-        }
+        className={`mt-0.5 text-xs ${
+          due.late ? "txt-bad font-medium" : "text-muted-foreground"
+        }`}
       >
         {due.text}
         {job.due_at ? ` · ${day(job.due_at)}` : ""}
       </p>
     </Link>
+  );
+}
+
+function Legend() {
+  return (
+    <ul className="flex flex-wrap items-center gap-2" aria-label="Legend">
+      {Object.values(DOT).map(d => (
+        <li
+          key={d.label}
+          className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium text-muted-foreground"
+        >
+          <span
+            aria-hidden
+            className="size-1.5 rounded-full"
+            style={{ background: d.tone }}
+          />
+          {d.label}
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -84,43 +115,45 @@ export default function PipelinePage() {
   }, [jobs]);
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-4 py-8">
-      <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Pipeline</h1>
-        <p className="muted mt-1 text-sm">
-          Every open job by its status on the board. A green dot is ready to
-          start, a red one is waiting on somebody.
-        </p>
-      </header>
+    <Page wide>
+      <PageHeader
+        title="Pipeline"
+        sub="Every open job by its status on the board."
+        actions={<Legend />}
+      />
 
       {error && <Problem>The board could not be read: {error}</Problem>}
       {loading && <Spinner what="Reading the board" />}
       {!loading && !columns.length && <Empty>No open jobs on the board.</Empty>}
 
-      <div className="-mx-4 overflow-x-auto px-4 pb-2">
-        <div className="flex min-w-max gap-3">
+      {/* The board scrolls sideways inside its own strip, edge to edge on
+          a phone, never the page. */}
+      <div className="-mx-4 overflow-x-auto px-4 pb-2 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
+        <div className="flex min-w-max gap-4">
           {columns.map(col => (
-            <section key={col.key} className="w-60 shrink-0">
+            <section key={col.key} className="w-64 shrink-0">
               <div className="mb-2 flex items-baseline gap-2 px-1">
-                <h2 className="text-xs font-semibold tracking-wide uppercase">
-                  {col.key}
+                <h2 className="text-sm font-semibold tracking-tight">
+                  {sentence(col.key)}
                 </h2>
-                <span className="muted tabular-nums text-xs">
+                <span className="text-xs tabular-nums text-muted-foreground">
                   {col.jobs.length}
                 </span>
               </div>
-              <div className="raised space-y-2 rounded-[calc(var(--radius)+0.25rem)] p-2">
+              <div className="space-y-2 rounded-2xl bg-muted/40 p-2">
                 {col.jobs.map(j => (
                   <Card key={j.task_id} job={j} />
                 ))}
                 {!col.jobs.length ? (
-                  <p className="muted px-2 py-4 text-center text-xs">empty</p>
+                  <p className="px-2 py-4 text-center text-xs text-muted-foreground">
+                    empty
+                  </p>
                 ) : null}
               </div>
             </section>
           ))}
         </div>
       </div>
-    </div>
+    </Page>
   );
 }

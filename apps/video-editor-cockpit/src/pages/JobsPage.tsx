@@ -1,6 +1,16 @@
+import { ChevronRight, RefreshCw } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link } from "react-router";
-import { Empty, Problem, Spinner, StateBadge } from "../components/bits";
+import {
+  chip,
+  Empty,
+  Page,
+  PageHeader,
+  Problem,
+  Spinner,
+  StateBadge,
+} from "../components/bits";
+import { Button } from "../components/ui/button";
 import { useWho } from "../lib/auth";
 import { useJobs } from "../lib/data";
 import { day, minutes, whenDue } from "../lib/format";
@@ -12,6 +22,14 @@ function isMine(job: Job, email: string): boolean {
   if (!email) return false;
   const low = email.toLowerCase();
   return (job.editors ?? []).some(p => (p.email ?? "").toLowerCase() === low);
+}
+
+/** Whole days from now to the due date, rounded the way `whenDue` rounds. */
+function daysToDue(iso: string | null): number | null {
+  if (!iso) return null;
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return null;
+  return Math.round((t - Date.now()) / 86_400_000);
 }
 
 /**
@@ -28,36 +46,36 @@ const GROUPS: {
   {
     key: "ready",
     title: "Ready to start",
-    hint: "footage read, nothing missing",
+    hint: "Footage read, nothing missing",
     has: j => j.state === "ready",
   },
   {
     key: "blocked",
     title: "Waiting on something",
-    hint: "these need someone else first",
+    hint: "These need someone else first",
     has: j => j.state === "blocked" || j.state === "stale",
   },
   {
     key: "new",
     title: "Not read yet",
-    hint: "the desk reads the board every half hour",
+    hint: "The desk reads the board every half hour",
     has: j => j.state === "new" || j.state === null,
   },
   {
     key: "delivered",
     title: "Delivered",
-    hint: "sent for client review",
+    hint: "Sent for client review",
     has: j => j.state === "delivered",
   },
   {
     key: "gone",
     title: "Card deleted",
-    hint: "the ClickUp card no longer exists",
+    hint: "The ClickUp card no longer exists",
     has: j => j.state === "gone",
   },
 ];
 
-function JobRow({ job }: { job: Job }) {
+function JobRow({ job, badge }: { job: Job; badge: boolean }) {
   const due = whenDue(job.due_at);
   const blocker = job.missing?.[0];
   const more = (job.missing?.length ?? 0) - 1;
@@ -65,56 +83,82 @@ function JobRow({ job }: { job: Job }) {
   return (
     <Link
       to={`/job/${job.task_id}`}
-      className="group block border-b hairline px-4 py-3.5 transition-colors last:border-b-0 hover:bg-[color:var(--secondary)]"
+      className="flex items-center gap-3 px-4 py-3.5 transition-colors hover:bg-muted sm:px-5"
     >
-      <div className="flex items-start gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
-            <span className="font-medium tracking-tight">
-              {job.client ?? "No client tag"}
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+          <span dir="auto" className="min-w-0 font-medium tracking-tight">
+            {job.client ?? "No client tag"}
+          </span>
+          <span className="text-xs text-muted-foreground">
+            {job.request_type ?? "Video"}
+          </span>
+        </div>
+
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+          <span>{job.editor ?? "Nobody assigned"}</span>
+          <span className={due.late ? "txt-bad font-medium" : ""}>
+            {due.text}
+            {job.due_at ? ` · ${day(job.due_at)}` : ""}
+          </span>
+          {job.files ? (
+            <span className="tabular-nums">
+              {job.files} file{job.files === 1 ? "" : "s"} ·{" "}
+              {minutes(job.seconds)}
             </span>
-            <span className="muted text-xs">{job.request_type ?? "Video"}</span>
-          </div>
-
-          <div className="muted mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs">
-            <span>{job.editor ?? "nobody assigned"}</span>
-            <span
-              className={due.late ? "font-medium" : ""}
-              style={due.late ? { color: "var(--destructive)" } : undefined}
-            >
-              {due.text}
-              {job.due_at ? ` · ${day(job.due_at)}` : ""}
-            </span>
-            {job.files ? (
-              <span className="tabular-nums">
-                {job.files} file{job.files === 1 ? "" : "s"} ·{" "}
-                {minutes(job.seconds)}
-              </span>
-            ) : null}
-          </div>
-
-          {blocker ? (
-            <p
-              className="mt-2 text-xs leading-relaxed"
-              style={{ color: "var(--destructive)" }}
-            >
-              {blocker}
-              {/* A separate clause: the blocker is a full sentence and
-                  "and 1 more" ran straight on after its full stop. */}
-              {more > 0 ? (
-                <span className="muted"> Plus {more} more.</span>
-              ) : null}
-            </p>
-          ) : null}
-
-          {job.asked_for ? (
-            <p className="muted mt-1.5 text-xs">Asked for {job.asked_for}.</p>
           ) : null}
         </div>
 
-        <StateBadge state={job.state} />
+        {blocker ? (
+          <p className="txt-warn mt-2 text-xs leading-relaxed">
+            {blocker}
+            {/* A separate clause: the blocker is a full sentence and
+                "and 1 more" ran straight on after its full stop. */}
+            {more > 0 ? (
+              <span className="text-muted-foreground"> Plus {more} more.</span>
+            ) : null}
+          </p>
+        ) : null}
+
+        {job.asked_for ? (
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            Asked for {job.asked_for}.
+          </p>
+        ) : null}
       </div>
+
+      {/* The group title already says the state; only "Waiting on
+          something" holds two (blocked, reading again), so only it shows. */}
+      {badge ? <StateBadge state={job.state} /> : null}
+      <ChevronRight
+        aria-hidden
+        className="size-4 shrink-0 text-muted-foreground"
+      />
     </Link>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  alarm = false,
+}: {
+  label: string;
+  value: number | null;
+  /** Red, for the one number that means something is wrong. */
+  alarm?: boolean;
+}) {
+  return (
+    <div className="min-w-0 rounded-2xl border bg-card p-3 sm:p-4">
+      <p className="truncate text-xs text-muted-foreground">{label}</p>
+      <p
+        className={`mt-1 whitespace-nowrap text-2xl font-semibold tracking-tight tabular-nums ${
+          alarm && value ? "txt-bad" : ""
+        }`}
+      >
+        {value ?? "n/a"}
+      </p>
+    </div>
   );
 }
 
@@ -149,46 +193,67 @@ export default function JobsPage() {
     [jobs, email],
   );
 
-  return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-8">
-      <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Jobs</h1>
-        <p className="muted mt-1 text-sm">
-          Everything on the Video Pipeline, read by the desk every half hour.
-        </p>
-      </header>
+  // The day in four numbers, counted from the list already on screen: open
+  // jobs only (closed and deleted cards never count), mine only when that
+  // filter is on. Late and due today leave out what is already delivered.
+  const tally = useMemo(() => {
+    if (!jobs) return null;
+    const open = jobs.filter(
+      j =>
+        j.state !== "gone" &&
+        !DONE.has((j.status ?? "").toLowerCase()) &&
+        (!onlyMine || isMine(j, email)),
+    );
+    const owed = open.filter(j => j.state !== "delivered");
+    return {
+      ready: open.filter(j => j.state === "ready").length,
+      waiting: open.filter(j => j.state === "blocked" || j.state === "stale")
+        .length,
+      late: owed.filter(j => (daysToDue(j.due_at) ?? 0) < 0).length,
+      today: owed.filter(j => daysToDue(j.due_at) === 0).length,
+    };
+  }, [jobs, onlyMine, email]);
 
-      <div className="mb-5 flex flex-wrap items-center gap-2">
+  return (
+    <Page>
+      <PageHeader
+        title="Jobs"
+        sub="Everything on the Video Pipeline, read by the desk every half hour."
+        actions={
+          <Button variant="outline" size="sm" onClick={reload}>
+            <RefreshCw aria-hidden />
+            Refresh
+          </Button>
+        }
+      />
+
+      {tally ? (
+        // One row on a phone too: four short numbers read at a glance.
+        <div className="mb-6 grid grid-cols-4 gap-2 sm:gap-4">
+          <Stat label="Ready" value={tally.ready} />
+          <Stat label="Waiting" value={tally.waiting} />
+          <Stat label="Late" value={tally.late} alarm />
+          <Stat label="Due today" value={tally.today} />
+        </div>
+      ) : null}
+
+      <div className="-mx-4 mb-6 flex flex-nowrap items-center gap-2 overflow-x-auto px-4 no-scrollbar sm:mx-0 sm:flex-wrap sm:px-0">
         <button
           type="button"
           onClick={() => setOnlyMine(m => !m)}
           aria-pressed={onlyMine}
-          className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
-            onlyMine
-              ? "bg-[color:var(--primary)] text-[color:var(--primary-foreground)]"
-              : "raised muted"
-          }`}
+          className={chip(onlyMine)}
         >
-          Assigned to me{mineCount ? ` (${mineCount})` : ""}
+          Assigned to me
+          {mineCount ? <span className="tabular-nums">{mineCount}</span> : null}
         </button>
         <button
           type="button"
           onClick={() => setShowDone(d => !d)}
           aria-pressed={showDone}
-          className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
-            showDone
-              ? "bg-[color:var(--primary)] text-[color:var(--primary-foreground)]"
-              : "raised muted"
-          }`}
+          className={chip(showDone)}
         >
           Include closed and deleted
-        </button>
-        <button
-          type="button"
-          onClick={reload}
-          className="muted ml-auto text-xs"
-        >
-          Refresh
         </button>
       </div>
 
@@ -202,28 +267,32 @@ export default function JobsPage() {
         </Empty>
       )}
 
-      <div className="space-y-7">
+      <div className="space-y-6">
         {groups.map(g => (
           <section key={g.key}>
             <div className="mb-2 flex items-baseline gap-2 px-1">
-              <h2 className="text-sm font-semibold tracking-tight">
+              <h2 className="text-[15px] font-semibold tracking-tight">
                 {g.title}
               </h2>
-              <span className="muted tabular-nums text-xs">
+              <span className="text-xs tabular-nums text-muted-foreground">
                 {g.jobs.length}
               </span>
-              <span className="muted ml-auto hidden text-xs sm:inline">
+              <span className="ml-auto hidden text-xs text-muted-foreground sm:inline">
                 {g.hint}
               </span>
             </div>
-            <div className="panel overflow-hidden">
+            <div className="divide-y overflow-hidden rounded-2xl border bg-card">
               {g.jobs.map(job => (
-                <JobRow key={job.task_id} job={job} />
+                <JobRow
+                  key={job.task_id}
+                  job={job}
+                  badge={g.key === "blocked"}
+                />
               ))}
             </div>
           </section>
         ))}
       </div>
-    </div>
+    </Page>
   );
 }

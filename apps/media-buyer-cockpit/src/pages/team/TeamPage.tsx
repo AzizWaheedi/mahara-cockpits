@@ -4,39 +4,26 @@ import { Link, useNavigate } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { DateInput } from "@/components/ui/date-input";
 import { Input } from "@/components/ui/input";
 import { usePageVisible } from "@/lib/usePageVisible";
-import {
-  fetchTeamOverview,
-  saveMeeting as saveMeetingApi,
-  type MeetingSummary,
-  type Overview,
-} from "@/lib/team";
-import {
-  dayName,
-  errorText,
-  Field,
-  Initials,
-  peopleById,
-  selectClass,
-} from "./teamKit";
+import { fetchTeamOverview, saveMeeting as saveMeetingApi, type MeetingSummary, type Overview } from "@/lib/team";
+import { api } from "@/lib/cockpitApi";
+import { DAY_NAMES, dayLabel, seriesLine } from "../../../convex/teamCore";
+import type { Prize, WeekDay } from "../../../convex/teamPage";
+import { CADENCES } from "./MeetingPage";
+import { chip, DayChips, dayName, errorText, Field, fieldClass, Initials, peopleById, selectClass, timeRange } from "./teamKit";
 
 /**
- * Team meetings: every meeting the team holds, what each one is for, and
- * what it will cover next. The whole team sees it; each meeting opens on its
- * own page (MeetingPage). Aziz, 2026-09-22.
+ * Team meetings: every meeting the team holds, the week at its real times,
+ * what each one is for and what it will cover next. The whole team sees it;
+ * each meeting opens on its own page (MeetingPage).
  */
-
-const CADENCES = [
-  "weekly",
-  "every two weeks",
-  "monthly",
-  "quarterly",
-  "as needed",
-];
 
 export function TeamPage() {
   const auth = useCockpitAuth();
+  const setAmount = useAction(api.team.setPrizeAmount);
   const navigate = useNavigate();
   const visible = usePageVisible();
   const [data, setData] = useState<Overview | null>(null);
@@ -112,7 +99,7 @@ export function TeamPage() {
 
   if (!data)
     return (
-      <div className="mx-auto w-full max-w-5xl p-1">
+      <div className="mx-auto w-full max-w-6xl p-1">
         {error ? (
           <p className="text-sm text-destructive">{error}</p>
         ) : (
@@ -127,15 +114,15 @@ export function TeamPage() {
   const noPurpose = data.meetings.filter(m => !m.purpose).length;
 
   return (
-    <div className="mx-auto grid w-full max-w-5xl gap-5">
-      <header className="flex flex-wrap items-start justify-between gap-3">
+    <div className="mx-auto grid w-full max-w-6xl gap-6">
+      <header className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0 max-w-2xl">
-          <h1 className="text-xl font-semibold tracking-tight">
+          <h1 className="text-2xl font-semibold tracking-tight">
             Team meetings
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Every meeting the team holds, what it is for, and what it will cover
-            next. Whatever is not finished carries over to the next one.
+            Every meeting the team holds, when it meets and what it will cover
+            next. Changes made here land on Google Calendar.
           </p>
         </div>
         <Button size="sm" onClick={() => setCreating(c => !c)}>
@@ -146,6 +133,7 @@ export function TeamPage() {
       {creating ? (
         <NewMeeting
           departments={departments}
+          today={data.today}
           onCancel={() => setCreating(false)}
           onSave={async m => {
             const page = (await saveMeeting(m)) as { meeting: { id: string } };
@@ -154,8 +142,23 @@ export function TeamPage() {
         />
       ) : null}
 
+      <WeekView weeks={data.weeks} today={data.today} />
+
+      {data.prizes?.length ? (
+        <Prizes
+          prizes={data.prizes}
+          onAmount={async (optionId, amount) => {
+            try {
+              setData((await setAmount({ optionId, amount })) as Overview);
+            } catch (e) {
+              setError(errorText(e));
+            }
+          }}
+        />
+      ) : null}
+
       {noPurpose ? (
-        <p className="rounded-lg border bg-card px-4 py-3 text-sm">
+        <p className="rounded-2xl border bg-card px-4 py-3 text-sm sm:px-6">
           {noPurpose === data.meetings.length
             ? "No meeting has a purpose written yet."
             : `${noPurpose} of ${data.meetings.length} meetings have no purpose written yet.`}{" "}
@@ -166,7 +169,7 @@ export function TeamPage() {
         </p>
       ) : null}
 
-      <div className="-mx-1 flex gap-1 overflow-x-auto px-1 [scrollbar-width:none] sm:flex-wrap [&::-webkit-scrollbar]:hidden">
+      <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 [scrollbar-width:none] sm:flex-wrap [&::-webkit-scrollbar]:hidden">
         {(
           [
             ["mine", "Yours"],
@@ -205,13 +208,13 @@ export function TeamPage() {
       </div>
 
       {shown.length ? (
-        <ul className="overflow-hidden rounded-xl border bg-card">
+        <ul className="overflow-hidden rounded-2xl border bg-card">
           {shown.map(m => (
             <MeetingRow key={m.id} m={m} byId={byId} today={data.today} />
           ))}
         </ul>
       ) : (
-        <div className="rounded-xl border bg-card px-4 py-10 text-center">
+        <div className="rounded-2xl border bg-card px-4 py-10 text-center">
           <p className="text-sm font-medium">
             {filter === "mine"
               ? "You are not in any meeting yet."
@@ -220,7 +223,7 @@ export function TeamPage() {
           <p className="mt-1 text-sm text-muted-foreground">
             {filter === "mine"
               ? "Everyone's shows every meeting the team holds; a host can add you."
-              : "Meetings arrive from the team's calendars every hour, or start one with New meeting."}
+              : "Meetings arrive from the team's calendars within five minutes, or start one with New meeting."}
           </p>
         </div>
       )}
@@ -229,12 +232,172 @@ export function TeamPage() {
   );
 }
 
-const chip = (on: boolean) =>
-  `shrink-0 rounded-full border px-2.5 py-1 text-xs transition-colors ${
-    on
-      ? "border-transparent bg-foreground text-background"
-      : "text-muted-foreground hover:text-foreground"
-  }`;
+// --- the week ------------------------------------------------------------------------------------
+
+/** Seven days from Saturday, every meeting at its real time; a dashed one is not on Google Calendar. */
+function WeekView({ weeks, today }: { weeks: WeekDay[][]; today: string }) {
+  const [which, setWhich] = useState(0);
+  const days = weeks[which] ?? [];
+  const empty = days.every(d => !d.items.length);
+  return (
+    <section className="rounded-2xl border bg-card" aria-labelledby="week">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-4 sm:px-6 sm:pt-5">
+        <h2 id="week" className="text-[15px] font-semibold">
+          The week
+        </h2>
+        <div className="flex gap-1.5">
+          {["This week", "Next week"].map((label, i) => (
+            <button
+              key={label}
+              type="button"
+              aria-pressed={which === i}
+              onClick={() => setWhich(i)}
+              className={chip(which === i)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {empty ? (
+        <p className="px-4 py-6 text-sm text-muted-foreground sm:px-6">
+          No meeting that week.
+        </p>
+      ) : (
+        <ol className="mt-3 grid border-t lg:grid-cols-7 lg:divide-x">
+          {days.map(d => (
+            <li
+              key={d.day}
+              className={`grid content-start gap-1.5 border-b px-4 py-3 lg:border-b-0 lg:px-2.5 ${d.day === today ? "bg-primary/[0.06]" : ""}`}
+            >
+              <p
+                className={`text-xs ${d.day === today ? "font-semibold text-primary" : "text-muted-foreground"}`}
+              >
+                {d.day === today
+                  ? "Today"
+                  : DAY_NAMES[new Date(`${d.day}T00:00:00Z`).getUTCDay()]}{" "}
+                <span className="font-normal">
+                  {dayLabel(d.day).split(" ").slice(1).join(" ")}
+                </span>
+              </p>
+              {d.items.length ? (
+                <ul className="grid gap-1.5">
+                  {d.items.map(x => (
+                    <li key={`${x.meetingId}-${x.day}`}>
+                      <Link
+                        to={`/team/${x.meetingId}`}
+                        className={`block rounded-lg px-2 py-1.5 text-xs transition-colors hover:bg-muted ${
+                          x.onCalendar
+                            ? "bg-muted/50"
+                            : "border border-dashed border-border"
+                        } ${x.status === "cancelled" ? "line-through opacity-60" : ""}`}
+                        title={
+                          x.onCalendar ? undefined : "Not on Google Calendar"
+                        }
+                      >
+                        <span className="block font-mono text-[11px] text-muted-foreground">
+                          {timeRange(x.time, x.endTime) || "No time"}
+                          {x.status === "moved" ? " moved" : ""}
+                        </span>
+                        <span
+                          className="block font-medium leading-snug"
+                          dir="auto"
+                        >
+                          {x.title}
+                        </span>
+                        {x.theme ? (
+                          <span className="block text-muted-foreground">
+                            {x.theme}
+                          </span>
+                        ) : null}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="hidden text-xs text-muted-foreground/60 lg:block">
+                  Nothing
+                </p>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  );
+}
+
+// --- prizes -------------------------------------------------------------------------------------
+
+/** Every prize on every wheel, one list, the amount set in place. The CEO and admins only. */
+function Prizes({
+  prizes,
+  onAmount,
+}: {
+  prizes: Prize[];
+  onAmount: (optionId: number, amount: number) => Promise<void>;
+}) {
+  const withAmount = prizes.filter(p => p.label.includes("{amount}"));
+  return (
+    <details className="rounded-2xl border bg-card">
+      <summary className="cursor-pointer px-4 py-3 text-[15px] font-semibold sm:px-6">
+        Prizes{" "}
+        <span className="font-normal text-muted-foreground">
+          {withAmount.length} amounts to set
+        </span>
+      </summary>
+      <ul className="divide-y border-t">
+        {prizes.map(p => (
+          <li
+            key={p.optionId}
+            className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5 text-sm sm:px-6"
+          >
+            <span className="min-w-0 flex-1">
+              <span
+                className={p.active ? "" : "text-muted-foreground line-through"}
+              >
+                {p.rendered}
+              </span>
+              {p.condition ? (
+                <span className="text-muted-foreground"> ({p.condition})</span>
+              ) : null}
+              <span className="block text-xs text-muted-foreground">
+                {p.wheelName}
+                {p.meetingTitle ? `, ${p.meetingTitle}` : ""}
+              </span>
+            </span>
+            {p.label.includes("{amount}") ? (
+              <label className="flex items-center gap-1 text-xs text-muted-foreground">
+                {p.suffix ? null : (
+                  <span>
+                    {p.currency && p.currency !== "USD" ? p.currency : "$"}
+                  </span>
+                )}
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min={0}
+                  step={0.01}
+                  defaultValue={p.amount ?? ""}
+                  aria-label={`Amount for ${p.rendered}`}
+                  onBlur={e => {
+                    const value = Number(e.target.value);
+                    if (e.target.value !== "" && value !== p.amount)
+                      void onAmount(p.optionId, value);
+                  }}
+                  className="h-8 w-24 rounded-md border border-input bg-transparent px-2 text-right font-mono text-sm tabular-nums"
+                />
+                {p.suffix ? <span>{p.suffix}</span> : null}
+              </label>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
+// --- the list -------------------------------------------------------------------------------------
 
 function MeetingRow({
   m,
@@ -251,6 +414,14 @@ function MeetingRow({
     Date.parse(`${m.nextSitting}T00:00:00Z`) -
       Date.parse(`${today}T00:00:00Z`) <=
       2 * 86_400_000;
+  const series =
+    m.startTime && m.minutes
+      ? seriesLine({
+          weekdays: m.weekdays,
+          startTime: m.startTime,
+          minutes: m.minutes,
+        }).replace(/, Kuwait time$/, "")
+      : null;
   return (
     <li className="border-b last:border-b-0">
       <Link
@@ -261,12 +432,15 @@ function MeetingRow({
           <span className="block font-medium" dir="auto">
             {m.title}
           </span>
-          <span
-            className={`mt-0.5 block text-sm ${m.purpose ? "text-muted-foreground" : "italic text-muted-foreground/80"}`}
-            dir="auto"
-          >
-            {m.purpose ?? "No purpose written yet"}
-          </span>
+          {/* A missing purpose is counted once, in the note above the list. */}
+          {m.purpose ? (
+            <span
+              className="mt-0.5 block text-sm text-muted-foreground"
+              dir="auto"
+            >
+              {m.purpose}
+            </span>
+          ) : null}
           <span className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
             {hosts.length ? (
               <span className="flex items-center gap-1.5">
@@ -286,8 +460,15 @@ function MeetingRow({
               {m.peopleIds.length}{" "}
               {m.peopleIds.length === 1 ? "person" : "people"}
             </span>
-            {m.cadence ? <span>{m.cadence}</span> : null}
+            {series ? (
+              <span>{series}</span>
+            ) : m.cadence ? (
+              <span>{m.cadence}</span>
+            ) : null}
             {m.department ? <span>{m.department}</span> : null}
+            {!m.onCalendar && series ? (
+              <span className="txt-warn">Not on Google Calendar</span>
+            ) : null}
           </span>
         </span>
         <span className="flex items-center gap-4 text-sm sm:flex-col sm:items-end sm:gap-1">
@@ -317,27 +498,39 @@ function MeetingRow({
 
 function NewMeeting({
   departments,
+  today,
   onCancel,
   onSave,
 }: {
   departments: string[];
+  today: string;
   onCancel: () => void;
   onSave: (m: {
     title: string;
     purpose: string;
     cadence: string;
     department?: string;
+    onCalendar: boolean;
+    weekdays: number[];
+    startTime?: string;
+    minutes?: number;
+    firstDate?: string;
   }) => Promise<void>;
 }) {
   const [title, setTitle] = useState("");
   const [purpose, setPurpose] = useState("");
   const [cadence, setCadence] = useState("weekly");
   const [department, setDepartment] = useState("");
+  const [days, setDays] = useState<number[]>([]);
+  const [start, setStart] = useState("13:00");
+  const [minutes, setMinutes] = useState("30");
+  const [first, setFirst] = useState(today);
+  const [offCalendar, setOffCalendar] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   return (
     <form
-      className="grid gap-3 rounded-xl border bg-card p-4 sm:p-5"
+      className="grid gap-4 rounded-2xl border bg-card p-4 sm:p-6"
       onSubmit={async e => {
         e.preventDefault();
         setBusy(true);
@@ -348,6 +541,11 @@ function NewMeeting({
             purpose,
             cadence,
             ...(department ? { department } : {}),
+            onCalendar: !offCalendar,
+            weekdays: days,
+            startTime: start,
+            minutes: Number(minutes),
+            firstDate: first,
           });
         } catch (err) {
           setError(errorText(err));
@@ -355,7 +553,7 @@ function NewMeeting({
         }
       }}
     >
-      <h2 className="text-sm font-semibold">A new meeting</h2>
+      <h2 className="text-[15px] font-semibold">A new meeting</h2>
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Name">
           {id => (
@@ -411,8 +609,61 @@ function NewMeeting({
           />
         )}
       </Field>
+      <DayChips
+        value={days}
+        onChange={setDays}
+        label="Days (none for a one-off)"
+      />
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <label className="grid gap-1 text-xs font-medium text-muted-foreground">
+          Starts
+          <input
+            type="time"
+            step={300}
+            value={start}
+            onChange={e => setStart(e.target.value)}
+            className={fieldClass}
+          />
+        </label>
+        <label className="grid gap-1 text-xs font-medium text-muted-foreground">
+          Minutes
+          <input
+            type="number"
+            inputMode="numeric"
+            min={5}
+            max={480}
+            step={5}
+            value={minutes}
+            onChange={e => setMinutes(e.target.value)}
+            className={fieldClass}
+          />
+        </label>
+        <div className="col-span-2 grid gap-1 sm:col-span-1">
+          <span className="text-xs font-medium text-muted-foreground">
+            {days.length ? "First from" : "On"}
+          </span>
+          <DateInput
+            value={first}
+            onChange={e => setFirst(e.target.value)}
+            aria-label={days.length ? "First from" : "On"}
+          />
+        </div>
+      </div>
+      <span className="flex items-center gap-2 text-sm">
+        <Checkbox
+          id="new-meeting-off-calendar"
+          checked={offCalendar}
+          onCheckedChange={v => setOffCalendar(v === true)}
+        />
+        <label htmlFor="new-meeting-off-calendar">
+          Leave it off Google Calendar
+        </label>
+      </span>
       <p className="text-xs text-muted-foreground">
-        You host it. Add the people and the first date on its page.
+        You host it.{" "}
+        {offCalendar
+          ? "It stays in the cockpit; put it on the calendar from its page any time."
+          : "It goes on your Google Calendar with a Meet link; add the people on its page and they get the invite."}
       </p>
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
       <div className="flex gap-2">

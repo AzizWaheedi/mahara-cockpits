@@ -13,7 +13,7 @@ import { latestStillAt } from "./previews";
 import { callTool, unwrap } from "./tools";
 
 const CLIENTS_LIST = "901816559981"; // Clients - Mahara
-const CS_LIST = "901816723211"; // All Assignments > Client Success
+export const CS_LIST = "901816723211"; // All Assignments > Client Success
 
 /** Custom field ids on Clients - Mahara. */
 export const CF = {

@@ -35,6 +35,18 @@ if [ -f apps/media-buyer-cockpit/scripts/billing.test.ts ]; then
     || { echo "the billing rules tests fail"; exit 1; }
 fi
 
+# Team meetings: what a change does to a Google Calendar series, who hears
+# about it, and what a spin writes. Wrong is a meeting moved on everyone's
+# calendar, or an invite sent for a part changed quietly.
+if [ -f apps/media-buyer-cockpit/scripts/team.test.ts ]; then
+  (cd apps/media-buyer-cockpit && bun test scripts/team.test.ts >/dev/null 2>&1) \
+    || { echo "the team meetings rules tests fail"; exit 1; }
+fi
+if [ -f hermes/team-sync/test_sync.py ]; then
+  (cd hermes/team-sync && python3 -m unittest test_sync >/dev/null 2>&1) \
+    || { echo "the team calendar sync tests fail"; exit 1; }
+fi
+
 # The webinar room: attendance, the retention curve, the pitches. Wrong is a
 # pitch that looks like it lost the room, or a show rate that counts the team.
 if [ -f apps/media-buyer-cockpit/scripts/webinar.test.ts ]; then

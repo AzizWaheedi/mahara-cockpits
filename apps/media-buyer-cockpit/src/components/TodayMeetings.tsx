@@ -13,9 +13,9 @@ const clock = (iso: string) =>
   });
 
 const KIND_LABEL: Record<string, string> = { client: "Client", team: "Team" };
-const KIND_CLASS: Record<string, string> = {
-  client: "bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-200",
-  team: "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-200",
+// One neutral chip; a client meeting carries the teal dot, a team one none.
+const KIND_DOT: Record<string, string | undefined> = {
+  client: "var(--mahara-teal)",
 };
 
 /**
@@ -40,12 +40,12 @@ export function TodayMeetings() {
   }, {});
 
   return (
-    <section className="rounded-xl border bg-card p-4 shadow-sm">
-      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-[12px] font-bold uppercase tracking-widest text-teal-600">
+    <section className="rounded-2xl border bg-card p-4 sm:p-6">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <h2 className="text-[15px] font-semibold">
           Today's meetings
           {today.length ? (
-            <span className="ml-2 font-medium normal-case tracking-normal text-muted-foreground">
+            <span className="ml-2 text-xs font-normal text-muted-foreground">
               {[
                 counts.client ? `${counts.client} client` : "",
                 counts.team ? `${counts.team} team` : "",
@@ -57,7 +57,7 @@ export function TodayMeetings() {
           ) : null}
         </h2>
         {my ? (
-          <div className="text-[12px] text-muted-foreground">
+          <div className="text-xs text-muted-foreground">
             <span className="font-semibold text-foreground">
               {my.calendarId}
             </span>{" "}
@@ -69,16 +69,16 @@ export function TodayMeetings() {
                 : "not readable yet"}{" "}
             <button
               type="button"
-              className="underline"
+              className="underline underline-offset-2 hover:text-foreground"
               onClick={() => unlink({})}
             >
-              disconnect
+              Disconnect
             </button>
           </div>
         ) : !open ? (
           <button
             type="button"
-            className="text-[12px] text-primary underline"
+            className="text-xs text-primary hover:underline"
             onClick={() => setOpen(true)}
           >
             Connect your Google Calendar
@@ -86,13 +86,11 @@ export function TodayMeetings() {
         ) : null}
       </div>
       {my?.status === "error" && my.note ? (
-        <p className="mb-2 text-[12px] text-amber-700 dark:text-amber-300">
-          {my.note}
-        </p>
+        <p className="mt-2 text-xs txt-warn">{my.note}</p>
       ) : null}
       {open && !my ? (
         <form
-          className="mb-3 max-w-xl rounded-md border bg-muted/30 p-3 text-[12px]"
+          className="mt-3 max-w-xl rounded-xl bg-muted/40 p-3 text-xs"
           onSubmit={async e => {
             e.preventDefault();
             setErr("");
@@ -123,12 +121,12 @@ export function TodayMeetings() {
               value={email}
               onChange={e => setEmail(e.target.value)}
               placeholder="you@maharamedia.com"
-              className="w-64 rounded-md border bg-background px-2 py-1 text-[13px]"
+              className="h-8 w-64 max-w-full rounded-lg border bg-background px-2 text-sm"
             />
             <button
               type="submit"
               disabled={!email.includes("@")}
-              className="rounded-md bg-primary px-3 py-1 text-[12px] font-semibold text-primary-foreground disabled:opacity-50"
+              className="h-8 rounded-lg bg-primary px-3 text-xs font-semibold text-primary-foreground disabled:opacity-50"
             >
               Connect
             </button>
@@ -139,36 +137,40 @@ export function TodayMeetings() {
             >
               Cancel
             </button>
-            {err ? <span className="text-red-600">{err}</span> : null}
+            {err ? <span className="txt-bad">{err}</span> : null}
           </div>
         </form>
       ) : null}
       {today.length === 0 ? (
-        <p className="text-[13px] text-muted-foreground">
+        <p className="mt-4 text-sm text-muted-foreground">
           Nothing in the calendar today.
         </p>
       ) : (
-        <ul className="divide-y">
+        <ul className="mt-3 divide-y">
           {(today as Any[]).map(e => {
             const k = e.kind ?? (e.clientName ? "client" : "other");
             return (
               <li
                 key={`${e.owner ?? ""}${e.eventId}`}
-                className="flex flex-wrap items-baseline gap-3 py-2 text-[13px]"
+                className="flex flex-wrap items-baseline gap-x-3 gap-y-1 py-2.5 text-sm"
               >
-                <span className="w-14 font-mono tabular-nums">
+                <span className="w-14 shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
                   {e.allDay ? "all day" : clock(e.start)}
                 </span>
-                <span className="font-semibold">{e.title}</span>
+                <span className="min-w-0 font-medium">{e.title}</span>
                 {KIND_LABEL[k] ? (
-                  <span
-                    className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${KIND_CLASS[k]}`}
-                  >
-                    {KIND_LABEL[k]}
+                  <span className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
+                    {KIND_DOT[k] ? (
+                      <span
+                        aria-hidden
+                        className="size-1.5 rounded-full"
+                        style={{ backgroundColor: KIND_DOT[k] }}
+                      />
+                    ) : null}
+                    {e.clientName ?? KIND_LABEL[k]}
                   </span>
-                ) : null}
-                {e.clientName ? (
-                  <span className="rounded bg-muted px-1.5 py-0.5 text-[12px]">
+                ) : e.clientName ? (
+                  <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
                     {e.clientName}
                   </span>
                 ) : null}
@@ -177,13 +179,13 @@ export function TodayMeetings() {
                     href={e.meetLink}
                     target="_blank"
                     rel="noreferrer"
-                    className="text-primary underline"
+                    className="text-xs font-medium text-primary hover:underline"
                   >
                     Join
                   </a>
                 ) : null}
                 {e.attendees?.length ? (
-                  <span className="ml-auto text-[12px] text-muted-foreground">
+                  <span className="basis-full pl-[4.25rem] text-xs text-muted-foreground sm:ml-auto sm:basis-auto sm:pl-0">
                     {e.attendees.slice(0, 3).join(", ")}
                   </span>
                 ) : null}

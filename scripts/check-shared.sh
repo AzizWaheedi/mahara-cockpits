@@ -55,6 +55,10 @@ done
 same adAsIdea "$CD/convex/adAsIdea.ts" "$MB/convex/adAsIdea.ts"
 same adAsIdea "$CD/convex/adAsIdea.ts" "$ED/src/lib/adAsIdea.ts"
 
+# What a client is told about their ads (no leads, no cost per lead, what we
+# did in their words) reads the same from the media buyer and from the CSM.
+same clientUpdate "$MB/src/lib/clientUpdate.ts" "apps/client-success-cockpit/src/lib/clientUpdate.ts"
+
 # The swipe file's backend is the same in the two Convex cockpits, bar the
 # role each one checks.
 same convex/foreplay.ts "$CD/convex/foreplay.ts" "$MB/convex/foreplay.ts"

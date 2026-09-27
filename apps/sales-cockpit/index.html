@@ -10,9 +10,8 @@
       (function () {
         try {
           var s = localStorage.getItem("theme");
-          var dark =
-            s === "dark" ||
-            (s !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+          // Dark unless someone chose light: the brand's web default.
+          var dark = s !== "light";
           document.documentElement.classList.toggle("dark", dark);
           document.documentElement.style.colorScheme = dark ? "dark" : "light";
         } catch (e) {

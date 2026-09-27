@@ -164,8 +164,10 @@ export function useChartRange(
   return { range, setRange, custom, setCustom, rows, first, last };
 }
 
-const control =
-  "h-7 rounded-md border bg-card px-1.5 text-xs text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+// ceo.css sizes it (the shared select stylesheet is unlayered, so height
+// and text utilities would lose): 28px with 12px text, beside the 28px
+// Chart/Table switch, and 40px beside a 40px switch on a touch screen.
+const control = "ceo-select-compact";
 
 /** The timeframe select, and the two dates when "Pick dates" is chosen. */
 export function RangeControl({
@@ -248,12 +250,12 @@ export function ChartHeader({
   const showLegend = series.length > 1;
   return (
     <div className="mb-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-      <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1.5">
+      <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
         {title ? (
-          <p className="text-[13px] font-medium text-foreground">{title}</p>
+          <p className="text-sm font-medium text-foreground">{title}</p>
         ) : null}
         {summary ? (
-          <span className="text-[13px] text-muted-foreground">{summary}</span>
+          <span className="text-xs text-muted-foreground">{summary}</span>
         ) : null}
         {showLegend ? (
           <ul className="flex flex-wrap items-center gap-x-4 gap-y-1">
@@ -296,18 +298,21 @@ function ViewToggle({
   mark: "line" | "rect";
 }) {
   const ChartIcon = mark === "line" ? ChartLine : ChartColumn;
+  // The same height as the range select beside it: 28px, and 40px on a
+  // touch screen, where the select takes the coarse-pointer 40px. no-touch
+  // keeps the global rule from stretching the buttons past their track.
   const btn = (active: boolean) =>
     cn(
-      "inline-flex h-6 items-center gap-1 rounded-[5px] px-2 text-[11px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+      "no-touch inline-flex h-6 items-center gap-1 rounded-md px-2 text-xs font-medium transition-colors pointer-coarse:h-9 pointer-coarse:px-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
       active
-        ? "bg-card text-foreground shadow-sm"
+        ? "bg-primary/15 text-foreground ring-1 ring-inset ring-primary/40"
         : "text-muted-foreground hover:text-foreground",
     );
   return (
     <div
       role="group"
       aria-label="Show as"
-      className="inline-flex shrink-0 items-center rounded-md bg-muted p-0.5"
+      className="inline-flex h-7 shrink-0 items-center rounded-lg bg-muted p-0.5 pointer-coarse:h-10"
     >
       <button
         type="button"
@@ -348,7 +353,7 @@ export function TooltipCard({
   note?: string;
 }) {
   return (
-    <div className="min-w-36 rounded-lg border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md">
+    <div className="min-w-36 rounded-lg border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-sm dark:shadow-none">
       <p className="mb-1.5 text-muted-foreground">{label}</p>
       <ul className="space-y-1">
         {series.map((s, i) => {
@@ -398,9 +403,11 @@ export function SeriesTable({
   height: number;
 }) {
   const rows = newestFirst ? [...data].reverse() : data;
+  // No box of its own: inside a card it reads like every other CEO table,
+  // hairline rows and a header that stays put while the rows scroll.
   return (
     <div
-      className="ceo-table-scroll overflow-auto rounded-lg border"
+      className="ceo-table-scroll relative overflow-auto"
       style={{ maxHeight: Math.max(height, 240) }}
     >
       <table className="w-full text-sm">
@@ -408,7 +415,7 @@ export function SeriesTable({
           <tr className="border-b">
             <th
               scope="col"
-              className="h-8 px-3 text-left text-xs font-medium text-muted-foreground"
+              className="h-8 px-3 text-left text-xs font-medium text-muted-foreground first:pl-0"
             >
               {xHeader}
             </th>
@@ -416,7 +423,7 @@ export function SeriesTable({
               <th
                 key={s.key}
                 scope="col"
-                className="h-8 px-3 text-right text-xs font-medium text-muted-foreground"
+                className="h-8 px-3 text-right text-xs font-medium text-muted-foreground last:pr-0"
               >
                 {s.label}
               </th>
@@ -429,7 +436,7 @@ export function SeriesTable({
               key={`${String(r[x])}-${i}`}
               className="border-b border-[color:var(--ceo-grid)] last:border-0"
             >
-              <td className="whitespace-nowrap px-3 py-1.5 text-muted-foreground tabular-nums">
+              <td className="whitespace-nowrap px-3 py-1.5 pl-0 text-muted-foreground tabular-nums">
                 {formatX(String(r[x] ?? ""))}
               </td>
               {series.map(s => {
@@ -437,7 +444,7 @@ export function SeriesTable({
                 return (
                   <td
                     key={s.key}
-                    className="whitespace-nowrap px-3 py-1.5 text-right tabular-nums text-foreground"
+                    className="whitespace-nowrap px-3 py-1.5 text-right tabular-nums text-foreground last:pr-0"
                   >
                     {format(isNum(v) ? v : null)}
                   </td>

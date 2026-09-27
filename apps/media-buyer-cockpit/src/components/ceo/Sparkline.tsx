@@ -156,7 +156,7 @@ export function Sparkline({
       ) : null}
       {active && labels && format ? (
         <div
-          className="pointer-events-none absolute bottom-full z-10 mb-1 -translate-x-1/2 whitespace-nowrap rounded-md border bg-popover px-2 py-1 text-xs shadow-sm"
+          className="pointer-events-none absolute bottom-full z-10 mb-1 -translate-x-1/2 whitespace-nowrap rounded-md border bg-popover px-2 py-1 text-xs shadow-sm dark:shadow-none"
           style={{
             left: Math.min(Math.max(active.x, 48), Math.max(48, width - 48)),
           }}

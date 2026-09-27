@@ -25,8 +25,6 @@ import {
   TaskListPage,
   TouchpointsPage,
 } from "@/pages";
-import { MeetingPage } from "@/pages/team/MeetingPage";
-import { TeamPage } from "@/pages/team/TeamPage";
 import { ViktorOAuthCallbackPage } from "@/pages/ViktorOAuthCallbackPage";
 
 export function AuthenticatedRoutes() {
@@ -73,8 +71,8 @@ export function AuthenticatedRoutes() {
             <Route path="/csm" element={<CsmPage />} />
           </Route>
           {/* Team meetings: everybody with a seat in the portal. */}
-          <Route path="/team" element={<TeamPage />} />
-          <Route path="/team/:id" element={<MeetingPage />} />
+          <Route path="/team" element={<div className="mx-auto max-w-3xl p-6"><h1 className="text-xl font-semibold">Team meetings</h1><p className="mt-2 text-sm text-muted-foreground">Team meetings are paused in this release. Existing meetings and history are preserved.</p></div>} />
+          <Route path="/team/:id" element={<div className="mx-auto max-w-3xl p-6"><h1 className="text-xl font-semibold">Team meetings</h1><p className="mt-2 text-sm text-muted-foreground">Team meetings are paused in this release. Existing meetings and history are preserved.</p></div>} />
           <Route path="/template" element={<DashboardPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Route>

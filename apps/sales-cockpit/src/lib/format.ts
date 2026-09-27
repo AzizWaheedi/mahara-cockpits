@@ -88,7 +88,7 @@ export function ago(iso: string | null | undefined, now = Date.now()): string {
 
 export function duration(seconds: number | null | undefined): string {
   if (seconds === null || seconds === undefined || Number.isNaN(seconds))
-    return "--";
+    return "n/a";
   const s = Math.max(0, Math.round(seconds));
   if (s < 60) return `${s} s`;
   const m = Math.floor(s / 60);
@@ -103,10 +103,10 @@ export function num(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** Money with no cents: "$6,000". A missing amount is a dash, never $0. */
+/** Money with no cents: "$6,000". A missing amount is "n/a", never $0. */
 export function money(v: unknown, currency = "USD"): string {
   const n = num(v);
-  if (n === null) return "--";
+  if (n === null) return "n/a";
   try {
     return new Intl.NumberFormat("en-US", {
       style: "currency",
@@ -121,21 +121,21 @@ export function money(v: unknown, currency = "USD"): string {
 /** A rate B2B already gives as a percentage (62.5 means 62.5%). */
 export function pct(v: unknown, digits = 0): string {
   const n = num(v);
-  if (n === null) return "--";
+  if (n === null) return "n/a";
   return `${n.toFixed(digits)}%`;
 }
 
-/** part ÷ whole as a percentage, or a dash when there is nothing to divide. */
+/** part ÷ whole as a percentage, or "n/a" when there is nothing to divide. */
 export function share(part: unknown, whole: unknown, digits = 0): string {
   const p = num(part);
   const w = num(whole);
-  if (p === null || w === null || w <= 0) return "--";
+  if (p === null || w === null || w <= 0) return "n/a";
   return `${((100 * p) / w).toFixed(digits)}%`;
 }
 
 export function count(v: unknown): string {
   const n = num(v);
-  return n === null ? "--" : n.toLocaleString("en-US");
+  return n === null ? "n/a" : n.toLocaleString("en-US");
 }
 
 const CALL_TYPES: Record<string, string> = {
@@ -178,12 +178,28 @@ export function classLabel(c: string | null | undefined): string {
   return c ? (CLASS[c] ?? c) : "No lead tag";
 }
 
-/** Names from HighLevel stages carry emoji; the list reads better without. */
+/**
+ * Names from HighLevel stages carry emoji and CRM capitals ("📞Intro Call
+ * CONFIRMED"); the cockpit shows them without the emoji and in sentence case
+ * ("Intro call confirmed"). A short word in capitals (FU, VIP) and a name
+ * with capitals inside it (HighLevel) are kept as they are. Display only:
+ * nothing matches on the result.
+ */
 export function plainStage(s: string | null | undefined): string {
-  return String(s ?? "")
+  const plain = String(s ?? "")
     .replace(/\p{Extended_Pictographic}/gu, "")
     .replace(/\u{FE0F}|\u{200D}/gu, "")
     .trim();
+  let first = true;
+  return plain.replace(/\p{L}+/gu, w => {
+    const isFirst = first;
+    first = false;
+    const lower = w.toLowerCase();
+    const caps = w === w.toUpperCase() && w !== lower;
+    if (caps && w.length <= 3) return w;
+    if (!caps && w.slice(1) !== w.slice(1).toLowerCase()) return w;
+    return isFirst ? lower.charAt(0).toUpperCase() + lower.slice(1) : lower;
+  });
 }
 
 /** True when a string is mostly Arabic, so it can be set right to left. */

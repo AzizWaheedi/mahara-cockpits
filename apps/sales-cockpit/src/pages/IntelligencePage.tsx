@@ -26,6 +26,11 @@ interface Digest {
     problems: { text: string; count: number }[];
     expectations: { text: string; count: number }[];
     marketing: { idea: string; why: string }[];
+    /** Recorded calls in the window that can have notes; more than calls_used when notes are still being written. */
+    calls_total?: number;
+    partial?: boolean;
+    /** Past calls in the window nobody marked yet. */
+    calls_unmarked?: number;
   };
   model: string | null;
   written_at: string;
@@ -55,7 +60,15 @@ export default function IntelligencePage() {
           <p className="muted text-sm">
             {d
               ? d.calls_used
-                ? `From ${d.calls_used} recorded call${d.calls_used === 1 ? "" : "s"}, ${day(d.from_at)} to ${day(d.to_at)}. Updated ${ago(d.written_at)}.`
+                ? `From ${
+                    d.digest.partial && d.digest.calls_total
+                      ? `${d.calls_used} of ${d.digest.calls_total} recorded calls (the rest still have their notes being written)`
+                      : `${d.calls_used} recorded call${d.calls_used === 1 ? "" : "s"}`
+                  }, ${day(d.from_at)} to ${day(d.to_at)}. Updated ${ago(d.written_at)}.${
+                    d.digest.calls_unmarked
+                      ? ` ${d.digest.calls_unmarked} past call${d.digest.calls_unmarked === 1 ? " is" : "s are"} not marked yet.`
+                      : ""
+                  }`
                 : `No recorded sales calls between ${day(d.from_at)} and ${day(d.to_at)}.`
               : "Most frequent first, from the notes of every recorded sales call."}
           </p>
@@ -140,11 +153,9 @@ export default function IntelligencePage() {
         </div>
       )}
       <SourceNote>
-        The desk on the VPS writes notes after every recorded sales call (Fathom
-        through the Obsidian vault) and, each morning, reads the last 7 and 30
-        days of those notes to write this page. Counts are how many calls raised
-        a point. Phone calls count once their transcripts are in the cockpit.
-        {d?.model ? ` Written by ${d.model}.` : ""}
+        The sales desk writes notes after every recorded sales call, video and
+        phone, and each morning reads the last 7 and 30 days of those notes to
+        write this page. Counts are how many calls raised a point.
       </SourceNote>
     </main>
   );

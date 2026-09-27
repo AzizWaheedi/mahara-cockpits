@@ -1,8 +1,12 @@
+import { Play } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useStills } from "../lib/data";
 import { clock, drivePreview, minutes, shape } from "../lib/format";
 import type { Asset } from "../lib/types";
-import { Empty, Out } from "./bits";
+import { Empty, FIELD, KICKER, Out } from "./bits";
+
+/** Shot changes shown before "+N more": a line of them, not a wall. */
+const SHOTS = 8;
 
 interface Found {
   asset: Asset;
@@ -43,6 +47,8 @@ export default function Footage({ assets }: { assets: Asset[] }) {
   // somebody actually wants to watch, and picking another file puts the
   // still back.
   const [playing, setPlaying] = useState<string | null>(null);
+  // The file whose shot changes are all showing, if any.
+  const [allShots, setAllShots] = useState<string | null>(null);
   const [term, setTerm] = useState("");
   const stills = useStills(assets.map(a => a.still_path));
   const hits = useMemo(() => search(assets, term), [assets, term]);
@@ -54,21 +60,25 @@ export default function Footage({ assets }: { assets: Asset[] }) {
     return <Empty>No footage has been read for this job yet.</Empty>;
   }
 
+  // Sized by the card it sits in, not by the screen.
   return (
-    <div className="space-y-4">
+    <div className="@container space-y-4">
       {anyWords && (
         <div>
           <input
             id="transcript-search"
             value={term}
             onChange={e => setTerm(e.target.value)}
+            aria-label="Search the transcripts"
             placeholder="Search everything that was said"
-            className="raised w-full rounded-md border hairline px-3 py-2 text-sm"
+            className={`${FIELD} h-10`}
           />
           {term.trim().length >= 2 && (
             <div className="mt-2 max-h-56 overflow-y-auto">
               {hits.length === 0 ? (
-                <p className="muted py-2 text-sm">Nothing said matches that.</p>
+                <p className="py-2 text-sm text-muted-foreground">
+                  Nothing said matches that.
+                </p>
               ) : (
                 <ul className="space-y-1">
                   {hits.map(h => (
@@ -79,12 +89,9 @@ export default function Footage({ assets }: { assets: Asset[] }) {
                           setOpenId(h.asset.id);
                           setPlaying(null);
                         }}
-                        className="raised flex w-full gap-3 rounded-md px-3 py-2 text-left text-sm"
+                        className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
                       >
-                        <span
-                          className="font-mono text-xs"
-                          style={{ color: "var(--primary)" }}
-                        >
+                        <span className="font-mono text-xs text-primary">
                           {clock(h.at)}
                         </span>
                         <span
@@ -93,7 +100,7 @@ export default function Footage({ assets }: { assets: Asset[] }) {
                         >
                           {h.text}
                         </span>
-                        <span className="muted shrink-0 truncate text-xs">
+                        <span className="max-w-[40%] shrink-0 truncate text-xs text-muted-foreground">
                           {h.asset.name}
                         </span>
                       </button>
@@ -106,7 +113,7 @@ export default function Footage({ assets }: { assets: Asset[] }) {
         </div>
       )}
 
-      <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+      <ul className="grid grid-cols-2 gap-3 @md:grid-cols-3">
         {assets.map(a => {
           const still = a.still_path ? stills[a.still_path] : undefined;
           const active = a.id === openId;
@@ -118,11 +125,12 @@ export default function Footage({ assets }: { assets: Asset[] }) {
                   setOpenId(a.id);
                   setPlaying(null);
                 }}
-                className={`w-full overflow-hidden rounded-lg border text-left ${
-                  active ? "border-[color:var(--primary)]" : "hairline"
+                aria-pressed={active}
+                className={`w-full overflow-hidden rounded-xl border text-left transition-colors ${
+                  active ? "border-primary" : "hover:border-primary/50"
                 }`}
               >
-                <div className="raised relative aspect-video w-full overflow-hidden">
+                <div className="relative aspect-video w-full overflow-hidden bg-muted">
                   {still ? (
                     <img
                       src={still}
@@ -131,23 +139,23 @@ export default function Footage({ assets }: { assets: Asset[] }) {
                       loading="lazy"
                     />
                   ) : (
-                    <span className="muted absolute inset-0 grid place-items-center text-xs">
-                      {a.error ? "not read" : "no frame"}
+                    <span className="absolute inset-0 grid place-items-center text-xs text-muted-foreground">
+                      {a.error ? "Not read" : "No frame"}
                     </span>
                   )}
                   {a.seconds ? (
-                    <span className="absolute right-1 bottom-1 rounded bg-black/70 px-1.5 py-0.5 font-mono text-[10px] text-white">
+                    <span className="absolute right-1.5 bottom-1.5 rounded bg-black/70 px-1.5 py-0.5 font-mono text-xs text-white">
                       {clock(a.seconds)}
                     </span>
                   ) : null}
                 </div>
-                <div className="px-2 py-1.5">
+                <div className="px-3 py-2">
                   <p className="truncate text-xs font-medium">{a.name}</p>
-                  <p className="muted mt-0.5 flex flex-wrap gap-x-2 text-[11px]">
+                  <p className="mt-0.5 flex flex-wrap gap-x-2 text-xs text-muted-foreground">
                     {shape(a.width, a.height) && (
                       <span>{shape(a.width, a.height)}</span>
                     )}
-                    {a.has_audio === false && <span>silent</span>}
+                    {a.has_audio === false && <span>Silent</span>}
                     {a.scenes?.length ? (
                       <span>{a.scenes.length} shots</span>
                     ) : null}
@@ -159,11 +167,12 @@ export default function Footage({ assets }: { assets: Asset[] }) {
         })}
       </ul>
 
+      {/* A quiet panel, not a card: it already sits inside one. */}
       {open && (
-        <div className="panel overflow-hidden">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b hairline px-4 py-2.5">
-            <p className="truncate text-sm font-medium">{open.name}</p>
-            <p className="muted flex flex-wrap gap-x-3 text-xs">
+        <div className="rounded-xl bg-muted/40">
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 pt-3">
+            <p className="min-w-0 truncate text-sm font-medium">{open.name}</p>
+            <p className="flex flex-wrap items-center gap-x-3 text-xs text-muted-foreground">
               <span>{minutes(open.seconds)}</span>
               {open.width && open.height ? (
                 <span>
@@ -171,20 +180,17 @@ export default function Footage({ assets }: { assets: Asset[] }) {
                 </span>
               ) : null}
               {open.fps ? <span>{Math.round(open.fps)} fps</span> : null}
-              <Out href={open.preview_url}>Open in Drive</Out>
+              {open.preview_url ? (
+                <Out href={open.preview_url}>Open in Drive</Out>
+              ) : null}
             </p>
           </div>
 
           {open.error ? (
-            <p
-              className="px-4 py-3 text-sm"
-              style={{ color: "var(--destructive)" }}
-            >
-              {open.error}
-            </p>
+            <p className="txt-bad px-4 py-3 text-sm">{open.error}</p>
           ) : (
-            <div className="grid gap-4 p-4 lg:grid-cols-2">
-              <div className="raised relative aspect-video overflow-hidden rounded-md">
+            <div className="grid gap-4 p-4 @xl:grid-cols-2">
+              <div className="relative aspect-video overflow-hidden rounded-lg bg-muted">
                 {playing === open.id && drivePreview(open.drive_id) ? (
                   <iframe
                     key={open.id}
@@ -194,10 +200,17 @@ export default function Footage({ assets }: { assets: Asset[] }) {
                     className="size-full border-0"
                   />
                 ) : (
+                  // Plays here, in Drive's own player. "Open in Drive" above
+                  // is the one way out to Drive.
                   <button
                     type="button"
                     onClick={() => setPlaying(open.id)}
                     disabled={!open.drive_id}
+                    aria-label={
+                      open.drive_id
+                        ? `Play ${open.name ?? "this file"}`
+                        : undefined
+                    }
                     className="group absolute inset-0 grid place-items-center"
                   >
                     {openStill ? (
@@ -207,9 +220,19 @@ export default function Footage({ assets }: { assets: Asset[] }) {
                         className="absolute inset-0 size-full object-cover"
                       />
                     ) : null}
-                    <span className="relative flex items-center gap-2 rounded-full bg-black/70 px-3 py-1.5 text-xs font-medium text-white">
-                      {open.drive_id ? "Play in Drive" : "No preview"}
-                    </span>
+                    {open.drive_id ? (
+                      <span className="relative grid size-12 place-items-center rounded-full bg-black/70 text-white transition-transform group-hover:scale-105">
+                        <Play
+                          aria-hidden
+                          className="ml-0.5 size-5"
+                          fill="currentColor"
+                        />
+                      </span>
+                    ) : (
+                      <span className="relative rounded-full bg-black/70 px-3 py-1.5 text-xs font-medium text-white">
+                        No preview
+                      </span>
+                    )}
                   </button>
                 )}
               </div>
@@ -217,28 +240,38 @@ export default function Footage({ assets }: { assets: Asset[] }) {
               <div className="min-w-0 space-y-3">
                 {open.scenes?.length ? (
                   <div>
-                    <p className="muted mb-1 text-xs uppercase tracking-wide">
-                      Shot changes ({open.scenes.length})
+                    <p className={`${KICKER} mb-2`}>
+                      Shot changes · {open.scenes.length}
                     </p>
-                    <div className="flex flex-wrap gap-1">
-                      {open.scenes.slice(0, 40).map(s => (
+                    <div className="flex flex-wrap items-center gap-1">
+                      {(allShots === open.id
+                        ? open.scenes
+                        : open.scenes.slice(0, SHOTS)
+                      ).map(s => (
                         <span
                           key={s}
-                          className="raised rounded px-1.5 py-0.5 font-mono text-[11px]"
+                          className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs"
                         >
                           {clock(s)}
                         </span>
                       ))}
+                      {open.scenes.length > SHOTS && allShots !== open.id ? (
+                        <button
+                          type="button"
+                          onClick={() => setAllShots(open.id)}
+                          className="no-touch relative rounded px-1.5 py-0.5 text-xs font-medium text-primary after:absolute after:-inset-2 after:content-[''] hover:underline"
+                        >
+                          +{open.scenes.length - SHOTS} more
+                        </button>
+                      ) : null}
                     </div>
                   </div>
                 ) : null}
 
                 <div>
-                  <p className="muted mb-1 text-xs uppercase tracking-wide">
-                    What was said
-                  </p>
+                  <p className={`${KICKER} mb-2`}>What was said</p>
                   {open.has_audio === false ? (
-                    <p className="muted text-sm">
+                    <p className="text-sm text-muted-foreground">
                       This file has no audio track, so there is nothing to
                       search.
                     </p>
@@ -250,7 +283,7 @@ export default function Footage({ assets }: { assets: Asset[] }) {
                       {open.transcript}
                     </p>
                   ) : (
-                    <p className="muted text-sm">
+                    <p className="text-sm text-muted-foreground">
                       No speech was found. That is normal for b-roll and
                       animation over music.
                     </p>
@@ -259,23 +292,18 @@ export default function Footage({ assets }: { assets: Asset[] }) {
 
                 {open.script_hits?.length ? (
                   <div>
-                    <p className="muted mb-1 text-xs uppercase tracking-wide">
-                      Script lines heard here
-                    </p>
+                    <p className={`${KICKER} mb-2`}>Script lines heard</p>
                     <ul className="space-y-1">
                       {open.script_hits.map(h => (
                         <li key={h.line} className="flex gap-2 text-sm">
-                          <span
-                            className="font-mono text-xs"
-                            style={{ color: "var(--primary)" }}
-                          >
+                          <span className="font-mono text-xs text-primary">
                             {clock(h.at_sec)}
                           </span>
                           <span dir="auto" className="rtl-safe min-w-0 flex-1">
                             {h.line}
                           </span>
                           {h.confidence === "partial" && (
-                            <span className="muted shrink-0 text-xs">
+                            <span className="shrink-0 text-xs text-muted-foreground">
                               {h.matched}/{h.of} words
                             </span>
                           )}

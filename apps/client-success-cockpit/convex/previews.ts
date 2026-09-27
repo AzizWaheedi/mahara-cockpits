@@ -8,6 +8,7 @@ import {
   type QueryCtx,
 } from "./_generated/server";
 import { authenticatedAction, authenticatedQuery } from "./functions";
+import { currentProfile } from "./profileRows";
 import { allowedClients, hasAccess } from "./roles";
 
 /**
@@ -161,10 +162,7 @@ export const gate = internalQuery({
     if (!scope) return { email, allowed: true };
     if (!clientName || !scope.has(clientName.toLowerCase()))
       return { email, allowed: false };
-    const profile = await ctx.db
-      .query("clientProfiles")
-      .withIndex("by_client", q => q.eq("clientName", clientName))
-      .first();
+    const profile = await currentProfile(ctx, clientName);
     return { email, allowed: treeHasAd(profile?.ads, adId) };
   },
 });

@@ -1,63 +1,37 @@
-import {
-  ArrowDown,
-  ArrowLeft,
-  ArrowUp,
-  Check,
-  Loader2,
-  Pencil,
-  X,
-} from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, Check, Loader2, Pencil, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
-import { DateInput } from "@/components/ui/date-input";
 import { Input } from "@/components/ui/input";
 import { usePageVisible } from "@/lib/usePageVisible";
-import {
-  addItem as addItemApi,
-  addSitting as addSittingApi,
-  closeItem as closeItemApi,
-  editItem as editItemApi,
-  fetchMeetingPage,
-  moveItem as moveItemApi,
-  saveDoc as saveDocApi,
-  saveMeeting as saveMeetingApi,
-  saveNotes as saveNotesApi,
-  setPart as setPartApi,
-  type Item,
-  type MeetingPage as Page,
-  type Person,
-  type Sitting,
-} from "@/lib/team";
-import {
-  dayName,
-  errorText,
-  Field,
-  Initials,
-  PeopleOptions,
-  peopleById,
-  type SaveResult,
-  SharedText,
-  selectClass,
-  shortName,
-  when,
-} from "./teamKit";
+import { addItem as addItemApi, addSitting as addSittingApi, closeItem as closeItemApi, editItem as editItemApi, fetchMeetingPage, moveItem as moveItemApi, saveDoc as saveDocApi, saveMeeting as saveMeetingApi, saveNotes as saveNotesApi, setPart as setPartApi, type Item, type MeetingPage as Page, type Person, type Sitting } from "@/lib/team";
+
+
+import { PipelineBoard, PipelineStrip } from "./Pipeline";
+import { RunOfShow } from "./RunOfShow";
+import { dayName, errorText, Field, peopleById, peopleOptions, type SaveResult, SharedText, selectClass, shortName, when } from "./teamKit";
+import { Wheels } from "./Wheels";
+import { WhenAndWho } from "./WhenAndWho";
 
 /**
- * One meeting: what it is for, the agenda for the next time it meets, the
- * notes of each sitting, its living doc, and who is in it.
+ * One meeting: what it is for, when it meets and who is in it (on Google
+ * Calendar too), its run of show, the agenda for the next time it meets,
+ * its wheels, the notes of each sitting, and its living doc.
  *
  * The agenda is the point. An item stays open until somebody finishes or
  * drops it, so the next meeting opens with what the last one did not get
  * to, and each open item shows how many meetings it has already been
- * carried through: one ring per meeting, amber from the third. Closing an
+ * carried through: one ring per meeting, orange from the third. Closing an
  * item stamps the meeting it was closed in, which is what "Finished last
  * time" reads back.
  */
 
-const CADENCES = [
+export const CADENCES = [
+  "daily",
+  "three times a week",
+  "twice a week",
   "weekly",
   "every two weeks",
   "monthly",
@@ -207,12 +181,14 @@ export function MeetingPage() {
     const byDate = [...page.sittings].sort((a, b) =>
       a.onDate.localeCompare(b.onDate),
     );
-    const next = byDate.find(s => s.onDate >= today) ?? null;
-    const past = byDate.filter(s => s.onDate < today).reverse();
-    const todays = byDate.find(s => s.onDate === today) ?? null;
+    const live = byDate.filter(s => s.status !== "cancelled");
+    const next = live.find(s => s.onDate >= today) ?? null;
+    const past = byDate.filter(s => s.onDate < today && !s.virtual).reverse();
+    const todays = live.find(s => s.onDate === today) ?? null;
     // Notes open on today's meeting, else the last one (to write it up),
     // else the next one.
-    const defaultNotes = todays ?? past[0] ?? next;
+    const defaultNotes =
+      todays ?? past.find(s => s.status !== "cancelled") ?? next;
     const open = page.items
       .filter(i => i.status === "open")
       .sort((a, b) => a.position - b.position || a.id - b.id);
@@ -255,18 +231,28 @@ export function MeetingPage() {
   const agendaFor = derived.next;
 
   return (
-    <div className="mx-auto grid w-full max-w-6xl gap-5">
+    <div className="mx-auto grid w-full max-w-6xl gap-6">
       <BackLink />
       <Header
         page={page}
         onSave={fields => act(() => saveMeeting({ id: m.id, ...fields }))}
       />
+      <WhenAndWho page={page} act={act} />
+      {page.strip ? <PipelineStrip strip={page.strip} /> : null}
+      {page.creative ? (
+        <PipelineBoard page={page} act={act} onError={setError} />
+      ) : null}
 
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)] lg:items-start">
-        <div className="grid min-w-0 gap-5">
-          <section className="rounded-xl border bg-card">
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)] lg:items-start">
+        <div className="grid min-w-0 gap-6">
+          <RunOfShow
+            page={page}
+            act={act}
+            day={notesSitting?.onDate ?? agendaFor?.onDate ?? null}
+          />
+          <section className="rounded-2xl border bg-card">
             <div className="flex flex-wrap items-baseline justify-between gap-2 border-b px-4 py-3 sm:px-5">
-              <h2 className="text-base font-semibold">
+              <h2 className="text-[15px] font-semibold">
                 {agendaFor
                   ? agendaFor.onDate === derived.today
                     ? "Today's agenda"
@@ -304,8 +290,8 @@ export function MeetingPage() {
               </ol>
             ) : (
               <p className="px-4 py-6 text-sm text-muted-foreground sm:px-5">
-                Add what this meeting has to cover. Anything not finished stays
-                here for the next one.
+                Add what this meeting has to cover this time. Anything not
+                finished stays here for the next one.
               </p>
             )}
             <AddItem
@@ -345,9 +331,17 @@ export function MeetingPage() {
             ) : null}
           </section>
 
-          <section className="rounded-xl border bg-card p-4 sm:p-5">
+          <Wheels
+            page={page}
+            act={act}
+            sitting={notesSitting}
+            onPage={setPage}
+            onError={setError}
+          />
+
+          <section className="rounded-2xl border bg-card p-4 sm:p-6">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-base font-semibold">
+              <h2 className="text-[15px] font-semibold">
                 {notesSitting
                   ? `Notes, ${notesSitting.onDate === derived.today ? "today" : dayName(notesSitting.onDate)}`
                   : "Notes"}
@@ -365,6 +359,7 @@ export function MeetingPage() {
                       <option key={s.id} value={s.id}>
                         {dayName(s.onDate)}
                         {s.onDate === derived.today ? " (today)" : ""}
+                        {s.status === "cancelled" ? " (cancelled)" : ""}
                       </option>
                     ))}
                 </AnimatedSelect>
@@ -394,13 +389,15 @@ export function MeetingPage() {
             ) : (
               <p className="text-sm text-muted-foreground">
                 Notes open once the meeting has a date.
-                {page.canManage ? " Set one in the panel on the right." : ""}
+                {page.canManage
+                  ? " Give it days under When and who, or add a one-off sitting."
+                  : ""}
               </p>
             )}
           </section>
 
-          <section className="rounded-xl border bg-card p-4 sm:p-5">
-            <h2 className="text-base font-semibold">The doc</h2>
+          <section className="rounded-2xl border bg-card p-4 sm:p-6">
+            <h2 className="text-[15px] font-semibold">The doc</h2>
             <p className="mb-3 mt-0.5 text-sm text-muted-foreground">
               This meeting's living document: the plan, the numbers, the
               projections. Everyone on the team can edit it, and it carries from
@@ -430,18 +427,7 @@ export function MeetingPage() {
           </section>
         </div>
 
-        <aside className="grid min-w-0 gap-5">
-          <When
-            page={page}
-            next={derived.next}
-            onAdd={date => act(() => addSitting({ meetingId: m.id, date }))}
-          />
-          <People
-            page={page}
-            onPart={(personId, part) =>
-              act(() => setPart({ meetingId: m.id, personId, part }))
-            }
-          />
+        <aside className="grid min-w-0 gap-6">
           <Past
             past={derived.past}
             items={page.items}
@@ -503,7 +489,7 @@ function Header({
   if (editing)
     return (
       <form
-        className="grid gap-3 rounded-xl border bg-card p-4 sm:p-5"
+        className="grid gap-3 rounded-2xl border bg-card p-4 sm:p-6"
         onSubmit={async e => {
           e.preventDefault();
           setBusy(true);
@@ -550,7 +536,10 @@ function Header({
               value={cadence}
               onChange={e => setCadence(e.target.value)}
             >
-              {CADENCES.map(c => (
+              {(CADENCES.includes(cadence)
+                ? CADENCES
+                : [cadence, ...CADENCES]
+              ).map(c => (
                 <option key={c} value={c}>
                   {c[0].toUpperCase() + c.slice(1)}
                 </option>
@@ -576,8 +565,8 @@ function Header({
         </div>
         {m.fromCalendar ? (
           <p className="text-xs text-muted-foreground">
-            It comes from the team's calendar. What you set here stays; the
-            calendar only adds new dates and new people.
+            A new name or purpose goes on the Google Calendar event too, and
+            everyone invited gets Google's update.
           </p>
         ) : null}
         <div className="flex gap-2">
@@ -636,7 +625,7 @@ function Header({
 
 // --- the agenda ----------------------------------------------------------------
 
-/** One ring per meeting the item has been carried through; amber from three. */
+/** One ring per meeting the item has been carried through; orange from three. */
 function Carried({ n }: { n: number }) {
   if (!n) return null;
   const shown = Math.min(n, 5);
@@ -653,14 +642,14 @@ function Carried({ n }: { n: number }) {
             key={i}
             className="size-2 rounded-full border-[1.5px]"
             style={{
-              borderColor: stuck ? "#c98a00" : "var(--muted-foreground)",
+              borderColor: stuck ? "var(--warning)" : "var(--muted-foreground)",
             }}
           />
         ))}
       </span>
       <span
         className="text-[11px] tabular-nums"
-        style={{ color: stuck ? "#c98a00" : undefined }}
+        style={{ color: stuck ? "var(--warning)" : undefined }}
       >
         {n > 5 ? `${n}×` : null}
         <span className="sr-only">
@@ -769,30 +758,32 @@ function AgendaRow({
             onChange={e => run(() => onOwner(e.target.value || null))}
           >
             <option value="">No owner</option>
-            <PeopleOptions people={people} />
+            {peopleOptions(people)}
           </AnimatedSelect>
           <Carried n={item.carried} />
           {item.carried ? (
             <span>since {dayName(item.addedAt.slice(0, 10))}</span>
           ) : null}
-          <span className="ml-auto flex items-center gap-0.5 opacity-100 transition-opacity sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100">
+          {/* Shown on hover only where there is a mouse; a finger always
+              sees them, at a size a finger can hit. */}
+          <span className="ml-auto flex items-center gap-1 opacity-100 transition-opacity pointer-fine:sm:opacity-0 pointer-fine:sm:group-focus-within:opacity-100 pointer-fine:sm:group-hover:opacity-100">
             <button
               type="button"
               aria-label="Move up"
               disabled={busy || first}
               onClick={() => run(() => onMove("up"))}
-              className="rounded p-1 hover:bg-muted disabled:opacity-30"
+              className="flex size-8 items-center justify-center rounded-lg hover:bg-muted disabled:opacity-30 pointer-coarse:size-10"
             >
-              <ArrowUp className="size-3.5" aria-hidden />
+              <ArrowUp className="size-4" aria-hidden />
             </button>
             <button
               type="button"
               aria-label="Move down"
               disabled={busy || last}
               onClick={() => run(() => onMove("down"))}
-              className="rounded p-1 hover:bg-muted disabled:opacity-30"
+              className="flex size-8 items-center justify-center rounded-lg hover:bg-muted disabled:opacity-30 pointer-coarse:size-10"
             >
-              <ArrowDown className="size-3.5" aria-hidden />
+              <ArrowDown className="size-4" aria-hidden />
             </button>
             <button
               type="button"
@@ -800,9 +791,9 @@ function AgendaRow({
               title="Drop it: it will not be covered"
               disabled={busy}
               onClick={() => run(onDrop)}
-              className="rounded p-1 hover:bg-muted"
+              className="flex size-8 items-center justify-center rounded-lg hover:bg-muted pointer-coarse:size-10"
             >
-              <X className="size-3.5" aria-hidden />
+              <X className="size-4" aria-hidden />
             </button>
           </span>
         </div>
@@ -826,7 +817,12 @@ function ClosedRow({
         className={`min-w-0 flex-1 ${item.status === "dropped" ? "text-muted-foreground line-through" : ""}`}
         dir="auto"
       >
-        {item.status === "done" ? "✓ " : ""}
+        {item.status === "done" ? (
+          <Check
+            className="mr-1 inline size-3.5 align-[-2px] txt-good"
+            aria-label="Done"
+          />
+        ) : null}
         {item.text}
         {owner ? (
           <span className="text-muted-foreground">
@@ -882,13 +878,13 @@ function AddItem({
       />
       <div className="flex gap-2">
         <AnimatedSelect
-          className={`${selectClass} sm:w-40`}
+          className={`${selectClass} min-w-[8.5rem] sm:w-44`}
           aria-label="Who owns it"
           value={owner}
           onChange={e => setOwner(e.target.value)}
         >
           <option value="">No owner</option>
-          <PeopleOptions people={people} />
+          {peopleOptions(people)}
         </AnimatedSelect>
         <Button
           type="submit"
@@ -900,225 +896,6 @@ function AddItem({
         </Button>
       </div>
     </form>
-  );
-}
-
-// --- the side panel --------------------------------------------------------------
-
-function When({
-  page,
-  next,
-  onAdd,
-}: {
-  page: Page;
-  next: Sitting | null;
-  onAdd: (date: string) => Promise<void>;
-}) {
-  const [date, setDate] = useState("");
-  const [busy, setBusy] = useState(false);
-  return (
-    <section className="rounded-xl border bg-card p-4 sm:p-5">
-      <h2 className="text-sm font-semibold">Next meeting</h2>
-      <p className="mt-1 text-lg font-semibold tracking-tight">
-        {next
-          ? next.onDate === page.today
-            ? "Today"
-            : dayName(next.onDate)
-          : "No date yet"}
-      </p>
-      <p className="text-xs text-muted-foreground">
-        {page.meeting.fromCalendar
-          ? "Dates come from the team's calendar every hour."
-          : "This meeting is not on the calendar; its hosts set the dates here."}
-      </p>
-      {page.canManage ? (
-        <form
-          className="mt-3 flex gap-2"
-          onSubmit={async e => {
-            e.preventDefault();
-            if (!date) return;
-            setBusy(true);
-            try {
-              await onAdd(date);
-              setDate("");
-            } catch {
-              // The page shows the error.
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          <DateInput
-            value={date}
-            min={page.today}
-            onChange={e => setDate(e.target.value)}
-            aria-label="Add a date"
-          />
-          <Button
-            type="submit"
-            size="sm"
-            variant="outline"
-            disabled={busy || !date}
-          >
-            Add the date
-          </Button>
-        </form>
-      ) : null}
-    </section>
-  );
-}
-
-const PART_LABEL: Record<string, string> = {
-  host: "Hosts",
-  required: "In the meeting",
-  optional: "Optional",
-};
-
-function People({
-  page,
-  onPart,
-}: {
-  page: Page;
-  onPart: (
-    personId: string,
-    part: "host" | "required" | "optional" | "off",
-  ) => Promise<void>;
-}) {
-  const byId = peopleById(page.people);
-  const [adding, setAdding] = useState("");
-  const [addPart, setAddPart] = useState<"required" | "optional" | "host">(
-    "required",
-  );
-  const [busy, setBusy] = useState<string | null>(null);
-  const members = new Set(page.members.map(x => x.personId));
-  const run = async (key: string, fn: () => Promise<void>) => {
-    setBusy(key);
-    try {
-      await fn();
-    } catch {
-      // The page shows the error.
-    } finally {
-      setBusy(null);
-    }
-  };
-  return (
-    <section className="rounded-xl border bg-card p-4 sm:p-5">
-      <h2 className="text-sm font-semibold">
-        Who is in it{" "}
-        <span className="font-normal text-muted-foreground">
-          {page.members.length}
-        </span>
-      </h2>
-      {(["host", "required", "optional"] as const).map(part => {
-        const list = page.members.filter(x => x.part === part);
-        if (!list.length) return null;
-        return (
-          <div key={part} className="mt-3">
-            <p className="text-xs text-muted-foreground">{PART_LABEL[part]}</p>
-            <ul className="mt-1.5 grid gap-2">
-              {list.map(x => {
-                const p = byId.get(x.personId);
-                return (
-                  <li key={x.personId} className="flex items-center gap-2.5">
-                    <Initials
-                      person={p}
-                      tone={part === "host" ? "host" : "muted"}
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm" dir="auto">
-                        {p?.name ?? x.personId}
-                        {x.personId === page.me.personId ? " (you)" : ""}
-                      </span>
-                      <span className="block truncate text-xs text-muted-foreground">
-                        {[p?.role, p?.department].filter(Boolean).join(", ")}
-                      </span>
-                    </span>
-                    {page.canManage ? (
-                      <AnimatedSelect
-                        className="h-7 rounded-md border border-input bg-transparent px-1.5 text-xs"
-                        aria-label={`${p?.name ?? "Their"} part`}
-                        value={x.part}
-                        disabled={busy === x.personId}
-                        onChange={e =>
-                          run(x.personId, () =>
-                            onPart(
-                              x.personId,
-                              e.target.value as
-                                | "host"
-                                | "required"
-                                | "optional"
-                                | "off",
-                            ),
-                          )
-                        }
-                      >
-                        <option value="host">Host</option>
-                        <option value="required">In it</option>
-                        <option value="optional">Optional</option>
-                        <option value="off">Take off</option>
-                      </AnimatedSelect>
-                    ) : null}
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        );
-      })}
-      {page.canManage ? (
-        <form
-          className="mt-4 grid gap-2 border-t pt-3"
-          onSubmit={async e => {
-            e.preventDefault();
-            if (!adding) return;
-            await run("add", () => onPart(adding, addPart));
-            setAdding("");
-          }}
-        >
-          <p className="text-xs text-muted-foreground">Add someone</p>
-          <AnimatedSelect
-            className={selectClass}
-            value={adding}
-            onChange={e => setAdding(e.target.value)}
-            aria-label="Who to add"
-          >
-            <option value="">Pick a person</option>
-            <PeopleOptions people={page.people} exclude={members} />
-          </AnimatedSelect>
-          <div className="flex gap-2">
-            <AnimatedSelect
-              className={selectClass}
-              value={addPart}
-              onChange={e =>
-                setAddPart(e.target.value as "required" | "optional" | "host")
-              }
-              aria-label="As"
-            >
-              <option value="required">In the meeting</option>
-              <option value="optional">Optional</option>
-              <option value="host">Host</option>
-            </AnimatedSelect>
-            <Button
-              type="submit"
-              size="sm"
-              variant="outline"
-              disabled={!adding || busy === "add"}
-            >
-              Add them
-            </Button>
-          </div>
-          <p className="text-[11px] leading-snug text-muted-foreground">
-            This adds them here. To have it on their calendar too, add them to
-            the invite in Google Calendar; the calendar never takes anyone off
-            who was set here.
-          </p>
-        </form>
-      ) : (
-        <p className="mt-3 text-[11px] text-muted-foreground">
-          Its hosts change who is in it.
-        </p>
-      )}
-    </section>
   );
 }
 
@@ -1135,7 +912,7 @@ function Past({
   if (!past.length) return null;
   const shown = all ? past : past.slice(0, 5);
   return (
-    <section className="rounded-xl border bg-card p-4 sm:p-5">
+    <section className="rounded-2xl border bg-card p-4 sm:p-6">
       <h2 className="text-sm font-semibold">Past meetings</h2>
       <ul className="mt-2 grid gap-2.5">
         {shown.map(s => {
@@ -1183,7 +960,7 @@ function Past({
 function Changes({ page }: { page: Page }) {
   if (!page.changes.length) return null;
   return (
-    <section className="rounded-xl border bg-card p-4 sm:p-5">
+    <section className="rounded-2xl border bg-card p-4 sm:p-6">
       <h2 className="text-sm font-semibold">What changed</h2>
       <ul className="mt-2 grid gap-1.5 text-xs">
         {page.changes.slice(0, 10).map((c, i) => (

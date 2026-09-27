@@ -1,16 +1,19 @@
 import { ChevronDown, ChevronRight, Search } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { useQuery } from "../lib/data";
+import { isArabic } from "../lib/format";
+import { TOKEN_LABELS } from "../lib/funnel";
 import {
   type Block,
   type Fill,
   firstSentence,
+  lineParts,
   type PlaybookEntry,
-  personalise,
+  personaliseMarked,
   type ScriptRow,
 } from "../lib/script";
 import { supabase } from "../lib/supabase";
-import { field, SectionCard } from "./kit";
+import { field, Segmented as KitSegmented, SectionCard } from "./kit";
 
 /**
  * The call scripts as the cockpit draws them, shared by the guided call
@@ -78,6 +81,7 @@ export function countryName(
   return c ? (lang === "ar" ? c[1] : c[0]) : null;
 }
 
+/** The kit's segmented control (teal when chosen), under its old name here. */
 export function Segmented({
   label,
   value,
@@ -90,27 +94,54 @@ export function Segmented({
   onChange: (v: string) => void;
 }) {
   return (
-    <div
-      className="raised inline-flex rounded-[var(--radius-md)] p-0.5 text-[13px]"
-      role="group"
-      aria-label={label}
-    >
-      {options.map(([v, text]) => (
-        <button
-          key={v}
-          type="button"
-          aria-pressed={value === v}
-          onClick={() => onChange(v)}
-          className={`rounded-[calc(var(--radius-md)-2px)] px-2.5 py-1 ${
-            value === v
-              ? "bg-[color:var(--card)] font-medium shadow-sm"
-              : "muted"
-          }`}
-        >
-          {text}
-        </button>
-      ))}
-    </div>
+    <KitSegmented
+      label={label}
+      value={value}
+      options={options}
+      onChange={onChange}
+    />
+  );
+}
+
+/**
+ * A line with what the notes filled in set apart (a teal tint: said from the
+ * prospect's own numbers) and each number the notes still need shown as a
+ * dashed blank with what to ask for, so a rep never reads out a bracket.
+ */
+export function Line({ text }: { text: string }) {
+  const parts = lineParts(text);
+  if (parts.length === 1 && parts[0].kind === "text")
+    return <>{parts[0].text}</>;
+  const lang = isArabic(text) ? "ar" : "en";
+  return (
+    <>
+      {parts.map((p, i) =>
+        p.kind === "text" ? (
+          <span key={i}>{p.text}</span>
+        ) : p.kind === "filled" ? (
+          <span
+            key={i}
+            title="From the notes"
+            className="rounded-[3px] px-[0.2em] font-medium [box-decoration-break:clone]"
+            style={{
+              background:
+                "color-mix(in oklab, var(--primary) 16%, transparent)",
+            }}
+          >
+            {p.text}
+          </span>
+        ) : (
+          <span
+            key={i}
+            title="Not in the notes yet. Ask for it before you say this line."
+            className="muted mx-[0.1em] inline-block rounded-[3px] border border-dashed px-[0.35em] align-baseline text-[0.8em] leading-snug"
+            style={{ borderColor: "var(--muted-foreground)" }}
+          >
+            {TOKEN_LABELS[p.token]?.[lang] ?? p.token}
+          </span>
+        ),
+      )}
+    </>
   );
 }
 
@@ -126,22 +157,19 @@ export function Blocks({
   return (
     <div className="space-y-2.5">
       {blocks.map((b, i) => {
-        const text = b.text ? personalise(b.text, fill) : "";
+        const text = b.text ? personaliseMarked(b.text, fill) : "";
+        const shown = mode === "bullets" ? firstSentence(text) : text;
         if (b.type === "say")
           return (
             <p
               key={i}
               dir="auto"
-              className={`rounded-e-[var(--radius-md)] border-s-2 py-1 ps-3 leading-relaxed ${
+              className={`border-s-2 py-1 ps-3 leading-relaxed ${
                 mode === "bullets" ? "text-[15px]" : "text-[17px]"
               }`}
-              style={{
-                borderColor: "var(--primary)",
-                background:
-                  "color-mix(in oklch, var(--primary) 7%, transparent)",
-              }}
+              style={{ borderColor: "var(--primary)" }}
             >
-              {mode === "bullets" ? firstSentence(text) : text}
+              <Line text={shown} />
             </p>
           );
         if (b.type === "adapt")
@@ -151,7 +179,7 @@ export function Blocks({
               dir="auto"
               className={`leading-relaxed ${mode === "bullets" ? "text-sm" : "text-[15px]"}`}
             >
-              {mode === "bullets" ? firstSentence(text) : text}
+              <Line text={shown} />
             </p>
           );
         if (b.type === "step")
@@ -161,14 +189,16 @@ export function Blocks({
               className="pt-1 text-[13px] font-semibold"
               style={{ color: "var(--primary)" }}
             >
-              {text}
+              <Line text={text} />
             </p>
           );
         if (b.type === "list")
           return (
             <ul key={i} className="list-disc space-y-1 pl-5 text-sm" dir="auto">
               {(b.items ?? []).map((it, j) => (
-                <li key={j}>{personalise(it, fill)}</li>
+                <li key={j}>
+                  <Line text={personaliseMarked(it, fill)} />
+                </li>
               ))}
             </ul>
           );
@@ -179,7 +209,7 @@ export function Blocks({
             dir="auto"
             className="muted text-[13px] italic leading-relaxed"
           >
-            {text}
+            <Line text={text} />
           </p>
         );
       })}
@@ -190,13 +220,24 @@ export function Blocks({
 export function BranchGroup({
   label,
   children,
+  open: openNow = false,
+  badge,
 }: {
   label: string;
   children: ReactNode;
+  /** Opens the branch by itself, as when it matches the prospect's numbers. */
+  open?: boolean;
+  badge?: ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(openNow);
+  useEffect(() => {
+    if (openNow) setOpen(true);
+  }, [openNow]);
   return (
-    <div className="rounded-[var(--radius-md)] border hairline">
+    <div
+      className="rounded-[var(--radius-md)] border hairline"
+      style={badge ? { borderColor: "var(--primary)" } : undefined}
+    >
       <button
         type="button"
         aria-expanded={open}
@@ -209,7 +250,8 @@ export function BranchGroup({
         ) : (
           <ChevronRight className="size-4 shrink-0" aria-hidden />
         )}
-        {label}
+        <span className="min-w-0 flex-1">{label}</span>
+        {badge}
       </button>
       {open ? (
         <div className="border-t hairline px-3 py-3">{children}</div>

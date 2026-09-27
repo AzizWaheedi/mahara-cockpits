@@ -9,9 +9,10 @@ const cardVariants = cva(
     variants: {
       variant: {
         default: "",
-        elevated: "shadow-lg border-0 bg-gradient-to-br from-card to-muted/30",
-        interactive:
-          "transition-all hover:shadow-lg hover:border-foreground/10",
+        // No grey shadow and no gradient: a card is a card. Light mode keeps
+        // a hairline lift; on Deep Space the border carries the edge.
+        elevated: "shadow-sm dark:shadow-none",
+        interactive: "transition-colors hover:border-primary/40",
         ghost: "border-0 shadow-none bg-transparent",
       },
       padding: {

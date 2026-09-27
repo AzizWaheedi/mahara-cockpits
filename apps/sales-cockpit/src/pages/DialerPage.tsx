@@ -1,4 +1,5 @@
 import {
+  ArrowLeft,
   Bell,
   BellRing,
   CalendarClock,
@@ -8,10 +9,10 @@ import {
   Flame,
   ListOrdered,
   PhoneCall,
+  PhoneMissed,
   PhoneOff,
   Search,
   SkipForward,
-  X,
 } from "lucide-react";
 import {
   type FormEvent,
@@ -28,12 +29,14 @@ import { AdOrigin } from "../components/AdOrigin";
 import { ProofToSend } from "../components/AssetPicker";
 import { CallNotesList, useCallNotes } from "../components/CallNotes";
 import { Conversation, useConversation } from "../components/Conversation";
+import { SavedWorkLine } from "../components/DialSavedWork";
 import { HotControl } from "../components/HotList";
 import {
   button,
   buttonPrimary,
   EmptyState,
   Failed,
+  FilterChip,
   field,
   StatTile,
   StatusChip,
@@ -54,7 +57,7 @@ import {
   useScript,
   writePrefs,
 } from "../components/ScriptParts";
-import { api } from "../lib/api";
+import { ApiError, api, uncertain } from "../lib/api";
 import { assetStage, objectionsFrom } from "../lib/assets";
 import {
   useLead,
@@ -62,24 +65,48 @@ import {
   useLeadSearch,
   useNow,
   useSetting,
+  useSnippets,
+  useTemplates,
 } from "../lib/data";
 import {
   alertsWanted,
   callbackPicks,
   chime,
   clearDraft,
-  countdown,
   type Draft,
   localInput,
   mmss,
   primeSound,
-  type QueueItem,
   readDraft,
   setAlertsWanted,
   type UrgentEvent,
-  urgentEvents,
   writeDraft,
 } from "../lib/dialer";
+import {
+  type AfterMiss,
+  afterMiss,
+  afterSave,
+  countsShown,
+  type DialItem,
+  type ItemKind,
+  isNextLeadKey,
+  lateSentence,
+  liveSkips,
+  type MissMoment,
+  missedCallLine,
+  openAfterRead,
+  plainError,
+  readyLine,
+  rowTime,
+  type SavedWork,
+  type Skip,
+  shortCountdown,
+  skipFor,
+  skipHolds,
+  type Undialable,
+  undialableLine,
+  urgentFor,
+} from "../lib/dialerUi";
 import {
   ago,
   classLabel,
@@ -100,10 +127,14 @@ import { leadLanguage, type Moment } from "../lib/whatsapp";
  * queue in the order the playbook says, one lead at a time with everything
  * about them beside the call, the call placed through Maqsam on the right
  * line for the lead's country, and Maqsam's own record of the call read back
- * while it runs. A call nobody answered saves itself and the next lead comes
- * up; any other outcome is one click and a line of notes, a booking goes on
+ * while it runs. A call nobody answered saves itself and Next lead waits,
+ * focused, for Enter; every outcome the rep saves opens the next lead at
+ * once (a no-answer can open the message box instead), a booking goes on
  * the HighLevel calendar from here, and calling through the dialer is never
- * required before saving.
+ * required before saving. A save answers as soon as the cockpit has it;
+ * HighLevel's half follows, and one it has not taken shows as saved work.
+ * No refresh swaps out a lead in a call, a booking or a note, and nothing
+ * waits on the server for more than 45 seconds.
  */
 
 interface Attempt {
@@ -138,7 +169,11 @@ interface Queue {
   counts: number[];
   open: Attempt | null;
   today: Today;
-  queue: QueueItem[];
+  queue: DialItem[];
+  /** Recent open leads the dialer cannot call: no number, or one it has no line for. */
+  undialable?: Undialable;
+  /** The rep's saves of the last day whose HighLevel half failed or is still waiting. */
+  saved_work?: SavedWork[];
   /** When this copy was asked for, in the browser. */
   loadedAt: number;
 }
@@ -189,8 +224,6 @@ interface OutcomeDef {
   needsNote: boolean;
   hint: string;
 }
-
-type ItemKind = "lead" | "intro" | "confirm";
 
 const LEAD_OUTCOMES: OutcomeDef[] = [
   {
@@ -308,21 +341,23 @@ const OUTCOMES: Record<ItemKind, OutcomeDef[]> = {
 
 const msg = (e: unknown) => String((e as Error)?.message ?? e);
 
-function shortAgo(iso: string | null, now: number): string {
-  if (!iso) return "";
-  const m = Math.round((now - Date.parse(iso)) / 60_000);
-  if (!Number.isFinite(m)) return "";
-  if (m < 0) {
-    const f = -m;
-    return f < 60
-      ? `in ${f}m`
-      : f < 2880
-        ? `in ${Math.round(f / 60)}h`
-        : `in ${Math.round(f / 1440)}d`;
-  }
-  if (m < 60) return `${Math.max(m, 0)}m`;
-  if (m < 2880) return `${Math.round(m / 60)}h`;
-  return `${Math.round(m / 1440)}d`;
+/** The server said no with this status (409: its state and the page's differ). */
+const refusedWith = (e: unknown, status: number) =>
+  e instanceof ApiError && e.status === status;
+
+/** Whether keys go to a text box right now (Alt+→ moves its cursor there). */
+function typing(): boolean {
+  const el = document.activeElement as HTMLElement | null;
+  if (!el) return false;
+  return (
+    el.isContentEditable ||
+    el.tagName === "TEXTAREA" ||
+    el.tagName === "SELECT" ||
+    (el.tagName === "INPUT" &&
+      !["button", "checkbox", "radio", "submit"].includes(
+        (el as HTMLInputElement).type,
+      ))
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -455,7 +490,12 @@ export default function DialerPage({ me }: { me: Me }) {
   const [as, setAs] = useState<As>(me.role === "closer" ? "closer" : "setter");
   const [q, setQ] = useState<Queue | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [skipped, setSkipped] = useState<Set<string>>(() => new Set());
+  // Skipped leads, with the tier and reason they were skipped for: a skip
+  // lapses after 30 minutes, or sooner when the lead moves or writes again.
+  const [skipped, setSkipped] = useState<Record<string, Skip>>({});
+  // Calls saved or let go on this page: a queue read that left before the
+  // save landed must not bring one back as the open call.
+  const [spent, setSpent] = useState<ReadonlySet<string>>(() => new Set());
   const [savedAt, setSavedAt] = useState<Record<string, number>>({});
   const [picked, setPicked] = useState<string | null>(null);
   const [tier, setTier] = useState<TierFilter>("all");
@@ -467,7 +507,13 @@ export default function DialerPage({ me }: { me: Me }) {
     n: 0,
     moment: null,
   });
+  // Saves sent to HighLevel again from here: off the list at once.
+  const [resent, setResent] = useState<ReadonlySet<string>>(() => new Set());
   const maqsam = useAgent();
+  const wa = useWaKit();
+  // The call this page placed, and when: a read of the queue asked before
+  // it cannot know it, so that read must not end it on screen.
+  const placed = useRef<{ attempt: Attempt; at: number } | null>(null);
 
   // One read at a time; a read asked for meanwhile runs right after.
   const asRef = useRef(as);
@@ -491,11 +537,15 @@ export default function DialerPage({ me }: { me: Me }) {
             limit: 80,
           });
           if (asked === asRef.current) {
-            setQ({ ...out, loadedAt });
+            setQ({
+              ...out,
+              open: openAfterRead(out.open, placed.current, loadedAt),
+              loadedAt,
+            });
             setError(null);
           }
         } catch (e) {
-          setError(msg(e));
+          if (asked === asRef.current) setError(msg(e));
         }
       } while (again.current);
     } finally {
@@ -528,18 +578,20 @@ export default function DialerPage({ me }: { me: Me }) {
     };
   }, [as, load]);
 
-  const open = q?.open ?? null;
-  const visible = useMemo(
-    () =>
-      (q?.queue ?? []).filter(
-        i =>
-          !skipped.has(i.contact_id) &&
-          !(
-            savedAt[i.contact_id] && (q?.loadedAt ?? 0) < savedAt[i.contact_id]
-          ),
-      ),
-    [q, skipped, savedAt],
-  );
+  const open = q?.open && !spent.has(q.open.id) ? q.open : null;
+  const visible = useMemo(() => {
+    const now = Date.now();
+    return (q?.queue ?? []).filter(
+      i =>
+        !skipHolds(skipped[i.contact_id], i, now) &&
+        !(savedAt[i.contact_id] && (q?.loadedAt ?? 0) < savedAt[i.contact_id]),
+    );
+  }, [q, skipped, savedAt]);
+  // Each read of the queue lets go of the skips that no longer hold, so a
+  // lead that comes back for a new reason stays back.
+  useEffect(() => {
+    if (q) setSkipped(s => liveSkips(s, q.queue, Date.now()));
+  }, [q]);
   const priority = visible[0] ?? null;
   const currentId = open?.contact_id ?? picked ?? priority?.contact_id ?? null;
   const current =
@@ -547,10 +599,17 @@ export default function DialerPage({ me }: { me: Me }) {
   const manual = !open && picked !== null && picked !== priority?.contact_id;
   const urgent = useMemo(
     () =>
-      urgentEvents(visible, Date.now()).filter(
+      urgentFor(visible, Date.now()).filter(
         e => e.contact_id !== open?.contact_id,
       ),
     [visible, open?.contact_id],
+  );
+  // Nobody shows only because the rep skipped them: say so, and undo it.
+  const allSkipped =
+    !visible.length &&
+    (q?.queue ?? []).some(i => skipHolds(skipped[i.contact_id], i, Date.now()));
+  const savedWork = (q?.saved_work ?? []).filter(
+    w => !resent.has(w.attempt_id),
   );
 
   // A "call now" lead the rep has not been told about: a sound, and a
@@ -571,13 +630,20 @@ export default function DialerPage({ me }: { me: Me }) {
       "Notification" in window &&
       Notification.permission === "granted"
     )
-      for (const e of fresh.slice(0, 3))
-        new Notification(`${e.title}: ${e.name ?? "a lead"}`, {
-          body: e.callback
-            ? "Call them back now, as agreed."
-            : "Dial within two minutes.",
-          tag: e.key,
-        });
+      for (const e of fresh.slice(0, 3)) {
+        // Chrome on Android refuses this constructor outside a service
+        // worker; the chime has played, so the page carries on without it.
+        try {
+          new Notification(`${e.title}: ${e.name ?? "a lead"}`, {
+            body: e.callback
+              ? "Call them back now, as agreed."
+              : "Dial within two minutes.",
+            tag: e.key,
+          });
+        } catch {
+          break;
+        }
+      }
   }, [q, urgent, alertsOn]);
 
   // After a reload the browser wants a click before it plays sound again.
@@ -610,10 +676,19 @@ export default function DialerPage({ me }: { me: Me }) {
     );
   }
 
-  // Alt+D calls, Alt+N goes to the notes (the call centre's keys).
+  // The call centre's keys: Alt+D calls, Alt+N goes to the notes, and
+  // Alt+→ opens the next lead where Next lead shows (not while typing, where
+  // it moves the cursor by a word).
   const callRef = useRef<(() => void) | null>(null);
+  const nextRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (isNextLeadKey(e, typing())) {
+        if (!nextRef.current) return;
+        e.preventDefault();
+        nextRef.current();
+        return;
+      }
       if (!e.altKey || e.ctrlKey || e.metaKey) return;
       if (e.code === "KeyD") {
         e.preventDefault();
@@ -627,39 +702,80 @@ export default function DialerPage({ me }: { me: Me }) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  function finished(
-    contactId: string,
-    how: "saved" | "skipped",
-    words?: string,
-  ) {
-    if (how === "skipped") setSkipped(s => new Set(s).add(contactId));
-    else setSavedAt(s => ({ ...s, [contactId]: Date.now() }));
-    setPicked(null);
+  // The lead's call on this page is done (saved, or let go): it is never
+  // shown as open again, whatever an earlier read of the queue says.
+  function closeCall(contactId: string) {
+    const done = open?.contact_id === contactId ? open.id : null;
+    if (done) setSpent(s => new Set(s).add(done));
+    if (placed.current?.attempt.contact_id === contactId) placed.current = null;
     setQ(prev =>
       prev && prev.open?.contact_id === contactId
         ? { ...prev, open: null }
         : prev,
     );
+  }
+
+  function finished(
+    contactId: string,
+    how: "saved" | "skipped",
+    words?: string,
+  ) {
+    if (how === "skipped") {
+      const item = q?.queue.find(i => i.contact_id === contactId);
+      if (item)
+        setSkipped(s => ({ ...s, [contactId]: skipFor(item, Date.now()) }));
+    } else setSavedAt(s => ({ ...s, [contactId]: Date.now() }));
+    closeCall(contactId);
+    // A save that lands after the rep moved to another lead leaves that
+    // lead where it is.
+    setPicked(p => (p === contactId ? null : p));
     if (words) toast.success(words);
     void load();
     void maqsam.check();
   }
 
+  // Saved with a next step (the intro held, a no-answer to message): the
+  // lead stays on screen, whatever the queue reads next, until the rep
+  // moves on. The call it was saved on is done, so anything saved after it
+  // is a save of its own.
+  function stay(contactId: string) {
+    closeCall(contactId);
+    setPicked(contactId);
+    void load();
+    void maqsam.check();
+  }
+
+  function switchQueue(v: As) {
+    if (v === as) return;
+    if (open) {
+      toast.error(
+        "Save or skip the call that is open first, then switch queues.",
+      );
+      return;
+    }
+    setAs(v);
+    setQ(null);
+    setPicked(null);
+    setSkipped({});
+  }
+
   const counts = q?.counts ?? [0, 0, 0, 0];
   const ready = counts.reduce((a, b) => a + b, 0);
+  // The chips count what the list shows, not the leads it is hiding.
+  const listCounts = q ? countsShown(q.counts, q.queue, visible) : counts;
 
   return (
     <main className="mx-auto w-full max-w-[1800px] space-y-4 px-4 py-5 md:px-6">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Dialer</h1>
-          <p className="muted text-sm">
-            {q
-              ? ready
-                ? `${counts[0] + counts[1]} to call now or today · ${counts[2]} due · ${counts[3]} never called`
-                : "Nobody waiting. New leads, replies and call-backs come in by themselves."
-              : "Working out who to call…"}
-          </p>
+          <h1 className="text-2xl font-semibold tracking-tight">Dialer</h1>
+          {q && ready ? null : (
+            <p className="muted mt-1 text-sm">
+              {q
+                ? "Nobody waiting. New leads, replies and call-backs come in by themselves."
+                : "Working out who to call…"}
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {canBoth ? (
@@ -670,12 +786,7 @@ export default function DialerPage({ me }: { me: Me }) {
                 ["setter", "Setter queue"],
                 ["closer", "Closer queue"],
               ]}
-              onChange={v => {
-                setAs(v as As);
-                setQ(null);
-                setPicked(null);
-                setSkipped(new Set());
-              }}
+              onChange={v => switchQueue(v as As)}
             />
           ) : null}
           <button
@@ -706,18 +817,24 @@ export default function DialerPage({ me }: { me: Me }) {
 
       <Stats q={q} />
 
+      <SavedWorkLine
+        items={savedWork}
+        onSent={id => setResent(s => new Set(s).add(id))}
+      />
+
       <UrgentStrip
         events={urgent}
         locked={Boolean(open)}
         onPick={id => setPicked(id)}
       />
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[16rem_minmax(0,1fr)] lg:[grid-template-areas:'queue_call'_'queue_lead'] 2xl:grid-cols-[17rem_minmax(0,1fr)_23rem] 2xl:[grid-template-areas:'queue_lead_call']">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[16rem_minmax(0,1fr)] lg:[grid-template-areas:'queue_call'_'queue_lead'] xl:grid-cols-[15rem_minmax(0,1fr)_21rem] xl:[grid-template-areas:'queue_lead_call']">
         <QueuePane
           className="lg:[grid-area:queue]"
           loaded={Boolean(q)}
           items={visible}
-          counts={counts}
+          counts={listCounts}
+          undialable={undialableLine(q?.undialable)}
           currentId={currentId}
           manual={manual}
           locked={Boolean(open)}
@@ -726,47 +843,157 @@ export default function DialerPage({ me }: { me: Me }) {
           term={term}
           setTerm={setTerm}
           onPick={id => setPicked(id)}
-          onBack={() => setPicked(null)}
+          onBack={() => {
+            setPicked(null);
+            setTerm("");
+          }}
         />
         {currentId ? (
-          <>
-            <CallPane
-              key={`call-${currentId}`}
-              className="lg:[grid-area:call] 2xl:sticky 2xl:top-4 2xl:self-start"
-              me={me}
-              as={as}
-              contactId={currentId}
-              item={current}
-              open={open?.contact_id === currentId ? open : null}
-              agent={maqsam}
-              callRef={callRef}
-              onCalled={a => setQ(prev => (prev ? { ...prev, open: a } : prev))}
-              onFinished={finished}
-              onTalk={moment =>
-                setTalk(t => ({ n: t.n + 1, moment: moment ?? null }))
-              }
-            />
-            <LeadPane
-              key={`lead-${currentId}`}
-              className="lg:[grid-area:lead]"
-              me={me}
-              as={as}
-              contactId={currentId}
-              item={current}
-              talk={talk}
-            />
-          </>
+          <LeadWork
+            key={currentId}
+            me={me}
+            as={as}
+            contactId={currentId}
+            item={current}
+            open={open?.contact_id === currentId ? open : null}
+            pinned={picked === currentId}
+            agent={maqsam}
+            callRef={callRef}
+            nextRef={nextRef}
+            wa={wa}
+            talk={talk}
+            onCalled={a => {
+              placed.current = { attempt: a, at: Date.now() };
+              setQ(prev => (prev ? { ...prev, open: a } : prev));
+            }}
+            onFinished={finished}
+            onStay={stay}
+            onPin={id => setPicked(id)}
+            onRefresh={() => void load()}
+            onTalk={moment =>
+              setTalk(t => ({ n: t.n + 1, moment: moment ?? null }))
+            }
+          />
         ) : q ? (
-          <div className="panel lg:[grid-area:call] 2xl:[grid-area:lead/lead/call/call]">
-            <EmptyState
-              icon={PhoneCall}
-              title="Nobody to call right now"
-              text="New leads, replies and due call-backs appear here as they happen; the queue checks every 15 seconds. Search the queue's box to call someone in particular."
-            />
+          <div className="panel lg:[grid-area:call] xl:[grid-area:lead/lead/call/call]">
+            {allSkipped ? (
+              <EmptyState
+                icon={SkipForward}
+                title="Everyone waiting is skipped"
+                text="A skip holds for half an hour, or until the lead writes, calls or moves up the queue."
+                action={
+                  <button
+                    type="button"
+                    onClick={() => setSkipped({})}
+                    className={button}
+                  >
+                    Show the skipped leads
+                  </button>
+                }
+              />
+            ) : (
+              <EmptyState
+                icon={PhoneCall}
+                title="Nobody to call right now"
+                text="New leads, replies, missed calls and due call-backs appear here as they happen; the queue checks every 15 seconds. Search the queue's box to call someone in particular."
+              />
+            )}
           </div>
         ) : null}
       </div>
     </main>
+  );
+}
+
+/**
+ * The lead on screen: the call beside everything about them. One read of
+ * the lead's conversation serves both panes, so the call pane knows which
+ * channel a message can go on after a missed call.
+ */
+function LeadWork({
+  me,
+  as,
+  contactId,
+  item,
+  open,
+  pinned,
+  agent,
+  callRef,
+  nextRef,
+  wa,
+  talk,
+  onCalled,
+  onFinished,
+  onStay,
+  onPin,
+  onRefresh,
+  onTalk,
+}: {
+  me: Me;
+  as: As;
+  contactId: string;
+  item: DialItem | null;
+  open: Attempt | null;
+  /** The rep chose this lead (or is working on it), so the queue cannot swap it out. */
+  pinned: boolean;
+  agent: ReturnType<typeof useAgent>;
+  callRef: MutableRefObject<(() => void) | null>;
+  /** Next lead, for Alt+→, while it shows. */
+  nextRef: MutableRefObject<(() => void) | null>;
+  wa: WaKit;
+  talk: { n: number; moment: Moment | null };
+  onCalled: (a: Attempt) => void;
+  onFinished: (
+    contactId: string,
+    how: "saved" | "skipped",
+    words?: string,
+  ) => void;
+  onStay: (contactId: string) => void;
+  onPin: (contactId: string) => void;
+  /** Read the queue again: the server's state and the page's differ. */
+  onRefresh: () => void;
+  onTalk: (moment?: Moment) => void;
+}) {
+  const convo = useConversation(contactId);
+  return (
+    <>
+      <CallPane
+        className={`lg:[grid-area:call] xl:sticky xl:top-4 xl:self-start ${
+          open ? "glow-teal" : ""
+        }`}
+        me={me}
+        as={as}
+        contactId={contactId}
+        item={item}
+        open={open}
+        pinned={pinned}
+        agent={agent}
+        callRef={callRef}
+        nextRef={nextRef}
+        convo={convo}
+        wa={wa}
+        onCalled={onCalled}
+        onFinished={onFinished}
+        onStay={onStay}
+        onPin={onPin}
+        onRefresh={onRefresh}
+        onTalk={onTalk}
+      />
+      <LeadPane
+        className="lg:[grid-area:lead]"
+        me={me}
+        as={as}
+        contactId={contactId}
+        item={item}
+        talk={talk}
+        convo={convo}
+        // Writing to the lead (a WhatsApp, research) keeps them on screen,
+        // as a note in the call pane does.
+        onTyping={() => {
+          if (!pinned) onPin(contactId);
+        }}
+      />
+    </>
   );
 }
 
@@ -780,13 +1007,13 @@ function Stats({ q }: { q: Queue | null }) {
   const ready = q ? q.counts.reduce((a, b) => a + b, 0) : null;
   return (
     <>
-      {/* On a phone the day fits one line, so Call stays near the top. */}
-      <p className="muted text-sm sm:hidden">
+      {/* The day in one line until the tiles fit beside the three columns, so Call stays near the top. */}
+      <p className="muted text-sm 2xl:hidden">
         {t && ready !== null
           ? `Today: ${t.saved} saved · ${t.answered} of ${t.calls} answered · ${t.booked} booked · ${ready} ready`
           : "Reading today's numbers…"}
       </p>
-      <div className="hidden grid-cols-2 gap-3 sm:grid lg:grid-cols-4">
+      <div className="hidden grid-cols-2 gap-3 lg:grid-cols-4 2xl:grid">
         <StatTile
           label="Saved today"
           value={t ? String(t.saved) : null}
@@ -880,10 +1107,10 @@ function UrgentStrip({
               </span>
             </span>
             <span
-              className="shrink-0 text-right text-sm font-semibold tabular-nums"
+              className="shrink-0 whitespace-nowrap text-right text-sm font-semibold tabular-nums"
               style={{ color: late ? "var(--destructive)" : undefined }}
             >
-              {countdown(e, now)}
+              {shortCountdown(e, now)}
             </span>
           </button>
         );
@@ -906,6 +1133,7 @@ function QueuePane({
   loaded,
   items,
   counts,
+  undialable,
   currentId,
   manual,
   locked,
@@ -918,8 +1146,10 @@ function QueuePane({
 }: {
   className: string;
   loaded: boolean;
-  items: QueueItem[];
+  items: DialItem[];
   counts: number[];
+  /** A line on recent leads the dialer cannot call, when there are any. */
+  undialable: string | null;
   currentId: string | null;
   manual: boolean;
   locked: boolean;
@@ -1007,21 +1237,21 @@ function QueuePane({
                   ["2", "Due", counts[2]],
                   ["3", "Never", counts[3]],
                 ] as [TierFilter, string, number][]
-              ).map(([k, label, n]) => (
-                <button
-                  key={k}
-                  type="button"
-                  aria-pressed={tier === k}
-                  onClick={() => setTier(k)}
-                  className={`rounded-full border px-2 py-0.5 text-[11px] tabular-nums ${
-                    tier === k
-                      ? "border-[color:var(--primary)] font-semibold"
-                      : "hairline muted"
-                  }`}
-                >
-                  {label} {n}
-                </button>
-              ))}
+              )
+                .filter(
+                  ([k, , n]) =>
+                    n > 0 || (k === "all" ? tier !== "all" : tier === k),
+                )
+                .map(([k, label, n]) => (
+                  <FilterChip
+                    key={k}
+                    on={tier === k}
+                    onClick={() => setTier(k)}
+                    count={n}
+                  >
+                    {label}
+                  </FilterChip>
+                ))}
             </div>
           ) : null}
         </div>
@@ -1100,17 +1330,21 @@ function QueuePane({
                           className="me-1 inline size-3 align-[-2px]"
                           aria-hidden
                         />
+                      ) : missedCallLine(i, now) ? (
+                        <PhoneMissed
+                          className="me-1 inline size-3 align-[-2px]"
+                          aria-hidden
+                        />
                       ) : null}
                       {i.why}
                     </span>
                     {i.hot_reasons?.length ? (
-                      <span
-                        className="block truncate text-[11px]"
-                        style={{ color: "var(--primary)" }}
-                      >
+                      // Teal sits on the flame; the words stay in text colour.
+                      <span className="dim block truncate text-[11px]">
                         {i.hot ? (
                           <Flame
                             className="me-0.5 inline size-3 align-[-2px]"
+                            style={{ color: "var(--primary)" }}
                             aria-hidden
                           />
                         ) : null}
@@ -1119,9 +1353,7 @@ function QueuePane({
                     ) : null}
                   </span>
                   <span className="muted shrink-0 pt-0.5 text-[11px] tabular-nums">
-                    {i.kind === "intro" || i.kind === "confirm"
-                      ? clock(i.appointment?.start_at ?? null)
-                      : shortAgo(i.inbound_at ?? i.created_at, now)}
+                    {rowTime(i, now)}
                   </span>
                 </button>
               </li>
@@ -1134,6 +1366,11 @@ function QueuePane({
             </li>
           )}
         </ul>
+        {!searching && undialable ? (
+          <p className="muted border-t hairline px-3 py-2 text-xs leading-relaxed">
+            {undialable}
+          </p>
+        ) : null}
       </div>
     </section>
   );
@@ -1143,13 +1380,17 @@ function QueuePane({
 // The call: the line's state, Call, and how it went
 // ---------------------------------------------------------------------------
 
-/** Maqsam's record of the open call, asked every few seconds until it ends. */
-function useCallStatus(
-  attempt: Attempt | null,
-  onAutoSaved: (words: string) => void,
-) {
-  const [call, setCall] = useState<CallInfo | null>(null);
-  const [error, setError] = useState<string | null>(null);
+/**
+ * Maqsam's record of the open call, asked every few seconds until it ends.
+ * What it says belongs to that one call: the next call on the same lead
+ * starts with no record, never the last call's.
+ */
+function useCallStatus(attempt: Attempt | null, onAutoSaved: () => void) {
+  const [seen, setSeen] = useState<{
+    id: string;
+    call: CallInfo | null;
+    error: string | null;
+  } | null>(null);
   const done = useRef(onAutoSaved);
   done.current = onAutoSaved;
   const id = attempt?.id ?? null;
@@ -1168,18 +1409,22 @@ function useCallStatus(
           auto_saved: boolean;
         }>("dial.status", { attempt_id: id });
         if (!alive) return;
-        setCall(r.call);
-        setError(null);
+        setSeen({ id, call: r.call, error: null });
         if (r.auto_saved) {
-          done.current(
-            "No answer, saved from Maqsam's record. Next lead is up.",
-          );
+          done.current();
           again = false;
         } else if (r.attempt?.state !== "placed" || r.call?.final) {
           again = false;
         }
       } catch (e) {
-        if (alive) setError(msg(e));
+        if (!alive) return;
+        setSeen(s => ({
+          id,
+          call: s?.id === id ? s.call : null,
+          error: msg(e),
+        }));
+        // The call is gone, or not this rep's: asking again cannot help.
+        if (refusedWith(e, 404) || refusedWith(e, 403)) again = false;
       }
       if (!alive || !again) return;
       t = window.setTimeout(tick, Date.now() - started < 120_000 ? 4000 : 8000);
@@ -1190,8 +1435,57 @@ function useCallStatus(
       window.clearTimeout(t);
     };
   }, [id, placed, started]);
-  return { call, error };
+  const mine = seen && seen.id === id ? seen : null;
+  return { call: mine?.call ?? null, error: mine?.error ?? null };
 }
+
+/**
+ * What WhatsApp can carry, for every lead alike: whether an approved
+ * template is live, and which moments have a ready-made message. Read once
+ * for the page, not once per lead.
+ */
+interface WaKit {
+  templatesLive: boolean | null;
+  moments: ReadonlySet<string> | null;
+}
+
+function useWaKit(): WaKit {
+  const templates = useTemplates();
+  const snippets = useSnippets();
+  return useMemo(
+    () => ({
+      templatesLive: templates.data
+        ? templates.data.some(t => t.active && Boolean(t.workflow_id))
+        : null,
+      moments: snippets.data ? new Set(snippets.data.map(s => s.moment)) : null,
+    }),
+    [templates.data, snippets.data],
+  );
+}
+
+/** What can be sent after a no-answer, for the lead on screen. */
+function missStep(
+  moment: MissMoment,
+  convo: ReturnType<typeof useConversation>,
+  wa: WaKit,
+): AfterMiss {
+  const channels = convo.data?.channels;
+  return afterMiss({
+    moment,
+    whatsapp: channels?.whatsapp ?? null,
+    email: channels?.email ?? null,
+    templatesLive: wa.templatesLive,
+    messageReady: wa.moments ? wa.moments.has(moment) : null,
+  });
+}
+
+const NO_DRAFT: Draft = { outcome: null, note: "", callback: "" };
+
+type PaneMode = "outcomes" | "book" | "move" | "held" | "unanswered";
+
+const fine = () =>
+  typeof window !== "undefined" &&
+  window.matchMedia?.("(pointer: fine)").matches;
 
 function CallPane({
   className,
@@ -1200,49 +1494,115 @@ function CallPane({
   contactId,
   item,
   open,
+  pinned,
   agent,
   callRef,
+  nextRef,
+  convo,
+  wa,
   onCalled,
   onFinished,
+  onStay,
+  onPin,
+  onRefresh,
   onTalk,
 }: {
   className: string;
   me: Me;
   as: As;
   contactId: string;
-  item: QueueItem | null;
+  item: DialItem | null;
   open: Attempt | null;
+  pinned: boolean;
   agent: ReturnType<typeof useAgent>;
   callRef: MutableRefObject<(() => void) | null>;
+  nextRef: MutableRefObject<(() => void) | null>;
+  convo: ReturnType<typeof useConversation>;
+  wa: WaKit;
   onCalled: (a: Attempt) => void;
   onFinished: (
     contactId: string,
     how: "saved" | "skipped",
     words?: string,
   ) => void;
+  /** Saved, with a next step: keep this lead on screen and close its call. */
+  onStay: (contactId: string) => void;
+  /** The rep is working on this lead: keep it on screen. */
+  onPin: (contactId: string) => void;
+  /** Read the queue again: the server's state and the page's differ. */
+  onRefresh: () => void;
   onTalk: (moment?: Moment) => void;
 }) {
   const lead = useLead(contactId);
   const l = lead.data;
+  // An answer that lands after the rep moved to another lead only does the
+  // bookkeeping; it never pulls the screen back to this one.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const [draft, setDraftState] = useState<Draft>(() => readDraft(contactId));
-  const [busy, setBusy] = useState<null | "call" | "save" | "skip">(null);
+  const [busy, setBusyState] = useState<null | "call" | "save" | "skip">(null);
+  // The same, at once: a second tap in the same moment finds it set before
+  // the button has been drawn as busy, so nothing is sent twice.
+  const busyRef = useRef<typeof busy>(null);
+  function setBusy(b: typeof busy) {
+    busyRef.current = b;
+    if (mounted.current) setBusyState(b);
+  }
   // What the form is showing: the outcomes, a booking, a move, or what comes
   // after an outcome that has a next step.
-  const [mode, setMode] = useState<
-    "outcomes" | "book" | "move" | "held" | "unanswered"
-  >("outcomes");
+  const [mode, setMode] = useState<PaneMode>("outcomes");
+  // How the step after a no-answer came about: Maqsam's record saved it
+  // (Next lead waits, focused) or the rep chose to message them (the box is
+  // open in the conversation).
+  const [missBy, setMissBy] = useState<"auto" | "message">("auto");
   const [bookKind, setBookKind] = useState<"intro" | "demo" | null>(null);
   // Once the intro is marked held, what follows is ordinary lead work.
   const [kind, setKind] = useState<ItemKind>(item?.kind ?? "lead");
-  const appt = item?.appointment ?? null;
-  const status = useCallStatus(open, words =>
-    onFinished(contactId, "saved", words),
-  );
+  // What was saved while the lead stays on screen, for the band.
+  const [saved, setSaved] = useState<string | null>(null);
+  // A call that may have gone out although no clear answer came back (a
+  // server error, or none in time): the band says to check Maqsam first.
+  const [doubt, setDoubt] = useState<string | null>(null);
+  // Why the last save needs another press, under the button until then.
+  const [saveNote, setSaveNote] = useState<string | null>(null);
+  // The appointment the lead came up for, kept when the queue lets the item
+  // go while the rep is still on the lead.
+  const [apptSeen, setApptSeen] = useState(item?.appointment ?? null);
+  useEffect(() => {
+    if (item?.appointment) setApptSeen(item.appointment);
+  }, [item?.appointment]);
+  const appt = item?.appointment ?? apptSeen;
+  // A save without a call through the dialer carries its own id: made when
+  // the rep starts that save, kept for every retry of it, new once a save
+  // lands. Another lead is another pane, so another id.
+  const saveId = useRef<string | null>(null);
+  const missMoment: MissMoment = kind === "confirm" ? "confirm" : "missed_call";
+  const miss = missStep(missMoment, convo, wa);
+  const noteRef = useRef<HTMLTextAreaElement>(null);
+  const saveRef = useRef<HTMLButtonElement>(null);
+  const status = useCallStatus(open, () => {
+    // Maqsam's record saved it as No answer. A save of the rep's own on its
+    // way decides what shows (only one of the two can land); otherwise the
+    // lead stays with Next lead ready for Enter.
+    if (busyRef.current) return;
+    onStay(contactId);
+    setSaved("Saved from Maqsam's record: No answer");
+    setMissBy("auto");
+    setMode(m => (m === "outcomes" ? "unanswered" : m));
+    toast.success("No answer, saved from Maqsam's record.");
+  });
   const outcomes = OUTCOMES[kind];
   const chosen = outcomes.find(o => o.key === draft.outcome) ?? null;
   const dnd = Boolean(l?.dnd);
 
   function setDraft(d: Partial<Draft>) {
+    // Writing about this lead keeps it on screen when another comes up.
+    if (!pinned) onPin(contactId);
     setDraftState(prev => {
       const next = { ...prev, ...d };
       writeDraft(contactId, next);
@@ -1250,20 +1610,74 @@ function CallPane({
     });
   }
 
+  function pickOutcome(o: OutcomeDef) {
+    setDraft({ outcome: o.key });
+    setSaveNote(null);
+    if (o.key === "booked") {
+      setBookKind(null);
+      setMode("book");
+      return;
+    }
+    if (o.key === "rescheduled") {
+      setMode("move");
+      return;
+    }
+    // With a mouse and keyboard the next key goes where it is needed: the
+    // notes when a line is asked for, else Save, so Enter saves.
+    if (fine())
+      window.setTimeout(
+        () =>
+          (o.needsNote ? noteRef.current : saveRef.current)?.focus({
+            preventScroll: true,
+          }),
+        0,
+      );
+  }
+
   async function call() {
-    if (busy || open || dnd) return;
+    if (busyRef.current || open || dnd || !l) return;
     setBusy("call");
+    setDoubt(null);
     try {
+      // What the call is for: an intro or a confirmation counts as a try on
+      // its appointment, not a miss on the lead. After "Held it" the lead's
+      // own work goes on, so a call then is a lead call.
+      const forAppt = kind !== "lead" && appt ? appt.id : null;
       const out = await api<{
         attempt: Attempt;
         route: { country: string; caller: string };
-      }>("dial.call", { contact_id: contactId, as });
+      }>("dial.call", {
+        contact_id: contactId,
+        as,
+        item_kind: forAppt ? kind : "lead",
+        appointment_id: forAppt,
+      });
       onCalled(out.attempt);
+      if (!mounted.current) return;
+      // Calling again after a saved call: back to saying how this one went.
+      setSaved(null);
+      setSaveNote(null);
+      if (mode === "held" || mode === "unanswered") setMode("outcomes");
       toast.success(
         `Calling on the ${out.route.country} line. Pick up in the Maqsam softphone.`,
       );
     } catch (e) {
-      toast.error(msg(e));
+      if (uncertain(e)) {
+        // A server error, or no answer in time, can still mean it rang (the
+        // call centre's rule). The next read of the queue shows the call if
+        // it did start; saving is never blocked.
+        if (mounted.current)
+          setDoubt(
+            e instanceof ApiError && e.kind === "server"
+              ? `${plainError(msg(e), 200).replace(/\.$/, "")}. A server error can still mean it rang. You can still save this lead's outcome.`
+              : "No word came back about the call, so it may be ringing. You can still save this lead's outcome.",
+          );
+        onRefresh();
+      } else {
+        toast.error(plainError(msg(e), 240));
+        // The server holds a call the page does not know: the next read shows it.
+        if (refusedWith(e, 409)) onRefresh();
+      }
       void agent.check();
     } finally {
       setBusy(null);
@@ -1279,9 +1693,9 @@ function CallPane({
     };
   }, [callRef]);
 
-  async function save(e?: FormEvent) {
+  async function save(e?: FormEvent, then: "next" | "message" = "next") {
     e?.preventDefault();
-    if (!draft.outcome || busy) return;
+    if (!draft.outcome || busyRef.current) return;
     if (draft.outcome === "booked") {
       setBookKind(null);
       setMode("book");
@@ -1291,10 +1705,18 @@ function CallPane({
       setMode("move");
       return;
     }
+    const attempt = open;
     setBusy("save");
+    setSaveNote(null);
+    if (!attempt) saveId.current ??= crypto.randomUUID();
     try {
-      await api("dial.save", {
-        ...(open ? { attempt_id: open.id } : { contact_id: contactId }),
+      const out = await api<{
+        attempt?: { outcome?: string | null } | null;
+        repeated?: boolean;
+      }>("dial.save", {
+        ...(attempt
+          ? { attempt_id: attempt.id }
+          : { contact_id: contactId, request_id: saveId.current }),
         outcome: draft.outcome,
         note: draft.note,
         as,
@@ -1305,42 +1727,94 @@ function CallPane({
             ? new Date(draft.callback).toISOString()
             : null,
       });
+      // Stored: HighLevel's half (note, tags, stage) may still be on its
+      // way, and a save it does not take shows as saved work.
+      saveId.current = null;
       clearDraft(contactId);
-      // Two outcomes have a next step before the next lead.
-      if (kind === "intro" && draft.outcome === "showed") {
+      // Saved already (sent again after no answer came back): what landed
+      // the first time is what stands.
+      const outcome = (out.repeated && out.attempt?.outcome) || draft.outcome;
+      const label = outcomes.find(o => o.key === outcome)?.label ?? outcome;
+      const words = `${out.repeated ? "Already saved" : "Saved"}: ${label}`;
+      const next = afterSave(kind, outcome, then === "message");
+      if (!mounted.current || next === "next") {
+        onFinished(
+          contactId,
+          "saved",
+          mounted.current
+            ? `${words}. Next lead is up.`
+            : `${words}, for ${l?.name ?? "the lead before"}.`,
+        );
+        return;
+      }
+      onStay(contactId);
+      setDraftState(NO_DRAFT);
+      setDoubt(null);
+      if (next === "held") {
         setKind("lead");
-        setDraftState({ outcome: null, note: "", callback: "" });
+        setSaved("Intro marked held");
         setMode("held");
         toast.success("Marked held. Book the demo, or set a call-back.");
         return;
       }
-      if (draft.outcome === "no_answer") {
-        setMode("unanswered");
-        return;
-      }
-      onFinished(
-        contactId,
-        "saved",
-        `Saved: ${chosen?.label ?? draft.outcome}. Next lead is up.`,
-      );
+      // A no-answer to message: the box opens with the ready message.
+      setSaved(words);
+      setMissBy("message");
+      setMode("unanswered");
+      if (miss.send) onTalk(miss.send === "whatsapp" ? missMoment : undefined);
     } catch (err) {
-      toast.error(msg(err));
+      if (attempt && refusedWith(err, 409) && /already saved/i.test(msg(err))) {
+        // Saved first, by Maqsam's record (nobody picked up) or an earlier
+        // press: that call is done. The outcome is still here, and the next
+        // press saves it as a save of its own.
+        if (mounted.current) onStay(contactId);
+        setSaveNote(
+          "This call was already saved, perhaps by Maqsam's record as No answer. Your outcome is still here: press Save again to add it.",
+        );
+      } else if (uncertain(err)) {
+        // A save sent again is the same save (its id, or its call), so the
+        // way to check is to press Save again.
+        setSaveNote(
+          err instanceof ApiError && err.kind === "server"
+            ? `${plainError(msg(err), 200).replace(/\.$/, "")}. Press Save again: the dialer keeps a save only once.`
+            : "No clear answer came back, so it may have saved already. Press Save again: the dialer keeps a save only once.",
+        );
+      } else {
+        toast.error(msg(err));
+        if (refusedWith(err, 409)) onRefresh();
+      }
     } finally {
       setBusy(null);
     }
   }
 
   async function skip() {
+    if (busyRef.current) return;
     setBusy("skip");
     try {
       if (open) await api("dial.release", { attempt_id: open.id });
       onFinished(contactId, "skipped", "Skipped for now. Next lead is up.");
     } catch (err) {
-      toast.error(msg(err));
+      // A call that is gone already needs no letting go.
+      if (refusedWith(err, 404))
+        onFinished(contactId, "skipped", "Skipped for now. Next lead is up.");
+      else toast.error(msg(err));
     } finally {
       setBusy(null);
     }
   }
+
+  // Next lead, and Alt+→ while it shows. The lead was saved already.
+  const toNext = () => onFinished(contactId, "saved");
+  const showsNext = mode === "held" || mode === "unanswered";
+  useEffect(() => {
+    if (!showsNext) return;
+    const go = () => onFinished(contactId, "saved");
+    nextRef.current = go;
+    return () => {
+      if (nextRef.current === go) nextRef.current = null;
+    };
+  }, [showsNext, nextRef, onFinished, contactId]);
 
   async function copyNumber() {
     if (!l?.phone) return;
@@ -1363,6 +1837,8 @@ function CallPane({
         call={status.call}
         callError={status.error}
         dnd={dnd}
+        saved={saved}
+        doubt={doubt}
       />
       <div className="space-y-4 p-4">
         <div className="flex flex-wrap items-center gap-2">
@@ -1439,44 +1915,16 @@ function CallPane({
             >
               Set a call-back
             </button>
-            <button
-              type="button"
-              onClick={() =>
-                onFinished(contactId, "saved", "Saved. Next lead is up.")
-              }
-              className={button}
-            >
-              Next lead
-            </button>
+            <NextLeadButton onNext={toNext} />
           </NextStep>
         ) : mode === "unanswered" ? (
-          <NextStep
-            title="No answer. Send them a WhatsApp?"
-            text={
-              kind === "confirm"
-                ? "A short WhatsApp asking them to confirm often gets the answer a call did not. The dialer tries the call again in two hours."
-                : "A WhatsApp right after a missed call gets answered far more often than an email. The missed-call message is ready in the box; read it, then send."
-            }
-          >
-            <button
-              type="button"
-              onClick={() =>
-                onTalk(kind === "confirm" ? "confirm" : "missed_call")
-              }
-              className={buttonPrimary}
-            >
-              WhatsApp them
-            </button>
-            <button
-              type="button"
-              onClick={() =>
-                onFinished(contactId, "saved", "Saved. Next lead is up.")
-              }
-              className={button}
-            >
-              Next lead
-            </button>
-          </NextStep>
+          <AfterMissStep
+            step={miss}
+            moment={missMoment}
+            focusNext={missBy === "auto"}
+            onTalk={onTalk}
+            onNext={toNext}
+          />
         ) : mode === "book" || mode === "move" ? (
           <BookForm
             me={me}
@@ -1496,7 +1944,10 @@ function CallPane({
             }}
           />
         ) : (
-          <form onSubmit={save} className="space-y-3 border-t hairline pt-4">
+          <form
+            onSubmit={e => void save(e)}
+            className="space-y-3 border-t hairline pt-4"
+          >
             <p className="text-sm font-medium">
               {kind === "intro"
                 ? "How did the intro go?"
@@ -1507,7 +1958,7 @@ function CallPane({
                     : "Save what happened"}
             </p>
             <div
-              className="grid grid-cols-2 gap-1.5 sm:grid-cols-3"
+              className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 xl:grid-cols-2"
               role="group"
               aria-label="Outcome"
             >
@@ -1517,14 +1968,7 @@ function CallPane({
                   type="button"
                   aria-pressed={draft.outcome === o.key}
                   title={o.hint}
-                  onClick={() => {
-                    setDraft({ outcome: o.key });
-                    if (o.key === "booked") {
-                      setBookKind(null);
-                      setMode("book");
-                    }
-                    if (o.key === "rescheduled") setMode("move");
-                  }}
+                  onClick={() => pickOutcome(o)}
                   className={`rounded-[var(--radius-md)] border px-2.5 py-1.5 text-sm ${
                     draft.outcome === o.key
                       ? "border-[color:var(--primary)] bg-[color:color-mix(in_oklch,var(--primary)_10%,transparent)] font-semibold"
@@ -1581,11 +2025,12 @@ function CallPane({
             <label className="block space-y-1">
               <span className="muted block text-xs">
                 {chosen?.needsNote
-                  ? "What happened (goes on the lead in HighLevel too) · Alt+N"
-                  : "Notes (optional) · Alt+N"}
+                  ? "What happened (goes on the lead in HighLevel too)"
+                  : "Notes (optional)"}
               </span>
               <textarea
                 id="dial-note"
+                ref={noteRef}
                 value={draft.note}
                 onChange={e => setDraft({ note: e.target.value })}
                 onKeyDown={e => {
@@ -1597,6 +2042,7 @@ function CallPane({
                 rows={3}
                 dir="auto"
                 required={Boolean(chosen?.needsNote)}
+                minLength={chosen?.needsNote ? 3 : undefined}
                 placeholder={
                   draft.outcome ? "" : "Pick how it went, then a line on it"
                 }
@@ -1605,18 +2051,36 @@ function CallPane({
             </label>
             <div className="flex flex-wrap items-center gap-2">
               <button
+                ref={saveRef}
                 type="submit"
                 disabled={Boolean(busy) || !draft.outcome}
                 className={buttonPrimary}
-                title="Ctrl+Enter or Cmd+Enter in the notes"
+                title="Ctrl+Enter in the notes"
               >
                 {busy === "save"
                   ? "Saving…"
                   : draft.outcome === "booked" ||
                       draft.outcome === "rescheduled"
                     ? "Pick a time"
-                    : "Save and next"}
+                    : draft.outcome &&
+                        afterSave(kind, draft.outcome, false) === "held"
+                      ? "Save"
+                      : "Save and next"}
               </button>
+              {draft.outcome === "no_answer" && miss.send ? (
+                // The missed-call message, as its own choice: saved, and the
+                // lead stays with the box ready.
+                <button
+                  type="button"
+                  onClick={() => void save(undefined, "message")}
+                  disabled={Boolean(busy)}
+                  className={button}
+                >
+                  {miss.send === "whatsapp"
+                    ? "Save and WhatsApp them"
+                    : "Save and email them"}
+                </button>
+              ) : null}
               {!open &&
               draft.outcome &&
               draft.outcome !== "booked" &&
@@ -1626,10 +2090,61 @@ function CallPane({
                 </span>
               ) : null}
             </div>
+            {saveNote ? (
+              <p
+                role="status"
+                className="callout-warn rounded-[var(--radius-md)] border px-3 py-2 text-xs leading-relaxed"
+              >
+                {saveNote}
+              </p>
+            ) : null}
           </form>
         )}
       </div>
+      <KeysLine />
     </section>
+  );
+}
+
+/** The dialer's keys, once, for a mouse and keyboard; a phone has none. */
+function KeysLine() {
+  const k = "rounded-[4px] border hairline px-1 font-sans text-[10px]";
+  return (
+    <p className="muted hidden border-t hairline px-4 py-2 text-[11px] leading-5 md:pointer-fine:block">
+      Keys: <kbd className={k}>Alt+D</kbd> call · <kbd className={k}>Alt+N</kbd>{" "}
+      notes · <kbd className={k}>Ctrl+Enter</kbd> save the notes ·{" "}
+      <kbd className={k}>Alt+→</kbd> next lead
+    </p>
+  );
+}
+
+/**
+ * Next lead. Focused when Maqsam's record has just saved a no-answer, so
+ * Enter moves on, but never taken from a box the rep is typing in.
+ */
+function NextLeadButton({
+  onNext,
+  primary = false,
+  focus = false,
+}: {
+  onNext: () => void;
+  primary?: boolean;
+  focus?: boolean;
+}) {
+  const ref = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (focus && !typing()) ref.current?.focus({ preventScroll: true });
+  }, [focus]);
+  return (
+    <button
+      ref={ref}
+      type="button"
+      onClick={onNext}
+      className={primary ? buttonPrimary : button}
+      title="Alt+→"
+    >
+      Next lead
+    </button>
   );
 }
 
@@ -1652,9 +2167,46 @@ function NextStep({
 }
 
 /**
+ * After a call nobody answered: Next lead first, and the message to send
+ * on the channel that can take it now (WhatsApp inside the lead's 24 hours
+ * or as a template, else email), said plainly when nothing can go.
+ */
+function AfterMissStep({
+  step,
+  moment,
+  focusNext,
+  onTalk,
+  onNext,
+}: {
+  step: AfterMiss;
+  moment: MissMoment;
+  /** Maqsam's record saved it: Next lead takes the focus, so Enter moves on. */
+  focusNext: boolean;
+  onTalk: (moment?: Moment) => void;
+  onNext: () => void;
+}) {
+  return (
+    <NextStep title={step.title} text={step.text}>
+      <NextLeadButton onNext={onNext} primary focus={focusNext} />
+      {step.send ? (
+        <button
+          type="button"
+          // Email opens the box as it is; WhatsApp brings the ready message.
+          onClick={() => onTalk(step.send === "whatsapp" ? moment : undefined)}
+          className={button}
+        >
+          {step.send === "whatsapp" ? "WhatsApp them" : "Email them"}
+        </button>
+      ) : null}
+    </NextStep>
+  );
+}
+
+/**
  * The line: what the call is doing right now, in one band. Ready; the
- * two-minute countdown for a lead to call now; ringing; Maqsam's record once
- * the call ends; or why it did not go through.
+ * two-minute countdown for a lead to call now; a missed call to return;
+ * ringing; Maqsam's record once the call ends; a call that may have gone
+ * out without a clear answer; or why it did not go through.
  */
 function CallBand({
   item,
@@ -1662,18 +2214,29 @@ function CallBand({
   call,
   callError,
   dnd,
+  saved,
+  doubt,
 }: {
-  item: QueueItem | null;
+  item: DialItem | null;
   open: Attempt | null;
   call: CallInfo | null;
   callError: string | null;
   dnd: boolean;
+  /** What was saved while the lead stays on screen for a next step. */
+  saved: string | null;
+  /** A call that may have gone out although no clear answer came back. */
+  doubt: string | null;
 }) {
   const now = useNow(1000);
   const urgent = useMemo(
-    () => (item && !open ? urgentEvents([item], Date.now())[0] : undefined),
+    () => (item && !open ? urgentFor([item], Date.now())[0] : undefined),
     [item, open],
   );
+  const missed = item && !open ? missedCallLine(item, now) : null;
+  const bookedAt = item?.appointment?.booked_at ?? null;
+  const booked = bookedAt
+    ? `Booked ${ago(bookedAt, now)}`
+    : "Booking date not known";
   let color = "var(--border)";
   let title: string;
   let detail: string | null = null;
@@ -1686,7 +2249,9 @@ function CallBand({
   } else if (open?.state === "failed") {
     color = "var(--destructive)";
     title = "The call did not go through";
-    detail = open.error ?? "Maqsam did not take it. Call again or save.";
+    detail = open.error
+      ? plainError(open.error, 200)
+      : "Maqsam did not take it. Call again or save.";
   } else if (open) {
     const since = now - Date.parse(open.started_at);
     if (call?.final) {
@@ -1701,57 +2266,70 @@ function CallBand({
       title = "Ringing you in Maqsam, then the lead";
       big = mmss(since);
       detail = callError
-        ? `Maqsam's record could not be read: ${callError}. Save how it went when you are done.`
+        ? `Maqsam's record could not be read just now (${plainError(callError, 120).replace(/\.$/, "")}). The dialer keeps asking; save how it went when you are done.`
         : call
           ? `Maqsam: ${call.words}.`
           : "Maqsam's record of the call is read every few seconds; an unanswered call saves itself.";
     }
+  } else if (doubt) {
+    color = "var(--warning)";
+    title = "Check the Maqsam softphone before calling again";
+    detail = doubt;
+  } else if (saved) {
+    title = saved;
   } else if (urgent) {
     const late = urgent.deadline <= now;
     color = late ? "var(--destructive)" : "var(--warning)";
+    // The queue's own words for booked calls and call-backs ("Call back at
+    // 14:30, as agreed"); the call centre's banner for a missed call.
     title =
-      item?.kind === "confirm" || item?.kind === "intro"
-        ? item.why
-        : urgent.title;
-    big = countdown(urgent, now);
+      item?.kind === "confirm" || item?.kind === "intro" || urgent.callback
+        ? (item?.why ?? urgent.title)
+        : (missed ?? urgent.title);
+    // A few words beside the title; the sentence goes on the line below.
+    big = shortCountdown(urgent, now);
     detail =
       item?.kind === "intro"
         ? "Intros are phone calls: call them at the booked time, then say how it went."
         : item?.kind === "confirm"
-          ? `Booked ${ago(item.appointment?.booked_at ?? null, now)}; not confirmed yet.`
-          : null;
+          ? `${booked}; not confirmed yet.`
+          : lateSentence(urgent, now);
   } else if (item?.kind === "confirm") {
     color = "var(--primary)";
     title = item.why;
-    detail = `Booked ${ago(item.appointment?.booked_at ?? null, now)}; not confirmed yet. Call, or message them on WhatsApp.`;
+    detail = `${booked}; not confirmed yet. Call, or message them on WhatsApp.`;
+  } else if (item && missed) {
+    color = "var(--warning)";
+    title = missed;
+    detail = readyLine({ ...item, why: "" }, now);
   } else {
     title = "Ready to call";
     detail = item
-      ? [
-          item.why,
-          item.step
-            ? `${item.step} unanswered ${item.step === 1 ? "try" : "tries"} so far`
-            : null,
-          item.last_dial_at
-            ? `last called ${ago(item.last_dial_at, now)}`
-            : "never called",
-        ]
-          .filter(Boolean)
-          .join(" · ")
-      : "Picked from the search. Call, or save what happened.";
+      ? readyLine(item, now)
+      : "Not in the queue right now. Call, or save what happened.";
   }
   return (
+    // The clock goes under the words when both do not fit (a phone, the
+    // narrow column from 1280px), so the title and its line always show.
     <div
-      className="flex items-center gap-3 border-b hairline px-4 py-3"
+      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b hairline px-4 py-3"
       style={{
         borderInlineStart: `4px solid ${color}`,
         background: `color-mix(in oklch, ${color === "var(--border)" ? "var(--secondary)" : color} 9%, transparent)`,
       }}
-      aria-live="polite"
     >
-      <div className="min-w-0 flex-1">
-        <p className="text-sm font-semibold">{title}</p>
-        {detail ? <p className="muted text-xs">{detail}</p> : null}
+      <div className="min-w-0 flex-[1_1_10rem]">
+        {/* Only a change of state is spoken; the running clock is not. */}
+        <p className="text-sm font-semibold" aria-live="polite" aria-atomic>
+          {title}
+        </p>
+        {detail ? (
+          // On a call the line says what Maqsam reports; otherwise it carries
+          // times that move every minute, so it is read, not announced.
+          <p className="muted text-xs" aria-live={open ? "polite" : undefined}>
+            {detail}
+          </p>
+        ) : null}
       </div>
       {big ? (
         <p className="shrink-0 font-mono text-xl font-semibold tabular-nums tracking-tight">
@@ -1805,7 +2383,17 @@ function BookForm({
   const [day, setDay] = useState<string | null>(null);
   const [start, setStart] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // At once, so a double tap never books twice.
+  const booking = useRef(false);
+  // A booking that got no clear answer: said until the calendar is read again.
+  const [unsure, setUnsure] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
+
+  // A booking sent without a clear answer: the time it asked for, so the
+  // calendar read after it can tell whether it landed.
+  const tried = useRef<string | null>(null);
+  const bookedRef = useRef(onBooked);
+  bookedRef.current = onBooked;
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: tick asks again after a time was taken
   useEffect(() => {
@@ -1821,6 +2409,22 @@ function BookForm({
     )
       .then(s => {
         if (!alive) return;
+        const asked = tried.current;
+        tried.current = null;
+        if (asked) {
+          const there = moving ? s.moving : s.existing;
+          if (there && Date.parse(there.start) === Date.parse(asked)) {
+            bookedRef.current(
+              moving
+                ? `Moved to ${there.words} (Kuwait time)`
+                : `${s.kind === "demo" ? "Demo" : "Intro"} booked for ${there.words} (Kuwait time)`,
+            );
+            return;
+          }
+          setUnsure(
+            "The calendar does not show it yet. Pick the time and book again: a booking already on its way is refused, never made twice.",
+          );
+        }
         setSlots(s);
         setDay(s.days[0]?.day ?? null);
       })
@@ -1840,8 +2444,10 @@ function BookForm({
 
   async function book(e: FormEvent) {
     e.preventDefault();
-    if (!start || busy) return;
+    if (!start || booking.current) return;
+    booking.current = true;
     setBusy(true);
+    setUnsure(null);
     try {
       const out = await api<{ verified: boolean; words: string }>(
         moving ? "book.move" : "book.create",
@@ -1870,10 +2476,21 @@ function BookForm({
         );
       onBooked(out.words);
     } catch (err) {
-      toast.error(msg(err));
-      // A time someone else just took: show what is free now.
-      if (/taken|already have/i.test(msg(err))) setTick(n => n + 1);
+      if (uncertain(err)) {
+        // It may have landed: the calendar is read again, and a booking
+        // that did land at this time moves on to the next lead.
+        tried.current = start;
+        setUnsure(
+          "No answer came back about the booking, so it may have gone through. Checking the calendar…",
+        );
+        setTick(n => n + 1);
+      } else {
+        toast.error(msg(err));
+        // A time someone else just took: show what is free now.
+        if (/taken|already have/i.test(msg(err))) setTick(n => n + 1);
+      }
     } finally {
+      booking.current = false;
       setBusy(false);
     }
   }
@@ -1891,7 +2508,7 @@ function BookForm({
           className="muted inline-flex items-center gap-1 text-xs hover:underline"
           title="Esc"
         >
-          <X className="size-3.5" aria-hidden /> Back to outcomes
+          <ArrowLeft className="size-3.5" aria-hidden /> Back to outcomes
         </button>
       </div>
       {moving ? (
@@ -1969,7 +2586,7 @@ function BookForm({
             ))}
           </div>
           <div
-            className="grid grid-cols-4 gap-1 sm:grid-cols-6 2xl:grid-cols-4"
+            className="grid grid-cols-4 gap-1 sm:grid-cols-6 xl:grid-cols-4"
             role="group"
             aria-label="Time"
           >
@@ -2028,10 +2645,20 @@ function BookForm({
           ? moving
             ? "Moving…"
             : "Booking…"
-          : start
-            ? `${moving ? "Move to" : "Book"} ${dayLabel(start)} ${clock(start)}`
-            : "Pick a time"}
+          : !start
+            ? "Pick a time"
+            : note.trim().length < 3
+              ? "Write a line on the call first"
+              : `${moving ? "Move to" : "Book"} ${dayLabel(start)} ${clock(start)}`}
       </button>
+      {unsure ? (
+        <p
+          role="status"
+          className="callout-warn rounded-[var(--radius-md)] border px-3 py-2 text-xs leading-relaxed"
+        >
+          {unsure}
+        </p>
+      ) : null}
     </form>
   );
 }
@@ -2049,18 +2676,23 @@ function LeadPane({
   contactId,
   item,
   talk,
+  convo,
+  onTyping,
 }: {
   className: string;
   me: Me;
   as: As;
   contactId: string;
-  item: QueueItem | null;
+  item: DialItem | null;
   /** Changes when the call pane asks for the conversation. */
   talk: { n: number; moment: Moment | null };
+  /** The lead's conversation, read once for both panes. */
+  convo: ReturnType<typeof useConversation>;
+  /** The rep typed in this pane (a message, a note): keep the lead on screen. */
+  onTyping: () => void;
 }) {
   const lead = useLead(contactId);
   const activity = useLeadActivity(contactId, lead.data?.phone8 ?? null);
-  const convo = useConversation(contactId);
   const callNotes = useCallNotes(contactId);
   const pipeline = useSetting<{ roles?: Record<string, string> }>("pipeline");
   const [tab, setTab] = useState<LeadTab>("talk");
@@ -2138,6 +2770,7 @@ function LeadPane({
       ref={paneRef}
       aria-label="The lead"
       className={`panel min-w-0 overflow-hidden ${className}`}
+      onInput={onTyping}
     >
       <header className="space-y-1.5 border-b hairline px-4 py-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -2240,7 +2873,14 @@ function LeadPane({
               convo={convo}
               compact
               rep={me.name}
-              callAt={item?.appointment?.start_at ?? null}
+              // The lead's booked call, for {day} and {time}: the next intro
+              // or demo on any item, else a closer's own demo.
+              callAt={
+                item?.appointment?.start_at ??
+                (as === "closer" ? item?.demo_at : null) ??
+                null
+              }
+              country={l?.country ?? null}
               prefill={prefill}
             />
             <div className="border-t hairline pt-4">
@@ -2315,6 +2955,12 @@ function LeadPane({
             deals={activity.data?.deals ?? []}
             proposals={activity.data?.proposals ?? []}
             messages={messages}
+            loading={!activity.data}
+            // The conversation tab says when a later read fails; the history
+            // says so only when it has none of the messages.
+            messagesLoading={!convo.data && !convo.error}
+            messagesError={convo.data ? null : convo.error}
+            messagesRetry={() => void convo.reload()}
           />
         )}
       </div>

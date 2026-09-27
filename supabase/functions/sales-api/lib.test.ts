@@ -1,6 +1,8 @@
 // bun test supabase/functions/sales-api
 import { describe, expect, test } from "bun:test";
 import {
+  dndFor,
+  redact,
   type Appointment,
   applyFills,
   fillPaths,
@@ -16,6 +18,7 @@ import {
   crmDecision,
   fillSnippet,
   greetingName,
+  needsPerson,
   refuseMark,
   renderTemplate,
   templateLine,
@@ -69,7 +72,9 @@ describe("whether a mark goes to HighLevel (Aziz: yes for today's calls)", () =>
   });
   test("an old call stays in the cockpit, so no old lead gets a no-show message", () => {
     const old = appt({ start_at: "2026-09-10T07:00:00Z" });
-    expect(crmDecision({ dispositions: true, backlog_days: 7 }, old, NOW)).toBe("skipped");
+    // An older call goes quietly (no automations), unless that is switched off.
+    expect(crmDecision({ dispositions: true, backlog_days: 7 }, old, NOW)).toBe("quiet");
+    expect(crmDecision({ dispositions: true, backlog_days: 7, quiet_backlog: false }, old, NOW)).toBe("skipped");
   });
 });
 
@@ -234,5 +239,51 @@ describe("client references", () => {
     expect(checkReference({ client_name: "X" }).ok).toBe(false);
     expect(checkReference({ client_name: "Example", consent: "maybe" }).ok).toBe(false);
     expect(checkReference({ client_name: "Example", asset_slugs: ["https://x.com"] }).ok).toBe(false);
+  });
+});
+
+describe("what a draft sent without a person may not carry", () => {
+  test("money, promises, percentages and links wait for a person", () => {
+    expect(needsPerson("هلا عمر، نقدر نعطيك خصم ٢٠٪ إذا بديت هالشهر")).not.toBeNull();
+    expect(needsPerson("Hi Omar, it is only $500 to start")).toBe("it mentions money");
+    expect(needsPerson("We guarantee results in 30 days")).toBe("it mentions a price, a discount or a promise");
+    expect(needsPerson("Watch this: https://example.com/x")).toBe("it mentions a link");
+    expect(needsPerson("Hi Omar, 50% of firms see this")).toBe("it mentions a percentage");
+  });
+  test("an ordinary follow-up may go", () => {
+    expect(needsPerson("هلا عمر، شكله صار عندك شي وقت المكالمة. تبيني أرسل لك أوقات ثانية؟")).toBeNull();
+    expect(needsPerson("Hi Omar, did something come up? Shall I send a couple of new times?")).toBeNull();
+  });
+});
+
+describe("redact", () => {
+  test("keys in query strings and bearer headers are cut out", () => {
+    expect(redact("GET /x?api_key=abc123&page=2 -> 500")).toBe("GET /x?api_key=[key]&page=2 -> 500");
+    expect(redact("Authorization: Bearer sk-live.abc_DEF")).toBe("Authorization: Bearer [key]");
+    expect(redact("pit-1234-abcd refused")).toBe("[key] refused");
+  });
+});
+
+describe("do-not-disturb by channel", () => {
+  test("active and permanent both close the channel; inactive leaves it open", () => {
+    const c = (status: string) => ({ dndSettings: { WhatsApp: { status } } });
+    expect(dndFor(c("active"), "whatsapp")).toBe(true);
+    expect(dndFor(c("permanent"), "whatsapp")).toBe(true);
+    expect(dndFor(c("inactive"), "whatsapp")).toBe(false);
+    expect(dndFor(c("permanent"), "email")).toBe(false);
+    expect(dndFor({ dnd: true }, "email")).toBe(true);
+  });
+});
+
+describe("the setter's pay rule", () => {
+  test("a base, each qualified intro and each fully closed deal are kept", () => {
+    const out = checkPay({ base_monthly: 500, per_intro_qualified: 10, per_full_close: 50, currency: "usd" });
+    expect(out).toEqual({
+      ok: true,
+      pay: { base_monthly: 500, per_intro_qualified: 10, per_full_close: 50, currency: "USD" },
+    });
+  });
+  test("a negative base is refused", () => {
+    expect(checkPay({ base_monthly: -1 }).ok).toBe(false);
   });
 });

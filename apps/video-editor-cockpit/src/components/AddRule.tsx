@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useWho } from "../lib/auth";
 import { askFor } from "../lib/data";
+import { chip, FIELD } from "./bits";
+import { Button } from "./ui/button";
 
 /**
  * Add a do or a don't to the client's card.
@@ -59,18 +61,14 @@ export default function AddRule({
               setSaid(null);
             }}
             aria-pressed={kind === k}
-            className={`rounded-full px-3 py-1.5 text-xs font-medium ${
-              kind === k
-                ? "bg-[color:var(--primary)] text-[color:var(--primary-foreground)]"
-                : "raised muted hover:text-[color:var(--foreground)]"
-            }`}
+            className={chip(kind === k)}
           >
             Add a {k === "DO" ? "do" : "don't"}
           </button>
         ))}
         {!kind ? (
-          <span className="muted text-xs">
-            from what you were told in revisions
+          <span className="text-xs text-muted-foreground">
+            From what you were told in revisions
           </span>
         ) : null}
       </div>
@@ -87,36 +85,37 @@ export default function AddRule({
                 ? "Hold the logo for the last two seconds"
                 : "Use the old teal from before the rebrand"
             }
-            className="raised w-full resize-y rounded-[var(--radius-md)] border hairline px-3 py-2 text-sm"
+            aria-label={kind === "DO" ? "The do" : "The don't"}
+            dir="auto"
+            className={`${FIELD} resize-y py-2`}
           />
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              disabled={busy}
-              onClick={send}
-              className="rounded-[var(--radius-md)] bg-[color:var(--primary)] px-3 py-1.5 text-sm font-medium text-[color:var(--primary-foreground)] disabled:opacity-50"
-            >
+          <div className="flex flex-wrap items-center gap-2">
+            <Button disabled={busy || !text.trim()} onClick={send}>
               {busy ? "Adding" : `Add it to ${clientName}`}
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="ghost"
+              className="text-muted-foreground hover:text-foreground"
               onClick={() => {
                 setKind(null);
                 setText("");
               }}
-              className="muted text-sm"
             >
               Cancel
-            </button>
+            </Button>
           </div>
-          <p className="muted text-xs">
+          <p className="text-xs text-muted-foreground">
             This is added to the client card, signed with your name and today's
             date. Nothing already written can be replaced from here.
           </p>
         </div>
       ) : null}
 
-      {said && <p className="muted text-sm">{said}</p>}
+      {said && (
+        <p role="status" className="text-sm text-muted-foreground">
+          {said}
+        </p>
+      )}
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { type FormEvent, useMemo, useState } from "react";
-import { Problem, Section } from "../components/bits";
+import { FIELD, Page, PageHeader, Problem, Section } from "../components/bits";
+import { Button } from "../components/ui/button";
 import { useWho } from "../lib/auth";
 import { askFor, useEodToday } from "../lib/data";
 import { moment } from "../lib/format";
@@ -35,19 +36,19 @@ const BLOCKS: { title: string; questions: Question[] }[] = [
       {
         key: "completed",
         label: "Videos completed",
-        hint: "count, client and the delivery link",
+        hint: "Count, client and the delivery link",
         rows: 3,
       },
       {
         key: "in_progress",
         label: "In progress or pending",
-        hint: "with how far along",
+        hint: "With how far along",
         rows: 2,
       },
       {
         key: "revisions",
         label: "Revisions handled",
-        hint: "count and client",
+        hint: "Count and client",
         rows: 2,
       },
     ],
@@ -58,13 +59,13 @@ const BLOCKS: { title: string; questions: Question[] }[] = [
       {
         key: "blockers",
         label: "Blockers",
-        hint: "missing footage, unclear brief, waiting on someone",
+        hint: "Missing footage, unclear brief, waiting on someone",
         rows: 2,
       },
       {
         key: "recommendations",
         label: "Recommendations",
-        hint: "anything that would make this easier",
+        hint: "Anything that would make this easier",
         rows: 2,
       },
     ],
@@ -76,7 +77,7 @@ const BLOCKS: { title: string; questions: Question[] }[] = [
       {
         key: "summary",
         label: "Day summary",
-        hint: "the one line Aziz reads first",
+        hint: "The one line Aziz reads first",
         rows: 3,
       },
     ],
@@ -92,12 +93,27 @@ function today(): string {
   return kuwait.toISOString().slice(0, 10);
 }
 
+/** "2026-09-26" read as a person says it: "Saturday 26 September". */
+function spoken(isoDay: string): string {
+  const d = new Date(`${isoDay}T12:00:00Z`);
+  if (Number.isNaN(d.getTime())) return isoDay;
+  return d.toLocaleDateString("en-GB", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    timeZone: "UTC",
+  });
+}
+
 export default function EodPage() {
   const { email, name } = useWho();
   const day = useMemo(today, []);
   const filed = useEodToday(day);
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  // The name the row is filed under: the seat's name unless the editor
+  // changes it (the Who card used to be a field; it is one tap away now).
   const [who, setWho] = useState(name);
+  const [editingWho, setEditingWho] = useState(false);
   const [busy, setBusy] = useState(false);
   const [said, setSaid] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -129,51 +145,64 @@ export default function EodPage() {
     }
   }
 
-  const field =
-    "w-full resize-y rounded-[var(--radius-md)] border hairline bg-[color:var(--background)] px-3 py-2 text-sm";
+  const field = `${FIELD} resize-y py-2`;
 
   return (
-    <div className="mx-auto w-full max-w-2xl px-4 py-8">
-      <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">End of day</h1>
-        <p className="muted mt-1 text-sm">
-          The same questions as the Video Editors form, filed straight into the
-          EOD Reports sheet. For {day}.
-        </p>
-      </header>
+    <Page>
+      <PageHeader
+        title="End of day"
+        sub={
+          editingWho ? (
+            <span className="flex flex-wrap items-center gap-2">
+              <label htmlFor="eod-name">Filing as</label>
+              <input
+                id="eod-name"
+                value={who}
+                onChange={e => setWho(e.target.value)}
+                onBlur={() => setEditingWho(false)}
+                // biome-ignore lint/a11y/noAutofocus: opened on purpose by the Change link
+                autoFocus
+                className="h-9 w-48 rounded-lg border bg-background px-3 text-sm"
+              />
+              <span>for {spoken(day)}.</span>
+            </span>
+          ) : (
+            <>
+              Filing as {who || name} for {spoken(day)}, straight into the EOD
+              Reports sheet.{" "}
+              <button
+                type="button"
+                onClick={() => setEditingWho(true)}
+                className="text-primary underline-offset-4 hover:underline"
+              >
+                Change
+              </button>
+            </>
+          )
+        }
+      />
 
       {already ? (
-        <Section title="Already filed today">
-          <p className="text-sm">
-            Filed{" "}
-            {already.finished_at ? moment(already.finished_at) : "just now"}
-            {already.status === "queued" || already.status === "running"
-              ? ", on its way to the sheet."
-              : already.status === "failed"
-                ? `, but it did not reach the sheet: ${already.error ?? "no reason given"}`
-                : "."}
-          </p>
-          <p className="muted mt-2 text-sm">
-            Filing again adds a second row rather than replacing the first, so
-            only do it if the first one was wrong.
-          </p>
-        </Section>
+        <div className="mb-4 sm:mb-6">
+          <Section title="Already filed today">
+            <p className="text-sm">
+              Filed{" "}
+              {already.finished_at ? moment(already.finished_at) : "just now"}
+              {already.status === "queued" || already.status === "running"
+                ? ", on its way to the sheet."
+                : already.status === "failed"
+                  ? `, but it did not reach the sheet: ${already.error ?? "no reason given"}`
+                  : "."}
+            </p>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Filing again adds a second row rather than replacing the first, so
+              only do it if the first one was wrong.
+            </p>
+          </Section>
+        </div>
       ) : null}
 
-      <form onSubmit={send} className="mt-4 space-y-4">
-        <Section
-          title="Who"
-          side={<span className="muted text-xs">{day}</span>}
-        >
-          <input
-            id="eod-name"
-            value={who}
-            onChange={e => setWho(e.target.value)}
-            aria-label="Name"
-            className="h-10 w-full rounded-[var(--radius-md)] border hairline bg-[color:var(--background)] px-3 text-sm"
-          />
-        </Section>
-
+      <form onSubmit={send} className="space-y-4 sm:space-y-6">
         {BLOCKS.map(block => (
           <Section key={block.title} title={block.title}>
             <div className="space-y-4">
@@ -181,21 +210,24 @@ export default function EodPage() {
                 <div key={q.key}>
                   <label
                     htmlFor={`eod-${q.key}`}
-                    className="mb-1 block text-[13px] font-medium"
+                    className="block text-sm font-medium"
                   >
                     {q.label}
                   </label>
                   {q.hint ? (
-                    <p className="muted mb-1.5 text-xs">{q.hint}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {q.hint}
+                    </p>
                   ) : null}
                   <textarea
                     id={`eod-${q.key}`}
                     rows={q.rows ?? 2}
+                    dir="auto"
                     value={answers[q.key] ?? ""}
                     onChange={e =>
                       setAnswers(a => ({ ...a, [q.key]: e.target.value }))
                     }
-                    className={field}
+                    className={`${field} mt-2`}
                   />
                 </div>
               ))}
@@ -204,21 +236,21 @@ export default function EodPage() {
         ))}
 
         {problem && <Problem>{problem}</Problem>}
-        {said && <p className="muted text-sm">{said}</p>}
-
-        <div className="flex items-center gap-3">
-          <button
-            type="submit"
-            disabled={busy}
-            className="h-11 flex-1 rounded-[var(--radius-md)] bg-[color:var(--primary)] text-sm font-medium text-[color:var(--primary-foreground)] disabled:opacity-50"
-          >
-            {busy ? "Filing" : "File the day"}
-          </button>
-          <p className="muted max-w-56 text-xs leading-snug">
-            Goes straight onto the Video Editors tab of the EOD Reports sheet.
+        {said && (
+          <p role="status" className="text-sm text-muted-foreground">
+            {said}
           </p>
-        </div>
+        )}
+
+        <Button
+          type="submit"
+          size="lg"
+          disabled={busy}
+          className="w-full pointer-coarse:h-11 sm:w-auto"
+        >
+          {busy ? "Filing" : "File the day"}
+        </Button>
       </form>
-    </div>
+    </Page>
   );
 }

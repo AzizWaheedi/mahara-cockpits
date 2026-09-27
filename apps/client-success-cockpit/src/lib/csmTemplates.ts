@@ -14,6 +14,9 @@
  * into one "last touched" number.
  */
 
+import { weekUpdate, whatWeDidAll } from "./clientUpdate";
+import { shortDay } from "./format";
+
 // biome-ignore lint/suspicious/noExplicitAny: snapshot rows are untyped by design
 export type Client = any;
 
@@ -118,6 +121,57 @@ type Template = {
 
 const first = (name: string) => (name ?? "").split(/[\s—–-]/)[0] || name || "";
 
+/** Kuwait's calendar day for a moment, "2026-09-27". */
+const kuwaitDayOf = (ms: number) =>
+  new Date(ms + 3 * 3_600_000).toISOString().slice(0, 10);
+
+/**
+ * The line above "What we did this week": the facts the draft came from,
+ * for her to check and to add to, with what only she can judge (the board's
+ * tasks are the team's own words, never sent as they are).
+ */
+function weekWhy(c: Client): string {
+  const w = c.work ?? {};
+  const bits: string[] = [];
+  const ads = whatWeDidAll(
+    (w.ads ?? []).map((a: { label: string }) => a.label),
+    "en",
+  );
+  if (ads.length) {
+    // What was logged, as it was written, so she can check the draft.
+    const logged = [
+      ...new Set(
+        (w.ads ?? []).map((a: { label: string }) =>
+          a.label.length > 70 ? `${a.label.slice(0, 69)}…` : a.label,
+        ),
+      ),
+    ].slice(0, 4);
+    bits.push(`ads: ${ads.join("; ")} (logged: ${logged.join(" · ")})`);
+  }
+  const v = w.videos;
+  if (v) {
+    const finished: string[] = Array.isArray(v.finished) ? v.finished : [];
+    const withClient: string[] = Array.isArray(v.withClient)
+      ? v.withClient
+      : [];
+    const parts = [
+      finished.length ? `finished ${finished.join(", ")}` : "",
+      withClient.length ? `with the client ${withClient.join(", ")}` : "",
+      v.making ? `${v.making} being made` : "",
+    ].filter(Boolean);
+    if (parts.length) bits.push(`videos: ${parts.join("; ")}`);
+  }
+  if (w.board?.length)
+    bits.push(
+      `done on the Client Success board: ${w.board.join(", ")} (add what the client should hear)`,
+    );
+  const told =
+    w.toldAt && kuwaitDayOf(w.toldAt) === kuwaitDayOf(Date.now())
+      ? " The media buyer already sent them an update today, and the SOP is one team message a day."
+      : "";
+  return `Since ${shortDay(w.since) || "last week"}, ${bits.join(". ")}.${told}`;
+}
+
 /** Ordered most urgent first — money and silence outrank routine updates. */
 const TEMPLATES: Template[] = [
   {
@@ -201,6 +255,18 @@ const TEMPLATES: Template[] = [
       `Morning ${first(c.name)}, quick update on week one.\n\nTwo things I need from you so I can tune it: are the enquiries reaching the right person, and are they the type of project you actually want? Speed to lead is the single biggest driver at this stage, someone who fills a form at 5pm hasn't decided to hire anyone yet, so whoever calls first usually wins.\n\nTell me either way and I'll adjust today.`,
     ar: c =>
       `صباح الخير ${first(c.name)}، تحديث سريع على الأسبوع الأول.\n\nشيئين أحتاجهم منك عشان أظبط الحملة: هل الاستفسارات توصل للشخص الصح؟ وهل نوع المشاريع هي اللي تبيها فعلاً؟ سرعة الرد على الليد أكبر عامل بهالمرحلة, اللي يعبي الفورم الساعة ٥ ما قرر يوظف أحد لين الحين، فاللي يتصل أول عادة يكسب.\n\nخبرني بأي حال وأعدّلها اليوم.`,
+  },
+  {
+    // Aziz, 2026-09-27: not just saying hi, "actually telling them what
+    // we've done". Built from the week the media buyer's feed sends; it only
+    // shows when the team did something this week a client can be told.
+    id: "what_we_did",
+    title: "What we did this week",
+    short: "sent the week's update on what we did",
+    when: c => weekUpdate(c.work, first(c.name), "en") !== null,
+    why: weekWhy,
+    en: c => weekUpdate(c.work, first(c.name), "en") ?? "",
+    ar: c => weekUpdate(c.work, first(c.name), "ar") ?? "",
   },
   {
     id: "call_due",
@@ -554,13 +620,14 @@ export function nextPocState(
     missing,
     past,
     suggested,
+    // Display only: the ISO day above is what gets saved and compared.
     label: booked
-      ? `next call ${booked}, booked in the calendar`
+      ? `Next call ${shortDay(booked)}, booked in the calendar`
       : missing
-        ? "no next call booked"
+        ? "No next call booked"
         : past
-          ? `next call ${date} has passed, rebook it`
-          : `next call ${date}`,
+          ? `Next call ${shortDay(date)} has passed, rebook it`
+          : `Next call ${shortDay(date)}`,
   };
 }
 
@@ -595,7 +662,7 @@ export function serviceModel(service?: string | null): {
   return {
     code: null,
     dwy: false,
-    label: "service not set",
+    label: "Service not set",
     kpi: "Set DFY or DWY, otherwise we do not know which numbers we owe them.",
   };
 }

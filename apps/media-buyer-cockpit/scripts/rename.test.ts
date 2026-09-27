@@ -8,7 +8,7 @@ runTest("Relaunched client updates its existing task", async h => {
   const row = h.page.locator("table tbody tr", { hasText: "Liwan" }).first();
   const act = row
     .getByRole("button", {
-      name: /Cut the worst ad|Turn it off|Add to Ads Managment board/,
+      name: /Cut the worst ad|Turn it off|Add to Ads Manage?ment board/,
     })
     .first();
   if (await act.count()) {

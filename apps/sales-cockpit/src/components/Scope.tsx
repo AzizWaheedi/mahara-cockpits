@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useReps } from "../lib/data";
 import type { Me } from "../lib/types";
+import { select } from "./kit";
 
 /**
  * Whose calls a page shows. Everyone opens on their own (Aziz, 2026-09-24:
@@ -84,7 +85,7 @@ export function useScope(
       <select
         value={current}
         onChange={e => pick(e.target.value)}
-        className="h-8 rounded-[var(--radius-md)] border hairline bg-[color:var(--card)] px-2 text-sm"
+        className={select}
       >
         <option value="mine">Mine</option>
         <option value="team">The whole team</option>

@@ -16,7 +16,9 @@ export function cors(origin: string | null): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": ok ? origin : "null",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info",
+    // x-region: the cockpit asks Supabase to run the function beside the
+    // database (eu-west-1), not beside the rep: a save is ten round trips.
+    "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info, x-region",
     "Access-Control-Max-Age": "86400",
     Vary: "Origin",
   };
@@ -75,23 +77,27 @@ export function refuseMark(
 export interface CrmSettings {
   dispositions?: boolean;
   backlog_days?: number;
+  /** Older calls are written to HighLevel without its automations (false: kept in the cockpit only). */
+  quiet_backlog?: boolean;
 }
 
 /**
  * Whether a mark goes to HighLevel. Aziz, 2026-09-24: yes for today's
- * calls, running HighLevel's usual automations; old appointments are marked
- * in the cockpit only, so an old lead is never sent a no-show message.
+ * calls, running HighLevel's usual automations; an old lead is never sent a
+ * no-show message. Since 2026-09-26 an older call's mark goes too, quietly
+ * (toNotify false: the status changes, no automation runs), so HighLevel,
+ * B2B and the CEO cockpit read the truth without anyone being messaged.
  */
 export function crmDecision(
   s: CrmSettings | null | undefined,
   appt: Appointment,
   nowMs: number,
-): "write" | "off" | "skipped" {
+): "write" | "quiet" | "off" | "skipped" {
   if (!s?.dispositions) return "off";
   const days = Number.isFinite(Number(s.backlog_days)) ? Number(s.backlog_days) : 7;
   const start = appt.start_at ? Date.parse(appt.start_at) : Number.NaN;
   if (!Number.isFinite(start)) return "skipped";
-  if (nowMs - start > days * 86_400_000) return "skipped";
+  if (nowMs - start > days * 86_400_000) return s.quiet_backlog === false ? "skipped" : "quiet";
   return "write";
 }
 
@@ -123,7 +129,18 @@ export function checkPay(
       return { ok: false, error: "The cash rate is a share between 0 and 1 (10% is 0.10)." };
     out.cash_rate = rate;
   }
-  for (const k of ["pif_bonus", "per_intro_shown", "per_demo_shown", "per_signed"]) {
+  // base_monthly: a setter's base each month; per_intro_qualified: each intro
+  // they ran that showed and qualified; per_full_close: each deal from their
+  // leads that fully closed (Aziz's setter plan of 2026-09-27).
+  for (const k of [
+    "pif_bonus",
+    "per_intro_shown",
+    "per_demo_shown",
+    "per_signed",
+    "base_monthly",
+    "per_intro_qualified",
+    "per_full_close",
+  ]) {
     const n = num(src[k]);
     if (n === null) continue;
     if (Number.isNaN(n) || n < 0 || n > 100_000)
@@ -253,6 +270,8 @@ export function redact(s: string): string {
     .replace(/sbp_[A-Za-z0-9]+/g, "[key]")
     .replace(/pit-[A-Za-z0-9-]+/g, "[key]")
     .replace(/eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, "[jwt]")
+    .replace(/((?:api_?key|access_token|token|secret)=)[^&\s"']+/gi, "$1[key]")
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/g, "Bearer [key]")
     .slice(0, 300);
 }
 
@@ -401,12 +420,16 @@ export function whatsappWindow(lastInboundAt: string | null | undefined, now: nu
   return { open: now < closes, closes_at: new Date(closes).toISOString(), last_inbound_at: new Date(t).toISOString() };
 }
 
-/** Do-not-disturb for one channel, as HighLevel records it on the contact. */
+/**
+ * Do-not-disturb for one channel, as HighLevel records it on the contact:
+ * "active", and "permanent" (a contact who must never be messaged there),
+ * the same two the sales desk honours.
+ */
 export function dndFor(contact: Record<string, unknown>, channel: Channel): boolean {
   if (contact.dnd === true) return true;
   const key = channel === "whatsapp" ? "WhatsApp" : channel === "email" ? "Email" : "SMS";
   const s = ((contact.dndSettings ?? {}) as Record<string, Record<string, unknown>>)[key];
-  return String(s?.status ?? "").toLowerCase() === "active";
+  return ["active", "permanent"].includes(String(s?.status ?? "").toLowerCase());
 }
 
 /** A plain-text email as simple, escaped HTML: paragraphs and line breaks. */
@@ -781,4 +804,28 @@ export function checkReference(b: Record<string, unknown>):
       notes: cleanText(b.notes, 2000) || null,
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// What a message sent without a person may never carry
+// ---------------------------------------------------------------------------
+
+const NEEDS_A_PERSON: [RegExp, string][] = [
+  [/https?:\/\/|www\.|\.com\b|\.net\b|\.ly\b/i, "a link"],
+  [/[$€£]|\b(usd|kwd|sar|aed|qar|bhd|omr|dollars?|dinars?|riyals?|dirhams?)\b|دولار|دينار|ريال|درهم|د\.ك/i, "money"],
+  [/\b(discount|off|free|refund|guarantee[ds]?|promise[ds]?|deal|offer|price|pricing|cost|fees?)\b|خصم|مجان|ضمان|نضمن|استرداد|عرض خاص|السعر|سعر|تكلفة/i, "a price, a discount or a promise"],
+  [/\d+\s*%|٪|\bpercent\b|بالمية|بالمئة/i, "a percentage"],
+];
+
+/**
+ * Why a follow-up draft must go through a person even when its kind is
+ * trusted to send by itself, or null. A lead's own messages are part of what
+ * the model reads, so a message can steer it ("offer me a discount"); money,
+ * promises, percentages and links therefore always wait for a person.
+ */
+export function needsPerson(body: string, subject?: string | null): string | null {
+  const text = `${subject ?? ""}\n${body}`;
+  for (const [re, what] of NEEDS_A_PERSON) if (re.test(text)) return `it mentions ${what}`;
+  if (body.length > 900) return "it is longer than a short message";
+  return null;
 }

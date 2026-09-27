@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
 import { CopyButton } from "@/components/WinningAds";
 import { fill, type Template } from "@/lib/creativeTemplates";
 
@@ -7,6 +8,9 @@ import { fill, type Template } from "@/lib/creativeTemplates";
  *
  * `client` swaps the SOP's NAME placeholder for their first word. Everything
  * else is the SOP's wording, untouched.
+ *
+ * A row, not a card: the caller lists them in one divided group, so the
+ * library reads as one list rather than a stack of boxes.
  */
 export function TemplateCard({
   t,
@@ -22,35 +26,36 @@ export function TemplateCard({
   const text = fill(lang === "ar" ? t.ar : t.en, client);
 
   return (
-    <div className="rounded-lg border">
-      <div className="flex flex-wrap items-center gap-2 px-3 py-2">
+    <div>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2.5">
         <button
           type="button"
+          aria-expanded={open}
           onClick={() => setOpen(!open)}
-          className="text-left text-[13px] font-semibold hover:underline"
+          className="min-w-0 text-left text-sm font-medium hover:underline"
         >
           {t.label}
         </button>
-        <span className="text-[12px] text-muted-foreground">{t.when}</span>
+        <span className="text-xs text-muted-foreground">{t.when}</span>
         <span className="ml-auto flex items-center gap-2">
-          <button
-            type="button"
+          <Button
+            size="sm"
+            variant="ghost"
             onClick={() => setLang(lang === "ar" ? "en" : "ar")}
-            className="rounded border px-1.5 py-0.5 text-[12px] text-muted-foreground hover:bg-muted"
           >
             {lang === "ar" ? "English" : "العربية"}
-          </button>
+          </Button>
           <CopyButton text={text} label="Copy" />
         </span>
       </div>
       {open && (
-        <div className="space-y-2 border-t px-3 py-2.5">
+        <div className="space-y-2 px-3 pb-3">
           {t.internal && (
-            <p className="callout-warn text-[12px]">
+            <p className="callout-warn rounded-lg px-3 py-2 text-xs">
               <strong>Before you send it:</strong> {t.internal}
             </p>
           )}
-          <p dir="auto" className="whitespace-pre-wrap text-[13px]">
+          <p dir="auto" className="whitespace-pre-wrap text-sm">
             {text}
           </p>
         </div>

@@ -114,6 +114,54 @@ export const upsertMember = authenticatedMutation({
   },
 });
 
+/**
+ * A Sales seat given from the command line, for Aziz, when he names the
+ * people and does not want to open the Admin page himself (2026-09-27:
+ * "Ahmed Abushaiba is the closer, Tahreer is the setter"). It does what
+ * upsertMember does for the Sales seat and nothing else: the person keeps
+ * every other cockpit they had, and the change is signed "cli" in addedBy.
+ * Internal, so only the deployment's own key can run it.
+ */
+export const grantSalesSeat = internalMutation({
+  args: {
+    email: v.string(),
+    name: v.optional(v.string()),
+    salesRole: v.union(
+      v.literal("setter"),
+      v.literal("closer"),
+      v.literal("both"),
+      v.literal("manager"),
+    ),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const email = norm(args.email);
+    if (!email.includes("@")) throw new Error("That is not an email.");
+    const existing = await ctx.db
+      .query("members")
+      .withIndex("by_email", q => q.eq("email", email))
+      .unique();
+    const roles = [...new Set([...(existing?.roles ?? []), "sales"])];
+    const patch = {
+      name: args.name?.trim() || existing?.name || undefined,
+      roles,
+      clients: existing?.clients ?? [],
+      salesRole: args.salesRole,
+      updatedAt: Date.now(),
+    };
+    if (existing) await ctx.db.patch(existing._id, patch);
+    else
+      await ctx.db.insert("members", {
+        email,
+        ...patch,
+        addedBy: "cli",
+        addedAt: Date.now(),
+      });
+    await ctx.scheduler.runAfter(0, internal.portal.pushMember, { email });
+    return null;
+  },
+});
+
 export const memberByEmail = internalQuery({
   args: { email: v.string() },
   returns: v.any(),

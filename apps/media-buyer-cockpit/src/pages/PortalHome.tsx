@@ -1,9 +1,12 @@
-import { ArrowRight } from "lucide-react";
+
+
 import { Link, Navigate } from "react-router";
 import { BackendWait } from "@/components/BackendWait";
-import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { Wordmark } from "@/components/Wordmark";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { COCKPIT_ICON } from "@/lib/cockpits";
+
 import { LoginPage } from "./LoginPage";
 
 export const COCKPIT_META: Record<
@@ -54,7 +57,10 @@ export function PortalHome() {
   if (!ready) {
     return (
       <BackendWait>
-        <div className="p-10 text-sm text-muted-foreground">One moment…</div>
+        <div className="flex flex-1 items-center justify-center gap-2 p-10 text-sm text-muted-foreground">
+          <Spinner />
+          One moment…
+        </div>
       </BackendWait>
     );
   }
@@ -67,7 +73,9 @@ export function PortalHome() {
 }
 
 function Chooser() {
-  const { isCeo, isAdmin, cockpits, email, name } = useCockpitAuth();
+  const { isCeo, isAdmin, cockpits, email, name, ready } = useCockpitAuth();
+
+  if (!ready) return <div className="p-10 text-sm text-muted-foreground">Checking your access…</div>;
 
   if (isCeo) return <Navigate to="/ceo" replace />;
   if (isAdmin) return <Navigate to="/admin" replace />;
@@ -107,27 +115,26 @@ function Chooser() {
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           {cockpits.map(c => {
-            const meta = COCKPIT_META[c];
-            if (!meta) return null;
+            if (!COCKPIT_META[c]) return null;
+            const Icon = COCKPIT_ICON[c];
             return (
-              <Button
+              <Link
                 key={c}
-                variant="outline"
-                className="h-auto justify-between px-4 py-4"
-                asChild
+                to={COCKPIT_META[c].to}
+                className="group flex items-center gap-4 rounded-2xl border bg-card p-4 transition-colors hover:border-[color:var(--mahara-teal)]/50 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <Link to={meta.to}>
-                  <span className="text-left">
-                    <span className="block font-semibold">
-                      {meta.label}
-                    </span>
-                    <span className="block text-xs text-muted-foreground">
-                      {meta.blurb}
-                    </span>
+                <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-accent text-[color:var(--mahara-teal)]">
+                  {Icon ? <Icon className="size-5" aria-hidden /> : null}
+                </span>
+                <span className="min-w-0 text-left">
+                  <span className="block font-semibold">
+                    {COCKPIT_META[c].label}
                   </span>
-                  <ArrowRight className="size-4" />
-                </Link>
-              </Button>
+                  <span className="block text-xs text-muted-foreground">
+                    {COCKPIT_META[c].blurb}
+                  </span>
+                </span>
+              </Link>
             );
           })}
         </div>

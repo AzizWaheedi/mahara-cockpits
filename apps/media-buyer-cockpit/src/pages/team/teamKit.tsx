@@ -1,7 +1,11 @@
-import { type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { Check, Loader2, X } from "lucide-react";
+import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import type { Person } from "@/lib/team";
+import { DAY_NAMES } from "../../../convex/teamCore";
+
 
 /** Native selects styled as the kit's Input, so a phone gets its own picker. */
 export const selectClass =
@@ -83,14 +87,16 @@ export function peopleById(people: Person[]): Map<string, Person> {
   return new Map(people.map(p => [p.id, p]));
 }
 
-/** The roster as <option>s, grouped by department. */
-export function PeopleOptions({
-  people,
-  exclude,
-}: {
-  people: Person[];
-  exclude?: Set<string>;
-}) {
+/**
+ * The roster as <option>s, grouped by department. A function, not a
+ * component: AnimatedSelect reads its options from its direct children, so
+ * they must be real <optgroup> and <option> elements.
+ */
+export function peopleOptions(
+  people: Person[],
+  exclude?: Set<string>,
+  withRole = true,
+): ReactNode {
   const groups = new Map<string, Person[]>();
   for (const p of people) {
     if (exclude?.has(p.id)) continue;
@@ -106,7 +112,7 @@ export function PeopleOptions({
             {list.map(p => (
               <option key={p.id} value={p.id}>
                 {p.name}
-                {p.role ? `, ${p.role}` : ""}
+                {withRole && p.role ? `, ${p.role}` : ""}
               </option>
             ))}
           </optgroup>
@@ -369,4 +375,238 @@ export function SharedText({
       ) : null}
     </div>
   );
+}
+
+// --- inline editing -------------------------------------------------------------
+
+/** Filters, tabs and day chips: 32px pills, the active one teal (docs/DESIGN.md). */
+export const chip = (on: boolean) =>
+  `inline-flex h-8 shrink-0 items-center rounded-full px-3 text-xs font-medium transition-colors ${
+    on
+      ? "bg-primary/15 text-foreground ring-1 ring-inset ring-primary/40"
+      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+  }`;
+
+/** An icon button that stays small with a mouse and grows under a finger. */
+export const iconButton =
+  "flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30 pointer-coarse:size-10";
+
+/** "13:30 to 14:00". */
+export function timeRange(start: string | null, end: string | null): string {
+  if (!start) return "";
+  return end ? `${start} to ${end}` : start;
+}
+
+/**
+ * Text that turns into a field when clicked, like a Google Doc: Enter or
+ * leaving the field saves, Escape puts it back.
+ */
+export function InlineText({
+  value,
+  onSave,
+  placeholder,
+  label,
+  multiline = false,
+  className = "",
+  disabled = false,
+  max = 200,
+  emptyClass = "",
+}: {
+  value: string;
+  onSave: (next: string) => Promise<void>;
+  placeholder: string;
+  label: string;
+  multiline?: boolean;
+  className?: string;
+  disabled?: boolean;
+  max?: number;
+  /** Extra classes while there is no text, to keep an empty prompt quiet. */
+  emptyClass?: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(value);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!editing) setText(value);
+  }, [value, editing]);
+  const save = async () => {
+    const next = text.trim();
+    if (next === value.trim()) {
+      setEditing(false);
+      return;
+    }
+    setBusy(true);
+    try {
+      await onSave(next);
+      setEditing(false);
+    } catch {
+      // The page shows the error; the text stays for another try.
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!editing || disabled)
+    return (
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setEditing(true)}
+        className={`min-w-0 text-left underline-offset-4 decoration-muted-foreground/40 enabled:hover:underline disabled:cursor-default ${value ? "" : `text-muted-foreground ${emptyClass}`} ${className}`}
+        dir="auto"
+        aria-label={`${label}: ${value || placeholder}. Edit`}
+      >
+        {value || placeholder}
+      </button>
+    );
+  const common = {
+    autoFocus: true,
+    value: text,
+    maxLength: max,
+    "aria-label": label,
+    placeholder,
+    dir: "auto" as const,
+    disabled: busy,
+    onChange: (e: { target: { value: string } }) => setText(e.target.value),
+    onBlur: () => void save(),
+    onKeyDown: (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setText(value);
+        setEditing(false);
+      }
+      if (e.key === "Enter" && (!multiline || e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        void save();
+      }
+    },
+  };
+  return multiline ? (
+    <Textarea
+      {...common}
+      rows={2}
+      className={`resize-none text-sm ${className}`}
+    />
+  ) : (
+    <Input {...common} className={`h-8 text-sm ${className}`} />
+  );
+}
+
+/** Pick days of the week: Sunday first, the Kuwaiti week. */
+export function DayChips({
+  value,
+  onChange,
+  label = "Days",
+}: {
+  value: number[];
+  onChange: (days: number[]) => void;
+  label?: string;
+}) {
+  return (
+    <fieldset className="grid gap-1">
+      <legend className="mb-1 text-xs font-medium text-muted-foreground">
+        {label}
+      </legend>
+      <div className="flex flex-wrap gap-1.5">
+        {DAY_NAMES.map((d, i) => {
+          const on = value.includes(i);
+          return (
+            <button
+              key={d}
+              type="button"
+              aria-pressed={on}
+              onClick={() =>
+                onChange(
+                  on
+                    ? value.filter(x => x !== i)
+                    : [...value, i].sort((a, b) => a - b),
+                )
+              }
+              className={`${chip(on)} w-11 justify-center`}
+            >
+              {d}
+            </button>
+          );
+        })}
+      </div>
+    </fieldset>
+  );
+}
+
+export const fieldClass =
+  "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring md:text-sm";
+
+/** A small confirm in place: "Delete?" with Yes and No, no dialog. */
+export function ConfirmInline({
+  ask,
+  yes,
+  onYes,
+  children,
+}: {
+  ask: string;
+  yes: string;
+  onYes: () => Promise<void>;
+  children: (open: () => void) => ReactNode;
+}) {
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  if (!asking) return <>{children(() => setAsking(true))}</>;
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 text-xs"
+      role="group"
+      aria-label={ask}
+    >
+      <span className="text-muted-foreground">{ask}</span>
+      <Button
+        size="sm"
+        variant="destructive"
+        className="h-7 px-2"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          try {
+            await onYes();
+          } catch {
+            // The page shows the error.
+          } finally {
+            setBusy(false);
+            setAsking(false);
+          }
+        }}
+      >
+        {busy ? (
+          <Loader2 className="animate-spin" aria-hidden />
+        ) : (
+          <Check aria-hidden />
+        )}
+        {yes}
+      </Button>
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-7 px-2"
+        onClick={() => setAsking(false)}
+      >
+        <X aria-hidden /> Keep
+      </Button>
+    </span>
+  );
+}
+
+/** Run one small change: busy while it runs, the page shows any error. */
+export function useBusy(): [
+  string | null,
+  (key: string, fn: () => Promise<unknown>) => Promise<void>,
+] {
+  const [busy, setBusy] = useState<string | null>(null);
+  const run = async (key: string, fn: () => Promise<unknown>) => {
+    setBusy(key);
+    try {
+      await fn();
+    } catch {
+      // The page shows the error.
+    } finally {
+      setBusy(null);
+    }
+  };
+  return [busy, run];
 }

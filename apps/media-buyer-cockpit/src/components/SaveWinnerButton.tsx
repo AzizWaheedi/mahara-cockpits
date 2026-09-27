@@ -45,6 +45,10 @@ import { api } from "@/lib/cockpitApi";
  * This lets the media buyer keep an ad she knows is worth reusing, with a line
  * on why. The numbers saved are the ad's own, over the range she is looking
  * at, worked out on the server. [aziz, 2026-09-16]
+ *
+ * Every row has the button (Aziz, 2026-09-27: "It should still be there"):
+ * when the range has no leads for the ad, the server takes its 90 days to the
+ * range's end, and the dialog says so.
  */
 
 /** What `winnerSaves.savedIn` says about one ad id. */
@@ -113,9 +117,6 @@ export function SaveWinnerButton({
   const unsave = useMutation(api.winnerSaves.unsave);
   const [busy, setBusy] = useState(false);
 
-  // No leads, no cost per lead: nothing to save. Quiet rows land here too.
-  if (!(row.leads > 0)) return null;
-
   const ids = row.adIds ?? [];
   const savedIds = ids.filter(id => savedIn?.[id]?.saved);
   const inWhatWorks = ids.some(id => savedIn?.[id]?.auto);
@@ -145,9 +146,9 @@ export function SaveWinnerButton({
               type="button"
               disabled={busy}
               title={`Saved to What works by ${first?.savedByName ?? "the team"} on ${dayLabel(first?.savedAt)}`}
-              className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-semibold tone-good disabled:opacity-50"
+              className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs font-medium disabled:opacity-50"
             >
-              <Star className="h-3 w-3 fill-current" />
+              <Star className="size-3 shrink-0 fill-current txt-good" />
               Saved
             </button>
           </DropdownMenuTrigger>
@@ -179,20 +180,22 @@ export function SaveWinnerButton({
         <span className="inline-flex items-center gap-1">
           {inWhatWorks && (
             <span
-              className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase text-muted-foreground"
+              className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground"
               title="The weekly check already put this ad in What works. Saving adds the team's note and numbers."
             >
               In What works
             </span>
           )}
+          {/* One mark per ad: the chip already says it is a winner, so the
+              button next to it carries no second star. */}
           <button
             type="button"
             onClick={() => setSaving(true)}
             title="Keep this ad in What works, with a note on why it works"
-            className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-semibold text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
           >
-            <Star className="h-3 w-3" />
-            Save as winner
+            {inWhatWorks ? null : <Star className="size-3 shrink-0" />}
+            {inWhatWorks ? "Add a note" : "Save as winner"}
           </button>
         </span>
       )}
@@ -234,7 +237,7 @@ export function SaveWinnerButton({
                 if (removing) void doRemove(removing);
               }}
             >
-              {busy ? "Removing..." : "Remove"}
+              {busy ? "Removing…" : "Remove"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -423,10 +426,20 @@ function SaveDialog({
           </p>
         )}
 
+        {stats && p?.widened && p.window && (
+          <p className="text-[12px] text-muted-foreground">
+            No leads between {range.start} and {range.end}, so these are its
+            last 90 days, {p.window.start} to {p.window.end}.
+          </p>
+        )}
+
         {stats && (
           <div className="rounded border bg-muted/30 px-3 py-2 text-[13px]">
             <div>
-              <span className="font-semibold">{range.label}:</span>{" "}
+              <span className="font-semibold">
+                {p?.widened ? (p.window?.label ?? "Last 90 days") : range.label}
+                :
+              </span>{" "}
               {usd(stats.spend)} spent, {plural(stats.leads, "lead")},{" "}
               {usd(stats.cpl)} a lead
               {showBookings &&
@@ -487,7 +500,7 @@ function SaveDialog({
             Cancel
           </Button>
           <Button onClick={submit} disabled={blocked || busy}>
-            {busy ? "Saving..." : "Save to What works"}
+            {busy ? "Saving…" : "Save to What works"}
           </Button>
         </DialogFooter>
       </DialogContent>

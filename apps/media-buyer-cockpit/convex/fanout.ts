@@ -2,12 +2,15 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { ActionCtx } from "./_generated/server";
 import { internalAction, internalQuery } from "./_generated/server";
+import { kuwaitDay } from "./changeResultsCore";
 import {
   type ClientDataRow,
   clientDataFor,
+  normTight,
   readClientData,
 } from "./clientData";
 import { daysBetween, kuwaitToday, parseAdded, parseAppt } from "./csmProfiles";
+import { CS_LIST } from "./csmSync";
 import { cleanDosDonts } from "./dosDonts";
 import { flush } from "./health";
 import { loadSheetCache, type SheetCache, saveSheetCache } from "./sheetCache";
@@ -1051,6 +1054,143 @@ async function clientDataOverlay() {
   return { modes, sheets };
 }
 
+// --- This week's work, for the CSM's "What we did this week" -----------------
+
+/** Finished: counted in the week ClickUp says it was done, never guessed. */
+const VIDEO_FINISHED = new Set(["complete", "closed", "done", "live 🚀"]);
+/** Being made, in the team's hands. */
+const VIDEO_MAKING = new Set([
+  "planning",
+  "in progress",
+  "internal review",
+  "update required",
+]);
+const BOARD_DONE = /complete|closed|done/i;
+
+/** A ClickUp list with its closed cards, page by page (100 a page, 5 at most). */
+async function listTasks(listId: string): Promise<Any[]> {
+  const out: Any[] = [];
+  for (let page = 0; page < 5; page++) {
+    const res = await clickup(
+      `list/${listId}/task?include_closed=true&subtasks=true&page=${page}`,
+    );
+    const tasks = (res?.tasks ?? []) as Any[];
+    out.push(...tasks);
+    if (tasks.length < 100 || res?.last_page === true) break;
+  }
+  return out;
+}
+
+export type WeekWork = {
+  /** The first day of the week this covers, Kuwait. */
+  since: string;
+  /** Ad changes a client can be told, oldest first, in the cockpit's labels. */
+  ads: { at: number; label: string }[];
+  verdict?: string;
+  bookings?: number;
+  weBook?: boolean;
+  /** When the media buyer last sent the client an update herself. */
+  toldAt?: number;
+  /** Videos: finished this week (names), with the client for review, being made. */
+  videos?: { finished: string[]; withClient: string[]; making: number };
+  /** Client Success board tasks finished this week, for the CSM's eyes. */
+  board?: string[];
+};
+
+/**
+ * What the team did for each client this week, keyed by the ClickUp card name
+ * the client success cockpit uses. Aziz, 2026-09-27: its touchpoints should
+ * pull "in the updates from the ads management, the client success board,
+ * and maybe the video pipeline". The ads come from csmWork.ts, matched to the
+ * card by name or through the Client Data sheet's ClickUp id; the Video
+ * Pipeline and the Client Success board are read here. A card counts as
+ * finished this week only by ClickUp's own done or closed date.
+ */
+async function weekOfWork(
+  ctx: ActionCtx,
+  clients: Any[],
+): Promise<Map<string, WeekWork>> {
+  const since = Date.now() - 7 * 86_400_000;
+  const known: { name: string; aliases: string[] }[] = await ctx
+    .runQuery(internal.csmWork.clientAliases, {})
+    .catch(() => []);
+  const aliasesOf = new Map(known.map(k => [k.name, k.aliases]));
+  const index = buildIndex(
+    clients.map(c => ({ name: c.name, aliases: aliasesOf.get(c.name) ?? [] })),
+  );
+  const names = new Set(clients.map(c => String(c.name)));
+  const tagsOf = (t: Any) =>
+    ((t.tags ?? []) as Any[]).map(x => String(x.name ?? ""));
+  const clientOf = (t: Any): string | undefined => {
+    const [resolved] = resolve(
+      tagsOf(t),
+      index,
+      clientFromName(String(t.name ?? "")),
+    );
+    return resolved.find(n => names.has(n));
+  };
+  const doneAt = (t: Any) => Number(t.date_done ?? t.date_closed ?? 0) || 0;
+  const [ads, videoCards, boardCards, dataRows] = await Promise.all([
+    ctx.runQuery(internal.csmWork.adsWeek, { since }) as Promise<Any[]>,
+    listTasks(VIDEO_LIST),
+    listTasks(CS_LIST),
+    readClientData(ctx).catch(() => [] as ClientDataRow[]),
+  ]);
+  const out = new Map<string, WeekWork>();
+  const week = (name: string): WeekWork => {
+    const w = out.get(name) ?? { since: kuwaitDay(since), ads: [] };
+    out.set(name, w);
+    return w;
+  };
+  for (const t of videoCards) {
+    const client = clientOf(t);
+    if (!client) continue;
+    const status = String(t.status?.status ?? "").toLowerCase();
+    const title = String(t.name ?? "").trim();
+    const finished = VIDEO_FINISHED.has(status) && doneAt(t) >= since;
+    const withClient = status === "client review";
+    const making = VIDEO_MAKING.has(status);
+    if (!finished && !withClient && !making) continue;
+    const w = week(client);
+    w.videos ??= { finished: [], withClient: [], making: 0 };
+    if (finished) w.videos.finished.push(title);
+    else if (withClient) w.videos.withClient.push(title);
+    else w.videos.making += 1;
+  }
+  for (const t of boardCards) {
+    const client = clientOf(t);
+    if (!client || t.parent) continue;
+    if (!BOARD_DONE.test(String(t.status?.status ?? ""))) continue;
+    if (doneAt(t) < since) continue;
+    const w = week(client);
+    w.board = [...(w.board ?? []), String(t.name ?? "").trim()];
+  }
+  const adsByKey = new Map(ads.map(a => [normTight(a.client), a]));
+  for (const c of clients) {
+    const row = clientDataFor(dataRows, c.name, c.taskId);
+    const a =
+      adsByKey.get(normTight(c.name)) ??
+      (row ? adsByKey.get(normTight(row.name)) : undefined);
+    if (!a) continue;
+    Object.assign(week(String(c.name)), {
+      ads: a.ads,
+      verdict: a.verdict,
+      bookings: a.bookings,
+      weBook: a.weBook,
+      toldAt: a.toldAt,
+    });
+  }
+  // Names are for the CSM's line above the draft: a few are enough.
+  for (const w of out.values()) {
+    if (w.videos) {
+      w.videos.finished = w.videos.finished.slice(0, 6);
+      w.videos.withClient = w.videos.withClient.slice(0, 4);
+    }
+    if (w.board) w.board = w.board.slice(0, 6);
+  }
+  return out;
+}
+
 // --- The runs -------------------------------------------------------------------
 
 /** Everything the creative director's cockpit shows. */
@@ -1251,8 +1391,19 @@ export const feedCsm = internalAction({
         // have no use for what a client pays. [2026-09-18]
         billing: payload.billing,
       });
+      // What the team did this week, for the CSM's "What we did this week"
+      // draft. Only the client success copy carries it, and a failure here
+      // costs that draft, never the roster.
+      let work = new Map<string, WeekWork>();
+      try {
+        work = await weekOfWork(ctx, payload.clients);
+      } catch (e) {
+        errors.push(`this week's work: ${String(e).slice(0, 200)}`);
+      }
       await bridge("csm", "store", {
-        clients: payload.clients,
+        clients: payload.clients.map((c: Any) =>
+          work.has(c.name) ? { ...c, work: work.get(c.name) } : c,
+        ),
         tasks: payload.tasks,
         checks: payload.checks,
       });

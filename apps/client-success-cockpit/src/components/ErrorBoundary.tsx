@@ -48,7 +48,7 @@ class ErrorBoundary extends Component<Props, State> {
               )}
             >
               <RotateCcw size={16} />
-              Reload Page
+              Reload page
             </button>
           </div>
         </div>

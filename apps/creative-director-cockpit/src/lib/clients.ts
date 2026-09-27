@@ -296,7 +296,7 @@ export async function fetchClientDetail(
 export async function fetchContextPack(
   client: SupabaseClient,
   clientName: string,
-): Promise<{ markdown: string; counts: Record<string, number> }> {
+): Promise<{ markdown: string; counts: { campaigns: number; ads: number; transcripts: number; funnels: number; plays: number; tasks: number; videos: number } }> {
   const detail = await fetchClientDetail(client, clientName);
   if (!detail) {
     return {

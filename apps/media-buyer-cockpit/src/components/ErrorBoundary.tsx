@@ -24,32 +24,44 @@ class ErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="flex items-center justify-center min-h-screen p-8 bg-background">
-          <div className="flex flex-col items-center w-full max-w-2xl p-8">
+        <div className="flex min-h-screen items-center justify-center bg-background p-6">
+          <div className="flex w-full max-w-lg flex-col items-center text-center">
             <AlertTriangle
-              size={48}
-              className="text-destructive mb-6 flex-shrink-0"
+              size={40}
+              className="mb-4 flex-shrink-0 txt-bad"
+              aria-hidden
             />
-
-            <h2 className="text-xl mb-4">An unexpected error occurred.</h2>
-
-            <div className="p-4 w-full rounded bg-muted overflow-auto mb-6">
-              <pre className="text-sm text-muted-foreground whitespace-break-spaces">
-                {this.state.error?.stack}
-              </pre>
-            </div>
+            <h2 className="text-xl font-semibold tracking-tight">
+              This screen hit a problem
+            </h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Reload the page to try again. If it happens again, tell Aziz what
+              you were doing when it broke.
+            </p>
 
             <button
+              type="button"
               onClick={() => window.location.reload()}
               className={cn(
-                "flex items-center gap-2 px-4 py-2 rounded-lg",
+                "mt-6 flex items-center gap-2 rounded-lg px-4 py-2",
                 "bg-primary text-primary-foreground",
-                "hover:opacity-90 cursor-pointer",
+                "cursor-pointer hover:opacity-90",
               )}
             >
-              <RotateCcw size={16} />
-              Reload Page
+              <RotateCcw size={16} aria-hidden />
+              Reload the page
             </button>
+
+            {this.state.error?.stack ? (
+              <details className="mt-6 w-full text-left text-sm">
+                <summary className="text-muted-foreground">
+                  Technical details
+                </summary>
+                <pre className="mt-2 max-h-64 overflow-auto whitespace-break-spaces rounded-xl bg-muted p-4 text-xs text-muted-foreground">
+                  {this.state.error.stack}
+                </pre>
+              </details>
+            ) : null}
           </div>
         </div>
       );

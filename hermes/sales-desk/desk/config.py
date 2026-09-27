@@ -26,10 +26,16 @@ WORKER = "sales-desk"
 # `desk.py doctor` says gpt-5 is not on the key.
 # anthropic: claude-opus-5, the current Opus. The key is empty on the VPS today.
 # openrouter: the same OpenAI model through OpenRouter's router.
+# vps: Aziz's own Claude plan on the VPS, through the OpenAI-shaped proxy that
+# Claude Code sits behind (openclaw-claude-proxy, 127.0.0.1:3456): no key and
+# no API credit to run out. Aziz, 2026-09-27: "I want to use my VPS, not
+# OpenAI". "opus" is Claude Code's own name for the newest Opus on the plan.
+# The default provider since that day.
 DEFAULT_MODELS = {
     "openai": "gpt-5",
     "anthropic": "claude-opus-5",
     "openrouter": "openai/gpt-5",
+    "vps": "opus",
 }
 PROVIDERS = tuple(DEFAULT_MODELS)
 
@@ -119,8 +125,8 @@ class Config:
     supabase_key: str = ""
     bucket: str = "sales-proposals"
 
-    provider: str = "openai"
-    model: str = DEFAULT_MODELS["openai"]
+    provider: str = "vps"
+    model: str = DEFAULT_MODELS["vps"]
     # Per attempt, and the longest the answer may stay silent, not a budget
     # for the whole answer: a draft legitimately takes six to eleven minutes.
     model_timeout: float = 900.0
@@ -141,7 +147,7 @@ class Config:
     @staticmethod
     def from_env() -> "Config":
         home = Path(key("SALES_DESK_HOME", str(Path.home() / ".sales-desk"))).expanduser()
-        provider = key("SALES_MODEL_PROVIDER", "openai").strip().lower() or "openai"
+        provider = key("SALES_MODEL_PROVIDER", "vps").strip().lower() or "vps"
         max_tokens = key("SALES_MAX_TOKENS", "").strip()
         return Config(
             home=home,

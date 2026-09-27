@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  baseApplies,
   CLOSER_PLAN,
   closerNames,
   dialStats,
@@ -17,6 +18,8 @@ import {
   payToForm,
   payWords,
   projection,
+  SETTER_PLAN,
+  setterEstimate,
   teamTotal,
   weekStart,
   windowDays,
@@ -478,5 +481,60 @@ describe("dials", () => {
       talkSeconds: 180,
       inbound: 1,
     });
+  });
+});
+
+describe("the setter plan (Aziz, 2026-09-27)", () => {
+  test("in words, as the setter reads it", () => {
+    expect(payWords({ ...SETTER_PLAN }, "your")).toBe(
+      "a base of $500 a month, $10 for each intro you run that shows and qualifies, plus $50 for each deal from your leads that fully closes (paid past the onboarding fee)",
+    );
+  });
+  test("the form keeps the three amounts", () => {
+    const f = payToForm({ ...SETTER_PLAN });
+    expect([f.base, f.perQualified, f.perFullClose]).toEqual([
+      "500",
+      "10",
+      "50",
+    ]);
+    const back = payFromForm(f);
+    expect(back.ok && back.pay).toEqual({
+      base_monthly: 500,
+      per_intro_qualified: 10,
+      per_full_close: 50,
+      currency: "USD",
+    });
+  });
+  test("the base counts for the month so far and the whole month, not a week", () => {
+    expect(baseApplies("2026-09-01", "2026-09-27")).toBe(true);
+    expect(baseApplies("2026-08-01", "2026-08-31")).toBe(true);
+    expect(baseApplies("2026-09-26", "2026-09-27")).toBe(false);
+    expect(baseApplies("2026-08-28", "2026-09-27")).toBe(false);
+  });
+  test("only fully closed deals pay; the rest wait", () => {
+    const e = setterEstimate(
+      { ...SETTER_PLAN },
+      7,
+      [{ fully_closed: true }, { fully_closed: false }, { fully_closed: true }],
+      true,
+    );
+    expect(e).toEqual({
+      base: 500,
+      qualified: 7,
+      intros: 70,
+      fullyClosed: 2,
+      waiting: 1,
+      closes: 100,
+      total: 670,
+    });
+  });
+  test("a week earns no base; a rule without an amount leaves that part out", () => {
+    const e = setterEstimate(
+      { per_intro_qualified: 10 },
+      3,
+      [{ fully_closed: true }],
+      false,
+    );
+    expect([e.base, e.intros, e.closes, e.total]).toEqual([null, 30, null, 30]);
   });
 });

@@ -5,9 +5,12 @@ import {
   button,
   EmptyState,
   Failed,
+  page,
+  Reading,
   SectionCard,
   SourceNote,
   StatusChip,
+  select,
 } from "../components/kit";
 import { PaceRail } from "../components/NumbersGoals";
 import { api } from "../lib/api";
@@ -17,6 +20,7 @@ import {
   useMonthCards,
   useNow,
   usePeople,
+  useQuery,
   useReps,
 } from "../lib/data";
 import { ago, count, money } from "../lib/format";
@@ -48,29 +52,26 @@ import type { Me, Rep, ScoreRow } from "../lib/types";
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 function fmt(metric: GoalMetric, v: number | null): string {
-  if (v === null) return "--";
+  if (v === null) return "n/a";
   return metric === "cash" ? money(v) : count(Math.round(v));
 }
 
-/** The first month any deal was recorded; closes and cash before it are unknown. */
-function useFirstDealMonth(): string | null {
-  const [m, setM] = useState<string | null>(null);
-  useEffect(() => {
-    let alive = true;
-    supabase
-      .from("cockpit_sales_deals")
-      .select("submitted_at")
-      .order("submitted_at", { ascending: true })
-      .limit(1)
-      .then(({ data }) => {
-        const at = data?.[0]?.submitted_at as string | undefined;
-        if (alive && at) setM(kuwaitToday(Date.parse(at)).slice(0, 7));
-      });
-    return () => {
-      alive = false;
+/**
+ * The first month any deal was recorded; closes and cash before it are
+ * unknown. A read like any other, so a month before it is not shown with
+ * B2B's zero while it is on its way or after it failed.
+ */
+function useFirstDealMonth() {
+  return useQuery<{ month: string | null }>(async () => {
+    // The team's first deal for every seat, though a rep reads only their own deals.
+    const { data, error } = await supabase.rpc("cockpit_sales_first_deal_at");
+    if (error) return { data: null, error };
+    const at = (data as string | null) ?? undefined;
+    return {
+      data: { month: at ? kuwaitToday(Date.parse(at)).slice(0, 7) : null },
+      error: null,
     };
   }, []);
-  return m;
 }
 
 export default function GoalsPage({ me }: { me: Me }) {
@@ -120,11 +121,11 @@ export default function GoalsPage({ me }: { me: Me }) {
         : "Not started yet";
 
   return (
-    <main className="mx-auto w-full max-w-5xl space-y-5 px-4 py-6 md:px-6">
+    <main className={page}>
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-xl font-semibold tracking-tight">Goals</h1>
-          <p className="muted text-sm">
+          <h1 className="text-2xl font-semibold tracking-tight">Goals</h1>
+          <p className="muted mt-1 text-sm">
             {monthWords(month)} · {when}
           </p>
         </div>
@@ -137,7 +138,7 @@ export default function GoalsPage({ me }: { me: Me }) {
                 onChange={e =>
                   set("rep", e.target.value === "team" ? null : e.target.value)
                 }
-                className="h-8 rounded-[var(--radius-md)] border hairline bg-[color:var(--card)] px-2 text-sm"
+                className={select}
               >
                 <option value="team">The whole team</option>
                 {active.map(r => (
@@ -165,7 +166,7 @@ export default function GoalsPage({ me }: { me: Me }) {
             <button
               type="button"
               onClick={() => set("month", null)}
-              className="min-w-32 px-2 py-1 font-medium tabular-nums"
+              className="min-w-32 px-2 py-1 font-medium"
               title="Back to this month"
             >
               {monthWords(month)}
@@ -185,6 +186,18 @@ export default function GoalsPage({ me }: { me: Me }) {
 
       {reps.error ? (
         <Failed what="The rep list" error={reps.error} retry={reps.reload} />
+      ) : !whose ? (
+        <EmptyState
+          icon={Target}
+          title="Your goals are not linked yet"
+          text={
+            me.ghl_user_id
+              ? "B2B's rep list has no rep with your HighLevel user yet, so your goals cannot be matched to your numbers. Ask Aziz to add you to it; your goals and your months show here from then on."
+              : "Once Aziz links your seat to your HighLevel user on the Team page, your goals and your months show here."
+          }
+        />
+      ) : !reps.data ? (
+        <Reading what="the team" />
       ) : whose === "team" ? (
         <TeamGoals
           month={month}
@@ -192,16 +205,10 @@ export default function GoalsPage({ me }: { me: Me }) {
           reps={active}
           onPick={id => set("rep", id)}
         />
-      ) : !whose ? (
-        <EmptyState
-          icon={Target}
-          title="Your goals are not linked yet"
-          text="Once Aziz links your seat to your HighLevel user on the Team page, your goals and your months show here."
-        />
       ) : rep ? (
-        <RepGoals me={me} rep={rep} month={month} now={now} />
-      ) : reps.loading ? (
-        <p className="muted text-sm">Reading the team…</p>
+        // One rep's reads per mount: another rep's goals never show, or
+        // take a typed goal, under this rep's name while theirs are read.
+        <RepGoals key={rep.id} me={me} rep={rep} month={month} now={now} />
       ) : (
         <EmptyState
           icon={Target}
@@ -243,7 +250,8 @@ function RepGoals({
   const cards = useMonthCards(rep.id);
   const dials = useDialMonths(rep.maqsam_email);
   const people = usePeople();
-  const firstDeal = useFirstDealMonth();
+  const first = useFirstDealMonth();
+  const firstDeal = first.data?.month ?? null;
   const seat = (people.data ?? []).find(p => p.b2b_rep_id === rep.id) ?? null;
   const standing = seat?.goals?.monthly ?? null;
 
@@ -295,17 +303,29 @@ function RepGoals({
   const canForecast = Boolean(me.manager) || me.b2b_rep_id === rep.id;
   const card = cardOf.get(month);
 
-  if (rows.error || cards.error)
+  // Goals come from the month's rows or the seat's standing goal, actuals
+  // from the scorecard, Maqsam and the first deal: until all of them are in,
+  // no goal reads "Not set" and no month reads B2B's zero.
+  const reads = [rows, cards, people, dials, first];
+  const failed = reads.find(q => q.error);
+  if (failed)
     return (
       <Failed
         what="The goals"
-        error={rows.error ?? cards.error ?? ""}
+        error={failed.error ?? ""}
         retry={() => {
-          rows.reload();
-          cards.reload();
+          for (const q of reads) if (q.error) q.reload();
         }}
       />
     );
+  if (
+    !rows.data ||
+    !cards.data ||
+    !people.data ||
+    !first.data ||
+    (rep.maqsam_email && !dials.data)
+  )
+    return <Reading what="the goals" />;
 
   return (
     <>
@@ -314,7 +334,7 @@ function RepGoals({
         side={
           card ? (
             <span className="muted text-xs">
-              scorecard as of {ago(card.computed_at)}
+              Scorecard as of {ago(card.computed_at)}
             </span>
           ) : undefined
         }
@@ -379,11 +399,11 @@ function RepGoals({
                         </span>
                         {l.goal !== null && l.actual !== null ? (
                           <span
-                            className="block text-[11px]"
+                            className="block text-xs"
                             style={{
                               color:
                                 l.actual >= l.goal
-                                  ? "var(--good, var(--primary))"
+                                  ? "var(--success)"
                                   : "var(--muted-foreground)",
                             }}
                           >
@@ -399,7 +419,7 @@ function RepGoals({
           </table>
         </div>
         <p className="muted border-t hairline px-4 py-2 text-xs">
-          "--" is a month with nothing recorded for them
+          "n/a" is a month with nothing recorded for them
           {firstDeal
             ? `; closes and cash start in ${monthWords(firstDeal)}, when deals were first recorded`
             : ""}
@@ -437,13 +457,13 @@ function GoalLine({
     <li className="grid grid-cols-1 gap-3 py-3 sm:grid-cols-[9rem_1fr_auto] sm:items-center">
       <div>
         <p className="text-sm font-medium">{label}</p>
-        <p className="text-2xl font-semibold tabular-nums tracking-tight">
-          {noDials ? (
-            <span className="muted text-sm font-normal">no Maqsam address</span>
-          ) : (
-            fmt(line.metric, line.actual)
-          )}
-        </p>
+        {noDials ? (
+          <p className="muted mt-1 text-sm">No Maqsam address</p>
+        ) : (
+          <p className="text-2xl font-semibold tabular-nums tracking-tight">
+            {fmt(line.metric, line.actual)}
+          </p>
+        )}
       </div>
       <div className="min-w-0 space-y-1.5">
         {line.goal !== null ? (
@@ -559,23 +579,29 @@ function NumberField({
   if (!editable)
     return (
       <div className="w-24 text-right">
-        <p className="muted text-[11px]">{label}</p>
+        <p className="muted text-xs">{label}</p>
         <p className="text-sm tabular-nums">
-          {value === null ? "--" : isMoney ? money(value) : count(value)}
+          {value === null ? (
+            <span className="muted">Not set</span>
+          ) : isMoney ? (
+            money(value)
+          ) : (
+            count(value)
+          )}
         </p>
       </div>
     );
   return (
     <form onSubmit={save} className="w-24">
       <label className="block">
-        <span className="muted block text-right text-[11px]">{label}</span>
+        <span className="muted block text-right text-xs">{label}</span>
         <input
           inputMode="decimal"
           value={text}
           aria-busy={busy}
           onChange={e => setText(e.target.value)}
           onBlur={() => void save()}
-          placeholder="--"
+          placeholder="Not set"
           className="h-8 w-full rounded-[var(--radius-md)] border hairline bg-[color:var(--background)] px-2 text-right text-sm tabular-nums"
         />
       </label>
@@ -651,24 +677,30 @@ function TeamGoals({
   const dials = useDialMonths(null, month);
   const people = usePeople();
 
-  if (cards.error || rows.error)
+  // The table waits for every read it is made of: while one is on its way
+  // (or failed) there is no "No reps to show", no missing goal and no 0 dials.
+  const reads = [cards, rows, dials, people];
+  const failed = reads.find(q => q.error);
+  if (failed)
     return (
       <Failed
         what="The team's goals"
-        error={cards.error ?? rows.error ?? ""}
+        error={failed.error ?? ""}
         retry={() => {
-          cards.reload();
-          rows.reload();
+          for (const q of reads) if (q.error) q.reload();
         }}
       />
     );
+  if (!cards.data || !rows.data || !dials.data || !people.data)
+    return <Reading what="the team's goals" />;
 
-  const cardOf = new Map(
-    (cards.data ?? []).map(c => [c.person_key, c.row] as const),
-  );
+  const cardOf = new Map(cards.data.map(c => [c.person_key, c.row] as const));
   const dialsOf = new Map(
-    (dials.data ?? []).map(d => [d.agent_email, Number(d.outbound)] as const),
+    dials.data.map(d => [d.agent_email, Number(d.outbound)] as const),
   );
+  // A month Maqsam has no calls for at all is one its record does not
+  // cover: dials there are unknown, not zero.
+  const dialsCovered = dials.data.length > 0;
   const shown = reps.filter(
     r =>
       cardOf.has(r.id) ||
@@ -706,7 +738,8 @@ function TeamGoals({
                 nowMs: now,
                 card: cardOf.get(r.id) ?? null,
                 dials: r.maqsam_email
-                  ? (dialsOf.get(r.maqsam_email.toLowerCase()) ?? 0)
+                  ? (dialsOf.get(r.maqsam_email.toLowerCase()) ??
+                    (dialsCovered ? 0 : null))
                   : null,
                 rows: (rows.data ?? []).filter(g => g.person_key === r.id),
                 standing: seat?.goals?.monthly ?? null,
@@ -721,7 +754,7 @@ function TeamGoals({
                     >
                       {r.display_name}
                     </button>
-                    <span className="muted block text-[11px]">
+                    <span className="muted block text-xs">
                       {r.role === "setter"
                         ? "Setter"
                         : r.role === "both"
@@ -738,7 +771,7 @@ function TeamGoals({
                         {fmt(l.metric, l.actual)}
                       </span>
                       {l.goal !== null ? (
-                        <span className="muted block text-[11px]">
+                        <span className="muted block text-xs">
                           of {fmt(l.metric, l.goal)}
                         </span>
                       ) : null}

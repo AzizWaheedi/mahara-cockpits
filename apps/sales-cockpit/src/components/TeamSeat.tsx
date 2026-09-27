@@ -12,6 +12,7 @@ import {
   payFromForm,
   payToForm,
   payWords,
+  SETTER_PLAN,
 } from "../lib/pay";
 import { toast } from "../lib/toast";
 import type { Goals, Person, Rep, SalesRole } from "../lib/types";
@@ -42,6 +43,31 @@ const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 function fail(e: unknown) {
   toast.error(String((e as Error)?.message ?? e));
+}
+
+/**
+ * What a seat still lacks before its first day, in the order it is set on
+ * this card: each one is something a rep hits (calls not dialled from their
+ * line, marks and pay not theirs, messages signed with no name). A Slack id
+ * is optional: the end of day posts without a mention when there is none.
+ */
+function seatMissing(person: Person, reps: Rep[], hasPay: boolean): string[] {
+  const rep = reps.find(r => r.id === person.b2b_rep_id) ?? null;
+  const goals = [
+    ...Object.values(person.goals?.weekly ?? {}),
+    ...Object.values(person.goals?.monthly ?? {}),
+  ].some(v => Number(v) > 0);
+  return [
+    person.ghl_user_id ? null : "their HighLevel user",
+    rep ? null : "their name in B2B's rep list",
+    person.maqsam_email || rep?.maqsam_email ? null : "their Maqsam line",
+    person.role !== "setter" && !(person.fathom_email || rep?.fathom_email)
+      ? "their Fathom email"
+      : null,
+    person.name_ar ? null : "their name in Arabic",
+    hasPay ? null : "a pay rule",
+    goals ? null : "goals",
+  ].filter((x): x is string => Boolean(x));
 }
 
 export function TeamSeat({
@@ -93,6 +119,7 @@ export function TeamSeat({
   const payLine = words
     ? `${words.charAt(0).toUpperCase()}${words.slice(1)}.`
     : "No pay rule set yet";
+  const missing = seatMissing(person, reps, Boolean(words));
 
   return (
     <section className="panel min-w-0 overflow-hidden" aria-label={who}>
@@ -119,6 +146,14 @@ export function TeamSeat({
           No longer has the Sales cockpit on the portal
         </p>
       )}
+      {person.active &&
+      person.via_portal &&
+      person.role !== "manager" &&
+      missing.length ? (
+        <p className="border-b hairline px-4 py-2 text-xs">
+          Not ready for a first day yet. Still to set: {missing.join(", ")}.
+        </p>
+      ) : null}
 
       <div className="space-y-4 p-4">
         <LinksForm
@@ -426,19 +461,16 @@ function LinksForm({
           />
         </TeamField>
       </div>
-      <div className="flex flex-wrap items-center gap-3">
-        <button
-          type="submit"
-          disabled={
-            busy ||
-            !changed.length ||
-            Boolean(bad.maqsam || bad.fathom || bad.nameAr)
-          }
-          className={buttonPrimary}
-        >
-          {busy ? "Saving…" : "Save links"}
-        </button>
-        {changed.length ? (
+      {/* Save shows once something has changed, not as a dimmed button on every seat. */}
+      {changed.length ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="submit"
+            disabled={busy || Boolean(bad.maqsam || bad.fathom || bad.nameAr)}
+            className={buttonPrimary}
+          >
+            {busy ? "Saving…" : "Save links"}
+          </button>
           <button
             type="button"
             onClick={() => setF(initial)}
@@ -446,8 +478,8 @@ function LinksForm({
           >
             Undo changes
           </button>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
     </form>
   );
 }
@@ -547,6 +579,17 @@ function PayEditor({
         )}
         {amountField("perDemo", "Per demo shown")}
         {amountField("perSigned", "Per signed client")}
+        {amountField("base", "Base a month", "A setter's base, each month.")}
+        {amountField(
+          "perQualified",
+          "Per qualified intro",
+          "For each intro they ran that shows and qualifies.",
+        )}
+        {amountField(
+          "perFullClose",
+          "Per fully closed deal",
+          "For each deal from their leads that fully closes: paid in full, or marked fully closed by a manager.",
+        )}
         <TeamField
           label="Currency"
           htmlFor={`${id}-currency`}
@@ -622,6 +665,27 @@ function PayEditor({
         <span className="muted text-xs">
           10% of cash collected and {money(CLOSER_PLAN.pif_bonus)} when a client
           pays in full
+        </span>
+        <button
+          type="button"
+          onClick={() => {
+            setError(null);
+            setF(x => ({
+              ...x,
+              base: String(SETTER_PLAN.base_monthly),
+              perQualified: String(SETTER_PLAN.per_intro_qualified),
+              perFullClose: String(SETTER_PLAN.per_full_close),
+              currency: SETTER_PLAN.currency,
+            }));
+          }}
+          className={button}
+        >
+          Use the setter plan
+        </button>
+        <span className="muted text-xs">
+          {money(SETTER_PLAN.base_monthly)} a month,{" "}
+          {money(SETTER_PLAN.per_intro_qualified)} per qualified intro,{" "}
+          {money(SETTER_PLAN.per_full_close)} per fully closed deal
         </span>
       </div>
     </form>

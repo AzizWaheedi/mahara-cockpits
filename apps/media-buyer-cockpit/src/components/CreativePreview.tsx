@@ -1,5 +1,5 @@
 import {
-  ExternalLink,
+  ArrowUpRight,
   ImageOff,
   LoaderCircle,
   Play,
@@ -121,7 +121,7 @@ const BOX = {
 } as const;
 
 const NOTE = {
-  loading: "Getting a fresh preview from Meta...",
+  loading: "Getting a fresh preview from Meta…",
   timedOut:
     "Meta's preview did not load. The browser may be blocking it. Showing the saved picture.",
   noId: "We do not have this ad's Meta id, so a live preview cannot be fetched.",
@@ -467,10 +467,10 @@ function AdsManagerLink({
       href={adsManagerUrl(adId, accountId)}
       target="_blank"
       rel="noreferrer noopener"
-      className="inline-flex items-center gap-1 text-[12px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+      className="inline-flex min-h-8 items-center gap-1 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground pointer-coarse:min-h-10"
     >
-      <ExternalLink className="h-3 w-3" aria-hidden />
       Open in Ads Manager
+      <ArrowUpRight className="size-3.5" aria-hidden />
     </a>
   );
 }
@@ -553,6 +553,9 @@ function PreviewBody({
   const stills = bigChain(p, result, now);
   const hasStill = Boolean(useFirstWorking(stills));
   const noPicture = !loading && !showFrame && !hasStill;
+  // One spinner at a time: the empty picture box spins while there is no
+  // picture to show, otherwise the note beside the picture does.
+  const boxSpins = loading && !showFrame && !hasStill;
 
   let note: string | undefined;
   if (loading) note = NOTE.loading;
@@ -599,7 +602,7 @@ function PreviewBody({
           role="status"
           className="flex items-start gap-1.5 text-[12px] text-muted-foreground"
         >
-          {loading && (
+          {loading && !boxSpins && (
             <LoaderCircle
               className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin"
               aria-hidden
@@ -624,7 +627,7 @@ function PreviewBody({
           <button
             type="button"
             onClick={() => setStillChosen(true)}
-            className="text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+            className="inline-flex min-h-8 items-center text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground pointer-coarse:min-h-10"
           >
             Blank, or says expired? Show the saved picture
           </button>
@@ -656,7 +659,7 @@ function PreviewBody({
           <Button
             size="sm"
             variant="outline"
-            className="h-7 px-2 text-[12px]"
+            className="px-2.5 text-xs"
             onClick={retry}
           >
             <RefreshCw aria-hidden />
@@ -668,7 +671,7 @@ function PreviewBody({
           <Button
             size="sm"
             variant="ghost"
-            className="h-7 px-2 text-[12px]"
+            className="px-2.5 text-xs"
             onClick={onClose}
           >
             Hide the preview
@@ -729,24 +732,18 @@ export function CreativePreview(props: CreativePreviewProps) {
                 </div>
               }
             />
+            {/* One action per card: Watch opens the preview, and the
+                preview carries the link to Ads Manager. */}
             {canWatch && (
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  className="h-7 px-2 text-[12px]"
-                  onClick={() => setOpen(true)}
-                >
-                  <Play aria-hidden />
-                  Watch
-                </Button>
-                {metaAdId && (
-                  <AdsManagerLink
-                    adId={metaAdId}
-                    accountId={props.accountId ?? known?.accountId}
-                  />
-                )}
-              </div>
+              <Button
+                size="sm"
+                variant="secondary"
+                className="h-7 px-2.5 text-xs"
+                onClick={() => setOpen(true)}
+              >
+                <Play aria-hidden />
+                Watch
+              </Button>
             )}
           </>
         )}

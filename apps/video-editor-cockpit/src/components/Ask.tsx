@@ -3,6 +3,8 @@ import { useWho } from "../lib/auth";
 import { askFor } from "../lib/data";
 import { moment } from "../lib/format";
 import type { AskTopic, Job } from "../lib/types";
+import { chip, FIELD } from "./bits";
+import { Button } from "./ui/button";
 
 /**
  * The editor is short of something.
@@ -59,13 +61,15 @@ export default function Ask({ job, onSent }: { job: Job; onSent: () => void }) {
   return (
     <div className="space-y-3">
       {job.asked_for ? (
-        <p className="muted text-sm">
+        <p className="text-sm text-muted-foreground">
           Last asked for {job.asked_for} by {job.asked_by || "someone"} on{" "}
           {moment(job.asked_at)}.
         </p>
       ) : null}
 
-      <div className="flex flex-wrap gap-1.5">
+      {/* Eight choices: one row that slides sideways on a phone (to the
+          card's edges, which pad 16px there), wrapping from a tablet up. */}
+      <div className="-mx-4 flex flex-nowrap gap-2 overflow-x-auto px-4 no-scrollbar sm:mx-0 sm:flex-wrap sm:px-0">
         {TOPICS.map(t => (
           <button
             key={t.key}
@@ -75,11 +79,7 @@ export default function Ask({ job, onSent }: { job: Job; onSent: () => void }) {
               setSaid(null);
             }}
             aria-pressed={topic === t.key}
-            className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
-              topic === t.key
-                ? "bg-[color:var(--primary)] text-[color:var(--primary-foreground)]"
-                : "raised muted hover:text-[color:var(--foreground)]"
-            }`}
+            className={chip(topic === t.key)}
           >
             {t.label}
           </button>
@@ -98,32 +98,33 @@ export default function Ask({ job, onSent }: { job: Job; onSent: () => void }) {
                 ? "What do you need?"
                 : "Anything worth adding (optional)"
             }
-            className="raised w-full resize-y rounded-[var(--radius-md)] border hairline px-3 py-2 text-sm"
+            aria-label="What you need"
+            dir="auto"
+            className={`${FIELD} resize-y py-2 text-foreground`}
           />
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              disabled={busy}
-              onClick={send}
-              className="rounded-[var(--radius-md)] bg-[color:var(--primary)] px-3 py-1.5 text-sm font-medium text-[color:var(--primary-foreground)] disabled:opacity-50"
-            >
+          <div className="flex items-center gap-2">
+            <Button disabled={busy} onClick={send}>
               {busy ? "Sending" : "Put it on the card"}
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="ghost"
+              className="text-muted-foreground hover:text-foreground"
               onClick={() => {
                 setTopic(null);
                 setNote("");
               }}
-              className="muted text-sm"
             >
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       )}
 
-      {said && <p className="muted text-sm">{said}</p>}
+      {said && (
+        <p role="status" className="text-sm text-muted-foreground">
+          {said}
+        </p>
+      )}
     </div>
   );
 }

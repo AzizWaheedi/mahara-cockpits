@@ -105,7 +105,7 @@ export type BillingApi = {
 // sheet looks the same in the client success cockpit, which has no CEO kit.
 // Status colour goes on a dot or a mark, never on text.
 const STYLE = `
-.billing-root{--b-good:#0ca30c;--b-warning:#fab219;--b-serious:#ec835a;--b-critical:#d03b3b;--b-line:color-mix(in srgb,currentColor 14%,transparent);--b-today:color-mix(in srgb,currentColor 45%,transparent)}
+.billing-root{--b-good:var(--success);--b-warning:var(--warning);--b-serious:color-mix(in oklch,var(--warning) 45%,var(--destructive));--b-critical:var(--destructive);--b-line:color-mix(in srgb,currentColor 14%,transparent);--b-today:color-mix(in srgb,currentColor 45%,transparent)}
 `;
 
 const TONE: Record<Ladder["tone"], string> = {
@@ -120,12 +120,14 @@ const TONE: Record<Ladder["tone"], string> = {
 const select =
   "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring md:text-sm";
 const label = "text-xs font-medium text-muted-foreground";
+// Filter and choice chips: teal when chosen, quiet otherwise.
 const chip = (on: boolean) =>
-  `rounded-full border px-2.5 py-1 text-xs transition-colors ${on ? "border-transparent bg-foreground text-background" : "text-muted-foreground hover:text-foreground"}`;
+  `inline-flex h-8 items-center whitespace-nowrap rounded-full border px-3 text-xs font-medium transition-colors ${on ? "border-primary/40 bg-primary/15 text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`;
 
+// An empty value reads "n/a" or "Not set", never a dash.
 const usd = (v: number | null | undefined) =>
   v === null || v === undefined
-    ? "—"
+    ? "n/a"
     : `$${v.toLocaleString("en-US", { maximumFractionDigits: v % 1 ? 2 : 0 })}`;
 
 const MONTHS = [
@@ -143,7 +145,7 @@ const MONTHS = [
   "Dec",
 ];
 const shortDay = (d: string | null | undefined) => {
-  if (!d) return "—";
+  if (!d) return "Not set";
   const [, m, day] = d.split("-").map(Number);
   return `${day} ${MONTHS[m - 1]}`;
 };
@@ -462,7 +464,9 @@ function Panel({
 
   return (
     <div className="grid gap-5 border-t bg-muted/30 px-3 py-4 sm:px-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] lg:gap-8">
-      <div className="grid min-w-0 content-start gap-4">
+      {/* A container: the fields below are laid out by this column's own
+          width, which is narrow beside the numbers from 1024px up. */}
+      <div className="@container grid min-w-0 content-start gap-4">
         <div
           className="flex flex-wrap gap-1"
           role="tablist"
@@ -488,7 +492,7 @@ function Panel({
 
         {tab === "pay" ? (
           <div className="grid gap-3">
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-3 @xl:grid-cols-4">
               <Field label="Received on">
                 {id => (
                   <>
@@ -549,7 +553,7 @@ function Panel({
                 )}
               </Field>
             </div>
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 @md:grid-cols-2">
               <Field label="Receipt or transfer photo">
                 {id => (
                   <>
@@ -575,7 +579,7 @@ function Panel({
                 )}
               </Field>
             </div>
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 @md:grid-cols-2">
               <Field label="Their next payment">
                 {id => (
                   <>
@@ -829,7 +833,7 @@ function Panel({
 
         {tab === "method" ? (
           <div className="grid gap-3 sm:max-w-lg">
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 @md:grid-cols-2">
               <Field label="Payment method">
                 {id => (
                   <>
@@ -1375,7 +1379,7 @@ export function BillingSheet({ api }: { api: BillingApi }) {
                         className={`block truncate ${r.method ? "" : "text-muted-foreground"}`}
                       >
                         {r.method ??
-                          (r.group === "active" ? "No method set" : "—")}
+                          (r.group === "active" ? "No method set" : "n/a")}
                       </span>
                       <span className="block truncate text-xs text-muted-foreground">
                         {r.plan ?? "No plan"}
@@ -1385,7 +1389,7 @@ export function BillingSheet({ api }: { api: BillingApi }) {
                     <span className="grid min-w-0 gap-1">
                       <span className="flex items-baseline justify-between gap-2 text-sm tabular-nums">
                         <span className="hidden font-medium md:inline">
-                          {isPaused ? "—" : usd(r.nextUsd)}
+                          {isPaused ? "n/a" : usd(r.nextUsd)}
                         </span>
                         <span className="truncate text-xs text-muted-foreground">
                           {due}

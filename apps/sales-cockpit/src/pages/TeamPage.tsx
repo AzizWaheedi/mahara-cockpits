@@ -1,9 +1,11 @@
 import { UsersRound } from "lucide-react";
 import { useEffect, useState } from "react";
+import { Link } from "react-router";
 import {
   buttonPrimary,
   EmptyState,
   Failed,
+  page,
   SectionCard,
   StatusChip,
 } from "../components/kit";
@@ -14,12 +16,14 @@ import {
   useMirrorRun,
   useNow,
   usePeople,
+  useQuery,
   useReps,
   useSetting,
   useWorkerStatus,
 } from "../lib/data";
 import { ago } from "../lib/format";
 import { portalUrl } from "../lib/portal";
+import { supabase } from "../lib/supabase";
 import { toast } from "../lib/toast";
 import type { Me, Person } from "../lib/types";
 
@@ -82,9 +86,9 @@ export default function TeamPage({ me }: { me: Me }) {
   const paused = seats.filter(p => !p.active).length;
 
   return (
-    <main className="mx-auto w-full max-w-6xl space-y-5 px-4 py-6 md:px-6">
+    <main className={page}>
       <header className="min-w-0">
-        <h1 className="text-xl font-semibold tracking-tight">Team</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Team</h1>
         <p className="muted mt-1 max-w-2xl text-sm">
           Add someone on the{" "}
           <a
@@ -98,10 +102,10 @@ export default function TeamPage({ me }: { me: Me }) {
         </p>
       </header>
 
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-12">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:gap-6">
         <div className="min-w-0 space-y-4 lg:col-span-8">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <h2 className="text-sm font-semibold tracking-tight">Seats</h2>
+            <h2 className="text-[15px] font-semibold tracking-tight">Seats</h2>
             {people.data ? (
               <span className="muted text-xs">
                 {seats.length} {seats.length === 1 ? "seat" : "seats"}
@@ -143,7 +147,7 @@ export default function TeamPage({ me }: { me: Me }) {
           ) : null}
         </div>
 
-        <div className="min-w-0 space-y-5 lg:col-span-4">
+        <div className="min-w-0 space-y-4 lg:col-span-4 lg:space-y-6">
           <CrmWritesCard />
           <HealthCard now={now} />
         </div>
@@ -220,7 +224,9 @@ function CrmWritesCard() {
               </p>
               <p className="muted mt-0.5 text-xs">
                 A mark on a recent call runs HighLevel's usual automations (the
-                no-show message, for example).
+                no-show message, for example). An older call's mark changes the
+                status in HighLevel without running them, so nobody is messaged
+                about a call from weeks ago.
               </p>
             </div>
           </div>
@@ -248,7 +254,7 @@ function CrmWritesCard() {
               onChange={e => setDays(e.target.value)}
               className="h-8 w-16 rounded-[var(--radius-md)] border hairline bg-[color:var(--background)] px-2 text-sm tabular-nums"
             />
-            <span>days stay in the cockpit only.</span>
+            <span>days go to HighLevel quietly, with no automations.</span>
             {changed ? (
               <button type="submit" disabled={busy} className={buttonPrimary}>
                 {busy ? "Saving…" : "Save"}
@@ -274,7 +280,7 @@ function CrmWritesCard() {
 function countText(v: unknown): string {
   if (typeof v === "number") return v.toLocaleString("en-US");
   if (typeof v === "string") return v;
-  if (v === null || v === undefined) return "--";
+  if (v === null || v === undefined) return "n/a";
   // A step that reports more than a count ({n, full, dropped}, or a note
   // that it was skipped) is shown as its count and the one thing worth
   // knowing about it.
@@ -291,13 +297,259 @@ function countText(v: unknown): string {
       return `${o.n.toLocaleString("en-US")}${extra.length ? ` (${extra.join(", ")})` : ""}`;
     }
   }
-  return "--";
+  return "n/a";
 }
 
-/** The last copy from B2B and the worker's own reports. */
+/**
+ * How long each desk job may go without a run before it counts as late: the
+ * same limits the portal's sales watch alerts on (convex/salesWatch.ts). Jobs
+ * not listed write only when they have work, so their age says nothing.
+ */
+const DESK_LIMITS_MIN: Record<string, number> = {
+  requests: 15,
+  followups: 75,
+  "maqsam-calls": 75,
+  "calls-vault": 75,
+  recordings: 75,
+  reviews: 75,
+  notes: 75,
+  digest: 26 * 60,
+};
+
+/** Tokens the desk's model calls used since Kuwait's midnight. */
+function useAiToday() {
+  return useQuery<number>(async () => {
+    const k = new Date(Date.now() + 3 * 3_600_000);
+    const midnight = new Date(
+      Date.UTC(k.getUTCFullYear(), k.getUTCMonth(), k.getUTCDate()) -
+        3 * 3_600_000,
+    ).toISOString();
+    const { data, error } = await supabase.rpc(
+      "cockpit_sales_ai_tokens_since",
+      { p_since: midnight },
+    );
+    return { data: data === null ? null : Number(data), error };
+  }, []);
+}
+
+/** B2B's own sources in plain words; anything not listed keeps its name. */
+const SOURCE_WORDS: Record<string, string> = {
+  fathom_calls: "Fathom's video calls",
+  maqsam_calls: "Maqsam's phone calls",
+  ghl_calls: "HighLevel's calendar",
+  leads: "HighLevel's leads",
+  meta: "Meta's ads",
+  typeform: "The New Client Form",
+  typeform_eod: "The end-of-day forms",
+  whop_payments: "Whop's payments",
+  assets_web: "The asset library (web)",
+  assets_wistia: "The asset library (Wistia)",
+  assets_social_youtube_mahara: "The asset library (YouTube)",
+  assets_social_ig_mahara: "The asset library (Instagram)",
+};
+
+interface B2bSources {
+  read_at: string;
+  sources: {
+    source: string;
+    last_synced_at: string | null;
+    last_sync_status: string | null;
+    last_error: string | null;
+  }[];
+}
+
+/**
+ * When B2B last read each of its own sources. The copy from B2B can be fresh
+ * while what B2B holds is old: a recording missing because B2B stopped
+ * reading Fathom is not a call that never happened.
+ */
+function SourcesPart({ now }: { now: number }) {
+  const s = useSetting<B2bSources>("b2b_sources");
+  const list = s.data?.sources ?? [];
+  const failing = list.filter(x => x.last_sync_status === "error");
+  return (
+    <>
+      <h3 className="mt-5 text-xs font-semibold">What B2B reads</h3>
+      <div className="mt-2">
+        {s.error ? (
+          <Failed what="B2B's sources" error={s.error} retry={s.reload} />
+        ) : !s.data ? (
+          <p className="muted text-sm">
+            {s.loading
+              ? "Reading…"
+              : "Not copied yet; the next copy brings it."}
+          </p>
+        ) : (
+          <>
+            <ul className="space-y-1 text-xs">
+              {[
+                ...failing,
+                ...list.filter(x => x.last_sync_status !== "error"),
+              ].map(x => (
+                <li
+                  key={x.source}
+                  className="flex min-w-0 justify-between gap-2"
+                >
+                  <span className="truncate">
+                    {SOURCE_WORDS[x.source] ?? x.source}
+                  </span>
+                  <span
+                    className="shrink-0 tabular-nums"
+                    style={
+                      x.last_sync_status === "error"
+                        ? { color: "var(--destructive)" }
+                        : undefined
+                    }
+                    title={x.last_error ?? undefined}
+                  >
+                    {x.last_sync_status === "error"
+                      ? `failing, last read ${ago(x.last_synced_at, now)}`
+                      : `read ${ago(x.last_synced_at, now)}`}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            {failing.length ? (
+              <p className="muted mt-1 text-xs">
+                B2B is Muhammed's: a failing source is fixed there, and what it
+                should have brought is missing here until then.
+              </p>
+            ) : null}
+          </>
+        )}
+      </div>
+    </>
+  );
+}
+
+/** Past calls nobody marked: each counts as shown until it is (the show-rate rule). */
+function UnmarkedPart() {
+  const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  const q = useQuery<{ start_at: string }[]>(
+    () =>
+      supabase
+        .from("cockpit_sales_calendar")
+        .select("start_at")
+        .eq("needs_mark", true)
+        .gte("start_at", since)
+        .order("start_at", { ascending: true })
+        .limit(1000),
+    [],
+    300_000,
+  );
+  const n = q.data?.length ?? 0;
+  return (
+    <>
+      <h3 className="mt-5 text-xs font-semibold">Calls waiting on a mark</h3>
+      <div className="mt-1 text-xs">
+        {q.error ? (
+          <Failed what="The unmarked calls" error={q.error} retry={q.reload} />
+        ) : !q.data ? (
+          <p className="muted">Reading…</p>
+        ) : !n ? (
+          <p className="muted">Every call of the last 30 days is marked.</p>
+        ) : (
+          <p>
+            {n} past {n === 1 ? "call" : "calls"} of the last 30 days{" "}
+            {n === 1 ? "is" : "are"} not marked, the oldest from{" "}
+            {ago(q.data[0].start_at)}. Until marked, each counts as shown.{" "}
+            <Link to="/calendar" className="underline underline-offset-2">
+              Mark them on the Calendar
+            </Link>
+            .
+          </p>
+        )}
+      </div>
+    </>
+  );
+}
+
+interface DialCheck {
+  day: string;
+  agent_email: string;
+  maqsam_calls: number;
+  copied_calls: number;
+  checked_at: string;
+}
+
+/**
+ * The second source for every dial count: per agent, the last seven days'
+ * calls in Maqsam against the calls the cockpit holds (written by the sales
+ * desk, which reads Maqsam itself). Managers only.
+ */
+function DialChecksPart() {
+  const q = useQuery<DialCheck[]>(
+    () =>
+      supabase
+        .from("cockpit_sales_dial_checks")
+        .select("*")
+        .order("day", { ascending: false })
+        .limit(500),
+    [],
+    300_000,
+  );
+  const byAgent = new Map<
+    string,
+    { maqsam: number; copied: number; at: string }
+  >();
+  for (const c of q.data ?? []) {
+    const cur = byAgent.get(c.agent_email) ?? {
+      maqsam: 0,
+      copied: 0,
+      at: c.checked_at,
+    };
+    byAgent.set(c.agent_email, {
+      maqsam: cur.maqsam + c.maqsam_calls,
+      copied: cur.copied + c.copied_calls,
+      at: cur.at > c.checked_at ? cur.at : c.checked_at,
+    });
+  }
+  const rows = [...byAgent.entries()].sort((a, b) => b[1].maqsam - a[1].maqsam);
+  return (
+    <>
+      <h3 className="mt-5 text-xs font-semibold">
+        Calls in Maqsam against the cockpit, 7 days
+      </h3>
+      <div className="mt-1 text-xs">
+        {q.error ? (
+          <Failed what="The call check" error={q.error} retry={q.reload} />
+        ) : !q.data ? (
+          <p className="muted">Reading…</p>
+        ) : !rows.length ? (
+          <p className="muted">
+            Not checked yet. The sales desk compares them each time it reads
+            Maqsam, twice an hour.
+          </p>
+        ) : (
+          <ul className="space-y-1">
+            {rows.map(([agent, v]) => (
+              <li key={agent} className="flex min-w-0 justify-between gap-2">
+                <span className="truncate">{agent.split("@")[0]}</span>
+                <span
+                  className="shrink-0 tabular-nums"
+                  style={
+                    v.copied < v.maqsam
+                      ? { color: "var(--destructive)" }
+                      : undefined
+                  }
+                >
+                  {v.copied} of {v.maqsam}
+                  {v.copied < v.maqsam ? " (some missing)" : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </>
+  );
+}
+
+/** The last copy from B2B and the desk's own reports. */
 function HealthCard({ now }: { now: number }) {
   const mirror = useMirrorRun();
   const workers = useWorkerStatus();
+  const ai = useAiToday();
   const run = mirror.data;
   const late = run?.finished_at
     ? now - Date.parse(run.finished_at) > 20 * 60_000
@@ -365,7 +617,18 @@ function HealthCard({ now }: { now: number }) {
         )}
       </div>
 
-      <h3 className="mt-5 text-xs font-semibold">Proposal worker</h3>
+      <SourcesPart now={now} />
+      <UnmarkedPart />
+      <DialChecksPart />
+
+      <h3 className="mt-5 text-xs font-semibold">The sales desk</h3>
+      <p className="muted mt-1 text-xs">
+        {ai.error
+          ? `Today's AI use could not be read: ${ai.error}.`
+          : ai.data === null
+            ? "Reading today's AI use…"
+            : `AI since midnight: ${Math.round(ai.data / 1000).toLocaleString()} thousand tokens (counted since 26 September, when the meter started). The desk stops calling the model at its daily ceiling, 15 million unless set otherwise on the desk, and starts again at midnight.`}
+      </p>
       <div className="mt-2">
         {workers.error ? (
           <Failed
@@ -377,34 +640,43 @@ function HealthCard({ now }: { now: number }) {
           workers.loading ? (
             <p className="muted text-sm">Loading…</p>
           ) : (
-            <EmptyState
-              compact
-              title="The proposal worker has not reported yet."
-            />
+            <EmptyState compact title="The sales desk has not reported yet." />
           )
         ) : (
           <ul className="divide-y hairline">
-            {list.map(w => (
-              <li key={`${w.worker}:${w.job}`} className="py-2">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="min-w-0 truncate text-sm font-medium">
-                    {w.job}
-                  </span>
-                  <StatusChip
-                    tone={w.ok ? "good" : "critical"}
-                    label={w.ok ? "OK" : "Failing"}
-                  />
-                </div>
-                {w.detail ? (
-                  <p className="muted mt-0.5 text-xs [overflow-wrap:anywhere]">
-                    {w.detail}
+            {list.map(w => {
+              const limit = DESK_LIMITS_MIN[w.job];
+              const late =
+                w.worker === "sales-desk" &&
+                limit !== undefined &&
+                now - Date.parse(w.at) > limit * 60_000;
+              return (
+                <li key={`${w.worker}:${w.job}`} className="py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="min-w-0 truncate text-sm font-medium">
+                      {w.job}
+                    </span>
+                    <StatusChip
+                      tone={!w.ok ? "critical" : late ? "warning" : "good"}
+                      label={!w.ok ? "Failing" : late ? "Late" : "OK"}
+                      title={
+                        late
+                          ? `It should run at least every ${limit} minutes; the portal alerts Aziz when it stays late.`
+                          : undefined
+                      }
+                    />
+                  </div>
+                  {w.detail ? (
+                    <p className="muted mt-0.5 text-xs [overflow-wrap:anywhere]">
+                      {w.detail}
+                    </p>
+                  ) : null}
+                  <p className="muted mt-0.5 text-xs">
+                    {w.worker} · {ago(w.at, now)}
                   </p>
-                ) : null}
-                <p className="muted mt-0.5 text-[11px]">
-                  {w.worker} · {ago(w.at, now)}
-                </p>
-              </li>
-            ))}
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

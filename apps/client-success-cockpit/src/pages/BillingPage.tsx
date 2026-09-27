@@ -1,15 +1,10 @@
 import { useMemo } from "react";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
-import {
-  type BillingApi,
-  type BillingPayload,
-  BillingSheet,
-} from "@/components/billing/BillingSheet";
-import {
-  editBillingAccount,
-  fetchBillingSheet,
-  logBillingPayment,
-} from "@/lib/billing";
+import { type BillingApi, type BillingPayload, BillingSheet } from "@/components/billing/BillingSheet";
+import { editBillingAccount, fetchBillingSheet, logBillingPayment } from "@/lib/billing";
+import { PageHeader } from "@/components/kit";
+
+
 
 /**
  * Billing: the same sheet as the CEO cockpit's Billing tab, over the clients
@@ -77,14 +72,11 @@ export function BillingPage() {
   );
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-4">
-      <header>
-        <h1 className="text-xl font-semibold tracking-tight">Billing</h1>
-        <p className="mt-1 text-[13px] text-muted-foreground">
-          Who pays next, how they pay, and what the billing SOP says to do
-          today. Every change is made on the ClickUp card.
-        </p>
-      </header>
+    <div className="mx-auto w-full max-w-6xl space-y-6">
+      <PageHeader
+        title="Billing"
+        sub="Who pays next, how they pay, and what the billing SOP says to do today. Every change is made on the ClickUp card."
+      />
       <BillingSheet api={wired} />
     </div>
   );

@@ -1,7 +1,7 @@
 import { FileText } from "lucide-react";
 import { useMemo } from "react";
 import { Link } from "react-router";
-import { EmptyState, Failed, SectionCard } from "../components/kit";
+import { EmptyState, Failed, page, SectionCard } from "../components/kit";
 import { ProposalChip } from "../components/ProposalPanel";
 import { useScope } from "../components/Scope";
 import { useLeadsById, useProposals } from "../lib/data";
@@ -54,11 +54,11 @@ export default function ProposalsPage({ me }: { me: Me }) {
   );
 
   return (
-    <main className="mx-auto w-full max-w-4xl space-y-5 px-4 py-6 md:px-6">
+    <main className={page}>
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Proposals</h1>
-          <p className="muted text-sm">
+          <h1 className="text-2xl font-semibold tracking-tight">Proposals</h1>
+          <p className="muted mt-1 text-sm">
             Drafted from the demo call by the proposal writer. Open one to fill
             any blanks, read it, download the PDF and mark it sent.
           </p>
@@ -72,13 +72,13 @@ export default function ProposalsPage({ me }: { me: Me }) {
           retry={proposals.reload}
         />
       ) : !list.length && !proposals.loading ? (
-        <SectionCard title="Nothing yet">
+        <section className="panel">
           <EmptyState
             icon={FileText}
             title="No proposals yet"
             text="Open a lead after the demo and choose Draft proposal. It takes about ten minutes."
           />
-        </SectionCard>
+        </section>
       ) : (
         <>
           {waiting.length ? (

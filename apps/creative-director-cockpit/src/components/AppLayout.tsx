@@ -1,22 +1,15 @@
-import {
-  AnimatePresence,
-  MotionConfig,
-  motion,
-  useReducedMotion,
-} from "framer-motion";
+import { MotionConfig, motion, useReducedMotion } from "framer-motion";
 import { useCallback, useLayoutEffect, useRef } from "react";
+
+
+import { useEffect } from "react";
 import { useLocation, useOutlet } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { AppSidebar } from "./AppSidebar";
 import { HermesChat } from "./HermesChat";
 import { RouteErrorBoundary } from "./RouteErrorBoundary";
-import { ThemeToggle } from "./ThemeToggle";
-import {
-  SidebarInset,
-  SidebarProvider,
-  SidebarTrigger,
-  useSidebar,
-} from "./ui/sidebar";
+import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "./ui/sidebar";
+import { Wordmark } from "./Wordmark";
 
 export function AppLayout() {
   return (
@@ -42,18 +35,24 @@ function LayoutContent() {
     async (r: any) => {
       if (!client) return;
       try {
-        await client.rpc("cockpit_report_issue", {
+        const { error } = await client.rpc("cockpit_submit_issue_report", {
           p_app: "creative",
           p_page: location.pathname,
           p_text: typeof r === "string" ? r : r?.message ?? "App error",
           p_role: "creative",
         });
+        if (error) throw error;
       } catch (err) {
         console.error("Failed to report issue:", err);
       }
     },
     [client, location.pathname],
   );
+  // The first screen appears as it is; only a change of page fades in.
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+  }, []);
   useLayoutEffect(() => {
     if (previousOpen.current === open) return;
     previousOpen.current = open;
@@ -77,36 +76,38 @@ function LayoutContent() {
     <>
       <AppSidebar />
       <SidebarInset ref={inset}>
-        <div className="sticky top-2.5 z-40 px-3 md:px-4 pt-safe">
-          <header className="flex h-11 items-center justify-between rounded-full border border-border/60 bg-card/80 px-3.5 shadow-xs backdrop-blur-md transition-all">
-            <SidebarTrigger className="md:hidden" />
-            <div className="ml-auto flex items-center gap-2">
-              <ThemeToggle />
-            </div>
-          </header>
-        </div>
-        <main className="flex-1 p-4 lg:p-6">
-          <RouteErrorBoundary report={handleReport}>
-            <AnimatePresence initial={false} mode="wait">
-              <motion.div
-                key={location.pathname}
-                initial={{ opacity: 0, y: reduced ? 0 : 4 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{
-                  opacity: 0,
-                  y: reduced ? 0 : -2,
-                  pointerEvents: "none",
-                }}
-                transition={{
-                  duration: reduced ? 0 : 0.16,
-                  ease: [0.2, 0.8, 0.2, 1],
-                }}
-              >
-                {outlet}
-              </motion.div>
-            </AnimatePresence>
+        {/* Below 1024px a slim bar holds the menu, clear of the status bar
+            in the installed app. From 1024px up the rail is always there,
+            so there is no bar at all; the theme lives in the account menu. */}
+        <header className="sticky top-0 z-30 border-b border-border/60 bg-background/85 px-2 pt-safe backdrop-blur lg:hidden">
+          <div className="flex h-14 items-center gap-2">
+            <SidebarTrigger className="size-10" />
+            <Wordmark size="sm" />
+            <span className="text-sm text-muted-foreground">
+              Creative director
+            </span>
+          </div>
+        </header>
+        {/* A div, not a second <main>: SidebarInset is the page's <main>,
+            so the touch-size rule in index.css still reaches every button.
+            The new page fades straight in; nothing waits for the old one
+            to fade out, so there is no blank moment between pages. Opacity
+            only: a transform here would pin the Social sheet (position:
+            fixed) to this wrapper instead of the screen. */}
+        <div className="flex-1 px-4 pt-4 pb-24 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8 lg:pb-12">
+          <RouteErrorBoundary
+            report={handleReport}
+          >
+            <motion.div
+              key={location.pathname}
+              initial={mounted.current && !reduced ? { opacity: 0 } : false}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.14, ease: [0.2, 0.8, 0.2, 1] }}
+            >
+              {outlet}
+            </motion.div>
           </RouteErrorBoundary>
-        </main>
+        </div>
         <HermesChat />
       </SidebarInset>
     </>

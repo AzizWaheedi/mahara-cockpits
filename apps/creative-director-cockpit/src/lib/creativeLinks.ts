@@ -116,7 +116,7 @@ export const LINK_GROUPS: LinkGroup[] = [
         note: "Script requests and creative onboarding sequences",
       },
       {
-        label: "Ads Managment (ClickUp)",
+        label: "Ads management (ClickUp)",
         url: "https://app.clickup.com/90182518398/v/li/901817774521",
         note: "What the media buyer is running with your creative",
       },

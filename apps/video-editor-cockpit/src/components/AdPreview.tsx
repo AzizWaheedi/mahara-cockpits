@@ -50,7 +50,7 @@ export default function AdPreviewFrame({
       <button
         type="button"
         onClick={openIt}
-        className="raised group relative block aspect-[4/5] w-full overflow-hidden rounded-[var(--radius-md)]"
+        className="group relative block aspect-[4/5] w-full overflow-hidden rounded-xl bg-muted"
       >
         {thumbUrl ? (
           <img
@@ -84,7 +84,9 @@ export default function AdPreviewFrame({
               />
             </div>
           ) : watchUrl ? (
-            <div className="aspect-[9/16] w-full">
+            // Sized by height, so a 9:16 ad fits a laptop screen instead of
+            // running to 900px and scrolling inside the panel.
+            <div className="mx-auto aspect-[9/16] h-[min(80dvh,720px)] max-w-full">
               <iframe
                 src={watchUrl}
                 title={title}
@@ -94,7 +96,7 @@ export default function AdPreviewFrame({
               />
             </div>
           ) : state === "loading" ? (
-            <p className="muted p-10 text-center text-sm">
+            <p className="p-10 text-center text-sm text-muted-foreground">
               Asking Meta for a preview…
             </p>
           ) : preview?.ok && preview.src ? (
@@ -107,13 +109,13 @@ export default function AdPreviewFrame({
                   height: Math.min(720, Math.max(420, preview.height ?? 560)),
                 }}
               />
-              <p className="muted text-[11px] leading-snug">
+              <p className="text-xs leading-snug text-muted-foreground">
                 Blank?{" "}
                 <a
                   href={preview.src}
                   target="_blank"
                   rel="noreferrer noopener"
-                  className="text-[color:var(--primary)] underline underline-offset-2"
+                  className="text-primary underline-offset-4 hover:underline"
                 >
                   Open it in a tab
                 </a>
@@ -127,10 +129,10 @@ export default function AdPreviewFrame({
                 <img
                   src={still}
                   alt=""
-                  className="mx-auto max-h-96 rounded-[var(--radius-md)]"
+                  className="mx-auto max-h-96 rounded-lg"
                 />
               ) : null}
-              <p className="muted text-sm">
+              <p className="text-sm text-muted-foreground">
                 {preview?.error ??
                   preview?.message ??
                   preview?.reason ??

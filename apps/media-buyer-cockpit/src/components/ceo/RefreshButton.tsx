@@ -7,6 +7,7 @@ export function RefreshButton({
   only,
   size = "md",
   label = "Refresh",
+  compact = false,
   className,
 }: {
   /** Limit the recompute to these sections; leave out for everything. */
@@ -15,6 +16,8 @@ export function RefreshButton({
   size?: "sm" | "md";
   /** Button text when idle. */
   label?: string;
+  /** Icon only on a phone, the label from the small tablet size up. */
+  compact?: boolean;
   className?: string;
 }) {
   const { refresh, busy } = useRefresh();
@@ -24,9 +27,11 @@ export function RefreshButton({
       onClick={() => void refresh(only)}
       disabled={busy}
       aria-busy={busy}
+      aria-label={busy ? "Refreshing" : label}
       className={cn(
-        "inline-flex items-center gap-2 rounded-lg border bg-card font-medium text-foreground transition-colors hover:bg-[var(--ceo-emphasis-wash)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-80",
+        "inline-flex shrink-0 items-center justify-center gap-2 rounded-full border bg-card font-medium text-foreground transition-colors hover:bg-[var(--ceo-emphasis-wash)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-80",
         size === "md" ? "h-9 px-3.5 text-sm" : "h-8 px-3 text-xs",
+        compact && "size-10 px-0 sm:h-9 sm:w-auto sm:px-3.5",
         className,
       )}
     >
@@ -41,7 +46,9 @@ export function RefreshButton({
           aria-hidden
         />
       )}
-      <span>{busy ? "Refreshing" : label}</span>
+      <span className={compact ? "hidden sm:inline" : undefined}>
+        {busy ? "Refreshing" : label}
+      </span>
     </button>
   );
 }

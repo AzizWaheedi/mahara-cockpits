@@ -1,6 +1,6 @@
 import {
+  ArrowUpRight,
   CircleCheck,
-  ExternalLink,
   OctagonAlert,
   Rocket,
   ShieldCheck,
@@ -121,7 +121,7 @@ function TileRow({
   return (
     <div
       className={cn(
-        "grid min-w-0 grid-cols-2 gap-x-6 gap-y-5 @2xl:grid-cols-3",
+        "grid min-w-0 grid-cols-2 gap-x-6 gap-y-6 @2xl:grid-cols-3",
         className,
       )}
     >
@@ -221,7 +221,7 @@ function BookCard({
       : "";
   return (
     <SectionCard
-      kicker="What the clients already here bring in"
+      kicker="Existing clients"
       title="Backend revenue"
       section={moneySection}
       alsoReads={[clients]}
@@ -229,15 +229,16 @@ function BookCard({
       notes={BOOK_NOTES}
       order={0}
     >
-      <div className="grid grid-cols-2 gap-x-6 gap-y-5 @lg:grid-cols-3 @3xl:grid-cols-6">
+      <div className="grid grid-cols-2 gap-x-6 gap-y-6 @lg:grid-cols-3 @3xl:grid-cols-6">
         <StatTile
           variant="plain"
           label="Recurring a month"
-          value={active ? money(active.recurringUsd) : "—"}
+          value={active ? money(active.recurringUsd) : null}
+          naHint="The client cards were not read yet."
           sub={
             active
               ? `${plural(active.cards, "active client")}${active.oneOffUsd > 0 ? ` · ${money(active.oneOffUsd)} on one-off plans` : ""}${onHold}`
-              : "client cards not read yet"
+              : "Client cards not read yet"
           }
           hint="The MRR typed on the active client cards that sit on a recurring plan, in USD. A card with no figure is missing from it, not zero. A pause holds the money; it is not counted as churn."
         />
@@ -247,12 +248,17 @@ function BookCard({
           value={
             retainer && isNum(retainer.averageUsd)
               ? money(retainer.averageUsd)
-              : "—"
+              : null
+          }
+          naHint={
+            retainer
+              ? "No active card on a recurring plan carries an MRR figure."
+              : "The clients section was not read yet."
           }
           sub={
             retainer
               ? plural(retainer.cards, "recurring active card")
-              : "clients not read yet"
+              : "Clients not read yet"
           }
           hint="The mean of the MRR field over active cards on a recurring plan. Typed by hand on the card; a blank card is left out."
         />
@@ -269,8 +275,9 @@ function BookCard({
               variant="plain"
               label="Collection rate"
               value={
-                isNum(book.collectionRate) ? pct(book.collectionRate) : "—"
+                isNum(book.collectionRate) ? pct(book.collectionRate) : null
               }
+              naHint="There is no projected MRR to measure the collection against."
               sub={`${money(book.collected)} collected of ${money(book.projectedMrr)}`}
               hint="Cash attributed to those clients this month, on every rail, over the projected MRR."
             />
@@ -287,7 +294,12 @@ function BookCard({
         <StatTile
           variant="plain"
           label="Average LTV"
-          value={avgLtv !== null ? money(avgLtv) : "—"}
+          value={avgLtv !== null ? money(avgLtv) : null}
+          naHint={
+            m
+              ? "No client card carries an LTV figure."
+              : "The money section was not read yet."
+          }
           sub={
             m
               ? `${count(m.ltv.filled)} of ${count(m.cards)} cards carry a figure`
@@ -298,13 +310,18 @@ function BookCard({
         <StatTile
           variant="plain"
           label="Churn this month"
-          value={churn && churn.rate !== null ? pct(churn.rate) : "—"}
+          value={churn && churn.rate !== null ? pct(churn.rate) : null}
+          naHint={
+            churn
+              ? (churn.rateWhy ?? "The churn rate is not known yet.")
+              : "The clients section was not read yet."
+          }
           sub={
             churn
               ? churn.rate === null
-                ? (churn.rateWhy ?? "not known yet")
+                ? `${plural(churn.churnedThisMonth.length, "launched client")} lost so far`
                 : `${count(churn.churnedThisMonth.length)} of ${count(churn.launchedAtMonthStart ?? 0)} launched clients${churn.complete ? "" : ", partial month"}`
-              : "clients not read yet"
+              : "Clients not read yet"
           }
           hint="Launched clients lost this month over launched clients at the start of the month. A pause is not churn, and a client that stops before its launch date is lost before launch, not churn."
         />
@@ -327,7 +344,7 @@ function MediaBuyingCard({
   const d = section?.payload ?? null;
   return (
     <SectionCard
-      kicker="Media buying, month to date"
+      kicker="Month to date"
       title="Client ads"
       section={section}
       notes={notes}
@@ -344,7 +361,6 @@ function MediaBuyingCard({
         </>
       }
       order={0}
-      bodyClassName="@container"
     >
       {p => <MediaBuyingBody d={p} />}
     </SectionCard>
@@ -444,7 +460,7 @@ function MediaBuyingBody({ d }: { d: DeliveryPayload }) {
         />
       </TileRow>
 
-      <TileRow className="border-t pt-5">
+      <TileRow className="border-t pt-6">
         <StatTile
           variant="plain"
           label="Campaigns running"
@@ -503,13 +519,20 @@ function CallCentreCard({
         ]
       : []),
     ...keepNotes(c?.notes, CALL_NOTE),
+    // How speed to lead is counted: a card note, not a paragraph in the body.
+    ...(c
+      ? speedSentences(c.speedToLead).map(text => ({
+          level: "info" as const,
+          text,
+        }))
+      : []),
   ];
   const median = c?.speedToLead.workingMedianMinutes7d ?? null;
   const speedTone = gateTone(median, SPEED_TARGET_MIN);
 
   return (
     <SectionCard
-      kicker="Call centre, today"
+      kicker="Today"
       title="Dials, connections and speed to lead"
       section={section}
       notes={notes}
@@ -523,14 +546,13 @@ function CallCentreCard({
                   ? `First call within ${SPEED_TARGET_MIN} min`
                   : `First call over ${SPEED_TARGET_MIN} min`
               }
-              hint={`Median time from a new lead to its first call over the last 7 days, against a ${SPEED_TARGET_MIN} minute target. Working hours come from Team & Payroll.`}
+              hint={`Median time from a new lead to its first call over the last 7 days, against a ${SPEED_TARGET_MIN} minute target. Working hours come from Team & payroll.`}
             />
           ) : null}
           <TabLink tab="calls" label="Calls" goTab={goTab} />
         </>
       }
       order={1}
-      bodyClassName="@container"
     >
       {p => <CallCentreBody c={p} />}
     </SectionCard>
@@ -614,19 +636,15 @@ function CallCentreBody({ c }: { c: CallsPayload }) {
           }
         />
       </TileRow>
-
-      <p className="border-t pt-4 text-xs leading-relaxed text-muted-foreground">
-        {speedSentences(s).join(" ")}
-      </p>
     </div>
   );
 }
 
-/** Call center response uses the shared Team & Payroll working clock. */
+/** Call center response uses the shared Team & payroll working clock. */
 function speedSentences(s: CallsPayload["speedToLead"]): string[] {
   return [
     `Speed to lead uses ${count(s.sample)} verified timed leads in the last 7 days. Its median excludes untimed leads; the 2-minute share includes all new leads in the cohort.`,
-    "Hours come from Team & Payroll. Dials count saved dispositions with notes; actual calls and connection rate use Maqsam evidence. Bookings use creation date. Delivery's bookings use appointment date.",
+    "Hours come from Team & payroll. Dials count saved dispositions with notes; actual calls and connection rate use Maqsam evidence. Bookings use creation date. Delivery's bookings use appointment date.",
   ];
 }
 
@@ -652,7 +670,7 @@ function ClientSuccessCard({
   const high = p ? highRiskCount(p) : null;
   return (
     <SectionCard
-      kicker="Client success"
+      kicker="Right now"
       title="The roster and who needs attention"
       section={section}
       notes={[
@@ -676,7 +694,6 @@ function ClientSuccessCard({
         </>
       }
       order={2}
-      bodyClassName="@container"
     >
       {c => <ClientSuccessBody p={c} />}
     </SectionCard>
@@ -720,7 +737,7 @@ function ClientSuccessBody({ p }: { p: ClientsPayload }) {
         />
       </TileRow>
 
-      <TileRow className="border-t pt-5">
+      <TileRow className="border-t pt-6">
         <StatTile
           variant="plain"
           label={churn.label}
@@ -739,10 +756,8 @@ function ClientSuccessBody({ p }: { p: ClientsPayload }) {
         />
       </TileRow>
 
-      <div className="min-w-0 border-t pt-5">
-        <p className="text-[13px] font-medium text-foreground">
-          Needs attention
-        </p>
+      <div className="min-w-0 border-t pt-6">
+        <p className="text-sm font-medium text-foreground">Needs attention</p>
         {attention.length === 0 ? (
           <EmptyState
             icon={CircleCheck}
@@ -763,6 +778,9 @@ function ClientSuccessBody({ p }: { p: ClientsPayload }) {
   );
 }
 
+/** The risk reason for silence, which the row's meta line already says in days. */
+const SILENT_REASON = /^silent \d+ days?$/i;
+
 function ClientRiskRow({ row }: { row: ClientRow }) {
   const risk = RISK[row.risk.level];
   const meta = [
@@ -771,26 +789,36 @@ function ClientRiskRow({ row }: { row: ClientRow }) {
       ? `${plural(row.silentDays, "day")} since the last contact`
       : "No contact date on the card",
   ].join(" · ");
+  const reasons = row.risk.reasons.filter(r => !SILENT_REASON.test(r));
   return (
     <li className="border-b border-[color:var(--ceo-grid)] py-3 first:pt-0 last:border-0 last:pb-0">
       <div className="flex min-w-0 items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="flex min-w-0 items-center gap-1.5">
-            <span className="truncate text-sm font-medium text-foreground">
+          {/* The name is the link to the ClickUp card: one trailing arrow, no second icon. */}
+          {row.clickupTaskId ? (
+            <a
+              href={`https://app.clickup.com/t/${encodeURIComponent(row.clickupTaskId)}`}
+              target="_blank"
+              rel="noreferrer"
+              title="Open the ClickUp card"
+              className="inline-flex max-w-full items-center gap-1 rounded-sm text-sm font-medium text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <span dir="auto" className="min-w-0 truncate">
+                {row.name}
+              </span>
+              <ArrowUpRight
+                className="size-3.5 shrink-0 text-muted-foreground"
+                aria-hidden
+              />
+            </a>
+          ) : (
+            <p
+              dir="auto"
+              className="truncate text-left text-sm font-medium text-foreground"
+            >
               {row.name}
-            </span>
-            {row.clickupTaskId ? (
-              <a
-                href={`https://app.clickup.com/t/${encodeURIComponent(row.clickupTaskId)}`}
-                target="_blank"
-                rel="noreferrer"
-                aria-label={`Open ${row.name} in ClickUp`}
-                className="inline-flex shrink-0 rounded-sm text-muted-foreground/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <ExternalLink className="size-3.5" aria-hidden />
-              </a>
-            ) : null}
-          </p>
+            </p>
+          )}
           <p className="mt-0.5 truncate text-xs text-muted-foreground">
             {meta}
           </p>
@@ -801,15 +829,15 @@ function ClientRiskRow({ row }: { row: ClientRow }) {
           hint={plural(row.risk.score, "risk point")}
         />
       </div>
-      {row.risk.reasons.length ? (
+      {reasons.length ? (
         <ul
           className="mt-2 flex flex-wrap gap-1.5"
           aria-label={`Why ${row.name} is at risk`}
         >
-          {row.risk.reasons.map(reason => (
+          {reasons.map(reason => (
             <li
               key={reason}
-              className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] leading-4 text-foreground/80"
+              className="rounded-full bg-muted px-2 py-0.5 text-xs text-foreground/80"
             >
               {capitalize(reason)}
             </li>
@@ -850,7 +878,7 @@ function StuckCard({
     : null;
   return (
     <SectionCard
-      kicker="Across the three departments"
+      kicker="Right now"
       title="What is stuck"
       section={section}
       notes={notes}
@@ -868,7 +896,6 @@ function StuckCard({
         </>
       }
       order={3}
-      bodyClassName="@container"
     >
       {p => <StuckBody d={p} />}
     </SectionCard>
@@ -897,7 +924,7 @@ function StuckBody({ d }: { d: DeliveryPayload }) {
           value={count(stuck.length)}
           status={
             stuck.length > 0 ? (
-              <StatusChip tone="warning" label="Past launch target" />
+              <StatusChip tone="warning" label="Needs a look" />
             ) : null
           }
           sub="Onboarding longer than the launch target"
@@ -937,9 +964,9 @@ function StuckBody({ d }: { d: DeliveryPayload }) {
         />
       </TileRow>
 
-      <div className="min-w-0 border-t pt-5">
+      <div className="min-w-0 border-t pt-6">
         <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-          <p className="text-[13px] font-medium text-foreground">
+          <p className="text-sm font-medium text-foreground">
             Verdicts on running campaigns
           </p>
           <p className="text-xs tabular-nums text-muted-foreground">
@@ -957,7 +984,7 @@ function StuckBody({ d }: { d: DeliveryPayload }) {
               return (
                 <li
                   key={key}
-                  className="flex min-w-0 items-center gap-1.5 text-[13px] text-muted-foreground"
+                  className="flex min-w-0 items-center gap-1.5 text-sm text-muted-foreground"
                 >
                   <span
                     aria-hidden
@@ -980,7 +1007,7 @@ function StuckBody({ d }: { d: DeliveryPayload }) {
         )}
       </div>
 
-      <div className="grid min-w-0 items-start gap-6 border-t pt-5 @3xl:grid-cols-2">
+      <div className="grid min-w-0 items-start gap-6 border-t pt-6 @3xl:grid-cols-2">
         <StuckLaunches d={d} />
         <AccountIssues d={d} />
       </div>
@@ -993,7 +1020,7 @@ function StuckLaunches({ d }: { d: DeliveryPayload }) {
   const shown = stuck.slice(0, 5);
   return (
     <div className="min-w-0">
-      <p className="text-[13px] font-medium text-foreground">
+      <p className="text-sm font-medium text-foreground">
         Launches past the target
       </p>
       {stuck.length === 0 ? (
@@ -1017,7 +1044,10 @@ function StuckLaunches({ d }: { d: DeliveryPayload }) {
                 className="flex min-w-0 items-start justify-between gap-3 border-b border-[color:var(--ceo-grid)] py-3 first:pt-0 last:border-0 last:pb-0"
               >
                 <div className="min-w-0">
-                  <p className="truncate text-[13px] font-medium text-foreground">
+                  <p
+                    dir="auto"
+                    className="truncate text-left text-sm font-medium text-foreground"
+                  >
                     {s.client}
                   </p>
                   <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
@@ -1050,9 +1080,7 @@ function AccountIssues({ d }: { d: DeliveryPayload }) {
   const shown = d.accountIssues.slice(0, 5);
   return (
     <div className="min-w-0">
-      <p className="text-[13px] font-medium text-foreground">
-        Ad account issues
-      </p>
+      <p className="text-sm font-medium text-foreground">Ad account issues</p>
       {d.accountIssues.length === 0 ? (
         <EmptyState
           icon={ShieldCheck}
@@ -1075,7 +1103,10 @@ function AccountIssues({ d }: { d: DeliveryPayload }) {
                   aria-label="Account issue"
                 />
                 <div className="min-w-0">
-                  <p className="truncate text-[13px] font-medium text-foreground">
+                  <p
+                    dir="auto"
+                    className="truncate text-left text-sm font-medium text-foreground"
+                  >
                     {a.client}
                   </p>
                   <p className="mt-0.5 break-words text-xs leading-relaxed text-muted-foreground">
@@ -1129,12 +1160,11 @@ function NotMeasuredCard() {
       kicker="Not measured yet"
       title="What this tab cannot tell you"
       order={4}
-      bodyClassName="@container"
     >
-      <dl className="grid min-w-0 gap-5 @2xl:grid-cols-2 @5xl:grid-cols-3">
+      <dl className="grid min-w-0 gap-6 @2xl:grid-cols-2 @5xl:grid-cols-3">
         {NOT_MEASURED.map(item => (
           <div key={item.label} className="min-w-0">
-            <dt className="min-w-0 text-[13px] text-muted-foreground">
+            <dt className="min-w-0 text-sm text-muted-foreground">
               {item.label}
             </dt>
             <dd className="mt-1 text-lg font-semibold tracking-tight">

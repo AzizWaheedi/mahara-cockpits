@@ -1,15 +1,26 @@
-import { ChevronDown, ChevronRight, Flame, Send, Sparkles } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  CircleAlert,
+  Flame,
+  Send,
+  Sparkles,
+} from "lucide-react";
 import { type FormEvent, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
+import { DeskStatus } from "../components/DeskStatus";
 import {
   button,
   buttonPrimary,
   EmptyState,
   Failed,
   field,
+  page,
   SectionCard,
+  Segmented,
   SourceNote,
   StatusChip,
+  select,
   type Tone,
 } from "../components/kit";
 import { useWorkflows, WhatsAppLibrary } from "../components/WhatsAppLibrary";
@@ -129,6 +140,15 @@ const REPLACES_WORDS: Partial<Record<Segment, string>> = {
   nurture: "1.3 Long Term Nurture",
 };
 
+/** 9 → "9 in the morning", 21 → "9 at night". */
+function hourWords(h: number): string {
+  const n = ((h % 24) + 24) % 24;
+  if (n === 0) return "midnight";
+  if (n === 12) return "noon";
+  const twelve = n % 12;
+  return `${twelve} ${n < 12 ? "in the morning" : n < 18 ? "in the afternoon" : n < 21 ? "in the evening" : "at night"}`;
+}
+
 const SKIPS = [
   "Already handled",
   "Wrong message for them",
@@ -161,13 +181,18 @@ export default function FollowupsPage({ me }: { me: Me }) {
         .gte("created_at", since)
         .order("created_at", { ascending: false })
         .limit(1000);
-      if (!everyone) q = q.eq("owner_email", me.email ?? "");
+      // A rep's own leads, and the leads nobody owns yet (anyone may send those).
+      if (!everyone)
+        q = q.or(`owner_email.eq."${me.email ?? ""}",owner_email.is.null`);
       return q;
     },
     [everyone, me.email, since],
     60_000,
   );
   const settings = useSetting<Settings>("followups");
+  // Read once for every card: a template draft needs to know whether its
+  // template is live, and "not live" must never be said while reading.
+  const templates = useTemplates();
   const all = rows.data ?? [];
   // The most urgent kind first, and within a kind the hottest lead first.
   const waiting = all
@@ -190,15 +215,16 @@ export default function FollowupsPage({ me }: { me: Me }) {
   );
 
   return (
-    <main className="mx-auto w-full max-w-4xl space-y-5 px-4 py-6 md:px-6">
+    <main className={page}>
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Follow-ups</h1>
-          <p className="muted text-sm">
+          <h1 className="text-2xl font-semibold tracking-tight">Follow-ups</h1>
+          <p className="muted mt-1 text-sm">
             Written by the follow-up agent for{" "}
-            {everyone ? "the team's" : "your"} leads, hottest first, on WhatsApp
-            wherever it can go. Nothing goes to a lead until a person approves
-            it, except the kinds a manager has trusted to send by themselves.
+            {everyone ? "the team's" : "your"} leads and the ones nobody owns
+            yet, hottest first, on WhatsApp wherever it can go. Nothing goes to
+            a lead until a person approves it, except the kinds a manager has
+            trusted to send by themselves.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -209,41 +235,33 @@ export default function FollowupsPage({ me }: { me: Me }) {
               onChange={e =>
                 set("whose", e.target.value === "mine" ? "mine" : null)
               }
-              className="h-8 rounded-[var(--radius-md)] border hairline bg-[color:var(--card)] px-2 text-sm"
+              className={select}
             >
               <option value="team">The whole team</option>
               <option value="mine">Mine</option>
             </select>
           ) : null}
-          <div
-            className="raised inline-flex flex-wrap rounded-[var(--radius-md)] p-0.5 text-sm"
-            role="group"
-            aria-label="Show"
-          >
-            {(
+          <Segmented
+            label="Show"
+            value={tab}
+            options={[
               [
-                [
-                  "waiting",
-                  `Waiting${waiting.length ? ` (${waiting.length})` : ""}`,
-                ],
-                ["sent", "Sent"],
-                ["learning", "How it works"],
-                ["library", "WhatsApp library"],
-              ] as const
-            ).map(([k, label]) => (
-              <button
-                key={k}
-                type="button"
-                aria-pressed={tab === k}
-                onClick={() => set("tab", k === "waiting" ? null : k)}
-                className={`rounded-[calc(var(--radius-md)-2px)] px-3 py-1 ${tab === k ? "bg-[color:var(--card)] font-medium shadow-sm" : "muted"}`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+                "waiting",
+                `Waiting${waiting.length ? ` (${waiting.length})` : ""}`,
+              ],
+              ["sent", "Sent"],
+              ["learning", "How it works"],
+              ["library", "WhatsApp library"],
+            ]}
+            onChange={k => set("tab", k === "waiting" ? null : k)}
+          />
         </div>
       </header>
+
+      <DeskStatus
+        jobs={[{ job: "followups", what: "The follow-up agent", staleMin: 75 }]}
+      />
+      <WhatsappHealth />
 
       {tab === "library" ? (
         <WhatsAppLibrary manager={Boolean(me.manager)} />
@@ -261,16 +279,27 @@ export default function FollowupsPage({ me }: { me: Me }) {
                 lead={nameOf.get(f.contact_id) ?? null}
                 showOwner={Boolean(everyone)}
                 steps={settings.data?.cadence?.[f.segment]?.length ?? null}
+                templates={templates}
                 onDone={rows.reload}
               />
             ))}
           </div>
         ) : (
-          <EmptyState
-            icon={Sparkles}
-            title="Nothing waiting"
-            text="The agent looks every half hour, from 9 in the morning to 9 at night, for leads who wrote, have a call to confirm, missed or cancelled a call, just came in, had a demo, or have gone quiet."
-          />
+          <section className="panel">
+            <EmptyState
+              icon={Sparkles}
+              title="Nothing waiting"
+              text={
+                settings.data?.enabled === false
+                  ? "The follow-up agent is switched off, so it writes nothing. A manager switches it on under How it works."
+                  : `The agent looks every half hour${
+                      settings.data?.quiet
+                        ? `, from ${hourWords(settings.data.quiet.to)} to ${hourWords(settings.data.quiet.from)} Kuwait time`
+                        : ""
+                    }, for leads who wrote, have a call to confirm, missed or cancelled a call, just came in, had a demo, or have gone quiet.`
+              }
+            />
+          </section>
         )
       ) : tab === "sent" ? (
         <SentList rows={done} nameOf={nameOf} />
@@ -282,9 +311,8 @@ export default function FollowupsPage({ me }: { me: Me }) {
         />
       )}
 
-      <SourceNote>
-        The agent runs on the sales desk with the VPS keys (lead data never goes
-        to DeepSeek). It reads what the cockpit knows about the lead: their
+      <SourceNote label="How the drafts are written">
+        The assistant reads what the cockpit knows about the lead: their
         answers, the calendar, the calls and their notes, the conversation in
         HighLevel and any research. It writes WhatsApp while the lead's 24-hour
         window is open; outside it, one line for an approved WhatsApp template
@@ -303,20 +331,23 @@ function DraftCard({
   lead,
   showOwner,
   steps,
+  templates,
   onDone,
 }: {
   f: Followup;
   lead: string | null;
   showOwner: boolean;
   steps: number | null;
+  templates: ReturnType<typeof useTemplates>;
   onDone: () => void;
 }) {
   const [body, setBody] = useState(f.body);
   const [subject, setSubject] = useState(f.subject ?? "");
   const [busy, setBusy] = useState(false);
+  // Sent or skipped: the card stays until the list reads again, its buttons off.
+  const [settled, setSettled] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [skipping, setSkipping] = useState(false);
-  const templates = useTemplates();
   const seg = SEGMENT[f.segment];
   const template =
     f.channel === "whatsapp_template"
@@ -341,16 +372,19 @@ function DraftCard({
         body,
         subject: f.channel === "email" ? subject : undefined,
       });
-      if (out.followup.status === "failed")
+      if (out.followup.status === "failed") {
         toast.error(
           `It did not deliver: ${out.message.error ?? out.followup.error ?? "no reason given"}.`,
         );
-      else
+        setSettled("It did not deliver.");
+      } else {
         toast.success(
           out.message.provider_status === "enrolled"
             ? "HighLevel is sending the template now."
             : `Sent by ${CHANNEL[f.channel]}.`,
         );
+        setSettled("Sent.");
+      }
       onDone();
     } catch (err) {
       toast.error(String((err as Error).message ?? err));
@@ -365,6 +399,7 @@ function DraftCard({
     try {
       await api("followup.skip", { id: f.id, reason });
       toast.success("Skipped.");
+      setSettled("Skipped.");
       onDone();
     } catch (err) {
       toast.error(String((err as Error).message ?? err));
@@ -375,7 +410,7 @@ function DraftCard({
   }
 
   return (
-    <form onSubmit={approve} className="panel space-y-3 p-4">
+    <form onSubmit={approve} className="panel space-y-4 p-4 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -398,15 +433,18 @@ function DraftCard({
               {f.expires_at
                 ? ` · good until ${day(f.expires_at)} ${clock(f.expires_at)}`
                 : ""}
-              {showOwner
-                ? ` · ${f.owner_email?.split("@")[0] ?? "no rep on the lead"}`
-                : ""}
+              {!f.owner_email
+                ? " · nobody's lead yet: anyone can send it"
+                : showOwner
+                  ? ` · ${f.owner_email.split("@")[0]}`
+                  : ""}
             </span>
           </div>
           {reasons.length ? (
-            <p className="mt-1 text-xs" style={{ color: "var(--primary)" }}>
+            <p className="mt-1 text-xs">
               <Flame
                 className="me-0.5 inline size-3 align-[-2px]"
+                style={{ color: "var(--primary)" }}
                 aria-hidden
               />
               {reasons.join(" · ")}
@@ -414,7 +452,7 @@ function DraftCard({
           ) : null}
           <p className="muted mt-1 text-sm">{f.why}</p>
         </div>
-        <p className="muted text-[11px]">written {ago(f.created_at)}</p>
+        <p className="muted text-xs">Written {ago(f.created_at)}</p>
       </div>
       {f.channel === "email" ? (
         <input
@@ -448,7 +486,14 @@ function DraftCard({
         }
       />
       {f.channel === "whatsapp_template" ? (
-        template ? (
+        templates.error ? (
+          <p className="text-xs">
+            The WhatsApp templates could not be read, so this draft cannot be
+            checked. Read the page again.
+          </p>
+        ) : !templates.data ? (
+          <p className="muted text-xs">Reading the templates…</p>
+        ) : template ? (
           <div>
             <p className="muted mb-1 text-xs">
               What they read ({"{{2}}"} is signed with the lead's rep, else the
@@ -481,6 +526,7 @@ function DraftCard({
           type="submit"
           disabled={
             busy ||
+            Boolean(settled) ||
             !body.trim() ||
             (f.channel === "whatsapp_template" &&
               !(template?.active && template.workflow_id))
@@ -488,11 +534,13 @@ function DraftCard({
           className={buttonPrimary}
         >
           <Send className="size-3.5" aria-hidden />
-          {busy
-            ? "Sending…"
-            : body.trim() !== f.body.trim()
-              ? "Send my version"
-              : "Approve and send"}
+          {settled
+            ? settled
+            : busy
+              ? "Sending…"
+              : body.trim() !== f.body.trim()
+                ? "Send my version"
+                : "Approve and send"}
         </button>
         {skipping ? (
           <span className="flex flex-wrap items-center gap-1.5">
@@ -500,7 +548,7 @@ function DraftCard({
               <button
                 key={r}
                 type="button"
-                disabled={busy}
+                disabled={busy || Boolean(settled)}
                 onClick={() => skip(r)}
                 className={button}
               >
@@ -512,6 +560,7 @@ function DraftCard({
           <button
             type="button"
             onClick={() => setSkipping(true)}
+            disabled={busy || Boolean(settled)}
             className={button}
           >
             Skip
@@ -569,7 +618,7 @@ function ContextView({ f }: { f: Followup }) {
           ))}
         </div>
       ) : null}
-      <p>Written by {f.model ?? "the desk's model"}.</p>
+      <p>Drafted by the assistant.</p>
     </div>
   );
 }
@@ -583,11 +632,13 @@ function SentList({
 }) {
   if (!rows.length)
     return (
-      <EmptyState
-        icon={Send}
-        title="Nothing sent yet"
-        text="Approved follow-ups and skipped ones show here for 30 days."
-      />
+      <section className="panel">
+        <EmptyState
+          icon={Send}
+          title="Nothing sent yet"
+          text="Approved follow-ups and skipped ones show here for 30 days."
+        />
+      </section>
     );
   return (
     <SectionCard title="The last 30 days" flush>
@@ -654,7 +705,7 @@ function SentList({
                   label={`They wrote back ${ago(f.replied_at)}`}
                 />
               ) : null}
-              <span className="muted text-[11px]">
+              <span className="muted text-xs">
                 {f.decided_by ? `${f.decided_by.split("@")[0]} · ` : ""}
                 {ago(f.decided_at ?? f.created_at)}
               </span>
@@ -700,7 +751,8 @@ function Learning({
   });
   const [busy, setBusy] = useState(false);
 
-  async function save(next: Settings) {
+  // Only what changed is sent; the server keeps every other field as it is.
+  async function save(next: Partial<Settings>) {
     setBusy(true);
     try {
       await api("followup.settings", { value: next });
@@ -715,11 +767,11 @@ function Learning({
 
   const toggle = (key: "autosend" | "takeover", seg: Segment, on: boolean) => {
     if (!s) return;
-    void save({ ...s, [key]: { ...(s[key] ?? {}), [seg]: on } });
+    void save({ [key]: { [seg]: on } });
   };
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <SectionCard title="The last 30 days, by kind of message" flush>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[720px] text-sm">
@@ -828,16 +880,160 @@ function Learning({
             the same checks as a rep's send.
           </p>
           <p>
-            Replaces HighLevel's: on, a lead the cockpit messages is taken out
-            of that automation at the send, so they never get both. While it is
-            off, the agent waits 20 hours after an automation's message before
-            writing. To retire an automation for everyone, switch it off in
-            HighLevel once the cockpit's messages do better.
+            Replaces HighLevel's: on, the agent writes to these leads 3 hours
+            after an automation's message, and a lead the cockpit messages is
+            taken out of that automation once the message is seen to have gone,
+            so they never get both. Off, the agent leaves the automation to it
+            and waits {s?.automation_gap_hours ?? 20} hours after its message
+            before writing. To retire an automation for everyone, switch it off
+            in HighLevel once the cockpit's messages do better.
           </p>
         </div>
       </SectionCard>
       {manager && s ? <SettingsForm s={s} busy={busy} onSave={save} /> : null}
+      {manager ? <GuardForm /> : null}
     </div>
+  );
+}
+
+/**
+ * WhatsApp's health over the last day: templates sent today against the
+ * ceiling, and what failed at Meta. Automatic sends pause by themselves
+ * when too many fail (sales-api whatsappHealth); this says so.
+ */
+function WhatsappHealth() {
+  const since = useMemo(
+    () => new Date(Date.now() - 86_400_000).toISOString(),
+    [],
+  );
+  const guard = useSetting<Guard>("whatsapp_guard");
+  const sends = useQuery<
+    { state: string; error: string | null; via: string; created_at: string }[]
+  >(
+    () =>
+      supabase
+        .from("cockpit_sales_messages")
+        .select("state,error,via,created_at")
+        .eq("channel", "whatsapp")
+        .gte("created_at", since)
+        .limit(2000),
+    [since],
+    120_000,
+  );
+  if (sends.error)
+    return (
+      <p className="muted text-xs">
+        WhatsApp's last day could not be read: {sends.error}.
+      </p>
+    );
+  const rows = sends.data ?? [];
+  const settled = rows.filter(r =>
+    ["sent", "delivered", "read", "failed"].includes(r.state),
+  );
+  const failed = settled.filter(r => r.state === "failed");
+  // Kuwait's midnight (UTC+3) that began today.
+  const k = new Date(Date.now() + 3 * 3_600_000);
+  const midnight =
+    Date.UTC(k.getUTCFullYear(), k.getUTCMonth(), k.getUTCDate()) -
+    3 * 3_600_000;
+  const templatesToday = rows.filter(
+    r =>
+      r.via === "workflow" &&
+      r.state !== "failed" &&
+      Date.parse(r.created_at) >= midnight,
+  ).length;
+  const g = guard.data;
+  const paused = Boolean(
+    g &&
+      settled.length >= g.pause_min_sends &&
+      failed.length / settled.length >= g.pause_fail_share,
+  );
+  if (!settled.length && !templatesToday) return null;
+  const reasons = [...new Set(failed.map(r => r.error).filter(Boolean))].slice(
+    0,
+    2,
+  );
+  return (
+    <p className={`flex items-start gap-1.5 text-xs ${paused ? "" : "muted"}`}>
+      {paused ? (
+        <CircleAlert
+          className="mt-px size-3.5 shrink-0"
+          style={{ color: "var(--warning)" }}
+          aria-hidden
+        />
+      ) : null}
+      <span>
+        WhatsApp, last day: {settled.length} sent, {failed.length} failed
+        {reasons.length ? ` (${reasons.join("; ")})` : ""}.{" "}
+        {g
+          ? `${templatesToday} of today's ${g.templates_per_day} templates.`
+          : ""}
+        {paused
+          ? " Automatic sends are paused until fewer fail; people can still send."
+          : ""}
+      </span>
+    </p>
+  );
+}
+
+interface Guard {
+  templates_per_day: number;
+  pause_fail_share: number;
+  pause_min_sends: number;
+}
+
+function GuardForm() {
+  const guard = useSetting<Guard>("whatsapp_guard");
+  const [perDay, setPerDay] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const g = guard.data;
+  if (!g) return null;
+  const value = perDay ?? String(g.templates_per_day);
+  return (
+    <SectionCard title="WhatsApp ceilings">
+      <form
+        className="flex flex-wrap items-end gap-3"
+        onSubmit={async e => {
+          e.preventDefault();
+          setBusy(true);
+          try {
+            await api("whatsapp.guard", {
+              value: { ...g, templates_per_day: Number(value) },
+            });
+            toast.success("Saved.");
+            setPerDay(null);
+            guard.reload();
+          } catch (err) {
+            toast.error(String((err as Error).message ?? err));
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <label className="block space-y-1 text-sm">
+          <span className="muted block text-xs">
+            WhatsApp templates a day, at most
+          </span>
+          <input
+            value={value}
+            onChange={e => setPerDay(e.target.value)}
+            inputMode="numeric"
+            className={`${field} w-32`}
+          />
+        </label>
+        <button type="submit" disabled={busy} className={buttonPrimary}>
+          {busy ? "Saving…" : "Save"}
+        </button>
+        <p className="muted w-full text-xs">
+          Meta limits how many conversations a number may start in a day and
+          marks it down when too many messages are ignored or reported. Past
+          this ceiling templates wait for tomorrow. Automatic sends also pause
+          by themselves when {Math.round(g.pause_fail_share * 100)}% or more of
+          the last day's WhatsApp sends failed (once {g.pause_min_sends} have
+          gone out).
+        </p>
+      </form>
+    </SectionCard>
   );
 }
 
@@ -876,7 +1072,7 @@ function SettingsForm({
 }: {
   s: Settings;
   busy: boolean;
-  onSave: (v: Settings) => void;
+  onSave: (v: Partial<Settings>) => void;
 }) {
   const [v, setV] = useState(s);
   return (
@@ -884,7 +1080,18 @@ function SettingsForm({
       <form
         onSubmit={e => {
           e.preventDefault();
-          onSave(v);
+          // The form's own fields only: the switches in the table above save
+          // themselves, and a stale copy of them here must not undo them.
+          onSave({
+            enabled: v.enabled,
+            per_run: v.per_run,
+            per_day: v.per_day,
+            nurture_every_days: v.nurture_every_days,
+            nurture_per_day: v.nurture_per_day,
+            automation_gap_hours: v.automation_gap_hours,
+            quiet: v.quiet,
+            email_fallback: v.email_fallback,
+          });
         }}
         className="grid gap-3 sm:grid-cols-2"
       >

@@ -103,6 +103,10 @@ export function webbyCall(c: string): string {
  * A signed deal (public.closed_deals, alias `d`) from a registrant, signed
  * after registering: by the CRM contact id first, the lowercased email
  * second. Never by name (the brief's rule).
+ *
+ * It only says whose deal it is. A voided deal is still in closed_deals, so
+ * every count of deals adds NOT_VOIDED from ./voids beside it, on both sides
+ * of the split.
  */
 export function webbyDeal(d: string): string {
   return `exists (

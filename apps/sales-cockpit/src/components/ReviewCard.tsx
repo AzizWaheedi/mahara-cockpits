@@ -95,7 +95,7 @@ export function ReviewCard({ r }: { r: Review }) {
         </div>
         <p className="muted text-xs">
           {r.source === "desk"
-            ? `Written ${day(r.reviewed_at)} with ${r.model ?? "the desk's model"}`
+            ? `Drafted by the assistant, ${day(r.reviewed_at)}`
             : "From Vince's archive"}
         </p>
       </div>

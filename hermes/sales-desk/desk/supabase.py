@@ -15,10 +15,18 @@ Rules the writes follow, as in the editor desk:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Optional
 
 from . import http
+
+# PostgREST's max-rows on Creative Triage: a request never answers more rows
+# than this, whatever its limit asks.
+MAX_ROWS = 1000
+# What a job failed on, per item (20260926m): an item that failed twice within
+# a day of its first failure is set aside until that day has passed.
+FAILURES = "cockpit_sales_desk_failures"
+FAILURE_WINDOW = timedelta(hours=24)
 
 REQUESTS = "cockpit_sales_requests"
 PROPOSALS = "cockpit_sales_proposals"
@@ -52,6 +60,22 @@ def iso(t: datetime) -> str:
 
 def _q(value: str) -> str:
     return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _when(v: Any) -> Optional[datetime]:
+    try:
+        t = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
+def set_aside(failures: dict[str, dict[str, Any]], now: datetime, *, times: int = 2) -> set[str]:
+    """The items that failed `times` times within a day of their first
+    failure, while that day lasts: each run would pay for the same failure
+    again, and a call that always fails would stay at the front of the queue."""
+    return {item for item, r in failures.items()
+            if int(r.get("failures") or 0) >= times and (_when(r.get("first_at")) or now) > now - FAILURE_WINDOW}
 
 
 class SupabaseError(Exception):
@@ -96,6 +120,22 @@ class Supabase:
     def select(self, table: str, params: str) -> list[dict[str, Any]]:
         rows = self.rest("GET", f"{table}?{params}")
         return rows if isinstance(rows, list) else []
+
+    def select_all(self, table: str, params: str, *, order: str, page: int = MAX_ROWS) -> list[dict[str, Any]]:
+        """Every row a read matches. The API answers at most 1,000 rows a
+        request whatever the limit asks, so a read that can grow goes page by
+        page, limit and offset over `order` (which ends on a unique column, so
+        no row is skipped or read twice), until a page comes back short. A
+        page larger than the cap would always look short, so it never is."""
+        page = max(1, min(int(page), MAX_ROWS))
+        out: list[dict[str, Any]] = []
+        offset = 0
+        while True:
+            rows = self.select(table, f"{params}&order={order}&limit={page}&offset={offset}")
+            out.extend(rows)
+            if len(rows) < page:
+                return out
+            offset += page
 
     def upsert(self, table: str, rows: list[dict[str, Any]], on_conflict: str) -> int:
         if not rows:
@@ -288,6 +328,33 @@ class Supabase:
 
     def store_setting(self, key: str, value: Any, by: str) -> None:
         self.upsert(SETTINGS, [{"key": key, "value": value, "updated_by": by, "updated_at": now_iso()}], "key")
+
+    # ---- what a job keeps failing on ------------------------------------
+    def failures(self, job: str) -> dict[str, dict[str, Any]]:
+        """The items a job has failed on and not yet got right, by item id."""
+        rows = self.select_all(FAILURES, f"select=item_id,failures,first_at,last_at&job=eq.{http.quote(job)}",
+                               order="item_id")
+        return {str(r["item_id"]): r for r in rows}
+
+    def record_failure(self, job: str, item_id: str, error: str, *, known: Optional[dict[str, Any]] = None,
+                       now: Optional[datetime] = None) -> None:
+        """One more failure of an item: counted within a day of its first
+        failure (`known`, the row read at the start of the run), and counted
+        afresh once that day has passed."""
+        now = now or datetime.now(timezone.utc)
+        first = _when((known or {}).get("first_at"))
+        fresh = first is not None and now - first < FAILURE_WINDOW
+        self.upsert(FAILURES, [{
+            "job": job, "item_id": str(item_id),
+            "failures": int((known or {}).get("failures") or 0) + 1 if fresh else 1,
+            "last_error": http.scrub(error)[:600],
+            "first_at": iso(first) if fresh and first else iso(now), "last_at": iso(now),
+        }], "job,item_id")
+
+    def clear_failure(self, job: str, item_id: str) -> None:
+        """An item that worked: what it failed on before is forgotten."""
+        self.rest("DELETE", f"{FAILURES}?job=eq.{http.quote(job)}&item_id=eq.{http.quote(str(item_id))}",
+                  prefer="return=minimal")
 
     # ---- health ----------------------------------------------------------
     def worker_status(self, worker: str, job: str, ok: bool, detail: str) -> None:

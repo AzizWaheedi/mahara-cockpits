@@ -23,7 +23,7 @@ export function Na({
         type="button"
         aria-label={`n/a: ${hint}`}
         className={cn(
-          "cursor-help rounded-sm text-muted-foreground underline decoration-muted-foreground/35 decoration-dotted underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          "no-touch relative cursor-help rounded-sm text-muted-foreground underline decoration-muted-foreground/35 decoration-dotted underline-offset-4 after:absolute after:-inset-2 after:content-[''] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           className,
         )}
       >

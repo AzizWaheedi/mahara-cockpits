@@ -1,50 +1,14 @@
-import {
-  ArrowRightLeft,
-  BarChart3,
-  CalendarClock,
-  CalendarDays,
-  DollarSign,
-  Flame,
-  LayoutGrid,
-  Link2,
-  ListChecks,
-  ListTodo,
-  LogOut,
-  MessageSquare,
-  Moon,
-  MoonStar,
-  Settings,
-  ShieldCheck,
-  Sun,
-  Sunrise,
-  UsersRound,
-} from "lucide-react";
+import { motion } from "framer-motion";
+import { BarChart3, CalendarClock, CalendarDays, DollarSign, Flame, LayoutGrid, Link2, ListChecks, ListTodo, LogOut, MessageSquare, Moon, MoonStar, Settings, Sun, Sunrise, X } from "lucide-react";
 import { Link, useLocation } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { portalUrl } from "@/lib/portal";
 import { Wordmark } from "@/components/Wordmark";
 import { useTheme } from "@/contexts/ThemeContext";
+import { COCKPIT_ICON } from "@/lib/cockpits";
 import { Avatar, AvatarFallback } from "./ui/avatar";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "./ui/dropdown-menu";
-import {
-  Sidebar,
-  SidebarContent,
-  SidebarFooter,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarHeader,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  useSidebar,
-} from "./ui/sidebar";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "./ui/dropdown-menu";
+import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "./ui/sidebar";
 
 /**
  * Grouped so the CSM reads the sidebar as a day, not as eight equal choices: the day runs
@@ -101,8 +65,25 @@ function NavLink({
 
   return (
     <SidebarMenuItem>
-      <SidebarMenuButton asChild isActive={isActive}>
-        <Link to={href} onClick={() => setOpenMobile(false)}>
+      <SidebarMenuButton
+        asChild
+        isActive={isActive}
+        tooltip={label}
+        className="cockpit-nav-link"
+      >
+        <Link
+          to={href}
+          aria-current={isActive ? "page" : undefined}
+          onClick={() => setOpenMobile(false)}
+        >
+          {/* The same teal lamp as the other cockpits' rails. */}
+          {isActive && (
+            <motion.span
+              layoutId="cockpit-nav-lamp"
+              className="cockpit-nav-lamp"
+              transition={{ type: "spring", stiffness: 320, damping: 30 }}
+            />
+          )}
           <Icon />
           <span>{label}</span>
         </Link>
@@ -150,21 +131,23 @@ function PortalGroup() {
       show: isAdmin || roles.includes("sales"),
     },
   ].filter(d => d.show);
-  if (doors.length === 0) return null;
+  // Team meetings are everybody's, so they sit with the doors at the foot.
+  const rows = [
+    { key: "team", label: "Team meetings", href: `${portal}/team` },
+    ...doors,
+  ];
   return (
-    <SidebarGroup>
-      <SidebarGroupLabel>Switch cockpit</SidebarGroupLabel>
+    <SidebarGroup className="mt-auto border-t border-sidebar-border">
       <SidebarGroupContent>
         <SidebarMenu>
-          {doors.map(d => (
+          {rows.map(d => (
             <SidebarMenuItem key={d.key}>
               <SidebarMenuButton asChild>
                 <a href={d.href}>
-                  {d.key === "admin" ? (
-                    <ShieldCheck className="size-4" />
-                  ) : (
-                    <ArrowRightLeft className="size-4" />
-                  )}
+                  {(() => {
+                    const Icon = COCKPIT_ICON[d.key];
+                    return Icon ? <Icon className="size-4" /> : null;
+                  })()}
                   <span>{d.label}</span>
                 </a>
               </SidebarMenuButton>
@@ -176,34 +159,11 @@ function PortalGroup() {
   );
 }
 
-/** The team's meetings and agendas, in the portal, for everyone. */
-function TeamGroup() {
-  return (
-    <SidebarGroup>
-      <SidebarGroupLabel>Team</SidebarGroupLabel>
-      <SidebarGroupContent>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton asChild>
-              <a href={`${portalUrl()}/team`}>
-                <UsersRound className="size-4" />
-                <span>Team meetings</span>
-              </a>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarGroupContent>
-    </SidebarGroup>
-  );
-}
-
 function SidebarNav() {
   const location = useLocation();
 
   return (
     <SidebarContent>
-      <PortalGroup />
-      <TeamGroup />
       {navGroups.map(group => (
         <SidebarGroup key={group.label}>
           <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
@@ -222,6 +182,7 @@ function SidebarNav() {
           </SidebarGroupContent>
         </SidebarGroup>
       ))}
+      <PortalGroup />
     </SidebarContent>
   );
 }
@@ -301,17 +262,30 @@ function SidebarUserMenu() {
 }
 
 function SidebarHeaderContent() {
-  const { setOpenMobile } = useSidebar();
+  const { setOpenMobile, isMobile } = useSidebar();
 
   return (
-    <SidebarHeader className="border-b border-sidebar-border">
+    <SidebarHeader className="flex-row items-center justify-between border-b border-sidebar-border">
+      {/* The logo opens the day, not the marketing page at "/". */}
       <Link
-        to="/"
+        to="/dashboard"
         onClick={() => setOpenMobile(false)}
         className="flex items-center px-2 py-2"
       >
         <Wordmark size="sm" />
       </Link>
+      {/* Below 1024px the rail is a sheet whose own close button is hidden,
+          so it carries one here. From 1024px up the rail is always there. */}
+      {isMobile ? (
+        <button
+          type="button"
+          onClick={() => setOpenMobile(false)}
+          aria-label="Close menu"
+          className="inline-flex size-10 items-center justify-center rounded-lg text-sidebar-foreground hover:bg-sidebar-accent"
+        >
+          <X className="size-5" aria-hidden />
+        </button>
+      ) : null}
     </SidebarHeader>
   );
 }

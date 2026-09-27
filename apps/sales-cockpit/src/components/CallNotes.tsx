@@ -1,7 +1,7 @@
 import { useQuery } from "../lib/data";
 import { day } from "../lib/format";
 import { supabase } from "../lib/supabase";
-import { StatusChip, type Tone } from "./kit";
+import { Reading, StatusChip, type Tone } from "./kit";
 
 /**
  * What the recorded calls told us about a lead: the desk's notes after each
@@ -90,18 +90,27 @@ function Fact({ label, text }: { label: string; text?: string }) {
   );
 }
 
+/**
+ * The notes, newest first. The caller owns the read: `loading` while it has
+ * not come back, so "no notes" is only said once it has (a failed read is
+ * the caller's to show with the kit's Failed).
+ */
 export function CallNotesList({
   notes,
   compact = false,
+  loading = false,
 }: {
   notes: CallNote[];
   compact?: boolean;
+  /** The notes have not been read yet. */
+  loading?: boolean;
 }) {
+  if (loading) return <Reading what="the call notes" />;
   if (!notes.length)
     return (
       <p className="muted text-sm">
-        No notes from a recorded call yet. The desk writes them within an hour
-        of a call's transcript arriving.
+        No notes from a recorded call yet. They appear within an hour of a
+        call's transcript arriving.
       </p>
     );
   return (
@@ -114,7 +123,10 @@ export function CallNotesList({
               <p className="text-sm font-semibold">
                 {KIND[n.call_type ?? "other"]} · {day(n.call_at)}
                 {n.rep ? (
-                  <span className="muted font-normal"> · {n.rep}</span>
+                  <span className="muted font-normal">
+                    {" · "}
+                    <bdi>{n.rep}</bdi>
+                  </span>
                 ) : null}
               </p>
               <StatusChip
@@ -162,11 +174,14 @@ export function CallNotesList({
                 <ul className="mt-0.5 space-y-0.5 text-sm" dir="auto">
                   {n.notes.objections.map(o => (
                     <li key={o.objection}>
-                      {o.objection}
+                      <bdi>{o.objection}</bdi>
                       <span className="muted">
-                        {o.handled
-                          ? ` · handled${o.how ? `: ${o.how}` : ""}`
-                          : " · not handled"}
+                        {" · "}
+                        <bdi>
+                          {o.handled
+                            ? `handled${o.how ? `: ${o.how}` : ""}`
+                            : "not handled"}
+                        </bdi>
                       </span>
                     </li>
                   ))}
@@ -179,10 +194,9 @@ export function CallNotesList({
           </article>
         );
       })}
-      <p className="muted text-[11px]">
-        Written by the desk from the call's transcript
-        {notes[0]?.model ? ` (${notes[0].model})` : ""}. Only what was said on
-        the call.
+      <p className="muted text-xs">
+        Drafted by the assistant from the call's transcript. Only what was said
+        on the call.
       </p>
     </div>
   );

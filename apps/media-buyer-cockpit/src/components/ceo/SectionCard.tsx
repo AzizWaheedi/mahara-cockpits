@@ -6,6 +6,7 @@ import type { Note } from "@/types/ceo/payloads";
 import { EmptyState } from "./EmptyState";
 import { dateTime, relative } from "./format";
 import { Hint } from "./Hint";
+import { Kicker } from "./Kicker";
 import { Notes } from "./Notes";
 import { RefreshButton } from "./RefreshButton";
 import {
@@ -20,8 +21,10 @@ import {
 type SectionCardProps<K extends SectionKey> = {
   /** Card title, sentence case. */
   title: ReactNode;
-  /** Small uppercase label above the title. */
+  /** Small mono label above the title, three words at most ("This month"). */
   kicker?: string;
+  /** One muted line under the title, for a sentence worth keeping that would be too long for a kicker. */
+  description?: ReactNode;
   /** The section this card reads. null (not computed yet) shows the empty state; leave it out for a card with no section. */
   section?: CeoSection<K> | null;
   /** Other sections the card also reads: their failures join the banner and the oldest time wins "as of". */
@@ -39,7 +42,7 @@ type SectionCardProps<K extends SectionKey> = {
   /** Anchor id for links into the card. */
   id?: string;
   className?: string;
-  /** Classes for the body wrapper (spacing between children). */
+  /** Classes for the body wrapper (spacing between children). The body is a size container, so tiles inside widen with @md:, @2xl: and the rest. */
   bodyClassName?: string;
 };
 
@@ -51,6 +54,7 @@ type SectionCardProps<K extends SectionKey> = {
 export function SectionCard<K extends SectionKey>({
   title,
   kicker,
+  description,
   section,
   alsoReads,
   notes,
@@ -63,6 +67,7 @@ export function SectionCard<K extends SectionKey>({
   bodyClassName,
 }: SectionCardProps<K>) {
   const reduce = useReducedMotion();
+  const now = useNow();
   const tracked = section !== undefined;
   const all = [
     ...(tracked ? [section] : []),
@@ -73,6 +78,13 @@ export function SectionCard<K extends SectionKey>({
   const asOf = present.length
     ? Math.min(...present.map(s => s.computedAt || Number.POSITIVE_INFINITY))
     : null;
+  // The page header already says when the numbers were computed, so a card
+  // only speaks up when its own numbers are old enough to read with care.
+  const showAsOf =
+    asOf !== null &&
+    Number.isFinite(asOf) &&
+    !hideAsOf &&
+    now - asOf > STALE_AFTER_MS;
 
   let body: ReactNode;
   if (tracked && section === null) {
@@ -123,27 +135,26 @@ export function SectionCard<K extends SectionKey>({
         delay: reduce ? 0 : Math.min(order, 8) * 0.04,
       }}
       className={cn(
-        "ceo-card min-w-0 rounded-xl border bg-card p-5 text-card-foreground sm:p-6",
+        "ceo-card min-w-0 rounded-2xl border bg-card p-4 text-card-foreground sm:p-6",
         className,
       )}
     >
       <header className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
         <div className="min-w-0">
-          {kicker ? (
-            <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              {kicker}
-            </p>
-          ) : null}
+          {kicker ? <Kicker className="mb-1.5">{kicker}</Kicker> : null}
           {/* h2: the page title is the h1, so card titles are the next level down. */}
-          <h2 className="text-sm font-semibold leading-5 text-foreground">
+          <h2 className="text-[15px] font-semibold leading-5 text-foreground">
             {title}
           </h2>
+          {description ? (
+            <p className="mt-1 max-w-prose text-xs leading-5 text-muted-foreground">
+              {description}
+            </p>
+          ) : null}
         </div>
-        {(asOf !== null && Number.isFinite(asOf) && !hideAsOf) || actions ? (
+        {showAsOf || actions ? (
           <div className="flex min-w-0 flex-wrap items-center gap-2">
-            {asOf !== null && Number.isFinite(asOf) && !hideAsOf ? (
-              <AsOf at={asOf} />
-            ) : null}
+            {showAsOf && asOf !== null ? <AsOf at={asOf} /> : null}
             {actions}
           </div>
         ) : null}
@@ -153,10 +164,12 @@ export function SectionCard<K extends SectionKey>({
         <StaleBanner key={s.key} section={s} showLabel={present.length > 1} />
       ))}
 
-      <div className={cn("mt-5 min-w-0", bodyClassName)}>{body}</div>
+      {/* A size container, so what sits inside widens with the card, not the
+          screen: a half-width card on a laptop lays out like a phone. */}
+      <div className={cn("@container mt-4 min-w-0", bodyClassName)}>{body}</div>
 
       {notes?.length ? (
-        <Notes notes={notes} className="mt-5 border-t pt-3" />
+        <Notes notes={notes} className="mt-4 border-t pt-3" />
       ) : null}
     </motion.section>
   );
@@ -170,7 +183,7 @@ function AsOf({ at }: { at: number }) {
     <Hint content={`Computed ${relative(at, now)}`}>
       <button
         type="button"
-        className="inline-flex cursor-default items-center gap-1 rounded-sm text-xs text-muted-foreground tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="no-touch relative inline-flex cursor-default items-center gap-1 rounded-sm text-xs text-muted-foreground tabular-nums after:absolute after:-inset-2 after:content-[''] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         {old ? (
           <TriangleAlert
@@ -218,7 +231,7 @@ function StaleBanner({
             <summary className="cursor-pointer select-none text-muted-foreground hover:text-foreground">
               Details
             </summary>
-            <p className="mt-1 break-words font-mono text-[11px] leading-relaxed text-muted-foreground">
+            <p className="mt-1 break-words font-mono text-xs leading-relaxed text-muted-foreground">
               {section.error}
             </p>
           </details>

@@ -39,9 +39,9 @@ export function EditPanel({ campaign, tree }: { campaign: Row; tree: Row[] }) {
   const ads = tree.filter(t => t.kind === "ad");
 
   return (
-    <div className="mt-3 rounded-lg border bg-muted/30 p-3">
+    <div className="mt-4 rounded-xl bg-muted/40 p-3 sm:p-4">
       <div className="flex flex-wrap items-center gap-1.5">
-        <span className="mr-1 text-[12px] font-bold uppercase tracking-wide text-muted-foreground">
+        <span className="mr-1 basis-full text-sm font-semibold sm:basis-auto">
           Make changes
         </span>
         {(
@@ -55,8 +55,9 @@ export function EditPanel({ campaign, tree }: { campaign: Row; tree: Row[] }) {
           <Button
             key={label}
             size="sm"
-            variant={tab === key ? "default" : "outline"}
-            className="h-7 px-2 text-[12px]"
+            variant="outline"
+            aria-pressed={tab === key}
+            className={`h-7 rounded-full px-3 text-xs ${tab === key ? "border-primary/40 bg-primary/15 text-foreground" : ""}`}
             onClick={() => setTab(tab === key ? null : key)}
           >
             {label}
@@ -122,7 +123,7 @@ function CopyTest({
   return (
     <div className="mt-3 space-y-2.5">
       <p className="text-[13px] text-muted-foreground">
-        Keeps the video, the page and the lead form exactly as they are — only
+        Keeps the video, the page and the lead form exactly as they are: only
         the text changes. New ads arrive <strong>paused</strong>.
       </p>
 
@@ -162,7 +163,7 @@ function CopyTest({
 
       <div className="flex flex-wrap items-end gap-2">
         <label className="min-w-[220px] flex-1 text-[12px] font-semibold">
-          Optional — tell me an angle and I'll draft a first pass
+          Optional: tell me an angle and I'll draft a first pass
           <input
             className="mt-1 w-full rounded-md border bg-background p-1.5 text-[13px] font-normal"
             placeholder="e.g. lead with the free consultation"
@@ -192,7 +193,7 @@ function CopyTest({
       {assistLabel(copyAssist.row, copyAssist.waiting) && (
         <p className="rounded-md bg-muted p-2 text-[12px] text-muted-foreground">
           {assistLabel(copyAssist.row, copyAssist.waiting)} You don't have to
-          wait — type your own copy below and create the ads the same way.
+          wait: type your own copy below and create the ads the same way.
         </p>
       )}
       {copyAssist.row?.status === "ready" && copyAssist.row.note && (
@@ -304,7 +305,7 @@ function NewAdSet({ campaign, adSets }: { campaign: Row; adSets: Row[] }) {
     <div className="mt-3 space-y-2.5">
       <p className="text-[13px] text-muted-foreground">
         Copies the targeting, optimisation and lead form from an ad set that
-        already works. Arrives <strong>paused</strong> with no ads in it — add
+        already works. Arrives <strong>paused</strong> with no ads in it; add
         ads with "Test new copy".
       </p>
       <div className="grid gap-2 sm:grid-cols-3">
@@ -420,7 +421,7 @@ function BudgetEditor({ campaign, adSets }: { campaign: Row; adSets: Row[] }) {
               now{" "}
               {s.dailyBudget !== undefined
                 ? `$${s.dailyBudget.toFixed(2)}/day`
-                : "—"}
+                : "not set"}
             </div>
           </div>
           <div className="flex items-center gap-1.5">
@@ -521,7 +522,7 @@ function AddCreative({
       setUrl("");
       await fetchFromDrive([link]);
       toast.info(
-        "That's a Drive link — fetching it into the ad account now. Press Use this when it appears above.",
+        "That's a Drive link. Fetching it into the ad account now; press Use this when it appears above.",
       );
       return;
     }
@@ -568,7 +569,7 @@ function AddCreative({
   return (
     <div className="mt-3 space-y-2 text-xs">
       <p className="text-muted-foreground">
-        Everything except the file and the copy is copied from the ad you pick —
+        Everything except the file and the copy is copied from the ad you pick:
         lead form, page and CTA come across untouched. It lands paused.
       </p>
       <div className="grid gap-2 sm:grid-cols-2">
@@ -606,8 +607,7 @@ function AddCreative({
       </div>
       <div className="rounded-md border bg-background p-2">
         <div className="mb-1 text-[12px] font-semibold">
-          Paste the Drive link — I'll fetch the file and put it in the ad
-          account
+          Paste the Drive link: I'll fetch the file and put it in the ad account
         </div>
         <div className="flex flex-wrap gap-1.5">
           <input
@@ -656,7 +656,7 @@ function AddCreative({
           >
             <span className="min-w-0 flex-1 truncate">
               {m.name}
-              {m.error && <span className="txt-bad"> — {m.error}</span>}
+              {m.error && <span className="txt-bad">: {m.error}</span>}
             </span>
             {!m.error && (
               <Button
@@ -715,7 +715,7 @@ function AddCreative({
       <textarea
         className="w-full rounded border bg-background p-1.5"
         rows={2}
-        placeholder="New primary text (optional — leave blank to keep the original)"
+        placeholder="New primary text (optional, leave blank to keep the original)"
         value={message}
         onChange={e => setMessage(e.target.value)}
       />

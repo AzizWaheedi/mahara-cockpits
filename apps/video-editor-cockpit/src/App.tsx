@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
-import { Navigate, Route, Routes, useLocation } from "react-router";
+import { Menu } from "lucide-react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { Link, Navigate, Route, Routes, useLocation } from "react-router";
 import {
   PortalAutoSignIn,
   portalSignInPending,
@@ -7,13 +8,7 @@ import {
 import Sidebar from "./components/Sidebar";
 import { Wordmark } from "./components/Wordmark";
 import { SessionProvider, useWho } from "./lib/auth";
-import {
-  useCanOpen,
-  useEodToday,
-  useJobs,
-  useMe,
-  useMeetings,
-} from "./lib/data";
+import { useCanOpen, useEodToday, useJobs, useMe } from "./lib/data";
 import { portalUrl } from "./lib/portal";
 import { Toaster } from "./lib/toast";
 import EodPage from "./pages/EodPage";
@@ -45,20 +40,25 @@ function Shell() {
   const location = useLocation();
   const me = useMe(session ? email : null);
   const canOpen = useCanOpen(session ? email : null);
-  // The numbers beside the navigation. Only things to act on get one.
+  // The marks beside the navigation. Only things to act on get one: jobs
+  // ready to start, and a dot until the day has been filed. (Meetings had a
+  // count of every meeting, which never cleared, so it has none.)
   const jobs = useJobs();
-  const meetings = useMeetings();
   const eodDay = useMemo(kuwaitDay, []);
   const eodToday = useEodToday(eodDay);
   const counts = useMemo(
     () => ({
       ready: (jobs.data ?? []).filter(j => j.state === "ready").length,
-      meetings: (meetings.data ?? []).length,
-      // One, until the day has been filed. A nudge, not a tally.
       eod: eodToday.data?.length ? 0 : 1,
     }),
-    [jobs.data, meetings.data, eodToday.data],
+    [jobs.data, eodToday.data],
   );
+
+  // index.html names the tab "Mahara Media", because a client opening a
+  // review link sees it before anything loads. The desk names itself.
+  useEffect(() => {
+    document.title = "Editor desk · Mahara";
+  }, []);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: a portal sign-in reloads the seat
   useEffect(() => {
@@ -166,21 +166,21 @@ function Shell() {
 
   return (
     <div className="flex h-full">
-      {/* Fixed on a desktop, a drawer on a phone: the same shape as the
-          other cockpits without pulling in their sidebar library. */}
-      <aside className="hidden w-56 shrink-0 border-r hairline bg-[color:var(--card)] md:block">
+      {/* A rail from 1024px up, a drawer below it: an iPad held upright
+          gets the whole width for the page, as in the other cockpits. */}
+      <aside className="hidden w-60 shrink-0 border-r bg-card pt-safe lg:block">
         <Sidebar name={who} isAdmin={admin} counts={counts} />
       </aside>
 
       {drawer ? (
-        <div className="fixed inset-0 z-40 md:hidden">
+        <div className="fixed inset-0 z-40 lg:hidden">
           <button
             type="button"
             aria-label="Close the menu"
             onClick={() => setDrawer(false)}
             className="absolute inset-0 bg-black/50"
           />
-          <aside className="absolute inset-y-0 left-0 w-60 border-r hairline bg-[color:var(--card)]">
+          <aside className="absolute inset-y-0 left-0 w-[min(18rem,85vw)] border-r bg-card pt-safe pb-safe sm:w-[22rem]">
             <Sidebar
               name={who}
               isAdmin={admin}
@@ -193,44 +193,82 @@ function Shell() {
 
       <div className="flex min-w-0 flex-1 flex-col overflow-y-auto">
         {portalBanner}
-        <header
-          className="sticky z-10 flex items-center gap-3 border-b hairline bg-[color:var(--background)]/90 px-4 py-2.5 backdrop-blur md:hidden"
-          style={{ top: "env(safe-area-inset-top, 0px)" }}
-        >
-          <button
-            type="button"
-            onClick={() => setDrawer(true)}
-            aria-label="Open the menu"
-            className="muted text-sm"
-          >
-            Menu
-          </button>
-          <Wordmark size="sm" className="ml-auto" />
+        {/* Pinned to the very top and padded by the status bar, so in the
+            installed app it covers the strip behind the clock instead of
+            starting under it. */}
+        <header className="sticky top-0 z-10 border-b bg-background/90 px-2 pt-safe backdrop-blur lg:hidden">
+          <div className="flex h-14 items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setDrawer(true)}
+              aria-label="Open the menu"
+              className="grid size-10 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <Menu aria-hidden className="size-5" />
+            </button>
+            <Wordmark size="sm" />
+            <span className="text-sm text-muted-foreground">Editor desk</span>
+          </div>
         </header>
 
-        <Routes>
-          <Route path="/" element={<JobsPage />} />
-          {/* The portal's door lands on /dashboard in every cockpit. */}
-          <Route path="/dashboard" element={<Navigate to="/" replace />} />
-          <Route path="/pipeline" element={<PipelinePage />} />
-          <Route path="/meetings" element={<MeetingsPage />} />
-          <Route path="/videos" element={<VideosPage />} />
-          <Route path="/winners" element={<WinnersPage />} />
-          <Route path="/ideas" element={<IdeationPage />} />
-          <Route path="/swipe" element={<SwipePage />} />
-          <Route path="/eod" element={<EodPage />} />
-          <Route path="/job/:taskId" element={<JobPage />} />
-          <Route path="/send-review" element={<SendReviewPage />} />
-          <Route
-            path="*"
-            element={
-              <p className="muted p-10 text-center text-sm">
-                That page does not exist.
-              </p>
-            }
-          />
-        </Routes>
+        <main className="min-w-0 flex-1 lg:pt-[env(safe-area-inset-top,0px)]">
+          <Routes>
+            <Route path="/" element={<JobsPage />} />
+            {/* The portal's door lands on /dashboard in every cockpit. */}
+            <Route path="/dashboard" element={<Navigate to="/" replace />} />
+            <Route path="/pipeline" element={<PipelinePage />} />
+            <Route path="/meetings" element={<MeetingsPage />} />
+            <Route path="/videos" element={<VideosPage />} />
+            <Route path="/winners" element={<WinnersPage />} />
+            <Route
+              path="/ideas"
+              element={
+                <Gutter>
+                  <IdeationPage />
+                </Gutter>
+              }
+            />
+            <Route
+              path="/swipe"
+              element={
+                <Gutter>
+                  <SwipePage />
+                </Gutter>
+              }
+            />
+            <Route path="/eod" element={<EodPage />} />
+            <Route path="/job/:taskId" element={<JobPage />} />
+            <Route path="/send-review" element={<SendReviewPage />} />
+            <Route
+              path="*"
+              element={
+                <div className="px-4 py-16 text-center text-sm text-muted-foreground">
+                  <p>That page does not exist.</p>
+                  <Link
+                    to="/"
+                    className="mt-2 inline-block text-primary underline-offset-4 hover:underline"
+                  >
+                    Back to jobs
+                  </Link>
+                </div>
+              }
+            />
+          </Routes>
+        </main>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The gutter for the two pages shared with the other cockpits. Theirs sit
+ * inside a padded layout; this desk has none, so without this they ran from
+ * edge to edge of the screen.
+ */
+function Gutter({ children }: { children: ReactNode }) {
+  return (
+    <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
+      {children}
     </div>
   );
 }

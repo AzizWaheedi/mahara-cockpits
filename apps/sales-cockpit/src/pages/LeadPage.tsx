@@ -1,4 +1,4 @@
-import { ArrowLeft, Copy, ExternalLink, Phone, ScrollText } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Copy, Phone, ScrollText } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import { AdOrigin } from "../components/AdOrigin";
@@ -7,8 +7,13 @@ import { CallNotesList, useCallNotes } from "../components/CallNotes";
 import { Conversation, useConversation } from "../components/Conversation";
 import { HotControl } from "../components/HotList";
 import {
+  button,
+  buttonPrimary,
   EmptyState,
   Failed,
+  Parts,
+  pageWide,
+  Reading,
   SectionCard,
   StatusChip,
   type Tone,
@@ -88,11 +93,16 @@ export default function LeadPage({ me }: { me: Me }) {
     return () => window.clearInterval(t);
   }, [drafting, activity.reload]);
 
-  const ownerName = useMemo(() => {
+  // Who owns the lead, in words. A lead with an owner is never "no owner"
+  // because the team list is still on its way, failed, or lacks that user.
+  const owner = useMemo(() => {
     const id = live?.contact.assigned_to ?? lead.data?.assigned_to;
-    if (!id) return null;
-    return (team.data ?? []).find(t => t.ghl_user_id === id)?.name ?? null;
-  }, [team.data, live, lead.data]);
+    if (!id) return "no owner";
+    if (team.error) return "owner's name could not be read";
+    if (!team.data) return null;
+    const name = team.data.find(t => t.ghl_user_id === id)?.name;
+    return name ? `owner ${name}` : "owner has no seat in the cockpit";
+  }, [team.data, team.error, live, lead.data]);
 
   if (lead.error)
     return (
@@ -118,6 +128,8 @@ export default function LeadPage({ me }: { me: Me }) {
 
   const l = lead.data;
   const a = activity.data;
+  // The lead's calls, notes, recordings and proposals have not come back yet.
+  const reading = !a && !activity.error;
   const appointments = a?.appointments ?? [];
   const nextAppt = [...appointments]
     .filter(
@@ -171,20 +183,25 @@ export default function LeadPage({ me }: { me: Me }) {
           ) : null}
         </div>
         <p className="muted text-sm">
-          {[
-            l.company,
-            l.country,
-            `came in ${ago(l.lead_created_at)}`,
-            ownerName ? `owner ${ownerName}` : "no owner",
-          ]
-            .filter(Boolean)
-            .join(" · ")}
+          <Parts
+            items={[
+              l.company,
+              l.country,
+              l.lead_created_at
+                ? `came in ${ago(l.lead_created_at)}`
+                : "not known when it came in",
+              owner,
+              nextAppt
+                ? `${callType(nextAppt.call_type)} booked ${when(nextAppt.start_at)}`
+                : null,
+            ]}
+          />
         </p>
         <HotControl me={me} contactId={l.contact_id} />
         <div className="flex flex-wrap gap-2">
           <Link
             to={`/call/${l.contact_id}?script=${callScript(me, appointments)}`}
-            className="inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-md)] bg-[color:var(--primary)] px-3 text-[13px] font-semibold text-[color:var(--primary-foreground)] hover:opacity-90"
+            className={buttonPrimary}
           >
             <ScrollText className="size-3.5" aria-hidden />
             {callScript(me, appointments) === "demo"
@@ -200,19 +217,19 @@ export default function LeadPage({ me }: { me: Me }) {
               href={newClientFormUrl(l, appointments, me)}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-md)] border hairline px-2.5 text-[13px] hover:bg-[color:var(--secondary)]"
+              className={button}
               title="Opens the New Client Form with this lead, the closer and the setter already filled in, so the signed client links back to this call."
             >
-              New client form <ExternalLink className="size-3.5" aria-hidden />
+              New client form <ArrowUpRight className="size-3.5" aria-hidden />
             </a>
           ) : null}
           <a
             href={`https://app.gohighlevel.com/v2/location/${GHL_LOCATION}/contacts/detail/${l.contact_id}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-md)] border hairline px-2.5 text-[13px] hover:bg-[color:var(--secondary)]"
+            className={button}
           >
-            Open in HighLevel <ExternalLink className="size-3.5" aria-hidden />
+            Open in HighLevel <ArrowUpRight className="size-3.5" aria-hidden />
           </a>
         </div>
       </header>
@@ -228,7 +245,10 @@ export default function LeadPage({ me }: { me: Me }) {
                 <p className="min-w-0 flex-1 text-sm">
                   {callType(r.call_type)} · {when(r.start_at)}
                   {r.assigned_user_name ? (
-                    <span className="muted"> · {r.assigned_user_name}</span>
+                    <span className="muted">
+                      {" · "}
+                      <bdi>{r.assigned_user_name}</bdi>
+                    </span>
                   ) : null}
                 </p>
                 <MarkControls row={r} onDone={() => activity.reload()} />
@@ -238,8 +258,8 @@ export default function LeadPage({ me }: { me: Me }) {
         </SectionCard>
       ) : null}
 
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-12">
-        <div className="min-w-0 space-y-5 xl:col-span-4">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-12 xl:gap-6">
+        <div className="min-w-0 space-y-4 xl:col-span-4 xl:space-y-6">
           <SectionCard title="What they told us">
             <Answers lead={l} />
           </SectionCard>
@@ -247,11 +267,15 @@ export default function LeadPage({ me }: { me: Me }) {
             <AdOrigin lead={l} />
           </SectionCard>
           <SectionCard title="Calls on the calendar" flush>
-            <Appointments rows={appointments} reload={activity.reload} />
+            <Appointments
+              rows={a ? appointments : null}
+              error={activity.error}
+              reload={activity.reload}
+            />
           </SectionCard>
         </div>
 
-        <div className="min-w-0 space-y-5 xl:col-span-5">
+        <div className="min-w-0 space-y-4 xl:col-span-5 xl:space-y-6">
           <div ref={convoRef}>
             <SectionCard title="Conversation">
               <Conversation
@@ -259,6 +283,7 @@ export default function LeadPage({ me }: { me: Me }) {
                 convo={convo}
                 rep={me.name}
                 callAt={nextAppt?.start_at ?? null}
+                country={l.country}
                 prefill={convoPrefill}
               />
             </SectionCard>
@@ -277,6 +302,12 @@ export default function LeadPage({ me }: { me: Me }) {
                 deals={a?.deals ?? []}
                 proposals={a?.proposals ?? []}
                 messages={timelineMessages}
+                loading={reading}
+                // The conversation card says when a later read fails; the
+                // history says so only when it has none of the messages.
+                messagesLoading={!convo.data && !convo.error}
+                messagesError={convo.data ? null : convo.error}
+                messagesRetry={() => void convo.reload()}
               />
             )}
           </SectionCard>
@@ -284,22 +315,14 @@ export default function LeadPage({ me }: { me: Me }) {
             <LeadRecordings
               contactId={l.contact_id}
               recordings={a?.recordings ?? []}
+              loading={reading}
+              error={activity.error}
+              retry={activity.reload}
             />
           </SectionCard>
         </div>
 
-        <div className="min-w-0 space-y-5 xl:col-span-3">
-          {nextAppt ? (
-            <SectionCard title="Next call">
-              <p className="text-sm font-medium">
-                {callType(nextAppt.call_type)} · {when(nextAppt.start_at)}
-              </p>
-              <p className="muted text-xs">
-                {nextAppt.assigned_user_name ?? "No rep assigned"} ·{" "}
-                {statusLabel(nextAppt.status)}
-              </p>
-            </SectionCard>
-          ) : null}
+        <div className="min-w-0 space-y-4 xl:col-span-3 xl:space-y-6">
           <SectionCard title="Proof to send">
             <ProofToSend
               contactId={l.contact_id}
@@ -340,7 +363,10 @@ export default function LeadPage({ me }: { me: Me }) {
                 retry={callNotes.reload}
               />
             ) : (
-              <CallNotesList notes={callNotes.data ?? []} />
+              <CallNotesList
+                notes={callNotes.data ?? []}
+                loading={!callNotes.data}
+              />
             )}
           </SectionCard>
           <SectionCard title="Research">
@@ -352,6 +378,9 @@ export default function LeadPage({ me }: { me: Me }) {
               contactId={l.contact_id}
               notes={a?.notes ?? []}
               onChange={activity.reload}
+              loading={reading}
+              error={activity.error}
+              retry={activity.reload}
             />
           </SectionCard>
           <SectionCard title="Proposal">
@@ -363,6 +392,9 @@ export default function LeadPage({ me }: { me: Me }) {
               recordings={a?.recordings ?? []}
               requests={a?.requests ?? []}
               onChange={activity.reload}
+              loading={reading}
+              error={activity.error}
+              retry={activity.reload}
             />
           </SectionCard>
         </div>
@@ -406,20 +438,26 @@ function callScript(me: Me, appointments: CalendarRow[]): "intro" | "demo" {
 }
 
 function Page({ children }: { children: ReactNode }) {
-  return (
-    <main className="mx-auto w-full max-w-7xl space-y-5 px-4 py-6 md:px-6">
-      {children}
-    </main>
-  );
+  return <main className={pageWide}>{children}</main>;
 }
 
 function Appointments({
   rows,
+  error,
   reload,
 }: {
-  rows: CalendarRow[];
+  /** Null until the lead's calls have been read. */
+  rows: CalendarRow[] | null;
+  error: string | null;
   reload: () => void;
 }) {
+  if (error)
+    return (
+      <div className="p-4">
+        <Failed what="This lead's calls" error={error} retry={reload} />
+      </div>
+    );
+  if (!rows) return <Reading what="the calls" className="px-4 py-3 text-sm" />;
   if (!rows.length)
     return (
       <p className="muted px-4 py-3 text-sm">
@@ -464,7 +502,6 @@ function Appointments({
 function CopyChip({
   text,
   label,
-  icon: Icon,
 }: {
   text: string;
   label: string;
@@ -481,14 +518,14 @@ function CopyChip({
           toast.error("The browser would not copy. Select the text instead.");
         }
       }}
-      className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-[var(--radius-md)] border hairline px-2.5 text-[13px] hover:bg-[color:var(--secondary)]"
+      className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-[var(--radius-md)] border hairline px-3 text-sm hover:bg-[color:var(--secondary)]"
       title={label}
+      aria-label={`${label}: ${text}`}
     >
-      {Icon ? <Icon className="size-3.5 shrink-0" aria-hidden /> : null}
+      <Copy className="muted size-3.5 shrink-0" aria-hidden />
       <span className="truncate tabular-nums" dir="ltr">
         {text}
       </span>
-      <Copy className="muted size-3 shrink-0" aria-hidden />
     </button>
   );
 }

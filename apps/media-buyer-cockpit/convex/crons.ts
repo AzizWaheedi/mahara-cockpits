@@ -153,6 +153,18 @@ crons.interval(
   },
 );
 
+/**
+ * The sales cockpit's desk (on the VPS) and its copy of B2B (a Supabase
+ * function) run outside Convex. Every 15 minutes their last runs are read;
+ * three late or failing reads in a row alert Aziz. [Aziz, 2026-09-26]
+ */
+crons.interval(
+  "watch the sales cockpit's desk and mirror",
+  { minutes: 15 },
+  internal.health.runJob,
+  { job: "sales watch" },
+);
+
 /** The CEO cockpit's prepared sections: every 15 minutes, all sources. [Aziz, 2026-09-15] */
 crons.interval(
   "refresh the CEO cockpit",

@@ -14,7 +14,8 @@ own lead match, which is by email or by appointment, the desk's own two rules.
 A call the vault holds is the vault step's to judge (calls_vault.py), so it is
 left alone here even when it is not in the cockpit. As everywhere else, a
 client-service title (launch, check-in, onboarding...) stays out, and so does
-a call nobody from outside joined that B2B matched to no lead.
+a call nobody from outside joined that B2B matched to no lead. Once the calls
+are in, a meeting recorded twice is hidden (recordings.mark_recordings).
 
 B2B is Muhammed's and read only for us. It is read the way sales-mirror reads
 it: the Supabase management API's query endpoint with `read_only: true`,
@@ -34,7 +35,7 @@ from typing import Any, Callable, Iterable, Optional
 from . import http
 from .calls_vault import MAX_ACTIONS, MAX_SUMMARY, vault_ids
 from .fathom import NOT_SALES, parse_ts
-from .recordings import MATCHES, OUTSIDER, _keep_earlier_matches
+from .recordings import MATCHES, OUTSIDER, _keep_earlier_matches, mark_recordings
 from .supabase import iso, now_iso
 
 B2B_REF = "flwboeijllbtrufxkhts"
@@ -244,13 +245,14 @@ def run(sb: Any, b2b: B2B, log: Callable[[str], None], *, emails: Iterable[str] 
             stored += sb.upsert("cockpit_sales_recordings", [{**r, "indexed_at": stamp} for r in rows],
                                 "recording_id")
         rows_done += len(rows)
+    marked = None if dry else mark_recordings(sb, log, "calls-b2b-fathom")
 
     summary = {
         "people": who, **counts, "to_copy": len(todo), "rows": rows_done, "stored": stored,
         "with_transcript": with_transcript, "transcripts_uploaded": uploaded, "kept_earlier_match": kept,
         "by_email": by.get("email", 0), "by_appointment": by.get("appointment", 0), "by_b2b": by.get("b2b", 0),
         "unmatched": by.get("none", 0), "vault_checked": vault is not None and bool(in_vault),
-        "first": first, "last": last, "dry": dry,
+        "first": first, "last": last, "dry": dry, "marked": marked,
     }
     log(f"calls-b2b-fathom: {json.dumps(summary, default=str)}")
     return summary

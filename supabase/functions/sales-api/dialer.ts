@@ -50,18 +50,26 @@ export function kuwaitAt(ms: number, hour: number, minute = 0, dayOffset = 0): n
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + dayOffset, hour, minute) - KUWAIT;
 }
 
+/** 09:00 on the next working morning in Kuwait (Friday is the day off). */
+export function nextWorkingNine(now: number): number {
+  let due = kuwaitAt(now, 9, 0, 1);
+  if (new Date(due + KUWAIT).getUTCDay() === 5) due = kuwaitAt(due, 9, 0, 1);
+  return due;
+}
+
 /**
- * The retry ladder for a lead who did not answer: the same day at 17:00,
- * then the next two days at 09:00, then the lead is left as unreachable.
- * `step` is how many unanswered tries there have been.
+ * The retry ladder for a lead who did not answer: the same day at 17:00
+ * (when that is at least an hour away), otherwise the next working morning
+ * at 09:00; then the next two working mornings at 09:00; then the lead is
+ * left as unreachable. `step` is how many unanswered tries there have been.
  */
 export function nextTry(step: number, now: number): { step: number; due: number | null; unreachable: boolean } {
   if (step >= 3) return { step, due: null, unreachable: true };
   const next = step + 1;
-  let due = next === 1 ? kuwaitAt(now, 17) : kuwaitAt(now, 9, 0, 1);
-  if (due <= now) due = next === 1 ? kuwaitAt(now, 17, 0, 1) : kuwaitAt(now, 9, 0, 1);
-  // A first retry must be at least an hour away, or it is just a redial.
-  if (next === 1 && due - now < HOUR) due = kuwaitAt(now, 9, 0, 1);
+  const five = kuwaitAt(now, 17);
+  // A first retry must be at least an hour away, or it is just a redial; an
+  // evening miss goes to the next working morning, not the next evening.
+  const due = next === 1 && five - now >= HOUR ? five : nextWorkingNine(now);
   return { step: next, due, unreachable: false };
 }
 
@@ -313,6 +321,44 @@ export interface Candidate {
   hot_owner: string | null;
   hot_next_at: number | null;
   appt: Appt | null;
+  /**
+   * The rep whose lead this is (Aziz, 2026-09-27): the setter from the intro
+   * they booked, the closer from the demo. Only a working rep's seat counts,
+   * so a leaver's leads are nobody's again. Null: the shared queue's.
+   */
+  owner?: string | null;
+  /** The lead's latest call to us in the last day that nobody answered. */
+  inbound_call_at?: number | null;
+}
+
+/** "14:30", Kuwait time. */
+function kuwaitClock(t: number): string {
+  return new Date(t + KUWAIT).toISOString().slice(11, 16);
+}
+
+/**
+ * The lead called us and nobody picked up, and nobody has called them since:
+ * the call centre's missed-call rule, the warmest lead there is. Urgent for
+ * ten minutes, today's work for the rest of the day.
+ */
+export function missedCall(c: Candidate, now: number): "now" | "today" | null {
+  const t = c.inbound_call_at ?? null;
+  if (t === null || now - t > DAY || (c.last_dial_at !== null && c.last_dial_at >= t)) return null;
+  return now - t <= 10 * MIN ? "now" : "today";
+}
+
+/**
+ * A call-back shows five minutes before the agreed time (the call centre's
+ * rule) and stays urgent for ten minutes after it.
+ */
+export function callbackSoon(c: Candidate, now: number): boolean {
+  return c.callback_at !== null && c.callback_at - 5 * MIN <= now && now - c.callback_at <= 10 * MIN;
+}
+
+function callbackWords(c: Candidate, now: number): string {
+  return c.callback_at !== null && c.callback_at > now
+    ? `Call back at ${kuwaitClock(c.callback_at)}, as agreed`
+    : "Call back now, as agreed";
 }
 
 export type ItemKind = "lead" | "intro" | "confirm";
@@ -349,6 +395,25 @@ export function confirmFrom(start: number): number {
   return hour < 12 ? kuwaitAt(start, 18, 0, -1) : kuwaitAt(start, 9);
 }
 
+/** An intro is the setter's call from five minutes before it to twenty after. */
+function introWindow(a: Appt, now: number): boolean {
+  return now >= a.start - 5 * MIN && now <= a.start + 20 * MIN;
+}
+
+/** How long an intro that rang out waits before it comes back, inside its window. */
+export const INTRO_RETRY = 5 * MIN;
+
+/**
+ * An intro the setter just tried and nobody answered: it leaves the queue
+ * for five minutes, so Next lead moves on instead of bringing it straight
+ * back, and returns while its window is still open (a try at the booked
+ * minute, then about every five minutes to twenty past).
+ */
+export function introWaiting(a: Appt | null, now: number): boolean {
+  if (!a || a.type !== "intro" || ENDED.has(String(a.status ?? "")) || !introWindow(a, now)) return false;
+  return a.last_try !== null && a.last_try >= a.start - 5 * MIN && now - a.last_try < INTRO_RETRY;
+}
+
 /**
  * Appointment work, before any lead: the intro call itself (intros are phone
  * calls the setter makes at the booked minute), then confirmations of calls
@@ -365,8 +430,10 @@ export function appointmentWork(
 ): { tier: 0 | 1; kind: ItemKind; why: string; sort: number } | null {
   if (!a || ENDED.has(String(a.status ?? ""))) return null;
   const mine = !meGhl || !a.assigned || a.assigned === meGhl;
-  if (as === "setter" && a.type === "intro" && mine && now >= a.start - 5 * MIN && now <= a.start + 20 * MIN)
+  if (as === "setter" && a.type === "intro" && mine && introWindow(a, now)) {
+    if (introWaiting(a, now)) return null;
     return { tier: 0, kind: "intro", why: `Intro call now, booked for ${whenWords(a.start, now).replace(/^today at /, "")}`, sort: a.start };
+  }
   const farAhead = a.booked !== null && a.start - a.booked > DAY;
   if (a.start <= now || !farAhead || a.confirmed || now < confirmFrom(a.start)) return null;
   // Setters confirm their own intros and help with every demo; a closer
@@ -441,23 +508,39 @@ export function rankForSetter(
     // A number the dialer cannot call is left for the Maqsam softphone.
     if (!routePhone(c.phone).ok) continue;
     if (c.claimed_by && c.claimed_by !== me) continue;
+    // The intro that just rang out waits its five minutes out of sight.
+    if (introWaiting(c.appt, now)) continue;
     const h = heat(c, now);
     const job = appointmentWork(c.appt, now, "setter", meGhl) ?? hotFollowUp(c, me, now, manager);
     if (job) {
       place(out, c, h, job);
       continue;
     }
+    // Another rep's lead is theirs to work; a manager still sees it.
+    if (c.owner && c.owner !== me && !manager) continue;
     if (c.closed) continue;
     const fresh = c.created_at !== null && now - c.created_at <= 10 * MIN && !c.last_dial_at;
     const replied = c.inbound_at !== null && now - c.inbound_at <= 10 * MIN && (!c.last_dial_at || c.last_dial_at < c.inbound_at);
-    const callbackNow = c.callback_at !== null && c.callback_at <= now && now - c.callback_at <= 10 * MIN;
-    if (fresh || replied || callbackNow) {
+    const callbackNow = callbackSoon(c, now);
+    const missed = missedCall(c, now);
+    if (fresh || replied || callbackNow || missed === "now") {
       place(out, c, h, {
         tier: 0,
         kind: "lead",
-        why: callbackNow ? "Call back now, as agreed" : replied ? "Wrote back minutes ago" : "New lead, call now",
-        sort: -(c.callback_at ?? c.inbound_at ?? c.created_at ?? 0),
+        why: callbackNow
+          ? callbackWords(c, now)
+          : missed === "now"
+            ? "Called us, missed it"
+            : replied
+              ? "Wrote back minutes ago"
+              : "New lead, call now",
+        sort: -(c.callback_at ?? c.inbound_call_at ?? c.inbound_at ?? c.created_at ?? 0),
       });
+      continue;
+    }
+    // They called us today and nobody answered: before any retry timing.
+    if (missed === "today") {
+      place(out, c, h, { tier: 1, kind: "lead", why: "Called us, missed it", sort: -(c.inbound_call_at ?? 0) });
       continue;
     }
     if (c.due_at !== null && c.due_at > now) continue;
@@ -547,14 +630,19 @@ export function rankForCloser(
       continue;
     }
     const replied = c.inbound_at !== null && now - c.inbound_at <= 10 * MIN && (!c.last_dial_at || c.last_dial_at < c.inbound_at);
-    const callbackNow = c.callback_at !== null && c.callback_at <= now && now - c.callback_at <= 10 * MIN;
-    if (replied || callbackNow) {
+    const callbackNow = callbackSoon(c, now);
+    const missed = missedCall(c, now);
+    if (replied || callbackNow || missed === "now") {
       place(out, c, h, {
         tier: 0,
         kind: "lead",
-        why: callbackNow ? "Call back now, as agreed" : "Wrote back minutes ago",
-        sort: -(c.inbound_at ?? c.callback_at ?? 0),
+        why: callbackNow ? callbackWords(c, now) : missed === "now" ? "Called us, missed it" : "Wrote back minutes ago",
+        sort: -(c.inbound_call_at ?? c.inbound_at ?? c.callback_at ?? 0),
       });
+      continue;
+    }
+    if (missed === "today") {
+      place(out, c, h, { tier: 1, kind: "lead", why: "Called us, missed it", sort: -(c.inbound_call_at ?? 0) });
       continue;
     }
     if (c.closed) continue;
@@ -575,12 +663,6 @@ export function rankForCloser(
     }
   }
   return order(out);
-}
-
-/** Speed to lead in minutes: lead created to the first outbound call, or null if never called. */
-export function speedToLead(createdAt: number | null, firstDialAt: number | null): number | null {
-  if (createdAt === null || firstDialAt === null || firstDialAt < createdAt) return null;
-  return Math.round((firstDialAt - createdAt) / 60_000);
 }
 
 // ---------------------------------------------------------------------------

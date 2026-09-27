@@ -1,6 +1,13 @@
 import { CalendarDays, Menu, PhoneCall, Sun, UserSearch } from "lucide-react";
 import { lazy, type ReactNode, Suspense, useEffect, useState } from "react";
-import { Navigate, NavLink, Route, Routes, useLocation } from "react-router";
+import {
+  Navigate,
+  NavLink,
+  Route,
+  Routes,
+  useLocation,
+  useParams,
+} from "react-router";
 import { PageBoundary } from "./components/PageBoundary";
 import {
   PortalAutoSignIn,
@@ -19,6 +26,15 @@ import TodayPage from "./pages/TodayPage";
 const CalendarPage = lazy(() => import("./pages/CalendarPage"));
 const LeadsPage = lazy(() => import("./pages/LeadsPage"));
 const LeadPage = lazy(() => import("./pages/LeadPage"));
+
+/**
+ * One lead's page, started fresh for each lead: a draft, a picked recording
+ * or a half-written note never carries over to the next lead opened.
+ */
+function KeyedLead({ me }: { me: Me }) {
+  const { contactId = "" } = useParams();
+  return <LeadPage key={contactId} me={me} />;
+}
 const CallPage = lazy(() => import("./pages/CallPage"));
 const DialerPage = lazy(() => import("./pages/DialerPage"));
 const ProposalsPage = lazy(() => import("./pages/ProposalsPage"));
@@ -204,13 +220,15 @@ export function Seated({
   );
 
   return (
-    <div className="flex h-full">
-      <aside className="hidden w-56 shrink-0 border-r hairline bg-[color:var(--card)] md:block">
+    // From md up there is no bar at the top, so the installed app keeps its
+    // own content below the clock (the status bar is see-through there).
+    <div className="flex h-full lg:pt-[env(safe-area-inset-top,0px)]">
+      <aside className="hidden w-56 shrink-0 border-r hairline bg-[color:var(--card)] lg:block">
         {sidebar()}
       </aside>
 
       {drawer ? (
-        <div className="fixed inset-0 z-40 md:hidden">
+        <div className="fixed inset-0 z-40 lg:hidden">
           <button
             type="button"
             aria-label="Close the menu"
@@ -223,9 +241,9 @@ export function Seated({
         </div>
       ) : null}
 
-      <div className="flex min-w-0 flex-1 flex-col overflow-y-auto pb-16 md:pb-0">
+      <div className="flex min-w-0 flex-1 flex-col overflow-y-auto pb-[calc(4rem+env(safe-area-inset-bottom,0px))] lg:pb-0">
         {banner}
-        <header className="pt-safe sticky top-0 z-10 flex items-center gap-3 border-b hairline bg-[color:var(--background)]/90 px-4 py-2.5 backdrop-blur md:hidden">
+        <header className="pt-safe sticky top-0 z-10 flex items-center gap-3 border-b hairline bg-[color:var(--background)]/90 px-4 py-2.5 backdrop-blur lg:hidden">
           <Wordmark size="sm" />
           <span className="muted text-sm">Sales</span>
         </header>
@@ -239,7 +257,7 @@ export function Seated({
               <Route path="/dashboard" element={<Navigate to="/" replace />} />
               <Route path="/calendar" element={<CalendarPage me={me} />} />
               <Route path="/leads" element={<LeadsPage />} />
-              <Route path="/lead/:contactId" element={<LeadPage me={me} />} />
+              <Route path="/lead/:contactId" element={<KeyedLead me={me} />} />
               <Route path="/call/:contactId" element={<CallPage me={me} />} />
               <Route path="/dialer" element={<DialerPage me={me} />} />
               <Route path="/pipeline" element={<PipelinePage me={me} />} />
@@ -295,7 +313,7 @@ function TabBar({ owed, onMore }: { owed: number; onMore: () => void }) {
   ];
   return (
     <nav
-      className="pb-safe fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t hairline bg-[color:var(--card)]/95 backdrop-blur md:hidden"
+      className="pb-safe fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t hairline bg-[color:var(--card)]/95 backdrop-blur lg:hidden"
       aria-label="Sections"
     >
       {tabs.map(({ to, label, icon: Icon, n }) => (
@@ -304,15 +322,20 @@ function TabBar({ owed, onMore }: { owed: number; onMore: () => void }) {
           to={to}
           end={to === "/"}
           className={({ isActive }) =>
-            `no-touch relative flex flex-col items-center gap-0.5 py-2 text-[11px] ${isActive ? "font-medium" : "muted"}`
+            `no-touch relative flex min-h-14 flex-col items-center justify-center gap-0.5 py-2 text-xs ${
+              isActive ? "font-medium text-[color:var(--primary)]" : "muted"
+            }`
           }
         >
           <Icon className="size-5" strokeWidth={1.75} aria-hidden />
           {label}
           {n ? (
             <span
-              className="absolute top-1 left-1/2 ml-2 rounded-full px-1 text-[10px] font-semibold tabular-nums"
-              style={{ background: "var(--owed)", color: "#1b1300" }}
+              className="absolute top-1 left-1/2 ml-2 rounded-full px-1.5 text-xs leading-4 font-semibold tabular-nums"
+              style={{
+                background: "var(--owed)",
+                color: "var(--warning-foreground)",
+              }}
             >
               {n}
             </span>
@@ -322,7 +345,7 @@ function TabBar({ owed, onMore }: { owed: number; onMore: () => void }) {
       <button
         type="button"
         onClick={onMore}
-        className="no-touch muted flex flex-col items-center gap-0.5 py-2 text-[11px]"
+        className="no-touch muted flex min-h-14 flex-col items-center justify-center gap-0.5 py-2 text-xs"
       >
         <Menu className="size-5" strokeWidth={1.75} aria-hidden />
         More
