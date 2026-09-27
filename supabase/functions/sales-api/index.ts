@@ -2360,7 +2360,7 @@ type QueueCandidate = Candidate &
 /** Everything the queue needs, read in a handful of queries, no huge id lists. */
 async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
   const soon = enc(new Date(now - 3_600_000).toISOString());
-  const [states, inbox, attempts, h, confirmations, hotRows, roles, seats] = await Promise.all([
+  const [states, inbox, attempts, h, confirmations, hotRows, roles, seats, introTries] = await Promise.all([
     svcAll("cockpit_sales_queue_state?select=*&order=contact_id"),
     svc(`cockpit_sales_inbox?select=contact_id,last_message_at,last_direction&last_direction=eq.inbound&last_message_at=gte.${enc(new Date(now - 86_400_000).toISOString())}`),
     svc("cockpit_sales_attempts?select=contact_id,rep_email,started_at,call_checked_at&state=in.(dialing,placed)"),
@@ -2369,6 +2369,9 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
     svc("cockpit_sales_hot?select=contact_id,owner_email,next_at&removed_at=is.null&limit=2000"),
     stageRoles(),
     svc("cockpit_sales_people?select=email,ghl_user_id,role&active=eq.true&via_portal=eq.true&limit=500"),
+    // Intro calls that rang out in the last hour: the intro waits a few
+    // minutes before it comes back (dialer.ts introWaiting).
+    svc(`cockpit_sales_attempts?select=appointment_id,saved_at&state=eq.saved&item_kind=eq.intro&outcome=eq.no_answer&saved_at=gte.${soon}&limit=2000`),
   ]);
   // Who owns a lead: a working rep's seat by HighLevel's owner field. A
   // manager's or a leaver's lead is the shared queue's (Aziz, 2026-09-27).
@@ -2443,6 +2446,11 @@ async function candidates(now: number): Promise<{ list: QueueCandidate[] }> {
     if (c.result === "confirmed" || c.result === "reschedule") confirmedAppt.add(id);
     const t = ms(c.at);
     if ((c.result === "no_answer" || c.result === "message_sent") && t && (lastTry.get(id) ?? 0) < t) lastTry.set(id, t);
+  }
+  for (const r of introTries) {
+    const id = String(r.appointment_id ?? "");
+    const t = ms(r.saved_at);
+    if (id && t && (lastTry.get(id) ?? 0) < t) lastTry.set(id, t);
   }
   const hotBy = new Map(hotRows.map(r => [String(r.contact_id), r]));
   const list = leads.map(l => {

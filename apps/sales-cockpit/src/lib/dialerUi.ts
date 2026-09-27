@@ -1,11 +1,287 @@
 /**
  * The dialer page's small rules, kept apart so they can be tested: how long
  * a skip holds, what the queue's chips count, the countdown in a few words,
- * the line about leads the dialer cannot call, and what can be sent to a
- * lead who did not answer.
+ * the line about leads the dialer cannot call, what can be sent to a lead
+ * who did not answer, missed calls, what follows a save, the saves
+ * HighLevel has not taken, and which open call a late read of the queue
+ * may show.
  */
 
-import { countdown, mmss, type QueueItem, type UrgentEvent } from "./dialer";
+import {
+  countdown,
+  DIAL_WITHIN_MS,
+  mmss,
+  type QueueItem,
+  type UrgentEvent,
+  urgentEvents,
+} from "./dialer";
+import { ago, clock, dayLabel } from "./format";
+
+/** A queue item as sales-api sends it, with the lead's last missed call to us. */
+export interface DialItem extends QueueItem {
+  /** Their latest call to us in the last day that nobody answered. */
+  inbound_call_at?: string | null;
+}
+
+/** What a dialer item is: a lead to call, the intro call itself, or a confirmation. */
+export type ItemKind = "lead" | "intro" | "confirm";
+
+const MIN_MS = 60_000;
+const DAY_MS = 86_400_000;
+
+const msOf = (iso: string | null | undefined): number | null => {
+  const t = iso ? Date.parse(iso) : Number.NaN;
+  return Number.isFinite(t) ? t : null;
+};
+
+/** "4m", "3h", "2d", or "in 20m" for a time ahead: short enough for a queue row. */
+export function shortAgo(iso: string | null, now: number): string {
+  if (!iso) return "";
+  const m = Math.round((now - Date.parse(iso)) / MIN_MS);
+  if (!Number.isFinite(m)) return "";
+  if (m < 0) {
+    const f = -m;
+    return f < 60
+      ? `in ${f}m`
+      : f < 2880
+        ? `in ${Math.round(f / 60)}h`
+        : `in ${Math.round(f / 1440)}d`;
+  }
+  if (m < 60) return `${Math.max(m, 0)}m`;
+  if (m < 2880) return `${Math.round(m / 60)}h`;
+  return `${Math.round(m / 1440)}d`;
+}
+
+// ---------------------------------------------------------------------------
+// Missed calls: the lead called us and nobody picked up
+// ---------------------------------------------------------------------------
+
+/**
+ * When the lead called and nobody answered, if that was in the last 24
+ * hours and nobody has called them since (sales-api's missedCall); else null.
+ */
+export function missedCallAt(i: DialItem, now: number): number | null {
+  const t = msOf(i.inbound_call_at);
+  if (t === null || now - t > DAY_MS) return null;
+  const last = msOf(i.last_dial_at);
+  if (last !== null && last >= t) return null;
+  return t;
+}
+
+/** The banner on the lead, the call centre's: "Missed their call at 14:05. Call them back." */
+export function missedCallLine(i: DialItem, now: number): string | null {
+  const t = missedCallAt(i, now);
+  if (t === null) return null;
+  const iso = new Date(t).toISOString();
+  const day = dayLabel(iso, now);
+  const at = day === "Today" ? "" : `${day.toLowerCase()} `;
+  return `Missed their call ${at}at ${clock(iso)}. Call them back.`;
+}
+
+/**
+ * The "call now" strip, missed calls included. A lead who called us has the
+ * same two minutes as a new lead, counted from their call when it is the
+ * latest thing they did (urgentEvents alone counts from when they came in,
+ * which made a call from a minute ago look hours late). A call-back due in
+ * the next five minutes keeps its own countdown.
+ */
+export function urgentFor(items: DialItem[], now: number): UrgentEvent[] {
+  const missed: UrgentEvent[] = [];
+  const rest: DialItem[] = [];
+  for (const i of items) {
+    const t =
+      i.tier === 0 && (i.kind ?? "lead") === "lead"
+        ? missedCallAt(i, now)
+        : null;
+    const callback = msOf(i.callback_at);
+    const later = Math.max(
+      msOf(i.inbound_at) ?? Number.NEGATIVE_INFINITY,
+      msOf(i.created_at) ?? Number.NEGATIVE_INFINITY,
+    );
+    if (
+      t === null ||
+      (callback !== null && callback <= now + 5 * MIN_MS) ||
+      later > t
+    ) {
+      rest.push(i);
+      continue;
+    }
+    missed.push({
+      key: `${i.contact_id}:missed:${t}`,
+      contact_id: i.contact_id,
+      name: i.name,
+      title: "Missed their call",
+      at: t,
+      deadline: t + DIAL_WITHIN_MS,
+      callback: false,
+    });
+  }
+  return [...urgentEvents(rest, now), ...missed].sort(
+    (a, b) => a.deadline - b.deadline || a.key.localeCompare(b.key),
+  );
+}
+
+/**
+ * The time at the end of a queue row: the booked call's clock, a call-back's
+ * agreed time when it is close, how long ago they called us, or how long
+ * ago they wrote or came in.
+ */
+export function rowTime(i: DialItem, now: number): string {
+  if (i.kind === "intro" || i.kind === "confirm")
+    return clock(i.appointment?.start_at ?? null);
+  const callback = msOf(i.callback_at);
+  if (callback !== null && i.tier === 0 && callback <= now + 5 * MIN_MS)
+    return clock(i.callback_at);
+  const missed = missedCallAt(i, now);
+  if (missed !== null) return shortAgo(new Date(missed).toISOString(), now);
+  return shortAgo(i.inbound_at ?? i.created_at, now);
+}
+
+/** The line under "Ready to call": why, how many tries, when last called (said once). */
+export function readyLine(i: DialItem, now: number): string {
+  return [
+    i.why,
+    i.step
+      ? `${i.step} unanswered ${i.step === 1 ? "try" : "tries"} so far`
+      : null,
+    i.last_dial_at
+      ? `last called ${ago(i.last_dial_at, now)}`
+      : /never called/i.test(i.why)
+        ? null
+        : "never called",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+// ---------------------------------------------------------------------------
+// After a save: the next lead at once, unless a next step was asked for
+// ---------------------------------------------------------------------------
+
+/**
+ * What the screen does once an outcome is saved: the next lead opens at
+ * once (the call centre's way), except after an intro was held (book the
+ * demo or set a call-back first) or a no-answer the rep chose to message.
+ */
+export function afterSave(
+  kind: ItemKind,
+  outcome: string,
+  thenMessage: boolean,
+): "next" | "held" | "message" {
+  if (kind === "intro" && outcome === "showed") return "held";
+  if (outcome === "no_answer" && thenMessage) return "message";
+  return "next";
+}
+
+/** Alt+→ opens the next lead, but not inside a text box, where it moves the cursor by a word. */
+export function isNextLeadKey(
+  e: {
+    key: string;
+    altKey: boolean;
+    ctrlKey: boolean;
+    metaKey: boolean;
+    shiftKey: boolean;
+  },
+  typing: boolean,
+): boolean {
+  return (
+    e.key === "ArrowRight" &&
+    e.altKey &&
+    !e.ctrlKey &&
+    !e.metaKey &&
+    !e.shiftKey &&
+    !typing
+  );
+}
+
+// ---------------------------------------------------------------------------
+// A late read of the queue and the call this page just placed
+// ---------------------------------------------------------------------------
+
+/**
+ * The open call after a read of the queue: the read's own when it has one;
+ * the call this page placed after the read was asked for, when the read
+ * cannot know it yet (a slow read must never end a call on screen); else
+ * none, because a read asked after the call that shows none means the
+ * server has let it go.
+ */
+export function openAfterRead<A>(
+  read: A | null,
+  placed: { attempt: A; at: number } | null,
+  askedAt: number,
+): A | null {
+  if (read) return read;
+  if (placed && placed.at >= askedAt) return placed.attempt;
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Saved work: saves stored in the cockpit that HighLevel has not taken
+// ---------------------------------------------------------------------------
+
+export interface SavedWork {
+  attempt_id: string;
+  contact_id: string;
+  name: string | null;
+  outcome: string;
+  saved_at: string;
+  crm_note: "pending" | "failed" | string;
+  error: string | null;
+}
+
+const OUTCOME_WORDS: Record<string, string> = {
+  no_answer: "No answer",
+  callback: "Call back",
+  booked: "Booked",
+  not_interested: "Not interested",
+  disqualified: "Disqualified",
+  wrong_number: "Wrong number",
+  handled: "Handled",
+  showed: "Intro held",
+  noshow: "No-show",
+  confirmed: "Confirmed",
+  cancelled: "Cancelled",
+  rescheduled: "Rescheduled",
+};
+
+/** An outcome as the screen says it. */
+export function outcomeWords(outcome: string): string {
+  return OUTCOME_WORDS[outcome] ?? outcome.replace(/_/g, " ");
+}
+
+/** "1 save is not in HighLevel yet", "2 saves are …". */
+export function savedWorkTitle(n: number): string {
+  return n === 1
+    ? "1 save is not in HighLevel yet"
+    : `${n} saves are not in HighLevel yet`;
+}
+
+/**
+ * A server sentence fit for the screen: a JSON blob in it becomes its
+ * message (or goes), spaces are tidied, and it is cut to `max` characters.
+ */
+export function plainError(s: string | null | undefined, max = 160): string {
+  let out = String(s ?? "");
+  out = out.replace(/\{[^{}]*\}/g, blob => {
+    try {
+      const o = JSON.parse(blob) as Record<string, unknown>;
+      const said = o.message ?? o.error ?? o.msg;
+      return typeof said === "string" ? said : "";
+    } catch {
+      return blob;
+    }
+  });
+  out = out.replace(/\s+/g, " ").replace(/:\s*$/, "").trim();
+  return out.length > max ? `${out.slice(0, max - 1).trimEnd()}…` : out;
+}
+
+/** Why a save is not in HighLevel, in a few words. */
+export function savedWorkWhy(w: SavedWork): string {
+  if (w.error) return plainError(w.error, 140);
+  return w.crm_note === "failed"
+    ? "HighLevel did not take it."
+    : "Still not in HighLevel after two minutes.";
+}
 
 // ---------------------------------------------------------------------------
 // Skips
@@ -25,15 +301,17 @@ export interface Skip {
 
 /**
  * Why a lead is in the queue: the queue's own words, and the moments behind
- * them, so a new message or a new call-back is a new reason to call.
+ * them, so a new message, a new missed call or a new call-back is a new
+ * reason to call.
  */
-export function skipReason(i: QueueItem): string {
+export function skipReason(i: DialItem): string {
   return [
     i.kind ?? "lead",
     i.why,
     i.appointment?.id ?? "",
     i.inbound_at ?? "",
     i.callback_at ?? "",
+    i.inbound_call_at ?? "",
   ].join("|");
 }
 
