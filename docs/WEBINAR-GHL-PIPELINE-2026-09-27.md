@@ -1,5 +1,7 @@
 # Webinar pipeline and workflow connection
 
+> 30 September update: [Separate call 1/call 2 and closing outcomes](WEBINAR-CALL-OUTCOMES-2026-09-30.md) are built and tested but not yet saved to GHL. The current source expects sixteen stages and prepares 22 draft triggers. The eight-stage/ten-trigger details below describe the 27 September checkpoint. Keep automatic movement disabled until live mapping and acceptance are complete.
+
 ## Verified live on 27 September 2026
 
 MaharaMedia location `7NI8yyJtwsh2OOWA5Icr` now has **WEBBY | Webinar Journey**, pipeline `gpytC6cU1OstqMZpRleR`. It was created in the signed-in GHL interface and verified through the public API. The eight exact stage IDs are versioned in `config/webinar/pipeline.json`.

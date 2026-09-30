@@ -11,6 +11,9 @@ import {
   desiredStage,
   syncPipelineCard,
   SALES_CALENDARS,
+  SALES_PIPELINES,
+  SALES_OUTCOME_STAGES,
+  callNumber,
 } from "../lib/pipeline-sync.js";
 const e = {
   registration_status: "confirmed",
@@ -40,15 +43,178 @@ test("branches preserve independent facts: survey is not attendance, late attend
   );
 });
 test("current calls beat webinar stages; future rebooking beats a missed call", () => {
-  const past = { appointmentStatus: "noshow", startTime: "2020-01-01" },
-    future = { appointmentStatus: "confirmed", startTime: "2099-01-01" };
-  assert.equal(desiredStage(e, [past]), "call_follow_up");
+  const past = {
+      callNumber: 1,
+      appointmentStatus: "noshow",
+      startTime: "2020-01-01",
+    },
+    future = {
+      callNumber: 1,
+      appointmentStatus: "confirmed",
+      startTime: "2099-01-01",
+    };
+  assert.equal(desiredStage(e, [past]), "call_1_no_show");
   assert.equal(desiredStage(e, [past, future]), "call_booked");
   assert.equal(
     desiredStage(e, [{ ...past, appointmentStatus: "showed" }, future]),
-    "call_attended",
+    "call_booked",
   );
   assert.equal(desiredStage(e, [past], [{ status: "won" }]), "client_won");
+});
+test("each round has distinct showed, no-show, cancellation and booking outcomes", () => {
+  for (const n of [1, 2]) {
+    const call = { callNumber: n, startTime: "2020-01-01" };
+    const prefix = n === 1 ? "call" : "call_2";
+    assert.equal(
+      desiredStage(e, [{ ...call, appointmentStatus: "showed" }]),
+      `${prefix}_attended`,
+    );
+    assert.equal(
+      desiredStage(e, [{ ...call, appointmentStatus: "noshow" }]),
+      `call_${n}_no_show`,
+    );
+    for (const status of ["cancelled", "canceled"])
+      assert.equal(
+        desiredStage(e, [{ ...call, appointmentStatus: status }]),
+        `call_${n}_cancelled`,
+      );
+    assert.equal(
+      desiredStage(e, [
+        { ...call, startTime: "2099-01-01", appointmentStatus: "new" },
+      ]),
+      `${prefix}_booked`,
+    );
+    assert.equal(
+      desiredStage(e, [{ ...call, appointmentStatus: "confirmed" }]),
+      "call_follow_up",
+    );
+  }
+});
+test("first-call attendance cannot hide second-call outcomes and second-call rebooking wins", () => {
+  const first = {
+    callNumber: 1,
+    appointmentStatus: "showed",
+    startTime: "2020-01-01",
+  };
+  for (const [status, expected] of [
+    ["showed", "call_2_attended"],
+    ["noshow", "call_2_no_show"],
+    ["cancelled", "call_2_cancelled"],
+  ]) {
+    const second = {
+      callNumber: 2,
+      appointmentStatus: status,
+      startTime: "2020-02-01",
+    };
+    assert.equal(desiredStage(e, [first, second]), expected);
+    assert.equal(desiredStage(e, [second, first]), expected);
+    assert.equal(
+      desiredStage(e, [
+        first,
+        second,
+        { ...second, startTime: "2099-01-01", appointmentStatus: "confirmed" },
+      ]),
+      "call_2_booked",
+    );
+  }
+});
+test("cancelled duplicates do not erase attendance; mixed unknown outcomes require follow-up", () => {
+  const call = { callNumber: 2, startTime: "2020-01-01" };
+  assert.equal(
+    desiredStage(e, [
+      { ...call, appointmentStatus: "cancelled" },
+      { ...call, appointmentStatus: "showed" },
+    ]),
+    "call_2_attended",
+  );
+  assert.equal(
+    desiredStage(e, [
+      { ...call, appointmentStatus: "noshow" },
+      { ...call, appointmentStatus: "cancelled" },
+    ]),
+    "call_follow_up",
+  );
+  assert.equal(
+    desiredStage(e, [{ ...call, appointmentStatus: "invalid" }]),
+    "call_follow_up",
+  );
+});
+test("direct demos are call one; two-call demos require the exact bound sales pipeline", () => {
+  assert.equal(callNumber({ calendarId: SALES_CALENDARS[0] }), 1);
+  assert.equal(
+    callNumber(
+      { calendarId: SALES_CALENDARS[2] },
+      { pipelineId: SALES_PIPELINES[0] },
+    ),
+    1,
+  );
+  assert.equal(
+    callNumber(
+      { calendarId: SALES_CALENDARS[3] },
+      { pipelineId: SALES_PIPELINES[1] },
+    ),
+    2,
+  );
+  assert.throws(
+    () => callNumber({ calendarId: SALES_CALENDARS[2] }),
+    /sequence_unverified/,
+  );
+  assert.throws(
+    () =>
+      callNumber({ calendarId: "unknown" }, { pipelineId: SALES_PIPELINES[1] }),
+    /sequence_unverified/,
+  );
+  assert.throws(
+    () => desiredStage(e, [{ appointmentStatus: "showed" }]),
+    /sequence_unverified/,
+  );
+});
+test("explicit sales outcomes distinguish won, lost and disqualified without closing another active attempt", () => {
+  for (const pipelineId of SALES_PIPELINES) {
+    const map = SALES_OUTCOME_STAGES[pipelineId];
+    assert.equal(
+      desiredStage(
+        e,
+        [],
+        [{ pipelineId, status: "open", pipelineStageId: map.closed }],
+      ),
+      "client_won",
+    );
+    assert.equal(
+      desiredStage(
+        e,
+        [],
+        [{ pipelineId, status: "lost", pipelineStageId: map.closed }],
+      ),
+      "closed_lost",
+    );
+    assert.equal(
+      desiredStage(
+        e,
+        [],
+        [{ pipelineId, status: "lost", pipelineStageId: map.disqualified }],
+      ),
+      "disqualified",
+    );
+    assert.equal(
+      desiredStage(
+        e,
+        [],
+        [{ pipelineId, status: "won", pipelineStageId: map.disqualified }],
+      ),
+      "client_won",
+    );
+  }
+  for (const status of ["lost", "abandoned"])
+    assert.equal(desiredStage(e, [], [{ status }]), "closed_lost");
+  assert.equal(
+    desiredStage(e, [], [{ status: "lost" }, { status: "open" }]),
+    "registered",
+  );
+  assert.equal(
+    desiredStage(e, [], [{ status: "lost" }, { status: "won" }]),
+    "client_won",
+  );
 });
 function fixtures() {
   const registration = randomUUID(),
@@ -223,4 +389,118 @@ test("wrong-contact sales booking cannot advance the card", async () => {
     "sales_appointment_scope_mismatch",
   );
   assert.equal(f.mutations, 0);
+});
+test("verified first and second appointment receipts move to the second-call no-show stage", async () => {
+  const f = fixtures();
+  f.store.read = async (path) =>
+    path.startsWith("cockpit_webinar_pipeline_evidence")
+      ? [f.evidence]
+      : [
+          { appointment_id: "intro" },
+          { appointment_id: "demo", sales_opportunity_id: "sale" },
+        ];
+  f.provider.appointment = async (id) => ({
+    id,
+    contactId: "c",
+    locationId: LOCATION_ID,
+    calendarId: SALES_CALENDARS[id === "intro" ? 0 : 2],
+    startTime: "2020-01-01",
+    appointmentStatus: id === "intro" ? "showed" : "noshow",
+  });
+  f.provider.opportunity = async (id) =>
+    id === "sale"
+      ? {
+          id,
+          contactId: "c",
+          locationId: LOCATION_ID,
+          pipelineId: SALES_PIPELINES[1],
+          status: "open",
+        }
+      : f.remote;
+  assert.equal(
+    (await syncPipelineCard({ ...f, enabled: true })).status,
+    "synced",
+  );
+  assert.equal(f.remote.pipelineStageId, f.mapping.stages.call_2_no_show);
+  assert.equal(f.remote.status, "open");
+  assert.equal(f.remote.monetaryValue, 0);
+});
+test("an unbound demo sequence or wrong-contact sales deal blocks all writes", async () => {
+  for (const sale of [
+    null,
+    {
+      id: "sale",
+      contactId: "other",
+      locationId: LOCATION_ID,
+      pipelineId: SALES_PIPELINES[1],
+      status: "won",
+    },
+  ]) {
+    const f = fixtures();
+    f.store.read = async (path) =>
+      path.startsWith("cockpit_webinar_pipeline_evidence")
+        ? [f.evidence]
+        : [
+            {
+              appointment_id: "demo",
+              ...(sale ? { sales_opportunity_id: "sale" } : {}),
+            },
+          ];
+    f.provider.appointment = async () => ({
+      id: "demo",
+      contactId: "c",
+      locationId: LOCATION_ID,
+      calendarId: SALES_CALENDARS[2],
+      startTime: "2020-01-01",
+      appointmentStatus: "showed",
+    });
+    f.provider.opportunity = async () => sale;
+    const result = await syncPipelineCard({ ...f, enabled: true });
+    assert.equal(result.status, "blocked");
+    assert.equal(
+      result.code,
+      sale
+        ? "sales_opportunity_scope_mismatch"
+        : "sales_call_sequence_unverified",
+    );
+    assert.equal(f.mutations, 0);
+  }
+});
+test("verified closed outcomes change only tracking stage and never invent money or appointment attendance", async () => {
+  for (const [status, stage] of [
+    ["won", "client_won"],
+    ["lost", "closed_lost"],
+  ]) {
+    const f = fixtures();
+    f.store.read = async (path) =>
+      path.startsWith("cockpit_webinar_pipeline_evidence")
+        ? [f.evidence]
+        : [{ appointment_id: "demo", sales_opportunity_id: "sale" }];
+    f.provider.appointment = async () => ({
+      id: "demo",
+      contactId: "c",
+      locationId: LOCATION_ID,
+      calendarId: SALES_CALENDARS[2],
+      startTime: "2020-01-01",
+      appointmentStatus: "cancelled",
+    });
+    f.provider.opportunity = async (id) =>
+      id === "sale"
+        ? {
+            id,
+            contactId: "c",
+            locationId: LOCATION_ID,
+            pipelineId: SALES_PIPELINES[0],
+            status,
+            monetaryValue: 25000,
+          }
+        : f.remote;
+    assert.equal(
+      (await syncPipelineCard({ ...f, enabled: true })).status,
+      "synced",
+    );
+    assert.equal(f.remote.pipelineStageId, f.mapping.stages[stage]);
+    assert.equal(f.remote.monetaryValue, 0);
+    assert.equal(f.remote.status, "open");
+  }
 });

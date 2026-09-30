@@ -5,11 +5,134 @@ import {
   verifyPipeline,
   provisionPipeline,
   createPipelineProvider,
+  expandPipeline,
+  expansionBody,
+  LEGACY_STAGE_NAMES,
 } from "../lib/pipeline.js";
 const row = () => ({
   ...pipelineBody(),
   id: "pipeline",
   stages: pipelineBody().stages.map((s, i) => ({ ...s, id: `stage${i}` })),
+});
+function legacy() {
+  const previous = {
+    pipeline_id: "pipeline",
+    stages: Object.fromEntries(
+      Object.keys(LEGACY_STAGE_NAMES).map((key, i) => [key, `old${i}`]),
+    ),
+  };
+  return {
+    previous,
+    row: {
+      ...pipelineBody(),
+      id: "pipeline",
+      stages: Object.entries(LEGACY_STAGE_NAMES).map(
+        ([key, name], position) => ({
+          id: previous.stages[key],
+          name,
+          position,
+        }),
+      ),
+    },
+  };
+}
+test("expansion plans by default and preserves all eight existing IDs", async () => {
+  const x = legacy();
+  let writes = 0;
+  const p = { list: async () => [x.row], update: async () => writes++ };
+  const result = await expandPipeline(p, x.previous);
+  assert.equal(result.status, "planned");
+  assert.equal(result.body.stages.length, 16);
+  assert.equal(writes, 0);
+  assert.deepEqual(
+    new Set(result.body.stages.filter((s) => s.id).map((s) => s.id)),
+    new Set(Object.values(x.previous.stages)),
+  );
+});
+test("expansion verifies once after a lost PUT response and reruns without writing", async () => {
+  const x = legacy();
+  let remote = x.row,
+    writes = 0;
+  const p = {
+    list: async () => [remote],
+    update: async (id, body) => {
+      writes++;
+      assert.equal(id, "pipeline");
+      remote = {
+        ...remote,
+        ...body,
+        stages: body.stages.map((s, i) => ({ ...s, id: s.id || `new${i}` })),
+      };
+      throw Error("timeout");
+    },
+  };
+  const result = await expandPipeline(p, x.previous, { apply: true });
+  assert.equal(result.status, "expanded_and_verified");
+  for (const [key, id] of Object.entries(x.previous.stages))
+    assert.equal(result.stages[key], id);
+  assert.equal(
+    (await expandPipeline(p, x.previous, { apply: true })).status,
+    "existing",
+  );
+  assert.equal(writes, 1);
+});
+test("expansion refuses unknown or changed stages and does not repeat rejected writes", async () => {
+  const x = legacy();
+  assert.throws(
+    () =>
+      expansionBody(
+        {
+          ...x.row,
+          stages: [...x.row.stages, { name: "User stage", id: "u" }],
+        },
+        x.previous,
+      ),
+    /legacy_pipeline_changed/,
+  );
+  assert.throws(
+    () => expansionBody({ ...x.row, locationId: "wrong" }, x.previous),
+    /scope_mismatch/,
+  );
+  const changed = structuredClone(x.row);
+  changed.stages[0].name = "Custom registration";
+  let writes = 0;
+  await assert.rejects(
+    expandPipeline(
+      { list: async () => [changed], update: async () => writes++ },
+      x.previous,
+      { apply: true },
+    ),
+    /legacy_pipeline_changed/,
+  );
+  assert.equal(writes, 0);
+  await assert.rejects(
+    expandPipeline(
+      {
+        list: async () => [x.row],
+        update: async () => {
+          writes++;
+          throw Error("ghl_http_401");
+        },
+      },
+      x.previous,
+      { apply: true },
+    ),
+    /ghl_http_401/,
+  );
+  assert.equal(writes, 1);
+});
+test("expanded readback must retain the original IDs, not just the names", async () => {
+  const x = legacy();
+  const body = expansionBody(x.row, x.previous);
+  const changed = {
+    ...x.row,
+    ...body,
+    stages: body.stages.map((s, i) => ({ ...s, id: `replacement${i}` })),
+  };
+  await assert.rejects(
+    expandPipeline({ list: async () => [changed] }, x.previous),
+    /existing_stage_id_changed/,
+  );
 });
 test("provision only plans by default and excludes tracking cards from revenue charts", async () => {
   let writes = 0;

@@ -144,10 +144,10 @@ test("audit mode makes no writes and exports no credentials", async () => {
   assert.equal(x.writes.length, 0);
   assert.ok(!x.files.join("").includes(x.token));
 });
-test("installer creates only a draft with one authenticated internal step and ten triggers", async () => {
+test("installer creates only a draft with one authenticated internal step and twenty-two triggers", async () => {
   const x = await run({ apply: true });
   assert.equal(x.out.result, "draft_verified");
-  assert.equal(x.out.draft.triggers, 10);
+  assert.equal(x.out.draft.triggers, 22);
   assert.ok(
     x.writes.every(
       (x) => !x.path.includes("change-status") && x.method !== "DELETE",
@@ -197,4 +197,31 @@ test("GHL null and empty draft graphs can be initialized; unknown graphs are pre
   });
   assert.match(x.out.error, /Unknown workflow graph/);
   assert.ok(!x.writes.some((w) => w.method === "PUT"));
+});
+
+test("expanding the old ten-trigger draft adds only missing appointment outcomes", async () => {
+  const first = await run({ apply: true });
+  const id = first.out.draft.id;
+  first.triggers.set(
+    id,
+    first.triggers
+      .get(id)
+      .filter(
+        (t) =>
+          t.type !== "appointment" ||
+          t.conditions.some(
+            (c) => c.field === "appointment.status" && c.value === "confirmed",
+          ),
+      ),
+  );
+  assert.equal(first.triggers.get(id).length, 10);
+  const next = await run({ apply: true, previous: first });
+  assert.equal(next.out.result, "draft_verified");
+  assert.equal(next.out.draft.triggers, 22);
+  assert.equal(next.writes.length, 12);
+  assert.ok(
+    next.writes.every(
+      (w) => w.path.endsWith("/trigger") && w.method === "POST",
+    ),
+  );
 });

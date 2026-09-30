@@ -7,6 +7,26 @@ export const SALES_CALENDARS = [
 ];
 export const SALES_PIPELINES = ["eU5KW4TRt3haofQSnWC1", "96oywOezX39jQzXP3Mg0"];
 const enc = encodeURIComponent;
+// Calendar IDs identify the appointment type. The bound sales pipeline tells
+// whether a demo is the first/only call or the second call, never elapsed dates.
+export function callNumber(appointment, sale) {
+  if (SALES_CALENDARS.slice(0, 2).includes(appointment.calendarId)) return 1;
+  if (SALES_CALENDARS.slice(2).includes(appointment.calendarId)) {
+    if (sale?.pipelineId === SALES_PIPELINES[0]) return 1;
+    if (sale?.pipelineId === SALES_PIPELINES[1]) return 2;
+  }
+  throw new PipelineError("sales_call_sequence_unverified");
+}
+export const SALES_OUTCOME_STAGES = {
+  eU5KW4TRt3haofQSnWC1: {
+    closed: "500184df-9560-45a4-a24e-28827acfa9d9",
+    disqualified: "7ca17b2e-b032-4c8c-b47e-66d9a8b53294",
+  },
+  "96oywOezX39jQzXP3Mg0": {
+    closed: "1d47f28d-7b3e-4e6c-a1e6-b64247790d88",
+    disqualified: "b18d6490-e079-47a3-bc4a-ca960a24c6d4",
+  },
+};
 export function desiredStage(
   evidence,
   calls = [],
@@ -14,18 +34,50 @@ export function desiredStage(
   now = Date.now(),
 ) {
   if (evidence.registration_status !== "confirmed") return null;
-  if (sales.some((s) => s.status === "won")) return "client_won";
-  if (calls.some((c) => c.appointmentStatus === "showed"))
-    return "call_attended";
-  if (
-    calls.some(
-      (c) =>
-        ["new", "confirmed"].includes(c.appointmentStatus) &&
-        Date.parse(c.startTime) > now,
+  const outcomes = sales.map((s) => {
+    const map = SALES_OUTCOME_STAGES[s.pipelineId];
+    // Explicit won/lost status is stronger than an old stage label.
+    if (s.status === "won") return "client_won";
+    if (map && s.pipelineStageId === map.disqualified) return "disqualified";
+    if (s.status === "lost" || s.status === "abandoned") return "closed_lost";
+    if (map && s.pipelineStageId === map.closed) return "client_won";
+    return null;
+  });
+  if (outcomes.includes("client_won")) return "client_won";
+  // A lost earlier sales attempt cannot close a different active attempt.
+  if (outcomes.length && outcomes.every(Boolean))
+    return outcomes.every((x) => x === "disqualified")
+      ? "disqualified"
+      : "closed_lost";
+  if (calls.some((c) => ![1, 2].includes(c.callNumber)))
+    throw new PipelineError("sales_call_sequence_unverified");
+  if (calls.length) {
+    const n = Math.max(...calls.map((c) => c.callNumber)),
+      group = calls.filter((c) => c.callNumber === n);
+    const booked = n === 1 ? "call_booked" : "call_2_booked",
+      showed = n === 1 ? "call_attended" : "call_2_attended";
+    // A replacement booking takes priority over this call's previous cancellation/no-show.
+    if (
+      group.some(
+        (c) =>
+          ["new", "confirmed"].includes(c.appointmentStatus) &&
+          Date.parse(c.startTime) > now,
+      )
     )
-  )
-    return "call_booked";
-  if (calls.length) return "call_follow_up";
+      return booked;
+    // A same-round completed call is never erased by cancellation of a duplicate booking.
+    if (group.some((c) => c.appointmentStatus === "showed")) return showed;
+    // Past unmarked attendance is unknown, not a no-show. Ambiguous mixed outcomes need review.
+    const states = new Set(
+      group.map((c) =>
+        c.appointmentStatus === "canceled" ? "cancelled" : c.appointmentStatus,
+      ),
+    );
+    if (states.size === 1 && states.has("noshow")) return `call_${n}_no_show`;
+    if (states.size === 1 && states.has("cancelled"))
+      return `call_${n}_cancelled`;
+    return "call_follow_up";
+  }
   if (evidence.survey_completed) return "survey_completed";
   if (evidence.attended) return "attended";
   if (evidence.attendance_final) return "webinar_missed";
@@ -159,7 +211,7 @@ export async function syncPipelineCard({
         ].includes(a.appointmentStatus)
       )
         throw new PipelineError("sales_appointment_scope_mismatch");
-      calls.push(a);
+      let sale;
       if (binding.sales_opportunity_id) {
         const s = await provider.opportunity(binding.sales_opportunity_id);
         if (
@@ -169,8 +221,12 @@ export async function syncPipelineCard({
           !SALES_PIPELINES.includes(s.pipelineId)
         )
           throw new PipelineError("sales_opportunity_scope_mismatch");
+        sale = s;
+        if (!["open", "won", "lost", "abandoned"].includes(s.status))
+          throw new PipelineError("sales_opportunity_status_unverified");
         sales.push(s);
       }
+      calls.push({ ...a, callNumber: callNumber(a, sale) });
     }
     const stage = desiredStage(e, calls, sales, now());
     // Full registration UUID is the immutable external marker. Never upsert by contact alone.

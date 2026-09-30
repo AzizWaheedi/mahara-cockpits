@@ -9,7 +9,7 @@
   const NAME = "WEBBY - P1 Reconcile Webinar Journey",
     FOLDER = "WEBBY | Pipeline Sync";
   const out = {
-    version: 3,
+    version: 4,
     at: new Date().toISOString(),
     location: LOC,
     audit: [],
@@ -327,33 +327,34 @@
       "NDBNz6Og4yfpdpWmHrue",
       "jQqXS1YuFnmGZKLkrE62",
     ])
-      desired.push({
-        type: "appointment",
-        name: `Confirmed sales booking: ${calendar}`,
-        conditions: [
-          {
-            operator: "==",
-            field: "appointment.eventType",
-            value: "normal",
-            title: "Event Type",
-            type: "select",
-          },
-          {
-            operator: "==",
-            field: "appointment.status",
-            value: "confirmed",
-            title: "Appointment status is",
-            type: "select",
-          },
-          {
-            operator: "==",
-            field: "calendar.id",
-            value: calendar,
-            title: "In calendar",
-            type: "select",
-          },
-        ],
-      });
+      for (const status of ["confirmed", "showed", "noshow", "cancelled"])
+        desired.push({
+          type: "appointment",
+          name: `Sales appointment ${status}: ${calendar}`,
+          conditions: [
+            {
+              operator: "==",
+              field: "appointment.eventType",
+              value: "normal",
+              title: "Event Type",
+              type: "select",
+            },
+            {
+              operator: "==",
+              field: "appointment.status",
+              value: status,
+              title: "Appointment status is",
+              type: "select",
+            },
+            {
+              operator: "==",
+              field: "calendar.id",
+              value: calendar,
+              title: "In calendar",
+              type: "select",
+            },
+          ],
+        });
     const existing = await api(
       "GET",
       `/workflow/${LOC}/trigger?workflowId=${id}`,
