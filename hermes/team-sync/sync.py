@@ -355,13 +355,20 @@ class Series:
         return max(live, key=lambda e: len(e.get("attendees") or [])) if live else None
 
 
-def group(events: List[Row]) -> Dict[Key, Series]:
+def group(events: List[Row], read_ok: Optional[Set[str]] = None) -> Dict[Key, Series]:
     """Occurrences by series. The same occurrence sits on every guest's
     calendar under the same id; it is counted once. A cancelled occurrence
-    can come back without its organiser, so it joins its series by id."""
+    can come back without its organiser, so it joins its series by id.
+
+    When the organiser's own calendar was read in this pass (`read_ok`, the
+    calendars read, each event tagged with `_on`), only what that calendar
+    holds counts. A guest's copy can go stale: on 2026-09-30 a teammate's
+    calendar still had weekly occurrences of four series the CEO had ended
+    or deleted, and the cockpit kept listing their sittings because of it."""
     out: Dict[Key, Series] = {}
     by_master: Dict[str, Key] = {}
     orphans: List[Row] = []
+    on_org: Dict[Key, Set[str]] = {}
     for e in events:
         if e.get("status") != "cancelled" and not (e.get("start") or {}).get("dateTime"):
             continue  # an all-day entry is not a meeting
@@ -374,6 +381,8 @@ def group(events: List[Row]) -> Dict[Key, Series]:
             continue
         s = out.setdefault((org, master), Series(org, master))
         by_master[master] = (org, master)
+        if str(e.get("_on") or "") == org.lower():
+            on_org.setdefault((org, master), set()).add(str(e.get("id")))
         have = s.items.get(e["id"])
         if not have or len(e.get("attendees") or []) > len(have.get("attendees") or []):
             s.items[e["id"]] = e
@@ -381,6 +390,13 @@ def group(events: List[Row]) -> Dict[Key, Series]:
         key = by_master.get(str(e.get("recurringEventId") or e.get("id") or ""))
         if key and e["id"] not in out[key].items:
             out[key].items[e["id"]] = e
+            if str(e.get("_on") or "") == key[0].lower():
+                on_org.setdefault(key, set()).add(str(e.get("id")))
+    if read_ok:
+        for key, s in out.items():
+            if key[0].lower() in read_ok:
+                own = on_org.get(key, set())
+                s.items = {i: e for i, e in s.items.items() if i in own}
     return out
 
 
@@ -704,6 +720,13 @@ def plan_pass(
         elif gone and not parts:
             patch.update({"cal_calendar": None, "cal_event_id": None, "cal_etag": None, "cal_writable": False})
             plan.log(mid, "deleted its event, so it is no longer on the calendar")
+        elif parts and (m.get("managed") or "calendar") == "calendar" and m.get("active"):
+            # Every series of it has ended on the calendar: the meeting is over
+            # now, not three weeks from now (the quiet rule). A meeting the
+            # cockpit manages is left to the page.
+            last = max((str(p.row.get("ends_on")) for p in parts if p.row.get("ends_on")), default="")
+            patch["active"] = False
+            plan.log(mid, f"marked it inactive: its series ended{' on ' + last if last else ''}")
         if patch:
             plan.write("PATCH", f"team_meetings?id=eq.{q(mid)}", {**patch, "updated_at": stamp})
         plan_sittings(plan, state, mid, [series[k] for k, v in mt.owner.items() if v == mid], today)
@@ -796,11 +819,14 @@ def plan_sittings(plan: Plan, state: State, mid: str, mine: List[Series], today:
         plan.write("POST", "team_sittings?on_conflict=id", changed, "resolution=merge-duplicates,return=minimal")
     # An occurrence Google no longer has is gone from the cockpit too, unless
     # something hangs on it (notes, a spin, a goal, a closed agenda item):
-    # then it stays, cancelled.
+    # then it stays, cancelled. A sitting just written under another
+    # occurrence (its day's series is a different event now) is not gone:
+    # on 2026-09-30 CSM Daily's sittings were rewritten, then deleted.
     live = {r["cal_instance_id"] for r in rows}
+    kept = {r["id"] for r in rows}
     horizon = (today + dt.timedelta(days=LOOK_ON)).isoformat()
     for sid, was in stored.items():
-        if not was.get("cal_instance_id") or was["cal_instance_id"] in live:
+        if sid in kept or not was.get("cal_instance_id") or was["cal_instance_id"] in live:
             continue
         if not (today.isoformat() <= str(was["on_date"]) <= horizon):
             continue
@@ -1036,18 +1062,27 @@ def roster(state: State, newcomers: List[Row]) -> Roster:
     return Roster(whois, names)
 
 
-def read_google(g: Google, now: dt.datetime) -> Tuple[List[Row], List[Row], bool]:
+def read_google(g: Google, now: dt.datetime) -> Tuple[List[Row], List[Row], bool, Set[str]]:
+    """Every calendar's events in the window, each tagged with the calendar
+    it was read from (`_on`), and the calendars that could be read."""
     cals = g.calendars()
     events: List[Row] = []
     everything = True
+    read_ok: Set[str] = set()
     start, end = now - dt.timedelta(days=LOOK_BACK), now + dt.timedelta(days=LOOK_ON)
     for c in cals:
+        cid = str(c["id"])
         try:
-            events += g.events(str(c["id"]), start, end)
+            got = g.events(cid, start, end)
         except Exception as e:  # one unreadable calendar is not a failed pass
             note(f"  {str(c.get('summary'))[:24]}: {type(e).__name__}")
             everything = False
-    return cals, events, everything
+            continue
+        for e in got:
+            e["_on"] = cid.lower()
+        events += got
+        read_ok.add(cid.lower())
+    return cals, events, everything, read_ok
 
 
 def read_masters(g: Google, state: State, series: Dict[Key, Series], readable: Set[str],
@@ -1066,10 +1101,20 @@ def read_masters(g: Google, state: State, series: Dict[Key, Series], readable: S
              and series[k].master not in legacy}
     out: Dict[Key, Row] = {}
     for k in want:
-        if k[0] not in readable:
+        if k[0] in readable:
+            e = g.event(k[0], k[1])
+            out[k] = e if e is not None else GONE
             continue
-        e = g.event(k[0], k[1])
-        out[k] = e if e is not None else GONE
+        # A teammate's calendar the sign-in does not list can still show its
+        # series event to a guest. Without it the copies decide, and Karim's
+        # Video Quality sync took a moved one-off's 12:45 for its time
+        # (2026-09-30). Only what is read counts: not finding it proves nothing.
+        try:
+            e = g.event(k[0], k[1])
+        except Exception:
+            continue
+        if e is not None:
+            out[k] = e
     return out
 
 
@@ -1078,10 +1123,10 @@ def run(dry: bool) -> int:
     today = now.astimezone(ZoneInfo(TZ)).date()
     token, via = google_token()
     g = Google(token)
-    cals, events, everything = read_google(g, now)
+    cals, events, everything, read_ok = read_google(g, now)
     readable = {str(c["id"]).lower() for c in cals}
     writable = {str(c["id"]).lower() for c in cals if c.get("accessRole") in ("owner", "writer")}
-    series = group(events)
+    series = group(events, read_ok)
     state = read_state(now)
     masters = read_masters(g, state, series, readable, today)
     newcomers: List[Row] = []
@@ -1114,9 +1159,9 @@ def links(apply: bool) -> int:
     now = dt.datetime.now(dt.timezone.utc)
     token, via = google_token()
     g = Google(token)
-    cals, events, _ = read_google(g, now)
+    cals, events, _, read_ok = read_google(g, now)
     writable = {str(c["id"]).lower() for c in cals if c.get("accessRole") in ("owner", "writer")}
-    series = group(events)
+    series = group(events, read_ok)
     meetings = sb("GET", "team_meetings?select=*&active=eq.true")
     # When each series that could be linked ends, from its own event.
     ends: Dict[Key, Optional[str]] = {}
