@@ -1,5 +1,7 @@
 # Webinar call outcomes
 
+> Latest correction: [one webinar and one sales call](WEBINAR-SINGLE-CALL-2026-10-01.md). Showed Won/Lost labels are saved; four unused Call 2 columns await deletion confirmation. The twelve-stage source is tested, not activated. All two-call requirements below are historical and superseded.
+
 ## Applied and verified, 1 October 2026
 
 The GHL editor retry succeeded. All sixteen stages are now saved in the existing WEBBY pipeline, with all eight original IDs retained. Public API readback at 08:36 UTC confirms both pipeline-level and every stage-level report flag are false. The eight new stages were appended in the UI; the table below remains the preferred grouped display order. Outcome routing now uses exact unique stage names and IDs independently of visual order, so rearranging columns cannot misroute a card.

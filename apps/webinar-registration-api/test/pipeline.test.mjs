@@ -42,7 +42,7 @@ test("expansion plans by default and preserves all eight existing IDs", async ()
   const p = { list: async () => [x.row], update: async () => writes++ };
   const result = await expandPipeline(p, x.previous);
   assert.equal(result.status, "planned");
-  assert.equal(result.body.stages.length, 16);
+  assert.equal(result.body.stages.length, 12);
   assert.equal(writes, 0);
   assert.deepEqual(
     new Set(result.body.stages.filter((s) => s.id).map((s) => s.id)),
@@ -216,4 +216,22 @@ test("public provider is pinned to v3 and exact account, rejects redirects and r
   assert.equal(req.headers.Version, "v3");
   assert.equal(req.redirect, "error");
   assert.match(req.url, /7NI8yyJtwsh2OOWA5Icr/);
+});
+
+test("single-call correction rejects an obsolete second-call board without deleting stages", async () => {
+  const extra = {
+    ...row(),
+    stages: [...row().stages, { id: "extra", name: "Call 2 booked" }],
+  };
+  assert.throws(() => verifyPipeline(extra), /stages_changed/);
+  let writes = 0;
+  await assert.rejects(
+    expandPipeline(
+      { list: async () => [extra], update: async () => writes++ },
+      { pipeline_id: "pipeline", stages: verifyPipeline(row()).stages },
+      { apply: true },
+    ),
+    /legacy_pipeline_changed/,
+  );
+  assert.equal(writes, 0);
 });

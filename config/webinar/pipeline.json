@@ -20,6 +20,7 @@
     "closed_lost": "183bf465-9357-4104-8878-6cb5c0a8a507",
     "disqualified": "7255d155-1d3c-4b83-bd1c-a7a6a2a08c89"
   },
-  "verified_at": "2026-10-01T08:39:14.912Z",
-  "automation_enabled": false
+  "verified_at": "2026-10-01T09:10:41.997Z",
+  "automation_enabled": false,
+  "pending_correction": "Names saved for one sales call and Showed Won/Lost. Four unused Call 2 stages still await deletion confirmation; this remains the live sixteen-ID mapping. New source requires twelve stages and will reject this board until corrected."
 }

@@ -1,5 +1,7 @@
 # Webinar pipeline and workflow connection
 
+> Latest correction: [one webinar and one sales call](WEBINAR-SINGLE-CALL-2026-10-01.md). Showed Won/Lost labels are saved; four unused Call 2 columns await deletion confirmation. The twelve-stage source is tested, not activated. All two-call requirements below are historical and superseded.
+
 > 1 October update: [The expanded sixteen-stage board](WEBINAR-CALL-OUTCOMES-2026-09-30.md) is now saved and API-verified; Git and the disabled Supabase mapping match. Both call rounds and closing outcomes are distinct. All 74 API tests pass. The prepared 22-trigger draft and automatic movement still require attribution, installation/readback and deployment acceptance. The eight-stage/ten-trigger details below are the historical 27 September checkpoint.
 
 ## Verified live on 27 September 2026

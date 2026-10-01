@@ -3,20 +3,16 @@ export const PIPELINE_NAME = "WEBBY | Webinar Journey";
 export const LOCATION_ID = "7NI8yyJtwsh2OOWA5Icr";
 export const STAGES = [
   { key: "registered", name: "Registered" },
-  { key: "attended", name: "Attended" },
+  { key: "attended", name: "Webinar attended" },
   { key: "webinar_missed", name: "Missed webinar" },
   { key: "survey_completed", name: "Survey completed" },
-  { key: "call_booked", name: "Call 1 booked" },
-  { key: "call_attended", name: "Call 1 showed" },
-  { key: "call_1_no_show", name: "Call 1 no-show" },
-  { key: "call_1_cancelled", name: "Call 1 cancelled" },
-  { key: "call_2_booked", name: "Call 2 booked" },
-  { key: "call_2_attended", name: "Call 2 showed" },
-  { key: "call_2_no_show", name: "Call 2 no-show" },
-  { key: "call_2_cancelled", name: "Call 2 cancelled" },
+  { key: "call_booked", name: "Call booked" },
+  { key: "call_attended", name: "Call showed" },
+  { key: "call_no_show", name: "Call no-show" },
+  { key: "call_cancelled", name: "Call cancelled" },
   { key: "call_follow_up", name: "Follow-up needed" },
-  { key: "client_won", name: "Closed won" },
-  { key: "closed_lost", name: "Closed lost" },
+  { key: "client_won", name: "Showed Won" },
+  { key: "closed_lost", name: "Showed Lost" },
   { key: "disqualified", name: "Disqualified" },
 ];
 export const LEGACY_STAGE_NAMES = {
