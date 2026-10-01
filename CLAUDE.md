@@ -46,7 +46,7 @@ brand-aligned design.** Neither is optional and neither is "later".
 
 This project is watched every minute by the shared, read-only Mahara reliability monitor on the Hermes VPS
 (engine and profiles: `mahara-context/tools/reliability-monitor`, project `mahara-cockpits`), with an off-VPS dead-man switch
-and a change-triggered fixer (fix policy: `pr`, Aziz approves every release). When you change this project:
+and a change-triggered fixer (the unattended fixer opens PRs; agents working with Aziz push to main and deploy to production directly, no approval or preview step). When you change this project:
 
 - Keep the signals the monitor reads working: each cockpit path on cockpit.maharamedia.com rendering its app shell, the three Convex deployments answering `/version`, `/askai/health`, and the authenticated `/watchdog` route (keep its JSON shape: `ok`, `ceo.refreshAgeMin`, `ceo.failing`, `smoke`, `sources`). If you rename or remove one, update the profile in the same change
   and run the monitor's tests, or the monitor will page Aziz (or worse, go blind).
