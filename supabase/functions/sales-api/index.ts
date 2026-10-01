@@ -96,6 +96,8 @@ import {
   contractName,
   contractPatch,
   contractTerms,
+  goneFrom,
+  isoTime,
   signingLink,
 } from "./contracts.ts";
 
@@ -4340,6 +4342,7 @@ async function contractCreate(who: Who, b: Row) {
       fields: checked.terms,
       created_by: who.email,
       revision: typeof doc.documentRevision === "number" ? doc.documentRevision : null,
+      ghl_updated_at: isoTime(doc.updatedAt),
       created_at: now,
       updated_at: now,
       checked_at: now,
@@ -4366,7 +4369,14 @@ async function contractSend(who: Who, b: Row) {
   const c = (await svc(`cockpit_sales_contracts?document_id=eq.${enc(id)}&select=*`))[0];
   if (!c) throw new Refusal("That contract is not here.", 404);
   if (c.status !== "draft")
-    throw new Refusal(c.status === "completed" ? "This contract is already signed." : "This contract was already sent.", 409);
+    throw new Refusal(
+      c.status === "completed"
+        ? "This contract is already signed."
+        : c.status === "deleted"
+          ? "HighLevel no longer has this contract. Make a new one."
+          : "This contract was already sent.",
+      409,
+    );
   const via = b.via === "email" ? "email" : b.via === "link" ? "link" : null;
   if (!via) throw new Refusal("Send it by email, or as a link to share.");
   if (!who.ghl_user_id)
@@ -4419,47 +4429,97 @@ async function contractLink(who: Who, b: Row) {
 }
 
 /**
- * Read the status of our open contracts back from HighLevel. Its list comes
- * newest change first, so a contract just opened or signed is on the first
- * page; at most ten pages are read. Once a minute is enough unless asked.
+ * HighLevel's documents, newest change first, page by page until every one
+ * wanted is seen or the pages run out. Says how far back the pages reached
+ * (the oldest change read) and whether they were the whole list.
  */
-async function contractRefresh(_who: Who, b: Row) {
-  const contact = cleanText(b.contact_id, 80);
-  const open = await svc(
-    `cockpit_sales_contracts?status=in.(draft,sent,viewed)${contact ? `&contact_id=eq.${enc(contact)}` : ""}&select=document_id,contact_id,checked_at&limit=500`,
-  );
-  if (!open.length) return { checked: 0 };
-  const now = Date.now();
-  const newest = Math.min(...open.map(r => ms(r.checked_at) ?? 0));
-  if (!b.force && newest > now - 60_000) return { checked: 0, fresh: true };
-  const want = new Map(open.map(r => [String(r.document_id), String(r.contact_id)] as const));
-  const at = new Date(now).toISOString();
-  let found = 0;
-  for (let skip = 0; skip < 200 && want.size; skip += 20) {
+async function readDocs(want: Set<string>, pages = 10) {
+  const left = new Set(want);
+  const hits: Row[] = [];
+  let floor: string | null = null;
+  let read = 0;
+  let total: number | null = null;
+  for (let skip = 0; skip < pages * 20 && left.size; skip += 20) {
     const page = await ghl("GET", `/proposals/document?locationId=${LOCATION}&limit=20&skip=${skip}`, undefined, "2021-07-28");
     const docs = (page.documents ?? []) as Row[];
+    if (typeof page.total === "number") total = page.total;
+    read += docs.length;
     for (const d of docs) {
-      const docId = String(d._id ?? "");
-      const contactId = want.get(docId);
-      if (!contactId) continue;
-      await svc(`cockpit_sales_contracts?document_id=eq.${enc(docId)}`, {
-        method: "PATCH",
-        body: contractPatch(d, contactId, at),
-        prefer: "return=minimal",
-      });
-      want.delete(docId);
-      found++;
+      const changed = isoTime(d.updatedAt);
+      if (changed && (!floor || changed < floor)) floor = changed;
+      if (left.delete(String(d._id ?? ""))) hits.push(d);
     }
     if (docs.length < 20) break;
   }
+  return { hits, floor, ended: total !== null && read > 0 && read >= total };
+}
+
+/**
+ * Read the status of our open contracts back from HighLevel. Its list comes
+ * newest change first, so a contract just opened or signed is on the first
+ * page; at most ten pages are read. Once a minute is enough unless asked.
+ * A contract deleted in HighLevel leaves the list; one that should have been
+ * on the pages read and was not is marked deleted, after a second read in
+ * case the client opened it mid-read and it jumped to the top.
+ */
+async function contractRefresh(who: Who, b: Row) {
+  const contact = cleanText(b.contact_id, 80);
+  const open = await svc(
+    `cockpit_sales_contracts?status=in.(draft,sent,viewed)${contact ? `&contact_id=eq.${enc(contact)}` : ""}&select=document_id,contact_id,status,checked_at,ghl_updated_at&limit=500`,
+  );
+  if (!open.length) return { checked: 0 };
+  const now = Date.now();
+  const oldest = Math.min(...open.map(r => ms(r.checked_at) ?? 0));
+  if (!b.force && oldest > now - 60_000) return { checked: 0, fresh: true };
+  const left = new Map(open.map(r => [String(r.document_id), r] as const));
+  const at = new Date(now).toISOString();
+  let found = 0;
+  const take = async (docs: Row[]) => {
+    for (const d of docs) {
+      const id = String(d._id ?? "");
+      const r = left.get(id);
+      if (!r) continue;
+      await svc(`cockpit_sales_contracts?document_id=eq.${enc(id)}`, {
+        method: "PATCH",
+        body: contractPatch(d, String(r.contact_id), at),
+        prefer: "return=minimal",
+      });
+      left.delete(id);
+      found++;
+    }
+  };
+  const missing = () =>
+    [...left.values()].map(r => ({ document_id: String(r.document_id), ghl_updated_at: (r.ghl_updated_at as string | null) ?? null }));
+
+  const first = await readDocs(new Set(left.keys()));
+  await take(first.hits);
+  let gone = goneFrom(missing(), first.floor, first.ended);
+  if (gone.length) {
+    const again = await readDocs(new Set(gone));
+    await take(again.hits);
+    const still = new Set(goneFrom(missing(), again.floor, again.ended));
+    gone = gone.filter(id => still.has(id));
+    for (const id of gone) {
+      const r = left.get(id);
+      await svc(`cockpit_sales_contracts?document_id=eq.${enc(id)}&status=in.(draft,sent,viewed)`, {
+        method: "PATCH",
+        body: { status: "deleted", checked_at: at, updated_at: at },
+        prefer: "return=minimal",
+      });
+      await audit(who, "contract.gone", "cockpit_sales_contracts", id, { status: r?.status ?? null }, { status: "deleted" }, {
+        reason: "not in HighLevel's document list on two reads",
+      });
+      left.delete(id);
+    }
+  }
   // The ones not on those pages have not changed lately: say they were checked.
-  if (want.size)
-    await svc(`cockpit_sales_contracts?document_id=in.(${[...want.keys()].map(enc).join(",")})`, {
+  if (left.size)
+    await svc(`cockpit_sales_contracts?document_id=in.(${[...left.keys()].map(enc).join(",")})`, {
       method: "PATCH",
       body: { checked_at: at },
       prefer: "return=minimal",
     });
-  return { checked: found, unchanged: want.size };
+  return { checked: found + gone.length, gone: gone.length, unchanged: left.size };
 }
 
 /** Every template in HighLevel's Documents & Contracts, for a manager to choose from. */

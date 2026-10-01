@@ -5,6 +5,7 @@ import {
   CONTRACT_COLUMNS,
   type Contract,
   type ContractSetting,
+  endedNote,
   isOpen,
   STEPS,
   shareLine,
@@ -36,12 +37,17 @@ export function canContract(me: Me): boolean {
 export function ContractTrail({ c }: { c: Contract }) {
   const step = stepOf(c);
   const times = stepTimes(c);
+  const ended = endedNote(c) !== null;
   return (
     <ol className="grid grid-cols-4 gap-x-1" aria-label="Where the contract is">
       {STEPS.map((label, i) => {
         const reached = i <= step;
         const done = step === 3;
-        const tone = done ? "var(--success)" : "var(--primary)";
+        const tone = ended
+          ? "var(--muted-foreground)"
+          : done
+            ? "var(--success)"
+            : "var(--primary)";
         return (
           <li
             key={label}
@@ -213,6 +219,7 @@ function ContractCard({
   onShare: (text: string) => void;
 }) {
   const step = stepOf(c);
+  const ended = endedNote(c);
   const [confirm, setConfirm] = useState<"email" | "link" | null>(null);
   const [busy, setBusy] = useState(false);
   const [link, setLink] = useState<string | null>(null);
@@ -272,7 +279,8 @@ function ContractCard({
       <div className="mt-3">
         <ContractTrail c={c} />
       </div>
-      {step === 0 ? (
+      {ended ? <p className="muted mt-2 text-xs">{ended}</p> : null}
+      {step === 0 && !ended ? (
         <p className="muted mt-2 text-xs">
           Filled in: <bdi>{c.fields.company_name}</bdi>
           {c.fields.payment_structure ? `, ${c.fields.payment_structure}` : ""}
@@ -281,7 +289,7 @@ function ContractCard({
         </p>
       ) : null}
 
-      {actor && step === 0 ? (
+      {actor && step === 0 && !ended ? (
         confirm ? (
           <div
             className="callout-warn mt-3 rounded-[var(--radius-md)] border px-3 py-2 text-sm"
@@ -356,7 +364,7 @@ function ContractCard({
         )
       ) : null}
 
-      {actor && (step === 1 || step === 2) ? (
+      {actor && (step === 1 || step === 2) && !ended ? (
         <div className="mt-3 flex flex-wrap gap-2">
           <button
             type="button"

@@ -56,14 +56,15 @@ export const CONTRACT_COLUMNS =
 
 export const STEPS = ["Draft", "Sent", "Opened", "Signed"] as const;
 
+type Progress = Pick<Contract, "status" | "signed_at" | "viewed_at"> &
+  Partial<Pick<Contract, "sent_at">>;
+
 /** How far along the contract is: 0 draft, 1 sent, 2 opened, 3 signed. */
-export function stepOf(
-  c: Pick<Contract, "status" | "signed_at" | "viewed_at">,
-): number {
+export function stepOf(c: Progress): number {
   const s = c.status.toLowerCase();
   if (s === "completed" || s === "accepted" || c.signed_at) return 3;
   if (s === "viewed" || c.viewed_at) return 2;
-  if (s === "sent") return 1;
+  if (s === "sent" || c.sent_at) return 1;
   return 0;
 }
 
@@ -72,14 +73,21 @@ export function stepTimes(c: Contract): (string | null)[] {
   return [c.created_at, c.sent_at, c.viewed_at, c.signed_at];
 }
 
+/** Ended without a signature: declined, expired or voided in HighLevel, or deleted there. */
+const ENDED = ["declined", "expired", "voided", "deleted"];
+
 /** Still waiting on someone: a draft not sent, or a sent contract not signed. */
-export function isOpen(
-  c: Pick<Contract, "status" | "signed_at" | "viewed_at">,
-): boolean {
-  return (
-    stepOf(c) < 3 &&
-    !["declined", "expired", "voided"].includes(c.status.toLowerCase())
-  );
+export function isOpen(c: Progress): boolean {
+  return stepOf(c) < 3 && !ENDED.includes(c.status.toLowerCase());
+}
+
+/** What happened to a contract that ended without a signature, and what to do next. */
+export function endedNote(c: Progress): string | null {
+  if (isOpen(c) || stepOf(c) === 3) return null;
+  const s = c.status.toLowerCase();
+  return s === "deleted"
+    ? "Deleted in HighLevel. Make a new contract if they still want to sign."
+    : `HighLevel marks it ${s}. Make a new contract if they still want to sign.`;
 }
 
 /** The words a rep puts in WhatsApp with the signing link. */

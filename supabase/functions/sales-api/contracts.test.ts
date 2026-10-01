@@ -7,6 +7,7 @@ import {
   contractName,
   contractPatch,
   contractTerms,
+  goneFrom,
   signingLink,
 } from "./contracts.ts";
 
@@ -128,5 +129,29 @@ describe("cleanTemplates", () => {
       ]),
     ).toEqual([{ id: "6905c43fc69d72f15bd69206", name: "90 Day Agreement", fields: ["company_name", "daily_ad_spend"] }]);
     expect(cleanTemplates(null)).toEqual([]);
+  });
+});
+
+describe("goneFrom", () => {
+  const floor = "2026-04-16T16:18:44.689Z";
+  const rows = [
+    { document_id: "newer", ghl_updated_at: "2026-10-01T14:24:48.941+00:00" },
+    { document_id: "older", ghl_updated_at: "2026-03-01T09:00:00.000Z" },
+    { document_id: "unknown", ghl_updated_at: null },
+  ];
+  test("a contract changed after the oldest change read had to be on the pages: absent, it is gone", () => {
+    expect(goneFrom(rows, floor, false)).toEqual(["newer"]);
+  });
+  test("one last changed before the pages reached, or never seen, is not called gone", () => {
+    expect(goneFrom(rows.slice(1), floor, false)).toEqual([]);
+  });
+  test("the same time as the oldest read is not enough: ties can sit on the next page", () => {
+    expect(goneFrom([{ document_id: "tie", ghl_updated_at: floor }], floor, false)).toEqual([]);
+  });
+  test("when the whole list was read, anything absent is gone", () => {
+    expect(goneFrom(rows, floor, true)).toEqual(["newer", "older", "unknown"]);
+  });
+  test("nothing read, nothing gone", () => {
+    expect(goneFrom(rows, null, false)).toEqual([]);
   });
 });

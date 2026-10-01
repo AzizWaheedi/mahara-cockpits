@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isOpen, shareLine, stepOf } from "./contracts";
+import { endedNote, isOpen, shareLine, stepOf } from "./contracts";
 
 describe("stepOf", () => {
   test("follows HighLevel's statuses", () => {
@@ -51,5 +51,36 @@ describe("shareLine", () => {
     );
     expect(shareLine("https://l/x", "ar")).toContain("https://l/x");
     expect(shareLine("https://l/x", "ar")).not.toContain("—");
+  });
+});
+
+describe("ended contracts", () => {
+  const deleted = {
+    status: "deleted",
+    viewed_at: null,
+    signed_at: null,
+    sent_at: "2026-10-01T14:24:00Z",
+  };
+  test("a contract deleted in HighLevel is no longer open, and keeps how far it got", () => {
+    expect(isOpen(deleted)).toBe(false);
+    expect(stepOf(deleted)).toBe(1);
+  });
+  test("says what happened and what to do", () => {
+    expect(endedNote(deleted)).toBe(
+      "Deleted in HighLevel. Make a new contract if they still want to sign.",
+    );
+    expect(
+      endedNote({ status: "declined", viewed_at: "x", signed_at: null }),
+    ).toBe(
+      "HighLevel marks it declined. Make a new contract if they still want to sign.",
+    );
+  });
+  test("open and signed contracts have no note", () => {
+    expect(
+      endedNote({ status: "sent", viewed_at: null, signed_at: null }),
+    ).toBeNull();
+    expect(
+      endedNote({ status: "completed", viewed_at: null, signed_at: "x" }),
+    ).toBeNull();
   });
 });

@@ -1014,8 +1014,9 @@ export const SETTINGS: Row[] = [
 ];
 
 /**
- * Contracts: one waiting for a signature (opened yesterday) on lead-2, a
- * draft on lead-3, one signed last week on lead-5.
+ * Contracts: one waiting for a signature (opened yesterday) on lead-2, with
+ * an earlier one deleted in HighLevel, a draft on lead-3, one signed last
+ * week on lead-5.
  */
 export const CONTRACTS: Row[] = [
   {
@@ -1041,6 +1042,29 @@ export const CONTRACTS: Row[] = [
     created_at: new Date(Date.now() - 2 * 24 * H - 3 * H).toISOString(),
     updated_at: new Date(Date.now() - 22 * H).toISOString(),
     checked_at: new Date(Date.now() - 10 * 60_000).toISOString(),
+  },
+  {
+    document_id: "doc-deleted",
+    contact_id: "lead-2",
+    template_id: "69d25fce5d2b0f67fa21caab",
+    template_name: "90 Day Agreement No G",
+    name: "Ardon Studio X Mahara Media",
+    status: "deleted",
+    fields: {
+      company_name: "Ardon Studio",
+      payment_structure: "Monthly",
+    },
+    created_by: "sara@example.com",
+    sent_by: "sara@example.com",
+    sent_via: "email",
+    sent_at: new Date(Date.now() - 4 * 24 * H).toISOString(),
+    viewed_at: null,
+    signed_at: null,
+    revision: 1,
+    ghl_updated_at: new Date(Date.now() - 4 * 24 * H).toISOString(),
+    created_at: new Date(Date.now() - 4 * 24 * H - H).toISOString(),
+    updated_at: new Date(Date.now() - 2 * 24 * H).toISOString(),
+    checked_at: new Date(Date.now() - 2 * 24 * H).toISOString(),
   },
   {
     document_id: "doc-draft",

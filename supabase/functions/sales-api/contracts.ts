@@ -106,7 +106,8 @@ export function contractStatus(v: unknown): string {
   return s || "draft";
 }
 
-const at = (v: unknown): string | null => {
+/** A time HighLevel sent, as ISO, or null when it sent none. */
+export const isoTime = (v: unknown): string | null => {
   const s = String(v ?? "");
   if (!s) return null;
   const t = Date.parse(s);
@@ -135,14 +136,37 @@ export function contractPatch(doc: Row, contactId: string, now: string): Row {
     status,
     name: text(doc.name, 200) || null,
     revision: typeof doc.documentRevision === "number" ? doc.documentRevision : null,
-    ghl_updated_at: at(doc.updatedAt),
+    ghl_updated_at: isoTime(doc.updatedAt),
     checked_at: now,
   };
-  const viewed = at(signer?.lastViewedAt);
+  const viewed = isoTime(signer?.lastViewedAt);
   if (viewed) patch.viewed_at = viewed;
-  const signed = signer?.hasCompleted ? at(signer?.signedDate) : null;
+  const signed = signer?.hasCompleted ? isoTime(signer?.signedDate) : null;
   if (signed) patch.signed_at = signed;
   return patch;
+}
+
+/**
+ * Which of our contracts HighLevel no longer has. Its document list comes
+ * newest change first and a document's last change only moves forward, so a
+ * contract last seen changed after the oldest change read had to be on the
+ * pages read: absent from them, it was deleted. When the whole list was
+ * read, anything absent was. Without a change time on file, only a read of
+ * the whole list can say a contract is gone.
+ */
+export function goneFrom(
+  missing: { document_id: string; ghl_updated_at: string | null }[],
+  floor: string | null,
+  ended: boolean,
+): string[] {
+  const oldest = floor ? Date.parse(floor) : Number.NaN;
+  return missing
+    .filter(r => {
+      if (ended) return true;
+      const seen = r.ghl_updated_at ? Date.parse(r.ghl_updated_at) : Number.NaN;
+      return Number.isFinite(seen) && Number.isFinite(oldest) && seen > oldest;
+    })
+    .map(r => r.document_id);
 }
 
 /** The templates a manager may offer, cleaned: known fields only, no duplicates, at most 20. */
