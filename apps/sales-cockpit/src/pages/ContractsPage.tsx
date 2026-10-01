@@ -14,13 +14,17 @@ import {
 } from "../components/kit";
 import { api } from "../lib/api";
 import {
+  byWhom,
   CONTRACT_COLUMNS,
   type Contract,
   type ContractField,
   type ContractSetting,
   type ContractTemplate,
+  DRAFT_DAYS,
   isOpen,
+  madeFrom,
   stepOf,
+  WAITING_DAYS,
 } from "../lib/contracts";
 import { useLeadsById, useQuery, useSetting } from "../lib/data";
 import { ago, isArabic } from "../lib/format";
@@ -29,13 +33,16 @@ import { toast } from "../lib/toast";
 import type { Me } from "../lib/types";
 
 /**
- * Every contract made from the cockpit: the ones waiting for a signature
- * first, then drafts nobody sent, then the month's signed ones. Contracts
- * are made on a lead's page; a manager chooses here which HighLevel
- * templates the team can use.
+ * Every client contract in HighLevel, made from a lead's page or in
+ * HighLevel itself: the ones waiting for a signature first (sent in the
+ * last 60 days), then drafts nobody sent (the last 30 days), then the
+ * month's signed ones. Older ones are counted and stay on each lead's page.
+ * A manager chooses here which templates the team can use, and which are
+ * staff contracts that never show.
  */
 
-const MONTH = 30 * 86_400_000;
+const DAY = 86_400_000;
+const MONTH = 30 * DAY;
 
 export default function ContractsPage({ me }: { me: Me }) {
   const rows = useQuery<Contract[]>(
@@ -44,7 +51,7 @@ export default function ContractsPage({ me }: { me: Me }) {
         .from("cockpit_sales_contracts")
         .select(CONTRACT_COLUMNS)
         .order("created_at", { ascending: false })
-        .limit(300),
+        .limit(2000),
     [],
     60_000,
   );
@@ -70,11 +77,17 @@ export default function ContractsPage({ me }: { me: Me }) {
   }, [reloadRows]);
 
   const now = Date.now();
-  const waiting = all.filter(c => {
+  const sentOpen = all.filter(c => {
     const s = stepOf(c);
     return isOpen(c) && (s === 1 || s === 2);
   });
-  const drafts = all.filter(c => isOpen(c) && stepOf(c) === 0);
+  const recent = (c: Contract, days: number, at: string | null) =>
+    Date.parse(at ?? c.created_at) > now - days * DAY;
+  const waiting = sentOpen.filter(c => recent(c, WAITING_DAYS, c.sent_at));
+  const olderWaiting = sentOpen.length - waiting.length;
+  const allDrafts = all.filter(c => isOpen(c) && stepOf(c) === 0);
+  const drafts = allDrafts.filter(c => recent(c, DRAFT_DAYS, c.created_at));
+  const olderDrafts = allDrafts.length - drafts.length;
   const signed = all.filter(
     c =>
       stepOf(c) === 3 && Date.parse(c.signed_at ?? c.updated_at) > now - MONTH,
@@ -85,8 +98,8 @@ export default function ContractsPage({ me }: { me: Me }) {
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Contracts</h1>
         <p className="muted mt-1 text-sm">
-          Contracts made from a lead's page, sent through HighLevel. Opened and
-          signed come from HighLevel when this page opens.
+          Every client contract in HighLevel, made from a lead's page or in
+          HighLevel itself. Opened and signed come from HighLevel.
         </p>
       </header>
 
@@ -108,19 +121,25 @@ export default function ContractsPage({ me }: { me: Me }) {
             title="Waiting for a signature"
             rows={waiting}
             nameOf={nameOf}
-            empty="Nothing is waiting for a signature."
-            when={c =>
-              `sent ${ago(c.sent_at)}${c.sent_by ? ` by ${c.sent_by.split("@")[0]}` : ""}`
+            empty={`Nothing sent in the last ${WAITING_DAYS} days is waiting for a signature.`}
+            note={
+              olderWaiting
+                ? `${olderWaiting} older ${olderWaiting === 1 ? "contract was" : "contracts were"} sent more than ${WAITING_DAYS} days ago and never signed. Each stays on its lead's page.`
+                : null
             }
+            when={c => `sent ${ago(c.sent_at)} ${byWhom(c.sent_by)}`}
           />
           <ContractList
             title="Drafts not sent"
             rows={drafts}
             nameOf={nameOf}
-            empty="No drafts waiting."
-            when={c =>
-              `made ${ago(c.created_at)} by ${c.created_by.split("@")[0]}`
+            empty={`No drafts from the last ${DRAFT_DAYS} days.`}
+            note={
+              olderDrafts
+                ? `${olderDrafts} older ${olderDrafts === 1 ? "draft is" : "drafts are"} left out. Each stays on its lead's page.`
+                : null
             }
+            when={c => `made ${ago(c.created_at)} ${byWhom(c.created_by)}`}
           />
           <ContractList
             title="Signed in the last 30 days"
@@ -135,12 +154,15 @@ export default function ContractsPage({ me }: { me: Me }) {
       {me.manager ? <TemplatePicker /> : null}
 
       <SourceNote label="Where this comes from">
-        A contract is a document in HighLevel's Documents &amp; Contracts. The
-        cockpit makes it from the template as a draft, with the company name,
-        the payment structure and the daily ad spend written to the lead in
+        A contract is a document in HighLevel's Documents &amp; Contracts. One
+        made from a lead's page starts as a draft, with the company name, the
+        payment structure and the daily ad spend written to the lead in
         HighLevel first, so the template fills itself. A draft can be changed in
-        HighLevel; sending locks it. Contracts sent from HighLevel itself are
-        not listed here.
+        HighLevel; sending locks it. Contracts made in HighLevel itself are
+        copied in every three minutes. Staff contracts (named after a staff
+        template or a role, such as Closer Contract or Media Buyer) and drafts
+        with nobody to sign are left out. Each lead's Contract Status and
+        Contract URL in HighLevel follow their latest contract.
       </SourceNote>
     </main>
   );
@@ -151,12 +173,15 @@ function ContractList({
   rows,
   nameOf,
   empty,
+  note,
   when,
 }: {
   title: string;
   rows: Contract[];
   nameOf: Map<string, string | null>;
   empty: string;
+  /** What the list leaves out, said under it. */
+  note?: string | null;
   when: (c: Contract) => string;
 }) {
   return (
@@ -185,7 +210,7 @@ function ContractList({
                     </Link>
                   </p>
                   <p className="muted truncate text-xs">
-                    {c.template_name} · {when(c)}
+                    {madeFrom(c)} · {when(c)}
                   </p>
                 </div>
                 <ContractTrail c={c} />
@@ -196,6 +221,11 @@ function ContractList({
       ) : (
         <p className="muted px-4 py-3 text-sm sm:px-6">{empty}</p>
       )}
+      {note ? (
+        <p className="muted border-t hairline px-4 py-2.5 text-xs sm:px-6">
+          {note}
+        </p>
+      ) : null}
     </SectionCard>
   );
 }
@@ -207,6 +237,7 @@ function TemplatePicker() {
   const setting = useSetting<ContractSetting>("contracts");
   const [all, setAll] = useState<{ id: string; name: string }[] | null>(null);
   const [picks, setPicks] = useState<Record<string, TemplatePick>>({});
+  const [staff, setStaff] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -221,6 +252,7 @@ function TemplatePicker() {
         (setting.data?.templates ?? []).map(t => [t.id, t] as const),
       );
       setAll(out.templates);
+      setStaff(new Set(setting.data?.staff?.names ?? []));
       setPicks(
         Object.fromEntries(
           out.templates.map(t => [
@@ -254,7 +286,11 @@ function TemplatePicker() {
       }));
     setBusy(true);
     try {
-      await api("contract.templates.save", { templates });
+      await api("contract.templates.save", {
+        templates,
+        // A template the team uses is a client contract, whatever was ticked before.
+        staff_names: [...staff].filter(n => !templates.some(t => t.name === n)),
+      });
       toast.success("Saved. The team sees these templates.");
       setting.reload();
       setAll(null);
@@ -284,7 +320,8 @@ function TemplatePicker() {
         <div className="mt-4 space-y-2">
           <p className="muted text-xs">
             Every template fills in the company name. Tick what else it prints,
-            so the form asks for it.
+            so the form asks for it. Mark a team member's template as a staff
+            contract: its contracts never show in the cockpit.
           </p>
           <ul className="divide-y hairline rounded-[var(--radius-md)] border hairline">
             {all.map(t => {
@@ -298,21 +335,45 @@ function TemplatePicker() {
                     <input
                       type="checkbox"
                       checked={Boolean(p?.on)}
-                      onChange={e =>
+                      onChange={e => {
+                        const on = e.target.checked;
                         setPicks(cur => ({
                           ...cur,
                           [t.id]: {
-                            on: e.target.checked,
+                            on,
                             fields:
                               cur[t.id]?.fields ?? new Set(["company_name"]),
                           },
-                        }))
-                      }
+                        }));
+                        if (on)
+                          setStaff(cur => {
+                            const next = new Set(cur);
+                            next.delete(t.name);
+                            return next;
+                          });
+                      }}
                     />
                     <span className="truncate text-sm" dir="auto">
                       {t.name}
                     </span>
                   </label>
+                  {!p?.on ? (
+                    <label className="flex items-center gap-1 text-xs">
+                      <input
+                        type="checkbox"
+                        checked={staff.has(t.name)}
+                        onChange={e =>
+                          setStaff(cur => {
+                            const next = new Set(cur);
+                            if (e.target.checked) next.add(t.name);
+                            else next.delete(t.name);
+                            return next;
+                          })
+                        }
+                      />
+                      Staff contract
+                    </label>
+                  ) : null}
                   {p?.on ? (
                     <span className="flex flex-wrap gap-3 text-xs">
                       <label className="flex items-center gap-1">

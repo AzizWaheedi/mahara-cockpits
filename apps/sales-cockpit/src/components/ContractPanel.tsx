@@ -7,7 +7,9 @@ import {
   type ContractSetting,
   endedNote,
   isOpen,
+  madeFrom,
   STEPS,
+  sentHow,
   shareLine,
   stepOf,
   stepTimes,
@@ -266,13 +268,13 @@ function ContractCard({
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <p className="min-w-0 truncate font-medium" dir="auto">
           {step === 0
-            ? (c.fields.company_name ?? c.template_name)
-            : (c.name ?? c.template_name)}
+            ? (c.fields.company_name ?? c.name ?? madeFrom(c))
+            : (c.name ?? madeFrom(c))}
         </p>
         <p className="muted text-xs">
-          {c.template_name}
+          {madeFrom(c)}
           {c.sent_at && step < 3
-            ? ` · sent ${ago(c.sent_at)}${c.sent_via === "link" ? " as a link" : " by email"}`
+            ? ` · sent ${ago(c.sent_at)} ${sentHow(c)}`
             : ""}
         </p>
       </div>
@@ -280,7 +282,12 @@ function ContractCard({
         <ContractTrail c={c} />
       </div>
       {ended ? <p className="muted mt-2 text-xs">{ended}</p> : null}
-      {step === 0 && !ended ? (
+      {step === 0 && !ended && c.source === "highlevel" ? (
+        <p className="muted mt-2 text-xs">
+          Made in HighLevel. Change it there before sending; sending locks it.
+        </p>
+      ) : null}
+      {step === 0 && !ended && c.source !== "highlevel" ? (
         <p className="muted mt-2 text-xs">
           Filled in: <bdi>{c.fields.company_name}</bdi>
           {c.fields.payment_structure ? `, ${c.fields.payment_structure}` : ""}
@@ -333,7 +340,11 @@ function ContractCard({
                 target="_blank"
                 rel="noreferrer"
                 className={button}
-                title={`In HighLevel it is the newest ${c.template_name} for this lead.`}
+                title={
+                  c.template_name
+                    ? `In HighLevel it is the newest ${c.template_name} for this lead.`
+                    : `In HighLevel it is called ${c.name ?? "this lead's contract"}.`
+                }
               >
                 <ExternalLink className="size-3.5" aria-hidden />
                 Edit in HighLevel
@@ -421,9 +432,9 @@ function NewContract({
   const templates = setting.templates ?? [];
   const options = setting.fields?.payment_structure?.options ?? [];
   const [templateId, setTemplateId] = useState(
-    last && templates.some(t => t.id === last.template_id)
-      ? last.template_id
-      : (templates[0]?.id ?? ""),
+    templates.find(t => t.id === last?.template_id)?.id ??
+      templates[0]?.id ??
+      "",
   );
   const template = useMemo(
     () => templates.find(t => t.id === templateId) ?? null,

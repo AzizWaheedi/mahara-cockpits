@@ -8,6 +8,11 @@
 // {{contact.daily_ad_spend}}), so the cockpit writes those fields, makes the
 // document as a draft (still editable in HighLevel), and sends it when the
 // rep says so (after that HighLevel locks it).
+//
+// Aziz, later the same day: "Make it do those things". Contracts made in
+// HighLevel directly are copied in as well (contract.sync), staff contracts
+// left out, and the cockpit keeps HighLevel's own Contract Status and
+// Contract URL contact fields in step with each lead's latest contract.
 
 type Row = Record<string, unknown>;
 
@@ -25,9 +30,15 @@ export interface ContractSetting {
   fields?: {
     daily_ad_spend?: { id?: string };
     payment_structure?: { id?: string; options?: string[] };
+    contract_status?: { id?: string; options?: string[] };
+    contract_url?: { id?: string };
   };
   link_base?: string;
   editor_url?: string;
+  /** How a staff contract is told apart: by its template's name, or a role word in its name. */
+  staff?: { names?: string[]; words?: string[] };
+  /** Keep HighLevel's Contract Status and Contract URL in step (off only when false). */
+  write_fields?: boolean;
 }
 
 export interface ContractTerms {
@@ -117,8 +128,10 @@ export const isoTime = (v: unknown): string | null => {
 /** The signer's own link, from the links HighLevel returns for each recipient. */
 export function signingLink(links: unknown, contactId: string, base: string | undefined): string | null {
   if (!Array.isArray(links) || !base) return null;
-  const own = (links as Row[]).find(l => String(l.recipientId ?? "") === contactId && !l.deleted)
-    ?? (links as Row[]).find(l => String(l.recipientCategory ?? "") === "recipient" && !l.deleted);
+  // A "users" link is the sender's own copy: never stored, never shared.
+  const list = (links as Row[]).filter(l => !l.deleted && String(l.entityName ?? "") !== "users");
+  const own = list.find(l => String(l.recipientId ?? "") === contactId)
+    ?? list.find(l => String(l.entityName ?? "") === "contacts");
   const ref = own?.referenceId;
   return typeof ref === "string" && ref ? `${base}${ref}` : null;
 }
@@ -167,6 +180,128 @@ export function goneFrom(
       return Number.isFinite(seen) && Number.isFinite(oldest) && seen > oldest;
     })
     .map(r => r.document_id);
+}
+
+// ---------------------------------------------------------------------------
+// Contracts made in HighLevel, and HighLevel's own contract fields
+// ---------------------------------------------------------------------------
+
+const norm = (v: unknown) => text(v, 200).toLowerCase();
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** The lead who signs a document: its primary contact recipient, else its first. */
+export function signerOf(doc: Row): string | null {
+  const people = (Array.isArray(doc.recipients) ? (doc.recipients as Row[]) : []).filter(
+    r => String(r.entityName ?? "contacts") === "contacts" && typeof r.id === "string" && r.id,
+  );
+  const signer = people.find(r => r.isPrimary) ?? people[0];
+  return signer ? String(signer.id) : null;
+}
+
+/**
+ * Who a HighLevel document is for. "nobody": no lead signs it yet. "staff":
+ * a team member's contract, named after one of the staff templates
+ * ("Closer Contract") or for a role ("Media Buyer"); those never enter the
+ * cockpit. Anything else a lead signs is a client contract.
+ */
+export function docKind(doc: Row, staff: ContractSetting["staff"]): "client" | "staff" | "nobody" {
+  if (!signerOf(doc)) return "nobody";
+  const name = norm(doc.name);
+  for (const n of (staff?.names ?? []).map(norm).filter(Boolean)) {
+    if (name === n) return "staff";
+    if (name.startsWith(n) && /[^\p{L}\p{N}]/u.test(name[n.length] ?? "")) return "staff";
+  }
+  for (const w of (staff?.words ?? []).map(norm).filter(Boolean)) {
+    if (new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRe(w)}($|[^\\p{L}\\p{N}])`, "u").test(name)) return "staff";
+  }
+  return "client";
+}
+
+/** When HighLevel first sent it: the earliest link it made for the lead. */
+export function sentAtOf(doc: Row): string | null {
+  const times = (Array.isArray(doc.links) ? (doc.links as Row[]) : [])
+    .filter(l => !l.deleted && String(l.entityName ?? "") === "contacts")
+    .map(l => isoTime(l.createdAt))
+    .filter((t): t is string => Boolean(t))
+    .sort();
+  return times[0] ?? null;
+}
+
+/** The HighLevel user who sent it, from the lead's link. */
+export function senderOf(doc: Row): string | null {
+  const link = (Array.isArray(doc.links) ? (doc.links as Row[]) : []).find(
+    l => !l.deleted && String(l.entityName ?? "") === "contacts" && typeof l.createdBy === "string",
+  );
+  return link ? String(link.createdBy) : null;
+}
+
+/**
+ * A contract made in HighLevel, as the cockpit keeps it: no terms (they were
+ * filled in HighLevel), the template only when the name still is one, and
+ * who sent it when that person has a seat.
+ */
+export function rowFromDoc(
+  doc: Row,
+  opts: { now: string; linkBase?: string; templateNames: string[]; senderEmail: string | null },
+): Row | null {
+  const contactId = signerOf(doc);
+  const id = text(doc._id, 40);
+  if (!contactId || !id) return null;
+  const patch = contractPatch(doc, contactId, opts.now);
+  const name = text(doc.name, 200);
+  const status = String(patch.status);
+  const sentAt = status === "draft" ? null : sentAtOf(doc);
+  return {
+    document_id: id,
+    contact_id: contactId,
+    template_id: null,
+    template_name: opts.templateNames.find(t => norm(t) === norm(name)) ?? null,
+    fields: {},
+    client_link: status === "draft" ? null : signingLink(doc.links, contactId, opts.linkBase),
+    created_by: opts.senderEmail ?? "HighLevel",
+    sent_by: sentAt ? opts.senderEmail : null,
+    sent_via: null,
+    sent_at: sentAt,
+    created_at: isoTime(doc.createdAt) ?? opts.now,
+    updated_at: opts.now,
+    source: "highlevel",
+    ...patch,
+  };
+}
+
+export interface FieldRow {
+  document_id: string;
+  status: string;
+  client_link?: string | null;
+  created_at: string;
+  signed_at?: string | null;
+}
+
+/** HighLevel's Contract Status option for one contract, or null for a status it has no word for. */
+export function contactStatusFor(c: Pick<FieldRow, "status" | "signed_at">): string | null {
+  const s = c.status.toLowerCase();
+  if (s === "completed" || s === "accepted" || c.signed_at) return "Signed";
+  if (s === "viewed") return "Waiting On Client";
+  if (s === "sent") return "Sent";
+  if (s === "draft") return "Working on it";
+  if (s === "declined" || s === "expired" || s === "voided") return "CANCELLED";
+  return null;
+}
+
+/**
+ * What a lead's Contract Status and Contract URL should say: the status of
+ * their latest contract that still exists, and the signing link of the
+ * latest one sent. With every contract deleted, "No Contract Yet" and no
+ * link (written only over what the cockpit wrote before).
+ */
+export function contactFieldsFor(rows: FieldRow[]): { status: string | null; url: string; document_id: string | null } {
+  const live = rows
+    .filter(r => r.status.toLowerCase() !== "deleted")
+    .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  if (!live.length) return { status: "No Contract Yet", url: "", document_id: null };
+  const latest = live[0];
+  const linked = live.find(r => r.client_link);
+  return { status: contactStatusFor(latest), url: linked?.client_link ?? "", document_id: latest.document_id };
 }
 
 /** The templates a manager may offer, cleaned: known fields only, no duplicates, at most 20. */

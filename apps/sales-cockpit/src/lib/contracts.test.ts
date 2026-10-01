@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { endedNote, isOpen, shareLine, stepOf } from "./contracts";
+import {
+  byWhom,
+  endedNote,
+  isOpen,
+  madeFrom,
+  sentHow,
+  shareLine,
+  stepOf,
+} from "./contracts";
 
 describe("stepOf", () => {
   test("follows HighLevel's statuses", () => {
@@ -82,5 +90,23 @@ describe("ended contracts", () => {
     expect(
       endedNote({ status: "completed", viewed_at: null, signed_at: "x" }),
     ).toBeNull();
+  });
+});
+
+describe("contracts made in HighLevel", () => {
+  test("named by their template when known, else by where they were made", () => {
+    expect(
+      madeFrom({ template_name: "90 Day Agreement", source: "cockpit" }),
+    ).toBe("90 Day Agreement");
+    expect(madeFrom({ template_name: null, source: "highlevel" })).toBe(
+      "Made in HighLevel",
+    );
+  });
+  test("how it went out and who sent it", () => {
+    expect(sentHow({ sent_via: "link" })).toBe("as a link");
+    expect(sentHow({ sent_via: null })).toBe("from HighLevel");
+    expect(byWhom("sara@maharamedia.com")).toBe("by sara");
+    expect(byWhom("HighLevel")).toBe("in HighLevel");
+    expect(byWhom(null)).toBe("in HighLevel");
   });
 });

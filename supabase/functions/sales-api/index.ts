@@ -92,12 +92,18 @@ import {
   type ContractSetting,
   type ContractTerms,
   cleanTemplates,
+  contactFieldsFor,
   contactFill,
   contractName,
   contractPatch,
   contractTerms,
+  docKind,
   goneFrom,
   isoTime,
+  rowFromDoc,
+  senderOf,
+  sentAtOf,
+  signerOf,
   signingLink,
 } from "./contracts.ts";
 
@@ -4254,7 +4260,7 @@ async function hotRemove(who: Who, b: Row) {
 
 /** Every column a seat may read: all but the client's signing link. */
 const CONTRACT_COLS =
-  "document_id,contact_id,template_id,template_name,name,status,fields,created_by,sent_by,sent_via,sent_at,viewed_at,signed_at,revision,ghl_updated_at,created_at,updated_at,checked_at";
+  "document_id,contact_id,template_id,template_name,name,status,fields,created_by,sent_by,sent_via,sent_at,viewed_at,signed_at,revision,ghl_updated_at,created_at,updated_at,checked_at,source";
 
 function needCloser(who: Who) {
   if (!who.manager && !["closer", "both"].includes(String(who.role)))
@@ -4311,6 +4317,7 @@ async function contractCreate(who: Who, b: Row) {
       prefer: "return=representation",
     }))[0];
     await audit(who, "contract.update", "cockpit_sales_contracts", String(open.document_id), open.fields ?? null, checked.terms);
+    await keepFieldsInStep([contact], who);
     return { contract: contractOut(saved), reused: true };
   }
 
@@ -4330,7 +4337,9 @@ async function contractCreate(who: Who, b: Row) {
   const id = String(doc._id ?? doc.id ?? "");
   if (!id)
     throw new Refusal("HighLevel did not say which contract it made. Look in HighLevel's Documents & Contracts before trying again, so it is not made twice.", 502);
-  const saved = (await svc("cockpit_sales_contracts", {
+  // The sync may have copied the new document a moment before this row
+  // landed; the cockpit's own row, with the terms, wins.
+  const saved = (await svc("cockpit_sales_contracts?on_conflict=document_id", {
     method: "POST",
     body: {
       document_id: id,
@@ -4346,14 +4355,16 @@ async function contractCreate(who: Who, b: Row) {
       created_at: now,
       updated_at: now,
       checked_at: now,
+      source: "cockpit",
     },
-    prefer: "return=representation",
+    prefer: "resolution=merge-duplicates,return=representation",
   }))[0];
   await audit(who, "contract.create", "cockpit_sales_contracts", id, null, {
     contact_id: contact,
     template: template.name,
     fields: checked.terms,
   });
+  await keepFieldsInStep([contact], who);
   return { contract: contractOut(saved) };
 }
 
@@ -4388,13 +4399,17 @@ async function contractSend(who: Who, b: Row) {
       throw new Refusal("This lead has no email address in HighLevel. Send it as a link and share it on WhatsApp.", 409);
   }
   const s = await contractSetting();
+  // A draft made in HighLevel was filled in there: its terms and name stay.
+  const ours = c.source !== "highlevel";
   const terms = (c.fields ?? {}) as ContractTerms;
-  const fill = contactFill(terms, s);
-  if (!fill.ok) throw new Refusal(fill.error, 409);
-  const name = contractName(String(terms.company_name ?? ""));
+  const fill = ours ? contactFill(terms, s) : null;
+  if (fill && !fill.ok) throw new Refusal(fill.error, 409);
+  const name = ours
+    ? contractName(String(terms.company_name ?? ""))
+    : cleanText(c.name, 200) || cleanText(c.template_name, 200) || "Contract";
   let out: Row;
   try {
-    await ghl("PUT", `/contacts/${enc(contact)}`, fill.body, "2021-07-28");
+    if (fill?.ok) await ghl("PUT", `/contacts/${enc(contact)}`, fill.body, "2021-07-28");
     out = await ghl("POST", "/proposals/document/send", {
       locationId: LOCATION,
       documentId: id,
@@ -4413,6 +4428,7 @@ async function contractSend(who: Who, b: Row) {
     prefer: "return=representation",
   }))[0];
   await audit(who, "contract.send", "cockpit_sales_contracts", id, { status: c.status }, { status: "sent", via, name });
+  await keepFieldsInStep([contact], who);
   return { contract: contractOut(saved), link: via === "link" ? link : null };
 }
 
@@ -4522,6 +4538,297 @@ async function contractRefresh(who: Who, b: Row) {
   return { checked: found + gone.length, gone: gone.length, unchanged: left.size };
 }
 
+// ---------------------------------------------------------------------------
+// Contracts made in HighLevel, and HighLevel's Contract Status / Contract URL
+// ---------------------------------------------------------------------------
+
+const FIELDS_RECENT = 30 * 86_400_000;
+const SYNC_FULL_EVERY = 6 * 3_600_000;
+/** A document this young that the cockpit does not know may be one contract.create is still saving. */
+const SYNC_SETTLE = 2 * 60_000;
+
+/**
+ * Keep HighLevel's Contract Status and Contract URL on each lead in step with
+ * their latest contract (Aziz, 2026-10-01: "Make it do those things"). A
+ * lead is written only when their contracts changed in the last 30 days or
+ * the cockpit wrote them before, and only when the value differs from what
+ * the cockpit last wrote. The signing link is never put in the audit row.
+ * A lead that fails is tried again by the next sync (contract.sync keeps
+ * the list).
+ */
+async function syncContactFields(
+  contactIds: string[],
+  who: Who,
+): Promise<{ written: number; failed: string[]; off?: true }> {
+  const ids = [...new Set(contactIds.filter(Boolean))];
+  if (!ids.length) return { written: 0, failed: [] };
+  const s = await contractSetting();
+  const statusField = s.fields?.contract_status;
+  const urlField = s.fields?.contract_url;
+  if (s.write_fields === false || !statusField?.id || !urlField?.id) return { written: 0, failed: [], off: true };
+  const options = new Set(statusField.options ?? []);
+  const rows: Row[] = [];
+  const before = new Map<string, Row>();
+  for (let i = 0; i < ids.length; i += 100) {
+    const part = ids.slice(i, i + 100).map(enc).join(",");
+    rows.push(...(await svcAll(
+      `cockpit_sales_contracts?contact_id=in.(${part})&select=document_id,contact_id,status,client_link,created_at,signed_at,ghl_updated_at,updated_at`,
+    )));
+    for (const r of await svc(`cockpit_sales_contract_fields?contact_id=in.(${part})&select=*`))
+      before.set(String(r.contact_id), r);
+  }
+  const byLead = new Map<string, Row[]>();
+  for (const r of rows) byLead.set(String(r.contact_id), [...(byLead.get(String(r.contact_id)) ?? []), r]);
+  const now = Date.now();
+  let written = 0;
+  const failed: string[] = [];
+  for (const id of ids) {
+    const list = byLead.get(id) ?? [];
+    const was = before.get(id);
+    const changed = Math.max(0, ...list.map(r => ms(r.ghl_updated_at) ?? ms(r.updated_at) ?? 0));
+    if (!was && changed < now - FIELDS_RECENT) continue;
+    if (!was && !list.some(r => String(r.status) !== "deleted")) continue;
+    const want = contactFieldsFor(list.map(r => ({
+      document_id: String(r.document_id),
+      status: String(r.status),
+      client_link: (r.client_link as string | null) ?? null,
+      created_at: String(r.created_at),
+      signed_at: (r.signed_at as string | null) ?? null,
+    })));
+    const status = want.status && options.has(want.status) ? want.status : null;
+    if (!was && !status && !want.url) continue;
+    if (was && ((was.status as string | null) ?? null) === status && String(was.url ?? "") === want.url) continue;
+    const customFields: { id: string; field_value: string }[] = [{ id: urlField.id, field_value: want.url }];
+    if (status) customFields.unshift({ id: statusField.id, field_value: status });
+    try {
+      await ghl("PUT", `/contacts/${enc(id)}`, { customFields }, "2021-07-28");
+      await svc("cockpit_sales_contract_fields?on_conflict=contact_id", {
+        method: "POST",
+        body: { contact_id: id, document_id: want.document_id, status, url: want.url, written_at: new Date().toISOString() },
+        prefer: "resolution=merge-duplicates,return=minimal",
+      });
+      await audit(
+        who,
+        "contract.fields",
+        "cockpit_sales_contract_fields",
+        id,
+        was ? { status: was.status ?? null, link: Boolean(was.url) } : null,
+        { status, link: Boolean(want.url), document_id: want.document_id },
+      );
+      written++;
+    } catch (e) {
+      failed.push(id);
+      console.error("contract fields", id, redact(String(e)));
+    }
+  }
+  return { written, failed };
+}
+
+/** The fields after a rep's own step; a failure waits for the next sync rather than failing the step. */
+async function keepFieldsInStep(contactIds: string[], who: Who): Promise<void> {
+  try {
+    await syncContactFields(contactIds, who);
+  } catch (e) {
+    console.error("contract fields", redact(String(e)));
+  }
+}
+
+/**
+ * HighLevel's documents, newest change first, down to a moment (all of them
+ * when there is none, up to the page limit). Says how far back the pages
+ * reached and whether they were the whole list.
+ */
+async function readSince(since: number | null, pages: number) {
+  const docs: Row[] = [];
+  let floor: string | null = null;
+  let read = 0;
+  let total: number | null = null;
+  for (let skip = 0; skip < pages * 20; skip += 20) {
+    const page = await ghl("GET", `/proposals/document?locationId=${LOCATION}&limit=20&skip=${skip}`, undefined, "2021-07-28");
+    const list = (page.documents ?? []) as Row[];
+    if (typeof page.total === "number") total = page.total;
+    read += list.length;
+    docs.push(...list);
+    for (const d of list) {
+      const changed = isoTime(d.updatedAt);
+      if (changed && (!floor || changed < floor)) floor = changed;
+    }
+    if (list.length < 20) break;
+    if (since !== null && floor && Date.parse(floor) < since) break;
+  }
+  return { docs, floor, ended: total !== null && read > 0 && read >= total };
+}
+
+interface SyncState {
+  since?: string | null;
+  full_at?: string | null;
+  ran_at?: string | null;
+  counts?: Row;
+  /** Leads whose contract fields failed to write last run: tried again. */
+  retry?: string[];
+}
+
+/**
+ * Copy HighLevel's client contracts into the cockpit, the ones made in
+ * HighLevel itself too, and keep each lead's Contract Status and Contract
+ * URL in step. The sales mirror runs it every three minutes with the service
+ * key: the documents changed since the last run, and all of them every six
+ * hours. Staff contracts, documents nobody signs and leads the cockpit does
+ * not have are left out. A contract HighLevel no longer has is marked
+ * deleted after a second read, as in contract.refresh.
+ */
+async function contractSync(desk: Who, b: Row) {
+  const who: Who = { ...desk, email: "contract-sync", name: "Contract sync" };
+  const s = await contractSetting();
+  const state = (await setting<SyncState>("contracts_sync")) ?? {};
+  const now = Date.now();
+  const at = new Date(now).toISOString();
+  const last = ms(state.since);
+  const full = b.full === true || last === null || (ms(state.full_at) ?? 0) < now - SYNC_FULL_EVERY;
+  const since = full || last === null ? null : last - 10 * 60_000;
+  const read = await readSince(since, full ? 60 : 10);
+
+  const ids = read.docs.map(d => String(d._id ?? "")).filter(Boolean);
+  const known = new Map<string, Row>();
+  for (let i = 0; i < ids.length; i += 100)
+    for (const r of await svc(
+      `cockpit_sales_contracts?document_id=in.(${ids.slice(i, i + 100).map(enc).join(",")})&select=document_id,contact_id,status,ghl_updated_at,client_link,sent_at`,
+    ))
+      known.set(String(r.document_id), r);
+
+  const fresh = read.docs.filter(d => !known.has(String(d._id ?? "")) && docKind(d, s.staff) === "client");
+  const signers = [...new Set(fresh.map(signerOf).filter((x): x is string => Boolean(x)))];
+  const leads = new Set<string>();
+  for (let i = 0; i < signers.length; i += 100)
+    for (const r of await svc(`cockpit_sales_leads?contact_id=in.(${signers.slice(i, i + 100).map(enc).join(",")})&select=contact_id`))
+      leads.add(String(r.contact_id));
+  const people = new Map(
+    (await svc("cockpit_sales_people?ghl_user_id=not.is.null&select=email,ghl_user_id")).map(p => [String(p.ghl_user_id), String(p.email)] as const),
+  );
+  const templateNames = (s.templates ?? []).map(t => t.name);
+
+  const touched = new Set<string>(Array.isArray(state.retry) ? state.retry.map(String) : []);
+  const inserts: Row[] = [];
+  let updated = 0;
+  let notLeads = 0;
+  const patchKnown = async (d: Row, row: Row) => {
+    const contactId = String(row.contact_id);
+    touched.add(contactId);
+    if (isoTime(d.updatedAt) === isoTime(row.ghl_updated_at) && row.status !== "deleted") return;
+    const patch = contractPatch(d, contactId, at);
+    if (String(patch.status) !== "draft") {
+      if (!row.client_link) {
+        const link = signingLink(d.links, contactId, s.link_base);
+        if (link) patch.client_link = link;
+      }
+      if (!row.sent_at) {
+        const sent = sentAtOf(d);
+        if (sent) patch.sent_at = sent;
+      }
+    }
+    patch.updated_at = at;
+    await svc(`cockpit_sales_contracts?document_id=eq.${enc(String(row.document_id))}`, {
+      method: "PATCH",
+      body: patch,
+      prefer: "return=minimal",
+    });
+    updated++;
+  };
+  for (const d of read.docs) {
+    const id = String(d._id ?? "");
+    const row = known.get(id);
+    if (row) {
+      await patchKnown(d, row);
+      continue;
+    }
+    if (docKind(d, s.staff) !== "client") continue;
+    if ((ms(d.createdAt) ?? 0) > now - SYNC_SETTLE) continue;
+    const signer = signerOf(d);
+    if (!signer || !leads.has(signer)) {
+      notLeads++;
+      continue;
+    }
+    const sender = senderOf(d);
+    const r = rowFromDoc(d, {
+      now: at,
+      linkBase: s.link_base,
+      templateNames,
+      senderEmail: sender ? (people.get(sender) ?? null) : null,
+    });
+    if (r) {
+      inserts.push(r);
+      touched.add(signer);
+    }
+  }
+  for (let i = 0; i < inserts.length; i += 100)
+    await svc("cockpit_sales_contracts?on_conflict=document_id", {
+      method: "POST",
+      body: inserts.slice(i, i + 100),
+      prefer: "resolution=ignore-duplicates,return=minimal",
+    });
+
+  // Contracts HighLevel no longer lists, read twice before saying so.
+  const seen = new Set(ids);
+  const open = (await svcAll("cockpit_sales_contracts?status=in.(draft,sent,viewed)&select=document_id,contact_id,status,ghl_updated_at"))
+    .filter(r => !seen.has(String(r.document_id)));
+  const missing = () =>
+    open.map(r => ({ document_id: String(r.document_id), ghl_updated_at: (r.ghl_updated_at as string | null) ?? null }));
+  let gone = goneFrom(missing(), read.floor, read.ended);
+  if (gone.length) {
+    const again = await readDocs(new Set(gone), full ? 60 : 10);
+    for (const d of again.hits) {
+      const row = open.find(r => String(r.document_id) === String(d._id ?? ""));
+      if (row) await patchKnown(d, row);
+    }
+    const back = new Set(again.hits.map(d => String(d._id ?? "")));
+    const still = new Set(goneFrom(missing().filter(r => !back.has(r.document_id)), again.floor, again.ended));
+    gone = gone.filter(id => still.has(id));
+    for (const id of gone) {
+      const row = open.find(r => String(r.document_id) === id);
+      await svc(`cockpit_sales_contracts?document_id=eq.${enc(id)}&status=in.(draft,sent,viewed)`, {
+        method: "PATCH",
+        body: { status: "deleted", checked_at: at, updated_at: at },
+        prefer: "return=minimal",
+      });
+      await audit(who, "contract.gone", "cockpit_sales_contracts", id, { status: row?.status ?? null }, { status: "deleted" }, {
+        reason: "not in HighLevel's document list on two reads",
+      });
+      if (row) touched.add(String(row.contact_id));
+    }
+  }
+
+  const fields = await syncContactFields([...touched], who);
+
+  // How far this run read: all the way to the last run's mark, or the whole list.
+  const complete = read.ended || (since !== null && read.floor !== null && Date.parse(read.floor) < since);
+  const newest = read.docs.map(d => isoTime(d.updatedAt)).filter((t): t is string => Boolean(t)).sort().pop() ?? null;
+  const counts = {
+    read: read.docs.length,
+    full,
+    added: inserts.length,
+    updated,
+    not_leads: notLeads,
+    gone: gone.length,
+    fields_written: fields.written,
+    fields_failed: fields.failed.length,
+    ...(fields.off ? { fields_off: true } : {}),
+  };
+  const next: SyncState = {
+    since: complete ? (newest ?? state.since ?? null) : (state.since ?? null),
+    // A run that could not read back to its mark makes the next one a full pass.
+    full_at: !complete ? null : full ? at : (state.full_at ?? null),
+    ran_at: at,
+    counts,
+    retry: fields.failed.slice(0, 200),
+  };
+  await svc("cockpit_sales_settings?on_conflict=key", {
+    method: "POST",
+    body: { key: "contracts_sync", value: next, updated_by: who.email, updated_at: at },
+    prefer: "resolution=merge-duplicates,return=minimal",
+  });
+  return counts;
+}
+
 /** Every template in HighLevel's Documents & Contracts, for a manager to choose from. */
 async function contractTemplates(who: Who) {
   needManager(who);
@@ -4543,13 +4850,23 @@ async function contractTemplatesSave(who: Who, b: Row) {
   const templates = cleanTemplates(b.templates);
   if (!templates.length) throw new Refusal("Keep at least one template for the team.");
   const before = await contractSetting();
-  const value = { ...before, templates };
+  const staffNames = Array.isArray(b.staff_names)
+    ? [...new Set((b.staff_names as unknown[]).map(n => cleanText(n, 120)).filter(Boolean))].slice(0, 60)
+    : null;
+  const value = { ...before, templates, ...(staffNames ? { staff: { ...(before.staff ?? {}), names: staffNames } } : {}) };
   await svc("cockpit_sales_settings?on_conflict=key", {
     method: "POST",
     body: { key: "contracts", value, updated_by: who.email, updated_at: new Date().toISOString() },
     prefer: "resolution=merge-duplicates,return=minimal",
   });
-  await audit(who, "contract.templates", "cockpit_sales_settings", "contracts", before.templates ?? null, templates);
+  await audit(
+    who,
+    "contract.templates",
+    "cockpit_sales_settings",
+    "contracts",
+    { templates: before.templates ?? null, staff: before.staff?.names ?? null },
+    { templates, staff: staffNames ?? before.staff?.names ?? null },
+  );
   return { templates };
 }
 
@@ -4695,6 +5012,8 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
 
 /** What the desk's service key may do: nothing but a trusted follow-up. */
 const DESK_ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
+  // The sales mirror's three-minute run: HighLevel's contracts and the contract fields.
+  "contract.sync": contractSync,
   "followup.autosend": followupAutosend,
   "followup.settle": followupSettle,
   "dial.resync_stuck": dialResyncStuck,

@@ -28,6 +28,9 @@
 // - the sales assets and their tags (B2B's asset library) every hour,
 //   dropping any B2B unpublished.
 // - when B2B last read each of its own sources (settings b2b_sources).
+// - contracts: sales-api's contract.sync, called with the service key, copies
+//   HighLevel's client contracts (the ones made in HighLevel too) and keeps
+//   each lead's Contract Status and Contract URL in step.
 // A drop that would remove more than a fifth of what was read is refused
 // and reported: that is B2B answering oddly, and a person decides.
 // Each run leaves a row in cockpit_sales_mirror_runs (kept thirty days); a
@@ -555,6 +558,23 @@ async function mirrorSources(at: string): Promise<number> {
 }
 
 /** The run log keeps thirty days. */
+/** HighLevel's contracts, through sales-api (contract.sync), where the contract rules live. */
+async function syncContracts(): Promise<unknown> {
+  const res = await fetch(`${env("SUPABASE_URL")}/functions/v1/sales-api`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env("SUPABASE_SERVICE_ROLE_KEY")}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ action: "contract.sync" }),
+  });
+  const out = (await res.json().catch(() => ({}))) as Row;
+  if (!res.ok || out.ok !== true)
+    throw new Error(`contract.sync ${res.status}: ${redact(String(out.error ?? "no answer"))}`);
+  const { ok: _ok, ...counts } = out;
+  return counts;
+}
+
 async function trimRuns(now: number): Promise<void> {
   await rest(
     `cockpit_sales_mirror_runs?started_at=lt.${encodeURIComponent(new Date(now - RUNS_KEPT).toISOString())}`,
@@ -649,6 +669,7 @@ async function run(): Promise<Response> {
   await step("scorecards", () => mirrorScorecards(state, at, now));
   await step("assets", () => mirrorAssets(state, at, now));
   await step("b2b_sources", () => mirrorSources(at));
+  await step("contracts", () => syncContracts());
   // After a finished full pass, four times a day.
   if ((counts.leads as { pass?: string } | undefined)?.pass === "finished")
     await step("trim_runs", () => trimRuns(now));

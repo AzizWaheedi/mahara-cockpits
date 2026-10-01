@@ -1016,7 +1016,8 @@ export const SETTINGS: Row[] = [
 /**
  * Contracts: one waiting for a signature (opened yesterday) on lead-2, with
  * an earlier one deleted in HighLevel, a draft on lead-3, one signed last
- * week on lead-5.
+ * week on lead-5, one made in HighLevel on lead-4 and one from February on
+ * lead-6 that was never signed.
  */
 export const CONTRACTS: Row[] = [
   {
@@ -1042,6 +1043,7 @@ export const CONTRACTS: Row[] = [
     created_at: new Date(Date.now() - 2 * 24 * H - 3 * H).toISOString(),
     updated_at: new Date(Date.now() - 22 * H).toISOString(),
     checked_at: new Date(Date.now() - 10 * 60_000).toISOString(),
+    source: "cockpit",
   },
   {
     document_id: "doc-deleted",
@@ -1065,6 +1067,7 @@ export const CONTRACTS: Row[] = [
     created_at: new Date(Date.now() - 4 * 24 * H - H).toISOString(),
     updated_at: new Date(Date.now() - 2 * 24 * H).toISOString(),
     checked_at: new Date(Date.now() - 2 * 24 * H).toISOString(),
+    source: "cockpit",
   },
   {
     document_id: "doc-draft",
@@ -1085,6 +1088,7 @@ export const CONTRACTS: Row[] = [
     created_at: new Date(Date.now() - 3 * H).toISOString(),
     updated_at: new Date(Date.now() - 3 * H).toISOString(),
     checked_at: null,
+    source: "cockpit",
   },
   {
     document_id: "doc-signed",
@@ -1109,6 +1113,49 @@ export const CONTRACTS: Row[] = [
     created_at: new Date(Date.now() - 8 * 24 * H - 2 * H).toISOString(),
     updated_at: new Date(Date.now() - 6 * 24 * H).toISOString(),
     checked_at: new Date(Date.now() - 10 * 60_000).toISOString(),
+    source: "cockpit",
+  },
+  {
+    document_id: "doc-highlevel",
+    contact_id: "lead-4",
+    template_id: null,
+    template_name: null,
+    name: "Bayt Al Khaleej X Mahara Media",
+    status: "viewed",
+    fields: {},
+    created_by: "HighLevel",
+    sent_by: null,
+    sent_via: null,
+    sent_at: new Date(Date.now() - 5 * 24 * H).toISOString(),
+    viewed_at: new Date(Date.now() - 3 * 24 * H).toISOString(),
+    signed_at: null,
+    revision: 3,
+    ghl_updated_at: new Date(Date.now() - 3 * 24 * H).toISOString(),
+    created_at: new Date(Date.now() - 6 * 24 * H).toISOString(),
+    updated_at: new Date(Date.now() - 3 * 24 * H).toISOString(),
+    checked_at: new Date(Date.now() - 3 * 60_000).toISOString(),
+    source: "highlevel",
+  },
+  {
+    document_id: "doc-old",
+    contact_id: "lead-6",
+    template_id: null,
+    template_name: "Retainer Contract",
+    name: "Retainer Contract",
+    status: "viewed",
+    fields: {},
+    created_by: "HighLevel",
+    sent_by: null,
+    sent_via: null,
+    sent_at: new Date(Date.now() - 140 * 24 * H).toISOString(),
+    viewed_at: new Date(Date.now() - 139 * 24 * H).toISOString(),
+    signed_at: null,
+    revision: 1,
+    ghl_updated_at: new Date(Date.now() - 139 * 24 * H).toISOString(),
+    created_at: new Date(Date.now() - 141 * 24 * H).toISOString(),
+    updated_at: new Date(Date.now() - 139 * 24 * H).toISOString(),
+    checked_at: new Date(Date.now() - 3 * 60_000).toISOString(),
+    source: "highlevel",
   },
 ];
 

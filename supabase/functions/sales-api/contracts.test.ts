@@ -6,8 +6,15 @@ import {
   contactFill,
   contractName,
   contractPatch,
+  contactFieldsFor,
+  contactStatusFor,
   contractTerms,
+  docKind,
   goneFrom,
+  rowFromDoc,
+  senderOf,
+  sentAtOf,
+  signerOf,
   signingLink,
 } from "./contracts.ts";
 
@@ -72,14 +79,17 @@ describe("contractName", () => {
 });
 
 describe("signingLink", () => {
-  test("the signer's own link, else the first recipient's", () => {
+  test("the signer's own link, else another lead's, never one that does not say whose", () => {
     const links = [
       { recipientId: "other", recipientCategory: "cc", referenceId: "ref-cc" },
       { recipientId: "c1", recipientCategory: "recipient", referenceId: "ref-1" },
     ];
     expect(signingLink(links, "c1", SETTING.link_base)).toBe("https://link.maharamedia.com/documents/v1/ref-1");
     expect(signingLink([{ recipientId: "x", recipientCategory: "recipient", referenceId: "ref-x" }], "c1", SETTING.link_base))
-      .toBe("https://link.maharamedia.com/documents/v1/ref-x");
+      .toBeNull();
+    expect(
+      signingLink([{ entityName: "contacts", recipientId: "x", recipientCategory: "recipient", referenceId: "ref-x" }], "c1", SETTING.link_base),
+    ).toBe("https://link.maharamedia.com/documents/v1/ref-x");
     expect(signingLink([], "c1", SETTING.link_base)).toBeNull();
     expect(signingLink(links, "c1", undefined)).toBeNull();
   });
@@ -153,5 +163,124 @@ describe("goneFrom", () => {
   });
   test("nothing read, nothing gone", () => {
     expect(goneFrom(rows, null, false)).toEqual([]);
+  });
+});
+
+const STAFF = {
+  names: ["Closer Contract", "CSM Contract", "Media Buyer - Template"],
+  words: ["closer", "media buyer", "editor"],
+};
+const doc = (over: Record<string, unknown> = {}) => ({
+  _id: "doc1",
+  name: "Ardon X Mahara Media",
+  status: "viewed",
+  createdAt: "2026-09-20T10:00:00.000Z",
+  updatedAt: "2026-09-21T09:00:00.000Z",
+  documentRevision: 2,
+  recipients: [
+    { id: "lead1", entityName: "contacts", isPrimary: true, lastViewedAt: "2026-09-21T09:00:00.000Z", hasCompleted: false },
+    { id: "user1", entityName: "users", isPrimary: false },
+  ],
+  links: [
+    { entityName: "users", recipientId: "user1", recipientCategory: "recipient", referenceId: "SENDER", createdBy: "u-sara", createdAt: "2026-09-20T11:00:00.000Z" },
+    { entityName: "contacts", recipientId: "lead1", recipientCategory: "recipient", referenceId: "CLIENT", createdBy: "u-sara", createdAt: "2026-09-20T11:00:01.000Z" },
+  ],
+  ...over,
+});
+
+describe("signingLink", () => {
+  test("never the sender's own copy, even when the lead's link is missing", () => {
+    const users = [{ entityName: "users", recipientId: "user1", recipientCategory: "recipient", referenceId: "SENDER" }];
+    expect(signingLink(users, "lead1", "https://l/")).toBeNull();
+    expect(signingLink(doc().links, "lead1", "https://l/")).toBe("https://l/CLIENT");
+    expect(signingLink(doc().links, "someone-else", "https://l/")).toBe("https://l/CLIENT");
+  });
+});
+
+describe("docKind", () => {
+  test("a document nobody signs yet", () => {
+    expect(docKind(doc({ recipients: [] }), STAFF)).toBe("nobody");
+  });
+  test("staff by a staff template's name, kept or extended", () => {
+    expect(docKind(doc({ name: "Closer Contract" }), STAFF)).toBe("staff");
+    expect(docKind(doc({ name: "closer contract - Ahmed" }), STAFF)).toBe("staff");
+    expect(docKind(doc({ name: "CSM Contract (Arabic)" }), STAFF)).toBe("staff");
+  });
+  test("staff by a role word on its own", () => {
+    expect(docKind(doc({ name: "Media Buyer" }), STAFF)).toBe("staff");
+    expect(docKind(doc({ name: "Editor" }), STAFF)).toBe("staff");
+  });
+  test("a client's contract, even with a role word inside another word", () => {
+    expect(docKind(doc(), STAFF)).toBe("client");
+    expect(docKind(doc({ name: "Editorial Studio X Mahara Media" }), STAFF)).toBe("client");
+    expect(docKind(doc({ name: "شركة البلوك الذهبي للمقاولات" }), STAFF)).toBe("client");
+    expect(docKind(doc({ name: "Closer Contracting Co" }), { names: ["Closer Contract"] })).toBe("client");
+  });
+});
+
+describe("a contract made in HighLevel", () => {
+  test("who signs, when it was sent and by whom, from the lead's link only", () => {
+    expect(signerOf(doc())).toBe("lead1");
+    expect(sentAtOf(doc())).toBe("2026-09-20T11:00:01.000Z");
+    expect(senderOf(doc())).toBe("u-sara");
+  });
+  test("kept as the cockpit keeps contracts, with no terms", () => {
+    const r = rowFromDoc(doc(), {
+      now: "2026-10-01T12:00:00.000Z",
+      linkBase: "https://l/",
+      templateNames: ["90 Day Agreement"],
+      senderEmail: "sara@x.com",
+    });
+    expect(r).toMatchObject({
+      document_id: "doc1",
+      contact_id: "lead1",
+      template_id: null,
+      template_name: null,
+      status: "viewed",
+      fields: {},
+      client_link: "https://l/CLIENT",
+      created_by: "sara@x.com",
+      sent_by: "sara@x.com",
+      sent_at: "2026-09-20T11:00:01.000Z",
+      viewed_at: "2026-09-21T09:00:00.000Z",
+      created_at: "2026-09-20T10:00:00.000Z",
+      source: "highlevel",
+    });
+  });
+  test("a draft has no link and no send; a draft still named after a template keeps it", () => {
+    const r = rowFromDoc(doc({ status: "draft", name: "90 day agreement", links: [] }), {
+      now: "2026-10-01T12:00:00.000Z",
+      linkBase: "https://l/",
+      templateNames: ["90 Day Agreement"],
+      senderEmail: null,
+    });
+    expect(r).toMatchObject({ status: "draft", client_link: null, sent_at: null, sent_by: null, created_by: "HighLevel", template_name: "90 Day Agreement" });
+  });
+});
+
+describe("Contract Status and Contract URL", () => {
+  test("HighLevel's words for each step", () => {
+    expect(contactStatusFor({ status: "draft" })).toBe("Working on it");
+    expect(contactStatusFor({ status: "sent" })).toBe("Sent");
+    expect(contactStatusFor({ status: "viewed" })).toBe("Waiting On Client");
+    expect(contactStatusFor({ status: "completed" })).toBe("Signed");
+    expect(contactStatusFor({ status: "viewed", signed_at: "2026-10-01" })).toBe("Signed");
+    expect(contactStatusFor({ status: "declined" })).toBe("CANCELLED");
+    expect(contactStatusFor({ status: "paid" })).toBeNull();
+  });
+  test("the latest contract that still exists decides; the link is the latest one sent", () => {
+    const rows = [
+      { document_id: "old", status: "completed", client_link: "https://l/OLD", created_at: "2026-06-01T00:00:00Z", signed_at: "2026-06-02" },
+      { document_id: "renewal", status: "draft", client_link: null, created_at: "2026-09-30T00:00:00Z" },
+      { document_id: "gone", status: "deleted", client_link: "https://l/GONE", created_at: "2026-10-01T00:00:00Z" },
+    ];
+    expect(contactFieldsFor(rows)).toEqual({ status: "Working on it", url: "https://l/OLD", document_id: "renewal" });
+  });
+  test("every contract deleted: no contract yet, and no link", () => {
+    expect(contactFieldsFor([{ document_id: "gone", status: "deleted", client_link: "https://l/GONE", created_at: "2026-10-01T00:00:00Z" }])).toEqual({
+      status: "No Contract Yet",
+      url: "",
+      document_id: null,
+    });
   });
 });
