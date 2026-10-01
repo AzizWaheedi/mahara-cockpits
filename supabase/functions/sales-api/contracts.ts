@@ -266,6 +266,9 @@ export function rowFromDoc(
     updated_at: opts.now,
     source: "highlevel",
     ...patch,
+    // One insert takes many rows, and every row must carry the same keys.
+    viewed_at: (patch.viewed_at as string | undefined) ?? null,
+    signed_at: (patch.signed_at as string | undefined) ?? null,
   };
 }
 

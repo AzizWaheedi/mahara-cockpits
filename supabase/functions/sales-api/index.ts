@@ -4692,7 +4692,7 @@ async function contractSync(desk: Who, b: Row) {
   const known = new Map<string, Row>();
   for (let i = 0; i < ids.length; i += 100)
     for (const r of await svc(
-      `cockpit_sales_contracts?document_id=in.(${ids.slice(i, i + 100).map(enc).join(",")})&select=document_id,contact_id,status,ghl_updated_at,client_link,sent_at`,
+      `cockpit_sales_contracts?document_id=in.(${ids.slice(i, i + 100).map(enc).join(",")})&select=document_id,contact_id,status,ghl_updated_at,client_link,sent_at,source`,
     ))
       known.set(String(r.document_id), r);
 
@@ -4734,9 +4734,15 @@ async function contractSync(desk: Who, b: Row) {
     });
     updated++;
   };
+  // A copied contract the staff rules now cover leaves the cockpit; HighLevel keeps it.
+  const staffRows: Row[] = [];
   for (const d of read.docs) {
     const id = String(d._id ?? "");
     const row = known.get(id);
+    if (row?.source === "highlevel" && docKind(d, s.staff) !== "client") {
+      staffRows.push(row);
+      continue;
+    }
     if (row) {
       await patchKnown(d, row);
       continue;
@@ -4766,6 +4772,23 @@ async function contractSync(desk: Who, b: Row) {
       body: inserts.slice(i, i + 100),
       prefer: "resolution=ignore-duplicates,return=minimal",
     });
+  if (staffRows.length) {
+    // A rule that suddenly covers a fifth of the copies is a wrong rule, not a fifth of staff.
+    const copies = [...known.values()].filter(r => r.source === "highlevel").length;
+    if (staffRows.length > 5 && staffRows.length > copies / 5)
+      throw new Error(`The staff rules would take out ${staffRows.length} of ${copies} copied contracts. Check the staff names and words.`);
+    for (const row of staffRows) {
+      const id = String(row.document_id);
+      await svc(`cockpit_sales_contracts?document_id=eq.${enc(id)}&source=eq.highlevel`, {
+        method: "DELETE",
+        prefer: "return=minimal",
+      });
+      await audit(who, "contract.staff", "cockpit_sales_contracts", id, { status: row.status ?? null }, null, {
+        reason: "a staff contract by its name; HighLevel keeps it",
+      });
+      touched.add(String(row.contact_id));
+    }
+  }
 
   // Contracts HighLevel no longer lists, read twice before saying so.
   const seen = new Set(ids);
@@ -4807,6 +4830,7 @@ async function contractSync(desk: Who, b: Row) {
     full,
     added: inserts.length,
     updated,
+    staff_removed: staffRows.length,
     not_leads: notLeads,
     gone: gone.length,
     fields_written: fields.written,
@@ -5019,6 +5043,9 @@ const DESK_ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   "dial.resync_stuck": dialResyncStuck,
 };
 
+/** What the sales mirror's scheduled run may ask for with the cron secret. */
+const CRON_ACTIONS = new Set(["contract.sync"]);
+
 /** The role claim of a token the gateway has already verified. */
 function jwtRole(jwt: string): string | null {
   const part = jwt.split(".")[1];
@@ -5061,7 +5088,16 @@ Deno.serve(async (req: Request) => {
   // deployed with verify_jwt), so its role claim can be read as it stands;
   // comparing the key's text failed because the desk and the function hold
   // two different, equally valid service keys (2026-09-24).
-  if (jwtRole(jwt) === "service_role") {
+  // The sales mirror's scheduled run comes with the shared cron secret from
+  // the vault, the door sales-mirror itself is opened with: the service key
+  // the gateway hands that function is not a token whose role can be read
+  // here (2026-10-01). It may run the contract sync and nothing else.
+  const cronSecret = env("CRON_SECRET");
+  const byCron =
+    Boolean(cronSecret) &&
+    (req.headers.get("x-cron-secret") ?? "").trim() === cronSecret &&
+    CRON_ACTIONS.has(String(body?.action ?? ""));
+  if (jwtRole(jwt) === "service_role" || byCron) {
     const deskHandler = DESK_ACTIONS[String(body?.action ?? "")];
     if (!deskHandler) return reply({ ok: false, error: "Not an action the desk may take." }, 403);
     const desk: Who = { signed_in: true, seat: true, manager: false, email: "sales-desk", name: "Sales desk" };

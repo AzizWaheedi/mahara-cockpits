@@ -558,12 +558,18 @@ async function mirrorSources(at: string): Promise<number> {
 }
 
 /** The run log keeps thirty days. */
-/** HighLevel's contracts, through sales-api (contract.sync), where the contract rules live. */
+/**
+ * HighLevel's contracts, through sales-api (contract.sync), where the
+ * contract rules live. It answers well within the mirror's lock: a full pass
+ * reads about twenty pages.
+ */
 async function syncContracts(): Promise<unknown> {
   const res = await fetch(`${env("SUPABASE_URL")}/functions/v1/sales-api`, {
     method: "POST",
     headers: {
+      // The gateway wants a project key; sales-api lets the run in by the cron secret.
       Authorization: `Bearer ${env("SUPABASE_SERVICE_ROLE_KEY")}`,
+      "x-cron-secret": env("CRON_SECRET"),
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ action: "contract.sync" }),

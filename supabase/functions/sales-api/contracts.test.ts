@@ -210,6 +210,11 @@ describe("docKind", () => {
     expect(docKind(doc({ name: "Media Buyer" }), STAFF)).toBe("staff");
     expect(docKind(doc({ name: "Editor" }), STAFF)).toBe("staff");
   });
+  test("a freelancer's engagement agreement is staff; a client who is a developer is not", () => {
+    const rules = { names: [], words: ["engagement agreement"] };
+    expect(docKind(doc({ name: "Web Developer — Engagement Agreement" }), rules)).toBe("staff");
+    expect(docKind(doc({ name: "Al Noor Developers X Mahara Media" }), rules)).toBe("client");
+  });
   test("a client's contract, even with a role word inside another word", () => {
     expect(docKind(doc(), STAFF)).toBe("client");
     expect(docKind(doc({ name: "Editorial Studio X Mahara Media" }), STAFF)).toBe("client");
@@ -255,6 +260,23 @@ describe("a contract made in HighLevel", () => {
       senderEmail: null,
     });
     expect(r).toMatchObject({ status: "draft", client_link: null, sent_at: null, sent_by: null, created_by: "HighLevel", template_name: "90 Day Agreement" });
+  });
+});
+
+describe("copied contracts in one insert", () => {
+  test("every row carries the same keys, opened or not, signed or not", () => {
+    const opts = { now: "2026-10-01T12:00:00.000Z", linkBase: "https://l/", templateNames: [], senderEmail: null };
+    const draft = rowFromDoc(doc({ status: "draft", links: [], recipients: [{ id: "lead1", entityName: "contacts", isPrimary: true }] }), opts);
+    const viewed = rowFromDoc(doc(), opts);
+    const signed = rowFromDoc(
+      doc({ status: "completed", recipients: [{ id: "lead1", entityName: "contacts", isPrimary: true, hasCompleted: true, signedDate: "2026-09-22T08:00:00.000Z" }] }),
+      opts,
+    );
+    const keys = (r: Record<string, unknown> | null) => Object.keys(r ?? {}).sort().join(",");
+    expect(keys(draft)).toBe(keys(viewed));
+    expect(keys(viewed)).toBe(keys(signed));
+    expect(draft?.viewed_at).toBeNull();
+    expect(signed?.signed_at).toBe("2026-09-22T08:00:00.000Z");
   });
 });
 
