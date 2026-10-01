@@ -1,4 +1,4 @@
-import { useAction, useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQueries, useQuery } from "convex/react";
 import {
   ArrowUpRight,
   Check,
@@ -223,6 +223,62 @@ const KICKER =
 
 // biome-ignore lint/suspicious/noExplicitAny: snapshot payload is untyped by design
 type Campaign = any;
+
+/**
+ * The board's numbers for one campaign. On the 7-day default they are the
+ * snapshot's own 7-day read (the one the calls are made on); on any other
+ * range they come from the same per-campaign range read the campaign panel
+ * and the account page use, so all three agree. [aziz, 2026-10-01]
+ */
+type BoardNumbers =
+  | { state: "loading" | "error" }
+  | {
+      state: "ok";
+      spend?: number;
+      leads?: number;
+      cpl?: number;
+      bookings?: number;
+      bookingRate?: number;
+      costPerBooking?: number;
+    };
+
+function boardNumbers(
+  c: Campaign,
+  ranged: boolean,
+  read: Campaign | Error | undefined,
+): BoardNumbers {
+  if (!ranged)
+    return {
+      state: "ok",
+      spend: c.spend7d,
+      leads: c.leads7d,
+      cpl: c.cpl,
+      bookings: c.bookings7d,
+      bookingRate: c.bookingRate,
+      costPerBooking: c.costPerBooking,
+    };
+  if (read === undefined) return { state: "loading" };
+  if (read instanceof Error) return { state: "error" };
+  const t = read.total ?? {};
+  const spend = Number(t.spend ?? 0);
+  const leads = Number(t.leads ?? 0);
+  // Done-with-you accounts have no bookings at all: keep them n/a, not 0.
+  const bookings =
+    c.bookings7d === undefined
+      ? undefined
+      : Number(read.bookingsTotal ?? t.bookings ?? 0);
+  return {
+    state: "ok",
+    spend,
+    leads,
+    cpl: leads > 0 ? spend / leads : undefined,
+    bookings,
+    bookingRate:
+      bookings !== undefined && leads > 0 ? (bookings / leads) * 100 : undefined,
+    costPerBooking:
+      bookings && bookings > 0 && spend > 0 ? spend / bookings : undefined,
+  };
+}
 
 /** Who a decision was sent to, in words: "client_success" reads "CSM". */
 const DEPT_LABEL: Record<string, string> = Object.fromEntries(
@@ -944,6 +1000,38 @@ function Cockpit({ view }: { view: View }) {
   const rangeFor = (name: string) => ranges[name] ?? globalRange;
   const setRange = (name: string, r: Range) =>
     setRanges(prev => ({ ...prev, [name]: r }));
+  // The board follows the picked range. On the 7-day default it keeps the
+  // snapshot's read; otherwise one range read per campaign. useQueries keys on
+  // the object's identity, so the object is rebuilt only when the campaigns or
+  // the range change (see AccountView, React error #301).
+  const boardKey =
+    globalRange.key === "7d"
+      ? ""
+      : JSON.stringify([
+          ((snap?.campaigns ?? []) as Campaign[])
+            .map(c => String(c.campaignName))
+            .sort(),
+          globalRange.start,
+          globalRange.end,
+        ]);
+  const boardQueries = useMemo(() => {
+    if (!boardKey) return {};
+    const [names, start, end] = JSON.parse(boardKey) as [
+      string[],
+      string,
+      string,
+    ];
+    return Object.fromEntries(
+      names.map(campaignName => [
+        campaignName,
+        { query: api.stats.range, args: { campaignName, start, end } },
+      ]),
+    );
+  }, [boardKey]);
+  const boardReads = useQueries(boardQueries) as Record<
+    string,
+    Campaign | Error | undefined
+  >;
   const [mode, setMode] = useState<"ads" | "reroute" | "leave">("ads");
   const [campaignPanelTab, setCampaignPanelTab] = useState<
     "recommendations" | "changes"
@@ -3050,8 +3138,9 @@ function Cockpit({ view }: { view: View }) {
           }}
         />
         <span className="text-xs text-muted-foreground">
-          The table always shows the 7-day read the calls are made on; the range
-          applies inside each campaign.
+          {globalRange.key === "7d"
+            ? "Spend, leads and bookings below are for the last 7 days, the read the calls are made on."
+            : `Spend, leads and bookings below are for ${globalRange.label.toLowerCase()}. The Call column always uses the last 7 days.`}
         </span>
       </div>
       {adsTab === "off" ? (
@@ -3130,6 +3219,25 @@ function Cockpit({ view }: { view: View }) {
                 );
                 const decided = decidedBySubject.get(c.campaignName);
                 const flag = flagFor(c);
+                const nums = boardNumbers(
+                  c,
+                  globalRange.key !== "7d",
+                  boardReads[String(c.campaignName)],
+                );
+                const cell = (value: React.ReactNode) =>
+                  nums.state === "loading" ? (
+                    <span className="font-normal text-muted-foreground">…</span>
+                  ) : nums.state === "error" ? (
+                    <span
+                      className="font-normal text-muted-foreground"
+                      title="This range could not be read. Pick it again, or open the campaign."
+                    >
+                      n/a
+                    </span>
+                  ) : (
+                    value
+                  );
+                const ok = nums.state === "ok" ? nums : undefined;
                 // Only a real finding earns the eye-catching button.
                 const needsDecision = (c.findings ?? []).some(
                   (f: Campaign) => f.severity !== "optimization",
@@ -3207,42 +3315,44 @@ function Cockpit({ view }: { view: View }) {
                         ) : null}
                       </td>
                       <td className="px-2 tabular-nums font-semibold">
-                        {moneyOr(c.spend7d)}
+                        {cell(moneyOr(ok?.spend))}
                       </td>
                       <td className="px-2 tabular-nums font-semibold">
-                        {c.leads7d}
+                        {cell(ok?.leads ?? "n/a")}
                       </td>
                       <td
-                        className={`px-2 tabular-nums font-semibold ${c.cpl === undefined ? "" : c.cpl > CPL_GATE ? "txt-bad" : "txt-good"}`}
+                        className={`px-2 tabular-nums font-semibold ${ok?.cpl === undefined ? "" : ok.cpl > CPL_GATE ? "txt-bad" : "txt-good"}`}
                       >
-                        {moneyOr(c.cpl, 2)}
+                        {cell(moneyOr(ok?.cpl, 2))}
                       </td>
                       <td className="px-2 tabular-nums font-semibold">
-                        {c.bookings7d === undefined ? (
-                          <span className="font-normal text-muted-foreground">
-                            n/a
-                          </span>
-                        ) : (
-                          <>
-                            {c.bookings7d}
-                            {c.bookingRate !== undefined && (
-                              <span className="ml-1 text-xs font-normal text-muted-foreground">
-                                {Math.round(c.bookingRate)}%
-                              </span>
-                            )}
-                          </>
+                        {cell(
+                          ok?.bookings === undefined ? (
+                            <span className="font-normal text-muted-foreground">
+                              n/a
+                            </span>
+                          ) : (
+                            <>
+                              {ok.bookings}
+                              {ok.bookingRate !== undefined && (
+                                <span className="ml-1 text-xs font-normal text-muted-foreground">
+                                  {Math.round(ok.bookingRate)}%
+                                </span>
+                              )}
+                            </>
+                          ),
                         )}
                       </td>
                       <td
                         className={`px-2 tabular-nums font-semibold ${
-                          c.costPerBooking === undefined
+                          ok?.costPerBooking === undefined
                             ? ""
-                            : c.costPerBooking > 80
+                            : ok.costPerBooking > 80
                               ? "txt-bad"
                               : "txt-good"
                         }`}
                       >
-                        {moneyOr(c.costPerBooking, 0)}
+                        {cell(moneyOr(ok?.costPerBooking, 0))}
                       </td>
                       <td className="px-2 tabular-nums">
                         {/* What is set on Meta, where it lives, and what it actually spends. */}
