@@ -1,6 +1,6 @@
 # Webinar call outcomes
 
-> Latest correction: [one webinar and one sales call](WEBINAR-SINGLE-CALL-2026-10-01.md). Showed Won/Lost labels are saved; four unused Call 2 columns await deletion confirmation. The twelve-stage source is tested, not activated. All two-call requirements below are historical and superseded.
+> Latest correction: [one webinar and one sales call](WEBINAR-SINGLE-CALL-2026-10-01.md). Twelve stages are saved/API-verified, including Qualified - Not Booked and Showed Won/Lost; Git and disabled Supabase mapping match. All two-call and survey-completion-as-qualification requirements below are historical and superseded. The true qualification form and receipt producer remain release gates.
 
 ## Applied and verified, 1 October 2026
 

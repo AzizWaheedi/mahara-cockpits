@@ -69,7 +69,10 @@ test("expansion verifies once after a lost PUT response and reruns without writi
   const result = await expandPipeline(p, x.previous, { apply: true });
   assert.equal(result.status, "expanded_and_verified");
   for (const [key, id] of Object.entries(x.previous.stages))
-    assert.equal(result.stages[key], id);
+    assert.equal(
+      result.stages[key === "survey_completed" ? "qualified_not_booked" : key],
+      id,
+    );
   assert.equal(
     (await expandPipeline(p, x.previous, { apply: true })).status,
     "existing",

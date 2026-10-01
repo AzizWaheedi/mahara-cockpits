@@ -6,21 +6,16 @@
     "registered": "61688ad4-669f-43d2-a060-c04a3a495fcd",
     "attended": "677180f8-e0ae-471b-89fa-cf857d40c979",
     "webinar_missed": "a6eff23a-61b0-4d7a-bf54-60d5d8f7b5f5",
-    "survey_completed": "aea4d2fe-dfbd-47aa-a6df-1f6d8989d4d0",
+    "qualified_not_booked": "aea4d2fe-dfbd-47aa-a6df-1f6d8989d4d0",
     "call_booked": "cbee132a-b9ef-43a2-94a6-519cdc7a46b7",
     "call_attended": "c1cde351-5b57-475d-bc4f-72c5eebd5b06",
-    "call_1_no_show": "9eb75130-95ca-4cc7-a5c9-7c2f8690631f",
-    "call_1_cancelled": "cc4fafef-1a18-4169-b35c-afe201cb0a6b",
-    "call_2_booked": "639c9227-51b2-4b10-951a-16f180114e20",
-    "call_2_attended": "9f9c0028-707c-43ae-b5da-100ff486d857",
-    "call_2_no_show": "454b6e36-9181-4265-bfae-6522d453f67a",
-    "call_2_cancelled": "589ea7bd-885d-42c3-bc9d-9c623c5a1c8c",
+    "call_no_show": "9eb75130-95ca-4cc7-a5c9-7c2f8690631f",
+    "call_cancelled": "cc4fafef-1a18-4169-b35c-afe201cb0a6b",
     "call_follow_up": "285df75d-e9a1-477b-874f-88b04b3fd792",
     "client_won": "5bbae57d-17da-4977-b95c-888bac0a8a8c",
     "closed_lost": "183bf465-9357-4104-8878-6cb5c0a8a507",
     "disqualified": "7255d155-1d3c-4b83-bd1c-a7a6a2a08c89"
   },
-  "verified_at": "2026-10-01T09:10:41.997Z",
-  "automation_enabled": false,
-  "pending_correction": "Names saved for one sales call and Showed Won/Lost. Four unused Call 2 stages still await deletion confirmation; this remains the live sixteen-ID mapping. New source requires twelve stages and will reject this board until corrected."
+  "verified_at": "2026-10-01T09:20:40.238Z",
+  "automation_enabled": false
 }

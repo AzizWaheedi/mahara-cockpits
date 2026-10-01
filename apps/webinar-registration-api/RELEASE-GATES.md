@@ -1,5 +1,7 @@
 # Recovered registration API: release gates
 
+> 1 October: the twelve-stage board is saved, but Qualified - Not Booked requires the correct post-webinar qualification form, verified pass/fail rules and an occurrence-scoped verdict producer. The existing Free Gift Survey P1xP4r24 and survey_completed boolean must not supply that verdict. See docs/WEBINAR-SINGLE-CALL-2026-10-01.md.
+
 Recovered from the currently deployed Vercel source on 26 September. The nine
 files listed in RECOVERY.json were byte-identical at recovery commit `7c735cd`,
 verified against Vercel's source-file hashes. Later changes are reviewed Git

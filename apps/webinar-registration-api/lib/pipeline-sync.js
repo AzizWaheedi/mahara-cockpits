@@ -84,8 +84,12 @@ export function desiredStage(
     return "call_follow_up";
   }
   if (outcomes.some(Boolean)) return "call_follow_up";
-  // Survey completed is a pre-booking state, not a required step in a call.
-  if (evidence.survey_completed) return "survey_completed";
+  // Only a verified, occurrence-scoped qualification receipt may set this
+  // server-owned verdict. Its producer is a release gate. The existing gift
+  // survey_completed boolean is intentionally NOT qualification evidence.
+  if (evidence.qualification_status === "qualified")
+    return "qualified_not_booked";
+  if (evidence.qualification_status === "disqualified") return "disqualified";
   if (evidence.attended) return "attended";
   if (evidence.attendance_final) return "webinar_missed";
   return "registered";

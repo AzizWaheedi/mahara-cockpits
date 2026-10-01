@@ -28,10 +28,7 @@ test("only completed provider registration can create a card", () => {
   assert.equal(desiredStage(e), "registered");
 });
 test("branches preserve independent facts: survey is not attendance, late attendance corrects missed", () => {
-  assert.equal(
-    desiredStage({ ...e, survey_completed: true }),
-    "survey_completed",
-  );
+  assert.equal(desiredStage({ ...e, survey_completed: true }), "registered");
   assert.equal(
     desiredStage({ ...e, attendance_final: true }),
     "webinar_missed",
@@ -47,7 +44,7 @@ const pastCall = {
   startTime: "2020-01-01",
 };
 const showedCall = { ...pastCall, appointmentStatus: "showed" };
-test("survey is a pre-booking state and rebooking leaves cancelled/no-show", () => {
+test("qualified not booked loses priority to booking and call outcomes", () => {
   for (const status of ["noshow", "cancelled", "showed"]) {
     const past = { ...pastCall, appointmentStatus: status };
     const future = {
@@ -57,12 +54,12 @@ test("survey is a pre-booking state and rebooking leaves cancelled/no-show", () 
       startTime: "2099-01-01",
     };
     assert.equal(
-      desiredStage({ ...e, survey_completed: true }, [past, future]),
+      desiredStage({ ...e, qualification_status: "qualified" }, [past, future]),
       "call_booked",
     );
   }
   assert.equal(
-    desiredStage({ ...e, survey_completed: true }, [showedCall]),
+    desiredStage({ ...e, qualification_status: "qualified" }, [showedCall]),
     "call_attended",
   );
 });
@@ -453,4 +450,33 @@ test("verified attended outcomes change only tracking stage and never invent mon
     assert.equal(f.remote.monetaryValue, 0);
     assert.equal(f.remote.status, "open");
   }
+});
+
+test("qualification requires an explicit verdict, never gift survey completion or webinar attendance", () => {
+  assert.equal(
+    desiredStage({ ...e, survey_completed: true, attended: true }),
+    "attended",
+  );
+  assert.equal(
+    desiredStage({ ...e, qualification_status: "qualified" }),
+    "qualified_not_booked",
+  );
+  assert.equal(
+    desiredStage({ ...e, qualification_status: "disqualified" }),
+    "disqualified",
+  );
+  assert.equal(
+    desiredStage({
+      ...e,
+      qualification_status: "unknown",
+      survey_completed: true,
+    }),
+    "registered",
+  );
+  assert.equal(
+    desiredStage({ ...e, qualification_status: "qualified" }, [
+      { ...pastCall, appointmentStatus: "cancelled" },
+    ]),
+    "call_cancelled",
+  );
 });

@@ -1,29 +1,27 @@
-# Webinar single-call correction, 1 October 2026
+# Webinar single-call and qualification correction, 1 October 2026
 
 ## User decision
 
-The funnel has **one webinar and one sales call**. The webinar is never Call 1. The earlier two-sales-call interpretation was incorrect and is superseded.
+The funnel has **one webinar and one sales call**. The webinar is never Call 1. The earlier two-sales-call interpretation is superseded.
 
-The existing webinar gift survey is Typeform `P1xP4r24`. Survey completed is the pre-booking state for a linked response while no sales appointment is bound. A booking or later call outcome takes priority. Completing the survey does not establish webinar or call attendance.
+After the webinar, leads answer qualification questions, and qualifying answers take them to the booking page. **Qualified - Not Booked** means they passed those questions but have no attributed sales booking. Merely completing a survey does not qualify them. Once they book, Call booked takes priority. Call showed is attended but undecided; Showed Won/Lost are attended sales outcomes. No-shows and cancellations stay separate.
 
-Aziz requested **Showed Won** and **Showed Lost**, not Closed won/lost. Call showed remains the attended-but-undecided state. No-shows and cancellations remain separate.
+## Saved and verified
 
-## Verified live state
+MaharaMedia location `7NI8yyJtwsh2OOWA5Icr`, pipeline `gpytC6cU1OstqMZpRleR` (WEBBY | Webinar Journey), now has twelve stages. Aziz explicitly approved removing the four unused Call 2 columns after a read-only opportunity search proved total 0. The removal and eight corrected names are saved and independently API-verified at provider update time `2026-10-01T09:20:40.238Z`.
 
-In MaharaMedia `7NI8yyJtwsh2OOWA5Icr`, pipeline `gpytC6cU1OstqMZpRleR` (WEBBY | Webinar Journey), seven renames are saved and API-verified at provider update time `2026-10-01T09:10:41.997Z`: Webinar attended, Call booked, Call showed, Call no-show, Call cancelled, Showed Won and Showed Lost. All IDs and reporting flags were preserved; all stage and pipeline report flags remain false.
+All twelve retained IDs are unchanged. All pipeline/stage reporting flags remain false. `config/webinar/pipeline.json` and the disabled Supabase configuration match the twelve IDs. The database write compared the exact prior sixteen-ID mapping and zero-card state, retained `enabled=false`, and created immutable audit receipt `f46d0d8c-30d4-4e62-b88c-65d181bd04a1`. Readback proves exact mapping equality, twelve keys, disabled, zero cards/bindings and the receipt.
 
-The read-only opportunity search returned total 0 and zero rows. Supabase remains disabled with sixteen mapped IDs and zero cards/bindings. No contacts, bookings, messages, workflow publication or workers were changed.
+No contacts, appointments, sales opportunities, messages, workflow publications or workers were changed.
 
-**Pending:** the four empty Call 2 stages are still live. Their permanent removal requires action-time browser confirmation, which was requested but not yet received. `config/webinar/pipeline.json` intentionally retains the sixteen live IDs and explicitly records this pending correction. The new twelve-stage validator fails closed against the old board; do not enable projection or claim full live correction yet.
-
-## Intended twelve stages
+## Twelve stages
 
 | Stage | Key | Retained ID source |
 | --- | --- | --- |
 | Registered | registered | Original registration |
 | Webinar attended | attended | Original attendance |
 | Missed webinar | webinar_missed | Original missed webinar |
-| Survey completed | survey_completed | Original survey |
+| Qualified - Not Booked | qualified_not_booked | Original Survey completed |
 | Call booked | call_booked | Original call booking |
 | Call showed | call_attended | Original call attendance |
 | Call no-show | call_no_show | Previously Call 1 no-show |
@@ -33,19 +31,28 @@ The read-only opportunity search returned total 0 and zero rows. Supabase remain
 | Showed Lost | closed_lost | Previously Closed lost |
 | Disqualified | disqualified | Existing disqualified |
 
-Remove only Call 2 booked `639c9227-51b2-4b10-951a-16f180114e20`, Call 2 showed `9f9c0028-707c-43ae-b5da-100ff486d857`, Call 2 no-show `454b6e36-9181-4265-bfae-6522d453f67a` and Call 2 cancelled `589ea7bd-885d-42c3-bc9d-9c623c5a1c8c`. All remaining twelve stage IDs must survive unchanged. Display order is independent of exact-ID routing.
+Display order is independent of exact-ID routing. The existing UI order retains exceptions near the end; no retained stage was recreated for layout.
+
+## Qualification source correction
+
+A fresh Typeform API read shows `P1xP4r24` is titled **Mahara Media Free Gift Survey**, has no qualification logic in its returned definition, has `use_lead_qualification=false`, and ends with a gift-delivery message rather than a booking redirect. The historical `/intro-booking` URL opens a fifteen-minute calendar directly. Neither verifies the post-webinar qualification flow Aziz described. No form was modified or submitted.
+
+The existing `survey_completed` evidence comes from the gift-survey receipt and must not feed Qualified - Not Booked. The code now ignores that boolean for stage qualification. It accepts only a server-owned `qualification_status` verdict from an exact registration-scoped qualifying receipt. **That producer and database projection are not implemented yet**; no current column supplies the verdict. The correct form/link, pass/fail rules, booking-page routing and occurrence attribution must be verified before implementing it or enabling projection. Do not substitute an old ROAS tag, gifted-form profit band or shared contact identity. Aziz has been asked for the correct form link.
 
 ## Routing and tests
 
-- Removed call-number classification from calendars and legacy sales-pipeline names. Explicitly bound receipts on any approved sales calendar use the same one-call stages. The existing four-calendar allowlist is not evidence of four calls.
-- Showed Won/Lost require an appointment marked showed and a won/lost outcome on the **same bound sales opportunity**. Webinar attendance, a different deal's attendance, a won flag alone, no-show or cancellation cannot establish showed.
-- Rebooking takes a pre-booking, missed or cancelled lead to Call booked. Duplicate cancelled bookings do not erase established attendance. Past unmarked appointments and conflicting uncompleted outcomes require follow-up.
-- Disqualified is distinct; a lost earlier attempt cannot close a different active attempt. Tracking cards remain open and zero-value, and won is not proof of collected payment.
-- Existing exact-registration identity, manual-change holds, leases, mutation receipts, uncertain-write checks and account/contact validation remain.
-- All 74 API Node tests pass. No second-call stage can pass the new board validator. The additive legacy eight-stage updater targets twelve and refuses the obsolete sixteen-stage board; it is not a deletion tool.
+- Removed call-number classification from calendars and legacy sales-pipeline names. Explicitly bound receipts on approved calendars all use the same one-call stages. The four-calendar allowlist is not four calls.
+- Showed Won/Lost require an appointment marked showed and the commercial result on the same bound sales opportunity. Webinar attendance, another deal's attendance, a won flag alone, no-show or cancellation cannot establish showed.
+- Rebooking takes priority over previous no-show/cancellation. Cancelled duplicates do not erase attendance. Past unmarked appointments and ambiguous uncompleted outcomes require follow-up.
+- Disqualified is distinct. A lost earlier attempt cannot close a different active attempt. Tracking cards remain open and zero-value; won is not collected-payment proof.
+- Exact-registration identity, manual-change holds, leases, mutation receipts, uncertain-write checks and account/contact validation remain.
+- All 75 API Node tests pass, including qualification-vs-gift separation and booking precedence. The legacy eight-stage updater preserves the former survey ID when mapping it to qualified_not_booked. It refuses obsolete extra stages instead of deleting them.
 
-## Next action
+## Remaining release gates
 
-After Aziz confirms removal, remove only the four empty Call 2 columns in the existing GHL editor. Read back twelve exact names and IDs and all reporting flags. Rewrite Git mapping with `call_no_show`/`call_cancelled`, preserving their IDs, and conditionally replace the disabled Supabase mapping against the exact old JSON in one audited transaction. Keep `enabled=false`.
+1. Verify the post-webinar qualifying form and its pass/fail/booking redirect rules; create the exact-registration qualification receipt/projection and prove pass, fail, incomplete and booked cases.
+2. Finish exact registration-to-sales-booking attribution. Rebooking still needs an explicit binding design; the current schema makes sales_opportunity_id unique.
+3. Verify the saved P1 internal draft action and all 22 triggers. Existing uploaded installer receipt remains incomplete; 22 means one form, five hints and four outcomes across four allowed calendars, not multiple calls.
+4. Wire native-form intake and confirmed personal-link delivery, deploy reviewed API/workers/health checks, and run isolated real-provider acceptance.
 
-The remaining release gates are unchanged: exact registration-to-sales-booking producer, a saved P1 draft action and 22 verified triggers, native-form/intake/personal-link connections, API/worker deployment and isolated real-provider acceptance. The old installer receipt is still incomplete. No reminder/workflow publication is part of this correction.
+Automatic movement remains off. No reminder or workflow publication is authorized by this correction.

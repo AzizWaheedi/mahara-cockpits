@@ -5,7 +5,7 @@ export const STAGES = [
   { key: "registered", name: "Registered" },
   { key: "attended", name: "Webinar attended" },
   { key: "webinar_missed", name: "Missed webinar" },
-  { key: "survey_completed", name: "Survey completed" },
+  { key: "qualified_not_booked", name: "Qualified - Not Booked" },
   { key: "call_booked", name: "Call booked" },
   { key: "call_attended", name: "Call showed" },
   { key: "call_no_show", name: "Call no-show" },
@@ -176,7 +176,10 @@ export function expansionBody(row, previous) {
     useOpportunityProbability: row.useOpportunityProbability,
     colorRenderMode: row.colorRenderMode,
     stages: STAGES.map((s, position) => ({
-      ...(previous.stages[s.key] ? { id: previous.stages[s.key] } : {}),
+      ...(previous.stages[s.key] ||
+      (s.key === "qualified_not_booked" && previous.stages.survey_completed)
+        ? { id: previous.stages[s.key] || previous.stages.survey_completed }
+        : {}),
       name: s.name,
       position,
       showInFunnel: false,
@@ -202,7 +205,12 @@ export async function expandPipeline(
   const verify = (row) => {
     const result = verifyPipeline(row);
     if (
-      Object.entries(previous.stages).some(([k, id]) => result.stages[k] !== id)
+      Object.entries(previous.stages).some(
+        ([k, id]) =>
+          result.stages[
+            k === "survey_completed" ? "qualified_not_booked" : k
+          ] !== id,
+      )
     )
       throw new PipelineError("existing_stage_id_changed");
     return result;
