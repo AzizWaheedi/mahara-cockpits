@@ -134,6 +134,19 @@ test("expanded readback must retain the original IDs, not just the names", async
     /existing_stage_id_changed/,
   );
 });
+test("display-only stage reordering preserves exact outcome mappings", () => {
+  const original = row();
+  const reordered = {
+    ...original,
+    stages: [...original.stages]
+      .reverse()
+      .map((s, position) => ({ ...s, position })),
+  };
+  assert.deepEqual(verifyPipeline(reordered), verifyPipeline(original));
+  const duplicateName = structuredClone(original);
+  duplicateName.stages[1].name = duplicateName.stages[0].name;
+  assert.throws(() => verifyPipeline(duplicateName), /stages_changed/);
+});
 test("provision only plans by default and excludes tracking cards from revenue charts", async () => {
   let writes = 0;
   const p = { list: async () => [], create: async () => writes++ };

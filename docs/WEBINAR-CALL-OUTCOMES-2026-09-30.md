@@ -1,5 +1,13 @@
 # Webinar call outcomes
 
+## Applied and verified, 1 October 2026
+
+The GHL editor retry succeeded. All sixteen stages are now saved in the existing WEBBY pipeline, with all eight original IDs retained. Public API readback at 08:36 UTC confirms both pipeline-level and every stage-level report flag are false. The eight new stages were appended in the UI; the table below remains the preferred grouped display order. Outcome routing now uses exact unique stage names and IDs independently of visual order, so rearranging columns cannot misroute a card.
+
+`config/webinar/pipeline.json` records all sixteen live IDs. The same mapping was applied conditionally to the disabled Supabase configuration, in one transaction with immutable audit receipt `7437a816-f85b-408e-bc23-c7a35baa3c52`. Readback proves an exact mapping match, `enabled=false`, sixteen keys, zero cards/bindings and the audit receipt. All 74 API Node tests pass, including display-order independence and duplicate-name rejection.
+
+This supersedes the editor/API blocker below. No workflows were published, no contacts or appointments changed, and no messages or workers were activated. The next functional gate is still the exact sales-booking attribution and verified P1 draft action/22 triggers, followed by provider/deployment acceptance. This turn does not prove that draft has been repaired.
+
 ## Current checkpoint, 30 September 2026
 
 Aziz requested separate second-call attendance, no-show, cancellation and closing outcomes. The expansion is implemented and tested, **not yet applied to the live GHL board or deployed**.

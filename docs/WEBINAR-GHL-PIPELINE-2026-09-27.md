@@ -1,6 +1,6 @@
 # Webinar pipeline and workflow connection
 
-> 30 September update: [Separate call 1/call 2 and closing outcomes](WEBINAR-CALL-OUTCOMES-2026-09-30.md) are built and tested but not yet saved to GHL. The current source expects sixteen stages and prepares 22 draft triggers. The eight-stage/ten-trigger details below describe the 27 September checkpoint. Keep automatic movement disabled until live mapping and acceptance are complete.
+> 1 October update: [The expanded sixteen-stage board](WEBINAR-CALL-OUTCOMES-2026-09-30.md) is now saved and API-verified; Git and the disabled Supabase mapping match. Both call rounds and closing outcomes are distinct. All 74 API tests pass. The prepared 22-trigger draft and automatic movement still require attribution, installation/readback and deployment acceptance. The eight-stage/ten-trigger details below are the historical 27 September checkpoint.
 
 ## Verified live on 27 September 2026
 

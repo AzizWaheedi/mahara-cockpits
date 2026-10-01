@@ -60,10 +60,14 @@ export function verifyPipeline(row) {
     !Array.isArray(row.stages)
   )
     throw new PipelineError("pipeline_scope_mismatch");
-  const stages = [...row.stages].sort((a, b) => a.position - b.position);
+  // Display order is editable in GHL. Route by the exact unique name and ID,
+  // so rearranging columns never routes a card into another outcome.
+  const stages = STAGES.map(({ name }) =>
+    row.stages.find((s) => s.name === name),
+  );
   if (
-    stages.length !== STAGES.length ||
-    stages.some((s, i) => !s.id || s.name !== STAGES[i].name) ||
+    row.stages.length !== STAGES.length ||
+    stages.some((s) => !s?.id) ||
     new Set(stages.map((s) => s.id)).size !== STAGES.length
   )
     throw new PipelineError("pipeline_stages_changed");
