@@ -1,7 +1,8 @@
 import { ConvexError } from "convex/values";
 import type { ActionCtx } from "./_generated/server";
-import { rest, type SbRow } from "./ceo/sbWrite";
+import { rest, type SbRow, storage, storageLink } from "./ceo/sbWrite";
 import { flush, note } from "./health";
+import { PICTURE_BUCKET } from "./teamDoc";
 
 /**
  * What the team meetings' server modules share (team.ts, teamCalendar.ts,
@@ -40,6 +41,46 @@ export async function db(
       "The team meetings tables are not in Supabase yet (migrations 20260922b and 20260927d).",
     );
   return rows;
+}
+
+/** The doc's pictures in storage, with the health ledger. */
+export async function bucket(
+  path: string,
+  init: Parameters<typeof storage>[1] = {},
+): Promise<SbRow | SbRow[]> {
+  try {
+    const out = await storage(path, init);
+    note("supabase", true);
+    return out;
+  } catch (e) {
+    note("supabase", false, String(e instanceof Error ? e.message : e));
+    throw e;
+  }
+}
+
+/** How long a picture's link lasts; the page signs them again on every read. */
+export const PICTURE_LINK_SECONDS = 7 * 24 * 3600;
+
+/**
+ * Signed links for the doc's pictures, in one call. A picture that cannot be
+ * signed is left out: the doc still opens, that picture shows as missing.
+ */
+export async function signPictures(
+  paths: string[],
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  if (!paths.length) return map;
+  try {
+    const rows = (await bucket(`object/sign/${PICTURE_BUCKET}`, {
+      json: { expiresIn: PICTURE_LINK_SECONDS, paths },
+    })) as SbRow[];
+    for (const r of Array.isArray(rows) ? rows : [])
+      if (r.path && r.signedURL && !r.error)
+        map.set(String(r.path), storageLink(String(r.signedURL)));
+  } catch {
+    // The ledger has it; the doc opens without fresh links this time.
+  }
+  return map;
 }
 
 /**

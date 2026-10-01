@@ -50,6 +50,47 @@ export async function rest(
   return text ? JSON.parse(text) : [];
 }
 
+/**
+ * One call to Creative Triage's storage with the service key: sign a link,
+ * sign an upload, or put a file. JSON in and out, or the file's bytes in.
+ */
+export async function storage(
+  path: string,
+  init: {
+    method?: string;
+    json?: unknown;
+    bytes?: ArrayBuffer;
+    contentType?: string;
+  } = {},
+): Promise<SbRow | SbRow[]> {
+  if (!sbWritable())
+    throw new Error(
+      "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are not set on this deployment.",
+    );
+  const res = await fetch(`${SUPABASE_URL}/storage/v1/${path}`, {
+    method: init.method ?? "POST",
+    headers: {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${SUPABASE_KEY}`,
+      ...(init.json !== undefined
+        ? { "Content-Type": "application/json" }
+        : init.contentType
+          ? { "Content-Type": init.contentType }
+          : {}),
+    },
+    body: init.json !== undefined ? JSON.stringify(init.json) : init.bytes,
+  });
+  const text = await res.text();
+  if (!res.ok)
+    throw new Error(`Supabase storage ${res.status}: ${text.slice(0, 220)}`);
+  return text ? JSON.parse(text) : {};
+}
+
+/** A path storage signed ("/object/sign/...") as a link a browser can open. */
+export function storageLink(signed: string): string {
+  return `${SUPABASE_URL}/storage/v1${signed}`;
+}
+
 /** Insert rows, ignoring the ones whose unique key already exists. */
 export async function upsertIgnore(
   table: string,
