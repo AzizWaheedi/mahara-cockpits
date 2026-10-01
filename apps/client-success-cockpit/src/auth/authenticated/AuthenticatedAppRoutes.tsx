@@ -12,6 +12,7 @@ import { ViktorProductAuthProvider } from "@/lib/viktor-spaces-access/ViktorProd
 import {
   BacklogPage,
   BillingPage,
+  ChurnPage,
   ClientPerformancePage,
   ClientsPage,
   EndOfDayPage,
@@ -56,6 +57,7 @@ export function AuthenticatedRoutes() {
             <Route path="/links" element={<KeyLinksPage />} />
             <Route path="/money" element={<MyMoneyPage />} />
             <Route path="/projections" element={<ProjectionsPage />} />
+            <Route path="/churn" element={<ChurnPage />} />
             <Route path="/eod" element={<EndOfDayPage />} />
             {/* Every page in this cockpit is the CSM's: a session minted for
                 another seat gets "not yours", not a crashed screen. */}

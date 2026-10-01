@@ -5,6 +5,7 @@ import {
   docHtml,
   docText,
   isHtml,
+  linkName,
   linksOf,
   picturePath,
   picturePaths,
@@ -255,5 +256,39 @@ describe("a meeting whose days start at different times", () => {
         "2026-09-30",
       ),
     ).toBeNull();
+  });
+});
+
+describe("a pasted link names itself", () => {
+  test("a board or screen the team keeps open goes by its own name", () => {
+    expect(
+      linkName("https://app.clickup.com/90182518398/v/b/2kzmr1ky-3738"),
+    ).toBe("Ads management board");
+    expect(
+      linkName("https://app.clickup.com/90182518398/v/l/2kzmr1ky-3818"),
+    ).toBe("911: critical CPL and CPB");
+    expect(linkName("https://dialer.maharamedia.com/")).toBe(
+      "Call center dialer",
+    );
+    expect(
+      linkName("https://cockpit.maharamedia.com/client-success/churn"),
+    ).toBe("Churn tracker");
+    expect(linkName("https://docs.google.com/spreadsheets/d/abc/edit")).toBe(
+      "Google Sheet",
+    );
+  });
+
+  test("anything else goes by its site, and a nameless saved link is named the same way", () => {
+    expect(linkName("https://www.loom.com/share/x")).toBe("loom.com");
+    expect(
+      cleanLinks([
+        { label: "", url: "https://dialer.maharamedia.com/#meetings" },
+      ]),
+    ).toEqual([
+      {
+        label: "Call center dialer",
+        url: "https://dialer.maharamedia.com/#meetings",
+      },
+    ]);
   });
 });

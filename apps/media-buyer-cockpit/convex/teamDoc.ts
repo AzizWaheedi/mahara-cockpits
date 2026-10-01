@@ -200,6 +200,53 @@ export function picturePath(
 
 export type MeetingLink = { label: string; url: string };
 
+/** Boards, screens and docs the team keeps open, named the way the team names them. */
+const KNOWN: [RegExp, string][] = [
+  [
+    /docs\.google\.com\/document\/d\/1cioKqspTOI6zK76ob0lOTzfNLDMe5WS6NJ_hgTwb-p4/,
+    "Diagnosing and fixing acquisition constraints",
+  ],
+  [
+    /cockpit\.maharamedia\.com\/client-success\/performance/,
+    "Client performance",
+  ],
+  [/cockpit\.maharamedia\.com\/client-success\/churn/, "Churn tracker"],
+  [/cockpit\.maharamedia\.com\/client-success\/projections/, "Projections"],
+  [
+    /cockpit\.maharamedia\.com\/client-success\/clients/,
+    "Clients & touchpoints",
+  ],
+  [/cockpit\.maharamedia\.com\/client-success\/hotlist/, "Hot list"],
+  [/cockpit\.maharamedia\.com\/client-success\/billing/, "Billing"],
+  [/cockpit\.maharamedia\.com\/creative\/what-works/, "What works"],
+  [/cockpit\.maharamedia\.com\/editor/, "Editor desk"],
+  [/cockpit\.maharamedia\.com\/sales/, "Sales cockpit"],
+  [/cockpit\.maharamedia\.com\/ads/, "Ads management (cockpit)"],
+  [/cockpit\.maharamedia\.com\/team/, "Team meetings"],
+  [/dialer\.maharamedia\.com/, "Call center dialer"],
+  [/app\.clickup\.com\/.*(901817774521|2kzmr1ky-3738)/, "Ads management board"],
+  [/app\.clickup\.com\/.*2kzmr1ky-3818/, "911: critical CPL and CPB"],
+  [/app\.clickup\.com\/.*901816723211/, "Client Success board"],
+  [/app\.clickup\.com\/.*901816559981/, "Clients - Mahara"],
+  [/app\.clickup\.com\/.*901816720767/, "Video Pipeline"],
+  [/app\.clickup\.com\/.*901818016338/, "Media / Creative board"],
+  [/docs\.google\.com\/spreadsheets/, "Google Sheet"],
+  [/docs\.google\.com\/document/, "Google Doc"],
+  [/docs\.google\.com\/presentation/, "Google Slides"],
+  [/drive\.google\.com/, "Google Drive"],
+  [/app\.clickup\.com/, "ClickUp"],
+];
+
+/** A pasted address's name: a known board or screen by its own name, anything else by its site. */
+export function linkName(url: string): string {
+  for (const [re, name] of KNOWN) if (re.test(url)) return name;
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url.slice(0, 80);
+  }
+}
+
 export const LINKS_MAX = 30;
 
 /**
@@ -232,7 +279,7 @@ export function cleanLinks(raw: unknown): MeetingLink[] {
       throw new Error(`The address for "${label || host}" is too long.`);
     if (seen.has(url)) continue;
     seen.add(url);
-    out.push({ label: label || host, url });
+    out.push({ label: label || linkName(url) || host, url });
   }
   if (out.length > LINKS_MAX)
     throw new Error(`A meeting keeps up to ${LINKS_MAX} links.`);
