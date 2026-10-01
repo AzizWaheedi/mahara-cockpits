@@ -4,6 +4,7 @@ import { Link, useParams } from "react-router";
 import { AdOrigin } from "../components/AdOrigin";
 import { ProofToSend } from "../components/AssetPicker";
 import { CallNotesList, useCallNotes } from "../components/CallNotes";
+import { ContractPanel } from "../components/ContractPanel";
 import { Conversation, useConversation } from "../components/Conversation";
 import { HotControl } from "../components/HotList";
 import {
@@ -60,10 +61,10 @@ export default function LeadPage({ me }: { me: Me }) {
   const convo = useConversation(contactId);
   const callNotes = useCallNotes(contactId);
   const pipeline = useSetting<{ roles?: Record<string, string> }>("pipeline");
-  // A sales asset's message, put in the conversation box from "Proof to send".
+  // A sales asset's message from "Proof to send", or a contract's link.
   const [convoPrefill, setConvoPrefill] = useState<{
     text: string;
-    asset: { id: string; url: string | null };
+    asset?: { id: string; url: string | null } | null;
     nonce: number;
   } | null>(null);
   const convoRef = useRef<HTMLDivElement>(null);
@@ -415,6 +416,26 @@ export default function LeadPage({ me }: { me: Me }) {
               loading={reading}
               error={activity.error}
               retry={activity.reload}
+            />
+          </SectionCard>
+          <SectionCard title="Contract">
+            <ContractPanel
+              me={me}
+              contactId={l.contact_id}
+              company={l.company}
+              hasEmail={Boolean(l.email?.trim())}
+              language={leadLanguage(
+                convo.thread
+                  .filter(m => m.direction === "inbound")
+                  .map(m => m.body),
+              )}
+              onShare={text => {
+                setConvoPrefill({ text, nonce: Date.now() });
+                convoRef.current?.scrollIntoView({
+                  block: "start",
+                  behavior: "smooth",
+                });
+              }}
             />
           </SectionCard>
         </div>

@@ -38,6 +38,7 @@ function KeyedLead({ me }: { me: Me }) {
 const CallPage = lazy(() => import("./pages/CallPage"));
 const DialerPage = lazy(() => import("./pages/DialerPage"));
 const ProposalsPage = lazy(() => import("./pages/ProposalsPage"));
+const ContractsPage = lazy(() => import("./pages/ContractsPage"));
 const ProposalPage = lazy(() => import("./pages/ProposalPage"));
 const NumbersPage = lazy(() => import("./pages/NumbersPage"));
 const GoalsPage = lazy(() => import("./pages/GoalsPage"));
@@ -264,6 +265,7 @@ export function Seated({
               <Route path="/pipeline" element={<PipelinePage me={me} />} />
               <Route path="/intelligence" element={<IntelligencePage />} />
               <Route path="/proposals" element={<ProposalsPage me={me} />} />
+              <Route path="/contracts" element={<ContractsPage me={me} />} />
               <Route path="/proposal/:id" element={<ProposalPage me={me} />} />
               <Route path="/numbers" element={<NumbersPage me={me} />} />
               <Route path="/goals" element={<GoalsPage me={me} />} />

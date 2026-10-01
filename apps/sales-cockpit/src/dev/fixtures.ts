@@ -975,6 +975,117 @@ export const SETTINGS: Row[] = [
       },
     },
   },
+  {
+    key: "contracts",
+    value: {
+      templates: [
+        {
+          id: "6905c43fc69d72f15bd69206",
+          name: "90 Day Agreement",
+          fields: ["company_name", "payment_structure", "daily_ad_spend"],
+        },
+        {
+          id: "69d25fce5d2b0f67fa21caab",
+          name: "90 Day Agreement No G",
+          fields: ["company_name", "payment_structure"],
+        },
+        {
+          id: "6a4cf9b8da68ef6b3d32c92c",
+          name: "Special Offer",
+          fields: ["company_name", "daily_ad_spend"],
+        },
+      ],
+      fields: {
+        daily_ad_spend: { id: "spend" },
+        payment_structure: {
+          id: "pay",
+          options: [
+            "Paid in full (90 days)",
+            "Split Pay (2x payments)",
+            "1.0K Start / $2K Months After",
+            "Monthly",
+          ],
+        },
+      },
+      link_base: "https://link.maharamedia.com/documents/v1/",
+      editor_url: "https://app.gohighlevel.com/",
+    },
+  },
+];
+
+/**
+ * Contracts: one waiting for a signature (opened yesterday) on lead-2, a
+ * draft on lead-3, one signed last week on lead-5.
+ */
+export const CONTRACTS: Row[] = [
+  {
+    document_id: "doc-opened",
+    contact_id: "lead-2",
+    template_id: "6905c43fc69d72f15bd69206",
+    template_name: "90 Day Agreement",
+    name: "Ardon Studio X Mahara Media",
+    status: "viewed",
+    fields: {
+      company_name: "Ardon Studio",
+      payment_structure: "Split Pay (2x payments)",
+      daily_ad_spend: 40,
+    },
+    created_by: "sara@example.com",
+    sent_by: "sara@example.com",
+    sent_via: "link",
+    sent_at: new Date(Date.now() - 2 * 24 * H).toISOString(),
+    viewed_at: new Date(Date.now() - 22 * H).toISOString(),
+    signed_at: null,
+    revision: 1,
+    ghl_updated_at: new Date(Date.now() - 22 * H).toISOString(),
+    created_at: new Date(Date.now() - 2 * 24 * H - 3 * H).toISOString(),
+    updated_at: new Date(Date.now() - 22 * H).toISOString(),
+    checked_at: new Date(Date.now() - 10 * 60_000).toISOString(),
+  },
+  {
+    document_id: "doc-draft",
+    contact_id: "lead-3",
+    template_id: "6a4cf9b8da68ef6b3d32c92c",
+    template_name: "Special Offer",
+    name: "Special Offer",
+    status: "draft",
+    fields: { company_name: "شركة البلوك الذهبي", daily_ad_spend: 50 },
+    created_by: "omar@example.com",
+    sent_by: null,
+    sent_via: null,
+    sent_at: null,
+    viewed_at: null,
+    signed_at: null,
+    revision: 1,
+    ghl_updated_at: null,
+    created_at: new Date(Date.now() - 3 * H).toISOString(),
+    updated_at: new Date(Date.now() - 3 * H).toISOString(),
+    checked_at: null,
+  },
+  {
+    document_id: "doc-signed",
+    contact_id: "lead-5",
+    template_id: "6905c43fc69d72f15bd69206",
+    template_name: "90 Day Agreement",
+    name: "Tafaseel X Mahara Media",
+    status: "completed",
+    fields: {
+      company_name: "Tafaseel",
+      payment_structure: "Paid in full (90 days)",
+      daily_ad_spend: 60,
+    },
+    created_by: "sara@example.com",
+    sent_by: "sara@example.com",
+    sent_via: "email",
+    sent_at: new Date(Date.now() - 8 * 24 * H).toISOString(),
+    viewed_at: new Date(Date.now() - 7 * 24 * H).toISOString(),
+    signed_at: new Date(Date.now() - 6 * 24 * H).toISOString(),
+    revision: 2,
+    ghl_updated_at: new Date(Date.now() - 6 * 24 * H).toISOString(),
+    created_at: new Date(Date.now() - 8 * 24 * H - 2 * H).toISOString(),
+    updated_at: new Date(Date.now() - 6 * 24 * H).toISOString(),
+    checked_at: new Date(Date.now() - 10 * 60_000).toISOString(),
+  },
 ];
 
 // ---------------------------------------------------------------------------

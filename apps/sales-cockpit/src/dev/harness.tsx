@@ -725,6 +725,88 @@ async function salesApi(b: Row, signal?: AbortSignal | null): Promise<Row> {
           read_at: new Date(now).toISOString(),
         },
       };
+    case "contract.refresh":
+      return { checked: 0 };
+    case "contract.create": {
+      const setup = F.SETTINGS.find(x => x.key === "contracts")?.value as
+        | { templates: { id: string; name: string }[] }
+        | undefined;
+      const t = setup?.templates.find(
+        x => x.id === String(b.template_id ?? ""),
+      );
+      if (!t) throw new Refusal("Pick one of the main contract templates.");
+      const row = {
+        document_id: `doc-${now}`,
+        contact_id: String(b.contact_id ?? ""),
+        template_id: t.id,
+        template_name: t.name,
+        name: t.name,
+        status: "draft",
+        fields: {
+          company_name: String(b.company_name ?? ""),
+          ...(b.payment_structure
+            ? { payment_structure: String(b.payment_structure) }
+            : {}),
+          ...(b.daily_ad_spend
+            ? { daily_ad_spend: Number(b.daily_ad_spend) }
+            : {}),
+        },
+        created_by: "aziz@maharamedia.com",
+        sent_by: null,
+        sent_via: null,
+        sent_at: null,
+        viewed_at: null,
+        signed_at: null,
+        revision: 1,
+        ghl_updated_at: null,
+        created_at: new Date(now).toISOString(),
+        updated_at: new Date(now).toISOString(),
+        checked_at: new Date(now).toISOString(),
+      };
+      F.CONTRACTS.unshift(row);
+      return { contract: row };
+    }
+    case "contract.send": {
+      const i = F.CONTRACTS.findIndex(
+        c => c.document_id === String(b.document_id ?? ""),
+      );
+      if (i < 0) throw new Refusal("That contract is not here.", 404);
+      const company = String(
+        (F.CONTRACTS[i].fields as { company_name?: string }).company_name ?? "",
+      );
+      F.CONTRACTS[i] = {
+        ...F.CONTRACTS[i],
+        name: /[\u0600-\u06ff]/.test(company)
+          ? `${company} X مهارة ميديا`
+          : `${company} X Mahara Media`,
+        status: "sent",
+        sent_at: new Date(now).toISOString(),
+        sent_by: "aziz@maharamedia.com",
+        sent_via: b.via,
+      };
+      return {
+        contract: F.CONTRACTS[i],
+        link:
+          b.via === "link"
+            ? "https://link.maharamedia.com/documents/v1/demo-link"
+            : null,
+      };
+    }
+    case "contract.link":
+      return { link: "https://link.maharamedia.com/documents/v1/demo-link" };
+    case "contract.templates":
+      return {
+        templates: [
+          { id: "6905c43fc69d72f15bd69206", name: "90 Day Agreement" },
+          { id: "69d25fce5d2b0f67fa21caab", name: "90 Day Agreement No G" },
+          { id: "6995853c5831c3bd20e03db7", name: "60 Day Agreement" },
+          { id: "6905c5456709f1453919ac3c", name: "Month To Month Agreement" },
+          { id: "6a4cf9b8da68ef6b3d32c92c", name: "Special Offer" },
+          { id: "6a8fb2fd5a4408090a5cf2f6", name: "CSM Contract" },
+        ],
+      };
+    case "contract.templates.save":
+      return { templates: b.templates };
     case "hot.save":
       return hotSave(b, now);
     case "hot.remove": {
@@ -782,6 +864,7 @@ async function main() {
     cockpit_sales_worker_status: [],
     cockpit_sales_inbox: [...F.INBOX, ...F.HOT_INBOX],
     cockpit_sales_followups: F.FOLLOWUPS,
+    cockpit_sales_contracts: F.CONTRACTS,
     cockpit_sales_hot: F.HOT,
     cockpit_sales_messages: F.MESSAGES,
     cockpit_sales_snippets: F.SNIPPETS,

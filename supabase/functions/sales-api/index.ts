@@ -88,6 +88,16 @@ import {
 } from "./dialer.ts";
 import { hotFresh, hotPatch, stillHot } from "./hot.ts";
 import { CLIENT_DRAFT_CLOSED, CLIENT_REFUSAL, isClient } from "./clients.ts";
+import {
+  type ContractSetting,
+  type ContractTerms,
+  cleanTemplates,
+  contactFill,
+  contractName,
+  contractPatch,
+  contractTerms,
+  signingLink,
+} from "./contracts.ts";
 
 type Row = Record<string, unknown>;
 
@@ -4237,6 +4247,253 @@ async function hotRemove(who: Who, b: Row) {
 }
 
 // ---------------------------------------------------------------------------
+// Contracts: HighLevel's Documents & Contracts, from the lead's page
+// ---------------------------------------------------------------------------
+
+/** Every column a seat may read: all but the client's signing link. */
+const CONTRACT_COLS =
+  "document_id,contact_id,template_id,template_name,name,status,fields,created_by,sent_by,sent_via,sent_at,viewed_at,signed_at,revision,ghl_updated_at,created_at,updated_at,checked_at";
+
+function needCloser(who: Who) {
+  if (!who.manager && !["closer", "both"].includes(String(who.role)))
+    throw new Refusal("Contracts are made and sent by closers and managers.", 403);
+}
+
+/** A contract row as the cockpit shows it: never with the signing link. */
+function contractOut(r: Row | undefined): Row | null {
+  if (!r) return null;
+  const { client_link: _link, ...rest } = r;
+  return rest;
+}
+
+async function contractSetting(): Promise<ContractSetting> {
+  return (await setting<ContractSetting>("contracts")) ?? {};
+}
+
+/**
+ * Make the contract in HighLevel as a draft for this lead, from one of the
+ * main templates, with the fields it prints filled from what the rep wrote.
+ * A draft can still be edited in HighLevel; sending locks it. The same lead
+ * and template with a draft already open gets that draft back with its
+ * fields brought up to date, so a second tap never makes a second contract.
+ */
+async function contractCreate(who: Who, b: Row) {
+  needCloser(who);
+  const contact = cleanText(b.contact_id, 80);
+  if (!contact) throw new Refusal("Which lead?");
+  const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contact)}&select=contact_id`))[0];
+  if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
+  if (!who.ghl_user_id)
+    throw new Refusal("Your seat has no HighLevel user, so the contract cannot be made in your name. A manager links it on the Team page.", 409);
+  const s = await contractSetting();
+  const template = (s.templates ?? []).find(t => t.id === cleanText(b.template_id, 40));
+  if (!template) throw new Refusal("Pick one of the main contract templates.");
+  const checked = contractTerms(b, template, s);
+  if (!checked.ok) throw new Refusal(checked.error);
+  const fill = contactFill(checked.terms, s);
+  if (!fill.ok) throw new Refusal(fill.error, 409);
+
+  try {
+    await ghl("PUT", `/contacts/${enc(contact)}`, fill.body, "2021-07-28");
+  } catch (e) {
+    throw new Refusal(`HighLevel did not take the contract details: ${redact(String((e as Error).message ?? e))}`, 502);
+  }
+  const now = new Date().toISOString();
+  const open = (await svc(
+    `cockpit_sales_contracts?contact_id=eq.${enc(contact)}&template_id=eq.${enc(template.id)}&status=eq.draft&select=*&order=created_at.desc&limit=1`,
+  ))[0];
+  if (open) {
+    const saved = (await svc(`cockpit_sales_contracts?document_id=eq.${enc(String(open.document_id))}`, {
+      method: "PATCH",
+      body: { fields: checked.terms, updated_at: now },
+      prefer: "return=representation",
+    }))[0];
+    await audit(who, "contract.update", "cockpit_sales_contracts", String(open.document_id), open.fields ?? null, checked.terms);
+    return { contract: contractOut(saved), reused: true };
+  }
+
+  let out: Row;
+  try {
+    out = await ghl("POST", "/proposals/templates/send", {
+      templateId: template.id,
+      userId: who.ghl_user_id,
+      sendDocument: false,
+      locationId: LOCATION,
+      contactId: contact,
+    }, "2021-07-28");
+  } catch (e) {
+    throw new Refusal(`HighLevel did not make the contract: ${redact(String((e as Error).message ?? e))}`, 502);
+  }
+  const doc = ((out.document ?? {}) as Row);
+  const id = String(doc._id ?? doc.id ?? "");
+  if (!id)
+    throw new Refusal("HighLevel did not say which contract it made. Look in HighLevel's Documents & Contracts before trying again, so it is not made twice.", 502);
+  const saved = (await svc("cockpit_sales_contracts", {
+    method: "POST",
+    body: {
+      document_id: id,
+      contact_id: contact,
+      template_id: template.id,
+      template_name: template.name,
+      name: cleanText(doc.name, 200) || template.name,
+      status: "draft",
+      fields: checked.terms,
+      created_by: who.email,
+      revision: typeof doc.documentRevision === "number" ? doc.documentRevision : null,
+      created_at: now,
+      updated_at: now,
+      checked_at: now,
+    },
+    prefer: "return=representation",
+  }))[0];
+  await audit(who, "contract.create", "cockpit_sales_contracts", id, null, {
+    contact_id: contact,
+    template: template.name,
+    fields: checked.terms,
+  });
+  return { contract: contractOut(saved) };
+}
+
+/**
+ * Send a draft for signature: HighLevel emails it to the lead, or marks it
+ * sent and returns the link for the rep to share (on WhatsApp, say). The
+ * fields are written again first, in case another contract for the same
+ * lead changed them since this draft was made.
+ */
+async function contractSend(who: Who, b: Row) {
+  needCloser(who);
+  const id = cleanText(b.document_id, 40);
+  const c = (await svc(`cockpit_sales_contracts?document_id=eq.${enc(id)}&select=*`))[0];
+  if (!c) throw new Refusal("That contract is not here.", 404);
+  if (c.status !== "draft")
+    throw new Refusal(c.status === "completed" ? "This contract is already signed." : "This contract was already sent.", 409);
+  const via = b.via === "email" ? "email" : b.via === "link" ? "link" : null;
+  if (!via) throw new Refusal("Send it by email, or as a link to share.");
+  if (!who.ghl_user_id)
+    throw new Refusal("Your seat has no HighLevel user, so the contract cannot be sent in your name. A manager links it on the Team page.", 409);
+  const contact = String(c.contact_id);
+  if (via === "email") {
+    const lead = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contact)}&select=email`))[0];
+    if (!String(lead?.email ?? "").trim())
+      throw new Refusal("This lead has no email address in HighLevel. Send it as a link and share it on WhatsApp.", 409);
+  }
+  const s = await contractSetting();
+  const terms = (c.fields ?? {}) as ContractTerms;
+  const fill = contactFill(terms, s);
+  if (!fill.ok) throw new Refusal(fill.error, 409);
+  const name = contractName(String(terms.company_name ?? ""));
+  let out: Row;
+  try {
+    await ghl("PUT", `/contacts/${enc(contact)}`, fill.body, "2021-07-28");
+    out = await ghl("POST", "/proposals/document/send", {
+      locationId: LOCATION,
+      documentId: id,
+      documentName: name,
+      medium: via,
+      sentBy: who.ghl_user_id,
+    }, "2021-07-28");
+  } catch (e) {
+    throw new Refusal(`HighLevel did not send the contract: ${redact(String((e as Error).message ?? e))}`, 502);
+  }
+  const link = signingLink(out.links, contact, s.link_base);
+  const now = new Date().toISOString();
+  const saved = (await svc(`cockpit_sales_contracts?document_id=eq.${enc(id)}`, {
+    method: "PATCH",
+    body: { status: "sent", name, sent_by: who.email, sent_via: via, sent_at: now, client_link: link, updated_at: now },
+    prefer: "return=representation",
+  }))[0];
+  await audit(who, "contract.send", "cockpit_sales_contracts", id, { status: c.status }, { status: "sent", via, name });
+  return { contract: contractOut(saved), link: via === "link" ? link : null };
+}
+
+/** The client's signing link, for a closer or manager to share again. */
+async function contractLink(who: Who, b: Row) {
+  needCloser(who);
+  const id = cleanText(b.document_id, 40);
+  const c = (await svc(`cockpit_sales_contracts?document_id=eq.${enc(id)}&select=document_id,status,client_link`))[0];
+  if (!c) throw new Refusal("That contract is not here.", 404);
+  if (!c.client_link)
+    throw new Refusal(c.status === "draft" ? "The link exists once the contract is sent." : "HighLevel gave no link for this contract. Open it in HighLevel.", 409);
+  await audit(who, "contract.link", "cockpit_sales_contracts", id, null, {});
+  return { link: c.client_link };
+}
+
+/**
+ * Read the status of our open contracts back from HighLevel. Its list comes
+ * newest change first, so a contract just opened or signed is on the first
+ * page; at most ten pages are read. Once a minute is enough unless asked.
+ */
+async function contractRefresh(_who: Who, b: Row) {
+  const contact = cleanText(b.contact_id, 80);
+  const open = await svc(
+    `cockpit_sales_contracts?status=in.(draft,sent,viewed)${contact ? `&contact_id=eq.${enc(contact)}` : ""}&select=document_id,contact_id,checked_at&limit=500`,
+  );
+  if (!open.length) return { checked: 0 };
+  const now = Date.now();
+  const newest = Math.min(...open.map(r => ms(r.checked_at) ?? 0));
+  if (!b.force && newest > now - 60_000) return { checked: 0, fresh: true };
+  const want = new Map(open.map(r => [String(r.document_id), String(r.contact_id)] as const));
+  const at = new Date(now).toISOString();
+  let found = 0;
+  for (let skip = 0; skip < 200 && want.size; skip += 20) {
+    const page = await ghl("GET", `/proposals/document?locationId=${LOCATION}&limit=20&skip=${skip}`, undefined, "2021-07-28");
+    const docs = (page.documents ?? []) as Row[];
+    for (const d of docs) {
+      const docId = String(d._id ?? "");
+      const contactId = want.get(docId);
+      if (!contactId) continue;
+      await svc(`cockpit_sales_contracts?document_id=eq.${enc(docId)}`, {
+        method: "PATCH",
+        body: contractPatch(d, contactId, at),
+        prefer: "return=minimal",
+      });
+      want.delete(docId);
+      found++;
+    }
+    if (docs.length < 20) break;
+  }
+  // The ones not on those pages have not changed lately: say they were checked.
+  if (want.size)
+    await svc(`cockpit_sales_contracts?document_id=in.(${[...want.keys()].map(enc).join(",")})`, {
+      method: "PATCH",
+      body: { checked_at: at },
+      prefer: "return=minimal",
+    });
+  return { checked: found, unchanged: want.size };
+}
+
+/** Every template in HighLevel's Documents & Contracts, for a manager to choose from. */
+async function contractTemplates(who: Who) {
+  needManager(who);
+  const all: Row[] = [];
+  for (let skip = 0; skip < 200; skip += 20) {
+    const page = await ghl("GET", `/proposals/templates?locationId=${LOCATION}&limit=20&skip=${skip}`, undefined, "2021-07-28");
+    const list = (page.data ?? []) as Row[];
+    all.push(...list.filter(t => !t.deleted && t.type === "proposal"));
+    if (list.length < 20) break;
+  }
+  return {
+    templates: all.map(t => ({ id: String(t._id ?? t.id), name: String(t.name ?? ""), updated_at: t.updatedAt ?? null })),
+  };
+}
+
+/** The templates the team may use, and the fields each one prints. */
+async function contractTemplatesSave(who: Who, b: Row) {
+  needManager(who);
+  const templates = cleanTemplates(b.templates);
+  if (!templates.length) throw new Refusal("Keep at least one template for the team.");
+  const before = await contractSetting();
+  const value = { ...before, templates };
+  await svc("cockpit_sales_settings?on_conflict=key", {
+    method: "POST",
+    body: { key: "contracts", value, updated_by: who.email, updated_at: new Date().toISOString() },
+    prefer: "resolution=merge-duplicates,return=minimal",
+  });
+  await audit(who, "contract.templates", "cockpit_sales_settings", "contracts", before.templates ?? null, templates);
+  return { templates };
+}
+
+// ---------------------------------------------------------------------------
 // Reviews a rep asks for, and Aziz's own reviews
 // ---------------------------------------------------------------------------
 
@@ -4355,6 +4612,12 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   "pipeline.move": pipelineMove,
   "hot.save": hotSave,
   "hot.remove": hotRemove,
+  "contract.create": contractCreate,
+  "contract.send": contractSend,
+  "contract.link": contractLink,
+  "contract.refresh": contractRefresh,
+  "contract.templates": contractTemplates,
+  "contract.templates.save": contractTemplatesSave,
   "review.ask": reviewAsk,
   "coach.save": coachSave,
   "coach.delete": coachDelete,
