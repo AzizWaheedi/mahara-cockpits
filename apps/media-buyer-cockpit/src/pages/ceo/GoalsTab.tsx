@@ -1,13 +1,27 @@
 import { useAction } from "convex/react";
 import { CalendarPlus, Loader2, Pencil, Target } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
-import { capitalize, count, plural, shortDate } from "@/components/ceo/format";
+import {
+  capitalize,
+  count,
+  pct,
+  plural,
+  shortDate,
+} from "@/components/ceo/format";
+import { KICKER } from "@/components/ceo/Kicker";
 import { Na } from "@/components/ceo/Na";
 import { SectionCard } from "@/components/ceo/SectionCard";
-import { StatusChip } from "@/components/ceo/StatusChip";
+import { StatusChip, StatusDot } from "@/components/ceo/StatusChip";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
+import { BOOKING_RATE_GATE } from "@/lib/kpi";
 import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
 import type { Board, TargetRow } from "../../../convex/ceo/goals";
@@ -39,11 +53,15 @@ import type { CeoTabProps } from "./types";
  *
  * Every other part of the business is a list of the same rows, grouped the
  * way Aziz groups them: the back end, the money, the client standard, the
- * call centre, content, creative, systems and the team.
+ * call centre, content, creative, systems and the team. The call centre is a
+ * short ladder of its own (Aziz, 2026-10-02: "call centers' main metric
+ * should be lead to booking"), with the same rate client by client under it.
  */
 
+type LadderRung = { key: string; into?: { key: string; label: string } };
+
 /** The rungs of the front-end ladder, in funnel order, with the rate between them. */
-const LADDER: { key: string; into?: { key: string; label: string } }[] = [
+const LADDER: LadderRung[] = [
   { key: "spend", into: { key: "cpl", label: "at" } },
   { key: "leads", into: { key: "leadToBooked", label: "of which book" } },
   { key: "bookableLeads" },
@@ -55,6 +73,17 @@ const LADDER: { key: string; into?: { key: string; label: string } }[] = [
   { key: "contracted" },
   { key: "newCash" },
 ];
+
+/** The call centre's ladder: client leads, the rate they book at, the bookings. */
+const CALL_LADDER: LadderRung[] = [
+  { key: "callLeads", into: { key: "callLeadToBooking", label: "book at" } },
+  { key: "callBookings" },
+];
+
+const LADDERS: Record<string, LadderRung[]> = {
+  front_end: LADDER,
+  calls: CALL_LADDER,
+};
 
 function Row({
   t,
@@ -128,14 +157,16 @@ function Row({
 }
 
 function Ladder({
+  spec,
   rows,
   worst,
 }: {
+  spec: LadderRung[];
   rows: TargetRow[];
   worst: ReadonlySet<string>;
 }) {
   const by = new Map(rows.map(r => [r.metricKey, r]));
-  const rungs = LADDER.filter(l => by.has(l.key));
+  const rungs = spec.filter(l => by.has(l.key));
   if (!rungs.length) return null;
   return (
     <ol className="grid">
@@ -170,22 +201,28 @@ function Group({
   order,
   ladder,
   worst,
+  extra,
 }: {
   label: string;
   blurb: string;
   rows: TargetRow[];
   order: number;
-  ladder?: boolean;
+  ladder?: LadderRung[];
   worst: ReadonlySet<string>;
+  /** Anything the group shows under its rows. */
+  extra?: ReactNode;
 }) {
-  const inLadder = new Set(LADDER.map(l => l.key));
-  const rest = ladder ? rows.filter(r => !inLadder.has(r.metricKey)) : rows;
+  const inLadder = new Set((ladder ?? []).map(l => l.key));
+  const drawn = ladder?.some(l => rows.some(r => r.metricKey === l.key));
+  const rest = drawn ? rows.filter(r => !inLadder.has(r.metricKey)) : rows;
   return (
     <SectionCard title={label} description={blurb || undefined} order={order}>
       <div className="grid">
-        {ladder ? <Ladder rows={rows} worst={worst} /> : null}
+        {ladder && drawn ? (
+          <Ladder spec={ladder} rows={rows} worst={worst} />
+        ) : null}
         {rest.length ? (
-          <div className={`grid ${ladder ? "mt-4 border-t pt-2" : ""}`}>
+          <div className={`grid ${drawn ? "mt-4 border-t pt-2" : ""}`}>
             {rest.map((t, i) => (
               <div key={t.id} className={i ? "border-t" : ""}>
                 <Row t={t} worst={worst} />
@@ -193,8 +230,77 @@ function Group({
             ))}
           </div>
         ) : null}
+        {extra}
       </div>
     </SectionCard>
+  );
+}
+
+/**
+ * The call centre's lead to booking client by client, most leads first,
+ * against the plan's target (or the 25% client booking line when the plan
+ * has none). "Depending on client results": the overall rate is these rows,
+ * and the clients under the line are the ones moving it.
+ */
+function ByClient({
+  clients,
+  target,
+  measured,
+}: {
+  clients: Board["callClients"];
+  target: number | null;
+  measured: Record<string, number>;
+}) {
+  const [all, setAll] = useState(false);
+  if (!clients?.length) return null;
+  const line = target ?? BOOKING_RATE_GATE / 100;
+  const shown = all ? clients : clients.slice(0, 6);
+  const under = clients.filter(c => c.rate !== null && c.rate < line).length;
+  const overall = measured.callLeadToBooking;
+  return (
+    <div className="mt-4 grid gap-2 border-t pt-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <span className={KICKER}>Lead to booking by client</span>
+        <span className="text-xs text-muted-foreground">
+          {`${under} of ${clients.length} under ${pct(line)}${target === null ? ", the client booking line" : ""}`}
+        </span>
+      </div>
+      {target === null && overall !== undefined ? (
+        <p className="text-sm">
+          {`${pct(overall)} overall: ${count(measured.callBookings)} bookings from ${count(measured.callLeads)} new client leads. This plan has no target for it yet.`}
+        </p>
+      ) : null}
+      <ul className="grid">
+        {shown.map(c => (
+          <li
+            key={c.name}
+            className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-baseline gap-x-3 py-1 text-sm"
+          >
+            <span className="truncate" dir="auto">
+              {c.name}
+            </span>
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {`${count(c.bookings)} of ${count(c.leads)}`}
+            </span>
+            <span className="inline-flex items-center justify-end gap-1.5 font-medium tabular-nums">
+              {c.rate !== null && c.rate < line ? (
+                <StatusDot tone="warning" label="Under the line" />
+              ) : null}
+              {pct(c.rate)}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {clients.length > 6 ? (
+        <button
+          type="button"
+          className="justify-self-start text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+          onClick={() => setAll(v => !v)}
+        >
+          {all ? "Show fewer" : `Show all ${clients.length}`}
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -416,8 +522,20 @@ export function GoalsTab({ sections }: CeoTabProps) {
           blurb={g.blurb}
           rows={g.targets}
           order={i + 1}
-          ladder={g.key === "front_end"}
+          ladder={LADDERS[g.key]}
           worst={worst}
+          extra={
+            g.key === "calls" ? (
+              <ByClient
+                clients={board.callClients ?? null}
+                target={
+                  g.targets.find(t => t.metricKey === "callLeadToBooking")
+                    ?.target ?? null
+                }
+                measured={board.measured ?? {}}
+              />
+            ) : null
+          }
         />
       ))}
     </div>

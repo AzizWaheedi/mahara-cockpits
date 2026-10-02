@@ -139,6 +139,30 @@
 }
 
 /*
+ * A worked-out number in next month's plan that just changed because an
+ * input above it did: one teal wash, gone in under a second, so the eye
+ * finds what moved. Nothing flashes on its own.
+ */
+@keyframes ceo-flash {
+  from {
+    background-color: color-mix(in srgb, var(--primary) 24%, transparent);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+
+.ceo-root .ceo-flash {
+  animation: ceo-flash 700ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ceo-root .ceo-flash {
+    animation: none;
+  }
+}
+
+/*
  * A grid with no column template sizes its one track by the widest thing in
  * it, so a scroller inside a card pushed the whole card past the screen
  * (2026-09-20, the funnel ribbon). Every CEO grid fills its container and no
