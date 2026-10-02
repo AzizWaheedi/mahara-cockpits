@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 import { api } from "../../../convex/_generated/api";
 import { payroll } from "../../../convex/ceo/costsModel";
 import type { Board, TargetRow } from "../../../convex/ceo/goals";
-import { fmt, paceTone, planTitle, worstThree } from "./goalsKit";
+import { fmt, paceTone, planName, planTitle, worstThree } from "./goalsKit";
 import {
   ALWAYS,
   aTenthBetter,
@@ -346,6 +346,12 @@ export function NextMonth({
     [used, p, wanted, costs, pay],
   );
   const missing = wanted.filter(k => !model.some(t => t.key === k));
+  // A draft already written for these days is updated, never doubled: its
+  // targets are replaced metric by metric.
+  const draft =
+    (board.plans ?? []).find(
+      x => x.periodFrom === from && x.periodTo === to && x.status === "draft",
+    ) ?? null;
   const total = model.length + tableRows.length;
 
   const changed =
@@ -852,6 +858,7 @@ export function NextMonth({
               setError(null);
               try {
                 const made = await savePlan({
+                  ...(draft ? { id: draft.id } : {}),
                   periodKind: "month",
                   periodFrom: from,
                   periodTo: to,
@@ -934,6 +941,8 @@ export function NextMonth({
                 <Loader2 className="animate-spin" aria-hidden />
                 Saving
               </>
+            ) : draft ? (
+              `Update the ${planName(draft.title)} draft (${total} targets)`
             ) : (
               `Save ${total} targets as a draft`
             )}
