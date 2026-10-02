@@ -346,7 +346,8 @@ def never(*_a: Any, **_k: Any) -> Any:
 
 # ---- synthetic data -------------------------------------------------------------
 
-GUARANTEE = "30 qualified appointments in 90 days, or we work for free until we deliver."
+GUARANTEE = ("A 7-day satisfaction guarantee: if you are unhappy with the process in any way in your "
+             "first 7 days, tell us and we refund you.")
 
 _FILLER_LINES = [
     "Karim Example: Walk me through how a project usually starts for you.",
@@ -584,8 +585,9 @@ TEST_OFFER: dict[str, Any] = {
     "program": {"name": "Premium Project Program", "price": 6000, "months": 3, "meetings": 30,
                 "ads_monthly_min": 1000, "ads_monthly_max": 1500, "ads_daily_min": 30, "ads_daily_max": 50,
                 "deposit": 500},
-    "guarantee": {"default": False,
-                  "text": "{meetings} qualified appointments in {days} days, or we work for free until we deliver."},
+    "guarantee": {"default": False, "label": "Include the 7-day satisfaction guarantee",
+                  "text": "A 7-day satisfaction guarantee: if you are unhappy with the process in any way in "
+                          "your first 7 days, tell us and we refund you."},
     "payment": {"default": "pif", "options": {
         "pif": {"label": "Paid in full at the start", "instalments": [{"share": 1, "due_days": 0, "due": "at the start"}]},
         "two_payments": {"label": "Two payments", "instalments": [

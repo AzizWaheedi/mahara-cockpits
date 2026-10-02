@@ -971,7 +971,7 @@ export const SETTINGS: Row[] = [
         { key: "plan_3", label: "Deposit, then three payments" },
       ],
       guarantee: {
-        label: "Include the guarantee (30 qualified appointments in 90 days)",
+        label: "Include the 7-day satisfaction guarantee",
       },
     },
   },

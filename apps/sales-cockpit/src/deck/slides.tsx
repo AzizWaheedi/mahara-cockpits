@@ -2212,7 +2212,7 @@ function investmentSlide(ctx: DeckCtx) {
           }}
         >
           <span className="dk-label" style={{ flex: "none" }}>
-            {ar(lang) ? "ضماننا" : "Our guarantee"}
+            {t(PROGRAM.guaranteeLabel, lang)}
           </span>
           <span
             style={{

@@ -150,9 +150,12 @@ these figures exactly, with the words in the document's language.
   nothing else; the instalments add up to the price. `validate.py` fails a
   draft whose schedule is not the one chosen.
 - **The guarantee appears only when the closer chose it**, in the words given,
-  once. When there is none, the document promises nothing beyond the target:
-  no free work, no refund, no "or we work for free until we deliver".
-  `validate.py` fails a draft that promises one nobody chose.
+  once: the 7-day satisfaction guarantee, a refund if they are unhappy with
+  the process in the first 7 days. When there is none, the document promises
+  nothing beyond the target: no refund, no free work. **Results are never
+  promised**, chosen guarantee or not: no "or we work for free until we
+  deliver", no meetings, leads or projects guaranteed; legally we can't.
+  `validate.py` fails a draft that promises results, or a refund nobody chose.
 - **The advertising budget is always its own line**, paid by the client to the
   platforms, never folded into the fee.
 - **Never discount.** The price is the one given. The payment structure is the

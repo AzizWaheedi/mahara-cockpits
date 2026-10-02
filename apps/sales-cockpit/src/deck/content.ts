@@ -14,7 +14,9 @@
  *   state them; the case study is on YouTube; the Google rating was read on
  *   27 September 2026; the campaign averages are the CEO cockpit's delivery
  *   numbers for 1 to 27 September 2026.
- * - The guarantee is not pitched. It sits hidden on the investment slide
+ * - Results are never promised: legally we can't, because every business
+ *   is different (Aziz, 2026-10-02). The guarantee is the 7-day satisfaction
+ *   guarantee, and it is not pitched. It sits hidden on the investment slide
  *   and comes out when a prospect asks for certainty (Aziz, 2026-09-27:
  *   "It's an objection handle. It's a tool you use.").
  */
@@ -442,9 +444,13 @@ export const PROGRAM = {
   deposit: 500,
   adsPerDay: [30, 50] as const,
   name: { en: "Premium Projects Program", ar: "برنامج المشاريع المميزة" },
+  guaranteeLabel: {
+    en: "7-day satisfaction guarantee",
+    ar: "ضمان الرضا ٧ أيام",
+  },
   guarantee: {
-    en: "30 qualified appointments in 90 days, or we keep working for free until we get there.",
-    ar: "٣٠ موعد مؤهل خلال ٩٠ يوم.. ولا نكمل نشتغل ببلاش لين نوصلها.",
+    en: "If you're unhappy with the process in any way in your first 7 days, tell us and we refund you.",
+    ar: "إذا بأول ٧ أيام مو راضي عن طريقة الشغل بأي شكل.. تقولنا ونرجع لك فلوسك.",
   },
 };
 

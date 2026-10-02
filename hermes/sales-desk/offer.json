@@ -19,9 +19,10 @@
   },
   "guarantee": {
     "default": false,
-    "text": "{meetings} qualified appointments in {days} days, or we work for free until we deliver.",
-    "source": "Aziz's closer framework, stage 13 (Investment & Close). The script's em dash is a comma here, because a proposal carries no em dashes.",
-    "confirm": "Aziz to confirm. It is printed only when the closer chooses the guarantee; a request that does not say is taken as no guarantee. {meetings}, {days} and {months} are filled in from the program and the closer's choice."
+    "label": "Include the 7-day satisfaction guarantee",
+    "text": "A 7-day satisfaction guarantee: if you are unhappy with the process in any way in your first 7 days, tell us and we refund you.",
+    "source": "Aziz, 2026-10-02: \"it's a 7-day satisfaction guarantee. If they're unhappy with the process whatsoever in the first 7 days, then we'll just refund them\", and \"we legally can't give them a result guarantee because everybody's different\". HighLevel has the contract for it: 90 Day Agreement (7 Day Satisfaction Guarantee). It replaced 30 qualified appointments in 90 days or we work for free.",
+    "confirm": "Printed only when the closer chooses it, because it is offered only to a prospect who asked for certainty; a request that does not say is taken as no guarantee. It is on the process, never on results: no proposal promises results, free work or a number of meetings, whatever the closer chose. {meetings}, {days} and {months} would be filled in from the program and the closer's choice."
   },
   "payment": {
     "default": "pif",

@@ -110,16 +110,24 @@ instalments and where each goes; it may not invent a schedule, and the
 guarantee appears only when it was chosen. The validator checks the document
 against the same choice: the price and term in `roi`, the deposit, the
 advertising on a line of its own, the instalments printed and adding up to
-the price, no split printed for a payment in full, and no promise of free
-work when no guarantee was chosen.
+the price, no split printed for a payment in full, no refund when no
+guarantee was chosen, and never a promise of results.
+
+**The guarantee** (Aziz, 2026-10-02) is a 7-day satisfaction guarantee:
+*if you are unhappy with the process in any way in your first 7 days, tell
+us and we refund you.* It replaced *30 qualified appointments in 90 days, or
+we work for free until we deliver*, because "we legally can't give them a
+result guarantee because everybody's different". The closer offers it only
+to a prospect who asked for certainty, so a proposal prints it only when the
+closer ticked it, and a request that does not say is taken as no guarantee.
+Results are never promised: free work, or meetings, leads or projects
+guaranteed, fails the validator whatever was chosen, while a line saying
+results cannot be guaranteed passes. The cockpit's form shows the file's
+`label`.
 
 **Aziz to confirm** (defaults written by the engineer, marked `confirm` in
-the file): the `two_payments` plan (half at the start, half 45 days in), the
-`monthly` plan (one equal payment a month, the first at the start), and the
-guarantee wording, taken from the closer framework's stage 13 with its em
-dash made a comma: *30 qualified appointments in 90 days, or we work for free
-until we deliver.* A request that does not say whether the guarantee is
-included is taken as no guarantee.
+the file): the `two_payments` plan (half at the start, half 45 days in) and
+the `monthly` plan (one equal payment a month, the first at the start).
 
 ## The model
 
