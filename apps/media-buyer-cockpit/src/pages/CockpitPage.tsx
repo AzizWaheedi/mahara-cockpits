@@ -274,7 +274,9 @@ function boardNumbers(
     cpl: leads > 0 ? spend / leads : undefined,
     bookings,
     bookingRate:
-      bookings !== undefined && leads > 0 ? (bookings / leads) * 100 : undefined,
+      bookings !== undefined && leads > 0
+        ? (bookings / leads) * 100
+        : undefined,
     costPerBooking:
       bookings && bookings > 0 && spend > 0 ? spend / bookings : undefined,
   };
