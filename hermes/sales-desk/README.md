@@ -25,6 +25,7 @@ sent. It writes the draft, checks it and says what is left for the closer.
 | `calls-b2b-fathom --once` | copies, once, Ahmed's private Fathom calls that only B2B's `fathom_calls` holds (`SALES_B2B_MGMT_TOKEN`, read only); `--dry-run`, `--limit N` |
 | `status` | the open requests, the last proposals, the last runs |
 | `offer-sync` | writes `offer.json` into the cockpit's proposal form (`requests` does it too) |
+| `form-sync` | writes the New Client Form's questions from Typeform into the cockpit setting `client_form` (`requests` does it too, every ten minutes; `TYPEFORM_API_TOKEN`) |
 | `validate DEAL.json` | the validator on a deal file by hand, `--transcript` for the evidence, `--send` for the send gate |
 | `build DEAL.json` | the HTML (and `--pdf`) from a deal file by hand |
 | `draft` | the whole engine on one call by hand (`--transcript FILE` or `--recording ID`), writing only into `--out` |
@@ -113,9 +114,12 @@ advertising on a line of its own, the instalments printed and adding up to
 the price, no split printed for a payment in full, no refund when no
 guarantee was chosen, and never a promise of results.
 
-**The guarantee** (Aziz, 2026-10-02) is a 7-day satisfaction guarantee:
-*if you are unhappy with the process in any way in your first 7 days, tell
-us and we refund you.* It replaced *30 qualified appointments in 90 days, or
+**The guarantee** (Aziz, 2026-10-02) is a 7-day satisfaction guarantee,
+worded as its contract has it (section 3 of HighLevel's "90 Day Agreement (7
+Day Satisfaction Guarantee)"): *if you are unhappy with the process for any
+reason within 7 days of paying in full, tell us by email or WhatsApp and we
+refund the program fee in full, once onboarding is done. Advertising paid to
+the platforms is not refunded.* It replaced *30 qualified appointments in 90 days, or
 we work for free until we deliver*, because "we legally can't give them a
 result guarantee because everybody's different". The closer offers it only
 to a prospect who asked for certainty, so a proposal prints it only when the
@@ -270,6 +274,25 @@ To make one from a finished proposal's HTML:
 ```bash
 python3 extract_reference.py 2026-09-05-client.html ~/.sales-desk/reference/general.json
 ```
+
+## The New Client Form
+
+Aziz, 2026-10-02: the closer fills the New Client Form (Typeform
+`BTzMwXiw`) on the lead's page, as easily as possible, and it starts the
+same Make scenario as before. The form stays Typeform's own, embedded with
+its hidden fields (`contact_id`, `closer`, `setter`) set from the lead:
+B2B's `closed_deals` is read from the responses Typeform stores (its
+`typeform-sync`, every 15 minutes), and the form's webhook feeds Make's
+"10. Closer Form to Onboarding (MAIN)", a HighLevel workflow and Cortana, so
+nothing may imitate a submission (Typeform's terms forbid it too). Typeform
+cannot fill a visible question in advance, so the page lists what the
+cockpit already knows beside the form, by question ref, ready to copy.
+`desk/clientform.py` keeps that list in step with the live form: it copies
+the form's screens, questions, refs and choices into the setting
+`client_form`, at most every ten minutes. When Typeform says it saved the
+response, sales-api `client_form.sent` writes `cockpit_sales_client_forms`
+and an audit row; the deal then reaches the cockpit through B2B by its
+response id.
 
 ## Install on the VPS
 

@@ -16,7 +16,8 @@
  *   numbers for 1 to 27 September 2026.
  * - Results are never promised: legally we can't, because every business
  *   is different (Aziz, 2026-10-02). The guarantee is the 7-day satisfaction
- *   guarantee, and it is not pitched. It sits hidden on the investment slide
+ *   guarantee, worded as the contract has it (section 3 of "90 Day Agreement
+ *   (7 Day Satisfaction Guarantee)"), and it is not pitched. It sits hidden on the investment slide
  *   and comes out when a prospect asks for certainty (Aziz, 2026-09-27:
  *   "It's an objection handle. It's a tool you use.").
  */
@@ -449,8 +450,8 @@ export const PROGRAM = {
     ar: "ضمان الرضا ٧ أيام",
   },
   guarantee: {
-    en: "If you're unhappy with the process in any way in your first 7 days, tell us and we refund you.",
-    ar: "إذا بأول ٧ أيام مو راضي عن طريقة الشغل بأي شكل.. تقولنا ونرجع لك فلوسك.",
+    en: "If you're unhappy with the process for any reason within 7 days of paying in full, tell us and we refund your program fee in full, once your onboarding is done.",
+    ar: "إذا خلال ٧ أيام من يوم تدفع المبلغ كامل ما كنت راضي عن طريقة الشغل لأي سبب.. تقولنا ونرجع لك رسوم البرنامج كاملة، بعد ما تخلص الأونبوردنق.",
   },
 };
 

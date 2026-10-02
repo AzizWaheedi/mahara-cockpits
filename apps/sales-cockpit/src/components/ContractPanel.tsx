@@ -88,7 +88,8 @@ export function ContractTrail({ c }: { c: Contract }) {
   );
 }
 
-function useContracts(contactId: string) {
+/** A lead's contracts, newest first. */
+export function useContracts(contactId: string) {
   return useQuery<Contract[]>(
     () =>
       supabase

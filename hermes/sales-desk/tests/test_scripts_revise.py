@@ -7,6 +7,7 @@ it. Run from hermes/sales-desk:
 """
 from __future__ import annotations
 
+import copy
 import sys
 import unittest
 from pathlib import Path
@@ -239,7 +240,7 @@ class GuaranteeTests(unittest.TestCase):
         says = [b["text"] for b in self.handle(revise.apply(demo("en"))) if b["type"] == "say"]
         order = ["are you asking for a reason?", "came with a 100% guarantee?", "your side of it",
                  "Are those two things you're willing to do?", "What other question do you have?",
-                 "in your first 7 days you're unhappy with the process in any way",
+                 "within 7 days of paying in full you're unhappy with the process for any reason",
                  "is that something you're willing to move forward with today?"]
         at = [next(i for i, t in enumerate(says) if words in t) for words in order]
         self.assertEqual(at, sorted(at))
@@ -273,7 +274,7 @@ class GuaranteeTests(unittest.TestCase):
         # The demo fixture has none of the lines the numbers revision edits,
         # so running it again would stop the import.
         out = revise.apply(demo("en"))
-        self.assertEqual(out["revisions"], [revise.NUMBERS, revise.GUARANTEE])
+        self.assertEqual(out["revisions"], [revise.NUMBERS, revise.GUARANTEE, revise.TERMS])
         self.assertEqual(revise.apply(out), out)
 
     def test_the_setter_says_the_legal_line_and_hands_over(self):
@@ -291,6 +292,57 @@ class GuaranteeTests(unittest.TestCase):
         with self.assertRaises(revise.Drift) as e:
             revise.apply(doc)
         self.assertIn("30 qualified appointments in 90 days.", str(e.exception))
+
+
+class TermsTests(unittest.TestCase):
+    """The 7-day lines say what the contract says (section 3 of "90 Day
+    Agreement (7 Day Satisfaction Guarantee)", read on 2026-10-02)."""
+
+    def seven(self, out: dict) -> list:
+        return [(where, b["text"]) for _, where, b in lines(out)
+                if b["type"] == "say" and ("7 days" in b["text"] or "٧ أيام" in b["text"])]
+
+    def test_the_lines_carry_the_contracts_terms(self):
+        for lang, words in (("en", ("within 7 days of paying in full", "program fee in full", "onboarding")),
+                            ("ar", ("خلال ٧ أيام من يوم تدفع المبلغ كامل", "رسوم البرنامج كاملة", "الأونبوردنق"))):
+            said = self.seven(revise.apply(demo(lang)))
+            self.assertEqual(len(said), 2, lang)
+            for _, text in said:
+                for w in words:
+                    self.assertIn(w, text, lang)
+                self.assertNotIn("in your first 7 days", text)
+                self.assertNotIn("بأول ٧ أيام", text)
+
+    def test_the_closer_note_names_the_contract_section(self):
+        out = revise.apply(demo("en"))
+        notes = [b["text"] for _, where, b in lines(out) if b["type"] == "note" and where.startswith('"How do I know')]
+        self.assertIn(revise.SEVEN_DAYS_TERMS_NOTE, notes)
+        self.assertNotIn(revise.SEVEN_DAYS_NOTE, notes)
+        self.assertIn("section 3", revise.SEVEN_DAYS_TERMS_NOTE)
+
+    def test_a_script_loaded_with_the_guarantee_gets_only_the_terms(self):
+        # Version 3 in the cockpit: the numbers and the guarantee, not the terms.
+        for lang in ("en", "ar"):
+            v3 = copy.deepcopy(demo(lang))
+            revise._guarantee_demo(v3, lang)
+            v3["revisions"] = [revise.NUMBERS, revise.GUARANTEE]
+            out = revise.apply(v3)
+            self.assertEqual(out["revisions"], [revise.NUMBERS, revise.GUARANTEE, revise.TERMS])
+            self.assertEqual(out, revise.apply(demo(lang)))
+
+    def test_a_seven_day_line_changed_in_the_cockpit_stops_the_import(self):
+        v3 = copy.deepcopy(demo("en"))
+        revise._guarantee_demo(v3, "en")
+        v3["revisions"] = [revise.NUMBERS, revise.GUARANTEE]
+        faq = next(e for e in v3["faqs"] if e["title"].startswith('"What'))
+        faq["blocks"][-1]["text"] = '"Seven days, money back."'
+        with self.assertRaises(revise.Drift) as e:
+            revise.apply(v3)
+        self.assertIn("If in your first 7 days", str(e.exception))
+
+    def test_the_setters_intro_is_not_touched(self):
+        out = revise.apply(intro("ar"))
+        self.assertNotIn(revise.TERMS, out["revisions"])
 
 
 if __name__ == "__main__":

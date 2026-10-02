@@ -961,7 +961,297 @@ export const WA_TEMPLATES: Row[] = [
   },
 ];
 
+/** The New Client Form's questions as the sales desk copies them from Typeform (read 2026-10-02). */
+export const CLIENT_FORM: Row = {
+  form_id: "BTzMwXiw",
+  title: "New Client Form",
+  url: "https://maharamedia.typeform.com/to/BTzMwXiw",
+  hidden: ["contact_id", "closer", "setter"],
+  screens: [
+    {
+      title: "General Information",
+      questions: [
+        {
+          ref: "a86cbf90-2154-44d9-84e3-b4a20f8e96a2",
+          title: "Who Closed The Deal?",
+          type: "dropdown",
+          required: true,
+          choices: [
+            "Aziz Waheedi",
+            "Maria",
+            "Ahmed Abushaiba",
+            "Ghanim Al Ghanim",
+          ],
+          description:
+            "Choose the MaharaMedia closer who secured this agreement.",
+        },
+        {
+          ref: "01247377-41fd-430d-bafd-c7223cfb911f",
+          title: "Client First Name",
+          type: "short_text",
+          required: true,
+          description: "Enter the client's preferred first name.",
+        },
+        {
+          ref: "a5171940-e34f-4c12-9bc5-2c984ded20a8",
+          title: "Client Last Name",
+          type: "short_text",
+          required: true,
+          description: "Enter the client's preferred last name.",
+        },
+        {
+          ref: "95a3901f-4130-454e-8e45-14c9a99dd096",
+          title: "Phone",
+          type: "phone_number",
+          required: true,
+          description: "Enter the client's phone number for direct contact.",
+        },
+        {
+          ref: "f322053a-3b86-4e8c-8596-93d31a096679",
+          title: "Raw Phone (No+ e.g. 96594470600)",
+          type: "short_text",
+          required: false,
+          description:
+            "Enter the phone number as numbers only (no +, spaces, or symbols). Example: 96594470600.",
+        },
+        {
+          ref: "a6ea04df-7b41-4a9f-b92b-8b5347a585be",
+          title: "Email",
+          type: "email",
+          required: true,
+          description:
+            "Enter the client's main email address. Double-check for accuracy.",
+        },
+        {
+          ref: "a1be4eee-8219-4228-8423-8cbf64919c5f",
+          title: "Business Name",
+          type: "short_text",
+          required: true,
+          description: "Enter the officially registered business name.",
+        },
+        {
+          ref: "f1eef314-1427-448e-8b77-9591c1e8a16c",
+          title: "Business Address",
+          type: "short_text",
+          required: false,
+          description:
+            "Please enter the complete business address, including suite, street, city, and region if applicable.",
+        },
+        {
+          ref: "021c505e-997f-4df0-b4b1-d1d693a3090f",
+          title: "City",
+          type: "short_text",
+          required: false,
+          description: "Which city is the business located in?",
+        },
+        {
+          ref: "0dbb7842-6aa1-4bb0-a94c-6e2778b19522",
+          title: "State",
+          type: "short_text",
+          required: false,
+          description: "Please specify the state, province, or region.",
+        },
+        {
+          ref: "528abff2-39be-4200-aa5f-a6f8521fc204",
+          title: "Country",
+          type: "dropdown",
+          required: false,
+          choices: ["KW", "SA", "AE", "BH", "QA", "OM"],
+          description: "Select the country where the business operates.",
+        },
+        {
+          ref: "e45f598c-214b-48eb-acaa-396ce49df499",
+          title: "Zip / Postal Code",
+          type: "short_text",
+          required: false,
+          description: "Business ZIP or postal code.",
+        },
+        {
+          ref: "bea8c519-b79f-4db3-8d43-0304410e6bfe",
+          title: "Company Website",
+          type: "website",
+          required: false,
+          description: "Share the business website URL.",
+        },
+        {
+          ref: "4ce5d27f-85a3-4af0-a327-ead29b036c1a",
+          title: "Current Timezone (Saudi is the same as Kuwait)",
+          type: "dropdown",
+          required: false,
+          choices: [
+            "Bahrain GMT+3",
+            "Kuwait GMT+3",
+            "Qatar GMT+3",
+            "UAE GMT+4",
+          ],
+          description: "Select the client's primary timezone.",
+        },
+      ],
+    },
+    {
+      title: "Lead and Payment Details",
+      questions: [
+        {
+          ref: "0c1f4a00-f77a-44f4-b598-945c9ab406a3",
+          title: "Lead Source",
+          type: "dropdown",
+          required: false,
+          choices: [
+            "Meta ads",
+            "TikTok ads",
+            "Email",
+            "Reactivation Campaign",
+            "Referral",
+            "Facebook DMs",
+            "Instagram DMs",
+          ],
+          description:
+            "Select the primary lead source or add a custom response.",
+        },
+        {
+          ref: "20848f32-80ed-4693-b064-ed4e10558b94",
+          title: "Payment Structure For Program",
+          type: "dropdown",
+          required: false,
+          choices: [
+            "Paid in full (90 days)",
+            "Split Pay (2x payments)",
+            "1.5K Start / $2.5K Months After",
+            "Monthly",
+            "Performance Offer",
+          ],
+          description: "Select the payment structure agreed for this program.",
+        },
+        {
+          ref: "d2cfc2dd-887e-4685-a3cc-84e85795e23a",
+          title: "Details of the payment and structure (For internal team)",
+          type: "long_text",
+          required: false,
+        },
+        {
+          ref: "3781537c-925c-4331-900c-e576a3f47a0d",
+          title: "Agreement To Send To Client",
+          type: "dropdown",
+          required: false,
+          choices: [
+            "3 Month Program / 30-Appointment Guarantee",
+            "3 Month Program / No Guarantee",
+            "60 Day Agreement",
+            "Month To Month",
+            "Special Offer",
+            "NA - Already Sent",
+          ],
+          description:
+            "Specify the agreement or contract version to provide to the client.",
+        },
+        {
+          ref: "e813c776-0584-4147-8c2c-dbe72d4818e2",
+          title: "Daily Ad Spend - DO NOT include the $ symbol (currency: USD)",
+          type: "number",
+          required: false,
+          description:
+            "Enter the client's DAILY ad spend in numerical format, without currency symbols. Currency: USD. DO NOT include the $ symbol.",
+        },
+        {
+          ref: "77a14b37-7f16-4c72-8c54-38f597bdddc2",
+          title:
+            "Cash Collected On The Sales Call - DO NOT include the $ symbol (currency: USD)",
+          type: "number",
+          required: false,
+          description:
+            "Total cash collected from the client for this deal (numbers only, currency: USD, no symbols). DO NOT include the $ symbol.",
+        },
+        {
+          ref: "b37f4cfe-82ab-4da7-b1f8-aaabe2afbf9b",
+          title:
+            "Cash To Be Collected On Onboarding - DO NOT include the $ symbol (currency: USD)",
+          type: "number",
+          required: false,
+          description:
+            "Total cash collected from the client for this deal (numbers only, currency: USD, no symbols). DO NOT include the $ symbol.",
+        },
+        {
+          ref: "ea6fccbd-d27e-4b57-8cfb-d3fa527f362f",
+          title:
+            "Second Payment Amount After Initial Payment (IGNORE IF PIF) - DO NOT include the $ symbol (currency: USD)",
+          type: "number",
+          required: false,
+          description:
+            "Total cash collected from the client for this deal (numbers only, currency: USD, no symbols). DO NOT include the $ symbol.",
+        },
+        {
+          ref: "c3bc74a6-c2f7-45fa-bf1a-d126c5890be9",
+          title:
+            "Total Contracted Revenue - DO NOT include the $ symbol (currency: USD)",
+          type: "number",
+          required: false,
+        },
+      ],
+    },
+    {
+      title: "Client Success Handoff",
+      questions: [
+        {
+          ref: "52ca9be9-8f56-4bb8-a130-dc1754e7d84d",
+          title: "Upload the Fathom Recording Link",
+          type: "website",
+          required: true,
+          description:
+            "Add a link to your Fathom sales call recording, or instructions on how to access the recording. If you don't have one, you may skip this.",
+        },
+        {
+          ref: "c62ae38e-71a1-4ba1-a7a5-023e378eb083",
+          title: "Fathom call TRANSCRIPT",
+          type: "long_text",
+          required: true,
+          description:
+            "Paste the full transcript of the sales call. Required for QA",
+        },
+        {
+          ref: "d68b9d65-90c2-4a29-984a-1d8b729453e3",
+          title: "Client Success Manager to manage client",
+          type: "dropdown",
+          required: false,
+          choices: ["عبد العزيز وحيدي", "عبدالإله الملحم"],
+          description:
+            "Name or select the MaharaMedia Client Success Manager responsible for ongoing client management.",
+        },
+        {
+          ref: "3cf4bfdf-f42a-447c-a109-a0d24468c5cd",
+          title:
+            "Is there any potential Client Success handoff problems that may occur?",
+          type: "long_text",
+          required: true,
+          description:
+            "Describe any possible issues you foresee with passing off the client to the Success team.",
+        },
+        {
+          ref: "e30bc458-1bf3-4840-a849-f2443843ed8a",
+          title:
+            "How soon do they want to go live? - and are there any delays stopping us from launching in 10 days from the onboarding call?",
+          type: "long_text",
+          required: true,
+          description:
+            "Share the client's target go-live date and mention any blockers that could prevent launching within 10 days of onboarding.",
+        },
+        {
+          ref: "23dd5b40-144e-462e-bfac-795058701f2b",
+          title:
+            "Client Expectations & What Was Sold? - Describe what this client believes they're getting — the specific outcomes, promises, guarantees, or timelines discussed on the call.",
+          type: "long_text",
+          required: true,
+        },
+      ],
+    },
+  ],
+  form_updated_at: "2026-09-24T08:45:18+00:00",
+  synced_at: new Date(Date.now() - 4 * 60_000).toISOString(),
+  source:
+    "hermes/sales-desk desk/clientform.py, from Typeform's form definition",
+};
+
 export const SETTINGS: Row[] = [
+  { key: "client_form", value: CLIENT_FORM },
   { key: "crm_writes", value: { dispositions: true, backlog_days: 7 } },
   {
     key: "offer",
@@ -1322,5 +1612,26 @@ export const MESSAGES: Row[] = [
     error: null,
     created_at: iso(Date.now() - 4 * H),
     updated_at: iso(Date.now() - 4 * H),
+  },
+];
+
+/** lead-5's demo, recorded in Fathom, with its transcript. */
+export const RECORDINGS: Row[] = [
+  {
+    recording_id: "rec-demo-5",
+    title: "Demo call",
+    recorded_by: "sara@example.com",
+    started_at: new Date(Date.now() - 8 * 24 * H).toISOString(),
+    duration_s: 2710,
+    share_url: "https://fathom.video/share/harness-demo-5",
+    contact_id: "lead-5",
+    appointment_id: null,
+    matched_by: "attendee",
+    indexed_at: new Date(Date.now() - 8 * 24 * H).toISOString(),
+    source: "fathom",
+    kind: "sales",
+    transcript_path: "lead-5/rec-demo-5.txt",
+    transcript_chars: 41200,
+    hidden_reason: null,
   },
 ];

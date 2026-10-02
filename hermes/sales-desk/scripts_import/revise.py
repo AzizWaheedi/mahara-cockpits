@@ -32,6 +32,12 @@ things you're willing to do?", "what other question do you have?". The 7
 days come last, as his risk mitigator for someone who wants in but is
 still skeptical ("the best thing for you isn't jumping in if this isn't
 right, and it isn't doing nothing either").
+
+2026-10-02, the contract's terms: the 7-day lines say what the contract says
+("90 Day Agreement (7 Day Satisfaction Guarantee)", section 3, read from the
+template that day): a full program-fee refund, asked for within 7 days of
+paying in full, once the onboarding is done (the call, the Academy lessons,
+the strategy review, access to the ad account, WhatsApp and calendar).
 """
 from __future__ import annotations
 
@@ -39,6 +45,7 @@ import copy
 
 NUMBERS = "2026-09-27-numbers"
 GUARANTEE = "2026-10-02-guarantee"
+TERMS = "2026-10-02-guarantee-terms"
 
 
 class Drift(Exception):
@@ -89,7 +96,8 @@ def _replace(stage: dict, first: str, last: str | None, new: list, where: str) -
     blocks = stage["blocks"]
     i = _find(blocks, first, where)
     j = _find(blocks, last, where, after=i - 1) if last else i
-    stage["blocks"] = blocks[:i] + new + blocks[j + 1:]
+    # Copies, so a doc never shares a block with this module's word lists.
+    stage["blocks"] = blocks[:i] + copy.deepcopy(new) + blocks[j + 1:]
 
 
 def _edit(stage: dict, starts: str, old: str, new: str, where: str) -> None:
@@ -106,7 +114,7 @@ def _after(stage: dict, starts: str, new: list, where: str) -> None:
     """Put blocks right after the line starting `starts`."""
     blocks = stage["blocks"]
     i = _find(blocks, starts, where)
-    stage["blocks"] = blocks[: i + 1] + new + blocks[i + 1:]
+    stage["blocks"] = blocks[: i + 1] + copy.deepcopy(new) + blocks[i + 1:]
 
 
 def _entry(doc: dict, part: str, title_starts: str) -> dict:
@@ -858,11 +866,66 @@ def _guarantee_intro(doc: dict, lang: str) -> None:
     _replace(faq, "Do NOT state the guarantee", None, [adapt(SETTER_NOTE)], w)
 
 
+# ------------------------------------------------- the contract's own terms
+
+SEVEN_DAYS_TERMS_NOTE = (
+    "Only for someone who wants this but is still skeptical, and only here: never in the pitch "
+    "or the close. It's a satisfaction guarantee on the process, not on results: never say \"if "
+    "you don't get results\". The contract is \"90 Day Agreement (7 Day Satisfaction "
+    "Guarantee)\", section 3: they ask by email or WhatsApp within 7 days of paying in full, "
+    "once they've done the onboarding (the call, the Academy lessons, the strategy review, "
+    "access to the ad account, WhatsApp and calendar). It ends early if they ask to launch the "
+    "ads before day 7, or with a chargeback, and ad spend paid to Meta is never refunded. It's "
+    "on the deck's investment slide too (press G)."
+)
+
+# (first words of the line the guarantee revision wrote, the line as the contract has it)
+TERMS_WORDS = {
+    "en": {
+        "handle": ('"And if in your first 7 days',
+                   "\"And if within 7 days of paying in full you're unhappy with the process for "
+                   "any reason, you tell us and we refund your program fee in full. No hard "
+                   "feelings. All we ask is that you do your part of the onboarding first: join the "
+                   "onboarding call, go through the Academy lessons, look over the strategy we "
+                   "present, and give us access to your ad account, WhatsApp and calendar.\""),
+        "faq": ('"If in your first 7 days',
+                "\"If within 7 days of paying in full you're unhappy with the process for any "
+                "reason, you tell us and we refund your program fee in full, once you've done the "
+                "onboarding.\""),
+    },
+    "ar": {
+        "handle": ('"وإذا بأول ٧ أيام مو راضي',
+                   "\"وإذا خلال ٧ أيام من يوم تدفع المبلغ كامل ما كنت راضي عن طريقة الشغل لأي سبب، "
+                   "تقولنا ونرجع لك رسوم البرنامج كاملة. بدون أي زعل. كل اللي نطلبه إنك تسوي اللي "
+                   "عليك بالأونبوردنق أول: تحضر مكالمة الأونبوردنق، تخلص دروس الأكاديمية، تشوف "
+                   "الاستراتيجية اللي نعرضها، وتعطينا الأكسس على حساب الإعلانات والواتساب والكالندر.\""),
+        "faq": ('"وإذا بأول ٧ أيام مو راضي',
+                "\"وإذا خلال ٧ أيام من يوم تدفع المبلغ كامل ما كنت راضي عن طريقة الشغل لأي سبب، "
+                "تقولنا ونرجع لك رسوم البرنامج كاملة.. بعد ما تخلص الأونبوردنق.\""),
+    },
+}
+
+
+def _terms_demo(doc: dict, lang: str) -> None:
+    w = f"demo.{lang}"
+    words = TERMS_WORDS[lang]
+    handle = _entry(doc, "objections", '"How do I know this will work?"')
+    _replace(handle, SEVEN_DAYS_NOTE[:60], None, [note(SEVEN_DAYS_TERMS_NOTE)], w)
+    _replace(handle, words["handle"][0], None, [say(words["handle"][1])], w)
+    faq = _entry(doc, "faqs", '"What\'s the guarantee exactly?"')
+    _replace(faq, words["faq"][0], None, [say(words["faq"][1])], w)
+
+
 SCRIPTS = (("demo", "en"), ("demo", "ar"), ("intro", "en"), ("intro", "ar"))
 
 
 def apply(doc: dict) -> dict:
-    """The doc with every revision applied once, in order; the input is left as it is."""
+    """The doc with every revision applied once, in order; the input is left as it is.
+
+    A revision with nothing to change in a script is not recorded on it: the
+    setter's intro never says the 7 days, so the contract's terms touch the
+    demo only.
+    """
     out = copy.deepcopy(doc)
     done = out.setdefault("revisions", [])
     key, lang = out.get("key"), out.get("lang")
@@ -880,4 +943,7 @@ def apply(doc: dict) -> dict:
         else:
             _guarantee_intro(out, lang)
         done.append(GUARANTEE)
+    if key == "demo" and TERMS not in done:
+        _terms_demo(out, lang)
+        done.append(TERMS)
     return out

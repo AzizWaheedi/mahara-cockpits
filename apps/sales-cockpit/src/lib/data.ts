@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Asset } from "./assets";
 import type { CallRow, LeadRow } from "./calls";
+import type { ClientFormSent } from "./clientForm";
 import type { GoalRow } from "./goals";
 import { supabase } from "./supabase";
 import type {
@@ -445,6 +446,20 @@ export function useLeadActivity(
       error: null,
     };
   }, [contactId, phone8]);
+}
+
+/** The New Client Forms sent from this lead's page, newest first. */
+export function useClientForms(contactId: string): Loaded<ClientFormSent[]> {
+  return useQuery<ClientFormSent[]>(
+    () =>
+      supabase
+        .from("cockpit_sales_client_forms")
+        .select("*")
+        .eq("contact_id", contactId)
+        .order("sent_at", { ascending: false })
+        .limit(10),
+    [contactId],
+  );
 }
 
 /** Contacts by id, for lists of appointments that only carry the id. */

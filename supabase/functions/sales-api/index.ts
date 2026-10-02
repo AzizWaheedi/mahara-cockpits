@@ -106,6 +106,7 @@ import {
   signerOf,
   signingLink,
 } from "./contracts.ts";
+import { clientFormRow, CLIENT_FORM_ID } from "./clientforms.ts";
 
 type Row = Record<string, unknown>;
 
@@ -4895,6 +4896,42 @@ async function contractTemplatesSave(who: Who, b: Row) {
 }
 
 // ---------------------------------------------------------------------------
+// The New Client Form, filled on a lead's page
+// ---------------------------------------------------------------------------
+
+/**
+ * Typeform saved a New Client Form filled on this lead's page (Aziz,
+ * 2026-10-02): note which response it was, for whom, and who sent it. The
+ * form itself is Typeform's, embedded, so the onboarding has already started
+ * by the time this runs; the deal reaches the cockpit through B2B.
+ */
+async function clientFormSent(who: Who, b: Row) {
+  if (!who.manager && !["closer", "both"].includes(String(who.role)))
+    throw new Refusal("The New Client Form is filled by closers and managers.", 403);
+  const form = await setting<{ form_id?: string }>("client_form");
+  const checked = clientFormRow(b, form?.form_id ?? CLIENT_FORM_ID);
+  if (!checked.ok) throw new Refusal(checked.error);
+  const lead = (await svc(
+    `cockpit_sales_leads?contact_id=eq.${enc(checked.row.contact_id)}&select=contact_id`,
+  ))[0];
+  if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
+  const row = {
+    ...checked.row,
+    sent_by: who.email,
+    sent_by_name: who.name ?? null,
+    sent_at: new Date().toISOString(),
+  };
+  const saved = await svc("cockpit_sales_client_forms?on_conflict=response_id", {
+    method: "POST",
+    body: row,
+    prefer: "resolution=ignore-duplicates,return=representation",
+  });
+  if (saved.length)
+    await audit(who, "client_form.sent", "cockpit_sales_client_forms", row.response_id, null, row);
+  return { form: saved[0] ?? row, noted: saved.length > 0 };
+}
+
+// ---------------------------------------------------------------------------
 // Reviews a rep asks for, and Aziz's own reviews
 // ---------------------------------------------------------------------------
 
@@ -5019,6 +5056,7 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   "contract.refresh": contractRefresh,
   "contract.templates": contractTemplates,
   "contract.templates.save": contractTemplatesSave,
+  "client_form.sent": clientFormSent,
   "review.ask": reviewAsk,
   "coach.save": coachSave,
   "coach.delete": coachDelete,

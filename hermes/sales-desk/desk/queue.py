@@ -28,6 +28,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from . import clientform as clientform_mod
 from . import engine as engine_mod
 from . import fathom as fathom_mod
 from . import http
@@ -84,6 +85,13 @@ class Worker:
             sync_offer(self.sb, self.offer, self.log)
         except Exception as e:  # noqa: BLE001
             self.log(f"offer setting not synced: {http.scrub(str(e))[:160]}")
+        # The New Client Form's questions, for the list beside the embedded
+        # form on a lead's page; every ten minutes at most.
+        if self.cfg.typeform_key:
+            try:
+                clientform_mod.sync_client_form(self.sb, self.cfg.typeform_key, self.log)
+            except Exception as e:  # noqa: BLE001
+                self.log(f"client form not synced: {http.scrub(str(e))[:160]}")
         out: dict[str, Any] = {"seen": 0, "done": 0, "failed": 0, "retry": 0, "waiting": 0, "skipped": 0,
                                "reaped": self.reap(), "statuses": {}}
         rows = self.sb.queued(KIND, max_attempts=MAX_ATTEMPTS, limit=limit or self.cfg.requests_per_run)

@@ -182,6 +182,10 @@ class Config:
         return key("OPENAI_API_KEY")
 
     @property
+    def typeform_key(self) -> str:
+        return key("TYPEFORM_API_TOKEN")
+
+    @property
     def anthropic_key(self) -> str:
         return key("ANTHROPIC_API_KEY")
 

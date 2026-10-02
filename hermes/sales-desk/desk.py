@@ -16,6 +16,7 @@
     python3 desk.py followups               draft follow-ups for the leads who need one now, for approval
     python3 desk.py status                  the queue, the last proposals, the last runs
     python3 desk.py offer-sync              offer.json into the cockpit's proposal form (requests does it too)
+    python3 desk.py form-sync               the New Client Form's questions into the cockpit (requests does it too, every 10 minutes)
 
 and three that write nothing to the database, for trying the engine by hand:
 
@@ -43,6 +44,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from desk import b2b_fathom as b2b_fathom_mod  # noqa: E402
 from desk import build as build_mod  # noqa: E402
 from desk import calls_vault as calls_vault_mod  # noqa: E402
+from desk import clientform as clientform_mod  # noqa: E402
 from desk import engine as engine_mod  # noqa: E402
 from desk import fathom as fathom_mod  # noqa: E402
 from desk import http  # noqa: E402
@@ -147,6 +149,10 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
                  "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY",
                  "MAQSAM_ACCESS_KEY", "MAQSAM_SECRET"):
         add(name, bool(key(name)) or None, "set" if key(name) else "not set")
+    # Only the New Client Form's question list needs it; without it the
+    # cockpit keeps its last copy.
+    add("TYPEFORM_API_TOKEN", True if key("TYPEFORM_API_TOKEN") else None,
+        "set" if key("TYPEFORM_API_TOKEN") else "not set: the cockpit's New Client Form list stops following Typeform")
     # Only calls-b2b-fathom needs it, once; its absence blocks nothing else.
     add("SALES_B2B_MGMT_TOKEN", True if key("SALES_B2B_MGMT_TOKEN") else None,
         "set" if key("SALES_B2B_MGMT_TOKEN") else "not set: only the one-off calls-b2b-fathom needs it")
@@ -775,6 +781,19 @@ def cmd_offer_sync(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     return 0
 
 
+def cmd_form_sync(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    """The New Client Form's questions into the `client_form` setting now,
+    for the list the cockpit shows beside the embedded form."""
+    sb = _sb(cfg)
+    clientform_mod.sync_client_form(sb, cfg.typeform_key, log.info, force=True)
+    value = sb.setting(clientform_mod.SETTING_KEY) or {}
+    count = sum(len(s.get("questions") or []) for s in value.get("screens") or [])
+    detail = f"{count} questions on {len(value.get('screens') or [])} screens, form changed {value.get('form_updated_at')}"
+    _status(cfg, log, "form-sync", True, detail)
+    _print(value if args.json else detail, args.json)
+    return 0
+
+
 # ---- the local tools: nothing is written to the database -------------------
 
 
@@ -873,6 +892,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     dg = sub.add_parser("digest"); dg.add_argument("--days", type=int, choices=(7, 30))
     sub.add_parser("status")
     sub.add_parser("offer-sync")
+    sub.add_parser("form-sync")
     v = sub.add_parser("validate"); v.add_argument("deal"); v.add_argument("--transcript")
     v.add_argument("--send", action="store_true"); v.add_argument("--skip-render", action="store_true")
     b = sub.add_parser("build"); b.add_argument("deal"); b.add_argument("--out"); b.add_argument("--pdf", action="store_true")
@@ -894,7 +914,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "calls-vault": cmd_calls_vault, "reviews-import": cmd_reviews_import, "reviews": cmd_reviews,
         "maqsam-calls": cmd_maqsam_calls, "calls-b2b-fathom": cmd_calls_b2b_fathom,
         "research": cmd_research, "followups": cmd_followups, "notes": cmd_notes, "digest": cmd_digest,
-        "validate": cmd_validate, "build": cmd_build, "draft": cmd_draft, "offer-sync": cmd_offer_sync,
+        "validate": cmd_validate, "build": cmd_build, "draft": cmd_draft, "offer-sync": cmd_offer_sync, "form-sync": cmd_form_sync,
     }
     if args.cmd in METERED and cfg.supabase_configured:
         _meter(cfg, args.cmd, log)
@@ -902,7 +922,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         return handlers[args.cmd](cfg, args, log)
     except (SupabaseError, http.HttpError, NotNow, Refused) as e:
         log.error(http.scrub(str(e))[:400])
-        if args.cmd in ("requests", "recordings", "status", "offer-sync", "calls-vault", "reviews", "research",
+        if args.cmd in ("requests", "recordings", "status", "offer-sync", "form-sync", "calls-vault", "reviews", "research",
                         "followups", "maqsam-calls", "notes", "digest") and not getattr(args, "dry", False):
             _status(cfg, log, args.cmd, False, http.scrub(str(e))[:400])
         return 1
